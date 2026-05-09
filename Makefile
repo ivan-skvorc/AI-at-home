@@ -115,6 +115,8 @@ setup-sandbox:
 # Start all services in development mode (with hot-reloading)
 dev:
 	@$(PYTHON) ./scripts/check.py
+	@mkdir -p .deer-flow/nginx-tmp
+	@$(PYTHON) ./scripts/sync-ollama-models.py --verbose || true
 	@$(RUN_WITH_GIT_BASH) ./scripts/serve.sh --dev
 
 # Start all services in production mode (with optimizations)
