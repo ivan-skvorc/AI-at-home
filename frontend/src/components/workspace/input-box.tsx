@@ -406,6 +406,29 @@ export function InputBox({
     },
     [onContextChange, context, models],
   );
+  const [subagentModelDialogOpen, setSubagentModelDialogOpen] = useState(false);
+  const handleSubagentModelSelect = useCallback(
+    (model_name: string | undefined) => {
+      onContextChange?.({
+        ...context,
+        subagent_model_name: model_name,
+      });
+      setSubagentModelDialogOpen(false);
+    },
+    [onContextChange, context],
+  );
+  const subagentModels = useMemo(() => {
+    return [...models].sort((a, b) => {
+      const aBad = a.supports_tools === false ? 1 : 0;
+      const bBad = b.supports_tools === false ? 1 : 0;
+      if (aBad !== bBad) return aBad - bBad;
+      return (a.display_name ?? a.name).localeCompare(b.display_name ?? b.name);
+    });
+  }, [models]);
+  const subagentSelected = useMemo(
+    () => models.find((m) => m.name === context.subagent_model_name),
+    [context.subagent_model_name, models],
+  );
 
   const handleModeSelect = useCallback(
     (mode: InputMode) => {
@@ -1266,6 +1289,9 @@ export function InputBox({
               <ModelSelectorTrigger asChild>
                 <PromptInputButton className="max-w-40 min-w-0 sm:max-w-56">
                   <div className="flex min-w-0 flex-col items-start text-left">
+                    <span className="text-muted-foreground text-[10px] leading-none">
+                      Main agent
+                    </span>
                     <ModelSelectorName className="text-xs font-normal">
                       {selectedModel?.display_name}
                     </ModelSelectorName>
@@ -1297,6 +1323,74 @@ export function InputBox({
                 </ModelSelectorList>
               </ModelSelectorContent>
             </ModelSelector>
+            {context.mode === "ultra" && (
+              <ModelSelector
+                open={subagentModelDialogOpen}
+                onOpenChange={setSubagentModelDialogOpen}
+              >
+                <ModelSelectorTrigger asChild>
+                  <PromptInputButton>
+                    <div className="flex min-w-0 flex-col items-start text-left">
+                      <span className="text-muted-foreground text-[10px] leading-none">
+                        Subagent
+                      </span>
+                      <ModelSelectorName className="text-xs font-normal">
+                        {subagentSelected?.display_name ?? "Follow lead"}
+                      </ModelSelectorName>
+                    </div>
+                  </PromptInputButton>
+                </ModelSelectorTrigger>
+                <ModelSelectorContent>
+                  <ModelSelectorInput placeholder={t.inputBox.searchModels} />
+                  <ModelSelectorList>
+                    <ModelSelectorItem
+                      key="__follow_lead__"
+                      value="follow lead"
+                      onSelect={() => handleSubagentModelSelect(undefined)}
+                    >
+                      <div className="flex min-w-0 flex-1 flex-col">
+                        <ModelSelectorName>Follow lead</ModelSelectorName>
+                        <span className="text-muted-foreground truncate text-[10px]">
+                          Use the same model as the lead agent
+                        </span>
+                      </div>
+                      {context.subagent_model_name === undefined ? (
+                        <CheckIcon className="ml-auto size-4" />
+                      ) : (
+                        <div className="ml-auto size-4" />
+                      )}
+                    </ModelSelectorItem>
+                    {subagentModels.map((m) => (
+                      <ModelSelectorItem
+                        key={m.name}
+                        value={m.name}
+                        className={m.supports_tools === false ? "opacity-50" : undefined}
+                        onSelect={() => handleSubagentModelSelect(m.name)}
+                      >
+                        <div className="flex min-w-0 flex-1 flex-col">
+                          <ModelSelectorName>
+                            {m.display_name}
+                            {m.supports_tools === false && (
+                              <span className="text-muted-foreground ml-1 text-[10px]">
+                                (no tool support)
+                              </span>
+                            )}
+                          </ModelSelectorName>
+                          <span className="text-muted-foreground truncate text-[10px]">
+                            {m.model}
+                          </span>
+                        </div>
+                        {m.name === context.subagent_model_name ? (
+                          <CheckIcon className="ml-auto size-4" />
+                        ) : (
+                          <div className="ml-auto size-4" />
+                        )}
+                      </ModelSelectorItem>
+                    ))}
+                  </ModelSelectorList>
+                </ModelSelectorContent>
+              </ModelSelector>
+            )}
             <PromptInputSubmit
               className="rounded-full"
               disabled={disabled}

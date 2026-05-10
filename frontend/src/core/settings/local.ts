@@ -37,10 +37,12 @@ export interface LocalSettings {
     | "is_plan_mode"
     | "thinking_enabled"
     | "subagent_enabled"
+    | "subagent_model_name"
     | "model_name"
     | "reasoning_effort"
   > & {
     model_name?: string | undefined;
+    subagent_model_name?: string | undefined;
     mode: "flash" | "thinking" | "pro" | "ultra" | undefined;
     reasoning_effort?: "minimal" | "low" | "medium" | "high";
   };

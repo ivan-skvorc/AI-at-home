@@ -133,6 +133,7 @@ _CONTEXT_CONFIGURABLE_KEYS: frozenset[str] = frozenset(
         "reasoning_effort",
         "is_plan_mode",
         "subagent_enabled",
+        "subagent_model_name",
         "max_concurrent_subagents",
         "agent_name",
         "is_bootstrap",
