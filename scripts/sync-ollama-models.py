@@ -79,8 +79,9 @@ def render_entry(name: str, caps: list) -> str:
         lines.append(f"{INDENT}  supports_thinking: true")
     if "vision" in caps:
         lines.append(f"{INDENT}  supports_vision: true")
-    if "tools" in caps:
-        lines.append(f"{INDENT}  supports_tools: true")
+    if "tools" not in caps:
+        # Explicit false signals the UI to grey out the entry for subagent selection.
+        lines.append(f"{INDENT}  supports_tools: false")
     return "\n".join(lines)
 
 
