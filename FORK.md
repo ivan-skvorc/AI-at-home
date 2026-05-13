@@ -93,6 +93,15 @@ git merge upstream/main      # or rebase, your call
 
 The fork's added files (`scripts/sync-ollama-models.py`, the input-box dropdown JSX, the task_tool.py override) are unlikely to conflict with upstream changes since they're either new files or additive blocks on stable anchors. If upstream restructures `task_tool.py` or `input-box.tsx`, expect a small merge.
 
+## PDF and Office document support
+
+Upstream supports converting PDF, DOCX, PPTX, and XLSX uploads to Markdown so the agent can read them, but the dependency (`pymupdf4llm`) is not bundled and the feature is off by default. This fork:
+
+- Adds `pymupdf4llm` as a backend dependency so PDFs convert out of the box.
+- Writes the converted Markdown under **two filenames** — `<original>.md` (upstream behavior) **and** `<original>.<ext>.md` (e.g. `report.pdf.md`). Agents tend to hallucinate one convention or the other; writing both eliminates the "file not found" failure mode. Cleanup on delete handles both names.
+
+To turn the feature on, set `uploads.auto_convert_documents: true` in your `config.yaml`. `config.yaml` is gitignored, so the toggle ships per-install rather than in the fork.
+
 ## Credits
 
 All credit for the underlying system goes to the [ByteDance DeerFlow](https://github.com/bytedance/deer-flow) team. This fork only wires up two convenience features around their work.

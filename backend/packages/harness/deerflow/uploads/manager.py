@@ -335,6 +335,8 @@ def delete_file_safe(base_dir: Path, filename: str, *, convertible_extensions: s
     # Clean up companion markdown generated during upload conversion.
     if convertible_extensions and file_path.suffix.lower() in convertible_extensions:
         file_path.with_suffix(".md").unlink(missing_ok=True)
+        # Also clean up the dual-name companion (<filename_with_extension>.md).
+        file_path.with_name(file_path.name + ".md").unlink(missing_ok=True)
 
     return {"success": True, "message": f"Deleted {filename}"}
 

@@ -159,6 +159,11 @@ async def convert_file_to_markdown(file_path: Path) -> Path | None:
 
         md_path = file_path.with_suffix(".md")
         md_path.write_text(text, encoding="utf-8")
+        # Belt-and-suspenders: also write <original_filename_with_extension>.md
+        # so agents that hallucinate either naming convention find the file.
+        dual_path = file_path.with_name(file_path.name + ".md")
+        if dual_path != md_path:
+            dual_path.write_text(text, encoding="utf-8")
 
         logger.info("Converted %s to markdown: %s (%d chars)", file_path.name, md_path.name, len(text))
         return md_path
