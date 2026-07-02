@@ -16,6 +16,7 @@ class ModelResponse(BaseModel):
     description: str | None = Field(None, description="Model description")
     supports_thinking: bool = Field(default=False, description="Whether model supports thinking mode")
     supports_reasoning_effort: bool = Field(default=False, description="Whether model supports reasoning effort")
+    supports_tools: bool | None = Field(default=None, description="Whether model supports tool calling (None if unknown)")
 
 
 class TokenUsageResponse(BaseModel):
@@ -81,6 +82,7 @@ async def list_models(config: AppConfig = Depends(get_config)) -> ModelsListResp
             description=model.description,
             supports_thinking=model.supports_thinking,
             supports_reasoning_effort=model.supports_reasoning_effort,
+            supports_tools=getattr(model, "supports_tools", None),
         )
         for model in config.models
     ]
@@ -129,4 +131,5 @@ async def get_model(model_name: str, config: AppConfig = Depends(get_config)) ->
         description=model.description,
         supports_thinking=model.supports_thinking,
         supports_reasoning_effort=model.supports_reasoning_effort,
+        supports_tools=getattr(model, "supports_tools", None),
     )

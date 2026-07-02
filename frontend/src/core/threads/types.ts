@@ -5,7 +5,7 @@ import type { Todo } from "../todos";
 export interface AgentThreadState extends Record<string, unknown> {
   title: string;
   messages: Message[];
-  artifacts: string[];
+  artifacts?: string[];
   todos?: Todo[];
 }
 
@@ -26,9 +26,25 @@ export interface AgentThread extends Thread<AgentThreadState> {
 
 export interface RunMessage {
   run_id: string;
+  seq?: number;
   content: Message;
   metadata: {
     caller: string;
+    [key: string]: unknown;
   };
   created_at: string;
+}
+
+export interface ThreadTokenUsageResponse {
+  thread_id: string;
+  total_tokens: number;
+  total_input_tokens: number;
+  total_output_tokens: number;
+  total_runs: number;
+  by_model: Record<string, { tokens: number; runs: number }>;
+  by_caller: {
+    lead_agent: number;
+    subagent: number;
+    middleware: number;
+  };
 }

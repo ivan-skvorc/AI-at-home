@@ -122,6 +122,26 @@ class TestListMessages:
         messages = await store.list_messages("t1", limit=3)
         assert [m["seq"] for m in messages] == [8, 9, 10]
 
+    @pytest.mark.anyio
+    async def test_pagination_with_interleaved_trace_events(self, store):
+        # Messages and non-message events interleave, so message seqs are
+        # non-contiguous (1, 3, 5, 7, 9). Seq-window pagination must still be
+        # correct over the messages-only projection, including when the cursor
+        # lands in a gap or exactly on a message seq (exclusive bound).
+        for i in range(10):
+            category = "message" if i % 2 == 0 else "trace"
+            await store.put(thread_id="t1", run_id="r1", event_type="e", category=category, content=str(i))
+
+        assert [m["seq"] for m in await store.list_messages("t1")] == [1, 3, 5, 7, 9]
+        # before_seq in a gap: seq < 6 -> [1, 3, 5], last 2
+        assert [m["seq"] for m in await store.list_messages("t1", before_seq=6, limit=2)] == [3, 5]
+        # before_seq on a message seq is exclusive: seq < 5 -> [1, 3]
+        assert [m["seq"] for m in await store.list_messages("t1", before_seq=5, limit=5)] == [1, 3]
+        # after_seq in a gap: seq > 4 -> [5, 7, 9], first 2
+        assert [m["seq"] for m in await store.list_messages("t1", after_seq=4, limit=2)] == [5, 7]
+        # after_seq on a message seq is exclusive: seq > 5 -> [7, 9]
+        assert [m["seq"] for m in await store.list_messages("t1", after_seq=5, limit=5)] == [7, 9]
+
 
 # -- list_events --
 
@@ -267,6 +287,39 @@ class TestEdgeCases:
 
 class TestDbRunEventStore:
     """Tests for DbRunEventStore with temp SQLite."""
+
+    @pytest.mark.anyio
+    async def test_postgres_max_seq_uses_advisory_lock_without_for_update(self):
+        from sqlalchemy.dialects import postgresql
+
+        from deerflow.runtime.events.store.db import DbRunEventStore
+
+        class FakeSession:
+            def __init__(self):
+                self.dialect = postgresql.dialect()
+                self.execute_calls = []
+                self.scalar_stmt = None
+
+            def get_bind(self):
+                return self
+
+            async def execute(self, stmt, params=None):
+                self.execute_calls.append((stmt, params))
+
+            async def scalar(self, stmt):
+                self.scalar_stmt = stmt
+                return 41
+
+        session = FakeSession()
+
+        max_seq = await DbRunEventStore._max_seq_for_thread(session, "thread-1")
+
+        assert max_seq == 41
+        assert session.execute_calls
+        assert session.execute_calls[0][1] == {"thread_id": "thread-1"}
+        assert "pg_advisory_xact_lock" in str(session.execute_calls[0][0])
+        compiled = str(session.scalar_stmt.compile(dialect=postgresql.dialect()))
+        assert "FOR UPDATE" not in compiled
 
     @pytest.mark.anyio
     async def test_basic_crud(self, tmp_path):

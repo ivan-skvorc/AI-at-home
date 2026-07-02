@@ -1,22 +1,24 @@
 import asyncio
 import logging
-import os
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.gateway.auth_disabled import warn_if_auth_disabled_enabled
 from app.gateway.auth_middleware import AuthMiddleware
 from app.gateway.config import get_gateway_config
-from app.gateway.csrf_middleware import CSRFMiddleware
+from app.gateway.csrf_middleware import CSRFMiddleware, get_configured_cors_origins
 from app.gateway.deps import langgraph_runtime
 from app.gateway.routers import (
     agents,
     artifacts,
     assistants_compat,
     auth,
+    channel_connections,
     channels,
+    features,
     feedback,
     mcp,
     memory,
@@ -30,6 +32,7 @@ from app.gateway.routers import (
 )
 from deerflow.config import app_config as deerflow_app_config
 from deerflow.config.app_config import apply_logging_level
+from deerflow.uploads.manager import cleanup_stale_upload_staging_files
 
 AppConfig = deerflow_app_config.AppConfig
 get_app_config = deerflow_app_config.get_app_config
@@ -63,7 +66,7 @@ async def _ensure_admin_user(app: FastAPI) -> None:
 
     Subsequent boots (admin already exists):
       - Runs the one-time "no-auth → with-auth" orphan thread migration for
-        existing LangGraph thread metadata that has no owner_id.
+        existing LangGraph thread metadata that has no user_id.
 
     No SQL persistence migration is needed: the four user_id columns
     (threads_meta, runs, run_events, feedback) only come into existence
@@ -162,11 +165,18 @@ async def _migrate_orphaned_threads(store, admin_user_id: str) -> int:
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Application lifespan handler."""
 
-    # Load config and check necessary environment variables at startup
+    # Load config and check necessary environment variables at startup.
+    # `startup_config` is a local snapshot used only for one-shot bootstrap
+    # work (logging level, langgraph_runtime engines, channels). Request-time
+    # config resolution always routes through `get_app_config()` in
+    # `app/gateway/deps.py::get_config()` so `config.yaml` edits become
+    # visible without a process restart. We deliberately do NOT cache this
+    # snapshot on `app.state` to keep that contract enforceable.
     try:
-        app.state.config = get_app_config()
-        apply_logging_level(app.state.config.log_level)
+        startup_config = get_app_config()
+        apply_logging_level(startup_config.log_level)
         logger.info("Configuration loaded successfully")
+        warn_if_auth_disabled_enabled()
     except Exception as e:
         error_msg = f"Failed to load configuration during gateway startup: {e}"
         logger.exception(error_msg)
@@ -174,11 +184,43 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     config = get_gateway_config()
     logger.info(f"Starting API Gateway on {config.host}:{config.port}")
 
+    # Pre-warm tiktoken encoding cache so the first memory-injection request
+    # never blocks on the BPE data download (which hits an OpenAI/Azure URL
+    # that may be unreachable in restricted networks — see issue #3402).
+    # When memory.token_counting is "char", token counting never touches
+    # tiktoken, so skip the warm-up entirely (avoids even the 5s probe in
+    # network-restricted deployments — see issue #3429).
+    if startup_config.memory.token_counting == "char":
+        logger.info("memory.token_counting='char'; skipping tiktoken warm-up (network-free token estimation)")
+    else:
+        try:
+            from deerflow.agents.memory.prompt import warm_tiktoken_cache
+
+            warmed = await asyncio.wait_for(
+                asyncio.to_thread(warm_tiktoken_cache),
+                timeout=5,
+            )
+            if warmed:
+                logger.info("tiktoken encoding cache warmed successfully")
+            else:
+                logger.warning("tiktoken encoding cache warm-up failed; token counting will use character-based fallback until tiktoken loads successfully")
+        except TimeoutError:
+            logger.warning("tiktoken encoding cache warm-up timed out; token counting will use character-based fallback until tiktoken loads successfully")
+        except Exception:
+            logger.warning("tiktoken warm-up skipped", exc_info=True)
+
+    try:
+        removed_upload_staging_files = await asyncio.to_thread(cleanup_stale_upload_staging_files)
+        if removed_upload_staging_files:
+            logger.info("Removed %d stale upload staging file(s)", removed_upload_staging_files)
+    except Exception:
+        logger.warning("Upload staging file cleanup skipped", exc_info=True)
+
     # Initialize LangGraph runtime components (StreamBridge, RunManager, checkpointer, store)
-    async with langgraph_runtime(app):
+    async with langgraph_runtime(app, startup_config):
         logger.info("LangGraph runtime initialised")
 
-        # Ensure admin user exists (auto-create on first boot)
+        # Check admin bootstrap state and migrate orphan threads after admin exists.
         # Must run AFTER langgraph_runtime so app.state.store is available for thread migration
         await _ensure_admin_user(app)
 
@@ -186,12 +228,17 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         try:
             from app.channels.service import start_channel_service
 
-            channel_service = await start_channel_service(app.state.config)
+            channel_service = await start_channel_service(startup_config)
             logger.info("Channel service started: %s", channel_service.get_status())
         except Exception:
             logger.exception("No IM channels configured or channel service failed to start")
 
         yield
+
+        try:
+            await auth.close_oidc_service()
+        except Exception:
+            logger.exception("Failed to close OIDC service")
 
         # Stop channel service on shutdown (bounded to prevent worker hang)
         try:
@@ -219,7 +266,9 @@ def create_app() -> FastAPI:
         Configured FastAPI application instance.
     """
     config = get_gateway_config()
-    docs_kwargs = {"docs_url": "/docs", "redoc_url": "/redoc", "openapi_url": "/openapi.json"} if config.enable_docs else {"docs_url": None, "redoc_url": None, "openapi_url": None}
+    docs_url = "/docs" if config.enable_docs else None
+    redoc_url = "/redoc" if config.enable_docs else None
+    openapi_url = "/openapi.json" if config.enable_docs else None
 
     app = FastAPI(
         title="DeerFlow API Gateway",
@@ -239,12 +288,14 @@ API Gateway for DeerFlow - A LangGraph-based AI agent backend with sandbox execu
 
 ### Architecture
 
-LangGraph requests are handled by nginx reverse proxy.
-This gateway provides custom endpoints for models, MCP configuration, skills, and artifacts.
+LangGraph-compatible requests are routed through nginx to this gateway.
+This gateway provides runtime endpoints for agent runs plus custom endpoints for models, MCP configuration, skills, and artifacts.
         """,
         version="0.1.0",
         lifespan=lifespan,
-        **docs_kwargs,
+        docs_url=docs_url,
+        redoc_url=redoc_url,
+        openapi_url=openapi_url,
         openapi_tags=[
             {
                 "name": "models",
@@ -307,29 +358,25 @@ This gateway provides custom endpoints for models, MCP configuration, skills, an
     # CSRF: Double Submit Cookie pattern for state-changing requests
     app.add_middleware(CSRFMiddleware)
 
-    # CORS: when GATEWAY_CORS_ORIGINS is set (dev without nginx), add CORS middleware.
-    # In production, nginx handles CORS and no middleware is needed.
-    cors_origins_env = os.environ.get("GATEWAY_CORS_ORIGINS", "")
-    if cors_origins_env:
-        cors_origins = [o.strip() for o in cors_origins_env.split(",") if o.strip()]
-        # Validate: wildcard origin with credentials is a security misconfiguration
-        for origin in cors_origins:
-            if origin == "*":
-                logger.error("GATEWAY_CORS_ORIGINS contains wildcard '*' with allow_credentials=True. This is a security misconfiguration — browsers will reject the response. Use explicit scheme://host:port origins instead.")
-                cors_origins = [o for o in cors_origins if o != "*"]
-                break
-        if cors_origins:
-            app.add_middleware(
-                CORSMiddleware,
-                allow_origins=cors_origins,
-                allow_credentials=True,
-                allow_methods=["*"],
-                allow_headers=["*"],
-            )
+    # CORS: the unified nginx endpoint is same-origin by default. Split-origin
+    # browser clients must opt in with this explicit Gateway allowlist so CORS
+    # and CSRF origin checks share the same source of truth.
+    cors_origins = sorted(get_configured_cors_origins())
+    if cors_origins:
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=cors_origins,
+            allow_credentials=True,
+            allow_methods=["*"],
+            allow_headers=["*"],
+        )
 
     # Include routers
     # Models API is mounted at /api/models
     app.include_router(models.router)
+
+    # Features API is mounted at /api/features
+    app.include_router(features.router)
 
     # MCP API is mounted at /api/mcp
     app.include_router(mcp.router)
@@ -355,6 +402,9 @@ This gateway provides custom endpoints for models, MCP configuration, skills, an
     # Suggestions API is mounted at /api/threads/{thread_id}/suggestions
     app.include_router(suggestions.router)
 
+    # User-facing IM channel connection API is mounted at /api/channels
+    app.include_router(channel_connections.router)
+
     # Channels API is mounted at /api/channels
     app.include_router(channels.router)
 
@@ -374,7 +424,7 @@ This gateway provides custom endpoints for models, MCP configuration, skills, an
     app.include_router(runs.router)
 
     @app.get("/health", tags=["health"])
-    async def health_check() -> dict:
+    async def health_check() -> dict[str, str]:
         """Health check endpoint.
 
         Returns:

@@ -18,13 +18,9 @@ https://github.com/user-attachments/assets/a8bcadc4-e040-4cf2-8fda-dd768b999c18
 
 ## 公式ウェブサイト
 
-[<img width="2880" height="1600" alt="image" src="https://github.com/user-attachments/assets/a598c49f-3b2f-41ea-a052-05e21349188a" />](https://deerflow.tech)
-
 **実際のデモ**は[**公式ウェブサイト**](https://deerflow.tech)でご覧いただけます。
 
 ## ByteDance Volcengine のコーディングプラン
-
-<img width="4808" height="2400" alt="英文方舟" src="https://github.com/user-attachments/assets/2ecc7b9d-50be-4185-b1f7-5542d222fb2d" />
 
 - DeerFlowの実行には、Doubao-Seed-2.0-Code、DeepSeek v3.2、Kimi 2.5の使用を強く推奨します
 - [詳細はこちら](https://www.byteplus.com/en/activity/codingplan?utm_campaign=deer_flow&utm_content=deer_flow&utm_medium=devrel&utm_source=OWO&utm_term=deer_flow)
@@ -181,7 +177,7 @@ make down   # コンテナを停止して削除
 ```
 
 > [!NOTE]
-> LangGraphエージェントサーバーは現在`langgraph dev`（オープンソースCLIサーバー）経由で実行されます。
+> Agentランタイムは現在Gateway内で実行されます。`/api/langgraph/*`はnginxによってGatewayのLangGraph-compatible APIへ書き換えられます。
 
 アクセス: http://localhost:2026
 
@@ -249,8 +245,8 @@ DeerFlowはメッセージングアプリからのタスク受信をサポート
 
 ```yaml
 channels:
-  # LangGraphサーバーURL（デフォルト: http://localhost:2024）
-  langgraph_url: http://localhost:2024
+  # LangGraph-compatible Gateway API base URL（デフォルト: http://localhost:8001/api）
+  langgraph_url: http://localhost:8001/api
   # Gateway API URL（デフォルト: http://localhost:8001）
   gateway_url: http://localhost:8001
 

@@ -7,13 +7,13 @@ from langgraph.types import Command
 
 from deerflow.config.agents_config import validate_agent_name
 from deerflow.config.paths import get_paths
-from deerflow.runtime.user_context import get_effective_user_id
+from deerflow.runtime.user_context import resolve_runtime_user_id
 from deerflow.tools.types import Runtime
 
 logger = logging.getLogger(__name__)
 
 
-@tool
+@tool(parse_docstring=True)
 def setup_agent(
     soul: str,
     description: str,
@@ -28,6 +28,25 @@ def setup_agent(
         skills: Optional list of skill names this agent should use. None means use all enabled skills, empty list means no skills.
     """
 
+    # Reject empty / whitespace-only soul before touching the filesystem.
+    # Without this guard the tool would happily persist an empty SOUL.md and
+    # still report success, which caused the frontend to enter the "agent
+    # created" state for an unusable agent (issue #3549). Failing loud lets
+    # the model retry instead of silently producing a broken artifact and,
+    # together with the upstream agent_name fix, prevents the global default
+    # SOUL.md from being overwritten with empty content.
+    if not soul or not soul.strip():
+        return Command(
+            update={
+                "messages": [
+                    ToolMessage(
+                        content="Error: soul content is empty; refusing to create agent with an empty SOUL.md",
+                        tool_call_id=runtime.tool_call_id,
+                    )
+                ]
+            }
+        )
+
     agent_name: str | None = runtime.context.get("agent_name") if runtime.context else None
     agent_dir = None
     is_new_dir = False
@@ -38,7 +57,7 @@ def setup_agent(
         if agent_name:
             # Custom agents are persisted under the current user's bucket so
             # different users do not see each other's agents.
-            user_id = get_effective_user_id()
+            user_id = resolve_runtime_user_id(runtime)
             agent_dir = paths.user_agent_dir(user_id, agent_name)
         else:
             # Default agent (no agent_name): SOUL.md lives at the global base dir.

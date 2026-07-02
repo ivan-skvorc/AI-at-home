@@ -6,13 +6,16 @@ State-changing operations require CSRF protection.
 
 import os
 import secrets
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from urllib.parse import urlsplit
 
 from fastapi import Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp
+
+from app.gateway.auth.config import get_auth_config
+from app.gateway.auth_disabled import is_auth_disabled
 
 CSRF_COOKIE_NAME = "csrf_token"
 CSRF_HEADER_NAME = "X-CSRF-Token"
@@ -36,6 +39,9 @@ def should_check_csrf(request: Request) -> bool:
     GET, HEAD, OPTIONS, and TRACE are exempt per RFC 7231.
     """
     if request.method not in ("POST", "PUT", "DELETE", "PATCH"):
+        return False
+
+    if is_auth_disabled():
         return False
 
     path = request.url.path.rstrip("/")
@@ -106,6 +112,11 @@ def _configured_cors_origins() -> set[str]:
     return origins
 
 
+def get_configured_cors_origins() -> set[str]:
+    """Return normalized explicit browser origins from GATEWAY_CORS_ORIGINS."""
+    return _configured_cors_origins()
+
+
 def _first_header_value(value: str | None) -> str | None:
     """Return the first value from a comma-separated proxy header."""
     if not value:
@@ -172,7 +183,7 @@ class CSRFMiddleware(BaseHTTPMiddleware):
     def __init__(self, app: ASGIApp) -> None:
         super().__init__(app)
 
-    async def dispatch(self, request: Request, call_next: Callable) -> Response:
+    async def dispatch(self, request: Request, call_next: Callable[[Request], Awaitable[Response]]) -> Response:
         _is_auth = is_auth_endpoint(request)
 
         if should_check_csrf(request) and _is_auth and not is_allowed_auth_origin(request):
@@ -210,6 +221,12 @@ class CSRFMiddleware(BaseHTTPMiddleware):
                 httponly=False,  # Must be JS-readable for Double Submit Cookie pattern
                 secure=is_https,
                 samesite="strict",
+                # Match the access_token cookie's lifetime (auth.py::_set_session_cookie)
+                # so the double-submit pair never diverges. A session-only csrf_token is
+                # evicted when iOS Safari terminates a home-screen PWA while the persistent
+                # access_token survives — leaving the user "logged in" but unable to make
+                # any state-changing request (403 "CSRF token missing").
+                max_age=get_auth_config().token_expiry_days * 24 * 3600 if is_https else None,
             )
 
         return response

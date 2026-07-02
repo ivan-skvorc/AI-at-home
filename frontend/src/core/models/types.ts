@@ -6,6 +6,7 @@ export interface Model {
   description?: string | null;
   supports_thinking?: boolean;
   supports_reasoning_effort?: boolean;
+  supports_tools?: boolean;
 }
 
 export interface TokenUsageSettings {

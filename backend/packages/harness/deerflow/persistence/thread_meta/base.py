@@ -15,8 +15,13 @@ three-state semantics (see :mod:`deerflow.runtime.user_context`):
 from __future__ import annotations
 
 import abc
+from typing import Any
 
 from deerflow.runtime.user_context import AUTO, _AutoSentinel
+
+
+class InvalidMetadataFilterError(ValueError):
+    """Raised when all client-supplied metadata filter keys are rejected."""
 
 
 class ThreadMetaStore(abc.ABC):
@@ -40,12 +45,12 @@ class ThreadMetaStore(abc.ABC):
     async def search(
         self,
         *,
-        metadata: dict | None = None,
+        metadata: dict[str, Any] | None = None,
         status: str | None = None,
         limit: int = 100,
         offset: int = 0,
         user_id: str | None | _AutoSentinel = AUTO,
-    ) -> list[dict]:
+    ) -> list[dict[str, Any]]:
         pass
 
     @abc.abstractmethod
@@ -63,6 +68,15 @@ class ThreadMetaStore(abc.ABC):
         Existing keys are overwritten by the new values; keys absent from
         ``metadata`` are preserved. No-op if the thread does not exist
         or the owner check fails.
+        """
+        pass
+
+    @abc.abstractmethod
+    async def update_owner(self, thread_id: str, owner_user_id: str, *, user_id: str | None | _AutoSentinel = AUTO) -> None:
+        """Move a thread metadata row to a new owner.
+
+        Intended for trusted internal repair/migration paths. No-op if the
+        row does not exist or the caller fails the owner check.
         """
         pass
 

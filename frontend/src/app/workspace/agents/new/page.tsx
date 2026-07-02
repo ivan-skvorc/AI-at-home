@@ -35,7 +35,6 @@ import {
   AgentNameCheckError,
   AgentsApiDisabledError,
   checkAgentName,
-  createAgent,
   getAgent,
 } from "@/core/agents/api";
 import { useI18n } from "@/core/i18n/hooks";
@@ -71,20 +70,6 @@ async function getAgentWithRetry(agentName: string) {
   return null;
 }
 
-function getCreateAgentErrorMessage(
-  error: unknown,
-  networkErrorMessage: string,
-  fallbackMessage: string,
-) {
-  if (error instanceof TypeError && error.message === "Failed to fetch") {
-    return networkErrorMessage;
-  }
-  if (error instanceof Error && error.message) {
-    return error.message;
-  }
-  return fallbackMessage;
-}
-
 export default function NewAgentPage() {
   const { t } = useI18n();
   const router = useRouter();
@@ -93,7 +78,6 @@ export default function NewAgentPage() {
   const [nameInput, setNameInput] = useState("");
   const [nameError, setNameError] = useState("");
   const [isCheckingName, setIsCheckingName] = useState(false);
-  const [isCreatingAgent, setIsCreatingAgent] = useState(false);
   const [agentName, setAgentName] = useState("");
   const [agent, setAgent] = useState<Agent | null>(null);
   const [showSaveHint, setShowSaveHint] = useState(false);
@@ -162,6 +146,27 @@ export default function NewAgentPage() {
         err.reason === "backend_unreachable"
       ) {
         setNameError(t.agents.nameStepNetworkError);
+      } else if (
+        err instanceof AgentNameCheckError &&
+        err.reason === "request_failed"
+      ) {
+        // Surface the backend-provided detail (e.g. validation error) when
+        // one is present, wrapped in a localised prefix so zh-CN users
+        // don't see a bare English string next to the surrounding Chinese
+        // UI. Falls back to the generic localised fallback when the backend
+        // sent no detail — `err.message` is unreliable for this branch
+        // because `checkAgentName` substitutes a generated fallback string
+        // ("Failed to check agent name: ${statusText}") when `detail` is
+        // missing, so testing `err.message` would always be truthy and the
+        // generated fallback would leak through.
+        setNameError(
+          err.detail
+            ? t.agents.nameStepCheckErrorWithDetail.replace(
+                "{detail}",
+                err.detail,
+              )
+            : t.agents.nameStepCheckError,
+        );
       } else {
         setNameError(t.agents.nameStepCheckError);
       }
@@ -170,36 +175,16 @@ export default function NewAgentPage() {
       setIsCheckingName(false);
     }
 
-    setIsCreatingAgent(true);
-    try {
-      await createAgent({
-        name: trimmed,
-        description: "",
-        soul: "",
-      });
-    } catch (err) {
-      if (err instanceof AgentsApiDisabledError) {
-        setNameError(t.agents.nameStepApiDisabledError);
-        return;
-      }
-      setNameError(
-        getCreateAgentErrorMessage(
-          err,
-          t.agents.nameStepNetworkError,
-          t.agents.nameStepCheckError,
-        ),
-      );
-      return;
-    } finally {
-      setIsCreatingAgent(false);
-    }
-
     setAgentName(trimmed);
     setStep("chat");
-    await sendMessage(threadId, {
-      text: t.agents.nameStepBootstrapMessage.replace("{name}", trimmed),
-      files: [],
-    });
+    await sendMessage(
+      threadId,
+      {
+        text: t.agents.nameStepBootstrapMessage.replace("{name}", trimmed),
+        files: [],
+      },
+      { agent_name: trimmed },
+    );
   }, [
     nameInput,
     sendMessage,
@@ -208,6 +193,7 @@ export default function NewAgentPage() {
     t.agents.nameStepNetworkError,
     t.agents.nameStepBootstrapMessage,
     t.agents.nameStepCheckError,
+    t.agents.nameStepCheckErrorWithDetail,
     t.agents.nameStepInvalidError,
     threadId,
   ]);
@@ -345,9 +331,7 @@ export default function NewAgentPage() {
               <Button
                 className="w-full"
                 onClick={() => void handleConfirmName()}
-                disabled={
-                  !nameInput.trim() || isCheckingName || isCreatingAgent
-                }
+                disabled={!nameInput.trim() || isCheckingName}
               >
                 {t.agents.nameStepContinue}
               </Button>

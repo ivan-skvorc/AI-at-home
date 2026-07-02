@@ -28,7 +28,7 @@ class User(BaseModel):
     oauth_id: str | None = Field(None, description="User ID from OAuth provider")
 
     # Auth lifecycle
-    needs_setup: bool = Field(default=False, description="True for auto-created admin until setup completes")
+    needs_setup: bool = Field(default=False, description="True when a reset account must complete setup")
     token_version: int = Field(default=0, description="Incremented on password change to invalidate old JWTs")
 
 
@@ -39,3 +39,4 @@ class UserResponse(BaseModel):
     email: str
     system_role: Literal["admin", "user"]
     needs_setup: bool = False
+    oauth_provider: str | None = Field(None, description="OAuth/SSO provider ID if the user logged in via SSO (e.g. 'keycloak')")
