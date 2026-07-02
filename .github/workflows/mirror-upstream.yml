@@ -1,0 +1,44 @@
+# Makes bytedance/deer-flow main available inside this fork for environments
+# that cannot reach the upstream repository directly.
+#
+# GITHUB_TOKEN may not push workflow-file changes, so instead of mirroring the
+# branch directly this packs the upstream delta into a git bundle and pushes it
+# on an orphan branch (upstream-sync-data). Consumers fetch that branch,
+# extract the bundle, and `git fetch` from it locally.
+name: Mirror Upstream
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - claude/upstream-changes-assessment-sfodb7
+
+permissions:
+  contents: write
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Fetch upstream and publish delta bundle
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git remote add upstream https://github.com/bytedance/deer-flow.git
+          git fetch upstream main
+          echo "UPSTREAM_MAIN_SHA=$(git rev-parse upstream/main)"
+          git log --oneline -5 upstream/main
+          git branch -f upstream-main-mirror upstream/main
+          git bundle create /tmp/upstream-delta.bundle ^origin/main upstream-main-mirror
+          ls -lh /tmp/upstream-delta.bundle
+          mkdir /tmp/sync-data && cd /tmp/sync-data
+          git init -b upstream-sync-data
+          split -b 90M -d /tmp/upstream-delta.bundle upstream-delta.bundle.part.
+          git rev-parse --git-dir >/dev/null
+          echo "$(cd "$GITHUB_WORKSPACE" && git rev-parse upstream/main)" > upstream-main.sha
+          git add -A
+          git -c user.name=github-actions -c user.email=actions@github.com commit -m "upstream sync data ($(date -u +%Y-%m-%dT%H:%M:%SZ))"
+          git push --force "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}" upstream-sync-data
