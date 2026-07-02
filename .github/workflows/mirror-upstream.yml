@@ -9,9 +9,6 @@ name: Mirror Upstream
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - claude/upstream-changes-assessment-sfodb7
 
 permissions:
   contents: write
@@ -37,7 +34,6 @@ jobs:
           mkdir /tmp/sync-data && cd /tmp/sync-data
           git init -b upstream-sync-data
           split -b 90M -d /tmp/upstream-delta.bundle upstream-delta.bundle.part.
-          git rev-parse --git-dir >/dev/null
           echo "$(cd "$GITHUB_WORKSPACE" && git rev-parse upstream/main)" > upstream-main.sha
           git add -A
           git -c user.name=github-actions -c user.email=actions@github.com commit -m "upstream sync data ($(date -u +%Y-%m-%dT%H:%M:%SZ))"

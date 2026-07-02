@@ -93,6 +93,8 @@ git merge upstream/main      # or rebase, your call
 
 The fork's added files (`scripts/sync-ollama-models.py`, the input-box dropdown JSX, the task_tool.py override) are unlikely to conflict with upstream changes since they're either new files or additive blocks on stable anchors. If upstream restructures `task_tool.py` or `input-box.tsx`, expect a small merge.
 
+For environments that cannot reach `github.com/bytedance/deer-flow` directly (e.g. network-restricted CI or sandboxed agents), the **Mirror Upstream** workflow (`.github/workflows/mirror-upstream.yml`, manual `workflow_dispatch`) fetches upstream `main` on a GitHub runner and publishes the delta as a git bundle on the `upstream-sync-data` branch of this fork. Fetch that branch, extract the bundle parts (`cat upstream-delta.bundle.part.* > upstream.bundle`), and `git fetch <bundle> upstream-main-mirror` to get full upstream history locally. (The workflow cannot push the mirrored branch directly: `GITHUB_TOKEN` is not allowed to create or update workflow files, and upstream regularly changes theirs.)
+
 ## PDF and Office document support
 
 Upstream supports converting PDF, DOCX, PPTX, and XLSX uploads to Markdown so the agent can read them, but the dependency (`pymupdf4llm`) is not bundled and the feature is off by default. This fork:
