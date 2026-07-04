@@ -357,6 +357,8 @@ Proxied through nginx: `/api/langgraph/*` → Gateway LangGraph-compatible runti
 
 Additional providers also live here (`brave`, `browserless`, `crawl4ai`, `ddg_search`, `exa`, `fastcrw`, `groundroute`, `infoquest`, `searxng`, `serper`); see each subpackage for specifics.
 
+The default `web_search` in `config.example.yaml` is `searxng/` (self-hosted instance bundled with the Docker stacks; `docker/searxng/settings.yml` enables the JSON API and disables the bot limiter). Its `base_url` resolution is `DEER_FLOW_SEARXNG_BASE_URL` env var > tool config `base_url` > `http://localhost:8088` — docker-compose sets the env var to the in-network `http://searxng:8080` so one `config.yaml` works both host-run and containerized (same pattern as `DEER_FLOW_CHANNELS_*`).
+
 **ACP agent tools**:
 - `invoke_acp_agent` - Invokes external ACP-compatible agents from `config.yaml`
 - ACP launchers must be real ACP adapters. The standard `codex` CLI is not ACP-compatible by itself; configure a wrapper such as `npx -y @zed-industries/codex-acp` or an installed `codex-acp` binary

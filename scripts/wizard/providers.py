@@ -467,9 +467,17 @@ LLM_PROVIDERS: list[LLMProvider] = [
 
 SEARCH_PROVIDERS: list[SearchProvider] = [
     SearchProvider(
+        name="searxng",
+        display_name="SearXNG (self-hosted, free, no key needed)",
+        description="Bundled with the Docker stacks; `make searxng` for host-run dev",
+        use="deerflow.community.searxng.tools:web_search_tool",
+        env_var=None,
+        extra_config={"base_url": "http://localhost:8088", "max_results": 5},
+    ),
+    SearchProvider(
         name="ddg",
         display_name="DuckDuckGo (free, no key needed)",
-        description="No API key required",
+        description="No API key or local service required",
         use="deerflow.community.ddg_search.tools:web_search_tool",
         env_var=None,
         extra_config={"max_results": 5},

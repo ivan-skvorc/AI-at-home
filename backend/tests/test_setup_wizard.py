@@ -629,7 +629,9 @@ class TestSearchStep:
         monkeypatch.setattr(search_step, "print_success", lambda *_args, **_kwargs: None)
         monkeypatch.setattr(search_step, "print_info", lambda *_args, **_kwargs: None)
 
-        choices = iter([3, 1])
+        search_exa_idx = next(i for i, p in enumerate(search_step.SEARCH_PROVIDERS) if p.name == "exa")
+        fetch_exa_idx = next(i for i, p in enumerate(search_step.WEB_FETCH_PROVIDERS) if p.name == "exa")
+        choices = iter([search_exa_idx, fetch_exa_idx])
         prompts: list[str] = []
 
         def fake_choice(_prompt, _options, default=0):

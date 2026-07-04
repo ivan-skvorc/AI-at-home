@@ -1,5 +1,6 @@
 import json
 import logging
+import os
 
 from langchain.tools import tool
 
@@ -8,6 +9,13 @@ from deerflow.config import get_app_config
 from .searxng_client import SearxngClient
 
 logger = logging.getLogger(__name__)
+
+DEFAULT_BASE_URL = "http://localhost:8088"
+# Deployment-level override so the same config.yaml works both host-run
+# (localhost:8088) and inside the Docker stack, where the compose file sets
+# this to the in-network service URL (http://searxng:8080). Mirrors the
+# DEER_FLOW_CHANNELS_LANGGRAPH_URL / DEER_FLOW_CHANNELS_GATEWAY_URL pattern.
+BASE_URL_ENV_VAR = "DEER_FLOW_SEARXNG_BASE_URL"
 
 
 def _get_tool_config(tool_name: str) -> dict | None:
@@ -20,8 +28,12 @@ def _get_tool_config(tool_name: str) -> dict | None:
 
 
 def _get_searxng_client() -> SearxngClient:
+    env_base_url = os.getenv(BASE_URL_ENV_VAR, "").strip()
+    if env_base_url:
+        return SearxngClient(base_url=env_base_url)
+
     cfg = _get_tool_config("web_search")
-    base_url = "http://localhost:8088"
+    base_url = DEFAULT_BASE_URL
     if cfg is not None:
         base_url = cfg.get("base_url", base_url)
     return SearxngClient(base_url=base_url)

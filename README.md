@@ -317,6 +317,15 @@ DeerFlow runs the agent runtime inside the Gateway API. Development mode enables
 
 Gateway owns `/api/langgraph/*` and translates those public LangGraph-compatible paths to its native `/api/*` routers behind nginx.
 
+#### Web Search Service (SearXNG)
+
+The default `web_search` tool is backed by a bundled, self-hosted [SearXNG](https://github.com/searxng/searxng) metasearch instance — no API key, and queries go straight from your machine to the upstream engines instead of through a third-party search API.
+
+- **Docker stacks** (`make up`, `make docker-start`): the `deer-flow-searxng` service starts automatically. The Gateway reaches it in-network at `http://searxng:8080` (wired via `DEER_FLOW_SEARXNG_BASE_URL`), and it is also published on `127.0.0.1:8088` for debugging — loopback only, never on the LAN.
+- **Host-run** (`make dev`, `make start`): start just the search container with `make searxng` (stop it with `make searxng-stop`). It serves `http://localhost:8088`, which matches the default `base_url` in `config.yaml`.
+- **Instance settings** live in [docker/searxng/settings.yml](docker/searxng/settings.yml): the JSON API is enabled (required by DeerFlow's client) and the bot limiter is disabled for the private in-network instance. Set `SEARXNG_SECRET` in `.env` before exposing the instance beyond localhost.
+- **No Docker / prefer zero dependencies?** Swap the active `web_search` entry in `config.yaml` back to the commented DuckDuckGo provider — no local service required.
+
 #### Docker Production Deployment
 
 `deploy.sh` supports building and starting separately:

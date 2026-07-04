@@ -1,0 +1,25 @@
+# SearXNG settings for the bundled DeerFlow search service.
+#
+# Merged on top of SearXNG's defaults (use_default_settings). Two deltas make
+# the instance work with DeerFlow's web_search provider out of the box:
+#
+#   1. search.formats must include "json" — DeerFlow's SearXNG client calls
+#      /search?format=json, which a stock instance rejects with HTTP 403.
+#   2. server.limiter stays off — the bot-detection limiter would rate-limit
+#      DeerFlow's client (it identifies itself with a bot User-Agent). This is
+#      safe for an in-network instance that is not published to the internet.
+#
+# The secret key is injected via the SEARXNG_SECRET environment variable in
+# docker-compose (SearXNG refuses to start with the built-in placeholder).
+# Full reference: https://docs.searxng.org/admin/settings/index.html
+
+use_default_settings: true
+
+server:
+  limiter: false
+  image_proxy: false
+
+search:
+  formats:
+    - html
+    - json
