@@ -1,6 +1,6 @@
 # DeerFlow - Unified Development Environment
 
-.PHONY: help config config-upgrade check install setup doctor support-bundle detect-thread-boundaries detect-blocking-io dev dev-daemon start start-daemon stop up down clean docker-init docker-start docker-stop docker-logs docker-logs-frontend docker-logs-gateway
+.PHONY: help config config-upgrade check install setup doctor support-bundle detect-thread-boundaries detect-blocking-io dev dev-daemon start start-daemon stop up down clean docker-init docker-start docker-stop docker-logs docker-logs-frontend docker-logs-gateway searxng searxng-stop
 
 BASH ?= bash
 BACKEND_UV_RUN = cd backend && uv run
@@ -29,6 +29,8 @@ help:
 	@echo "  make install         - Install all dependencies (frontend + backend + pre-commit hooks)"
 	@echo "  make setup-sandbox   - Pre-pull sandbox container image (recommended)"
 	@echo "  make dev             - Start all services in development mode (with hot-reloading)"
+	@echo "  make searxng         - Start only the SearXNG search container (for make dev / make start)"
+	@echo "  make searxng-stop    - Stop the standalone SearXNG search container"
 	@echo "  make dev-daemon      - Start dev services in background (daemon mode)"
 	@echo "  make start           - Start all services in production mode (optimized, no hot-reloading)"
 	@echo "  make start-daemon    - Start prod services in background (daemon mode)"
@@ -166,3 +168,13 @@ up:
 # Stop and remove production containers
 down:
 	@$(RUN_WITH_GIT_BASH) ./scripts/deploy.sh down
+
+# Start only the SearXNG search container (backs the default web_search tool).
+# The Docker stacks (make up / make docker-start) already include it; this
+# target serves host-run workflows (make dev / make start), publishing the
+# instance on 127.0.0.1:8088 to match config.yaml's default base_url.
+searxng:
+	docker compose -f docker/docker-compose.yaml up -d searxng
+
+searxng-stop:
+	docker compose -f docker/docker-compose.yaml stop searxng

@@ -5,6 +5,7 @@
 #   - nginx:       Reverse proxy (port 2026, configurable via PORT env var)
 #   - frontend:    Next.js production server
 #   - gateway:     FastAPI Gateway API + agent runtime
+#   - searxng:     Self-hosted metasearch backing the web_search tool
 #   - provisioner: (optional) Sandbox provisioner for Kubernetes mode
 #
 # Key environment variables (set via environment/.env or scripts/deploy.sh):
@@ -104,6 +105,9 @@ services:
       - DEER_FLOW_EXTENSIONS_CONFIG_PATH=/app/backend/extensions_config.json
       - DEER_FLOW_CHANNELS_LANGGRAPH_URL=${DEER_FLOW_CHANNELS_LANGGRAPH_URL:-http://gateway:8001/api}
       - DEER_FLOW_CHANNELS_GATEWAY_URL=${DEER_FLOW_CHANNELS_GATEWAY_URL:-http://gateway:8001}
+      # Point the SearXNG web_search provider at the in-network service; the
+      # same config.yaml keeps http://localhost:8088 for host-run `make dev`.
+      - DEER_FLOW_SEARXNG_BASE_URL=${DEER_FLOW_SEARXNG_BASE_URL:-http://searxng:8080}
       - DEER_FLOW_INTERNAL_AUTH_TOKEN=${DEER_FLOW_INTERNAL_AUTH_TOKEN}
       # DooD path/network translation
       - DEER_FLOW_HOST_BASE_DIR=${DEER_FLOW_HOME}
@@ -111,12 +115,35 @@ services:
       - DEER_FLOW_SANDBOX_HOST=host.docker.internal
       # Proxy values (HTTP_PROXY/HTTPS_PROXY/ALL_PROXY) are inherited from ../.env via env_file.
       # Only NO_PROXY is declared here so internal service hostnames are always exempt from the proxy.
-      - NO_PROXY=${NO_PROXY:-}${NO_PROXY:+,}localhost,127.0.0.1,::1,gateway,frontend,nginx,provisioner,host.docker.internal
-      - no_proxy=${no_proxy:-}${no_proxy:+,}localhost,127.0.0.1,::1,gateway,frontend,nginx,provisioner,host.docker.internal
+      - NO_PROXY=${NO_PROXY:-}${NO_PROXY:+,}localhost,127.0.0.1,::1,gateway,frontend,nginx,provisioner,searxng,host.docker.internal
+      - no_proxy=${no_proxy:-}${no_proxy:+,}localhost,127.0.0.1,::1,gateway,frontend,nginx,provisioner,searxng,host.docker.internal
     env_file:
       - ../.env
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    networks:
+      - deer-flow
+    restart: unless-stopped
+
+  # ── SearXNG: self-hosted metasearch for the web_search tool ────────────────
+  # The gateway reaches it in-network at http://searxng:8080 (see
+  # DEER_FLOW_SEARXNG_BASE_URL above). The loopback-only host port keeps
+  # http://localhost:8088 working for host-run `make dev` and for debugging,
+  # without exposing the instance to the LAN.
+  searxng:
+    image: docker.io/searxng/searxng:latest
+    container_name: deer-flow-searxng
+    ports:
+      - "127.0.0.1:8088:8080"
+    volumes:
+      # rw: the image writes runtime files next to the mounted settings.yml;
+      # repo pollution is fenced by docker/searxng/.gitignore.
+      - ./searxng:/etc/searxng
+    environment:
+      # HMAC secret for SearXNG internals. The instance is only reachable
+      # in-network and on loopback, so a static default is acceptable here;
+      # set SEARXNG_SECRET in .env before publishing it any wider.
+      - SEARXNG_SECRET=${SEARXNG_SECRET:-deer-flow-local-searxng-secret}
     networks:
       - deer-flow
     restart: unless-stopped

@@ -182,6 +182,16 @@ class TestCheckWebSearch:
         assert result.status == "ok"
         assert "DuckDuckGo" in result.detail
 
+    def test_searxng_ok(self, tmp_path):
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text(
+            "config_version: 5\nmodels:\n  - name: default\n    use: langchain_openai:ChatOpenAI\n    model: gpt-4o\n    api_key: $OPENAI_API_KEY\n"
+            "tools:\n  - name: web_search\n    use: deerflow.community.searxng.tools:web_search_tool\n    base_url: http://localhost:8088\n"
+        )
+        result = doctor.check_web_search(cfg)
+        assert result.status == "ok"
+        assert "SearXNG" in result.detail
+
     def test_tavily_with_key_ok(self, tmp_path, monkeypatch):
         monkeypatch.setenv("TAVILY_API_KEY", "tvly-test")
         cfg = tmp_path / "config.yaml"

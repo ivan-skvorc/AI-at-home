@@ -111,6 +111,46 @@ class TestSearxngClient:
             assert call_kwargs["params"]["categories"] == "news,science"
 
 
+class TestSearxngBaseUrlResolution:
+    """Tests for base_url resolution in _get_searxng_client.
+
+    Precedence: DEER_FLOW_SEARXNG_BASE_URL env var > config base_url > default.
+    The env override lets the Docker stack point the same config.yaml at the
+    in-network service (http://searxng:8080) while host-run dev keeps
+    http://localhost:8088 (mirrors DEER_FLOW_CHANNELS_* URL overrides).
+    """
+
+    def test_default_base_url(self, monkeypatch):
+        monkeypatch.delenv("DEER_FLOW_SEARXNG_BASE_URL", raising=False)
+        with patch("deerflow.community.searxng.tools._get_tool_config", return_value=None):
+            client = tools._get_searxng_client()
+        assert client.base_url == "http://localhost:8088"
+
+    def test_config_base_url(self, monkeypatch):
+        monkeypatch.delenv("DEER_FLOW_SEARXNG_BASE_URL", raising=False)
+        with patch("deerflow.community.searxng.tools._get_tool_config", return_value={"base_url": "http://my-searxng:9999"}):
+            client = tools._get_searxng_client()
+        assert client.base_url == "http://my-searxng:9999"
+
+    def test_env_overrides_config(self, monkeypatch):
+        monkeypatch.setenv("DEER_FLOW_SEARXNG_BASE_URL", "http://searxng:8080")
+        with patch("deerflow.community.searxng.tools._get_tool_config", return_value={"base_url": "http://localhost:8088"}):
+            client = tools._get_searxng_client()
+        assert client.base_url == "http://searxng:8080"
+
+    def test_env_used_without_config(self, monkeypatch):
+        monkeypatch.setenv("DEER_FLOW_SEARXNG_BASE_URL", "http://searxng:8080")
+        with patch("deerflow.community.searxng.tools._get_tool_config", return_value=None):
+            client = tools._get_searxng_client()
+        assert client.base_url == "http://searxng:8080"
+
+    def test_blank_env_ignored(self, monkeypatch):
+        monkeypatch.setenv("DEER_FLOW_SEARXNG_BASE_URL", "   ")
+        with patch("deerflow.community.searxng.tools._get_tool_config", return_value={"base_url": "http://my-searxng:9999"}):
+            client = tools._get_searxng_client()
+        assert client.base_url == "http://my-searxng:9999"
+
+
 @pytest.mark.asyncio
 class TestSearxngTools:
     """Tests for the SearXNG tool functions."""

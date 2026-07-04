@@ -5,6 +5,19 @@ All notable changes to DeerFlow are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **tools:** Bundle a self-hosted SearXNG instance as the default `web_search`
+  backend. The Docker stacks start a `deer-flow-searxng` service (in-network
+  `http://searxng:8080`, loopback-only host port `8088`); host-run dev uses
+  `make searxng` / `make searxng-stop`. The SearXNG provider now honours a
+  `DEER_FLOW_SEARXNG_BASE_URL` env override so one `config.yaml` works in both
+  environments, the setup wizard and `make doctor` know the provider, and
+  DuckDuckGo remains available as the zero-dependency fallback in
+  `config.example.yaml`.
+
 ## [2.0.0] — 2026-06-15
 
 DeerFlow 2.0 is a ground-up rewrite around a "super agent" harness with

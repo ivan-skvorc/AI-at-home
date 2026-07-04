@@ -1,0 +1,6 @@
+# The SearXNG container mounts this directory read-write and may create
+# runtime files next to settings.yml (generated server config, caches).
+# Keep only the files we actually version.
+*
+!.gitignore
+!settings.yml
