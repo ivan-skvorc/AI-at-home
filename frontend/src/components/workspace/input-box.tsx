@@ -1364,7 +1364,9 @@ export function InputBox({
                       <ModelSelectorItem
                         key={m.name}
                         value={m.name}
-                        className={m.supports_tools === false ? "opacity-50" : undefined}
+                        className={
+                          m.supports_tools === false ? "opacity-50" : undefined
+                        }
                         onSelect={() => handleSubagentModelSelect(m.name)}
                       >
                         <div className="flex min-w-0 flex-1 flex-col">
