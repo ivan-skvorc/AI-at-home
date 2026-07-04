@@ -29,7 +29,7 @@ A single `make dev` / Docker stack runs these cooperating services:
 | **Nginx**       | `2026` | Unified reverse-proxy entry point — open this in the browser        |
 | **Gateway API** | `8001` | FastAPI REST API + embedded LangGraph-compatible agent runtime      |
 | **Frontend**    | `3000` | Next.js web interface                                               |
-| **SearXNG**     | `8088` | Self-hosted metasearch backing the default `web_search` tool. In the Docker stacks the Gateway uses the in-network `http://searxng:8080` (via `DEER_FLOW_SEARXNG_BASE_URL`); the host port is loopback-only. Host-run dev starts it with `make searxng` |
+| **SearXNG**     | `8088` | Self-hosted metasearch backing the default `web_search` tool. In the Docker stacks the Gateway uses the in-network `http://searxng:8080` (via `DEER_FLOW_SEARXNG_BASE_URL`); the host port is loopback-only. Host-run dev starts it with `make searxng`. `DEER_FLOW_BUNDLED_SEARXNG=0` in `.env` skips the bundled container (external-instance setups) |
 | **Provisioner** | `8002` | Optional — only when sandbox is configured for provisioner/K8s mode |
 
 Nginx is the single public entry: it serves the frontend and proxies `/api/langgraph/*`

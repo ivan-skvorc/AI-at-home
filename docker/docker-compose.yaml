@@ -133,6 +133,13 @@ services:
   searxng:
     image: docker.io/searxng/searxng:latest
     container_name: deer-flow-searxng
+    # Already running your own SearXNG on this machine? Set
+    # DEER_FLOW_BUNDLED_SEARXNG=0 in .env to skip starting this bundled
+    # instance, and point DEER_FLOW_SEARXNG_BASE_URL at yours (from the
+    # gateway container, a host instance is http://host.docker.internal:<port>).
+    # Your instance must allow format=json (search.formats: [html, json]).
+    deploy:
+      replicas: ${DEER_FLOW_BUNDLED_SEARXNG:-1}
     ports:
       - "127.0.0.1:8088:8080"
     volumes:

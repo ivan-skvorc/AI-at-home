@@ -17,6 +17,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   environments, the setup wizard and `make doctor` know the provider, and
   DuckDuckGo remains available as the zero-dependency fallback in
   `config.example.yaml`.
+- **docker:** `DEER_FLOW_BUNDLED_SEARXNG=0` in `.env` skips the bundled
+  SearXNG container in both Docker stacks (via `deploy.replicas`
+  interpolation), for deployments that already run their own instance and
+  point `DEER_FLOW_SEARXNG_BASE_URL` at it.
 
 ## [2.0.0] — 2026-06-15
 

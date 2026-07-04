@@ -324,6 +324,7 @@ The default `web_search` tool is backed by a bundled, self-hosted [SearXNG](http
 - **Docker stacks** (`make up`, `make docker-start`): the `deer-flow-searxng` service starts automatically. The Gateway reaches it in-network at `http://searxng:8080` (wired via `DEER_FLOW_SEARXNG_BASE_URL`), and it is also published on `127.0.0.1:8088` for debugging — loopback only, never on the LAN.
 - **Host-run** (`make dev`, `make start`): start just the search container with `make searxng` (stop it with `make searxng-stop`). It serves `http://localhost:8088`, which matches the default `base_url` in `config.yaml`.
 - **Instance settings** live in [docker/searxng/settings.yml](docker/searxng/settings.yml): the JSON API is enabled (required by DeerFlow's client) and the bot limiter is disabled for the private in-network instance. Set `SEARXNG_SECRET` in `.env` before exposing the instance beyond localhost.
+- **Already running your own SearXNG?** Set `DEER_FLOW_BUNDLED_SEARXNG=0` in `.env` to skip the bundled container in the Docker stacks, and point `DEER_FLOW_SEARXNG_BASE_URL` at your instance (from inside the gateway container a host instance is `http://host.docker.internal:<port>`; host-run setups can just set `base_url` in `config.yaml`). Your instance must have the JSON API enabled (`search.formats: [html, json]`), or DeerFlow's `format=json` calls get HTTP 403.
 - **No Docker / prefer zero dependencies?** Swap the active `web_search` entry in `config.yaml` back to the commented DuckDuckGo provider — no local service required.
 
 #### Docker Production Deployment
