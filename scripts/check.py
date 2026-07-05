@@ -144,6 +144,26 @@ def main() -> int:
         failed = True
 
     print()
+    print("Checking Docker (optional)...")
+    docker_path = shutil.which("docker")
+    if docker_path:
+        docker_version = run_command(["docker", "--version"])
+        daemon_ok = run_command(["docker", "info", "--format", "{{.ServerVersion}}"]) is not None
+        version_label = docker_version or "Docker (version unknown)"
+        if daemon_ok:
+            print(f"  OK {version_label}")
+        else:
+            print(f"  INFO {version_label} — installed, but the daemon is not running")
+            print("    Needed only for the containerized AIO sandbox and Docker deploy modes.")
+            print("    Start Docker before enabling sandbox.use: deerflow.community.aio_sandbox:AioSandboxProvider")
+    else:
+        print("  INFO Docker not found (optional)")
+        print("    Required only for the containerized AIO sandbox (isolated agent execution,")
+        print("    private GitHub repo cloning) and the Docker deploy modes (make up / make docker-start).")
+        print("    The default LocalSandboxProvider works without it.")
+        print("    Install from: https://docs.docker.com/get-docker/")
+
+    print()
     if not failed:
         print("==========================================")
         print("  OK All dependencies are installed!")

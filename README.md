@@ -354,6 +354,57 @@ For Docker development, service startup follows `config.yaml` sandbox mode. In L
 
 See the [Sandbox Configuration Guide](backend/docs/CONFIGURATION.md#sandbox) to configure your preferred mode.
 
+#### Containerized sandbox & private GitHub repos
+
+**Why:** the default `LocalSandboxProvider` runs file tools against the host
+filesystem and keeps host `bash` disabled (`sandbox.allow_host_bash: false`)
+because the host is not an isolation boundary. The containerized **AIO
+sandbox** gives the agent a full shell, per conversation, inside an isolated
+Docker (or Apple Container) container instead — enable it when you want the
+agent to run real commands, e.g. cloning and working on a GitHub repo. The
+local default stays unchanged; this mode is strictly opt-in.
+
+**Setup** (Linux with Docker, from a fresh clone):
+
+1. `make check` — Docker is reported as an optional dependency; this mode needs it.
+2. `make install` and `make config`
+3. In `config.yaml`, comment out the "Option 1" local sandbox block and
+   uncomment the "Option 2" AIO sandbox block
+   (`use: deerflow.community.aio_sandbox:AioSandboxProvider`), including its
+   `environment:` map with `GITHUB_TOKEN: $GITHUB_TOKEN` if you need private
+   repos.
+4. For private repos: create a **fine-grained personal access token** at
+   github.com → Settings → Developer settings → Fine-grained tokens. Restrict
+   *Repository access* to just the repos the agent needs and grant only the
+   **Contents** repository permission (read-only unless the agent must push).
+   Put it in `.env` as `GITHUB_TOKEN=...` (see `.env.example`).
+5. `make dev` — the preflight verifies Docker is usable, pulls the sandbox
+   image on first run (it is large), and prints an actionable error with
+   fallback instructions when the environment cannot run containers. Sandbox
+   containers are then created per conversation on first use and
+   health-checked with a 60s timeout.
+
+**How git auth works:** when a sandbox container starts, DeerFlow installs a
+git credential helper inside it that reads `GITHUB_TOKEN` from the container
+environment at git-invocation time. The agent just runs
+`git clone https://github.com/owner/repo.git` — the token never appears in
+clone URLs, tool output, shell history, server logs (container-run command
+logging redacts environment values), or the clone's `.git/config`. Without a
+token, public repos keep working and a private clone fails fast with a hint
+explaining what to set, instead of a cryptic username prompt.
+
+**Mounts vs in-container cloning:** prefer letting the agent clone *inside*
+the container — isolated, disposable, nothing on the host changes. Use
+`sandbox.mounts` to bind host directories into the container only when the
+agent must edit an existing host checkout; mounted paths are host files, so
+the container boundary does not protect them.
+
+**Security note:** the token is ordinary process environment inside the
+sandbox container, so *any code the agent runs there can read it*. That is
+inherent to giving the agent authenticated git. Scope the token minimally —
+fine-grained, selected repositories, Contents permission only — rotate it
+periodically, and never reuse a classic all-repos PAT here.
+
 #### MCP Server
 
 DeerFlow supports configurable MCP servers and skills to extend its capabilities.

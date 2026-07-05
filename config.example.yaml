@@ -1059,6 +1059,15 @@ sandbox:
 #   #   DEBUG: "false"
 #   #   API_KEY: $MY_API_KEY        # Reads from host's MY_API_KEY env var
 #   #   DATABASE_URL: $DATABASE_URL  # Reads from host's DATABASE_URL env var
+#   #
+#   #   # Private GitHub repos: forward a fine-grained PAT (set it in .env, see
+#   #   # .env.example) and DeerFlow configures git inside the container so the
+#   #   # agent can `git clone https://github.com/owner/repo.git` directly —
+#   #   # the token never appears in clone URLs, tool output, or .git/config.
+#   #   # Anything running inside the sandbox can read this variable, so scope
+#   #   # the token to the selected repos with Contents permission only.
+#   #   # See README "Containerized sandbox & private GitHub repos".
+#   #   GITHUB_TOKEN: $GITHUB_TOKEN
 
 # Option 3: Provisioner-managed AIO Sandbox (docker-compose-dev)
 # Each sandbox_id gets a dedicated Pod in k3s, managed by the provisioner.
