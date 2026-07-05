@@ -35,6 +35,7 @@ from deerflow.sandbox.sandbox_provider import SandboxProvider
 
 from .aio_sandbox import AioSandbox
 from .backend import SandboxBackend, wait_for_sandbox_ready, wait_for_sandbox_ready_async
+from .git_credentials import TOKEN_ENV_VAR, setup_github_credentials
 from .local_backend import LocalContainerBackend
 from .remote_backend import RemoteSandboxBackend
 from .sandbox_info import SandboxInfo
@@ -226,6 +227,11 @@ class AioSandboxProvider(SandboxProvider):
                 resolved[key] = os.environ.get(env_name, "")
             else:
                 resolved[key] = str(value)
+        # Agent shell sessions cannot answer interactive git prompts: without
+        # this a private clone with no usable credential would hang waiting
+        # for "Username:" on the session pty. Failing fast surfaces the
+        # credential helper's stderr hint instead. Config values win.
+        resolved.setdefault("GIT_TERMINAL_PROMPT", "0")
         return resolved
 
     # ── Startup reconciliation ────────────────────────────────────────────
@@ -872,7 +878,9 @@ class AioSandboxProvider(SandboxProvider):
             self._backend.destroy(info)
             raise RuntimeError(f"Sandbox {sandbox_id} failed to become ready within timeout at {info.sandbox_url}")
 
-        return self._register_created_sandbox(thread_id, sandbox_id, info, user_id=effective_user_id)
+        registered_id = self._register_created_sandbox(thread_id, sandbox_id, info, user_id=effective_user_id)
+        self._setup_sandbox_session(registered_id)
+        return registered_id
 
     async def _create_sandbox_async(self, thread_id: str | None, sandbox_id: str, *, user_id: str | None = None) -> str:
         """Async counterpart to ``_create_sandbox``."""
@@ -893,7 +901,27 @@ class AioSandboxProvider(SandboxProvider):
             await asyncio.to_thread(self._backend.destroy, info)
             raise RuntimeError(f"Sandbox {sandbox_id} failed to become ready within timeout at {info.sandbox_url}")
 
-        return self._register_created_sandbox(thread_id, sandbox_id, info, user_id=effective_user_id)
+        registered_id = self._register_created_sandbox(thread_id, sandbox_id, info, user_id=effective_user_id)
+        await asyncio.to_thread(self._setup_sandbox_session, registered_id)
+        return registered_id
+
+    def _setup_sandbox_session(self, sandbox_id: str) -> None:
+        """Best-effort in-container init for a freshly created sandbox.
+
+        Currently installs the GitHub credential helper (git auth via the
+        GITHUB_TOKEN container env var). Runs only on the creation paths —
+        discovered/warm-pool containers were configured when they were
+        created. Never raises: a failed setup (e.g. custom image without
+        git) must not fail sandbox acquisition.
+        """
+        sandbox = self.get(sandbox_id)
+        if not isinstance(sandbox, AioSandbox):
+            return
+        token_configured = bool(self._config.get("environment", {}).get(TOKEN_ENV_VAR))
+        try:
+            setup_github_credentials(sandbox, token_configured=token_configured)
+        except Exception as e:
+            logger.warning(f"Sandbox {sandbox_id}: session init failed: {e}")
 
     def get(self, sandbox_id: str) -> Sandbox | None:
         """Get a sandbox by ID. Updates last activity timestamp.

@@ -354,6 +354,20 @@ fi
 
 "$REPO_ROOT/scripts/config-upgrade.sh"
 
+# ── Containerized (AIO) sandbox preflight ────────────────────────────────────
+# When config.yaml selects the AIO sandbox provider, verify Docker (or Apple
+# Container) is usable and the sandbox image is present — pulling it on first
+# run — so the first conversation doesn't fail on a cold environment. Prints
+# actionable errors (including the LocalSandboxProvider fallback) on failure.
+
+_resolved_config="config.yaml"
+[ -f "backend/config.yaml" ] && _resolved_config="backend/config.yaml"
+[ -n "$DEER_FLOW_CONFIG_PATH" ] && [ -f "$DEER_FLOW_CONFIG_PATH" ] && _resolved_config="$DEER_FLOW_CONFIG_PATH"
+
+if ! "$REPO_ROOT/scripts/sandbox-preflight.sh" "$_resolved_config"; then
+    exit 1
+fi
+
 # ── Install dependencies ────────────────────────────────────────────────────
 
 # Pick a runnable Python for the extras detector. On Windows/Git Bash,

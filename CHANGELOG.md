@@ -9,6 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **sandbox:** Make the containerized AIO sandbox a first-class, out-of-the-box
+  mode with secure private-GitHub-repo access. When `config.yaml` selects
+  `AioSandboxProvider`, `make dev` now runs a preflight
+  (`scripts/sandbox-preflight.sh`): it verifies Docker (or Apple Container) is
+  usable, pulls the sandbox image on first run, and prints actionable errors
+  with a `LocalSandboxProvider` fallback hint; `make check` reports Docker as
+  an optional dependency. Each freshly created sandbox container gets a git
+  credential helper that resolves `GITHUB_TOKEN` from the container
+  environment (forwarded via `sandbox.environment` — see the commented AIO
+  block in `config.example.yaml` and the new `.env.example` guidance on
+  fine-grained, Contents-only PATs), so the agent can
+  `git clone https://github.com/owner/repo.git` for private repos with the
+  token never appearing in clone URLs, tool output, logs, or `.git/config`.
+  Without a token, public repos keep working and private clones fail fast
+  with a helpful hint (`GIT_TERMINAL_PROMPT=0` is defaulted in the container
+  env). The default sandbox remains `LocalSandboxProvider`, unchanged.
+
 - **tools:** Startup scripts now auto-provision SearXNG for `web_search`:
   `make up`, `make docker-start`, and host-run `make dev` / `make start` run
   `scripts/detect_searxng.py` before starting services. An existing SearXNG
