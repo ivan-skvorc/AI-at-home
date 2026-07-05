@@ -29,7 +29,7 @@ A single `make dev` / Docker stack runs these cooperating services:
 | **Nginx**       | `2026` | Unified reverse-proxy entry point — open this in the browser        |
 | **Gateway API** | `8001` | FastAPI REST API + embedded LangGraph-compatible agent runtime      |
 | **Frontend**    | `3000` | Next.js web interface                                               |
-| **SearXNG**     | `8088` | Self-hosted metasearch backing the default `web_search` tool. In the Docker stacks the Gateway uses the in-network `http://searxng:8080` (via `DEER_FLOW_SEARXNG_BASE_URL`); the host port is loopback-only. Host-run dev starts it with `make searxng` |
+| **SearXNG**     | `8088` | Self-hosted metasearch backing the default `web_search` tool. All launch scripts resolve it at startup via `scripts/detect_searxng.py`: an existing instance on the machine is reused when reachable (Docker stacks verify container reachability), otherwise the bundled container is started automatically. In the Docker stacks the Gateway uses the in-network `http://searxng:8080` (via `DEER_FLOW_SEARXNG_BASE_URL`); the host port is loopback-only. `make searxng` / `make searxng-stop` give manual control |
 | **Provisioner** | `8002` | Optional — only when sandbox is configured for provisioner/K8s mode |
 
 Nginx is the single public entry: it serves the frontend and proxies `/api/langgraph/*`
@@ -52,7 +52,7 @@ deer-flow/
 ├── docker/                         # docker-compose files, nginx config, provisioner
 ├── skills/                         # Agent skills: public/ (committed), custom/ (gitignored)
 ├── contracts/                      # Cross-component JSON contracts (e.g. subagent status)
-├── scripts/                        # Root orchestration scripts invoked by the Makefile (check, configure, doctor, support_bundle, serve, docker, deploy, setup_wizard)
+├── scripts/                        # Root orchestration scripts invoked by the Makefile (check, configure, doctor, support_bundle, serve, docker, deploy, setup_wizard, searxng, detect_searxng)
 ├── tests/                          # Root-level tests (currently tests/skills/ — public skill tests)
 └── docs/                           # Cross-cutting docs, plans, and design notes
 ```
