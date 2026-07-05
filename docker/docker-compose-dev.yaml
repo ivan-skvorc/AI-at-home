@@ -47,7 +47,9 @@ services:
       # which is unreachable from inside the container
       - K8S_API_SERVER=https://host.docker.internal:26443
     env_file:
-      - ../.env
+      # Optional: fresh clones have no .env yet; compose must still parse.
+      - path: ../.env
+        required: false
     extra_hosts:
       - "host.docker.internal:host-gateway"
     networks:
@@ -109,7 +111,9 @@ services:
       - CI=true
       - DEER_FLOW_INTERNAL_GATEWAY_BASE_URL=http://gateway:8001
     env_file:
-      - ../frontend/.env
+      # Optional: fresh clones have no .env yet; compose must still parse.
+      - path: ../frontend/.env
+        required: false
     networks:
       - deer-flow-dev
     restart: unless-stopped
@@ -176,7 +180,9 @@ services:
       - NO_PROXY=${NO_PROXY:-}${NO_PROXY:+,}localhost,127.0.0.1,::1,gateway,frontend,nginx,provisioner,searxng,host.docker.internal
       - no_proxy=${no_proxy:-}${no_proxy:+,}localhost,127.0.0.1,::1,gateway,frontend,nginx,provisioner,searxng,host.docker.internal
     env_file:
-      - ../.env
+      # Optional: fresh clones have no .env yet; compose must still parse.
+      - path: ../.env
+        required: false
     extra_hosts:
       # For Linux: map host.docker.internal to host gateway
       - "host.docker.internal:host-gateway"

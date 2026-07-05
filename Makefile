@@ -29,7 +29,7 @@ help:
 	@echo "  make install         - Install all dependencies (frontend + backend + pre-commit hooks)"
 	@echo "  make setup-sandbox   - Pre-pull sandbox container image (recommended)"
 	@echo "  make dev             - Start all services in development mode (with hot-reloading)"
-	@echo "  make searxng         - Start only the SearXNG search container (for make dev / make start)"
+	@echo "  make searxng         - Start only the SearXNG search container (launch paths auto-start it when needed)"
 	@echo "  make searxng-stop    - Stop the standalone SearXNG search container"
 	@echo "  make dev-daemon      - Start dev services in background (daemon mode)"
 	@echo "  make start           - Start all services in production mode (optimized, no hot-reloading)"
@@ -170,11 +170,11 @@ down:
 	@$(RUN_WITH_GIT_BASH) ./scripts/deploy.sh down
 
 # Start only the SearXNG search container (backs the default web_search tool).
-# The Docker stacks (make up / make docker-start) already include it; this
-# target serves host-run workflows (make dev / make start), publishing the
-# instance on 127.0.0.1:8088 to match config.yaml's default base_url.
+# All launch paths (make up / make docker-start / make dev / make start) already
+# auto-detect or auto-start it via scripts/detect_searxng.py; this target is for
+# manual control. Publishes 127.0.0.1:8088 to match config.yaml's default base_url.
 searxng:
-	docker compose -f docker/docker-compose.yaml up -d searxng
+	@$(RUN_WITH_GIT_BASH) ./scripts/searxng.sh up
 
 searxng-stop:
-	docker compose -f docker/docker-compose.yaml stop searxng
+	@$(RUN_WITH_GIT_BASH) ./scripts/searxng.sh stop

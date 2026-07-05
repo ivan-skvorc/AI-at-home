@@ -200,13 +200,10 @@ if  [ "$CMD" != "down" ] && [ -z "$DEER_FLOW_INTERNAL_AUTH_TOKEN" ]; then
     fi
 fi
 
-# ── UV_EXTRAS auto-detection ─────────────────────────────────────────────────
-# The production Dockerfile accepts UV_EXTRAS as a single build-arg token and
-# adds the --extra prefix itself. Convert the detector's uv flag string
-# ("--extra postgres --extra discord") to a comma-joined name token.
+# ── Pick a runnable Python (used by the detectors below) ─────────────────────
 
-if [ "$CMD" != "down" ] && [ -z "$UV_EXTRAS" ]; then
-    _detect_python=""
+_detect_python=""
+if [ "$CMD" != "down" ]; then
     for _python in python3 python; do
         if command -v "$_python" >/dev/null 2>&1 && \
             "$_python" -c 'import sys; sys.version_info >= (3, 6) or sys.exit(1)' >/dev/null 2>&1; then
@@ -215,6 +212,11 @@ if [ "$CMD" != "down" ] && [ -z "$UV_EXTRAS" ]; then
         fi
     done
 fi
+
+# ── UV_EXTRAS auto-detection ─────────────────────────────────────────────────
+# The production Dockerfile accepts UV_EXTRAS as a single build-arg token and
+# adds the --extra prefix itself. Convert the detector's uv flag string
+# ("--extra postgres --extra discord") to a comma-joined name token.
 
 if [ "$CMD" != "down" ] && [ -z "$UV_EXTRAS" ] && [ -n "$_detect_python" ]; then
     _uv_extras_flags="$("$_detect_python" "$REPO_ROOT/scripts/detect_uv_extras.py" 2>/dev/null || true)"
@@ -329,6 +331,36 @@ services="frontend gateway nginx"
 if [ "$sandbox_mode" = "provisioner" ]; then
     services="$services provisioner"
 fi
+
+# ── SearXNG (web_search backend) ─────────────────────────────────────────────
+# Reuse an existing SearXNG instance on this machine when containers can reach
+# it; otherwise start the bundled service. See scripts/detect_searxng.py.
+
+searxng_resolution="bundled"
+if [ -n "$_detect_python" ]; then
+    _searxng_args=(--context docker --config "$DEER_FLOW_CONFIG_PATH")
+    [ -f "$ENV_FILE" ] && _searxng_args+=(--env-file "$ENV_FILE")
+    searxng_resolution="$("$_detect_python" "$REPO_ROOT/scripts/detect_searxng.py" "${_searxng_args[@]}" || echo bundled)"
+elif ! grep -E 'deerflow\.community\.searxng' "$DEER_FLOW_CONFIG_PATH" 2>/dev/null | grep -qv '^[[:space:]]*#'; then
+    # No Python available for detection: fall back to the config grep only.
+    searxng_resolution="skip"
+fi
+
+case "$searxng_resolution" in
+    skip)
+        echo -e "${BLUE}SearXNG: config.yaml does not use the SearXNG web_search provider — bundled service not started${NC}"
+        ;;
+    external\ *)
+        export DEER_FLOW_SEARXNG_BASE_URL="${searxng_resolution#external }"
+        echo -e "${GREEN}✓ SearXNG: using existing instance at $DEER_FLOW_SEARXNG_BASE_URL${NC}"
+        ;;
+    *)
+        # Pin the in-network URL so a stale .env value cannot contradict the decision.
+        export DEER_FLOW_SEARXNG_BASE_URL="http://searxng:8080"
+        services="$services searxng"
+        echo -e "${BLUE}SearXNG: no existing instance found — starting the bundled service${NC}"
+        ;;
+esac
 
 # ── DEER_FLOW_DOCKER_SOCKET (aio / pure-DooD mode only) ──────────────────────
 # Only aio mode (AioSandboxProvider without provisioner_url) needs the host
