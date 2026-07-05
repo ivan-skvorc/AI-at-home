@@ -570,11 +570,14 @@ tool_groups:
 tools:
   # Web search tool (uses SearXNG, self-hosted, no API key required)
   # SearXNG is a free internet metasearch engine which aggregates results from
-  # various search services. A ready-to-use instance ships with the Docker
-  # stacks (make up / make docker-start); for host-run `make dev` / `make start`
-  # bring it up with `make searxng` (publishes 127.0.0.1:8088).
-  # The DEER_FLOW_SEARXNG_BASE_URL env var overrides base_url — docker-compose
-  # sets it to http://searxng:8080 so this same file works inside the stack.
+  # various search services. All launch paths (make up / make docker-start /
+  # make dev / make start) auto-resolve an instance at startup: an existing
+  # local SearXNG is reused when reachable, otherwise the bundled container is
+  # started automatically (publishes 127.0.0.1:8088). Manual control:
+  # `make searxng` / `make searxng-stop`.
+  # The DEER_FLOW_SEARXNG_BASE_URL env var overrides base_url and skips the
+  # auto-detection — docker-compose sets it in-network so this file works
+  # unchanged inside the stack.
   # Self-deploy alternative: https://github.com/searxng/searxng
   - name: web_search
     group: web

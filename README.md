@@ -321,9 +321,12 @@ Gateway owns `/api/langgraph/*` and translates those public LangGraph-compatible
 
 The default `web_search` tool is backed by a bundled, self-hosted [SearXNG](https://github.com/searxng/searxng) metasearch instance — no API key, and queries go straight from your machine to the upstream engines instead of through a third-party search API.
 
-- **Docker stacks** (`make up`, `make docker-start`): the `deer-flow-searxng` service starts automatically. The Gateway reaches it in-network at `http://searxng:8080` (wired via `DEER_FLOW_SEARXNG_BASE_URL`), and it is also published on `127.0.0.1:8088` for debugging — loopback only, never on the LAN.
-- **Host-run** (`make dev`, `make start`): start just the search container with `make searxng` (stop it with `make searxng-stop`). It serves `http://localhost:8088`, which matches the default `base_url` in `config.yaml`.
+Every launch path resolves the instance automatically at startup (via `scripts/detect_searxng.py`): if a SearXNG with the JSON API enabled is already running on this machine (checked on ports `8088` and `8080`, or wherever `DEER_FLOW_SEARXNG_BASE_URL` points), the stack reuses it; otherwise it starts the bundled `deer-flow-searxng` container. If `config.yaml` doesn't use the SearXNG provider, nothing is started.
+
+- **Docker stacks** (`make up`, `make docker-start`): an existing host instance is only reused when containers can actually reach it — on Linux it must listen beyond loopback (Docker Desktop proxies loopback through `host.docker.internal`); otherwise the bundled service starts. The Gateway reaches the bundled service in-network at `http://searxng:8080` (wired via `DEER_FLOW_SEARXNG_BASE_URL`), and it is also published on `127.0.0.1:8088` for debugging — loopback only, never on the LAN.
+- **Host-run** (`make dev`, `make start`): the launcher reuses a running instance or starts the bundled container itself (requires Docker; without it, a warning explains the options). `make searxng` / `make searxng-stop` remain for manual control; note `make stop` leaves the container running. It serves `http://localhost:8088`, which matches the default `base_url` in `config.yaml`.
 - **Instance settings** live in [docker/searxng/settings.yml](docker/searxng/settings.yml): the JSON API is enabled (required by DeerFlow's client) and the bot limiter is disabled for the private in-network instance. Set `SEARXNG_SECRET` in `.env` before exposing the instance beyond localhost.
+- **Bring your own instance**: set `DEER_FLOW_SEARXNG_BASE_URL` in `.env` to skip auto-detection and point the Gateway at any reachable SearXNG (its `search.formats` must include `json`).
 - **No Docker / prefer zero dependencies?** Swap the active `web_search` entry in `config.yaml` back to the commented DuckDuckGo provider — no local service required.
 
 #### Docker Production Deployment

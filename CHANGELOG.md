@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **tools:** Startup scripts now auto-provision SearXNG for `web_search`:
+  `make up`, `make docker-start`, and host-run `make dev` / `make start` run
+  `scripts/detect_searxng.py` before starting services. An existing SearXNG
+  instance on the machine (ports `8088`/`8080`, or `DEER_FLOW_SEARXNG_BASE_URL`)
+  is reused when it answers the JSON search API — Docker contexts additionally
+  verify the instance is reachable from containers (bridge gateway probe, with
+  a Docker Desktop loopback-proxy allowance) — otherwise the bundled container
+  is started automatically. Detection is skipped entirely when `config.yaml`
+  doesn't use the SearXNG provider. `make searxng` now shares the `deer-flow`
+  compose project with `make up` so the standalone container and the production
+  stack no longer conflict (if you ran the old target before, remove the stale
+  container once with `docker rm -f deer-flow-searxng`).
+
 - **tools:** Bundle a self-hosted SearXNG instance as the default `web_search`
   backend. The Docker stacks start a `deer-flow-searxng` service (in-network
   `http://searxng:8080`, loopback-only host port `8088`); host-run dev uses
@@ -17,6 +30,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   environments, the setup wizard and `make doctor` know the provider, and
   DuckDuckGo remains available as the zero-dependency fallback in
   `config.example.yaml`.
+
+### Fixed
+
+- **docker:** `make up` and `make docker-start` never actually started the
+  bundled `deer-flow-searxng` service — both scripts pass an explicit service
+  list to `docker compose up` and it omitted `searxng`, leaving the Gateway
+  pointing at a dead `http://searxng:8080` and `web_search` failing on every
+  call. The service is now included whenever the bundled instance is the
+  resolved provider.
+
+- **docker:** the compose files declared `env_file: ../.env` and
+  `../frontend/.env` as required, so any compose invocation on a clone without
+  those (gitignored) files failed with "env file not found"; both are now
+  marked optional (`required: false`), matching how `deploy.sh` already treats
+  `.env`. Relatedly, `make searxng` could not even parse the compose file when
+  the `DEER_FLOW_*` interpolation variables were unset (empty bind-mount
+  specs); it now runs through `scripts/searxng.sh`, which supplies parse-only
+  defaults and works from a fresh clone.
 
 ## [2.0.0] — 2026-06-15
 

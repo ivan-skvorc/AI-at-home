@@ -41,6 +41,34 @@ load_proxy_env_from_dotenv() {
     done
 }
 
+_pick_python() {
+    local candidate
+    for candidate in python3 python; do
+        if command -v "$candidate" >/dev/null 2>&1 && \
+            "$candidate" -c 'import sys; sys.version_info >= (3, 6) or sys.exit(1)' >/dev/null 2>&1; then
+            printf '%s\n' "$candidate"
+            return 0
+        fi
+    done
+    return 1
+}
+
+# Prints "skip", "bundled", or "external <url>" — see scripts/detect_searxng.py.
+resolve_searxng() {
+    local detect_python
+    detect_python="$(_pick_python || true)"
+    if [ -n "$detect_python" ]; then
+        local args=(--context docker --config "$PROJECT_ROOT/config.yaml")
+        [ -f "$PROJECT_ROOT/.env" ] && args+=(--env-file "$PROJECT_ROOT/.env")
+        "$detect_python" "$SCRIPT_DIR/detect_searxng.py" "${args[@]}" || echo "bundled"
+    elif ! grep -E 'deerflow\.community\.searxng' "$PROJECT_ROOT/config.yaml" 2>/dev/null | grep -qv '^[[:space:]]*#'; then
+        # No Python available for detection: fall back to the config grep only.
+        echo "skip"
+    else
+        echo "bundled"
+    fi
+}
+
 detect_sandbox_mode() {
     local config_file="$PROJECT_ROOT/config.yaml"
     local sandbox_use=""
@@ -259,6 +287,27 @@ start() {
             echo -e "${BLUE}Created empty extensions_config.json${NC}"
         fi
     fi
+
+    # ── SearXNG (web_search backend) ─────────────────────────────────────
+    # Reuse an existing SearXNG instance on this machine when containers can
+    # reach it; otherwise start the bundled service (scripts/detect_searxng.py).
+    local searxng_resolution
+    searxng_resolution="$(resolve_searxng)"
+    case "$searxng_resolution" in
+        skip)
+            echo -e "${BLUE}SearXNG: config.yaml does not use the SearXNG web_search provider — bundled service not started${NC}"
+            ;;
+        external\ *)
+            export DEER_FLOW_SEARXNG_BASE_URL="${searxng_resolution#external }"
+            echo -e "${GREEN}✓ SearXNG: using existing instance at $DEER_FLOW_SEARXNG_BASE_URL${NC}"
+            ;;
+        *)
+            # Pin the in-network URL so a stale value cannot contradict the decision.
+            export DEER_FLOW_SEARXNG_BASE_URL="http://searxng:8080"
+            services="$services searxng"
+            echo -e "${BLUE}SearXNG: no existing instance found — starting the bundled service${NC}"
+            ;;
+    esac
 
     load_proxy_env_from_dotenv
 

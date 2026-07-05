@@ -392,6 +392,39 @@ else
     echo "⏩ Skipping dependency install (--skip-install)"
 fi
 
+# ── SearXNG (web_search backend) ─────────────────────────────────────────────
+# Reuse an existing SearXNG instance on this machine when one is running;
+# otherwise start the bundled container (scripts/detect_searxng.py decides).
+
+_searxng_config="$REPO_ROOT/config.yaml"
+[ -f "$REPO_ROOT/backend/config.yaml" ] && _searxng_config="$REPO_ROOT/backend/config.yaml"
+[ -n "$DEER_FLOW_CONFIG_PATH" ] && [ -f "$DEER_FLOW_CONFIG_PATH" ] && _searxng_config="$DEER_FLOW_CONFIG_PATH"
+
+_searxng_resolution="skip"
+if [ -n "$DETECT_PYTHON" ]; then
+    _searxng_resolution="$("$DETECT_PYTHON" "$REPO_ROOT/scripts/detect_searxng.py" --context host --config "$_searxng_config" || echo bundled)"
+fi
+
+case "$_searxng_resolution" in
+    skip)
+        ;;
+    external\ *)
+        export DEER_FLOW_SEARXNG_BASE_URL="${_searxng_resolution#external }"
+        echo "✓ SearXNG: using existing instance at $DEER_FLOW_SEARXNG_BASE_URL"
+        ;;
+    *)
+        if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
+            echo "Starting the bundled SearXNG container (web_search backend)..."
+            "$REPO_ROOT/scripts/searxng.sh" up \
+                || echo "⚠ Could not start the bundled SearXNG container — web_search will fail until one is available (try 'make searxng')." >&2
+        else
+            echo "⚠ SearXNG: no running instance found and Docker is unavailable." >&2
+            echo "  web_search will fail until a SearXNG instance is reachable (config.yaml defaults to http://localhost:8088)." >&2
+            echo "  Start Docker and run 'make searxng', or switch the web_search tool in config.yaml to another provider." >&2
+        fi
+        ;;
+esac
+
 # ── Banner ───────────────────────────────────────────────────────────────────
 
 echo ""
