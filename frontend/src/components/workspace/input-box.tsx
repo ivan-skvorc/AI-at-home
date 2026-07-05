@@ -62,6 +62,12 @@ import { fetch } from "@/core/api/fetcher";
 import { getBackendBaseURL } from "@/core/config";
 import { useI18n } from "@/core/i18n/hooks";
 import { isHiddenFromUIMessage } from "@/core/messages/utils";
+import {
+  getResolvedMode,
+  lacksToolSupport,
+  sortModelsByToolSupport,
+  type InputMode,
+} from "@/core/models/capabilities";
 import { useModels } from "@/core/models/hooks";
 import type { Skill } from "@/core/skills";
 import { useSkills } from "@/core/skills/hooks";
@@ -98,8 +104,6 @@ import {
 import { useThread } from "./messages/context";
 import { ModeHoverGuide } from "./mode-hover-guide";
 import { Tooltip } from "./tooltip";
-
-type InputMode = "flash" | "thinking" | "pro" | "ultra";
 
 const MAX_SKILL_SUGGESTIONS = 6;
 const SUGGESTION_TEMPLATE_PLACEHOLDER_PATTERN =
@@ -155,19 +159,6 @@ function getMatchingSkillSuggestions(skills: Skill[], query: string): Skill[] {
     })
     .slice(0, MAX_SKILL_SUGGESTIONS)
     .map(({ skill }) => skill);
-}
-
-function getResolvedMode(
-  mode: InputMode | undefined,
-  supportsThinking: boolean,
-): InputMode {
-  if (!supportsThinking && mode !== "flash") {
-    return "flash";
-  }
-  if (mode) {
-    return mode;
-  }
-  return supportsThinking ? "pro" : "flash";
 }
 
 export function InputBox({
@@ -417,14 +408,10 @@ export function InputBox({
     },
     [onContextChange, context],
   );
-  const subagentModels = useMemo(() => {
-    return [...models].sort((a, b) => {
-      const aBad = a.supports_tools === false ? 1 : 0;
-      const bBad = b.supports_tools === false ? 1 : 0;
-      if (aBad !== bBad) return aBad - bBad;
-      return (a.display_name ?? a.name).localeCompare(b.display_name ?? b.name);
-    });
-  }, [models]);
+  const subagentModels = useMemo(
+    () => sortModelsByToolSupport(models),
+    [models],
+  );
   const subagentSelected = useMemo(
     () => models.find((m) => m.name === context.subagent_model_name),
     [context.subagent_model_name, models],
@@ -1301,25 +1288,39 @@ export function InputBox({
               <ModelSelectorContent>
                 <ModelSelectorInput placeholder={t.inputBox.searchModels} />
                 <ModelSelectorList>
-                  {models.map((m) => (
-                    <ModelSelectorItem
-                      key={m.name}
-                      value={m.name}
-                      onSelect={() => handleModelSelect(m.name)}
-                    >
-                      <div className="flex min-w-0 flex-1 flex-col">
-                        <ModelSelectorName>{m.display_name}</ModelSelectorName>
-                        <span className="text-muted-foreground truncate text-[10px]">
-                          {m.model}
-                        </span>
-                      </div>
-                      {m.name === context.model_name ? (
-                        <CheckIcon className="ml-auto size-4" />
-                      ) : (
-                        <div className="ml-auto size-4" />
-                      )}
-                    </ModelSelectorItem>
-                  ))}
+                  {models.map((m) => {
+                    // Ultra mode delegates via the `task` tool, so the lead
+                    // model must be able to call tools.
+                    const unusable =
+                      context.mode === "ultra" && lacksToolSupport(m);
+                    return (
+                      <ModelSelectorItem
+                        key={m.name}
+                        value={m.name}
+                        disabled={unusable}
+                        onSelect={() => handleModelSelect(m.name)}
+                      >
+                        <div className="flex min-w-0 flex-1 flex-col">
+                          <ModelSelectorName>
+                            {m.display_name}
+                            {unusable && (
+                              <span className="text-muted-foreground ml-1 text-[10px]">
+                                (no tool support)
+                              </span>
+                            )}
+                          </ModelSelectorName>
+                          <span className="text-muted-foreground truncate text-[10px]">
+                            {m.model}
+                          </span>
+                        </div>
+                        {m.name === context.model_name ? (
+                          <CheckIcon className="ml-auto size-4" />
+                        ) : (
+                          <div className="ml-auto size-4" />
+                        )}
+                      </ModelSelectorItem>
+                    );
+                  })}
                 </ModelSelectorList>
               </ModelSelectorContent>
             </ModelSelector>
@@ -1364,13 +1365,13 @@ export function InputBox({
                       <ModelSelectorItem
                         key={m.name}
                         value={m.name}
-                        className={m.supports_tools === false ? "opacity-50" : undefined}
+                        disabled={lacksToolSupport(m)}
                         onSelect={() => handleSubagentModelSelect(m.name)}
                       >
                         <div className="flex min-w-0 flex-1 flex-col">
                           <ModelSelectorName>
                             {m.display_name}
-                            {m.supports_tools === false && (
+                            {lacksToolSupport(m) && (
                               <span className="text-muted-foreground ml-1 text-[10px]">
                                 (no tool support)
                               </span>
