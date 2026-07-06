@@ -1026,6 +1026,18 @@ sandbox:
 # sandbox:
 #   use: deerflow.community.aio_sandbox:AioSandboxProvider
 #
+#   # Optional: Connect to a single externally-managed sandbox container instead
+#   # of letting DeerFlow auto-spawn one per conversation. Start that container
+#   # with `make sandbox-up` (docker/docker-compose.sandbox.yml, published on
+#   # 127.0.0.1:8091) — or run `make sandbox-enable` to write this block for you.
+#   # In this external mode DeerFlow never creates or destroys the container,
+#   # `mounts:` are ignored (declare volumes in the compose file), and
+#   # `environment:` must be set on the container itself (the compose file passes
+#   # GITHUB_TOKEN through from the host). `make dev` auto-starts the container
+#   # when base_url is set and unreachable.
+#   # base_url: http://localhost:8091
+#   # request_timeout: 120.0        # HTTP client timeout for the sandbox API (default: 600)
+#
 #   # Optional: Container image to use (works with both Docker and Apple Container)
 #   # Default: enterprise-public-cn-beijing.cr.volces.com/vefaas-public/all-in-one-sandbox:latest
 #   # Recommended: enterprise-public-cn-beijing.cr.volces.com/vefaas-public/all-in-one-sandbox:latest (works on both x86_64 and arm64)

@@ -26,17 +26,23 @@ class AioSandbox(Sandbox):
     from corrupting the container's single persistent session (see #1433).
     """
 
-    def __init__(self, id: str, base_url: str, home_dir: str | None = None):
+    #: Default HTTP client timeout (seconds) when no request_timeout is configured.
+    DEFAULT_REQUEST_TIMEOUT = 600
+
+    def __init__(self, id: str, base_url: str, home_dir: str | None = None, request_timeout: float | None = None):
         """Initialize the AIO sandbox.
 
         Args:
             id: Unique identifier for this sandbox instance.
             base_url: URL of the sandbox API (e.g., http://localhost:8080).
             home_dir: Home directory inside the sandbox. If None, will be fetched from the sandbox.
+            request_timeout: HTTP client timeout in seconds for sandbox API
+                requests (``sandbox.request_timeout`` in config.yaml). Defaults
+                to 600 when unset.
         """
         super().__init__(id)
         self._base_url = base_url
-        self._client = AioSandboxClient(base_url=base_url, timeout=600)
+        self._client = AioSandboxClient(base_url=base_url, timeout=request_timeout if request_timeout is not None else self.DEFAULT_REQUEST_TIMEOUT)
         self._home_dir = home_dir
         self._lock = threading.Lock()
         self._closed = False

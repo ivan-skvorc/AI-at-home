@@ -151,3 +151,66 @@ class TestAioSandboxPreflight:
         assert "failed to pull" in result.stderr
         assert "make setup-sandbox" in result.stderr
         assert "LocalSandboxProvider" in result.stderr
+
+
+# ── External base_url mode ───────────────────────────────────────────────────
+
+AIO_EXTERNAL_CONFIG = """
+sandbox:
+  use: deerflow.community.aio_sandbox:AioSandboxProvider
+  base_url: http://localhost:8091
+  request_timeout: 120.0
+""".strip()
+
+
+class TestSandboxBaseUrl:
+    def test_base_url_parsed_with_trailing_comment(self):
+        config = "sandbox:\n  use: deerflow.community.aio_sandbox:AioSandboxProvider\n  base_url: http://localhost:8091  # external\n"
+        result = _run_sourced(config, 'sandbox_base_url_from_config "$CONFIG"')
+        assert result.stdout.strip() == "http://localhost:8091"
+
+    def test_base_url_empty_when_unset(self):
+        result = _run_sourced(AIO_CONFIG, 'sandbox_base_url_from_config "$CONFIG"')
+        assert result.stdout.strip() == ""
+
+
+class TestExternalPreflight:
+    # Fake curl (health probe) and docker (compose) as shell functions.
+    def test_already_reachable_is_success_without_compose(self):
+        # curl succeeds immediately → no compose call.
+        fake = "curl() { return 0; }; docker() { echo 'DOCKER SHOULD NOT RUN'; return 1; }; "
+        result = _run_sourced(AIO_EXTERNAL_CONFIG, _FAKE_ENV + fake + 'aio_sandbox_preflight "$CONFIG"')
+        assert result.returncode == 0
+        assert "already reachable" in result.stdout
+        assert "DOCKER SHOULD NOT RUN" not in result.stdout
+
+    def test_unreachable_then_compose_up_then_healthy(self):
+        # curl fails first (health check before up), then succeeds after up.
+        fake = (
+            "STATE=/tmp/pf_state_$$; rm -f $STATE; "
+            'curl() { if [ -f "$STATE" ]; then return 0; else return 1; fi; }; '
+            'docker() { if [ "$1" = "compose" ] && [ "$2" = "version" ]; then return 0; fi; '
+            'if [ "$1" = "compose" ]; then touch "$STATE"; echo "COMPOSE UP"; return 0; fi; return 0; }; '
+        )
+        result = _run_sourced(AIO_EXTERNAL_CONFIG, _FAKE_ENV + fake + 'aio_sandbox_preflight "$CONFIG"')
+        assert result.returncode == 0
+        assert "COMPOSE UP" in result.stdout
+        assert "is ready" in result.stdout
+
+    def test_compose_up_but_never_ready_fails_with_hints(self):
+        # curl always fails; compose up "succeeds" but health never passes.
+        fake = 'curl() { return 1; }; docker() { if [ "$1" = "compose" ] && [ "$2" = "version" ]; then return 0; fi; return 0; }; '
+        # Shorten the loop by faking sleep to a no-op so the 60s poll returns fast.
+        fake = "sleep() { return 0; }; " + fake
+        result = _run_sourced(AIO_EXTERNAL_CONFIG, _FAKE_ENV + fake + 'aio_sandbox_preflight "$CONFIG"')
+        assert result.returncode == 1
+        assert "did not become ready" in result.stderr
+        assert "make sandbox-logs" in result.stderr
+        assert "make sandbox-disable" in result.stderr
+
+    def test_no_compose_available_fails_with_hints(self):
+        # curl fails, docker compose version fails, docker-compose absent.
+        fake = "curl() { return 1; }; docker() { return 1; }; command() { return 1; }; "
+        result = _run_sourced(AIO_EXTERNAL_CONFIG, _FAKE_ENV + fake + 'aio_sandbox_preflight "$CONFIG"')
+        assert result.returncode == 1
+        assert "make sandbox-disable" in result.stderr

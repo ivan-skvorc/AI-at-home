@@ -35,6 +35,7 @@ from deerflow.sandbox.sandbox_provider import SandboxProvider
 
 from .aio_sandbox import AioSandbox
 from .backend import SandboxBackend, wait_for_sandbox_ready, wait_for_sandbox_ready_async
+from .external_backend import ExternalSandboxBackend
 from .git_credentials import TOKEN_ENV_VAR, setup_github_credentials
 from .local_backend import LocalContainerBackend
 from .remote_backend import RemoteSandboxBackend
@@ -178,13 +179,25 @@ class AioSandboxProvider(SandboxProvider):
         Selection logic (checked in order):
         1. ``provisioner_url`` set → RemoteSandboxBackend (provisioner mode)
               Provisioner dynamically creates Pods + Services in k3s.
-        2. Default → LocalContainerBackend (local mode)
+        2. ``base_url`` set → ExternalSandboxBackend (external mode)
+              Connect to one externally-managed container (e.g. `make sandbox-up`,
+              docker/docker-compose.sandbox.yml). DeerFlow never creates or
+              destroys it.
+        3. Default → LocalContainerBackend (local mode)
               Local provider manages container lifecycle directly (start/stop).
         """
         provisioner_url = self._config.get("provisioner_url")
         if provisioner_url:
             logger.info(f"Using remote sandbox backend with provisioner at {provisioner_url}")
+            self._warn_ignored_mounts("provisioner/remote", "the provisioner pod spec")
             return RemoteSandboxBackend(provisioner_url=provisioner_url)
+
+        base_url = self._config.get("base_url")
+        if base_url:
+            logger.info(f"Using external sandbox backend at {base_url}")
+            self._warn_ignored_mounts("external base_url", "docker/docker-compose.sandbox.yml `volumes:`")
+            self._warn_external_environment()
+            return ExternalSandboxBackend(base_url=base_url)
 
         logger.info("Using local container sandbox backend")
         return LocalContainerBackend(
@@ -193,6 +206,49 @@ class AioSandboxProvider(SandboxProvider):
             container_prefix=self._config["container_prefix"],
             config_mounts=self._config["mounts"],
             environment=self._config["environment"],
+        )
+
+    def _warn_ignored_mounts(self, backend_label: str, where_to_declare: str) -> None:
+        """Warn that configured `sandbox.mounts` are ignored by this backend.
+
+        LocalContainerBackend applies mounts; the remote (provisioner) and
+        external backends do not manage the container filesystem, so a
+        configured `mounts:` list is silently dropped without this notice.
+        """
+        mounts = self._config.get("mounts") or []
+        if not mounts:
+            return
+        described = []
+        for m in mounts:
+            host = getattr(m, "host_path", None) or (m.get("host_path") if isinstance(m, dict) else None)
+            container = getattr(m, "container_path", None) or (m.get("container_path") if isinstance(m, dict) else None)
+            described.append(f"{host} -> {container}")
+        logger.warning(
+            "sandbox.mounts is ignored in %s mode (%d mount(s): %s). Declare these volumes in %s instead.",
+            backend_label,
+            len(mounts),
+            ", ".join(described),
+            where_to_declare,
+        )
+
+    def _warn_external_environment(self) -> None:
+        """Warn that `sandbox.environment` cannot be injected in external mode.
+
+        The external container's exec API runs commands in one persistent
+        session with no per-command env injection, so `environment:` entries
+        must be set on the container itself (the bundled compose file passes
+        GITHUB_TOKEN through from the host). The token is never injected via
+        shell commands (which would leak into logs/history).
+        """
+        environment = self._config.get("environment") or {}
+        # GIT_TERMINAL_PROMPT is defaulted in by _resolve_env_vars; only warn
+        # when the user actually configured their own environment entries.
+        user_keys = [k for k in environment if k != "GIT_TERMINAL_PROMPT"]
+        if not user_keys:
+            return
+        logger.warning(
+            "sandbox.environment (%s) is not injected in external base_url mode — set these on the sandbox container itself (docker/docker-compose.sandbox.yml passes GITHUB_TOKEN through from the host env).",
+            ", ".join(sorted(user_keys)),
         )
 
     # ── Configuration ────────────────────────────────────────────────────
@@ -215,6 +271,10 @@ class AioSandboxProvider(SandboxProvider):
             "environment": self._resolve_env_vars(sandbox_config.environment or {}),
             # provisioner URL for dynamic pod management (e.g. http://provisioner:8002)
             "provisioner_url": getattr(sandbox_config, "provisioner_url", None) or "",
+            # external base_url for a single pre-existing container (e.g. http://localhost:8091)
+            "base_url": getattr(sandbox_config, "base_url", None) or "",
+            # HTTP client timeout for the sandbox API (None → AioSandbox default of 600s)
+            "request_timeout": getattr(sandbox_config, "request_timeout", None),
         }
 
     @staticmethod
@@ -547,7 +607,7 @@ class AioSandboxProvider(SandboxProvider):
             if warm_item is None:
                 return None
             info, _ = warm_item
-            sandbox = AioSandbox(id=sandbox_id, base_url=info.sandbox_url)
+            sandbox = AioSandbox(id=sandbox_id, base_url=info.sandbox_url, request_timeout=self._config.get("request_timeout"))
             self._sandboxes[sandbox_id] = sandbox
             self._sandbox_infos[sandbox_id] = info
             self._last_activity[sandbox_id] = time.time()
@@ -568,7 +628,7 @@ class AioSandboxProvider(SandboxProvider):
 
     def _register_discovered_sandbox(self, thread_id: str, info: SandboxInfo, *, user_id: str) -> str:
         """Track a sandbox discovered through the backend."""
-        sandbox = AioSandbox(id=info.sandbox_id, base_url=info.sandbox_url)
+        sandbox = AioSandbox(id=info.sandbox_id, base_url=info.sandbox_url, request_timeout=self._config.get("request_timeout"))
         key = self._thread_key(thread_id, user_id)
         with self._lock:
             self._sandboxes[info.sandbox_id] = sandbox
@@ -581,7 +641,7 @@ class AioSandboxProvider(SandboxProvider):
 
     def _register_created_sandbox(self, thread_id: str | None, sandbox_id: str, info: SandboxInfo, *, user_id: str | None = None) -> str:
         """Track a newly-created sandbox in the active maps."""
-        sandbox = AioSandbox(id=sandbox_id, base_url=info.sandbox_url)
+        sandbox = AioSandbox(id=sandbox_id, base_url=info.sandbox_url, request_timeout=self._config.get("request_timeout"))
         with self._lock:
             self._sandboxes[sandbox_id] = sandbox
             self._sandbox_infos[sandbox_id] = info
@@ -791,7 +851,13 @@ class AioSandboxProvider(SandboxProvider):
                 # Backend discovery: another process may have created the container.
                 discovered = self._backend.discover(sandbox_id)
                 if discovered is not None:
-                    return self._register_discovered_sandbox(thread_id, discovered, user_id=effective_user_id)
+                    registered_id = self._register_discovered_sandbox(thread_id, discovered, user_id=effective_user_id)
+                    if getattr(self._backend, "session_init_on_discover", False):
+                        # External container is pre-existing and shared; re-run the
+                        # (idempotent) git-credential session init on discovery so a
+                        # gateway restart or a freshly recreated container is still set up.
+                        self._setup_sandbox_session(registered_id)
+                    return registered_id
 
                 return self._create_sandbox(thread_id, sandbox_id, user_id=effective_user_id)
             finally:
@@ -820,7 +886,11 @@ class AioSandboxProvider(SandboxProvider):
             # Docker and perform a health check; keep it off the event loop.
             discovered = await asyncio.to_thread(self._backend.discover, sandbox_id)
             if discovered is not None:
-                return self._register_discovered_sandbox(thread_id, discovered, user_id=effective_user_id)
+                registered_id = self._register_discovered_sandbox(thread_id, discovered, user_id=effective_user_id)
+                if getattr(self._backend, "session_init_on_discover", False):
+                    # See sync path: idempotent re-init for the shared external container.
+                    await asyncio.to_thread(self._setup_sandbox_session, registered_id)
+                return registered_id
 
             return await self._create_sandbox_async(thread_id, sandbox_id, user_id=effective_user_id)
         finally:

@@ -38,6 +38,12 @@ class SandboxConfig(BaseModel):
         idle_timeout: Idle timeout in seconds before sandbox is released (default: 600 = 10 minutes). Set to 0 to disable.
         mounts: List of volume mounts to share directories with the container
         environment: Environment variables to inject into the container (values starting with $ are resolved from host env)
+        base_url: Connect to a single externally-managed AIO sandbox container instead of auto-spawning containers
+        request_timeout: HTTP client timeout in seconds for sandbox API requests (default: 600)
+        provisioner_url: Delegate sandbox lifecycle to the provisioner service (remote/K8s mode)
+
+    Backend selection precedence for AioSandboxProvider:
+        provisioner_url > base_url > local container mode (auto-spawn via Docker/Apple Container).
     """
 
     use: str = Field(
@@ -75,6 +81,24 @@ class SandboxConfig(BaseModel):
     environment: dict[str, str] = Field(
         default_factory=dict,
         description="Environment variables to inject into the sandbox container. Values starting with $ will be resolved from host environment variables.",
+    )
+    base_url: str | None = Field(
+        default=None,
+        description=(
+            "Connect to a single externally-managed AIO sandbox container (e.g. started with `make sandbox-up`, "
+            "see docker/docker-compose.sandbox.yml) instead of auto-spawning containers. Example: http://localhost:8091. "
+            "In this mode DeerFlow never creates or destroys the container, `mounts` are ignored (add volumes to the "
+            "compose file instead), and `environment` entries must come from the container itself. "
+            "Ignored when provisioner_url is set."
+        ),
+    )
+    request_timeout: float | None = Field(
+        default=None,
+        description="HTTP client timeout in seconds for AIO sandbox API requests (default: 600 when unset).",
+    )
+    provisioner_url: str | None = Field(
+        default=None,
+        description=("URL of the provisioner service for remote/K8s sandbox mode (e.g. http://provisioner:8002). The provisioner dynamically creates per-sandbox Pods + Services. Takes precedence over base_url."),
     )
 
     bash_output_max_chars: int = Field(

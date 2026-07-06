@@ -58,6 +58,83 @@ detect_sandbox_mode_from_config() {
     fi
 }
 
+# Print the sandbox.base_url from config.yaml (empty if unset/commented).
+sandbox_base_url_from_config() {
+    local config_file="$1"
+    [ -f "$config_file" ] || return 0
+    awk '
+        /^[[:space:]]*sandbox:[[:space:]]*$/ { in_sandbox=1; next }
+        in_sandbox && /^[^[:space:]#]/ { in_sandbox=0 }
+        in_sandbox && /^[[:space:]]*base_url:[[:space:]]*/ {
+            line=$0; sub(/^[[:space:]]*base_url:[[:space:]]*/, "", line);
+            sub(/[[:space:]]*#.*$/, "", line); print line; exit
+        }
+    ' "$config_file"
+}
+
+# True (0) when the external sandbox answers its readiness endpoint.
+_external_sandbox_healthy() {
+    local base_url="$1"
+    command -v curl >/dev/null 2>&1 || return 1
+    curl -fsS --max-time 3 "${base_url%/}/v1/sandbox" >/dev/null 2>&1
+}
+
+_external_fallback_hint() {
+    echo "  Inspect the container:   make sandbox-logs" >&2
+    echo "  Or revert to local mode: make sandbox-disable" >&2
+}
+
+# External base_url mode: ensure the pre-existing sandbox container is up.
+# $1 = base_url, $2 = repo root.
+external_sandbox_preflight() {
+    local base_url="$1"
+    local repo_root="$2"
+    local compose_file="$repo_root/docker/docker-compose.sandbox.yml"
+
+    echo "Sandbox: external AIO mode detected (base_url: $base_url) — checking reachability..."
+
+    if _external_sandbox_healthy "$base_url"; then
+        echo "✓ Sandbox: external container already reachable at $base_url"
+        return 0
+    fi
+
+    echo "Sandbox: $base_url is not reachable — attempting to start the bundled container..."
+
+    local compose_cmd=""
+    if docker compose version >/dev/null 2>&1; then
+        compose_cmd="docker compose"
+    elif command -v docker-compose >/dev/null 2>&1; then
+        compose_cmd="docker-compose"
+    fi
+
+    if [ -z "$compose_cmd" ] || [ ! -f "$compose_file" ]; then
+        echo "✗ Sandbox: cannot auto-start the external sandbox (docker compose or $compose_file unavailable)." >&2
+        _external_fallback_hint
+        return 1
+    fi
+
+    if ! $compose_cmd -f "$compose_file" up -d; then
+        echo "✗ Sandbox: 'docker compose -f $compose_file up -d' failed." >&2
+        _external_fallback_hint
+        return 1
+    fi
+
+    # Health-poll base_url (bounded ~60s).
+    local waited=0
+    while [ "$waited" -lt 60 ]; do
+        if _external_sandbox_healthy "$base_url"; then
+            echo "✓ Sandbox: external container is ready at $base_url"
+            return 0
+        fi
+        sleep 2
+        waited=$((waited + 2))
+    done
+
+    echo "✗ Sandbox: started the container but $base_url did not become ready within 60s." >&2
+    _external_fallback_hint
+    return 1
+}
+
 # Print the sandbox image from config.yaml, or the provider default.
 sandbox_image_from_config() {
     local config_file="$1"
@@ -104,6 +181,16 @@ aio_sandbox_preflight() {
             return 0
             ;;
     esac
+
+    # External mode: a single pre-existing container addressed by base_url.
+    local base_url
+    base_url="$(sandbox_base_url_from_config "$config_file")"
+    if [ -n "$base_url" ]; then
+        local repo_root
+        repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+        external_sandbox_preflight "$base_url" "$repo_root"
+        return $?
+    fi
 
     echo "Sandbox: containerized AIO mode detected in config.yaml — checking Docker..."
 
