@@ -41,16 +41,12 @@ def _coerce_proxy(value: object) -> str | None:
     return proxy or None
 
 
-@tool("web_fetch", parse_docstring=True)
-async def web_fetch_tool(url: str) -> str:
-    """Fetch the contents of a web page at a given URL.
-    Only fetch EXACT URLs that have been provided directly by the user or have been returned in results from the web_search and web_fetch tools.
-    This tool can NOT access content that requires authentication, such as private Google Docs or pages behind login walls.
-    Do NOT add www. to URLs that do NOT have them.
-    URLs must include the schema: https://example.com is a valid URL while example.com is an invalid URL.
+async def fetch_url_via_jina(url: str) -> str:
+    """Fetch ``url`` through the Jina reader API and return readable markdown.
 
-    Args:
-        url: The URL to fetch the contents of.
+    Plain importable async callable (no LangChain tool wrapper) so the
+    pluggable web_fetch dispatcher can reuse the exact Jina behavior. Returns
+    an ``"Error: ..."``-prefixed string on failure, matching the tool contract.
     """
     jina_client = JinaClient()
     timeout = 10
@@ -66,3 +62,17 @@ async def web_fetch_tool(url: str) -> str:
         return html_content
     article = await asyncio.to_thread(readability_extractor.extract_article, html_content)
     return article.to_markdown()[:4096]
+
+
+@tool("web_fetch", parse_docstring=True)
+async def web_fetch_tool(url: str) -> str:
+    """Fetch the contents of a web page at a given URL.
+    Only fetch EXACT URLs that have been provided directly by the user or have been returned in results from the web_search and web_fetch tools.
+    This tool can NOT access content that requires authentication, such as private Google Docs or pages behind login walls.
+    Do NOT add www. to URLs that do NOT have them.
+    URLs must include the schema: https://example.com is a valid URL while example.com is an invalid URL.
+
+    Args:
+        url: The URL to fetch the contents of.
+    """
+    return await fetch_url_via_jina(url)

@@ -729,12 +729,24 @@ tools:
   #   use: deerflow.community.exa.tools:web_fetch_tool
   #   # api_key: $EXA_API_KEY
 
-  # Web fetch tool (uses Jina AI reader)
+  # Web fetch tool — pluggable backend dispatcher.
+  # Default backend is `jina` (cloud reader API, works key-less at a lower rate
+  # limit). Switch to `camoufox` for a local, key-less, JS-capable browser
+  # fetch (no external dependency). To use Camoufox:
+  #   1. set `backend: camoufox` below (or run `make config` and choose it)
+  #   2. deps install automatically on the next `make dev`
+  #      (or: cd backend; uv sync --extra camoufox)
+  #   3. download the browser once: make fetch-browser
+  # `fallback:` optionally chains a second backend when the first errors.
   - name: web_fetch
     group: web
-    use: deerflow.community.jina_ai.tools:web_fetch_tool
-    timeout: 10
-    # Optional proxy for restricted networks / Docker / WSL.
+    use: deerflow.community.web_fetch.tools:web_fetch_tool
+    backend: jina
+    # backend: camoufox        # local browser fetch (run `make fetch-browser` once)
+    # fallback: jina           # try this backend if the primary one errors
+    timeout: 10                # jina: request timeout; camoufox: page-load timeout (s)
+    # max_content_length: 4096 # cap on returned characters (default 4096)
+    # Optional proxy for restricted networks / Docker / WSL (jina backend).
     # Use host.docker.internal instead of 127.0.0.1 when the proxy runs on the host.
     # proxy: $HTTPS_PROXY
     # trust_env: true

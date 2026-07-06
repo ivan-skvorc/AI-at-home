@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -17,6 +18,50 @@ def copy_if_missing(src: Path, dst: Path) -> None:
     shutil.copyfile(src, dst)
 
 
+def _prompt_yes_no(question: str) -> bool:
+    """Ask a [y/N] question on a TTY. Non-interactive → False (safe default)."""
+    if not sys.stdin.isatty():
+        return False
+    try:
+        answer = input(f"{question} [y/N] ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        print()
+        return False
+    return answer in {"y", "yes"}
+
+
+def _offer_sandbox_choice(project_root: Path) -> None:
+    """Offer to switch the fresh config to the containerized AIO sandbox."""
+    if not _prompt_yes_no("Enable the containerized AIO sandbox (requires Docker)?"):
+        return
+    script = project_root / "scripts" / "sandbox_toggle.py"
+    result = subprocess.run([sys.executable, str(script), "enable"], cwd=str(project_root))
+    if result.returncode == 0:
+        print("  Start the sandbox container with: make sandbox-up")
+    else:
+        print("  Could not update the sandbox section automatically; edit config.yaml by hand.")
+
+
+def _offer_web_fetch_choice(project_root: Path) -> None:
+    """Offer to switch web_fetch from the Jina cloud API to the local Camoufox browser."""
+    if not _prompt_yes_no("Use the local Camoufox browser for web_fetch instead of the Jina cloud API?"):
+        return
+    config_path = project_root / "config.yaml"
+    try:
+        text = config_path.read_text(encoding="utf-8")
+    except OSError:
+        return
+    # Flip only the web_fetch dispatcher's `backend: jina` to `backend: camoufox`.
+    updated = text.replace("    backend: jina\n", "    backend: camoufox\n", 1)
+    if updated != text:
+        config_path.write_text(updated, encoding="utf-8")
+        print("  web_fetch backend set to camoufox.")
+        print("  Camoufox installs automatically on the next `make dev`.")
+        print("  Then download the browser once with: make fetch-browser")
+    else:
+        print("  Could not update the web_fetch backend automatically; edit config.yaml by hand.")
+
+
 def main() -> int:
     project_root = Path(__file__).resolve().parent.parent
 
@@ -27,10 +72,7 @@ def main() -> int:
     ]
 
     if any(path.exists() for path in existing_config):
-        print(
-            "Error: configuration file already exists "
-            "(config.yaml/config.yml/configure.yml). Aborting."
-        )
+        print("Error: configuration file already exists (config.yaml/config.yml/configure.yml). Aborting.")
         return 1
 
     try:
@@ -44,13 +86,14 @@ def main() -> int:
         print("Error while generating configuration files:")
         print(f"  {exc}")
         if isinstance(exc, PermissionError):
-            print(
-                "Hint: Check file permissions and ensure the files are not "
-                "read-only or locked by another process."
-            )
+            print("Hint: Check file permissions and ensure the files are not read-only or locked by another process.")
         return 1
 
     print("✓ Configuration files generated")
+
+    # Optional interactive choices (TTY only; non-interactive runs skip these).
+    _offer_sandbox_choice(project_root)
+    _offer_web_fetch_choice(project_root)
     return 0
 
 

@@ -153,6 +153,46 @@ def test_detect_from_config_missing_file_returns_empty(tmp_path):
     assert detect.detect_from_config(tmp_path / "does-not-exist.yaml") == []
 
 
+def test_detect_camoufox_via_backend_key(tmp_path):
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text(
+        "tools:\n  - name: web_fetch\n    use: deerflow.community.web_fetch.tools:web_fetch_tool\n    backend: camoufox\n",
+    )
+    assert detect.detect_from_config(cfg) == ["camoufox"]
+
+
+def test_detect_camoufox_via_fallback_key(tmp_path):
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text(
+        "tools:\n  - name: web_fetch\n    use: deerflow.community.web_fetch.tools:web_fetch_tool\n    backend: jina\n    fallback: camoufox\n",
+    )
+    assert detect.detect_from_config(cfg) == ["camoufox"]
+
+
+def test_detect_camoufox_via_use_path(tmp_path):
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text(
+        "tools:\n  - name: web_fetch\n    use: deerflow.community.camoufox_fetch.tools:fetch_url_via_camoufox\n",
+    )
+    assert detect.detect_from_config(cfg) == ["camoufox"]
+
+
+def test_jina_backend_does_not_select_camoufox(tmp_path):
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text(
+        "tools:\n  - name: web_fetch\n    use: deerflow.community.web_fetch.tools:web_fetch_tool\n    backend: jina\n",
+    )
+    assert detect.detect_from_config(cfg) == []
+
+
+def test_commented_camoufox_backend_is_ignored(tmp_path):
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text(
+        "tools:\n  - name: web_fetch\n    backend: jina\n    # backend: camoufox\n",
+    )
+    assert detect.detect_from_config(cfg) == []
+
+
 def test_resolve_extras_env_overrides_config(isolated_cwd, monkeypatch):
     cfg = isolated_cwd / "config.yaml"
     cfg.write_text("database:\n  backend: sqlite\n")

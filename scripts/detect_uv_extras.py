@@ -230,7 +230,31 @@ def detect_from_config(path: Path) -> list[str]:
         extras.add("postgres")
     if (nested_section_value(lines, "channels.discord", "enabled") or "").lower() == "true":
         extras.add("discord")
+    if _uses_camoufox_web_fetch(text):
+        extras.add("camoufox")
     return sorted(extras)
+
+
+def _uses_camoufox_web_fetch(text: str) -> bool:
+    """True when config.yaml selects the Camoufox web_fetch backend.
+
+    Matched on any of: the dispatcher entry with ``backend: camoufox``, a
+    ``fallback: camoufox`` chain, or a ``use:`` pointing into the camoufox
+    module. Line-oriented on purpose — this parser runs before uv sync, so it
+    cannot depend on PyYAML; the tools: section is a list, not the flat shape
+    section_value handles.
+    """
+    for raw in text.splitlines():
+        line = _strip_comment(raw).strip()
+        if not line:
+            continue
+        if line.startswith("use:") and "camoufox_fetch" in line:
+            return True
+        if line.startswith("backend:") and _unquote(line.split(":", 1)[1].strip()) == "camoufox":
+            return True
+        if line.startswith("fallback:") and _unquote(line.split(":", 1)[1].strip()) == "camoufox":
+            return True
+    return False
 
 
 def resolve_extras() -> list[str]:
