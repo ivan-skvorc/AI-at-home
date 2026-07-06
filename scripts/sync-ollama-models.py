@@ -85,6 +85,27 @@ def render_entry(name: str, caps: list) -> str:
     return "\n".join(lines)
 
 
+def check_duplicate_top_level_keys(text: str, path) -> None:
+    """Abort when a top-level YAML key appears twice.
+
+    YAML last-key-wins would make this script edit a `models:` section the
+    application never sees (and would silently mask a corrupted config, e.g.
+    two `sandbox:` blocks). Pure-text scan on purpose — this script runs under
+    plain python3 with no PyYAML; the message format matches the shared loader
+    in backend/packages/harness/deerflow/config/yaml_guard.py.
+    """
+    top_key = re.compile(r"^([A-Za-z_][\w-]*):")
+    seen: dict[str, int] = {}
+    for lineno, line in enumerate(text.splitlines(), start=1):
+        match = top_key.match(line)
+        if not match:
+            continue
+        key = match.group(1)
+        if key in seen:
+            raise SystemExit(f"ERROR: duplicate top-level key '{key}' in {path}: first defined at line {seen[key]}, duplicated at line {lineno}\nRemove one of the duplicate sections from config.yaml, then retry.")
+        seen[key] = lineno
+
+
 def find_models_section(lines):
     """Return (start, end) indices of the models: block.
 
@@ -160,10 +181,8 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     repo_root = Path(__file__).resolve().parent.parent
     ap.add_argument("--config", default=str(repo_root / "config.yaml"))
-    ap.add_argument("--host", default=DEFAULT_HOST,
-                    help=f"Ollama endpoint (default: {DEFAULT_HOST}; OLLAMA_HOST env wins)")
-    ap.add_argument("--dry-run", action="store_true",
-                    help="Print result to stdout, do not write")
+    ap.add_argument("--host", default=DEFAULT_HOST, help=f"Ollama endpoint (default: {DEFAULT_HOST}; OLLAMA_HOST env wins)")
+    ap.add_argument("--dry-run", action="store_true", help="Print result to stdout, do not write")
     ap.add_argument("--verbose", action="store_true")
     args = ap.parse_args()
 
@@ -191,6 +210,7 @@ def main() -> int:
     if not config_path.exists():
         raise SystemExit(f"ERROR: config not found at {config_path}")
     original = config_path.read_text()
+    check_duplicate_top_level_keys(original, config_path)
     updated = sync(original, models)
 
     if args.dry_run:

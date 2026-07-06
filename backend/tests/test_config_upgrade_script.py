@@ -1,0 +1,173 @@
+"""Tests for scripts/config_upgrade.py (invoked by scripts/config-upgrade.sh).
+
+Pins the config-regeneration integrity guarantees:
+- duplicate-keyed configs are refused (named key + both line numbers), never
+  silently collapsed by the merge round-trip;
+- the upgrade is idempotent — an up-to-date config is left byte-identical with
+  no backup churn;
+- a version-stamp-only upgrade preserves user comments;
+- the merge only ever adds missing keys (it cannot append a duplicate section).
+"""
+
+from __future__ import annotations
+
+import importlib.util
+import textwrap
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+SCRIPT_PATH = REPO_ROOT / "scripts" / "config_upgrade.py"
+
+
+def _load_script():
+    spec = importlib.util.spec_from_file_location("config_upgrade", SCRIPT_PATH)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+config_upgrade = _load_script()
+
+
+def _write_example(tmp_path: Path, version: int = 3) -> Path:
+    example = tmp_path / "config.example.yaml"
+    example.write_text(
+        textwrap.dedent(
+            f"""\
+            config_version: {version}
+            sandbox:
+              use: deerflow.sandbox.local:LocalSandboxProvider
+            models: []
+            new_section:
+              enabled: true
+            """
+        ),
+        encoding="utf-8",
+    )
+    return example
+
+
+class TestUpToDateConfig:
+    def test_no_write_and_no_backup(self, tmp_path, capsys):
+        example = _write_example(tmp_path, version=3)
+        config = tmp_path / "config.yaml"
+        original = "config_version: 3\n# my comment\nsandbox:\n  use: custom\n"
+        config.write_text(original, encoding="utf-8")
+
+        rc = config_upgrade.upgrade(config, example, REPO_ROOT)
+
+        assert rc == 0
+        assert config.read_text(encoding="utf-8") == original
+        assert not (tmp_path / "config.yaml.bak").exists()
+        assert "already up to date" in capsys.readouterr().out
+
+
+class TestDuplicateKeys:
+    def test_duplicate_top_level_key_aborts_without_writing(self, tmp_path, capsys):
+        example = _write_example(tmp_path)
+        config = tmp_path / "config.yaml"
+        original = textwrap.dedent(
+            """\
+            config_version: 1
+            sandbox:
+              use: deerflow.community.aio_sandbox:AioSandboxProvider
+            sandbox:
+              use: deerflow.sandbox.local:LocalSandboxProvider
+            """
+        )
+        config.write_text(original, encoding="utf-8")
+
+        rc = config_upgrade.upgrade(config, example, REPO_ROOT)
+
+        assert rc == 1
+        out = capsys.readouterr().out
+        assert "duplicate top-level key 'sandbox'" in out
+        assert "first defined at line 2" in out
+        assert "duplicated at line 4" in out
+        # File untouched, no backup created
+        assert config.read_text(encoding="utf-8") == original
+        assert not (tmp_path / "config.yaml.bak").exists()
+
+
+class TestVersionBumpOnly:
+    def test_comments_survive_a_version_stamp_upgrade(self, tmp_path):
+        example = _write_example(tmp_path, version=3)
+        config = tmp_path / "config.yaml"
+        config.write_text(
+            textwrap.dedent(
+                """\
+                config_version: 2
+                # user comment that must survive
+                sandbox:
+                  use: custom  # inline note
+                models: []
+                new_section:
+                  enabled: false
+                """
+            ),
+            encoding="utf-8",
+        )
+
+        rc = config_upgrade.upgrade(config, example, REPO_ROOT)
+
+        assert rc == 0
+        text = config.read_text(encoding="utf-8")
+        assert "config_version: 3" in text
+        assert "# user comment that must survive" in text
+        assert "# inline note" in text
+        # user values untouched
+        assert "enabled: false" in text
+        assert (tmp_path / "config.yaml.bak").exists()
+
+
+class TestMergeMissingKeys:
+    def test_missing_section_is_added_once(self, tmp_path, capsys):
+        example = _write_example(tmp_path, version=3)
+        config = tmp_path / "config.yaml"
+        config.write_text(
+            "config_version: 1\nsandbox:\n  use: custom\nmodels: []\n",
+            encoding="utf-8",
+        )
+
+        rc = config_upgrade.upgrade(config, example, REPO_ROOT)
+
+        assert rc == 0
+        text = config.read_text(encoding="utf-8")
+        assert text.count("new_section:") == 1
+        assert text.count("sandbox:") == 1  # never appends an existing section
+        assert "use: custom" in text  # user value wins over example default
+        assert "+ new_section" in capsys.readouterr().out
+
+    def test_second_run_is_a_byte_identical_no_op(self, tmp_path):
+        example = _write_example(tmp_path, version=3)
+        config = tmp_path / "config.yaml"
+        config.write_text(
+            "config_version: 1\nsandbox:\n  use: custom\nmodels: []\n",
+            encoding="utf-8",
+        )
+
+        assert config_upgrade.upgrade(config, example, REPO_ROOT) == 0
+        after_first = config.read_text(encoding="utf-8")
+        backup_after_first = (tmp_path / "config.yaml.bak").read_text(encoding="utf-8")
+
+        assert config_upgrade.upgrade(config, example, REPO_ROOT) == 0
+        assert config.read_text(encoding="utf-8") == after_first
+        # backup untouched by the no-op second run
+        assert (tmp_path / "config.yaml.bak").read_text(encoding="utf-8") == backup_after_first
+
+
+class TestMigrations:
+    def test_src_module_paths_are_rewritten(self, tmp_path):
+        example = _write_example(tmp_path, version=3)
+        config = tmp_path / "config.yaml"
+        config.write_text(
+            "config_version: 0\nsandbox:\n  use: src.sandbox.local:LocalSandboxProvider\nmodels: []\nnew_section:\n  enabled: true\n",
+            encoding="utf-8",
+        )
+
+        rc = config_upgrade.upgrade(config, example, REPO_ROOT)
+
+        assert rc == 0
+        text = config.read_text(encoding="utf-8")
+        assert "deerflow.sandbox.local:LocalSandboxProvider" in text
+        assert "src.sandbox" not in text

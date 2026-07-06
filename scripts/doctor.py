@@ -214,6 +214,57 @@ def check_config_exists(config_path: Path) -> CheckResult:
     )
 
 
+def check_config_duplicate_keys(config_path: Path) -> CheckResult:
+    """Fail loudly on duplicate YAML keys (PyYAML would silently keep the last).
+
+    Motivating incident: a config.yaml with two top-level `sandbox:` blocks
+    silently reverted the user to LocalSandboxProvider; the only runtime
+    symptom was "bash is disabled" while their sandbox container ran fine.
+    """
+    if not config_path.exists():
+        return CheckResult("config.yaml has no duplicate keys", "skip")
+    try:
+        from deerflow.config.yaml_guard import DuplicateKeyError, safe_load_guarded
+    except ImportError as exc:
+        return CheckResult("config.yaml has no duplicate keys", "skip", str(exc))
+
+    try:
+        with open(config_path, encoding="utf-8") as f:
+            safe_load_guarded(f)
+    except DuplicateKeyError as exc:
+        return CheckResult(
+            "config.yaml has no duplicate keys",
+            "fail",
+            str(exc),
+            fix="Remove one of the duplicate sections from config.yaml",
+        )
+    except Exception:
+        return CheckResult("config.yaml has no duplicate keys", "skip", "config.yaml is not parseable (see 'config.yaml loadable')")
+    return CheckResult("config.yaml has no duplicate keys", "ok")
+
+
+def check_config_unknown_keys(config_path: Path) -> list[CheckResult]:
+    """Warn on unknown sandbox: keys and suspected typos in models: entries."""
+    if not config_path.exists():
+        return []
+    try:
+        from deerflow.config.config_lint import lint_unknown_config_keys
+
+        data = _load_yaml_file(config_path)
+    except Exception:
+        return []
+
+    return [
+        CheckResult(
+            "config.yaml key lint",
+            "warn",
+            message,
+            fix="Compare with config.example.yaml",
+        )
+        for message in lint_unknown_config_keys(data)
+    ]
+
+
 def check_config_version(config_path: Path, project_root: Path) -> CheckResult:
     if not config_path.exists():
         return CheckResult("config.yaml version", "skip")
@@ -720,9 +771,11 @@ def main() -> int:
         check_env_file(project_root),
         check_frontend_env(project_root),
         check_config_exists(config_path),
+        check_config_duplicate_keys(config_path),
         check_config_version(config_path, project_root),
         check_config_loadable(config_path),
         check_models_configured(config_path),
+        *check_config_unknown_keys(config_path),
     ]
     sections.append(("Configuration", cfg_checks))
 
