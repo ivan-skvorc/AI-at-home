@@ -214,6 +214,45 @@ That prompt is intended for coding agents. It tells the agent to clone the repo 
 
    </details>
 
+#### Config validation (loud, not silent)
+
+This fork turns silent `config.yaml` mistakes into clear startup errors:
+
+- **Duplicate keys are rejected.** A config with, say, two top-level `sandbox:` blocks (e.g. a hand edit plus a regenerated template) used to be silently resolved to the *last* one — reverting you to the local sandbox while your container sat healthy. Now the loader fails fast, naming the key and both line numbers:
+
+  ```
+  duplicate top-level key 'sandbox' in config.yaml: first defined at line 12, duplicated at line 87
+  ```
+
+  The same check runs in `make dev`'s config regeneration step, so startup refuses before anything can collapse the duplicate.
+
+- **Config regeneration is idempotent.** `make config-upgrade` and the Ollama model sync only write when something actually changes — running them twice leaves `config.yaml` byte-for-byte identical and never appends a section that already exists.
+
+- **Unknown keys are flagged.** Unrecognized keys under `sandbox:` warn with a "did you mean…?" hint, and typo-shaped keys in `models:` entries (e.g. `supports_thinkng`) warn that they look like a typo of a real field — surfacing mistakes that would otherwise only appear as a puzzling runtime error deep in a provider call. `make doctor` reports the same findings.
+
+#### Web fetch: local browser or cloud reader
+
+The `web_fetch` tool has a pluggable backend. The default is **`jina`** (cloud reader API; works key-less at a lower rate limit), so existing installs are unchanged. You can switch to **`camoufox`** — a local, key-less, JavaScript-capable browser fetcher — with no external dependency:
+
+```yaml
+tools:
+  - name: web_fetch
+    group: web
+    use: deerflow.community.web_fetch.tools:web_fetch_tool
+    backend: camoufox      # or jina (default)
+    fallback: jina         # optional: try this backend if the primary errors
+```
+
+Setup for the Camoufox backend (fish):
+
+```fish
+make config            # pick "camoufox" when prompted (or edit config.yaml)
+make fetch-browser     # one-time browser download (large; only when selected)
+make dev               # the camoufox extra installs automatically on selection
+```
+
+Camoufox reuses a single headless browser across requests, renders JS-heavy pages, and returns readable markdown. If the browser isn't downloaded yet, the tool result tells the agent exactly what to do (`run make fetch-browser`) instead of failing opaquely. A `web_fetch` of a private GitHub URL returns a hint to use git in the sandbox rather than a bare 404.
+
 ### Running the Application
 
 #### Deployment Sizing
@@ -742,6 +781,49 @@ This is the difference between a chatbot with tool access and an agent with an a
 ├── workspace/        ← agents' working directory
 └── outputs/          ← final deliverables
 ```
+
+#### Containerized sandbox as a one-command capability
+
+This fork makes the AIO container sandbox a zero-friction, self-managed capability. Instead of DeerFlow spawning a container per conversation, you can run **one** long-lived sandbox container and point DeerFlow at it:
+
+```fish
+# 1. Switch config.yaml to the containerized sandbox (rewrites only the
+#    sandbox: section, backs up to config.yaml.bak, keeps your environment:)
+make sandbox-enable
+
+# 2. Start the container (image is tag-pinned in docker/docker-compose.sandbox.yml,
+#    published loopback-only on 127.0.0.1:8091)
+make sandbox-up
+
+# 3. Run DeerFlow — `make dev` auto-starts the sandbox if it isn't already
+#    reachable, health-polls it, and fails fast with actionable guidance
+make dev
+```
+
+The resulting `sandbox:` block is:
+
+```yaml
+sandbox:
+  use: deerflow.community.aio_sandbox:AioSandboxProvider
+  base_url: http://localhost:8091
+  request_timeout: 120.0
+  environment:
+    GITHUB_TOKEN: $GITHUB_TOKEN
+```
+
+`$`-values resolve from the host env / `.env` at load. In this **external** mode DeerFlow never creates or destroys the container — its lifecycle is yours (`make sandbox-up` / `make sandbox-down` / `make sandbox-logs`). `make check` reports whether Docker, the `docker` group, compose, and port 8091 are ready, printing fish-compatible remediation for Arch and Debian. `make sandbox-disable` reverts to the default `LocalSandboxProvider` (host `bash` disabled, guardrail intact). Users who don't run any of this see **zero** behavior change and need no Docker.
+
+> Note: `mounts:` is honored only by `LocalSandboxProvider` and the auto-spawn AIO backend. In external mode, declare volumes in `docker/docker-compose.sandbox.yml` instead — DeerFlow logs a warning if it sees an ignored `mounts:` list.
+
+#### Private GitHub repositories
+
+When `GITHUB_TOKEN` is set in the sandbox `environment:` (the bundled compose file forwards it from your host), DeerFlow installs a git credential helper inside the container so the agent can clone private repos with a **plain** URL:
+
+```fish
+git clone https://github.com/owner/repo.git    # works; token never touches .git/config
+```
+
+The token never appears in remote URLs, `.git/config`, tool output, logs (container-run env values are redacted), or history. Scope the token to the repos you need (Contents: read).
 
 ### Context Engineering
 
