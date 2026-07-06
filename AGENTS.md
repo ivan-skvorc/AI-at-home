@@ -79,6 +79,9 @@ make start       # Start all services in production mode (local, optimized)
 make stop        # Stop all running services
 make up / down   # Build/stop the production Docker stack (browser at localhost:2026)
 make docker-start / docker-stop / docker-logs   # Docker development environment
+make sandbox-enable / sandbox-disable           # Switch config.yaml between the containerized AIO sandbox and the local sandbox
+make sandbox-up / sandbox-down / sandbox-logs   # Manage the standalone AIO sandbox container (docker/docker-compose.sandbox.yml, 127.0.0.1:8091)
+make fetch-browser                              # Download the Camoufox browser for the local web_fetch backend
 ```
 
 Run `make help` for the full list.

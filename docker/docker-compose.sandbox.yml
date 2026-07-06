@@ -1,0 +1,47 @@
+# Standalone AIO sandbox container for DeerFlow.
+#
+# This runs ONE externally-managed sandbox container that the DeerFlow agent
+# connects to when config.yaml selects:
+#
+#   sandbox:
+#     use: deerflow.community.aio_sandbox:AioSandboxProvider
+#     base_url: http://localhost:8091
+#     request_timeout: 120.0
+#     environment:
+#       GITHUB_TOKEN: $GITHUB_TOKEN
+#
+# Lifecycle is yours, not DeerFlow's: `make dev` will auto-start this container
+# when it's not already reachable, but it never destroys it. Manage it directly
+# with:
+#   make sandbox-up      # start (this file)
+#   make sandbox-logs    # follow logs
+#   make sandbox-down    # stop and remove
+#
+# The image is TAG-PINNED on purpose — do not change it to :latest. Bumping the
+# sandbox runtime should be a deliberate, reviewed change.
+
+services:
+  sandbox:
+    image: ghcr.io/agent-infra/sandbox:1.11.0 # keep tag-pinned; do not use :latest
+    container_name: deer-flow-sandbox-external
+    # Loopback-only: the sandbox API must not be exposed on the network. The
+    # agent (and `make dev` health checks) reach it at http://localhost:8091.
+    ports:
+      - "127.0.0.1:8091:8080"
+    environment:
+      # Forwarded from the host env / .env so the in-container git credential
+      # helper can authenticate private GitHub clones. Empty when unset — public
+      # repos still work. The token is never written to .git/config or logs.
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+    restart: unless-stopped
+    healthcheck:
+      # Same readiness endpoint the provider polls.
+      test: ["CMD", "curl", "-fsS", "http://localhost:8080/v1/sandbox"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    # AIO sandbox mounts belong here (the `mounts:` config key is ignored in
+    # external base_url mode). Uncomment and adjust to share host directories:
+    # volumes:
+    #   - /path/on/host:/path/in/container

@@ -6,7 +6,6 @@ from contextvars import ContextVar
 from pathlib import Path
 from typing import Any, Self
 
-import yaml
 from dotenv import load_dotenv
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, model_validator
 
@@ -15,6 +14,7 @@ from deerflow.config.agents_api_config import AgentsApiConfig, load_agents_api_c
 from deerflow.config.auth_config import AuthAppConfig
 from deerflow.config.channel_connections_config import ChannelConnectionsConfig
 from deerflow.config.checkpointer_config import CheckpointerConfig, load_checkpointer_config_from_dict
+from deerflow.config.config_lint import lint_unknown_config_keys
 from deerflow.config.database_config import DatabaseConfig
 from deerflow.config.extensions_config import ExtensionsConfig
 from deerflow.config.guardrails_config import GuardrailsConfig, load_guardrails_config_from_dict
@@ -38,6 +38,7 @@ from deerflow.config.token_usage_config import TokenUsageConfig
 from deerflow.config.tool_config import ToolConfig, ToolGroupConfig
 from deerflow.config.tool_output_config import ToolOutputConfig
 from deerflow.config.tool_search_config import ToolSearchConfig, load_tool_search_config_from_dict
+from deerflow.config.yaml_guard import safe_load_guarded
 
 load_dotenv()
 
@@ -244,8 +245,14 @@ class AppConfig(BaseModel):
             AppConfig: The loaded config.
         """
         resolved_path = cls.resolve_config_path(config_path)
+        # safe_load_guarded raises DuplicateKeyError (naming the key and both
+        # line numbers) instead of PyYAML's silent last-key-wins, so a config
+        # with e.g. two top-level `sandbox:` blocks fails loudly at startup.
         with open(resolved_path, encoding="utf-8") as f:
-            config_data = yaml.safe_load(f) or {}
+            config_data = safe_load_guarded(f) or {}
+
+        for lint_warning in lint_unknown_config_keys(config_data):
+            logger.warning("config.yaml: %s", lint_warning)
 
         # Check config version before processing
         cls._check_config_version(config_data, resolved_path)
@@ -347,7 +354,7 @@ class AppConfig(BaseModel):
 
         try:
             with open(example_path, encoding="utf-8") as f:
-                example_data = yaml.safe_load(f)
+                example_data = safe_load_guarded(f)
             raw = example_data.get("config_version", 0) if example_data else 0
             try:
                 example_version = int(raw)

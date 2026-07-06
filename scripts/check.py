@@ -57,6 +57,123 @@ def parse_node_major(version_text: str) -> int | None:
     return int(major_str)
 
 
+def in_docker_group() -> bool | None:
+    """Whether the current user can use Docker without sudo.
+
+    Returns True for root or a member of the `docker` group, False when not a
+    member, or None when membership can't be determined (e.g. non-POSIX).
+    """
+    try:
+        import os
+
+        if hasattr(os, "geteuid") and os.geteuid() == 0:
+            return True
+        import grp
+
+        try:
+            docker_gid = grp.getgrnam("docker").gr_gid
+        except KeyError:
+            return False
+        if docker_gid in os.getgroups():
+            return True
+        return False
+    except Exception:
+        return None
+
+
+def probe_port_8091() -> str:
+    """Classify localhost:8091: 'sandbox', 'occupied', or 'free'."""
+    import socket
+    import urllib.error
+    import urllib.request
+
+    try:
+        with urllib.request.urlopen("http://localhost:8091/v1/sandbox", timeout=2) as resp:
+            if resp.status == 200:
+                return "sandbox"
+    except urllib.error.HTTPError:
+        return "occupied"  # something answers HTTP but isn't the sandbox API
+    except (urllib.error.URLError, TimeoutError, OSError):
+        pass
+
+    # No HTTP response — is anything listening on the port at all?
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.settimeout(1)
+    try:
+        connected = sock.connect_ex(("127.0.0.1", 8091)) == 0
+    finally:
+        sock.close()
+    return "occupied" if connected else "free"
+
+
+def print_docker_remediation() -> None:
+    """Print fish-compatible Docker setup commands (Arch + Debian). Never runs them."""
+    print("    Install & start Docker + compose (run these yourself; commands are fish-compatible):")
+    print("      # Arch:")
+    print("      sudo pacman -S docker docker-compose")
+    print("      # Debian/Ubuntu:")
+    print("      sudo apt install docker.io docker-compose-v2")
+    print("      # Then enable the daemon and allow your user to use it:")
+    print("      sudo systemctl enable --now docker.service")
+    print("      sudo usermod -aG docker $USER")
+    print("      # Log out and back in for the docker group to take effect.")
+
+
+def check_docker_optional() -> None:
+    """Advisory Docker diagnostics for the containerized AIO sandbox.
+
+    Never fails `make check` — Docker is optional (default LocalSandboxProvider
+    needs none of it). Reports daemon reachability, docker-group membership,
+    compose availability, and whether port 8091 is free / already serving the
+    sandbox / occupied by something else.
+    """
+    print()
+    print("Checking Docker (optional — only for the containerized AIO sandbox)...")
+    docker_path = shutil.which("docker")
+    if not docker_path:
+        print("  INFO Docker not found (optional)")
+        print("    Required only for the containerized AIO sandbox (isolated agent execution,")
+        print("    private GitHub repo cloning) and the Docker deploy modes (make up / make docker-start).")
+        print("    The default LocalSandboxProvider works without it.")
+        print_docker_remediation()
+        return
+
+    docker_version = run_command(["docker", "--version"]) or "Docker (version unknown)"
+    daemon_ok = run_command(["docker", "info", "--format", "{{.ServerVersion}}"]) is not None
+    if daemon_ok:
+        print(f"  OK {docker_version} — daemon reachable")
+    else:
+        print(f"  INFO {docker_version} — installed, but the daemon is not reachable")
+        print("    Start it before using `make sandbox-up` / the AIO sandbox:")
+        print("      sudo systemctl enable --now docker.service")
+
+    group_state = in_docker_group()
+    if group_state is True:
+        print("  OK current user can use Docker without sudo")
+    elif group_state is False:
+        print("  INFO current user is not in the `docker` group (docker commands will need sudo)")
+        print("      sudo usermod -aG docker $USER")
+        print("      # Log out and back in for it to take effect.")
+
+    # docker compose (v2 plugin) or legacy docker-compose
+    compose_ok = run_command(["docker", "compose", "version"]) is not None or shutil.which("docker-compose") is not None
+    if compose_ok:
+        print("  OK docker compose available")
+    else:
+        print("  INFO docker compose not available (needed for `make sandbox-up`)")
+        print("      # Arch: sudo pacman -S docker-compose")
+        print("      # Debian/Ubuntu: sudo apt install docker-compose-v2")
+
+    port_state = probe_port_8091()
+    if port_state == "free":
+        print("  OK port 8091 is free (`make sandbox-up` will use it)")
+    elif port_state == "sandbox":
+        print("  OK an AIO sandbox is already serving on port 8091")
+    else:
+        print("  WARN port 8091 is occupied by something other than the AIO sandbox")
+        print("    Stop that process or change sandbox.base_url before `make sandbox-up`.")
+
+
 def main() -> int:
     configure_stdio()
     print("==========================================")
@@ -75,9 +192,7 @@ def main() -> int:
             if major is not None and major >= 22:
                 print(f"  OK Node.js {node_version.lstrip('v')} (>= 22 required)")
             else:
-                print(
-                    f"  FAIL Node.js {node_version.lstrip('v')} found, but version 22+ is required"
-                )
+                print(f"  FAIL Node.js {node_version.lstrip('v')} found, but version 22+ is required")
                 print("    Install from: https://nodejs.org/")
                 failed = True
         else:
@@ -143,25 +258,7 @@ def main() -> int:
         print("    Or visit: https://nginx.org/en/download.html")
         failed = True
 
-    print()
-    print("Checking Docker (optional)...")
-    docker_path = shutil.which("docker")
-    if docker_path:
-        docker_version = run_command(["docker", "--version"])
-        daemon_ok = run_command(["docker", "info", "--format", "{{.ServerVersion}}"]) is not None
-        version_label = docker_version or "Docker (version unknown)"
-        if daemon_ok:
-            print(f"  OK {version_label}")
-        else:
-            print(f"  INFO {version_label} — installed, but the daemon is not running")
-            print("    Needed only for the containerized AIO sandbox and Docker deploy modes.")
-            print("    Start Docker before enabling sandbox.use: deerflow.community.aio_sandbox:AioSandboxProvider")
-    else:
-        print("  INFO Docker not found (optional)")
-        print("    Required only for the containerized AIO sandbox (isolated agent execution,")
-        print("    private GitHub repo cloning) and the Docker deploy modes (make up / make docker-start).")
-        print("    The default LocalSandboxProvider works without it.")
-        print("    Install from: https://docs.docker.com/get-docker/")
+    check_docker_optional()
 
     print()
     if not failed:

@@ -52,6 +52,10 @@ tui = ["textual>=0.80"]
 # install command resolves cleanly without an "unknown extra" warning.
 groundroute = []
 ollama = ["langchain-ollama>=0.3.0"]
+# Local, key-less, JS-capable web_fetch backend (an alternative to the Jina
+# cloud reader). Large browser binaries are NOT pulled by `uv sync`; download
+# them separately with `make fetch-browser` (python -m camoufox fetch).
+camoufox = ["camoufox[geoip]>=0.4.11"]
 postgres = [
     "asyncpg>=0.29",
     "langgraph-checkpoint-postgres>=3.0.5",

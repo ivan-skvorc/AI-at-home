@@ -1,6 +1,10 @@
 # DeerFlow - Unified Development Environment
 
-.PHONY: help config config-upgrade check install setup doctor support-bundle detect-thread-boundaries detect-blocking-io dev dev-daemon start start-daemon stop up down clean docker-init docker-start docker-stop docker-logs docker-logs-frontend docker-logs-gateway searxng searxng-stop
+.PHONY: help config config-upgrade check install setup doctor support-bundle detect-thread-boundaries detect-blocking-io dev dev-daemon start start-daemon stop up down clean docker-init docker-start docker-stop docker-logs docker-logs-frontend docker-logs-gateway searxng searxng-stop sandbox-up sandbox-down sandbox-logs sandbox-enable sandbox-disable fetch-browser
+
+# docker compose shim: prefer the v2 plugin, fall back to legacy docker-compose.
+DOCKER_COMPOSE ?= docker compose
+SANDBOX_COMPOSE_FILE = docker/docker-compose.sandbox.yml
 
 BASH ?= bash
 BACKEND_UV_RUN = cd backend && uv run
@@ -28,6 +32,12 @@ help:
 	@echo "  make detect-blocking-io        - Inventory blocking IO that may block the backend event loop"
 	@echo "  make install         - Install all dependencies (frontend + backend + pre-commit hooks)"
 	@echo "  make setup-sandbox   - Pre-pull sandbox container image (recommended)"
+	@echo "  make sandbox-enable  - Switch config.yaml to the containerized AIO sandbox"
+	@echo "  make sandbox-disable - Switch config.yaml back to the local sandbox"
+	@echo "  make sandbox-up      - Start the standalone AIO sandbox container (localhost:8091)"
+	@echo "  make sandbox-down    - Stop and remove the AIO sandbox container"
+	@echo "  make sandbox-logs    - Follow the AIO sandbox container logs"
+	@echo "  make fetch-browser   - Download the Camoufox browser for the local web_fetch backend"
 	@echo "  make dev             - Start all services in development mode (with hot-reloading)"
 	@echo "  make searxng         - Start only the SearXNG search container (launch paths auto-start it when needed)"
 	@echo "  make searxng-stop    - Stop the standalone SearXNG search container"
@@ -97,6 +107,32 @@ install:
 # Pre-pull sandbox Docker image (optional but recommended)
 setup-sandbox:
 	@$(RUN_WITH_GIT_BASH) ./scripts/setup-sandbox.sh
+
+# Switch config.yaml between the local and containerized AIO sandbox (rewrites
+# only the sandbox: section, backs up to config.yaml.bak, preserves environment:)
+sandbox-enable:
+	@$(BACKEND_UV_RUN) python ../scripts/sandbox_toggle.py enable
+
+sandbox-disable:
+	@$(BACKEND_UV_RUN) python ../scripts/sandbox_toggle.py disable
+
+# Standalone AIO sandbox container (docker/docker-compose.sandbox.yml).
+# `make dev` auto-starts it when config selects base_url and it is unreachable;
+# these targets give manual control. Lifecycle is yours — dev never destroys it.
+sandbox-up:
+	$(DOCKER_COMPOSE) -f $(SANDBOX_COMPOSE_FILE) up -d
+
+sandbox-down:
+	$(DOCKER_COMPOSE) -f $(SANDBOX_COMPOSE_FILE) down
+
+sandbox-logs:
+	$(DOCKER_COMPOSE) -f $(SANDBOX_COMPOSE_FILE) logs --tail=100 -f
+
+# Download the Camoufox browser binaries for the local web_fetch backend.
+# Large download — only needed when tools.web_fetch backend is set to camoufox.
+# The python package itself installs automatically at `make dev` once selected.
+fetch-browser:
+	@$(BACKEND_UV_RUN) python -m camoufox fetch
 
 # Start all services in development mode (with hot-reloading)
 dev:
