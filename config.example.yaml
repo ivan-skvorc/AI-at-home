@@ -734,15 +734,15 @@ tools:
   # limit). Switch to `camoufox` for a local, key-less, JS-capable browser
   # fetch (no external dependency). To use Camoufox:
   #   1. set `backend: camoufox` below (or run `make config` and choose it)
-  #   2. deps install automatically on the next `make dev`
-  #      (or: cd backend; uv sync --extra camoufox)
-  #   3. download the browser once: make fetch-browser
+  #   2. the package AND browser binaries install automatically on the next
+  #      launch (make dev/start, docker-start, or up) — no manual step needed.
+  #      `make fetch-browser` is available to pre-download the browser by hand.
   # `fallback:` optionally chains a second backend when the first errors.
   - name: web_fetch
     group: web
     use: deerflow.community.web_fetch.tools:web_fetch_tool
     backend: jina
-    # backend: camoufox        # local browser fetch (run `make fetch-browser` once)
+    # backend: camoufox        # local browser fetch (installs automatically when selected)
     # fallback: jina           # try this backend if the primary one errors
     timeout: 10                # jina: request timeout; camoufox: page-load timeout (s)
     # max_content_length: 4096 # cap on returned characters (default 4096)

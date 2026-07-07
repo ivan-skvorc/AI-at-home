@@ -62,6 +62,20 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     done; \
     UV_INDEX_URL=${UV_INDEX_URL:-https://pypi.org/simple} uv sync $extras_flags'
 
+# Bake the Camoufox browser binaries into the image when the camoufox extra was
+# installed (config selected the camoufox web_fetch backend, propagated via the
+# UV_EXTRAS build-arg). Always create the cache dir so the runtime stage's COPY
+# succeeds even when the extra is absent. INSTALL_DIR resolves to
+# /root/.cache/camoufox (platformdirs user_cache_dir under root's HOME).
+# Best-effort: a failed fetch (e.g. no build network) leaves the browser absent
+# and the tool surfaces an actionable install hint at runtime.
+RUN --mount=type=cache,target=/root/.cache/uv \
+    mkdir -p /root/.cache/camoufox && cd backend && \
+    if uv run --no-sync python -c 'import camoufox' 2>/dev/null; then \
+        echo "Fetching Camoufox browser binaries..."; \
+        uv run --no-sync python -m camoufox fetch || echo "camoufox fetch failed; browser absent (rebuild with network or run 'make fetch-browser')"; \
+    fi
+
 # UTF-8 locale prevents UnicodeEncodeError on Chinese/emoji content in minimal
 # containers where locale configuration may be missing and the default encoding is not UTF-8.
 ENV LANG=C.UTF-8
@@ -105,6 +119,11 @@ WORKDIR /app
 
 # Copy backend with pre-built virtualenv from builder
 COPY --from=builder /app/backend ./backend
+
+# Camoufox browser binaries baked in the builder (an empty dir when the camoufox
+# extra was not selected). INSTALL_DIR = /root/.cache/camoufox at runtime (root),
+# so the camoufox web_fetch backend works without a runtime download.
+COPY --from=builder /root/.cache/camoufox /root/.cache/camoufox
 
 # Expose Gateway API port.
 EXPOSE 8001

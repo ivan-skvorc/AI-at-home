@@ -81,7 +81,7 @@ make up / down   # Build/stop the production Docker stack (browser at localhost:
 make docker-start / docker-stop / docker-logs   # Docker development environment
 make sandbox-enable / sandbox-disable           # Switch config.yaml between the containerized AIO sandbox and the local sandbox
 make sandbox-up / sandbox-down / sandbox-logs   # Manage the standalone AIO sandbox container (docker/docker-compose.sandbox.yml, 127.0.0.1:8091)
-make fetch-browser                              # Download the Camoufox browser for the local web_fetch backend
+make fetch-browser                              # Manually pre-download the Camoufox browser (also auto-installed on every launch path when the camoufox web_fetch backend is selected)
 ```
 
 Run `make help` for the full list.

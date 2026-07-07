@@ -247,11 +247,12 @@ Setup for the Camoufox backend (fish):
 
 ```fish
 make config            # pick "camoufox" when prompted (or edit config.yaml)
-make fetch-browser     # one-time browser download (large; only when selected)
-make dev               # the camoufox extra installs automatically on selection
+make dev               # package AND browser install automatically on selection
 ```
 
-Camoufox reuses a single headless browser across requests, renders JS-heavy pages, and returns readable markdown. If the browser isn't downloaded yet, the tool result tells the agent exactly what to do (`run make fetch-browser`) instead of failing opaquely. A `web_fetch` of a private GitHub URL returns a hint to use git in the sandbox rather than a bare 404.
+Once the backend is selected, **every launch path installs Camoufox end-to-end automatically** — the `camoufox` package (via the auto-detected uv extra) and the browser binaries (a large one-time download): local `make dev` / `make start`, Docker dev (`make docker-start`), and Docker prod (`make up`, baked into the image at build). `make fetch-browser` remains available to pre-download the browser by hand. The step is idempotent and best-effort: an already-present browser is a no-op, and a failed download (e.g. offline) never blocks startup.
+
+Camoufox reuses a single headless browser across requests, renders JS-heavy pages, and returns readable markdown. If the browser somehow isn't downloaded yet, the tool result tells the agent exactly what to do (`run make fetch-browser`) instead of failing opaquely. A `web_fetch` of a private GitHub URL returns a hint to use git in the sandbox rather than a bare 404.
 
 ### Running the Application
 

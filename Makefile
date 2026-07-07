@@ -128,17 +128,21 @@ sandbox-down:
 sandbox-logs:
 	$(DOCKER_COMPOSE) -f $(SANDBOX_COMPOSE_FILE) logs --tail=100 -f
 
-# Download the Camoufox browser binaries for the local web_fetch backend.
-# Large download — only needed when tools.web_fetch backend is set to camoufox.
-# The python package itself installs automatically at `make dev` once selected.
+# Manually pre-download the Camoufox browser binaries for the web_fetch backend.
+# Large download — only relevant when tools.web_fetch backend is set to camoufox.
+# Both the python package AND these browser binaries install automatically on
+# every launch path (make dev/start, docker-start, up) once camoufox is selected
+# (scripts/ensure_camoufox.py + the Dockerfile bake); this target is a manual
+# pre-fetch for when you want the download to happen ahead of first launch.
 fetch-browser:
 	@$(BACKEND_UV_RUN) python -m camoufox fetch
 
 # Start all services in development mode (with hot-reloading)
+# Ollama auto-populate + Camoufox browser fetch run inside scripts/serve.sh so
+# every local launch path (dev/start, foreground/daemon) shares one code path.
 dev:
 	@$(PYTHON) ./scripts/check.py
 	@mkdir -p .deer-flow/nginx-tmp
-	@$(PYTHON) ./scripts/sync-ollama-models.py --verbose || true
 	@$(RUN_WITH_GIT_BASH) ./scripts/serve.sh --dev
 
 # Start all services in production mode (with optimizations)

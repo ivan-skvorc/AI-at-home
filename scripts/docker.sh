@@ -288,6 +288,20 @@ start() {
         fi
     fi
 
+    # ── Ollama auto-populate ─────────────────────────────────────────────
+    # Reconcile config.yaml's managed models block with the host's installed
+    # Ollama models before the containers mount config.yaml. Runs on the HOST
+    # (config.yaml is mounted read-only into the gateway container) and writes
+    # base_url http://host.docker.internal:11434 via --container, since inside
+    # the container `localhost` is the container itself, not the Docker host
+    # where a host-run Ollama listens (host.docker.internal is mapped via
+    # extra_hosts in the compose files). Best-effort: unreachable daemon = no-op.
+    local ollama_python
+    ollama_python="$(_pick_python || true)"
+    if [ -n "$ollama_python" ]; then
+        "$ollama_python" "$SCRIPT_DIR/sync-ollama-models.py" --config "$PROJECT_ROOT/config.yaml" --container --verbose || true
+    fi
+
     # ── SearXNG (web_search backend) ─────────────────────────────────────
     # Reuse an existing SearXNG instance on this machine when containers can
     # reach it; otherwise start the bundled service (scripts/detect_searxng.py).
