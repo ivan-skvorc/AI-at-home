@@ -87,6 +87,18 @@ if ! uv sync --all-packages $EXTRAS_FLAGS; then
     uv sync --all-packages $EXTRAS_FLAGS
 fi
 
+# ── Camoufox browser ────────────────────────────────────────────────────────
+# When config selected the camoufox web_fetch backend, the `camoufox` uv extra
+# was installed above; fetch the browser binaries too so the backend works
+# without a manual `make fetch-browser`. Idempotent + best-effort: a no-op when
+# camoufox is not installed or the browser is already present. Requires the
+# repo `scripts/` dir mounted at /app/scripts (docker/docker-compose-dev.yaml);
+# INSTALL_DIR (~/.cache/camoufox) is a named volume so the download survives
+# container recreation.
+if [ -f /app/scripts/ensure_camoufox.py ]; then
+    uv run python /app/scripts/ensure_camoufox.py || true
+fi
+
 # ── Hand off to uvicorn ─────────────────────────────────────────────────────
 
 PYTHONPATH=. exec uv run uvicorn app.gateway.app:app \

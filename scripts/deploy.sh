@@ -311,6 +311,18 @@ if [ "$CMD" = "build" ]; then
     exit 0
 fi
 
+# ── Ollama auto-populate ──────────────────────────────────────────────────────
+# Reconcile config.yaml's managed models block with the host's installed Ollama
+# models before the containers mount config.yaml (mounted read-only into the
+# gateway). Runs on the HOST and writes base_url http://host.docker.internal:11434
+# via --container, since inside the container `localhost` is the container
+# itself, not the Docker host where a host-run Ollama listens (host.docker.internal
+# is mapped via extra_hosts in docker-compose.yaml). Best-effort: unreachable
+# daemon = no-op. Skipped for `build` (image-only) and `down`.
+if [ -n "$_detect_python" ]; then
+    "$_detect_python" "$REPO_ROOT/scripts/sync-ollama-models.py" --config "$DEER_FLOW_CONFIG_PATH" --container --verbose || true
+fi
+
 # ── Banner ────────────────────────────────────────────────────────────────────
 
 echo "=========================================="

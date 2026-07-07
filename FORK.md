@@ -12,17 +12,33 @@ Two features on top of upstream, both designed around running DeerFlow locally w
 
 The script is **idempotent and bounded** — it only owns content between its `BEGIN ollama-sync` / `END ollama-sync` markers. Anything you've hand-edited outside that block (cloud models, custom Ollama overrides) is never touched.
 
-It is hooked into `make dev`, so every time you start the dev server, your Ollama list is refreshed automatically. If the daemon is unreachable, the script no-ops with no changes.
+It is hooked into **every launch path**, so however you start DeerFlow your Ollama list is refreshed automatically. If the daemon is unreachable, the script no-ops with no changes:
+
+| Path | Where it runs | `base_url` written into entries |
+| --- | --- | --- |
+| `make dev` / `make start` (+ daemons) | `scripts/serve.sh` | `http://localhost:11434` (local runtime) |
+| `make docker-start` (Docker dev) | `scripts/docker.sh`, on the host before `compose up` | `http://host.docker.internal:11434` |
+| `make up` (Docker prod) | `scripts/deploy.sh`, on the host before `compose up` | `http://host.docker.internal:11434` |
+
+**Why the base_url differs on the Docker paths.** The sync always *queries* the host's Ollama over loopback, but inside a container `localhost` is the container itself, not the host where Ollama listens. So for the Docker paths the sync writes `http://host.docker.internal:11434` (the `--container` flag; `host.docker.internal` is mapped to the host gateway via `extra_hosts` in the compose files, and is already in the gateway's `NO_PROXY`). `config.yaml` is edited on the host **before** the containers mount it, so this works even though the gateway mounts `config.yaml` read-only. A genuinely remote `OLLAMA_HOST` (a non-loopback host) is recorded verbatim on every path, since it is reachable from both host and container.
+
+> **Host-run Ollama + Docker:** for `host.docker.internal` to reach it, Ollama must listen on all interfaces (`OLLAMA_HOST=0.0.0.0 ollama serve`), not just `127.0.0.1` (its default). Otherwise the container can resolve the host but the connection is refused.
 
 ```bash
-# Manual run
+# Manual run (local runtime — base_url localhost)
 python3 scripts/sync-ollama-models.py --verbose
+
+# Manual run for a containerized runtime (base_url host.docker.internal)
+python3 scripts/sync-ollama-models.py --container --verbose
 
 # Dry-run (prints proposed config to stdout, doesn't write)
 python3 scripts/sync-ollama-models.py --dry-run
 
-# Remote Ollama
+# Remote Ollama (queried and written verbatim on every path)
 OLLAMA_HOST=http://server.lan:11434 python3 scripts/sync-ollama-models.py
+
+# Explicit base_url override (wins over --container)
+python3 scripts/sync-ollama-models.py --base-url http://ollama:11434
 ```
 
 ### 2. Per-thread subagent model override (Ultra mode)
@@ -91,7 +107,7 @@ git fetch upstream
 git merge upstream/main      # or rebase, your call
 ```
 
-The fork's added files (`scripts/sync-ollama-models.py`, the input-box dropdown JSX, the task_tool.py override) are unlikely to conflict with upstream changes since they're either new files or additive blocks on stable anchors. If upstream restructures `task_tool.py` or `input-box.tsx`, expect a small merge.
+The fork's added files (`scripts/sync-ollama-models.py`, `scripts/ensure_camoufox.py`, the input-box dropdown JSX, the task_tool.py override) are unlikely to conflict with upstream changes since they're either new files or additive blocks on stable anchors. The launch-script hooks (Ollama sync + Camoufox fetch in `scripts/serve.sh`, `scripts/docker.sh`, `scripts/deploy.sh`, `docker/dev-entrypoint.sh`, `backend/Dockerfile`) are additive blocks on stable anchors. If upstream restructures `task_tool.py`, `input-box.tsx`, or those launch scripts, expect a small merge.
 
 For environments that cannot reach `github.com/bytedance/deer-flow` directly (e.g. network-restricted CI or sandboxed agents), the **Mirror Upstream** workflow (`.github/workflows/mirror-upstream.yml`, manual `workflow_dispatch`) fetches upstream `main` on a GitHub runner and publishes the delta as a git bundle on the `upstream-sync-data` branch of this fork. Fetch that branch, extract the bundle parts (`cat upstream-delta.bundle.part.* > upstream.bundle`), and `git fetch <bundle> upstream-main-mirror` to get full upstream history locally. (The workflow cannot push the mirrored branch directly: `GITHUB_TOKEN` is not allowed to create or update workflow files, and upstream regularly changes theirs.)
 
@@ -103,6 +119,18 @@ Upstream supports converting PDF, DOCX, PPTX, and XLSX uploads to Markdown so th
 - Writes the converted Markdown under **two filenames** — `<original>.md` (upstream behavior) **and** `<original>.<ext>.md` (e.g. `report.pdf.md`). Agents tend to hallucinate one convention or the other; writing both eliminates the "file not found" failure mode. Cleanup on delete handles both names.
 
 To turn the feature on, set `uploads.auto_convert_documents: true` in your `config.yaml`. `config.yaml` is gitignored, so the toggle ships per-install rather than in the fork.
+
+## Local Camoufox `web_fetch` backend
+
+Upstream's `web_fetch` tool defaults to the `jina` cloud reader. This fork adds a pluggable dispatcher and a **local, key-less, JavaScript-capable** backend built on [Camoufox](https://github.com/daijro/camoufox) (a stealth Firefox), selectable with `backend: camoufox` under the `web_fetch` tool in `config.yaml`.
+
+Camoufox needs two things: the `camoufox` Python package **and** its browser binaries (a large one-time download). Both install **automatically on every launch path** once the backend is selected — you never have to run `make fetch-browser` by hand:
+
+- **Local** (`make dev` / `make start`, foreground or daemon): `scripts/serve.sh` auto-detects the `camoufox` uv extra from `config.yaml`, installs it, then runs `scripts/ensure_camoufox.py` to fetch the browser.
+- **Docker dev** (`make docker-start`): `docker/dev-entrypoint.sh` runs the same `ensure_camoufox.py` after `uv sync`; the download persists in the `gateway-camoufox` volume across container recreation.
+- **Docker prod** (`make up`): the browser is **baked into the image** at build time (`backend/Dockerfile` builder stage runs `camoufox fetch` when the extra is present) and copied into the runtime stage, so no runtime download is needed.
+
+Every path is **idempotent and best-effort**: an already-present browser is a no-op (checked via camoufox's `version.json`), and a failed download (e.g. offline) never blocks startup — the tool then returns an actionable install hint at call time. `make fetch-browser` still works for a manual pre-download.
 
 ## Credits
 

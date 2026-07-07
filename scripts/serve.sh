@@ -391,6 +391,20 @@ if [ -n "$DETECT_PYTHON" ]; then
     UV_EXTRAS_FLAGS=$("$DETECT_PYTHON" "$REPO_ROOT/scripts/detect_uv_extras.py" || { echo "[serve.sh] detect_uv_extras.py failed (exit $?) — proceeding without extras" >&2; echo ""; })
 fi
 
+# ── Ollama auto-populate ─────────────────────────────────────────────────────
+# Reconcile config.yaml's managed models block with the models installed in the
+# local (or OLLAMA_HOST) Ollama daemon before the gateway reads config. This
+# runtime is local, so entries keep base_url http://localhost:11434 (no
+# --container rewrite — that is for the Docker launch paths). Best-effort: an
+# unreachable daemon is a no-op, and a duplicate-key abort is swallowed here
+# because the gateway re-checks and fails loudly on startup anyway.
+if [ -n "$DETECT_PYTHON" ]; then
+    _ollama_config="config.yaml"
+    [ -f "backend/config.yaml" ] && _ollama_config="backend/config.yaml"
+    [ -n "$DEER_FLOW_CONFIG_PATH" ] && [ -f "$DEER_FLOW_CONFIG_PATH" ] && _ollama_config="$DEER_FLOW_CONFIG_PATH"
+    "$DETECT_PYTHON" "$REPO_ROOT/scripts/sync-ollama-models.py" --config "$_ollama_config" --verbose || true
+fi
+
 if ! $SKIP_INSTALL; then
     echo "Syncing dependencies..."
     if [ -n "$UV_EXTRAS_FLAGS" ]; then
@@ -405,6 +419,14 @@ if ! $SKIP_INSTALL; then
 else
     echo "⏩ Skipping dependency install (--skip-install)"
 fi
+
+# ── Camoufox browser ─────────────────────────────────────────────────────────
+# When config selects the camoufox web_fetch backend, detect_uv_extras added the
+# `camoufox` uv extra above and `uv sync` installed the package. Fetch the
+# browser binaries too so the backend works end-to-end without a manual
+# `make fetch-browser`. Idempotent + best-effort (no-op when camoufox is not
+# installed or the browser is already present).
+(cd backend && uv run python "$REPO_ROOT/scripts/ensure_camoufox.py") || true
 
 # ── SearXNG (web_search backend) ─────────────────────────────────────────────
 # Reuse an existing SearXNG instance on this machine when one is running;

@@ -77,3 +77,62 @@ class TestSyncIdempotence:
         removed = sync_ollama.sync(with_block, [])
         assert sync_ollama.BEGIN_MARKER not in removed
         assert "hand-edited" in removed
+
+
+class TestBaseUrl:
+    """base_url written into entries is decoupled from the query host so the
+    Docker launch paths can record a container-reachable URL (#Docker path)."""
+
+    def test_default_base_url_is_localhost(self):
+        out = sync_ollama.sync(CLEAN_CONFIG, [("qwen3:8b", ["tools"])])
+        assert "base_url: http://localhost:11434" in out
+
+    def test_render_entry_uses_provided_base_url(self):
+        entry = sync_ollama.render_entry("qwen3:8b", ["tools"], "http://host.docker.internal:11434")
+        assert "base_url: http://host.docker.internal:11434" in entry
+
+    def test_sync_writes_container_base_url(self):
+        out = sync_ollama.sync(CLEAN_CONFIG, [("qwen3:8b", ["tools"])], base_url="http://host.docker.internal:11434")
+        assert "base_url: http://host.docker.internal:11434" in out
+        assert "base_url: http://localhost:11434" not in out
+
+    def test_container_base_url_double_sync_idempotent(self):
+        base = "http://host.docker.internal:11434"
+        models = [("qwen3:8b", ["tools"])]
+        once = sync_ollama.sync(CLEAN_CONFIG, models, base_url=base)
+        twice = sync_ollama.sync(once, models, base_url=base)
+        assert once == twice
+
+
+class TestContainerizeBaseUrl:
+    def test_localhost_is_rewritten_to_host_gateway(self):
+        assert sync_ollama.containerize_base_url("http://localhost:11434") == "http://host.docker.internal:11434"
+
+    def test_loopback_ip_is_rewritten(self):
+        assert sync_ollama.containerize_base_url("http://127.0.0.1:11434") == "http://host.docker.internal:11434"
+
+    def test_ipv6_loopback_is_rewritten(self):
+        assert sync_ollama.containerize_base_url("http://[::1]:11434") == "http://host.docker.internal:11434"
+
+    def test_port_is_preserved(self):
+        assert sync_ollama.containerize_base_url("http://localhost:1234") == "http://host.docker.internal:1234"
+
+    def test_remote_host_is_left_unchanged(self):
+        # A genuinely remote Ollama is already reachable from a container.
+        assert sync_ollama.containerize_base_url("http://server.lan:11434") == "http://server.lan:11434"
+
+
+class TestResolveBaseUrl:
+    def test_explicit_base_url_wins(self):
+        resolved = sync_ollama.resolve_base_url("http://localhost:11434", "http://custom:9999", container=True)
+        assert resolved == "http://custom:9999"
+
+    def test_container_rewrites_loopback(self):
+        resolved = sync_ollama.resolve_base_url("http://localhost:11434", None, container=True)
+        assert resolved == "http://host.docker.internal:11434"
+
+    def test_no_flags_keeps_query_host(self):
+        # Non-container local runtime records the query host verbatim, so a
+        # remote OLLAMA_HOST is written correctly instead of a bogus localhost.
+        resolved = sync_ollama.resolve_base_url("http://server.lan:11434", None, container=False)
+        assert resolved == "http://server.lan:11434"
