@@ -232,25 +232,24 @@ This fork turns silent `config.yaml` mistakes into clear startup errors:
 
 #### Web fetch: local browser or cloud reader
 
-The `web_fetch` tool has a pluggable backend. The default is **`jina`** (cloud reader API; works key-less at a lower rate limit), so existing installs are unchanged. You can switch to **`camoufox`** — a local, key-less, JavaScript-capable browser fetcher — with no external dependency:
+The `web_fetch` tool has a pluggable backend. The default is **`camoufox`** — a local, key-less, JavaScript-capable browser fetcher (a stealth Firefox) with no external dependency or API key. You can switch to **`jina`** (cloud reader API; works key-less at a lower rate limit):
 
 ```yaml
 tools:
   - name: web_fetch
     group: web
     use: deerflow.community.web_fetch.tools:web_fetch_tool
-    backend: camoufox      # or jina (default)
+    backend: camoufox      # default; or jina (cloud reader API)
     fallback: jina         # optional: try this backend if the primary errors
 ```
 
-Setup for the Camoufox backend (fish):
+To switch to the Jina cloud reader instead (fish):
 
 ```fish
-make config            # pick "camoufox" when prompted (or edit config.yaml)
-make dev               # package AND browser install automatically on selection
+make config            # pick "jina" when prompted (or edit config.yaml)
 ```
 
-Once the backend is selected, **every launch path installs Camoufox end-to-end automatically** — the `camoufox` package (via the auto-detected uv extra) and the browser binaries (a large one-time download): local `make dev` / `make start`, Docker dev (`make docker-start`), and Docker prod (`make up`, baked into the image at build). `make fetch-browser` remains available to pre-download the browser by hand. The step is idempotent and best-effort: an already-present browser is a no-op, and a failed download (e.g. offline) never blocks startup.
+Because Camoufox is the default, **every launch path installs it end-to-end automatically** — the `camoufox` package (via the auto-detected uv extra) and the browser binaries (a large one-time download): local `make dev` / `make start`, Docker dev (`make docker-start`), and Docker prod (`make up`, baked into the image at build). `make fetch-browser` remains available to pre-download the browser by hand. The step is idempotent and best-effort: an already-present browser is a no-op, and a failed download (e.g. offline) never blocks startup.
 
 Camoufox reuses a single headless browser across requests, renders JS-heavy pages, and returns readable markdown. If the browser somehow isn't downloaded yet, the tool result tells the agent exactly what to do (`run make fetch-browser`) instead of failing opaquely. A `web_fetch` of a private GitHub URL returns a hint to use git in the sandbox rather than a bare 404.
 
