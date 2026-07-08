@@ -122,9 +122,9 @@ To turn the feature on, set `uploads.auto_convert_documents: true` in your `conf
 
 ## Local Camoufox `web_fetch` backend
 
-Upstream's `web_fetch` tool defaults to the `jina` cloud reader. This fork adds a pluggable dispatcher and a **local, key-less, JavaScript-capable** backend built on [Camoufox](https://github.com/daijro/camoufox) (a stealth Firefox), selectable with `backend: camoufox` under the `web_fetch` tool in `config.yaml`.
+Upstream's `web_fetch` tool defaults to the `jina` cloud reader. This fork adds a pluggable dispatcher and a **local, key-less, JavaScript-capable** backend built on [Camoufox](https://github.com/daijro/camoufox) (a stealth Firefox), and **makes it the default** — the shipped `config.example.yaml` sets `backend: camoufox` under the `web_fetch` tool. Switch back to the cloud reader with `backend: jina` (or `make config`).
 
-Camoufox needs two things: the `camoufox` Python package **and** its browser binaries (a large one-time download). Both install **automatically on every launch path** once the backend is selected — you never have to run `make fetch-browser` by hand:
+Camoufox needs two things: the `camoufox` Python package **and** its browser binaries (a large one-time download). Because it is the default backend, both install **automatically on every launch path** — you never have to run `make fetch-browser` by hand:
 
 - **Local** (`make dev` / `make start`, foreground or daemon): `scripts/serve.sh` auto-detects the `camoufox` uv extra from `config.yaml`, installs it, then runs `scripts/ensure_camoufox.py` to fetch the browser.
 - **Docker dev** (`make docker-start`): `docker/dev-entrypoint.sh` runs the same `ensure_camoufox.py` after `uv sync`; the download persists in the `gateway-camoufox` volume across container recreation.

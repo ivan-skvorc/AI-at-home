@@ -43,21 +43,19 @@ def _offer_sandbox_choice(project_root: Path) -> None:
 
 
 def _offer_web_fetch_choice(project_root: Path) -> None:
-    """Offer to switch web_fetch from the Jina cloud API to the local Camoufox browser."""
-    if not _prompt_yes_no("Use the local Camoufox browser for web_fetch instead of the Jina cloud API?"):
+    """Offer to switch web_fetch from the default local Camoufox browser to the Jina cloud API."""
+    if not _prompt_yes_no("Use the Jina cloud reader API for web_fetch instead of the default local Camoufox browser?"):
         return
     config_path = project_root / "config.yaml"
     try:
         text = config_path.read_text(encoding="utf-8")
     except OSError:
         return
-    # Flip only the web_fetch dispatcher's `backend: jina` to `backend: camoufox`.
-    updated = text.replace("    backend: jina\n", "    backend: camoufox\n", 1)
+    # Flip only the web_fetch dispatcher's `backend: camoufox` to `backend: jina`.
+    updated = text.replace("    backend: camoufox\n", "    backend: jina\n", 1)
     if updated != text:
         config_path.write_text(updated, encoding="utf-8")
-        print("  web_fetch backend set to camoufox.")
-        print("  Camoufox installs automatically on the next `make dev`.")
-        print("  Then download the browser once with: make fetch-browser")
+        print("  web_fetch backend set to jina (cloud reader API, no browser download needed).")
     else:
         print("  Could not update the web_fetch backend automatically; edit config.yaml by hand.")
 

@@ -730,21 +730,21 @@ tools:
   #   # api_key: $EXA_API_KEY
 
   # Web fetch tool — pluggable backend dispatcher.
-  # Default backend is `jina` (cloud reader API, works key-less at a lower rate
-  # limit). Switch to `camoufox` for a local, key-less, JS-capable browser
-  # fetch (no external dependency). To use Camoufox:
-  #   1. set `backend: camoufox` below (or run `make config` and choose it)
-  #   2. the package AND browser binaries install automatically on the next
-  #      launch (make dev/start, docker-start, or up) — no manual step needed.
-  #      `make fetch-browser` is available to pre-download the browser by hand.
+  # Default backend is `camoufox`: a local, key-less, JavaScript-capable browser
+  # fetch (a stealth Firefox) with no external dependency or API key. The
+  # `camoufox` package AND its browser binaries install automatically on the
+  # next launch (make dev/start, docker-start, or up) — no manual step needed;
+  # `make fetch-browser` can pre-download the browser by hand.
+  # Switch to `jina` (cloud reader API, key-less at a lower rate limit) by
+  # setting `backend: jina` below (or run `make config` and choose it).
   # `fallback:` optionally chains a second backend when the first errors.
   - name: web_fetch
     group: web
     use: deerflow.community.web_fetch.tools:web_fetch_tool
-    backend: jina
-    # backend: camoufox        # local browser fetch (installs automatically when selected)
+    backend: camoufox
+    # backend: jina            # cloud reader API (key-less, lower rate limit)
     # fallback: jina           # try this backend if the primary one errors
-    timeout: 10                # jina: request timeout; camoufox: page-load timeout (s)
+    timeout: 10                # camoufox: page-load timeout; jina: request timeout (s)
     # max_content_length: 4096 # cap on returned characters (default 4096)
     # Optional proxy for restricted networks / Docker / WSL (jina backend).
     # Use host.docker.internal instead of 127.0.0.1 when the proxy runs on the host.
