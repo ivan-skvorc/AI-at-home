@@ -10,6 +10,7 @@ If Ollama is not running, the script exits cleanly with no changes.
 Usage:
     python3 scripts/sync-ollama-models.py [--config PATH] [--dry-run] [--verbose]
                                           [--base-url URL] [--container]
+                                          [--num-ctx-cap N]
 
 Environment:
     OLLAMA_HOST: override Ollama endpoint (default: http://localhost:11434)
@@ -20,6 +21,15 @@ runtime (Docker paths) queries the host's Ollama over loopback but must record a
 ``base_url`` the container can reach. ``--container`` rewrites a loopback query
 host to ``host.docker.internal`` for the written entries; ``--base-url`` sets it
 explicitly (wins over ``--container``).
+
+Context window: Ollama defaults ``num_ctx`` to 2048 tokens regardless of what a
+model actually supports, which silently truncates the agent's context (system
+prompt + tools + skills + memory + conversation) and is smaller than the 8192
+``num_predict`` output budget the entries request. Each entry is therefore
+written with an explicit ``num_ctx`` read from the model's native context length
+(``/api/show`` -> ``model_info``), clamped to ``--num-ctx-cap`` (default 32768)
+so a 128K-native model does not allocate an OOM-sized KV cache on a typical local
+GPU. Pass ``--num-ctx-cap 0`` to use each model's full native length uncapped.
 """
 
 from __future__ import annotations
@@ -44,6 +54,13 @@ DOCKER_HOST_ALIAS = "host.docker.internal"
 BEGIN_MARKER = "# === BEGIN ollama-sync (auto-generated; regenerated on each run) ==="
 END_MARKER = "# === END ollama-sync ==="
 INDENT = "  "  # entries inside models: are at 2-space indent
+# Output-token budget requested per entry (Ollama option: num_predict).
+DEFAULT_NUM_PREDICT = 8192
+# Ceiling for the auto-written context window (Ollama option: num_ctx). A model
+# may advertise 128K+ natively, but allocating that much KV cache can OOM a
+# typical local GPU, so the auto-populated value is clamped here; users can raise
+# it by hand (or pass --num-ctx-cap 0 for uncapped) on big-memory rigs.
+DEFAULT_NUM_CTX_CAP = 32768
 
 
 def normalize_host(host: str) -> str:
@@ -93,8 +110,8 @@ def fetch_tags(host: str, timeout: float = 2.0):
     return [m.get("name") for m in data.get("models", []) if m.get("name")]
 
 
-def fetch_capabilities(host: str, name: str, timeout: float = 5.0):
-    """Return list of capability strings from /api/show; [] on error."""
+def fetch_show(host: str, name: str, timeout: float = 5.0) -> dict:
+    """Return the parsed /api/show payload for a model; {} on error."""
     try:
         req = urllib.request.Request(
             f"{host}/api/show",
@@ -104,19 +121,71 @@ def fetch_capabilities(host: str, name: str, timeout: float = 5.0):
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             data = json.loads(resp.read())
     except (urllib.error.URLError, TimeoutError, ConnectionError, json.JSONDecodeError):
-        return []
-    return data.get("capabilities") or []
+        return {}
+    return data if isinstance(data, dict) else {}
 
 
-def render_entry(name: str, caps: list, base_url: str = DEFAULT_HOST) -> str:
-    """Render a single Ollama model entry as YAML at 2-space indent."""
+def parse_capabilities(show: dict) -> list:
+    """Return the list of capability strings from an /api/show payload."""
+    return show.get("capabilities") or []
+
+
+def parse_context_length(show: dict) -> int | None:
+    """Return the model's native context length from an /api/show payload.
+
+    Ollama reports it under ``model_info`` as ``<architecture>.context_length``
+    (e.g. ``qwen3.context_length``). Falls back to any ``*.context_length`` key,
+    and returns None when the payload does not expose it.
+    """
+    info = show.get("model_info")
+    if not isinstance(info, dict):
+        return None
+    arch = info.get("general.architecture")
+    if isinstance(arch, str):
+        value = info.get(f"{arch}.context_length")
+        if isinstance(value, (int, float)) and not isinstance(value, bool) and value > 0:
+            return int(value)
+    for key, value in info.items():
+        if key.endswith(".context_length") and isinstance(value, (int, float)) and not isinstance(value, bool) and value > 0:
+            return int(value)
+    return None
+
+
+def resolve_num_ctx(native: int | None, cap: int = DEFAULT_NUM_CTX_CAP) -> int | None:
+    """Resolve the ``num_ctx`` to write from a model's native context length.
+
+    Returns the native length clamped to ``cap`` (``cap <= 0`` disables the
+    clamp), or None when the native length is unknown — in which case no
+    ``num_ctx`` is written and Ollama keeps its own default.
+    """
+    if not native or native <= 0:
+        return None
+    if cap and cap > 0:
+        return min(native, cap)
+    return native
+
+
+def render_entry(name: str, caps: list, base_url: str = DEFAULT_HOST, num_ctx: int | None = None) -> str:
+    """Render a single Ollama model entry as YAML at 2-space indent.
+
+    When ``num_ctx`` is known, the entry pins the context window and keeps the
+    ``num_predict`` output budget below it (reserving at least half the window
+    for the prompt) so the two options stay consistent.
+    """
+    num_predict = DEFAULT_NUM_PREDICT
+    if num_ctx is not None:
+        num_predict = max(1, min(DEFAULT_NUM_PREDICT, num_ctx // 2))
     lines = [
         f"{INDENT}- name: {name}",
         f"{INDENT}  display_name: {name} (Ollama)",
         f"{INDENT}  use: langchain_ollama:ChatOllama",
         f"{INDENT}  model: {name}",
         f"{INDENT}  base_url: {base_url}",
-        f"{INDENT}  num_predict: 8192",
+    ]
+    if num_ctx is not None:
+        lines.append(f"{INDENT}  num_ctx: {num_ctx}")
+    lines += [
+        f"{INDENT}  num_predict: {num_predict}",
         f"{INDENT}  temperature: 0.7",
     ]
     if "thinking" in caps:
@@ -210,8 +279,12 @@ def sync(text: str, models: list, base_url: str = DEFAULT_HOST) -> str:
     if models:
         new_section.append("")
         new_section.append(f"{INDENT}{BEGIN_MARKER}")
-        for name, caps in models:
-            new_section.append(render_entry(name, caps, base_url))
+        for entry in models:
+            # Entries are (name, caps) or (name, caps, num_ctx); num_ctx is
+            # optional so pre-existing 2-tuple callers keep working.
+            name, caps = entry[0], entry[1]
+            num_ctx = entry[2] if len(entry) > 2 else None
+            new_section.append(render_entry(name, caps, base_url, num_ctx=num_ctx))
         new_section.append(f"{INDENT}{END_MARKER}")
 
     new_section.append("")  # blank separator before next top-level key
@@ -230,6 +303,7 @@ def main() -> int:
     ap.add_argument("--host", default=DEFAULT_HOST, help=f"Ollama endpoint to query (default: {DEFAULT_HOST}; OLLAMA_HOST env wins)")
     ap.add_argument("--base-url", default=None, help="base_url written into each entry (default: the query host). Wins over --container.")
     ap.add_argument("--container", action="store_true", help=f"Rewrite a loopback query host to {DOCKER_HOST_ALIAS} for the written base_url (Docker launch paths)")
+    ap.add_argument("--num-ctx-cap", type=int, default=DEFAULT_NUM_CTX_CAP, help=f"Clamp the written num_ctx to this many tokens (default: {DEFAULT_NUM_CTX_CAP}; 0 = use each model's full native context length)")
     ap.add_argument("--dry-run", action="store_true", help="Print result to stdout, do not write")
     ap.add_argument("--verbose", action="store_true")
     args = ap.parse_args()
@@ -247,10 +321,13 @@ def main() -> int:
 
     models = []
     for name in names:
-        caps = fetch_capabilities(host, name)
-        models.append((name, caps))
+        show = fetch_show(host, name)
+        caps = parse_capabilities(show)
+        num_ctx = resolve_num_ctx(parse_context_length(show), cap=args.num_ctx_cap)
+        models.append((name, caps, num_ctx))
         if args.verbose:
-            print(f"  - {name}  caps={caps}", file=sys.stderr)
+            ctx_note = num_ctx if num_ctx is not None else "unknown (Ollama default)"
+            print(f"  - {name}  caps={caps}  num_ctx={ctx_note}", file=sys.stderr)
 
     # Tool-capable first, then alphabetical (matches dropdown order in UI)
     models.sort(key=lambda m: (0 if "tools" in m[1] else 1, m[0]))
