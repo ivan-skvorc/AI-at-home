@@ -136,3 +136,85 @@ class TestResolveBaseUrl:
         # remote OLLAMA_HOST is written correctly instead of a bogus localhost.
         resolved = sync_ollama.resolve_base_url("http://server.lan:11434", None, container=False)
         assert resolved == "http://server.lan:11434"
+
+
+class TestParseContextLength:
+    """The model's native context window is read from /api/show -> model_info."""
+
+    def test_reads_architecture_scoped_key(self):
+        show = {"model_info": {"general.architecture": "qwen3", "qwen3.context_length": 40960}}
+        assert sync_ollama.parse_context_length(show) == 40960
+
+    def test_falls_back_to_any_context_length_key(self):
+        # Architecture missing/mismatched: still find the *.context_length entry.
+        show = {"model_info": {"llama.context_length": 8192}}
+        assert sync_ollama.parse_context_length(show) == 8192
+
+    def test_missing_model_info_returns_none(self):
+        assert sync_ollama.parse_context_length({"capabilities": ["tools"]}) is None
+
+    def test_missing_context_length_returns_none(self):
+        show = {"model_info": {"general.architecture": "phi3"}}
+        assert sync_ollama.parse_context_length(show) is None
+
+    def test_bool_is_not_treated_as_context_length(self):
+        # bool is a subclass of int — guard against `enable: true` style keys.
+        show = {"model_info": {"x.context_length": True}}
+        assert sync_ollama.parse_context_length(show) is None
+
+    def test_float_is_coerced_to_int(self):
+        show = {"model_info": {"general.architecture": "gemma", "gemma.context_length": 8192.0}}
+        assert sync_ollama.parse_context_length(show) == 8192
+
+
+class TestResolveNumCtx:
+    def test_clamps_native_to_cap(self):
+        assert sync_ollama.resolve_num_ctx(131072, cap=32768) == 32768
+
+    def test_native_below_cap_is_kept(self):
+        assert sync_ollama.resolve_num_ctx(8192, cap=32768) == 8192
+
+    def test_cap_zero_uses_full_native(self):
+        assert sync_ollama.resolve_num_ctx(131072, cap=0) == 131072
+
+    def test_unknown_native_returns_none(self):
+        assert sync_ollama.resolve_num_ctx(None) is None
+        assert sync_ollama.resolve_num_ctx(0) is None
+
+
+class TestRenderEntryNumCtx:
+    def test_num_ctx_written_when_known(self):
+        entry = sync_ollama.render_entry("qwen3:8b", ["tools"], num_ctx=32768)
+        assert "num_ctx: 32768" in entry
+
+    def test_num_predict_never_exceeds_context(self):
+        # A small context window shrinks the output budget so the prompt still fits.
+        entry = sync_ollama.render_entry("old:7b", ["tools"], num_ctx=4096)
+        assert "num_ctx: 4096" in entry
+        assert "num_predict: 2048" in entry
+
+    def test_default_num_predict_when_context_is_large(self):
+        entry = sync_ollama.render_entry("qwen3:8b", ["tools"], num_ctx=32768)
+        assert f"num_predict: {sync_ollama.DEFAULT_NUM_PREDICT}" in entry
+
+    def test_no_num_ctx_line_when_unknown(self):
+        # Backward-compatible: unknown context length leaves Ollama's own default.
+        entry = sync_ollama.render_entry("mystery", ["tools"])
+        assert "num_ctx" not in entry
+        assert f"num_predict: {sync_ollama.DEFAULT_NUM_PREDICT}" in entry
+
+
+class TestSyncNumCtxIdempotence:
+    def test_three_tuple_entries_write_num_ctx_and_stay_idempotent(self):
+        models = [("qwen3:8b", ["tools"], 32768), ("llava:13b", ["vision"], 8192)]
+        once = sync_ollama.sync(CLEAN_CONFIG, models)
+        twice = sync_ollama.sync(once, models)
+        assert once == twice
+        assert "num_ctx: 32768" in once
+        assert "num_ctx: 8192" in once
+        assert "hand-edited" in once
+
+    def test_two_tuple_entries_still_supported(self):
+        # Pre-existing (name, caps) callers keep working — no num_ctx emitted.
+        once = sync_ollama.sync(CLEAN_CONFIG, [("qwen3:8b", ["tools"])])
+        assert "num_ctx" not in once

@@ -10,6 +10,8 @@ Two features on top of upstream, both designed around running DeerFlow locally w
 
 `scripts/sync-ollama-models.py` queries the local Ollama daemon (or remote, via `OLLAMA_HOST`) and reconciles `config.yaml`'s `models:` section with whatever you have installed via `ollama pull`. Capabilities (`thinking`, `vision`, `tools`) are detected via `/api/show` and translated into DeerFlow's `supports_*` flags.
 
+**Context window (`num_ctx`).** Ollama defaults `num_ctx` to just **2048 tokens** regardless of what a model actually supports — small enough to silently truncate the agent's context (system prompt + tools + skills + memory + conversation), and smaller than the 8192-token `num_predict` output budget the entries request. The sync therefore reads each model's **native context length** from `/api/show` (`model_info.<arch>.context_length`) and writes an explicit `num_ctx`, clamped to **32768** so a 128K-native model doesn't allocate an OOM-sized KV cache on a typical local GPU. Override the clamp with `--num-ctx-cap N` (or `--num-ctx-cap 0` for each model's full native length). `num_predict` is kept at or below half the window so there's always room for the prompt.
+
 The script is **idempotent and bounded** — it only owns content between its `BEGIN ollama-sync` / `END ollama-sync` markers. Anything you've hand-edited outside that block (cloud models, custom Ollama overrides) is never touched.
 
 It is hooked into **every launch path**, so however you start DeerFlow your Ollama list is refreshed automatically. If the daemon is unreachable, the script no-ops with no changes:
@@ -39,6 +41,9 @@ OLLAMA_HOST=http://server.lan:11434 python3 scripts/sync-ollama-models.py
 
 # Explicit base_url override (wins over --container)
 python3 scripts/sync-ollama-models.py --base-url http://ollama:11434
+
+# Use each model's full native context window (no 32768 clamp)
+python3 scripts/sync-ollama-models.py --num-ctx-cap 0
 ```
 
 ### 2. Per-thread subagent model override (Ultra mode)

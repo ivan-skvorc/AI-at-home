@@ -120,11 +120,21 @@ models:
   #
   # Install: cd backend && uv pip install 'deerflow-harness[ollama]'
   #
+  # num_ctx sets the context window. Ollama defaults it to just 2048 tokens
+  # regardless of what the model supports, which silently truncates the agent's
+  # context (system prompt + tools + skills + memory + conversation) and is even
+  # smaller than the num_predict output budget — always set it explicitly. The
+  # Ollama auto-populate script (scripts/sync-ollama-models.py, run on the
+  # Docker launch paths) reads each model's native length and writes num_ctx for
+  # you, clamped to 32768 to avoid an OOM-sized KV cache; raise it here for
+  # big-memory rigs.
+  #
   # - name: qwen3-local
   #   display_name: Qwen3 32B (Ollama)
   #   use: langchain_ollama:ChatOllama
   #   model: qwen3:32b
   #   base_url: http://localhost:11434   # No /v1 suffix — uses native /api/chat
+  #   num_ctx: 32768                     # Context window (Ollama default is only 2048)
   #   num_predict: 8192
   #   temperature: 0.7
   #   reasoning: true                    # Passes think:true to Ollama native API
@@ -136,6 +146,7 @@ models:
   #   use: langchain_ollama:ChatOllama
   #   model: gemma4:27b
   #   base_url: http://localhost:11434
+  #   num_ctx: 32768                     # Context window (Ollama default is only 2048)
   #   num_predict: 8192
   #   temperature: 0.7
   #   reasoning: true
