@@ -239,6 +239,59 @@ def test_start_container_keeps_apple_container_port_format(monkeypatch):
     assert captured_cmd[captured_cmd.index("-p") + 1] == "18080:8080"
 
 
+# ── Host-run Ollama reachability (host.docker.internal) ─────────────────────
+
+
+def _backend_with_environment(environment: dict[str, str]) -> LocalContainerBackend:
+    return LocalContainerBackend(
+        image="sandbox:latest",
+        base_port=8080,
+        container_prefix="sandbox",
+        config_mounts=[],
+        environment=environment,
+    )
+
+
+def test_start_container_maps_host_gateway_alias_for_docker(monkeypatch):
+    """Linux daemons don't provide host.docker.internal; the backend must map it."""
+    backend = _backend_with_environment({})
+
+    captured_cmd = _capture_start_container_command(monkeypatch, backend)
+
+    assert "--add-host" in captured_cmd
+    assert captured_cmd[captured_cmd.index("--add-host") + 1] == "host.docker.internal:host-gateway"
+
+
+def test_start_container_defaults_ollama_host_for_docker(monkeypatch):
+    """Agent-run Ollama clients inside the sandbox must target the host daemon by default."""
+    backend = _backend_with_environment({})
+
+    captured_cmd = _capture_start_container_command(monkeypatch, backend)
+
+    assert "OLLAMA_HOST=http://host.docker.internal:11434" in captured_cmd
+
+
+def test_start_container_keeps_configured_ollama_host(monkeypatch):
+    """An operator-configured sandbox.environment OLLAMA_HOST wins over the default."""
+    backend = _backend_with_environment({"OLLAMA_HOST": "http://ollama.lan:11434"})
+
+    captured_cmd = _capture_start_container_command(monkeypatch, backend)
+
+    assert "OLLAMA_HOST=http://ollama.lan:11434" in captured_cmd
+    assert "OLLAMA_HOST=http://host.docker.internal:11434" not in captured_cmd
+
+
+def test_start_container_apple_container_gets_no_docker_host_alias(monkeypatch):
+    """host.docker.internal is Docker-specific; Apple Container must not receive it."""
+    backend = _backend_with_environment({})
+    monkeypatch.setenv("DEER_FLOW_SANDBOX_BIND_HOST", "127.0.0.1")
+
+    captured_cmd = _capture_start_container_command(monkeypatch, backend, runtime="container")
+
+    assert "--add-host" not in captured_cmd
+    assert not any(arg.startswith("OLLAMA_HOST=") for arg in captured_cmd)
+
+
 def _backend_for_inspect_tests() -> LocalContainerBackend:
     backend = LocalContainerBackend(
         image="sandbox:latest",

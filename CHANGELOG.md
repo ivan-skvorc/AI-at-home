@@ -9,6 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **sandbox:** Host-run Ollama is now reachable from inside the AIO sandbox
+  out of the box. Both the external sandbox container
+  (`docker/docker-compose.sandbox.yml`) and the per-conversation containers
+  created by `AioSandboxProvider` map `host.docker.internal` to the Docker
+  host gateway (Linux daemons don't provide the alias automatically) and
+  advertise `OLLAMA_HOST=http://host.docker.internal:11434` in the container
+  environment, so agent-run Ollama clients target the host daemon instead of
+  the container's own loopback (override with `DEER_FLOW_SANDBOX_OLLAMA_HOST`
+  in external mode or an `OLLAMA_HOST` entry in `sandbox.environment`).
+  Because a loopback-bound host Ollama — its default — still refuses
+  bridge-gateway connections, the sandbox preflight and the Docker launch
+  paths (`sync-ollama-models.py --container`) now detect that case and print
+  the exact fix (`OLLAMA_HOST=0.0.0.0`) instead of leaving containers to fail
+  with "connection refused". Advisory only: nothing fails, detection stays
+  quiet when reachability can't be determined, and Docker Desktop (which
+  proxies host loopback) is exempt.
+
 - **sandbox:** Make the containerized AIO sandbox a first-class, out-of-the-box
   mode with secure private-GitHub-repo access. When `config.yaml` selects
   `AioSandboxProvider`, `make dev` now runs a preflight
