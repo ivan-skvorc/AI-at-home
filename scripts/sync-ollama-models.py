@@ -10,7 +10,8 @@ If Ollama is not running, the script exits cleanly with no changes.
 Usage:
     python3 scripts/sync-ollama-models.py [--config PATH] [--dry-run] [--verbose]
                                           [--base-url URL] [--container]
-                                          [--num-ctx-cap N]
+                                          [--num-ctx-cap N] [--vram-gb G]
+                                          [--kv-cache-type f16|q8_0|q4_0]
 
 Environment:
     OLLAMA_HOST: override Ollama endpoint (default: http://localhost:11434)
@@ -30,6 +31,17 @@ written with an explicit ``num_ctx`` read from the model's native context length
 (``/api/show`` -> ``model_info``), clamped to ``--num-ctx-cap`` (default 32768)
 so a 128K-native model does not allocate an OOM-sized KV cache on a typical local
 GPU. Pass ``--num-ctx-cap 0`` to use each model's full native length uncapped.
+
+VRAM-aware sizing: when a GPU memory budget is known (``ollama.vram_gb`` in
+config.yaml — written by ``make setup`` — or ``--vram-gb``), the flat cap is
+replaced by a per-model estimate: the largest window whose KV cache fits next to
+the model's weights within that budget, derived from the model's attention
+geometry (``/api/show`` -> ``model_info``) and its on-disk size (``/api/tags``).
+``ollama.kv_cache_type`` / ``--kv-cache-type`` tells the sizing which KV-cache
+quantization the daemon runs (``OLLAMA_KV_CACHE_TYPE``): ``q8_0`` roughly halves
+the per-token cost versus the default ``f16``, roughly doubling the affordable
+window. An explicit ``--num-ctx-cap`` still applies as a hard ceiling; models
+whose geometry can't be read fall back to the flat-cap behavior.
 """
 
 from __future__ import annotations
@@ -62,6 +74,27 @@ DEFAULT_NUM_PREDICT = 8192
 # typical local GPU, so the auto-populated value is clamped here; users can raise
 # it by hand (or pass --num-ctx-cap 0 for uncapped) on big-memory rigs.
 DEFAULT_NUM_CTX_CAP = 32768
+
+# ── VRAM-aware context sizing ─────────────────────────────────────────────────
+# When `ollama.vram_gb` is configured (config.yaml, written by `make setup`, or
+# --vram-gb), the flat cap above is replaced by a per-model estimate: the largest
+# window whose KV cache fits next to the model weights in that budget.
+#
+# Bytes per KV-cache element by Ollama's OLLAMA_KV_CACHE_TYPE. q8_0/q4_0 are
+# block-quantized (32 elements + a 2-byte scale per block), hence the fractions.
+KV_CACHE_BYTES_PER_ELEMENT = {"f16": 2.0, "q8_0": 34 / 32, "q4_0": 18 / 32}
+DEFAULT_KV_CACHE_TYPE = "f16"
+# VRAM reserved for everything that is neither weights nor KV cache: compute
+# graph buffers, CUDA/ROCm/Metal context, display, fragmentation. Deliberately
+# conservative — and the estimate assumes OLLAMA_NUM_PARALLEL=1 (the modern
+# Ollama default; each extra parallel slot multiplies the KV allocation). If the
+# estimate is still too optimistic, Ollama degrades by offloading layers to CPU
+# (slow, not fatal).
+VRAM_OVERHEAD_BYTES = int(1.5 * 1024**3)
+# Floor/step for the computed window: below 4096 the agent's system prompt alone
+# doesn't fit, and odd sizes buy nothing.
+MIN_VRAM_NUM_CTX = 4096
+NUM_CTX_STEP = 2048
 
 
 def normalize_host(host: str) -> str:
@@ -102,13 +135,18 @@ def resolve_base_url(query_host: str, explicit_base_url: str | None, container: 
 
 
 def fetch_tags(host: str, timeout: float = 2.0):
-    """Return list of model names from /api/tags, or None if Ollama is unreachable."""
+    """Return installed models from /api/tags as [{"name", "size"}, ...].
+
+    ``size`` is the on-disk model size in bytes (≈ VRAM the weights need when
+    fully offloaded), used for VRAM-aware context sizing. Returns None if
+    Ollama is unreachable.
+    """
     try:
         with urllib.request.urlopen(f"{host}/api/tags", timeout=timeout) as resp:
             data = json.loads(resp.read())
     except (urllib.error.URLError, TimeoutError, ConnectionError, json.JSONDecodeError):
         return None
-    return [m.get("name") for m in data.get("models", []) if m.get("name")]
+    return [{"name": m.get("name"), "size": m.get("size")} for m in data.get("models", []) if m.get("name")]
 
 
 def fetch_show(host: str, name: str, timeout: float = 5.0) -> dict:
@@ -197,18 +235,144 @@ def parse_context_length(show: dict) -> int | None:
     return None
 
 
-def resolve_num_ctx(native: int | None, cap: int = DEFAULT_NUM_CTX_CAP) -> int | None:
+def _positive_number(info: dict, key: str) -> float | None:
+    value = info.get(key)
+    if isinstance(value, (int, float)) and not isinstance(value, bool) and value > 0:
+        return float(value)
+    return None
+
+
+def parse_kv_bytes_per_token(show: dict, kv_cache_type: str = DEFAULT_KV_CACHE_TYPE) -> float | None:
+    """Estimate KV-cache bytes per context token from an /api/show payload.
+
+    KV cache per token = layers × kv_heads × (key_dim + value_dim) × bytes/element.
+    Head dims come from ``attention.key_length``/``value_length`` when present,
+    falling back to ``embedding_length / head_count``. Some hybrid architectures
+    report ``head_count_kv`` as a per-layer list; its mean is used. Returns None
+    when the payload doesn't expose the needed geometry; an unknown
+    ``kv_cache_type`` is costed as f16 (the conservative choice).
+    """
+    info = show.get("model_info")
+    if not isinstance(info, dict):
+        return None
+    arch = info.get("general.architecture")
+    if not isinstance(arch, str):
+        return None
+    block_count = _positive_number(info, f"{arch}.block_count")
+    kv_heads = _positive_number(info, f"{arch}.attention.head_count_kv")
+    if kv_heads is None:
+        raw = info.get(f"{arch}.attention.head_count_kv")
+        if isinstance(raw, list) and raw and all(isinstance(v, (int, float)) and not isinstance(v, bool) and v > 0 for v in raw):
+            kv_heads = sum(raw) / len(raw)
+    key_dim = _positive_number(info, f"{arch}.attention.key_length")
+    value_dim = _positive_number(info, f"{arch}.attention.value_length")
+    if key_dim is None or value_dim is None:
+        head_count = _positive_number(info, f"{arch}.attention.head_count")
+        embedding = _positive_number(info, f"{arch}.embedding_length")
+        if head_count and embedding:
+            head_dim = embedding / head_count
+            key_dim = key_dim or head_dim
+            value_dim = value_dim or head_dim
+    if not (block_count and kv_heads and key_dim and value_dim):
+        return None
+    bytes_per_element = KV_CACHE_BYTES_PER_ELEMENT.get(kv_cache_type, KV_CACHE_BYTES_PER_ELEMENT[DEFAULT_KV_CACHE_TYPE])
+    return block_count * kv_heads * (key_dim + value_dim) * bytes_per_element
+
+
+def vram_num_ctx_limit(show: dict, weights_bytes, vram_bytes, kv_cache_type: str = DEFAULT_KV_CACHE_TYPE) -> int | None:
+    """Largest context window whose KV cache fits VRAM next to the weights.
+
+    ``(vram - weights - VRAM_OVERHEAD_BYTES) / kv_bytes_per_token``, floored to
+    ``NUM_CTX_STEP`` and never below ``MIN_VRAM_NUM_CTX`` (a model that doesn't
+    fit at all still gets a usable window — Ollama offloads layers to CPU rather
+    than failing). Returns None when the geometry or weights size is unknown, so
+    callers can fall back to the flat cap.
+    """
+    per_token = parse_kv_bytes_per_token(show, kv_cache_type)
+    if per_token is None or not weights_bytes or weights_bytes <= 0 or not vram_bytes or vram_bytes <= 0:
+        return None
+    available = vram_bytes - weights_bytes - VRAM_OVERHEAD_BYTES
+    if available <= 0:
+        return MIN_VRAM_NUM_CTX
+    tokens = int(available // per_token)
+    return max(MIN_VRAM_NUM_CTX, (tokens // NUM_CTX_STEP) * NUM_CTX_STEP)
+
+
+def parse_ollama_settings(text: str) -> dict:
+    """Parse the top-level ``ollama:`` section of config.yaml.
+
+    Recognized keys: ``vram_gb`` (positive number) and ``kv_cache_type`` (one of
+    KV_CACHE_BYTES_PER_ELEMENT); malformed values are dropped. Pure-text scan on
+    purpose — this script runs under plain python3 with no PyYAML.
+    """
+    top_key = re.compile(r"^[A-Za-z_][\w-]*:")
+    entry = re.compile(r"^\s+([A-Za-z_][\w-]*):\s*([^#]*)")
+    raw: dict[str, str] = {}
+    in_section = False
+    for line in text.splitlines():
+        if not in_section:
+            if re.match(r"^ollama:\s*(#.*)?$", line):
+                in_section = True
+            continue
+        if line and not line[0].isspace():
+            if top_key.match(line):
+                break
+            continue
+        match = entry.match(line)
+        if match:
+            raw[match.group(1)] = match.group(2).strip().strip("\"'")
+
+    settings: dict = {}
+    try:
+        vram_gb = float(raw["vram_gb"])
+        if vram_gb > 0:
+            settings["vram_gb"] = vram_gb
+    except (KeyError, ValueError):
+        pass
+    if raw.get("kv_cache_type") in KV_CACHE_BYTES_PER_ELEMENT:
+        settings["kv_cache_type"] = raw["kv_cache_type"]
+    return settings
+
+
+def resolve_sizing_settings(cli_vram_gb, cli_kv_cache_type, config_text: str):
+    """Resolve (vram_bytes, kv_cache_type) with CLI > config > default precedence."""
+    settings = parse_ollama_settings(config_text)
+    vram_gb = cli_vram_gb if cli_vram_gb is not None else settings.get("vram_gb")
+    kv_cache_type = cli_kv_cache_type or settings.get("kv_cache_type") or DEFAULT_KV_CACHE_TYPE
+    vram_bytes = int(vram_gb * 1024**3) if vram_gb and vram_gb > 0 else None
+    return vram_bytes, kv_cache_type
+
+
+def effective_num_ctx_cap(explicit_cap: int | None, vram_limit: int | None) -> int:
+    """Cap precedence: explicit ``--num-ctx-cap`` > VRAM sizing (cap off) > flat default.
+
+    The flat DEFAULT_NUM_CTX_CAP exists to protect a GPU of *unknown* size from a
+    128K-native model; once a per-model VRAM estimate exists it subsumes that
+    job, so the flat cap is disabled rather than fighting the better number.
+    """
+    if explicit_cap is not None:
+        return explicit_cap
+    if vram_limit is not None:
+        return 0
+    return DEFAULT_NUM_CTX_CAP
+
+
+def resolve_num_ctx(native: int | None, cap: int = DEFAULT_NUM_CTX_CAP, vram_limit: int | None = None) -> int | None:
     """Resolve the ``num_ctx`` to write from a model's native context length.
 
-    Returns the native length clamped to ``cap`` (``cap <= 0`` disables the
-    clamp), or None when the native length is unknown — in which case no
-    ``num_ctx`` is written and Ollama keeps its own default.
+    Returns the native length clamped to ``vram_limit`` (when known) and to
+    ``cap`` (``cap <= 0`` disables the clamp), or None when the native length is
+    unknown — in which case no ``num_ctx`` is written and Ollama keeps its own
+    default.
     """
     if not native or native <= 0:
         return None
+    resolved = native
+    if vram_limit and vram_limit > 0:
+        resolved = min(resolved, vram_limit)
     if cap and cap > 0:
-        return min(native, cap)
-    return native
+        resolved = min(resolved, cap)
+    return resolved
 
 
 def render_entry(name: str, caps: list, base_url: str = DEFAULT_HOST, num_ctx: int | None = None) -> str:
@@ -349,18 +513,34 @@ def main() -> int:
     ap.add_argument("--host", default=DEFAULT_HOST, help=f"Ollama endpoint to query (default: {DEFAULT_HOST}; OLLAMA_HOST env wins)")
     ap.add_argument("--base-url", default=None, help="base_url written into each entry (default: the query host). Wins over --container.")
     ap.add_argument("--container", action="store_true", help=f"Rewrite a loopback query host to {DOCKER_HOST_ALIAS} for the written base_url (Docker launch paths)")
-    ap.add_argument("--num-ctx-cap", type=int, default=DEFAULT_NUM_CTX_CAP, help=f"Clamp the written num_ctx to this many tokens (default: {DEFAULT_NUM_CTX_CAP}; 0 = use each model's full native context length)")
+    ap.add_argument("--num-ctx-cap", type=int, default=None, help=f"Hard cap for the written num_ctx (default: {DEFAULT_NUM_CTX_CAP}, or the VRAM-based estimate when a VRAM budget is configured; 0 = uncapped)")
+    ap.add_argument("--vram-gb", type=float, default=None, help="GPU memory budget in GiB for per-model context sizing (default: `ollama.vram_gb` in config.yaml; unset = flat cap only)")
+    ap.add_argument(
+        "--kv-cache-type",
+        choices=sorted(KV_CACHE_BYTES_PER_ELEMENT),
+        default=None,
+        help="KV-cache quantization assumed by the sizing (default: `ollama.kv_cache_type` in config.yaml, else f16). Must match the daemon's OLLAMA_KV_CACHE_TYPE to be accurate.",
+    )
     ap.add_argument("--dry-run", action="store_true", help="Print result to stdout, do not write")
     ap.add_argument("--verbose", action="store_true")
     args = ap.parse_args()
+
+    config_path = Path(args.config)
+    if not config_path.exists():
+        raise SystemExit(f"ERROR: config not found at {config_path}")
+    original = config_path.read_text()
+    check_duplicate_top_level_keys(original, config_path)
+    vram_bytes, kv_cache_type = resolve_sizing_settings(args.vram_gb, args.kv_cache_type, original)
 
     host = normalize_host(os.environ.get("OLLAMA_HOST") or args.host)
     base_url = resolve_base_url(host, args.base_url, args.container)
     if args.verbose:
         print(f"[ollama-sync] querying {host}; writing base_url {base_url}", file=sys.stderr)
+        if vram_bytes:
+            print(f"[ollama-sync] sizing num_ctx for {vram_bytes / 1024**3:g} GiB VRAM (kv_cache_type={kv_cache_type})", file=sys.stderr)
 
-    names = fetch_tags(host)
-    if names is None:
+    installed = fetch_tags(host)
+    if installed is None:
         if args.verbose:
             print(f"[ollama-sync] {host} unreachable; skipping (no changes)", file=sys.stderr)
         return 0
@@ -373,23 +553,21 @@ def main() -> int:
             print(f"[ollama-sync] {warning}", file=sys.stderr)
 
     models = []
-    for name in names:
+    for installed_model in installed:
+        name = installed_model["name"]
         show = fetch_show(host, name)
         caps = parse_capabilities(show)
-        num_ctx = resolve_num_ctx(parse_context_length(show), cap=args.num_ctx_cap)
+        vram_limit = vram_num_ctx_limit(show, installed_model.get("size"), vram_bytes, kv_cache_type) if vram_bytes else None
+        num_ctx = resolve_num_ctx(parse_context_length(show), cap=effective_num_ctx_cap(args.num_ctx_cap, vram_limit), vram_limit=vram_limit)
         models.append((name, caps, num_ctx))
         if args.verbose:
             ctx_note = num_ctx if num_ctx is not None else "unknown (Ollama default)"
-            print(f"  - {name}  caps={caps}  num_ctx={ctx_note}", file=sys.stderr)
+            vram_note = f"  vram_limit={vram_limit}" if vram_limit is not None else ""
+            print(f"  - {name}  caps={caps}  num_ctx={ctx_note}{vram_note}", file=sys.stderr)
 
     # Tool-capable first, then alphabetical (matches dropdown order in UI)
     models.sort(key=lambda m: (0 if "tools" in m[1] else 1, m[0]))
 
-    config_path = Path(args.config)
-    if not config_path.exists():
-        raise SystemExit(f"ERROR: config not found at {config_path}")
-    original = config_path.read_text()
-    check_duplicate_top_level_keys(original, config_path)
     updated = sync(original, models, base_url=base_url)
 
     if args.dry_run:

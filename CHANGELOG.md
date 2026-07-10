@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **ollama:** VRAM-aware context sizing for auto-populated Ollama models. Set
+  a GPU memory budget (`ollama.vram_gb` in `config.yaml` — `make setup` now
+  asks for it when an Ollama provider is selected, auto-detecting via
+  `nvidia-smi` / `rocm-smi` / Apple unified memory) and
+  `scripts/sync-ollama-models.py` replaces its flat 32768 `num_ctx` cap with a
+  per-model estimate: the largest window whose KV cache fits next to that
+  model's weights, computed from the attention geometry in `/api/show` and the
+  weights size in `/api/tags` (floored to 2048-token steps, never below 4096;
+  an explicit `--num-ctx-cap` still applies as a hard ceiling, and models
+  whose geometry can't be read keep the flat-cap behavior).
+  `ollama.kv_cache_type: q8_0` sizes for a quantized KV cache — roughly double
+  the affordable window — and the wizard prints the matching server-side
+  setting (`OLLAMA_KV_CACHE_TYPE=q8_0`), since that env var is Ollama's to
+  set, not DeerFlow's; sizing defaults to f16 unless opted in. Without
+  `ollama.vram_gb`, nothing changes.
+
 - **sandbox:** Host-run Ollama is now reachable from inside the AIO sandbox
   out of the box. Both the external sandbox container
   (`docker/docker-compose.sandbox.yml`) and the per-conversation containers

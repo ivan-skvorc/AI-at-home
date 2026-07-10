@@ -21,10 +21,7 @@ def _is_interactive() -> bool:
 def main() -> int:
     try:
         if not _is_interactive():
-            print(
-                "Non-interactive environment detected.\n"
-                "Please edit config.yaml and .env directly, or run 'make setup' in a terminal."
-            )
+            print("Non-interactive environment detected.\nPlease edit config.yaml and .env directly, or run 'make setup' in a terminal.")
             return 1
 
         from wizard.ui import (
@@ -64,6 +61,13 @@ def main() -> int:
 
         llm = run_llm_step(f"Step 1/{total_steps}")
 
+        # Sub-step of the LLM choice: only local Ollama needs a VRAM budget.
+        ollama_sizing = None
+        if llm.provider.use == "langchain_ollama:ChatOllama":
+            from wizard.steps.ollama import run_ollama_step
+
+            ollama_sizing = run_ollama_step(f"Step 1/{total_steps}")
+
         from wizard.steps.search import run_search_step
 
         search = run_search_step(f"Step 2/{total_steps}")
@@ -102,6 +106,8 @@ def main() -> int:
             include_bash_tool=execution.include_bash_tool,
             include_write_tools=execution.include_write_tools,
             channel_connection_providers=channels.enabled_providers,
+            ollama_vram_gb=ollama_sizing.vram_gb if ollama_sizing else None,
+            ollama_kv_cache_type=ollama_sizing.kv_cache_type if ollama_sizing else None,
         )
         print_success(f"Config written to: {config_path.relative_to(project_root)}")
 
@@ -109,6 +115,7 @@ def main() -> int:
             env_example = project_root / ".env.example"
             if env_example.exists():
                 import shutil
+
                 shutil.copyfile(env_example, env_path)
 
         env_pairs: dict[str, str] = {}
@@ -127,6 +134,7 @@ def main() -> int:
         frontend_env_example = project_root / "frontend" / ".env.example"
         if not frontend_env.exists() and frontend_env_example.exists():
             import shutil
+
             shutil.copyfile(frontend_env_example, frontend_env)
             print_success("frontend/.env created from example")
 
@@ -142,6 +150,9 @@ def main() -> int:
             print(f"  {'—':>3} Web fetch:  not configured")
         sandbox_label = "Local sandbox" if execution.sandbox_use.endswith("LocalSandboxProvider") else "Container sandbox"
         print(f"  {green('✓')} Execution:  {sandbox_label}")
+        if ollama_sizing and ollama_sizing.vram_gb:
+            kv_label = ollama_sizing.kv_cache_type or "f16"
+            print(f"  {green('✓')} Ollama ctx: sized for {ollama_sizing.vram_gb:g} GB VRAM ({kv_label} KV cache)")
         if execution.include_bash_tool:
             bash_label = "enabled"
             if execution.allow_host_bash:
