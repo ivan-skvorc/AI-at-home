@@ -3,6 +3,7 @@ from typing import Annotated, NotRequired, TypedDict
 
 from langchain.agents import AgentState
 
+from deerflow.agents.goal_state import GoalState
 from deerflow.subagents.status_contract import SUBAGENT_STATUS_VALUES
 
 
@@ -85,6 +86,13 @@ def merge_todos(existing: list | None, new: list | None) -> list | None:
     return new
 
 
+def merge_goal(existing: GoalState | None, new: GoalState | None) -> GoalState | None:
+    """Reducer for goal state - preserves existing when a node does not touch it."""
+    if new is None:
+        return existing
+    return new
+
+
 class PromotedTools(TypedDict):
     catalog_hash: str
     names: list[str]
@@ -123,6 +131,10 @@ class DelegationEntry(TypedDict):
     result_brief: NotRequired[str]
     result_sha256: NotRequired[str]
     result_ref: NotRequired[str]
+    # Why a guardrail cap ended the run early (#3875 Phase 2): token_capped /
+    # turn_capped / loop_capped. The status stays completed/failed; this field
+    # is the additive signal that distinguishes a capped run from a clean one.
+    stop_reason: NotRequired[str]
     created_at: str
 
 
@@ -218,6 +230,7 @@ class ThreadState(AgentState):
     title: NotRequired[str | None]
     artifacts: Annotated[list[str], merge_artifacts]
     todos: Annotated[list | None, merge_todos]
+    goal: Annotated[GoalState | None, merge_goal]
     uploaded_files: NotRequired[list[dict] | None]
     viewed_images: Annotated[dict[str, ViewedImageData], merge_viewed_images]  # image_path -> {base64, mime_type}
     promoted: Annotated[PromotedTools | None, merge_promoted]
