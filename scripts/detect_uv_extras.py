@@ -7,9 +7,14 @@ Order of resolution:
    parsing semantics apply in the Docker dev container via
    ``docker/dev-entrypoint.sh`` and in the production Docker image build via
    ``backend/Dockerfile``.
-2. Auto-detection from config.yaml — currently maps:
+2. Auto-detection from config.yaml (plus backend env overrides) — currently maps:
    - database.backend == postgres        -> postgres
    - checkpointer.type == postgres       -> postgres
+   - channels.discord.enabled == true    -> discord
+   - web_fetch resolving to camoufox     -> camoufox (explicit ``backend:`` /
+     ``fallback:`` / ``use:`` selection, a dispatcher entry that omits
+     ``backend:`` — camoufox is the code-level default — or
+     ``DEER_FLOW_WEB_FETCH_BACKEND=camoufox``)
 
 Each extra name is validated against ``^[A-Za-z][A-Za-z0-9_-]*$`` (the same
 shape uv enforces for `[project.optional-dependencies]` keys). Anything else
@@ -235,14 +240,18 @@ def detect_from_config(path: Path) -> list[str]:
     return sorted(extras)
 
 
+_DISPATCHER_USE = "web_fetch.tools:web_fetch_tool"
+
+
 def _uses_camoufox_web_fetch(text: str) -> bool:
-    """True when config.yaml selects the Camoufox web_fetch backend.
+    """True when config.yaml resolves web_fetch to the Camoufox backend.
 
     Matched on any of: the dispatcher entry with ``backend: camoufox``, a
-    ``fallback: camoufox`` chain, or a ``use:`` pointing into the camoufox
-    module. Line-oriented on purpose — this parser runs before uv sync, so it
-    cannot depend on PyYAML; the tools: section is a list, not the flat shape
-    section_value handles.
+    ``fallback: camoufox`` chain, a ``use:`` pointing into the camoufox
+    module, or a dispatcher entry that omits ``backend:`` entirely — camoufox
+    is the dispatcher's code-level default. Line-oriented on purpose — this
+    parser runs before uv sync, so it cannot depend on PyYAML; the tools:
+    section is a list, not the flat shape section_value handles.
     """
     for raw in text.splitlines():
         line = _strip_comment(raw).strip()
@@ -254,17 +263,64 @@ def _uses_camoufox_web_fetch(text: str) -> bool:
             return True
         if line.startswith("fallback:") and _unquote(line.split(":", 1)[1].strip()) == "camoufox":
             return True
-    return False
+    return _dispatcher_entry_omits_backend(text)
+
+
+def _dispatcher_entry_omits_backend(text: str) -> bool:
+    """True when a tools list entry uses the web_fetch dispatcher without a ``backend:`` key.
+
+    Such an entry gets the dispatcher's code-level default (camoufox), so the
+    extra must install even though "camoufox" never appears in the file. Scans
+    list entries by indentation: an entry starts at a ``- `` line and ends at
+    the next ``- `` line or a dedent to (or past) the dash's indent, so keys
+    from later sections (e.g. ``database.backend``) are never attributed to it.
+    """
+    in_entry = False
+    entry_indent = 0
+    has_dispatcher_use = False
+    has_backend = False
+
+    for raw in text.splitlines():
+        line = _strip_comment(raw)
+        stripped = line.lstrip()
+        if not stripped:
+            continue
+        indent = len(line) - len(stripped)
+        if stripped.startswith("- "):
+            if in_entry and has_dispatcher_use and not has_backend:
+                return True
+            in_entry = True
+            entry_indent = indent
+            has_dispatcher_use = False
+            has_backend = False
+            stripped = stripped[2:].lstrip()
+        elif in_entry and indent <= entry_indent:
+            if has_dispatcher_use and not has_backend:
+                return True
+            in_entry = False
+        if not in_entry:
+            continue
+        if stripped.startswith("use:") and _DISPATCHER_USE in stripped:
+            has_dispatcher_use = True
+        elif stripped.startswith("backend:"):
+            has_backend = True
+    return in_entry and has_dispatcher_use and not has_backend
 
 
 def resolve_extras() -> list[str]:
     env = os.environ.get("UV_EXTRAS", "")
     if env.strip():
         return parse_env_extras(env)
+    extras: set[str] = set()
+    # The env var overrides config at dispatch time, so honor it here too —
+    # otherwise `DEER_FLOW_WEB_FETCH_BACKEND=camoufox` over a jina config
+    # would select a backend whose package never installs.
+    if os.environ.get("DEER_FLOW_WEB_FETCH_BACKEND", "").strip().lower() == "camoufox":
+        extras.add("camoufox")
     config = find_config_file()
-    if config is None:
-        return []
-    return detect_from_config(config)
+    if config is not None:
+        extras.update(detect_from_config(config))
+    return sorted(extras)
 
 
 def format_flags(extras: list[str]) -> str:
