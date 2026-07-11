@@ -11,6 +11,7 @@ from wizard import ui as wizard_ui
 from wizard.providers import LLM_PROVIDERS, SEARCH_PROVIDERS, WEB_FETCH_PROVIDERS, LLMProvider
 from wizard.steps import channels as channels_step
 from wizard.steps import llm as llm_step
+from wizard.steps import ollama as ollama_step
 from wizard.steps import search as search_step
 from wizard.writer import (
     build_minimal_config,
@@ -653,3 +654,120 @@ class TestSearchStep:
         assert result.search_api_key == "shared-api-key"
         assert result.fetch_api_key == "shared-api-key"
         assert prompts == ["EXA_API_KEY"]
+
+
+class TestOllamaSizingStep:
+    """VRAM detection parsers + the optional Ollama context-sizing step."""
+
+    def test_parse_nvidia_smi_sums_gpus(self):
+        assert ollama_step.parse_nvidia_smi_gib("24576\n24576\n") == 48.0
+
+    def test_parse_nvidia_smi_rejects_garbage(self):
+        assert ollama_step.parse_nvidia_smi_gib("N/A\n") is None
+
+    def test_parse_rocm_smi_sums_cards(self):
+        payload = '{"card0": {"VRAM Total Memory (B)": "17179869184"}, "card1": {"VRAM Total Memory (B)": "17179869184"}}'
+        assert ollama_step.parse_rocm_smi_gib(payload) == 32.0
+
+    def test_parse_rocm_smi_rejects_garbage(self):
+        assert ollama_step.parse_rocm_smi_gib("not json") is None
+
+    def test_detect_prefers_nvidia_smi(self):
+        def run(args, timeout=5.0):
+            return "16384\n" if args[0] == "nvidia-smi" else None
+
+        assert ollama_step.detect_vram_gb(run=run, system=lambda: "Linux") == (16.0, "nvidia-smi")
+
+    def test_detect_falls_back_to_rocm_smi(self):
+        def run(args, timeout=5.0):
+            return '{"card0": {"VRAM Total Memory (B)": "17179869184"}}' if args[0] == "rocm-smi" else None
+
+        detected = ollama_step.detect_vram_gb(run=run, system=lambda: "Linux")
+        assert detected == (16.0, "rocm-smi")
+
+    def test_detect_uses_metal_budget_on_macos(self):
+        def run(args, timeout=5.0):
+            return str(32 * 1024**3) if args[0] == "sysctl" else None
+
+        detected = ollama_step.detect_vram_gb(run=run, system=lambda: "Darwin")
+        assert detected is not None
+        gib, source = detected
+        assert gib == 32 * ollama_step.APPLE_METAL_FRACTION
+        assert "Metal" in source
+
+    def test_detect_returns_none_without_gpu_tools(self):
+        assert ollama_step.detect_vram_gb(run=lambda *_a, **_k: None, system=lambda: "Linux") is None
+
+    def _silence(self, monkeypatch):
+        for name in ("print_header", "print_info", "print_success"):
+            monkeypatch.setattr(ollama_step, name, lambda *_args, **_kwargs: None)
+        monkeypatch.setattr(ollama_step, "detect_vram_gb", lambda *_args, **_kwargs: None)
+
+    def test_step_collects_vram_and_q8(self, monkeypatch, capsys):
+        self._silence(monkeypatch)
+        monkeypatch.setattr(ollama_step, "ask_text", lambda *_args, **_kwargs: "16")
+        monkeypatch.setattr(ollama_step, "ask_yes_no", lambda *_args, **_kwargs: True)
+
+        result = ollama_step.run_ollama_step("Step 1/5")
+
+        assert result.vram_gb == 16.0
+        assert result.kv_cache_type == "q8_0"
+        # The exact server-side setting must be shown when q8_0 is chosen.
+        assert "OLLAMA_KV_CACHE_TYPE=q8_0" in capsys.readouterr().out
+
+    def test_step_defaults_to_f16_when_q8_declined(self, monkeypatch):
+        self._silence(monkeypatch)
+        monkeypatch.setattr(ollama_step, "ask_text", lambda *_args, **_kwargs: "16")
+        monkeypatch.setattr(ollama_step, "ask_yes_no", lambda *_args, **_kwargs: False)
+
+        result = ollama_step.run_ollama_step("Step 1/5")
+
+        assert result.vram_gb == 16.0
+        assert result.kv_cache_type is None
+
+    def test_blank_input_skips_sizing(self, monkeypatch):
+        self._silence(monkeypatch)
+        monkeypatch.setattr(ollama_step, "ask_text", lambda *_args, **_kwargs: "")
+
+        result = ollama_step.run_ollama_step("Step 1/5")
+
+        assert result.vram_gb is None
+        assert result.kv_cache_type is None
+
+
+class TestOllamaSectionInConfig:
+    def test_ollama_section_written_when_vram_provided(self):
+        content = build_minimal_config(
+            provider_use="langchain_ollama:ChatOllama",
+            model_name="qwen3:32b",
+            display_name="Ollama / qwen3:32b",
+            api_key_field="api_key",
+            env_var=None,
+            ollama_vram_gb=16.0,
+            ollama_kv_cache_type="q8_0",
+        )
+        data = yaml.safe_load(content)
+        assert data["ollama"] == {"vram_gb": 16.0, "kv_cache_type": "q8_0"}
+
+    def test_kv_cache_type_omitted_when_unset(self):
+        content = build_minimal_config(
+            provider_use="langchain_ollama:ChatOllama",
+            model_name="qwen3:32b",
+            display_name="Ollama / qwen3:32b",
+            api_key_field="api_key",
+            env_var=None,
+            ollama_vram_gb=16.0,
+        )
+        data = yaml.safe_load(content)
+        assert data["ollama"] == {"vram_gb": 16.0}
+
+    def test_no_ollama_section_without_vram(self):
+        content = build_minimal_config(
+            provider_use="langchain_openai:ChatOpenAI",
+            model_name="gpt-test",
+            display_name="GPT Test",
+            api_key_field="api_key",
+            env_var="OPENAI_API_KEY",
+        )
+        data = yaml.safe_load(content)
+        assert "ollama" not in data

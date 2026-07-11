@@ -267,3 +267,178 @@ class TestSyncNumCtxIdempotence:
         # Pre-existing (name, caps) callers keep working — no num_ctx emitted.
         once = sync_ollama.sync(CLEAN_CONFIG, [("qwen3:8b", ["tools"])])
         assert "num_ctx" not in once
+
+
+# ── VRAM-aware context sizing ────────────────────────────────────────────────
+
+# Realistic /api/show geometry for qwen3:8b (GQA: 32 query heads, 8 KV heads).
+QWEN3_SHOW = {
+    "capabilities": ["tools", "thinking"],
+    "model_info": {
+        "general.architecture": "qwen3",
+        "qwen3.block_count": 36,
+        "qwen3.context_length": 40960,
+        "qwen3.embedding_length": 4096,
+        "qwen3.attention.head_count": 32,
+        "qwen3.attention.head_count_kv": 8,
+        "qwen3.attention.key_length": 128,
+        "qwen3.attention.value_length": 128,
+    },
+}
+
+GIB = 1024**3
+QWEN3_WEIGHTS = 5_200_000_000  # ~q4_K_M on disk
+
+
+class TestParseKvBytesPerToken:
+    """KV cache per token = layers x kv_heads x (key_dim + value_dim) x bytes/element."""
+
+    def test_f16_geometry(self):
+        assert sync_ollama.parse_kv_bytes_per_token(QWEN3_SHOW) == 36 * 8 * 256 * 2.0
+
+    def test_q8_0_shrinks_per_token_cost(self):
+        f16 = sync_ollama.parse_kv_bytes_per_token(QWEN3_SHOW, "f16")
+        q8 = sync_ollama.parse_kv_bytes_per_token(QWEN3_SHOW, "q8_0")
+        assert q8 == 36 * 8 * 256 * (34 / 32)
+        assert q8 < f16
+
+    def test_unknown_kv_type_falls_back_to_f16(self):
+        assert sync_ollama.parse_kv_bytes_per_token(QWEN3_SHOW, "q2_K") == sync_ollama.parse_kv_bytes_per_token(QWEN3_SHOW, "f16")
+
+    def test_head_dim_falls_back_to_embedding_over_head_count(self):
+        show = {
+            "model_info": {
+                "general.architecture": "llama",
+                "llama.block_count": 36,
+                "llama.embedding_length": 4096,
+                "llama.attention.head_count": 32,
+                "llama.attention.head_count_kv": 8,
+            }
+        }
+        # head_dim = 4096 / 32 = 128 -> same as explicit key/value_length above
+        assert sync_ollama.parse_kv_bytes_per_token(show) == 36 * 8 * 256 * 2.0
+
+    def test_per_layer_kv_head_list_uses_mean(self):
+        show = {
+            "model_info": {
+                "general.architecture": "hybrid",
+                "hybrid.block_count": 36,
+                "hybrid.attention.head_count_kv": [8, 8, 4, 4],
+                "hybrid.attention.key_length": 128,
+                "hybrid.attention.value_length": 128,
+            }
+        }
+        assert sync_ollama.parse_kv_bytes_per_token(show) == 36 * 6 * 256 * 2.0
+
+    def test_missing_model_info_returns_none(self):
+        assert sync_ollama.parse_kv_bytes_per_token({"capabilities": ["tools"]}) is None
+
+    def test_missing_geometry_returns_none(self):
+        show = {"model_info": {"general.architecture": "phi3", "phi3.block_count": 32}}
+        assert sync_ollama.parse_kv_bytes_per_token(show) is None
+
+
+class TestVramNumCtxLimit:
+    """Largest window whose KV cache fits: (VRAM - weights - overhead) / per-token."""
+
+    def test_tight_vram_limits_the_window(self):
+        # 8 GiB - 5.2 GB weights - 1.5 GiB overhead = ~1.66 GiB for KV cache
+        # -> 12066 tokens at f16, floored to the 2048 step.
+        limit = sync_ollama.vram_num_ctx_limit(QWEN3_SHOW, QWEN3_WEIGHTS, 8 * GIB)
+        assert limit == 10240
+
+    def test_q8_0_roughly_doubles_the_window(self):
+        f16 = sync_ollama.vram_num_ctx_limit(QWEN3_SHOW, QWEN3_WEIGHTS, 8 * GIB, "f16")
+        q8 = sync_ollama.vram_num_ctx_limit(QWEN3_SHOW, QWEN3_WEIGHTS, 8 * GIB, "q8_0")
+        assert q8 == 22528
+        assert q8 > 2 * f16 * 0.9
+
+    def test_big_vram_exceeds_native_length(self):
+        # 16 GiB fits ~70K tokens -> resolve_num_ctx clamps to the 40960 native.
+        limit = sync_ollama.vram_num_ctx_limit(QWEN3_SHOW, QWEN3_WEIGHTS, 16 * GIB)
+        assert limit == 69632
+
+    def test_no_room_floors_at_minimum(self):
+        # Weights + overhead already exceed 6 GiB: still write a usable floor
+        # (Ollama degrades by offloading layers to CPU, not by crashing).
+        limit = sync_ollama.vram_num_ctx_limit(QWEN3_SHOW, QWEN3_WEIGHTS, 6 * GIB)
+        assert limit == sync_ollama.MIN_VRAM_NUM_CTX
+
+    def test_unknown_geometry_returns_none(self):
+        assert sync_ollama.vram_num_ctx_limit({"model_info": {}}, QWEN3_WEIGHTS, 8 * GIB) is None
+
+    def test_unknown_weights_returns_none(self):
+        assert sync_ollama.vram_num_ctx_limit(QWEN3_SHOW, None, 8 * GIB) is None
+
+
+class TestResolveNumCtxWithVramLimit:
+    def test_vram_limit_caps_native(self):
+        assert sync_ollama.resolve_num_ctx(40960, cap=0, vram_limit=10240) == 10240
+
+    def test_native_below_vram_limit_is_kept(self):
+        assert sync_ollama.resolve_num_ctx(8192, cap=0, vram_limit=10240) == 8192
+
+    def test_explicit_cap_still_wins_over_vram_limit(self):
+        assert sync_ollama.resolve_num_ctx(40960, cap=8192, vram_limit=10240) == 8192
+
+    def test_unknown_native_stays_none(self):
+        assert sync_ollama.resolve_num_ctx(None, cap=0, vram_limit=10240) is None
+
+
+class TestEffectiveNumCtxCap:
+    """Cap precedence: explicit --num-ctx-cap > VRAM sizing (cap off) > flat default."""
+
+    def test_default_flat_cap_without_vram(self):
+        assert sync_ollama.effective_num_ctx_cap(None, None) == sync_ollama.DEFAULT_NUM_CTX_CAP
+
+    def test_vram_sizing_replaces_the_default_cap(self):
+        assert sync_ollama.effective_num_ctx_cap(None, 69632) == 0
+
+    def test_explicit_cap_always_applies(self):
+        assert sync_ollama.effective_num_ctx_cap(16384, 69632) == 16384
+
+    def test_explicit_zero_disables_the_cap(self):
+        assert sync_ollama.effective_num_ctx_cap(0, None) == 0
+
+
+class TestParseOllamaSettings:
+    """The `ollama:` config section is parsed with the same no-PyYAML text scan
+    the script uses everywhere else."""
+
+    def test_reads_vram_and_kv_type(self):
+        text = "config_version: 5\nollama:\n  vram_gb: 16          # GPU budget\n  kv_cache_type: q8_0\nmodels:\n  - name: x\n"
+        assert sync_ollama.parse_ollama_settings(text) == {"vram_gb": 16.0, "kv_cache_type": "q8_0"}
+
+    def test_absent_section_returns_empty(self):
+        assert sync_ollama.parse_ollama_settings(CLEAN_CONFIG) == {}
+
+    def test_section_header_comment_is_tolerated(self):
+        text = "ollama:   # sizing\n  vram_gb: 24.5\n"
+        assert sync_ollama.parse_ollama_settings(text) == {"vram_gb": 24.5}
+
+    def test_invalid_values_are_dropped(self):
+        text = "ollama:\n  vram_gb: lots\n  kv_cache_type: q2_K\n"
+        assert sync_ollama.parse_ollama_settings(text) == {}
+
+    def test_section_ends_at_next_top_level_key(self):
+        text = "ollama:\n  vram_gb: 16\nsandbox:\n  vram_gb: 99\n"
+        assert sync_ollama.parse_ollama_settings(text) == {"vram_gb": 16.0}
+
+
+class TestResolveSizingSettings:
+    _CONFIG = "ollama:\n  vram_gb: 16\n  kv_cache_type: q8_0\n"
+
+    def test_config_values_apply(self):
+        vram_bytes, kv = sync_ollama.resolve_sizing_settings(None, None, self._CONFIG)
+        assert vram_bytes == 16 * GIB
+        assert kv == "q8_0"
+
+    def test_cli_overrides_config(self):
+        vram_bytes, kv = sync_ollama.resolve_sizing_settings(24.0, "f16", self._CONFIG)
+        assert vram_bytes == 24 * GIB
+        assert kv == "f16"
+
+    def test_defaults_without_config_or_cli(self):
+        vram_bytes, kv = sync_ollama.resolve_sizing_settings(None, None, CLEAN_CONFIG)
+        assert vram_bytes is None
+        assert kv == "f16"
