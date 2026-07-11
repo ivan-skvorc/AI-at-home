@@ -6,12 +6,15 @@ Selects a fetch backend at call time and (optionally) chains a fallback:
       - name: web_fetch
         group: web
         use: deerflow.community.web_fetch.tools:web_fetch_tool
-        backend: camoufox        # or jina (default)
+        backend: camoufox        # default; or jina (cloud reader API)
         fallback: jina           # optional: try this backend if the primary errors
 
 Backend resolution order: ``DEER_FLOW_WEB_FETCH_BACKEND`` env var >
-tool-config ``backend`` key > ``"jina"``. The default is ``jina`` so existing
-installs behave identically.
+tool-config ``backend`` key > ``"camoufox"``. Camoufox is the default
+everywhere: the shipped config selects it explicitly, and an entry that omits
+``backend`` gets it too (set ``backend: jina`` to keep the cloud reader).
+``scripts/detect_uv_extras.py`` mirrors this resolution so the ``camoufox``
+extra and browser install automatically on every launch path.
 
 Each backend is an importable ``async (url) -> str`` callable returning readable
 text or an ``"Error: ..."``-prefixed string on failure. The dispatcher adds a
@@ -31,7 +34,7 @@ from deerflow.config import get_app_config
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_BACKEND = "jina"
+DEFAULT_BACKEND = "camoufox"
 _ENV_BACKEND = "DEER_FLOW_WEB_FETCH_BACKEND"
 
 _GITHUB_HOST_RE = re.compile(r"^https?://(www\.)?github\.com/", re.IGNORECASE)

@@ -1,8 +1,8 @@
 """Tests for the pluggable web_fetch dispatcher.
 
-Covers backend selection (env > config > default jina), the fallback chain, the
-both-failed report, and the private-GitHub 404 hint. Backends are stubbed — no
-network, no browser.
+Covers backend selection (env > config > default camoufox), the fallback chain,
+the both-failed report, and the private-GitHub 404 hint. Backends are stubbed —
+no network, no browser.
 """
 
 from __future__ import annotations
@@ -62,20 +62,28 @@ async def _run(url="https://example.com"):
 
 class TestBackendSelection:
     @pytest.mark.anyio
-    async def test_default_is_jina(self, set_config, stub_backends, monkeypatch):
+    async def test_default_is_camoufox(self, set_config, stub_backends, monkeypatch):
         monkeypatch.delenv("DEER_FLOW_WEB_FETCH_BACKEND", raising=False)
         set_config(None)
-        calls = stub_backends({"jina": "JINA-OK"})
-        assert await _run() == "JINA-OK"
-        assert calls == ["jina"]
-
-    @pytest.mark.anyio
-    async def test_config_selects_camoufox(self, set_config, stub_backends, monkeypatch):
-        monkeypatch.delenv("DEER_FLOW_WEB_FETCH_BACKEND", raising=False)
-        set_config({"backend": "camoufox"})
         calls = stub_backends({"camoufox": "CAMO-OK", "jina": "JINA-OK"})
         assert await _run() == "CAMO-OK"
         assert calls == ["camoufox"]
+
+    @pytest.mark.anyio
+    async def test_entry_without_backend_key_defaults_to_camoufox(self, set_config, stub_backends, monkeypatch):
+        monkeypatch.delenv("DEER_FLOW_WEB_FETCH_BACKEND", raising=False)
+        set_config({"timeout": 10})  # dispatcher entry present, no `backend` key
+        calls = stub_backends({"camoufox": "CAMO-OK", "jina": "JINA-OK"})
+        assert await _run() == "CAMO-OK"
+        assert calls == ["camoufox"]
+
+    @pytest.mark.anyio
+    async def test_config_selects_jina(self, set_config, stub_backends, monkeypatch):
+        monkeypatch.delenv("DEER_FLOW_WEB_FETCH_BACKEND", raising=False)
+        set_config({"backend": "jina"})
+        calls = stub_backends({"camoufox": "CAMO-OK", "jina": "JINA-OK"})
+        assert await _run() == "JINA-OK"
+        assert calls == ["jina"]
 
     @pytest.mark.anyio
     async def test_env_overrides_config(self, set_config, stub_backends, monkeypatch):
@@ -136,7 +144,7 @@ class TestGithubHint:
     async def test_github_404_gets_private_repo_hint(self, set_config, stub_backends, monkeypatch):
         monkeypatch.delenv("DEER_FLOW_WEB_FETCH_BACKEND", raising=False)
         set_config(None)
-        stub_backends({"jina": "Error: Jina API returned status 404: Not Found"})
+        stub_backends({"camoufox": "Error: page returned status 404: Not Found"})
         result = await dispatcher.dispatch_web_fetch("https://github.com/acme/secret")
         assert "private GitHub repository" in result
         assert "git clone https://github.com/OWNER/REPO.git" in result
@@ -145,7 +153,7 @@ class TestGithubHint:
     async def test_non_github_404_gets_no_hint(self, set_config, stub_backends, monkeypatch):
         monkeypatch.delenv("DEER_FLOW_WEB_FETCH_BACKEND", raising=False)
         set_config(None)
-        stub_backends({"jina": "Error: 404 Not Found"})
+        stub_backends({"camoufox": "Error: 404 Not Found"})
         result = await dispatcher.dispatch_web_fetch("https://example.com/missing")
         assert "private GitHub repository" not in result
 
@@ -153,7 +161,7 @@ class TestGithubHint:
     async def test_github_success_gets_no_hint(self, set_config, stub_backends, monkeypatch):
         monkeypatch.delenv("DEER_FLOW_WEB_FETCH_BACKEND", raising=False)
         set_config(None)
-        stub_backends({"jina": "# Public repo README\n\ncontent"})
+        stub_backends({"camoufox": "# Public repo README\n\ncontent"})
         result = await dispatcher.dispatch_web_fetch("https://github.com/acme/public")
         assert "private GitHub repository" not in result
 

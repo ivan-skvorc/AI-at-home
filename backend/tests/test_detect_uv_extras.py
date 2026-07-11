@@ -27,6 +27,7 @@ def isolated_cwd(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("UV_EXTRAS", raising=False)
     monkeypatch.delenv("DEER_FLOW_CONFIG_PATH", raising=False)
+    monkeypatch.delenv("DEER_FLOW_WEB_FETCH_BACKEND", raising=False)
     return tmp_path
 
 
@@ -177,6 +178,33 @@ def test_detect_camoufox_via_use_path(tmp_path):
     assert detect.detect_from_config(cfg) == ["camoufox"]
 
 
+def test_detect_camoufox_when_dispatcher_entry_omits_backend(tmp_path):
+    """No `backend:` key -> the dispatcher's code-level default (camoufox) applies."""
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text(
+        "tools:\n  - name: web_fetch\n    group: web\n    use: deerflow.community.web_fetch.tools:web_fetch_tool\n    timeout: 10\n",
+    )
+    assert detect.detect_from_config(cfg) == ["camoufox"]
+
+
+def test_dispatcher_without_backend_ignores_later_sections_backend_key(tmp_path):
+    """A `backend:` key in a later section (database) must not be attributed to the tool entry."""
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text(
+        "tools:\n  - name: web_fetch\n    use: deerflow.community.web_fetch.tools:web_fetch_tool\ndatabase:\n  backend: sqlite\n",
+    )
+    assert detect.detect_from_config(cfg) == ["camoufox"]
+
+
+def test_non_dispatcher_web_fetch_without_backend_selects_nothing(tmp_path):
+    """Other web_fetch providers (exa, firecrawl, ...) have no camoufox default."""
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text(
+        "tools:\n  - name: web_fetch\n    use: deerflow.community.exa.tools:web_fetch_tool\n",
+    )
+    assert detect.detect_from_config(cfg) == []
+
+
 def test_jina_backend_does_not_select_camoufox(tmp_path):
     cfg = tmp_path / "config.yaml"
     cfg.write_text(
@@ -191,6 +219,25 @@ def test_commented_camoufox_backend_is_ignored(tmp_path):
         "tools:\n  - name: web_fetch\n    backend: jina\n    # backend: camoufox\n",
     )
     assert detect.detect_from_config(cfg) == []
+
+
+def test_resolve_extras_web_fetch_env_var_selects_camoufox(isolated_cwd, monkeypatch):
+    """DEER_FLOW_WEB_FETCH_BACKEND=camoufox overrides a jina config at dispatch time, so the extra must install."""
+    cfg = isolated_cwd / "config.yaml"
+    cfg.write_text(
+        "tools:\n  - name: web_fetch\n    use: deerflow.community.web_fetch.tools:web_fetch_tool\n    backend: jina\n",
+    )
+    monkeypatch.setenv("DEER_FLOW_WEB_FETCH_BACKEND", "camoufox")
+    assert detect.resolve_extras() == ["camoufox"]
+
+
+def test_resolve_extras_web_fetch_env_var_other_value_is_ignored(isolated_cwd, monkeypatch):
+    cfg = isolated_cwd / "config.yaml"
+    cfg.write_text(
+        "tools:\n  - name: web_fetch\n    use: deerflow.community.web_fetch.tools:web_fetch_tool\n    backend: jina\n",
+    )
+    monkeypatch.setenv("DEER_FLOW_WEB_FETCH_BACKEND", "jina")
+    assert detect.resolve_extras() == []
 
 
 def test_resolve_extras_env_overrides_config(isolated_cwd, monkeypatch):
