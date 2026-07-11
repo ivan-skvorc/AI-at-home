@@ -122,6 +122,55 @@ class TestContainerizeBaseUrl:
         assert sync_ollama.containerize_base_url("http://server.lan:11434") == "http://server.lan:11434"
 
 
+class TestContainerOllamaWarning:
+    """--container writes host.docker.internal, which resolves to the Docker
+    bridge gateway on Linux. A loopback-only host Ollama (its default binding)
+    refuses those connections, so the sync must warn with the exact fix."""
+
+    @staticmethod
+    def _docker(responses: dict[str, str | None]):
+        def run(args, timeout=5.0):
+            return responses.get(args[0])
+
+        return run
+
+    def test_warns_when_gateway_unreachable(self):
+        docker = self._docker({"info": "Ubuntu 24.04", "network": "172.17.0.1\n"})
+        warning = sync_ollama.container_ollama_warning("http://host.docker.internal:11434", docker=docker, probe=lambda url: False)
+        assert warning is not None
+        assert "OLLAMA_HOST=0.0.0.0" in warning
+        assert "172.17.0.1" in warning
+
+    def test_probes_gateway_at_base_url_port(self):
+        probed: list[str] = []
+        docker = self._docker({"info": "Ubuntu 24.04", "network": "172.17.0.1\n"})
+
+        def probe(url: str) -> bool:
+            probed.append(url)
+            return True
+
+        assert sync_ollama.container_ollama_warning("http://host.docker.internal:12345", docker=docker, probe=probe) is None
+        assert probed == ["http://172.17.0.1:12345"]
+
+    def test_silent_when_gateway_answers(self):
+        docker = self._docker({"info": "Ubuntu 24.04", "network": "172.17.0.1\n"})
+        assert sync_ollama.container_ollama_warning("http://host.docker.internal:11434", docker=docker, probe=lambda url: True) is None
+
+    def test_silent_on_docker_desktop(self):
+        # Docker Desktop proxies host loopback for host.docker.internal.
+        docker = self._docker({"info": "Docker Desktop\n", "network": "192.168.65.1\n"})
+        assert sync_ollama.container_ollama_warning("http://host.docker.internal:11434", docker=docker, probe=lambda url: False) is None
+
+    def test_silent_when_gateway_cannot_be_determined(self):
+        docker = self._docker({"info": "Ubuntu 24.04", "network": None})
+        assert sync_ollama.container_ollama_warning("http://host.docker.internal:11434", docker=docker, probe=lambda url: False) is None
+
+    def test_silent_for_non_alias_base_url(self):
+        # A remote Ollama recorded verbatim needs no bridge-gateway reachability.
+        docker = self._docker({"info": "Ubuntu 24.04", "network": "172.17.0.1\n"})
+        assert sync_ollama.container_ollama_warning("http://server.lan:11434", docker=docker, probe=lambda url: False) is None
+
+
 class TestResolveBaseUrl:
     def test_explicit_base_url_wins(self):
         resolved = sync_ollama.resolve_base_url("http://localhost:11434", "http://custom:9999", container=True)

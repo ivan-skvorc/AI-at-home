@@ -815,6 +815,12 @@ sandbox:
 
 > Note: `mounts:` is honored only by `LocalSandboxProvider` and the auto-spawn AIO backend. In external mode, declare volumes in `docker/docker-compose.sandbox.yml` instead — DeerFlow logs a warning if it sees an ignored `mounts:` list.
 
+#### Host-run Ollama from inside the sandbox
+
+Sandbox containers (both the external one above and the per-conversation auto-spawn ones) can reach a host-run Ollama out of the box: they map `host.docker.internal` to the host gateway (Linux Docker daemons don't provide the alias automatically) and set `OLLAMA_HOST=http://host.docker.internal:11434` in the container environment, so agent-run scripts and Ollama clients target your local daemon instead of the container's own loopback. Override the endpoint with `DEER_FLOW_SANDBOX_OLLAMA_HOST` (external mode) or an `OLLAMA_HOST` entry in `sandbox.environment` (auto-spawn mode).
+
+One host-side requirement remains: Ollama's default binding is loopback-only (`127.0.0.1`), which refuses connections arriving from containers. Make it listen on all interfaces (`sudo systemctl edit ollama` → `[Service]` `Environment="OLLAMA_HOST=0.0.0.0"`, or `OLLAMA_HOST=0.0.0.0 ollama serve`). You don't need to remember this — `make dev`'s sandbox preflight detects the loopback-only case and prints that exact fix (advisory only; DeerFlow's own model calls run on the host and are unaffected, and Docker Desktop is exempt because it proxies host loopback).
+
 #### Private GitHub repositories
 
 When `GITHUB_TOKEN` is set in the sandbox `environment:` (the bundled compose file forwards it from your host), DeerFlow installs a git credential helper inside the container so the agent can clone private repos with a **plain** URL:

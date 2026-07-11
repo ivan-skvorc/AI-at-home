@@ -33,6 +33,17 @@ services:
       # helper can authenticate private GitHub clones. Empty when unset — public
       # repos still work. The token is never written to .git/config or logs.
       GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+      # Agent-run Ollama clients inside the sandbox target the host daemon by
+      # default (localhost in here is the container itself). Override with
+      # DEER_FLOW_SANDBOX_OLLAMA_HOST for a remote daemon. The host's Ollama
+      # must listen beyond loopback for these connections to be accepted
+      # (e.g. OLLAMA_HOST=0.0.0.0) — `make dev` warns when it doesn't.
+      OLLAMA_HOST: ${DEER_FLOW_SANDBOX_OLLAMA_HOST:-http://host.docker.internal:11434}
+    # Linux daemons don't resolve host.docker.internal on their own (Docker
+    # Desktop does); map it to the host gateway so in-container code can reach
+    # host-run services such as Ollama.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     restart: unless-stopped
     healthcheck:
       # Same readiness endpoint the provider polls.

@@ -20,6 +20,15 @@ from .sandbox_info import SandboxInfo
 
 logger = logging.getLogger(__name__)
 
+# Host alias for in-container code to reach services on the Docker host (e.g. a
+# host-run Ollama). Linux daemons do not provide it automatically the way Docker
+# Desktop does, so it is mapped explicitly at container start via --add-host.
+DOCKER_HOST_GATEWAY_ALIAS = "host.docker.internal"
+# Advertised inside sandbox containers so agent-run Ollama clients target the
+# host daemon instead of the container's own loopback. An OLLAMA_HOST entry in
+# `sandbox.environment` wins over this default.
+SANDBOX_OLLAMA_HOST_DEFAULT = f"http://{DOCKER_HOST_GATEWAY_ALIAS}:11434"
+
 
 def _parse_docker_timestamp(raw: str) -> float:
     """Parse Docker's ISO 8601 timestamp into a Unix epoch float.
@@ -544,6 +553,9 @@ class LocalContainerBackend(SandboxBackend):
         # Docker-specific security options
         if self._runtime == "docker":
             cmd.extend(["--security-opt", "seccomp=unconfined"])
+            # Linux daemons don't resolve host.docker.internal on their own;
+            # map it so agent-run code can reach host services (e.g. Ollama).
+            cmd.extend(["--add-host", f"{DOCKER_HOST_GATEWAY_ALIAS}:host-gateway"])
 
         if self._runtime == "docker":
             port_mapping = f"{_resolve_docker_bind_host()}:{port}:8080"
@@ -562,7 +574,10 @@ class LocalContainerBackend(SandboxBackend):
         )
 
         # Environment variables
-        for key, value in self._environment.items():
+        environment = dict(self._environment)
+        if self._runtime == "docker":
+            environment.setdefault("OLLAMA_HOST", SANDBOX_OLLAMA_HOST_DEFAULT)
+        for key, value in environment.items():
             cmd.extend(["-e", f"{key}={value}"])
 
         # Config-level volume mounts

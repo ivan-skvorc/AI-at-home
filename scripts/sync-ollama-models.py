@@ -38,6 +38,7 @@ import argparse
 import json
 import os
 import re
+import subprocess
 import sys
 import urllib.error
 import urllib.parse
@@ -123,6 +124,51 @@ def fetch_show(host: str, name: str, timeout: float = 5.0) -> dict:
     except (urllib.error.URLError, TimeoutError, ConnectionError, json.JSONDecodeError):
         return {}
     return data if isinstance(data, dict) else {}
+
+
+def _run_docker(args: list, timeout: float = 5.0):
+    """Run a docker CLI command, returning stdout or None on any failure."""
+    try:
+        completed = subprocess.run(["docker", *args], capture_output=True, text=True, timeout=timeout, check=False)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if completed.returncode != 0:
+        return None
+    return completed.stdout
+
+
+def _ollama_probe(host: str) -> bool:
+    return fetch_tags(host, timeout=2.0) is not None
+
+
+def container_ollama_warning(base_url: str, *, docker=_run_docker, probe=_ollama_probe):
+    """Return a warning when a host.docker.internal base_url looks container-unreachable.
+
+    The ``--container`` rewrite records ``host.docker.internal``, which resolves
+    to the Docker bridge gateway on Linux. A host Ollama bound to loopback only —
+    its default — answers on localhost but refuses bridge-gateway connections,
+    so the gateway container would get "connection refused" for every model
+    call. Best-effort: returns None whenever reachability cannot be determined,
+    and on Docker Desktop (which proxies host loopback for the alias).
+    """
+    parsed = urllib.parse.urlsplit(base_url)
+    if (parsed.hostname or "").lower() != DOCKER_HOST_ALIAS:
+        return None
+    operating_system = docker(["info", "--format", "{{.OperatingSystem}}"]) or ""
+    if "docker desktop" in operating_system.lower():
+        return None
+    gateway_ip = (docker(["network", "inspect", "bridge", "--format", "{{(index .IPAM.Config 0).Gateway}}"]) or "").strip()
+    if not gateway_ip:
+        return None
+    port = parsed.port or 11434
+    if probe(f"http://{gateway_ip}:{port}"):
+        return None
+    return (
+        f"WARNING: wrote base_url {base_url}, but the host's Ollama does not answer on the Docker bridge gateway ({gateway_ip}:{port}) — "
+        "it is likely bound to loopback only, so containers will get 'connection refused' on every model call. "
+        'Make Ollama listen on all interfaces and restart it (systemd: sudo systemctl edit ollama, add [Service] Environment="OLLAMA_HOST=0.0.0.0"; '
+        "manual: OLLAMA_HOST=0.0.0.0 ollama serve)."
+    )
 
 
 def parse_capabilities(show: dict) -> list:
@@ -318,6 +364,13 @@ def main() -> int:
         if args.verbose:
             print(f"[ollama-sync] {host} unreachable; skipping (no changes)", file=sys.stderr)
         return 0
+
+    # The daemon is up, so entries will be written — check they will actually
+    # be reachable from the containers that read them (best-effort, warn only).
+    if args.container:
+        warning = container_ollama_warning(base_url)
+        if warning:
+            print(f"[ollama-sync] {warning}", file=sys.stderr)
 
     models = []
     for name in names:

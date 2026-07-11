@@ -174,6 +174,63 @@ class TestSandboxBaseUrl:
         assert result.stdout.strip() == ""
 
 
+# ── Host-run Ollama reachability advisory ────────────────────────────────────
+
+# Fake a Linux docker daemon: bridge gateway 172.17.0.1, non-Desktop OS string.
+_FAKE_DOCKER_LINUX = 'docker() { if [ "$1" = "network" ]; then echo 172.17.0.1; return 0; fi; if [ "$1" = "info" ]; then echo "Ubuntu 24.04"; return 0; fi; return 0; }; '
+
+
+class TestOllamaAdvisory:
+    def test_warns_when_host_ollama_is_loopback_only(self):
+        # Ollama answers on localhost but not on the bridge gateway.
+        fake = 'curl() { case "$*" in *localhost:11434*) return 0;; *) return 1;; esac; }; ' + _FAKE_DOCKER_LINUX
+        result = _run_sourced(None, _FAKE_ENV + fake + "warn_if_host_ollama_unreachable_from_containers")
+        assert result.returncode == 0
+        assert "OLLAMA_HOST=0.0.0.0" in result.stderr
+        assert "host.docker.internal" in result.stderr
+
+    def test_silent_when_no_host_ollama(self):
+        fake = "curl() { return 1; }; " + _FAKE_DOCKER_LINUX
+        result = _run_sourced(None, _FAKE_ENV + fake + "warn_if_host_ollama_unreachable_from_containers")
+        assert result.returncode == 0
+        assert result.stderr.strip() == ""
+
+    def test_silent_when_gateway_reachable(self):
+        fake = "curl() { return 0; }; " + _FAKE_DOCKER_LINUX
+        result = _run_sourced(None, _FAKE_ENV + fake + "warn_if_host_ollama_unreachable_from_containers")
+        assert result.returncode == 0
+        assert result.stderr.strip() == ""
+
+    def test_silent_on_docker_desktop(self):
+        # Docker Desktop proxies host loopback for host.docker.internal.
+        fake = 'curl() { case "$*" in *localhost:11434*) return 0;; *) return 1;; esac; }; docker() { if [ "$1" = "info" ]; then echo "Docker Desktop"; return 0; fi; return 1; }; '
+        result = _run_sourced(None, _FAKE_ENV + fake + "warn_if_host_ollama_unreachable_from_containers")
+        assert result.returncode == 0
+        assert result.stderr.strip() == ""
+
+    def test_silent_when_gateway_cannot_be_determined(self):
+        # No usable docker CLI → reachability unknown → stay quiet, never guess.
+        fake = 'curl() { case "$*" in *localhost:11434*) return 0;; *) return 1;; esac; }; docker() { return 1; }; '
+        result = _run_sourced(None, _FAKE_ENV + fake + "warn_if_host_ollama_unreachable_from_containers")
+        assert result.returncode == 0
+        assert result.stderr.strip() == ""
+
+    def test_external_preflight_success_runs_advisory(self):
+        # Healthy external sandbox + loopback-only host Ollama → advisory on stderr, rc 0.
+        fake = 'curl() { case "$*" in *8091*|*localhost:11434*) return 0;; *) return 1;; esac; }; ' + _FAKE_DOCKER_LINUX
+        result = _run_sourced(AIO_EXTERNAL_CONFIG, _FAKE_ENV + fake + 'aio_sandbox_preflight "$CONFIG"')
+        assert result.returncode == 0
+        assert "already reachable" in result.stdout
+        assert "OLLAMA_HOST=0.0.0.0" in result.stderr
+
+    def test_aio_preflight_success_runs_advisory(self):
+        # Per-conversation AIO mode gets the same advisory after the Docker checks pass.
+        fake = 'curl() { case "$*" in *localhost:11434*) return 0;; *) return 1;; esac; }; ' + _FAKE_DOCKER_LINUX
+        result = _run_sourced(AIO_CONFIG, _FAKE_ENV + fake + 'aio_sandbox_preflight "$CONFIG"')
+        assert result.returncode == 0
+        assert "OLLAMA_HOST=0.0.0.0" in result.stderr
+
+
 class TestExternalPreflight:
     # Fake curl (health probe) and docker (compose) as shell functions.
     def test_already_reachable_is_success_without_compose(self):
