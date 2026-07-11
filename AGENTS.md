@@ -70,6 +70,12 @@ Skill quality review note:
   tag-neutralized; full raw payloads stay in tool artifacts. See
   [backend/AGENTS.md](backend/AGENTS.md) for the non-activation, SkillScan, and
   `skill-creator` ownership boundaries.
+- The skill-review CI gate (`scripts/review_changed_public_skills.py`) supports
+  digest-pinned acknowledgments in `skills/public/.review-acknowledgments.json`
+  for pre-existing packages whose findings were human-reviewed (e.g. upstream
+  packages predating the gate). An acknowledgment suppresses the failure only
+  while the package's content digest matches; any change to the package re-arms
+  the full gate. Tests: `backend/tests/test_review_changed_public_skills.py`.
 
 Scheduled-task note:
 - The scheduled-task MVP adds a workspace page at `/workspace/scheduled-tasks` plus a background scheduler service gated by `config.yaml -> scheduler.enabled`.

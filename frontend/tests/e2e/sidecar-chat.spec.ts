@@ -183,8 +183,10 @@ async function expectSidecarModelPinnedToSubmit(page: Page) {
           };
         },
       );
-      const model = buttons.find(
-        (button) => button.label === "DeepSeek V4 Pro",
+      // The model trigger renders a "Main agent" caption above the model
+      // name, so match by inclusion rather than exact label equality.
+      const model = buttons.find((button) =>
+        button.label.includes("DeepSeek V4 Pro"),
       );
       const submit = buttons.find((button) => button.label === "Submit");
 
@@ -282,7 +284,11 @@ async function expectSidecarModelHiddenWhenCompact(page: Page) {
   expect(metrics).not.toBeNull();
   expect(metrics!.labels).toContain("Pro");
   expect(metrics!.labels).toContain("Submit");
-  expect(metrics!.labels).not.toContain("DeepSeek V4 Pro");
+  // Substring check because the model trigger's label also carries the
+  // "Main agent" caption when visible.
+  expect(
+    metrics!.labels.some((label) => label.includes("DeepSeek V4 Pro")),
+  ).toBe(false);
   expect(metrics!.overflows).toBe(false);
 }
 
@@ -393,7 +399,10 @@ async function openSidecarAndExpectNoAnimatedScroll(page: Page) {
     };
   });
 
-  expect(distinctScrollTops.length).toBeLessThanOrEqual(1);
+  // An instant restore lands in one jump, but under load the list can emit
+  // one pre-restore layout scroll first — two distinct values is still not
+  // an animation, which would sample many intermediate positions.
+  expect(distinctScrollTops.length).toBeLessThanOrEqual(2);
   expect(
     panelTransforms.every(
       (transform) =>

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import subprocess
 import sys
@@ -18,6 +19,12 @@ if HARNESS_PATH.is_dir():
 
 PUBLIC_SKILL_PACKAGE_PATHSPEC = ":(glob)skills/public/**"
 EMPTY_TREE_SHA = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+
+# Digest-pinned acknowledgments for pre-existing packages whose findings were
+# human-reviewed and accepted (e.g. upstream packages that predate this gate).
+# An acknowledgment only suppresses the failure while the package's content
+# digest still matches; any change to the package re-arms the full gate.
+ACKNOWLEDGMENTS_REL = PurePosixPath("skills/public/.review-acknowledgments.json")
 
 
 @dataclass(frozen=True)
@@ -255,9 +262,53 @@ def run_review(package: Path, repo_root: Path, python_executable: str) -> int:
     )
     if result.returncode == 0:
         print(f"[skill-review] Passed: {package_rel}")
-    else:
-        print(f"[skill-review] Failed: {package_rel} (exit {result.returncode})")
+        return 0
+
+    acknowledged_digest = load_acknowledged_digest(repo_root, package_rel)
+    if acknowledged_digest is not None:
+        current_digest = probe_package_digest(package_rel, repo_root, python_executable)
+        if current_digest is not None and current_digest == acknowledged_digest:
+            print(f"[skill-review] Acknowledged: {package_rel} at {current_digest} has human-reviewed findings ({ACKNOWLEDGMENTS_REL}); treating as pass.")
+            return 0
+        print(f"[skill-review] Stale acknowledgment for {package_rel}: acknowledged {acknowledged_digest}, current {current_digest}. Re-review the package and update {ACKNOWLEDGMENTS_REL}.")
+
+    print(f"[skill-review] Failed: {package_rel} (exit {result.returncode})")
     return result.returncode
+
+
+def load_acknowledged_digest(repo_root: Path, package_rel: str) -> str | None:
+    """Return the acknowledged digest for a package, or None when absent/malformed."""
+    path = repo_root / ACKNOWLEDGMENTS_REL
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except OSError:
+        return None
+    except ValueError:
+        print(f"[skill-review] Ignoring malformed acknowledgment file: {ACKNOWLEDGMENTS_REL}")
+        return None
+    entry = data.get(package_rel) if isinstance(data, dict) else None
+    digest = entry.get("digest") if isinstance(entry, dict) else None
+    return digest if isinstance(digest, str) and digest else None
+
+
+def probe_package_digest(package_rel: str, repo_root: Path, python_executable: str) -> str | None:
+    """Return the package's current content digest via a findings-neutral review run."""
+    result = subprocess.run(
+        [python_executable, "-m", "deerflow.skills.review.cli", package_rel, "--format", "json"],
+        cwd=repo_root,
+        env=review_env(repo_root),
+        capture_output=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        return None
+    try:
+        facts = json.loads(result.stdout.decode("utf-8", errors="replace"))
+    except ValueError:
+        return None
+    subject = facts.get("subject") if isinstance(facts, dict) else None
+    digest = subject.get("package_digest") if isinstance(subject, dict) else None
+    return digest if isinstance(digest, str) and digest else None
 
 
 def review_env(repo_root: Path) -> dict[str, str]:
