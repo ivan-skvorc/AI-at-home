@@ -217,6 +217,8 @@ class LocalContainerBackend(SandboxBackend):
         container_prefix: str,
         config_mounts: list,
         environment: dict[str, str],
+        expose_ports: list[int] | None = None,
+        extra_capabilities: list[str] | None = None,
     ):
         """Initialize the local container backend.
 
@@ -226,12 +228,18 @@ class LocalContainerBackend(SandboxBackend):
             container_prefix: Prefix for container names (e.g., "deer-flow-sandbox").
             config_mounts: Volume mount configurations from config (list of VolumeMountConfig).
             environment: Environment variables to inject into containers.
+            expose_ports: Extra container ports published 1:1 to the host loopback
+                (fixed host ports — only one concurrent container can hold each).
+            extra_capabilities: Additional Linux capabilities (`--cap-add`) for the
+                container; Docker runtime only (warned and skipped on Apple Container).
         """
         self._image = image
         self._base_port = base_port
         self._container_prefix = container_prefix
         self._config_mounts = config_mounts
         self._environment = environment
+        self._expose_ports = list(expose_ports or [])
+        self._extra_capabilities = list(extra_capabilities or [])
         self._runtime = self._detect_runtime()
 
     @property
@@ -572,6 +580,26 @@ class LocalContainerBackend(SandboxBackend):
                 container_name,
             ]
         )
+
+        # Extra debug ports (sandbox.expose_ports): published 1:1 so a program
+        # under test inside the sandbox is reachable from the host browser.
+        # Fixed host ports — a second concurrent container fails to start while
+        # the port is held, which Docker reports and _start_container surfaces.
+        for extra_port in self._expose_ports:
+            if self._runtime == "docker":
+                cmd.extend(["-p", f"{_resolve_docker_bind_host()}:{extra_port}:{extra_port}"])
+            else:
+                cmd.extend(["-p", f"{extra_port}:{extra_port}"])
+
+        # Extra Linux capabilities (sandbox.extra_capabilities), e.g. SYS_PTRACE
+        # so gdb/strace can attach to running processes. Docker-only: Apple
+        # Container has no --cap-add equivalent.
+        if self._extra_capabilities:
+            if self._runtime == "docker":
+                for capability in self._extra_capabilities:
+                    cmd.extend(["--cap-add", capability])
+            else:
+                logger.warning(f"sandbox.extra_capabilities is Docker-only; ignoring {self._extra_capabilities} on runtime '{self._runtime}'")
 
         # Environment variables
         environment = dict(self._environment)

@@ -15,7 +15,7 @@
 # ============================================================================
 # Bump this number when the config schema changes.
 # Run `make config-upgrade` to merge new fields into your local config.yaml.
-config_version: 22
+config_version: 23
 
 # ============================================================================
 # Logging
@@ -1145,7 +1145,15 @@ sandbox:
   bash_command_timeout: 600
 
 # Option 2: Container-based AIO Sandbox
-# Executes commands in isolated containers (Docker or Apple Container)
+# Executes commands in isolated containers (Docker or Apple Container) where the
+# agent has root and can install packages, so it is the mode for "clone a repo
+# and run/debug it" workflows. Two sub-modes:
+#   - Local container mode (no base_url): DeerFlow spawns one container per thread
+#     and mounts that thread's user-data dirs, so /mnt/user-data is host-backed
+#     (uploads, outputs, and present_files all work). Best for clone-and-debug.
+#     Run `make sandbox-enable MODE=container` to write this block for you.
+#   - External mode (base_url set): connect to one shared, externally-managed
+#     container started via `make sandbox-up`. `mounts:` are ignored.
 # On macOS: Automatically prefers Apple Container if available, falls back to Docker
 # On other platforms: Uses Docker
 # Uncomment to use:
@@ -1160,9 +1168,40 @@ sandbox:
 #   # `mounts:` are ignored (declare volumes in the compose file), and
 #   # `environment:` must be set on the container itself (the compose file passes
 #   # GITHUB_TOKEN through from the host). `make dev` auto-starts the container
-#   # when base_url is set and unreachable.
+#   # when base_url is set and unreachable. Omit base_url for per-thread local
+#   # container mode (recommended for clone-and-debug — see above).
 #   # base_url: http://localhost:8091
 #   # request_timeout: 120.0        # HTTP client timeout for the sandbox API (default: 600)
+#
+#   # Optional: Per-command budget for bash inside the sandbox (seconds). Reused
+#   # for both AIO paths: the idle (no-new-output) timeout on the persistent
+#   # shell and the wall-clock hard timeout on the env-bearing bash.exec path.
+#   # Raise it for long installs/builds (e.g. `pip install torch`, `cargo build`)
+#   # — and raise request_timeout to at least the same value, or the HTTP client
+#   # aborts the command first (DeerFlow logs a one-shot warning when it would).
+#   # bash_command_timeout: 1800
+#   # request_timeout: 1800.0
+#
+#   # Optional: Publish extra container ports 1:1 to the host loopback so a
+#   # program you run inside the sandbox is reachable from your own browser
+#   # (e.g. a dev server the agent starts). Local container mode only; ignored
+#   # (with a warning) in external/provisioner modes. Fixed host ports — only
+#   # one sandbox container can hold each at a time, so keep `replicas` low or
+#   # use this for single-thread debugging.
+#   # expose_ports: [8000, 3000]
+#
+#   # Optional: Extra Linux capabilities for the sandbox container (Docker
+#   # runtime, local container mode only). SYS_PTRACE lets gdb/strace attach to
+#   # running processes for native debugging. Ignored (with a warning) in
+#   # external/provisioner modes and on Apple Container.
+#   # extra_capabilities: [SYS_PTRACE]
+#
+#   # Optional: Keep released containers warm longer before idle reclaim
+#   # (seconds; default 600). A longer window keeps an installed/built debug
+#   # environment alive between the agent's turns. Note: packages installed
+#   # OUTSIDE the mounted workspace (apt, global pip) are still lost when a
+#   # container is finally recycled — keep a project's deps in a workspace venv.
+#   # idle_timeout: 3600
 #
 #   # Optional: Container image to use (works with both Docker and Apple Container)
 #   # Default: enterprise-public-cn-beijing.cr.volces.com/vefaas-public/all-in-one-sandbox:latest

@@ -197,6 +197,7 @@ class AioSandboxProvider(WarmPoolLifecycleMixin[SandboxInfo], SandboxProvider):
         if provisioner_url:
             logger.info(f"Using remote sandbox backend with provisioner at {provisioner_url}")
             self._warn_ignored_mounts("provisioner/remote", "the provisioner pod spec")
+            self._warn_ignored_container_options("provisioner/remote", "the provisioner pod spec")
             return RemoteSandboxBackend(provisioner_url=provisioner_url)
 
         base_url = self._config.get("base_url")
@@ -204,6 +205,7 @@ class AioSandboxProvider(WarmPoolLifecycleMixin[SandboxInfo], SandboxProvider):
             logger.info(f"Using external sandbox backend at {base_url}")
             self._warn_ignored_mounts("external base_url", "docker/docker-compose.sandbox.yml `volumes:`")
             self._warn_external_environment()
+            self._warn_ignored_container_options("external base_url", "docker/docker-compose.sandbox.yml (`ports:` / `cap_add:`)")
             return ExternalSandboxBackend(base_url=base_url)
 
         logger.info("Using local container sandbox backend")
@@ -213,6 +215,28 @@ class AioSandboxProvider(WarmPoolLifecycleMixin[SandboxInfo], SandboxProvider):
             container_prefix=self._config["container_prefix"],
             config_mounts=self._config["mounts"],
             environment=self._config["environment"],
+            expose_ports=self._config.get("expose_ports") or [],
+            extra_capabilities=self._config.get("extra_capabilities") or [],
+        )
+
+    def _warn_ignored_container_options(self, backend_label: str, where_to_declare: str) -> None:
+        """Warn that expose_ports / extra_capabilities only apply in local container mode.
+
+        The external and provisioner backends do not create containers, so these
+        run-time docker options would be silently dropped without this notice.
+        """
+        ignored = []
+        if self._config.get("expose_ports"):
+            ignored.append(f"expose_ports={self._config['expose_ports']}")
+        if self._config.get("extra_capabilities"):
+            ignored.append(f"extra_capabilities={self._config['extra_capabilities']}")
+        if not ignored:
+            return
+        logger.warning(
+            "sandbox.%s is ignored in %s mode. Declare the equivalent in %s instead.",
+            " and sandbox.".join(ignored),
+            backend_label,
+            where_to_declare,
         )
 
     def _warn_ignored_mounts(self, backend_label: str, where_to_declare: str) -> None:
@@ -282,6 +306,9 @@ class AioSandboxProvider(WarmPoolLifecycleMixin[SandboxInfo], SandboxProvider):
             "base_url": getattr(sandbox_config, "base_url", None) or "",
             # HTTP client timeout for the sandbox API (None → AioSandbox default of 600s)
             "request_timeout": getattr(sandbox_config, "request_timeout", None),
+            # Extra debug ports / capabilities (applied in local container mode only)
+            "expose_ports": list(getattr(sandbox_config, "expose_ports", None) or []),
+            "extra_capabilities": list(getattr(sandbox_config, "extra_capabilities", None) or []),
         }
 
     @staticmethod

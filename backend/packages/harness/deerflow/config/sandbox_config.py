@@ -46,6 +46,8 @@ class SandboxConfig(BaseModel):
         base_url: Connect to a single externally-managed AIO sandbox container instead of auto-spawning containers
         request_timeout: HTTP client timeout in seconds for sandbox API requests (default: 600)
         provisioner_url: Delegate sandbox lifecycle to the provisioner service (remote/K8s mode)
+        expose_ports: Extra container ports published 1:1 to the host loopback (local container mode only)
+        extra_capabilities: Additional Linux capabilities for the sandbox container, e.g. SYS_PTRACE for gdb attach (local container mode, Docker runtime only)
 
     Backend selection precedence for AioSandboxProvider:
         provisioner_url > base_url > local container mode (auto-spawn via Docker/Apple Container).
@@ -110,6 +112,21 @@ class SandboxConfig(BaseModel):
         default=None,
         description=("URL of the provisioner service for remote/K8s sandbox mode (e.g. http://provisioner:8002). The provisioner dynamically creates per-sandbox Pods + Services. Takes precedence over base_url."),
     )
+    expose_ports: list[int] = Field(
+        default_factory=list,
+        description=(
+            "Extra container ports to publish 1:1 to the host loopback in AIO local container mode (e.g. [8000, 3000] so a program under debug is reachable at localhost:8000). "
+            "Fixed host ports: only one sandbox container at a time can hold each port — a second concurrent sandbox fails to start while the port is taken, so keep this to "
+            "single-thread debugging workflows or lower `replicas`. Ignored (with a warning) in external base_url and provisioner modes."
+        ),
+    )
+    extra_capabilities: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Additional Linux capabilities granted to the sandbox container via `--cap-add` in AIO local container mode with the Docker runtime "
+            '(e.g. ["SYS_PTRACE"] so gdb/strace can attach to running processes). Ignored (with a warning) in external base_url and provisioner modes and on non-Docker runtimes.'
+        ),
+    )
 
     bash_output_max_chars: int = Field(
         default=20000,
@@ -131,7 +148,9 @@ class SandboxConfig(BaseModel):
         gt=0,
         description=(
             "Maximum wall-clock seconds a host bash command may run before it is terminated, process group and all (LocalSandboxProvider). "
-            "Keeps a blocking foreground command (e.g. an un-backgrounded server) from hanging the turn; background `&` processes return immediately."
+            "Keeps a blocking foreground command (e.g. an un-backgrounded server) from hanging the turn; background `&` processes return immediately. "
+            "Also forwarded as the AIO sandbox per-command budget: the idle (no-new-output) timeout on the persistent-shell path and the wall-clock "
+            "hard timeout on the env-bearing bash.exec path. Raise `request_timeout` alongside this value — the HTTP client must outlive the command."
         ),
     )
 

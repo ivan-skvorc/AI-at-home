@@ -92,6 +92,72 @@ class TestEnable:
         assert not (tmp_path / "config.yaml.bak").exists()
 
 
+class TestEnableContainerMode:
+    def test_enable_container_writes_provider_without_base_url(self, tmp_path):
+        config = _write(tmp_path, LOCAL_CONFIG)
+        rc = toggle.toggle("enable", config, mode="container")
+        assert rc == 0
+        text = config.read_text(encoding="utf-8")
+        assert "use: deerflow.community.aio_sandbox:AioSandboxProvider" in text
+        # Container mode is per-thread; must NOT pin an external base_url.
+        assert "base_url" not in text
+        assert "bash_command_timeout: 1800" in text
+        assert "request_timeout: 1800.0" in text
+        assert "GITHUB_TOKEN: $GITHUB_TOKEN" in text
+
+    def test_enable_container_preserves_environment(self, tmp_path):
+        config = _write(
+            tmp_path,
+            "sandbox:\n  use: deerflow.sandbox.local:LocalSandboxProvider\n  environment:\n    GITHUB_TOKEN: $GITHUB_TOKEN\n    CUSTOM_VAR: hello\ntools: []\n",
+        )
+        toggle.toggle("enable", config, mode="container")
+        text = config.read_text(encoding="utf-8")
+        assert "CUSTOM_VAR: hello" in text
+        assert "base_url" not in text
+
+    def test_enable_container_idempotent(self, tmp_path, capsys):
+        config = _write(tmp_path, LOCAL_CONFIG)
+        toggle.toggle("enable", config, mode="container")
+        before = config.read_text(encoding="utf-8")
+        (tmp_path / "config.yaml.bak").unlink()
+        rc = toggle.toggle("enable", config, mode="container")
+        assert rc == 0
+        assert "already set to AIO container mode" in capsys.readouterr().out
+        assert config.read_text(encoding="utf-8") == before
+        assert not (tmp_path / "config.yaml.bak").exists()
+
+    def test_switch_external_to_container_rewrites(self, tmp_path):
+        config = _write(tmp_path, AIO_CONFIG_WITH_ENV)
+        rc = toggle.toggle("enable", config, mode="container")
+        assert rc == 0
+        text = config.read_text(encoding="utf-8")
+        assert "base_url" not in text
+        assert "bash_command_timeout: 1800" in text
+        # environment preserved across the mode switch
+        assert "CUSTOM_VAR: hello" in text
+
+    def test_main_accepts_mode_container_flag(self, tmp_path, monkeypatch):
+        config = _write(tmp_path, LOCAL_CONFIG)
+        monkeypatch.setattr(toggle, "resolve_config_path", lambda: config)
+        rc = toggle.main(["sandbox_toggle.py", "enable", "--mode", "container"])
+        assert rc == 0
+        assert "base_url" not in config.read_text(encoding="utf-8")
+
+    def test_main_rejects_bad_mode(self, tmp_path, monkeypatch, capsys):
+        config = _write(tmp_path, LOCAL_CONFIG)
+        monkeypatch.setattr(toggle, "resolve_config_path", lambda: config)
+        rc = toggle.main(["sandbox_toggle.py", "enable", "--mode", "bogus"])
+        assert rc == 2
+        assert "usage:" in capsys.readouterr().err
+
+    def test_main_rejects_mode_on_disable(self, tmp_path, monkeypatch, capsys):
+        config = _write(tmp_path, LOCAL_CONFIG)
+        monkeypatch.setattr(toggle, "resolve_config_path", lambda: config)
+        rc = toggle.main(["sandbox_toggle.py", "disable", "--mode", "container"])
+        assert rc == 2
+        assert "usage:" in capsys.readouterr().err
+
+
 class TestDisable:
     def test_disable_reverts_to_local_and_keeps_guardrail_default(self, tmp_path):
         config = _write(tmp_path, AIO_CONFIG_WITH_ENV)

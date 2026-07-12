@@ -386,3 +386,93 @@ def test_is_container_running_raises_on_unrelated_not_found_error(monkeypatch):
 
     with pytest.raises(RuntimeError, match="Failed to inspect container sandbox-busy"):
         backend._is_container_running("sandbox-busy")
+
+
+def _pairs(cmd: list[str], flag: str) -> list[str]:
+    """Return the argument following each occurrence of flag in cmd."""
+    return [cmd[i + 1] for i, tok in enumerate(cmd) if tok == flag and i + 1 < len(cmd)]
+
+
+def test_start_container_publishes_expose_ports_to_loopback(monkeypatch):
+    backend = LocalContainerBackend(
+        image="sandbox:latest",
+        base_port=8080,
+        container_prefix="sandbox",
+        config_mounts=[],
+        environment={},
+        expose_ports=[8000, 3000],
+    )
+    monkeypatch.delenv("DEER_FLOW_SANDBOX_HOST", raising=False)
+    monkeypatch.delenv("DEER_FLOW_SANDBOX_BIND_HOST", raising=False)
+
+    captured_cmd = _capture_start_container_command(monkeypatch, backend)
+
+    port_args = _pairs(captured_cmd, "-p")
+    # First -p is the sandbox API port; the debug ports are published 1:1 to loopback.
+    assert "127.0.0.1:8000:8000" in port_args
+    assert "127.0.0.1:3000:3000" in port_args
+
+
+def test_start_container_expose_ports_use_broad_bind_for_dood(monkeypatch):
+    backend = LocalContainerBackend(
+        image="sandbox:latest",
+        base_port=8080,
+        container_prefix="sandbox",
+        config_mounts=[],
+        environment={},
+        expose_ports=[8000],
+    )
+    monkeypatch.setenv("DEER_FLOW_SANDBOX_HOST", "host.docker.internal")
+    monkeypatch.delenv("DEER_FLOW_SANDBOX_BIND_HOST", raising=False)
+
+    captured_cmd = _capture_start_container_command(monkeypatch, backend)
+
+    assert "0.0.0.0:8000:8000" in _pairs(captured_cmd, "-p")
+
+
+def test_start_container_adds_extra_capabilities_on_docker(monkeypatch):
+    backend = LocalContainerBackend(
+        image="sandbox:latest",
+        base_port=8080,
+        container_prefix="sandbox",
+        config_mounts=[],
+        environment={},
+        extra_capabilities=["SYS_PTRACE", "NET_ADMIN"],
+    )
+
+    captured_cmd = _capture_start_container_command(monkeypatch, backend, runtime="docker")
+
+    assert _pairs(captured_cmd, "--cap-add") == ["SYS_PTRACE", "NET_ADMIN"]
+
+
+def test_start_container_skips_capabilities_on_apple_container(monkeypatch, caplog):
+    backend = LocalContainerBackend(
+        image="sandbox:latest",
+        base_port=8080,
+        container_prefix="sandbox",
+        config_mounts=[],
+        environment={},
+        extra_capabilities=["SYS_PTRACE"],
+    )
+
+    with caplog.at_level(logging.WARNING):
+        captured_cmd = _capture_start_container_command(monkeypatch, backend, runtime="container")
+
+    assert "--cap-add" not in captured_cmd
+    assert "extra_capabilities is Docker-only" in caplog.text
+
+
+def test_start_container_no_extra_ports_or_caps_by_default(monkeypatch):
+    backend = LocalContainerBackend(
+        image="sandbox:latest",
+        base_port=8080,
+        container_prefix="sandbox",
+        config_mounts=[],
+        environment={},
+    )
+
+    captured_cmd = _capture_start_container_command(monkeypatch, backend, runtime="docker")
+
+    # Only the single sandbox API port is published; no --cap-add flags.
+    assert len(_pairs(captured_cmd, "-p")) == 1
+    assert "--cap-add" not in captured_cmd

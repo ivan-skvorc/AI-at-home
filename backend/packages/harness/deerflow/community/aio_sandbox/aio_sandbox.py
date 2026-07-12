@@ -56,13 +56,17 @@ class AioSandbox(Sandbox):
         """
         super().__init__(id)
         self._base_url = base_url
-        self._client = AioSandboxClient(base_url=base_url, timeout=request_timeout if request_timeout is not None else self.DEFAULT_REQUEST_TIMEOUT)
+        self._request_timeout = float(request_timeout) if request_timeout is not None else float(self.DEFAULT_REQUEST_TIMEOUT)
+        self._client = AioSandboxClient(base_url=base_url, timeout=self._request_timeout)
         self._home_dir = home_dir
         self._lock = threading.Lock()
         self._closed = False
         # Set to True after bash.exec answers 404 (image predates /v1/bash/*),
         # so later env-bearing calls fail fast instead of re-hitting HTTP (#3921).
         self._bash_exec_unsupported = False
+        # One-shot flag so a per-call timeout larger than the HTTP client
+        # timeout is reported once per sandbox, not on every command.
+        self._timeout_mismatch_warned = False
 
     @property
     def base_url(self) -> str:
@@ -167,14 +171,26 @@ class AioSandbox(Sandbox):
                 secret values travel in the structured ``env`` field, never in the
                 command string. When ``None`` the legacy persistent-shell path runs
                 unchanged.
-            timeout: Optional per-call timeout. The current sandbox SDK does not
-                expose a command-level timeout distinct from its client/request
-                timeout, so DeerFlow keeps using the backend's default here.
+            timeout: Optional per-call command budget in seconds (the bash tool
+                passes ``sandbox.bash_command_timeout``). On the persistent-shell
+                path this is the idle (no-new-output) ``no_change_timeout``; on the
+                env-bearing ``bash.exec`` path it is the wall-clock hard timeout.
+                Falls back to the 600s defaults when unset. The HTTP client
+                timeout (``sandbox.request_timeout``) must be at least as large or
+                the client aborts first — a one-shot warning flags that mismatch.
 
         Returns:
             The output of the command.
         """
-        del timeout
+        command_timeout = float(timeout) if timeout is not None and timeout > 0 else None
+        if command_timeout is not None and command_timeout > self._request_timeout and not self._timeout_mismatch_warned:
+            self._timeout_mismatch_warned = True
+            logger.warning(
+                f"sandbox.bash_command_timeout ({command_timeout:.0f}s) exceeds sandbox.request_timeout "
+                f"({self._request_timeout:.0f}s); the HTTP client will abort long commands first. "
+                "Raise sandbox.request_timeout to at least the command timeout."
+            )
+        no_change_timeout = command_timeout if command_timeout is not None else self._DEFAULT_NO_CHANGE_TIMEOUT
         # Validate ``env`` keys before forwarding them to the ``bash.exec`` API.
         # The public ``Sandbox.execute_command`` contract accepts arbitrary dict
         # keys; enforcing the POSIX env-var name rule keeps the contract
@@ -182,10 +198,10 @@ class AioSandbox(Sandbox):
         # early. ``_validate_extra_env`` is a no-op when ``env`` is None or empty.
         _validate_extra_env(env)
         if env:
-            return self._execute_with_env(command, env)
+            return self._execute_with_env(command, env, hard_timeout=command_timeout if command_timeout is not None else self._DEFAULT_HARD_TIMEOUT)
         with self._lock:
             try:
-                result = self._client.shell.exec_command(command=command, no_change_timeout=self._DEFAULT_NO_CHANGE_TIMEOUT)
+                result = self._client.shell.exec_command(command=command, no_change_timeout=no_change_timeout)
                 output = result.data.output if result.data else ""
 
                 if output and _ERROR_OBSERVATION_SIGNATURE in output:
@@ -196,7 +212,7 @@ class AioSandbox(Sandbox):
                     fresh_id = str(uuid.uuid4())
                     self._client.shell.create_session(id=fresh_id)
                     try:
-                        result = self._client.shell.exec_command(command=command, id=fresh_id, no_change_timeout=self._DEFAULT_NO_CHANGE_TIMEOUT)
+                        result = self._client.shell.exec_command(command=command, id=fresh_id, no_change_timeout=no_change_timeout)
                         output = result.data.output if result.data else ""
                     finally:
                         # Release the one-shot recovery session, best-effort, so
@@ -211,7 +227,7 @@ class AioSandbox(Sandbox):
                 logger.error(f"Failed to execute command in sandbox: {e}")
                 return f"Error: {e}"
 
-    def _execute_with_env(self, command: str, env: dict[str, str]) -> str:
+    def _execute_with_env(self, command: str, env: dict[str, str], hard_timeout: float) -> str:
         """Execute a command with per-call environment variables injected.
 
         The persistent-shell ``shell.exec_command`` API has no env parameter, so
@@ -241,22 +257,22 @@ class AioSandbox(Sandbox):
         """
         if self._bash_exec_unsupported:
             return _BASH_EXEC_UNSUPPORTED_ERROR
-        output = self._run_bash_exec(command, env)
+        output = self._run_bash_exec(command, env, hard_timeout)
         if output and _ERROR_OBSERVATION_SIGNATURE in output:
             logger.warning("ErrorObservation detected in bash.exec output, retrying on a fresh session")
-            retried = self._run_bash_exec(command, env)
+            retried = self._run_bash_exec(command, env, hard_timeout)
             if retried and _ERROR_OBSERVATION_SIGNATURE not in retried:
                 return retried
         return output
 
-    def _run_bash_exec(self, command: str, env: dict[str, str]) -> str:
+    def _run_bash_exec(self, command: str, env: dict[str, str], hard_timeout: float) -> str:
         """Single bash.exec invocation with injected env (one fresh session)."""
         with self._lock:
             try:
                 result = self._client.bash.exec(
                     command=command,
                     env=env,
-                    hard_timeout=self._DEFAULT_HARD_TIMEOUT,
+                    hard_timeout=hard_timeout,
                 )
                 data = result.data if result else None
                 stdout = (data.stdout or "") if data else ""

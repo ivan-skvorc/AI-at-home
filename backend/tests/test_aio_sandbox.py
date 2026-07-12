@@ -523,3 +523,104 @@ class TestClose:
         sandbox._client = SimpleNamespace()  # no close, no _client_wrapper
         sandbox.close()  # must not raise
         assert sandbox._client is None
+
+
+class TestPerCallTimeout:
+    """Verify that a per-call timeout overrides the 600s defaults on both paths."""
+
+    def test_execute_command_forwards_custom_no_change_timeout(self, sandbox):
+        calls = []
+
+        def mock_exec(command, **kwargs):
+            calls.append(kwargs)
+            return SimpleNamespace(data=SimpleNamespace(output="ok"))
+
+        sandbox._client.shell.exec_command = mock_exec
+
+        sandbox.execute_command("pip install torch", timeout=1800)
+
+        assert calls[0].get("no_change_timeout") == 1800
+
+    def test_retry_forwards_custom_no_change_timeout(self, sandbox):
+        calls = []
+
+        def mock_exec(command, **kwargs):
+            calls.append(kwargs)
+            if len(calls) == 1:
+                return SimpleNamespace(data=SimpleNamespace(output="'ErrorObservation' object has no attribute 'exit_code'"))
+            return SimpleNamespace(data=SimpleNamespace(output="ok"))
+
+        sandbox._client.shell.exec_command = mock_exec
+
+        sandbox.execute_command("echo hi", timeout=900)
+
+        assert len(calls) == 2
+        assert calls[0].get("no_change_timeout") == 900
+        assert calls[1].get("no_change_timeout") == 900
+
+    def test_zero_and_none_timeout_fall_back_to_default(self, sandbox):
+        calls = []
+
+        def mock_exec(command, **kwargs):
+            calls.append(kwargs)
+            return SimpleNamespace(data=SimpleNamespace(output="ok"))
+
+        sandbox._client.shell.exec_command = mock_exec
+
+        sandbox.execute_command("echo a", timeout=0)
+        sandbox.execute_command("echo b", timeout=None)
+
+        assert calls[0].get("no_change_timeout") == sandbox._DEFAULT_NO_CHANGE_TIMEOUT
+        assert calls[1].get("no_change_timeout") == sandbox._DEFAULT_NO_CHANGE_TIMEOUT
+
+    def test_env_path_forwards_custom_hard_timeout(self, sandbox):
+        calls = []
+
+        def mock_bash_exec(command, **kwargs):
+            calls.append(kwargs)
+            return SimpleNamespace(data=SimpleNamespace(stdout="ok", stderr=None))
+
+        sandbox._client.bash.exec = mock_bash_exec
+
+        sandbox.execute_command("make", env={"TOK": "v"}, timeout=1800)
+
+        assert calls[0].get("hard_timeout") == 1800
+
+    def test_env_path_defaults_hard_timeout_when_unset(self, sandbox):
+        calls = []
+
+        def mock_bash_exec(command, **kwargs):
+            calls.append(kwargs)
+            return SimpleNamespace(data=SimpleNamespace(stdout="ok", stderr=None))
+
+        sandbox._client.bash.exec = mock_bash_exec
+
+        sandbox.execute_command("make", env={"TOK": "v"})
+
+        assert calls[0].get("hard_timeout") == sandbox._DEFAULT_HARD_TIMEOUT
+
+    def test_timeout_exceeding_request_timeout_warns_once(self, caplog):
+        with patch("deerflow.community.aio_sandbox.aio_sandbox.AioSandboxClient"):
+            from deerflow.community.aio_sandbox.aio_sandbox import AioSandbox
+
+            sb = AioSandbox(id="t", base_url="http://localhost:8080", request_timeout=120)
+        sb._client.shell.exec_command = MagicMock(return_value=SimpleNamespace(data=SimpleNamespace(output="ok")))
+
+        with caplog.at_level("WARNING"):
+            sb.execute_command("slow", timeout=1800)
+            sb.execute_command("slow-again", timeout=1800)
+
+        warnings = [r for r in caplog.records if "exceeds sandbox.request_timeout" in r.message]
+        assert len(warnings) == 1
+
+    def test_timeout_within_request_timeout_does_not_warn(self, caplog):
+        with patch("deerflow.community.aio_sandbox.aio_sandbox.AioSandboxClient"):
+            from deerflow.community.aio_sandbox.aio_sandbox import AioSandbox
+
+            sb = AioSandbox(id="t", base_url="http://localhost:8080", request_timeout=1800)
+        sb._client.shell.exec_command = MagicMock(return_value=SimpleNamespace(data=SimpleNamespace(output="ok")))
+
+        with caplog.at_level("WARNING"):
+            sb.execute_command("ok", timeout=600)
+
+        assert not [r for r in caplog.records if "exceeds sandbox.request_timeout" in r.message]

@@ -256,6 +256,23 @@ Because Camoufox is the default, **every launch path installs it end-to-end auto
 
 Camoufox reuses a single headless browser across requests, renders JS-heavy pages, and returns readable markdown. If the browser somehow isn't downloaded yet, the tool result tells the agent exactly what to do (`run make fetch-browser`) instead of failing opaquely. A `web_fetch` of a private GitHub URL returns a hint to use git in the sandbox rather than a bare 404.
 
+#### Clone-and-run a repo in the sandbox
+
+To have the agent take a GitHub link, clone it, install its requirements, and run or debug the program with admin rights, use the containerized sandbox in **per-thread container mode** (the agent runs as root inside a Docker container per conversation, with `/mnt/user-data` host-backed so files and outputs surface normally):
+
+```fish
+make sandbox-enable MODE=container   # writes an AioSandboxProvider block (no base_url)
+```
+
+Then restart the app. For a private repo, set `GITHUB_TOKEN` in `.env` (scoped to the repos you want) and DeerFlow configures git inside the container so plain `git clone https://github.com/owner/repo.git` works without the token ever appearing in URLs or logs. Useful `config.yaml → sandbox` knobs for this workflow:
+
+- `bash_command_timeout` / `request_timeout` — raise both together for long installs and builds (a big `pip install` or `cargo build` no longer stops at the old 600s ceiling).
+- `expose_ports: [8000]` — publish a port so a dev server the agent starts is reachable at `localhost:8000` from your own browser.
+- `extra_capabilities: [SYS_PTRACE]` — allow `gdb`/`strace` to attach for native debugging.
+- `idle_timeout` — keep a warmed-up debug environment alive longer between the agent's turns.
+
+The bundled **`repo-runner` skill** walks the agent through the whole loop (clone → detect toolchain → install in an isolated venv → run/debug → report the exact commands). Invoke it with `/repo-runner <github-url and what to do>`.
+
 ### Running the Application
 
 #### Deployment Sizing

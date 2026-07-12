@@ -1713,9 +1713,11 @@ def bash_tool(runtime: Runtime, description: str, command: str) -> str:
 
             sandbox_cfg = get_app_config().sandbox
             max_chars = sandbox_cfg.bash_output_max_chars if sandbox_cfg else 20000
+            command_timeout = sandbox_cfg.bash_command_timeout if sandbox_cfg else None
         except Exception:
             max_chars = 20000
-        return _truncate_bash_output(mask_secret_values(sandbox.execute_command(command, env=injected_env), injected_env), max_chars)
+            command_timeout = None
+        return _truncate_bash_output(mask_secret_values(sandbox.execute_command(command, env=injected_env, timeout=command_timeout), injected_env), max_chars)
     except SandboxError as e:
         return f"Error: {e}"
     except PermissionError as e:
