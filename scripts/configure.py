@@ -31,13 +31,19 @@ def _prompt_yes_no(question: str) -> bool:
 
 
 def _offer_sandbox_choice(project_root: Path) -> None:
-    """Offer to switch the fresh config to the containerized AIO sandbox."""
+    """Offer to switch the fresh config to the containerized AIO sandbox.
+
+    Writes the per-thread container mode (no base_url) — DeerFlow manages one
+    container per thread with that thread's user-data mounted, so uploads,
+    outputs, and present_files work without a separate `make sandbox-up`. This
+    matches what the richer `make setup` wizard writes.
+    """
     if not _prompt_yes_no("Enable the containerized AIO sandbox (requires Docker)?"):
         return
     script = project_root / "scripts" / "sandbox_toggle.py"
-    result = subprocess.run([sys.executable, str(script), "enable"], cwd=str(project_root))
+    result = subprocess.run([sys.executable, str(script), "enable", "--mode", "container"], cwd=str(project_root))
     if result.returncode == 0:
-        print("  Start the sandbox container with: make sandbox-up")
+        print("  Containers start automatically on first use (a Docker daemon must be running).")
     else:
         print("  Could not update the sandbox section automatically; edit config.yaml by hand.")
 
