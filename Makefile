@@ -111,9 +111,13 @@ setup-sandbox:
 	@$(RUN_WITH_GIT_BASH) ./scripts/setup-sandbox.sh
 
 # Switch config.yaml between the local and containerized AIO sandbox (rewrites
-# only the sandbox: section, backs up to config.yaml.bak, preserves environment:)
+# only the sandbox: section, backs up to config.yaml.bak, preserves environment:).
+# MODE=external (default): one shared container managed by `make sandbox-up`.
+# MODE=container: per-thread containers with host-backed /mnt/user-data mounts —
+# the mode to use for clone-and-debug workflows (`make sandbox-enable MODE=container`).
+SANDBOX_MODE ?= $(or $(MODE),external)
 sandbox-enable:
-	@$(BACKEND_UV_RUN) python ../scripts/sandbox_toggle.py enable
+	@$(BACKEND_UV_RUN) python ../scripts/sandbox_toggle.py enable --mode $(SANDBOX_MODE)
 
 sandbox-disable:
 	@$(BACKEND_UV_RUN) python ../scripts/sandbox_toggle.py disable

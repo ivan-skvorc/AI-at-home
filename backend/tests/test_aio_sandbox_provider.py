@@ -693,3 +693,100 @@ def test_create_sandbox_evicts_oldest_warm_replica_via_shared_lifecycle(tmp_path
     assert "warm-oldest" not in provider._warm_pool
     assert provider._warm_pool == {"warm-newest": (newest_info, 20.0)}
     assert provider._sandbox_infos["created"] is created_info
+
+
+# ── expose_ports / extra_capabilities wiring ─────────────────────────────────
+
+
+def _load_config_for(sandbox_cfg):
+    aio_mod = importlib.import_module("deerflow.community.aio_sandbox.aio_sandbox_provider")
+    provider = aio_mod.AioSandboxProvider.__new__(aio_mod.AioSandboxProvider)
+    with patch.object(aio_mod, "get_app_config", return_value=SimpleNamespace(sandbox=sandbox_cfg)):
+        return provider._load_config()
+
+
+def test_load_config_reads_expose_ports_and_capabilities():
+    sandbox_cfg = SimpleNamespace(
+        image=None,
+        port=None,
+        container_prefix=None,
+        idle_timeout=None,
+        replicas=None,
+        mounts=[],
+        environment={},
+        provisioner_url=None,
+        base_url=None,
+        request_timeout=None,
+        expose_ports=[8000, 3000],
+        extra_capabilities=["SYS_PTRACE"],
+    )
+    config = _load_config_for(sandbox_cfg)
+    assert config["expose_ports"] == [8000, 3000]
+    assert config["extra_capabilities"] == ["SYS_PTRACE"]
+
+
+def test_load_config_defaults_ports_and_capabilities_to_empty():
+    sandbox_cfg = SimpleNamespace(
+        image=None,
+        port=None,
+        container_prefix=None,
+        idle_timeout=None,
+        replicas=None,
+        mounts=[],
+        environment={},
+        provisioner_url=None,
+        base_url=None,
+        request_timeout=None,
+    )
+    config = _load_config_for(sandbox_cfg)
+    assert config["expose_ports"] == []
+    assert config["extra_capabilities"] == []
+
+
+def test_create_backend_forwards_ports_and_capabilities_to_local_backend(monkeypatch):
+    aio_mod = importlib.import_module("deerflow.community.aio_sandbox.aio_sandbox_provider")
+    provider = aio_mod.AioSandboxProvider.__new__(aio_mod.AioSandboxProvider)
+    provider._config = {
+        "image": "img",
+        "port": 8080,
+        "container_prefix": "sandbox",
+        "mounts": [],
+        "environment": {},
+        "provisioner_url": "",
+        "base_url": "",
+        "expose_ports": [8000],
+        "extra_capabilities": ["SYS_PTRACE"],
+    }
+    captured = {}
+
+    class FakeLocalBackend:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setattr(aio_mod, "LocalContainerBackend", FakeLocalBackend)
+
+    provider._create_backend()
+
+    assert captured["expose_ports"] == [8000]
+    assert captured["extra_capabilities"] == ["SYS_PTRACE"]
+
+
+def test_create_backend_warns_when_ports_ignored_in_external_mode(monkeypatch, caplog):
+    aio_mod = importlib.import_module("deerflow.community.aio_sandbox.aio_sandbox_provider")
+    provider = aio_mod.AioSandboxProvider.__new__(aio_mod.AioSandboxProvider)
+    provider._config = {
+        "provisioner_url": "",
+        "base_url": "http://localhost:8091",
+        "mounts": [],
+        "environment": {},
+        "expose_ports": [8000],
+        "extra_capabilities": ["SYS_PTRACE"],
+    }
+    monkeypatch.setattr(aio_mod, "ExternalSandboxBackend", lambda **kwargs: SimpleNamespace())
+
+    with caplog.at_level("WARNING"):
+        provider._create_backend()
+
+    assert "expose_ports" in caplog.text
+    assert "extra_capabilities" in caplog.text
+    assert "external base_url" in caplog.text

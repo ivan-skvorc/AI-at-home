@@ -7,8 +7,17 @@ comments, other sections, ollama-sync markers — is left byte-for-byte intact.
 The existing ``environment:`` block is preserved across both directions.
 
 Usage:
-    python3 scripts/sandbox_toggle.py enable    # → AIO external mode (localhost:8091)
-    python3 scripts/sandbox_toggle.py disable   # → LocalSandboxProvider default
+    python3 scripts/sandbox_toggle.py enable                    # → AIO external mode (localhost:8091)
+    python3 scripts/sandbox_toggle.py enable --mode container   # → AIO local container mode (per-thread containers)
+    python3 scripts/sandbox_toggle.py disable                   # → LocalSandboxProvider default
+
+Modes for ``enable``:
+- ``external`` (default): one externally-managed container (`make sandbox-up`);
+  DeerFlow never creates or destroys it. `sandbox.mounts` is ignored, so files
+  written in the sandbox are not host-backed (present_files can't surface them).
+- ``container``: DeerFlow spawns one container per thread and mounts that
+  thread's user-data directories, so /mnt/user-data is host-backed — uploads,
+  outputs, and present_files all work. Best mode for clone-and-debug workflows.
 
 Guarantees:
 - config.yaml is backed up to config.yaml.bak before any write.
@@ -154,6 +163,31 @@ def build_enabled_section(environment: list[str] | None) -> list[str]:
     return lines
 
 
+def build_enabled_container_section(environment: list[str] | None) -> list[str]:
+    """Build the AIO local-container-mode sandbox section (per-thread containers)."""
+    lines = [
+        "sandbox:",
+        f"  use: {AIO_PROVIDER}",
+        "  # Local container mode: DeerFlow spawns one sandbox container per thread",
+        "  # and mounts that thread's user-data directories, so /mnt/user-data is",
+        "  # host-backed (uploads, outputs, and present_files all work). Requires a",
+        "  # local Docker daemon; no `make sandbox-up` needed.",
+        "  # Per-command budget for bash in the sandbox; raise both together for",
+        "  # long installs/builds (the HTTP client must outlive the command).",
+        "  bash_command_timeout: 1800",
+        "  request_timeout: 1800.0",
+        "  # Keep debug sessions warm for an hour before idle reclaim.",
+        "  idle_timeout: 3600",
+        "  # Publish extra ports 1:1 to localhost so a program under debug is",
+        "  # reachable from the host browser (one container at a time per port):",
+        "  # expose_ports: [8000, 3000]",
+        "  # Grant extra capabilities, e.g. so gdb/strace can attach:",
+        "  # extra_capabilities: [SYS_PTRACE]",
+    ]
+    lines.extend(environment if environment is not None else DEFAULT_ENVIRONMENT)
+    return lines
+
+
 def build_disabled_section(environment: list[str] | None) -> list[str]:
     """Build the LocalSandboxProvider default sandbox section."""
     lines = [
@@ -180,7 +214,16 @@ def write_section(config_path: Path, new_section: list[str], start: int, end: in
     config_path.write_text(text, encoding="utf-8")
 
 
-def toggle(action: str, config_path: Path) -> int:
+def current_aio_mode(section_lines: list[str]) -> str:
+    """Return "external" when the section pins a base_url, else "container"."""
+    for line in section_lines:
+        stripped = line.split("#", 1)[0].strip()
+        if stripped.startswith("base_url:") and stripped.split(":", 1)[1].strip():
+            return "external"
+    return "container"
+
+
+def toggle(action: str, config_path: Path, mode: str = "external") -> int:
     safe_load_guarded, duplicate_key_error = _load_yaml_guard()
     raw = config_path.read_text(encoding="utf-8")
     try:
@@ -203,11 +246,18 @@ def toggle(action: str, config_path: Path) -> int:
 
     target = AIO_PROVIDER if action == "enable" else LOCAL_PROVIDER
     if provider == target:
-        state = "AIO container sandbox" if action == "enable" else "LocalSandboxProvider"
-        print(f"OK sandbox is already set to {state} — no change.")
-        return 0
+        if action == "disable":
+            print("OK sandbox is already set to LocalSandboxProvider — no change.")
+            return 0
+        if current_aio_mode(section_lines) == mode:
+            print(f"OK sandbox is already set to AIO {mode} mode — no change.")
+            return 0
 
-    if action == "enable":
+    if action == "enable" and mode == "container":
+        new_section = build_enabled_container_section(environment)
+        print("Enabling AIO sandbox in local container mode (one container per thread).")
+        print("  Requires a running Docker daemon; containers start on first use.")
+    elif action == "enable":
         new_section = build_enabled_section(environment)
         print("Enabling containerized AIO sandbox (base_url: http://localhost:8091).")
         print("  Start it with: make sandbox-up")
@@ -221,15 +271,25 @@ def toggle(action: str, config_path: Path) -> int:
 
 
 def main(argv: list[str]) -> int:
-    if len(argv) != 2 or argv[1] not in ("enable", "disable"):
-        print("usage: sandbox_toggle.py {enable|disable}", file=sys.stderr)
+    usage = "usage: sandbox_toggle.py {enable [--mode {external|container}]|disable}"
+    args = argv[1:]
+    if not args or args[0] not in ("enable", "disable"):
+        print(usage, file=sys.stderr)
         return 2
+    action = args[0]
+    mode = "external"
+    rest = args[1:]
+    if rest:
+        if action != "enable" or len(rest) != 2 or rest[0] != "--mode" or rest[1] not in ("external", "container"):
+            print(usage, file=sys.stderr)
+            return 2
+        mode = rest[1]
     config_path = resolve_config_path()
     if config_path is None:
         print("✗ No config.yaml found.")
         print("  Run `make config` (or `make setup`) to create it first.")
         return 1
-    return toggle(argv[1], config_path)
+    return toggle(action, config_path, mode)
 
 
 if __name__ == "__main__":

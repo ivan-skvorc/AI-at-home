@@ -56,3 +56,14 @@ services:
     # external base_url mode). Uncomment and adjust to share host directories:
     # volumes:
     #   - /path/on/host:/path/in/container
+    #
+    # Extra debug ports for a program run inside the sandbox (the config
+    # `expose_ports` key is ignored in external base_url mode — declare them
+    # here instead). Loopback-bound so they are not exposed on the network:
+    # ports:
+    #   - "127.0.0.1:8000:8000"
+    #
+    # Extra Linux capabilities, e.g. so gdb/strace can attach to processes (the
+    # config `extra_capabilities` key is ignored in external base_url mode):
+    # cap_add:
+    #   - SYS_PTRACE
