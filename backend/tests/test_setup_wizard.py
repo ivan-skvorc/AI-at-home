@@ -8,7 +8,15 @@ from __future__ import annotations
 
 import yaml
 from wizard import ui as wizard_ui
-from wizard.providers import LLM_PROVIDERS, SEARCH_PROVIDERS, WEB_FETCH_PROVIDERS, LLMProvider, with_thinking_support
+from wizard.providers import (
+    ANTHROPIC_BUNDLE_MODELS,
+    LLM_PROVIDERS,
+    OPENROUTER_BUNDLE_MODELS,
+    SEARCH_PROVIDERS,
+    WEB_FETCH_PROVIDERS,
+    LLMProvider,
+    with_thinking_support,
+)
 from wizard.steps import channels as channels_step
 from wizard.steps import llm as llm_step
 from wizard.steps import ollama as ollama_step
@@ -116,6 +124,60 @@ class TestProviders:
     def test_at_least_one_free_web_fetch_provider(self):
         free = [provider for provider in WEB_FETCH_PROVIDERS if provider.env_var is None]
         assert free, "Expected at least one free (no-key) web fetch provider"
+
+
+class TestBundleProviders:
+    """Anthropic / OpenRouter enable a whole latest-model set from one key."""
+
+    def test_anthropic_bundle_has_latest_models(self):
+        provider = next(p for p in LLM_PROVIDERS if p.name == "anthropic")
+        assert provider.default_model == "claude-opus-4-8"
+        assert provider.default_model in provider.models
+        assert [m["model"] for m in provider.bundle_models] == [
+            "claude-opus-4-8",
+            "claude-sonnet-5",
+            "claude-haiku-4-5",
+        ]
+        by_model = {m["model"]: m for m in provider.bundle_models}
+        # Opus 4.8 / Sonnet 5 must use adaptive thinking (budget_tokens 400s).
+        assert by_model["claude-opus-4-8"]["when_thinking_enabled"]["thinking"]["type"] == "adaptive"
+        assert by_model["claude-sonnet-5"]["when_thinking_enabled"]["thinking"]["type"] == "adaptive"
+        # Haiku 4.5 still takes an explicit thinking budget.
+        haiku_thinking = by_model["claude-haiku-4-5"]["when_thinking_enabled"]["thinking"]
+        assert haiku_thinking["type"] == "enabled"
+        assert haiku_thinking["budget_tokens"] == 4096
+        # One shared key + native Anthropic provider on every entry.
+        assert all(m["api_key"] == "$ANTHROPIC_API_KEY" for m in provider.bundle_models)
+        assert all(m["use"] == "langchain_anthropic:ChatAnthropic" for m in provider.bundle_models)
+        assert all(m["supports_thinking"] is True for m in provider.bundle_models)
+
+    def test_openrouter_bundle_covers_requested_providers(self):
+        provider = next(p for p in LLM_PROVIDERS if p.name == "openrouter")
+        assert provider.default_model in provider.models
+        bundle_ids = [m["model"] for m in provider.bundle_models]
+        # Latest Claude Fable + the xAI / OpenAI / Google flagships.
+        assert "anthropic/claude-fable-5" in bundle_ids
+        assert any(m.startswith("x-ai/") for m in bundle_ids)
+        assert any(m.startswith("openai/") for m in bundle_ids)
+        assert any(m.startswith("google/") for m in bundle_ids)
+        # The requested open alternatives.
+        for prefix in ("minimax/", "mistralai/", "deepseek/", "moonshotai/", "z-ai/", "qwen/"):
+            assert any(m.startswith(prefix) for m in bundle_ids), prefix
+        # One OpenRouter key + base_url reaches all of them.
+        assert all(m["api_key"] == "$OPENROUTER_API_KEY" for m in provider.bundle_models)
+        assert all(m["base_url"] == "https://openrouter.ai/api/v1" for m in provider.bundle_models)
+        assert all(m["use"] == "langchain_openai:ChatOpenAI" for m in provider.bundle_models)
+
+    def test_single_model_providers_have_no_bundle(self):
+        providers = {p.name: p for p in LLM_PROVIDERS}
+        assert providers["openai"].bundle_models == []
+        assert providers["deepseek"].bundle_models == []
+        assert providers["google"].bundle_models == []
+
+    def test_bundle_model_names_are_unique(self):
+        for bundle in (ANTHROPIC_BUNDLE_MODELS, OPENROUTER_BUNDLE_MODELS):
+            names = [m["name"] for m in bundle]
+            assert len(names) == len(set(names))
 
 
 class TestBuildMinimalConfig:
@@ -283,6 +345,69 @@ class TestBuildMinimalConfig:
         data = yaml.safe_load(content)
         assert data["config_version"] == 5
 
+    def test_model_entries_written_verbatim(self):
+        entries = [
+            {
+                "name": "a",
+                "display_name": "A",
+                "use": "langchain_openai:ChatOpenAI",
+                "model": "prov/a",
+                "api_key": "$OPENROUTER_API_KEY",
+                "base_url": "https://openrouter.ai/api/v1",
+            },
+            {
+                "name": "b",
+                "display_name": "B",
+                "use": "langchain_openai:ChatOpenAI",
+                "model": "prov/b",
+                "api_key": "$OPENROUTER_API_KEY",
+                "base_url": "https://openrouter.ai/api/v1",
+            },
+        ]
+        content = build_minimal_config(
+            provider_use="langchain_openai:ChatOpenAI",
+            model_name="ignored-when-entries-given",
+            display_name="ignored",
+            api_key_field="api_key",
+            env_var="OPENROUTER_API_KEY",
+            model_entries=entries,
+        )
+        data = yaml.safe_load(content)
+        assert [m["model"] for m in data["models"]] == ["prov/a", "prov/b"]
+        assert data["models"][0]["api_key"] == "$OPENROUTER_API_KEY"
+        assert data["models"][1]["base_url"] == "https://openrouter.ai/api/v1"
+
+    def test_model_entries_do_not_mutate_source(self):
+        entries = [{"name": "a", "use": "x:Y", "model": "m"}]
+        build_minimal_config(
+            provider_use="x:Y",
+            model_name="m",
+            display_name="A",
+            api_key_field="api_key",
+            env_var=None,
+            model_entries=entries,
+        )
+        assert entries == [{"name": "a", "use": "x:Y", "model": "m"}]
+
+    def test_anthropic_bundle_writes_all_three_models(self):
+        content = build_minimal_config(
+            provider_use="langchain_anthropic:ChatAnthropic",
+            model_name="claude-opus-4-8",
+            display_name="Anthropic",
+            api_key_field="api_key",
+            env_var="ANTHROPIC_API_KEY",
+            model_entries=ANTHROPIC_BUNDLE_MODELS,
+        )
+        data = yaml.safe_load(content)
+        assert [m["model"] for m in data["models"]] == [
+            "claude-opus-4-8",
+            "claude-sonnet-5",
+            "claude-haiku-4-5",
+        ]
+        opus = data["models"][0]
+        assert opus["when_thinking_enabled"]["thinking"]["type"] == "adaptive"
+        assert opus["api_key"] == "$ANTHROPIC_API_KEY"
+
     def test_cli_provider_does_not_emit_fake_api_key(self):
         content = build_minimal_config(
             provider_use="deerflow.models.openai_codex_provider:CodexChatModel",
@@ -424,6 +549,43 @@ class TestLLMStep:
 
         assert result.model_name == "default-model"
         assert prompts == [("Enter choice", None), ("Select model", 1)]
+
+    def test_bundle_provider_skips_model_selection(self, monkeypatch):
+        bundle = [
+            {"name": "m1", "display_name": "M1", "use": "u:C", "model": "prov/m1", "api_key": "$BUNDLE_API_KEY"},
+            {"name": "m2", "display_name": "M2", "use": "u:C", "model": "prov/m2", "api_key": "$BUNDLE_API_KEY"},
+        ]
+        provider = LLMProvider(
+            name="bundleprov",
+            display_name="Bundle",
+            description="latest set",
+            use="u:C",
+            models=["prov/m1", "prov/m2"],
+            default_model="prov/m1",
+            env_var="BUNDLE_API_KEY",
+            package=None,
+            bundle_models=bundle,
+        )
+        choice_calls: list[str] = []
+
+        def fake_choice(prompt, options, default=None):
+            choice_calls.append(prompt)
+            return 0
+
+        monkeypatch.setattr(llm_step, "LLM_PROVIDERS", [provider])
+        monkeypatch.setattr(llm_step, "ask_choice", fake_choice)
+        monkeypatch.setattr(llm_step, "ask_secret", lambda _prompt: "key")
+        monkeypatch.setattr(llm_step, "print_header", lambda *_args, **_kwargs: None)
+        monkeypatch.setattr(llm_step, "print_info", lambda *_args, **_kwargs: None)
+        monkeypatch.setattr(llm_step, "print_success", lambda *_args, **_kwargs: None)
+
+        result = llm_step.run_llm_step()
+
+        # Only the provider was chosen — the per-model picker is skipped for bundles.
+        assert choice_calls == ["Enter choice"]
+        assert result.model_name == "prov/m1"
+        assert result.bundle_models == bundle
+        assert result.api_key == "key"
 
     def test_base_url_prompt_is_used_for_custom_gateway(self, monkeypatch):
         provider = LLMProvider(

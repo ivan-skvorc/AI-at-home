@@ -95,6 +95,7 @@ def main() -> int:
             env_var=llm.provider.env_var,
             extra_model_config=llm.provider.extra_config_for(llm.model_name) or None,
             base_url=llm.base_url,
+            model_entries=llm.bundle_models or None,
             search_use=search_provider.use if search_provider else None,
             search_tool_name=search_provider.tool_name if search_provider else "web_search",
             search_extra_config=search_provider.extra_config if search_provider else None,
@@ -139,7 +140,11 @@ def main() -> int:
             print_success("frontend/.env created from example")
 
         print_header("Setup complete!")
-        print(f"  {green('✓')} LLM:        {llm.provider.display_name} / {llm.model_name}")
+        if llm.bundle_models:
+            llm_label = f"{llm.provider.display_name} ({len(llm.bundle_models)} models, default: {llm.model_name})"
+        else:
+            llm_label = f"{llm.provider.display_name} / {llm.model_name}"
+        print(f"  {green('✓')} LLM:        {llm_label}")
         if search_provider:
             print(f"  {green('✓')} Web search: {search_provider.display_name}")
         else:

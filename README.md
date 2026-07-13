@@ -118,6 +118,8 @@ That prompt is intended for coding agents. It tells the agent to clone the repo 
 
    This launches an interactive wizard that guides you through choosing an LLM provider, optional web search, and execution/safety preferences such as sandbox mode, bash access, and file-write tools. It generates a minimal `config.yaml` and writes your keys to `.env`. Takes about 2 minutes.
 
+   Pick **Anthropic** or **OpenRouter** and the wizard enables a whole set of latest models from that one key — Anthropic writes Opus 4.8 / Sonnet 5 / Haiku 4.5, and OpenRouter writes the latest Claude Fable plus the xAI / OpenAI / Google flagships and a spread of open alternatives (MiniMax, Mistral, DeepSeek, Kimi, GLM, Qwen). If you configure by hand instead (`make config`), the same ready-to-uncomment blocks are at the top of `config.example.yaml` under `models:` — uncomment the one matching your key.
+
    The wizard also lets you configure an optional web search provider, or skip it for now.
 
    Run `make doctor` at any time to verify your setup and get actionable fix hints.
