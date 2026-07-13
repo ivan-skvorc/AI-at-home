@@ -1,4 +1,4 @@
-> **This is a fork of [bytedance/deer-flow](https://github.com/bytedance/deer-flow).** It adds two convenience features (auto-synced Ollama models, per-thread subagent model override) and an Arch nginx fix. See [`FORK.md`](./FORK.md) for details, cost analysis, and disclaimers.
+> **This is a fork of [bytedance/deer-flow](https://github.com/bytedance/deer-flow).** It adds five local-first enhancements: auto-synced Ollama models with VRAM-aware sizing, per-thread subagent model override (Ultra mode), a local Camoufox `web_fetch` backend, full per-thread container sandbox runs with `repo-runner`, and PDF/Office auto-conversion. See [`FORK.md`](./FORK.md) for details, cost analysis, and disclaimers.
 
 ---
 
