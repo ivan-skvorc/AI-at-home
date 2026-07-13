@@ -339,7 +339,12 @@ def resolve_agent_factory(assistant_id: str | None):
 # call), enabling runaway API cost / DoS. ``_DEFAULT_RECURSION_LIMIT`` is the
 # server default when the client sends nothing; the hard ceiling any client
 # value is clamped to is configurable via ``AppConfig.max_recursion_limit``.
-_DEFAULT_RECURSION_LIMIT = 100
+# The default is 250 (not LangGraph's 25): agentic sessions that clone a repo
+# and iterate — many bash / read_file / write_file / str_replace turns, each a
+# super-step — routinely exceed a lower cap and abort with GraphRecursionError
+# mid-task. 250 matches the autonomous github-channel budget; the 1000 ceiling
+# still bounds cost.
+_DEFAULT_RECURSION_LIMIT = 250
 _DEFAULT_MAX_RECURSION_LIMIT = 1000
 
 
@@ -395,7 +400,7 @@ def build_run_config(
     # Lead-agent recursion budget (LangGraph super-steps for the lead graph
     # only). Independent of subagent depth: a `task()` dispatch runs the whole
     # subagent inside ONE lead tools-node step, and subagents enforce their own
-    # limit via `subagents.max_turns`. Do not conflate this 100 with the
+    # limit via `subagents.max_turns`. Do not conflate this default with the
     # general-purpose subagent's max_turns.
     config: dict[str, Any] = {"recursion_limit": _DEFAULT_RECURSION_LIMIT}
     if request_config:

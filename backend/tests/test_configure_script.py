@@ -104,9 +104,16 @@ class TestPromptDefaults:
         def isatty():
             return False
 
-    def test_non_interactive_returns_false_even_with_default_yes(self, monkeypatch):
+    def test_non_interactive_returns_the_caller_default(self, monkeypatch):
+        """A scripted first install cannot answer, so it takes the caller's default.
+
+        This is what lets `make config` land on the container sandbox
+        non-interactively when Docker is present (default=True) while the
+        web_fetch prompt (default=False) still stays on the safe choice.
+        """
         monkeypatch.setattr(configure.sys, "stdin", self._FakePipe())
-        assert configure._prompt_yes_no("q?", default=True) is False
+        assert configure._prompt_yes_no("q?", default=True) is True
+        assert configure._prompt_yes_no("q?", default=False) is False
 
     def test_empty_answer_returns_the_default(self, monkeypatch):
         monkeypatch.setattr(configure.sys, "stdin", self._FakeTty())
@@ -161,3 +168,38 @@ class TestSandboxOfferDefault:
         out = capsys.readouterr().out
         assert "bash" in out
         assert "make sandbox-enable MODE=container" in out
+
+
+class TestSandboxDefaultsToContainerOnFirstInstall:
+    """A non-interactive first install picks the container sandbox when a
+    container runtime is present, and stays local otherwise — no prompt."""
+
+    class _FakePipe:
+        @staticmethod
+        def isatty():
+            return False
+
+    def _run(self, monkeypatch, *, runtime_available: bool):
+        monkeypatch.setattr(configure.sys, "stdin", self._FakePipe())
+        monkeypatch.setattr(configure, "_container_runtime_available", lambda: runtime_available)
+        calls: list[list[str]] = []
+
+        class _Result:
+            returncode = 0
+
+        def fake_run(cmd, **kwargs):
+            calls.append(cmd)
+            return _Result()
+
+        monkeypatch.setattr(configure.subprocess, "run", fake_run)
+        configure._offer_sandbox_choice(REPO_ROOT)
+        return calls
+
+    def test_container_runtime_present_auto_enables_container(self, monkeypatch):
+        calls = self._run(monkeypatch, runtime_available=True)
+        assert len(calls) == 1
+        assert calls[0][-3:] == ["enable", "--mode", "container"]
+
+    def test_no_container_runtime_stays_local(self, monkeypatch):
+        calls = self._run(monkeypatch, runtime_available=False)
+        assert calls == []
