@@ -18,16 +18,31 @@ def copy_if_missing(src: Path, dst: Path) -> None:
     shutil.copyfile(src, dst)
 
 
-def _prompt_yes_no(question: str) -> bool:
-    """Ask a [y/N] question on a TTY. Non-interactive → False (safe default)."""
+def _prompt_yes_no(question: str, *, default: bool = False) -> bool:
+    """Ask a yes/no question on a TTY. Non-interactive → the caller's default.
+
+    A non-interactive run cannot answer, so it takes the default the caller
+    passed. Callers wanting the old always-safe behavior simply keep
+    ``default=False`` (e.g. the web_fetch prompt); the sandbox prompt passes
+    ``default`` = "a container runtime is available", so a scripted first
+    install still lands on the container sandbox when Docker is present.
+    """
     if not sys.stdin.isatty():
-        return False
+        return default
+    suffix = "[Y/n]" if default else "[y/N]"
     try:
-        answer = input(f"{question} [y/N] ").strip().lower()
+        answer = input(f"{question} {suffix} ").strip().lower()
     except (EOFError, KeyboardInterrupt):
         print()
-        return False
+        return default
+    if not answer:
+        return default
     return answer in {"y", "yes"}
+
+
+def _container_runtime_available() -> bool:
+    """Return True when Docker or Apple Container is on PATH."""
+    return bool(shutil.which("docker") or shutil.which("container"))
 
 
 def _offer_sandbox_choice(project_root: Path) -> None:
@@ -37,8 +52,17 @@ def _offer_sandbox_choice(project_root: Path) -> None:
     container per thread with that thread's user-data mounted, so uploads,
     outputs, and present_files work without a separate `make sandbox-up`. This
     matches what the richer `make setup` wizard writes.
+
+    Defaults to yes when a container runtime is installed: the container
+    sandbox is the only mode where the bash tool (and therefore git/clone) is
+    active out of the box — with the local sandbox, host bash stays disabled.
+    Because the prompt's default is "a runtime is available", a non-interactive
+    first install also lands on the container sandbox whenever Docker/Apple
+    Container is present, and falls back to the local sandbox otherwise.
     """
-    if not _prompt_yes_no("Enable the containerized AIO sandbox (requires Docker)?"):
+    if not _prompt_yes_no("Enable the containerized AIO sandbox (requires Docker)?", default=_container_runtime_available()):
+        print("  Keeping the local sandbox: the bash tool (git, program runs) stays disabled by default.")
+        print("  Enable later with 'make sandbox-enable MODE=container'.")
         return
     script = project_root / "scripts" / "sandbox_toggle.py"
     result = subprocess.run([sys.executable, str(script), "enable", "--mode", "container"], cwd=str(project_root))

@@ -86,6 +86,36 @@ def merge_missing(target: dict, source: dict, path: str = "") -> list[str]:
     return added
 
 
+def backfill_missing_default_tools(user: dict, example: dict) -> list[str]:
+    """Append example ``tools:`` entries whose names are missing from the user list.
+
+    ``merge_missing`` is dict-based, so a ``tools:`` list that exists but lost
+    default entries (e.g. a wizard run that declined bash, or a config created
+    before a tool existed) would stay reduced forever. The default toolset is
+    meant to be available out of the box, so missing entries are appended,
+    keyed by ``name`` — existing entries (a different web_search provider,
+    customized settings) are never touched or duplicated. An appended ``bash``
+    entry stays runtime-inactive on the local sandbox unless
+    ``sandbox.allow_host_bash`` is true, so this cannot widen the security
+    boundary.
+    """
+    example_tools = example.get("tools")
+    user_tools = user.get("tools")
+    if not isinstance(example_tools, list) or not isinstance(user_tools, list):
+        # An absent tools section is handled wholesale by merge_missing.
+        return []
+    existing_names = {tool.get("name") for tool in user_tools if isinstance(tool, dict)}
+    added = []
+    for tool in example_tools:
+        if not isinstance(tool, dict):
+            continue
+        name = tool.get("name")
+        if name and name not in existing_names:
+            user_tools.append(copy.deepcopy(tool))
+            added.append(f"tools[{name}]")
+    return added
+
+
 def replace_version_line(raw_text: str, new_version: int) -> str | None:
     """Rewrite the config_version line in place; None if it isn't present."""
     new_text, count = re.subn(r"(?m)^config_version:.*$", f"config_version: {new_version}", raw_text, count=1)
@@ -137,6 +167,7 @@ def upgrade(config_path: Path, example_path: Path, repo_root: Path) -> int:
         print()
 
     added = merge_missing(user, example)
+    added.extend(backfill_missing_default_tools(user, example))
     user["config_version"] = example_version
 
     backup = config_path.with_suffix(".yaml.bak")

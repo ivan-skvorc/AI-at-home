@@ -223,7 +223,7 @@ def test_build_run_config_basic():
 
     config = build_run_config("thread-1", None, None)
     assert config["configurable"]["thread_id"] == "thread-1"
-    assert config["recursion_limit"] == 100
+    assert config["recursion_limit"] == 250
 
 
 def test_build_run_config_with_overrides():
@@ -1119,7 +1119,7 @@ def test_build_run_config_with_context():
     assert config["context"]["thread_id"] == "thread-1"
     # configurable carries thread_id for the checkpointer; user context stays in context.
     assert config["configurable"] == {"thread_id": "thread-1"}
-    assert config["recursion_limit"] == 100
+    assert config["recursion_limit"] == 250
 
 
 def test_build_run_config_context_injects_thread_id():

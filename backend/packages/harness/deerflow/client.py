@@ -232,7 +232,11 @@ class DeerFlowClient:
         }
         return RunnableConfig(
             configurable=configurable,
-            recursion_limit=overrides.get("recursion_limit", 100),
+            # Default lead-agent super-step budget. 250 (not LangGraph's 25) so
+            # long clone-and-iterate sessions don't abort mid-task with
+            # GraphRecursionError; mirrors the Gateway default in
+            # app.gateway.services._DEFAULT_RECURSION_LIMIT.
+            recursion_limit=overrides.get("recursion_limit", 250),
         )
 
     def _ensure_agent(self, config: RunnableConfig):

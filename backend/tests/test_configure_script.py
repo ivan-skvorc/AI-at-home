@@ -27,7 +27,7 @@ configure = _load()
 
 
 def test_sandbox_choice_enables_container_mode(monkeypatch):
-    monkeypatch.setattr(configure, "_prompt_yes_no", lambda _q: True)
+    monkeypatch.setattr(configure, "_prompt_yes_no", lambda _q, **_kw: True)
     calls: list[list[str]] = []
 
     class _Result:
@@ -48,7 +48,7 @@ def test_sandbox_choice_enables_container_mode(monkeypatch):
 
 
 def test_sandbox_choice_declined_is_a_noop(monkeypatch):
-    monkeypatch.setattr(configure, "_prompt_yes_no", lambda _q: False)
+    monkeypatch.setattr(configure, "_prompt_yes_no", lambda _q, **_kw: False)
     called = False
 
     def fake_run(cmd, **kwargs):
@@ -63,7 +63,7 @@ def test_sandbox_choice_declined_is_a_noop(monkeypatch):
 
 
 def test_sandbox_choice_reports_failure(monkeypatch, capsys):
-    monkeypatch.setattr(configure, "_prompt_yes_no", lambda _q: True)
+    monkeypatch.setattr(configure, "_prompt_yes_no", lambda _q, **_kw: True)
 
     class _Result:
         returncode = 1
@@ -78,7 +78,7 @@ def test_sandbox_choice_reports_failure(monkeypatch, capsys):
 
 def test_declined_choice_does_not_mention_sandbox_up(monkeypatch, capsys):
     """Container mode auto-starts; the success path must not tell users to run make sandbox-up."""
-    monkeypatch.setattr(configure, "_prompt_yes_no", lambda _q: True)
+    monkeypatch.setattr(configure, "_prompt_yes_no", lambda _q, **_kw: True)
 
     class _Result:
         returncode = 0
@@ -89,3 +89,117 @@ def test_declined_choice_does_not_mention_sandbox_up(monkeypatch, capsys):
 
     out = capsys.readouterr().out
     assert "sandbox-up" not in out
+
+
+class TestPromptDefaults:
+    """The yes/no prompt honors a per-question default; non-interactive stays no."""
+
+    class _FakeTty:
+        @staticmethod
+        def isatty():
+            return True
+
+    class _FakePipe:
+        @staticmethod
+        def isatty():
+            return False
+
+    def test_non_interactive_returns_the_caller_default(self, monkeypatch):
+        """A scripted first install cannot answer, so it takes the caller's default.
+
+        This is what lets `make config` land on the container sandbox
+        non-interactively when Docker is present (default=True) while the
+        web_fetch prompt (default=False) still stays on the safe choice.
+        """
+        monkeypatch.setattr(configure.sys, "stdin", self._FakePipe())
+        assert configure._prompt_yes_no("q?", default=True) is True
+        assert configure._prompt_yes_no("q?", default=False) is False
+
+    def test_empty_answer_returns_the_default(self, monkeypatch):
+        monkeypatch.setattr(configure.sys, "stdin", self._FakeTty())
+        monkeypatch.setattr("builtins.input", lambda _prompt: "")
+        assert configure._prompt_yes_no("q?", default=True) is True
+        assert configure._prompt_yes_no("q?", default=False) is False
+
+    def test_explicit_no_beats_default_yes(self, monkeypatch):
+        monkeypatch.setattr(configure.sys, "stdin", self._FakeTty())
+        monkeypatch.setattr("builtins.input", lambda _prompt: "n")
+        assert configure._prompt_yes_no("q?", default=True) is False
+
+    def test_prompt_suffix_reflects_default(self, monkeypatch):
+        monkeypatch.setattr(configure.sys, "stdin", self._FakeTty())
+        seen: list[str] = []
+
+        def fake_input(prompt: str) -> str:
+            seen.append(prompt)
+            return ""
+
+        monkeypatch.setattr("builtins.input", fake_input)
+        configure._prompt_yes_no("q?", default=True)
+        configure._prompt_yes_no("q?", default=False)
+        assert "[Y/n]" in seen[0]
+        assert "[y/N]" in seen[1]
+
+
+class TestSandboxOfferDefault:
+    """The AIO sandbox offer defaults to yes exactly when a container runtime exists."""
+
+    def _seen_default(self, monkeypatch, runtime_available: bool) -> bool:
+        monkeypatch.setattr(configure, "_container_runtime_available", lambda: runtime_available)
+        seen: dict[str, bool] = {}
+
+        def fake_prompt(question, *, default=False):
+            seen["default"] = default
+            return False
+
+        monkeypatch.setattr(configure, "_prompt_yes_no", fake_prompt)
+        configure._offer_sandbox_choice(REPO_ROOT)
+        return seen["default"]
+
+    def test_defaults_to_yes_with_container_runtime(self, monkeypatch):
+        assert self._seen_default(monkeypatch, runtime_available=True) is True
+
+    def test_defaults_to_no_without_container_runtime(self, monkeypatch):
+        assert self._seen_default(monkeypatch, runtime_available=False) is False
+
+    def test_declining_prints_how_to_enable_later(self, monkeypatch, capsys):
+        monkeypatch.setattr(configure, "_prompt_yes_no", lambda _q, **_kw: False)
+        configure._offer_sandbox_choice(REPO_ROOT)
+        out = capsys.readouterr().out
+        assert "bash" in out
+        assert "make sandbox-enable MODE=container" in out
+
+
+class TestSandboxDefaultsToContainerOnFirstInstall:
+    """A non-interactive first install picks the container sandbox when a
+    container runtime is present, and stays local otherwise — no prompt."""
+
+    class _FakePipe:
+        @staticmethod
+        def isatty():
+            return False
+
+    def _run(self, monkeypatch, *, runtime_available: bool):
+        monkeypatch.setattr(configure.sys, "stdin", self._FakePipe())
+        monkeypatch.setattr(configure, "_container_runtime_available", lambda: runtime_available)
+        calls: list[list[str]] = []
+
+        class _Result:
+            returncode = 0
+
+        def fake_run(cmd, **kwargs):
+            calls.append(cmd)
+            return _Result()
+
+        monkeypatch.setattr(configure.subprocess, "run", fake_run)
+        configure._offer_sandbox_choice(REPO_ROOT)
+        return calls
+
+    def test_container_runtime_present_auto_enables_container(self, monkeypatch):
+        calls = self._run(monkeypatch, runtime_available=True)
+        assert len(calls) == 1
+        assert calls[0][-3:] == ["enable", "--mode", "container"]
+
+    def test_no_container_runtime_stays_local(self, monkeypatch):
+        calls = self._run(monkeypatch, runtime_available=False)
+        assert calls == []
