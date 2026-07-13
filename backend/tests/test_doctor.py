@@ -538,6 +538,59 @@ class TestCheckSandbox:
         results = doctor.check_sandbox(cfg)
         assert any(result.label == "container runtime available" and result.status == "warn" for result in results)
 
+    def test_container_sandbox_without_bash_tool_warns(self, tmp_path):
+        """A container sandbox with no bash tool means the agent cannot run commands at all."""
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text("config_version: 5\nsandbox:\n  use: deerflow.community.aio_sandbox:AioSandboxProvider\ntools:\n  - name: web_search\n    use: deerflow.community.searxng.tools:web_search_tool\n")
+        results = doctor.check_sandbox(cfg)
+        bash_result = next(result for result in results if result.label == "bash tool present")
+        assert bash_result.status == "warn"
+        assert "config-upgrade" in bash_result.fix
+
+    def test_container_sandbox_with_bash_tool_does_not_warn_about_bash(self, tmp_path, monkeypatch):
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text("config_version: 5\nsandbox:\n  use: deerflow.community.aio_sandbox:AioSandboxProvider\ntools:\n  - name: bash\n    use: deerflow.sandbox.tools:bash_tool\n")
+        monkeypatch.setattr(doctor.shutil, "which", lambda _name: "/usr/bin/docker")
+        results = doctor.check_sandbox(cfg)
+        assert all(result.label != "bash tool present" for result in results)
+
+
+# ---------------------------------------------------------------------------
+# check_core_tools
+# ---------------------------------------------------------------------------
+
+
+_ALL_CORE_TOOLS_YAML = "tools:\n" + "".join(f"  - name: {name}\n    use: example.module:{name}_tool\n" for name in doctor.CORE_TOOL_NAMES)
+
+
+class TestCheckCoreTools:
+    def test_missing_config_skipped(self, tmp_path):
+        result = doctor.check_core_tools(tmp_path / "config.yaml")
+        assert result.status == "skip"
+
+    def test_full_default_toolset_ok(self, tmp_path):
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text(f"config_version: 5\n{_ALL_CORE_TOOLS_YAML}")
+        result = doctor.check_core_tools(cfg)
+        assert result.status == "ok"
+
+    def test_missing_tools_are_named_in_warning(self, tmp_path):
+        """The wizard-declined-bash case: bash and web_fetch absent from the list."""
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text("config_version: 5\ntools:\n  - name: web_search\n    use: deerflow.community.searxng.tools:web_search_tool\n  - name: ls\n    use: deerflow.sandbox.tools:ls_tool\n")
+        result = doctor.check_core_tools(cfg)
+        assert result.status == "warn"
+        assert "bash" in result.detail
+        assert "web_fetch" in result.detail
+        assert "config-upgrade" in result.fix
+
+    def test_no_tools_section_fails(self, tmp_path):
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text("config_version: 5\nmodels: []\n")
+        result = doctor.check_core_tools(cfg)
+        assert result.status == "fail"
+        assert "config-upgrade" in result.fix
+
 
 # ---------------------------------------------------------------------------
 # main() exit code

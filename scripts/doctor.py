@@ -513,7 +513,11 @@ def check_web_tool(config_path: Path, *, tool_name: str, label: str) -> CheckRes
                 "searxng": "SearXNG (self-hosted, no key needed)",
                 "ddg_search": "DuckDuckGo (no key needed)",
             },
-            "web_fetch": {"jina_ai": "Jina AI Reader (no key needed)", "crawl4ai": "Crawl4AI (self-hosted, no key needed)"},
+            "web_fetch": {
+                "community.web_fetch.tools": "web_fetch dispatcher (Camoufox local browser default, no key needed)",
+                "jina_ai": "Jina AI Reader (no key needed)",
+                "crawl4ai": "Crawl4AI (self-hosted, no key needed)",
+            },
             "image_search": {"deerflow.community.image_search.tools": "DuckDuckGo Images (no key needed)"},
         }
         key_providers = {
@@ -638,6 +642,51 @@ def check_image_search(config_path: Path) -> CheckResult:
     return check_web_tool(config_path, tool_name="image_search", label="image search configured")
 
 
+# The tool names every fresh config ships with (config.example.yaml's tools
+# section). Doctor warns when one goes missing so "the agent says it has no
+# tools" is diagnosable; `make config-upgrade` backfills them.
+CORE_TOOL_NAMES = (
+    "web_search",
+    "web_fetch",
+    "image_search",
+    "ls",
+    "read_file",
+    "glob",
+    "grep",
+    "write_file",
+    "str_replace",
+    "bash",
+)
+
+
+def check_core_tools(config_path: Path) -> CheckResult:
+    """Warn when default tools are missing from config.yaml's tools list."""
+    if not config_path.exists():
+        return CheckResult("default toolset present", "skip")
+    try:
+        data = _load_yaml_file(config_path)
+        tools = data.get("tools")
+        if not isinstance(tools, list) or not tools:
+            return CheckResult(
+                "default toolset present",
+                "fail",
+                "no tools section — the agent has no web/file/bash tools",
+                fix="Run 'make config-upgrade' to restore the default toolset",
+            )
+        names = {tool.get("name") for tool in tools if isinstance(tool, dict)}
+        missing = [name for name in CORE_TOOL_NAMES if name not in names]
+        if missing:
+            return CheckResult(
+                "default toolset present",
+                "warn",
+                f"missing: {', '.join(missing)}",
+                fix="Run 'make config-upgrade' to backfill the default toolset",
+            )
+        return CheckResult("default toolset present", "ok", f"{len(tools)} tool(s)")
+    except Exception as exc:
+        return CheckResult("default toolset present", "warn", str(exc))
+
+
 def check_frontend_env(project_root: Path) -> CheckResult:
     env_path = project_root / "frontend" / ".env"
     if env_path.exists():
@@ -680,8 +729,8 @@ def check_sandbox(config_path: Path) -> list[CheckResult]:
                     CheckResult(
                         "bash compatibility",
                         "warn",
-                        "bash tool configured but host bash is disabled",
-                        fix="Enable host bash only in a fully trusted environment, or switch to container sandbox",
+                        "bash tool configured but inactive: local sandbox with host bash disabled (agent cannot run git or programs)",
+                        fix="Run 'make sandbox-enable MODE=container' for isolated bash, or set sandbox.allow_host_bash: true only in a fully trusted environment",
                     )
                 )
             elif allow_host_bash:
@@ -695,6 +744,15 @@ def check_sandbox(config_path: Path) -> list[CheckResult]:
                 )
         elif "AioSandboxProvider" in sandbox_use:
             results.append(CheckResult("sandbox configured", "ok", "Container sandbox"))
+            if "bash" not in tool_names:
+                results.append(
+                    CheckResult(
+                        "bash tool present",
+                        "warn",
+                        "container sandbox without a bash tool — the agent cannot run commands (git, program runs)",
+                        fix="Run 'make config-upgrade' to backfill the default toolset",
+                    )
+                )
             if not sandbox.get("provisioner_url") and not (shutil.which("docker") or shutil.which("container")):
                 results.append(
                     CheckResult(
@@ -775,6 +833,7 @@ def main() -> int:
         check_config_version(config_path, project_root),
         check_config_loadable(config_path),
         check_models_configured(config_path),
+        check_core_tools(config_path),
         *check_config_unknown_keys(config_path),
     ]
     sections.append(("Configuration", cfg_checks))

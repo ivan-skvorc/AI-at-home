@@ -122,6 +122,8 @@ That prompt is intended for coding agents. It tells the agent to clone the repo 
 
    The wizard also lets you configure an optional web search provider, or skip it for now.
 
+   **Tools out of the box**: the defaults are chosen so the agent has its full toolset from the first launch — web search (SearXNG, key-less), web fetch (Camoufox local browser, key-less), image search, file read/write tools, and bash. When Docker (or Apple Container) is installed, both `make setup` and `make config` default to the **container sandbox** with bash enabled, so git/clone and program runs work immediately; without a container runtime the local sandbox is used and host bash stays off (a security default — enable the container sandbox later with `make sandbox-enable MODE=container`). If an older `config.yaml` is missing default tools (for example the agent reports it has no web_search/web_fetch/bash), `make config-upgrade` backfills the missing entries without touching your existing ones, and `make doctor` names exactly which tools are absent.
+
    Run `make doctor` at any time to verify your setup and get actionable fix hints.
    If you are opening a GitHub issue about a local setup or runtime problem, run
    `make support-bundle`. The command prints reporter next steps, writes a

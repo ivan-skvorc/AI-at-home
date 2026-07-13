@@ -171,3 +171,109 @@ class TestMigrations:
         text = config.read_text(encoding="utf-8")
         assert "deerflow.sandbox.local:LocalSandboxProvider" in text
         assert "src.sandbox" not in text
+
+
+def _write_example_with_tools(tmp_path: Path, version: int = 3) -> Path:
+    example = tmp_path / "config.example.yaml"
+    example.write_text(
+        textwrap.dedent(
+            f"""\
+            config_version: {version}
+            sandbox:
+              use: deerflow.sandbox.local:LocalSandboxProvider
+            models: []
+            tools:
+              - name: web_search
+                group: web
+                use: deerflow.community.searxng.tools:web_search_tool
+              - name: web_fetch
+                group: web
+                use: deerflow.community.web_fetch.tools:web_fetch_tool
+                backend: camoufox
+              - name: bash
+                group: bash
+                use: deerflow.sandbox.tools:bash_tool
+            """
+        ),
+        encoding="utf-8",
+    )
+    return example
+
+
+class TestDefaultToolsBackfill:
+    """An existing `tools:` list regains missing default entries on upgrade.
+
+    merge_missing is dict-based and cannot heal a reduced list, so configs from
+    older bootstraps (e.g. a wizard run that declined bash) stayed tool-less
+    forever — the "agent says it has no tools" failure mode.
+    """
+
+    def test_missing_default_tools_are_appended(self, tmp_path, capsys):
+        import yaml
+
+        example = _write_example_with_tools(tmp_path, version=3)
+        config = tmp_path / "config.yaml"
+        config.write_text(
+            textwrap.dedent(
+                """\
+                config_version: 1
+                sandbox:
+                  use: custom
+                models: []
+                tools:
+                  - name: web_search
+                    group: web
+                    use: deerflow.community.ddg_search.tools:web_search_tool
+                """
+            ),
+            encoding="utf-8",
+        )
+
+        rc = config_upgrade.upgrade(config, example, REPO_ROOT)
+
+        assert rc == 0
+        data = yaml.safe_load(config.read_text(encoding="utf-8"))
+        tools_by_name = {tool["name"]: tool for tool in data["tools"]}
+        # Existing entry untouched (user's provider choice wins), no duplicate.
+        assert sum(1 for tool in data["tools"] if tool["name"] == "web_search") == 1
+        assert tools_by_name["web_search"]["use"] == "deerflow.community.ddg_search.tools:web_search_tool"
+        # Missing defaults appended from the example.
+        assert tools_by_name["web_fetch"]["backend"] == "camoufox"
+        assert tools_by_name["bash"]["use"] == "deerflow.sandbox.tools:bash_tool"
+        out = capsys.readouterr().out
+        assert "+ tools[web_fetch]" in out
+        assert "+ tools[bash]" in out
+        assert "+ tools[web_search]" not in out
+
+    def test_backfill_second_run_is_a_no_op(self, tmp_path):
+        example = _write_example_with_tools(tmp_path, version=3)
+        config = tmp_path / "config.yaml"
+        config.write_text(
+            "config_version: 1\nsandbox:\n  use: custom\nmodels: []\ntools:\n  - name: web_search\n    group: web\n    use: deerflow.community.ddg_search.tools:web_search_tool\n",
+            encoding="utf-8",
+        )
+
+        assert config_upgrade.upgrade(config, example, REPO_ROOT) == 0
+        after_first = config.read_text(encoding="utf-8")
+        assert config_upgrade.upgrade(config, example, REPO_ROOT) == 0
+        assert config.read_text(encoding="utf-8") == after_first
+
+    def test_absent_tools_section_is_added_wholesale(self, tmp_path):
+        import yaml
+
+        example = _write_example_with_tools(tmp_path, version=3)
+        config = tmp_path / "config.yaml"
+        config.write_text("config_version: 1\nsandbox:\n  use: custom\nmodels: []\n", encoding="utf-8")
+
+        rc = config_upgrade.upgrade(config, example, REPO_ROOT)
+
+        assert rc == 0
+        data = yaml.safe_load(config.read_text(encoding="utf-8"))
+        assert [tool["name"] for tool in data["tools"]] == ["web_search", "web_fetch", "bash"]
+
+    def test_backfill_helper_ignores_non_dict_entries(self):
+        user = {"tools": ["not-a-dict", {"name": "bash"}]}
+        example = {"tools": [{"name": "bash"}, {"name": "web_fetch", "backend": "camoufox"}, "also-not-a-dict"]}
+        added = config_upgrade.backfill_missing_default_tools(user, example)
+        assert added == ["tools[web_fetch]"]
+        assert user["tools"][-1] == {"name": "web_fetch", "backend": "camoufox"}

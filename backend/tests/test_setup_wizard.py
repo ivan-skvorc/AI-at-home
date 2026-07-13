@@ -1018,3 +1018,104 @@ class TestOllamaSectionInConfig:
         )
         data = yaml.safe_load(content)
         assert "ollama" not in data
+
+
+class TestCamoufoxDefaultFetchProvider:
+    """The wizard's default web_fetch must match DeerFlow's repo-wide default:
+    the web_fetch dispatcher with the local Camoufox browser backend."""
+
+    def test_camoufox_is_the_first_and_default_fetch_provider(self):
+        first = WEB_FETCH_PROVIDERS[0]
+        assert first.name == "camoufox"
+        assert first.use == "deerflow.community.web_fetch.tools:web_fetch_tool"
+        assert first.env_var is None  # key-less, works out of the box
+        assert first.extra_config == {"backend": "camoufox"}
+        assert first.tool_name == "web_fetch"
+
+    def test_writer_emits_the_dispatcher_entry_with_camoufox_backend(self):
+        provider = WEB_FETCH_PROVIDERS[0]
+        content = build_minimal_config(
+            provider_use="langchain_openai:ChatOpenAI",
+            model_name="gpt-test",
+            display_name="GPT Test",
+            api_key_field="api_key",
+            env_var="OPENAI_API_KEY",
+            web_fetch_use=provider.use,
+            web_fetch_extra_config=provider.extra_config,
+        )
+        data = yaml.safe_load(content)
+        fetch_tool = next(t for t in data["tools"] if t["name"] == "web_fetch")
+        assert fetch_tool["use"] == "deerflow.community.web_fetch.tools:web_fetch_tool"
+        assert fetch_tool["backend"] == "camoufox"
+
+
+class TestExecutionStepDefaults:
+    """Out-of-the-box execution: container sandbox + bash when Docker exists.
+
+    The container sandbox is the only mode where bash (and therefore
+    git/clone-and-debug) is safe to enable by default; local host bash keeps
+    its security default of off.
+    """
+
+    def _run(self, monkeypatch, *, runtime_available, choice_return, yes_no_returns=None):
+        from wizard.steps import execution as execution_step
+
+        calls = {"choice_default": None, "yes_no": []}
+        monkeypatch.setattr(execution_step, "container_runtime_available", lambda: runtime_available)
+
+        def fake_choice(prompt, options, default=None):
+            calls["choice_default"] = default
+            return choice_return
+
+        def fake_yes_no(prompt, default=True):
+            calls["yes_no"].append((prompt, default))
+            if yes_no_returns is not None:
+                return yes_no_returns.pop(0)
+            return default  # simulate pressing Enter
+
+        monkeypatch.setattr(execution_step, "ask_choice", fake_choice)
+        monkeypatch.setattr(execution_step, "ask_yes_no", fake_yes_no)
+        monkeypatch.setattr(execution_step, "print_header", lambda *a, **k: None)
+        monkeypatch.setattr(execution_step, "print_info", lambda *a, **k: None)
+        monkeypatch.setattr(execution_step, "print_warning", lambda *a, **k: None)
+        result = execution_step.run_execution_step()
+        return result, calls
+
+    def test_mode_defaults_to_container_when_runtime_present(self, monkeypatch):
+        _result, calls = self._run(monkeypatch, runtime_available=True, choice_return=1)
+        assert calls["choice_default"] == 1
+
+    def test_mode_defaults_to_local_without_runtime(self, monkeypatch):
+        _result, calls = self._run(monkeypatch, runtime_available=False, choice_return=0)
+        assert calls["choice_default"] == 0
+
+    def test_container_mode_enter_through_enables_bash(self, monkeypatch):
+        """Pressing Enter through the container path yields bash on, host bash off."""
+        result, calls = self._run(monkeypatch, runtime_available=True, choice_return=1)
+        bash_prompt, bash_default = calls["yes_no"][0]
+        assert "bash" in bash_prompt.lower()
+        assert bash_default is True
+        assert result.include_bash_tool is True
+        assert result.allow_host_bash is False  # container bash, not host bash
+        assert result.sandbox_use == "deerflow.community.aio_sandbox:AioSandboxProvider"
+
+    def test_local_mode_enter_through_keeps_host_bash_off(self, monkeypatch):
+        result, calls = self._run(monkeypatch, runtime_available=True, choice_return=0)
+        _bash_prompt, bash_default = calls["yes_no"][0]
+        assert bash_default is False
+        assert result.include_bash_tool is False
+        assert result.allow_host_bash is False
+        assert result.sandbox_use == "deerflow.sandbox.local:LocalSandboxProvider"
+
+    def test_local_mode_explicit_yes_enables_host_bash(self, monkeypatch):
+        result, _calls = self._run(monkeypatch, runtime_available=False, choice_return=0, yes_no_returns=[True, True])
+        assert result.include_bash_tool is True
+        assert result.allow_host_bash is True
+
+    def test_container_runtime_available_uses_path_lookup(self, monkeypatch):
+        from wizard.steps import execution as execution_step
+
+        monkeypatch.setattr(execution_step.shutil, "which", lambda _name: None)
+        assert execution_step.container_runtime_available() is False
+        monkeypatch.setattr(execution_step.shutil, "which", lambda name: "/usr/bin/docker" if name == "docker" else None)
+        assert execution_step.container_runtime_available() is True

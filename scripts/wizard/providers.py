@@ -671,9 +671,18 @@ SEARCH_PROVIDERS: list[SearchProvider] = [
 
 WEB_FETCH_PROVIDERS: list[WebProvider] = [
     WebProvider(
+        name="camoufox",
+        display_name="Camoufox (local browser, no key needed)",
+        description="JS-capable headless browser, auto-installed on launch; DeerFlow's default",
+        use="deerflow.community.web_fetch.tools:web_fetch_tool",
+        env_var=None,
+        tool_name="web_fetch",
+        extra_config={"backend": "camoufox"},
+    ),
+    WebProvider(
         name="jina_ai",
         display_name="Jina AI Reader",
-        description="Good default reader, no API key required",
+        description="Cloud reader API, no API key required",
         use="deerflow.community.jina_ai.tools:web_fetch_tool",
         env_var=None,
         tool_name="web_fetch",
