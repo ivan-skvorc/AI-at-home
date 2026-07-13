@@ -22,6 +22,10 @@ class LLMStepResult:
     model_name: str
     api_key: str | None
     base_url: str | None = None
+    # When the chosen provider ships a bundle (Anthropic / OpenRouter), the whole
+    # recommended set is written to config.yaml instead of a single model. Empty
+    # for single-model providers.
+    bundle_models: list[dict] | None = None
 
 
 def run_llm_step(step_label: str = "Step 1/3") -> LLMStepResult:
@@ -32,6 +36,26 @@ def run_llm_step(step_label: str = "Step 1/3") -> LLMStepResult:
     provider = LLM_PROVIDERS[idx]
 
     print()
+
+    # Bundle providers (Anthropic / OpenRouter) enable a whole recommended set of
+    # latest models from one API key — no per-model prompting. The user just
+    # supplies the key and every bundled model is written to config.yaml.
+    if provider.bundle_models:
+        print_info(f"{provider.display_name}: these models will be enabled with your key:")
+        for entry in provider.bundle_models:
+            print_info(f"  • {entry['display_name']}  ({entry['model']})")
+        print()
+        print_header(f"{step_label} · Enter your API Key")
+        api_key = ask_secret(f"{provider.env_var}") if provider.env_var else None
+        if api_key:
+            print_success(f"Key will be saved to .env as {provider.env_var}")
+        return LLMStepResult(
+            provider=provider,
+            model_name=provider.default_model,
+            api_key=api_key,
+            base_url=None,
+            bundle_models=list(provider.bundle_models),
+        )
 
     # Model selection (show list, default to provider preference)
     if len(provider.models) > 1:

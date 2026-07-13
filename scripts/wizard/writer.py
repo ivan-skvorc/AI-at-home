@@ -195,31 +195,41 @@ def build_minimal_config(
     ollama_kv_cache_type: str | None = None,
     config_version: int = 5,
     base_config: dict[str, Any] | None = None,
+    model_entries: list[dict[str, Any]] | None = None,
 ) -> str:
-    """Build the content of a minimal config.yaml."""
+    """Build the content of a minimal config.yaml.
+
+    When *model_entries* is provided (a bundle of ready-to-use model dicts, e.g.
+    the latest Anthropic or OpenRouter set), those entries are written verbatim
+    and the single-model parameters (``model_name`` / ``display_name`` /
+    ``extra_model_config`` / ``base_url``) are ignored for the ``models:``
+    section.
+    """
     from datetime import date
 
     today = date.today().isoformat()
 
-    model_entry: dict[str, Any] = {
-        "name": _make_model_config_name(model_name),
-        "display_name": display_name,
-        "use": provider_use,
-        "model": model_name,
-    }
-    if env_var:
-        model_entry[api_key_field] = f"${env_var}"
-    extra_model_fields = dict(extra_model_config or {})
-    if "base_url" in extra_model_fields and not base_url:
-        base_url = extra_model_fields.pop("base_url")
-    if base_url:
-        model_entry["base_url"] = base_url
-    if extra_model_fields:
-        model_entry.update(extra_model_fields)
-
     data: dict[str, Any] = deepcopy(base_config or {})
     data["config_version"] = config_version
-    data["models"] = [model_entry]
+    if model_entries:
+        data["models"] = deepcopy(model_entries)
+    else:
+        model_entry: dict[str, Any] = {
+            "name": _make_model_config_name(model_name),
+            "display_name": display_name,
+            "use": provider_use,
+            "model": model_name,
+        }
+        if env_var:
+            model_entry[api_key_field] = f"${env_var}"
+        extra_model_fields = dict(extra_model_config or {})
+        if "base_url" in extra_model_fields and not base_url:
+            base_url = extra_model_fields.pop("base_url")
+        if base_url:
+            model_entry["base_url"] = base_url
+        if extra_model_fields:
+            model_entry.update(extra_model_fields)
+        data["models"] = [model_entry]
     base_tools = data.get("tools")
     if not isinstance(base_tools, list):
         base_tools = None
@@ -280,6 +290,7 @@ def write_config_yaml(
     channel_connection_providers: list[str] | None = None,
     ollama_vram_gb: float | None = None,
     ollama_kv_cache_type: str | None = None,
+    model_entries: list[dict[str, Any]] | None = None,
 ) -> None:
     """Write (or overwrite) config.yaml with a minimal working configuration."""
     # Read config_version from config.example.yaml if present
@@ -320,5 +331,6 @@ def write_config_yaml(
         ollama_kv_cache_type=ollama_kv_cache_type,
         config_version=config_version,
         base_config=example_defaults,
+        model_entries=model_entries,
     )
     config_path.write_text(content, encoding="utf-8")
