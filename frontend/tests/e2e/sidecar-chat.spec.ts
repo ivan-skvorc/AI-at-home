@@ -582,7 +582,7 @@ test.describe("Side chat", () => {
       },
     );
     await page.route(
-      new RegExp(`/api/threads/${MOCK_THREAD_ID}/runs/[^/]+/messages`),
+      new RegExp(`/api/threads/${MOCK_THREAD_ID}/messages/page`),
       (route) => {
         if (route.request().method() !== "GET") {
           return route.fallback();
@@ -593,11 +593,13 @@ test.describe("Side chat", () => {
           body: JSON.stringify({
             data: parentMessages.map((message, index) => ({
               run_id: `run-${MOCK_THREAD_ID}`,
+              seq: index + 1,
               content: message,
               metadata: { caller: "lead_agent" },
               created_at: `2025-01-01T00:00:${String(index).padStart(2, "0")}Z`,
             })),
-            hasMore: false,
+            has_more: false,
+            next_before_seq: null,
           }),
         });
       },
@@ -680,7 +682,7 @@ test.describe("Side chat", () => {
       },
     );
     await page.route(
-      new RegExp(`/api/threads/${MOCK_SIDECAR_THREAD_ID}/runs/[^/]+/messages`),
+      new RegExp(`/api/threads/${MOCK_SIDECAR_THREAD_ID}/messages/page`),
       (route) => {
         if (route.request().method() !== "GET") {
           return route.fallback();
@@ -691,11 +693,13 @@ test.describe("Side chat", () => {
           body: JSON.stringify({
             data: sidecarThreadMessages.map((message, index) => ({
               run_id: `run-${MOCK_SIDECAR_THREAD_ID}`,
+              seq: index + 1,
               content: message,
               metadata: { caller: "lead_agent" },
               created_at: `2025-01-01T00:00:${String(index).padStart(2, "0")}Z`,
             })),
-            hasMore: false,
+            has_more: false,
+            next_before_seq: null,
           }),
         });
       },
