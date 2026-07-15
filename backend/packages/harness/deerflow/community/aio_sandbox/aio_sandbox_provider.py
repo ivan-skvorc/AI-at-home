@@ -198,7 +198,8 @@ class AioSandboxProvider(WarmPoolLifecycleMixin[SandboxInfo], SandboxProvider):
             logger.info(f"Using remote sandbox backend with provisioner at {provisioner_url}")
             self._warn_ignored_mounts("provisioner/remote", "the provisioner pod spec")
             self._warn_ignored_container_options("provisioner/remote", "the provisioner pod spec")
-            return RemoteSandboxBackend(provisioner_url=provisioner_url)
+            api_key = self._config.get("provisioner_api_key", "")
+            return RemoteSandboxBackend(provisioner_url=provisioner_url, api_key=api_key)
 
         base_url = self._config.get("base_url")
         if base_url:
@@ -302,6 +303,7 @@ class AioSandboxProvider(WarmPoolLifecycleMixin[SandboxInfo], SandboxProvider):
             "environment": self._resolve_env_vars(sandbox_config.environment or {}),
             # provisioner URL for dynamic pod management (e.g. http://provisioner:8002)
             "provisioner_url": getattr(sandbox_config, "provisioner_url", None) or "",
+            "provisioner_api_key": getattr(sandbox_config, "provisioner_api_key", None) or "",
             # external base_url for a single pre-existing container (e.g. http://localhost:8091)
             "base_url": getattr(sandbox_config, "base_url", None) or "",
             # HTTP client timeout for the sandbox API (None → AioSandbox default of 600s)
