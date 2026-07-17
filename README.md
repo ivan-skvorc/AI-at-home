@@ -1,4 +1,14 @@
-> **This is a fork of [bytedance/deer-flow](https://github.com/bytedance/deer-flow).** It adds two convenience features (auto-synced Ollama models, per-thread subagent model override) and an Arch nginx fix. See [`FORK.md`](./FORK.md) for details, cost analysis, and disclaimers.
+> **This is a fork of [bytedance/deer-flow](https://github.com/bytedance/deer-flow).** On top of upstream, it adds — out of the box:
+>
+> - 🦙 **Auto-populated Ollama models** — `config.yaml`'s `models:` list is synced from your local `ollama pull` list on every launch. Capabilities (thinking / vision / tools) are detected and mapped to DeerFlow's `supports_*` flags, and each model gets a VRAM-aware context window instead of Ollama's tiny 2048-token default.
+> - 🧩 **Per-thread subagent model dropdown** — in **Ultra mode**, a second model picker lets you route `task` subagents to a cheaper or local model instead of the lead model (defaults to "Follow lead").
+> - 🦊 **Camoufox as the default `web_fetch`** — a local, key-less, JavaScript-capable browser backend replaces the Jina cloud reader as the default. The package and its browser install automatically on every launch path (no API key).
+> - 🔎 **Self-hosted SearXNG as the default `web_search`** — a bundled metasearch backend, auto-provisioned at startup (an existing reachable instance is reused, otherwise the bundled container starts). No search API key required.
+> - 📄 **PDF / Office uploads that just work** — `pymupdf4llm` is bundled and converted files are written under both name conventions, so PDF / DOCX / PPTX / XLSX uploads are reliably readable by the agent (enable with `uploads.auto_convert_documents: true`).
+> - 🐳 **Full clone-and-debug sandbox runs** — one-command per-thread containers, host-reachable ports, native debuggers (`gdb` / `strace`), longer command timeouts, and a `repo-runner` skill that encodes clone → install → run → debug.
+> - 🩹 **Arch / CachyOS fixes** — an nginx temp-path patch and bundled `langchain-ollama` so `make dev` works for non-root users out of the box.
+>
+> See [`FORK.md`](./FORK.md) for details, cost analysis, and disclaimers. Upstream is the source of truth for everything else.
 
 ---
 
