@@ -351,7 +351,10 @@ def test_make_lead_agent_enforces_allowed_tools_when_skill_cache_is_cold(monkeyp
 
     mock_app_config = MagicMock()
     mock_app_config.get_model_config.return_value = SimpleNamespace(supports_thinking=False, supports_vision=False)
-    mock_storage = SimpleNamespace(load_skills=lambda *, enabled_only: [_make_skill("restricted", ["read_file"])])
+    # The restricting skill must declare at least one *business* tool (web_search);
+    # a declaration of only framework tools (e.g. read_file) is not a real scoping
+    # and must not strip the agent's toolset (see test_framework_only_* below).
+    mock_storage = SimpleNamespace(load_skills=lambda *, enabled_only: [_make_skill("restricted", ["read_file", "web_search"])])
 
     with prompt_module._enabled_skills_lock:
         prompt_module._enabled_skills_cache = None
@@ -361,9 +364,10 @@ def test_make_lead_agent_enforces_allowed_tools_when_skill_cache_is_cold(monkeyp
 
     agent_kwargs = lead_agent_module.make_lead_agent({"configurable": {"agent_name": "test"}})
 
+    # bash is dropped by the skill's allowed-tools; read_file/web_search survive.
     # describe_skill is appended after skill-allowed-tools filtering (it bypasses policy).
     tool_names = [tool.name for tool in agent_kwargs["tools"]]
-    assert tool_names == ["read_file", "describe_skill"]
+    assert tool_names == ["read_file", "web_search", "describe_skill"]
 
 
 def test_make_lead_agent_fails_closed_when_skill_policy_load_fails(monkeypatch):
