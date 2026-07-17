@@ -84,6 +84,12 @@ class LocalSkillStorage(SkillStorage):
                 if SKILL_MD_FILE not in file_names:
                     continue
                 yield category, category_path, Path(current_root) / SKILL_MD_FILE
+                # A skill package owns its entire subtree. Nested SKILL.md files
+                # (e.g. skill-reviewer/evals/fixtures/*/SKILL.md) are package
+                # resources, not separately-installable skills — stop descending
+                # so they are never discovered and enabled as real skills (which
+                # would let a fixture's allowed-tools restrict the whole agent).
+                dir_names[:] = []
 
     def read_custom_skill(self, name: str) -> str:
         if not self.custom_skill_exists(name):

@@ -269,6 +269,11 @@ class UserScopedSkillStorage(LocalSkillStorage):
                 if SKILL_MD_FILE not in file_names:
                     continue
                 yield SkillCategory.PUBLIC, public_path, Path(current_root) / SKILL_MD_FILE
+                # A skill package owns its subtree; nested SKILL.md files (e.g.
+                # skill-reviewer/evals/fixtures/*/SKILL.md) are package resources,
+                # not separate skills. Stop descending so they are not discovered
+                # and enabled (a fixture's allowed-tools would restrict the agent).
+                dir_names[:] = []
 
         # 2. Custom skills: prefer user-level directory
         user_custom_exists = False
@@ -280,6 +285,8 @@ class UserScopedSkillStorage(LocalSkillStorage):
                     continue
                 user_custom_exists = True
                 yield SkillCategory.CUSTOM, user_custom_path, Path(current_root) / SKILL_MD_FILE
+                # Package owns its subtree — do not descend into nested SKILL.md.
+                dir_names[:] = []
 
         # 3. Fallback: if user has no custom skills, load from global custom
         #    as LEGACY (read-only) so legacy skills are visible but not
@@ -294,6 +301,8 @@ class UserScopedSkillStorage(LocalSkillStorage):
                     if SKILL_MD_FILE not in file_names:
                         continue
                     yield SkillCategory.LEGACY, global_custom_path, Path(current_root) / SKILL_MD_FILE
+                    # Package owns its subtree — do not descend into nested SKILL.md.
+                    dir_names[:] = []
 
     # ------------------------------------------------------------------
     # Install — redirect custom_dir to user directory

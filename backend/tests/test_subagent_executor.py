@@ -1459,13 +1459,14 @@ class TestSkillAllowedTools:
         executor = SubagentExecutor(config=base_config, tools=tools, thread_id="test-thread")
 
         async def load_skills():
-            return [_skill("a", ["bash"]), _skill("b", ["read_file"])]
+            # Two skills declaring *business* tools union to {bash, web_search}.
+            return [_skill("a", ["bash"]), _skill("b", ["web_search"])]
 
         with patch.object(executor, "_load_skills", load_skills), patch.object(executor, "_create_agent", return_value=mock_agent) as create_agent_mock:
             await executor._aexecute("Task")
 
         create_agent_mock.assert_called_once()
-        assert [tool.name for tool in create_agent_mock.call_args.args[0]] == ["bash", "read_file"]
+        assert [tool.name for tool in create_agent_mock.call_args.args[0]] == ["bash", "web_search"]
         assert [tool.name for tool in executor.tools] == ["bash", "read_file", "web_search"]
 
     @pytest.mark.anyio
@@ -1523,7 +1524,7 @@ class TestSkillAllowedTools:
         assert [tool.name for tool in executor.tools] == ["bash", "read_file", "web_search"]
 
     @pytest.mark.anyio
-    async def test_empty_allowed_tools_contributes_no_tools(self, classes, base_config, mock_agent, msg, caplog):
+    async def test_empty_and_framework_only_allowed_tools_do_not_restrict(self, classes, base_config, mock_agent, msg, caplog):
         SubagentExecutor = classes["SubagentExecutor"]
 
         final_state = {"messages": [msg.human("Task"), msg.ai("Done", "msg-1")]}
@@ -1532,14 +1533,19 @@ class TestSkillAllowedTools:
         executor = SubagentExecutor(config=base_config, tools=tools, thread_id="test-thread")
 
         async def load_skills():
+            # An empty declaration and a framework-only declaration (read_file is an
+            # always-available framework built-in) scope no business tools, so neither
+            # may restrict the subagent's toolset. Previously this stripped every tool
+            # except read_file — the root cause of enabled skill-reviewer disarming
+            # both the lead agent and its subagents.
             return [_skill("empty", []), _skill("reader", ["read_file"])]
 
         with patch.object(executor, "_load_skills", load_skills), patch.object(executor, "_create_agent", return_value=mock_agent) as create_agent_mock, caplog.at_level("INFO"):
             await executor._aexecute("Task")
 
-        assert [tool.name for tool in create_agent_mock.call_args.args[0]] == ["read_file"]
+        assert [tool.name for tool in create_agent_mock.call_args.args[0]] == ["bash", "read_file", "web_search"]
         assert [tool.name for tool in executor.tools] == ["bash", "read_file", "web_search"]
-        assert "declared empty allowed-tools" in caplog.text
+        assert "not restricting the global toolset" in caplog.text
 
     @pytest.mark.anyio
     async def test_skill_load_failure_fails_without_creating_agent(self, classes, base_config, mock_agent):
