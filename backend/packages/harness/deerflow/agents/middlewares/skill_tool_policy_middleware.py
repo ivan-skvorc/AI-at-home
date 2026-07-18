@@ -141,7 +141,10 @@ class SkillToolPolicyMiddleware(AgentMiddleware[AgentState]):
         active_skills, policy_failed = self._active_skills_for_paths(paths)
         if policy_failed:
             return set(ALWAYS_AVAILABLE_BUILTIN_TOOL_NAMES)
-        allowed = allowed_tool_names_for_skills(active_skills)
+        # Dynamic policy sees only *actively* invoked skills (slash / skill_context),
+        # so an explicit empty allowed-tools is a real "framework only" scoping and
+        # must restrict — opt out of the static path's framework-only exemption.
+        allowed = allowed_tool_names_for_skills(active_skills, exempt_framework_only=False)
         if allowed is None:
             return None
         return allowed | set(ALWAYS_AVAILABLE_BUILTIN_TOOL_NAMES)

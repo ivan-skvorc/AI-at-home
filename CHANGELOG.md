@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **skills:** Reconcile the fork's static skill tool-policy exemption with
+  upstream's dynamic `SkillToolPolicyMiddleware` after the upstream sync. The
+  fork's `allowed_tool_names_for_skills` treats an empty / framework-only
+  `allowed-tools` declaration as "no restriction" (so merely *enabling* a
+  framework skill such as `skill-reviewer` never disarms the agent), but the
+  lead agent's dynamic middleware — which only sees *actively* invoked skills
+  (slash / `skill_context`) — needs an explicit empty declaration to restrict
+  to framework tools. That collision left `task` (and other non-framework
+  tools) leaking through the active-skill policy. The framework-only exemption
+  is now opt-in (`exempt_framework_only`, default on for the static subagent
+  path); the middleware opts out, restoring upstream's active-skill semantics.
+  Fixes 4 `backend-unit-tests` failures introduced by the merge
+  (`test_skill_tool_policy_middleware.py`, `test_lead_agent_model_resolution.py`).
+
 ### Changed
 
 - **suggestions:** Follow-up question suggestions now default **off** to avoid
