@@ -323,6 +323,14 @@ if [ -n "$_detect_python" ]; then
     "$_detect_python" "$REPO_ROOT/scripts/sync-ollama-models.py" --config "$DEER_FLOW_CONFIG_PATH" --container --verbose || true
 fi
 
+# ── API-key model auto-config ─────────────────────────────────────────────────
+# Enable the Anthropic / OpenRouter model blocks in config.yaml on the HOST
+# before the containers mount it (mounted read-only into the gateway), when
+# their keys are present in .env. Best-effort: missing key = no-op.
+if [ -n "$_detect_python" ]; then
+    "$_detect_python" "$REPO_ROOT/scripts/sync-api-key-models.py" --config "$DEER_FLOW_CONFIG_PATH" --env-file "$REPO_ROOT/.env" --verbose || true
+fi
+
 # ── Banner ────────────────────────────────────────────────────────────────────
 
 echo "=========================================="

@@ -1,6 +1,9 @@
 > **This is a fork of [bytedance/deer-flow](https://github.com/bytedance/deer-flow).** On top of upstream, it adds — out of the box:
 >
 > - 🦙 **Auto-populated Ollama models** — `config.yaml`'s `models:` list is synced from your local `ollama pull` list on every launch. Capabilities (thinking / vision / tools) are detected and mapped to DeerFlow's `supports_*` flags, and each model gets a VRAM-aware context window instead of Ollama's tiny 2048-token default.
+> - 🔑 **API-key model auto-config** — on every launch, `scripts/sync-api-key-models.py` reads your `.env` and uncomments the matching cloud-model block in `config.yaml`, so the right models are enabled on first start with no manual editing. It only ever uncomments (never re-comments), skips a block whose models are already active, and no-ops when the key is absent. The auto-enabled models and their conditions:
+>   - **`ANTHROPIC_API_KEY` present** → Claude **Fable 5**, **Opus 4.8**, **Sonnet 5**, **Haiku 4.5** (direct Anthropic API).
+>   - **`OPENROUTER_API_KEY` present** → Claude **Fable 5**, **Grok 4.5**, **GPT-5.5**, **MiniMax M3**, **Qwen3.7 Max**, **Gemini 3.5 Flash**, **DeepSeek V4 Pro**, **GLM-4.5**, **Nemotron 3 Ultra** (all via OpenRouter).
 > - 🧩 **Per-thread subagent model dropdown** — in **Ultra mode**, a second model picker lets you route `task` subagents to a cheaper or local model instead of the lead model (defaults to "Follow lead").
 > - 🦊 **Camoufox as the default `web_fetch`** — a local, key-less, JavaScript-capable browser backend replaces the Jina cloud reader as the default. The package and its browser install automatically on every launch path (no API key).
 > - 🔎 **Self-hosted SearXNG as the default `web_search`** — a bundled metasearch backend, auto-provisioned at startup (an existing reachable instance is reused, otherwise the bundled container starts). No search API key required.

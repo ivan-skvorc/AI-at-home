@@ -32,8 +32,8 @@ class LLMProvider:
     # When non-empty, the wizard writes this whole list of ready-to-use model
     # entries (the recommended latest set for the provider's single API key)
     # instead of prompting for one model. Used so first launch can enable the
-    # full model set for the detected key — e.g. Anthropic Opus/Sonnet/Haiku, or
-    # the OpenRouter Claude Fable + xAI/OpenAI/Google/alternatives set. Each dict
+    # full model set for the detected key — e.g. Anthropic Fable/Opus/Sonnet/Haiku,
+    # or the OpenRouter Claude Fable + xAI/OpenAI/Google/alternatives set. Each dict
     # is a complete `models:` entry (already carrying api_key/base_url); the
     # first entry is treated as the primary/default model.
     bundle_models: list[dict] = field(default_factory=list)
@@ -125,7 +125,20 @@ ANTHROPIC_BUDGET_THINKING_CONFIG = {
 ANTHROPIC_THINKING_CONFIG = ANTHROPIC_BUDGET_THINKING_CONFIG
 
 # Latest Claude models, enabled together when the user has an ANTHROPIC_API_KEY.
+# Fable 5 / Opus 4.8 / Sonnet 5 use adaptive thinking; Haiku 4.5 takes a budget.
 ANTHROPIC_BUNDLE_MODELS: list[dict] = [
+    {
+        "name": "claude-fable-5",
+        "display_name": "Claude Fable 5",
+        "use": "langchain_anthropic:ChatAnthropic",
+        "model": "claude-fable-5",
+        "api_key": "$ANTHROPIC_API_KEY",
+        "default_request_timeout": 600.0,
+        "max_retries": 2,
+        "max_tokens": 32000,
+        "supports_vision": True,
+        **ANTHROPIC_ADAPTIVE_THINKING_CONFIG,
+    },
     {
         "name": "claude-opus-4-8",
         "display_name": "Claude Opus 4.8",
@@ -165,7 +178,16 @@ ANTHROPIC_BUNDLE_MODELS: list[dict] = [
 ]
 
 
-def _openrouter_model(name: str, display_name: str, model: str, *, supports_vision: bool = False) -> dict:
+def _openrouter_model(
+    name: str,
+    display_name: str,
+    model: str,
+    *,
+    supports_vision: bool = False,
+    supports_thinking: bool = True,
+    max_tokens: int = 32000,
+    temperature: float | None = None,
+) -> dict:
     """Build one OpenRouter model entry (shared api_key + base_url + defaults)."""
     entry: dict = {
         "name": name,
@@ -176,28 +198,29 @@ def _openrouter_model(name: str, display_name: str, model: str, *, supports_visi
         "base_url": "https://openrouter.ai/api/v1",
         "request_timeout": 600.0,
         "max_retries": 2,
-        "max_tokens": 16000,
+        "max_tokens": max_tokens,
     }
-    if supports_vision:
-        entry["supports_vision"] = True
+    if temperature is not None:
+        entry["temperature"] = temperature
+    entry["supports_vision"] = supports_vision
+    if supports_thinking:
+        entry["supports_thinking"] = True
     return entry
 
 
-# One OPENROUTER_API_KEY reaches every provider. The first four are the latest
-# Claude Fable plus the xAI / OpenAI / Google flagships; the rest are strong
-# open alternatives (MiniMax, Mistral, DeepSeek, Kimi, GLM, Qwen). Slugs current
-# as of 2026-07.
+# One OPENROUTER_API_KEY reaches every provider. Claude Fable plus the current
+# xAI / OpenAI / Google flagships and strong open alternatives (MiniMax, Qwen,
+# DeepSeek, GLM, Nemotron). Slugs current as of 2026-07.
 OPENROUTER_BUNDLE_MODELS: list[dict] = [
-    _openrouter_model("openrouter-claude-fable-5", "Claude Fable 5 (OpenRouter)", "anthropic/claude-fable-5", supports_vision=True),
-    _openrouter_model("openrouter-grok-4-5", "Grok 4.5 (OpenRouter)", "x-ai/grok-4.5", supports_vision=True),
-    _openrouter_model("openrouter-gpt-5-6-sol", "GPT-5.6 Sol (OpenRouter)", "openai/gpt-5.6-sol", supports_vision=True),
-    _openrouter_model("openrouter-gemini-3-5-pro", "Gemini 3.5 Pro (OpenRouter)", "google/gemini-3.5-pro", supports_vision=True),
-    _openrouter_model("openrouter-minimax-m3", "MiniMax M3 (OpenRouter)", "minimax/minimax-m3", supports_vision=True),
-    _openrouter_model("openrouter-mistral-large-3", "Mistral Large 3 (OpenRouter)", "mistralai/mistral-large-2512"),
-    _openrouter_model("openrouter-deepseek-v4", "DeepSeek V4 Pro (OpenRouter)", "deepseek/deepseek-v4-pro"),
-    _openrouter_model("openrouter-kimi-k2-6", "Kimi K2.6 (OpenRouter)", "moonshotai/kimi-k2.6", supports_vision=True),
-    _openrouter_model("openrouter-glm-5", "GLM-5 (OpenRouter)", "z-ai/glm-5"),
-    _openrouter_model("openrouter-qwen3-7-plus", "Qwen3.7 Plus (OpenRouter)", "qwen/qwen3.7-plus", supports_vision=True),
+    _openrouter_model("openrouter-fable-5", "Claude Fable 5 (OpenRouter)", "anthropic/claude-fable-5", supports_vision=True),
+    _openrouter_model("openrouter-grok-4.5", "Grok 4.5 (OpenRouter)", "x-ai/grok-4.5", supports_vision=True),
+    _openrouter_model("openrouter-gpt-5.5", "GPT-5.5 (OpenRouter)", "openai/gpt-5.5", supports_vision=True),
+    _openrouter_model("openrouter-minimax-m3", "MiniMax M3 (OpenRouter)", "minimax/minimax-m3", supports_vision=True, max_tokens=16000, temperature=1.0),
+    _openrouter_model("openrouter-qwen3.7-max", "Qwen3.7 Max (OpenRouter)", "qwen/qwen3.7-max"),
+    _openrouter_model("openrouter-gemini-3.5-flash", "Gemini 3.5 Flash (OpenRouter)", "google/gemini-3.5-flash", supports_vision=True),
+    _openrouter_model("openrouter-deepseek-v4-pro", "DeepSeek V4 Pro (OpenRouter)", "deepseek/deepseek-v4-pro"),
+    _openrouter_model("openrouter-glm-4.5", "GLM-4.5 (OpenRouter)", "z-ai/glm-4.5", max_tokens=16000),
+    _openrouter_model("openrouter-nemotron-3-ultra", "Nemotron 3 Ultra (OpenRouter)", "nvidia/nemotron-3-ultra-550b-a55b", max_tokens=16000),
 ]
 
 
@@ -316,9 +339,9 @@ LLM_PROVIDERS: list[LLMProvider] = [
     LLMProvider(
         name="anthropic",
         display_name="Anthropic",
-        description="Latest Claude Opus 4.8, Sonnet 5 and Haiku 4.5",
+        description="Latest Claude Fable 5, Opus 4.8, Sonnet 5 and Haiku 4.5",
         use="langchain_anthropic:ChatAnthropic",
-        models=["claude-opus-4-8", "claude-sonnet-5", "claude-haiku-4-5"],
+        models=["claude-fable-5", "claude-opus-4-8", "claude-sonnet-5", "claude-haiku-4-5"],
         default_model="claude-opus-4-8",
         env_var="ANTHROPIC_API_KEY",
         package="langchain-anthropic",
@@ -525,7 +548,7 @@ LLM_PROVIDERS: list[LLMProvider] = [
     LLMProvider(
         name="openrouter",
         display_name="OpenRouter",
-        description="One key: Claude Fable + xAI/OpenAI/Google flagships & alternatives",
+        description="One key: Claude Fable + xAI/OpenAI/Google flagships & open alternatives",
         use="langchain_openai:ChatOpenAI",
         models=[entry["model"] for entry in OPENROUTER_BUNDLE_MODELS],
         default_model=OPENROUTER_BUNDLE_MODELS[0]["model"],
