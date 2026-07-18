@@ -360,11 +360,17 @@ async def task_tool(
     if config.model == "inherit" and parent_model is None and resolved_app_config is None:
         resolved_app_config = get_app_config()
     effective_model = resolve_subagent_model_name(config, parent_model, app_config=resolved_app_config)
-    # Per-thread runtime override from frontend Ultra-mode subagent dropdown.
+    # Per-thread runtime override from the frontend Ultra-mode subagent dropdown.
+    # It is authoritative: apply it to effective_model (used for the tool set and
+    # the task_* events here) AND pass it to the executor as model_override so the
+    # executor's own re-resolution can't discard it for a subagent that pins a
+    # specific config.model (resolve_subagent_model_name ignores parent_model then).
+    subagent_model_override: str | None = None
     runtime_context = getattr(runtime, "context", None)
     if isinstance(runtime_context, dict):
         override = runtime_context.get("subagent_model_name")
         if override:
+            subagent_model_override = override
             effective_model = override
 
     # Subagents should not have subagent tools enabled (prevent recursive nesting)
@@ -382,6 +388,7 @@ async def task_tool(
         "config": config,
         "tools": tools,
         "parent_model": effective_model,
+        "model_override": subagent_model_override,
         "sandbox_state": sandbox_state,
         "thread_data": thread_data,
         "thread_id": thread_id,

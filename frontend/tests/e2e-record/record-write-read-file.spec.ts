@@ -94,7 +94,13 @@ test("record write/read-file run through the real frontend", async ({
   await page.addInitScript(() => {
     window.localStorage.setItem(
       "deerflow.local-settings",
-      JSON.stringify({ context: { mode: "ultra" } }),
+      // suggestions.enabled:true — follow-up suggestions now default OFF, but
+      // this recording must trigger the /suggestions call so its model turn is
+      // captured into the fixture (the waitForResponse below depends on it).
+      JSON.stringify({
+        context: { mode: "ultra" },
+        suggestions: { enabled: true },
+      }),
     );
   });
   await page.goto("/workspace/chats/new");

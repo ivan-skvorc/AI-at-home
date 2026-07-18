@@ -80,10 +80,16 @@ test.describe("real backend render (replay, no API key)", () => {
   }) => {
     // ultra mode so the context the frontend sends (is_plan_mode + subagent_enabled)
     // matches the recorded fixture; otherwise the replay input hash would miss.
+    // suggestions.enabled is opted in explicitly: follow-up suggestions now
+    // default OFF (cost control), and this test asserts the replayed suggestion
+    // renders, so it must turn the per-user toggle on.
     await page.addInitScript(() => {
       window.localStorage.setItem(
         "deerflow.local-settings",
-        JSON.stringify({ context: { mode: "ultra" } }),
+        JSON.stringify({
+          context: { mode: "ultra" },
+          suggestions: { enabled: true },
+        }),
       );
     });
 
