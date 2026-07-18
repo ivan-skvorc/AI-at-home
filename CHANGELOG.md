@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **suggestions:** Follow-up question suggestions now default **off** to avoid
+  the extra per-turn LLM call (and its cost). A new **Settings → Suggestions**
+  page adds a per-browser toggle plus a model dropdown to choose which model
+  generates them — the first option, "Follow workflow selection", reuses the
+  thread's current model; any configured model can be picked instead (e.g. a
+  cheap one) and is sent as the suggestions request's `model_name`. The
+  server-side `suggestions.enabled` master switch is unchanged and still gates
+  generation; the toggle shows a hint when the server has it disabled. Client
+  preference stored in `localStorage` (`deerflow.local-settings`).
+
 ### Added
 
 - **models:** API-key model auto-config. A new `scripts/sync-api-key-models.py`

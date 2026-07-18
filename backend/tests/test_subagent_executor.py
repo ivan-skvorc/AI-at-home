@@ -708,6 +708,41 @@ class TestAgentConstruction:
         assert captured["middlewares"]["deferred_setup"] is deferred_setup
 
 
+class TestModelOverride:
+    """The per-thread runtime model override (Ultra-mode subagent dropdown) must
+    win over the subagent's own config.model, which resolve_subagent_model_name
+    returns verbatim (ignoring parent_model). Regression: without threading the
+    override into the executor, the pick was silently discarded for any subagent
+    that pins a specific model."""
+
+    def test_override_wins_over_pinned_config_model(self, classes):
+        SubagentExecutor = classes["SubagentExecutor"]
+        SubagentConfig = classes["SubagentConfig"]
+        pinned = SubagentConfig(name="a", description="d", model="pinned-model")
+
+        executor = SubagentExecutor(config=pinned, tools=[], model_override="override-model")
+
+        assert executor.model_name == "override-model"
+
+    def test_override_wins_over_inherit_and_parent_model(self, classes):
+        SubagentExecutor = classes["SubagentExecutor"]
+        SubagentConfig = classes["SubagentConfig"]
+        inherit = SubagentConfig(name="a", description="d")  # model defaults to "inherit"
+
+        executor = SubagentExecutor(config=inherit, tools=[], parent_model="parent-model", model_override="override-model")
+
+        assert executor.model_name == "override-model"
+
+    def test_pinned_config_model_used_when_no_override(self, classes):
+        SubagentExecutor = classes["SubagentExecutor"]
+        SubagentConfig = classes["SubagentConfig"]
+        pinned = SubagentConfig(name="a", description="d", model="pinned-model")
+
+        executor = SubagentExecutor(config=pinned, tools=[])
+
+        assert executor.model_name == "pinned-model"
+
+
 # -----------------------------------------------------------------------------
 # Async Execution Path Tests
 # -----------------------------------------------------------------------------

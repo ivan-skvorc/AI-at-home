@@ -9,6 +9,13 @@ export const DEFAULT_LOCAL_SETTINGS: LocalSettings = {
     headerTotal: true,
     inlineMode: "per_turn",
   },
+  // Follow-up suggestions default OFF to avoid the extra per-turn LLM call
+  // (and its cost). Users opt in from Settings → Suggestions and can pick which
+  // model generates them (undefined = follow the workflow's selected model).
+  suggestions: {
+    enabled: false,
+    modelName: undefined,
+  },
   context: {
     model_name: undefined,
     mode: undefined,
@@ -30,6 +37,13 @@ export interface LocalSettings {
   tokenUsage: {
     headerTotal: boolean;
     inlineMode: TokenUsageInlineMode;
+  };
+  suggestions: {
+    // Whether the follow-up suggestion chips are generated after each answer.
+    enabled: boolean;
+    // Model that generates the suggestions; undefined = follow the workflow's
+    // selected model (the thread's current lead model).
+    modelName?: string | undefined;
   };
   context: Omit<
     AgentThreadContext,
@@ -58,6 +72,10 @@ function mergeLocalSettings(settings?: Partial<LocalSettings>): LocalSettings {
     tokenUsage: {
       ...DEFAULT_LOCAL_SETTINGS.tokenUsage,
       ...settings?.tokenUsage,
+    },
+    suggestions: {
+      ...DEFAULT_LOCAL_SETTINGS.suggestions,
+      ...settings?.suggestions,
     },
     notification: {
       ...DEFAULT_LOCAL_SETTINGS.notification,
