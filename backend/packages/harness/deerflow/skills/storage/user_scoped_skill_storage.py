@@ -268,6 +268,7 @@ class UserScopedSkillStorage(LocalSkillStorage):
                 dir_names[:] = sorted(name for name in dir_names if not name.startswith("."))
                 if SKILL_MD_FILE not in file_names:
                     continue
+                dir_names.clear()
                 yield SkillCategory.PUBLIC, public_path, Path(current_root) / SKILL_MD_FILE
                 # A skill package owns its subtree; nested SKILL.md files (e.g.
                 # skill-reviewer/evals/fixtures/*/SKILL.md) are package resources,
@@ -283,6 +284,7 @@ class UserScopedSkillStorage(LocalSkillStorage):
                 dir_names[:] = sorted(name for name in dir_names if not name.startswith(".") and name != ".history")
                 if SKILL_MD_FILE not in file_names:
                     continue
+                dir_names.clear()
                 user_custom_exists = True
                 yield SkillCategory.CUSTOM, user_custom_path, Path(current_root) / SKILL_MD_FILE
                 # Package owns its subtree — do not descend into nested SKILL.md.
@@ -300,6 +302,7 @@ class UserScopedSkillStorage(LocalSkillStorage):
                     dir_names[:] = sorted(name for name in dir_names if not name.startswith(".") and name != ".history")
                     if SKILL_MD_FILE not in file_names:
                         continue
+                    dir_names.clear()
                     yield SkillCategory.LEGACY, global_custom_path, Path(current_root) / SKILL_MD_FILE
                     # Package owns its subtree — do not descend into nested SKILL.md.
                     dir_names[:] = []
