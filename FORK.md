@@ -4,7 +4,7 @@
 
 ## What this fork adds
 
-Two features on top of upstream, both designed around running DeerFlow locally with mixed cloud + local models:
+Convenience features on top of upstream, designed around running DeerFlow locally with mixed cloud + local models (more are covered in the sections further down):
 
 ### 1. Auto-synced Ollama models in `config.yaml`
 
@@ -56,7 +56,49 @@ python3 scripts/sync-ollama-models.py --base-url http://ollama:11434
 python3 scripts/sync-ollama-models.py --num-ctx-cap 0
 ```
 
-### 2. Per-thread subagent model override (Ultra mode)
+### 2. API-key model auto-config in `config.yaml`
+
+A companion to the Ollama sync for **cloud** models. `scripts/sync-api-key-models.py` runs on every launch, reads the provider API keys in your `.env` (falling back to the process environment), and **uncomments** the matching ready-to-use model block in `config.yaml` — so the right models are enabled on first start with no manual editing.
+
+| `.env` key present | Models enabled | Provider / `use` |
+| --- | --- | --- |
+| `ANTHROPIC_API_KEY` | Claude **Fable 5**, **Opus 4.8**, **Sonnet 5**, **Haiku 4.5** | direct Anthropic API (`langchain_anthropic:ChatAnthropic`) |
+| `OPENROUTER_API_KEY` | Claude **Fable 5**, **Grok 4.5**, **GPT-5.5**, **MiniMax M3**, **Qwen3.7 Max**, **Gemini 3.5 Flash**, **DeepSeek V4 Pro**, **GLM-4.5**, **Nemotron 3 Ultra** | OpenRouter (`langchain_openai:ChatOpenAI` + `base_url`) |
+
+Both keys present enables both blocks (Fable appears twice — once direct, once via OpenRouter — under distinct `name:`s). The four latest Claude models use adaptive thinking (Haiku takes an explicit budget); every entry ships `supports_thinking: true` so DeerFlow's thinking toggle actually engages.
+
+**Bounded and idempotent — safe on a hand-edited config.** The script owns only the model entries between a provider's `# === BEGIN auto-model-config: <provider> ===` / `# === END … ===` markers in `config.yaml` (shipped in `config.example.yaml`, so `make config` copies them in). It:
+
+- **only ever uncomments**, never re-comments — a model you enabled by hand is never turned back off;
+- **skips a block whose models are already active**, so a config written by `make setup` (or by hand) is never duplicated;
+- **no-ops when the key is missing** or is still a placeholder (`your-…`, empty, or an unresolved `$VAR`);
+- **no-ops when the markers are absent** (an older `config.yaml` predating this feature) — nothing to uncomment;
+- refuses to run against a config with duplicate top-level keys (same guard as the Ollama sync).
+
+It is hooked into **every launch path**, right after the Ollama sync, so however you start DeerFlow the block is enabled once your key is in place:
+
+| Path | Where it runs |
+| --- | --- |
+| `make dev` / `make start` (+ daemons) | `scripts/serve.sh` (reads the `.env` it already sourced) |
+| `make docker-start` (Docker dev) | `scripts/docker.sh`, on the host before `compose up` |
+| `make up` (Docker prod) | `scripts/deploy.sh`, on the host before `compose up` |
+
+On the Docker paths `config.yaml` is edited on the host **before** the containers mount it (read-only), same as the Ollama sync. `make setup` still enables the identical sets interactively (`scripts/wizard/providers.py` is the shared source of truth for the model definitions).
+
+```bash
+# Manual run (reads repo-root .env and config.yaml)
+python3 scripts/sync-api-key-models.py --verbose
+
+# Preview without writing
+python3 scripts/sync-api-key-models.py --dry-run
+
+# Point at a specific config / env file
+python3 scripts/sync-api-key-models.py --config config.yaml --env-file .env --verbose
+```
+
+Model ids current as of 2026-07 — edit the block in `config.example.yaml` (or `config.yaml` after it is enabled) to add, drop, or re-slug models.
+
+### 3. Per-thread subagent model override (Ultra mode)
 
 A second model selector appears next to the lead-model picker when **Ultra mode** (subagents enabled) is active. Default is "Follow lead" (subagents inherit the lead model, identical to upstream behavior). Pick anything else and `task` tool delegations route to that model instead.
 
@@ -122,7 +164,7 @@ git fetch upstream
 git merge upstream/main      # or rebase, your call
 ```
 
-The fork's added files (`scripts/sync-ollama-models.py`, `scripts/ensure_camoufox.py`, the input-box dropdown JSX, the task_tool.py override) are unlikely to conflict with upstream changes since they're either new files or additive blocks on stable anchors. The launch-script hooks (Ollama sync + Camoufox fetch in `scripts/serve.sh`, `scripts/docker.sh`, `scripts/deploy.sh`, `docker/dev-entrypoint.sh`, `backend/Dockerfile`) are additive blocks on stable anchors. If upstream restructures `task_tool.py`, `input-box.tsx`, or those launch scripts, expect a small merge.
+The fork's added files (`scripts/sync-ollama-models.py`, `scripts/sync-api-key-models.py`, `scripts/ensure_camoufox.py`, the input-box dropdown JSX, the task_tool.py override) are unlikely to conflict with upstream changes since they're either new files or additive blocks on stable anchors. The launch-script hooks (Ollama sync + API-key model auto-config + Camoufox fetch in `scripts/serve.sh`, `scripts/docker.sh`, `scripts/deploy.sh`, `docker/dev-entrypoint.sh`, `backend/Dockerfile`) are additive blocks on stable anchors. The auto-config's model definitions live in `config.example.yaml` (the `auto-model-config` marker blocks) and `scripts/wizard/providers.py`; if upstream restructures `task_tool.py`, `input-box.tsx`, or those launch scripts, expect a small merge.
 
 For environments that cannot reach `github.com/bytedance/deer-flow` directly (e.g. network-restricted CI or sandboxed agents), the **Mirror Upstream** workflow (`.github/workflows/mirror-upstream.yml`, manual `workflow_dispatch`) fetches upstream `main` on a GitHub runner and publishes the delta as a git bundle on the `upstream-sync-data` branch of this fork. Fetch that branch, extract the bundle parts (`cat upstream-delta.bundle.part.* > upstream.bundle`), and `git fetch <bundle> upstream-main-mirror` to get full upstream history locally. (The workflow cannot push the mirrored branch directly: `GITHUB_TOKEN` is not allowed to create or update workflow files, and upstream regularly changes theirs.)
 

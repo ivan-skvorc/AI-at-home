@@ -405,6 +405,14 @@ if [ -n "$DETECT_PYTHON" ]; then
     "$DETECT_PYTHON" "$REPO_ROOT/scripts/sync-ollama-models.py" --config "$_ollama_config" --verbose || true
 fi
 
+# ── API-key model auto-config ────────────────────────────────────────────────
+# Enable the Anthropic / OpenRouter model blocks in config.yaml when their keys
+# are present in .env (already sourced above). Best-effort: no key = no-op, and a
+# duplicate-key abort is swallowed because the gateway re-checks on startup.
+if [ -n "$DETECT_PYTHON" ]; then
+    "$DETECT_PYTHON" "$REPO_ROOT/scripts/sync-api-key-models.py" --config "$_ollama_config" --verbose || true
+fi
+
 if ! $SKIP_INSTALL; then
     echo "Syncing dependencies..."
     if [ -n "$UV_EXTRAS_FLAGS" ]; then

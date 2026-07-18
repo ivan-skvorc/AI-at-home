@@ -134,12 +134,14 @@ class TestBundleProviders:
         assert provider.default_model == "claude-opus-4-8"
         assert provider.default_model in provider.models
         assert [m["model"] for m in provider.bundle_models] == [
+            "claude-fable-5",
             "claude-opus-4-8",
             "claude-sonnet-5",
             "claude-haiku-4-5",
         ]
         by_model = {m["model"]: m for m in provider.bundle_models}
-        # Opus 4.8 / Sonnet 5 must use adaptive thinking (budget_tokens 400s).
+        # Fable 5 / Opus 4.8 / Sonnet 5 must use adaptive thinking (budget_tokens 400s).
+        assert by_model["claude-fable-5"]["when_thinking_enabled"]["thinking"]["type"] == "adaptive"
         assert by_model["claude-opus-4-8"]["when_thinking_enabled"]["thinking"]["type"] == "adaptive"
         assert by_model["claude-sonnet-5"]["when_thinking_enabled"]["thinking"]["type"] == "adaptive"
         # Haiku 4.5 still takes an explicit thinking budget.
@@ -161,7 +163,7 @@ class TestBundleProviders:
         assert any(m.startswith("openai/") for m in bundle_ids)
         assert any(m.startswith("google/") for m in bundle_ids)
         # The requested open alternatives.
-        for prefix in ("minimax/", "mistralai/", "deepseek/", "moonshotai/", "z-ai/", "qwen/"):
+        for prefix in ("minimax/", "qwen/", "deepseek/", "z-ai/", "nvidia/"):
             assert any(m.startswith(prefix) for m in bundle_ids), prefix
         # One OpenRouter key + base_url reaches all of them.
         assert all(m["api_key"] == "$OPENROUTER_API_KEY" for m in provider.bundle_models)
@@ -389,7 +391,7 @@ class TestBuildMinimalConfig:
         )
         assert entries == [{"name": "a", "use": "x:Y", "model": "m"}]
 
-    def test_anthropic_bundle_writes_all_three_models(self):
+    def test_anthropic_bundle_writes_all_models(self):
         content = build_minimal_config(
             provider_use="langchain_anthropic:ChatAnthropic",
             model_name="claude-opus-4-8",
@@ -400,13 +402,14 @@ class TestBuildMinimalConfig:
         )
         data = yaml.safe_load(content)
         assert [m["model"] for m in data["models"]] == [
+            "claude-fable-5",
             "claude-opus-4-8",
             "claude-sonnet-5",
             "claude-haiku-4-5",
         ]
-        opus = data["models"][0]
-        assert opus["when_thinking_enabled"]["thinking"]["type"] == "adaptive"
-        assert opus["api_key"] == "$ANTHROPIC_API_KEY"
+        fable = data["models"][0]
+        assert fable["when_thinking_enabled"]["thinking"]["type"] == "adaptive"
+        assert fable["api_key"] == "$ANTHROPIC_API_KEY"
 
     def test_cli_provider_does_not_emit_fake_api_key(self):
         content = build_minimal_config(

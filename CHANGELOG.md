@@ -9,6 +9,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **models:** API-key model auto-config. A new `scripts/sync-api-key-models.py`
+  runs on every launch path (right after the Ollama sync in `scripts/serve.sh`,
+  `scripts/docker.sh`, `scripts/deploy.sh`), reads the provider keys in your
+  `.env`, and uncomments the matching cloud-model block in `config.yaml` so the
+  right models are enabled on first start with no manual editing:
+  `ANTHROPIC_API_KEY` → Claude Fable 5 / Opus 4.8 / Sonnet 5 / Haiku 4.5
+  (direct Anthropic API); `OPENROUTER_API_KEY` → Claude Fable 5 + Grok 4.5 /
+  GPT-5.5 / MiniMax M3 / Qwen3.7 Max / Gemini 3.5 Flash / DeepSeek V4 Pro /
+  GLM-4.5 / Nemotron 3 Ultra (via OpenRouter). The script is bounded to the
+  `# === BEGIN/END auto-model-config: <provider> ===` markers shipped in
+  `config.example.yaml`: it only ever uncomments (never re-comments), skips a
+  block whose models are already active (so `make setup` / hand-edits are never
+  duplicated), no-ops when the key is a placeholder / missing or when the
+  markers are absent, and refuses to run on a duplicate-key config.
+  `make setup` enables the same sets interactively
+  (`scripts/wizard/providers.py` is the shared source of truth). Tests:
+  `backend/tests/test_sync_api_key_models.py`.
+
 - **ollama:** VRAM-aware context sizing for auto-populated Ollama models. Set
   a GPU memory budget (`ollama.vram_gb` in `config.yaml` — `make setup` now
   asks for it when an Ollama provider is selected, auto-detecting via

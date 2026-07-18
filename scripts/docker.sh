@@ -302,6 +302,14 @@ start() {
         "$ollama_python" "$SCRIPT_DIR/sync-ollama-models.py" --config "$PROJECT_ROOT/config.yaml" --container --verbose || true
     fi
 
+    # ── API-key model auto-config ────────────────────────────────────────
+    # Enable the Anthropic / OpenRouter model blocks in config.yaml on the
+    # HOST before the containers mount it, when their keys are present in
+    # .env. Best-effort: missing key = no-op.
+    if [ -n "$ollama_python" ]; then
+        "$ollama_python" "$SCRIPT_DIR/sync-api-key-models.py" --config "$PROJECT_ROOT/config.yaml" --env-file "$PROJECT_ROOT/.env" --verbose || true
+    fi
+
     # ── SearXNG (web_search backend) ─────────────────────────────────────
     # Reuse an existing SearXNG instance on this machine when containers can
     # reach it; otherwise start the bundled service (scripts/detect_searxng.py).

@@ -93,25 +93,52 @@ max_recursion_limit: 1000
 
 models:
   # ══════════════════════════════════════════════════════════════════════════
-  # QUICK START — uncomment ONE block below that matches the API key you have.
+  # QUICK START — enable the model block that matches the API key you have.
   #
-  # `make setup` does this for you: it asks which API key you have and, based on
-  # the answer, enables the matching set of latest models automatically —
-  # Anthropic (Opus / Sonnet / Haiku) if you have an ANTHROPIC_API_KEY, or the
-  # OpenRouter set (Claude Fable + xAI / OpenAI / Google flagships and a spread
-  # of open alternatives) if you have an OPENROUTER_API_KEY. If you copied this
-  # file by hand (`make config`), uncomment the block yourself and add the key
-  # to your `.env`.
+  # This happens automatically. On every launch `scripts/sync-api-key-models.py`
+  # (the API-key auto-config, a companion to the Ollama sync) reads your `.env`
+  # and uncomments the matching block below:
+  #   ANTHROPIC_API_KEY  -> Claude Fable 5 / Opus 4.8 / Sonnet 5 / Haiku 4.5
+  #                         (direct Anthropic API)
+  #   OPENROUTER_API_KEY -> Claude Fable 5 + Grok 4.5 / GPT-5.5 / MiniMax M3 /
+  #                         Qwen3.7 Max / Gemini 3.5 Flash / DeepSeek V4 Pro /
+  #                         GLM-4.5 / Nemotron 3 Ultra (via OpenRouter)
+  # It only ever uncomments (never re-comments), skips a block whose models are
+  # already active, and no-ops when the key is missing — so hand edits are safe.
+  # `make setup` enables the same sets interactively; if you copied this file by
+  # hand (`make config`) with a key already in `.env`, the next launch enables it.
   #
   # Model ids and thinking formats below are current as of 2026-07. Adjust
   # max_tokens / supports_vision to taste and delete the models you don't want.
   # ══════════════════════════════════════════════════════════════════════════
 
-  # ── Anthropic — uncomment if you have an ANTHROPIC_API_KEY ─────────────────
-  # Latest Claude models. Opus 4.8 and Sonnet 5 use adaptive thinking (the
-  # `budget_tokens` form is rejected by these models); Haiku 4.5 still takes an
-  # explicit thinking budget. `supports_thinking: true` is required or DeerFlow
-  # silently falls back to non-thinking mode even with the UI toggle on.
+  # ── Anthropic — auto-enabled when ANTHROPIC_API_KEY is set ─────────────────
+  # Latest Claude models via the direct Anthropic API. Fable 5, Opus 4.8 and
+  # Sonnet 5 use adaptive thinking (the `budget_tokens` form is rejected by these
+  # models); Haiku 4.5 still takes an explicit thinking budget. `supports_thinking:
+  # true` is required or DeerFlow silently falls back to non-thinking mode even
+  # with the UI toggle on.
+  # The startup auto-config (scripts/sync-api-key-models.py) uncomments the entries
+  # between the markers below when it finds a real ANTHROPIC_API_KEY in your .env;
+  # you can also uncomment them by hand.
+  # === BEGIN auto-model-config: anthropic (uncommented at startup when ANTHROPIC_API_KEY is set) ===
+  # - name: claude-fable-5
+  #   display_name: Claude Fable 5
+  #   use: langchain_anthropic:ChatAnthropic
+  #   model: claude-fable-5
+  #   api_key: $ANTHROPIC_API_KEY
+  #   default_request_timeout: 600.0
+  #   max_retries: 2
+  #   max_tokens: 32000
+  #   supports_vision: true
+  #   supports_thinking: true
+  #   when_thinking_enabled:
+  #     thinking:
+  #       type: adaptive
+  #   when_thinking_disabled:
+  #     thinking:
+  #       type: disabled
+  #
   # - name: claude-opus-4-8
   #   display_name: Claude Opus 4.8
   #   use: langchain_anthropic:ChatAnthropic
@@ -163,14 +190,18 @@ models:
   #   when_thinking_disabled:
   #     thinking:
   #       type: disabled
+  # === END auto-model-config: anthropic ===
 
-  # ── OpenRouter — uncomment if you have an OPENROUTER_API_KEY ───────────────
+  # ── OpenRouter — auto-enabled when OPENROUTER_API_KEY is set ───────────────
   # One key, every provider. Model ids are OpenRouter slugs (provider/model),
   # routed through the standard OpenAI-compatible ChatOpenAI + base_url pattern.
-  # The first four are the latest Claude Fable plus the flagships from xAI,
-  # OpenAI and Google; the rest are strong open alternatives (MiniMax, Mistral,
-  # DeepSeek, Kimi, GLM, Qwen). Keep the ones you want and delete the others.
-  # - name: openrouter-claude-fable-5
+  # The set below is Claude Fable plus the current xAI / OpenAI / Google flagships
+  # and strong open alternatives (MiniMax, Qwen, DeepSeek, GLM, Nemotron).
+  # The startup auto-config (scripts/sync-api-key-models.py) uncomments the entries
+  # between the markers below when it finds a real OPENROUTER_API_KEY in your .env.
+  # Delete any you don't want after they are enabled.
+  # === BEGIN auto-model-config: openrouter (uncommented at startup when OPENROUTER_API_KEY is set) ===
+  # - name: openrouter-fable-5
   #   display_name: Claude Fable 5 (OpenRouter)
   #   use: langchain_openai:ChatOpenAI
   #   model: anthropic/claude-fable-5
@@ -178,10 +209,11 @@ models:
   #   base_url: https://openrouter.ai/api/v1
   #   request_timeout: 600.0
   #   max_retries: 2
-  #   max_tokens: 16000
+  #   max_tokens: 32000
   #   supports_vision: true
+  #   supports_thinking: true
   #
-  # - name: openrouter-grok-4-5
+  # - name: openrouter-grok-4.5
   #   display_name: Grok 4.5 (OpenRouter)
   #   use: langchain_openai:ChatOpenAI
   #   model: x-ai/grok-4.5
@@ -189,30 +221,21 @@ models:
   #   base_url: https://openrouter.ai/api/v1
   #   request_timeout: 600.0
   #   max_retries: 2
-  #   max_tokens: 16000
+  #   max_tokens: 32000
   #   supports_vision: true
+  #   supports_thinking: true
   #
-  # - name: openrouter-gpt-5-6-sol
-  #   display_name: GPT-5.6 Sol (OpenRouter)
+  # - name: openrouter-gpt-5.5
+  #   display_name: GPT-5.5 (OpenRouter)
   #   use: langchain_openai:ChatOpenAI
-  #   model: openai/gpt-5.6-sol
+  #   model: openai/gpt-5.5
   #   api_key: $OPENROUTER_API_KEY
   #   base_url: https://openrouter.ai/api/v1
   #   request_timeout: 600.0
   #   max_retries: 2
-  #   max_tokens: 16000
+  #   max_tokens: 32000
   #   supports_vision: true
-  #
-  # - name: openrouter-gemini-3-5-pro
-  #   display_name: Gemini 3.5 Pro (OpenRouter)
-  #   use: langchain_openai:ChatOpenAI
-  #   model: google/gemini-3.5-pro
-  #   api_key: $OPENROUTER_API_KEY
-  #   base_url: https://openrouter.ai/api/v1
-  #   request_timeout: 600.0
-  #   max_retries: 2
-  #   max_tokens: 16000
-  #   supports_vision: true
+  #   supports_thinking: true
   #
   # - name: openrouter-minimax-m3
   #   display_name: MiniMax M3 (OpenRouter)
@@ -223,19 +246,35 @@ models:
   #   request_timeout: 600.0
   #   max_retries: 2
   #   max_tokens: 16000
+  #   temperature: 1.0
   #   supports_vision: true
+  #   supports_thinking: true
   #
-  # - name: openrouter-mistral-large-3
-  #   display_name: Mistral Large 3 (OpenRouter)
+  # - name: openrouter-qwen3.7-max
+  #   display_name: Qwen3.7 Max (OpenRouter)
   #   use: langchain_openai:ChatOpenAI
-  #   model: mistralai/mistral-large-2512
+  #   model: qwen/qwen3.7-max
   #   api_key: $OPENROUTER_API_KEY
   #   base_url: https://openrouter.ai/api/v1
   #   request_timeout: 600.0
   #   max_retries: 2
-  #   max_tokens: 16000
+  #   max_tokens: 32000
+  #   supports_vision: false
+  #   supports_thinking: true
   #
-  # - name: openrouter-deepseek-v4
+  # - name: openrouter-gemini-3.5-flash
+  #   display_name: Gemini 3.5 Flash (OpenRouter)
+  #   use: langchain_openai:ChatOpenAI
+  #   model: google/gemini-3.5-flash
+  #   api_key: $OPENROUTER_API_KEY
+  #   base_url: https://openrouter.ai/api/v1
+  #   request_timeout: 600.0
+  #   max_retries: 2
+  #   max_tokens: 32000
+  #   supports_vision: true
+  #   supports_thinking: true
+  #
+  # - name: openrouter-deepseek-v4-pro
   #   display_name: DeepSeek V4 Pro (OpenRouter)
   #   use: langchain_openai:ChatOpenAI
   #   model: deepseek/deepseek-v4-pro
@@ -243,39 +282,34 @@ models:
   #   base_url: https://openrouter.ai/api/v1
   #   request_timeout: 600.0
   #   max_retries: 2
-  #   max_tokens: 16000
+  #   max_tokens: 32000
+  #   supports_vision: false
+  #   supports_thinking: true
   #
-  # - name: openrouter-kimi-k2-6
-  #   display_name: Kimi K2.6 (OpenRouter)
+  # - name: openrouter-glm-4.5
+  #   display_name: GLM-4.5 (OpenRouter)
   #   use: langchain_openai:ChatOpenAI
-  #   model: moonshotai/kimi-k2.6
+  #   model: z-ai/glm-4.5
   #   api_key: $OPENROUTER_API_KEY
   #   base_url: https://openrouter.ai/api/v1
   #   request_timeout: 600.0
   #   max_retries: 2
   #   max_tokens: 16000
-  #   supports_vision: true
+  #   supports_vision: false
+  #   supports_thinking: true
   #
-  # - name: openrouter-glm-5
-  #   display_name: GLM-5 (OpenRouter)
+  # - name: openrouter-nemotron-3-ultra
+  #   display_name: Nemotron 3 Ultra (OpenRouter)
   #   use: langchain_openai:ChatOpenAI
-  #   model: z-ai/glm-5
+  #   model: nvidia/nemotron-3-ultra-550b-a55b
   #   api_key: $OPENROUTER_API_KEY
   #   base_url: https://openrouter.ai/api/v1
   #   request_timeout: 600.0
   #   max_retries: 2
   #   max_tokens: 16000
-  #
-  # - name: openrouter-qwen3-7-plus
-  #   display_name: Qwen3.7 Plus (OpenRouter)
-  #   use: langchain_openai:ChatOpenAI
-  #   model: qwen/qwen3.7-plus
-  #   api_key: $OPENROUTER_API_KEY
-  #   base_url: https://openrouter.ai/api/v1
-  #   request_timeout: 600.0
-  #   max_retries: 2
-  #   max_tokens: 16000
-  #   supports_vision: true
+  #   supports_vision: false
+  #   supports_thinking: true
+  # === END auto-model-config: openrouter ===
 
   # Example: Volcengine (Doubao) model
   # - name: doubao-seed-1.8
