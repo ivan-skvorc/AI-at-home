@@ -79,6 +79,7 @@ import {
   type InputMode,
 } from "@/core/models/capabilities";
 import { useModels } from "@/core/models/hooks";
+import { useLocalSettings } from "@/core/settings";
 import {
   buildReferenceMessageMetadata,
   type SidecarContext,
@@ -349,8 +350,14 @@ export function InputBox({
 
   const [followups, setFollowups] = useState<string[]>([]);
   const { data: suggestionsConfig } = useSuggestionsConfig();
+  const [localSettings] = useLocalSettings();
   const suggestionsConfigLoaded = suggestionsConfig !== undefined;
-  const suggestionsEnabled = suggestionsConfig?.enabled;
+  // Effective enablement = server master switch AND the per-user opt-in
+  // (defaults off to avoid the extra per-turn LLM call / cost).
+  const suggestionsEnabled =
+    suggestionsConfig?.enabled && localSettings.suggestions.enabled;
+  // undefined = follow the workflow's selected model (context.model_name).
+  const suggestionsModelName = localSettings.suggestions.modelName;
   const [followupsHidden, setFollowupsHidden] = useState(false);
   const [followupsLoading, setFollowupsLoading] = useState(false);
   const [polishingInput, setPolishingInput] = useState(false);
@@ -1745,7 +1752,7 @@ export function InputBox({
       body: JSON.stringify({
         messages: recent,
         n: 3,
-        model_name: context.model_name ?? undefined,
+        model_name: suggestionsModelName ?? context.model_name ?? undefined,
       }),
       signal: controller.signal,
     })
@@ -1777,6 +1784,7 @@ export function InputBox({
     status,
     suggestionsConfigLoaded,
     suggestionsEnabled,
+    suggestionsModelName,
     threadId,
   ]);
 

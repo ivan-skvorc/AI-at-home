@@ -5,6 +5,7 @@ import {
   CableIcon,
   InfoIcon,
   BrainIcon,
+  LightbulbIcon,
   PaletteIcon,
   SparklesIcon,
   UserIcon,
@@ -26,6 +27,7 @@ import { ChannelsSettingsPage } from "@/components/workspace/settings/channels-s
 import { MemorySettingsPage } from "@/components/workspace/settings/memory-settings-page";
 import { NotificationSettingsPage } from "@/components/workspace/settings/notification-settings-page";
 import { SkillSettingsPage } from "@/components/workspace/settings/skill-settings-page";
+import { SuggestionsSettingsPage } from "@/components/workspace/settings/suggestions-settings-page";
 import { ToolSettingsPage } from "@/components/workspace/settings/tool-settings-page";
 import { useI18n } from "@/core/i18n/hooks";
 import { cn } from "@/lib/utils";
@@ -38,6 +40,7 @@ type SettingsSection =
   | "tools"
   | "skills"
   | "notification"
+  | "suggestions"
   | "about";
 
 type SettingsDialogProps = React.ComponentProps<typeof Dialog> & {
@@ -76,6 +79,11 @@ export function SettingsDialog(props: SettingsDialogProps) {
         icon: BellIcon,
       },
       {
+        id: "suggestions",
+        label: t.settings.sections.suggestions,
+        icon: LightbulbIcon,
+      },
+      {
         id: "channels",
         label: t.settings.sections.channels,
         icon: CableIcon,
@@ -97,6 +105,7 @@ export function SettingsDialog(props: SettingsDialogProps) {
       t.settings.sections.tools,
       t.settings.sections.skills,
       t.settings.sections.notification,
+      t.settings.sections.suggestions,
       t.settings.sections.about,
     ],
   );
@@ -152,6 +161,7 @@ export function SettingsDialog(props: SettingsDialogProps) {
                 />
               )}
               {activeSection === "notification" && <NotificationSettingsPage />}
+              {activeSection === "suggestions" && <SuggestionsSettingsPage />}
               {activeSection === "channels" && <ChannelsSettingsPage />}
               {activeSection === "about" && <AboutSettingsPage />}
             </div>

@@ -549,6 +549,7 @@ export interface Translations {
       tools: string;
       skills: string;
       notification: string;
+      suggestions: string;
       about: string;
     };
     memory: {
@@ -667,6 +668,14 @@ export interface Translations {
       testBody: string;
       notSupported: string;
       disableNotification: string;
+    };
+    suggestions: {
+      title: string;
+      description: string;
+      modelLabel: string;
+      modelHint: string;
+      followWorkflow: string;
+      serverDisabledHint: string;
     };
     account: {
       profileTitle: string;

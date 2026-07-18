@@ -637,6 +637,7 @@ export const zhCN: Translations = {
       tools: "工具",
       skills: "技能",
       notification: "通知",
+      suggestions: "建议",
       about: "关于",
     },
     memory: {
@@ -763,6 +764,17 @@ export const zhCN: Translations = {
       testBody: "这是一条测试通知。",
       notSupported: "当前浏览器不支持通知功能。",
       disableNotification: "关闭通知",
+    },
+    suggestions: {
+      title: "后续建议",
+      description:
+        "在每条回答后显示可点击的后续问题。默认关闭，因为每次生成都会额外调用一次模型（产生费用）——需要时再开启。",
+      modelLabel: "建议模型",
+      modelHint:
+        "用于生成后续问题的模型。选择更便宜的模型可降低成本；“跟随工作流选择”会复用当前会话正在使用的模型。",
+      followWorkflow: "跟随工作流选择",
+      serverDisabledHint:
+        "后续建议已被服务器配置禁用（config.yaml 中的 suggestions.enabled）。请在那里启用后再使用此开关。",
     },
     account: {
       profileTitle: "个人信息",

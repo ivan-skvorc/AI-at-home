@@ -662,6 +662,7 @@ export const enUS: Translations = {
       tools: "Tools",
       skills: "Skills",
       notification: "Notification",
+      suggestions: "Suggestions",
       about: "About",
     },
     memory: {
@@ -794,6 +795,17 @@ export const enUS: Translations = {
       testBody: "This is a test notification.",
       notSupported: "Your browser does not support notifications.",
       disableNotification: "Disable notification",
+    },
+    suggestions: {
+      title: "Follow-up suggestions",
+      description:
+        "Show clickable follow-up questions after each answer. Off by default because each set costs an extra model call — turn it on only when you want it.",
+      modelLabel: "Suggestion model",
+      modelHint:
+        "Which model writes the follow-up questions. Pick a cheap model to keep costs low; “Follow workflow selection” reuses whichever model the current thread is running.",
+      followWorkflow: "Follow workflow selection",
+      serverDisabledHint:
+        "Follow-up suggestions are disabled by the server configuration (suggestions.enabled in config.yaml). Enable it there to use this toggle.",
     },
     account: {
       profileTitle: "Profile",
