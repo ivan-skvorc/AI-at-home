@@ -634,6 +634,10 @@ export interface Translations {
       systemDescription: string;
       lightDescription: string;
       darkDescription: string;
+      motionTitle: string;
+      motionDescription: string;
+      reduceAnimations: string;
+      reduceAnimationsHint: string;
       languageTitle: string;
       languageDescription: string;
     };

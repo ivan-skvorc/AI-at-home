@@ -754,6 +754,11 @@ export const enUS: Translations = {
       systemDescription: "Match the operating system preference automatically.",
       lightDescription: "Bright palette with higher contrast for daytime.",
       darkDescription: "Dim palette that reduces glare for focus.",
+      motionTitle: "Motion",
+      motionDescription: "Reduce animations",
+      reduceAnimations: "Reduce animations",
+      reduceAnimationsHint:
+        "Turn off decorative animations such as the landing background, the subagent glow, and shimmering text to cut visual noise and GPU/CPU usage. Your system's reduce-motion setting is always respected.",
       languageTitle: "Language",
       languageDescription: "Switch between languages.",
     },

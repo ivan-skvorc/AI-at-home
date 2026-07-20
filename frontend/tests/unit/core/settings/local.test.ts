@@ -1,6 +1,9 @@
 import { expect, test } from "@rstest/core";
 
-import { DEFAULT_LOCAL_SETTINGS } from "@/core/settings/local";
+import {
+  DEFAULT_LOCAL_SETTINGS,
+  mergeLocalSettings,
+} from "@/core/settings/local";
 
 test("defaults token usage to header total plus per-turn breakdown", () => {
   expect(DEFAULT_LOCAL_SETTINGS.tokenUsage).toEqual({
@@ -16,4 +19,26 @@ test("defaults follow-up suggestions to off, following the workflow model", () =
     enabled: false,
     modelName: undefined,
   });
+});
+
+test("defaults decorative animations to on", () => {
+  // On by default so existing users keep the current look; the OS
+  // prefers-reduced-motion signal is honored separately at read time.
+  expect(DEFAULT_LOCAL_SETTINGS.appearance).toEqual({
+    reduceAnimations: false,
+  });
+});
+
+test("fills in the appearance section when older settings are missing it", () => {
+  // Settings persisted before this flag existed must not crash reads.
+  const merged = mergeLocalSettings({ notification: { enabled: false } });
+  expect(merged.appearance).toEqual({ reduceAnimations: false });
+  expect(merged.notification).toEqual({ enabled: false });
+});
+
+test("preserves an explicit reduce-animations preference", () => {
+  const merged = mergeLocalSettings({
+    appearance: { reduceAnimations: true },
+  });
+  expect(merged.appearance.reduceAnimations).toBe(true);
 });

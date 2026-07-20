@@ -726,6 +726,11 @@ export const zhCN: Translations = {
       systemDescription: "自动跟随系统主题。",
       lightDescription: "更明亮的配色，适合日间使用。",
       darkDescription: "更暗的配色，减少眩光方便专注。",
+      motionTitle: "动效",
+      motionDescription: "减少动画",
+      reduceAnimations: "减少动画",
+      reduceAnimationsHint:
+        "关闭装饰性动画（如首页背景、子智能体光效、文字流光等），减少视觉干扰和 GPU/CPU 占用。系统的“减少动态效果”设置始终会被遵循。",
       languageTitle: "语言",
       languageDescription: "在不同语言之间切换。",
     },

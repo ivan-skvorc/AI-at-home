@@ -17,6 +17,7 @@ import {
 import { Shimmer } from "@/components/ai-elements/shimmer";
 import { Button } from "@/components/ui/button";
 import { ShineBorder } from "@/components/ui/shine-border";
+import { useReducedMotion } from "@/core/appearance";
 import { useI18n } from "@/core/i18n/hooks";
 import { hasToolCalls } from "@/core/messages/utils";
 import { useModels } from "@/core/models/hooks";
@@ -53,6 +54,7 @@ export function SubtaskCard({
 }) {
   const { t } = useI18n();
   const [collapsed, setCollapsed] = useState(true);
+  const reduceMotion = useReducedMotion();
   const rehypePlugins = useRehypeSplitWordsIntoSpans(isLoading);
   const task = useSubtask(taskId)!;
   const { models, tokenUsageEnabled } = useModels();
@@ -114,10 +116,10 @@ export function SubtaskCard({
       <div
         className={cn(
           "ambilight z-[-1]",
-          task.status === "in_progress" ? "enabled" : "",
+          task.status === "in_progress" && !reduceMotion ? "enabled" : "",
         )}
       ></div>
-      {task.status === "in_progress" && (
+      {task.status === "in_progress" && !reduceMotion && (
         <>
           <ShineBorder
             borderWidth={1.5}
