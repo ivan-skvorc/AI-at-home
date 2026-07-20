@@ -209,15 +209,19 @@ def _openrouter_model(
 
 
 # One OPENROUTER_API_KEY reaches every provider. Claude Fable plus the current
-# xAI / OpenAI / Google flagships and strong open alternatives (MiniMax, Qwen,
-# DeepSeek, GLM, Nemotron). Slugs current as of 2026-07.
+# xAI / OpenAI / Google / Meta flagships and strong open alternatives (MiniMax,
+# Qwen, DeepSeek, GLM, Nemotron, Moonshot Kimi). Slugs current as of 2026-07.
 OPENROUTER_BUNDLE_MODELS: list[dict] = [
     _openrouter_model("openrouter-fable-5", "Claude Fable 5 (OpenRouter)", "anthropic/claude-fable-5", supports_vision=True),
     _openrouter_model("openrouter-grok-4.5", "Grok 4.5 (OpenRouter)", "x-ai/grok-4.5", supports_vision=True),
     _openrouter_model("openrouter-gpt-5.5", "GPT-5.5 (OpenRouter)", "openai/gpt-5.5", supports_vision=True),
+    _openrouter_model("openrouter-gpt-5.5-codex", "GPT-5.5 Codex (OpenRouter)", "openai/gpt-5.5-codex", supports_vision=True),
+    _openrouter_model("openrouter-gemini-3.5-pro", "Gemini 3.5 Pro (OpenRouter)", "google/gemini-3.5-pro", supports_vision=True),
+    _openrouter_model("openrouter-gemini-3.5-flash", "Gemini 3.5 Flash (OpenRouter)", "google/gemini-3.5-flash", supports_vision=True),
+    _openrouter_model("openrouter-llama-4-maverick", "Llama 4 Maverick (OpenRouter)", "meta-llama/llama-4-maverick", supports_vision=True, supports_thinking=False),
     _openrouter_model("openrouter-minimax-m3", "MiniMax M3 (OpenRouter)", "minimax/minimax-m3", supports_vision=True, max_tokens=16000, temperature=1.0),
     _openrouter_model("openrouter-qwen3.7-max", "Qwen3.7 Max (OpenRouter)", "qwen/qwen3.7-max"),
-    _openrouter_model("openrouter-gemini-3.5-flash", "Gemini 3.5 Flash (OpenRouter)", "google/gemini-3.5-flash", supports_vision=True),
+    _openrouter_model("openrouter-kimi-k2-thinking", "Kimi K2 Thinking (OpenRouter)", "moonshotai/kimi-k2-thinking"),
     _openrouter_model("openrouter-deepseek-v4-pro", "DeepSeek V4 Pro (OpenRouter)", "deepseek/deepseek-v4-pro"),
     _openrouter_model("openrouter-glm-4.5", "GLM-4.5 (OpenRouter)", "z-ai/glm-4.5", max_tokens=16000),
     _openrouter_model("openrouter-nemotron-3-ultra", "Nemotron 3 Ultra (OpenRouter)", "nvidia/nemotron-3-ultra-550b-a55b", max_tokens=16000),

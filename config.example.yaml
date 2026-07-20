@@ -100,9 +100,11 @@ models:
   # and uncomments the matching block below:
   #   ANTHROPIC_API_KEY  -> Claude Fable 5 / Opus 4.8 / Sonnet 5 / Haiku 4.5
   #                         (direct Anthropic API)
-  #   OPENROUTER_API_KEY -> Claude Fable 5 + Grok 4.5 / GPT-5.5 / MiniMax M3 /
-  #                         Qwen3.7 Max / Gemini 3.5 Flash / DeepSeek V4 Pro /
-  #                         GLM-4.5 / Nemotron 3 Ultra (via OpenRouter)
+  #   OPENROUTER_API_KEY -> Claude Fable 5 + Grok 4.5 / GPT-5.5 / GPT-5.5 Codex /
+  #                         Gemini 3.5 Pro / Gemini 3.5 Flash / Llama 4 Maverick /
+  #                         MiniMax M3 / Qwen3.7 Max / Kimi K2 Thinking /
+  #                         DeepSeek V4 Pro / GLM-4.5 / Nemotron 3 Ultra
+  #                         (via OpenRouter)
   # It only ever uncomments (never re-comments), skips a block whose models are
   # already active, and no-ops when the key is missing — so hand edits are safe.
   # `make setup` enables the same sets interactively; if you copied this file by
@@ -195,8 +197,9 @@ models:
   # ── OpenRouter — auto-enabled when OPENROUTER_API_KEY is set ───────────────
   # One key, every provider. Model ids are OpenRouter slugs (provider/model),
   # routed through the standard OpenAI-compatible ChatOpenAI + base_url pattern.
-  # The set below is Claude Fable plus the current xAI / OpenAI / Google flagships
-  # and strong open alternatives (MiniMax, Qwen, DeepSeek, GLM, Nemotron).
+  # The set below is Claude Fable plus the current xAI / OpenAI / Google / Meta
+  # flagships and strong open alternatives (MiniMax, Qwen, Kimi, DeepSeek, GLM,
+  # Nemotron).
   # The startup auto-config (scripts/sync-api-key-models.py) uncomments the entries
   # between the markers below when it finds a real OPENROUTER_API_KEY in your .env.
   # Delete any you don't want after they are enabled.
@@ -237,6 +240,18 @@ models:
   #   supports_vision: true
   #   supports_thinking: true
   #
+  # - name: openrouter-gpt-5.5-codex
+  #   display_name: GPT-5.5 Codex (OpenRouter)
+  #   use: langchain_openai:ChatOpenAI
+  #   model: openai/gpt-5.5-codex
+  #   api_key: $OPENROUTER_API_KEY
+  #   base_url: https://openrouter.ai/api/v1
+  #   request_timeout: 600.0
+  #   max_retries: 2
+  #   max_tokens: 32000
+  #   supports_vision: true
+  #   supports_thinking: true
+  #
   # - name: openrouter-minimax-m3
   #   display_name: MiniMax M3 (OpenRouter)
   #   use: langchain_openai:ChatOpenAI
@@ -262,6 +277,30 @@ models:
   #   supports_vision: false
   #   supports_thinking: true
   #
+  # - name: openrouter-kimi-k2-thinking
+  #   display_name: Kimi K2 Thinking (OpenRouter)
+  #   use: langchain_openai:ChatOpenAI
+  #   model: moonshotai/kimi-k2-thinking
+  #   api_key: $OPENROUTER_API_KEY
+  #   base_url: https://openrouter.ai/api/v1
+  #   request_timeout: 600.0
+  #   max_retries: 2
+  #   max_tokens: 32000
+  #   supports_vision: false
+  #   supports_thinking: true
+  #
+  # - name: openrouter-gemini-3.5-pro
+  #   display_name: Gemini 3.5 Pro (OpenRouter)
+  #   use: langchain_openai:ChatOpenAI
+  #   model: google/gemini-3.5-pro
+  #   api_key: $OPENROUTER_API_KEY
+  #   base_url: https://openrouter.ai/api/v1
+  #   request_timeout: 600.0
+  #   max_retries: 2
+  #   max_tokens: 32000
+  #   supports_vision: true
+  #   supports_thinking: true
+  #
   # - name: openrouter-gemini-3.5-flash
   #   display_name: Gemini 3.5 Flash (OpenRouter)
   #   use: langchain_openai:ChatOpenAI
@@ -273,6 +312,18 @@ models:
   #   max_tokens: 32000
   #   supports_vision: true
   #   supports_thinking: true
+  #
+  # - name: openrouter-llama-4-maverick
+  #   display_name: Llama 4 Maverick (OpenRouter)
+  #   use: langchain_openai:ChatOpenAI
+  #   model: meta-llama/llama-4-maverick
+  #   api_key: $OPENROUTER_API_KEY
+  #   base_url: https://openrouter.ai/api/v1
+  #   request_timeout: 600.0
+  #   max_retries: 2
+  #   max_tokens: 16000
+  #   supports_vision: true
+  #   supports_thinking: false
   #
   # - name: openrouter-deepseek-v4-pro
   #   display_name: DeepSeek V4 Pro (OpenRouter)

@@ -21,6 +21,24 @@ test("defaults follow-up suggestions to off, following the workflow model", () =
   });
 });
 
+test("defaults long-term memory to off on a fresh install", () => {
+  // Off by default so a fresh install does not learn from / inject conversation
+  // context until the user opts in from Settings → Memory.
+  expect(DEFAULT_LOCAL_SETTINGS.memory).toEqual({ enabled: false });
+});
+
+test("fills in the memory section when older settings are missing it", () => {
+  // Settings persisted before the memory toggle existed must not crash reads and
+  // adopt the off-by-default.
+  const merged = mergeLocalSettings({ notification: { enabled: false } });
+  expect(merged.memory).toEqual({ enabled: false });
+});
+
+test("preserves an explicit opt-in to memory over the default", () => {
+  const merged = mergeLocalSettings({ memory: { enabled: true } });
+  expect(merged.memory.enabled).toBe(true);
+});
+
 test("defaults decorative animations to reduced", () => {
   // Reduced by default to keep the UI calm and cheap on GPU/CPU; users can
   // re-enable the full motion from Settings → Appearance, and the OS

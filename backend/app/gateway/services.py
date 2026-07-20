@@ -203,6 +203,11 @@ _CONTEXT_CONFIGURABLE_KEYS: frozenset[str] = frozenset(
         "max_total_subagents",
         "agent_name",
         "is_bootstrap",
+        # Per-user long-term memory opt-in. When explicitly ``false`` the lead
+        # agent factory disables memory injection/extraction/tools for the run;
+        # absent falls back to the operator config default. Combined (AND) with
+        # the operator master switch ``memory.enabled`` in config.yaml.
+        "memory_enabled",
     }
 )
 

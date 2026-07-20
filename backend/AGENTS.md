@@ -214,6 +214,7 @@ tool graph or subagent executor during state/schema imports.
 - `model_name` - Select specific LLM model
 - `is_plan_mode` - Enable TodoList middleware
 - `subagent_enabled` - Enable task delegation tool
+- `memory_enabled` - Per-user memory opt-out (Web UI Settings → Memory, off by default on a fresh install). Forwarded from `body.context` via `_CONTEXT_CONFIGURABLE_KEYS`; `_make_lead_agent` passes it to `_apply_memory_preference`, which derives a per-run `AppConfig` with `memory.enabled`/`injection_enabled` forced off when the flag is explicitly `False`. This is a one-way opt-out from a single chokepoint (injection, extraction, and memory tools all skip memory for the run); the operator master switch `memory.enabled` in config.yaml still wins and the flag can never force memory on. Absent (non-web callers: IM/TUI/embedded) → operator config unchanged.
 - `max_concurrent_subagents` - Per-response `task` call concurrency limit (clamped by `SubagentLimitMiddleware`)
 - `max_total_subagents` - Optional per-run total delegation cap override (falls back to `subagents.max_total_per_run`, clamped to 1-50)
   Gateway and `DeerFlowClient.stream()` always provide the runtime `run_id`; custom
@@ -620,7 +621,7 @@ The cached value is reused for both the blocking (`runs.wait`) and streaming (`_
 Focused regression coverage for the updater lives in `backend/tests/test_memory_updater.py`.
 
 **Configuration** (`config.yaml` → `memory`):
-- `enabled` / `injection_enabled` - Master switches
+- `enabled` / `injection_enabled` - Operator master switches. Layered on top of these is the per-user, per-run `memory_enabled` context flag (Web UI Settings → Memory, off by default): the lead-agent factory's `_apply_memory_preference` opts a run out of memory when the flag is `False`, but the operator master switch still wins (a user opt-in cannot override `memory.enabled: false`). See Runtime Configuration above.
 - `mode` - Operation mode: `middleware` (default passive background extraction) or `tool` (experimental model-driven memory tools). Modes are mutually exclusive.
 - `storage_path` - Path to memory.json (absolute path opts out of per-user isolation)
 - `debounce_seconds` - Wait time before processing (default: 30)

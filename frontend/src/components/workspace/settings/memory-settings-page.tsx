@@ -21,6 +21,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { useI18n } from "@/core/i18n/hooks";
@@ -31,6 +32,7 @@ import {
   useDeleteMemoryFact,
   useImportMemory,
   useMemory,
+  useMemoryConfig,
   useUpdateMemoryFact,
 } from "@/core/memory/hooks";
 import type {
@@ -38,6 +40,7 @@ import type {
   MemoryFactPatchInput,
   UserMemory,
 } from "@/core/memory/types";
+import { useLocalSettings } from "@/core/settings";
 import { SafeStreamdown } from "@/core/streamdown/components";
 import { streamdownPlugins } from "@/core/streamdown/plugins";
 import { pathOfThread } from "@/core/threads/utils";
@@ -276,6 +279,15 @@ function upperFirst(str: string) {
 export function MemorySettingsPage() {
   const { t } = useI18n();
   const { memory, isLoading, error } = useMemory();
+  const { data: memoryConfig } = useMemoryConfig();
+  const [settings, setSettings] = useLocalSettings();
+  // Operator master switch (config.yaml → memory.enabled). When off, memory is
+  // unavailable regardless of the per-user toggle, so the switch is disabled.
+  const serverMemoryEnabled = memoryConfig?.enabled ?? true;
+  const memoryEnabled = settings.memory.enabled;
+  const handleMemoryToggle = (next: boolean) => {
+    setSettings("memory", { enabled: next });
+  };
   const clearMemory = useClearMemory();
   const createMemoryFact = useCreateMemoryFact();
   const deleteMemoryFact = useDeleteMemoryFact();
@@ -535,8 +547,25 @@ export function MemorySettingsPage() {
     <>
       <SettingsSection
         title={t.settings.memory.title}
-        description={t.settings.memory.description}
+        description={
+          <div className="flex items-start gap-2">
+            <div>{t.settings.memory.description}</div>
+            <div>
+              <Switch
+                aria-label={t.settings.memory.enabledLabel}
+                disabled={!serverMemoryEnabled}
+                checked={serverMemoryEnabled && memoryEnabled}
+                onCheckedChange={handleMemoryToggle}
+              />
+            </div>
+          </div>
+        }
       >
+        {!serverMemoryEnabled && (
+          <p className="text-muted-foreground mb-4 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm dark:border-amber-800 dark:bg-amber-950/50">
+            {t.settings.memory.serverDisabledHint}
+          </p>
+        )}
         {isLoading ? (
           <div className="text-muted-foreground text-sm">
             {t.common.loading}
