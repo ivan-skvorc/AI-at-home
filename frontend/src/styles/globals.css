@@ -375,6 +375,41 @@
     filter: blur(60px);
   }
 
+  /* Reduced motion.
+     Honors both the OS `prefers-reduced-motion: reduce` accessibility setting
+     and the in-app "Reduce animations" toggle (Settings → Appearance), which
+     sets `data-reduce-motion="true"` on <html>. Decorative / continuous
+     animations that live in generated components (aurora shimmer) or global CSS
+     (subagent ambilight glow, welcome wave) are neutralized to cut GPU/CPU
+     overhead and visual noise. Functional status indicators (spinners,
+     streaming dots) are intentionally left animated so run state stays legible.
+     The heavier canvas/WebGL backgrounds (Galaxy, FlickeringGrid) and the
+     subagent ShineBorder cannot be stopped from CSS and are skipped at render
+     time in their consumers via the useReducedMotion() hook. */
+  @media (prefers-reduced-motion: reduce) {
+    .animate-aurora,
+    .animate-wave {
+      animation: none !important;
+    }
+    .ambilight,
+    .ambilight:before,
+    .ambilight:after {
+      animation: none !important;
+      opacity: 0 !important;
+    }
+  }
+
+  :root[data-reduce-motion="true"] .animate-aurora,
+  :root[data-reduce-motion="true"] .animate-wave {
+    animation: none !important;
+  }
+  :root[data-reduce-motion="true"] .ambilight,
+  :root[data-reduce-motion="true"] .ambilight:before,
+  :root[data-reduce-motion="true"] .ambilight:after {
+    animation: none !important;
+    opacity: 0 !important;
+  }
+
   .golden-text {
     background: linear-gradient(135deg, #d19e1d 0%, #e9c665 50%, #e3a812 100%);
     -webkit-background-clip: text;

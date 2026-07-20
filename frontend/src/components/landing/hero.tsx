@@ -9,6 +9,7 @@ import { AuroraText } from "@/components/ui/aurora-text";
 import { Button } from "@/components/ui/button";
 import { FlickeringGrid } from "@/components/ui/flickering-grid";
 import Galaxy from "@/components/ui/galaxy";
+import { useReducedMotion } from "@/core/appearance";
 import { env } from "@/env";
 import { cn } from "@/lib/utils";
 
@@ -29,6 +30,10 @@ const HERO_WORDS = [
 ];
 
 export function Hero({ className }: { className?: string }) {
+  // Skip the continuous WebGL galaxy and canvas flickering-grid backgrounds when
+  // reduced motion is requested. They run persistent render loops, so a static
+  // fallback is a meaningful overhead reduction (not just a visual preference).
+  const reduceMotion = useReducedMotion();
   return (
     <div
       className={cn(
@@ -37,23 +42,29 @@ export function Hero({ className }: { className?: string }) {
       )}
     >
       <div className="absolute inset-0 z-0 bg-black/40">
-        <Galaxy
-          mouseRepulsion={false}
-          starSpeed={0.2}
-          density={0.6}
-          glowIntensity={0.35}
-          twinkleIntensity={0.3}
-          speed={0.5}
-        />
+        {reduceMotion ? (
+          <div className="size-full bg-gradient-to-b from-neutral-950 via-neutral-900 to-black" />
+        ) : (
+          <Galaxy
+            mouseRepulsion={false}
+            starSpeed={0.2}
+            density={0.6}
+            glowIntensity={0.35}
+            twinkleIntensity={0.3}
+            speed={0.5}
+          />
+        )}
       </div>
-      <FlickeringGrid
-        className="absolute inset-0 z-0 mask-[url(/images/deer.svg)] mask-size-[100vw] mask-center mask-no-repeat md:mask-size-[72vh]"
-        squareSize={4}
-        gridGap={4}
-        color={"white"}
-        maxOpacity={0.3}
-        flickerChance={0.25}
-      />
+      {!reduceMotion && (
+        <FlickeringGrid
+          className="absolute inset-0 z-0 mask-[url(/images/deer.svg)] mask-size-[100vw] mask-center mask-no-repeat md:mask-size-[72vh]"
+          squareSize={4}
+          gridGap={4}
+          color={"white"}
+          maxOpacity={0.3}
+          flickerChance={0.25}
+        />
+      )}
       <div className="container-md relative z-10 mx-auto flex min-h-[92svh] flex-col items-center justify-center px-4 pt-20 pb-14">
         <h1 className="text-center text-5xl leading-tight font-bold break-words md:text-6xl">
           DeerFlow

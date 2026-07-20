@@ -3,6 +3,7 @@ import "@/styles/globals.css";
 
 import { type Metadata } from "next";
 
+import { ReduceMotionEffect } from "@/components/reduce-motion-effect";
 import { ThemeProvider } from "@/components/theme-provider";
 import { I18nProvider } from "@/core/i18n/context";
 import { detectLocaleServer } from "@/core/i18n/server";
@@ -20,6 +21,7 @@ export default async function RootLayout({
     <html lang={locale} suppressContentEditableWarning suppressHydrationWarning>
       <body>
         <ThemeProvider attribute="class" enableSystem disableTransitionOnChange>
+          <ReduceMotionEffect />
           <I18nProvider initialLocale={locale}>{children}</I18nProvider>
         </ThemeProvider>
       </body>

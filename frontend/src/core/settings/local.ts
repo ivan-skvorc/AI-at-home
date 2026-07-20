@@ -5,6 +5,15 @@ export const DEFAULT_LOCAL_SETTINGS: LocalSettings = {
   notification: {
     enabled: true,
   },
+  // Decorative animations (landing background, subagent "flashing lights",
+  // aurora/wave shimmer) are reduced by default to keep the UI calm and cheap on
+  // GPU/CPU; users who prefer the full motion can turn the toggle off from
+  // Settings → Appearance. The system `prefers-reduced-motion` preference is
+  // honored independently of this flag (it can only add reduction, never
+  // override an explicit opt-in to motion).
+  appearance: {
+    reduceAnimations: true,
+  },
   tokenUsage: {
     headerTotal: true,
     inlineMode: "per_turn",
@@ -34,6 +43,12 @@ export interface LocalSettings {
   notification: {
     enabled: boolean;
   };
+  appearance: {
+    // When true, decorative/continuous animations are suppressed to reduce
+    // GPU/CPU overhead and visual noise. This is combined (logical OR) with the
+    // system `prefers-reduced-motion` media query at read time.
+    reduceAnimations: boolean;
+  };
   tokenUsage: {
     headerTotal: boolean;
     inlineMode: TokenUsageInlineMode;
@@ -62,7 +77,9 @@ export interface LocalSettings {
   };
 }
 
-function mergeLocalSettings(settings?: Partial<LocalSettings>): LocalSettings {
+export function mergeLocalSettings(
+  settings?: Partial<LocalSettings>,
+): LocalSettings {
   return {
     ...DEFAULT_LOCAL_SETTINGS,
     context: {
@@ -80,6 +97,10 @@ function mergeLocalSettings(settings?: Partial<LocalSettings>): LocalSettings {
     notification: {
       ...DEFAULT_LOCAL_SETTINGS.notification,
       ...settings?.notification,
+    },
+    appearance: {
+      ...DEFAULT_LOCAL_SETTINGS.appearance,
+      ...settings?.appearance,
     },
   };
 }
