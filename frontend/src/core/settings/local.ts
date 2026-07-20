@@ -6,11 +6,13 @@ export const DEFAULT_LOCAL_SETTINGS: LocalSettings = {
     enabled: true,
   },
   // Decorative animations (landing background, subagent "flashing lights",
-  // aurora/wave shimmer) are on by default; users who want a calmer, cheaper
-  // UI can turn them off from Settings → Appearance. The system
-  // `prefers-reduced-motion` preference is honored independently of this flag.
+  // aurora/wave shimmer) are reduced by default to keep the UI calm and cheap on
+  // GPU/CPU; users who prefer the full motion can turn the toggle off from
+  // Settings → Appearance. The system `prefers-reduced-motion` preference is
+  // honored independently of this flag (it can only add reduction, never
+  // override an explicit opt-in to motion).
   appearance: {
-    reduceAnimations: false,
+    reduceAnimations: true,
   },
   tokenUsage: {
     headerTotal: true,
