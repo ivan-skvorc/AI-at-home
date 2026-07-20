@@ -340,15 +340,61 @@ if ! $ALREADY_STOPPED; then
     sleep 1
 fi
 
-# ── Config check ─────────────────────────────────────────────────────────────
+# ── Config bootstrap (first-run seeding) ─────────────────────────────────────
+# On a fresh checkout config.yaml does not exist yet. Rather than failing with
+# "run make config first", seed it from the committed config.example.yaml
+# template so `make dev` / `make start` come up on the very first run — the same
+# behaviour the Docker launch paths already have (scripts/deploy.sh,
+# scripts/docker.sh, which both seed a missing config). The API-key model
+# auto-config below (scripts/sync-api-key-models.py) then uncomments the model
+# block matching whatever provider key is present in the environment / .env.
+#
+# Only the repo-root config.yaml is seeded, and only when NO config resolves via
+# DEER_FLOW_CONFIG_PATH / backend/config.yaml / config.yaml — an existing config
+# at any of those locations is never overwritten.
+seed_missing_config() {
+    if { [ -n "$DEER_FLOW_CONFIG_PATH" ] && [ -f "$DEER_FLOW_CONFIG_PATH" ]; } ||
+        [ -f "$REPO_ROOT/backend/config.yaml" ] ||
+        [ -f "$REPO_ROOT/config.yaml" ]; then
+        return 0
+    fi
 
-if ! { \
-        [ -n "$DEER_FLOW_CONFIG_PATH" ] && [ -f "$DEER_FLOW_CONFIG_PATH" ] || \
-        [ -f backend/config.yaml ] || \
-        [ -f config.yaml ]; \
-    }; then
-    echo "✗ No DeerFlow config file found."
-    echo "  Run 'make setup' (recommended) or 'make config' to generate config.yaml."
+    if [ ! -f "$REPO_ROOT/config.example.yaml" ]; then
+        echo "✗ No DeerFlow config file found and no config.example.yaml to seed from."
+        echo "  Run 'make setup' (recommended) or 'make config' to generate config.yaml."
+        return 1
+    fi
+
+    if ! cp "$REPO_ROOT/config.example.yaml" "$REPO_ROOT/config.yaml"; then
+        echo "✗ Failed to seed config.yaml from config.example.yaml."
+        return 1
+    fi
+    echo "✓ First run: seeded config.yaml from config.example.yaml"
+    echo "  Model blocks matching the provider API keys in your environment/.env are enabled automatically."
+    echo "  Run 'make setup' for interactive configuration, or edit config.yaml to customize."
+
+    # Seed the companion config files from their committed examples when missing
+    # (the same set `make config` and the setup wizard create), so the first run
+    # starts from a complete configuration. Best-effort — a missing companion is
+    # handled gracefully downstream, so these never block startup.
+    if [ ! -f "$REPO_ROOT/extensions_config.json" ]; then
+        if [ -f "$REPO_ROOT/extensions_config.example.json" ]; then
+            cp "$REPO_ROOT/extensions_config.example.json" "$REPO_ROOT/extensions_config.json" || true
+        else
+            echo '{"mcpServers":{},"skills":{}}' > "$REPO_ROOT/extensions_config.json" || true
+        fi
+    fi
+    if [ ! -f "$REPO_ROOT/.env" ] && [ -f "$REPO_ROOT/.env.example" ]; then
+        cp "$REPO_ROOT/.env.example" "$REPO_ROOT/.env" || true
+    fi
+    if [ ! -f "$REPO_ROOT/frontend/.env" ] && [ -f "$REPO_ROOT/frontend/.env.example" ]; then
+        cp "$REPO_ROOT/frontend/.env.example" "$REPO_ROOT/frontend/.env" || true
+    fi
+
+    return 0
+}
+
+if ! seed_missing_config; then
     exit 1
 fi
 
