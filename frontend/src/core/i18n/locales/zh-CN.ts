@@ -644,6 +644,9 @@ export const zhCN: Translations = {
       title: "记忆",
       description:
         "DeerFlow 会在后台不断从你的对话中自动学习。这些记忆能帮助 DeerFlow 更好地理解你，并提供更个性化的体验。",
+      enabledLabel: "启用记忆",
+      serverDisabledHint:
+        "记忆功能已被服务端配置禁用（config.yaml 中的 memory.enabled）。请在服务端启用后再使用此开关。",
       empty: "暂无可展示的记忆数据。",
       rawJson: "原始 JSON",
       exportButton: "导出记忆",

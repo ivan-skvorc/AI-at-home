@@ -21,6 +21,7 @@ import { useI18n } from "../i18n/hooks";
 import { isHiddenFromUIMessage } from "../messages/utils";
 import type { FileInMessage } from "../messages/utils";
 import type { LocalSettings } from "../settings";
+import { getLocalSettings } from "../settings/local";
 import { isSidecarThread, SIDECAR_METADATA_KEY } from "../sidecar/thread";
 import { useUpdateSubtask } from "../tasks/context";
 import { taskEventToSubtaskUpdate } from "../tasks/lifecycle";
@@ -1533,6 +1534,7 @@ export function useThreadStream({
               thinking_enabled: context.mode !== "flash",
               is_plan_mode: context.mode === "pro" || context.mode === "ultra",
               subagent_enabled: context.mode === "ultra",
+              memory_enabled: getLocalSettings().memory.enabled,
               reasoning_effort:
                 context.reasoning_effort ??
                 (context.mode === "ultra"
@@ -1638,6 +1640,7 @@ export function useThreadStream({
             thinking_enabled: context.mode !== "flash",
             is_plan_mode: context.mode === "pro" || context.mode === "ultra",
             subagent_enabled: context.mode === "ultra",
+            memory_enabled: getLocalSettings().memory.enabled,
             reasoning_effort:
               context.reasoning_effort ??
               (context.mode === "ultra"

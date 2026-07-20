@@ -669,6 +669,9 @@ export const enUS: Translations = {
       title: "Memory",
       description:
         "DeerFlow automatically learns from your conversations in the background. These memories help DeerFlow understand you better and deliver a more personalized experience.",
+      enabledLabel: "Enable memory",
+      serverDisabledHint:
+        "Memory is disabled by the server configuration (memory.enabled in config.yaml). Enable it there to use this toggle.",
       empty: "No memory data to display.",
       rawJson: "Raw JSON",
       exportButton: "Export memory",

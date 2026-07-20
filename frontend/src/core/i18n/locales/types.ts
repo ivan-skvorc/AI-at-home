@@ -555,6 +555,8 @@ export interface Translations {
     memory: {
       title: string;
       description: string;
+      enabledLabel: string;
+      serverDisabledHint: string;
       empty: string;
       rawJson: string;
       exportButton: string;

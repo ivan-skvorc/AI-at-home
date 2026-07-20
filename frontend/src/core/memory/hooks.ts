@@ -6,6 +6,7 @@ import {
   deleteMemoryFact,
   importMemory,
   loadMemory,
+  loadMemoryConfig,
   updateMemoryFact,
 } from "./api";
 import type {
@@ -20,6 +21,14 @@ export function useMemory() {
     queryFn: () => loadMemory(),
   });
   return { memory: data ?? null, isLoading, error };
+}
+
+export function useMemoryConfig() {
+  return useQuery({
+    queryKey: ["memoryConfig"],
+    queryFn: loadMemoryConfig,
+    staleTime: Infinity,
+  });
 }
 
 export function useClearMemory() {

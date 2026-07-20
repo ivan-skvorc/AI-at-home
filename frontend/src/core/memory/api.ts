@@ -80,6 +80,25 @@ async function readMemoryResponse(
   return response.json() as Promise<UserMemory>;
 }
 
+export interface MemoryConfigResponse {
+  // Operator master switch (config.yaml → memory.enabled). When false, memory is
+  // unavailable regardless of the per-user toggle.
+  enabled: boolean;
+}
+
+export async function loadMemoryConfig(): Promise<MemoryConfigResponse> {
+  const response = await fetch(`${getBackendBaseURL()}/api/memory/config`);
+  if (!response.ok) {
+    if (response.status === 404) {
+      // Fallback to enabled if the backend is older / lacks the config route.
+      return { enabled: true };
+    }
+    throw new Error(`Failed to load memory config: ${response.statusText}`);
+  }
+  const data = (await response.json()) as { enabled?: unknown };
+  return { enabled: data.enabled !== false };
+}
+
 export async function loadMemory(): Promise<UserMemory> {
   const response = await fetch(`${getBackendBaseURL()}/api/memory`);
   return readMemoryResponse(response, "Failed to fetch memory");

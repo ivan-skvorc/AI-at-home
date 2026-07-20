@@ -90,6 +90,27 @@ def _get_runtime_config(config: RunnableConfig) -> dict:
     return cfg
 
 
+def _apply_memory_preference(app_config: AppConfig, memory_enabled_override: object) -> AppConfig:
+    """Return an AppConfig honoring the per-run ``memory_enabled`` preference.
+
+    The Web UI sends a per-user ``memory_enabled`` flag in the run context
+    (Settings → Memory, off by default on a fresh install). This is a one-way
+    *opt-out* layered on top of the operator master switch: when the flag is
+    explicitly ``False`` we derive a config copy with memory fully disabled so
+    every downstream reader (DynamicContextMiddleware injection, MemoryMiddleware
+    extraction, ``should_use_memory_tools``, and the prompt's ``_get_memory_context``)
+    naturally skips memory for this run. The flag can never force memory *on* when
+    the operator disabled it — ``memory.enabled=False`` in config.yaml still wins.
+    When the flag is absent (non-web callers: IM channels, TUI, embedded) the
+    operator config is used unchanged, preserving legacy behavior.
+    """
+    # Only an explicit boolean False opts out; ``None``/absent keeps operator config.
+    if memory_enabled_override is not False:
+        return app_config
+    disabled_memory = app_config.memory.model_copy(update={"enabled": False, "injection_enabled": False})
+    return app_config.model_copy(update={"memory": disabled_memory})
+
+
 def _resolve_model_name(requested_model_name: str | None = None, *, app_config: AppConfig | None = None) -> str:
     """Resolve a runtime model name safely, falling back to default if invalid. Returns None if no models are configured."""
     app_config = app_config or get_app_config()
@@ -454,7 +475,10 @@ def _make_lead_agent(config: RunnableConfig, *, app_config: AppConfig):
     from deerflow.tools.builtins.tool_search import assemble_deferred_tools, build_mcp_routing_middleware, get_mcp_routing_hints_prompt_section
 
     cfg = _get_runtime_config(config)
-    resolved_app_config = app_config
+    # Honor the per-user memory opt-out (Settings → Memory) before anything reads
+    # the config, so injection, extraction, and memory tools are all disabled for
+    # this run from a single chokepoint. The operator master switch still wins.
+    resolved_app_config = _apply_memory_preference(app_config, cfg.get("memory_enabled"))
 
     # Extract user_id for user-scoped skill loading.
     # LangGraph gateway injects user_id into config["configurable"];

@@ -46,6 +46,10 @@ export interface AgentThreadContext extends Record<string, unknown> {
   subagent_model_name?: string;
   reasoning_effort?: "minimal" | "low" | "medium" | "high";
   agent_name?: string;
+  // Per-user long-term memory opt-in. When false the backend skips memory
+  // injection/extraction/tools for this run; when omitted the backend falls back
+  // to the operator config default. Gated on top by config.yaml memory.enabled.
+  memory_enabled?: boolean;
 }
 
 export interface AgentThread extends Thread<AgentThreadState> {

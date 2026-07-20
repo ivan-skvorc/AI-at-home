@@ -589,6 +589,17 @@ def test_run_create_request_context_defaults_to_none():
     assert body.context is None
 
 
+def test_memory_enabled_forwarded_into_config():
+    """The per-user memory opt-out flag must reach both configurable and context
+    so ``_get_runtime_config`` (and thus ``_apply_memory_preference``) can read it."""
+    from app.gateway.services import merge_run_context_overrides
+
+    config: dict = {}
+    merge_run_context_overrides(config, {"memory_enabled": False})
+    assert config["configurable"]["memory_enabled"] is False
+    assert config["context"]["memory_enabled"] is False
+
+
 def test_apply_checkpoint_to_run_config_writes_checkpoint_fields():
     import asyncio
     from types import SimpleNamespace

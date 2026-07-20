@@ -25,6 +25,15 @@ export const DEFAULT_LOCAL_SETTINGS: LocalSettings = {
     enabled: false,
     modelName: undefined,
   },
+  // Long-term memory defaults OFF on a fresh install so the agent does not learn
+  // from / inject conversation context until the user explicitly opts in from
+  // Settings → Memory. When off, the per-run `memory_enabled` flag is sent to the
+  // backend which skips memory injection, extraction, and memory tools for that
+  // run (the operator master switch `memory.enabled` in config.yaml still gates
+  // availability on top of this per-user preference).
+  memory: {
+    enabled: false,
+  },
   context: {
     model_name: undefined,
     mode: undefined,
@@ -60,6 +69,13 @@ export interface LocalSettings {
     // selected model (the thread's current lead model).
     modelName?: string | undefined;
   };
+  memory: {
+    // Whether long-term memory is used for this user. Sent to the backend as the
+    // per-run `memory_enabled` flag; when false the backend skips memory
+    // injection/extraction/tools for the run. Combined (logical AND) with the
+    // operator master switch `memory.enabled` in config.yaml.
+    enabled: boolean;
+  };
   context: Omit<
     AgentThreadContext,
     | "thread_id"
@@ -69,6 +85,7 @@ export interface LocalSettings {
     | "subagent_model_name"
     | "model_name"
     | "reasoning_effort"
+    | "memory_enabled"
   > & {
     model_name?: string | undefined;
     subagent_model_name?: string | undefined;
@@ -93,6 +110,10 @@ export function mergeLocalSettings(
     suggestions: {
       ...DEFAULT_LOCAL_SETTINGS.suggestions,
       ...settings?.suggestions,
+    },
+    memory: {
+      ...DEFAULT_LOCAL_SETTINGS.memory,
+      ...settings?.memory,
     },
     notification: {
       ...DEFAULT_LOCAL_SETTINGS.notification,
