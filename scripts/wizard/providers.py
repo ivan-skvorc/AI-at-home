@@ -93,11 +93,22 @@ OPENAI_COMPAT_THINKING_CONFIG = {
 # `budget_tokens` form is rejected by these models. Haiku 4.5 still takes an
 # explicit thinking budget. Opus 4.8 / Sonnet 5 accept an explicit
 # `thinking: {type: disabled}` when the toggle is off.
+#
+# `display: summarized` is required for multi-turn tool use. These models default
+# `thinking.display` to `"omitted"`, which returns thinking blocks whose `thinking`
+# text is empty (only the encrypted `signature` is carried). When langchain-anthropic
+# streams such a block it never sees a `thinking_delta`, so the reconstructed content
+# block has no `thinking` key at all; replaying it on the next turn serializes to
+# `{type: thinking, signature: ...}` with the field missing, and Anthropic rejects the
+# request with `messages.N.content.0.thinking.thinking: Field required` (400). Asking
+# for `summarized` makes the model return real (summarized) thinking text that streams
+# and round-trips, so the block replays intact.
 ANTHROPIC_ADAPTIVE_THINKING_CONFIG = {
     "supports_thinking": True,
     "when_thinking_enabled": {
         "thinking": {
             "type": "adaptive",
+            "display": "summarized",
         }
     },
     "when_thinking_disabled": {
@@ -108,19 +119,28 @@ ANTHROPIC_ADAPTIVE_THINKING_CONFIG = {
 }
 
 # Claude Fable 5 has thinking permanently on: an explicit
-# `thinking: {type: disabled}` is rejected with a 400. When the thinking toggle
-# is off the parameter must be OMITTED, so `when_thinking_disabled` is an empty
-# dict — the model factory then applies no thinking setting (and, because the
-# disable block is present-but-empty, it also suppresses the native-Anthropic
-# `{type: disabled}` fallback), leaving Fable to run its default adaptive thinking.
+# `thinking: {type: disabled}` is rejected with a 400, so neither toggle state can
+# turn thinking off. Both states therefore send adaptive thinking with
+# `display: summarized` — `summarized` for the same multi-turn-replay reason as the
+# adaptive config above (Fable's default `omitted` display otherwise breaks tool-use
+# continuation), and `adaptive` (never `disabled`) so the disable path stays a legal
+# request. This supersedes the earlier empty-`when_thinking_disabled` workaround: an
+# empty dict avoided the disable-400 but left Fable on its default omitted display,
+# which still tripped the replay-400 whenever the toggle was off.
 ANTHROPIC_ALWAYS_ON_THINKING_CONFIG = {
     "supports_thinking": True,
     "when_thinking_enabled": {
         "thinking": {
             "type": "adaptive",
+            "display": "summarized",
         }
     },
-    "when_thinking_disabled": {},
+    "when_thinking_disabled": {
+        "thinking": {
+            "type": "adaptive",
+            "display": "summarized",
+        }
+    },
 }
 
 ANTHROPIC_BUDGET_THINKING_CONFIG = {

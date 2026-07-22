@@ -140,7 +140,11 @@ models:
   #   when_thinking_enabled:
   #     thinking:
   #       type: adaptive
-  #   when_thinking_disabled: {}   # Fable 5 rejects `thinking: {type: disabled}` (400) — omit the param
+  #       display: summarized       # summarized thinking text round-trips on multi-turn tool use; omitted (the default) drops the text and 400s on replay
+  #   when_thinking_disabled:       # Fable can't disable thinking (400 on type: disabled); keep adaptive+summarized so the replay still works
+  #     thinking:
+  #       type: adaptive
+  #       display: summarized
   #
   # - name: claude-opus-4-8
   #   display_name: Claude Opus 4.8
@@ -155,6 +159,7 @@ models:
   #   when_thinking_enabled:
   #     thinking:
   #       type: adaptive
+  #       display: summarized       # summarized thinking text round-trips on multi-turn tool use; omitted (the default) drops the text and 400s on replay
   #   when_thinking_disabled:
   #     thinking:
   #       type: disabled
@@ -172,6 +177,7 @@ models:
   #   when_thinking_enabled:
   #     thinking:
   #       type: adaptive
+  #       display: summarized       # summarized thinking text round-trips on multi-turn tool use; omitted (the default) drops the text and 400s on replay
   #   when_thinking_disabled:
   #     thinking:
   #       type: disabled
