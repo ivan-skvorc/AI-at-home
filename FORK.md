@@ -63,7 +63,7 @@ A companion to the Ollama sync for **cloud** models. `scripts/sync-api-key-model
 | `.env` key present | Models enabled | Provider / `use` |
 | --- | --- | --- |
 | `ANTHROPIC_API_KEY` | Claude **Fable 5**, **Opus 4.8**, **Sonnet 5**, **Haiku 4.5** | direct Anthropic API (`langchain_anthropic:ChatAnthropic`) |
-| `OPENROUTER_API_KEY` | Claude **Fable 5**, **Grok 4.5**, **GPT-5.5**, **MiniMax M3**, **Qwen3.7 Max**, **Gemini 3.5 Flash**, **DeepSeek V4 Pro**, **GLM-4.5**, **Nemotron 3 Ultra** | OpenRouter (`langchain_openai:ChatOpenAI` + `base_url`) |
+| `OPENROUTER_API_KEY` | Claude **Fable 5**, **Grok 4.5**, **GPT-5.5**, **GPT-5.5 Codex**, **Gemini 3.5 Pro**, **Gemini 3.5 Flash**, **Llama 4 Maverick**, **MiniMax M3**, **Qwen3.7 Max**, **Kimi K3**, **Mistral Large 3**, **DeepSeek V4 Pro**, **GLM-5.2**, **Nemotron 3 Ultra** | OpenRouter (`langchain_openai:ChatOpenAI` + `base_url`) |
 
 Both keys present enables both blocks (Fable appears twice — once direct, once via OpenRouter — under distinct `name:`s). The four latest Claude models use adaptive thinking (Haiku takes an explicit budget); every entry ships `supports_thinking: true` so DeerFlow's thinking toggle actually engages.
 

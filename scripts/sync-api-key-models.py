@@ -8,8 +8,9 @@ in ``config.yaml`` so the models light up on first start with no manual editing.
 
     ANTHROPIC_API_KEY  -> direct Claude Fable 5 / Opus 4.8 / Sonnet 5 / Haiku 4.5
     OPENROUTER_API_KEY -> Claude Fable 5 + Grok 4.5 / GPT-5.5 / MiniMax M3 /
-                          Qwen3.7 Max / Gemini 3.5 Flash / DeepSeek V4 Pro /
-                          GLM-4.5 / Nemotron 3 Ultra (all via OpenRouter)
+                          Qwen3.7 Max / Kimi K3 / Mistral Large 3 /
+                          Gemini 3.5 Flash / DeepSeek V4 Pro / GLM-5.2 /
+                          Nemotron 3 Ultra (all via OpenRouter)
 
 Idempotent and bounded: the script only ever *uncomments* the model entries
 between a provider's ``BEGIN/END auto-model-config`` markers, and never touches
