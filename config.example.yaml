@@ -117,9 +117,12 @@ models:
   # ── Anthropic — auto-enabled when ANTHROPIC_API_KEY is set ─────────────────
   # Latest Claude models via the direct Anthropic API. Fable 5, Opus 4.8 and
   # Sonnet 5 use adaptive thinking (the `budget_tokens` form is rejected by these
-  # models); Haiku 4.5 still takes an explicit thinking budget. `supports_thinking:
-  # true` is required or DeerFlow silently falls back to non-thinking mode even
-  # with the UI toggle on.
+  # models); Haiku 4.5 still takes an explicit thinking budget. Fable 5's thinking
+  # is always on: it rejects an explicit `thinking: {type: disabled}` with a 400,
+  # so its `when_thinking_disabled` is left empty (the parameter is omitted) while
+  # Opus 4.8 / Sonnet 5 accept `type: disabled`. `supports_thinking: true` is
+  # required or DeerFlow silently falls back to non-thinking mode even with the
+  # UI toggle on.
   # The startup auto-config (scripts/sync-api-key-models.py) uncomments the entries
   # between the markers below when it finds a real ANTHROPIC_API_KEY in your .env;
   # you can also uncomment them by hand.
@@ -137,9 +140,7 @@ models:
   #   when_thinking_enabled:
   #     thinking:
   #       type: adaptive
-  #   when_thinking_disabled:
-  #     thinking:
-  #       type: disabled
+  #   when_thinking_disabled: {}   # Fable 5 rejects `thinking: {type: disabled}` (400) — omit the param
   #
   # - name: claude-opus-4-8
   #   display_name: Claude Opus 4.8
