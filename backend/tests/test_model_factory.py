@@ -191,6 +191,42 @@ def test_thinking_enabled_merges_when_thinking_enabled_settings(monkeypatch):
     assert FakeChatModel.captured_kwargs.get("max_tokens") == 16000
 
 
+def test_thinking_enabled_forwards_adaptive_summarized_display(monkeypatch):
+    """Adaptive Claude models configure `thinking={"type": "adaptive", "display":
+    "summarized"}`; the factory must forward the whole dict — including `display` —
+    to the model constructor. langchain-anthropic passes `self.thinking` verbatim into
+    the request, so `display: summarized` reaches the API and returned thinking blocks
+    carry real (summarized) text. Without it the default `omitted` display yields empty
+    thinking blocks that drop their `thinking` field on multi-turn tool-use replay and
+    trigger a 400 (`messages.N.content.0.thinking.thinking: Field required`)."""
+    wte = {"thinking": {"type": "adaptive", "display": "summarized"}}
+    cfg = _make_app_config(
+        [
+            _make_model(
+                "adaptive-anthropic",
+                use="langchain_anthropic:ChatAnthropic",
+                supports_thinking=True,
+                supports_reasoning_effort=False,
+                when_thinking_enabled=wte,
+            )
+        ]
+    )
+    _patch_factory(monkeypatch, cfg)
+
+    captured: dict = {}
+
+    class CapturingModel(FakeChatModel):
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+            BaseChatModel.__init__(self, **kwargs)
+
+    monkeypatch.setattr(factory_module, "resolve_class", lambda path, base: CapturingModel)
+
+    factory_module.create_chat_model(name="adaptive-anthropic", thinking_enabled=True)
+
+    assert captured.get("thinking") == {"type": "adaptive", "display": "summarized"}
+
+
 # ---------------------------------------------------------------------------
 # thinking_enabled=False — disable logic
 # ---------------------------------------------------------------------------
