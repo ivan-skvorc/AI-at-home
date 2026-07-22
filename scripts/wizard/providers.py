@@ -91,7 +91,8 @@ OPENAI_COMPAT_THINKING_CONFIG = {
 
 # Latest Claude models (Opus 4.8, Sonnet 5) use adaptive thinking — the fixed
 # `budget_tokens` form is rejected by these models. Haiku 4.5 still takes an
-# explicit thinking budget.
+# explicit thinking budget. Opus 4.8 / Sonnet 5 accept an explicit
+# `thinking: {type: disabled}` when the toggle is off.
 ANTHROPIC_ADAPTIVE_THINKING_CONFIG = {
     "supports_thinking": True,
     "when_thinking_enabled": {
@@ -104,6 +105,22 @@ ANTHROPIC_ADAPTIVE_THINKING_CONFIG = {
             "type": "disabled",
         }
     },
+}
+
+# Claude Fable 5 has thinking permanently on: an explicit
+# `thinking: {type: disabled}` is rejected with a 400. When the thinking toggle
+# is off the parameter must be OMITTED, so `when_thinking_disabled` is an empty
+# dict — the model factory then applies no thinking setting (and, because the
+# disable block is present-but-empty, it also suppresses the native-Anthropic
+# `{type: disabled}` fallback), leaving Fable to run its default adaptive thinking.
+ANTHROPIC_ALWAYS_ON_THINKING_CONFIG = {
+    "supports_thinking": True,
+    "when_thinking_enabled": {
+        "thinking": {
+            "type": "adaptive",
+        }
+    },
+    "when_thinking_disabled": {},
 }
 
 ANTHROPIC_BUDGET_THINKING_CONFIG = {
@@ -137,7 +154,7 @@ ANTHROPIC_BUNDLE_MODELS: list[dict] = [
         "max_retries": 2,
         "max_tokens": 32000,
         "supports_vision": True,
-        **ANTHROPIC_ADAPTIVE_THINKING_CONFIG,
+        **ANTHROPIC_ALWAYS_ON_THINKING_CONFIG,
     },
     {
         "name": "claude-opus-4-8",

@@ -262,6 +262,42 @@ def test_thinking_disabled_langchain_anthropic_format(monkeypatch):
     assert captured.get("reasoning_effort") is None
 
 
+def test_thinking_disabled_empty_when_thinking_disabled_omits_thinking_param(monkeypatch):
+    """Always-on thinking models (e.g. Claude Fable 5) reject an explicit
+    thinking={"type": "disabled"} with a 400, so their config sets a present-but-empty
+    when_thinking_disabled to OMIT the parameter. The empty disable block must take
+    precedence over the native-Anthropic fallback so no `thinking` kwarg is sent —
+    even though when_thinking_enabled (adaptive) is configured."""
+    cfg = _make_app_config(
+        [
+            _make_model(
+                "always-on",
+                use="langchain_anthropic:ChatAnthropic",
+                supports_thinking=True,
+                supports_reasoning_effort=False,
+                when_thinking_enabled={"thinking": {"type": "adaptive"}},
+                when_thinking_disabled={},
+            )
+        ]
+    )
+    _patch_factory(monkeypatch, cfg)
+
+    captured: dict = {}
+
+    class CapturingModel(FakeChatModel):
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+            BaseChatModel.__init__(self, **kwargs)
+
+    monkeypatch.setattr(factory_module, "resolve_class", lambda path, base: CapturingModel)
+
+    factory_module.create_chat_model(name="always-on", thinking_enabled=False)
+
+    # No thinking param at all — an explicit {"type": "disabled"} would 400 on Fable 5.
+    assert "thinking" not in captured
+    assert "extra_body" not in captured
+
+
 def test_thinking_disabled_no_when_thinking_enabled_does_nothing(monkeypatch):
     """If when_thinking_enabled is not set, disabling thinking must not inject any kwargs."""
     cfg = _make_app_config([_make_model("plain", supports_thinking=True, when_thinking_enabled=None)])
