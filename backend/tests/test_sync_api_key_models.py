@@ -194,9 +194,10 @@ class TestRealExampleConfig:
             "meta-llama/llama-4-maverick",
             "minimax/minimax-m3",
             "qwen/qwen3.7-max",
-            "moonshotai/kimi-k2-thinking",
+            "moonshotai/kimi-k3",
+            "mistralai/mistral-large-2512",
             "deepseek/deepseek-v4-pro",
-            "z-ai/glm-4.5",
+            "z-ai/glm-5.2",
             "nvidia/nemotron-3-ultra-550b-a55b",
         }
         assert expected == ids
