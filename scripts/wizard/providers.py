@@ -89,10 +89,17 @@ OPENAI_COMPAT_THINKING_CONFIG = {
     },
 }
 
-# Latest Claude models (Opus 4.8, Sonnet 5) use adaptive thinking — the fixed
-# `budget_tokens` form is rejected by these models. Haiku 4.5 still takes an
-# explicit thinking budget. Opus 4.8 / Sonnet 5 accept an explicit
+# Latest Claude models (Opus 5, Opus 4.8, Sonnet 5) use adaptive thinking — the
+# fixed `budget_tokens` form is rejected by these models. Haiku 4.5 still takes an
+# explicit thinking budget. Opus 5 / Opus 4.8 / Sonnet 5 accept an explicit
 # `thinking: {type: disabled}` when the toggle is off.
+#
+# Opus 5 caveat: it accepts `thinking: {type: disabled}` only at reasoning effort
+# `high` or below (400 at `xhigh`/`max`). DeerFlow never sends an effort/
+# `output_config` parameter to `langchain_anthropic:ChatAnthropic` — the factory
+# only forwards `reasoning_effort` for models that opt in via
+# `supports_reasoning_effort`, which these entries do not — so the API default
+# (`high`) applies and the disable path stays legal.
 #
 # `display: summarized` is required for multi-turn tool use. These models default
 # `thinking.display` to `"omitted"`, which returns thinking blocks whose `thinking`
@@ -162,7 +169,9 @@ ANTHROPIC_BUDGET_THINKING_CONFIG = {
 ANTHROPIC_THINKING_CONFIG = ANTHROPIC_BUDGET_THINKING_CONFIG
 
 # Latest Claude models, enabled together when the user has an ANTHROPIC_API_KEY.
-# Fable 5 / Opus 4.8 / Sonnet 5 use adaptive thinking; Haiku 4.5 takes a budget.
+# Fable 5 / Opus 5 / Opus 4.8 / Sonnet 5 use adaptive thinking; Haiku 4.5 takes a
+# budget. Ordered most- to least-capable; Opus 4.8 is kept alongside its Opus 5
+# successor so existing threads can stay pinned to it.
 ANTHROPIC_BUNDLE_MODELS: list[dict] = [
     {
         "name": "claude-fable-5",
@@ -175,6 +184,18 @@ ANTHROPIC_BUNDLE_MODELS: list[dict] = [
         "max_tokens": 32000,
         "supports_vision": True,
         **ANTHROPIC_ALWAYS_ON_THINKING_CONFIG,
+    },
+    {
+        "name": "claude-opus-5",
+        "display_name": "Claude Opus 5",
+        "use": "langchain_anthropic:ChatAnthropic",
+        "model": "claude-opus-5",
+        "api_key": "$ANTHROPIC_API_KEY",
+        "default_request_timeout": 600.0,
+        "max_retries": 2,
+        "max_tokens": 32000,
+        "supports_vision": True,
+        **ANTHROPIC_ADAPTIVE_THINKING_CONFIG,
     },
     {
         "name": "claude-opus-4-8",
@@ -245,16 +266,27 @@ def _openrouter_model(
     return entry
 
 
-# One OPENROUTER_API_KEY reaches every provider. Claude Fable plus the current
-# xAI / OpenAI / Google / Meta flagships and strong open alternatives (MiniMax,
-# Qwen, Kimi, Mistral, DeepSeek, GLM, Nemotron). Slugs current as of 2026-07.
+# One OPENROUTER_API_KEY reaches every provider. Claude Fable + Opus 5 plus the
+# current xAI / OpenAI / Google / Meta flagships and strong open alternatives
+# (MiniMax, Qwen, Kimi, Mistral, DeepSeek, GLM, Nemotron). Slugs current as of
+# 2026-07.
+#
+# Two slugs corrected in this refresh — both named models that never shipped, so
+# selecting them failed at request time:
+#   - `openai/gpt-5.5-codex` -> `openai/gpt-5.3-codex`. There is no 5.5/5.6 Codex;
+#     5.3-Codex is still the newest agentic-coding variant.
+#   - `google/gemini-3.5-pro` -> dropped. Gemini 3.5 Pro has slipped three times
+#     and is still unreleased (Google shipped 3.6 Flash / 3.5 Flash-Lite / Flash
+#     Cyber on 2026-07-21 with no Pro). The newest shipped Pro is the older
+#     `gemini-3.1-pro-preview`, which 3.5+ Flash already beats on coding, agentic
+#     work and tool use — so the Gemini slot is one Flash entry, upgraded to 3.6.
 OPENROUTER_BUNDLE_MODELS: list[dict] = [
     _openrouter_model("openrouter-fable-5", "Claude Fable 5 (OpenRouter)", "anthropic/claude-fable-5", supports_vision=True),
+    _openrouter_model("openrouter-opus-5", "Claude Opus 5 (OpenRouter)", "anthropic/claude-opus-5", supports_vision=True),
     _openrouter_model("openrouter-grok-4.5", "Grok 4.5 (OpenRouter)", "x-ai/grok-4.5", supports_vision=True),
-    _openrouter_model("openrouter-gpt-5.5", "GPT-5.5 (OpenRouter)", "openai/gpt-5.5", supports_vision=True),
-    _openrouter_model("openrouter-gpt-5.5-codex", "GPT-5.5 Codex (OpenRouter)", "openai/gpt-5.5-codex", supports_vision=True),
-    _openrouter_model("openrouter-gemini-3.5-pro", "Gemini 3.5 Pro (OpenRouter)", "google/gemini-3.5-pro", supports_vision=True),
-    _openrouter_model("openrouter-gemini-3.5-flash", "Gemini 3.5 Flash (OpenRouter)", "google/gemini-3.5-flash", supports_vision=True),
+    _openrouter_model("openrouter-gpt-5.6-sol", "GPT-5.6 Sol (OpenRouter)", "openai/gpt-5.6-sol", supports_vision=True),
+    _openrouter_model("openrouter-gpt-5.3-codex", "GPT-5.3 Codex (OpenRouter)", "openai/gpt-5.3-codex", supports_vision=True),
+    _openrouter_model("openrouter-gemini-3.6-flash", "Gemini 3.6 Flash (OpenRouter)", "google/gemini-3.6-flash", supports_vision=True),
     _openrouter_model("openrouter-llama-4-maverick", "Llama 4 Maverick (OpenRouter)", "meta-llama/llama-4-maverick", supports_vision=True, supports_thinking=False),
     _openrouter_model("openrouter-minimax-m3", "MiniMax M3 (OpenRouter)", "minimax/minimax-m3", supports_vision=True, max_tokens=16000, temperature=1.0),
     _openrouter_model("openrouter-qwen3.7-max", "Qwen3.7 Max (OpenRouter)", "qwen/qwen3.7-max"),
@@ -381,10 +413,10 @@ LLM_PROVIDERS: list[LLMProvider] = [
     LLMProvider(
         name="anthropic",
         display_name="Anthropic",
-        description="Latest Claude Fable 5, Opus 4.8, Sonnet 5 and Haiku 4.5",
+        description="Latest Claude Fable 5, Opus 5, Opus 4.8, Sonnet 5 and Haiku 4.5",
         use="langchain_anthropic:ChatAnthropic",
-        models=["claude-fable-5", "claude-opus-4-8", "claude-sonnet-5", "claude-haiku-4-5"],
-        default_model="claude-opus-4-8",
+        models=["claude-fable-5", "claude-opus-5", "claude-opus-4-8", "claude-sonnet-5", "claude-haiku-4-5"],
+        default_model="claude-opus-5",
         env_var="ANTHROPIC_API_KEY",
         package="langchain-anthropic",
         extra_config={
@@ -590,7 +622,7 @@ LLM_PROVIDERS: list[LLMProvider] = [
     LLMProvider(
         name="openrouter",
         display_name="OpenRouter",
-        description="One key: Claude Fable + xAI/OpenAI/Google flagships & open alternatives",
+        description="One key: Claude Fable/Opus 5 + xAI/OpenAI/Google flagships & open alternatives",
         use="langchain_openai:ChatOpenAI",
         models=[entry["model"] for entry in OPENROUTER_BUNDLE_MODELS],
         default_model=OPENROUTER_BUNDLE_MODELS[0]["model"],

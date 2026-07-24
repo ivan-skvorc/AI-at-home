@@ -62,10 +62,10 @@ A companion to the Ollama sync for **cloud** models. `scripts/sync-api-key-model
 
 | `.env` key present | Models enabled | Provider / `use` |
 | --- | --- | --- |
-| `ANTHROPIC_API_KEY` | Claude **Fable 5**, **Opus 4.8**, **Sonnet 5**, **Haiku 4.5** | direct Anthropic API (`langchain_anthropic:ChatAnthropic`) |
-| `OPENROUTER_API_KEY` | Claude **Fable 5**, **Grok 4.5**, **GPT-5.5**, **GPT-5.5 Codex**, **Gemini 3.5 Pro**, **Gemini 3.5 Flash**, **Llama 4 Maverick**, **MiniMax M3**, **Qwen3.7 Max**, **Kimi K3**, **Mistral Large 3**, **DeepSeek V4 Pro**, **GLM-5.2**, **Nemotron 3 Ultra** | OpenRouter (`langchain_openai:ChatOpenAI` + `base_url`) |
+| `ANTHROPIC_API_KEY` | Claude **Fable 5**, **Opus 5**, **Opus 4.8**, **Sonnet 5**, **Haiku 4.5** | direct Anthropic API (`langchain_anthropic:ChatAnthropic`) |
+| `OPENROUTER_API_KEY` | Claude **Fable 5**, Claude **Opus 5**, **Grok 4.5**, **GPT-5.6 Sol**, **GPT-5.3 Codex**, **Gemini 3.6 Flash**, **Llama 4 Maverick**, **MiniMax M3**, **Qwen3.7 Max**, **Kimi K3**, **Mistral Large 3**, **DeepSeek V4 Pro**, **GLM-5.2**, **Nemotron 3 Ultra** | OpenRouter (`langchain_openai:ChatOpenAI` + `base_url`) |
 
-Both keys present enables both blocks (Fable appears twice — once direct, once via OpenRouter — under distinct `name:`s). The four latest Claude models use adaptive thinking (Haiku takes an explicit budget); every entry ships `supports_thinking: true` so DeerFlow's thinking toggle actually engages.
+Both keys present enables both blocks (Fable and Opus 5 each appear twice — once direct, once via OpenRouter — under distinct `name:`s). The four newest Claude models (Fable 5, Opus 5, Opus 4.8, Sonnet 5) use adaptive thinking (Haiku takes an explicit budget); every entry ships `supports_thinking: true` so DeerFlow's thinking toggle actually engages.
 
 **Bounded and idempotent — safe on a hand-edited config.** The script owns only the model entries between a provider's `# === BEGIN auto-model-config: <provider> ===` / `# === END … ===` markers in `config.yaml` (shipped in `config.example.yaml`, so `make config` copies them in). It:
 
