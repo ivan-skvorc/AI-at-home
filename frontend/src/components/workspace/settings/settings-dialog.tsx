@@ -7,6 +7,7 @@ import {
   BrainIcon,
   LightbulbIcon,
   PaletteIcon,
+  PlugZapIcon,
   SparklesIcon,
   UserIcon,
   WrenchIcon,
@@ -24,6 +25,7 @@ import { AboutSettingsPage } from "@/components/workspace/settings/about-setting
 import { AccountSettingsPage } from "@/components/workspace/settings/account-settings-page";
 import { AppearanceSettingsPage } from "@/components/workspace/settings/appearance-settings-page";
 import { ChannelsSettingsPage } from "@/components/workspace/settings/channels-settings-page";
+import { IntegrationsSettingsPage } from "@/components/workspace/settings/integrations-settings-page";
 import { MemorySettingsPage } from "@/components/workspace/settings/memory-settings-page";
 import { NotificationSettingsPage } from "@/components/workspace/settings/notification-settings-page";
 import { SkillSettingsPage } from "@/components/workspace/settings/skill-settings-page";
@@ -32,10 +34,11 @@ import { ToolSettingsPage } from "@/components/workspace/settings/tool-settings-
 import { useI18n } from "@/core/i18n/hooks";
 import { cn } from "@/lib/utils";
 
-type SettingsSection =
+export type SettingsSection =
   | "account"
   | "appearance"
   | "channels"
+  | "integrations"
   | "memory"
   | "tools"
   | "skills"
@@ -89,6 +92,11 @@ export function SettingsDialog(props: SettingsDialogProps) {
         icon: CableIcon,
       },
       {
+        id: "integrations",
+        label: t.settings.sections.integrations,
+        icon: PlugZapIcon,
+      },
+      {
         id: "memory",
         label: t.settings.sections.memory,
         icon: BrainIcon,
@@ -101,6 +109,7 @@ export function SettingsDialog(props: SettingsDialogProps) {
       t.settings.sections.account,
       t.settings.sections.appearance,
       t.settings.sections.channels,
+      t.settings.sections.integrations,
       t.settings.sections.memory,
       t.settings.sections.tools,
       t.settings.sections.skills,
@@ -163,6 +172,7 @@ export function SettingsDialog(props: SettingsDialogProps) {
               {activeSection === "notification" && <NotificationSettingsPage />}
               {activeSection === "suggestions" && <SuggestionsSettingsPage />}
               {activeSection === "channels" && <ChannelsSettingsPage />}
+              {activeSection === "integrations" && <IntegrationsSettingsPage />}
               {activeSection === "about" && <AboutSettingsPage />}
             </div>
           </ScrollArea>

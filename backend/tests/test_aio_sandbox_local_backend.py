@@ -476,3 +476,44 @@ def test_start_container_no_extra_ports_or_caps_by_default(monkeypatch):
     # Only the single sandbox API port is published; no --cap-add flags.
     assert len(_pairs(captured_cmd, "-p")) == 1
     assert "--cap-add" not in captured_cmd
+
+
+def test_stop_container_passes_a_timeout(monkeypatch):
+    """An unbounded `stop` can outlive the teardown lease that guards it.
+
+    The `del:` marker keeps a peer from re-acquiring the container during the
+    stop, but a lease can lapse (a store outage longer than the TTL) while a
+    wedged daemon leaves `docker stop` blocked forever — and the stop then lands
+    on a container the peer has since been handed. Bounding the call caps that
+    exposure independently of the ownership layer.
+    """
+    backend = _backend_for_inspect_tests()
+    seen = {}
+
+    def fake_run(cmd, **kwargs):
+        seen.update(kwargs)
+        return SimpleNamespace(stdout="", stderr="", returncode=0)
+
+    monkeypatch.setattr("subprocess.run", fake_run)
+    backend._stop_container("sandbox-slow")
+
+    assert seen.get("timeout") == backend._STOP_TIMEOUT_SECONDS
+
+
+def test_stop_container_propagates_a_timeout_instead_of_reporting_success(monkeypatch):
+    """A timed-out stop must not be swallowed like a failed one.
+
+    `CalledProcessError` means the runtime answered "I could not stop it"; a
+    timeout means we do not know, and the container is probably still running.
+    Returning normally would let `_destroy_warm_entry` report a clean stop and
+    drop the warm entry, leaking a running container nothing tracks.
+    """
+    backend = _backend_for_inspect_tests()
+
+    def fake_run(cmd, **kwargs):
+        raise subprocess.TimeoutExpired(cmd=cmd, timeout=kwargs["timeout"])
+
+    monkeypatch.setattr("subprocess.run", fake_run)
+
+    with pytest.raises(subprocess.TimeoutExpired):
+        backend._stop_container("sandbox-wedged")

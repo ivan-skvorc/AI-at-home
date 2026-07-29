@@ -21,9 +21,14 @@ import { useReducedMotion } from "@/core/appearance";
 import { useI18n } from "@/core/i18n/hooks";
 import { hasToolCalls } from "@/core/messages/utils";
 import { useModels } from "@/core/models/hooks";
-import { useRehypeSplitWordsIntoSpans } from "@/core/rehype";
-import { streamdownPluginsWithWordAnimation } from "@/core/streamdown";
-import { SafeStreamdown } from "@/core/streamdown/components";
+import {
+  streamdownPluginsWithoutRawHtml,
+  streamdownWordAnimation,
+} from "@/core/streamdown";
+import {
+  SafeStreamdown,
+  toStreamdownComponents,
+} from "@/core/streamdown/components";
 import { fetchSubtaskSteps } from "@/core/tasks/api";
 import { useSubtask, useUpdateSubtask } from "@/core/tasks/context";
 import {
@@ -55,7 +60,6 @@ export function SubtaskCard({
   const { t } = useI18n();
   const [collapsed, setCollapsed] = useState(true);
   const reduceMotion = useReducedMotion();
-  const rehypePlugins = useRehypeSplitWordsIntoSpans(isLoading);
   const task = useSubtask(taskId)!;
   const { models, tokenUsageEnabled } = useModels();
   const updateSubtask = useUpdateSubtask();
@@ -197,8 +201,10 @@ export function SubtaskCard({
             <ChainOfThoughtStep
               label={
                 <SafeStreamdown
-                  {...streamdownPluginsWithWordAnimation}
-                  components={{ a: CitationLink }}
+                  {...streamdownPluginsWithoutRawHtml}
+                  animated={streamdownWordAnimation}
+                  components={toStreamdownComponents({ a: CitationLink })}
+                  isAnimating={isLoading}
                 >
                   {task.prompt}
                 </SafeStreamdown>
@@ -223,11 +229,7 @@ export function SubtaskCard({
                     (step.tool_name ?? t.subtasks[task.status])
                   ) : (
                     <div className="text-muted-foreground line-clamp-3 text-sm">
-                      <MarkdownContent
-                        content={step.text}
-                        isLoading={false}
-                        rehypePlugins={rehypePlugins}
-                      />
+                      <MarkdownContent content={step.text} isLoading={false} />
                     </div>
                   )
                 }
@@ -244,11 +246,7 @@ export function SubtaskCard({
               <ChainOfThoughtStep
                 label={
                   task.result ? (
-                    <MarkdownContent
-                      content={task.result}
-                      isLoading={false}
-                      rehypePlugins={rehypePlugins}
-                    />
+                    <MarkdownContent content={task.result} isLoading={false} />
                   ) : null
                 }
               ></ChainOfThoughtStep>
