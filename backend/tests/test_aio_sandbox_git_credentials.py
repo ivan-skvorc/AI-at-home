@@ -164,6 +164,9 @@ class TestResolveEnvVars:
 
 def _make_provider(environment: dict | None = None):
     """Minimal provider instance without __init__ side effects (idle checker, signals)."""
+    from deerflow.community.aio_sandbox.ownership.memory import MemoryOwnershipStore
+    from deerflow.config.sandbox_config import SandboxOwnershipConfig
+
     cls = _provider_cls()
     provider = cls.__new__(cls)
     provider._lock = threading.Lock()
@@ -175,6 +178,17 @@ def _make_provider(environment: dict | None = None):
     provider._warm_pool = {}
     provider._config = {"environment": environment or {}, "replicas": 3}
     provider._backend = MagicMock()
+    # Cross-instance ownership store state (upstream #4206): registration
+    # publishes ownership, so a minimal provider still needs these attributes.
+    provider._active_sandbox_identity = {}
+    provider._warm_pool_identity = {}
+    provider._local_teardown = set()
+    provider._acquire_epoch = {}
+    provider._acquire_epoch_counter = 0
+    provider._acquire_inflight = {}
+    provider._owner_id = "test-worker"
+    provider._ownership_config = SandboxOwnershipConfig()
+    provider._ownership = MemoryOwnershipStore(owner_id="test-worker", ttl_seconds=600)
     return provider
 
 

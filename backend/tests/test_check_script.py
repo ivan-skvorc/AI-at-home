@@ -120,11 +120,15 @@ def test_check_status_labels_corepack_fallback(monkeypatch, capsys):
     monkeypatch.setattr(
         check_script,
         "run_command",
+        # .get() (not strict lookup) so the fork's optional Docker diagnostics —
+        # which call run_command(["docker", ...]) from main() — resolve to None
+        # (the "Docker not fully available" path) instead of raising KeyError.
+        # This test only asserts the pnpm/corepack label.
         lambda command: {
             "node": "v22.0.0",
             "uv": "uv 0.11.31",
             "nginx": "nginx/1.31.3",
-        }[command[0]],
+        }.get(command[0]),
     )
     monkeypatch.setattr(
         check_script,
