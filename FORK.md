@@ -98,6 +98,8 @@ python3 scripts/sync-api-key-models.py --config config.yaml --env-file .env --ve
 
 Model ids current as of 2026-07 — edit the block in `config.example.yaml` (or `config.yaml` after it is enabled) to add, drop, or re-slug models.
 
+**The bundled model list is a living list — keep it current.** Providers ship, rename, retire, and re-price models faster than upstream DeerFlow moves, so treat the roster as something to revisit periodically, not a one-time setup. Three things stay honest on each pass — *which* models are bundled, their *format/settings*, and their *pricing* — and each has its own criteria below, gathered into a single periodic checklist in *Auditing the model list*.
+
 #### Which models to keep in the bundle
 
 The shipped set is deliberately a curated "big names" list, not a catalog dump. When refreshing it, keep to this shape:
@@ -118,6 +120,34 @@ Provider APIs change model IDs and request-shape rules faster than upstream Deer
 - **`supports_thinking: true` is load-bearing** — without it DeerFlow silently runs the model in non-thinking mode even with the UI toggle on.
 - **Pricing (optional) uses one currency** — the console cost display sums across models, so every `pricing:` block must share a currency; mixed currencies disable the feature. Prices are per 1M tokens (`input_per_million` / `output_per_million`, optional `input_cache_hit_per_million`). The shipped Anthropic entries carry USD list prices as a worked example.
 - **Regression-test the change** — `python3 scripts/sync-api-key-models.py --dry-run` must still uncomment the block cleanly, and `cd backend && uv run pytest tests/test_sync_api_key_models.py tests/test_config_integrity.py` must stay green.
+
+#### The machine-readable `pricing:` block — how to write pricing in `config.yaml`
+
+Beyond the price-in-the-name signal below, a model entry can carry an optional **`pricing:` block**. This is the machine-readable price the workspace **console cost display** actually bills runs against (the name is just a human glance). Write it as a child of the model entry in `config.yaml` (or the `config.example.yaml` marker block that seeds it):
+
+```yaml
+models:
+  - name: Claude Opus 4.8 ($5/25) (Anthropic)
+    use: langchain_anthropic:ChatAnthropic
+    model: claude-opus-4-8
+    max_tokens: 8192
+    supports_thinking: true
+    # ...other per-model settings...
+    pricing:                        # optional; powers the console real-cost display
+      currency: USD                 # ISO code (USD, CNY, ...); see the one-currency rule below
+      input_per_million: 5.0        # price per 1M input tokens (cache MISS)
+      output_per_million: 25.0      # price per 1M output tokens
+      input_cache_hit_per_million: 0.5  # optional; prompt-cache reads ≈ 0.1x input
+```
+
+The logic that block feeds, and the rules for writing it:
+
+- **Prices are per 1,000,000 tokens**, in the stated `currency`. `input_per_million` is the cache-*miss* input price; `output_per_million` is the output price.
+- **`input_cache_hit_per_million` is optional.** Prompt-cache-hit input tokens are billed at this rate; **omit it and cache hits fall back to the miss price** (`input_per_million`) — a deliberate conservative upper bound. For Anthropic, cache reads run ≈ 0.1× the input price, so `input/10` is the right figure. The console is cache-aware: it reads each run's `token_usage_by_model` input/output split plus accumulated `cache_read` tokens and prices them separately.
+- **One currency across every priced model.** The console sums cost across models, so a mix of currencies is meaningless — if two priced models declare different `currency` values, cost reporting is **disabled entirely** (the cost/currency fields go null) rather than producing an invalid total. Pick one currency and price every `pricing:` block in it.
+- **Pricing is optional and additive.** A model with no `pricing:` block yields `cost: null` (it just doesn't contribute to the total); when *no* model is priced, the console omits cost columns. `ModelConfig` is `extra="allow"`, so adding the block needs no schema change.
+- **What ships priced.** Only the direct-Anthropic bundle carries real `pricing:` blocks (USD list prices) as the worked example — see the `# === BEGIN auto-model-config: anthropic ===` block in `config.example.yaml`. Add blocks to other entries by following the same rules; keep them **exact** (unlike the rounded price-in-the-name), since this is what bills.
+- **Keep it current with the roster.** The `pricing:` block is part of the same living bundle as the model list — refresh it on the same cadence as slugs and thinking config (see *Auditing the model list* below), reading each figure off the provider's own model page, never from memory.
 
 #### Price signal in the display name
 
