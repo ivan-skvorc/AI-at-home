@@ -119,6 +119,17 @@ Provider APIs change model IDs and request-shape rules faster than upstream Deer
 - **Pricing (optional) uses one currency** — the console cost display sums across models, so every `pricing:` block must share a currency; mixed currencies disable the feature. Prices are per 1M tokens (`input_per_million` / `output_per_million`, optional `input_cache_hit_per_million`). The shipped Anthropic entries carry USD list prices as a worked example.
 - **Regression-test the change** — `python3 scripts/sync-api-key-models.py --dry-run` must still uncomment the block cleanly, and `cd backend && uv run pytest tests/test_sync_api_key_models.py tests/test_config_integrity.py` must stay green.
 
+#### Price signal in the display name
+
+Every bundled model's `display_name` carries its price as an `<input>/<output>` pair in USD per 1M tokens, placed before any `(OpenRouter)` suffix — e.g. `Kimi K3 3/15 (OpenRouter)` = $3 in / $15 out, `Claude Sonnet 5 3/15`. The model dropdown (`frontend/src/components/workspace/input-box.tsx`) renders `display_name`, so the pair shows up right in the picker and lets you compare cost at a glance without opening the config.
+
+Rules for keeping it honest:
+
+- **It is a rough signal, not billing truth.** Round to a clean pair; promos, prompt-cache discounts, and provider-variant routing shift the real number. The machine-readable `pricing:` block (currently the Anthropic entries) is what actually feeds the console cost display — keep that exact, keep the name approximate.
+- **Verify, never invent.** When adding or re-pricing a model, read the current figure off the provider's / OpenRouter's own model page. Do not carry a price from memory for a model past your knowledge cutoff.
+- **Refresh the pair when you re-slug or re-tier a model**, the same way you re-check the slug and thinking config above — a stale price in the name is worse than none.
+- **Keep both model sources in sync.** The price-in-name lives in two places that must match: the `config.example.yaml` marker blocks (the auto-config path) and `scripts/wizard/providers.py` (`make setup`). Edit both, or a user gets prices on one path and bare names on the other.
+
 ### 3. Per-thread subagent model override (Ultra mode)
 
 A second model selector appears next to the lead-model picker when **Ultra mode** (subagents enabled) is active. Default is "Follow lead" (subagents inherit the lead model, identical to upstream behavior). Pick anything else and `task` tool delegations route to that model instead.

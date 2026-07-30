@@ -175,7 +175,7 @@ ANTHROPIC_THINKING_CONFIG = ANTHROPIC_BUDGET_THINKING_CONFIG
 ANTHROPIC_BUNDLE_MODELS: list[dict] = [
     {
         "name": "claude-fable-5",
-        "display_name": "Claude Fable 5",
+        "display_name": "Claude Fable 5 10/50",
         "use": "langchain_anthropic:ChatAnthropic",
         "model": "claude-fable-5",
         "api_key": "$ANTHROPIC_API_KEY",
@@ -187,7 +187,7 @@ ANTHROPIC_BUNDLE_MODELS: list[dict] = [
     },
     {
         "name": "claude-opus-5",
-        "display_name": "Claude Opus 5",
+        "display_name": "Claude Opus 5 5/25",
         "use": "langchain_anthropic:ChatAnthropic",
         "model": "claude-opus-5",
         "api_key": "$ANTHROPIC_API_KEY",
@@ -199,7 +199,7 @@ ANTHROPIC_BUNDLE_MODELS: list[dict] = [
     },
     {
         "name": "claude-opus-4-8",
-        "display_name": "Claude Opus 4.8",
+        "display_name": "Claude Opus 4.8 5/25",
         "use": "langchain_anthropic:ChatAnthropic",
         "model": "claude-opus-4-8",
         "api_key": "$ANTHROPIC_API_KEY",
@@ -211,7 +211,7 @@ ANTHROPIC_BUNDLE_MODELS: list[dict] = [
     },
     {
         "name": "claude-sonnet-5",
-        "display_name": "Claude Sonnet 5",
+        "display_name": "Claude Sonnet 5 3/15",
         "use": "langchain_anthropic:ChatAnthropic",
         "model": "claude-sonnet-5",
         "api_key": "$ANTHROPIC_API_KEY",
@@ -223,7 +223,7 @@ ANTHROPIC_BUNDLE_MODELS: list[dict] = [
     },
     {
         "name": "claude-haiku-4-5",
-        "display_name": "Claude Haiku 4.5",
+        "display_name": "Claude Haiku 4.5 1/5",
         "use": "langchain_anthropic:ChatAnthropic",
         "model": "claude-haiku-4-5",
         "api_key": "$ANTHROPIC_API_KEY",
@@ -281,20 +281,20 @@ def _openrouter_model(
 #     `gemini-3.1-pro-preview`, which 3.5+ Flash already beats on coding, agentic
 #     work and tool use — so the Gemini slot is one Flash entry, upgraded to 3.6.
 OPENROUTER_BUNDLE_MODELS: list[dict] = [
-    _openrouter_model("openrouter-fable-5", "Claude Fable 5 (OpenRouter)", "anthropic/claude-fable-5", supports_vision=True),
-    _openrouter_model("openrouter-opus-5", "Claude Opus 5 (OpenRouter)", "anthropic/claude-opus-5", supports_vision=True),
-    _openrouter_model("openrouter-grok-4.5", "Grok 4.5 (OpenRouter)", "x-ai/grok-4.5", supports_vision=True),
-    _openrouter_model("openrouter-gpt-5.6-sol", "GPT-5.6 Sol (OpenRouter)", "openai/gpt-5.6-sol", supports_vision=True),
-    _openrouter_model("openrouter-gpt-5.3-codex", "GPT-5.3 Codex (OpenRouter)", "openai/gpt-5.3-codex", supports_vision=True),
-    _openrouter_model("openrouter-gemini-3.6-flash", "Gemini 3.6 Flash (OpenRouter)", "google/gemini-3.6-flash", supports_vision=True),
-    _openrouter_model("openrouter-llama-4-maverick", "Llama 4 Maverick (OpenRouter)", "meta-llama/llama-4-maverick", supports_vision=True, supports_thinking=False),
-    _openrouter_model("openrouter-minimax-m3", "MiniMax M3 (OpenRouter)", "minimax/minimax-m3", supports_vision=True, max_tokens=16000, temperature=1.0),
-    _openrouter_model("openrouter-qwen3.7-max", "Qwen3.7 Max (OpenRouter)", "qwen/qwen3.7-max"),
-    _openrouter_model("openrouter-kimi-k3", "Kimi K3 (OpenRouter)", "moonshotai/kimi-k3", supports_vision=True),
-    _openrouter_model("openrouter-mistral-large-3", "Mistral Large 3 (OpenRouter)", "mistralai/mistral-large-2512", supports_vision=True, supports_thinking=False),
-    _openrouter_model("openrouter-deepseek-v4-pro", "DeepSeek V4 Pro (OpenRouter)", "deepseek/deepseek-v4-pro"),
-    _openrouter_model("openrouter-glm-5.2", "GLM-5.2 (OpenRouter)", "z-ai/glm-5.2", max_tokens=16000),
-    _openrouter_model("openrouter-nemotron-3-ultra", "Nemotron 3 Ultra (OpenRouter)", "nvidia/nemotron-3-ultra-550b-a55b", max_tokens=16000),
+    _openrouter_model("openrouter-fable-5", "Claude Fable 5 10/50 (OpenRouter)", "anthropic/claude-fable-5", supports_vision=True),
+    _openrouter_model("openrouter-opus-5", "Claude Opus 5 5/25 (OpenRouter)", "anthropic/claude-opus-5", supports_vision=True),
+    _openrouter_model("openrouter-grok-4.5", "Grok 4.5 2/6 (OpenRouter)", "x-ai/grok-4.5", supports_vision=True),
+    _openrouter_model("openrouter-gpt-5.6-sol", "GPT-5.6 Sol 5/30 (OpenRouter)", "openai/gpt-5.6-sol", supports_vision=True),
+    _openrouter_model("openrouter-gpt-5.3-codex", "GPT-5.3 Codex 1.75/14 (OpenRouter)", "openai/gpt-5.3-codex", supports_vision=True),
+    _openrouter_model("openrouter-gemini-3.6-flash", "Gemini 3.6 Flash 1.5/7.5 (OpenRouter)", "google/gemini-3.6-flash", supports_vision=True),
+    _openrouter_model("openrouter-llama-4-maverick", "Llama 4 Maverick 0.2/0.8 (OpenRouter)", "meta-llama/llama-4-maverick", supports_vision=True, supports_thinking=False),
+    _openrouter_model("openrouter-minimax-m3", "MiniMax M3 0.3/1.2 (OpenRouter)", "minimax/minimax-m3", supports_vision=True, max_tokens=16000, temperature=1.0),
+    _openrouter_model("openrouter-qwen3.7-max", "Qwen3.7 Max 1.5/4.4 (OpenRouter)", "qwen/qwen3.7-max"),
+    _openrouter_model("openrouter-kimi-k3", "Kimi K3 3/15 (OpenRouter)", "moonshotai/kimi-k3", supports_vision=True),
+    _openrouter_model("openrouter-mistral-large-3", "Mistral Large 3 0.5/1.5 (OpenRouter)", "mistralai/mistral-large-2512", supports_vision=True, supports_thinking=False),
+    _openrouter_model("openrouter-deepseek-v4-pro", "DeepSeek V4 Pro 0.44/0.87 (OpenRouter)", "deepseek/deepseek-v4-pro"),
+    _openrouter_model("openrouter-glm-5.2", "GLM-5.2 0.7/2.2 (OpenRouter)", "z-ai/glm-5.2", max_tokens=16000),
+    _openrouter_model("openrouter-nemotron-3-ultra", "Nemotron 3 Ultra 0.5/2.2 (OpenRouter)", "nvidia/nemotron-3-ultra-550b-a55b", max_tokens=16000),
 ]
 
 
