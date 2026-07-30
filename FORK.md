@@ -98,6 +98,38 @@ python3 scripts/sync-api-key-models.py --config config.yaml --env-file .env --ve
 
 Model ids current as of 2026-07 — edit the block in `config.example.yaml` (or `config.yaml` after it is enabled) to add, drop, or re-slug models.
 
+#### Which models to keep in the bundle
+
+The shipped set is deliberately a curated "big names" list, not a catalog dump. When refreshing it, keep to this shape:
+
+- **Anthropic (direct key):** all current Claude models — Fable 5, Opus 5, Opus 4.8, Sonnet 5, Haiku 4.5. This is the whole current lineup; add a legacy-but-active model (e.g. Opus 4.7/4.6, Sonnet 4.6) only if you specifically need to pin it.
+- **OpenRouter:** the current flagship from each major lab plus a few strong/cheaper alternates — one main entry each for **xAI** (Grok), **OpenAI** (GPT, plus the Codex agentic-coding variant), **Google** (Gemini), **DeepSeek**, **Moonshot/Kimi**, and the big Chinese open models (**Qwen**, **Zhipu/GLM**, **MiniMax**); optionally Meta (Llama), Mistral, and NVIDIA (Nemotron). Prefer one primary tier per lab; sprinkle in a cheaper/faster tier (a Flash/mini/lite variant) rather than listing every size.
+- **Cost spread:** keep at least one genuinely cheap option live (Haiku, Gemini Flash, GLM/MiniMax) so the mixed-model cost story in this doc holds in practice.
+
+Rule of thumb: one primary model per big-name lab, a couple of secondary/cheaper ones, and nothing that isn't a recognizable flagship or a deliberate budget pick. Trim aggressively — a long list dilutes the picker and the auto-config.
+
+#### Keep the model format current, and free of deprecated fields
+
+Provider APIs change model IDs and request-shape rules faster than upstream DeerFlow does, so a refresh must re-validate the *format*, not just swap names. Before committing a model-block change:
+
+- **Model IDs / slugs** — confirm each `model:` is the exact current id (Anthropic bare ids like `claude-opus-5`; OpenRouter `provider/model` slugs). A wrong or unreleased id fails at request time, not at load. When unsure of a live slug, verify against the provider's / OpenRouter's catalog rather than guessing.
+- **Thinking config matches the model family** — the adaptive Claude models (Fable 5, Opus 5, Opus 4.8, Sonnet 5) reject the old `thinking: {type: enabled, budget_tokens: N}` form with a 400; use `type: adaptive`. Only pre-adaptive models (Haiku 4.5 and older) still take `budget_tokens` (min 1024, `< max_tokens`). Fable 5 additionally rejects `type: disabled`, so its disabled state must stay on adaptive. Sampling params (`temperature`/`top_p`/`top_k`) are rejected on the newest Claude models — don't add them to those entries.
+- **No deprecated fields** — drop anything the provider has removed (e.g. `budget_tokens` on adaptive models, `output_format` in favour of `output_config.format`, retired tool-version strings). If a `supports_*` flag no longer maps to a real capability, remove it.
+- **`supports_thinking: true` is load-bearing** — without it DeerFlow silently runs the model in non-thinking mode even with the UI toggle on.
+- **Pricing (optional) uses one currency** — the console cost display sums across models, so every `pricing:` block must share a currency; mixed currencies disable the feature. Prices are per 1M tokens (`input_per_million` / `output_per_million`, optional `input_cache_hit_per_million`). The shipped Anthropic entries carry USD list prices as a worked example.
+- **Regression-test the change** — `python3 scripts/sync-api-key-models.py --dry-run` must still uncomment the block cleanly, and `cd backend && uv run pytest tests/test_sync_api_key_models.py tests/test_config_integrity.py` must stay green.
+
+#### Price signal in the display name
+
+Every bundled model's `display_name` carries its price as an `<input>/<output>` pair in USD per 1M tokens, placed before any `(OpenRouter)` suffix — e.g. `Kimi K3 3/15 (OpenRouter)` = $3 in / $15 out, `Claude Sonnet 5 3/15`. The model dropdown (`frontend/src/components/workspace/input-box.tsx`) renders `display_name`, so the pair shows up right in the picker and lets you compare cost at a glance without opening the config.
+
+Rules for keeping it honest:
+
+- **It is a rough signal, not billing truth.** Round to a clean pair; promos, prompt-cache discounts, and provider-variant routing shift the real number. The machine-readable `pricing:` block (currently the Anthropic entries) is what actually feeds the console cost display — keep that exact, keep the name approximate.
+- **Verify, never invent.** When adding or re-pricing a model, read the current figure off the provider's / OpenRouter's own model page. Do not carry a price from memory for a model past your knowledge cutoff.
+- **Refresh the pair when you re-slug or re-tier a model**, the same way you re-check the slug and thinking config above — a stale price in the name is worse than none.
+- **Keep both model sources in sync.** The price-in-name lives in two places that must match: the `config.example.yaml` marker blocks (the auto-config path) and `scripts/wizard/providers.py` (`make setup`). Edit both, or a user gets prices on one path and bare names on the other.
+
 ### 3. Per-thread subagent model override (Ultra mode)
 
 A second model selector appears next to the lead-model picker when **Ultra mode** (subagents enabled) is active. Default is "Follow lead" (subagents inherit the lead model, identical to upstream behavior). Pick anything else and `task` tool delegations route to that model instead.
