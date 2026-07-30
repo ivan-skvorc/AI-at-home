@@ -175,7 +175,7 @@ ANTHROPIC_THINKING_CONFIG = ANTHROPIC_BUDGET_THINKING_CONFIG
 ANTHROPIC_BUNDLE_MODELS: list[dict] = [
     {
         "name": "claude-fable-5",
-        "display_name": "Claude Fable 5 ($10/50)",
+        "display_name": "Claude Fable 5 ($10/50) (Anthropic)",
         "use": "langchain_anthropic:ChatAnthropic",
         "model": "claude-fable-5",
         "api_key": "$ANTHROPIC_API_KEY",
@@ -187,7 +187,7 @@ ANTHROPIC_BUNDLE_MODELS: list[dict] = [
     },
     {
         "name": "claude-opus-5",
-        "display_name": "Claude Opus 5 ($5/25)",
+        "display_name": "Claude Opus 5 ($5/25) (Anthropic)",
         "use": "langchain_anthropic:ChatAnthropic",
         "model": "claude-opus-5",
         "api_key": "$ANTHROPIC_API_KEY",
@@ -199,7 +199,7 @@ ANTHROPIC_BUNDLE_MODELS: list[dict] = [
     },
     {
         "name": "claude-opus-4-8",
-        "display_name": "Claude Opus 4.8 ($5/25)",
+        "display_name": "Claude Opus 4.8 ($5/25) (Anthropic)",
         "use": "langchain_anthropic:ChatAnthropic",
         "model": "claude-opus-4-8",
         "api_key": "$ANTHROPIC_API_KEY",
@@ -211,7 +211,7 @@ ANTHROPIC_BUNDLE_MODELS: list[dict] = [
     },
     {
         "name": "claude-sonnet-5",
-        "display_name": "Claude Sonnet 5 ($3/15)",
+        "display_name": "Claude Sonnet 5 ($3/15) (Anthropic)",
         "use": "langchain_anthropic:ChatAnthropic",
         "model": "claude-sonnet-5",
         "api_key": "$ANTHROPIC_API_KEY",
@@ -223,7 +223,7 @@ ANTHROPIC_BUNDLE_MODELS: list[dict] = [
     },
     {
         "name": "claude-haiku-4-5",
-        "display_name": "Claude Haiku 4.5 ($1/5)",
+        "display_name": "Claude Haiku 4.5 ($1/5) (Anthropic)",
         "use": "langchain_anthropic:ChatAnthropic",
         "model": "claude-haiku-4-5",
         "api_key": "$ANTHROPIC_API_KEY",

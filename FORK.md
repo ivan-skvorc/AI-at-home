@@ -121,7 +121,7 @@ Provider APIs change model IDs and request-shape rules faster than upstream Deer
 
 #### Price signal in the display name
 
-Every bundled model's `display_name` carries its price as a bracketed `($<input>/<output>)` pair in USD per 1M tokens, placed before any `(OpenRouter)`/`(p)` suffix — e.g. `Kimi K3 ($3/15) (OpenRouter) (p)` = $3 in / $15 out, `Claude Sonnet 5 ($3/15)`. The model dropdown (`frontend/src/components/workspace/input-box.tsx`) renders `display_name`, so the pair shows up right in the picker and lets you compare cost at a glance without opening the config. The `$`-prefixed bracket keeps the numbers readable next to the model name instead of running into it.
+Every bundled model's `display_name` carries its price as a bracketed `($<input>/<output>)` pair in USD per 1M tokens, placed before the source suffix — `(Anthropic)` for the direct Anthropic API or `(OpenRouter)` for OpenRouter-routed models — and any trailing `(p)` marker. E.g. `Kimi K3 ($3/15) (OpenRouter) (p)` = $3 in / $15 out, `Claude Sonnet 5 ($3/15) (Anthropic)`. The model dropdown (`frontend/src/components/workspace/input-box.tsx`) renders `display_name`, so the pair shows up right in the picker and lets you compare cost at a glance without opening the config. The `$`-prefixed bracket keeps the numbers readable next to the model name instead of running into it.
 
 Two extra markers ride on the OpenRouter entries:
 

@@ -151,7 +151,9 @@ models:
   # ══════════════════════════════════════════════════════════════════════════
 
   # ── Anthropic — auto-enabled when ANTHROPIC_API_KEY is set ─────────────────
-  # Latest Claude models via the direct Anthropic API. Fable 5, Opus 5, Opus 4.8
+  # Latest Claude models via the direct Anthropic API — their display names carry
+  # an (Anthropic) suffix, mirroring the (OpenRouter) suffix on the routed copies
+  # below. Fable 5, Opus 5, Opus 4.8
   # and Sonnet 5 use adaptive thinking (the `budget_tokens` form is rejected by
   # these models); Haiku 4.5 still takes an explicit thinking budget. Fable 5's
   # thinking is always on: it rejects an explicit `thinking: {type: disabled}` with
@@ -169,7 +171,7 @@ models:
   # you can also uncomment them by hand.
   # === BEGIN auto-model-config: anthropic (uncommented at startup when ANTHROPIC_API_KEY is set) ===
   # - name: claude-fable-5
-  #   display_name: Claude Fable 5 ($10/50)
+  #   display_name: Claude Fable 5 ($10/50) (Anthropic)
   #   use: langchain_anthropic:ChatAnthropic
   #   model: claude-fable-5
   #   api_key: $ANTHROPIC_API_KEY
@@ -193,7 +195,7 @@ models:
   #       display: summarized
   #
   # - name: claude-opus-5
-  #   display_name: Claude Opus 5 ($5/25)
+  #   display_name: Claude Opus 5 ($5/25) (Anthropic)
   #   use: langchain_anthropic:ChatAnthropic
   #   model: claude-opus-5
   #   api_key: $ANTHROPIC_API_KEY
@@ -216,7 +218,7 @@ models:
   #       type: disabled
   #
   # - name: claude-opus-4-8
-  #   display_name: Claude Opus 4.8 ($5/25)
+  #   display_name: Claude Opus 4.8 ($5/25) (Anthropic)
   #   use: langchain_anthropic:ChatAnthropic
   #   model: claude-opus-4-8
   #   api_key: $ANTHROPIC_API_KEY
@@ -239,7 +241,7 @@ models:
   #       type: disabled
   #
   # - name: claude-sonnet-5
-  #   display_name: Claude Sonnet 5 ($3/15)
+  #   display_name: Claude Sonnet 5 ($3/15) (Anthropic)
   #   use: langchain_anthropic:ChatAnthropic
   #   model: claude-sonnet-5
   #   api_key: $ANTHROPIC_API_KEY
@@ -262,7 +264,7 @@ models:
   #       type: disabled
   #
   # - name: claude-haiku-4-5
-  #   display_name: Claude Haiku 4.5 ($1/5)
+  #   display_name: Claude Haiku 4.5 ($1/5) (Anthropic)
   #   use: langchain_anthropic:ChatAnthropic
   #   model: claude-haiku-4-5
   #   api_key: $ANTHROPIC_API_KEY
