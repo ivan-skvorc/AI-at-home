@@ -37,6 +37,24 @@ if [ -f "$REPO_ROOT/.env" ]; then
     set +a
 fi
 
+# ── Fork: passwordless by default for local use ──────────────────────────────
+# This fork runs the local stack without a login wall. DEER_FLOW_AUTH_DISABLED=1
+# makes the Gateway and the Next.js SSR auth check both resolve every request to
+# the built-in `default` admin user, so the app is reachable (including from other
+# LAN devices) with no username/password. Exported here — before the gateway and
+# frontend are launched — so both child processes inherit it.
+#
+# It is opt-out, not forced: set DEER_FLOW_AUTH_DISABLED=0 in .env to restore the
+# normal email/password login. It is also self-disabling in production — the
+# backend and frontend both ignore the flag when DEER_FLOW_ENV / ENVIRONMENT is
+# `prod`/`production` (see auth_disabled.py and auth-disabled-user.ts), so a real
+# deployment that sets that variable keeps authentication on regardless.
+# Kept as a function so tests can exercise the opt-out (test_serve_auth_default.py).
+apply_default_auth_mode() {
+    export DEER_FLOW_AUTH_DISABLED="${DEER_FLOW_AUTH_DISABLED:-1}"
+}
+apply_default_auth_mode
+
 _pick_python() {
     local candidate
     for candidate in python3 python py; do
