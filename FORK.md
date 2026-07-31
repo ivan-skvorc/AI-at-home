@@ -208,6 +208,17 @@ The mechanism is upstream's own `DEER_FLOW_AUTH_DISABLED` switch, which both the
 
 `config.yaml` is unchanged; this is purely an environment default, so it ships in the fork (via `serve.sh` + the `.env.example` docs) rather than per-install.
 
+### 6. Multi-user mode toggle (combine or isolate histories)
+
+Upstream scopes every conversation to an owner `user_id`, so each login only sees its own threads. That's right for a shared deployment, but it has a sharp edge on a personal fork: once you go passwordless (§5) the effective user is always `default`, yet any conversations created back when login was on live under real account ids — so they're "stranded", invisible under `default`, and the phone and PC appear to have separate histories. **Multi-user mode** is a toggle for exactly this.
+
+- **What it does.** ON (default) = upstream behavior, per-login thread isolation. OFF = one shared workspace: thread listing and per-thread access ignore the owner filter, so **every conversation is visible regardless of which login or device created it** — including the stranded pre-passwordless ones.
+- **Where it lives.** Settings → Account, as a switch (admin-only; in passwordless mode the built-in `default` user is admin). Turning it OFF pops a confirmation explaining it will combine all histories; turning it back ON is immediate and restores isolation. It is a **server-wide** setting (not a per-browser preference) — that's what makes it actually merge phone + PC — persisted as JSON under the DeerFlow home dir (`runtime_settings.json`), read hot (no restart), never touching the operator's `config.yaml`.
+- **How it's wired.** `deerflow/config/runtime_settings.py` owns the setting plus `resolve_owner_scope()` — a read/access resolver that returns `None` (no owner filter) when the mode is OFF and otherwise defers to the normal `resolve_user_id`. The thread-metadata store (`search`/`get`/`check_access`) and run-store read helpers use it, so the sidebar lists everything and any thread can be opened/continued; `check_access` returning True covers every `owner_check` route guard in one place. **Writes still stamp the real owner**, so re-enabling isolation cleanly restores each login's own view. Gateway `GET`/`PUT /api/settings/multi-user-mode` reads/toggles it (PUT admin-gated).
+- **Security.** With it OFF, anyone who can reach the server sees all conversations — the same trust model as passwordless. Leave it ON on any shared/public deployment.
+
+Pinned by `backend/tests/test_multi_user_mode.py` (setting round-trip, owner-scope bypass, thread isolation ON vs OFF, admin-gated API) and `frontend/tests/unit/core/settings/multi-user-mode.test.ts`.
+
 ## Why mix local and cloud
 
 Each tier of model has a job it's good at. Mixing them is how you get most of the quality of frontier models at a fraction of the cost:
@@ -298,6 +309,7 @@ Then confirm each fork feature end-to-end:
 | **First-run config seeding** | `scripts/serve.sh::seed_missing_config` (and the equivalents in `deploy.sh` / `docker.sh`). |
 | **Passwordless by default** (§5) | `scripts/serve.sh::apply_default_auth_mode` exports `DEER_FLOW_AUTH_DISABLED="${DEER_FLOW_AUTH_DISABLED:-1}"` after loading `.env` (pinned by `backend/tests/test_serve_auth_default.py`); both `.env.example` files document the `=0` opt-out. Backend honors it via `auth_disabled.py`, frontend via `core/auth/auth-disabled-user.ts` (both ignore it when `DEER_FLOW_ENV`/`ENVIRONMENT` is prod). |
 | **Dev-origin defaults (§5, LAN/Tailscale)** | `frontend/src/dev-origins.js::getAllowedDevOrigins()` returns `DEFAULT_DEV_ORIGIN_PATTERNS` (private-LAN + Tailscale) merged with `DEER_FLOW_DEV_ALLOWED_ORIGINS`, unless `DEER_FLOW_DEV_ALLOWED_ORIGINS_STRICT`; wired in `next.config.js`. Pinned by `frontend/tests/unit/dev-origins.test.ts` (runs the defaults through Next's real `isCsrfOriginAllowed` matcher). |
+| **Multi-user mode toggle** (§6) | `deerflow/config/runtime_settings.py` (`is_multi_user_mode_enabled` / `set_multi_user_mode` / `resolve_owner_scope`, default ON) gates `thread_meta` `search`/`get`/`check_access` and run-store read helpers (writes keep the real owner); `GET`/`PUT /api/settings/multi-user-mode` (`app/gateway/routers/settings.py`, PUT admin-gated). Frontend toggle + confirm dialog in `account-settings-page.tsx` via `core/settings/multi-user-mode.ts`. Pinned by `backend/tests/test_multi_user_mode.py` + `frontend/tests/unit/core/settings/multi-user-mode.test.ts`. |
 
 **Integration points that tend to need a hand** (where upstream refactors collide with fork additions — check these first when tests fail): the AIO sandbox provider (upstream's cross-instance ownership store adds instance attributes that minimal test fixtures built via `__new__` must seed), the skills tool-policy path (upstream's dynamic `SkillToolPolicyMiddleware` vs. any fork static filtering — reconcile onto the middleware and drop dead build-time filters), `scripts/check.py`'s Docker diagnostics (any upstream test that mocks `run_command` with a strict dict must tolerate the extra `docker` calls), and the `task_tool.py` / `input-box.tsx` model-override plumbing.
 

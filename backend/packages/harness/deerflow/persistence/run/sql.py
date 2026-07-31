@@ -14,6 +14,7 @@ from typing import Any
 from sqlalchemy import case, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from deerflow.config.runtime_settings import resolve_owner_scope
 from deerflow.persistence.run.model import RunRow
 from deerflow.runtime.runs.store.base import (
     LeaseRenewal,
@@ -149,7 +150,7 @@ class RunRepository(RunStore):
         *,
         user_id: str | None | _AutoSentinel = AUTO,
     ):
-        resolved_user_id = resolve_user_id(user_id, method_name="RunRepository.get")
+        resolved_user_id = resolve_owner_scope(user_id, method_name="RunRepository.get")
         async with self._sf() as session:
             row = await session.get(RunRow, run_id)
             if row is None:
@@ -165,7 +166,7 @@ class RunRepository(RunStore):
         user_id: str | None | _AutoSentinel = AUTO,
         limit=100,
     ):
-        resolved_user_id = resolve_user_id(user_id, method_name="RunRepository.list_by_thread")
+        resolved_user_id = resolve_owner_scope(user_id, method_name="RunRepository.list_by_thread")
         stmt = select(RunRow).where(RunRow.thread_id == thread_id, RunRow.operation_kind == "run")
         if resolved_user_id is not None:
             stmt = stmt.where(RunRow.user_id == resolved_user_id)
@@ -180,7 +181,7 @@ class RunRepository(RunStore):
         *,
         user_id: str | None | _AutoSentinel = AUTO,
     ):
-        resolved_user_id = resolve_user_id(user_id, method_name="RunRepository.list_successful_regenerate_sources")
+        resolved_user_id = resolve_owner_scope(user_id, method_name="RunRepository.list_successful_regenerate_sources")
         source = RunRow.metadata_json["regenerate_from_run_id"].as_string()
         stmt = select(source).where(
             RunRow.thread_id == thread_id,
@@ -201,7 +202,7 @@ class RunRepository(RunStore):
         *,
         user_id: str | None | _AutoSentinel = AUTO,
     ):
-        resolved_user_id = resolve_user_id(user_id, method_name="RunRepository.list_edit_regenerate_runs")
+        resolved_user_id = resolve_owner_scope(user_id, method_name="RunRepository.list_edit_regenerate_runs")
         replay_kind = RunRow.metadata_json["replay_kind"].as_string()
         source = RunRow.metadata_json["regenerate_from_run_id"].as_string()
         stmt = select(RunRow).where(
@@ -226,7 +227,7 @@ class RunRepository(RunStore):
     ):
         if not run_ids:
             return {}
-        resolved_user_id = resolve_user_id(user_id, method_name="RunRepository.get_many_by_thread")
+        resolved_user_id = resolve_owner_scope(user_id, method_name="RunRepository.get_many_by_thread")
         stmt = select(RunRow).where(RunRow.thread_id == thread_id, RunRow.operation_kind == "run", RunRow.run_id.in_(run_ids))
         if resolved_user_id is not None:
             stmt = stmt.where(RunRow.user_id == resolved_user_id)

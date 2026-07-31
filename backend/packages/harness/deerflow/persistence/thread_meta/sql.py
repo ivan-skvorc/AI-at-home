@@ -10,6 +10,7 @@ from sqlalchemy import case, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm.attributes import flag_modified
 
+from deerflow.config.runtime_settings import is_multi_user_mode_enabled, resolve_owner_scope
 from deerflow.persistence.json_compat import json_match
 from deerflow.persistence.thread_meta.base import THREAD_PINNED_METADATA_KEY, InvalidMetadataFilterError, ThreadMetaStore
 from deerflow.persistence.thread_meta.model import ThreadMetaRow
@@ -69,7 +70,7 @@ class ThreadMetaRepository(ThreadMetaStore):
         *,
         user_id: str | None | _AutoSentinel = AUTO,
     ) -> dict | None:
-        resolved_user_id = resolve_user_id(user_id, method_name="ThreadMetaRepository.get")
+        resolved_user_id = resolve_owner_scope(user_id, method_name="ThreadMetaRepository.get")
         async with self._sf() as session:
             row = await session.get(ThreadMetaRow, thread_id)
             if row is None:
@@ -107,6 +108,11 @@ class ThreadMetaRepository(ThreadMetaStore):
                 return not require_existing
             if row.user_id is None:
                 return True
+            # Multi-user mode OFF: one shared workspace — any existing thread is
+            # accessible regardless of owner. ``require_existing`` still holds
+            # (the row must exist), so a deleted thread cannot be re-targeted.
+            if not is_multi_user_mode_enabled():
+                return True
             return row.user_id == user_id
 
     async def search(
@@ -123,7 +129,7 @@ class ThreadMetaRepository(ThreadMetaStore):
         Owner filter is enforced by default: caller must be in a user
         context. Pass ``user_id=None`` to bypass (migration/CLI).
         """
-        resolved_user_id = resolve_user_id(user_id, method_name="ThreadMetaRepository.search")
+        resolved_user_id = resolve_owner_scope(user_id, method_name="ThreadMetaRepository.search")
         pinned_order = case(
             (json_match(ThreadMetaRow.metadata_json, THREAD_PINNED_METADATA_KEY, True), 1),
             else_=0,
@@ -173,7 +179,7 @@ class ThreadMetaRepository(ThreadMetaStore):
         user_id: str | None | _AutoSentinel = AUTO,
     ) -> None:
         """Update the display_name (title) for a thread."""
-        resolved_user_id = resolve_user_id(user_id, method_name="ThreadMetaRepository.update_display_name")
+        resolved_user_id = resolve_owner_scope(user_id, method_name="ThreadMetaRepository.update_display_name")
         async with self._sf() as session:
             if not await self._check_ownership(session, thread_id, resolved_user_id):
                 return
@@ -187,7 +193,7 @@ class ThreadMetaRepository(ThreadMetaStore):
         *,
         user_id: str | None | _AutoSentinel = AUTO,
     ) -> None:
-        resolved_user_id = resolve_user_id(user_id, method_name="ThreadMetaRepository.update_status")
+        resolved_user_id = resolve_owner_scope(user_id, method_name="ThreadMetaRepository.update_status")
         async with self._sf() as session:
             if not await self._check_ownership(session, thread_id, resolved_user_id):
                 return
@@ -213,7 +219,7 @@ class ThreadMetaRepository(ThreadMetaStore):
         ``touch`` refreshes ``updated_at`` (default); pass ``touch=False`` to
         preserve recency ordering for metadata-only changes such as pin/unpin.
         """
-        resolved_user_id = resolve_user_id(user_id, method_name="ThreadMetaRepository.update_metadata")
+        resolved_user_id = resolve_owner_scope(user_id, method_name="ThreadMetaRepository.update_metadata")
         async with self._sf() as session:
             if session.get_bind().dialect.name == "sqlite":
                 # A deferred SQLite transaction does not reserve the writer
@@ -250,7 +256,7 @@ class ThreadMetaRepository(ThreadMetaStore):
         user_id: str | None | _AutoSentinel = AUTO,
     ) -> None:
         """Move a thread metadata row to ``owner_user_id``."""
-        resolved_user_id = resolve_user_id(user_id, method_name="ThreadMetaRepository.update_owner")
+        resolved_user_id = resolve_owner_scope(user_id, method_name="ThreadMetaRepository.update_owner")
         async with self._sf() as session:
             if not await self._check_ownership(session, thread_id, resolved_user_id):
                 return
@@ -263,7 +269,7 @@ class ThreadMetaRepository(ThreadMetaStore):
         *,
         user_id: str | None | _AutoSentinel = AUTO,
     ) -> None:
-        resolved_user_id = resolve_user_id(user_id, method_name="ThreadMetaRepository.delete")
+        resolved_user_id = resolve_owner_scope(user_id, method_name="ThreadMetaRepository.delete")
         async with self._sf() as session:
             row = await session.get(ThreadMetaRow, thread_id)
             if row is None:
