@@ -6,7 +6,10 @@ rs.mock("@/core/api/fetcher", () => ({
 }));
 
 import { fetch as fetcher } from "@/core/api/fetcher";
-import { getMultiUserMode, setMultiUserMode } from "@/core/settings/multi-user-mode";
+import {
+  getMultiUserMode,
+  setMultiUserMode,
+} from "@/core/settings/multi-user-mode";
 
 const mockedFetch = rs.mocked(fetcher);
 
@@ -23,12 +26,16 @@ beforeEach(() => {
 
 describe("getMultiUserMode", () => {
   test("returns true when the server reports isolation on", async () => {
-    mockedFetch.mockResolvedValueOnce(jsonResponse(200, { multi_user_mode: true }));
+    mockedFetch.mockResolvedValueOnce(
+      jsonResponse(200, { multi_user_mode: true }),
+    );
     expect(await getMultiUserMode()).toBe(true);
   });
 
   test("returns false when the server reports the shared workspace", async () => {
-    mockedFetch.mockResolvedValueOnce(jsonResponse(200, { multi_user_mode: false }));
+    mockedFetch.mockResolvedValueOnce(
+      jsonResponse(200, { multi_user_mode: false }),
+    );
     expect(await getMultiUserMode()).toBe(false);
   });
 
@@ -45,7 +52,9 @@ describe("getMultiUserMode", () => {
 
 describe("setMultiUserMode", () => {
   test("PUTs the enabled flag with CSRF headers and returns the persisted value", async () => {
-    mockedFetch.mockResolvedValueOnce(jsonResponse(200, { multi_user_mode: false }));
+    mockedFetch.mockResolvedValueOnce(
+      jsonResponse(200, { multi_user_mode: false }),
+    );
     const result = await setMultiUserMode(false);
     expect(result).toBe(false);
 

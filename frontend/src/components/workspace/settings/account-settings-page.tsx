@@ -226,8 +226,9 @@ export function AccountSettingsPage() {
               <div>
                 Keep each login&apos;s conversations separate. Turn this off to
                 combine all histories into one shared workspace — everyone who
-                can reach this server then sees every conversation, no matter how
-                they log in. Leave it on unless this is your own trusted machine.
+                can reach this server then sees every conversation, no matter
+                how they log in. Leave it on unless this is your own trusted
+                machine.
               </div>
               <div>
                 <Switch
@@ -242,8 +243,8 @@ export function AccountSettingsPage() {
         >
           {!multiUserMode ? (
             <p className="text-muted-foreground rounded-md border border-amber-200 bg-amber-50 p-3 text-sm dark:border-amber-800 dark:bg-amber-950/50">
-              Multi-user mode is off: all conversations are visible to anyone who
-              can reach this server, regardless of how they log in.
+              Multi-user mode is off: all conversations are visible to anyone
+              who can reach this server, regardless of how they log in.
             </p>
           ) : null}
         </SettingsSection>
