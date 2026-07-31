@@ -11,6 +11,7 @@ from typing import Any
 
 from langgraph.store.base import BaseStore
 
+from deerflow.config.runtime_settings import is_multi_user_mode_enabled, resolve_owner_scope
 from deerflow.persistence.thread_meta.base import THREAD_PINNED_METADATA_KEY, ThreadMetaStore
 from deerflow.runtime.user_context import AUTO, _AutoSentinel, resolve_user_id
 from deerflow.utils.time import coerce_iso, now_iso
@@ -30,7 +31,7 @@ class MemoryThreadMetaStore(ThreadMetaStore):
         method_name: str,
     ) -> dict | None:
         """Fetch a record and verify ownership. Returns a mutable copy, or None."""
-        resolved = resolve_user_id(user_id, method_name=method_name)
+        resolved = resolve_owner_scope(user_id, method_name=method_name)
         item = await self._store.aget(THREADS_NS, thread_id)
         if item is None:
             return None
@@ -82,7 +83,7 @@ class MemoryThreadMetaStore(ThreadMetaStore):
         it can mirror SQL's pinned-first ordering. Use the SQL store for
         scalable paginated I/O.
         """
-        resolved_user_id = resolve_user_id(user_id, method_name="MemoryThreadMetaStore.search")
+        resolved_user_id = resolve_owner_scope(user_id, method_name="MemoryThreadMetaStore.search")
         filter_dict: dict[str, Any] = {}
         if metadata:
             filter_dict.update(metadata)
@@ -117,6 +118,10 @@ class MemoryThreadMetaStore(ThreadMetaStore):
             return not require_existing
         record_user_id = item.value.get("user_id")
         if record_user_id is None:
+            return True
+        # Multi-user mode OFF: one shared workspace — any existing thread is
+        # accessible regardless of owner (require_existing still holds above).
+        if not is_multi_user_mode_enabled():
             return True
         return record_user_id == user_id
 
