@@ -8,7 +8,7 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from deerflow.runtime.runs.store.base import LeaseRenewal, RunStore, StatusFinalization
+from deerflow.runtime.runs.store.base import LeaseRenewal, RunStore, StatusFinalization, new_by_model_usage_entry
 
 
 class MemoryRunStore(RunStore):
@@ -211,8 +211,11 @@ class MemoryRunStore(RunStore):
             usage_by_model = r.get("token_usage_by_model") or {}
             if usage_by_model:
                 for model, usage in usage_by_model.items():
-                    entry = by_model.setdefault(model, {"tokens": 0, "runs": 0})
+                    entry = by_model.setdefault(model, new_by_model_usage_entry())
                     entry["tokens"] += usage.get("total_tokens", 0)
+                    entry["input_tokens"] += usage.get("input_tokens", 0) or 0
+                    entry["output_tokens"] += usage.get("output_tokens", 0) or 0
+                    entry["cache_read_tokens"] += usage.get("cache_read_tokens", 0) or 0
                     entry["runs"] += 1
             else:
                 # Fallback for rows written before per-model accounting landed:
@@ -220,8 +223,10 @@ class MemoryRunStore(RunStore):
                 # the legacy lead-only behavior for old data instead of
                 # silently dropping it.
                 model = r.get("model_name") or "unknown"
-                entry = by_model.setdefault(model, {"tokens": 0, "runs": 0})
+                entry = by_model.setdefault(model, new_by_model_usage_entry())
                 entry["tokens"] += r.get("total_tokens", 0)
+                entry["input_tokens"] += r.get("total_input_tokens", 0) or 0
+                entry["output_tokens"] += r.get("total_output_tokens", 0) or 0
                 entry["runs"] += 1
         return {
             "total_tokens": sum(r.get("total_tokens", 0) for r in completed),

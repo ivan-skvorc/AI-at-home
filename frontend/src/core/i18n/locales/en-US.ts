@@ -697,6 +697,13 @@ export const enUS: Translations = {
     completeTodo: (content: string) => `Complete To-do: ${content}`,
     updateTodo: (content: string) => `Update To-do: ${content}`,
     removeTodo: (content: string) => `Remove To-do: ${content}`,
+    cost: "Estimated cost",
+    costHint:
+      "Estimated from each model's price in config.yaml, per model — so subagents on a cheaper or local model are billed at their own rate. Models with no configured price (like local Ollama) count as $0, ignoring electricity. An estimate only; check your provider's billing page for the real figure.",
+    memory: "Memory",
+    suggestions: "Suggestions",
+    auxCallCount: (count: number) =>
+      count === 1 ? "1 call" : `${count} calls`,
   },
 
   // Shortcuts

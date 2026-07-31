@@ -47,7 +47,10 @@ import {
   useThreadStream,
   useThreadTokenUsage,
 } from "@/core/threads/hooks";
-import { threadTokenUsageToTokenUsage } from "@/core/threads/token-usage";
+import {
+  threadTokenUsageToCostSummary,
+  threadTokenUsageToTokenUsage,
+} from "@/core/threads/token-usage";
 import { textOfMessage } from "@/core/threads/utils";
 import { env } from "@/env";
 import { cn } from "@/lib/utils";
@@ -80,6 +83,9 @@ export default function AgentChatPage() {
     isMock,
   });
   const backendTokenUsage = threadTokenUsageToTokenUsage(threadTokenUsage.data);
+  const backendCostSummary = threadTokenUsageToCostSummary(
+    threadTokenUsage.data,
+  );
 
   const { showNotification } = useNotification();
 
@@ -279,6 +285,7 @@ export default function AgentChatPage() {
                 <TokenUsageIndicator
                   threadId={isNewThread ? undefined : threadId}
                   backendUsage={backendTokenUsage}
+                  costSummary={backendCostSummary}
                   enabled={tokenUsageEnabled}
                   messages={thread.messages}
                   pendingMessages={pendingUsageMessages}

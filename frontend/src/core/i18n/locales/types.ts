@@ -580,6 +580,11 @@ export interface Translations {
     completeTodo: (content: string) => string;
     updateTodo: (content: string) => string;
     removeTodo: (content: string) => string;
+    cost: string;
+    costHint: string;
+    memory: string;
+    suggestions: string;
+    auxCallCount: (count: number) => string;
   };
 
   // Shortcuts

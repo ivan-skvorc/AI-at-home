@@ -454,7 +454,7 @@ class TestRunRepository:
         assert agg["total_input_tokens"] == 90
         assert agg["total_output_tokens"] == 60
         assert agg["total_runs"] == 2
-        assert agg["by_model"] == {"unknown": {"tokens": 150, "runs": 2}}
+        assert agg["by_model"] == {"unknown": {"tokens": 150, "runs": 2, "input_tokens": 90, "output_tokens": 60, "cache_read_tokens": 0}}
         assert agg["by_caller"] == {
             "lead_agent": 120,
             "subagent": 25,

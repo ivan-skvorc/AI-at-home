@@ -670,6 +670,12 @@ export const zhCN: Translations = {
     completeTodo: (content: string) => `完成 To-do：${content}`,
     updateTodo: (content: string) => `更新 To-do：${content}`,
     removeTodo: (content: string) => `移除 To-do：${content}`,
+    cost: "预估费用",
+    costHint:
+      "按 config.yaml 中每个模型各自的价格估算——因此在更便宜或本地模型上运行的子代理会按其自身费率计费。未配置价格的模型（如本地 Ollama）按 $0 计（不含电费）。仅为估算值，实际以服务商账单为准。",
+    memory: "记忆",
+    suggestions: "建议",
+    auxCallCount: (count: number) => `${count} 次调用`,
   },
 
   // Shortcuts

@@ -35,11 +35,14 @@ from app.gateway.checkpoint_lineage import (
 )
 from app.gateway.deps import get_current_user, get_feedback_repo, get_run_event_store, get_run_manager, get_run_store, get_stream_bridge
 from app.gateway.pagination import trim_run_message_page
+from app.gateway.pricing import build_pricing_map, lookup_pricing, pricing_currency, token_cost
 from app.gateway.run_models import RunCreateRequest
 from app.gateway.services import build_checkpoint_state_accessor, build_thread_checkpoint_state_accessor, sse_consumer, start_run, wait_for_run_completion
 from app.gateway.utils import sanitize_log_param
 from deerflow.agents.middlewares.dynamic_context_middleware import strip_injected_user_message_id_suffix
+from deerflow.config import get_app_config
 from deerflow.runtime import CancelOutcome, RunRecord, RunStatus, serialize_channel_values_for_api
+from deerflow.runtime.aux_usage import get_thread_aux_usage
 from deerflow.runtime.secret_context import redact_config_secrets, redact_metadata_secrets
 from deerflow.utils.messages import ORIGINAL_USER_CONTENT_KEY, get_original_user_content_text, message_to_text
 from deerflow.workspace_changes import get_workspace_changes_response
@@ -172,12 +175,30 @@ class ThreadTokenUsageModelBreakdown(BaseModel):
         default=0,
         description="Number of runs in which this model appeared; counts are non-exclusive for runs that used multiple models.",
     )
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cache_read_tokens: int = Field(default=0, description="Prompt-cache-hit input tokens attributed to this model")
+    cost: float | None = Field(default=None, description="Estimated spend for this model; null when unpriced")
 
 
 class ThreadTokenUsageCallerBreakdown(BaseModel):
     lead_agent: int = 0
     subagent: int = 0
     middleware: int = 0
+
+
+class ThreadTokenUsageAuxBreakdown(BaseModel):
+    """Tokens/cost for an auxiliary LLM sink (memory extraction, suggestions).
+
+    These calls never become graph runs, so they are tracked in a separate
+    process-local counter and reported here alongside the durable run totals.
+    """
+
+    tokens: int = 0
+    input_tokens: int = 0
+    output_tokens: int = 0
+    calls: int = 0
+    cost: float | None = Field(default=None, description="Estimated spend for this sink; null when its models are unpriced")
 
 
 class ThreadTokenUsageResponse(BaseModel):
@@ -188,6 +209,13 @@ class ThreadTokenUsageResponse(BaseModel):
     total_runs: int = 0
     by_model: dict[str, ThreadTokenUsageModelBreakdown] = Field(default_factory=dict)
     by_caller: ThreadTokenUsageCallerBreakdown = Field(default_factory=ThreadTokenUsageCallerBreakdown)
+    # Real-cost estimate from ``models[*].pricing`` (fork feature). ``total_cost``
+    # covers the run totals only; ``aux`` sinks (memory/suggestions) are priced
+    # and reported separately so the sidebar can show one counter each. Both are
+    # null when no pricing is configured or priced models mix currencies.
+    total_cost: float | None = None
+    currency: str | None = None
+    aux: dict[str, ThreadTokenUsageAuxBreakdown] = Field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
@@ -1446,6 +1474,16 @@ async def get_run_workspace_changes(
     )
 
 
+def _thread_pricing_map() -> dict:
+    """Per-model prices from ``models[*].pricing``; ``{}`` disables cost display."""
+    try:
+        models = get_app_config().models
+    except Exception:  # pragma: no cover - defensive: cost display must not break token usage
+        logger.warning("thread token-usage: failed to load model pricing from config", exc_info=True)
+        return {}
+    return build_pricing_map(models, logger=logger)
+
+
 @router.get("/{thread_id}/token-usage", response_model=ThreadTokenUsageResponse)
 @require_permission("threads", "read", owner_check=True)
 async def thread_token_usage(
@@ -1453,10 +1491,72 @@ async def thread_token_usage(
     request: Request,
     include_active: bool = Query(default=False, description="Include running run progress snapshots"),
 ) -> ThreadTokenUsageResponse:
-    """Thread-level token usage aggregation."""
+    """Thread-level token usage aggregation, with a real-cost overview.
+
+    Costs come from ``models[*].pricing`` and are model-aware: each run's
+    per-model token split is priced by that model's own rate, so subagents on a
+    cheaper/local model are billed correctly. Unpriced models (e.g. local
+    Ollama) contribute nothing — assumed free despite real electricity cost. The
+    memory-extraction and follow-up-suggestion LLM calls are tracked separately
+    (they are never graph runs) and reported under ``aux``.
+    """
     run_store = get_run_store(request)
-    if include_active:
-        agg = await run_store.aggregate_tokens_by_thread(thread_id, include_active=True)
-    else:
-        agg = await run_store.aggregate_tokens_by_thread(thread_id)
-    return ThreadTokenUsageResponse(thread_id=thread_id, **agg)
+    agg = await run_store.aggregate_tokens_by_thread(thread_id, include_active=include_active)
+
+    pricing = _thread_pricing_map()
+    currency = pricing_currency(pricing)
+
+    total_cost: float | None = None
+    by_model: dict[str, ThreadTokenUsageModelBreakdown] = {}
+    for model, entry in (agg.get("by_model") or {}).items():
+        input_tokens = int(entry.get("input_tokens") or 0)
+        output_tokens = int(entry.get("output_tokens") or 0)
+        cache_read = int(entry.get("cache_read_tokens") or 0)
+        price = lookup_pricing(pricing, model)
+        model_cost: float | None = None
+        if price is not None and (input_tokens or output_tokens):
+            model_cost = round(token_cost(input_tokens, output_tokens, price, cache_read), 6)
+            total_cost = round((total_cost or 0.0) + model_cost, 6)
+        by_model[model] = ThreadTokenUsageModelBreakdown(
+            tokens=int(entry.get("tokens") or 0),
+            runs=int(entry.get("runs") or 0),
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            cache_read_tokens=cache_read,
+            cost=model_cost,
+        )
+
+    aux: dict[str, ThreadTokenUsageAuxBreakdown] = {}
+    for category, models in get_thread_aux_usage(thread_id).items():
+        tokens = input_tokens = output_tokens = calls = 0
+        cat_cost: float | None = None
+        for model, totals in models.items():
+            m_input = int(totals.get("input_tokens") or 0)
+            m_output = int(totals.get("output_tokens") or 0)
+            tokens += int(totals.get("total_tokens") or 0)
+            input_tokens += m_input
+            output_tokens += m_output
+            calls += int(totals.get("calls") or 0)
+            price = lookup_pricing(pricing, model)
+            if price is not None and (m_input or m_output):
+                cat_cost = round((cat_cost or 0.0) + token_cost(m_input, m_output, price, int(totals.get("cache_read_tokens") or 0)), 6)
+        aux[category] = ThreadTokenUsageAuxBreakdown(
+            tokens=tokens,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            calls=calls,
+            cost=cat_cost,
+        )
+
+    return ThreadTokenUsageResponse(
+        thread_id=thread_id,
+        total_tokens=agg.get("total_tokens", 0),
+        total_input_tokens=agg.get("total_input_tokens", 0),
+        total_output_tokens=agg.get("total_output_tokens", 0),
+        total_runs=agg.get("total_runs", 0),
+        by_model=by_model,
+        by_caller=ThreadTokenUsageCallerBreakdown(**(agg.get("by_caller") or {})),
+        total_cost=total_cost,
+        currency=currency,
+        aux=aux,
+    )

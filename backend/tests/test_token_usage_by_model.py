@@ -339,13 +339,15 @@ def _assert_aggregate_shape(agg: dict) -> None:
     }
     # The core fix: subagent / middleware models show up in by_model with their
     # real tokens; the lead-model bucket is NOT inflated with subagent tokens.
-    assert agg["by_model"]["lead-model"] == {"tokens": 100, "runs": 1}
-    assert agg["by_model"]["subagent-model"] == {"tokens": 150, "runs": 1}
-    assert agg["by_model"]["middleware-model"] == {"tokens": 50, "runs": 1}
-    assert agg["by_model"]["lead-model-b"] == {"tokens": 80, "runs": 1}
+    # The per-model input/output/cache split powers the sidebar cost overview.
+    assert agg["by_model"]["lead-model"] == {"tokens": 100, "runs": 1, "input_tokens": 60, "output_tokens": 40, "cache_read_tokens": 0}
+    assert agg["by_model"]["subagent-model"] == {"tokens": 150, "runs": 1, "input_tokens": 90, "output_tokens": 60, "cache_read_tokens": 0}
+    assert agg["by_model"]["middleware-model"] == {"tokens": 50, "runs": 1, "input_tokens": 30, "output_tokens": 20, "cache_read_tokens": 0}
+    assert agg["by_model"]["lead-model-b"] == {"tokens": 80, "runs": 1, "input_tokens": 50, "output_tokens": 30, "cache_read_tokens": 0}
     # Legacy fallback path — empty token_usage_by_model maps to the row's
-    # ``model_name`` with the full total_tokens.
-    assert agg["by_model"]["legacy-model"] == {"tokens": 42, "runs": 1}
+    # ``model_name`` with the full total_tokens (input/output from run totals,
+    # which are 0 in this fixture).
+    assert agg["by_model"]["legacy-model"] == {"tokens": 42, "runs": 1, "input_tokens": 0, "output_tokens": 0, "cache_read_tokens": 0}
     # Invariant from issue #3645.
     assert sum(b["tokens"] for b in agg["by_model"].values()) == agg["total_tokens"]
 
@@ -425,7 +427,7 @@ async def test_include_active_picks_up_running_progress_snapshot(tmp_path):
 
         active = await repo.aggregate_tokens_by_thread(_THREAD, include_active=True)
         assert active["total_runs"] == 1
-        assert active["by_model"] == {"lead-model": {"tokens": 70, "runs": 1}}
+        assert active["by_model"] == {"lead-model": {"tokens": 70, "runs": 1, "input_tokens": 40, "output_tokens": 30, "cache_read_tokens": 0}}
         assert active["total_tokens"] == 70
     finally:
         await _close_sql_engine()

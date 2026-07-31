@@ -67,16 +67,39 @@ export interface RunMessage {
   created_at: string;
 }
 
+export interface ThreadTokenUsageModelBreakdown {
+  tokens: number;
+  runs: number;
+  input_tokens?: number;
+  output_tokens?: number;
+  cache_read_tokens?: number;
+  cost?: number | null;
+}
+
+export interface ThreadTokenUsageAuxBreakdown {
+  tokens: number;
+  input_tokens: number;
+  output_tokens: number;
+  calls: number;
+  cost?: number | null;
+}
+
 export interface ThreadTokenUsageResponse {
   thread_id: string;
   total_tokens: number;
   total_input_tokens: number;
   total_output_tokens: number;
   total_runs: number;
-  by_model: Record<string, { tokens: number; runs: number }>;
+  by_model: Record<string, ThreadTokenUsageModelBreakdown>;
   by_caller: {
     lead_agent: number;
     subagent: number;
     middleware: number;
   };
+  // Real-cost overview (fork feature). Null when no models[*].pricing is
+  // configured or priced models mix currencies. `aux` holds the separate
+  // memory / suggestions counters keyed by category.
+  total_cost?: number | null;
+  currency?: string | null;
+  aux?: Record<string, ThreadTokenUsageAuxBreakdown>;
 }

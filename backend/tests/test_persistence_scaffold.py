@@ -228,7 +228,7 @@ class TestMemoryRunStore:
         agg = await store.aggregate_tokens_by_thread("t1")
         assert agg["total_tokens"] == 120  # the other thread's run is excluded
         assert agg["total_runs"] == 2
-        assert agg["by_model"]["m-a"] == {"tokens": 120, "runs": 2}
+        assert agg["by_model"]["m-a"] == {"tokens": 120, "runs": 2, "input_tokens": 0, "output_tokens": 0, "cache_read_tokens": 0}
         assert "m-b" not in agg["by_model"]
 
     @pytest.mark.anyio
