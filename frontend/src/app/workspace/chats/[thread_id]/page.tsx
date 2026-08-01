@@ -13,6 +13,7 @@ import {
   useSpecificChatMode,
   useThreadChat,
 } from "@/components/workspace/chats";
+import { ContextUsageBadge } from "@/components/workspace/context-usage-badge";
 import { ExportTrigger } from "@/components/workspace/export-trigger";
 import { GoalStatus } from "@/components/workspace/goal-status";
 import {
@@ -53,6 +54,7 @@ import {
   useThreadTokenUsage,
 } from "@/core/threads/hooks";
 import {
+  selectContextUsage,
   threadTokenUsageToCostSummary,
   threadTokenUsageToTokenUsage,
 } from "@/core/threads/token-usage";
@@ -77,7 +79,7 @@ export default function ChatPage() {
   const { tokenUsageEnabled } = useModels();
   const threadTokenUsage = useThreadTokenUsage(
     isNewThread || isMock ? undefined : threadId,
-    { enabled: tokenUsageEnabled && !isMock },
+    { enabled: !isMock },
   );
   const threadMetadata = useThreadMetadata(threadId, {
     enabled: !isNewThread && !isMock,
@@ -88,6 +90,7 @@ export default function ChatPage() {
   const backendCostSummary = threadTokenUsageToCostSummary(
     threadTokenUsage.data,
   );
+  const contextUsage = selectContextUsage(threadTokenUsage.data);
   const mountedRef = useRef(false);
   useSpecificChatMode();
 
@@ -294,18 +297,23 @@ export default function ChatPage() {
                 {!isNewThread && (
                   <ThreadScheduledTasksLink threadId={threadId} />
                 )}
-                <TokenUsageIndicator
-                  threadId={isNewThread ? undefined : threadId}
-                  backendUsage={backendTokenUsage}
-                  costSummary={backendCostSummary}
-                  enabled={tokenUsageEnabled}
-                  messages={thread.messages}
-                  pendingMessages={pendingUsageMessages}
-                  preferences={localSettings.tokenUsage}
-                  onPreferencesChange={(preferences) =>
-                    setLocalSettings("tokenUsage", preferences)
-                  }
-                />
+                {tokenUsageEnabled ? (
+                  <TokenUsageIndicator
+                    threadId={isNewThread ? undefined : threadId}
+                    backendUsage={backendTokenUsage}
+                    costSummary={backendCostSummary}
+                    contextUsage={contextUsage}
+                    enabled={tokenUsageEnabled}
+                    messages={thread.messages}
+                    pendingMessages={pendingUsageMessages}
+                    preferences={localSettings.tokenUsage}
+                    onPreferencesChange={(preferences) =>
+                      setLocalSettings("tokenUsage", preferences)
+                    }
+                  />
+                ) : (
+                  <ContextUsageBadge contextUsage={contextUsage} />
+                )}
                 <SidecarTrigger />
                 {browserEnabled && <BrowserTrigger />}
                 <ExportTrigger threadId={threadId} />

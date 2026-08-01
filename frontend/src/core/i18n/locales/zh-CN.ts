@@ -678,6 +678,12 @@ export const zhCN: Translations = {
     auxCallCount: (count: number) => `${count} 次调用`,
   },
 
+  contextUsage: {
+    label: "上下文",
+    title: "上下文窗口",
+    badgeAriaLabel: (percentage: string) => `上下文窗口已使用 ${percentage}%`,
+  },
+
   // Shortcuts
   shortcuts: {
     searchActions: "搜索操作...",

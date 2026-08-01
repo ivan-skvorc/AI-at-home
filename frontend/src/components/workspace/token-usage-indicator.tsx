@@ -26,9 +26,14 @@ import {
   type TokenUsagePreferences,
   type TokenUsageViewPreset,
 } from "@/core/messages/usage-model";
-import { formatCost, type ThreadCostSummary } from "@/core/threads/token-usage";
+import {
+  formatCost,
+  type ContextUsage,
+  type ThreadCostSummary,
+} from "@/core/threads/token-usage";
 import { cn } from "@/lib/utils";
 
+import { formatContextUsagePercentage } from "./context-usage-format";
 import { Tooltip } from "./tooltip";
 
 interface TokenUsageIndicatorProps {
@@ -37,6 +42,7 @@ interface TokenUsageIndicatorProps {
   pendingMessages?: Message[];
   backendUsage?: TokenUsage | null;
   costSummary?: ThreadCostSummary | null;
+  contextUsage?: ContextUsage | null;
   enabled?: boolean;
   preferences: TokenUsagePreferences;
   onPreferencesChange: (preferences: TokenUsagePreferences) => void;
@@ -49,6 +55,7 @@ export function TokenUsageIndicator({
   pendingMessages,
   backendUsage,
   costSummary,
+  contextUsage,
   enabled = false,
   preferences,
   onPreferencesChange,
@@ -70,6 +77,9 @@ export function TokenUsageIndicator({
   // stream deltas), and is shown only when a thread exists and pricing is set.
   const cost = threadId ? costSummary : null;
   const auxEntries = cost ? Object.entries(cost.aux) : [];
+  const contextPercentage = formatContextUsagePercentage(
+    contextUsage?.percentage,
+  );
 
   if (!enabled) {
     return null;
@@ -105,6 +115,14 @@ export function TokenUsageIndicator({
                 </span>
               </>
             )}
+          {contextPercentage != null && (
+            <span
+              className="text-muted-foreground/80 border-l pl-1.5 font-mono"
+              aria-label={t.contextUsage.badgeAriaLabel(contextPercentage)}
+            >
+              {contextPercentage}%
+            </span>
+          )}
           <ChevronDownIcon className="size-3" />
         </Button>
       </DropdownMenuTrigger>

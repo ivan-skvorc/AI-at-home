@@ -84,6 +84,12 @@ export interface ThreadTokenUsageAuxBreakdown {
   cost?: number | null;
 }
 
+export interface ThreadContextUsage {
+  token_count: number;
+  max_context_tokens: number | null;
+  percentage: number | null;
+}
+
 export interface ThreadTokenUsageResponse {
   thread_id: string;
   total_tokens: number;
@@ -102,4 +108,6 @@ export interface ThreadTokenUsageResponse {
   total_cost?: number | null;
   currency?: string | null;
   aux?: Record<string, ThreadTokenUsageAuxBreakdown>;
+  // Real-time context window usage (upstream #3125/#3183).
+  context_usage?: ThreadContextUsage | null;
 }

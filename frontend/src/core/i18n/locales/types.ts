@@ -587,6 +587,12 @@ export interface Translations {
     auxCallCount: (count: number) => string;
   };
 
+  contextUsage: {
+    label: string;
+    title: string;
+    badgeAriaLabel: (percentage: string) => string;
+  };
+
   // Shortcuts
   shortcuts: {
     searchActions: string;

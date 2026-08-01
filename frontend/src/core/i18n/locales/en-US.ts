@@ -706,6 +706,13 @@ export const enUS: Translations = {
       count === 1 ? "1 call" : `${count} calls`,
   },
 
+  contextUsage: {
+    label: "Context",
+    title: "Context window",
+    badgeAriaLabel: (percentage: string) =>
+      `Context window ${percentage}% full`,
+  },
+
   // Shortcuts
   shortcuts: {
     searchActions: "Search actions...",

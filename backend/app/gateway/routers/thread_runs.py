@@ -33,6 +33,7 @@ from app.gateway.checkpoint_lineage import (
     find_checkpoint_before_message_chronologically,
     is_duration_only_checkpoint,
 )
+from app.gateway.context_usage import build_context_usage
 from app.gateway.deps import get_current_user, get_feedback_repo, get_run_event_store, get_run_manager, get_run_store, get_stream_bridge
 from app.gateway.pagination import trim_run_message_page
 from app.gateway.pricing import build_pricing_map, lookup_pricing, pricing_currency, token_cost
@@ -201,6 +202,12 @@ class ThreadTokenUsageAuxBreakdown(BaseModel):
     cost: float | None = Field(default=None, description="Estimated spend for this sink; null when its models are unpriced")
 
 
+class ThreadContextUsage(BaseModel):
+    token_count: int = 0
+    max_context_tokens: int | None = None
+    percentage: float | None = None
+
+
 class ThreadTokenUsageResponse(BaseModel):
     thread_id: str
     total_tokens: int = 0
@@ -216,6 +223,8 @@ class ThreadTokenUsageResponse(BaseModel):
     total_cost: float | None = None
     currency: str | None = None
     aux: dict[str, ThreadTokenUsageAuxBreakdown] = Field(default_factory=dict)
+    # Real-time context window usage (upstream #3125/#3183).
+    context_usage: ThreadContextUsage | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -1505,6 +1514,7 @@ async def thread_token_usage(
 
     pricing = _thread_pricing_map()
     currency = pricing_currency(pricing)
+    context_usage = await build_context_usage(request, thread_id, run_store)
 
     total_cost: float | None = None
     by_model: dict[str, ThreadTokenUsageModelBreakdown] = {}
@@ -1559,4 +1569,5 @@ async def thread_token_usage(
         total_cost=total_cost,
         currency=currency,
         aux=aux,
+        context_usage=context_usage,
     )
