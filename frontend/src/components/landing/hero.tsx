@@ -2,16 +2,19 @@
 
 import { ChevronRightIcon } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
+import dynamic from "next/dynamic";
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { AuroraText } from "@/components/ui/aurora-text";
 import { Button } from "@/components/ui/button";
 import { FlickeringGrid } from "@/components/ui/flickering-grid";
-import Galaxy from "@/components/ui/galaxy";
 import { useReducedMotion } from "@/core/appearance";
+import { useRenderActivity } from "@/core/dom/render-activity";
 import { env } from "@/env";
 import { cn } from "@/lib/utils";
+
+const Galaxy = dynamic(() => import("@/components/ui/galaxy"), { ssr: false });
 
 const HERO_WORDS = [
   "Deep Research",
@@ -34,6 +37,10 @@ export function Hero({ className }: { className?: string }) {
   // reduced motion is requested. They run persistent render loops, so a static
   // fallback is a meaningful overhead reduction (not just a visual preference).
   const reduceMotion = useReducedMotion();
+  // Upstream only mounts the WebGL galaxy while its container is actually being
+  // rendered/visible; keep that optimization on top of the reduced-motion gate.
+  const galaxyContainerRef = useRef<HTMLDivElement>(null);
+  const renderGalaxy = useRenderActivity(galaxyContainerRef);
   return (
     <div
       className={cn(
@@ -41,10 +48,13 @@ export function Hero({ className }: { className?: string }) {
         className,
       )}
     >
-      <div className="absolute inset-0 z-0 bg-black/40">
+      <div
+        ref={galaxyContainerRef}
+        className="absolute inset-0 z-0 bg-black/40"
+      >
         {reduceMotion ? (
           <div className="size-full bg-gradient-to-b from-neutral-950 via-neutral-900 to-black" />
-        ) : (
+        ) : renderGalaxy ? (
           <Galaxy
             mouseRepulsion={false}
             starSpeed={0.2}
@@ -53,7 +63,7 @@ export function Hero({ className }: { className?: string }) {
             twinkleIntensity={0.3}
             speed={0.5}
           />
-        )}
+        ) : null}
       </div>
       {!reduceMotion && (
         <FlickeringGrid
