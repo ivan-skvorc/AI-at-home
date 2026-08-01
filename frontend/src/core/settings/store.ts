@@ -1,12 +1,14 @@
 import {
   DEFAULT_LOCAL_SETTINGS,
   LOCAL_SETTINGS_KEY,
-  THREAD_MODEL_KEY_PREFIX,
+  THREAD_CONTEXT_KEY_PREFIX,
   getLocalSettings,
-  getThreadModelName,
+  getThreadContextOverride,
+  pickThreadScopedContext,
   saveLocalSettings,
-  saveThreadModelName,
+  saveThreadContextOverride,
   type LocalSettings,
+  type ThreadContextOverride,
 } from "./local";
 
 type Listener = () => void;
@@ -16,8 +18,15 @@ export type LocalSettingsSetter = <K extends keyof LocalSettings>(
   value: Partial<LocalSettings[K]>,
 ) => void;
 
+// Stable empty override reused for SSR / never-touched threads so
+// useSyncExternalStore does not see a fresh reference on every render.
+export const EMPTY_THREAD_CONTEXT: ThreadContextOverride = Object.freeze({});
+
 const listeners = new Set<Listener>();
-const threadModelNames = new Map<string, string | undefined>();
+// Cached per-thread workflow-selection overrides. The stored object reference is
+// only replaced when that thread's override actually changes, so a change to one
+// thread never re-renders another thread's `useThreadSettings` subscriber.
+const threadContextOverrides = new Map<string, ThreadContextOverride>();
 
 let baseSettings: LocalSettings = DEFAULT_LOCAL_SETTINGS;
 let baseSettingsLoaded = false;
@@ -70,7 +79,7 @@ function handleStorage(event: StorageEvent) {
 
   if (event.key === null) {
     baseSettings = getLocalSettings();
-    threadModelNames.clear();
+    threadContextOverrides.clear();
     emitChange();
     return;
   }
@@ -81,12 +90,12 @@ function handleStorage(event: StorageEvent) {
     return;
   }
 
-  if (!event.key.startsWith(THREAD_MODEL_KEY_PREFIX)) {
+  if (!event.key.startsWith(THREAD_CONTEXT_KEY_PREFIX)) {
     return;
   }
 
-  const threadId = event.key.slice(THREAD_MODEL_KEY_PREFIX.length);
-  threadModelNames.set(threadId, getThreadModelName(threadId));
+  const threadId = event.key.slice(THREAD_CONTEXT_KEY_PREFIX.length);
+  threadContextOverrides.set(threadId, getThreadContextOverride(threadId));
   emitChange();
 }
 
@@ -105,14 +114,16 @@ export function getBaseSettingsSnapshot(): LocalSettings {
   return baseSettings;
 }
 
-export function getThreadModelSnapshot(threadId: string): string | undefined {
+export function getThreadContextSnapshot(
+  threadId: string,
+): ThreadContextOverride {
   ensureBaseSettingsLoaded();
 
-  if (!threadModelNames.has(threadId)) {
-    threadModelNames.set(threadId, getThreadModelName(threadId));
+  if (!threadContextOverrides.has(threadId)) {
+    threadContextOverrides.set(threadId, getThreadContextOverride(threadId));
   }
 
-  return threadModelNames.get(threadId);
+  return threadContextOverrides.get(threadId) ?? EMPTY_THREAD_CONTEXT;
 }
 
 export const updateLocalSettings: LocalSettingsSetter = (key, value) => {
@@ -132,19 +143,25 @@ export function updateThreadSettings<K extends keyof LocalSettings>(
   ensureBaseSettingsLoaded();
   ensureStorageListenerRegistered();
 
-  const nextBaseSettings = mergeSettingsSection(baseSettings, key, value);
-  baseSettings = nextBaseSettings;
-  saveLocalSettings(baseSettings);
-
-  if (
-    key === "context" &&
-    Object.prototype.hasOwnProperty.call(value, "model_name")
-  ) {
-    const contextValue = value as Partial<LocalSettings["context"]>;
-    const threadModelName = contextValue.model_name;
-    threadModelNames.set(threadId, threadModelName);
-    saveThreadModelName(threadId, threadModelName);
+  if (key === "context") {
+    // Workflow selection is per conversation: merge the change into THIS
+    // thread's own override and never touch the shared global base settings, so
+    // changing the model/mode in one open chat cannot flip another open chat's
+    // selection (same tab or, via the `storage` event, another tab).
+    const previous = threadContextOverrides.has(threadId)
+      ? (threadContextOverrides.get(threadId) ?? EMPTY_THREAD_CONTEXT)
+      : getThreadContextOverride(threadId);
+    const nextOverride: ThreadContextOverride = {
+      ...previous,
+      ...pickThreadScopedContext(value as Partial<LocalSettings["context"]>),
+    };
+    threadContextOverrides.set(threadId, nextOverride);
+    saveThreadContextOverride(threadId, nextOverride);
+    emitChange();
+    return;
   }
 
+  baseSettings = mergeSettingsSection(baseSettings, key, value);
+  saveLocalSettings(baseSettings);
   emitChange();
 }

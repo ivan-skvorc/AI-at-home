@@ -42,7 +42,32 @@ export const DEFAULT_LOCAL_SETTINGS: LocalSettings = {
 };
 
 export const LOCAL_SETTINGS_KEY = "deerflow.local-settings";
-export const THREAD_MODEL_KEY_PREFIX = "deerflow.thread-model.";
+// Per-conversation workflow selection (model, subagent model, mode, reasoning
+// effort) is persisted per thread under this prefix so concurrent conversations
+// stay independent: selecting a model in one open chat must never change the
+// model selected in another. This is deliberately NOT stored in the shared
+// `deerflow.local-settings` blob, which every thread reads — writing the model
+// there is exactly what used to leak a selection across chats (and across tabs
+// via the `storage` event).
+export const THREAD_CONTEXT_KEY_PREFIX = "deerflow.thread-context.";
+// Legacy key that stored only the model name per thread. Read once for
+// migration so a user's currently-pinned model survives the upgrade; never
+// written to anymore.
+const LEGACY_THREAD_MODEL_KEY_PREFIX = "deerflow.thread-model.";
+
+// The context fields that are scoped per conversation. Everything else in
+// `context` (e.g. `agent_name`, which is fixed by the route) stays out of the
+// per-thread override.
+export const THREAD_SCOPED_CONTEXT_KEYS = [
+  "model_name",
+  "subagent_model_name",
+  "mode",
+  "reasoning_effort",
+] as const;
+
+export type ThreadContextOverride = Partial<
+  Pick<LocalSettings["context"], (typeof THREAD_SCOPED_CONTEXT_KEYS)[number]>
+>;
 
 function isBrowser(): boolean {
   return typeof window !== "undefined";
@@ -165,46 +190,81 @@ export function mergeLocalSettings(
   };
 }
 
-function getThreadModelStorageKey(threadId: string): string {
-  return `${THREAD_MODEL_KEY_PREFIX}${threadId}`;
+function getThreadContextStorageKey(threadId: string): string {
+  return `${THREAD_CONTEXT_KEY_PREFIX}${threadId}`;
 }
 
-export function getThreadModelName(threadId: string): string | undefined {
-  if (!isBrowser()) {
-    return undefined;
+/**
+ * Narrow an arbitrary context patch to only the per-conversation workflow keys.
+ * A key present with an `undefined` value is kept (it means "clear this
+ * override", e.g. the subagent model going back to "follow lead").
+ */
+export function pickThreadScopedContext(
+  value: Partial<LocalSettings["context"]>,
+): ThreadContextOverride {
+  const out: ThreadContextOverride = {};
+  for (const key of THREAD_SCOPED_CONTEXT_KEYS) {
+    if (Object.prototype.hasOwnProperty.call(value, key)) {
+      // Copy across the picked union; the source and target key sets match.
+      (out as Record<string, unknown>)[key] = value[key];
+    }
   }
-  return (
-    safeLocalStorage.getItem(getThreadModelStorageKey(threadId)) ?? undefined
-  );
+  return out;
 }
 
-export function saveThreadModelName(
+export function getThreadContextOverride(
   threadId: string,
-  modelName: string | undefined,
+): ThreadContextOverride {
+  if (!isBrowser()) {
+    return {};
+  }
+  const raw = safeLocalStorage.getItem(getThreadContextStorageKey(threadId));
+  if (raw) {
+    try {
+      const parsed = JSON.parse(raw) as unknown;
+      if (parsed && typeof parsed === "object") {
+        return pickThreadScopedContext(parsed as Partial<LocalSettings["context"]>);
+      }
+    } catch {}
+    return {};
+  }
+  // Migration: fall back to the legacy model-only per-thread key so a chat that
+  // already had a pinned model keeps it after the upgrade.
+  const legacyModel = safeLocalStorage.getItem(
+    `${LEGACY_THREAD_MODEL_KEY_PREFIX}${threadId}`,
+  );
+  return legacyModel ? { model_name: legacyModel } : {};
+}
+
+export function saveThreadContextOverride(
+  threadId: string,
+  override: ThreadContextOverride,
 ) {
   if (!isBrowser()) {
     return;
   }
-  const key = getThreadModelStorageKey(threadId);
-  if (!modelName) {
+  const key = getThreadContextStorageKey(threadId);
+  // Persist only defined values; an override with nothing left to store is
+  // removed so a reset chat falls back cleanly to the app default.
+  const persisted = Object.fromEntries(
+    Object.entries(override).filter(([, v]) => v !== undefined),
+  );
+  if (Object.keys(persisted).length === 0) {
     safeLocalStorage.removeItem(key);
     return;
   }
-  safeLocalStorage.setItem(key, modelName);
+  safeLocalStorage.setItem(key, JSON.stringify(persisted));
 }
 
-export function applyThreadModelOverride(
+export function applyThreadContextOverride(
   settings: LocalSettings,
-  threadModelName: string | undefined,
+  override: ThreadContextOverride,
 ): LocalSettings {
-  if (!threadModelName) {
-    return settings;
-  }
   return {
     ...settings,
     context: {
       ...settings.context,
-      model_name: threadModelName,
+      ...override,
     },
   };
 }
