@@ -111,9 +111,9 @@ test("pickThreadScopedContext preserves an explicit undefined reset", () => {
   // Sending the subagent model back to "follow lead" clears the override, which
   // must survive as an own `undefined` key rather than being dropped.
   const picked = pickThreadScopedContext({ subagent_model_name: undefined });
-  expect(Object.prototype.hasOwnProperty.call(picked, "subagent_model_name")).toBe(
-    true,
-  );
+  expect(
+    Object.prototype.hasOwnProperty.call(picked, "subagent_model_name"),
+  ).toBe(true);
   expect(picked.subagent_model_name).toBeUndefined();
 });
 

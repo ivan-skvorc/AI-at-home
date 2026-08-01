@@ -223,7 +223,9 @@ export function getThreadContextOverride(
     try {
       const parsed = JSON.parse(raw) as unknown;
       if (parsed && typeof parsed === "object") {
-        return pickThreadScopedContext(parsed as Partial<LocalSettings["context"]>);
+        return pickThreadScopedContext(
+          parsed as Partial<LocalSettings["context"]>,
+        );
       }
     } catch {}
     return {};
