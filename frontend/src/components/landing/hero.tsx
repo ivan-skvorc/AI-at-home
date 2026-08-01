@@ -54,16 +54,18 @@ export function Hero({ className }: { className?: string }) {
       >
         {reduceMotion ? (
           <div className="size-full bg-gradient-to-b from-neutral-950 via-neutral-900 to-black" />
-        ) : renderGalaxy ? (
-          <Galaxy
-            mouseRepulsion={false}
-            starSpeed={0.2}
-            density={0.6}
-            glowIntensity={0.35}
-            twinkleIntensity={0.3}
-            speed={0.5}
-          />
-        ) : null}
+        ) : (
+          renderGalaxy && (
+            <Galaxy
+              mouseRepulsion={false}
+              starSpeed={0.2}
+              density={0.6}
+              glowIntensity={0.35}
+              twinkleIntensity={0.3}
+              speed={0.5}
+            />
+          )
+        )}
       </div>
       {!reduceMotion && (
         <FlickeringGrid
