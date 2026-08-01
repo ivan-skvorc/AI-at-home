@@ -14,7 +14,6 @@ which persists no run history to report on.
 import asyncio
 import logging
 from datetime import UTC, datetime, time, timedelta
-from typing import NamedTuple
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
@@ -22,6 +21,7 @@ from sqlalchemy import func, select
 
 from app.gateway.authz import require_permission
 from app.gateway.deps import get_current_user
+from app.gateway.pricing import ModelPricing, build_pricing_map, lookup_pricing, pricing_currency, run_cost, token_cost
 from deerflow.config import get_app_config
 from deerflow.config.agents_config import list_custom_agents
 from deerflow.persistence.engine import get_session_factory
@@ -138,136 +138,28 @@ def _as_utc(dt: datetime | None) -> datetime | None:
 # ---------------------------------------------------------------------------
 # Pricing — real spend estimation
 # ---------------------------------------------------------------------------
+#
+# The pricing math itself lives in ``app.gateway.pricing`` so the per-thread
+# token-usage endpoint (the chat sidebar cost overview) and this console share
+# one implementation. Only ``_build_pricing_map`` stays here because it reads
+# ``get_app_config()`` — kept module-local so tests can patch that seam and so
+# the mixed-currency warning is logged under ``console``'s logger.
+
+_ModelPricing = ModelPricing
+_pricing_currency = pricing_currency
+_lookup_pricing = lookup_pricing
+_token_cost = token_cost
+_run_cost = run_cost
 
 
-class _ModelPricing(NamedTuple):
-    input_per_million: float
-    output_per_million: float
-    currency: str
-    # Price for prompt-cache-hit input tokens. None → hits are billed at the
-    # full input price (conservative upper bound for providers that don't
-    # discount, or when the operator hasn't configured the hit price).
-    input_cache_hit_per_million: float | None = None
-
-
-def _build_pricing_map() -> dict[str, _ModelPricing]:
-    """Collect per-model prices from ``models[*].pricing`` in config.yaml.
-
-    ``ModelConfig`` allows extra fields, so operators can annotate each model
-    with e.g. ``pricing: {currency: CNY, input_per_million: 8,
-    output_per_million: 32, input_cache_hit_per_million: 0.8}`` without any
-    schema change. Entries are keyed by both the config ``name`` and the
-    provider ``model`` id (plus lowercase variants), because
-    ``token_usage_by_model`` buckets carry the provider-reported model name.
-    """
+def _build_pricing_map() -> dict[str, ModelPricing]:
+    """Collect per-model prices from ``models[*].pricing`` in config.yaml."""
     try:
         models = get_app_config().models
     except Exception:  # pragma: no cover - defensive: cost display must not break the console
         logger.warning("console: failed to load model pricing from config", exc_info=True)
         return {}
-
-    pricing: dict[str, _ModelPricing] = {}
-    pricing_currency: str | None = None
-    pricing_currency_model: str | None = None
-    for model_cfg in models or []:
-        raw = getattr(model_cfg, "pricing", None)
-        if not isinstance(raw, dict):
-            continue
-        try:
-            input_price = float(raw.get("input_per_million") or 0)
-            output_price = float(raw.get("output_per_million") or 0)
-            raw_hit_price = raw.get("input_cache_hit_per_million")
-            cache_hit_price = float(raw_hit_price) if raw_hit_price is not None else None
-        except (TypeError, ValueError):
-            logger.warning("console: ignoring malformed pricing on model %s", model_cfg.name)
-            continue
-        if input_price <= 0 and output_price <= 0:
-            continue
-        model_currency = str(raw.get("currency") or "USD").strip().upper() or "USD"
-        if pricing_currency is None:
-            pricing_currency = model_currency
-            pricing_currency_model = model_cfg.name
-        elif model_currency != pricing_currency:
-            logger.warning(
-                "console: disabling cost reporting because model pricing mixes currencies (%s on %s, %s on %s)",
-                pricing_currency,
-                pricing_currency_model,
-                model_currency,
-                model_cfg.name,
-            )
-            return {}
-        entry = _ModelPricing(input_price, output_price, model_currency, cache_hit_price)
-        for key in (model_cfg.name, getattr(model_cfg, "model", None)):
-            if key:
-                pricing.setdefault(key, entry)
-                pricing.setdefault(key.lower(), entry)
-    return pricing
-
-
-def _pricing_currency(pricing: dict[str, _ModelPricing]) -> str | None:
-    """Display currency: the first configured entry's (one currency per deployment)."""
-    return next(iter(pricing.values())).currency if pricing else None
-
-
-def _lookup_pricing(pricing: dict[str, _ModelPricing], model: str | None) -> _ModelPricing | None:
-    if not model:
-        return None
-    return pricing.get(model) or pricing.get(model.lower())
-
-
-def _token_cost(input_tokens: int, output_tokens: int, price: _ModelPricing, cache_read_tokens: int = 0) -> float:
-    """Cache-aware spend: cache-hit input tokens are billed at the hit price.
-
-    ``cache_read_tokens`` is clamped into ``[0, input_tokens]``; the remainder
-    is billed at the full (cache-miss) input price. Without a configured hit
-    price all input is billed at the miss price.
-    """
-    cache_read = min(max(int(cache_read_tokens or 0), 0), max(int(input_tokens or 0), 0))
-    uncached = max(int(input_tokens or 0), 0) - cache_read
-    hit_price = price.input_cache_hit_per_million if price.input_cache_hit_per_million is not None else price.input_per_million
-    return (uncached / 1_000_000) * price.input_per_million + (cache_read / 1_000_000) * hit_price + (output_tokens / 1_000_000) * price.output_per_million
-
-
-def _run_cost(
-    pricing: dict[str, _ModelPricing],
-    *,
-    model_name: str | None,
-    total_input_tokens: int | None,
-    total_output_tokens: int | None,
-    token_usage_by_model: dict | None,
-) -> float | None:
-    """Estimate one run's spend, or None when none of its models are priced.
-
-    Prefers the per-model breakdown (accurate for multi-model runs, e.g.
-    subagents on a different model); falls back to run-level totals priced at
-    ``model_name`` for legacy rows. Buckets without an input/output split are
-    skipped rather than guessed.
-    """
-    cost = 0.0
-    priced = False
-    if isinstance(token_usage_by_model, dict):
-        for model, usage in token_usage_by_model.items():
-            if not isinstance(usage, dict):
-                continue
-            price = _lookup_pricing(pricing, model)
-            if price is None:
-                continue
-            input_tokens = int(usage.get("input_tokens") or 0)
-            output_tokens = int(usage.get("output_tokens") or 0)
-            if input_tokens == 0 and output_tokens == 0:
-                continue
-            cost += _token_cost(input_tokens, output_tokens, price, int(usage.get("cache_read_tokens") or 0))
-            priced = True
-    if priced:
-        return cost
-    price = _lookup_pricing(pricing, model_name)
-    if price is None:
-        return None
-    input_tokens = int(total_input_tokens or 0)
-    output_tokens = int(total_output_tokens or 0)
-    if input_tokens == 0 and output_tokens == 0:
-        return None
-    return _token_cost(input_tokens, output_tokens, price)
+    return build_pricing_map(models, logger=logger)
 
 
 # ---------------------------------------------------------------------------

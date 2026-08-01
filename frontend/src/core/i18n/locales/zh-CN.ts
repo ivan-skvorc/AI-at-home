@@ -100,6 +100,19 @@ export const zhCN: Translations = {
     linkCopied: "链接已复制到剪贴板",
   },
 
+  artifactEditing: {
+    unsaved: "未保存",
+    saving: "正在保存...",
+    saved: "文件已保存",
+    exit: "退出编辑",
+    discard: "放弃修改",
+    discardChanges: "要放弃对此文件的未保存修改吗？",
+    conflict: "开始编辑后文件已发生变化。请放弃草稿并重新加载后再保存。",
+    conflictShort: "远端已更新",
+    runInProgress: "请等待当前 Agent 运行结束后再保存。",
+    saveFailed: "保存文件失败",
+  },
+
   // Citations
   citations: {
     sourcesSummary: (count) => `使用了 ${count} 个来源`,
@@ -670,6 +683,18 @@ export const zhCN: Translations = {
     completeTodo: (content: string) => `完成 To-do：${content}`,
     updateTodo: (content: string) => `更新 To-do：${content}`,
     removeTodo: (content: string) => `移除 To-do：${content}`,
+    cost: "预估费用",
+    costHint:
+      "按 config.yaml 中每个模型各自的价格估算——因此在更便宜或本地模型上运行的子代理会按其自身费率计费。未配置价格的模型（如本地 Ollama）按 $0 计（不含电费）。仅为估算值，实际以服务商账单为准。",
+    memory: "记忆",
+    suggestions: "建议",
+    auxCallCount: (count: number) => `${count} 次调用`,
+  },
+
+  contextUsage: {
+    label: "上下文",
+    title: "上下文窗口",
+    badgeAriaLabel: (percentage: string) => `上下文窗口已使用 ${percentage}%`,
   },
 
   // Shortcuts

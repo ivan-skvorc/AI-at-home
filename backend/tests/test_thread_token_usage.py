@@ -1,13 +1,44 @@
-"""Tests for thread-level token usage aggregation API."""
+"""Tests for thread-level token usage and context-window usage."""
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
 from _router_auth_helpers import make_authed_test_app
 from fastapi.testclient import TestClient
 
+from app.gateway import context_usage
+from app.gateway.pricing import build_pricing_map
 from app.gateway.routers import thread_runs
+from deerflow.runtime import aux_usage
+
+
+def _aggregate_result() -> dict:
+    return {
+        "total_tokens": 150,
+        "total_input_tokens": 90,
+        "total_output_tokens": 60,
+        "total_runs": 2,
+        "by_model": {"unknown": {"tokens": 150, "runs": 2, "input_tokens": 90, "output_tokens": 60, "cache_read_tokens": 0, "cost": None}},
+        "by_caller": {
+            "lead_agent": 120,
+            "subagent": 25,
+            "middleware": 5,
+        },
+        "total_cost": None,
+        "currency": None,
+        "aux": {},
+    }
+
+
+def _make_run_store(*, model_name: str | None = None) -> MagicMock:
+    run_store = MagicMock()
+    run_store.aggregate_tokens_by_thread = AsyncMock(return_value=_aggregate_result())
+    runs = [{"model_name": model_name}] if model_name else []
+    run_store.list_by_thread = AsyncMock(return_value=runs)
+    return run_store
 
 
 def _make_app(run_store: MagicMock):
@@ -17,22 +48,14 @@ def _make_app(run_store: MagicMock):
     return app
 
 
-def test_thread_token_usage_returns_stable_shape():
-    run_store = MagicMock()
-    run_store.aggregate_tokens_by_thread = AsyncMock(
-        return_value={
-            "total_tokens": 150,
-            "total_input_tokens": 90,
-            "total_output_tokens": 60,
-            "total_runs": 2,
-            "by_model": {"unknown": {"tokens": 150, "runs": 2}},
-            "by_caller": {
-                "lead_agent": 120,
-                "subagent": 25,
-                "middleware": 5,
-            },
-        },
-    )
+def test_thread_token_usage_returns_stable_shape(monkeypatch: pytest.MonkeyPatch) -> None:
+    aux_usage.reset_aux_usage()
+    run_store = _make_run_store()
+    build_context_usage = AsyncMock(return_value=None)
+    monkeypatch.setattr(thread_runs, "build_context_usage", build_context_usage)
+    # No pricing configured → cost fields null, aux empty. Patch the pricing map
+    # so the assertion does not depend on whatever config.yaml the test env has.
+    monkeypatch.setattr(thread_runs, "_thread_pricing_map", lambda: {})
     app = _make_app(run_store)
 
     with TestClient(app) as client:
@@ -41,42 +64,211 @@ def test_thread_token_usage_returns_stable_shape():
     assert response.status_code == 200
     assert response.json() == {
         "thread_id": "thread-1",
-        "total_tokens": 150,
-        "total_input_tokens": 90,
-        "total_output_tokens": 60,
-        "total_runs": 2,
-        "by_model": {"unknown": {"tokens": 150, "runs": 2}},
-        "by_caller": {
-            "lead_agent": 120,
-            "subagent": 25,
-            "middleware": 5,
-        },
+        **_aggregate_result(),
+        "context_usage": None,
     }
-    run_store.aggregate_tokens_by_thread.assert_awaited_once_with("thread-1")
+    run_store.aggregate_tokens_by_thread.assert_awaited_once_with("thread-1", include_active=False)
+    build_context_usage.assert_awaited_once()
 
 
-def test_thread_token_usage_can_include_active_runs():
-    run_store = MagicMock()
-    run_store.aggregate_tokens_by_thread = AsyncMock(
-        return_value={
-            "total_tokens": 175,
-            "total_input_tokens": 120,
-            "total_output_tokens": 55,
-            "total_runs": 3,
-            "by_model": {"unknown": {"tokens": 175, "runs": 3}},
-            "by_caller": {
-                "lead_agent": 145,
-                "subagent": 25,
-                "middleware": 5,
-            },
-        },
-    )
+def test_thread_token_usage_can_include_active_runs(monkeypatch: pytest.MonkeyPatch) -> None:
+    run_store = _make_run_store()
+    build_context_usage = AsyncMock(return_value=None)
+    monkeypatch.setattr(thread_runs, "build_context_usage", build_context_usage)
     app = _make_app(run_store)
 
     with TestClient(app) as client:
         response = client.get("/api/threads/thread-1/token-usage?include_active=true")
 
     assert response.status_code == 200
-    assert response.json()["total_tokens"] == 175
-    assert response.json()["total_runs"] == 3
     run_store.aggregate_tokens_by_thread.assert_awaited_once_with("thread-1", include_active=True)
+
+
+def _priced_map():
+    return build_pricing_map(
+        [
+            SimpleNamespace(name="lead", model="lead-model", pricing={"currency": "USD", "input_per_million": 5, "output_per_million": 25}),
+            SimpleNamespace(name="sub", model="sub-model", pricing={"currency": "USD", "input_per_million": 1, "output_per_million": 4}),
+        ],
+    )
+
+
+def test_thread_token_usage_computes_model_aware_cost_and_aux():
+    """Cost is priced per model (subagent on a cheaper model billed correctly),
+    and memory/suggestions LLM calls surface as separate priced aux counters."""
+    aux_usage.reset_aux_usage()
+    # A memory call on an *unpriced* model → tokens shown, cost null.
+    aux_usage.record_aux_usage("thread-cost", "memory", model_name="mem-model", input_tokens=1000, output_tokens=200)
+    # A suggestions call on the priced sub-model.
+    aux_usage.record_aux_usage("thread-cost", "suggestions", model_name="sub-model", input_tokens=500_000, output_tokens=100_000)
+
+    run_store = MagicMock()
+    run_store.aggregate_tokens_by_thread = AsyncMock(
+        return_value={
+            "total_tokens": 5_000_000,
+            "total_input_tokens": 3_000_000,
+            "total_output_tokens": 2_000_000,
+            "total_runs": 2,
+            "by_model": {
+                "lead-model": {"tokens": 2_000_000, "runs": 2, "input_tokens": 1_000_000, "output_tokens": 1_000_000, "cache_read_tokens": 0},
+                "sub-model": {"tokens": 3_000_000, "runs": 1, "input_tokens": 2_000_000, "output_tokens": 1_000_000, "cache_read_tokens": 0},
+            },
+            "by_caller": {"lead_agent": 2_000_000, "subagent": 3_000_000, "middleware": 0},
+        },
+    )
+    app = _make_app(run_store)
+
+    try:
+        with (
+            patch.object(thread_runs, "_thread_pricing_map", side_effect=_priced_map),
+            patch.object(thread_runs, "build_context_usage", AsyncMock(return_value=None)),
+            TestClient(app) as client,
+        ):
+            data = client.get("/api/threads/thread-cost/token-usage").json()
+    finally:
+        aux_usage.reset_aux_usage()
+
+    assert data["currency"] == "USD"
+    # lead: 5 + 25 = 30 ; sub: 2*1 + 1*4 = 6 ; run total = 36.
+    assert data["total_cost"] == pytest.approx(36.0)
+    assert data["by_model"]["lead-model"]["cost"] == pytest.approx(30.0)
+    assert data["by_model"]["sub-model"]["cost"] == pytest.approx(6.0)
+
+    # Aux is separate from total_cost.
+    assert data["aux"]["memory"]["tokens"] == 1200
+    assert data["aux"]["memory"]["cost"] is None  # unpriced memory model
+    assert data["aux"]["suggestions"]["calls"] == 1
+    # suggestions: 0.5M @ $1/M + 0.1M @ $4/M = 0.5 + 0.4 = 0.9
+    assert data["aux"]["suggestions"]["cost"] == pytest.approx(0.9)
+
+
+def test_thread_token_usage_cost_null_when_no_pricing():
+    aux_usage.reset_aux_usage()
+    run_store = MagicMock()
+    run_store.aggregate_tokens_by_thread = AsyncMock(
+        return_value={
+            "total_tokens": 100,
+            "total_input_tokens": 60,
+            "total_output_tokens": 40,
+            "total_runs": 1,
+            "by_model": {"m": {"tokens": 100, "runs": 1, "input_tokens": 60, "output_tokens": 40, "cache_read_tokens": 0}},
+            "by_caller": {"lead_agent": 100, "subagent": 0, "middleware": 0},
+        },
+    )
+    app = _make_app(run_store)
+    with (
+        patch.object(thread_runs, "_thread_pricing_map", return_value={}),
+        patch.object(thread_runs, "build_context_usage", AsyncMock(return_value=None)),
+        TestClient(app) as client,
+    ):
+        data = client.get("/api/threads/thread-x/token-usage").json()
+    assert data["total_cost"] is None
+    assert data["currency"] is None
+    assert data["by_model"]["m"]["cost"] is None
+
+
+def test_thread_token_usage_serializes_context_percentage(monkeypatch: pytest.MonkeyPatch) -> None:
+    run_store = _make_run_store()
+    monkeypatch.setattr(
+        thread_runs,
+        "build_context_usage",
+        AsyncMock(
+            return_value={
+                "token_count": 350,
+                "max_context_tokens": 1000,
+                "percentage": 35.0,
+            }
+        ),
+    )
+    app = _make_app(run_store)
+
+    with TestClient(app) as client:
+        response = client.get("/api/threads/thread-1/token-usage")
+
+    assert response.status_code == 200
+    assert response.json()["context_usage"] == {
+        "token_count": 350,
+        "max_context_tokens": 1000,
+        "percentage": 35.0,
+    }
+
+
+def test_build_context_usage_payload_computes_percentage() -> None:
+    assert context_usage.build_context_usage_payload(token_count=350, max_context_tokens=1000) == {
+        "token_count": 350,
+        "max_context_tokens": 1000,
+        "percentage": 35.0,
+    }
+
+
+def test_build_context_usage_payload_handles_unknown_capacity() -> None:
+    assert context_usage.build_context_usage_payload(token_count=350, max_context_tokens=None) == {
+        "token_count": 350,
+        "max_context_tokens": None,
+        "percentage": None,
+    }
+
+
+@pytest.mark.asyncio
+async def test_resolve_thread_model_prefers_latest_run() -> None:
+    run_store = _make_run_store(model_name="thread-model")
+    app_config = SimpleNamespace(models=[SimpleNamespace(name="fallback-model")])
+
+    assert await context_usage._resolve_thread_model_name(run_store, "thread-1", app_config) == "thread-model"
+
+
+@pytest.mark.asyncio
+async def test_resolve_thread_model_falls_back_to_first_configured_model() -> None:
+    run_store = _make_run_store()
+    app_config = SimpleNamespace(models=[SimpleNamespace(name="fallback-model")])
+
+    assert await context_usage._resolve_thread_model_name(run_store, "thread-1", app_config) == "fallback-model"
+
+
+@pytest.mark.asyncio
+async def test_build_context_usage_counts_materialized_messages(monkeypatch: pytest.MonkeyPatch) -> None:
+    messages = [SimpleNamespace(content="hello")]
+    snapshot = SimpleNamespace(values={"messages": messages})
+    accessor = SimpleNamespace(aget=AsyncMock(return_value=snapshot))
+    monkeypatch.setattr(
+        context_usage,
+        "build_thread_checkpoint_state_accessor",
+        AsyncMock(return_value=(accessor, {"configurable": {"thread_id": "thread-1"}})),
+    )
+    model_config = SimpleNamespace(context_window=1000)
+    app_config = SimpleNamespace(
+        models=[SimpleNamespace(name="fallback-model")],
+        get_model_config=lambda name: model_config if name == "thread-model" else None,
+    )
+    monkeypatch.setattr(context_usage, "get_config", lambda: app_config)
+    monkeypatch.setattr(context_usage, "_count_messages_approximately", lambda value: 250 if value == messages else 0)
+
+    result = await context_usage.build_context_usage(
+        request=SimpleNamespace(app=SimpleNamespace()),
+        thread_id="thread-1",
+        run_store=_make_run_store(model_name="thread-model"),
+    )
+
+    assert result == {
+        "token_count": 250,
+        "max_context_tokens": 1000,
+        "percentage": 25.0,
+    }
+
+
+@pytest.mark.asyncio
+async def test_build_context_usage_returns_none_when_checkpoint_read_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        context_usage,
+        "build_thread_checkpoint_state_accessor",
+        AsyncMock(side_effect=RuntimeError("checkpoint unavailable")),
+    )
+    monkeypatch.setattr(context_usage, "get_config", lambda: SimpleNamespace())
+
+    result = await context_usage.build_context_usage(
+        request=SimpleNamespace(app=SimpleNamespace()),
+        thread_id="thread-1",
+        run_store=_make_run_store(),
+    )
+
+    assert result is None

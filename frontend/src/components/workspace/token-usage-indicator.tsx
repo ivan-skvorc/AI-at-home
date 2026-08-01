@@ -1,7 +1,7 @@
 "use client";
 
 import type { Message } from "@langchain/langgraph-sdk";
-import { ChevronDownIcon, CoinsIcon } from "lucide-react";
+import { ChevronDownIcon, CircleHelpIcon, CoinsIcon } from "lucide-react";
 import { useMemo } from "react";
 
 import { Button } from "@/components/ui/button";
@@ -26,13 +26,23 @@ import {
   type TokenUsagePreferences,
   type TokenUsageViewPreset,
 } from "@/core/messages/usage-model";
+import {
+  formatCost,
+  type ContextUsage,
+  type ThreadCostSummary,
+} from "@/core/threads/token-usage";
 import { cn } from "@/lib/utils";
+
+import { formatContextUsagePercentage } from "./context-usage-format";
+import { Tooltip } from "./tooltip";
 
 interface TokenUsageIndicatorProps {
   threadId?: string;
   messages: Message[];
   pendingMessages?: Message[];
   backendUsage?: TokenUsage | null;
+  costSummary?: ThreadCostSummary | null;
+  contextUsage?: ContextUsage | null;
   enabled?: boolean;
   preferences: TokenUsagePreferences;
   onPreferencesChange: (preferences: TokenUsagePreferences) => void;
@@ -44,6 +54,8 @@ export function TokenUsageIndicator({
   messages,
   pendingMessages,
   backendUsage,
+  costSummary,
+  contextUsage,
   enabled = false,
   preferences,
   onPreferencesChange,
@@ -61,6 +73,13 @@ export function TokenUsageIndicator({
     [backendUsage, messages, pendingMessages, threadId],
   );
   const preset = getTokenUsageViewPreset(preferences);
+  // Cost only reflects persisted runs (the backend does not price in-flight
+  // stream deltas), and is shown only when a thread exists and pricing is set.
+  const cost = threadId ? costSummary : null;
+  const auxEntries = cost ? Object.entries(cost.aux) : [];
+  const contextPercentage = formatContextUsagePercentage(
+    contextUsage?.percentage,
+  );
 
   if (!enabled) {
     return null;
@@ -86,6 +105,24 @@ export function TokenUsageIndicator({
                 : "-"
               : t.tokenUsage.presets[presetKeyToTranslationKey(preset)]}
           </span>
+          {preferences.headerTotal &&
+            cost?.totalCost != null &&
+            cost.currency && (
+              <>
+                <span className="opacity-40">·</span>
+                <span className="font-mono">
+                  {formatCost(cost.totalCost, cost.currency)}
+                </span>
+              </>
+            )}
+          {contextPercentage != null && (
+            <span
+              className="text-muted-foreground/80 border-l pl-1.5 font-mono"
+              aria-label={t.contextUsage.badgeAriaLabel(contextPercentage)}
+            >
+              {contextPercentage}%
+            </span>
+          )}
           <ChevronDownIcon className="size-3" />
         </Button>
       </DropdownMenuTrigger>
@@ -121,6 +158,58 @@ export function TokenUsageIndicator({
             </div>
           )}
         </div>
+        {cost && (
+          <>
+            <DropdownMenuSeparator />
+            <div className="px-2 py-1 text-xs">
+              <div className="flex items-center justify-between gap-4">
+                <span className="flex items-center gap-1">
+                  {t.tokenUsage.cost}
+                  <Tooltip
+                    content={
+                      <span className="block max-w-72 text-xs leading-relaxed">
+                        {t.tokenUsage.costHint}
+                      </span>
+                    }
+                  >
+                    <CircleHelpIcon
+                      className="text-muted-foreground size-3 cursor-help"
+                      aria-label={t.tokenUsage.costHint}
+                    />
+                  </Tooltip>
+                </span>
+                <span className="font-mono font-medium">
+                  {cost.totalCost != null && cost.currency
+                    ? formatCost(cost.totalCost, cost.currency)
+                    : "—"}
+                </span>
+              </div>
+              {auxEntries.length > 0 && (
+                <div className="mt-1 space-y-1 border-t pt-1">
+                  {auxEntries.map(([category, entry]) => (
+                    <div
+                      key={category}
+                      className="flex items-center justify-between gap-4"
+                    >
+                      <span className="text-muted-foreground">
+                        {category === "memory"
+                          ? t.tokenUsage.memory
+                          : category === "suggestions"
+                            ? t.tokenUsage.suggestions
+                            : category}
+                      </span>
+                      <span className="font-mono">
+                        {entry.cost != null && cost.currency
+                          ? formatCost(entry.cost, cost.currency)
+                          : formatTokenCount(entry.tokens)}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </>
+        )}
         <DropdownMenuSeparator />
         <DropdownMenuLabel>{t.tokenUsage.view}</DropdownMenuLabel>
         <DropdownMenuRadioGroup

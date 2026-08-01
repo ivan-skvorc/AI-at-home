@@ -678,6 +678,33 @@ def _host_default_llm() -> Any:
         return None
 
 
+def _record_memory_aux_usage(thread_id: Any, model_name: Any, token_usage: Any) -> None:
+    """Record the memory-extraction LLM call's tokens for the sidebar counter.
+
+    Best-effort: the memory updater already wraps ``extraction_callback`` so an
+    exception here cannot break memory writes, but keep this defensive anyway —
+    a broken cost counter must never disturb memory extraction.
+    """
+    if not isinstance(token_usage, dict) or not thread_id:
+        return
+    try:
+        from deerflow.runtime.aux_usage import record_aux_usage
+
+        input_details = token_usage.get("input_token_details")
+        cache_read = input_details.get("cache_read") if isinstance(input_details, dict) else 0
+        record_aux_usage(
+            str(thread_id),
+            "memory",
+            model_name=str(model_name) if model_name else None,
+            input_tokens=token_usage.get("input_tokens"),
+            output_tokens=token_usage.get("output_tokens"),
+            total_tokens=token_usage.get("total_tokens"),
+            cache_read_tokens=cache_read,
+        )
+    except Exception:  # pragma: no cover - defensive: counter must not break memory
+        logger.debug("failed to record memory aux usage", exc_info=True)
+
+
 def _host_default_extraction_callback(payload: Any) -> None:
     """deer-flow default for DeerMem's ``extraction_callback`` slot.
 
@@ -694,8 +721,11 @@ def _host_default_extraction_callback(payload: Any) -> None:
     extracted = payload.get("facts_extracted")
     passed_confidence = payload.get("facts_passed_confidence")
     rejected = payload.get("rejected_low_confidence", 0)
+    rejected_by_scope = payload.get("rejected_by_scope_gate", 0)
+    scope_breakdown = payload.get("scope_gate_rejections")
     thread_id = payload.get("thread_id")
     model_name = payload.get("model_name")
+    _record_memory_aux_usage(thread_id, model_name, payload.get("token_usage"))
     if isinstance(extracted, int) and isinstance(passed_confidence, int) and extracted > 0:
         rejection_rate = (extracted - passed_confidence) / extracted
         logger.info(
@@ -721,6 +751,22 @@ def _host_default_extraction_callback(payload: Any) -> None:
             payload.get("success"),
             payload.get("token_usage"),
         )
+    if isinstance(scope_breakdown, dict):
+        logger.info(
+            "Memory scope-gate metrics: thread=%s model=%s rejected=%s breakdown=%s",
+            thread_id,
+            model_name,
+            rejected_by_scope,
+            scope_breakdown,
+        )
+        fact_breakdown = scope_breakdown.get("facts")
+        fact_scope_rejected = sum(value for value in fact_breakdown.values() if isinstance(value, int)) if isinstance(fact_breakdown, dict) else 0
+        if isinstance(extracted, int) and extracted > 0 and fact_scope_rejected / extracted > 0.6:
+            logger.warning(
+                "Memory fact scope-gate rejection rate %.0f%% exceeds 60%% - review extraction model classification / prompt (thread=%s)",
+                fact_scope_rejected / extracted * 100,
+                thread_id,
+            )
 
 
 def _collect_host_hooks() -> dict[str, Any]:

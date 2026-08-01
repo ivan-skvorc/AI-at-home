@@ -16,6 +16,8 @@ helper stops at the extracted raw text.
 from __future__ import annotations
 
 import os
+from dataclasses import dataclass
+from typing import Any
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
@@ -28,6 +30,70 @@ from deerflow.utils.llm_text import extract_response_text
 
 def _resolve_environment() -> str | None:
     return os.environ.get("DEER_FLOW_ENV") or os.environ.get("ENVIRONMENT")
+
+
+@dataclass(frozen=True)
+class OneshotResult:
+    """Result of a one-shot LLM turn: extracted text plus usage for accounting."""
+
+    text: str
+    # Raw ``usage_metadata`` dict from the response (input/output/total tokens,
+    # optional ``input_token_details.cache_read``), or ``None`` when the
+    # provider reported no usage.
+    usage: dict[str, Any] | None
+    # Best model identity for pricing lookup: the provider-reported model id
+    # when present, else the requested override name.
+    model_name: str | None
+
+
+def _response_model_name(response: Any, requested: str | None) -> str | None:
+    metadata = getattr(response, "response_metadata", None)
+    if isinstance(metadata, dict):
+        for key in ("model_name", "model"):
+            value = metadata.get(key)
+            if isinstance(value, str) and value.strip():
+                return value
+    return requested
+
+
+async def run_oneshot_llm_with_usage(
+    *,
+    system_instruction: str,
+    user_content: str,
+    run_name: str,
+    app_config: AppConfig,
+    model_name: str | None = None,
+    thread_id: str | None = None,
+) -> OneshotResult:
+    """Run a single non-graph system+user LLM turn, returning text and usage.
+
+    Same request shape as :func:`run_oneshot_llm`, but also surfaces the
+    response's token usage so callers that want to bill the call (e.g. the
+    follow-up-suggestions cost counter) can record it.
+    """
+    model = create_chat_model(name=model_name, thinking_enabled=False, app_config=app_config)
+    invoke_config: dict = {"run_name": run_name}
+    inject_langfuse_metadata(
+        invoke_config,
+        thread_id=thread_id,
+        user_id=get_effective_user_id(),
+        assistant_id=run_name,
+        model_name=model_name,
+        environment=_resolve_environment(),
+    )
+    response = await model.ainvoke(
+        [
+            SystemMessage(content=system_instruction),
+            HumanMessage(content=user_content),
+        ],
+        config=invoke_config,
+    )
+    usage = getattr(response, "usage_metadata", None)
+    return OneshotResult(
+        text=extract_response_text(response.content),
+        usage=usage if isinstance(usage, dict) else None,
+        model_name=_response_model_name(response, model_name),
+    )
 
 
 async def run_oneshot_llm(
@@ -52,21 +118,12 @@ async def run_oneshot_llm(
     Returns:
         The extracted plain-text content of the model response (uncleaned).
     """
-    model = create_chat_model(name=model_name, thinking_enabled=False, app_config=app_config)
-    invoke_config: dict = {"run_name": run_name}
-    inject_langfuse_metadata(
-        invoke_config,
-        thread_id=thread_id,
-        user_id=get_effective_user_id(),
-        assistant_id=run_name,
+    result = await run_oneshot_llm_with_usage(
+        system_instruction=system_instruction,
+        user_content=user_content,
+        run_name=run_name,
+        app_config=app_config,
         model_name=model_name,
-        environment=_resolve_environment(),
+        thread_id=thread_id,
     )
-    response = await model.ainvoke(
-        [
-            SystemMessage(content=system_instruction),
-            HumanMessage(content=user_content),
-        ],
-        config=invoke_config,
-    )
-    return extract_response_text(response.content)
+    return result.text

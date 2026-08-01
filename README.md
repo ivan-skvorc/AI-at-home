@@ -1,4 +1,8 @@
-> **This is a fork of [bytedance/deer-flow](https://github.com/bytedance/deer-flow).** On top of upstream, it adds — out of the box:
+> **This is a fork of [bytedance/deer-flow](https://github.com/bytedance/deer-flow).**
+>
+> It's meant to be a **personal AI you host at home** — a private, self-run alternative to the big assistants that you reach over [Tailscale](https://tailscale.com/) from your phone or laptop anywhere, with no login wall on your own network. Point it at local [Ollama](https://ollama.com/) models for a **free** experience (you only pay for electricity), mix in a cheap cloud key when you want more muscle, and you get something close to the Claude Code / Claude.ai experience — sub-agents, memory, sandboxed tool use, a chat UI — running on hardware you already own and control. The fork's defaults (passwordless-on-LAN, Tailscale-ready dev origins, local-first search/fetch, suggestions & memory off by default, and a live cost overview) are all in service of that goal: keep it private, keep it cheap, keep it yours.
+>
+> On top of upstream, it adds — out of the box:
 >
 > - 🦙 **Auto-populated Ollama models** — `config.yaml`'s `models:` list is synced from your local `ollama pull` list on every launch. Capabilities (thinking / vision / tools) are detected and mapped to DeerFlow's `supports_*` flags, and each model gets a VRAM-aware context window instead of Ollama's tiny 2048-token default.
 > - 🔑 **API-key model auto-config** — on every launch, `scripts/sync-api-key-models.py` reads your `.env` and uncomments the matching cloud-model block in `config.yaml`, so the right models are enabled on first start with no manual editing. It only ever uncomments (never re-comments), skips a block whose models are already active, and no-ops when the key is absent. The auto-enabled models and their conditions:
@@ -7,6 +11,7 @@
 > - 🧩 **Per-thread subagent model dropdown** — in **Ultra mode**, a second model picker lets you route `task` subagents to a cheaper or local model instead of the lead model (defaults to "Follow lead").
 > - 💡 **Follow-up suggestions off by default** — the clickable follow-up-question chips make an extra model call after every answer, so they now default **off** to save cost. Turn them back on per-browser under **Settings → Suggestions**, where a dropdown also lets you pick which model generates them ("Follow workflow selection" by default, or any configured model — pick a cheap one to keep it cheap).
 > - 🧠 **Long-term memory off by default** — the agent no longer learns from or injects your saved memory until you opt in. Turn it on per-browser under **Settings → Memory** (the operator can still hard-disable it with `memory.enabled: false` in `config.yaml`, which greys out the toggle). When off, each run sends `memory_enabled: false` and the backend skips memory injection, extraction, and memory tools.
+> - 💵 **Live cost overview in the conversation header** — the token counter next to a chat now shows an estimated **dollar (or other currency) cost**, priced from each model's `pricing:` block in `config.yaml`. It's **model-aware**: each run's per-model token split is billed at that model's own rate, so subagents on a cheaper or local model are costed correctly — hover the **?** for the note that models without a configured price (like local Ollama) count as $0, ignoring electricity. When the **memory** or **suggestions** features are on, their extra LLM calls get their own separate counters in the dropdown so you can see what each is quietly costing. No pricing configured → the cost line simply hides.
 > - 🔓 **Passwordless by default (local)** — the local stack (`make dev` / `make start`) starts with no login wall: every request resolves to the built-in `default` admin, so the app — and other devices on your LAN — reach it with no username/password. It's opt-out (`DEER_FLOW_AUTH_DISABLED=0` in `.env` restores the email/password login) and self-disabling in production (`DEER_FLOW_ENV`/`ENVIRONMENT` = `prod` keeps auth on regardless).
 > - 🎬 **Reduced motion by default** — decorative and continuous animations are disabled by default (and honor the OS `prefers-reduced-motion` setting); it's a per-browser preference you can flip back on.
 > - 👥 **Multi-user mode toggle (Settings → Account)** — on by default (each login only sees its own conversations). Turn it off — after a confirmation — to combine every conversation into one shared workspace, so all histories are visible no matter which login or device created them (handy after going passwordless, when old per-account chats are stranded under different ids). Server-wide, admin-only, and reversible; while off, anyone who can reach the server sees all conversations, so keep it to a trusted machine.
@@ -546,6 +551,9 @@ periodically, and never reuse a classic all-repos PAT here.
 DeerFlow supports configurable MCP servers and skills to extend its capabilities.
 For HTTP/SSE MCP servers, OAuth token flows are supported (`client_credentials`, `refresh_token`).
 For stdio MCP servers, per-tool call timeouts can be configured with `tool_call_timeout`.
+Settings > Tools updates one MCP server at a time: an invalid stdio command on one server no longer blocks toggling another, while enabling that invalid server remains protected by the command allowlist and surfaces the backend validation message in the UI.
+Targeted updates accept both DeerFlow's `type` field and the MCP-spec `transport` field for SSE/HTTP servers.
+Runtime MCP and skill updates replace `extensions_config.json` atomically, so an interrupted write cannot leave the shared configuration truncated or partially written.
 MCP routing hints can also prefer a specific MCP tool for matching requests without forbidding other tools. When `tool_search` defers MCP schemas, matching routing metadata can auto-promote up to `tool_search.auto_promote_top_k` deferred schemas before the model call.
 See the [MCP Server Guide](backend/docs/MCP_SERVER.md) for detailed instructions.
 
@@ -860,6 +868,8 @@ An enabled skill's `allowed-tools` policy applies only after that skill is expli
 
 When you install `.skill` archives through the Gateway, DeerFlow accepts standard optional frontmatter metadata such as `version`, `author`, and `compatibility` instead of rejecting otherwise valid external skills.
 
+Disabling a skill also removes it from the sandbox filesystem view, so shell commands and structured file tools follow the same enabled state. Local, Docker/AIO, hostPath provisioner, and newly created E2B sandboxes source `/mnt/skills` from enabled-only projections that update when public, custom, legacy, or managed integration skills are toggled, edited, created, deleted, or installed. Managed integration packages remain shared, while their projected filesystem visibility follows each user's enabled state. Multi-worker Gateways re-read on-disk enable state while rebuilding user projections, so a toggle handled by one worker is honored by another worker's next sandbox acquire. Existing E2B sandboxes retain their creation-time snapshot until they are recreated. PVC-backed provisioner skills keep their configured PVC snapshot/layout for now; dynamic PVC materialization is tracked separately.
+
 Managed integrations install shared read-only skill packs without mixing them
 into custom skills. The Lark/Feishu CLI integration is available under
 `Settings → Integrations → Lark / Feishu CLI`; an administrator installs or
@@ -1031,6 +1041,8 @@ The Web UI shows the active goal above the composer. The same command is availab
 
 Use `/compact` in the Web UI composer to summarize older context for the current thread. DeerFlow keeps the full chat visible, but future model calls use the compacted summary plus recent messages. The command is ignored when there is not enough history to compact, and it is blocked while the thread has a run in flight, including when that run is owned by another Gateway worker. If a multi-worker reservation loses its lease, DeerFlow cancels the checkpoint writer before the replacing run proceeds and returns a retryable conflict after cleanup. Thread-title edits are serialized through the same state-write boundary and show a conflict without closing the rename dialog when a run is active.
 
+The chat header also shows a context-window gauge when the selected model has a positive `context_window` configured. It estimates the latest materialized checkpoint's message tokens and keeps the previous same-thread percentage visible while data refetches, independently of the cumulative token-usage setting.
+
 ### Sub-Agents
 
 Sub-agents are an optimization, not the default response to a complex request.
@@ -1049,7 +1061,17 @@ Use `burst` with `burst_limit` to permit bounded extra VMs. The `wait` and
 `reject` policies use only `replicas`. The `reject` policy can remove one warm
 VM before it returns an error.
 
-`replicas` limits one Gateway process. It does not limit all Gateway processes.
+With in-memory ownership, `replicas` limits one Gateway process. With Redis
+ownership, E2B shares one capacity Hash between workers using the same
+`sandbox.ownership.key_prefix`; `replicas` (plus a configured burst) is then a
+deployment-wide hard limit. Use one unique prefix and the same effective limit
+per deployment. To change the limit, stop its Gateways, delete the capacity
+Hash, and restart; mismatched workers fail closed.
+
+The Hash counts remote VMs and in-flight creates, repairs interrupted creates
+from E2B metadata, grace-protects stale inventory omissions, and blocks new
+creates while Redis or initial inventory is unavailable. Run Redis with persistence, non-evicting memory, and HA.
+
 E2B acquisition uses a bounded executor. Waiting acquisitions do not use the
 default asyncio executor.
 
@@ -1071,7 +1093,7 @@ Image bytes loaded for a vision-model call are transient: DeerFlow removes the h
 
 After each run, DeerFlow records a workspace change summary for the run-owned `workspace` and `outputs` directories. The Web UI shows a compact "files changed" badge on the assistant turn; opening it reveals created, modified, and deleted files with text diffs when safe to display. Uploads are excluded because they are user inputs, not agent-generated changes. Large, binary, or sensitive-looking files are shown as metadata only.
 
-Files presented through `present_files` remain part of the thread's artifact state, and the Web UI restores the artifact panel and selected document after a page refresh. The currently selected formal artifact is refreshed once when the run finishes so edits become visible without a manual reload.
+Files presented through `present_files` remain part of the thread's artifact state, and the Web UI restores the artifact panel and selected document after a page refresh. The currently selected formal artifact is refreshed once when the run finishes so edits become visible without a manual reload. Existing UTF-8 text artifacts under `/mnt/user-data/outputs` can also be edited and explicitly saved from the panel while the thread is idle; saves use content revisions to prevent overwriting agent changes.
 
 With `AioSandboxProvider`, shell execution runs inside isolated containers. With `LocalSandboxProvider`, file tools still map to per-thread directories on the host, but host `bash` is disabled by default because it is not a secure isolation boundary. Re-enable host bash only for fully trusted local workflows. Host bash commands have a wall-clock timeout, and long-lived processes should be started in the background with output redirected to a workspace log.
 
@@ -1190,6 +1212,8 @@ requires an explicit local-development opt-in. See the
 [mem0 backend guide](backend/packages/harness/deerflow/agents/memory/backends/mem0/README.md).
 
 Memory updates now skip duplicate fact entries at apply time, so repeated preferences and context do not accumulate endlessly across sessions.
+
+In the default DeerMem `middleware` mode, automatic extraction now classifies every proposed fact by scope, durability, and authority before a deterministic write gate accepts it. Only durable, descriptive user-level facts are stored; current-thread or project constraints and one-time action permissions stay in conversation state. User-global summaries require both user scope and descriptive authority, contradiction removals are scope-gated, and a replacement-dependent removal is applied only when its replacement actually survives validation and storage. These classification labels are extraction-only metadata, add no extra LLM call, and are not written into the fact files. The explicit CRUD tools in `memory.mode: tool` remain a separate, model-directed path. Deployments that override the bundled DeerMem prompts via `memory.backend_config.prompts_dir` must add the new classification fields to their custom templates (the `memory_update` fact/summary/removal formats and the `consolidation` consolidated-fact schema): the write gate fails closed, so an un-migrated template stops every extraction-driven fact, summary, and removal write, surfacing only through the `rejected_by_scope_gate` metrics and the high-rejection-rate warning.
 
 File-backed memory now separates global user context from agent facts. Each user has one `memory.json` containing only the project-independent `user` and `history` summaries; every fact is a canonical Markdown file below `agents/{agent_name}/facts/`. Existing lead-agent middleware, API, Settings, import/export, and embedded-client calls that omit `agent_name` resolve inside DeerMem to the reserved `__default__` bucket. That bucket is outside the valid custom-agent name grammar, so a real custom agent named `lead-agent` has a separate fact repository and deleting a custom agent cannot delete a memory-only directory without `config.yaml`. Public agent identifiers are case-insensitive and canonicalized to lowercase. Runtime/API readers still receive a compatibility `facts` array for the selected/default agent, so the frontend does not read agent facts from `memory.json`; structured Markdown `source` metadata is projected to the historical string field at the MemoryManager boundary. An unscoped Clear All first migrates facts from unread legacy per-agent JSON without adopting its soon-to-be-cleared summaries, then removes shared summaries and facts from every agent bucket while preserving agent configuration files, so a later read cannot resurrect skipped legacy facts; an explicitly agent-scoped clear removes only that agent's facts. On first normal read, old facts embedded in the user JSON are migrated automatically to `__default__`; facts written to the earlier implicit `lead-agent` bucket are also moved when that directory is not a real custom agent. Migration and normal writes notify the configured retrieval adapter only after durable storage locks are released. DeerMem uses a scope-aware SQLite FTS5/BM25 adapter by default, stores only rebuildable derived index data under `.retrieval/`, and rebuilds it in the background during Gateway startup or lazily on the first scoped search. A corrupt derived index is recreated automatically. Set `memory.backend_config.retrieval_adapter` to an empty string to disable it and use the local substring fallback. Chinese tokenization is optional; install the backend `memory-zh` extra (`uv sync --extra memory-zh`) for jieba-assisted sub-phrase search. Journaled writes, a shared user lock, and optimistic user-memory revisions prevent silent lost updates.
 
@@ -1312,6 +1336,17 @@ DeerFlow has key high-privilege capabilities including **system command executio
 
 - **Unauthorized illegal invocation**: Agent functionality could be discovered by unauthorized third parties or malicious internet scanners, triggering bulk unauthorized requests that execute high-risk operations such as system commands and file read/write, potentially causing serious security consequences.
 - **Compliance and legal risks**: If the agent is illegally invoked to conduct cyberattacks, data theft, or other illegal activities, it may result in legal liability and compliance risks.
+
+### Deployment Defaults
+
+The Docker stack publishes its entry port on `127.0.0.1` only, matching the
+local-trusted-environment model described above. To reach it from another
+machine, set `BIND_HOST` in `.env` (e.g. `BIND_HOST=0.0.0.0`) — and only after
+putting the security measures below in place.
+
+**Complete first-run setup before the host becomes reachable.** A fresh
+instance has no accounts yet, so create the admin account through `/setup`
+immediately after starting any deployment that is not loopback-only.
 
 ### Security Recommendations
 

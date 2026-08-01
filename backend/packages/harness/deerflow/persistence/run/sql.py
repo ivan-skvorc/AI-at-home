@@ -20,6 +20,7 @@ from deerflow.runtime.runs.store.base import (
     LeaseRenewal,
     RunStore,
     StatusFinalization,
+    new_by_model_usage_entry,
 )
 from deerflow.runtime.user_context import AUTO, _AutoSentinel, resolve_user_id
 from deerflow.utils.time import coerce_iso
@@ -473,13 +474,18 @@ class RunRepository(RunStore):
             usage_by_model = r.token_usage_by_model or {}
             if usage_by_model:
                 for model, usage in usage_by_model.items():
-                    entry = by_model.setdefault(model, {"tokens": 0, "runs": 0})
+                    entry = by_model.setdefault(model, new_by_model_usage_entry())
                     entry["tokens"] += usage.get("total_tokens", 0)
+                    entry["input_tokens"] += usage.get("input_tokens", 0) or 0
+                    entry["output_tokens"] += usage.get("output_tokens", 0) or 0
+                    entry["cache_read_tokens"] += usage.get("cache_read_tokens", 0) or 0
                     entry["runs"] += 1
             else:
                 model = r.model_name or "unknown"
-                entry = by_model.setdefault(model, {"tokens": 0, "runs": 0})
+                entry = by_model.setdefault(model, new_by_model_usage_entry())
                 entry["tokens"] += r.total_tokens
+                entry["input_tokens"] += r.total_input_tokens or 0
+                entry["output_tokens"] += r.total_output_tokens or 0
                 entry["runs"] += 1
 
         return {

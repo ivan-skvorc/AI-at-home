@@ -15,6 +15,16 @@ from dataclasses import dataclass, field
 from typing import Any
 
 
+def new_by_model_usage_entry() -> dict[str, int]:
+    """Zeroed per-model bucket for ``aggregate_tokens_by_thread`` results.
+
+    Carries the total plus the input/output/cache-read split so the token-usage
+    endpoint can price each model accurately (subagents included). Shared by the
+    memory and SQL stores so the two aggregations cannot drift.
+    """
+    return {"tokens": 0, "runs": 0, "input_tokens": 0, "output_tokens": 0, "cache_read_tokens": 0}
+
+
 @dataclass(frozen=True)
 class EditReplayVisibility:
     hidden_source_run_ids: set[str] = field(default_factory=set)

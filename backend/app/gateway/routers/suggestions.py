@@ -9,7 +9,8 @@ from app.gateway.authz import require_permission
 from app.gateway.deps import get_config
 from deerflow.config.app_config import AppConfig
 from deerflow.config.suggestions_config import DEFAULT_MAX_SUGGESTIONS, MAX_SUGGESTIONS_LIMIT
-from deerflow.utils.oneshot_llm import run_oneshot_llm
+from deerflow.runtime.aux_usage import record_aux_usage
+from deerflow.utils.oneshot_llm import run_oneshot_llm_with_usage
 
 logger = logging.getLogger(__name__)
 
@@ -82,6 +83,26 @@ def _configured_max_suggestions(config: AppConfig) -> int:
     return getattr(config.suggestions, "max_suggestions", DEFAULT_MAX_SUGGESTIONS)
 
 
+def _record_suggestions_usage(thread_id: str, model_name: str | None, usage: dict | None) -> None:
+    """Record the suggestions LLM call's tokens for the sidebar counter (best-effort)."""
+    if not isinstance(usage, dict):
+        return
+    input_details = usage.get("input_token_details")
+    cache_read = input_details.get("cache_read") if isinstance(input_details, dict) else 0
+    try:
+        record_aux_usage(
+            thread_id,
+            "suggestions",
+            model_name=model_name,
+            input_tokens=usage.get("input_tokens"),
+            output_tokens=usage.get("output_tokens"),
+            total_tokens=usage.get("total_tokens"),
+            cache_read_tokens=cache_read,
+        )
+    except Exception:  # pragma: no cover - defensive: counter must not break suggestions
+        logger.debug("failed to record suggestions aux usage", exc_info=True)
+
+
 @router.get(
     "/suggestions/config",
     response_model=SuggestionsConfigResponse,
@@ -130,7 +151,7 @@ async def generate_suggestions(
     user_content = f"Conversation Context:\n{conversation}\n\nGenerate {n} follow-up questions"
 
     try:
-        raw = await run_oneshot_llm(
+        result = await run_oneshot_llm_with_usage(
             system_instruction=system_instruction,
             user_content=user_content,
             run_name="suggest_agent",
@@ -138,7 +159,8 @@ async def generate_suggestions(
             model_name=body.model_name,
             thread_id=thread_id,
         )
-        suggestions = _parse_json_string_list(raw) or []
+        _record_suggestions_usage(thread_id, result.model_name, result.usage)
+        suggestions = _parse_json_string_list(result.text) or []
         cleaned = [s.replace("\n", " ").strip() for s in suggestions if s.strip()]
         cleaned = cleaned[:n]
         return SuggestionsResponse(suggestions=cleaned)
