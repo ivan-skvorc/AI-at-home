@@ -325,6 +325,9 @@ class TestBuildMinimalConfig:
         data = yaml.safe_load(content)
         assert data["sandbox"]["use"] == "deerflow.community.aio_sandbox:AioSandboxProvider"
         assert "allow_host_bash" not in data["sandbox"]
+        # A working image is pinned so the container sandbox bash works out of the
+        # box rather than falling back to the provider's broken :latest default.
+        assert data["sandbox"]["image"] == "ghcr.io/agent-infra/sandbox:1.11.0"
         tool_names = [t["name"] for t in data.get("tools", [])]
         assert "bash" in tool_names
 

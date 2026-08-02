@@ -251,6 +251,11 @@ def build_minimal_config(
         sandbox_config["allow_host_bash"] = allow_host_bash
     else:
         sandbox_config.pop("allow_host_bash", None)
+        # The wizard writes AIO in per-thread container mode (no base_url), which
+        # spawns its own container — pin a working image (matching
+        # docker/docker-compose.sandbox.yml) so the sandbox bash works out of the
+        # box instead of the provider's broken :latest DEFAULT_IMAGE fallback.
+        sandbox_config["image"] = "ghcr.io/agent-infra/sandbox:1.11.0"
     data["sandbox"] = sandbox_config
     if channel_connection_providers is not None:
         data["channel_connections"] = _build_channel_connections_config(channel_connection_providers)

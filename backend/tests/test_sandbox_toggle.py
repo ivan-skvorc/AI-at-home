@@ -101,6 +101,9 @@ class TestEnableContainerMode:
         assert "use: deerflow.community.aio_sandbox:AioSandboxProvider" in text
         # Container mode is per-thread; must NOT pin an external base_url.
         assert "base_url" not in text
+        # Container mode spawns its own container, so a working image must be
+        # pinned instead of the provider's broken :latest DEFAULT_IMAGE fallback.
+        assert "image: ghcr.io/agent-infra/sandbox:1.11.0" in text
         assert "bash_command_timeout: 1800" in text
         assert "request_timeout: 1800.0" in text
         assert "GITHUB_TOKEN: $GITHUB_TOKEN" in text
