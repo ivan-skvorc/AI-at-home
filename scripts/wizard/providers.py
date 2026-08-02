@@ -169,9 +169,11 @@ ANTHROPIC_BUDGET_THINKING_CONFIG = {
 ANTHROPIC_THINKING_CONFIG = ANTHROPIC_BUDGET_THINKING_CONFIG
 
 # Latest Claude models, enabled together when the user has an ANTHROPIC_API_KEY.
-# Fable 5 / Opus 5 / Opus 4.8 / Sonnet 5 use adaptive thinking; Haiku 4.5 takes a
-# budget. Ordered most- to least-capable; Opus 4.8 is kept alongside its Opus 5
-# successor so existing threads can stay pinned to it.
+# Opus and Sonnet each ship their last 4.x alongside 5 (Opus 4.8 + Opus 5,
+# Sonnet 4.6 + Sonnet 5); Haiku and Fable ship only the latest. Fable 5 / Opus 5 /
+# Opus 4.8 / Sonnet 5 / Sonnet 4.6 use adaptive thinking; Haiku 4.5 takes a
+# budget. Ordered most- to least-capable; the last-4.x models are kept alongside
+# their 5 successors so existing threads can stay pinned to them.
 ANTHROPIC_BUNDLE_MODELS: list[dict] = [
     {
         "name": "claude-fable-5",
@@ -211,9 +213,21 @@ ANTHROPIC_BUNDLE_MODELS: list[dict] = [
     },
     {
         "name": "claude-sonnet-5",
-        "display_name": "Claude Sonnet 5 ($3/15) (Anthropic)",
+        "display_name": "Claude Sonnet 5 ($3/15 → $2/10*) (Anthropic)",
         "use": "langchain_anthropic:ChatAnthropic",
         "model": "claude-sonnet-5",
+        "api_key": "$ANTHROPIC_API_KEY",
+        "default_request_timeout": 600.0,
+        "max_retries": 2,
+        "max_tokens": 32000,
+        "supports_vision": True,
+        **ANTHROPIC_ADAPTIVE_THINKING_CONFIG,
+    },
+    {
+        "name": "claude-sonnet-4-6",
+        "display_name": "Claude Sonnet 4.6 ($3/15) (Anthropic)",
+        "use": "langchain_anthropic:ChatAnthropic",
+        "model": "claude-sonnet-4-6",
         "api_key": "$ANTHROPIC_API_KEY",
         "default_request_timeout": 600.0,
         "max_retries": 2,
@@ -266,10 +280,11 @@ def _openrouter_model(
     return entry
 
 
-# One OPENROUTER_API_KEY reaches every provider. Claude Fable + Opus 5 plus the
-# current xAI / OpenAI / Google / Meta flagships and strong open alternatives
-# (MiniMax, Qwen, Kimi, Mistral, DeepSeek, GLM, Nemotron). Slugs current as of
-# 2026-07.
+# One OPENROUTER_API_KEY reaches every provider. Claude Fable (the flagship,
+# offered here for OpenRouter-only users — every other Claude lives on the direct
+# Anthropic bundle above) plus the current xAI / OpenAI / Google / Meta flagships
+# and strong open alternatives (MiniMax, Qwen, Kimi, Mistral, DeepSeek, GLM,
+# Nemotron). Slugs current as of 2026-07.
 #
 # Two slugs corrected in this refresh — both named models that never shipped, so
 # selecting them failed at request time:
@@ -292,7 +307,6 @@ def _openrouter_model(
 #                        direct Anthropic bundle above.
 OPENROUTER_BUNDLE_MODELS: list[dict] = [
     _openrouter_model("openrouter-fable-5", "Claude Fable 5 ($10/50) (OpenRouter) (p)", "anthropic/claude-fable-5", supports_vision=True),
-    _openrouter_model("openrouter-opus-5", "Claude Opus 5 ($5/25) (OpenRouter) (p)", "anthropic/claude-opus-5", supports_vision=True),
     _openrouter_model("openrouter-grok-4.5", "Grok 4.5 ($2/6) (OpenRouter) (p)", "x-ai/grok-4.5", supports_vision=True),
     _openrouter_model("openrouter-gpt-5.6-sol", "GPT-5.6 Sol ($5/30) (OpenRouter) (p)", "openai/gpt-5.6-sol", supports_vision=True),
     _openrouter_model("openrouter-gpt-5.3-codex", "GPT-5.3 Codex ($1.75/14) (OpenRouter) (p)", "openai/gpt-5.3-codex", supports_vision=True),
@@ -423,9 +437,9 @@ LLM_PROVIDERS: list[LLMProvider] = [
     LLMProvider(
         name="anthropic",
         display_name="Anthropic",
-        description="Latest Claude Fable 5, Opus 5, Opus 4.8, Sonnet 5 and Haiku 4.5",
+        description="Latest Claude Fable 5, Opus 5, Opus 4.8, Sonnet 5, Sonnet 4.6 and Haiku 4.5",
         use="langchain_anthropic:ChatAnthropic",
-        models=["claude-fable-5", "claude-opus-5", "claude-opus-4-8", "claude-sonnet-5", "claude-haiku-4-5"],
+        models=["claude-fable-5", "claude-opus-5", "claude-opus-4-8", "claude-sonnet-5", "claude-sonnet-4-6", "claude-haiku-4-5"],
         default_model="claude-opus-5",
         env_var="ANTHROPIC_API_KEY",
         package="langchain-anthropic",
