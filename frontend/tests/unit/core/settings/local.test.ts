@@ -1,12 +1,14 @@
 import { afterEach, expect, rs, test } from "@rstest/core";
 
 import {
+  applyThreadContextOverride,
   DEFAULT_LOCAL_SETTINGS,
   getLocalSettings,
-  getThreadModelName,
+  getThreadContextOverride,
   mergeLocalSettings,
+  pickThreadScopedContext,
   saveLocalSettings,
-  saveThreadModelName,
+  saveThreadContextOverride,
 } from "@/core/settings/local";
 
 afterEach(() => {
@@ -81,7 +83,48 @@ test("falls back when localStorage access is blocked", () => {
   });
 
   expect(getLocalSettings()).toEqual(DEFAULT_LOCAL_SETTINGS);
-  expect(getThreadModelName("thread-1")).toBeUndefined();
+  expect(getThreadContextOverride("thread-1")).toEqual({});
   expect(() => saveLocalSettings(DEFAULT_LOCAL_SETTINGS)).not.toThrow();
-  expect(() => saveThreadModelName("thread-1", "model-1")).not.toThrow();
+  expect(() =>
+    saveThreadContextOverride("thread-1", { model_name: "model-1" }),
+  ).not.toThrow();
+});
+
+test("pickThreadScopedContext keeps only per-conversation workflow keys", () => {
+  // agent_name is route-derived and must not leak into the per-thread override.
+  const picked = pickThreadScopedContext({
+    model_name: "ollama:llama3",
+    subagent_model_name: "claude-opus",
+    mode: "ultra",
+    reasoning_effort: "high",
+    agent_name: "researcher",
+  });
+  expect(picked).toEqual({
+    model_name: "ollama:llama3",
+    subagent_model_name: "claude-opus",
+    mode: "ultra",
+    reasoning_effort: "high",
+  });
+});
+
+test("pickThreadScopedContext preserves an explicit undefined reset", () => {
+  // Sending the subagent model back to "follow lead" clears the override, which
+  // must survive as an own `undefined` key rather than being dropped.
+  const picked = pickThreadScopedContext({ subagent_model_name: undefined });
+  expect(
+    Object.prototype.hasOwnProperty.call(picked, "subagent_model_name"),
+  ).toBe(true);
+  expect(picked.subagent_model_name).toBeUndefined();
+});
+
+test("applyThreadContextOverride layers the thread selection over base settings", () => {
+  const base = mergeLocalSettings({});
+  const applied = applyThreadContextOverride(base, {
+    model_name: "ollama:llama3",
+    mode: "flash",
+  });
+  expect(applied.context.model_name).toBe("ollama:llama3");
+  expect(applied.context.mode).toBe("flash");
+  // The base settings object is never mutated.
+  expect(base.context.model_name).toBeUndefined();
 });

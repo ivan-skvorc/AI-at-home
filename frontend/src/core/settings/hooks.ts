@@ -2,12 +2,13 @@ import { useCallback, useMemo, useSyncExternalStore } from "react";
 
 import {
   DEFAULT_LOCAL_SETTINGS,
-  applyThreadModelOverride,
+  applyThreadContextOverride,
   type LocalSettings,
 } from "./local";
 import {
+  EMPTY_THREAD_CONTEXT,
   getBaseSettingsSnapshot,
-  getThreadModelSnapshot,
+  getThreadContextSnapshot,
   subscribe,
   updateLocalSettings,
   updateThreadSettings,
@@ -37,15 +38,18 @@ export function useThreadSettings(
     () => DEFAULT_LOCAL_SETTINGS,
   );
 
-  const threadModelName = useSyncExternalStore(
+  const threadContext = useSyncExternalStore(
     subscribe,
-    () => getThreadModelSnapshot(threadId),
-    () => undefined,
+    () => getThreadContextSnapshot(threadId),
+    () => EMPTY_THREAD_CONTEXT,
   );
 
+  // The thread's own workflow selection (model / subagent model / mode /
+  // reasoning effort) overrides the shared base settings, so two conversations
+  // open at once each keep their own model.
   const settings = useMemo(
-    () => applyThreadModelOverride(baseSettings, threadModelName),
-    [baseSettings, threadModelName],
+    () => applyThreadContextOverride(baseSettings, threadContext),
+    [baseSettings, threadContext],
   );
 
   const setSettings = useCallback<LocalSettingsSetter>(

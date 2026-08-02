@@ -125,8 +125,8 @@ models:
   # (the API-key auto-config, a companion to the Ollama sync) reads your `.env`
   # and uncomments the matching block below:
   #   ANTHROPIC_API_KEY  -> Claude Fable 5 / Opus 5 / Opus 4.8 / Sonnet 5 /
-  #                         Haiku 4.5 (direct Anthropic API)
-  #   OPENROUTER_API_KEY -> Claude Fable 5 + Claude Opus 5 / Grok 4.5 /
+  #                         Sonnet 4.6 / Haiku 4.5 (direct Anthropic API)
+  #   OPENROUTER_API_KEY -> Claude Fable 5 / Grok 4.5 /
   #                         GPT-5.6 Sol / GPT-5.3 Codex / Gemini 3.6 Flash /
   #                         Llama 4 Maverick / MiniMax M3 / Qwen3.7 Max /
   #                         Kimi K3 / Mistral Large 3 / DeepSeek V4 Pro /
@@ -161,14 +161,15 @@ models:
   # ── Anthropic — auto-enabled when ANTHROPIC_API_KEY is set ─────────────────
   # Latest Claude models via the direct Anthropic API — their display names carry
   # an (Anthropic) suffix, mirroring the (OpenRouter) suffix on the routed copies
-  # below. Fable 5, Opus 5, Opus 4.8
-  # and Sonnet 5 use adaptive thinking (the `budget_tokens` form is rejected by
-  # these models); Haiku 4.5 still takes an explicit thinking budget. Fable 5's
-  # thinking is always on: it rejects an explicit `thinking: {type: disabled}` with
-  # a 400, so its disabled state stays on adaptive+summarized, while Opus 5 /
-  # Opus 4.8 / Sonnet 5 accept `type: disabled`. `supports_thinking: true` is
-  # required or DeerFlow silently falls back to non-thinking mode even with the
-  # UI toggle on.
+  # below. Opus and Sonnet each ship their last 4.x alongside 5 (Opus 4.8 + Opus 5,
+  # Sonnet 4.6 + Sonnet 5); Haiku and Fable ship only the latest. Fable 5, Opus 5,
+  # Opus 4.8, Sonnet 5 and Sonnet 4.6 use adaptive thinking (the `budget_tokens`
+  # form is rejected/deprecated on these models); Haiku 4.5 still takes an explicit
+  # thinking budget. Fable 5's thinking is always on: it rejects an explicit
+  # `thinking: {type: disabled}` with a 400, so its disabled state stays on
+  # adaptive+summarized, while Opus 5 / Opus 4.8 / Sonnet 5 / Sonnet 4.6 accept
+  # `type: disabled`. `supports_thinking: true` is required or DeerFlow silently
+  # falls back to non-thinking mode even with the UI toggle on.
   # Opus 5 note: it accepts `thinking: {type: disabled}` only at reasoning effort
   # `high` or below (400 at `xhigh`/`max`). DeerFlow never sends an effort /
   # `output_config` parameter to ChatAnthropic (`reasoning_effort` is forwarded
@@ -249,7 +250,7 @@ models:
   #       type: disabled
   #
   # - name: claude-sonnet-5
-  #   display_name: Claude Sonnet 5 ($3/15) (Anthropic)
+  #   display_name: Claude Sonnet 5 ($3/15 → $2/10*) (Anthropic)
   #   use: langchain_anthropic:ChatAnthropic
   #   model: claude-sonnet-5
   #   api_key: $ANTHROPIC_API_KEY
@@ -259,7 +260,30 @@ models:
   #   supports_vision: true
   #   supports_thinking: true
   #   pricing:                        # Anthropic API list price (USD / 1M tokens); powers the console cost display
-  #     currency: USD                 # intro pricing (2.0 / 10.0) runs through 2026-08-31; these are the standard rates
+  #     currency: USD                 # intro pricing (2.0 / 10.0, the starred pair) runs through 2026-08-31; these are the standard rates
+  #     input_per_million: 3.0
+  #     output_per_million: 15.0
+  #     input_cache_hit_per_million: 0.3   # cache reads ≈ 0.1x input
+  #   when_thinking_enabled:
+  #     thinking:
+  #       type: adaptive
+  #       display: summarized       # summarized thinking text round-trips on multi-turn tool use; omitted (the default) drops the text and 400s on replay
+  #   when_thinking_disabled:
+  #     thinking:
+  #       type: disabled
+  #
+  # - name: claude-sonnet-4-6
+  #   display_name: Claude Sonnet 4.6 ($3/15) (Anthropic)
+  #   use: langchain_anthropic:ChatAnthropic
+  #   model: claude-sonnet-4-6
+  #   api_key: $ANTHROPIC_API_KEY
+  #   default_request_timeout: 600.0
+  #   max_retries: 2
+  #   max_tokens: 32000
+  #   supports_vision: true
+  #   supports_thinking: true
+  #   pricing:                        # Anthropic API list price (USD / 1M tokens); powers the console cost display
+  #     currency: USD
   #     input_per_million: 3.0
   #     output_per_million: 15.0
   #     input_cache_hit_per_million: 0.3   # cache reads ≈ 0.1x input
@@ -298,9 +322,10 @@ models:
   # ── OpenRouter — auto-enabled when OPENROUTER_API_KEY is set ───────────────
   # One key, every provider. Model ids are OpenRouter slugs (provider/model),
   # routed through the standard OpenAI-compatible ChatOpenAI + base_url pattern.
-  # The set below is Claude Fable + Claude Opus 5 plus the current xAI / OpenAI /
-  # Google / Meta flagships and strong open alternatives (MiniMax, Qwen, Kimi,
-  # Mistral, DeepSeek, GLM, Nemotron).
+  # The set below is Claude Fable (the flagship, also offered here for OpenRouter-
+  # only users — every other Claude lives on the direct Anthropic block above)
+  # plus the current xAI / OpenAI / Google / Meta flagships and strong open
+  # alternatives (MiniMax, Qwen, Kimi, Mistral, DeepSeek, GLM, Nemotron).
   #
   # Display-name markers on these OpenRouter entries:
   #   (p)  — zero-data-retention is NOT guaranteed. Requests are routed through
@@ -331,18 +356,6 @@ models:
   #   display_name: Claude Fable 5 ($10/50) (OpenRouter) (p)
   #   use: langchain_openai:ChatOpenAI
   #   model: anthropic/claude-fable-5
-  #   api_key: $OPENROUTER_API_KEY
-  #   base_url: https://openrouter.ai/api/v1
-  #   request_timeout: 600.0
-  #   max_retries: 2
-  #   max_tokens: 32000
-  #   supports_vision: true
-  #   supports_thinking: true
-  #
-  # - name: openrouter-opus-5
-  #   display_name: Claude Opus 5 ($5/25) (OpenRouter) (p)
-  #   use: langchain_openai:ChatOpenAI
-  #   model: anthropic/claude-opus-5
   #   api_key: $OPENROUTER_API_KEY
   #   base_url: https://openrouter.ai/api/v1
   #   request_timeout: 600.0
@@ -2825,12 +2838,15 @@ run_ownership:
 #         admin:
 #           tools: {allow: "*"}
 #           routes: {allow: "*"}
+#           models: {allow: "*"}
 #         user:
 #           tools: {allow: "*", deny: ["update_agent"]}
 #           routes: {allow: "*"}
+#           models: {allow: "*"}
 #         guest:
 #           tools: {allow: ["web_search", "read_file"]}
 #           routes: {allow: ["threads:read", "runs:read"]}
+#           models: {allow: ["gpt-4o-mini"]}
 authorization:
   enabled: false
 

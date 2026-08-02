@@ -138,14 +138,16 @@ class TestBundleProviders:
             "claude-opus-5",
             "claude-opus-4-8",
             "claude-sonnet-5",
+            "claude-sonnet-4-6",
             "claude-haiku-4-5",
         ]
         by_model = {m["model"]: m for m in provider.bundle_models}
-        # Fable 5 / Opus 5 / Opus 4.8 / Sonnet 5 must use adaptive thinking (budget_tokens 400s).
+        # Fable 5 / Opus 5 / Opus 4.8 / Sonnet 5 / Sonnet 4.6 must use adaptive thinking (budget_tokens 400s).
         assert by_model["claude-fable-5"]["when_thinking_enabled"]["thinking"]["type"] == "adaptive"
         assert by_model["claude-opus-5"]["when_thinking_enabled"]["thinking"]["type"] == "adaptive"
         assert by_model["claude-opus-4-8"]["when_thinking_enabled"]["thinking"]["type"] == "adaptive"
         assert by_model["claude-sonnet-5"]["when_thinking_enabled"]["thinking"]["type"] == "adaptive"
+        assert by_model["claude-sonnet-4-6"]["when_thinking_enabled"]["thinking"]["type"] == "adaptive"
         # Haiku 4.5 still takes an explicit thinking budget.
         haiku_thinking = by_model["claude-haiku-4-5"]["when_thinking_enabled"]["thinking"]
         assert haiku_thinking["type"] == "enabled"
@@ -159,9 +161,11 @@ class TestBundleProviders:
         provider = next(p for p in LLM_PROVIDERS if p.name == "openrouter")
         assert provider.default_model in provider.models
         bundle_ids = [m["model"] for m in provider.bundle_models]
-        # Latest Claude Fable + Opus 5 + the xAI / OpenAI / Google flagships.
+        # Claude Fable (flagship, OpenRouter-only users) + the xAI / OpenAI / Google
+        # flagships. Every other Claude lives on the direct Anthropic bundle, so
+        # Opus 5 is intentionally NOT routed through OpenRouter.
         assert "anthropic/claude-fable-5" in bundle_ids
-        assert "anthropic/claude-opus-5" in bundle_ids
+        assert "anthropic/claude-opus-5" not in bundle_ids
         assert any(m.startswith("x-ai/") for m in bundle_ids)
         assert any(m.startswith("openai/") for m in bundle_ids)
         assert any(m.startswith("google/") for m in bundle_ids)
@@ -409,6 +413,7 @@ class TestBuildMinimalConfig:
             "claude-opus-5",
             "claude-opus-4-8",
             "claude-sonnet-5",
+            "claude-sonnet-4-6",
             "claude-haiku-4-5",
         ]
         fable = data["models"][0]

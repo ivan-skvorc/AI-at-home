@@ -177,14 +177,14 @@ class TestRealExampleConfig:
         out = sync_api.sync(self.text, {"anthropic"})
         data = yaml.safe_load(out)
         names = {m["model"] for m in data["models"]}
-        assert {"claude-fable-5", "claude-opus-5", "claude-opus-4-8", "claude-sonnet-5", "claude-haiku-4-5"}.issubset(names)
+        assert {"claude-fable-5", "claude-opus-5", "claude-opus-4-8", "claude-sonnet-5", "claude-sonnet-4-6", "claude-haiku-4-5"}.issubset(names)
         assert all(m["api_key"] == "$ANTHROPIC_API_KEY" for m in data["models"])
 
     def test_anthropic_adaptive_models_request_summarized_thinking(self):
-        """The adaptive Claude models (Fable 5, Opus 5, Opus 4.8, Sonnet 5) must
-        request `display: summarized` when thinking is enabled. Their default
-        (`omitted`) returns thinking blocks with empty text, which langchain-anthropic
-        drops on multi-turn tool-use replay, producing a 400
+        """The adaptive Claude models (Fable 5, Opus 5, Opus 4.8, Sonnet 5,
+        Sonnet 4.6) must request `display: summarized` when thinking is enabled.
+        Their default (`omitted`) returns thinking blocks with empty text, which
+        langchain-anthropic drops on multi-turn tool-use replay, producing a 400
         (`messages.N.content.0.thinking.thinking: Field required`). Haiku 4.5 uses the
         older `type: enabled` budget form, which returns full thinking text, so it
         needs no display override."""
@@ -192,7 +192,7 @@ class TestRealExampleConfig:
         data = yaml.safe_load(out)
         by_model = {m["model"]: m for m in data["models"]}
 
-        for slug in ("claude-fable-5", "claude-opus-5", "claude-opus-4-8", "claude-sonnet-5"):
+        for slug in ("claude-fable-5", "claude-opus-5", "claude-opus-4-8", "claude-sonnet-5", "claude-sonnet-4-6"):
             enabled = by_model[slug]["when_thinking_enabled"]["thinking"]
             assert enabled.get("type") == "adaptive", slug
             assert enabled.get("display") == "summarized", slug
@@ -206,9 +206,9 @@ class TestRealExampleConfig:
         """Fable 5 rejects `thinking: {type: disabled}` with a 400, so it must never
         send it on either toggle state: when thinking is "disabled" Fable keeps
         adaptive+summarized (it cannot turn thinking off, and summarized keeps the
-        multi-turn replay legal). Opus 5 / Opus 4.8 / Sonnet 5 accept and keep
-        `type: disabled`. Regression guard against both the disable-path 400 and the
-        omitted-display replay 400.
+        multi-turn replay legal). Opus 5 / Opus 4.8 / Sonnet 5 / Sonnet 4.6 accept
+        and keep `type: disabled`. Regression guard against both the disable-path 400
+        and the omitted-display replay 400.
 
         Opus 5 additionally rejects `type: disabled` above reasoning effort `high`,
         but DeerFlow never sends an effort/`output_config` parameter to
@@ -223,7 +223,7 @@ class TestRealExampleConfig:
         assert fable_disabled.get("type") != "disabled"
         assert fable_disabled.get("display") == "summarized", fable_disabled
 
-        for slug in ("claude-opus-5", "claude-opus-4-8", "claude-sonnet-5", "claude-haiku-4-5"):
+        for slug in ("claude-opus-5", "claude-opus-4-8", "claude-sonnet-5", "claude-sonnet-4-6", "claude-haiku-4-5"):
             disabled = by_model[slug].get("when_thinking_disabled") or {}
             assert disabled.get("thinking", {}).get("type") == "disabled", slug
 
@@ -233,7 +233,6 @@ class TestRealExampleConfig:
         ids = {m["model"] for m in data["models"]}
         expected = {
             "anthropic/claude-fable-5",
-            "anthropic/claude-opus-5",
             "x-ai/grok-4.5",
             "openai/gpt-5.6-sol",
             "openai/gpt-5.3-codex",

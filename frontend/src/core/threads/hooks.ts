@@ -2489,6 +2489,11 @@ type ThreadHistoryOptions = {
   pendingSupersededRunIds?: ReadonlySet<string>;
 };
 
+export const THREAD_HISTORY_QUERY_POLICY = {
+  refetchOnWindowFocus: false,
+  staleTime: 5 * 60 * 1_000,
+} as const;
+
 export function useThreadHistory(
   threadId: string,
   { enabled = true, pendingSupersededRunIds }: ThreadHistoryOptions = {},
@@ -2500,6 +2505,7 @@ export function useThreadHistory(
     ReturnType<typeof threadHistoryQueryKey>,
     number | null
   >({
+    ...THREAD_HISTORY_QUERY_POLICY,
     queryKey: threadHistoryQueryKey(threadId),
     enabled: enabled && Boolean(threadId),
     initialPageParam: null,
