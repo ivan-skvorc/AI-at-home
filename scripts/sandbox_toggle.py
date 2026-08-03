@@ -41,6 +41,13 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 AIO_PROVIDER = "deerflow.community.aio_sandbox:AioSandboxProvider"
 LOCAL_PROVIDER = "deerflow.sandbox.local:LocalSandboxProvider"
 
+# Working AIO sandbox image, kept in lockstep with the external-mode container in
+# docker/docker-compose.sandbox.yml. Container mode spawns its own container from
+# this image, so it must be pinned: the provider's fallback DEFAULT_IMAGE is a
+# `:latest` mirror tag frozen on a pre-1.9.3 digest that lacks the /v1/bash/*
+# routes, which would leave the agent's env-bearing bash broken out of the box.
+AIO_SANDBOX_IMAGE = "ghcr.io/agent-infra/sandbox:1.11.0"
+
 DEFAULT_ENVIRONMENT = ["  environment:", "    GITHUB_TOKEN: $GITHUB_TOKEN"]
 
 _TOP_KEY = re.compile(r"^([A-Za-z_][\w-]*):")
@@ -172,6 +179,9 @@ def build_enabled_container_section(environment: list[str] | None) -> list[str]:
         "  # and mounts that thread's user-data directories, so /mnt/user-data is",
         "  # host-backed (uploads, outputs, and present_files all work). Requires a",
         "  # local Docker daemon; no `make sandbox-up` needed.",
+        "  # Pinned image (matches docker/docker-compose.sandbox.yml); do NOT drop to",
+        "  # :latest — that mirror tag lacks the /v1/bash/* routes the agent needs.",
+        f"  image: {AIO_SANDBOX_IMAGE}",
         "  # Per-command budget for bash in the sandbox; raise both together for",
         "  # long installs/builds (the HTTP client must outlive the command).",
         "  bash_command_timeout: 1800",

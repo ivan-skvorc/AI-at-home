@@ -300,8 +300,8 @@ def _openrouter_model(
 #   ($<in>/<out>)        USD list price per 1M tokens (rough dropdown signal).
 #   ($<list> → $<promo>*) a starred second pair = a temporary discount from
 #                        OpenRouter's promotions page; the first pair is the list
-#                        price. MiniMax M3 (60% off) and GLM-5.2 (51.65% off) as of
-#                        2026-07 — drop the starred pair back to list when a promo ends.
+#                        price. MiniMax M3 (60% off) and GLM-5.2 (76% off) as of
+#                        2026-08 — drop the starred pair back to list when a promo ends.
 #   (p)                  zero-data-retention NOT guaranteed (routed via OpenRouter to
 #                        a third-party provider that may log prompts) — unlike the
 #                        direct Anthropic bundle above.
@@ -317,7 +317,7 @@ OPENROUTER_BUNDLE_MODELS: list[dict] = [
     _openrouter_model("openrouter-kimi-k3", "Kimi K3 ($3/15) (OpenRouter) (p)", "moonshotai/kimi-k3", supports_vision=True),
     _openrouter_model("openrouter-mistral-large-3", "Mistral Large 3 ($0.5/1.5) (OpenRouter) (p)", "mistralai/mistral-large-2512", supports_vision=True, supports_thinking=False),
     _openrouter_model("openrouter-deepseek-v4-pro", "DeepSeek V4 Pro ($0.44/0.87) (OpenRouter) (p)", "deepseek/deepseek-v4-pro"),
-    _openrouter_model("openrouter-glm-5.2", "GLM-5.2 ($1.4/4.4 → $0.68/2.13*) (OpenRouter) (p)", "z-ai/glm-5.2", max_tokens=16000),
+    _openrouter_model("openrouter-glm-5.2", "GLM-5.2 ($1.15/3.6 → $0.28/0.87*) (OpenRouter) (p)", "z-ai/glm-5.2", max_tokens=16000),
     _openrouter_model("openrouter-nemotron-3-ultra", "Nemotron 3 Ultra ($0.5/2.2) (OpenRouter) (p)", "nvidia/nemotron-3-ultra-550b-a55b", max_tokens=16000),
 ]
 

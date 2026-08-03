@@ -15,7 +15,7 @@
 # ============================================================================
 # Bump this number when the config schema changes.
 # Run `make config-upgrade` to merge new fields into your local config.yaml.
-config_version: 31
+config_version: 32
 
 # ============================================================================
 # Logging
@@ -337,7 +337,7 @@ models:
   #          OpenRouter's promotions page (the * flags a temporary promo that can
   #          end at any time). Only models currently on a promo carry the second
   #          pair: MiniMax M3 ($0.6/2.4 → $0.24/0.96*, 60% off) and GLM-5.2
-  #          ($1.4/4.4 → $0.68/2.13*, 51.65% off) as of 2026-07. Re-check the promo
+  #          ($1.15/3.6 → $0.28/0.87*, 76% off) as of 2026-08. Re-check the promo
   #          page when refreshing — an ended promo means dropping the starred pair
   #          back to the list price.
   # Two slugs were corrected in the 2026-07 refresh — both named models that never
@@ -474,7 +474,7 @@ models:
   #   supports_thinking: true
   #
   # - name: openrouter-glm-5.2
-  #   display_name: GLM-5.2 ($1.4/4.4 → $0.68/2.13*) (OpenRouter) (p)
+  #   display_name: GLM-5.2 ($1.15/3.6 → $0.28/0.87*) (OpenRouter) (p)
   #   use: langchain_openai:ChatOpenAI
   #   model: z-ai/glm-5.2
   #   api_key: $OPENROUTER_API_KEY
@@ -1757,11 +1757,12 @@ sandbox:
 #   # Default: enterprise-public-cn-beijing.cr.volces.com/vefaas-public/all-in-one-sandbox:latest
 #   # The mirror's `:latest` tag is frozen on an old pre-1.9.3 digest that lacks
 #   # the /v1/bash/* routes required-secrets skills need (see #3921/#3922), so
-#   # pin an explicit version instead — recommended: 1.11.0 (multi-arch, works
-#   # on both x86_64 and arm64). Custom images should extend the default image
-#   # or implement the same AIO sandbox HTTP API used by agent-sandbox. See
-#   # backend/docs/CONFIGURATION.md.
-#   # image: enterprise-public-cn-beijing.cr.volces.com/vefaas-public/all-in-one-sandbox:1.11.0
+#   # pin an explicit version instead — recommended: ghcr.io/agent-infra/sandbox:1.11.0
+#   # (multi-arch, works on x86_64 and arm64; the same image docker-compose.sandbox.yml
+#   # and `make sandbox-enable MODE=container` pin). Custom images should extend the
+#   # default image or implement the same AIO sandbox HTTP API used by agent-sandbox.
+#   # See backend/docs/CONFIGURATION.md.
+#   # image: ghcr.io/agent-infra/sandbox:1.11.0
 #
 #   # Optional: Base port for sandbox containers (default: 8080)
 #   # port: 8080
@@ -2491,6 +2492,16 @@ database:
   checkpoint_graph_cache:
     # Gateway thread-state accessor graphs (per assistant/mode/cadence).
     accessor_graph_max: 64
+  # Delta-mode checkpoint history cache (only used when checkpoint_channel_mode: delta).
+  # Pure performance policy: safe to differ across workers, never frozen.
+  # checkpoint_cache:
+  #   type: memory            # memory | redis (redis is Gateway/async only)
+  #   max_entries: 128        # 0 disables the cache
+  #   redis_url: null         # or DEER_FLOW_CHECKPOINT_CACHE_REDIS_URL / REDIS_URL
+  #   ttl_seconds: 86400      # redis leak safety net; bounds residual copies if a
+  #                           # thread-delete purge fails (purge itself is immediate).
+  #                           # 0 explicitly disables expiry (redis maxmemory only)
+  #   key_prefix: ""          # default: hash of the database identity
 
 # ============================================================================
 # Run Events Configuration
