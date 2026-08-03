@@ -77,7 +77,6 @@ import { isHiddenFromUIMessage } from "@/core/messages/utils";
 import {
   getResolvedMode,
   lacksToolSupport,
-  sortModelsByToolSupport,
   type InputMode,
 } from "@/core/models/capabilities";
 import { useModels } from "@/core/models/hooks";
@@ -128,7 +127,6 @@ import {
   ModelSelectorContent,
   ModelSelectorInput,
   ModelSelectorItem,
-  ModelSelectorList,
   ModelSelectorName,
   ModelSelectorTrigger,
 } from "../ai-elements/model-selector";
@@ -161,6 +159,7 @@ import {
 } from "./input-box-helpers";
 import { useThread } from "./messages/context";
 import { ModeHoverGuide } from "./mode-hover-guide";
+import { ModelPickerControls, ModelPickerList } from "./model-picker-controls";
 import { ReferenceAttachmentSummary, useMaybeSidecar } from "./sidecar";
 import { SlashSkillChip } from "./slash-skill-chip";
 import { Tooltip } from "./tooltip";
@@ -388,7 +387,7 @@ export function InputBox({
 
   const [followups, setFollowups] = useState<string[]>([]);
   const { data: suggestionsConfig } = useSuggestionsConfig();
-  const [localSettings] = useLocalSettings();
+  const [localSettings, setLocalSettings] = useLocalSettings();
   const suggestionsConfigLoaded = suggestionsConfig !== undefined;
   // Effective enablement = server master switch AND the per-user opt-in
   // (defaults off to avoid the extra per-turn LLM call / cost).
@@ -849,10 +848,6 @@ export function InputBox({
       setSubagentModelDialogOpen(false);
     },
     [onContextChange, context],
-  );
-  const subagentModels = useMemo(
-    () => sortModelsByToolSupport(models),
-    [models],
   );
   const subagentSelected = useMemo(
     () => models.find((m) => m.name === context.subagent_model_name),
@@ -2703,8 +2698,14 @@ export function InputBox({
               </ModelSelectorTrigger>
               <ModelSelectorContent>
                 <ModelSelectorInput placeholder={t.inputBox.searchModels} />
-                <ModelSelectorList>
-                  {models.map((m) => {
+                <ModelPickerControls
+                  prefs={localSettings.modelPicker}
+                  onChange={(next) => setLocalSettings("modelPicker", next)}
+                />
+                <ModelPickerList
+                  models={models}
+                  prefs={localSettings.modelPicker}
+                  renderItem={(m) => {
                     // Ultra mode delegates via the `task` tool, so the lead
                     // model must be able to call tools.
                     const unusable =
@@ -2736,8 +2737,8 @@ export function InputBox({
                         )}
                       </ModelSelectorItem>
                     );
-                  })}
-                </ModelSelectorList>
+                  }}
+                />
               </ModelSelectorContent>
             </ModelSelector>
             {context.mode === "ultra" && (
@@ -2759,25 +2760,35 @@ export function InputBox({
                 </ModelSelectorTrigger>
                 <ModelSelectorContent>
                   <ModelSelectorInput placeholder={t.inputBox.searchModels} />
-                  <ModelSelectorList>
-                    <ModelSelectorItem
-                      key="__follow_lead__"
-                      value="follow lead"
-                      onSelect={() => handleSubagentModelSelect(undefined)}
-                    >
-                      <div className="flex min-w-0 flex-1 flex-col">
-                        <ModelSelectorName>Follow lead</ModelSelectorName>
-                        <span className="text-muted-foreground truncate text-[10px]">
-                          Use the same model as the lead agent
-                        </span>
-                      </div>
-                      {context.subagent_model_name === undefined ? (
-                        <CheckIcon className="ml-auto size-4" />
-                      ) : (
-                        <div className="ml-auto size-4" />
-                      )}
-                    </ModelSelectorItem>
-                    {subagentModels.map((m) => (
+                  <ModelPickerControls
+                    prefs={localSettings.modelPicker}
+                    onChange={(next) => setLocalSettings("modelPicker", next)}
+                  />
+                  <ModelPickerList
+                    models={models}
+                    prefs={localSettings.modelPicker}
+                    // Keep tool-incapable models at the bottom (FORK.md §3).
+                    demoteLast={lacksToolSupport}
+                    leading={
+                      <ModelSelectorItem
+                        key="__follow_lead__"
+                        value="follow lead"
+                        onSelect={() => handleSubagentModelSelect(undefined)}
+                      >
+                        <div className="flex min-w-0 flex-1 flex-col">
+                          <ModelSelectorName>Follow lead</ModelSelectorName>
+                          <span className="text-muted-foreground truncate text-[10px]">
+                            Use the same model as the lead agent
+                          </span>
+                        </div>
+                        {context.subagent_model_name === undefined ? (
+                          <CheckIcon className="ml-auto size-4" />
+                        ) : (
+                          <div className="ml-auto size-4" />
+                        )}
+                      </ModelSelectorItem>
+                    }
+                    renderItem={(m) => (
                       <ModelSelectorItem
                         key={m.name}
                         value={m.name}
@@ -2803,8 +2814,8 @@ export function InputBox({
                           <div className="ml-auto size-4" />
                         )}
                       </ModelSelectorItem>
-                    ))}
-                  </ModelSelectorList>
+                    )}
+                  />
                 </ModelSelectorContent>
               </ModelSelector>
             )}
