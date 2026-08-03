@@ -1,4 +1,8 @@
 import type { TokenUsageInlineMode } from "../messages/usage-model";
+import {
+  DEFAULT_MODEL_PICKER_PREFS,
+  type ModelPickerPrefs,
+} from "../models/sorting";
 import type { AgentThreadContext } from "../threads";
 
 export const DEFAULT_LOCAL_SETTINGS: LocalSettings = {
@@ -34,6 +38,10 @@ export const DEFAULT_LOCAL_SETTINGS: LocalSettings = {
   memory: {
     enabled: false,
   },
+  // Per-browser model-picker preference (sort key/direction + group-by-provider
+  // toggle). Defaults to config order, ungrouped, so the picker looks unchanged
+  // until the user opts into sorting/grouping.
+  modelPicker: DEFAULT_MODEL_PICKER_PREFS,
   context: {
     model_name: undefined,
     mode: undefined,
@@ -140,6 +148,9 @@ export interface LocalSettings {
     // operator master switch `memory.enabled` in config.yaml.
     enabled: boolean;
   };
+  // How the model dropdown orders/groups its entries (fork feature). Per browser,
+  // shared across threads. See `core/models/sorting.ts`.
+  modelPicker: ModelPickerPrefs;
   context: Omit<
     AgentThreadContext,
     | "thread_id"
@@ -178,6 +189,10 @@ export function mergeLocalSettings(
     memory: {
       ...DEFAULT_LOCAL_SETTINGS.memory,
       ...settings?.memory,
+    },
+    modelPicker: {
+      ...DEFAULT_LOCAL_SETTINGS.modelPicker,
+      ...settings?.modelPicker,
     },
     notification: {
       ...DEFAULT_LOCAL_SETTINGS.notification,

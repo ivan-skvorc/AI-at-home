@@ -83,13 +83,13 @@ import {
   ModelSelectorContent,
   ModelSelectorInput,
   ModelSelectorItem,
-  ModelSelectorList,
   ModelSelectorName,
   ModelSelectorTrigger,
 } from "../../ai-elements/model-selector";
 import { MessageList, MESSAGE_LIST_DEFAULT_PADDING_BOTTOM } from "../messages";
 import { useThread as useParentThread } from "../messages/context";
 import { ModeHoverGuide } from "../mode-hover-guide";
+import { ModelPickerControls, ModelPickerList } from "../model-picker-controls";
 import { Tooltip } from "../tooltip";
 
 import { type SidecarReference, useSidecar } from "./context";
@@ -930,6 +930,7 @@ function SidecarModelSelector({
   onOpenChange: (open: boolean) => void;
 }) {
   const { t } = useI18n();
+  const [localSettings, setLocalSettings] = useLocalSettings();
 
   if (!selectedModel) {
     return null;
@@ -948,8 +949,14 @@ function SidecarModelSelector({
       </ModelSelectorTrigger>
       <ModelSelectorContent>
         <ModelSelectorInput placeholder={t.inputBox.searchModels} />
-        <ModelSelectorList>
-          {models.map((model) => (
+        <ModelPickerControls
+          prefs={localSettings.modelPicker}
+          onChange={(next) => setLocalSettings("modelPicker", next)}
+        />
+        <ModelPickerList
+          models={models}
+          prefs={localSettings.modelPicker}
+          renderItem={(model) => (
             <ModelSelectorItem
               key={model.name}
               value={model.name}
@@ -967,8 +974,8 @@ function SidecarModelSelector({
                 <div className="ml-auto size-4" />
               )}
             </ModelSelectorItem>
-          ))}
-        </ModelSelectorList>
+          )}
+        />
       </ModelSelectorContent>
     </ModelSelector>
   );

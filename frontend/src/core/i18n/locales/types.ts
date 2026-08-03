@@ -176,6 +176,14 @@ export interface Translations {
     reasoningEffortHigh: string;
     reasoningEffortHighDescription: string;
     searchModels: string;
+    sortModelsBy: string;
+    sortByDefault: string;
+    sortByName: string;
+    sortByPrice: string;
+    sortAscending: string;
+    sortDescending: string;
+    groupByProvider: string;
+    modelProviderOther: string;
     surpriseMe: string;
     surpriseMePrompt: string;
     followupLoading: string;
