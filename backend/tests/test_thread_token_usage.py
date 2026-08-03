@@ -10,9 +10,10 @@ from _router_auth_helpers import make_authed_test_app
 from fastapi.testclient import TestClient
 
 from app.gateway import context_usage
-from app.gateway.pricing import build_pricing_map
+from app.gateway.pricing import build_pricing_map, lookup_pricing, token_cost
 from app.gateway.routers import thread_runs
 from deerflow.runtime import aux_usage
+from deerflow.runtime.runs.store.memory import MemoryRunStore
 
 
 def _aggregate_result() -> dict:
@@ -91,6 +92,83 @@ def _priced_map():
             SimpleNamespace(name="sub", model="sub-model", pricing={"currency": "USD", "input_per_million": 1, "output_per_million": 4}),
         ],
     )
+
+
+def _priced_anthropic_map():
+    """The fork's direct-Anthropic prices, so the switching-conversation math
+    matches real config ($5/25, $3/15, $1/5 per 1M tokens)."""
+    return build_pricing_map(
+        [
+            SimpleNamespace(name="Claude Opus 4.8", model="claude-opus-4-8", pricing={"currency": "USD", "input_per_million": 5, "output_per_million": 25}),
+            SimpleNamespace(name="Claude Sonnet 4.6", model="claude-sonnet-4-6", pricing={"currency": "USD", "input_per_million": 3, "output_per_million": 15}),
+            SimpleNamespace(name="Claude Haiku 4.5", model="claude-haiku-4-5", pricing={"currency": "USD", "input_per_million": 1, "output_per_million": 5}),
+        ],
+    )
+
+
+@pytest.mark.anyio
+async def test_cost_tracks_model_switching_across_turns():
+    """The 'as the conversation goes on' property: when the selected model changes
+    each turn, the cumulative cost is the sum of every turn priced at the model
+    that actually ran it — no turn's tokens are cross-attributed to another
+    model's rate.
+
+    Unlike ``test_thread_token_usage_computes_model_aware_cost_and_aux`` (which
+    prices a *mocked* aggregate), this drives the real cross-run per-model store
+    aggregation and feeds it through the same pricing helpers the endpoint uses,
+    so it pins the whole store→price chain across a multi-turn thread.
+    """
+    store = MemoryRunStore()
+    thread = "thread-model-switch"
+
+    async def _turn(run_id: str, model_name: str, input_tokens: int, output_tokens: int) -> None:
+        total = input_tokens + output_tokens
+        await store.put(run_id, thread_id=thread, status="pending", model_name=model_name)
+        await store.update_run_completion(
+            run_id,
+            status="success",
+            total_input_tokens=input_tokens,
+            total_output_tokens=output_tokens,
+            total_tokens=total,
+            llm_call_count=1,
+            lead_agent_tokens=total,
+            subagent_tokens=0,
+            middleware_tokens=0,
+            token_usage_by_model={model_name: {"input_tokens": input_tokens, "output_tokens": output_tokens, "total_tokens": total}},
+            message_count=0,
+        )
+
+    # Turn 1 on Opus, turn 2 on Sonnet, turn 3 on Haiku.
+    await _turn("t1", "claude-opus-4-8", 1_000_000, 200_000)
+    await _turn("t2", "claude-sonnet-4-6", 2_000_000, 400_000)
+    await _turn("t3", "claude-haiku-4-5", 3_000_000, 1_000_000)
+
+    agg = await store.aggregate_tokens_by_thread(thread)
+    pricing = _priced_anthropic_map()
+
+    # Price exactly as the endpoint does: each per-model bucket at its own rate.
+    per_model_cost: dict[str, float] = {}
+    total_cost = 0.0
+    for model, bucket in agg["by_model"].items():
+        price = lookup_pricing(pricing, model)
+        assert price is not None, f"no price resolved for {model}"
+        cost = token_cost(bucket["input_tokens"], bucket["output_tokens"], price, bucket["cache_read_tokens"])
+        per_model_cost[model] = cost
+        total_cost += cost
+
+    # Opus 1M@$5 + 0.2M@$25 = 10 ; Sonnet 2M@$3 + 0.4M@$15 = 12 ; Haiku 3M@$1 + 1M@$5 = 8.
+    assert per_model_cost["claude-opus-4-8"] == pytest.approx(10.0)
+    assert per_model_cost["claude-sonnet-4-6"] == pytest.approx(12.0)
+    assert per_model_cost["claude-haiku-4-5"] == pytest.approx(8.0)
+    # Cumulative conversation cost is the sum, each turn billed at its own model.
+    assert total_cost == pytest.approx(30.0)
+    # Each turn contributes exactly one run to its own bucket — no cross-attribution.
+    assert {model: bucket["runs"] for model, bucket in agg["by_model"].items()} == {
+        "claude-opus-4-8": 1,
+        "claude-sonnet-4-6": 1,
+        "claude-haiku-4-5": 1,
+    }
+    assert agg["total_runs"] == 3
 
 
 def test_thread_token_usage_computes_model_aware_cost_and_aux():
