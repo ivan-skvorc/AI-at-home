@@ -337,7 +337,7 @@ models:
   #          OpenRouter's promotions page (the * flags a temporary promo that can
   #          end at any time). Only models currently on a promo carry the second
   #          pair: MiniMax M3 ($0.6/2.4 → $0.24/0.96*, 60% off) and GLM-5.2
-  #          ($1.4/4.4 → $0.68/2.13*, 51.65% off) as of 2026-07. Re-check the promo
+  #          ($1.15/3.6 → $0.28/0.87*, 76% off) as of 2026-08. Re-check the promo
   #          page when refreshing — an ended promo means dropping the starred pair
   #          back to the list price.
   # Two slugs were corrected in the 2026-07 refresh — both named models that never
@@ -474,7 +474,7 @@ models:
   #   supports_thinking: true
   #
   # - name: openrouter-glm-5.2
-  #   display_name: GLM-5.2 ($1.4/4.4 → $0.68/2.13*) (OpenRouter) (p)
+  #   display_name: GLM-5.2 ($1.15/3.6 → $0.28/0.87*) (OpenRouter) (p)
   #   use: langchain_openai:ChatOpenAI
   #   model: z-ai/glm-5.2
   #   api_key: $OPENROUTER_API_KEY
