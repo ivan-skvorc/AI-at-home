@@ -363,6 +363,11 @@ Mixed Sonnet/Haiku saves ~63% over pure Sonnet. Sonnet/local saves ~95% — at t
   fish_add_path ~/.local/bin
   ```
 
+- **Root-owned files from the DooD sandbox.** In Docker DooD mode the gateway container is host-root-equivalent and writes into host-mounted dirs **as root**. Over time `backend/.deer-flow/` (per-user integrations/uploads/backups) and, if a container ever created it, `backend/.venv/` end up owned by `root`, which then breaks host-side commands run as your normal user. Two symptoms and their fixes:
+  - **`make config-upgrade` / `make sandbox-enable` fail** with `Failed to query Python interpreter … failed to canonicalize path backend/.venv/bin/python3: Permission denied (os error 13)`. The venv is root-owned. Fix: `sudo chown -R "$USER":"$USER" backend/.venv` (or delete it and let `make install` rebuild it).
+  - **`make docker-start` fails during "load build context"** with `error from sender: open …/backend/.deer-flow/…: permission denied`. The build context sender can't read the root-owned runtime tree. This is now prevented at the source — the repo-root `.dockerignore` excludes `.deer-flow/` (and `**/.deer-flow/`), so the build never reads it (pinned by `backend/tests/test_dockerignore_deer_flow.py`). If you still hit it on an older checkout, either add those patterns or `sudo chown -R "$USER":"$USER" backend/.deer-flow`.
+  - General remedy for either: `sudo chown -R "$USER":"$USER" .deer-flow backend/.deer-flow backend/.venv`. Running the local (non-Docker) `make dev` avoids creating root-owned files in the first place.
+
 ## Upstream sync
 
 Pull upstream changes into this fork with:
