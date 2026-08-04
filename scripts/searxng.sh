@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 #
-# searxng.sh — start or stop the standalone bundled SearXNG container
+# searxng.sh — start, stop, or update the standalone bundled SearXNG container
 #
 # Usage:
 #   ./scripts/searxng.sh up      # start (default)
 #   ./scripts/searxng.sh stop    # stop
+#   ./scripts/searxng.sh update  # pull the latest image, recreate if running
 #
 # Runs the `searxng` service from docker/docker-compose.yaml under the same
 # compose project as `make up` (deer-flow), so the standalone container and
@@ -33,8 +34,22 @@ case "$CMD" in
     stop)
         exec docker compose -p deer-flow -f "$REPO_ROOT/docker/docker-compose.yaml" stop searxng
         ;;
+    update)
+        # docker.io/searxng/searxng:latest only re-pulls when told to, so a
+        # long-running stack never picks up upstream fixes on its own. Pull the
+        # newest image, then recreate the container ONLY if it is currently
+        # running (an idle checkout just pre-fetches the image for its next
+        # `up`; a live stack rolls onto the new image). `up -d` is a no-op when
+        # the image is unchanged.
+        compose_file="$REPO_ROOT/docker/docker-compose.yaml"
+        docker compose -p deer-flow -f "$compose_file" pull searxng || exit 1
+        if [ -n "$(docker compose -p deer-flow -f "$compose_file" ps -q searxng 2>/dev/null)" ]; then
+            exec docker compose -p deer-flow -f "$compose_file" up -d searxng
+        fi
+        echo "SearXNG image pulled; bundled container is not running, nothing to recreate."
+        ;;
     *)
-        echo "Usage: $0 [up|stop]"
+        echo "Usage: $0 [up|stop|update]"
         exit 1
         ;;
 esac

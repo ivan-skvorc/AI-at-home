@@ -1,6 +1,6 @@
 # DeerFlow - Unified Development Environment
 
-.PHONY: help config config-upgrade check install setup doctor support-bundle detect-thread-boundaries detect-blocking-io dev dev-daemon start start-daemon nginx stop up down clean docker-init docker-start docker-stop docker-logs docker-logs-frontend docker-logs-gateway docker-logs-redis searxng searxng-stop sandbox-up sandbox-down sandbox-logs sandbox-enable sandbox-disable fetch-browser
+.PHONY: help config config-upgrade check install setup doctor support-bundle detect-thread-boundaries detect-blocking-io dev dev-daemon start start-daemon nginx stop up down clean docker-init docker-start docker-stop docker-logs docker-logs-frontend docker-logs-gateway docker-logs-redis searxng searxng-stop sandbox-up sandbox-down sandbox-logs sandbox-enable sandbox-disable fetch-browser auto-update auto-update-install auto-update-uninstall
 
 # docker compose shim: prefer the v2 plugin, fall back to legacy docker-compose.
 DOCKER_COMPOSE ?= docker compose
@@ -40,6 +40,9 @@ help:
 	@echo "  make sandbox-down    - Stop and remove the AIO sandbox container"
 	@echo "  make sandbox-logs    - Follow the AIO sandbox container logs"
 	@echo "  make fetch-browser   - Download the Camoufox browser for the local web_fetch backend"
+	@echo "  make auto-update     - Update the Camoufox browser + bundled SearXNG image now"
+	@echo "  make auto-update-install   - Install a daily systemd timer for the update above"
+	@echo "  make auto-update-uninstall - Remove the daily auto-update timer"
 	@echo "  make dev             - Start all services in development mode (with hot-reloading)"
 	@echo "  make searxng         - Start only the SearXNG search container (launch paths auto-start it when needed)"
 	@echo "  make searxng-stop    - Stop the standalone SearXNG search container"
@@ -144,6 +147,22 @@ sandbox-logs:
 # pre-fetch for when you want the download to happen ahead of first launch.
 fetch-browser:
 	@$(BACKEND_UV_RUN) python -m camoufox fetch
+
+# Refresh the two components this repo installs itself — the Camoufox browser
+# binaries and the bundled SearXNG :latest image — neither of which self-updates
+# after first install. Idempotent + best-effort (no-op when a component isn't in
+# use or is already current). Runs inside the backend venv so camoufox imports.
+auto-update:
+	@$(BACKEND_UV_RUN) python ../scripts/update_camoufox_searxng.py --verbose
+
+# Install / remove a daily `systemd --user` timer that runs `make auto-update`
+# even when the app isn't launched (the local launch paths also run it, throttled
+# to once a day). Prints an equivalent cron line where systemd --user is absent.
+auto-update-install:
+	@$(PYTHON) ./scripts/install_auto_update.py
+
+auto-update-uninstall:
+	@$(PYTHON) ./scripts/install_auto_update.py --uninstall
 
 # Start all services in development mode (with hot-reloading)
 # Ollama auto-populate + Camoufox browser fetch run inside scripts/serve.sh so
