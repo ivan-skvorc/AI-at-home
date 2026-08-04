@@ -65,6 +65,18 @@ frontend/node_modules
 backend/.venv
 backend/htmlcov
 backend/.coverage
+
+# DeerFlow runtime state (per-user data, integrations, uploads, backups). It is
+# created at runtime — and is frequently root-owned because the DooD sandbox
+# writes into these host-mounted dirs as root — so it must never enter the build
+# context: BuildKit's context sender cannot read the root-owned files and the
+# whole `docker build` fails ("error from sender: open .../.deer-flow/...:
+# permission denied"), and it would otherwise bake user data / credentials into
+# the image. Matches both the repo-root `.deer-flow/` and nested copies such as
+# `backend/.deer-flow/`.
+.deer-flow/
+**/.deer-flow/
+
 *.md
 !README.md
 !frontend/README.md
