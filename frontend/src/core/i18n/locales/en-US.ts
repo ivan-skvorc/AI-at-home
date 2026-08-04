@@ -318,6 +318,7 @@ export const enUS: Translations = {
     pinTab: "Pin as tab",
     openInTab: "Open in tab",
     untitled: "New chat",
+    dropHint: "Drag a chat here to keep it open as a tab",
   },
 
   // Scheduled tasks

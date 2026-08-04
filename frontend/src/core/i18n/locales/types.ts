@@ -244,6 +244,7 @@ export interface Translations {
     pinTab: string;
     openInTab: string;
     untitled: string;
+    dropHint: string;
   };
 
   // Scheduled tasks
