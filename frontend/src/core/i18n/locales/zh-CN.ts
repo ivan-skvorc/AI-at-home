@@ -296,6 +296,14 @@ export const zhCN: Translations = {
     agentsDisabledTooltip: "功能未启用",
   },
 
+  chatTabs: {
+    ariaLabel: "打开的对话标签页",
+    closeTab: "关闭标签页",
+    pinTab: "固定为标签页",
+    openInTab: "在标签页中打开",
+    untitled: "新对话",
+  },
+
   // 定时任务
   scheduledTasks: {
     scheduleType: {

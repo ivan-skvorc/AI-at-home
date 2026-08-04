@@ -1,6 +1,5 @@
 import { FilesIcon, XIcon } from "lucide-react";
 import dynamic from "next/dynamic";
-import { usePathname } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   type Layout,
@@ -80,7 +79,6 @@ const ChatBox: React.FC<{
 }> = ({ children, threadId, browserEnabled = true }) => {
   const { thread } = useThread();
   const isMobile = useIsMobile();
-  const pathname = usePathname();
   const threadIdRef = useRef(threadId);
 
   const {
@@ -163,9 +161,12 @@ const ChatBox: React.FC<{
   const [renderedRightPanel, setRenderedRightPanel] =
     useState<RightPanelKind | null>(activeRightPanel);
 
+  // Panel-group ids are derived from the thread id, not the route pathname, so
+  // several ChatBox instances mounted at once (keep-alive chat tabs share one
+  // pathname) never collide on DOM ids or cross-wire their resize layouts.
   const resizableIdBase = useMemo(() => {
-    return pathname.replace(/[^a-zA-Z0-9_-]+/g, "-").replace(/^-+|-+$/g, "");
-  }, [pathname]);
+    return threadId.replace(/[^a-zA-Z0-9_-]+/g, "-").replace(/^-+|-+$/g, "");
+  }, [threadId]);
 
   const sidePanelRef = usePanelRef();
   // Width the panel reopens at: the last size the user dragged it to.

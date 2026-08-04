@@ -3,11 +3,16 @@ import { Toaster } from "sonner";
 
 import { QueryClientProvider } from "@/components/query-client-provider";
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
+// Direct file import (not the barrel): this server component must reach the
+// client viewport across a proper "use client" boundary without pulling the
+// whole chats barrel into the server module graph.
+import { KeepAliveChatViewport } from "@/components/workspace/chats/keep-alive-chat-viewport";
 import { CommandPalette } from "@/components/workspace/command-palette";
 import { GatewayOfflineBanner } from "@/components/workspace/gateway-offline-banner";
 import { SettingsDialogHost } from "@/components/workspace/settings";
 import { WorkspaceSettingsDeepLink } from "@/components/workspace/workspace-settings-deep-link";
 import { WorkspaceSidebar } from "@/components/workspace/workspace-sidebar";
+import { ChatTabsProvider } from "@/core/threads/chat-tabs-context";
 
 function parseSidebarOpenCookie(
   value: string | undefined,
@@ -32,11 +37,17 @@ export async function WorkspaceContent({
   return (
     <QueryClientProvider>
       <SidebarProvider className="h-screen" defaultOpen={initialSidebarOpen}>
-        <WorkspaceSidebar />
-        <SidebarInset className="min-w-0">
-          <GatewayOfflineBanner gatewayUnavailable={gatewayUnavailable} />
-          {children}
-        </SidebarInset>
+        <ChatTabsProvider>
+          <WorkspaceSidebar />
+          <SidebarInset className="min-w-0">
+            <GatewayOfflineBanner gatewayUnavailable={gatewayUnavailable} />
+            {/* Persistent keep-alive host for chat tabs. Mounted above the
+                route so navigating between chats never remounts them; hidden
+                (but still mounted) on non-chat workspace routes. */}
+            <KeepAliveChatViewport />
+            {children}
+          </SidebarInset>
+        </ChatTabsProvider>
       </SidebarProvider>
       <CommandPalette />
       <SettingsDialogHost />
