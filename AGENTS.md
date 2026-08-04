@@ -58,6 +58,7 @@ deer-flow/
 ├── extensions_config.example.json  # Template → copy to extensions_config.json (gitignored): MCP servers + skills
 ├── backend/                        # Python backend — see backend/AGENTS.md
 │   ├── Makefile                    # Per-module backend commands (dev, gateway, test, lint, migrate-rev)
+│   ├── packages/extension-api/     # deerflow-extension-api package (import: deerflow_extension_api.*) — public extension contract
 │   ├── packages/harness/           # deerflow-harness package (import: deerflow.*) — agent framework
 │   └── app/                        # FastAPI Gateway + IM channels (import: app.*)
 ├── frontend/                       # Next.js frontend (pnpm) — see frontend/AGENTS.md
@@ -70,6 +71,11 @@ deer-flow/
 ├── tests/                          # Root-level tests (currently tests/skills/ — public skill tests)
 └── docs/                           # Cross-cutting docs, plans, and design notes
 ```
+
+Third-party extensions are loaded from a top-level `plugins:` list in `config.yaml`
+(operator-controlled on purpose — that list causes code to be imported, so it is deliberately
+kept out of the API-writable `extensions_config.json`). See the Extension System section in
+[backend/AGENTS.md](backend/AGENTS.md).
 
 Runtime config lives at the **repo root**: copy `config.example.yaml` → `config.yaml`
 (main app config) and `extensions_config.example.json` → `extensions_config.json` (MCP
@@ -115,6 +121,9 @@ make sandbox-enable / sandbox-disable           # Switch config.yaml between the
 make sandbox-up / sandbox-down / sandbox-logs   # Manage the standalone AIO sandbox container (docker/docker-compose.sandbox.yml, 127.0.0.1:8091)
 make fetch-browser                              # Manually pre-download the Camoufox browser (also auto-installed on every launch path when the camoufox web_fetch backend is selected)
 ```
+
+Docker log and restart commands resolve `DEER_FLOW_ROOT` from the current
+checkout before invoking Compose, matching the start and stop commands.
 
 Run `make help` for the full list.
 
