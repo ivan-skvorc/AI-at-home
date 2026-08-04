@@ -80,9 +80,17 @@ function readPersistedState(pathname: string): PersistedArtifactsState | null {
 
 interface ArtifactsProviderProps {
   children: ReactNode;
+  // Persistence scope for the panel's session-storage state. Defaults to the
+  // route pathname (classic single-chat behavior). Keep-alive chat tabs mount
+  // several providers at once under one pathname, so each passes its own
+  // thread id here to stay isolated instead of clobbering a shared key.
+  storageScope?: string;
 }
 
-export function ArtifactsProvider({ children }: ArtifactsProviderProps) {
+export function ArtifactsProvider({
+  children,
+  storageScope,
+}: ArtifactsProviderProps) {
   const [artifacts, setArtifacts] = useState<string[]>([]);
   const [selectedArtifact, setSelectedArtifact] = useState<string | null>(null);
   const [autoSelect, setAutoSelect] = useState(true);
@@ -94,14 +102,17 @@ export function ArtifactsProvider({ children }: ArtifactsProviderProps) {
   const [editingPath, setEditingPath] = useState<string | null>(null);
   const { setOpen: setSidebarOpen } = useSidebar();
   const pathname = usePathname();
+  // Isolation scope for persisted panel state: an explicit per-instance scope
+  // (keep-alive chat tabs) or the route pathname (classic single chat).
+  const scope = storageScope ?? pathname;
   const hydratedPathRef = useRef<string | null>(null);
 
   useEffect(() => {
-    if (!pathname) {
+    if (!scope) {
       return;
     }
 
-    const persisted = readPersistedState(pathname);
+    const persisted = readPersistedState(scope);
     setArtifacts(persisted?.artifacts ?? []);
     setSelectedArtifact(persisted?.selectedArtifact ?? null);
     setOpen(persisted?.open ?? env.NEXT_PUBLIC_STATIC_WEBSITE_ONLY === "true");
@@ -109,8 +120,8 @@ export function ArtifactsProvider({ children }: ArtifactsProviderProps) {
     setAutoSelect(!persisted?.selectedArtifact);
     setDrafts({});
     setEditingPath(null);
-    hydratedPathRef.current = pathname;
-  }, [pathname]);
+    hydratedPathRef.current = scope;
+  }, [scope]);
 
   useEffect(() => {
     const hasUnsavedDrafts = Object.values(drafts).some(
@@ -127,18 +138,18 @@ export function ArtifactsProvider({ children }: ArtifactsProviderProps) {
   }, [drafts]);
 
   useEffect(() => {
-    if (!pathname || hydratedPathRef.current !== pathname) {
+    if (!scope || hydratedPathRef.current !== scope) {
       return;
     }
     try {
       window.sessionStorage.setItem(
-        storageKey(pathname),
+        storageKey(scope),
         JSON.stringify({ artifacts, selectedArtifact, open }),
       );
     } catch {
       // Browser storage can be disabled or full; panel state must keep working.
     }
-  }, [artifacts, open, pathname, selectedArtifact]);
+  }, [artifacts, open, scope, selectedArtifact]);
 
   const select = useCallback(
     (artifact: string, autoSelect = false) => {

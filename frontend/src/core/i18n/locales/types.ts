@@ -237,6 +237,15 @@ export interface Translations {
     channels: string;
   };
 
+  // Browser-style keep-alive chat tabs (fork feature).
+  chatTabs: {
+    ariaLabel: string;
+    closeTab: string;
+    pinTab: string;
+    openInTab: string;
+    untitled: string;
+  };
+
   // Scheduled tasks
   scheduledTasks: {
     scheduleType: { cron: string; once: string };

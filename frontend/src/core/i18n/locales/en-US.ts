@@ -312,6 +312,14 @@ export const enUS: Translations = {
     agentsDisabledTooltip: "Feature not enabled",
   },
 
+  chatTabs: {
+    ariaLabel: "Open chat tabs",
+    closeTab: "Close tab",
+    pinTab: "Pin as tab",
+    openInTab: "Open in tab",
+    untitled: "New chat",
+  },
+
   // Scheduled tasks
   scheduledTasks: {
     scheduleType: {

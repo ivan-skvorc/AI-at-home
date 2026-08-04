@@ -5,6 +5,7 @@ import {
   FileJson,
   FileText,
   MoreHorizontal,
+  PanelTop,
   Pencil,
   Pin,
   PinOff,
@@ -48,6 +49,8 @@ import { resetThreadChatAfterDelete } from "@/components/workspace/chats/use-thr
 import { getAPIClient } from "@/core/api";
 import { writeTextToClipboard } from "@/core/clipboard";
 import { useI18n } from "@/core/i18n/hooks";
+import { CHAT_TAB_DND_THREAD_MIME } from "@/core/threads/chat-tabs";
+import { useMaybeChatTabs } from "@/core/threads/chat-tabs-context";
 import { exportThread, type ThreadExportFormat } from "@/core/threads/export";
 import {
   useDeleteThread,
@@ -130,6 +133,7 @@ export function RecentChatList() {
   const { mutate: deleteThread } = useDeleteThread();
   const { mutate: renameThread } = useRenameThread();
   const { mutate: updatePinnedThread } = usePinThread();
+  const chatTabs = useMaybeChatTabs();
 
   // Rename dialog state
   const [renameDialogOpen, setRenameDialogOpen] = useState(false);
@@ -306,6 +310,24 @@ export function RecentChatList() {
                         <Link
                           className="text-muted-foreground min-w-0 whitespace-nowrap group-hover/side-menu-item:overflow-hidden"
                           href={pathOfThread(thread)}
+                          draggable={chatTabs?.enabled ?? false}
+                          onDragStart={
+                            chatTabs?.enabled
+                              ? (event) => {
+                                  // Drag a chat onto the tab strip to pin it as
+                                  // a keep-alive tab (see ChatTabsBar).
+                                  event.dataTransfer.setData(
+                                    CHAT_TAB_DND_THREAD_MIME,
+                                    thread.thread_id,
+                                  );
+                                  event.dataTransfer.setData(
+                                    "text/plain",
+                                    titleOfThread(thread),
+                                  );
+                                  event.dataTransfer.effectAllowed = "copy";
+                                }
+                              : undefined
+                          }
                         >
                           <ThreadChannelIcon source={channelSource} />
                           {pinned && (
@@ -345,6 +367,26 @@ export function RecentChatList() {
                             side={"right"}
                             align={"start"}
                           >
+                            {chatTabs?.enabled && (
+                              <DropdownMenuItem
+                                onSelect={() => {
+                                  chatTabs.pinThread(
+                                    thread.thread_id,
+                                    titleOfThread(thread),
+                                  );
+                                  // Sync the URL to the pinned tab without a
+                                  // Next navigation (keep-alive: no remount).
+                                  window.history.replaceState(
+                                    null,
+                                    "",
+                                    pathOfThread(thread),
+                                  );
+                                }}
+                              >
+                                <PanelTop className="text-muted-foreground" />
+                                <span>{t.chatTabs.openInTab}</span>
+                              </DropdownMenuItem>
+                            )}
                             <DropdownMenuItem
                               onSelect={() => handleTogglePin(thread)}
                             >
