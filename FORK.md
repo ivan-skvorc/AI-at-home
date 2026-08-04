@@ -176,7 +176,7 @@ Rules for keeping it honest:
 
 #### Auditing the model list (settings + pricing)
 
-Run this pass periodically (and whenever you touch the bundle) to keep the enabled models, their per-model settings, and their prices honest. Everything below lives in the **two synced sources** — the `config.example.yaml` marker blocks and `scripts/wizard/providers.py` — so apply every change to both.
+Run this pass **periodically, whenever you touch the bundle, and as a step of the [Post-sync feature checklist](#post-sync-feature-checklist) on every upstream merge** — models, prices, and promos shift on the providers' schedule, not upstream's, so the sync is just a convenient recurring checkpoint to re-verify them. It keeps the enabled models, their per-model settings, and their prices honest. Everything below lives in the **two synced sources** — the `config.example.yaml` marker blocks and `scripts/wizard/providers.py` — so apply every change to both.
 
 1. **Roster & order.** The bundle stays grouped by provider in this order: **Anthropic** (direct) → **OpenRouter** → **Ollama** (Ollama is populated at runtime by `scripts/sync-ollama-models.py`, so it lands after the two static blocks). Keep the "one flagship per big-name lab + a couple of cheaper picks" shape from *Which models to keep in the bundle* above.
 2. **Slugs.** Confirm each `model:` is the exact current id (bare Anthropic ids like `claude-opus-5`; OpenRouter `provider/model` slugs). A wrong/unreleased id fails at request time, not at load — verify against the provider's / OpenRouter's catalog, never from memory.
@@ -393,6 +393,7 @@ First, the mechanical gates:
 - [ ] Backend: `make lint && make test` (CI enforces `ruff format --check`).
 - [ ] Frontend: `pnpm format && pnpm check && pnpm test`. **Watch the formatting gate:** `pnpm check` is only `eslint` + `tsc --noEmit` — it does **not** run Prettier, but CI's `lint-frontend` job (`.github/workflows/lint-check.yml`) runs `pnpm format` (`prettier --check .`) as its own step. So a change that is eslint/type-clean can still fail CI on formatting alone; always run `pnpm format` (or fix with `pnpm format:write`) before pushing. `eslint --fix` normalizes imports/optional-chains but not Prettier whitespace.
 - [ ] `backend/uv.lock` reconciled: `cd backend && uv lock` (must include every fork extra — `camoufox`, `ollama`, `pymupdf` — alongside upstream's).
+- [ ] Model list still current: run the **[Auditing the model list](#auditing-the-model-list-settings--pricing)** pass (or confirm it ran recently). Provider model ids, prices, and promos drift *independently* of upstream DeerFlow, so a sync is only the calendar checkpoint — the audit itself must read each slug/price off the **provider's own page** (`scripts/sync-api-key-models.py --dry-run` and the model-format tests below do **not** catch a stale-but-well-formed price or a since-renamed slug, because both pass against any syntactically valid entry). Regression-gate whatever you change with `python3 scripts/sync-api-key-models.py --dry-run` + `cd backend && uv run pytest tests/test_sync_api_key_models.py tests/test_setup_wizard.py tests/test_config_integrity.py`.
 
 Then confirm each fork feature end-to-end:
 
