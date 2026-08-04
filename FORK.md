@@ -406,6 +406,7 @@ Then confirm each fork feature end-to-end:
 | **Memory toggle (off by default)** | `core/settings/local.ts` defaults `memory.enabled=false`; Settings → Memory page writes it; `core/threads/hooks.ts` sends `memory_enabled` in run context; `agents/lead_agent/agent.py::_apply_memory_preference` consumes it (operator `memory.enabled: false` still wins). Frontend defaults pinned by `frontend/tests/unit/core/settings/local.test.ts`; the backend `_apply_memory_preference` behavior (override-false disables injection/extraction/tools; operator config still wins) by `backend/tests/test_lead_agent_memory_toggle.py`. |
 | **Camoufox default `web_fetch`** | `config.example.yaml` web_fetch entry has `backend: camoufox`; `scripts/detect_uv_extras.py` emits `--extra camoufox` for it (pinned by `test_detect_uv_extras.py`). The dispatcher's code-level default — a `web_fetch` entry with no `backend:` key still routes to camoufox — is pinned by `backend/tests/test_web_fetch_dispatcher.py`; the browser auto-install by `backend/tests/test_ensure_camoufox.py` + `test_camoufox_fetch.py`. |
 | **SearXNG default `web_search`** | active `web_search` tool uses `deerflow.community.searxng.tools:web_search_tool`; `scripts/detect_searxng.py` still resolves it (resolution pinned by `backend/tests/test_detect_searxng.py`). |
+| **Camoufox + SearXNG auto-update** (see *Automatic updates*) | `scripts/update_camoufox_searxng.py` refreshes both; `scripts/searxng.sh` has an `update` subcommand (pull + recreate-if-running); `scripts/serve.sh` runs the updater `--if-stale 24` in the background (opt out `DEER_FLOW_AUTO_UPDATE=0`); `scripts/install_auto_update.py` + `make auto-update{,-install,-uninstall}` manage the daily `systemd --user` timer. Pinned by `backend/tests/test_update_camoufox_searxng.py`, `test_install_auto_update.py`, `test_searxng_update_script.py`. If upstream restructures `scripts/serve.sh`, re-add the throttled background `--if-stale` hook after the SearXNG block. |
 | **PDF/Office conversion** | `pymupdf` extra (`pymupdf4llm`) present in `backend/packages/harness/pyproject.toml`. The feature stays off by default, and the converted-Markdown companion write (distinct names for multiple convertibles, never clobbering a same-request user `.md`) is pinned by `backend/tests/test_uploads_router.py` (`test_upload_files_does_not_auto_convert_documents_by_default`, `test_upload_files_two_convertibles_get_distinct_markdown_companions`, `test_upload_files_converted_markdown_does_not_overwrite_user_markdown`). |
 | **Reduce animations (default on)** | `core/appearance` (`useReducedMotion`) + `components/reduce-motion-effect.tsx`; default pinned by `local.test.ts`. |
 | **Full sandbox runs** | `skills/public/repo-runner/`; `sandbox.expose_ports` / `extra_capabilities` in `config.example.yaml` and honored by `LocalContainerBackend`. The container-sandbox default (chosen when a Docker/Apple Container runtime is present, even non-interactively) and per-thread container mode are pinned by `backend/tests/test_configure_script.py` + `test_docker_sandbox_mode_detection.py`; the enable/disable toggle by `test_sandbox_toggle.py`; the forwarded `bash_command_timeout` by `test_local_sandbox_command_timeout.py`. |
@@ -441,6 +442,37 @@ Camoufox needs two things: the `camoufox` Python package **and** its browser bin
 - **Docker prod** (`make up`): the browser is **baked into the image** at build time (`backend/Dockerfile` builder stage runs `camoufox fetch` when the extra is present) and copied into the runtime stage, so no runtime download is needed.
 
 Every path is **idempotent and best-effort**: an already-present browser is a no-op (checked via camoufox's `version.json`), and a failed download (e.g. offline) never blocks startup — the tool then returns an actionable install hint at call time. `make fetch-browser` still works for a manual pre-download.
+
+## Automatic updates (Camoufox + SearXNG)
+
+The two components this repo installs *for itself* — the Camoufox browser binaries and the bundled SearXNG Docker image — did not self-update after their first install:
+
+- **Camoufox** only ever *fetched when absent*. `scripts/ensure_camoufox.py` short-circuits the moment camoufox's `version.json` exists, so a newer browser build (for an updated `camoufox` package, or a re-published build for the pinned one) was never pulled after the first download.
+- **SearXNG** runs `docker.io/searxng/searxng:latest`, but Docker only pulls `:latest` when the image is missing locally, so a long-running stack keeps whatever image it started with indefinitely — never picking up upstream SearXNG fixes.
+
+This fork adds a single **daily auto-update loop** that closes both gaps.
+
+**The updater** — `scripts/update_camoufox_searxng.py` (`make auto-update`):
+
+- **Camoufox:** runs `camoufox fetch` *unconditionally* (not the ensure-only guard). `fetch` is itself version-aware — it compares the installed browser to the expected version and re-downloads only when they differ — so running it is the update, and a no-op when already current. Skipped entirely when the `camoufox` extra isn't installed (the web_fetch backend wasn't selected).
+- **SearXNG:** `scripts/searxng.sh update` runs `docker compose pull searxng` (fetch the newest `:latest`) and then `up -d searxng` **only if the bundled container is currently running** (a live stack rolls onto the new image; an idle checkout just pre-fetches it for its next `up`). It only ever touches the repo's own `deer-flow-searxng` container — it's skipped when the `web_search` provider isn't SearXNG, when Docker is unavailable, or when `DEER_FLOW_SEARXNG_BASE_URL` points at a foreign instance you manage yourself.
+
+Everything is **idempotent and best-effort**: an already-current component is a no-op, and any failure is logged, never raised, so a scheduled or launch-time run never wedges. Flags: `--dry-run`, `--verbose`, `--camoufox-only`, `--searxng-only`.
+
+**Two ways it runs daily, automatically:**
+
+1. **On launch, throttled (zero setup).** `scripts/serve.sh` runs the updater with `--if-stale 24` in the **background** after starting services, so `make dev` / `make start` refresh both components at most once a day without ever blocking startup. A stamp file (`.deer-flow/auto-update.stamp`) enforces the once-a-day throttle. Opt out with `DEER_FLOW_AUTO_UPDATE=0`.
+2. **A `systemd --user` timer (runs even when the app isn't launched).** `make auto-update-install` writes `~/.config/systemd/user/deer-flow-auto-update.{service,timer}` and enables a daily timer (`OnCalendar=daily`, `RandomizedDelaySec=1h`, `Persistent=true` so a missed run catches up after downtime). systemd is the idiomatic scheduler on this fork's Arch/CachyOS target, and a *user* timer needs no root. `make auto-update-uninstall` removes it. On a machine without `systemd --user` (macOS, non-systemd Linux), the installer prints an equivalent `cron` line instead.
+
+```bash
+make auto-update             # update both now (idempotent; no-op when current)
+make auto-update-install     # install + enable the daily systemd --user timer
+make auto-update-uninstall   # stop + disable + remove the timer
+systemctl --user list-timers deer-flow-auto-update.timer   # inspect it
+# `loginctl enable-linger` keeps the timer running while you're logged out.
+```
+
+Pinned by `backend/tests/test_update_camoufox_searxng.py` (camoufox present/absent, the SearXNG ownership decision matrix, docker-unavailable, dry-run, the `--if-stale` throttle, and `main()` wiring), `backend/tests/test_install_auto_update.py` (the systemd unit / cron content), and `backend/tests/test_searxng_update_script.py` (the `searxng.sh update` pull + recreate-if-running shell path).
 
 ## Full sandbox runs (clone a repo and run/debug it)
 

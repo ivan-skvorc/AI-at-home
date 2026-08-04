@@ -538,6 +538,17 @@ case "$_searxng_resolution" in
         ;;
 esac
 
+# ── Daily Camoufox + SearXNG auto-update (throttled) ─────────────────────────
+# Neither the Camoufox browser binaries nor the bundled SearXNG :latest image
+# self-update after their first install. Refresh them at most once a day, in the
+# background so launch is never blocked, giving `make dev`/`start` users daily
+# updates with no extra setup. `make auto-update-install` adds a systemd timer
+# that runs the same script even when the app isn't launched. Opt out with
+# DEER_FLOW_AUTO_UPDATE=0.
+if [ "${DEER_FLOW_AUTO_UPDATE:-1}" != "0" ]; then
+    (cd backend && uv run python "$REPO_ROOT/scripts/update_camoufox_searxng.py" --if-stale 24 >/dev/null 2>&1) &
+fi
+
 # ── Banner ───────────────────────────────────────────────────────────────────
 
 echo ""

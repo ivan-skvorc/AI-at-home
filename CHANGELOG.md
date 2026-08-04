@@ -37,6 +37,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **auto-update:** A daily auto-update loop for the two components this repo
+  installs itself — the Camoufox browser binaries and the bundled SearXNG
+  `:latest` Docker image — neither of which self-updated after first install
+  (`ensure_camoufox.py` only fetched when absent; Docker only pulls `:latest`
+  when missing locally). `scripts/update_camoufox_searxng.py` (`make
+  auto-update`) force-runs the version-aware `camoufox fetch` and, via a new
+  `scripts/searxng.sh update` subcommand, `docker compose pull`s the SearXNG
+  image and recreates the container only when it is running. It only touches
+  the repo's own `deer-flow-searxng` container and is skipped for a
+  foreign-configured instance. It runs daily two ways: throttled in the
+  background from `scripts/serve.sh` on every local launch (`--if-stale 24`,
+  opt out with `DEER_FLOW_AUTO_UPDATE=0`), and via a `systemd --user` timer
+  installed by `make auto-update-install` (`scripts/install_auto_update.py`;
+  prints a cron line where systemd `--user` is absent). Idempotent and
+  best-effort — an up-to-date component is a no-op and failures are logged, not
+  raised. Tests: `backend/tests/test_update_camoufox_searxng.py`,
+  `test_install_auto_update.py`, `test_searxng_update_script.py`.
 - **models:** API-key model auto-config. A new `scripts/sync-api-key-models.py`
   runs on every launch path (right after the Ollama sync in `scripts/serve.sh`,
   `scripts/docker.sh`, `scripts/deploy.sh`), reads the provider keys in your

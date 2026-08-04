@@ -67,7 +67,7 @@ deer-flow/
 │                                    # Managed integration skill packs are global at .deer-flow/integrations/skills/{provider}/
 │                                    # Integration credentials and enabled state remain per-user
 ├── contracts/                      # Cross-component JSON contracts (e.g. subagent status, skill review)
-├── scripts/                        # Root orchestration scripts invoked by the Makefile (check, configure, doctor, support_bundle, serve, nginx, docker, deploy, setup_wizard, searxng, detect_searxng, sandbox-preflight, sync-ollama-models, sync-api-key-models)
+├── scripts/                        # Root orchestration scripts invoked by the Makefile (check, configure, doctor, support_bundle, serve, nginx, docker, deploy, setup_wizard, searxng, detect_searxng, sandbox-preflight, sync-ollama-models, sync-api-key-models, update_camoufox_searxng, install_auto_update)
 ├── tests/                          # Root-level tests (currently tests/skills/ — public skill tests)
 └── docs/                           # Cross-cutting docs, plans, and design notes
 ```
@@ -120,6 +120,8 @@ make docker-start / docker-stop / docker-logs   # Docker development environment
 make sandbox-enable / sandbox-disable           # Switch config.yaml between the containerized AIO sandbox and the local sandbox
 make sandbox-up / sandbox-down / sandbox-logs   # Manage the standalone AIO sandbox container (docker/docker-compose.sandbox.yml, 127.0.0.1:8091)
 make fetch-browser                              # Manually pre-download the Camoufox browser (also auto-installed on every launch path when the camoufox web_fetch backend is selected)
+make auto-update                                # Update the Camoufox browser + bundled SearXNG image now (fork feature; also runs daily via a systemd --user timer / throttled on launch — see FORK.md "Automatic updates")
+make auto-update-install / auto-update-uninstall # Install/remove the daily systemd --user timer for the update above
 ```
 
 Docker log and restart commands resolve `DEER_FLOW_ROOT` from the current
