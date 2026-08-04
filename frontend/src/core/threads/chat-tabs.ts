@@ -90,7 +90,11 @@ export function closeTabByThreadId(
 }
 
 /** Move the item at `fromIndex` so it sits at `toIndex`, preserving order. */
-export function moveItem<T>(items: T[], fromIndex: number, toIndex: number): T[] {
+export function moveItem<T>(
+  items: T[],
+  fromIndex: number,
+  toIndex: number,
+): T[] {
   if (
     fromIndex === toIndex ||
     fromIndex < 0 ||

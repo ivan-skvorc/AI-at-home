@@ -193,7 +193,7 @@ export function ChatTabsBar() {
               "group/chat-tab flex max-w-48 min-w-24 shrink-0 cursor-pointer items-center gap-1.5 rounded-md border px-2 text-xs transition-colors",
               isActive
                 ? "border-border bg-background text-foreground shadow-xs"
-                : "text-muted-foreground border-transparent hover:bg-background/60",
+                : "text-muted-foreground hover:bg-background/60 border-transparent",
             )}
           >
             <span className="min-w-0 flex-1 truncate">

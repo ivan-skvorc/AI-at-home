@@ -44,10 +44,7 @@ export function KeepAliveChatViewport() {
     }));
     // The current chat gets its own slot unless it is already pinned (in which
     // case the pinned instance owns that thread — never mount it twice).
-    if (
-      current &&
-      !tabs.some((tab) => tab.threadId === current.threadId)
-    ) {
+    if (current && !tabs.some((tab) => tab.threadId === current.threadId)) {
       pinnedSlots.push({
         key: current.key,
         threadId: current.threadId,
@@ -64,10 +61,7 @@ export function KeepAliveChatViewport() {
   return (
     <div
       data-testid="keep-alive-chat-viewport"
-      className={cn(
-        "min-h-0 flex-1 flex-col",
-        onChatRoute ? "flex" : "hidden",
-      )}
+      className={cn("min-h-0 flex-1 flex-col", onChatRoute ? "flex" : "hidden")}
     >
       <ChatTabsBar />
       <div className="relative min-h-0 flex-1">

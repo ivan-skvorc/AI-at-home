@@ -175,9 +175,7 @@ export function ChatTabsProvider({ children }: { children: ReactNode }) {
     // Reuse the live slot's key when pinning the chat we're viewing so the
     // mounted instance is not torn down by the pin.
     const reusedKey =
-      prevCurrent?.threadId === threadId
-        ? prevCurrent.key
-        : undefined;
+      prevCurrent?.threadId === threadId ? prevCurrent.key : undefined;
     const prevTabs = tabsRef.current;
     const existing = findTabByThreadId(prevTabs, threadId);
     if (existing) {
@@ -261,9 +259,7 @@ export function ChatTabsProvider({ children }: { children: ReactNode }) {
       }
       setTabs((prevTabs) => closeTabByThreadId(prevTabs, deletedThreadId));
       setCurrent((prevCurrent) =>
-        prevCurrent?.threadId === deletedThreadId
-          ? null
-          : prevCurrent,
+        prevCurrent?.threadId === deletedThreadId ? null : prevCurrent,
       );
     };
     window.addEventListener(THREAD_CHAT_RESET_EVENT, handleReset);
