@@ -1,6 +1,6 @@
 "use client";
 
-import { PinIcon, XIcon } from "lucide-react";
+import { PanelTopIcon, PinIcon, XIcon } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useCallback, useMemo, useState } from "react";
 
@@ -42,6 +42,7 @@ export function ChatTabsBar() {
     () => buildThreadListModel(data?.pages ?? []).byId,
     [data?.pages],
   );
+  const hasThreads = byId.size > 0;
 
   const [dropActive, setDropActive] = useState(false);
 
@@ -152,10 +153,13 @@ export function ChatTabsBar() {
 
   // The current chat gets a preview chip only when it is not already pinned.
   const showCurrentChip = current !== null && !current.isNew;
+  // With no tabs and no preview chip (e.g. a brand-new chat) the strip still
+  // renders as an empty drop zone with a hint, so there is always somewhere to
+  // drag a chat onto — the whole point of the feature. It hides only when there
+  // is nothing to drag at all (a fresh install with no chat history).
+  const isEmpty = tabs.length === 0 && !showCurrentChip;
 
-  if (tabs.length === 0 && !showCurrentChip) {
-    // Nothing to show yet, but the strip stays available as a drop target once a
-    // chat exists; render nothing to avoid an empty bar on a brand-new chat.
+  if (isEmpty && !hasThreads) {
     return null;
   }
 
@@ -173,6 +177,21 @@ export function ChatTabsBar() {
         dropActive && "bg-primary/5",
       )}
     >
+      {isEmpty && (
+        <div
+          data-testid="chat-tabs-empty-hint"
+          className={cn(
+            "text-muted-foreground/70 flex min-w-0 flex-1 items-center gap-1.5 rounded-md border border-dashed px-2 text-xs transition-colors",
+            dropActive
+              ? "border-primary/50 text-foreground"
+              : "border-border/50",
+          )}
+        >
+          <PanelTopIcon className="size-3.5 shrink-0" />
+          <span className="truncate">{t.chatTabs.dropHint}</span>
+        </div>
+      )}
+
       {tabs.map((tab) => {
         const isActive = tab.key === activeKey;
         return (

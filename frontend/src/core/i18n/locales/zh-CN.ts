@@ -302,6 +302,7 @@ export const zhCN: Translations = {
     pinTab: "固定为标签页",
     openInTab: "在标签页中打开",
     untitled: "新对话",
+    dropHint: "将对话拖到这里，即可固定为标签页",
   },
 
   // 定时任务
