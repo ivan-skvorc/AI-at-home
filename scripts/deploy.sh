@@ -133,6 +133,31 @@ apply_default_auth_mode() {
     export DEER_FLOW_AUTH_DISABLED="${current:-1}"
 }
 
+# ── Fork: keep localhost working when BIND_HOST is a single external interface ─
+# BIND_HOST publishes exactly ONE interface (it's a bind address, not an
+# allowlist). If you set it to your Tailscale IP (e.g. 100.x.y.z) to reach the
+# app from your phone, the host's own http://localhost:PORT is refused, because
+# nothing binds loopback — the "works over Tailscale, connection refused on
+# localhost" footgun. `should_cobind_loopback` echoes "yes" when BIND_HOST names
+# a single specific interface (neither loopback nor a wildcard), so deploy.sh can
+# append docker-compose.loopback.yaml to ALSO publish the port on 127.0.0.1.
+# Wildcards (0.0.0.0 / ::) already cover loopback, so co-binding there would
+# collide on the port; loopback binds need nothing extra. Reads BIND_HOST via
+# read_dotenv_value (an exported shell var wins, then .env). Kept as a function
+# so tests can exercise the decision (test_deploy_loopback_cobind.py).
+should_cobind_loopback() {
+    local bind
+    bind="$(read_dotenv_value BIND_HOST)"
+    case "$bind" in
+        "" | 127.0.0.1 | ::1 | localhost | 0.0.0.0 | ::)
+            echo "no"
+            ;;
+        *)
+            echo "yes"
+            ;;
+    esac
+}
+
 # ── Colors ────────────────────────────────────────────────────────────────────
 
 GREEN='\033[0;32m'
@@ -476,6 +501,18 @@ if [ "$sandbox_mode" = "aio" ]; then
     COMPOSE_CMD+=(-f "$DOCKER_DIR/docker-compose.dood.yaml")
 fi
 
+# ── Loopback co-bind (fork) ──────────────────────────────────────────────────
+# See should_cobind_loopback above. When BIND_HOST is a single external
+# interface (e.g. a Tailscale IP), also publish the entry port on 127.0.0.1 so
+# the host's own http://localhost keeps working. Loopback is host-only, so this
+# never widens the external surface.
+LOOPBACK_COBIND=0
+if [ "$(should_cobind_loopback)" = "yes" ]; then
+    COMPOSE_CMD+=(-f "$DOCKER_DIR/docker-compose.loopback.yaml")
+    LOOPBACK_COBIND=1
+    echo -e "${GREEN}✓ Co-binding 127.0.0.1 so http://localhost stays reachable on this host (BIND_HOST=$(read_dotenv_value BIND_HOST)).${NC}"
+fi
+
 echo ""
 
 # ── Start / Up ───────────────────────────────────────────────────────────────
@@ -516,6 +553,10 @@ else
     echo "  ⚠️  Bound to ${RESOLVED_BIND_HOST} — reachable from the network."
     echo "     Open http://localhost:${RESOLVED_PORT} and complete first-run"
     echo "     setup now, before anyone else reaches this host."
+    if [ "${LOOPBACK_COBIND:-0}" = "1" ]; then
+        echo "     Also co-bound 127.0.0.1, so http://localhost:${RESOLVED_PORT} works on this host too"
+        echo "     (single specific interface would otherwise refuse localhost)."
+    fi
 fi
 echo ""
 echo "  Manage:"

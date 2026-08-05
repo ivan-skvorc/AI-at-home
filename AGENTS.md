@@ -48,6 +48,14 @@ internal; the published nginx port is the entire external surface, and the Gatew
 `8001` is deliberately not published. Any new published port needs an explicit bind
 address; `backend/tests/test_compose_default_bind_host.py` pins this for every service
 in both compose files.
+Because `BIND_HOST` is a single bind interface (not an allowlist), setting it to one
+non-loopback, non-wildcard interface (e.g. a Tailscale IP) publishes only that
+interface and refuses the host's own `localhost`. `scripts/deploy.sh::should_cobind_loopback`
+detects that case and appends `docker/docker-compose.loopback.yaml`, an overlay that
+*also* publishes the entry port on `127.0.0.1` (host-only, so the external surface is
+unchanged), so `make up` stays reachable at `http://localhost:${PORT}` on the host too.
+Wildcards (`0.0.0.0`/`::`) and loopback binds skip the overlay — a second `127.0.0.1`
+mapping there would collide on the port. Pinned by `backend/tests/test_deploy_loopback_cobind.py`.
 
 ## Repository Map
 
