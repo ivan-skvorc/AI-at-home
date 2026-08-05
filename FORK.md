@@ -221,13 +221,13 @@ Upstream ships a full email/password (plus optional SSO) login wall: on first ru
 
 The mechanism is upstream's own `DEER_FLOW_AUTH_DISABLED` switch, which both the Gateway (`backend/app/gateway/auth_disabled.py`) and the Next.js SSR auth check (`frontend/src/core/auth/auth-disabled-user.ts`) already honor: when set, every request resolves to the built-in `default` admin user, the login/setup pages are skipped, and there is no password to manage. The fork just turns it **on by default** at launch:
 
-- **Where it's wired.** `scripts/serve.sh` exports `DEER_FLOW_AUTH_DISABLED="${DEER_FLOW_AUTH_DISABLED:-1}"` (in the `apply_default_auth_mode` helper) right after loading `.env`, before the gateway and frontend are launched, so **both** child processes inherit it. This covers every local path: `make dev`, `make start`, and their `--daemon` variants.
+- **Where it's wired.** `scripts/serve.sh` exports `DEER_FLOW_AUTH_DISABLED="${DEER_FLOW_AUTH_DISABLED:-1}"` (in the `apply_default_auth_mode` helper) right after loading `.env`, before the gateway and frontend are launched, so **both** child processes inherit it. This covers every local path: `make dev`, `make start`, and their `--daemon` variants. The Docker **prod** path (`make up` / `scripts/deploy.sh`) has a matching `apply_default_auth_mode` helper that resolves the value from `.env` (via `read_dotenv_value`, which honors an already-exported shell var first) and defaults it to `1`, then exports it; `make up` prints a warning line when auth ends up off. Because `deploy.sh` doesn't source `.env` into the shell and the frontend container reads only `frontend/.env`, `docker-compose.yaml` forwards `DEER_FLOW_AUTH_DISABLED` **and** the production markers `DEER_FLOW_ENV` / `ENVIRONMENT` to **both** the gateway and frontend `environment:` blocks — otherwise the two containers could disagree on whether auth is on. (Before this fix, `make up` was *not* wired with the default, so a home-lab Docker deploy hit the login wall unexpectedly — see "Troubleshooting: nginx 502 after `make up`" below.)
 - **Opt-out, not forced.** Set `DEER_FLOW_AUTH_DISABLED=0` in `.env` to restore the normal email/password login. Any explicit value you set (0 or 1) is preserved — the default only fills in the unset case. Both `.env.example` files document the toggle.
-- **Self-disabling in production.** The flag is ignored whenever `DEER_FLOW_ENV` / `ENVIRONMENT` is `prod`/`production` (enforced in both `auth_disabled.py` and `auth-disabled-user.ts`), so a real deployment that sets that variable keeps authentication on regardless of this default. The Docker **prod** path (`make up` / `scripts/deploy.sh`) is intentionally *not* wired with the default — only the local `serve.sh` paths are.
+- **Self-disabling in production.** The flag is ignored whenever `DEER_FLOW_ENV` / `ENVIRONMENT` is `prod`/`production` (enforced in both `auth_disabled.py` and `auth-disabled-user.ts`), so a real deployment that sets that variable keeps authentication on regardless of this default. The Docker stack also publishes its entry port on `127.0.0.1` (loopback) by default (`BIND_HOST`), so the default surface is local-only.
 - **LAN note.** Because there's no login, any device that can reach the server (e.g. `http://<your-ip>:2026`) is in — that's the point, but it also means anyone on your network is too. Keep it to trusted networks, or flip `DEER_FLOW_AUTH_DISABLED=0` and use the login.
 - **Dev-server access from other devices works out of the box too.** Next.js gates its dev resources (`/_next/*`, fonts, HMR) with `allowedDevOrigins` — an unlisted host 403s the client bundles, so the page renders but never hydrates (visible shell, dead buttons, no input box). To match the passwordless-for-LAN default, `frontend/src/dev-origins.js` now **defaults that allowlist to the private-LAN and Tailscale ranges** (`10.*`, `172.*`, `192.168.*`, `100.*` Tailscale CGNAT, `**.ts.net` MagicDNS, `*.local`), so `make dev` reached from a phone on the network or over Tailscale hydrates without extra config. `DEER_FLOW_DEV_ALLOWED_ORIGINS` still adds hosts the defaults miss (a custom domain, an IPv6 literal); `DEER_FLOW_DEV_ALLOWED_ORIGINS_STRICT=1` drops the built-in defaults for upstream's stricter behavior. Dev-only — production builds ignore `allowedDevOrigins`. Pinned by `frontend/tests/unit/dev-origins.test.ts` (which runs the defaults through Next's real matcher).
 
-`config.yaml` is unchanged; this is purely an environment default, so it ships in the fork (via `serve.sh` + the `.env.example` docs) rather than per-install.
+`config.yaml` is unchanged; this is purely an environment default, so it ships in the fork (via `serve.sh` / `deploy.sh` + the `.env.example` docs) rather than per-install. Pinned by `backend/tests/test_serve_auth_default.py` (local launcher) and `backend/tests/test_deploy_auth_default.py` (Docker prod launcher opt-out precedence + the compose forwarding of `DEER_FLOW_AUTH_DISABLED` / `DEER_FLOW_ENV` / `ENVIRONMENT` to both containers).
 
 ### 6. Multi-user mode toggle (combine or isolate histories)
 
@@ -498,6 +498,45 @@ This fork rounds out the containerized AIO sandbox into a first-class "hand it a
 - **A `repo-runner` public skill** (`skills/public/repo-runner/`) that encodes the whole loop: clone into the workspace → detect the toolchain → install deps in an isolated venv/`node_modules` → run (backgrounding servers) → iterate on failures → report reproducible commands.
 
 The `expose_ports` / `extra_capabilities` keys are local-container-mode only; in external/provisioner mode they are warned-as-ignored (declare `ports:` / `cap_add:` in `docker/docker-compose.sandbox.yml` instead). Packages installed outside the mounted workspace (apt, global pip) are still lost when a container is recycled, so keep a project's dependencies in a workspace-local venv — the skill does this by default. Raise `sandbox.idle_timeout` to keep a warmed-up debug environment alive longer between turns.
+
+## Troubleshooting: nginx 502 after `make up`
+
+**Symptom.** After a `git pull` + `make up` (Docker prod, containerized AiO sandbox), `http://localhost:2026` returned a bare nginx **502 Bad Gateway**. nginx was up on `:2026`, but the upstream gateway was not healthy, so nginx had nothing to proxy to. A stack that had previously worked passwordless suddenly wanted a login, and even the login/health routes 502'd.
+
+**What actually happened.** Two independent problems stacked into one opaque failure:
+
+1. **The gateway hard-crashed on config load.** `AppConfig.resolve_env_variables` raised `ValueError: Environment variable … not found` for **any** `$VAR` in `config.yaml` that wasn't set in the environment — *even when the block that referenced it was `enabled: false`*. A leftover `channels.slack` / `channels.telegram` block with `bot_token: $SLACK_BOT_TOKEN` and no token in `.env` was enough to take the whole gateway down. Because the crash happened at startup, the only external symptom was nginx's generic 502 — no hint about the missing variable.
+2. **`make up` was silently re-enabling auth.** The fork's passwordless default was wired only into the local launchers (`serve.sh`); the Docker prod path (`deploy.sh`) left `DEER_FLOW_AUTH_DISABLED` unset, so `make up` came up with the login wall on. A home-lab user who expected "no login on my own network" got one, with no obvious escape hatch.
+
+**The immediate workaround** (what unblocked the box):
+
+```fish
+# .env
+DEER_FLOW_AUTH_DISABLED=1
+# make sure DEER_FLOW_ENV / ENVIRONMENT are not prod/production (that forces auth back on)
+
+# config.yaml: don't leave a live $SLACK_BOT_TOKEN etc. for a channel you haven't set up
+make sandbox-enable MODE=container
+make config-upgrade
+make down && make up
+```
+
+**The in-repo fixes so it can't recur:**
+
+- **A disabled section no longer crashes the gateway on a missing `$VAR`.** `AppConfig.resolve_env_variables` now propagates a "lenient" flag through the subtree of any `enabled: false` section: a missing `$VAR` there resolves to an empty string with a `WARNING` instead of raising. **Active** config stays strict — a missing API key for an *enabled* model still fails loudly at startup, which is the behavior you want. So a leftover placeholder for a channel you never turned on is tolerated, while a real misconfiguration still surfaces. Pinned by `backend/tests/test_config_env_resolution.py`.
+- **`make doctor` lists referenced-but-missing `$VARS` before you start.** A new check (`scripts/doctor.py::check_env_placeholders`) scans `config.yaml`, and for any `$VAR` that isn't set it reports: a **failure** ("The Gateway crashes on load (bare nginx 502) if an active section references an unset `$VAR`") when the section is active, or an informational **note** ("unset but tolerated (enabled: false)") when it's disabled. `make doctor` is the recommended one-liner after a `git pull` and before `make up`. Pinned by `backend/tests/test_doctor.py::TestCheckEnvPlaceholders`.
+- **`make up` is passwordless by default** (see §5). `deploy.sh` now defaults `DEER_FLOW_AUTH_DISABLED=1` (opt-out via `.env`), forwards it plus the production markers to both containers, and prints a warning when auth is off — so the home-lab Docker path matches `make dev` / `make start` instead of surprising you with a login wall. Production (`DEER_FLOW_ENV`/`ENVIRONMENT=production`) still forces auth on.
+
+**Recommended post-update flow:**
+
+```bash
+git pull
+make config-upgrade   # merge any new config fields; never leaves live placeholders for disabled features
+make doctor           # catches missing $VARS + reports the auth posture, before the stack starts
+make up
+```
+
+`make config-upgrade` only ever *adds missing keys* from `config.example.yaml` (whose channel blocks ship fully commented out), so it never injects a live `$PLACEHOLDER` for a feature you haven't enabled; combined with the lenient-resolution fix above, an uncommented-but-disabled block is now harmless.
 
 ## Credits
 

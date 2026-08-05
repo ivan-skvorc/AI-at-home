@@ -523,7 +523,7 @@ Configuration priority:
 3. `config.yaml` in current directory (backend/)
 4. `config.yaml` in parent directory (project root - **recommended location**)
 
-Config values starting with `$` are resolved as environment variables (e.g., `$OPENAI_API_KEY`).
+Config values starting with `$` are resolved as environment variables (e.g., `$OPENAI_API_KEY`). `AppConfig.resolve_env_variables` raises on a missing `$VAR` so a real misconfiguration (an active model with no API key) fails loudly at startup — **except** inside a section explicitly turned off with `enabled: false`, where a missing `$VAR` resolves to an empty string with a `WARNING` and leniency propagates to the whole subtree (`AppConfig._is_section_disabled`). This keeps a leftover placeholder for an unused feature — e.g. a disabled `channels.slack` block that still references `$SLACK_BOT_TOKEN` — from crashing the whole Gateway on load (the bare-nginx-502-after-`make up` failure). `scripts/doctor.py::check_env_placeholders` surfaces the same distinction ahead of a launch: active-section missing vars fail the check, disabled-section ones are an informational note. Tests: `tests/test_config_env_resolution.py`, `tests/test_doctor.py::TestCheckEnvPlaceholders`.
 `ModelConfig` also declares `use_responses_api` and `output_version` so OpenAI `/v1/responses` can be enabled explicitly while still using `langchain_openai:ChatOpenAI`.
 
 **Extensions Configuration** (`extensions_config.json`):

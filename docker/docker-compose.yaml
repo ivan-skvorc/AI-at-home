@@ -78,6 +78,14 @@ services:
     environment:
       - BETTER_AUTH_SECRET=${BETTER_AUTH_SECRET}
       - DEER_FLOW_INTERNAL_GATEWAY_BASE_URL=http://gateway:8001
+      # Fork: passwordless-by-default for the home-lab. scripts/deploy.sh defaults
+      # this to 1 (opt-out via .env); both the frontend and gateway ignore it when
+      # DEER_FLOW_ENV/ENVIRONMENT is prod/production, so a real deployment keeps
+      # auth on. The frontend reads its own env_file (frontend/.env), NOT ../.env,
+      # so these three must be passed explicitly here to reach its SSR auth check.
+      - DEER_FLOW_AUTH_DISABLED=${DEER_FLOW_AUTH_DISABLED:-0}
+      - DEER_FLOW_ENV=${DEER_FLOW_ENV:-}
+      - ENVIRONMENT=${ENVIRONMENT:-}
     env_file:
       # Optional: fresh clones have no .env yet; compose must still parse.
       - path: ../frontend/.env
@@ -136,6 +144,14 @@ services:
       # same config.yaml keeps http://localhost:8088 for host-run `make dev`.
       - DEER_FLOW_SEARXNG_BASE_URL=${DEER_FLOW_SEARXNG_BASE_URL:-http://searxng:8080}
       - DEER_FLOW_INTERNAL_AUTH_TOKEN=${DEER_FLOW_INTERNAL_AUTH_TOKEN}
+      # Fork: passwordless-by-default for the home-lab. scripts/deploy.sh defaults
+      # DEER_FLOW_AUTH_DISABLED to 1 (opt-out via .env) and exports it, so the
+      # shell default reaches the container even when it is absent from ../.env.
+      # Both the gateway and the frontend ignore it when DEER_FLOW_ENV/ENVIRONMENT
+      # is prod/production. These override the same keys read from ../.env below.
+      - DEER_FLOW_AUTH_DISABLED=${DEER_FLOW_AUTH_DISABLED:-0}
+      - DEER_FLOW_ENV=${DEER_FLOW_ENV:-}
+      - ENVIRONMENT=${ENVIRONMENT:-}
       # DooD path/network translation
       - DEER_FLOW_HOST_BASE_DIR=${DEER_FLOW_HOME}
       - DEER_FLOW_SANDBOX_HOST=host.docker.internal

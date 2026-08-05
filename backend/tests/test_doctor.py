@@ -664,3 +664,42 @@ class TestMainExitCode:
         assert output
         assert "config.yaml" in output
         assert ".env" in output
+
+
+# ---------------------------------------------------------------------------
+# check_env_placeholders
+# ---------------------------------------------------------------------------
+
+
+class TestCheckEnvPlaceholders:
+    def test_missing_var_in_active_section_fails(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text("config_version: 5\nchannels:\n  telegram:\n    enabled: true\n    bot_token: $TELEGRAM_BOT_TOKEN\n")
+        results = doctor.check_env_placeholders(cfg)
+        present = next(r for r in results if r.label == "referenced env vars present")
+        assert present.status == "fail"
+        assert "TELEGRAM_BOT_TOKEN" in present.detail
+        assert "502" in present.fix
+
+    def test_missing_var_in_disabled_section_is_tolerated(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("SLACK_BOT_TOKEN", raising=False)
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text("config_version: 5\nchannels:\n  slack:\n    enabled: false\n    bot_token: $SLACK_BOT_TOKEN\n")
+        results = doctor.check_env_placeholders(cfg)
+        present = next(r for r in results if r.label == "referenced env vars present")
+        assert present.status == "ok"
+        note = next(r for r in results if r.label == "disabled-section placeholders")
+        assert note.status == "ok"
+        assert "SLACK_BOT_TOKEN" in note.detail
+
+    def test_present_var_passes(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "123:abc")
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text("config_version: 5\nchannels:\n  telegram:\n    enabled: true\n    bot_token: $TELEGRAM_BOT_TOKEN\n")
+        results = doctor.check_env_placeholders(cfg)
+        present = next(r for r in results if r.label == "referenced env vars present")
+        assert present.status == "ok"
+
+    def test_no_config_returns_empty(self, tmp_path):
+        assert doctor.check_env_placeholders(tmp_path / "missing.yaml") == []
