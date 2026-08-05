@@ -36,12 +36,25 @@ class TestTimerUnit:
         assert "RandomizedDelaySec=1h" in content
         assert "WantedBy=timers.target" in content
 
+    def test_runs_on_boot(self):
+        # The timer must also fire shortly after boot so a machine that was off
+        # at the daily time still refreshes both components on startup.
+        content = inst.timer_unit()
+        assert "OnBootSec=" in content
+
 
 class TestCronLine:
     def test_daily_cron_line_runs_the_updater(self):
         line = inst.cron_line()
         # Five cron fields then the command.
         assert line.split()[0:5] == ["17", "4", "*", "*", "*"]
+        assert "update_camoufox_searxng.py" in line
+        assert "run python" in line
+
+    def test_reboot_cron_line_runs_the_updater_at_boot(self):
+        line = inst.cron_reboot_line()
+        # The @reboot special string is cron's on-boot trigger.
+        assert line.split()[0] == "@reboot"
         assert "update_camoufox_searxng.py" in line
         assert "run python" in line
 

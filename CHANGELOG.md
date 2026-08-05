@@ -46,13 +46,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `scripts/searxng.sh update` subcommand, `docker compose pull`s the SearXNG
   image and recreates the container only when it is running. It only touches
   the repo's own `deer-flow-searxng` container and is skipped for a
-  foreign-configured instance. It runs daily two ways: throttled in the
+  foreign-configured instance. It runs automatically two ways: throttled in the
   background from `scripts/serve.sh` on every local launch (`--if-stale 24`,
   opt out with `DEER_FLOW_AUTO_UPDATE=0`), and via a `systemd --user` timer
-  installed by `make auto-update-install` (`scripts/install_auto_update.py`;
-  prints a cron line where systemd `--user` is absent). Idempotent and
-  best-effort — an up-to-date component is a no-op and failures are logged, not
-  raised. Tests: `backend/tests/test_update_camoufox_searxng.py`,
+  installed by `make auto-update-install` (`scripts/install_auto_update.py`)
+  that fires both **daily** (`OnCalendar=daily`) **and on boot**
+  (`OnBootSec=2min`), so a machine powered off at the daily slot still refreshes
+  on startup; where systemd `--user` is absent it prints the equivalent daily +
+  `@reboot` cron lines instead. Idempotent and best-effort — an up-to-date
+  component is a no-op and failures are logged, not raised. Tests:
+  `backend/tests/test_update_camoufox_searxng.py`,
   `test_install_auto_update.py`, `test_searxng_update_script.py`.
 - **models:** API-key model auto-config. A new `scripts/sync-api-key-models.py`
   runs on every launch path (right after the Ollama sync in `scripts/serve.sh`,
@@ -687,6 +690,17 @@ This section accumulates work toward the **2.1.0** milestone
   thread. ([#4394])
 - **tools:** Exclude injected runtime from the `list_uploaded_files` schema.
   ([#4376])
+- **mcp:** Bound MCP server bring-up — tool discovery (subprocess spawn +
+  `initialize` + `tools/list`) and persistent stdio session initialization —
+  with a new per-server `session_init_timeout` (default 60s, `null` disables),
+  so a hung stdio server can no longer block agent construction, or the whole
+  Gateway event loop, indefinitely. `tool_call_timeout` still bounds individual
+  stdio tool calls.
+- **runtime:** Tool-output budget externalization no longer trips run delivery
+  verification. The default `.tool-results` storage dir (and any custom
+  `tool_output.storage_subdir`) is excluded from workspace-change snapshots and
+  produced-artifact detection, so a run that only externalized oversized tool
+  outputs succeeds instead of failing as an error.
 
 ### Performance
 

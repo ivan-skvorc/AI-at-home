@@ -120,8 +120,8 @@ make docker-start / docker-stop / docker-logs   # Docker development environment
 make sandbox-enable / sandbox-disable           # Switch config.yaml between the containerized AIO sandbox and the local sandbox
 make sandbox-up / sandbox-down / sandbox-logs   # Manage the standalone AIO sandbox container (docker/docker-compose.sandbox.yml, 127.0.0.1:8091)
 make fetch-browser                              # Manually pre-download the Camoufox browser (also auto-installed on every launch path when the camoufox web_fetch backend is selected)
-make auto-update                                # Update the Camoufox browser + bundled SearXNG image now (fork feature; also runs daily via a systemd --user timer / throttled on launch — see FORK.md "Automatic updates")
-make auto-update-install / auto-update-uninstall # Install/remove the daily systemd --user timer for the update above
+make auto-update                                # Update the Camoufox browser + bundled SearXNG image now (fork feature; also runs daily and on boot via a systemd --user timer / throttled on launch — see FORK.md "Automatic updates")
+make auto-update-install / auto-update-uninstall # Install/remove the systemd --user timer for the update above (fires daily + on boot)
 ```
 
 Docker log and restart commands resolve `DEER_FLOW_ROOT` from the current

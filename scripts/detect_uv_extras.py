@@ -12,6 +12,7 @@ Order of resolution:
    - checkpointer.type == postgres       -> postgres
    - stream_bridge.type == redis         -> redis
    - channels.discord.enabled == true    -> discord
+   - channels.buzz.enabled == true       -> buzz
    - tools[].name == browser_navigate    -> browser
    - sandbox.ownership.type == redis     -> redis
    - web_fetch resolving to camoufox     -> camoufox (explicit ``backend:`` /
@@ -273,6 +274,8 @@ def detect_from_config(path: Path) -> list[str]:
         extras.add("redis")
     if (nested_section_value(lines, "channels.discord", "enabled") or "").lower() == "true":
         extras.add("discord")
+    if (nested_section_value(lines, "channels.buzz", "enabled") or "").lower() == "true":
+        extras.add("buzz")
     if tools_include_name(lines, "browser_navigate"):
         extras.add("browser")
     if _uses_camoufox_web_fetch(text):

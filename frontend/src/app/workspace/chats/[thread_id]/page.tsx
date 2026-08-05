@@ -16,6 +16,11 @@ import { env } from "@/env";
  *   keep-alive viewport (see `KeepAliveChatViewport`). Here the route page is a
  *   thin registrar: it reports the current chat route to the tab strip and
  *   renders nothing itself, so navigating between chats never remounts them.
+ *
+ * The registrar path is workspace-only — it depends on `useChatTabs` and the
+ * `KeepAliveChatViewport` mounted above the `/workspace` route. The standalone
+ * public `/showcase/[thread_id]` route lives outside that tree, so it renders
+ * `ClassicChatPage` directly (exported below) regardless of build mode.
  */
 export default function ChatPage() {
   if (env.NEXT_PUBLIC_STATIC_WEBSITE_ONLY === "true") {
@@ -24,7 +29,7 @@ export default function ChatPage() {
   return <ChatRouteRegistrar />;
 }
 
-function ClassicChatPage() {
+export function ClassicChatPage() {
   const { threadId, isNewThread, isMock, setThreadId, setIsNewThread } =
     useThreadChat();
   const handleThreadStarted = useCallback(
