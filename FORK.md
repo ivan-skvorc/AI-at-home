@@ -471,17 +471,17 @@ This fork adds a single **daily auto-update loop** that closes both gaps.
 
 Everything is **idempotent and best-effort**: an already-current component is a no-op, and any failure is logged, never raised, so a scheduled or launch-time run never wedges. Flags: `--dry-run`, `--verbose`, `--camoufox-only`, `--searxng-only`.
 
-**Two ways it runs daily, automatically:**
+**Two ways it runs automatically:**
 
 1. **On launch, throttled (zero setup).** `scripts/serve.sh` runs the updater with `--if-stale 24` in the **background** after starting services, so `make dev` / `make start` refresh both components at most once a day without ever blocking startup. A stamp file (`.deer-flow/auto-update.stamp`) enforces the once-a-day throttle. Opt out with `DEER_FLOW_AUTO_UPDATE=0`.
-2. **A `systemd --user` timer (runs even when the app isn't launched).** `make auto-update-install` writes `~/.config/systemd/user/deer-flow-auto-update.{service,timer}` and enables a daily timer (`OnCalendar=daily`, `RandomizedDelaySec=1h`, `Persistent=true` so a missed run catches up after downtime). systemd is the idiomatic scheduler on this fork's Arch/CachyOS target, and a *user* timer needs no root. `make auto-update-uninstall` removes it. On a machine without `systemd --user` (macOS, non-systemd Linux), the installer prints an equivalent `cron` line instead.
+2. **A `systemd --user` timer (runs even when the app isn't launched — daily *and* on boot).** `make auto-update-install` writes `~/.config/systemd/user/deer-flow-auto-update.{service,timer}` and enables a timer that fires both once a day (`OnCalendar=daily`) and shortly after the machine boots (`OnBootSec=2min`), with `RandomizedDelaySec=1h` (spreads a fleet out so a shared reboot / power-outage recovery doesn't hammer the registries at once) and `Persistent=true` (a missed daily run catches up after downtime). The boot trigger is what makes it "run when the PC starts up": a machine that's powered off at the daily slot refreshes both components on its next boot instead of skipping a day. systemd is the idiomatic scheduler on this fork's Arch/CachyOS target, and a *user* timer needs no root. `make auto-update-uninstall` removes it. On a machine without `systemd --user` (macOS, non-systemd Linux), the installer prints the equivalent `cron` lines instead — a daily entry plus a `@reboot` entry for the on-boot run.
 
 ```bash
 make auto-update             # update both now (idempotent; no-op when current)
-make auto-update-install     # install + enable the daily systemd --user timer
+make auto-update-install     # install + enable the systemd --user timer (daily + on boot)
 make auto-update-uninstall   # stop + disable + remove the timer
 systemctl --user list-timers deer-flow-auto-update.timer   # inspect it
-# `loginctl enable-linger` keeps the timer running while you're logged out.
+# `loginctl enable-linger` runs the boot + daily timer even while you're logged out.
 ```
 
 Pinned by `backend/tests/test_update_camoufox_searxng.py` (camoufox present/absent, the SearXNG ownership decision matrix, docker-unavailable, dry-run, the `--if-stale` throttle, and `main()` wiring), `backend/tests/test_install_auto_update.py` (the systemd unit / cron content), and `backend/tests/test_searxng_update_script.py` (the `searxng.sh update` pull + recreate-if-running shell path).

@@ -46,13 +46,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `scripts/searxng.sh update` subcommand, `docker compose pull`s the SearXNG
   image and recreates the container only when it is running. It only touches
   the repo's own `deer-flow-searxng` container and is skipped for a
-  foreign-configured instance. It runs daily two ways: throttled in the
+  foreign-configured instance. It runs automatically two ways: throttled in the
   background from `scripts/serve.sh` on every local launch (`--if-stale 24`,
   opt out with `DEER_FLOW_AUTO_UPDATE=0`), and via a `systemd --user` timer
-  installed by `make auto-update-install` (`scripts/install_auto_update.py`;
-  prints a cron line where systemd `--user` is absent). Idempotent and
-  best-effort — an up-to-date component is a no-op and failures are logged, not
-  raised. Tests: `backend/tests/test_update_camoufox_searxng.py`,
+  installed by `make auto-update-install` (`scripts/install_auto_update.py`)
+  that fires both **daily** (`OnCalendar=daily`) **and on boot**
+  (`OnBootSec=2min`), so a machine powered off at the daily slot still refreshes
+  on startup; where systemd `--user` is absent it prints the equivalent daily +
+  `@reboot` cron lines instead. Idempotent and best-effort — an up-to-date
+  component is a no-op and failures are logged, not raised. Tests:
+  `backend/tests/test_update_camoufox_searxng.py`,
   `test_install_auto_update.py`, `test_searxng_update_script.py`.
 - **models:** API-key model auto-config. A new `scripts/sync-api-key-models.py`
   runs on every launch path (right after the Ollama sync in `scripts/serve.sh`,
