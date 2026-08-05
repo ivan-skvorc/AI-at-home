@@ -108,6 +108,31 @@ read_dotenv_value() {
     printf '%s' "$value"
 }
 
+# ── Fork: passwordless by default for the home-lab Docker path (make up) ──────
+# The local launchers (scripts/serve.sh, make dev / make start) already default
+# DEER_FLOW_AUTH_DISABLED=1 so the stack is reachable with no login wall on your
+# own network. This makes `make up` (Docker prod) consistent: without it, a user
+# who git-pulled and ran `make up` hit the login wall (or, combined with a
+# gateway crash, a bare nginx 502) with no obvious escape hatch.
+#
+# It is opt-out, not forced: an explicit DEER_FLOW_AUTH_DISABLED=0 in .env
+# restores the normal email/password login (read_dotenv_value honors an already
+# exported shell var first, then .env). It is also self-disabling in production
+# — the Gateway and the Next.js SSR auth check both ignore the flag when
+# DEER_FLOW_ENV / ENVIRONMENT is `prod`/`production` (see auth_disabled.py and
+# auth-disabled-user.ts). The published entry port also defaults to loopback
+# (BIND_HOST=127.0.0.1), so the default surface is local-only.
+#
+# Exported here so docker compose interpolates it into the gateway AND frontend
+# containers (docker-compose.yaml passes DEER_FLOW_AUTH_DISABLED / DEER_FLOW_ENV
+# / ENVIRONMENT to both). Kept as a function so tests can exercise the opt-out
+# (test_deploy_auth_default.py).
+apply_default_auth_mode() {
+    local current
+    current="$(read_dotenv_value DEER_FLOW_AUTH_DISABLED)"
+    export DEER_FLOW_AUTH_DISABLED="${current:-1}"
+}
+
 # ── Colors ────────────────────────────────────────────────────────────────────
 
 GREEN='\033[0;32m'
@@ -232,6 +257,19 @@ if  [ "$CMD" != "down" ] && [ -z "$DEER_FLOW_INTERNAL_AUTH_TOKEN" ]; then
         echo "$DEER_FLOW_INTERNAL_AUTH_TOKEN" > "$_internal_auth_token_file"
         chmod 600 "$_internal_auth_token_file"
         echo -e "${GREEN}✓ DEER_FLOW_INTERNAL_AUTH_TOKEN generated → $_internal_auth_token_file${NC}"
+    fi
+fi
+
+# ── Auth mode (fork: passwordless by default on the home-lab Docker path) ────
+
+if [ "$CMD" != "down" ]; then
+    apply_default_auth_mode
+    if [ "$DEER_FLOW_AUTH_DISABLED" = "1" ]; then
+        echo -e "${YELLOW}⚠ DEER_FLOW_AUTH_DISABLED=1 — the stack is passwordless (every request runs as the built-in 'default' admin).${NC}"
+        echo "  This is the fork's home-lab default and is self-disabling when DEER_FLOW_ENV/ENVIRONMENT=production."
+        echo "  Set DEER_FLOW_AUTH_DISABLED=0 in .env to require email/password login."
+    else
+        echo -e "${GREEN}✓ Authentication enabled (DEER_FLOW_AUTH_DISABLED=$DEER_FLOW_AUTH_DISABLED)${NC}"
     fi
 fi
 

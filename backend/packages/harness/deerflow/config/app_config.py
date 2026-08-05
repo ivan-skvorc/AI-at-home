@@ -540,29 +540,69 @@ class AppConfig(BaseModel):
                 example_version,
             )
 
+    @staticmethod
+    def _is_section_disabled(section: Mapping[str, Any]) -> bool:
+        """Return ``True`` when a config section is explicitly ``enabled: false``.
+
+        Only an *explicit* disable makes a section lenient about missing env
+        vars — an absent ``enabled`` key means "not gated here" and keeps the
+        strict behavior. Accepts the YAML boolean ``false`` and the common
+        string spellings a hand-edited config might carry.
+        """
+        if "enabled" not in section:
+            return False
+        value = section.get("enabled")
+        if isinstance(value, bool):
+            return value is False
+        if isinstance(value, str):
+            return value.strip().lower() in {"false", "0", "no", "off"}
+        return False
+
     @classmethod
-    def resolve_env_variables(cls, config: Any) -> Any:
+    def resolve_env_variables(cls, config: Any, *, lenient_missing: bool = False) -> Any:
         """Recursively resolve environment variables in the config.
 
         Environment variables are resolved using the `os.getenv` function. Example: $OPENAI_API_KEY
 
+        A missing ``$VAR`` normally raises, so a real misconfiguration (an
+        active model with no API key) fails loudly at startup rather than
+        limping along. The one exception is a section explicitly turned off
+        with ``enabled: false`` (e.g. a disabled IM `channels.slack` block that
+        still references `$SLACK_BOT_TOKEN`): resolving those to an empty string
+        with a warning keeps a leftover placeholder for an unused feature from
+        crashing the whole Gateway on load — the classic "updated, ran `make
+        up`, got a bare nginx 502" failure. Leniency propagates to the whole
+        subtree of a disabled section; everything else stays strict.
+
         Args:
             config: The config to resolve environment variables in.
+            lenient_missing: When ``True``, a missing ``$VAR`` resolves to an
+                empty string (with a warning) instead of raising. Set
+                automatically for the subtree of any ``enabled: false`` section.
 
         Returns:
             The config with environment variables resolved.
         """
         if isinstance(config, str):
             if config.startswith("$"):
-                env_value = os.getenv(config[1:])
+                var_name = config[1:]
+                env_value = os.getenv(var_name)
                 if env_value is None:
-                    raise ValueError(f"Environment variable {config[1:]} not found for config value {config}")
+                    if lenient_missing:
+                        logger.warning(
+                            "Environment variable %s (config value %s) is not set; resolving it to an empty string because it lives inside a disabled (enabled: false) config section. Set it in .env if you intend to enable that feature.",
+                            var_name,
+                            config,
+                        )
+                        return ""
+                    raise ValueError(f"Environment variable {var_name} not found for config value {config}")
                 return env_value
             return config
         elif isinstance(config, dict):
-            return {k: cls.resolve_env_variables(v) for k, v in config.items()}
+            child_lenient = lenient_missing or cls._is_section_disabled(config)
+            return {k: cls.resolve_env_variables(v, lenient_missing=child_lenient) for k, v in config.items()}
         elif isinstance(config, list):
-            return [cls.resolve_env_variables(item) for item in config]
+            return [cls.resolve_env_variables(item, lenient_missing=lenient_missing) for item in config]
         return config
 
     @model_validator(mode="after")

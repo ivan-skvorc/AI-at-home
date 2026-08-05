@@ -360,6 +360,105 @@ def check_config_loadable(config_path: Path) -> CheckResult:
         )
 
 
+def _section_disabled(section: dict) -> bool:
+    """Mirror ``AppConfig._is_section_disabled`` without importing the harness.
+
+    Only an explicit ``enabled: false`` (bool or the common string spellings)
+    makes a section's missing ``$VAR`` references non-fatal at config load.
+    """
+    if "enabled" not in section:
+        return False
+    value = section.get("enabled")
+    if isinstance(value, bool):
+        return value is False
+    if isinstance(value, str):
+        return value.strip().lower() in {"false", "0", "no", "off"}
+    return False
+
+
+def _collect_env_placeholders(obj: object, *, disabled: bool = False) -> list[tuple[str, bool]]:
+    """Return ``(var_name, in_disabled_section)`` for every ``$VAR`` in the config.
+
+    Leniency propagates to the whole subtree of an ``enabled: false`` section,
+    matching ``AppConfig.resolve_env_variables``.
+    """
+    refs: list[tuple[str, bool]] = []
+    if isinstance(obj, str):
+        if obj.startswith("$"):
+            refs.append((obj[1:], disabled))
+    elif isinstance(obj, dict):
+        child_disabled = disabled or _section_disabled(obj)
+        for value in obj.values():
+            refs.extend(_collect_env_placeholders(value, disabled=child_disabled))
+    elif isinstance(obj, list):
+        for item in obj:
+            refs.extend(_collect_env_placeholders(item, disabled=disabled))
+    return refs
+
+
+def check_env_placeholders(config_path: Path) -> list[CheckResult]:
+    """Surface ``$VAR`` references in config.yaml that are missing from the environment.
+
+    A missing ``$VAR`` inside an **active** section crashes the Gateway on config
+    load (``AppConfig.resolve_env_variables`` raises), which an operator sees only
+    as a bare nginx 502. Listing these here — before ``make up`` — turns that into
+    a clear, actionable message. Missing vars inside a **disabled**
+    (``enabled: false``) section no longer crash the Gateway; they are reported as
+    an informational note so the operator understands why an unused placeholder is
+    tolerated.
+    """
+    if not config_path.exists():
+        return []
+
+    try:
+        import yaml
+        from dotenv import load_dotenv
+
+        env_path = config_path.parent / ".env"
+        if env_path.exists():
+            load_dotenv(env_path, override=False)
+
+        with open(config_path, encoding="utf-8") as f:
+            data = yaml.safe_load(f) or {}
+    except Exception as exc:
+        return [CheckResult("env placeholders", "fail", str(exc))]
+
+    active_missing: list[str] = []
+    disabled_missing: list[str] = []
+    for var, in_disabled in _collect_env_placeholders(data):
+        if os.environ.get(var):
+            continue
+        (disabled_missing if in_disabled else active_missing).append(var)
+
+    results: list[CheckResult] = []
+    if active_missing:
+        names = ", ".join(sorted(set(active_missing)))
+        results.append(
+            CheckResult(
+                "referenced env vars present",
+                "fail",
+                f"missing from environment/.env: {names}",
+                fix=(
+                    "The Gateway crashes on load (bare nginx 502) if an active section references an unset\n"
+                    f"$VAR. Add the value(s) to .env, or set that section's `enabled: false`:\n  {names}"
+                ),
+            )
+        )
+    else:
+        results.append(CheckResult("referenced env vars present", "ok"))
+
+    if disabled_missing:
+        names = ", ".join(sorted(set(disabled_missing)))
+        results.append(
+            CheckResult(
+                "disabled-section placeholders",
+                "ok",
+                f"unset but tolerated (enabled: false): {names}",
+            )
+        )
+    return results
+
+
 def check_llm_api_key(config_path: Path) -> list[CheckResult]:
     """Check that each model's env var is set in the environment."""
     if not config_path.exists():
@@ -859,6 +958,7 @@ def main() -> int:
         check_config_loadable(config_path),
         check_models_configured(config_path),
         check_core_tools(config_path),
+        *check_env_placeholders(config_path),
         *check_config_unknown_keys(config_path),
     ]
     sections.append(("Configuration", cfg_checks))
