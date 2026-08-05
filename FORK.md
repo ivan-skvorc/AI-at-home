@@ -538,6 +538,35 @@ make up
 
 `make config-upgrade` only ever *adds missing keys* from `config.example.yaml` (whose channel blocks ship fully commented out), so it never injects a live `$PLACEHOLDER` for a feature you haven't enabled; combined with the lenient-resolution fix above, an uncommented-but-disabled block is now harmless.
 
+## Troubleshooting: after an update — container name conflict, then localhost refused
+
+Two more things that can bite right after `git pull` + `make up`, in the order they tend to appear.
+
+### Container name conflict on `make up`
+
+**Symptom.** `make up` fails with `Error response from daemon: Conflict. The container name "/deer-flow-gateway" (or -nginx / -frontend / -searxng) is already in use by container …`.
+
+**Why.** The prod stack pins fixed `container_name:`s (`deer-flow-gateway`, etc.). If a container with that name is left behind — a previous stack that wasn't brought down cleanly, a crashed run, or a container created outside the current Compose project (e.g. a different `-p` project name, or the Docker **dev** stack sharing a name) — `docker compose up` refuses to clobber it and errors instead of recreating it.
+
+**Fix.** Bring the old stack down first, which removes the named containers, then bring it up:
+
+```bash
+make down    # removes the named containers for the deer-flow project
+make up
+```
+
+If a stray container survives `make down` (created outside the project), remove it by name: `docker rm -f deer-flow-gateway` (repeat for `-nginx` / `-frontend` / `-searxng`), then `make up`. **Look out for this when you change `container_name:` or add a service in `docker/docker-compose.yaml`** — a rename leaves the old name orphaned, and any host with the previous name still present will conflict until it is removed.
+
+### `localhost` refused on the host, but it works over Tailscale from another device
+
+**Symptom.** After `make up`, `http://localhost:2026` on the machine running the stack returns **connection refused**, yet the app is reachable from your phone over Tailscale (or another device on the LAN). Nothing is wrong with the app — it's the bind.
+
+**Why.** `BIND_HOST` is a **single bind interface, not an allowlist**. The entry port is published as `${BIND_HOST}:${PORT}:2026`, so setting `BIND_HOST` to your Tailscale IP (e.g. `100.x.y.z`) to reach the app from your phone binds **only** that interface. The host's own `localhost` is a different interface (loopback), so nothing is listening there and the connection is refused. (`BIND_HOST=0.0.0.0` binds *all* interfaces including loopback, which is why the all-interfaces case doesn't hit this.)
+
+**Fix (now automatic).** `scripts/deploy.sh` detects when `BIND_HOST` is a single specific interface — set, but not loopback (`127.0.0.1`/`::1`/`localhost`) and not a wildcard (`0.0.0.0`/`::`) — via `should_cobind_loopback`, and appends `docker/docker-compose.loopback.yaml`, which **also** publishes the entry port on `127.0.0.1`. So with `BIND_HOST=100.x.y.z` the port is now bound on **both** the Tailscale interface and loopback: the phone reaches it over Tailscale *and* `http://localhost:2026` works on the host. Loopback is host-only, so this never widens the external surface. `make up` prints a `✓ Co-binding 127.0.0.1 …` line when it's active. Compose concatenates the two `ports` entries (verified with `docker compose config`), so the base external mapping is untouched. Pinned by `backend/tests/test_deploy_loopback_cobind.py` (the decision function + the overlay's shape).
+
+**Look out for this when you touch the port/bind wiring** — `docker/docker-compose.yaml`'s `nginx.ports`, the `should_cobind_loopback` predicate, or the overlay. If you make the base compose publish a wildcard by default, or add another loopback mapping, you can double-bind `127.0.0.1:${PORT}` and collide on the port (`bind: address already in use`); the predicate deliberately skips the overlay for loopback and wildcard binds for exactly that reason. The still-simplest way to reach the app from both the host and the network without any of this is `BIND_HOST=0.0.0.0` (behind your own firewall/TLS).
+
 ## Credits
 
 All credit for the underlying system goes to the [ByteDance DeerFlow](https://github.com/bytedance/deer-flow) team. This fork wires convenience features around their work.

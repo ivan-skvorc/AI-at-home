@@ -1,0 +1,24 @@
+# Loopback co-bind overlay (fork feature).
+#
+# Appended by scripts/deploy.sh ONLY when BIND_HOST is set to a single specific
+# interface (e.g. a Tailscale IP like 100.x.y.z) that is neither loopback nor a
+# wildcard. See scripts/deploy.sh::should_cobind_loopback.
+#
+# Why this exists: the base docker-compose.yaml publishes the entry port as
+# "${BIND_HOST:-127.0.0.1}:${PORT:-2026}:2026", i.e. ONE interface. BIND_HOST is a
+# single bind interface, not an allowlist — so pointing it at your Tailscale IP to
+# reach the app from your phone binds ONLY that interface, and the host's own
+# http://localhost:${PORT} is refused (nothing is listening on loopback). That is
+# the classic "works over Tailscale on my phone, connection refused on localhost on
+# the PC" symptom.
+#
+# This overlay ALSO publishes the entry port on 127.0.0.1, so the host's own
+# localhost keeps working alongside the external interface. It does NOT widen the
+# external surface: 127.0.0.1 is host-only. Compose concatenates `ports` across
+# -f files, so the base external mapping and this loopback mapping are both
+# published. It is intentionally skipped for wildcard binds (0.0.0.0 / ::), which
+# already cover loopback — adding 127.0.0.1 there would collide on the port.
+services:
+  nginx:
+    ports:
+      - "127.0.0.1:${PORT:-2026}:2026"
