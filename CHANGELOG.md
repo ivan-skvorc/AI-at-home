@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **docker build:** The gateway image build failed on a stock install/update
+  with `extra 'camoufox' is not defined`. `config.example.yaml` ships
+  `web_fetch` with `backend: camoufox`, so `scripts/detect_uv_extras.py`
+  auto-detects `UV_EXTRAS=camoufox` and the Dockerfile runs
+  `uv sync --extra camoufox` — but the backend (root workspace) package only
+  declared `postgres`/`redis`/`browser`/… extras, not `camoufox` (it lived only
+  in the harness sub-package). Added the forwarding extra
+  `camoufox = ["deerflow-harness[camoufox]"]` so the build resolves. A new
+  regression test pins that *every* extra `detect_uv_extras.py` can emit is
+  declared in `backend/pyproject.toml`, closing the class of drift rather than
+  just this instance.
+
 - **skills:** Reconcile the fork's static skill tool-policy exemption with
   upstream's dynamic `SkillToolPolicyMiddleware` after the upstream sync. The
   fork's `allowed_tool_names_for_skills` treats an empty / framework-only
@@ -36,6 +48,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   preference stored in `localStorage` (`deerflow.local-settings`).
 
 ### Added
+
+- **deploy / docs:** New `make up-start` (`./scripts/deploy.sh start`) restarts
+  the production Docker stack from pre-built images so a config-only change
+  (e.g. editing `BIND_HOST` / `PORT` in `.env`) applies without the slow image
+  rebuild the default `make up` performs; the `deploy.sh` banner and README now
+  point beginners at it. Documented the `BIND_HOST` + Tailscale gotcha in
+  `.env.example` and the README security section: the port is published as
+  `${BIND_HOST}:${PORT}:2026`, so `BIND_HOST` is a single bind interface, not an
+  allowlist — binding only the Tailscale IP (`100.x`) drops loopback and breaks
+  `http://localhost:2026`; use `BIND_HOST=0.0.0.0` to reach it from both
+  localhost and Tailscale.
 
 - **auto-update:** A daily auto-update loop for the two components this repo
   installs itself — the Camoufox browser binaries and the bundled SearXNG

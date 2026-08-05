@@ -923,6 +923,9 @@ browser = [
 buzz = [
     { name = "coincurve" },
 ]
+camoufox = [
+    { name = "deerflow-harness", extra = ["camoufox"] },
+]
 discord = [
     { name = "discord-py" },
 ]
@@ -959,6 +962,7 @@ requires-dist = [
     { name = "coincurve", marker = "extra == 'buzz'", specifier = ">=20.0.0" },
     { name = "deerflow-harness", editable = "packages/harness" },
     { name = "deerflow-harness", extras = ["browser"], marker = "extra == 'browser'", editable = "packages/harness" },
+    { name = "deerflow-harness", extras = ["camoufox"], marker = "extra == 'camoufox'", editable = "packages/harness" },
     { name = "deerflow-harness", extras = ["memory-zh"], marker = "extra == 'memory-zh'", editable = "packages/harness" },
     { name = "deerflow-harness", extras = ["monocle"], marker = "extra == 'monocle'", editable = "packages/harness" },
     { name = "deerflow-harness", extras = ["postgres"], marker = "extra == 'postgres'", editable = "packages/harness" },
@@ -982,7 +986,7 @@ requires-dist = [
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.34.0" },
     { name = "wecom-aibot-python-sdk", specifier = ">=0.1.6" },
 ]
-provides-extras = ["postgres", "redis", "discord", "buzz", "monocle", "browser", "memory-zh"]
+provides-extras = ["postgres", "redis", "discord", "buzz", "monocle", "browser", "camoufox", "memory-zh"]
 
 [package.metadata.requires-dev]
 dev = [

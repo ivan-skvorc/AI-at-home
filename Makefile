@@ -1,6 +1,6 @@
 # DeerFlow - Unified Development Environment
 
-.PHONY: help config config-upgrade check install setup doctor support-bundle detect-thread-boundaries detect-blocking-io dev dev-daemon start start-daemon nginx stop up down clean docker-init docker-start docker-stop docker-logs docker-logs-frontend docker-logs-gateway docker-logs-redis searxng searxng-stop sandbox-up sandbox-down sandbox-logs sandbox-enable sandbox-disable fetch-browser auto-update auto-update-install auto-update-uninstall
+.PHONY: help config config-upgrade check install setup doctor support-bundle detect-thread-boundaries detect-blocking-io dev dev-daemon start start-daemon nginx stop up up-start down clean docker-init docker-start docker-stop docker-logs docker-logs-frontend docker-logs-gateway docker-logs-redis searxng searxng-stop sandbox-up sandbox-down sandbox-logs sandbox-enable sandbox-disable fetch-browser auto-update auto-update-install auto-update-uninstall
 
 # docker compose shim: prefer the v2 plugin, fall back to legacy docker-compose.
 DOCKER_COMPOSE ?= docker compose
@@ -55,6 +55,7 @@ help:
 	@echo ""
 	@echo "Docker Production Commands:"
 	@echo "  make up              - Build and start production Docker services (localhost:2026)"
+	@echo "  make up-start        - Start production services from pre-built images (apply .env/config-only changes, no rebuild)"
 	@echo "  make down            - Stop and remove production Docker containers"
 	@echo ""
 	@echo "Docker Development Commands:"
@@ -237,6 +238,11 @@ docker-logs-redis:
 # Build and start production services
 up:
 	@$(RUN_WITH_GIT_BASH) ./scripts/deploy.sh
+
+# Start production services from pre-built images (no rebuild). Use this to apply
+# config-only changes (e.g. BIND_HOST / PORT in .env) without the slow image rebuild.
+up-start:
+	@$(RUN_WITH_GIT_BASH) ./scripts/deploy.sh start
 
 # Stop and remove production containers
 down:

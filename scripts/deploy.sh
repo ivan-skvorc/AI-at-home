@@ -10,10 +10,14 @@
 #
 # Sandbox mode (local / aio / provisioner) is auto-detected from config.yaml.
 #
+# Prefer `deploy.sh start` after a config-only change (e.g. editing BIND_HOST /
+# PORT in .env): it restarts the pre-built images with the new environment and
+# skips the slow image rebuild the bare `deploy.sh` (build + start) performs.
+#
 # Examples:
 #   deploy.sh                    # build + start
 #   deploy.sh build              # build all images
-#   deploy.sh start              # start pre-built images
+#   deploy.sh start              # start pre-built images (also: apply .env changes)
 #   deploy.sh down               # stop and remove containers
 #
 # Must be run from the repo root directory.
@@ -479,4 +483,8 @@ echo ""
 echo "  Manage:"
 echo "    make down        — stop and remove containers"
 echo "    make docker-logs — view logs"
+echo ""
+echo "  Tip: config-only changes (e.g. BIND_HOST / PORT in .env) don't need a"
+echo "       rebuild — apply them with 'deploy.sh start' (make up-start) instead"
+echo "       of the default build+start."
 echo ""

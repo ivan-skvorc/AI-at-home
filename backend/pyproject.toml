@@ -33,6 +33,11 @@ discord = ["discord.py>=2.7.0"]
 buzz = ["coincurve>=20.0.0"]
 monocle = ["deerflow-harness[monocle]"]
 browser = ["deerflow-harness[browser]"]
+# Local, key-less, JS-capable web_fetch backend (camoufox). This is the shipped
+# default in config.example.yaml, so scripts/detect_uv_extras.py auto-detects it
+# on a stock install; forward it to the harness extra so the gateway image build
+# (uv sync --extra camoufox) resolves instead of failing with "extra not defined".
+camoufox = ["deerflow-harness[camoufox]"]
 memory-zh = ["deerflow-harness[memory-zh]"]
 
 [dependency-groups]
