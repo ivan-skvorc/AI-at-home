@@ -14,6 +14,21 @@ in ``config.yaml`` so the models light up on first start with no manual editing.
                           Gemini 3.6 Flash / DeepSeek V4 Pro / GLM-5.2 /
                           Nemotron 3 Ultra (all via OpenRouter)
 
+Every big-name lab that ships a first-party API also gets a "home" block enabled
+by that lab's own key, mirroring how Anthropic is handled — the lab's full lineup
+on its direct API, so its flagship is reachable through both the home API and
+OpenRouter:
+
+    OPENAI_API_KEY     -> GPT-5.6 Sol / GPT-5.3 Codex / GPT-5.6 Mini (OpenAI)
+    XAI_API_KEY        -> Grok 4.5 / Grok 4.5 Fast (xAI)
+    GEMINI_API_KEY     -> Gemini 3.6 Flash / 3.5 Flash-Lite / 3.1 Pro (Google)
+    DEEPSEEK_API_KEY   -> DeepSeek V4 Pro / V4 Flash (DeepSeek)
+    MISTRAL_API_KEY    -> Mistral Large 3 / Medium / Small (Mistral)
+    MOONSHOT_API_KEY   -> Kimi K3 / Kimi K2.6 (Moonshot)
+    DASHSCOPE_API_KEY  -> Qwen3.7 Max / Qwen3.7 Plus (Qwen)
+    MINIMAX_API_KEY    -> MiniMax M3 / MiniMax M2.7 (MiniMax)
+    ZAI_API_KEY        -> GLM-5.2 / GLM-5.2 Air (z-ai)
+
 Idempotent and bounded: the script only ever *uncomments* the model entries
 between a provider's ``BEGIN/END auto-model-config`` markers, and never touches
 anything outside them. It never re-comments a block (so a model you enabled by
@@ -42,9 +57,22 @@ import sys
 from pathlib import Path
 
 # Provider slug (used in the config markers) -> environment variable that gates it.
+# The two aggregator keys (Anthropic direct, OpenRouter routed) plus a first-party
+# "home" block for every big-name lab that ships its own API — enabled when THAT
+# lab's own key is present, so a lab's flagship is reachable through both its home
+# API and OpenRouter (see config.example.yaml's FIRST-PARTY HOME API BLOCKS).
 PROVIDERS: list[tuple[str, str]] = [
     ("anthropic", "ANTHROPIC_API_KEY"),
     ("openrouter", "OPENROUTER_API_KEY"),
+    ("openai", "OPENAI_API_KEY"),
+    ("xai", "XAI_API_KEY"),
+    ("google", "GEMINI_API_KEY"),
+    ("deepseek", "DEEPSEEK_API_KEY"),
+    ("mistral", "MISTRAL_API_KEY"),
+    ("moonshot", "MOONSHOT_API_KEY"),
+    ("qwen", "DASHSCOPE_API_KEY"),
+    ("minimax", "MINIMAX_API_KEY"),
+    ("zai", "ZAI_API_KEY"),
 ]
 
 BEGIN_MARKER = "BEGIN auto-model-config: {slug}"

@@ -10,6 +10,7 @@ import yaml
 from wizard import ui as wizard_ui
 from wizard.providers import (
     ANTHROPIC_BUNDLE_MODELS,
+    HOME_API_BUNDLES,
     LLM_PROVIDERS,
     OPENROUTER_BUNDLE_MODELS,
     SEARCH_PROVIDERS,
@@ -177,16 +178,90 @@ class TestBundleProviders:
         assert all(m["base_url"] == "https://openrouter.ai/api/v1" for m in provider.bundle_models)
         assert all(m["use"] == "langchain_openai:ChatOpenAI" for m in provider.bundle_models)
 
-    def test_single_model_providers_have_no_bundle(self):
+    def test_home_api_providers_now_have_bundles(self):
+        """The first-party 'home' labs enable a full lineup from one key, like
+        Anthropic/OpenRouter — no longer single-model providers."""
         providers = {p.name: p for p in LLM_PROVIDERS}
-        assert providers["openai"].bundle_models == []
-        assert providers["deepseek"].bundle_models == []
-        assert providers["google"].bundle_models == []
+        # marker slug -> wizard provider name (moonshot's block rides the `kimi` provider)
+        for slug in ("openai", "xai", "google", "deepseek", "mistral", "qwen", "minimax", "zai"):
+            assert providers[slug].bundle_models, f"{slug} should carry a home bundle"
+        assert providers["kimi"].bundle_models, "moonshot/kimi should carry a home bundle"
+
+    def test_genuinely_single_model_providers_still_have_no_bundle(self):
+        providers = {p.name: p for p in LLM_PROVIDERS}
+        for name in ("volcengine", "openai_responses", "novita", "mimo", "minimax_cn", "vllm", "mindie", "codex", "claude_code", "other"):
+            assert providers[name].bundle_models == [], name
 
     def test_bundle_model_names_are_unique(self):
-        for bundle in (ANTHROPIC_BUNDLE_MODELS, OPENROUTER_BUNDLE_MODELS):
+        for bundle in (ANTHROPIC_BUNDLE_MODELS, OPENROUTER_BUNDLE_MODELS, *(b for _, b in HOME_API_BUNDLES.values())):
             names = [m["name"] for m in bundle]
             assert len(names) == len(set(names))
+
+    def test_all_bundle_model_names_globally_unique(self):
+        """Every bundled model `name:` is unique across Anthropic + OpenRouter +
+        the nine home blocks, so nothing collides when several keys are set."""
+        all_names: list[str] = []
+        for bundle in (ANTHROPIC_BUNDLE_MODELS, OPENROUTER_BUNDLE_MODELS, *(b for _, b in HOME_API_BUNDLES.values())):
+            all_names += [m["name"] for m in bundle]
+        assert len(all_names) == len(set(all_names))
+
+
+class TestHomeApiBundleProviders:
+    """First-party 'home' blocks: one per big-name lab with its own API, gated by
+    that lab's own key, mirroring how the Anthropic bundle is handled."""
+
+    def test_registry_covers_the_nine_first_party_labs(self):
+        assert set(HOME_API_BUNDLES) == {"openai", "xai", "google", "deepseek", "mistral", "moonshot", "qwen", "minimax", "zai"}
+
+    def test_each_bundle_is_wired_into_a_wizard_provider(self):
+        bundle_owner = {id(p.bundle_models): p for p in LLM_PROVIDERS if p.bundle_models}
+        for slug, (_env, bundle) in HOME_API_BUNDLES.items():
+            provider = bundle_owner.get(id(bundle))
+            assert provider is not None, f"{slug} bundle not wired into any wizard provider"
+            assert provider.bundle_models == bundle
+            assert provider.default_model in provider.models
+
+    def test_every_entry_uses_the_labs_own_key(self):
+        for slug, (env_var, bundle) in HOME_API_BUNDLES.items():
+            for entry in bundle:
+                key = entry.get("api_key") or entry.get("gemini_api_key")
+                assert key == f"${env_var}", f"{slug}/{entry['name']} key {key!r}"
+                assert entry["use"] and ":" in entry["use"]
+
+    def test_home_entries_carry_no_privacy_marker_and_use_lab_suffix(self):
+        # (p) is an OpenRouter-only routing caveat; home entries are direct.
+        suffix = {
+            "openai": "(OpenAI)",
+            "xai": "(xAI)",
+            "google": "(Google)",
+            "deepseek": "(DeepSeek)",
+            "mistral": "(Mistral)",
+            "moonshot": "(Moonshot)",
+            "qwen": "(Qwen)",
+            "minimax": "(MiniMax)",
+            "zai": "(z-ai)",
+        }
+        for slug, (_env, bundle) in HOME_API_BUNDLES.items():
+            for entry in bundle:
+                assert "(p)" not in entry["display_name"], entry["name"]
+                assert suffix[slug] in entry["display_name"], entry["name"]
+
+    def test_flagships_are_doubled_with_openrouter(self):
+        """Each lab's flagship exists on BOTH its home block and OpenRouter (the
+        same slug, minus the OpenRouter provider prefix) — the whole point of the
+        home blocks. GPT keeps its Sol + Codex double on OpenRouter."""
+        openrouter_ids = {m["model"] for m in OPENROUTER_BUNDLE_MODELS}
+        home_ids = {m["model"] for _, (_e, b) in HOME_API_BUNDLES.items() for m in b}
+
+        def routed(bare: str) -> bool:
+            # `gpt-5.6-sol` is doubled as some `<provider>/gpt-5.6-sol` OpenRouter
+            # slug; the id casing can differ per API (MiniMax's own API uses
+            # `MiniMax-M3`, OpenRouter uses `minimax/minimax-m3`).
+            return any(slug.split("/", 1)[-1].lower() == bare.lower() for slug in openrouter_ids)
+
+        for flagship in ("gpt-5.6-sol", "gpt-5.3-codex", "grok-4.5", "gemini-3.6-flash", "deepseek-v4-pro", "mistral-large-2512", "kimi-k3", "qwen3.7-max", "MiniMax-M3", "glm-5.2"):
+            assert flagship in home_ids, f"{flagship} missing from a home block"
+            assert routed(flagship), f"{flagship} not doubled on OpenRouter"
 
 
 class TestBuildMinimalConfig:

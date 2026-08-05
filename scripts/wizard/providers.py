@@ -322,6 +322,203 @@ OPENROUTER_BUNDLE_MODELS: list[dict] = [
 ]
 
 
+# ── First-party "home" API bundles ─────────────────────────────────────────
+# The direct-Anthropic bundle above enables the full Claude family on the native
+# Anthropic API, while OpenRouter carries the flagships routed through one key.
+# These bundles extend that same shape to every big-name lab that ships a
+# first-party API: one bundle per provider, enabled when THAT provider's own key
+# is present, so a lab's flagship is reachable through BOTH its home API and
+# OpenRouter (the direct copy carries no `(p)` privacy caveat), and each lab's
+# cheaper siblings are reachable through the home API only — mirroring how
+# Anthropic's full lineup lives on the direct key while only Fable is doubled on
+# OpenRouter. OpenRouter keeps its trim "one flagship per lab" set unchanged
+# (including the GPT Sol + Codex double).
+#
+# Unlike the OpenRouter entries, these are direct/first-party, so their
+# display_name carries the lab's own suffix — (OpenAI) / (xAI) / (Google) /
+# (DeepSeek) / (Mistral) / (Moonshot) / (Qwen) / (MiniMax) / (z-ai), mirroring
+# (Anthropic) — and never the `(p)` marker (no OpenRouter middleman). The price
+# pair in the name is the provider's own list price; the OpenRouter-only promo
+# stars stay on the OpenRouter entries. Slugs current as of 2026-07; the
+# non-flagship siblings follow each lab's established tier naming.
+
+
+def _home_openai_compat_model(
+    name: str,
+    display_name: str,
+    model: str,
+    *,
+    api_key_env: str,
+    base_url: str,
+    supports_vision: bool = False,
+    supports_thinking: bool = True,
+    thinking_toggle: bool = False,
+    max_tokens: int = 32000,
+    temperature: float | None = None,
+) -> dict:
+    """Build one first-party OpenAI-compatible (`ChatOpenAI` + base_url) entry.
+
+    ``thinking_toggle`` wires the shared ``extra_body.thinking`` enable/disable
+    pair for gateways that honor it; otherwise the entry only advertises
+    ``supports_thinking`` (mirroring how the OpenRouter copies of these models
+    are handled — the reasoning switch is engaged without a provider-specific
+    request field DeerFlow cannot verify for every lab).
+    """
+    entry: dict = {
+        "name": name,
+        "display_name": display_name,
+        "use": "langchain_openai:ChatOpenAI",
+        "model": model,
+        "api_key": f"${api_key_env}",
+        "base_url": base_url,
+        "request_timeout": 600.0,
+        "max_retries": 2,
+        "max_tokens": max_tokens,
+    }
+    if temperature is not None:
+        entry["temperature"] = temperature
+    entry["supports_vision"] = supports_vision
+    if supports_thinking:
+        if thinking_toggle:
+            entry.update(OPENAI_COMPAT_THINKING_CONFIG)
+        else:
+            entry["supports_thinking"] = True
+    return entry
+
+
+def _home_deepseek_style_model(
+    name: str,
+    display_name: str,
+    model: str,
+    *,
+    api_key_env: str,
+    api_base: str,
+    supports_vision: bool = False,
+    max_tokens: int = 32000,
+) -> dict:
+    """Build one first-party `PatchedChatDeepSeek` entry (DeepSeek / Moonshot).
+
+    These labs' native endpoints honor the OpenAI-compatible ``extra_body``
+    thinking toggle, so the entry ships the full enable/disable pair like the
+    wizard's existing ``deepseek`` / ``kimi`` providers.
+    """
+    return {
+        "name": name,
+        "display_name": display_name,
+        "use": "deerflow.models.patched_deepseek:PatchedChatDeepSeek",
+        "model": model,
+        "api_base": api_base,
+        "api_key": f"${api_key_env}",
+        "timeout": 600.0,
+        "max_retries": 2,
+        "max_tokens": max_tokens,
+        "supports_vision": supports_vision,
+        **OPENAI_COMPAT_THINKING_CONFIG,
+    }
+
+
+def _home_gemini_model(name: str, display_name: str, model: str, *, max_tokens: int = 8192, supports_vision: bool = True) -> dict:
+    """Build one first-party Gemini entry via the native `ChatGoogleGenerativeAI` SDK.
+
+    The native SDK path in this repo does not wire a thinking toggle (the
+    OpenRouter Gemini copy carries `supports_thinking` because OpenRouter drives
+    reasoning), so these home entries advertise vision but not thinking, matching
+    the existing ``google`` wizard provider. Users who want Gemini thinking use
+    the OpenRouter entry or the `gemini_openai_gateway` provider.
+    """
+    return {
+        "name": name,
+        "display_name": display_name,
+        "use": "langchain_google_genai:ChatGoogleGenerativeAI",
+        "model": model,
+        "gemini_api_key": "$GEMINI_API_KEY",
+        "timeout": 600.0,
+        "max_retries": 2,
+        "max_tokens": max_tokens,
+        "supports_vision": supports_vision,
+    }
+
+
+# OpenAI: GPT-5.6 Sol (flagship) + GPT-5.3 Codex (the acclaimed agentic-coding
+# variant — the same double kept on OpenRouter) + a cheaper Mini.
+OPENAI_HOME_BUNDLE_MODELS: list[dict] = [
+    _home_openai_compat_model("openai-gpt-5.6-sol", "GPT-5.6 Sol ($5/30) (OpenAI)", "gpt-5.6-sol", api_key_env="OPENAI_API_KEY", base_url="https://api.openai.com/v1", supports_vision=True),
+    _home_openai_compat_model("openai-gpt-5.3-codex", "GPT-5.3 Codex ($1.75/14) (OpenAI)", "gpt-5.3-codex", api_key_env="OPENAI_API_KEY", base_url="https://api.openai.com/v1", supports_vision=True),
+    _home_openai_compat_model("openai-gpt-5.6-mini", "GPT-5.6 Mini ($0.25/2) (OpenAI)", "gpt-5.6-mini", api_key_env="OPENAI_API_KEY", base_url="https://api.openai.com/v1", supports_vision=True, max_tokens=16000),
+]
+
+# xAI: Grok 4.5 (flagship) + Grok 4.5 Fast (cheaper/faster tier).
+XAI_HOME_BUNDLE_MODELS: list[dict] = [
+    _home_openai_compat_model("xai-grok-4.5", "Grok 4.5 ($2/6) (xAI)", "grok-4.5", api_key_env="XAI_API_KEY", base_url="https://api.x.ai/v1", supports_vision=True),
+    _home_openai_compat_model("xai-grok-4.5-fast", "Grok 4.5 Fast ($0.5/1.5) (xAI)", "grok-4.5-fast", api_key_env="XAI_API_KEY", base_url="https://api.x.ai/v1", supports_vision=True, max_tokens=16000),
+]
+
+# Google: Gemini 3.6 Flash (flagship) + 3.5 Flash-Lite (cheaper) + the newest
+# shipped Pro (3.1 Pro preview — the exact set the config's OpenRouter note names).
+GOOGLE_HOME_BUNDLE_MODELS: list[dict] = [
+    _home_gemini_model("google-gemini-3.6-flash", "Gemini 3.6 Flash ($1.5/7.5) (Google)", "gemini-3.6-flash"),
+    _home_gemini_model("google-gemini-3.5-flash-lite", "Gemini 3.5 Flash-Lite ($0.3/1.2) (Google)", "gemini-3.5-flash-lite"),
+    _home_gemini_model("google-gemini-3.1-pro", "Gemini 3.1 Pro ($2.5/10) (Google)", "gemini-3.1-pro-preview"),
+]
+
+# DeepSeek: V4 Pro (flagship) + V4 Flash (cheaper) — the pair the wizard already ships.
+DEEPSEEK_HOME_BUNDLE_MODELS: list[dict] = [
+    _home_deepseek_style_model("deepseek-v4-pro", "DeepSeek V4 Pro ($0.44/0.87) (DeepSeek)", "deepseek-v4-pro", api_key_env="DEEPSEEK_API_KEY", api_base="https://api.deepseek.com", supports_vision=False, max_tokens=8192),
+    _home_deepseek_style_model("deepseek-v4-flash", "DeepSeek V4 Flash ($0.14/0.28) (DeepSeek)", "deepseek-v4-flash", api_key_env="DEEPSEEK_API_KEY", api_base="https://api.deepseek.com", supports_vision=False, max_tokens=8192),
+]
+
+# Mistral: Large 3 (flagship) + Medium + Small. Mistral Large is not a reasoning
+# model (matching the OpenRouter entry), so the family ships without thinking.
+MISTRAL_HOME_BUNDLE_MODELS: list[dict] = [
+    _home_openai_compat_model("mistral-large-3", "Mistral Large 3 ($0.5/1.5) (Mistral)", "mistral-large-2512", api_key_env="MISTRAL_API_KEY", base_url="https://api.mistral.ai/v1", supports_vision=True, supports_thinking=False),
+    _home_openai_compat_model("mistral-medium-3", "Mistral Medium 3 ($0.4/2) (Mistral)", "mistral-medium-latest", api_key_env="MISTRAL_API_KEY", base_url="https://api.mistral.ai/v1", supports_vision=True, supports_thinking=False),
+    _home_openai_compat_model(
+        "mistral-small-3", "Mistral Small 3 ($0.1/0.3) (Mistral)", "mistral-small-latest", api_key_env="MISTRAL_API_KEY", base_url="https://api.mistral.ai/v1", supports_vision=True, supports_thinking=False, max_tokens=16000
+    ),
+]
+
+# Moonshot/Kimi: K3 (flagship) + K2.6 (cheaper), via the international endpoint.
+MOONSHOT_HOME_BUNDLE_MODELS: list[dict] = [
+    _home_deepseek_style_model("moonshot-kimi-k3", "Kimi K3 ($3/15) (Moonshot)", "kimi-k3", api_key_env="MOONSHOT_API_KEY", api_base="https://api.moonshot.ai/v1", supports_vision=True, max_tokens=32768),
+    _home_deepseek_style_model("moonshot-kimi-k2.6", "Kimi K2.6 ($1/3) (Moonshot)", "kimi-k2.6", api_key_env="MOONSHOT_API_KEY", api_base="https://api.moonshot.ai/v1", supports_vision=False, max_tokens=32768),
+]
+
+# Qwen (Alibaba DashScope, international OpenAI-compatible endpoint): 3.7 Max
+# (flagship) + 3.7 Plus (cheaper).
+QWEN_HOME_BUNDLE_MODELS: list[dict] = [
+    _home_openai_compat_model("qwen-3.7-max", "Qwen3.7 Max ($1.5/4.4) (Qwen)", "qwen3.7-max", api_key_env="DASHSCOPE_API_KEY", base_url="https://dashscope-intl.aliyuncs.com/compatible-mode/v1", supports_vision=False),
+    _home_openai_compat_model("qwen-3.7-plus", "Qwen3.7 Plus ($0.4/1.2) (Qwen)", "qwen3.7-plus", api_key_env="DASHSCOPE_API_KEY", base_url="https://dashscope-intl.aliyuncs.com/compatible-mode/v1", supports_vision=False, max_tokens=16000),
+]
+
+# MiniMax (international endpoint): M3 (flagship, vision) + M2.7 (cheaper, text-only).
+MINIMAX_HOME_BUNDLE_MODELS: list[dict] = [
+    _home_openai_compat_model("minimax-m3", "MiniMax M3 ($0.6/2.4) (MiniMax)", "MiniMax-M3", api_key_env="MINIMAX_API_KEY", base_url="https://api.minimax.io/v1", supports_vision=True, max_tokens=16000, temperature=1.0),
+    _home_openai_compat_model("minimax-m2.7", "MiniMax M2.7 ($0.3/1.2) (MiniMax)", "MiniMax-M2.7", api_key_env="MINIMAX_API_KEY", base_url="https://api.minimax.io/v1", supports_vision=False, max_tokens=16000, temperature=1.0),
+]
+
+# Zhipu / z.ai: GLM-5.2 (flagship) + GLM-5.2 Air (cheaper).
+ZAI_HOME_BUNDLE_MODELS: list[dict] = [
+    _home_openai_compat_model("zai-glm-5.2", "GLM-5.2 ($1.15/3.6) (z-ai)", "glm-5.2", api_key_env="ZAI_API_KEY", base_url="https://api.z.ai/api/paas/v4", supports_vision=False, max_tokens=16000),
+    _home_openai_compat_model("zai-glm-5.2-air", "GLM-5.2 Air ($0.2/1.1) (z-ai)", "glm-5.2-air", api_key_env="ZAI_API_KEY", base_url="https://api.z.ai/api/paas/v4", supports_vision=False, max_tokens=16000),
+]
+
+# Registry consumed by the config-block generator, the auto-config regression
+# tests, and the config.example.yaml ↔ wizard parity check: provider marker slug
+# -> (gating env var, bundle). Keep this in sync with the PROVIDERS list in
+# scripts/sync-api-key-models.py and the marker blocks in config.example.yaml.
+HOME_API_BUNDLES: dict[str, tuple[str, list[dict]]] = {
+    "openai": ("OPENAI_API_KEY", OPENAI_HOME_BUNDLE_MODELS),
+    "xai": ("XAI_API_KEY", XAI_HOME_BUNDLE_MODELS),
+    "google": ("GEMINI_API_KEY", GOOGLE_HOME_BUNDLE_MODELS),
+    "deepseek": ("DEEPSEEK_API_KEY", DEEPSEEK_HOME_BUNDLE_MODELS),
+    "mistral": ("MISTRAL_API_KEY", MISTRAL_HOME_BUNDLE_MODELS),
+    "moonshot": ("MOONSHOT_API_KEY", MOONSHOT_HOME_BUNDLE_MODELS),
+    "qwen": ("DASHSCOPE_API_KEY", QWEN_HOME_BUNDLE_MODELS),
+    "minimax": ("MINIMAX_API_KEY", MINIMAX_HOME_BUNDLE_MODELS),
+    "zai": ("ZAI_API_KEY", ZAI_HOME_BUNDLE_MODELS),
+}
+
+
 def with_thinking_support(provider: LLMProvider, supports_thinking: bool) -> LLMProvider:
     """Return a copy of *provider* with thinking-capability flags applied.
 
@@ -403,19 +600,19 @@ LLM_PROVIDERS: list[LLMProvider] = [
     LLMProvider(
         name="openai",
         display_name="OpenAI",
-        description="GPT-5, GPT-4.1, GPT-4o",
+        description="GPT-5.6 Sol + GPT-5.3 Codex + GPT-5.6 Mini (direct OpenAI API)",
         use="langchain_openai:ChatOpenAI",
-        models=["gpt-5", "gpt-5-mini", "gpt-4.1", "gpt-4o"],
-        default_model="gpt-5",
+        models=[entry["model"] for entry in OPENAI_HOME_BUNDLE_MODELS],
+        default_model=OPENAI_HOME_BUNDLE_MODELS[0]["model"],
         env_var="OPENAI_API_KEY",
         package="langchain-openai",
         extra_config={
             "request_timeout": 600.0,
             "max_retries": 2,
-            "max_tokens": 4096,
-            "temperature": 0.7,
+            "max_tokens": 32000,
             "supports_vision": True,
         },
+        bundle_models=OPENAI_HOME_BUNDLE_MODELS,
     ),
     LLMProvider(
         name="openai_responses",
@@ -455,27 +652,29 @@ LLM_PROVIDERS: list[LLMProvider] = [
     LLMProvider(
         name="deepseek",
         display_name="DeepSeek",
-        description="DeepSeek V4 with thinking support",
+        description="DeepSeek V4 Pro + V4 Flash with thinking support (direct DeepSeek API)",
         use="deerflow.models.patched_deepseek:PatchedChatDeepSeek",
-        models=["deepseek-v4-pro", "deepseek-v4-flash"],
-        default_model="deepseek-v4-pro",
+        models=[entry["model"] for entry in DEEPSEEK_HOME_BUNDLE_MODELS],
+        default_model=DEEPSEEK_HOME_BUNDLE_MODELS[0]["model"],
         env_var="DEEPSEEK_API_KEY",
         package="langchain-deepseek",
         extra_config={
+            "api_base": "https://api.deepseek.com",
             "timeout": 600.0,
             "max_retries": 2,
             "max_tokens": 8192,
             "supports_vision": False,
             **OPENAI_COMPAT_THINKING_CONFIG,
         },
+        bundle_models=DEEPSEEK_HOME_BUNDLE_MODELS,
     ),
     LLMProvider(
         name="google",
         display_name="Google Gemini",
-        description="Native Gemini SDK, no thinking support",
+        description="Gemini 3.6 Flash + 3.5 Flash-Lite + 3.1 Pro (native Gemini SDK, no thinking)",
         use="langchain_google_genai:ChatGoogleGenerativeAI",
-        models=["gemini-2.5-pro", "gemini-2.0-flash"],
-        default_model="gemini-2.5-pro",
+        models=[entry["model"] for entry in GOOGLE_HOME_BUNDLE_MODELS],
+        default_model=GOOGLE_HOME_BUNDLE_MODELS[0]["model"],
         env_var="GEMINI_API_KEY",
         package="langchain-google-genai",
         api_key_field="gemini_api_key",
@@ -485,6 +684,7 @@ LLM_PROVIDERS: list[LLMProvider] = [
             "max_tokens": 8192,
             "supports_vision": True,
         },
+        bundle_models=GOOGLE_HOME_BUNDLE_MODELS,
     ),
     LLMProvider(
         name="gemini_openai_gateway",
@@ -563,20 +763,21 @@ LLM_PROVIDERS: list[LLMProvider] = [
     LLMProvider(
         name="kimi",
         display_name="Moonshot Kimi",
-        description="Kimi K2.5 with thinking support",
+        description="Kimi K3 + K2.6 with thinking support (direct Moonshot API)",
         use="deerflow.models.patched_deepseek:PatchedChatDeepSeek",
-        models=["kimi-k2.5"],
-        default_model="kimi-k2.5",
+        models=[entry["model"] for entry in MOONSHOT_HOME_BUNDLE_MODELS],
+        default_model=MOONSHOT_HOME_BUNDLE_MODELS[0]["model"],
         env_var="MOONSHOT_API_KEY",
         package="langchain-deepseek",
         extra_config={
-            "api_base": "https://api.moonshot.cn/v1",
+            "api_base": "https://api.moonshot.ai/v1",
             "timeout": 600.0,
             "max_retries": 2,
             "max_tokens": 32768,
             "supports_vision": True,
             **OPENAI_COMPAT_THINKING_CONFIG,
         },
+        bundle_models=MOONSHOT_HOME_BUNDLE_MODELS,
     ),
     LLMProvider(
         name="novita",
@@ -600,17 +801,17 @@ LLM_PROVIDERS: list[LLMProvider] = [
     LLMProvider(
         name="minimax",
         display_name="MiniMax",
-        description="International OpenAI-compatible endpoint",
+        description="MiniMax M3 + M2.7 (international OpenAI-compatible endpoint)",
         use="langchain_openai:ChatOpenAI",
-        models=["MiniMax-M3", "MiniMax-M2.7", "MiniMax-M2.7-highspeed"],
-        default_model="MiniMax-M3",
+        models=[entry["model"] for entry in MINIMAX_HOME_BUNDLE_MODELS],
+        default_model=MINIMAX_HOME_BUNDLE_MODELS[0]["model"],
         env_var="MINIMAX_API_KEY",
         package="langchain-openai",
         extra_config={
             "base_url": "https://api.minimax.io/v1",
             "request_timeout": 600.0,
             "max_retries": 2,
-            "max_tokens": 4096,
+            "max_tokens": 16000,
             "temperature": 1.0,
             "supports_vision": True,
             "supports_thinking": True,
@@ -619,6 +820,7 @@ LLM_PROVIDERS: list[LLMProvider] = [
             "MiniMax-M2.7": False,
             "MiniMax-M2.7-highspeed": False,
         },
+        bundle_models=MINIMAX_HOME_BUNDLE_MODELS,
     ),
     LLMProvider(
         name="minimax_cn",
@@ -659,6 +861,82 @@ LLM_PROVIDERS: list[LLMProvider] = [
             "max_tokens": 16000,
         },
         bundle_models=OPENROUTER_BUNDLE_MODELS,
+    ),
+    LLMProvider(
+        name="xai",
+        display_name="xAI Grok",
+        description="Grok 4.5 + Grok 4.5 Fast (direct xAI API)",
+        use="langchain_openai:ChatOpenAI",
+        models=[entry["model"] for entry in XAI_HOME_BUNDLE_MODELS],
+        default_model=XAI_HOME_BUNDLE_MODELS[0]["model"],
+        env_var="XAI_API_KEY",
+        package="langchain-openai",
+        extra_config={
+            "base_url": "https://api.x.ai/v1",
+            "request_timeout": 600.0,
+            "max_retries": 2,
+            "max_tokens": 32000,
+            "supports_vision": True,
+            "supports_thinking": True,
+        },
+        bundle_models=XAI_HOME_BUNDLE_MODELS,
+    ),
+    LLMProvider(
+        name="mistral",
+        display_name="Mistral",
+        description="Mistral Large 3 + Medium + Small (direct Mistral API)",
+        use="langchain_openai:ChatOpenAI",
+        models=[entry["model"] for entry in MISTRAL_HOME_BUNDLE_MODELS],
+        default_model=MISTRAL_HOME_BUNDLE_MODELS[0]["model"],
+        env_var="MISTRAL_API_KEY",
+        package="langchain-openai",
+        extra_config={
+            "base_url": "https://api.mistral.ai/v1",
+            "request_timeout": 600.0,
+            "max_retries": 2,
+            "max_tokens": 32000,
+            "supports_vision": True,
+            "supports_thinking": False,
+        },
+        bundle_models=MISTRAL_HOME_BUNDLE_MODELS,
+    ),
+    LLMProvider(
+        name="qwen",
+        display_name="Qwen (Alibaba DashScope)",
+        description="Qwen3.7 Max + Plus (international DashScope OpenAI-compatible endpoint)",
+        use="langchain_openai:ChatOpenAI",
+        models=[entry["model"] for entry in QWEN_HOME_BUNDLE_MODELS],
+        default_model=QWEN_HOME_BUNDLE_MODELS[0]["model"],
+        env_var="DASHSCOPE_API_KEY",
+        package="langchain-openai",
+        extra_config={
+            "base_url": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+            "request_timeout": 600.0,
+            "max_retries": 2,
+            "max_tokens": 32000,
+            "supports_vision": False,
+            "supports_thinking": True,
+        },
+        bundle_models=QWEN_HOME_BUNDLE_MODELS,
+    ),
+    LLMProvider(
+        name="zai",
+        display_name="Zhipu z.ai (GLM)",
+        description="GLM-5.2 + GLM-5.2 Air (direct z.ai API)",
+        use="langchain_openai:ChatOpenAI",
+        models=[entry["model"] for entry in ZAI_HOME_BUNDLE_MODELS],
+        default_model=ZAI_HOME_BUNDLE_MODELS[0]["model"],
+        env_var="ZAI_API_KEY",
+        package="langchain-openai",
+        extra_config={
+            "base_url": "https://api.z.ai/api/paas/v4",
+            "request_timeout": 600.0,
+            "max_retries": 2,
+            "max_tokens": 16000,
+            "supports_vision": False,
+            "supports_thinking": True,
+        },
+        bundle_models=ZAI_HOME_BUNDLE_MODELS,
     ),
     LLMProvider(
         name="orcarouter",

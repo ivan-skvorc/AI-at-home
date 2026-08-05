@@ -280,6 +280,65 @@ class TestRealExampleConfig:
         assert (data.get("models") or []) == []
 
 
+class TestHomeApiBlocks:
+    """The first-party 'home' blocks (openai, xai, google, deepseek, mistral,
+    moonshot, qwen, minimax, zai) each enable one lab's lineup on its own key,
+    mirroring the Anthropic block. They round-trip to exactly the wizard bundles."""
+
+    def setup_method(self):
+        self.text = (REPO_ROOT / "config.example.yaml").read_text()
+        from wizard.providers import HOME_API_BUNDLES
+
+        self.bundles = HOME_API_BUNDLES
+
+    def test_every_home_slug_is_registered_and_present(self):
+        registered = {slug for slug, _env in sync_api.PROVIDERS}
+        for slug, (env_var, _bundle) in self.bundles.items():
+            assert slug in registered, f"{slug} missing from sync PROVIDERS"
+            assert (slug, env_var) in sync_api.PROVIDERS, f"{slug} env mismatch in PROVIDERS"
+            assert sync_api.find_block(self.text.splitlines(), slug) is not None, f"{slug} block missing from config.example.yaml"
+
+    def test_each_block_round_trips_to_its_wizard_bundle(self):
+        """config.example.yaml ↔ scripts/wizard/providers.py must stay in sync:
+        uncommenting a home block yields exactly that lab's bundle entries."""
+        for slug, (_env, bundle) in self.bundles.items():
+            out = sync_api.sync(self.text, {slug})
+            active = {m["name"]: m for m in yaml.safe_load(out)["models"]}
+            for entry in bundle:
+                assert active.get(entry["name"]) == entry, f"{slug}/{entry['name']} drifted between config.example.yaml and providers.py"
+
+    def test_home_entries_use_the_labs_own_key(self):
+        for slug, (env_var, _bundle) in self.bundles.items():
+            out = sync_api.sync(self.text, {slug})
+            for m in yaml.safe_load(out)["models"]:
+                key = m.get("api_key") or m.get("gemini_api_key")
+                assert key == f"${env_var}", f"{slug}/{m['name']} key {key!r}"
+
+    def test_home_entries_carry_no_openrouter_privacy_marker(self):
+        for slug, (_env, _bundle) in self.bundles.items():
+            out = sync_api.sync(self.text, {slug})
+            for m in yaml.safe_load(out)["models"]:
+                assert "(p)" not in m["display_name"], f"{slug}/{m['name']} must not carry the OpenRouter (p) marker"
+
+    def test_all_keys_present_enables_every_block_without_name_collision(self):
+        all_slugs = {slug for slug, _env in sync_api.PROVIDERS}
+        out = sync_api.sync(self.text, all_slugs)
+        names = [m["name"] for m in yaml.safe_load(out)["models"]]
+        assert len(names) == len(set(names)), "model names collide when every key is set"
+        # 6 Anthropic + 13 OpenRouter + 21 home = 40 distinct models.
+        assert len(names) == 40
+
+    def test_openai_home_and_openrouter_gpt_are_distinct_entries(self):
+        """The GPT flagship is doubled: a direct OpenAI entry AND the OpenRouter
+        Sol + Codex double both survive with distinct names."""
+        out = sync_api.sync(self.text, {"openai", "openrouter"})
+        by_name = {m["name"]: m for m in yaml.safe_load(out)["models"]}
+        assert by_name["openai-gpt-5.6-sol"]["model"] == "gpt-5.6-sol"
+        assert by_name["openai-gpt-5.6-sol"]["api_key"] == "$OPENAI_API_KEY"
+        assert by_name["openrouter-gpt-5.6-sol"]["model"] == "openai/gpt-5.6-sol"
+        assert by_name["openrouter-gpt-5.3-codex"]["model"] == "openai/gpt-5.3-codex"
+
+
 class TestDuplicateTopLevelKeys:
     def test_duplicate_models_aborts(self):
         text = "models: []\nsandbox:\n  use: a\nmodels: []\n"
