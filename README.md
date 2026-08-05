@@ -494,6 +494,13 @@ deploy.sh start              # start pre-built images
 deploy.sh down
 ```
 
+> **Applying config-only changes (e.g. `BIND_HOST`, `PORT`):** the bare
+> `deploy.sh` (`make up`) rebuilds every image, which is slow and unnecessary
+> when you only edited `.env` or `config.yaml`. Prefer `deploy.sh start`
+> (`make up-start`) — it restarts the pre-built images with the new environment,
+> no rebuild. Only re-run `deploy.sh build` (or `make up`) after a code or
+> dependency change.
+
 ### Advanced
 #### Sandbox Mode
 
@@ -1403,6 +1410,15 @@ The Docker stack publishes its entry port on `127.0.0.1` only, matching the
 local-trusted-environment model described above. To reach it from another
 machine, set `BIND_HOST` in `.env` (e.g. `BIND_HOST=0.0.0.0`) — and only after
 putting the security measures below in place.
+
+> **Tailscale + localhost:** the port is published as `${BIND_HOST}:${PORT}:2026`,
+> so `BIND_HOST` is a **single bind interface, not an allowlist**. Setting it to
+> just your Tailscale IP (e.g. `BIND_HOST=100.x.y.z`) binds *only* that interface
+> and drops loopback — the app then works over Tailscale but **not** at
+> `http://localhost:2026` on the host itself. To reach it from **both** localhost
+> and Tailscale, use `BIND_HOST=0.0.0.0` (all interfaces), not the Tailscale IP
+> alone. After editing `.env`, apply the change with `./scripts/deploy.sh start`
+> (or `make up-start`) — a config-only change needs no image rebuild.
 
 **Complete first-run setup before the host becomes reachable.** A fresh
 instance has no accounts yet, so create the admin account through `/setup`

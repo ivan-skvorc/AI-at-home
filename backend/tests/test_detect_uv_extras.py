@@ -7,12 +7,14 @@ future opt-in extras) are not wiped on every restart — see Issue #2754.
 from __future__ import annotations
 
 import importlib.util
+import tomllib
 from pathlib import Path
 
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DETECT_SCRIPT_PATH = REPO_ROOT / "scripts" / "detect_uv_extras.py"
+BACKEND_PYPROJECT_PATH = REPO_ROOT / "backend" / "pyproject.toml"
 
 
 spec = importlib.util.spec_from_file_location("deerflow_detect_uv_extras", DETECT_SCRIPT_PATH)
@@ -377,3 +379,50 @@ def test_resolve_extras_root_config_takes_precedence(isolated_cwd):
     (sub / "config.yaml").write_text("database:\n  backend: postgres\n")
     # Root config.yaml is checked first, matching the precedence in serve.sh.
     assert detect.resolve_extras() == []
+
+
+def _backend_declared_extras() -> set[str]:
+    pyproject = tomllib.loads(BACKEND_PYPROJECT_PATH.read_text(encoding="utf-8"))
+    return set(pyproject["project"]["optional-dependencies"])
+
+
+def test_backend_pyproject_forwards_camoufox_extra_to_harness():
+    """camoufox is the shipped web_fetch default, so the backend (root) package
+    must forward the extra to the harness — otherwise `uv sync --extra camoufox`
+    in the gateway image build fails with "extra not defined"."""
+    pyproject = tomllib.loads(BACKEND_PYPROJECT_PATH.read_text(encoding="utf-8"))
+    optional = pyproject["project"]["optional-dependencies"]
+    assert optional["camoufox"] == ["deerflow-harness[camoufox]"]
+
+
+def test_every_auto_detected_extra_is_a_declared_backend_extra(tmp_path):
+    """Auto-detect must never emit an extra the gateway image cannot install.
+
+    scripts/detect_uv_extras.py feeds UV_EXTRAS into the production Dockerfile's
+    `uv sync --extra <name>`, which builds the backend (root workspace) package.
+    Any emitted name absent from backend/pyproject.toml's optional-dependencies
+    fails that build with "extra not defined" — the camoufox regression this
+    change fixes. Exercise every config-driven detector branch at once and pin
+    the closed loop so a future detector cannot reintroduce the gap.
+    """
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text(
+        "database:\n  backend: postgres\n"
+        "stream_bridge:\n  type: redis\n"
+        "channels:\n  discord:\n    enabled: true\n  buzz:\n    enabled: true\n"
+        "tools:\n"
+        "  - name: browser_navigate\n"
+        "  - name: web_fetch\n"
+        "    use: deerflow.community.web_fetch.tools:web_fetch_tool\n"
+        "    backend: camoufox\n",
+        encoding="utf-8",
+    )
+
+    config_extras = set(detect.detect_from_config(cfg))
+    # Sanity: the fixture actually triggered every config-driven detector branch.
+    assert config_extras == {"browser", "buzz", "camoufox", "discord", "postgres", "redis"}
+
+    emitted = config_extras | set(detect.detect_from_runtime_env())
+    declared = _backend_declared_extras()
+    missing = emitted - declared
+    assert not missing, f"detect_uv_extras can emit extras not declared in backend/pyproject.toml: {sorted(missing)}"
