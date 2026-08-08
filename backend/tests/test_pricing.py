@@ -274,3 +274,112 @@ def test_same_currency_case_insensitive_does_not_trip_guard():
     )
     assert pricing_currency(pricing) == "USD"
     assert lookup_pricing(pricing, "model-b") is not None
+
+
+class TestPromoPricing:
+    """Optional promotional / introductory rates alongside the standard price.
+
+    A provider discount is temporary, so the standard rate stays what cost
+    reporting bills against; the promo is additive and lets the UI show what the
+    conversation costs *right now* beside what it costs once the promo ends.
+    A half-specified or above-list promo is a config error and is dropped whole
+    rather than partially honoured — silently billing an invalid promo would
+    under-report spend.
+    """
+
+    @staticmethod
+    def _priced(promo: dict) -> object:
+        return _model("m", "model-m", {"currency": "USD", "input_per_million": 1.0, "output_per_million": 4.0, **promo})
+
+    def test_promo_rates_are_exposed_as_a_standalone_price(self):
+        pricing = build_pricing_map([self._priced({"promo_input_per_million": 0.25, "promo_output_per_million": 1.0})])
+        price = lookup_pricing(pricing, "model-m")
+        assert price is not None
+        assert price.input_per_million == 1.0
+        assert price.output_per_million == 4.0
+        promo = price.promo()
+        assert promo is not None
+        assert (promo.input_per_million, promo.output_per_million, promo.currency) == (0.25, 1.0, "USD")
+
+    def test_promo_cost_uses_the_discounted_rate(self):
+        pricing = build_pricing_map([self._priced({"promo_input_per_million": 0.25, "promo_output_per_million": 1.0})])
+        price = lookup_pricing(pricing, "model-m")
+        assert token_cost(1_000_000, 1_000_000, price) == pytest.approx(5.0)
+        assert token_cost(1_000_000, 1_000_000, price.promo()) == pytest.approx(1.25)
+
+    def test_promo_cache_hit_price_is_carried_through(self):
+        pricing = build_pricing_map(
+            [
+                self._priced(
+                    {
+                        "promo_input_per_million": 0.5,
+                        "promo_output_per_million": 2.0,
+                        "promo_input_cache_hit_per_million": 0.05,
+                    }
+                )
+            ]
+        )
+        promo = lookup_pricing(pricing, "model-m").promo()
+        # 1M input all cache-read at 0.05 + 1M output at 2.0
+        assert token_cost(1_000_000, 1_000_000, promo, cache_read_tokens=1_000_000) == pytest.approx(2.05)
+
+    def test_no_promo_configured_returns_none(self):
+        pricing = build_pricing_map([self._priced({})])
+        assert lookup_pricing(pricing, "model-m").promo() is None
+
+    @pytest.mark.parametrize(
+        "promo",
+        [
+            pytest.param({"promo_input_per_million": 0.25}, id="output-missing"),
+            pytest.param({"promo_output_per_million": 1.0}, id="input-missing"),
+            pytest.param({"promo_input_per_million": "cheap", "promo_output_per_million": 1.0}, id="malformed"),
+            pytest.param({"promo_input_per_million": 0, "promo_output_per_million": 1.0}, id="zero-input"),
+            pytest.param({"promo_input_per_million": -1.0, "promo_output_per_million": 1.0}, id="negative-input"),
+            pytest.param({"promo_input_per_million": 2.0, "promo_output_per_million": 1.0}, id="input-above-list"),
+            pytest.param({"promo_input_per_million": 0.25, "promo_output_per_million": 9.0}, id="output-above-list"),
+        ],
+    )
+    def test_invalid_promo_is_dropped_whole_and_standard_price_survives(self, promo, caplog):
+        with caplog.at_level(logging.WARNING, logger="app.gateway.pricing"):
+            pricing = build_pricing_map([self._priced(promo)])
+        price = lookup_pricing(pricing, "model-m")
+        assert price is not None, "an invalid promo must not disable the model's standard price"
+        assert (price.input_per_million, price.output_per_million) == (1.0, 4.0)
+        assert price.promo() is None
+        assert any("promo" in record.getMessage() for record in caplog.records)
+
+    def test_promo_equal_to_list_price_is_accepted(self):
+        # Not useful, but not invalid — only an *above-list* "promo" is a config error.
+        pricing = build_pricing_map([self._priced({"promo_input_per_million": 1.0, "promo_output_per_million": 4.0})])
+        assert lookup_pricing(pricing, "model-m").promo() is not None
+
+    def test_invalid_promo_cache_hit_drops_only_the_cache_hit_rate(self, caplog):
+        with caplog.at_level(logging.WARNING, logger="app.gateway.pricing"):
+            pricing = build_pricing_map(
+                [
+                    self._priced(
+                        {
+                            "promo_input_per_million": 0.5,
+                            "promo_output_per_million": 2.0,
+                            "promo_input_cache_hit_per_million": 5.0,
+                        }
+                    )
+                ]
+            )
+        promo = lookup_pricing(pricing, "model-m").promo()
+        assert promo is not None
+        # Falls back to the promo miss price, the same conservative rule the
+        # standard block uses when no cache-hit price is configured.
+        assert promo.input_cache_hit_per_million is None
+        assert token_cost(1_000_000, 0, promo, cache_read_tokens=1_000_000) == pytest.approx(0.5)
+
+    def test_run_cost_still_bills_the_standard_rate(self):
+        pricing = build_pricing_map([self._priced({"promo_input_per_million": 0.25, "promo_output_per_million": 1.0})])
+        cost = run_cost(
+            pricing,
+            model_name="model-m",
+            total_input_tokens=0,
+            total_output_tokens=0,
+            token_usage_by_model={"model-m": {"input_tokens": 1_000_000, "output_tokens": 1_000_000}},
+        )
+        assert cost == pytest.approx(5.0)

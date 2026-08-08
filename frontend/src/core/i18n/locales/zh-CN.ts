@@ -717,6 +717,8 @@ export const zhCN: Translations = {
       `无法显示费用：${models} 未配置价格。请在 config.yaml 中为该模型添加 pricing 配置。`,
     unpricedPartial: (models: string) =>
       `未包含 ${models}（未配置价格），实际费用更高。`,
+    promoRate: "当前优惠价",
+    standardRate: "标准价",
     memory: "记忆",
     suggestions: "建议",
     auxCallCount: (count: number) => `${count} 次调用`,

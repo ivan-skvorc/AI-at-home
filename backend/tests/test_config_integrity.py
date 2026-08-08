@@ -150,6 +150,37 @@ class TestBundledModelPricing:
                 assert entry["pricing"]["input_per_million"] == pytest.approx(float(match.group(1))), entry["name"]
                 assert entry["pricing"]["output_per_million"] == pytest.approx(float(match.group(2))), entry["name"]
 
+    def test_promo_price_matches_the_starred_pair_in_the_name(self):
+        """A starred `$list → $promo*` name and its `promo_*` block must agree.
+
+        The starred pair is the human-readable "you pay less right now" signal
+        and `promo_*_per_million` is the machine-readable one the header renders
+        in green. They are two spellings of one number: if a promo ends and only
+        the name is updated, the UI keeps advertising a discount that no longer
+        exists, which is worse than showing no promo at all. This also enforces
+        the converse — a `promo_*` block with no starred pair in the name.
+        """
+        import re
+
+        starred = re.compile(r"\(\$\d+(?:\.\d+)?/\d+(?:\.\d+)?\s*→\s*\$(\d+(?:\.\d+)?)/(\d+(?:\.\d+)?)\*\)")
+        for slug, entries in self._marker_blocks().items():
+            for entry in entries:
+                pricing = entry["pricing"]
+                label = f"{slug}:{entry['name']}"
+                match = starred.search(entry["display_name"])
+                has_promo_block = "promo_input_per_million" in pricing or "promo_output_per_million" in pricing
+                if match is None:
+                    assert not has_promo_block, f"{label} has promo pricing but no starred pair in its display_name"
+                    continue
+                assert has_promo_block, f"{label} advertises a promo in its display_name but ships no promo_* pricing"
+                assert pricing["promo_input_per_million"] == pytest.approx(float(match.group(1))), label
+                assert pricing["promo_output_per_million"] == pytest.approx(float(match.group(2))), label
+                # A "promo" at or above list price would be billed as a discount
+                # while costing the user more — the pricing loader drops it, so
+                # catch it here where the fix is obvious.
+                assert pricing["promo_input_per_million"] <= pricing["input_per_million"], label
+                assert pricing["promo_output_per_million"] <= pricing["output_per_million"], label
+
     def test_wizard_bundles_match_the_config_marker_blocks(self):
         """`make setup` and the auto-config path must write identical prices."""
         import sys

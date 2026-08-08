@@ -17,6 +17,7 @@ import {
   type ModelProvider,
   type ModelSortKey,
   sortModels,
+  splitModelNamePriceSegments,
 } from "@/core/models/sorting";
 import type { Model } from "@/core/models/types";
 import { cn } from "@/lib/utils";
@@ -104,6 +105,47 @@ export function ModelPickerControls({
         />
       </label>
     </div>
+  );
+}
+
+/**
+ * Render a model's `display_name` with its price picked out in colour.
+ *
+ * Green is what you pay: the only price on an ordinary model, or the starred
+ * promo on a discounted one. Red is the standard list price *beside* a live
+ * promo — it is what the model reverts to, so it reads as the more expensive of
+ * the pair rather than as an error. A name with no parseable price renders
+ * verbatim (see `splitModelNamePriceSegments`), so nothing is ever hidden by a
+ * format the parser does not recognize.
+ */
+export function ModelDisplayName({
+  displayName,
+  className,
+}: {
+  displayName: string | null | undefined;
+  className?: string;
+}) {
+  const segments = useMemo(
+    () => splitModelNamePriceSegments(displayName),
+    [displayName],
+  );
+  return (
+    <span className={className}>
+      {segments.map((segment, index) => (
+        <span
+          key={index}
+          className={
+            segment.kind === "price" || segment.kind === "promoPrice"
+              ? "text-emerald-500"
+              : segment.kind === "listPrice"
+                ? "text-red-500"
+                : undefined
+          }
+        >
+          {segment.text}
+        </span>
+      ))}
+    </span>
   );
 }
 

@@ -159,7 +159,11 @@ import {
 } from "./input-box-helpers";
 import { useThread } from "./messages/context";
 import { ModeHoverGuide } from "./mode-hover-guide";
-import { ModelPickerControls, ModelPickerList } from "./model-picker-controls";
+import {
+  ModelDisplayName,
+  ModelPickerControls,
+  ModelPickerList,
+} from "./model-picker-controls";
 import { ReferenceAttachmentSummary, useMaybeSidecar } from "./sidecar";
 import { SlashSkillChip } from "./slash-skill-chip";
 import { Tooltip } from "./tooltip";
@@ -2691,7 +2695,9 @@ export function InputBox({
                       Main agent
                     </span>
                     <ModelSelectorName className="text-xs font-normal">
-                      {selectedModel?.display_name}
+                      <ModelDisplayName
+                        displayName={selectedModel?.display_name}
+                      />
                     </ModelSelectorName>
                   </div>
                 </PromptInputButton>
@@ -2719,7 +2725,7 @@ export function InputBox({
                       >
                         <div className="flex min-w-0 flex-1 flex-col">
                           <ModelSelectorName>
-                            {m.display_name}
+                            <ModelDisplayName displayName={m.display_name} />
                             {unusable && (
                               <span className="text-muted-foreground ml-1 text-[10px]">
                                 (no tool support)
@@ -2753,7 +2759,13 @@ export function InputBox({
                         Subagent
                       </span>
                       <ModelSelectorName className="text-xs font-normal">
-                        {subagentSelected?.display_name ?? "Follow lead"}
+                        {subagentSelected ? (
+                          <ModelDisplayName
+                            displayName={subagentSelected.display_name}
+                          />
+                        ) : (
+                          "Follow lead"
+                        )}
                       </ModelSelectorName>
                     </div>
                   </PromptInputButton>
@@ -2797,7 +2809,7 @@ export function InputBox({
                       >
                         <div className="flex min-w-0 flex-1 flex-col">
                           <ModelSelectorName>
-                            {m.display_name}
+                            <ModelDisplayName displayName={m.display_name} />
                             {lacksToolSupport(m) && (
                               <span className="text-muted-foreground ml-1 text-[10px]">
                                 (no tool support)

@@ -89,7 +89,11 @@ import {
 import { MessageList, MESSAGE_LIST_DEFAULT_PADDING_BOTTOM } from "../messages";
 import { useThread as useParentThread } from "../messages/context";
 import { ModeHoverGuide } from "../mode-hover-guide";
-import { ModelPickerControls, ModelPickerList } from "../model-picker-controls";
+import {
+  ModelDisplayName,
+  ModelPickerControls,
+  ModelPickerList,
+} from "../model-picker-controls";
 import { Tooltip } from "../tooltip";
 
 import { type SidecarReference, useSidecar } from "./context";
@@ -942,7 +946,7 @@ function SidecarModelSelector({
         <PromptInputButton className={cn("min-w-0 px-2!", className)}>
           <div className="flex min-w-0 flex-col items-start text-left">
             <ModelSelectorName className="truncate text-xs font-normal">
-              {selectedModel.display_name}
+              <ModelDisplayName displayName={selectedModel.display_name} />
             </ModelSelectorName>
           </div>
         </PromptInputButton>
@@ -963,7 +967,9 @@ function SidecarModelSelector({
               onSelect={() => onModelSelect(model.name)}
             >
               <div className="flex min-w-0 flex-1 flex-col">
-                <ModelSelectorName>{model.display_name}</ModelSelectorName>
+                <ModelSelectorName>
+                  <ModelDisplayName displayName={model.display_name} />
+                </ModelSelectorName>
                 <span className="text-muted-foreground truncate text-[10px]">
                   {model.model}
                 </span>

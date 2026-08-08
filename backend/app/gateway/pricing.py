@@ -16,6 +16,8 @@ once instead of being copied. Prices come from the optional
           input_per_million: 5.0
           output_per_million: 25.0
           input_cache_hit_per_million: 0.5   # optional
+          promo_input_per_million: 2.5       # optional; a live discount
+          promo_output_per_million: 12.5     # (see ModelPricing.promo)
 
 ``ModelConfig`` is ``extra="allow"``, so the block needs no schema change.
 Models without a ``pricing`` block (e.g. local Ollama) contribute ``0`` /
@@ -55,6 +57,66 @@ class ModelPricing(NamedTuple):
     # full input price (conservative upper bound for providers that don't
     # discount, or when the operator hasn't configured the hit price).
     input_cache_hit_per_million: float | None = None
+    # Temporary promotional / introductory rates, when the provider is currently
+    # discounting this model (an OpenRouter promo, an Anthropic intro window).
+    # These are strictly additive: the standard rates above stay what cost
+    # reporting bills against, because a promo can end at any time and a
+    # silently-too-low estimate is worse than a slightly-high one. They exist so
+    # the UI can show what a conversation costs *now* beside what it costs once
+    # the discount lapses.
+    promo_input_per_million: float | None = None
+    promo_output_per_million: float | None = None
+    promo_input_cache_hit_per_million: float | None = None
+
+    def promo(self) -> ModelPricing | None:
+        """This model's promotional rates as a standalone price, or None.
+
+        Returned as an ordinary ``ModelPricing`` so ``token_cost`` prices a
+        promo exactly the way it prices a standard rate — there is no second
+        cost formula to keep in step.
+        """
+        if self.promo_input_per_million is None or self.promo_output_per_million is None:
+            return None
+        return ModelPricing(
+            self.promo_input_per_million,
+            self.promo_output_per_million,
+            self.currency,
+            self.promo_input_cache_hit_per_million,
+        )
+
+
+def _parse_promo_rates(raw: dict, input_price: float, output_price: float, *, model_name: str, log: logging.Logger) -> tuple[float | None, float | None, float | None]:
+    """Optional promotional rates from a ``pricing:`` block.
+
+    Both directions must be present, positive, and no higher than the standard
+    rate. A half-specified or above-list "promo" is a config error, and honouring
+    part of it would under-report spend against a price the provider never
+    offered, so the whole promo is dropped with a warning. An invalid *cache-hit*
+    rate is narrower — it degrades to the promo miss price, the same conservative
+    fallback the standard block already uses.
+    """
+    raw_input = raw.get("promo_input_per_million")
+    raw_output = raw.get("promo_output_per_million")
+    raw_hit = raw.get("promo_input_cache_hit_per_million")
+    if raw_input is None and raw_output is None and raw_hit is None:
+        return None, None, None
+    try:
+        promo_input = float(raw_input) if raw_input is not None else None
+        promo_output = float(raw_output) if raw_output is not None else None
+        promo_hit = float(raw_hit) if raw_hit is not None else None
+    except (TypeError, ValueError):
+        log.warning("pricing: ignoring malformed promo pricing on model %s", model_name)
+        return None, None, None
+    if promo_input is None or promo_output is None:
+        log.warning("pricing: ignoring incomplete promo pricing on model %s (needs both promo_input_per_million and promo_output_per_million)", model_name)
+        return None, None, None
+    if not (0 < promo_input <= input_price) or not (0 < promo_output <= output_price):
+        log.warning("pricing: ignoring promo pricing on model %s because it is not a positive discount below the standard rate", model_name)
+        return None, None, None
+    if promo_hit is not None and not (0 <= promo_hit <= promo_input):
+        log.warning("pricing: ignoring promo cache-hit price on model %s (must be between 0 and the promo input price)", model_name)
+        promo_hit = None
+    return promo_input, promo_output, promo_hit
 
 
 def build_pricing_map(models: Any, *, logger: logging.Logger | None = None) -> dict[str, ModelPricing]:
@@ -96,7 +158,8 @@ def build_pricing_map(models: Any, *, logger: logging.Logger | None = None) -> d
                 model_cfg.name,
             )
             return {}
-        entry = ModelPricing(input_price, output_price, model_currency, cache_hit_price)
+        promo_input, promo_output, promo_hit = _parse_promo_rates(raw, input_price, output_price, model_name=str(getattr(model_cfg, "name", "?")), log=log)
+        entry = ModelPricing(input_price, output_price, model_currency, cache_hit_price, promo_input, promo_output, promo_hit)
         for key in (model_cfg.name, getattr(model_cfg, "model", None)):
             if key:
                 pricing.setdefault(key, entry)

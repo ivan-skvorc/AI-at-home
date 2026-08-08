@@ -624,6 +624,10 @@ export interface Translations {
     unpricedOnly: (models: string) => string;
     /** Shown when only some models are priced, so the total understates spend. */
     unpricedPartial: (models: string) => string;
+    /** Legend for the green figure when a promotional rate is live. */
+    promoRate: string;
+    /** Legend for the red figure — what the thread costs once the promo ends. */
+    standardRate: string;
     memory: string;
     suggestions: string;
     auxCallCount: (count: number) => string;

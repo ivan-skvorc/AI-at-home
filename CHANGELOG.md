@@ -9,6 +9,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **pricing:** The conversation cost is now rendered in **green**, so it reads
+  as money rather than as another token counter, and a model on a live
+  promotional/introductory rate shows **both** prices. The `pricing:` block
+  gained optional `promo_input_per_million` / `promo_output_per_million` (plus a
+  matching cache-hit rate); the token-usage endpoint returns `promo_total_cost`
+  beside `total_cost`, and the header dropdown shows the green promo total —
+  what the thread costs today — next to the red standard total it reverts to
+  when the discount ends. Promo rates are strictly additive: cost is still
+  *billed* against the standard rate, because a promo can lapse at any time and
+  a silently-too-low estimate is worse than a slightly-high one. Both totals
+  cover the whole thread, so an undiscounted model contributes its ordinary cost
+  to each and the pair stays comparable. A half-specified, non-positive, or
+  above-list "promo" is a config error and is dropped whole rather than
+  partially honoured. The three currently-discounted bundled models (Claude
+  Sonnet 5's intro window, MiniMax M3 and GLM-5.2 on OpenRouter) ship with the
+  block, derived from the starred half of the same price-in-name pair.
+
+- **models:** The model dropdown now colours each entry's price — green for what
+  you pay, and on a discounted `($list → $promo*)` entry the list price in red
+  beside the green promo, matching the cost overview. Purely presentational and
+  total: a name whose price cannot be parsed renders verbatim.
+
 - **chat tabs:** The keep-alive chat tab strip is now persisted **server-side
   per user** (`GET`/`PUT /api/settings/chat-tabs`, backed by
   `{base_dir}/users/{user_id}/ui_state.json`), with `localStorage` demoted to a

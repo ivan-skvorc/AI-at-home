@@ -29,6 +29,7 @@ def _aggregate_result() -> dict:
             "middleware": 5,
         },
         "total_cost": None,
+        "promo_total_cost": None,
         "currency": None,
         "unpriced_models": [],
         "aux": {},
@@ -495,3 +496,89 @@ async def test_build_context_usage_returns_none_when_checkpoint_read_fails(monke
     )
 
     assert result is None
+
+
+def _promo_pricing_map() -> dict:
+    """One discounted model beside a full-price one.
+
+    Mirrors the shipped bundle, where only some entries carry a live promo — the
+    interesting case is a thread that mixes both, because the promo total has to
+    bill the undiscounted model at its ordinary rate.
+    """
+    return build_pricing_map(
+        [
+            SimpleNamespace(
+                name="glm-5.2",
+                model="z-ai/glm-5.2",
+                pricing={
+                    "currency": "USD",
+                    "input_per_million": 1.15,
+                    "output_per_million": 3.6,
+                    "promo_input_per_million": 0.28,
+                    "promo_output_per_million": 0.87,
+                },
+            ),
+            SimpleNamespace(name="opus", model="claude-opus-5", pricing={"currency": "USD", "input_per_million": 5.0, "output_per_million": 25.0}),
+        ],
+    )
+
+
+def test_promo_total_cost_prices_the_thread_at_the_live_discount(monkeypatch):
+    """`total_cost` stays the standard rate; `promo_total_cost` is what you pay now.
+
+    Both numbers cover the *whole* thread — a model with no promo contributes
+    its ordinary cost to both totals, so the pair is always comparable rather
+    than being a discounted subtotal next to a full total.
+    """
+    aux_usage.reset_aux_usage()
+    run_store = _make_run_store()
+    run_store.aggregate_tokens_by_thread = AsyncMock(
+        return_value=_agg_with_models(
+            {
+                "z-ai/glm-5.2": {"tokens": 2_000_000, "runs": 1, "input_tokens": 1_000_000, "output_tokens": 1_000_000, "cache_read_tokens": 0},
+                "claude-opus-5": {"tokens": 2_000_000, "runs": 1, "input_tokens": 1_000_000, "output_tokens": 1_000_000, "cache_read_tokens": 0},
+            }
+        )
+    )
+    monkeypatch.setattr(thread_runs, "build_context_usage", AsyncMock(return_value=None))
+    monkeypatch.setattr(thread_runs, "_thread_pricing_map", _promo_pricing_map)
+    app = _make_app(run_store)
+
+    with TestClient(app) as client:
+        data = client.get("/api/threads/thread-1/token-usage").json()
+
+    # standard: GLM 1.15 + 3.6 = 4.75 ; Opus 5 + 25 = 30 -> 34.75
+    assert data["total_cost"] == pytest.approx(34.75)
+    # promo: GLM 0.28 + 0.87 = 1.15 ; Opus undiscounted 30 -> 31.15
+    assert data["promo_total_cost"] == pytest.approx(31.15)
+
+
+def test_promo_total_cost_is_null_when_nothing_in_the_thread_is_discounted(monkeypatch):
+    """No promo anywhere means one price, not the same number printed twice."""
+    aux_usage.reset_aux_usage()
+    run_store = _make_run_store()
+    run_store.aggregate_tokens_by_thread = AsyncMock(return_value=_agg_with_models({"claude-opus-5": {"tokens": 2_000_000, "runs": 1, "input_tokens": 1_000_000, "output_tokens": 1_000_000, "cache_read_tokens": 0}}))
+    monkeypatch.setattr(thread_runs, "build_context_usage", AsyncMock(return_value=None))
+    monkeypatch.setattr(thread_runs, "_thread_pricing_map", _promo_pricing_map)
+    app = _make_app(run_store)
+
+    with TestClient(app) as client:
+        data = client.get("/api/threads/thread-1/token-usage").json()
+
+    assert data["total_cost"] == pytest.approx(30.0)
+    assert data["promo_total_cost"] is None
+
+
+def test_promo_total_cost_is_null_when_no_pricing_is_configured(monkeypatch):
+    aux_usage.reset_aux_usage()
+    run_store = _make_run_store()
+    run_store.aggregate_tokens_by_thread = AsyncMock(return_value=_agg_with_models({"z-ai/glm-5.2": {"tokens": 2_000_000, "runs": 1, "input_tokens": 1_000_000, "output_tokens": 1_000_000, "cache_read_tokens": 0}}))
+    monkeypatch.setattr(thread_runs, "build_context_usage", AsyncMock(return_value=None))
+    monkeypatch.setattr(thread_runs, "_thread_pricing_map", dict)
+    app = _make_app(run_store)
+
+    with TestClient(app) as client:
+        data = client.get("/api/threads/thread-1/token-usage").json()
+
+    assert data["total_cost"] is None
+    assert data["promo_total_cost"] is None

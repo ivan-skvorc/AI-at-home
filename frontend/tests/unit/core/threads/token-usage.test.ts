@@ -301,3 +301,43 @@ test("selectContextUsage returns null when context_usage is missing", () => {
   expect(selectContextUsage(null)).toBeNull();
   expect(selectContextUsage(undefined)).toBeNull();
 });
+
+const PROMO_BASE: ThreadTokenUsageResponse = {
+  thread_id: "t",
+  total_tokens: 0,
+  total_input_tokens: 0,
+  total_output_tokens: 0,
+  total_runs: 0,
+  by_model: {},
+  by_caller: { lead_agent: 0, subagent: 0, middleware: 0 },
+  currency: "USD",
+};
+
+test("cost summary carries the promo total alongside the standard one", () => {
+  const summary = threadTokenUsageToCostSummary({
+    ...PROMO_BASE,
+    total_cost: 34.75,
+    promo_total_cost: 31.15,
+  });
+  expect(summary?.totalCost).toBe(34.75);
+  expect(summary?.promoTotalCost).toBe(31.15);
+});
+
+test("cost summary promo total is null when the backend reports none", () => {
+  const summary = threadTokenUsageToCostSummary({
+    ...PROMO_BASE,
+    total_cost: 30,
+  });
+  expect(summary?.promoTotalCost).toBeNull();
+});
+
+test("cost summary drops a promo total identical to the standard total", () => {
+  // Printing the same figure twice in green and red claims a discount that does
+  // not exist, so an equal pair collapses back to a single price.
+  const summary = threadTokenUsageToCostSummary({
+    ...PROMO_BASE,
+    total_cost: 30,
+    promo_total_cost: 30,
+  });
+  expect(summary?.promoTotalCost).toBeNull();
+});

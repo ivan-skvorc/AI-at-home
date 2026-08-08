@@ -34,6 +34,12 @@ export interface AuxCostEntry {
 export interface ThreadCostSummary {
   /** Estimated spend across the thread's runs, or null when unpriced. */
   totalCost: number | null;
+  /**
+   * The same total billed at the live promotional/introductory rates — what the
+   * thread costs *now*. Null when no model in it is currently discounted, which
+   * is the signal to show one price instead of the same number twice.
+   */
+  promoTotalCost: number | null;
   /** ISO currency code from config pricing, or null when unpriced. */
   currency: string | null;
   /** Separate memory / suggestions counters, present only when non-zero. */
@@ -66,8 +72,16 @@ export function threadTokenUsageToCostSummary(
     }
     aux[category] = { tokens: entry.tokens, cost: entry.cost ?? null };
   }
+  const totalCost = usage.total_cost ?? null;
+  const promoTotalCost = usage.promo_total_cost ?? null;
   return {
-    totalCost: usage.total_cost ?? null,
+    totalCost,
+    // A promo total that matches the standard one carries no information, so
+    // treat it as "no discount" and let the UI render a single figure.
+    promoTotalCost:
+      promoTotalCost != null && promoTotalCost !== totalCost
+        ? promoTotalCost
+        : null,
     currency: usage.currency,
     aux,
     unpricedModels: (usage.unpriced_models ?? []).filter(

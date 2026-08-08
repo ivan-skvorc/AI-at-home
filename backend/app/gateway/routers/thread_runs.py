@@ -222,6 +222,13 @@ class ThreadTokenUsageResponse(BaseModel):
     # and reported separately so the sidebar can show one counter each. Both are
     # null when no pricing is configured or priced models mix currencies.
     total_cost: float | None = None
+    # The same whole-thread total billed at any live promotional/introductory
+    # rates instead of the standard ones — i.e. what the conversation actually
+    # costs right now. Null when no model in the thread is currently discounted,
+    # so the UI shows one price rather than the same number twice. Models with no
+    # promo contribute their ordinary cost to both totals, keeping the pair
+    # directly comparable.
+    promo_total_cost: float | None = None
     currency: str | None = None
     # Models that burned tokens in this thread but carry no ``pricing:`` block,
     # so they contributed nothing to ``total_cost``. Without this the UI can only
@@ -1524,6 +1531,8 @@ async def thread_token_usage(
     context_usage = await build_context_usage(request, thread_id, run_store)
 
     total_cost: float | None = None
+    promo_total_cost: float | None = None
+    thread_has_promo = False
     unpriced_models: list[str] = []
     by_model: dict[str, ThreadTokenUsageModelBreakdown] = {}
     for model, entry in (agg.get("by_model") or {}).items():
@@ -1535,6 +1544,13 @@ async def thread_token_usage(
         if price is not None and (input_tokens or output_tokens):
             model_cost = round(token_cost(input_tokens, output_tokens, price, cache_read), 6)
             total_cost = round((total_cost or 0.0) + model_cost, 6)
+            # The promo total covers the whole thread, so an undiscounted model
+            # contributes its ordinary cost here too — otherwise the two numbers
+            # would not be comparable.
+            promo_price = price.promo()
+            thread_has_promo = thread_has_promo or promo_price is not None
+            promo_model_cost = round(token_cost(input_tokens, output_tokens, promo_price, cache_read), 6) if promo_price is not None else model_cost
+            promo_total_cost = round((promo_total_cost or 0.0) + promo_model_cost, 6)
         elif price is None and (input_tokens or output_tokens):
             # Burned tokens but no price: name it so the operator can act. Only
             # reported when pricing is configured at all — with an empty pricing
@@ -1581,6 +1597,7 @@ async def thread_token_usage(
         by_model=by_model,
         by_caller=ThreadTokenUsageCallerBreakdown(**(agg.get("by_caller") or {})),
         total_cost=total_cost,
+        promo_total_cost=promo_total_cost if thread_has_promo else None,
         currency=currency,
         unpriced_models=sorted(unpriced_models),
         aux=aux,

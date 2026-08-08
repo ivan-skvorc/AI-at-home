@@ -106,6 +106,10 @@ export interface ThreadTokenUsageResponse {
   // configured or priced models mix currencies. `aux` holds the separate
   // memory / suggestions counters keyed by category.
   total_cost?: number | null;
+  // The same whole-thread total billed at any live promotional/introductory
+  // rates — what the conversation costs right now, versus `total_cost`'s
+  // standard rate. Null when nothing in the thread is currently discounted.
+  promo_total_cost?: number | null;
   currency?: string | null;
   // Models that burned tokens here but carry no `pricing:` block, so they
   // contributed nothing to `total_cost`. Lets the UI say *which* model needs a

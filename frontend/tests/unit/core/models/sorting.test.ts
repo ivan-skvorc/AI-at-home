@@ -7,6 +7,7 @@ import {
   parseModelPrice,
   parseModelProvider,
   sortModels,
+  splitModelNamePriceSegments,
 } from "@/core/models/sorting";
 import type { Model } from "@/core/models/types";
 
@@ -185,5 +186,85 @@ describe("groupModelsByProvider", () => {
   it("omits empty provider buckets", () => {
     const groups = groupModelsByProvider([grok], DEFAULT_MODEL_PICKER_PREFS);
     expect(groups.map((g) => g.provider)).toEqual(["OpenRouter"]);
+  });
+});
+
+describe("splitModelNamePriceSegments", () => {
+  it("picks out the single price of an ordinary model", () => {
+    expect(
+      splitModelNamePriceSegments("Claude Opus 4.8 ($5/25) (Anthropic)"),
+    ).toEqual([
+      { text: "Claude Opus 4.8 (", kind: "text" },
+      { text: "$5/25", kind: "price" },
+      { text: ") (Anthropic)", kind: "text" },
+    ]);
+  });
+
+  it("splits a promo pair into list price then promo price", () => {
+    expect(
+      splitModelNamePriceSegments(
+        "GLM-5.2 ($1.15/3.6 → $0.28/0.87*) (OpenRouter) (p)",
+      ),
+    ).toEqual([
+      { text: "GLM-5.2 (", kind: "text" },
+      { text: "$1.15/3.6", kind: "listPrice" },
+      { text: " → ", kind: "text" },
+      { text: "$0.28/0.87", kind: "promoPrice" },
+      { text: "*) (OpenRouter) (p)", kind: "text" },
+    ]);
+  });
+
+  it("reassembles to the original name in every case", () => {
+    // The picker renders these segments in place of the raw string, so losing
+    // or duplicating a character would silently corrupt a model's name.
+    for (const name of [
+      "Claude Opus 4.8 ($5/25) (Anthropic)",
+      "GLM-5.2 ($1.15/3.6 → $0.28/0.87*) (OpenRouter) (p)",
+      "qwen3:32b (Ollama)",
+      "Doubao-Seed-1.8",
+      "$3/15",
+    ]) {
+      expect(
+        splitModelNamePriceSegments(name)
+          .map((segment) => segment.text)
+          .join(""),
+      ).toBe(name);
+    }
+  });
+
+  it("returns one plain text segment when there is no price", () => {
+    expect(splitModelNamePriceSegments("qwen3:32b (Ollama)")).toEqual([
+      { text: "qwen3:32b (Ollama)", kind: "text" },
+    ]);
+    // A bare version number is not a price — same anchor rule as parseModelPrice.
+    expect(splitModelNamePriceSegments("Gemini 3.6 Flash")).toEqual([
+      { text: "Gemini 3.6 Flash", kind: "text" },
+    ]);
+  });
+
+  it("handles an empty or missing name without throwing", () => {
+    expect(splitModelNamePriceSegments("")).toEqual([]);
+    expect(splitModelNamePriceSegments(null)).toEqual([]);
+    expect(splitModelNamePriceSegments(undefined)).toEqual([]);
+  });
+
+  it("does not share regex state between calls", () => {
+    const promo = "GLM-5.2 ($1.15/3.6 → $0.28/0.87*) (OpenRouter)";
+    expect(splitModelNamePriceSegments(promo)).toEqual(
+      splitModelNamePriceSegments(promo),
+    );
+  });
+
+  it("leaves a third price run as plain text rather than guessing", () => {
+    const segments = splitModelNamePriceSegments(
+      "Odd ($1/2 → $0.5/1* was $9/9)",
+    );
+    expect(segments.filter((s) => s.kind !== "text")).toEqual([
+      { text: "$1/2", kind: "listPrice" },
+      { text: "$0.5/1", kind: "promoPrice" },
+    ]);
+    expect(segments.map((s) => s.text).join("")).toBe(
+      "Odd ($1/2 → $0.5/1* was $9/9)",
+    );
   });
 });

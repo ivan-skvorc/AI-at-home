@@ -746,6 +746,8 @@ export const enUS: Translations = {
       `No cost shown: no price is configured for ${models}. Add a pricing block to that model in config.yaml.`,
     unpricedPartial: (models: string) =>
       `Excludes ${models} — no price configured, so the real cost is higher.`,
+    promoRate: "promo rate now",
+    standardRate: "standard rate",
     memory: "Memory",
     suggestions: "Suggestions",
     auxCallCount: (count: number) =>
