@@ -582,3 +582,77 @@ def test_promo_total_cost_is_null_when_no_pricing_is_configured(monkeypatch):
 
     assert data["total_cost"] is None
     assert data["promo_total_cost"] is None
+
+
+def test_promo_total_is_model_aware_across_lead_subagent_and_aux(monkeypatch):
+    """Ultra mode: lead, subagent, and aux sinks each priced at their own rate.
+
+    The whole point of the per-thread subagent override is that a run mixes
+    models, so a single headline rate would be wrong in both directions. This
+    drives the real endpoint over the ids providers actually report (a dated
+    Anthropic snapshot for the lead, an OpenRouter `:variant` slug for the
+    discounted subagent) and asserts the discount lands on the subagent's tokens
+    only — never smeared across the lead's, and never dropped because the lead
+    happens to be undiscounted.
+    """
+    aux_usage.reset_aux_usage()
+    run_store = _make_run_store()
+    run_store.aggregate_tokens_by_thread = AsyncMock(
+        return_value=_agg_with_models(
+            {
+                # Lead: full-price Opus, reported as its dated snapshot.
+                "claude-opus-5-20260115": {"tokens": 1_100_000, "runs": 1, "input_tokens": 1_000_000, "output_tokens": 100_000, "cache_read_tokens": 0},
+                # Subagent: the discounted GLM, routed with a variant tag.
+                "z-ai/glm-5.2:floor": {"tokens": 3_000_000, "runs": 1, "input_tokens": 2_000_000, "output_tokens": 1_000_000, "cache_read_tokens": 0},
+            }
+        )
+    )
+    # Memory extraction on the discounted model; suggestions on the full-price one.
+    aux_usage.record_aux_usage("thread-1", "memory", model_name="z-ai/glm-5.2", input_tokens=1_000_000, output_tokens=0)
+    aux_usage.record_aux_usage("thread-1", "suggestions", model_name="claude-opus-5", input_tokens=1_000_000, output_tokens=0)
+    monkeypatch.setattr(thread_runs, "build_context_usage", AsyncMock(return_value=None))
+    monkeypatch.setattr(thread_runs, "_thread_pricing_map", _promo_pricing_map)
+    app = _make_app(run_store)
+
+    with TestClient(app) as client:
+        data = client.get("/api/threads/thread-1/token-usage").json()
+
+    # Lead (standard only): 1M@$5 + 0.1M@$25 = 7.5
+    assert data["by_model"]["claude-opus-5-20260115"]["cost"] == pytest.approx(7.5)
+    # Subagent standard: 2M@$1.15 + 1M@$3.6 = 5.9 ; promo: 2M@$0.28 + 1M@$0.87 = 1.43
+    assert data["by_model"]["z-ai/glm-5.2:floor"]["cost"] == pytest.approx(5.9)
+    assert data["total_cost"] == pytest.approx(13.4)
+    assert data["promo_total_cost"] == pytest.approx(8.93)
+    # The lead's 7.5 is untouched by the discount — the delta is exactly the
+    # subagent's saving, not a fraction of the whole thread.
+    assert data["total_cost"] - data["promo_total_cost"] == pytest.approx(5.9 - 1.43)
+
+    # Aux sinks follow the same per-model rule.
+    assert data["aux"]["memory"]["cost"] == pytest.approx(1.15)
+    assert data["aux"]["memory"]["promo_cost"] == pytest.approx(0.28)
+    assert data["aux"]["suggestions"]["cost"] == pytest.approx(5.0)
+    assert data["aux"]["suggestions"]["promo_cost"] is None
+
+
+def test_unpriced_subagent_model_does_not_break_the_promo_total(monkeypatch):
+    """A local subagent contributes 0 to both totals and is still named."""
+    aux_usage.reset_aux_usage()
+    run_store = _make_run_store()
+    run_store.aggregate_tokens_by_thread = AsyncMock(
+        return_value=_agg_with_models(
+            {
+                "z-ai/glm-5.2": {"tokens": 2_000_000, "runs": 1, "input_tokens": 1_000_000, "output_tokens": 1_000_000, "cache_read_tokens": 0},
+                "qwen3:32b": {"tokens": 500_000, "runs": 1, "input_tokens": 400_000, "output_tokens": 100_000, "cache_read_tokens": 0},
+            }
+        )
+    )
+    monkeypatch.setattr(thread_runs, "build_context_usage", AsyncMock(return_value=None))
+    monkeypatch.setattr(thread_runs, "_thread_pricing_map", _promo_pricing_map)
+    app = _make_app(run_store)
+
+    with TestClient(app) as client:
+        data = client.get("/api/threads/thread-1/token-usage").json()
+
+    assert data["total_cost"] == pytest.approx(4.75)
+    assert data["promo_total_cost"] == pytest.approx(1.15)
+    assert data["unpriced_models"] == ["qwen3:32b"]

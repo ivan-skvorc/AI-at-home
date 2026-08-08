@@ -16,6 +16,7 @@ import {
   type ModelPickerPrefs,
   type ModelProvider,
   type ModelSortKey,
+  compactModelDisplayName,
   sortModels,
   splitModelNamePriceSegments,
 } from "@/core/models/sorting";
@@ -121,26 +122,55 @@ export function ModelPickerControls({
 export function ModelDisplayName({
   displayName,
   className,
+  variant = "inline",
 }: {
   displayName: string | null | undefined;
   className?: string;
+  /**
+   * `"compact"` is for the width-capped trigger button: the name is shortened
+   * (provider suffix dropped, `(p)` kept) and only the **leading text** is
+   * allowed to ellipsize, so the price pair survives at any button width.
+   *
+   * The host `ModelSelectorName` must carry `w-full`. It lives in a
+   * `flex-col items-start` container, where its own `flex-1` sizes the *cross*
+   * axis — height, not width — so it defaults to `fit-content`, renders past the
+   * capped button, and its `truncate` never fires. Measured in Chromium: a
+   * bundled promo name is 315px inside a 160px button. Without `w-full` there is
+   * no width budget for the pinning below to work inside.
+   */
+  variant?: "inline" | "compact";
 }) {
+  const compact = variant === "compact";
   const segments = useMemo(
-    () => splitModelNamePriceSegments(displayName),
-    [displayName],
+    () =>
+      splitModelNamePriceSegments(
+        compact ? compactModelDisplayName(displayName) : displayName,
+      ),
+    [displayName, compact],
   );
   return (
-    <span className={className}>
+    <span
+      className={cn(compact && "flex min-w-0 items-baseline", className)}
+      // The full, uncompacted name stays reachable on hover, since the compact
+      // form deliberately drops the provider.
+      title={compact ? (displayName ?? undefined) : undefined}
+    >
       {segments.map((segment, index) => (
         <span
           key={index}
-          className={
+          className={cn(
             segment.kind === "price" || segment.kind === "promoPrice"
               ? "text-emerald-500"
               : segment.kind === "listPrice"
                 ? "text-red-500"
-                : undefined
-          }
+                : undefined,
+            // Everything after the leading text is pinned; the model name is
+            // the only part that may be sacrificed to a narrow button.
+            compact &&
+              (index === 0 && segment.kind === "text"
+                ? "min-w-0 truncate"
+                : "shrink-0 whitespace-nowrap"),
+          )}
         >
           {segment.text}
         </span>

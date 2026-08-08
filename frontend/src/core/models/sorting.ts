@@ -158,6 +158,47 @@ export function splitModelNamePriceSegments(
   return segments;
 }
 
+// A trailing ` (...)` group carrying no `$` — a provider suffix (`(OpenRouter)`,
+// `(Anthropic)`, `(xAI)`, ...) or the `(p)` privacy marker. Matched from the end
+// and repeatedly, so a name can carry several. Excluding `$` from the class is
+// what makes the price group a hard stop, without hardcoding a provider list
+// (the "home" blocks add a new suffix per lab).
+const TRAILING_NON_PRICE_GROUP = /\s*\([^()$]*\)\s*$/;
+const PRIVACY_MARKER = /\(p\)\s*$/;
+
+/**
+ * A `display_name` shortened for a width-constrained trigger button.
+ *
+ * The composer's model button is capped at ~160-224px, and the price sits in the
+ * *middle* of a bundled name (`GLM-5.2 ($1.15/3.6 → $0.28/0.87*) (OpenRouter) (p)`),
+ * so plain truncation eats the promo half — the number the user most wants to
+ * see. Dropping the provider suffix buys that space back: the provider is still
+ * visible in the open list and as a group heading. The `(p)` privacy marker is
+ * deliberately kept — "don't put sensitive data through this one" is worth more
+ * at a glance than the provider's name, and today it is the *first* thing
+ * truncation removes.
+ */
+export function compactModelDisplayName(
+  displayName: string | null | undefined,
+): string {
+  const name = (displayName ?? "").trim();
+  if (!name) {
+    return "";
+  }
+  const isPrivate = PRIVACY_MARKER.test(name);
+  let compact = name;
+  while (TRAILING_NON_PRICE_GROUP.test(compact)) {
+    const stripped = compact.replace(TRAILING_NON_PRICE_GROUP, "").trim();
+    // A name that is *only* a parenthesised group (no model name left) is not
+    // worth compacting — return it whole rather than an empty button.
+    if (!stripped) {
+      return name;
+    }
+    compact = stripped;
+  }
+  return isPrivate ? `${compact} (p)` : compact;
+}
+
 /** Derive the provider group from the `display_name` suffix. */
 export function parseModelProvider(
   displayName: string | null | undefined,

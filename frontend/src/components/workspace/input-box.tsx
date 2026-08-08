@@ -2694,9 +2694,10 @@ export function InputBox({
                     <span className="text-muted-foreground text-[10px] leading-none">
                       Main agent
                     </span>
-                    <ModelSelectorName className="text-xs font-normal">
+                    <ModelSelectorName className="w-full text-xs font-normal">
                       <ModelDisplayName
                         displayName={selectedModel?.display_name}
+                        variant="compact"
                       />
                     </ModelSelectorName>
                   </div>
@@ -2758,10 +2759,11 @@ export function InputBox({
                       <span className="text-muted-foreground text-[10px] leading-none">
                         Subagent
                       </span>
-                      <ModelSelectorName className="text-xs font-normal">
+                      <ModelSelectorName className="w-full text-xs font-normal">
                         {subagentSelected ? (
                           <ModelDisplayName
                             displayName={subagentSelected.display_name}
+                            variant="compact"
                           />
                         ) : (
                           "Follow lead"

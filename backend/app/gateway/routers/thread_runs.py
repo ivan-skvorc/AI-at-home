@@ -201,6 +201,10 @@ class ThreadTokenUsageAuxBreakdown(BaseModel):
     output_tokens: int = 0
     calls: int = 0
     cost: float | None = Field(default=None, description="Estimated spend for this sink; null when its models are unpriced")
+    promo_cost: float | None = Field(
+        default=None,
+        description="Spend for this sink at live promotional rates; null when none of its models are discounted. Keeps the aux rows on the same basis as the headline total, which the UI renders at the promo rate.",
+    )
 
 
 class ThreadContextUsage(BaseModel):
@@ -1570,6 +1574,8 @@ async def thread_token_usage(
     for category, models in get_thread_aux_usage(thread_id).items():
         tokens = input_tokens = output_tokens = calls = 0
         cat_cost: float | None = None
+        cat_promo_cost: float | None = None
+        cat_has_promo = False
         for model, totals in models.items():
             m_input = int(totals.get("input_tokens") or 0)
             m_output = int(totals.get("output_tokens") or 0)
@@ -1579,13 +1585,24 @@ async def thread_token_usage(
             calls += int(totals.get("calls") or 0)
             price = lookup_pricing(pricing, model)
             if price is not None and (m_input or m_output):
-                cat_cost = round((cat_cost or 0.0) + token_cost(m_input, m_output, price, int(totals.get("cache_read_tokens") or 0)), 6)
+                cache_read = int(totals.get("cache_read_tokens") or 0)
+                model_cost = token_cost(m_input, m_output, price, cache_read)
+                cat_cost = round((cat_cost or 0.0) + model_cost, 6)
+                # Aux sinks are priced per model exactly like run buckets: memory
+                # extraction and suggestions can each run on a different model
+                # from the conversation (`memory.model_name`), so a discount
+                # applies to whichever of them is actually on one.
+                promo_price = price.promo()
+                cat_has_promo = cat_has_promo or promo_price is not None
+                promo_model_cost = token_cost(m_input, m_output, promo_price, cache_read) if promo_price is not None else model_cost
+                cat_promo_cost = round((cat_promo_cost or 0.0) + promo_model_cost, 6)
         aux[category] = ThreadTokenUsageAuxBreakdown(
             tokens=tokens,
             input_tokens=input_tokens,
             output_tokens=output_tokens,
             calls=calls,
             cost=cat_cost,
+            promo_cost=cat_promo_cost if cat_has_promo else None,
         )
 
     return ThreadTokenUsageResponse(

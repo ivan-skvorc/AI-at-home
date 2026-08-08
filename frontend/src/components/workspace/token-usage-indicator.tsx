@@ -249,10 +249,20 @@ export function TokenUsageIndicator({
                             ? t.tokenUsage.suggestions
                             : category}
                       </span>
+                      {/* One figure, on the same basis as the headline: what
+                          this sink costs now. Memory and suggestions can each run
+                          on their own model, so a discount applies per sink. */}
                       <span className="font-mono">
-                        {entry.cost != null && cost.currency
-                          ? formatCost(entry.cost, cost.currency)
-                          : formatTokenCount(entry.tokens)}
+                        {entry.cost != null && cost.currency ? (
+                          <span className="text-emerald-500">
+                            {formatCost(
+                              entry.promoCost ?? entry.cost,
+                              cost.currency,
+                            )}
+                          </span>
+                        ) : (
+                          formatTokenCount(entry.tokens)
+                        )}
                       </span>
                     </div>
                   ))}

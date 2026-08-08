@@ -26,6 +26,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Sonnet 5's intro window, MiniMax M3 and GLM-5.2 on OpenRouter) ship with the
   block, derived from the starred half of the same price-in-name pair.
 
+- **models:** The composer's collapsed model button now keeps the price
+  visible. It is capped at ~160-224px and the price sits mid-name, so the promo
+  half was cut off; the trigger now drops the provider suffix (keeping the `(p)`
+  privacy marker) and lets only the model name ellipsize. This also fixes a
+  pre-existing layout bug behind it: the name span sits in a `flex-col
+  items-start` container where its `flex-1` sizes height, not width, so it was
+  `fit-content` — measured at 315px inside a 160px button — overflowing instead
+  of truncating, with its `truncate` never firing.
+
 - **models:** The model dropdown now colours each entry's price — green for what
   you pay, and on a discounted `($list → $promo*)` entry the list price in red
   beside the green promo, matching the cost overview. Purely presentational and

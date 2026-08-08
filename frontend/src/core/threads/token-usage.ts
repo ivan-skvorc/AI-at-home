@@ -29,6 +29,8 @@ export function threadTokenUsageToTokenUsage(
 export interface AuxCostEntry {
   tokens: number;
   cost: number | null;
+  /** Spend at live promo rates; null when this sink is undiscounted. */
+  promoCost: number | null;
 }
 
 export interface ThreadCostSummary {
@@ -70,7 +72,14 @@ export function threadTokenUsageToCostSummary(
     if (!entry || entry.tokens <= 0) {
       continue;
     }
-    aux[category] = { tokens: entry.tokens, cost: entry.cost ?? null };
+    const cost = entry.cost ?? null;
+    const promoCost = entry.promo_cost ?? null;
+    aux[category] = {
+      tokens: entry.tokens,
+      cost,
+      // Same rule as the headline: an equal pair is not a discount.
+      promoCost: promoCost != null && promoCost !== cost ? promoCost : null,
+    };
   }
   const totalCost = usage.total_cost ?? null;
   const promoTotalCost = usage.promo_total_cost ?? null;

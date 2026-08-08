@@ -137,8 +137,8 @@ test("cost summary carries total, currency and non-zero aux counters", () => {
   expect(summary!.totalCost).toBe(0.42);
   expect(summary!.currency).toBe("USD");
   expect(summary!.aux).toEqual({
-    memory: { tokens: 600, cost: 0.01 },
-    suggestions: { tokens: 120, cost: null },
+    memory: { tokens: 600, cost: 0.01, promoCost: null },
+    suggestions: { tokens: 120, cost: null, promoCost: null },
   });
 });
 
@@ -340,4 +340,59 @@ test("cost summary drops a promo total identical to the standard total", () => {
     promo_total_cost: 30,
   });
   expect(summary?.promoTotalCost).toBeNull();
+});
+
+test("aux rows carry their own promo cost, per sink", () => {
+  // Memory and suggestions can each run on a different model from the
+  // conversation, so a discount applies per sink rather than thread-wide.
+  const summary = threadTokenUsageToCostSummary({
+    ...PROMO_BASE,
+    total_cost: 30,
+    aux: {
+      memory: {
+        tokens: 600,
+        input_tokens: 500,
+        output_tokens: 100,
+        calls: 2,
+        cost: 1.15,
+        promo_cost: 0.28,
+      },
+      suggestions: {
+        tokens: 120,
+        input_tokens: 100,
+        output_tokens: 20,
+        calls: 1,
+        cost: 5,
+        promo_cost: null,
+      },
+    },
+  });
+  expect(summary!.aux.memory!).toEqual({
+    tokens: 600,
+    cost: 1.15,
+    promoCost: 0.28,
+  });
+  expect(summary!.aux.suggestions!).toEqual({
+    tokens: 120,
+    cost: 5,
+    promoCost: null,
+  });
+});
+
+test("an aux promo cost equal to its standard cost collapses to null", () => {
+  const summary = threadTokenUsageToCostSummary({
+    ...PROMO_BASE,
+    total_cost: 30,
+    aux: {
+      memory: {
+        tokens: 600,
+        input_tokens: 500,
+        output_tokens: 100,
+        calls: 2,
+        cost: 1.15,
+        promo_cost: 1.15,
+      },
+    },
+  });
+  expect(summary!.aux.memory!.promoCost).toBeNull();
 });

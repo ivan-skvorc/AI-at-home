@@ -4,6 +4,7 @@ import {
   DEFAULT_MODEL_PICKER_PREFS,
   groupModelsByProvider,
   modelPriceSortValue,
+  compactModelDisplayName,
   parseModelPrice,
   parseModelProvider,
   sortModels,
@@ -266,5 +267,73 @@ describe("splitModelNamePriceSegments", () => {
     expect(segments.map((s) => s.text).join("")).toBe(
       "Odd ($1/2 → $0.5/1* was $9/9)",
     );
+  });
+});
+
+describe("compactModelDisplayName", () => {
+  it("drops the provider suffix but keeps the price pair and (p)", () => {
+    expect(
+      compactModelDisplayName(
+        "GLM-5.2 ($1.15/3.6 → $0.28/0.87*) (OpenRouter) (p)",
+      ),
+    ).toBe("GLM-5.2 ($1.15/3.6 → $0.28/0.87*) (p)");
+    expect(
+      compactModelDisplayName("Claude Sonnet 5 ($3/15 → $2/10*) (Anthropic)"),
+    ).toBe("Claude Sonnet 5 ($3/15 → $2/10*)");
+  });
+
+  it("handles the first-party home suffixes without a hardcoded list", () => {
+    // Each lab's "home" block adds its own suffix, so the rule is structural
+    // (a trailing group with no `$`), not an enumeration of provider names.
+    expect(compactModelDisplayName("GPT-5.6 Sol ($1.25/10) (OpenAI)")).toBe(
+      "GPT-5.6 Sol ($1.25/10)",
+    );
+    expect(compactModelDisplayName("Grok 5 ($3/15) (xAI)")).toBe(
+      "Grok 5 ($3/15)",
+    );
+  });
+
+  it("never strips the price group itself", () => {
+    for (const name of [
+      "Claude Opus 4.8 ($5/25) (Anthropic)",
+      "MiniMax M3 ($0.6/2.4 → $0.24/0.96*) (OpenRouter) (p)",
+    ]) {
+      expect(compactModelDisplayName(name)).toContain("$");
+    }
+  });
+
+  it("leaves a name with no trailing suffix untouched", () => {
+    expect(compactModelDisplayName("Doubao-Seed-1.8")).toBe("Doubao-Seed-1.8");
+    expect(compactModelDisplayName("qwen3:32b (Ollama)")).toBe("qwen3:32b");
+  });
+
+  it("returns the original when stripping would leave nothing", () => {
+    // A hand-added model named only "(local)" must still render something.
+    expect(compactModelDisplayName("(local)")).toBe("(local)");
+    expect(compactModelDisplayName("(OpenRouter) (p)")).toBe(
+      "(OpenRouter) (p)",
+    );
+  });
+
+  it("handles empty and missing names", () => {
+    expect(compactModelDisplayName("")).toBe("");
+    expect(compactModelDisplayName(null)).toBe("");
+    expect(compactModelDisplayName(undefined)).toBe("");
+  });
+
+  it("keeps the promo pair intact for every discounted bundled model", () => {
+    // The whole point of the compact form: the trigger button is ~160-224px, so
+    // both halves of the pair must survive the shortening.
+    for (const name of [
+      "Claude Sonnet 5 ($3/15 → $2/10*) (Anthropic)",
+      "MiniMax M3 ($0.6/2.4 → $0.24/0.96*) (OpenRouter) (p)",
+      "GLM-5.2 ($1.15/3.6 → $0.28/0.87*) (OpenRouter) (p)",
+    ]) {
+      const segments = splitModelNamePriceSegments(
+        compactModelDisplayName(name),
+      );
+      expect(segments.map((s) => s.kind)).toContain("listPrice");
+      expect(segments.map((s) => s.kind)).toContain("promoPrice");
+    }
   });
 });

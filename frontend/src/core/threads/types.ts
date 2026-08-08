@@ -82,6 +82,9 @@ export interface ThreadTokenUsageAuxBreakdown {
   output_tokens: number;
   calls: number;
   cost?: number | null;
+  // Spend at live promotional rates, null when none of this sink's models are
+  // discounted. Keeps aux rows on the same basis as the headline total.
+  promo_cost?: number | null;
 }
 
 export interface ThreadContextUsage {
