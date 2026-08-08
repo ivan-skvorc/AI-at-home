@@ -376,6 +376,10 @@ models:
   #   max_tokens: 32000
   #   supports_vision: true
   #   supports_thinking: true
+  #   pricing:                        # OpenRouter list price (USD / 1M tokens); powers the console cost display
+  #     currency: USD
+  #     input_per_million: 10.0
+  #     output_per_million: 50.0
   #
   # - name: openrouter-grok-4.5
   #   display_name: Grok 4.5 ($2/6) (OpenRouter) (p)
@@ -388,6 +392,10 @@ models:
   #   max_tokens: 32000
   #   supports_vision: true
   #   supports_thinking: true
+  #   pricing:                        # OpenRouter list price (USD / 1M tokens); powers the console cost display
+  #     currency: USD
+  #     input_per_million: 2.0
+  #     output_per_million: 6.0
   #
   # - name: openrouter-gpt-5.6-sol
   #   display_name: GPT-5.6 Sol ($5/30) (OpenRouter) (p)
@@ -400,6 +408,10 @@ models:
   #   max_tokens: 32000
   #   supports_vision: true
   #   supports_thinking: true
+  #   pricing:                        # OpenRouter list price (USD / 1M tokens); powers the console cost display
+  #     currency: USD
+  #     input_per_million: 5.0
+  #     output_per_million: 30.0
   #
   # - name: openrouter-gpt-5.3-codex
   #   display_name: GPT-5.3 Codex ($1.75/14) (OpenRouter) (p)
@@ -412,6 +424,10 @@ models:
   #   max_tokens: 32000
   #   supports_vision: true
   #   supports_thinking: true
+  #   pricing:                        # OpenRouter list price (USD / 1M tokens); powers the console cost display
+  #     currency: USD
+  #     input_per_million: 1.75
+  #     output_per_million: 14.0
   #
   # - name: openrouter-minimax-m3
   #   display_name: MiniMax M3 ($0.6/2.4 → $0.24/0.96*) (OpenRouter) (p)
@@ -425,6 +441,12 @@ models:
   #   temperature: 1.0
   #   supports_vision: true
   #   supports_thinking: true
+  #   pricing:                        # OpenRouter STANDARD list price (USD / 1M tokens); powers the console
+  #                                  # cost display. The starred promo pair in the name is deliberately not
+  #                                  # used here — the block stays the conservative upper bound.
+  #     currency: USD
+  #     input_per_million: 0.6
+  #     output_per_million: 2.4
   #
   # - name: openrouter-qwen3.7-max
   #   display_name: Qwen3.7 Max ($1.5/4.4) (OpenRouter) (p)
@@ -437,6 +459,10 @@ models:
   #   max_tokens: 32000
   #   supports_vision: false
   #   supports_thinking: true
+  #   pricing:                        # OpenRouter list price (USD / 1M tokens); powers the console cost display
+  #     currency: USD
+  #     input_per_million: 1.5
+  #     output_per_million: 4.4
   #
   # - name: openrouter-kimi-k3
   #   display_name: Kimi K3 ($3/15) (OpenRouter) (p)
@@ -449,6 +475,10 @@ models:
   #   max_tokens: 32000
   #   supports_vision: true
   #   supports_thinking: true
+  #   pricing:                        # OpenRouter list price (USD / 1M tokens); powers the console cost display
+  #     currency: USD
+  #     input_per_million: 3.0
+  #     output_per_million: 15.0
   #
   # - name: openrouter-gemini-3.6-flash
   #   display_name: Gemini 3.6 Flash ($1.5/7.5) (OpenRouter) (p)
@@ -461,6 +491,10 @@ models:
   #   max_tokens: 32000
   #   supports_vision: true
   #   supports_thinking: true
+  #   pricing:                        # OpenRouter list price (USD / 1M tokens); powers the console cost display
+  #     currency: USD
+  #     input_per_million: 1.5
+  #     output_per_million: 7.5
   #
   # - name: openrouter-llama-4-maverick
   #   display_name: Llama 4 Maverick ($0.2/0.8) (OpenRouter) (p)
@@ -473,6 +507,10 @@ models:
   #   max_tokens: 16000
   #   supports_vision: true
   #   supports_thinking: false
+  #   pricing:                        # OpenRouter list price (USD / 1M tokens); powers the console cost display
+  #     currency: USD
+  #     input_per_million: 0.2
+  #     output_per_million: 0.8
   #
   # - name: openrouter-deepseek-v4-pro
   #   display_name: DeepSeek V4 Pro ($0.44/0.87) (OpenRouter) (p)
@@ -485,6 +523,10 @@ models:
   #   max_tokens: 32000
   #   supports_vision: false
   #   supports_thinking: true
+  #   pricing:                        # OpenRouter list price (USD / 1M tokens); powers the console cost display
+  #     currency: USD
+  #     input_per_million: 0.44
+  #     output_per_million: 0.87
   #
   # - name: openrouter-glm-5.2
   #   display_name: GLM-5.2 ($1.15/3.6 → $0.28/0.87*) (OpenRouter) (p)
@@ -497,6 +539,12 @@ models:
   #   max_tokens: 16000
   #   supports_vision: false
   #   supports_thinking: true
+  #   pricing:                        # OpenRouter STANDARD list price (USD / 1M tokens); powers the console
+  #                                  # cost display. The starred promo pair in the name is deliberately not
+  #                                  # used here — the block stays the conservative upper bound.
+  #     currency: USD
+  #     input_per_million: 1.15
+  #     output_per_million: 3.6
   #
   # - name: openrouter-mistral-large-3
   #   display_name: Mistral Large 3 ($0.5/1.5) (OpenRouter) (p)
@@ -509,6 +557,10 @@ models:
   #   max_tokens: 32000
   #   supports_vision: true
   #   supports_thinking: false
+  #   pricing:                        # OpenRouter list price (USD / 1M tokens); powers the console cost display
+  #     currency: USD
+  #     input_per_million: 0.5
+  #     output_per_million: 1.5
   #
   # - name: openrouter-nemotron-3-ultra
   #   display_name: Nemotron 3 Ultra ($0.5/2.2) (OpenRouter) (p)
@@ -521,6 +573,10 @@ models:
   #   max_tokens: 16000
   #   supports_vision: false
   #   supports_thinking: true
+  #   pricing:                        # OpenRouter list price (USD / 1M tokens); powers the console cost display
+  #     currency: USD
+  #     input_per_million: 0.5
+  #     output_per_million: 2.2
   # === END auto-model-config: openrouter ===
 
   # ══════════════════════════════════════════════════════════════════════════
@@ -558,6 +614,10 @@ models:
   #   max_tokens: 32000
   #   supports_vision: true
   #   supports_thinking: true
+  #   pricing:                        # OpenAI list price (USD / 1M tokens); powers the console cost display
+  #     currency: USD
+  #     input_per_million: 5.0
+  #     output_per_million: 30.0
   #
   # - name: openai-gpt-5.3-codex
   #   display_name: GPT-5.3 Codex ($1.75/14) (OpenAI)
@@ -570,6 +630,10 @@ models:
   #   max_tokens: 32000
   #   supports_vision: true
   #   supports_thinking: true
+  #   pricing:                        # OpenAI list price (USD / 1M tokens); powers the console cost display
+  #     currency: USD
+  #     input_per_million: 1.75
+  #     output_per_million: 14.0
   #
   # - name: openai-gpt-5.6-mini
   #   display_name: GPT-5.6 Mini ($0.25/2) (OpenAI)
@@ -582,6 +646,10 @@ models:
   #   max_tokens: 16000
   #   supports_vision: true
   #   supports_thinking: true
+  #   pricing:                        # OpenAI list price (USD / 1M tokens); powers the console cost display
+  #     currency: USD
+  #     input_per_million: 0.25
+  #     output_per_million: 2.0
   # === END auto-model-config: openai ===
 
   # ── xAI Grok — auto-enabled when XAI_API_KEY is set ───────────────────────
@@ -600,6 +668,10 @@ models:
   #   max_tokens: 32000
   #   supports_vision: true
   #   supports_thinking: true
+  #   pricing:                        # xAI list price (USD / 1M tokens); powers the console cost display
+  #     currency: USD
+  #     input_per_million: 2.0
+  #     output_per_million: 6.0
   #
   # - name: xai-grok-4.5-fast
   #   display_name: Grok 4.5 Fast ($0.5/1.5) (xAI)
@@ -612,6 +684,10 @@ models:
   #   max_tokens: 16000
   #   supports_vision: true
   #   supports_thinking: true
+  #   pricing:                        # xAI list price (USD / 1M tokens); powers the console cost display
+  #     currency: USD
+  #     input_per_million: 0.5
+  #     output_per_million: 1.5
   # === END auto-model-config: xai ===
 
   # ── Google Gemini — auto-enabled when GEMINI_API_KEY is set ───────────────
@@ -631,6 +707,10 @@ models:
   #   max_retries: 2
   #   max_tokens: 8192
   #   supports_vision: true
+  #   pricing:                        # Google list price (USD / 1M tokens); powers the console cost display
+  #     currency: USD
+  #     input_per_million: 1.5
+  #     output_per_million: 7.5
   #
   # - name: google-gemini-3.5-flash-lite
   #   display_name: Gemini 3.5 Flash-Lite ($0.3/1.2) (Google)
@@ -641,6 +721,10 @@ models:
   #   max_retries: 2
   #   max_tokens: 8192
   #   supports_vision: true
+  #   pricing:                        # Google list price (USD / 1M tokens); powers the console cost display
+  #     currency: USD
+  #     input_per_million: 0.3
+  #     output_per_million: 1.2
   #
   # - name: google-gemini-3.1-pro
   #   display_name: Gemini 3.1 Pro ($2.5/10) (Google)
@@ -651,7 +735,12 @@ models:
   #   max_retries: 2
   #   max_tokens: 8192
   #   supports_vision: true
-  # === END auto-model-config: google ===
+  
+  #   pricing:                        # Google list price (USD / 1M tokens); powers the console cost display
+  #     currency: USD
+  #     input_per_million: 2.5
+  #     output_per_million: 10.0
+# === END auto-model-config: google ===
 
   # ── DeepSeek — auto-enabled when DEEPSEEK_API_KEY is set ──────────────────
   # DeepSeek V4 Pro + V4 Flash, on the direct DeepSeek API (thinking toggle on).
@@ -669,6 +758,10 @@ models:
   #   max_tokens: 8192
   #   supports_vision: false
   #   supports_thinking: true
+  #   pricing:                        # DeepSeek list price (USD / 1M tokens); powers the console cost display
+  #     currency: USD
+  #     input_per_million: 0.44
+  #     output_per_million: 0.87
   #   when_thinking_enabled:
   #     extra_body:
   #       thinking:
@@ -689,6 +782,10 @@ models:
   #   max_tokens: 8192
   #   supports_vision: false
   #   supports_thinking: true
+  #   pricing:                        # DeepSeek list price (USD / 1M tokens); powers the console cost display
+  #     currency: USD
+  #     input_per_million: 0.14
+  #     output_per_million: 0.28
   #   when_thinking_enabled:
   #     extra_body:
   #       thinking:
@@ -715,6 +812,10 @@ models:
   #   max_retries: 2
   #   max_tokens: 32000
   #   supports_vision: true
+  #   pricing:                        # Mistral list price (USD / 1M tokens); powers the console cost display
+  #     currency: USD
+  #     input_per_million: 0.5
+  #     output_per_million: 1.5
   #
   # - name: mistral-medium-3
   #   display_name: Mistral Medium 3 ($0.4/2) (Mistral)
@@ -726,6 +827,10 @@ models:
   #   max_retries: 2
   #   max_tokens: 32000
   #   supports_vision: true
+  #   pricing:                        # Mistral list price (USD / 1M tokens); powers the console cost display
+  #     currency: USD
+  #     input_per_million: 0.4
+  #     output_per_million: 2.0
   #
   # - name: mistral-small-3
   #   display_name: Mistral Small 3 ($0.1/0.3) (Mistral)
@@ -737,7 +842,12 @@ models:
   #   max_retries: 2
   #   max_tokens: 16000
   #   supports_vision: true
-  # === END auto-model-config: mistral ===
+  
+  #   pricing:                        # Mistral list price (USD / 1M tokens); powers the console cost display
+  #     currency: USD
+  #     input_per_million: 0.1
+  #     output_per_million: 0.3
+# === END auto-model-config: mistral ===
 
   # ── Moonshot (Kimi) — auto-enabled when MOONSHOT_API_KEY is set ───────────
   # Kimi K3 + K2.6, on the direct Moonshot international API (thinking toggle on).
@@ -755,6 +865,10 @@ models:
   #   max_tokens: 32768
   #   supports_vision: true
   #   supports_thinking: true
+  #   pricing:                        # Moonshot list price (USD / 1M tokens); powers the console cost display
+  #     currency: USD
+  #     input_per_million: 3.0
+  #     output_per_million: 15.0
   #   when_thinking_enabled:
   #     extra_body:
   #       thinking:
@@ -775,6 +889,10 @@ models:
   #   max_tokens: 32768
   #   supports_vision: false
   #   supports_thinking: true
+  #   pricing:                        # Moonshot list price (USD / 1M tokens); powers the console cost display
+  #     currency: USD
+  #     input_per_million: 1.0
+  #     output_per_million: 3.0
   #   when_thinking_enabled:
   #     extra_body:
   #       thinking:
@@ -801,6 +919,10 @@ models:
   #   max_tokens: 32000
   #   supports_vision: false
   #   supports_thinking: true
+  #   pricing:                        # Qwen list price (USD / 1M tokens); powers the console cost display
+  #     currency: USD
+  #     input_per_million: 1.5
+  #     output_per_million: 4.4
   #
   # - name: qwen-3.7-plus
   #   display_name: Qwen3.7 Plus ($0.4/1.2) (Qwen)
@@ -813,6 +935,10 @@ models:
   #   max_tokens: 16000
   #   supports_vision: false
   #   supports_thinking: true
+  #   pricing:                        # Qwen list price (USD / 1M tokens); powers the console cost display
+  #     currency: USD
+  #     input_per_million: 0.4
+  #     output_per_million: 1.2
   # === END auto-model-config: qwen ===
 
   # ── MiniMax — auto-enabled when MINIMAX_API_KEY is set ────────────────────
@@ -832,6 +958,10 @@ models:
   #   temperature: 1.0
   #   supports_vision: true
   #   supports_thinking: true
+  #   pricing:                        # MiniMax list price (USD / 1M tokens); powers the console cost display
+  #     currency: USD
+  #     input_per_million: 0.6
+  #     output_per_million: 2.4
   #
   # - name: minimax-m2.7
   #   display_name: MiniMax M2.7 ($0.3/1.2) (MiniMax)
@@ -845,6 +975,10 @@ models:
   #   temperature: 1.0
   #   supports_vision: false
   #   supports_thinking: true
+  #   pricing:                        # MiniMax list price (USD / 1M tokens); powers the console cost display
+  #     currency: USD
+  #     input_per_million: 0.3
+  #     output_per_million: 1.2
   # === END auto-model-config: minimax ===
 
   # ── Zhipu z.ai (GLM) — auto-enabled when ZAI_API_KEY is set ───────────────
@@ -863,6 +997,10 @@ models:
   #   max_tokens: 16000
   #   supports_vision: false
   #   supports_thinking: true
+  #   pricing:                        # z.ai list price (USD / 1M tokens); powers the console cost display
+  #     currency: USD
+  #     input_per_million: 1.15
+  #     output_per_million: 3.6
   #
   # - name: zai-glm-5.2-air
   #   display_name: GLM-5.2 Air ($0.2/1.1) (z-ai)
@@ -875,6 +1013,10 @@ models:
   #   max_tokens: 16000
   #   supports_vision: false
   #   supports_thinking: true
+  #   pricing:                        # z.ai list price (USD / 1M tokens); powers the console cost display
+  #     currency: USD
+  #     input_per_million: 0.2
+  #     output_per_million: 1.1
   # === END auto-model-config: zai ===
 
   # Example: Volcengine (Doubao) model

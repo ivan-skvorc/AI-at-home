@@ -30,6 +30,7 @@ def _aggregate_result() -> dict:
         },
         "total_cost": None,
         "currency": None,
+        "unpriced_models": [],
         "aux": {},
     }
 
@@ -217,6 +218,102 @@ def test_thread_token_usage_prices_provider_reported_model_ids(monkeypatch: pyte
     assert data["by_model"]["claude-sonnet-4-6-20260115"]["cost"] == pytest.approx(12.0)
     assert data["by_model"]["anthropic/claude-haiku-4-5:nitro"]["cost"] == pytest.approx(8.0)
     assert data["total_cost"] == pytest.approx(30.0)
+
+
+def _agg_with_models(by_model: dict) -> dict:
+    total_in = sum(b["input_tokens"] for b in by_model.values())
+    total_out = sum(b["output_tokens"] for b in by_model.values())
+    return {
+        "total_tokens": total_in + total_out,
+        "total_input_tokens": total_in,
+        "total_output_tokens": total_out,
+        "total_runs": len(by_model),
+        "by_model": by_model,
+        "by_caller": {"lead_agent": total_in + total_out, "subagent": 0, "middleware": 0},
+    }
+
+
+@pytest.mark.parametrize(
+    ("by_model", "expected_cost", "expected_unpriced"),
+    [
+        # Every model priced → no report, full total.
+        (
+            {"claude-opus-4-8": {"tokens": 0, "runs": 1, "input_tokens": 1_000_000, "output_tokens": 0, "cache_read_tokens": 0}},
+            5.0,
+            [],
+        ),
+        # Nothing priced → the "—" case. The models are named so the operator
+        # can tell a missing pricing block from a broken feature.
+        (
+            {"gpt-5.6-sol": {"tokens": 0, "runs": 1, "input_tokens": 1_000_000, "output_tokens": 0, "cache_read_tokens": 0}},
+            None,
+            ["gpt-5.6-sol"],
+        ),
+        # Mixed → the total is real but understates the spend; say so.
+        (
+            {
+                "claude-opus-4-8": {"tokens": 0, "runs": 1, "input_tokens": 1_000_000, "output_tokens": 0, "cache_read_tokens": 0},
+                "grok-4.5": {"tokens": 0, "runs": 1, "input_tokens": 500_000, "output_tokens": 0, "cache_read_tokens": 0},
+            },
+            5.0,
+            ["grok-4.5"],
+        ),
+        # Zero-token buckets are not "unpriced" — nothing was spent on them.
+        (
+            {
+                "claude-opus-4-8": {"tokens": 0, "runs": 1, "input_tokens": 1_000_000, "output_tokens": 0, "cache_read_tokens": 0},
+                "idle-model": {"tokens": 0, "runs": 1, "input_tokens": 0, "output_tokens": 0, "cache_read_tokens": 0},
+            },
+            5.0,
+            [],
+        ),
+    ],
+    ids=["all-priced", "none-priced", "partially-priced", "zero-token-bucket-ignored"],
+)
+def test_thread_token_usage_reports_unpriced_models(monkeypatch, by_model, expected_cost, expected_unpriced):
+    """An unexplained "—" is indistinguishable from a broken cost feature.
+
+    The endpoint therefore names any model that burned tokens without a
+    configured price, so the UI can point at the model that needs one.
+    """
+    aux_usage.reset_aux_usage()
+    run_store = _make_run_store()
+    run_store.aggregate_tokens_by_thread = AsyncMock(return_value=_agg_with_models(by_model))
+    monkeypatch.setattr(thread_runs, "build_context_usage", AsyncMock(return_value=None))
+    monkeypatch.setattr(thread_runs, "_thread_pricing_map", _priced_anthropic_map)
+
+    with TestClient(_make_app(run_store)) as client:
+        data = client.get("/api/threads/thread-1/token-usage").json()
+
+    assert data["unpriced_models"] == expected_unpriced
+    if expected_cost is None:
+        assert data["total_cost"] is None
+    else:
+        assert data["total_cost"] == pytest.approx(expected_cost)
+
+
+def test_unpriced_models_empty_when_no_pricing_configured(monkeypatch):
+    """With no pricing at all the cost UI is hidden, so the list stays quiet.
+
+    Reporting every model as "unpriced" here would nag operators who simply
+    never opted into cost tracking.
+    """
+    aux_usage.reset_aux_usage()
+    run_store = _make_run_store()
+    run_store.aggregate_tokens_by_thread = AsyncMock(
+        return_value=_agg_with_models(
+            {"gpt-5.6-sol": {"tokens": 0, "runs": 1, "input_tokens": 1_000, "output_tokens": 500, "cache_read_tokens": 0}},
+        ),
+    )
+    monkeypatch.setattr(thread_runs, "build_context_usage", AsyncMock(return_value=None))
+    monkeypatch.setattr(thread_runs, "_thread_pricing_map", dict)
+
+    with TestClient(_make_app(run_store)) as client:
+        data = client.get("/api/threads/thread-1/token-usage").json()
+
+    assert data["currency"] is None
+    assert data["total_cost"] is None
+    assert data["unpriced_models"] == []
 
 
 def test_thread_token_usage_computes_model_aware_cost_and_aux():

@@ -61,6 +61,47 @@ test("cost summary is null when no currency (no pricing configured)", () => {
   expect(threadTokenUsageToCostSummary(null)).toBeNull();
 });
 
+test("cost summary surfaces models that ran without a configured price", () => {
+  // The reason a cost renders as "—": tokens were spent on models with no
+  // `pricing:` block. Carrying the names lets the UI say which one to fix
+  // instead of showing an unexplained dash.
+  const noneP = threadTokenUsageToCostSummary(
+    baseResponse({
+      total_cost: null,
+      currency: "USD",
+      unpriced_models: ["gpt-5.6-sol", "grok-4.5"],
+    }),
+  );
+  expect(noneP!.totalCost).toBeNull();
+  expect(noneP!.unpricedModels).toEqual(["gpt-5.6-sol", "grok-4.5"]);
+
+  // A partial total is real but understates the spend — same signal, cost set.
+  const partial = threadTokenUsageToCostSummary(
+    baseResponse({
+      total_cost: 1.25,
+      currency: "USD",
+      unpriced_models: ["grok-4.5"],
+    }),
+  );
+  expect(partial!.totalCost).toBe(1.25);
+  expect(partial!.unpricedModels).toEqual(["grok-4.5"]);
+
+  // Absent / malformed entries degrade to an empty list rather than rendering
+  // a note about "undefined".
+  expect(
+    threadTokenUsageToCostSummary(baseResponse({ currency: "USD" }))!
+      .unpricedModels,
+  ).toEqual([]);
+  expect(
+    threadTokenUsageToCostSummary(
+      baseResponse({
+        currency: "USD",
+        unpriced_models: ["ok", "", null, 7] as unknown as string[],
+      }),
+    )!.unpricedModels,
+  ).toEqual(["ok"]);
+});
+
 test("cost summary carries total, currency and non-zero aux counters", () => {
   const summary = threadTokenUsageToCostSummary(
     baseResponse({

@@ -742,6 +742,10 @@ export const enUS: Translations = {
     cost: "Estimated cost",
     costHint:
       "Estimated from each model's price in config.yaml, per model — so subagents on a cheaper or local model are billed at their own rate. Models with no configured price (like local Ollama) count as $0, ignoring electricity. An estimate only; check your provider's billing page for the real figure.",
+    unpricedOnly: (models: string) =>
+      `No cost shown: no price is configured for ${models}. Add a pricing block to that model in config.yaml.`,
+    unpricedPartial: (models: string) =>
+      `Excludes ${models} — no price configured, so the real cost is higher.`,
     memory: "Memory",
     suggestions: "Suggestions",
     auxCallCount: (count: number) =>

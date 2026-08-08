@@ -107,6 +107,10 @@ export interface ThreadTokenUsageResponse {
   // memory / suggestions counters keyed by category.
   total_cost?: number | null;
   currency?: string | null;
+  // Models that burned tokens here but carry no `pricing:` block, so they
+  // contributed nothing to `total_cost`. Lets the UI say *which* model needs a
+  // price instead of rendering an unexplained "—".
+  unpriced_models?: string[];
   aux?: Record<string, ThreadTokenUsageAuxBreakdown>;
   // Real-time context window usage (upstream #3125/#3183).
   context_usage?: ThreadContextUsage | null;

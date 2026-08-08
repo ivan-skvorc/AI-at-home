@@ -184,6 +184,21 @@ export function TokenUsageIndicator({
                     : "—"}
                 </span>
               </div>
+              {cost.unpricedModels.length > 0 && (
+                // A bare "—" (or a total that silently omits a model) is
+                // indistinguishable from a broken feature. Name the models that
+                // have no `pricing:` block so the fix is obvious.
+                <div
+                  data-testid="token-usage-unpriced"
+                  className="text-muted-foreground mt-1 text-[11px] leading-snug"
+                >
+                  {cost.totalCost == null
+                    ? t.tokenUsage.unpricedOnly(cost.unpricedModels.join(", "))
+                    : t.tokenUsage.unpricedPartial(
+                        cost.unpricedModels.join(", "),
+                      )}
+                </div>
+              )}
               {auxEntries.length > 0 && (
                 <div className="mt-1 space-y-1 border-t pt-1">
                   {auxEntries.map(([category, entry]) => (

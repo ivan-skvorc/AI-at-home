@@ -26,6 +26,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **pricing:** Only the six direct-Anthropic models shipped with a machine-readable
+  `pricing:` block, so the other **34** bundled paid models were unpriceable and a
+  conversation run on any of them reported no cost — the chat header rendered `—`
+  even though tokens were counted. Every bundled paid model now carries a pricing
+  block on both the auto-config and `make setup` paths (`providers.py` derives it
+  from the same price-in-name pair the display uses, so the two synced sources
+  cannot drift), and `TestBundledModelPricing` fails if a bundled model ever loses
+  its price again. `make setup` previously wrote *no* pricing at all, even for
+  Anthropic; it now matches the config path exactly.
+
+- **pricing:** A missing price no longer renders as an unexplained dash. The
+  token-usage endpoint reports `unpriced_models` — models that spent tokens with
+  no configured price — and the header names them, distinguishing "add a pricing
+  block for this model" from "the cost feature is broken". When only some models
+  are priced it says so, rather than quietly showing a total that understates the
+  real spend.
+
 - **pricing:** The conversation cost estimate always showed `—` and never
   reported a spend. `token_usage_by_model` buckets are keyed by the
   *provider-reported* model id rather than the `config.yaml` id — LangChain

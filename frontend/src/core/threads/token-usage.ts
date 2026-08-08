@@ -38,6 +38,12 @@ export interface ThreadCostSummary {
   currency: string | null;
   /** Separate memory / suggestions counters, present only when non-zero. */
   aux: Record<string, AuxCostEntry>;
+  /**
+   * Models that ran in this thread with no `pricing:` block configured. When
+   * `totalCost` is null this is the reason it is null; when `totalCost` is set
+   * the figure covers only the priced models and understates the real spend.
+   */
+  unpricedModels: string[];
 }
 
 /**
@@ -64,6 +70,9 @@ export function threadTokenUsageToCostSummary(
     totalCost: usage.total_cost ?? null,
     currency: usage.currency,
     aux,
+    unpricedModels: (usage.unpriced_models ?? []).filter(
+      (name): name is string => typeof name === "string" && name.length > 0,
+    ),
   };
 }
 

@@ -223,6 +223,12 @@ class ThreadTokenUsageResponse(BaseModel):
     # null when no pricing is configured or priced models mix currencies.
     total_cost: float | None = None
     currency: str | None = None
+    # Models that burned tokens in this thread but carry no ``pricing:`` block,
+    # so they contributed nothing to ``total_cost``. Without this the UI can only
+    # render a bare "—" (or a silently low total) with no way for the operator to
+    # tell which model needs a price — the difference between "cost is broken"
+    # and "add a pricing block for gpt-5.6-sol".
+    unpriced_models: list[str] = Field(default_factory=list)
     aux: dict[str, ThreadTokenUsageAuxBreakdown] = Field(default_factory=dict)
     # Real-time context window usage (upstream #3125/#3183).
     context_usage: ThreadContextUsage | None = None
@@ -1518,6 +1524,7 @@ async def thread_token_usage(
     context_usage = await build_context_usage(request, thread_id, run_store)
 
     total_cost: float | None = None
+    unpriced_models: list[str] = []
     by_model: dict[str, ThreadTokenUsageModelBreakdown] = {}
     for model, entry in (agg.get("by_model") or {}).items():
         input_tokens = int(entry.get("input_tokens") or 0)
@@ -1528,6 +1535,12 @@ async def thread_token_usage(
         if price is not None and (input_tokens or output_tokens):
             model_cost = round(token_cost(input_tokens, output_tokens, price, cache_read), 6)
             total_cost = round((total_cost or 0.0) + model_cost, 6)
+        elif price is None and (input_tokens or output_tokens):
+            # Burned tokens but no price: name it so the operator can act. Only
+            # reported when pricing is configured at all — with an empty pricing
+            # map every model is trivially "unpriced" and the cost UI is hidden.
+            if pricing:
+                unpriced_models.append(model)
         by_model[model] = ThreadTokenUsageModelBreakdown(
             tokens=int(entry.get("tokens") or 0),
             runs=int(entry.get("runs") or 0),
@@ -1569,6 +1582,7 @@ async def thread_token_usage(
         by_caller=ThreadTokenUsageCallerBreakdown(**(agg.get("by_caller") or {})),
         total_cost=total_cost,
         currency=currency,
+        unpriced_models=sorted(unpriced_models),
         aux=aux,
         context_usage=context_usage,
     )

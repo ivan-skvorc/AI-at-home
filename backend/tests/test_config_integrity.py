@@ -84,6 +84,87 @@ class TestShippedExampleConfig:
         assert lint_unknown_config_keys(data) == []
 
 
+class TestBundledModelPricing:
+    """Every bundled paid model must carry a machine-readable ``pricing:`` block.
+
+    A model without one contributes nothing to the chat header's cost estimate,
+    so a conversation run entirely on unpriced models reports no cost at all —
+    which is what shipped when only the Anthropic block was priced. These pin
+    the whole bundle so a newly added model cannot silently reintroduce it.
+    """
+
+    @staticmethod
+    def _marker_blocks() -> dict[str, list[dict]]:
+        """The models each ``auto-model-config`` marker block would enable."""
+        import re
+
+        import yaml
+
+        text = (REPO_ROOT / "config.example.yaml").read_text(encoding="utf-8")
+        blocks: dict[str, list[dict]] = {}
+        for match in re.finditer(
+            r"# === BEGIN auto-model-config: (\w+).*?===(.*?)# === END auto-model-config: \1",
+            text,
+            re.S,
+        ):
+            # Uncomment the block the same way sync-api-key-models.py does, then
+            # parse it as the YAML list it becomes once enabled.
+            body = "\n".join(re.sub(r"^  # ?", "  ", line) for line in match.group(2).splitlines())
+            blocks[match.group(1)] = yaml.safe_load(body) or []
+        return blocks
+
+    def test_every_bundled_model_is_priced(self):
+        unpriced = [f"{slug}:{entry.get('name')}" for slug, entries in self._marker_blocks().items() for entry in entries if not entry.get("pricing")]
+        assert unpriced == [], f"bundled models missing a pricing block: {unpriced}"
+
+    def test_pricing_blocks_are_well_formed_and_single_currency(self):
+        currencies: set[str] = set()
+        for slug, entries in self._marker_blocks().items():
+            for entry in entries:
+                pricing = entry["pricing"]
+                name = f"{slug}:{entry.get('name')}"
+                currencies.add(pricing["currency"])
+                assert pricing["input_per_million"] > 0, name
+                assert pricing["output_per_million"] > 0, name
+                hit = pricing.get("input_cache_hit_per_million")
+                # Optional, but when present it must be cheaper than a miss —
+                # otherwise caching would be priced as a penalty.
+                assert hit is None or 0 <= hit <= pricing["input_per_million"], name
+        # Mixed currencies disable cost reporting entirely (see FORK.md §2).
+        assert currencies == {"USD"}, currencies
+
+    def test_price_matches_the_price_in_name_pair(self):
+        """The two prices a model carries must agree.
+
+        `display_name` shows `($<in>/<out>)` for humans and `pricing:` bills
+        against it. A promo name (`$list → $promo*`) bills at the **standard**
+        rate — the promo can end at any time.
+        """
+        import re
+
+        pair = re.compile(r"\(\$(\d+(?:\.\d+)?)/(\d+(?:\.\d+)?)")
+        for slug, entries in self._marker_blocks().items():
+            for entry in entries:
+                match = pair.search(entry["display_name"])
+                assert match, f"{slug}:{entry['name']} has no price in its display_name"
+                assert entry["pricing"]["input_per_million"] == pytest.approx(float(match.group(1))), entry["name"]
+                assert entry["pricing"]["output_per_million"] == pytest.approx(float(match.group(2))), entry["name"]
+
+    def test_wizard_bundles_match_the_config_marker_blocks(self):
+        """`make setup` and the auto-config path must write identical prices."""
+        import sys
+
+        sys.path.insert(0, str(REPO_ROOT / "scripts"))
+        import wizard.providers as providers
+
+        wizard = {"anthropic": providers.ANTHROPIC_BUNDLE_MODELS, "openrouter": providers.OPENROUTER_BUNDLE_MODELS}
+        wizard.update({slug: bundle for slug, (_, bundle) in providers.HOME_API_BUNDLES.items()})
+
+        config = {entry["name"]: entry.get("pricing") for entries in self._marker_blocks().values() for entry in entries}
+        drift = [(entry["name"], entry.get("pricing"), config.get(entry["name"])) for bundle in wizard.values() for entry in bundle if entry.get("pricing") != config.get(entry["name"])]
+        assert drift == [], f"pricing drift between providers.py and config.example.yaml: {drift}"
+
+
 class TestSandboxKeyLint:
     def test_unknown_sandbox_key_warns_with_did_you_mean(self):
         warnings = lint_unknown_config_keys({"sandbox": {"use": "x", "allow_hostbash": True}})
