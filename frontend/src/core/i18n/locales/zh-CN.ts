@@ -713,6 +713,12 @@ export const zhCN: Translations = {
     cost: "预估费用",
     costHint:
       "按 config.yaml 中每个模型各自的价格估算——因此在更便宜或本地模型上运行的子代理会按其自身费率计费。未配置价格的模型（如本地 Ollama）按 $0 计（不含电费）。仅为估算值，实际以服务商账单为准。",
+    unpricedOnly: (models: string) =>
+      `无法显示费用：${models} 未配置价格。请在 config.yaml 中为该模型添加 pricing 配置。`,
+    unpricedPartial: (models: string) =>
+      `未包含 ${models}（未配置价格），实际费用更高。`,
+    promoRate: "当前优惠价",
+    standardRate: "标准价",
     memory: "记忆",
     suggestions: "建议",
     auxCallCount: (count: number) => `${count} 次调用`,

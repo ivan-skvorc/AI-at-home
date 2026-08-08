@@ -110,8 +110,14 @@ export function TokenUsageIndicator({
             cost.currency && (
               <>
                 <span className="opacity-40">·</span>
-                <span className="font-mono">
-                  {formatCost(cost.totalCost, cost.currency)}
+                {/* The pill shows one number — what you actually pay, i.e. the
+                    promo rate when one is live. The standard rate it reverts to
+                    is in the dropdown, where there is room to label the pair. */}
+                <span className="font-mono text-emerald-500">
+                  {formatCost(
+                    cost.promoTotalCost ?? cost.totalCost,
+                    cost.currency,
+                  )}
                 </span>
               </>
             )}
@@ -178,12 +184,57 @@ export function TokenUsageIndicator({
                     />
                   </Tooltip>
                 </span>
-                <span className="font-mono font-medium">
-                  {cost.totalCost != null && cost.currency
-                    ? formatCost(cost.totalCost, cost.currency)
-                    : "—"}
+                {/* Green is what you pay; a red standard rate appears beside it
+                    only while a promo is live, so the pair reads as "now" vs
+                    "once the discount ends" rather than as two rival numbers. */}
+                <span className="flex items-baseline gap-1.5 font-mono font-medium">
+                  {cost.totalCost != null && cost.currency ? (
+                    <>
+                      <span className="text-emerald-500">
+                        {formatCost(
+                          cost.promoTotalCost ?? cost.totalCost,
+                          cost.currency,
+                        )}
+                      </span>
+                      {cost.promoTotalCost != null && (
+                        <span className="text-red-500">
+                          {formatCost(cost.totalCost, cost.currency)}
+                        </span>
+                      )}
+                    </>
+                  ) : (
+                    "—"
+                  )}
                 </span>
               </div>
+              {cost.promoTotalCost != null && cost.currency && (
+                <div
+                  data-testid="token-usage-promo-note"
+                  className="text-muted-foreground mt-1 flex items-baseline gap-1.5 text-[11px] leading-snug"
+                >
+                  <span className="text-emerald-500">
+                    {t.tokenUsage.promoRate}
+                  </span>
+                  <span className="text-red-500">
+                    {t.tokenUsage.standardRate}
+                  </span>
+                </div>
+              )}
+              {cost.unpricedModels.length > 0 && (
+                // A bare "—" (or a total that silently omits a model) is
+                // indistinguishable from a broken feature. Name the models that
+                // have no `pricing:` block so the fix is obvious.
+                <div
+                  data-testid="token-usage-unpriced"
+                  className="text-muted-foreground mt-1 text-[11px] leading-snug"
+                >
+                  {cost.totalCost == null
+                    ? t.tokenUsage.unpricedOnly(cost.unpricedModels.join(", "))
+                    : t.tokenUsage.unpricedPartial(
+                        cost.unpricedModels.join(", "),
+                      )}
+                </div>
+              )}
               {auxEntries.length > 0 && (
                 <div className="mt-1 space-y-1 border-t pt-1">
                   {auxEntries.map(([category, entry]) => (
@@ -198,10 +249,20 @@ export function TokenUsageIndicator({
                             ? t.tokenUsage.suggestions
                             : category}
                       </span>
+                      {/* One figure, on the same basis as the headline: what
+                          this sink costs now. Memory and suggestions can each run
+                          on their own model, so a discount applies per sink. */}
                       <span className="font-mono">
-                        {entry.cost != null && cost.currency
-                          ? formatCost(entry.cost, cost.currency)
-                          : formatTokenCount(entry.tokens)}
+                        {entry.cost != null && cost.currency ? (
+                          <span className="text-emerald-500">
+                            {formatCost(
+                              entry.promoCost ?? entry.cost,
+                              cost.currency,
+                            )}
+                          </span>
+                        ) : (
+                          formatTokenCount(entry.tokens)
+                        )}
                       </span>
                     </div>
                   ))}

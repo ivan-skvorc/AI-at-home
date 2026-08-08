@@ -620,6 +620,14 @@ export interface Translations {
     removeTodo: (content: string) => string;
     cost: string;
     costHint: string;
+    /** Shown when no model that ran has a configured price (cost renders "—"). */
+    unpricedOnly: (models: string) => string;
+    /** Shown when only some models are priced, so the total understates spend. */
+    unpricedPartial: (models: string) => string;
+    /** Legend for the green figure when a promotional rate is live. */
+    promoRate: string;
+    /** Legend for the red figure — what the thread costs once the promo ends. */
+    standardRate: string;
     memory: string;
     suggestions: string;
     auxCallCount: (count: number) => string;

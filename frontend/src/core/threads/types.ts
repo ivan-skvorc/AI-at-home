@@ -82,6 +82,9 @@ export interface ThreadTokenUsageAuxBreakdown {
   output_tokens: number;
   calls: number;
   cost?: number | null;
+  // Spend at live promotional rates, null when none of this sink's models are
+  // discounted. Keeps aux rows on the same basis as the headline total.
+  promo_cost?: number | null;
 }
 
 export interface ThreadContextUsage {
@@ -106,7 +109,15 @@ export interface ThreadTokenUsageResponse {
   // configured or priced models mix currencies. `aux` holds the separate
   // memory / suggestions counters keyed by category.
   total_cost?: number | null;
+  // The same whole-thread total billed at any live promotional/introductory
+  // rates — what the conversation costs right now, versus `total_cost`'s
+  // standard rate. Null when nothing in the thread is currently discounted.
+  promo_total_cost?: number | null;
   currency?: string | null;
+  // Models that burned tokens here but carry no `pricing:` block, so they
+  // contributed nothing to `total_cost`. Lets the UI say *which* model needs a
+  // price instead of rendering an unexplained "—".
+  unpriced_models?: string[];
   aux?: Record<string, ThreadTokenUsageAuxBreakdown>;
   // Real-time context window usage (upstream #3125/#3183).
   context_usage?: ThreadContextUsage | null;

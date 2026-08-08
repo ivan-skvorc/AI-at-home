@@ -94,6 +94,111 @@ export function parseModelPrice(
   };
 }
 
+/**
+ * A piece of a `display_name` split out for colouring.
+ *
+ * `price` is an undiscounted model's only pair; a discounted name yields
+ * `listPrice` (the standard rate you'd pay once the promo ends) and
+ * `promoPrice` (what you pay now), so the picker can render them red and green
+ * respectively instead of leaving two bare numbers for the eye to disambiguate.
+ */
+export type ModelNameSegmentKind =
+  | "text"
+  | "price"
+  | "listPrice"
+  | "promoPrice";
+
+export interface ModelNameSegment {
+  text: string;
+  kind: ModelNameSegmentKind;
+}
+
+// Same anchored `$` pair as PRICE_PAIR, but non-global so `lastIndex` is not
+// shared across calls, and capturing the surrounding punctuation is left to the
+// caller by using match indices.
+const PRICE_PAIR_ONCE = /\$\s*\d+(?:\.\d+)?\s*\/\s*\d+(?:\.\d+)?/g;
+
+/**
+ * Split a `display_name` into text and price runs for colour rendering.
+ *
+ * Purely presentational and deliberately total: a name with no recognizable
+ * price comes back as one `text` segment, so an unparseable or hand-added model
+ * still renders its full name verbatim. Only the first two pairs are classified
+ * (list then promo, matching the `($list → $promo*)` convention); anything
+ * further is left as text rather than guessed at.
+ */
+export function splitModelNamePriceSegments(
+  displayName: string | null | undefined,
+): ModelNameSegment[] {
+  const name = displayName ?? "";
+  if (!name) {
+    return [];
+  }
+  const matches = [...name.matchAll(PRICE_PAIR_ONCE)].slice(0, 2);
+  if (matches.length === 0) {
+    return [{ text: name, kind: "text" }];
+  }
+  const discounted = matches.length > 1;
+  const segments: ModelNameSegment[] = [];
+  let cursor = 0;
+  matches.forEach((match, index) => {
+    const start = match.index ?? 0;
+    if (start > cursor) {
+      segments.push({ text: name.slice(cursor, start), kind: "text" });
+    }
+    segments.push({
+      text: match[0],
+      kind: !discounted ? "price" : index === 0 ? "listPrice" : "promoPrice",
+    });
+    cursor = start + match[0].length;
+  });
+  if (cursor < name.length) {
+    segments.push({ text: name.slice(cursor), kind: "text" });
+  }
+  return segments;
+}
+
+// A trailing ` (...)` group carrying no `$` — a provider suffix (`(OpenRouter)`,
+// `(Anthropic)`, `(xAI)`, ...) or the `(p)` privacy marker. Matched from the end
+// and repeatedly, so a name can carry several. Excluding `$` from the class is
+// what makes the price group a hard stop, without hardcoding a provider list
+// (the "home" blocks add a new suffix per lab).
+const TRAILING_NON_PRICE_GROUP = /\s*\([^()$]*\)\s*$/;
+const PRIVACY_MARKER = /\(p\)\s*$/;
+
+/**
+ * A `display_name` shortened for a width-constrained trigger button.
+ *
+ * The composer's model button is capped at ~160-224px, and the price sits in the
+ * *middle* of a bundled name (`GLM-5.2 ($1.15/3.6 → $0.28/0.87*) (OpenRouter) (p)`),
+ * so plain truncation eats the promo half — the number the user most wants to
+ * see. Dropping the provider suffix buys that space back: the provider is still
+ * visible in the open list and as a group heading. The `(p)` privacy marker is
+ * deliberately kept — "don't put sensitive data through this one" is worth more
+ * at a glance than the provider's name, and today it is the *first* thing
+ * truncation removes.
+ */
+export function compactModelDisplayName(
+  displayName: string | null | undefined,
+): string {
+  const name = (displayName ?? "").trim();
+  if (!name) {
+    return "";
+  }
+  const isPrivate = PRIVACY_MARKER.test(name);
+  let compact = name;
+  while (TRAILING_NON_PRICE_GROUP.test(compact)) {
+    const stripped = compact.replace(TRAILING_NON_PRICE_GROUP, "").trim();
+    // A name that is *only* a parenthesised group (no model name left) is not
+    // worth compacting — return it whole rather than an empty button.
+    if (!stripped) {
+      return name;
+    }
+    compact = stripped;
+  }
+  return isPrivate ? `${compact} (p)` : compact;
+}
+
 /** Derive the provider group from the `display_name` suffix. */
 export function parseModelProvider(
   displayName: string | null | undefined,

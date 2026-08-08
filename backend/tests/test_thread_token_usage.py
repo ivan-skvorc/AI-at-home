@@ -29,7 +29,9 @@ def _aggregate_result() -> dict:
             "middleware": 5,
         },
         "total_cost": None,
+        "promo_total_cost": None,
         "currency": None,
+        "unpriced_models": [],
         "aux": {},
     }
 
@@ -219,6 +221,102 @@ def test_thread_token_usage_prices_provider_reported_model_ids(monkeypatch: pyte
     assert data["total_cost"] == pytest.approx(30.0)
 
 
+def _agg_with_models(by_model: dict) -> dict:
+    total_in = sum(b["input_tokens"] for b in by_model.values())
+    total_out = sum(b["output_tokens"] for b in by_model.values())
+    return {
+        "total_tokens": total_in + total_out,
+        "total_input_tokens": total_in,
+        "total_output_tokens": total_out,
+        "total_runs": len(by_model),
+        "by_model": by_model,
+        "by_caller": {"lead_agent": total_in + total_out, "subagent": 0, "middleware": 0},
+    }
+
+
+@pytest.mark.parametrize(
+    ("by_model", "expected_cost", "expected_unpriced"),
+    [
+        # Every model priced → no report, full total.
+        (
+            {"claude-opus-4-8": {"tokens": 0, "runs": 1, "input_tokens": 1_000_000, "output_tokens": 0, "cache_read_tokens": 0}},
+            5.0,
+            [],
+        ),
+        # Nothing priced → the "—" case. The models are named so the operator
+        # can tell a missing pricing block from a broken feature.
+        (
+            {"gpt-5.6-sol": {"tokens": 0, "runs": 1, "input_tokens": 1_000_000, "output_tokens": 0, "cache_read_tokens": 0}},
+            None,
+            ["gpt-5.6-sol"],
+        ),
+        # Mixed → the total is real but understates the spend; say so.
+        (
+            {
+                "claude-opus-4-8": {"tokens": 0, "runs": 1, "input_tokens": 1_000_000, "output_tokens": 0, "cache_read_tokens": 0},
+                "grok-4.5": {"tokens": 0, "runs": 1, "input_tokens": 500_000, "output_tokens": 0, "cache_read_tokens": 0},
+            },
+            5.0,
+            ["grok-4.5"],
+        ),
+        # Zero-token buckets are not "unpriced" — nothing was spent on them.
+        (
+            {
+                "claude-opus-4-8": {"tokens": 0, "runs": 1, "input_tokens": 1_000_000, "output_tokens": 0, "cache_read_tokens": 0},
+                "idle-model": {"tokens": 0, "runs": 1, "input_tokens": 0, "output_tokens": 0, "cache_read_tokens": 0},
+            },
+            5.0,
+            [],
+        ),
+    ],
+    ids=["all-priced", "none-priced", "partially-priced", "zero-token-bucket-ignored"],
+)
+def test_thread_token_usage_reports_unpriced_models(monkeypatch, by_model, expected_cost, expected_unpriced):
+    """An unexplained "—" is indistinguishable from a broken cost feature.
+
+    The endpoint therefore names any model that burned tokens without a
+    configured price, so the UI can point at the model that needs one.
+    """
+    aux_usage.reset_aux_usage()
+    run_store = _make_run_store()
+    run_store.aggregate_tokens_by_thread = AsyncMock(return_value=_agg_with_models(by_model))
+    monkeypatch.setattr(thread_runs, "build_context_usage", AsyncMock(return_value=None))
+    monkeypatch.setattr(thread_runs, "_thread_pricing_map", _priced_anthropic_map)
+
+    with TestClient(_make_app(run_store)) as client:
+        data = client.get("/api/threads/thread-1/token-usage").json()
+
+    assert data["unpriced_models"] == expected_unpriced
+    if expected_cost is None:
+        assert data["total_cost"] is None
+    else:
+        assert data["total_cost"] == pytest.approx(expected_cost)
+
+
+def test_unpriced_models_empty_when_no_pricing_configured(monkeypatch):
+    """With no pricing at all the cost UI is hidden, so the list stays quiet.
+
+    Reporting every model as "unpriced" here would nag operators who simply
+    never opted into cost tracking.
+    """
+    aux_usage.reset_aux_usage()
+    run_store = _make_run_store()
+    run_store.aggregate_tokens_by_thread = AsyncMock(
+        return_value=_agg_with_models(
+            {"gpt-5.6-sol": {"tokens": 0, "runs": 1, "input_tokens": 1_000, "output_tokens": 500, "cache_read_tokens": 0}},
+        ),
+    )
+    monkeypatch.setattr(thread_runs, "build_context_usage", AsyncMock(return_value=None))
+    monkeypatch.setattr(thread_runs, "_thread_pricing_map", dict)
+
+    with TestClient(_make_app(run_store)) as client:
+        data = client.get("/api/threads/thread-1/token-usage").json()
+
+    assert data["currency"] is None
+    assert data["total_cost"] is None
+    assert data["unpriced_models"] == []
+
+
 def test_thread_token_usage_computes_model_aware_cost_and_aux():
     """Cost is priced per model (subagent on a cheaper model billed correctly),
     and memory/suggestions LLM calls surface as separate priced aux counters."""
@@ -398,3 +496,163 @@ async def test_build_context_usage_returns_none_when_checkpoint_read_fails(monke
     )
 
     assert result is None
+
+
+def _promo_pricing_map() -> dict:
+    """One discounted model beside a full-price one.
+
+    Mirrors the shipped bundle, where only some entries carry a live promo — the
+    interesting case is a thread that mixes both, because the promo total has to
+    bill the undiscounted model at its ordinary rate.
+    """
+    return build_pricing_map(
+        [
+            SimpleNamespace(
+                name="glm-5.2",
+                model="z-ai/glm-5.2",
+                pricing={
+                    "currency": "USD",
+                    "input_per_million": 1.15,
+                    "output_per_million": 3.6,
+                    "promo_input_per_million": 0.28,
+                    "promo_output_per_million": 0.87,
+                },
+            ),
+            SimpleNamespace(name="opus", model="claude-opus-5", pricing={"currency": "USD", "input_per_million": 5.0, "output_per_million": 25.0}),
+        ],
+    )
+
+
+def test_promo_total_cost_prices_the_thread_at_the_live_discount(monkeypatch):
+    """`total_cost` stays the standard rate; `promo_total_cost` is what you pay now.
+
+    Both numbers cover the *whole* thread — a model with no promo contributes
+    its ordinary cost to both totals, so the pair is always comparable rather
+    than being a discounted subtotal next to a full total.
+    """
+    aux_usage.reset_aux_usage()
+    run_store = _make_run_store()
+    run_store.aggregate_tokens_by_thread = AsyncMock(
+        return_value=_agg_with_models(
+            {
+                "z-ai/glm-5.2": {"tokens": 2_000_000, "runs": 1, "input_tokens": 1_000_000, "output_tokens": 1_000_000, "cache_read_tokens": 0},
+                "claude-opus-5": {"tokens": 2_000_000, "runs": 1, "input_tokens": 1_000_000, "output_tokens": 1_000_000, "cache_read_tokens": 0},
+            }
+        )
+    )
+    monkeypatch.setattr(thread_runs, "build_context_usage", AsyncMock(return_value=None))
+    monkeypatch.setattr(thread_runs, "_thread_pricing_map", _promo_pricing_map)
+    app = _make_app(run_store)
+
+    with TestClient(app) as client:
+        data = client.get("/api/threads/thread-1/token-usage").json()
+
+    # standard: GLM 1.15 + 3.6 = 4.75 ; Opus 5 + 25 = 30 -> 34.75
+    assert data["total_cost"] == pytest.approx(34.75)
+    # promo: GLM 0.28 + 0.87 = 1.15 ; Opus undiscounted 30 -> 31.15
+    assert data["promo_total_cost"] == pytest.approx(31.15)
+
+
+def test_promo_total_cost_is_null_when_nothing_in_the_thread_is_discounted(monkeypatch):
+    """No promo anywhere means one price, not the same number printed twice."""
+    aux_usage.reset_aux_usage()
+    run_store = _make_run_store()
+    run_store.aggregate_tokens_by_thread = AsyncMock(return_value=_agg_with_models({"claude-opus-5": {"tokens": 2_000_000, "runs": 1, "input_tokens": 1_000_000, "output_tokens": 1_000_000, "cache_read_tokens": 0}}))
+    monkeypatch.setattr(thread_runs, "build_context_usage", AsyncMock(return_value=None))
+    monkeypatch.setattr(thread_runs, "_thread_pricing_map", _promo_pricing_map)
+    app = _make_app(run_store)
+
+    with TestClient(app) as client:
+        data = client.get("/api/threads/thread-1/token-usage").json()
+
+    assert data["total_cost"] == pytest.approx(30.0)
+    assert data["promo_total_cost"] is None
+
+
+def test_promo_total_cost_is_null_when_no_pricing_is_configured(monkeypatch):
+    aux_usage.reset_aux_usage()
+    run_store = _make_run_store()
+    run_store.aggregate_tokens_by_thread = AsyncMock(return_value=_agg_with_models({"z-ai/glm-5.2": {"tokens": 2_000_000, "runs": 1, "input_tokens": 1_000_000, "output_tokens": 1_000_000, "cache_read_tokens": 0}}))
+    monkeypatch.setattr(thread_runs, "build_context_usage", AsyncMock(return_value=None))
+    monkeypatch.setattr(thread_runs, "_thread_pricing_map", dict)
+    app = _make_app(run_store)
+
+    with TestClient(app) as client:
+        data = client.get("/api/threads/thread-1/token-usage").json()
+
+    assert data["total_cost"] is None
+    assert data["promo_total_cost"] is None
+
+
+def test_promo_total_is_model_aware_across_lead_subagent_and_aux(monkeypatch):
+    """Ultra mode: lead, subagent, and aux sinks each priced at their own rate.
+
+    The whole point of the per-thread subagent override is that a run mixes
+    models, so a single headline rate would be wrong in both directions. This
+    drives the real endpoint over the ids providers actually report (a dated
+    Anthropic snapshot for the lead, an OpenRouter `:variant` slug for the
+    discounted subagent) and asserts the discount lands on the subagent's tokens
+    only — never smeared across the lead's, and never dropped because the lead
+    happens to be undiscounted.
+    """
+    aux_usage.reset_aux_usage()
+    run_store = _make_run_store()
+    run_store.aggregate_tokens_by_thread = AsyncMock(
+        return_value=_agg_with_models(
+            {
+                # Lead: full-price Opus, reported as its dated snapshot.
+                "claude-opus-5-20260115": {"tokens": 1_100_000, "runs": 1, "input_tokens": 1_000_000, "output_tokens": 100_000, "cache_read_tokens": 0},
+                # Subagent: the discounted GLM, routed with a variant tag.
+                "z-ai/glm-5.2:floor": {"tokens": 3_000_000, "runs": 1, "input_tokens": 2_000_000, "output_tokens": 1_000_000, "cache_read_tokens": 0},
+            }
+        )
+    )
+    # Memory extraction on the discounted model; suggestions on the full-price one.
+    aux_usage.record_aux_usage("thread-1", "memory", model_name="z-ai/glm-5.2", input_tokens=1_000_000, output_tokens=0)
+    aux_usage.record_aux_usage("thread-1", "suggestions", model_name="claude-opus-5", input_tokens=1_000_000, output_tokens=0)
+    monkeypatch.setattr(thread_runs, "build_context_usage", AsyncMock(return_value=None))
+    monkeypatch.setattr(thread_runs, "_thread_pricing_map", _promo_pricing_map)
+    app = _make_app(run_store)
+
+    with TestClient(app) as client:
+        data = client.get("/api/threads/thread-1/token-usage").json()
+
+    # Lead (standard only): 1M@$5 + 0.1M@$25 = 7.5
+    assert data["by_model"]["claude-opus-5-20260115"]["cost"] == pytest.approx(7.5)
+    # Subagent standard: 2M@$1.15 + 1M@$3.6 = 5.9 ; promo: 2M@$0.28 + 1M@$0.87 = 1.43
+    assert data["by_model"]["z-ai/glm-5.2:floor"]["cost"] == pytest.approx(5.9)
+    assert data["total_cost"] == pytest.approx(13.4)
+    assert data["promo_total_cost"] == pytest.approx(8.93)
+    # The lead's 7.5 is untouched by the discount — the delta is exactly the
+    # subagent's saving, not a fraction of the whole thread.
+    assert data["total_cost"] - data["promo_total_cost"] == pytest.approx(5.9 - 1.43)
+
+    # Aux sinks follow the same per-model rule.
+    assert data["aux"]["memory"]["cost"] == pytest.approx(1.15)
+    assert data["aux"]["memory"]["promo_cost"] == pytest.approx(0.28)
+    assert data["aux"]["suggestions"]["cost"] == pytest.approx(5.0)
+    assert data["aux"]["suggestions"]["promo_cost"] is None
+
+
+def test_unpriced_subagent_model_does_not_break_the_promo_total(monkeypatch):
+    """A local subagent contributes 0 to both totals and is still named."""
+    aux_usage.reset_aux_usage()
+    run_store = _make_run_store()
+    run_store.aggregate_tokens_by_thread = AsyncMock(
+        return_value=_agg_with_models(
+            {
+                "z-ai/glm-5.2": {"tokens": 2_000_000, "runs": 1, "input_tokens": 1_000_000, "output_tokens": 1_000_000, "cache_read_tokens": 0},
+                "qwen3:32b": {"tokens": 500_000, "runs": 1, "input_tokens": 400_000, "output_tokens": 100_000, "cache_read_tokens": 0},
+            }
+        )
+    )
+    monkeypatch.setattr(thread_runs, "build_context_usage", AsyncMock(return_value=None))
+    monkeypatch.setattr(thread_runs, "_thread_pricing_map", _promo_pricing_map)
+    app = _make_app(run_store)
+
+    with TestClient(app) as client:
+        data = client.get("/api/threads/thread-1/token-usage").json()
+
+    assert data["total_cost"] == pytest.approx(4.75)
+    assert data["promo_total_cost"] == pytest.approx(1.15)
+    assert data["unpriced_models"] == ["qwen3:32b"]

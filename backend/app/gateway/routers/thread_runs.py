@@ -201,6 +201,10 @@ class ThreadTokenUsageAuxBreakdown(BaseModel):
     output_tokens: int = 0
     calls: int = 0
     cost: float | None = Field(default=None, description="Estimated spend for this sink; null when its models are unpriced")
+    promo_cost: float | None = Field(
+        default=None,
+        description="Spend for this sink at live promotional rates; null when none of its models are discounted. Keeps the aux rows on the same basis as the headline total, which the UI renders at the promo rate.",
+    )
 
 
 class ThreadContextUsage(BaseModel):
@@ -222,7 +226,20 @@ class ThreadTokenUsageResponse(BaseModel):
     # and reported separately so the sidebar can show one counter each. Both are
     # null when no pricing is configured or priced models mix currencies.
     total_cost: float | None = None
+    # The same whole-thread total billed at any live promotional/introductory
+    # rates instead of the standard ones — i.e. what the conversation actually
+    # costs right now. Null when no model in the thread is currently discounted,
+    # so the UI shows one price rather than the same number twice. Models with no
+    # promo contribute their ordinary cost to both totals, keeping the pair
+    # directly comparable.
+    promo_total_cost: float | None = None
     currency: str | None = None
+    # Models that burned tokens in this thread but carry no ``pricing:`` block,
+    # so they contributed nothing to ``total_cost``. Without this the UI can only
+    # render a bare "—" (or a silently low total) with no way for the operator to
+    # tell which model needs a price — the difference between "cost is broken"
+    # and "add a pricing block for gpt-5.6-sol".
+    unpriced_models: list[str] = Field(default_factory=list)
     aux: dict[str, ThreadTokenUsageAuxBreakdown] = Field(default_factory=dict)
     # Real-time context window usage (upstream #3125/#3183).
     context_usage: ThreadContextUsage | None = None
@@ -1518,6 +1535,9 @@ async def thread_token_usage(
     context_usage = await build_context_usage(request, thread_id, run_store)
 
     total_cost: float | None = None
+    promo_total_cost: float | None = None
+    thread_has_promo = False
+    unpriced_models: list[str] = []
     by_model: dict[str, ThreadTokenUsageModelBreakdown] = {}
     for model, entry in (agg.get("by_model") or {}).items():
         input_tokens = int(entry.get("input_tokens") or 0)
@@ -1528,6 +1548,19 @@ async def thread_token_usage(
         if price is not None and (input_tokens or output_tokens):
             model_cost = round(token_cost(input_tokens, output_tokens, price, cache_read), 6)
             total_cost = round((total_cost or 0.0) + model_cost, 6)
+            # The promo total covers the whole thread, so an undiscounted model
+            # contributes its ordinary cost here too — otherwise the two numbers
+            # would not be comparable.
+            promo_price = price.promo()
+            thread_has_promo = thread_has_promo or promo_price is not None
+            promo_model_cost = round(token_cost(input_tokens, output_tokens, promo_price, cache_read), 6) if promo_price is not None else model_cost
+            promo_total_cost = round((promo_total_cost or 0.0) + promo_model_cost, 6)
+        elif price is None and (input_tokens or output_tokens):
+            # Burned tokens but no price: name it so the operator can act. Only
+            # reported when pricing is configured at all — with an empty pricing
+            # map every model is trivially "unpriced" and the cost UI is hidden.
+            if pricing:
+                unpriced_models.append(model)
         by_model[model] = ThreadTokenUsageModelBreakdown(
             tokens=int(entry.get("tokens") or 0),
             runs=int(entry.get("runs") or 0),
@@ -1541,6 +1574,8 @@ async def thread_token_usage(
     for category, models in get_thread_aux_usage(thread_id).items():
         tokens = input_tokens = output_tokens = calls = 0
         cat_cost: float | None = None
+        cat_promo_cost: float | None = None
+        cat_has_promo = False
         for model, totals in models.items():
             m_input = int(totals.get("input_tokens") or 0)
             m_output = int(totals.get("output_tokens") or 0)
@@ -1550,13 +1585,24 @@ async def thread_token_usage(
             calls += int(totals.get("calls") or 0)
             price = lookup_pricing(pricing, model)
             if price is not None and (m_input or m_output):
-                cat_cost = round((cat_cost or 0.0) + token_cost(m_input, m_output, price, int(totals.get("cache_read_tokens") or 0)), 6)
+                cache_read = int(totals.get("cache_read_tokens") or 0)
+                model_cost = token_cost(m_input, m_output, price, cache_read)
+                cat_cost = round((cat_cost or 0.0) + model_cost, 6)
+                # Aux sinks are priced per model exactly like run buckets: memory
+                # extraction and suggestions can each run on a different model
+                # from the conversation (`memory.model_name`), so a discount
+                # applies to whichever of them is actually on one.
+                promo_price = price.promo()
+                cat_has_promo = cat_has_promo or promo_price is not None
+                promo_model_cost = token_cost(m_input, m_output, promo_price, cache_read) if promo_price is not None else model_cost
+                cat_promo_cost = round((cat_promo_cost or 0.0) + promo_model_cost, 6)
         aux[category] = ThreadTokenUsageAuxBreakdown(
             tokens=tokens,
             input_tokens=input_tokens,
             output_tokens=output_tokens,
             calls=calls,
             cost=cat_cost,
+            promo_cost=cat_promo_cost if cat_has_promo else None,
         )
 
     return ThreadTokenUsageResponse(
@@ -1568,7 +1614,9 @@ async def thread_token_usage(
         by_model=by_model,
         by_caller=ThreadTokenUsageCallerBreakdown(**(agg.get("by_caller") or {})),
         total_cost=total_cost,
+        promo_total_cost=promo_total_cost if thread_has_promo else None,
         currency=currency,
+        unpriced_models=sorted(unpriced_models),
         aux=aux,
         context_usage=context_usage,
     )

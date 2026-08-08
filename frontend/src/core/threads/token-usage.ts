@@ -29,15 +29,29 @@ export function threadTokenUsageToTokenUsage(
 export interface AuxCostEntry {
   tokens: number;
   cost: number | null;
+  /** Spend at live promo rates; null when this sink is undiscounted. */
+  promoCost: number | null;
 }
 
 export interface ThreadCostSummary {
   /** Estimated spend across the thread's runs, or null when unpriced. */
   totalCost: number | null;
+  /**
+   * The same total billed at the live promotional/introductory rates — what the
+   * thread costs *now*. Null when no model in it is currently discounted, which
+   * is the signal to show one price instead of the same number twice.
+   */
+  promoTotalCost: number | null;
   /** ISO currency code from config pricing, or null when unpriced. */
   currency: string | null;
   /** Separate memory / suggestions counters, present only when non-zero. */
   aux: Record<string, AuxCostEntry>;
+  /**
+   * Models that ran in this thread with no `pricing:` block configured. When
+   * `totalCost` is null this is the reason it is null; when `totalCost` is set
+   * the figure covers only the priced models and understates the real spend.
+   */
+  unpricedModels: string[];
 }
 
 /**
@@ -58,12 +72,30 @@ export function threadTokenUsageToCostSummary(
     if (!entry || entry.tokens <= 0) {
       continue;
     }
-    aux[category] = { tokens: entry.tokens, cost: entry.cost ?? null };
+    const cost = entry.cost ?? null;
+    const promoCost = entry.promo_cost ?? null;
+    aux[category] = {
+      tokens: entry.tokens,
+      cost,
+      // Same rule as the headline: an equal pair is not a discount.
+      promoCost: promoCost != null && promoCost !== cost ? promoCost : null,
+    };
   }
+  const totalCost = usage.total_cost ?? null;
+  const promoTotalCost = usage.promo_total_cost ?? null;
   return {
-    totalCost: usage.total_cost ?? null,
+    totalCost,
+    // A promo total that matches the standard one carries no information, so
+    // treat it as "no discount" and let the UI render a single figure.
+    promoTotalCost:
+      promoTotalCost != null && promoTotalCost !== totalCost
+        ? promoTotalCost
+        : null,
     currency: usage.currency,
     aux,
+    unpricedModels: (usage.unpriced_models ?? []).filter(
+      (name): name is string => typeof name === "string" && name.length > 0,
+    ),
   };
 }
 

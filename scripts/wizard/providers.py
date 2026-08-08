@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field, replace
 
 
@@ -501,6 +502,81 @@ ZAI_HOME_BUNDLE_MODELS: list[dict] = [
     _home_openai_compat_model("zai-glm-5.2", "GLM-5.2 ($1.15/3.6) (z-ai)", "glm-5.2", api_key_env="ZAI_API_KEY", base_url="https://api.z.ai/api/paas/v4", supports_vision=False, max_tokens=16000),
     _home_openai_compat_model("zai-glm-5.2-air", "GLM-5.2 Air ($0.2/1.1) (z-ai)", "glm-5.2-air", api_key_env="ZAI_API_KEY", base_url="https://api.z.ai/api/paas/v4", supports_vision=False, max_tokens=16000),
 ]
+
+# ── Machine-readable pricing, derived from the price-in-name pair ────────────
+# Every bundled model's display_name already carries its price as `($<in>/<out>)`
+# (see FORK.md §2). The console/chat cost display needs that same figure as a
+# structured `pricing:` block, and a model without one contributes nothing to the
+# total — so a conversation run entirely on unpriced models shows no cost at all.
+# Deriving the block from the name here (rather than hand-writing it per entry)
+# is what keeps the wizard's output identical to the config.example.yaml marker
+# blocks: there is one number per model, in one place, and it cannot drift.
+_PRICE_IN_NAME_RE = re.compile(r"\(\$(\d+(?:\.\d+)?)/(\d+(?:\.\d+)?)(?:\s*→\s*\$(\d+(?:\.\d+)?)/(\d+(?:\.\d+)?)\*)?\)")
+
+# Anthropic publishes prompt-cache reads at 0.1x the input price. Other providers
+# differ (and several do not publish a cache-read rate at all), so their blocks
+# omit `input_cache_hit_per_million` and cache hits fall back to the full input
+# price — the documented conservative upper bound.
+_ANTHROPIC_CACHE_HIT_RATIO = 0.1
+
+
+def pricing_for_display_name(display_name: str) -> dict | None:
+    """Structured `pricing:` block for a bundled model, or None if unpriced.
+
+    When the name carries a promo pair (`$list → $promo*`), the **standard**
+    (first) price remains what cost reporting bills against — the promo can end
+    at any time, so billing against it would under-report. The discount is
+    carried additively in `promo_*_per_million` so the UI can show what the
+    conversation costs today beside what it costs once the promo lapses. That
+    matches the rule in FORK.md §2.
+    """
+    match = _PRICE_IN_NAME_RE.search(display_name)
+    if match is None:
+        return None
+    is_anthropic = display_name.rstrip().endswith("(Anthropic)")
+    input_per_million = float(match.group(1))
+    pricing: dict = {
+        "currency": "USD",
+        "input_per_million": input_per_million,
+        "output_per_million": float(match.group(2)),
+    }
+    if is_anthropic:
+        pricing["input_cache_hit_per_million"] = round(input_per_million * _ANTHROPIC_CACHE_HIT_RATIO, 6)
+    if match.group(3) is not None and match.group(4) is not None:
+        promo_input = float(match.group(3))
+        pricing["promo_input_per_million"] = promo_input
+        pricing["promo_output_per_million"] = float(match.group(4))
+        if is_anthropic:
+            pricing["promo_input_cache_hit_per_million"] = round(promo_input * _ANTHROPIC_CACHE_HIT_RATIO, 6)
+    return pricing
+
+
+def _with_pricing(models: list[dict]) -> list[dict]:
+    """Stamp the derived `pricing:` block onto every entry that lacks one."""
+    for entry in models:
+        if "pricing" not in entry:
+            pricing = pricing_for_display_name(entry.get("display_name", ""))
+            if pricing is not None:
+                entry["pricing"] = pricing
+    return models
+
+
+for _bundle in (
+    ANTHROPIC_BUNDLE_MODELS,
+    OPENROUTER_BUNDLE_MODELS,
+    OPENAI_HOME_BUNDLE_MODELS,
+    XAI_HOME_BUNDLE_MODELS,
+    GOOGLE_HOME_BUNDLE_MODELS,
+    DEEPSEEK_HOME_BUNDLE_MODELS,
+    MISTRAL_HOME_BUNDLE_MODELS,
+    MOONSHOT_HOME_BUNDLE_MODELS,
+    QWEN_HOME_BUNDLE_MODELS,
+    MINIMAX_HOME_BUNDLE_MODELS,
+    ZAI_HOME_BUNDLE_MODELS,
+):
+    _with_pricing(_bundle)
+del _bundle
+
 
 # Registry consumed by the config-block generator, the auto-config regression
 # tests, and the config.example.yaml ↔ wizard parity check: provider marker slug

@@ -61,6 +61,47 @@ test("cost summary is null when no currency (no pricing configured)", () => {
   expect(threadTokenUsageToCostSummary(null)).toBeNull();
 });
 
+test("cost summary surfaces models that ran without a configured price", () => {
+  // The reason a cost renders as "—": tokens were spent on models with no
+  // `pricing:` block. Carrying the names lets the UI say which one to fix
+  // instead of showing an unexplained dash.
+  const noneP = threadTokenUsageToCostSummary(
+    baseResponse({
+      total_cost: null,
+      currency: "USD",
+      unpriced_models: ["gpt-5.6-sol", "grok-4.5"],
+    }),
+  );
+  expect(noneP!.totalCost).toBeNull();
+  expect(noneP!.unpricedModels).toEqual(["gpt-5.6-sol", "grok-4.5"]);
+
+  // A partial total is real but understates the spend — same signal, cost set.
+  const partial = threadTokenUsageToCostSummary(
+    baseResponse({
+      total_cost: 1.25,
+      currency: "USD",
+      unpriced_models: ["grok-4.5"],
+    }),
+  );
+  expect(partial!.totalCost).toBe(1.25);
+  expect(partial!.unpricedModels).toEqual(["grok-4.5"]);
+
+  // Absent / malformed entries degrade to an empty list rather than rendering
+  // a note about "undefined".
+  expect(
+    threadTokenUsageToCostSummary(baseResponse({ currency: "USD" }))!
+      .unpricedModels,
+  ).toEqual([]);
+  expect(
+    threadTokenUsageToCostSummary(
+      baseResponse({
+        currency: "USD",
+        unpriced_models: ["ok", "", null, 7] as unknown as string[],
+      }),
+    )!.unpricedModels,
+  ).toEqual(["ok"]);
+});
+
 test("cost summary carries total, currency and non-zero aux counters", () => {
   const summary = threadTokenUsageToCostSummary(
     baseResponse({
@@ -96,8 +137,8 @@ test("cost summary carries total, currency and non-zero aux counters", () => {
   expect(summary!.totalCost).toBe(0.42);
   expect(summary!.currency).toBe("USD");
   expect(summary!.aux).toEqual({
-    memory: { tokens: 600, cost: 0.01 },
-    suggestions: { tokens: 120, cost: null },
+    memory: { tokens: 600, cost: 0.01, promoCost: null },
+    suggestions: { tokens: 120, cost: null, promoCost: null },
   });
 });
 
@@ -259,4 +300,99 @@ test("selectContextUsage returns null when context_usage is missing", () => {
   ).toBeNull();
   expect(selectContextUsage(null)).toBeNull();
   expect(selectContextUsage(undefined)).toBeNull();
+});
+
+const PROMO_BASE: ThreadTokenUsageResponse = {
+  thread_id: "t",
+  total_tokens: 0,
+  total_input_tokens: 0,
+  total_output_tokens: 0,
+  total_runs: 0,
+  by_model: {},
+  by_caller: { lead_agent: 0, subagent: 0, middleware: 0 },
+  currency: "USD",
+};
+
+test("cost summary carries the promo total alongside the standard one", () => {
+  const summary = threadTokenUsageToCostSummary({
+    ...PROMO_BASE,
+    total_cost: 34.75,
+    promo_total_cost: 31.15,
+  });
+  expect(summary?.totalCost).toBe(34.75);
+  expect(summary?.promoTotalCost).toBe(31.15);
+});
+
+test("cost summary promo total is null when the backend reports none", () => {
+  const summary = threadTokenUsageToCostSummary({
+    ...PROMO_BASE,
+    total_cost: 30,
+  });
+  expect(summary?.promoTotalCost).toBeNull();
+});
+
+test("cost summary drops a promo total identical to the standard total", () => {
+  // Printing the same figure twice in green and red claims a discount that does
+  // not exist, so an equal pair collapses back to a single price.
+  const summary = threadTokenUsageToCostSummary({
+    ...PROMO_BASE,
+    total_cost: 30,
+    promo_total_cost: 30,
+  });
+  expect(summary?.promoTotalCost).toBeNull();
+});
+
+test("aux rows carry their own promo cost, per sink", () => {
+  // Memory and suggestions can each run on a different model from the
+  // conversation, so a discount applies per sink rather than thread-wide.
+  const summary = threadTokenUsageToCostSummary({
+    ...PROMO_BASE,
+    total_cost: 30,
+    aux: {
+      memory: {
+        tokens: 600,
+        input_tokens: 500,
+        output_tokens: 100,
+        calls: 2,
+        cost: 1.15,
+        promo_cost: 0.28,
+      },
+      suggestions: {
+        tokens: 120,
+        input_tokens: 100,
+        output_tokens: 20,
+        calls: 1,
+        cost: 5,
+        promo_cost: null,
+      },
+    },
+  });
+  expect(summary!.aux.memory!).toEqual({
+    tokens: 600,
+    cost: 1.15,
+    promoCost: 0.28,
+  });
+  expect(summary!.aux.suggestions!).toEqual({
+    tokens: 120,
+    cost: 5,
+    promoCost: null,
+  });
+});
+
+test("an aux promo cost equal to its standard cost collapses to null", () => {
+  const summary = threadTokenUsageToCostSummary({
+    ...PROMO_BASE,
+    total_cost: 30,
+    aux: {
+      memory: {
+        tokens: 600,
+        input_tokens: 500,
+        output_tokens: 100,
+        calls: 2,
+        cost: 1.15,
+        promo_cost: 1.15,
+      },
+    },
+  });
+  expect(summary!.aux.memory!.promoCost).toBeNull();
 });

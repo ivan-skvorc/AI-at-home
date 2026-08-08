@@ -9,6 +9,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **pricing:** The conversation cost is now rendered in **green**, so it reads
+  as money rather than as another token counter, and a model on a live
+  promotional/introductory rate shows **both** prices. The `pricing:` block
+  gained optional `promo_input_per_million` / `promo_output_per_million` (plus a
+  matching cache-hit rate); the token-usage endpoint returns `promo_total_cost`
+  beside `total_cost`, and the header dropdown shows the green promo total —
+  what the thread costs today — next to the red standard total it reverts to
+  when the discount ends. Promo rates are strictly additive: cost is still
+  *billed* against the standard rate, because a promo can lapse at any time and
+  a silently-too-low estimate is worse than a slightly-high one. Both totals
+  cover the whole thread, so an undiscounted model contributes its ordinary cost
+  to each and the pair stays comparable. A half-specified, non-positive, or
+  above-list "promo" is a config error and is dropped whole rather than
+  partially honoured. The three currently-discounted bundled models (Claude
+  Sonnet 5's intro window, MiniMax M3 and GLM-5.2 on OpenRouter) ship with the
+  block, derived from the starred half of the same price-in-name pair.
+
+- **models:** The composer's collapsed model button now keeps the price
+  visible. It is capped at ~160-224px and the price sits mid-name, so the promo
+  half was cut off; the trigger now drops the provider suffix (keeping the `(p)`
+  privacy marker) and lets only the model name ellipsize. This also fixes a
+  pre-existing layout bug behind it: the name span sits in a `flex-col
+  items-start` container where its `flex-1` sizes height, not width, so it was
+  `fit-content` — measured at 315px inside a 160px button — overflowing instead
+  of truncating, with its `truncate` never firing.
+
+- **models:** The model dropdown now colours each entry's price — green for what
+  you pay, and on a discounted `($list → $promo*)` entry the list price in red
+  beside the green promo, matching the cost overview. Purely presentational and
+  total: a name whose price cannot be parsed renders verbatim.
+
 - **chat tabs:** The keep-alive chat tab strip is now persisted **server-side
   per user** (`GET`/`PUT /api/settings/chat-tabs`, backed by
   `{base_dir}/users/{user_id}/ui_state.json`), with `localStorage` demoted to a
@@ -25,6 +56,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   blanked by an empty set the user did not produce.
 
 ### Fixed
+
+- **pricing:** Only the six direct-Anthropic models shipped with a machine-readable
+  `pricing:` block, so the other **34** bundled paid models were unpriceable and a
+  conversation run on any of them reported no cost — the chat header rendered `—`
+  even though tokens were counted. Every bundled paid model now carries a pricing
+  block on both the auto-config and `make setup` paths (`providers.py` derives it
+  from the same price-in-name pair the display uses, so the two synced sources
+  cannot drift), and `TestBundledModelPricing` fails if a bundled model ever loses
+  its price again. `make setup` previously wrote *no* pricing at all, even for
+  Anthropic; it now matches the config path exactly.
+
+- **pricing:** A missing price no longer renders as an unexplained dash. The
+  token-usage endpoint reports `unpriced_models` — models that spent tokens with
+  no configured price — and the header names them, distinguishing "add a pricing
+  block for this model" from "the cost feature is broken". When only some models
+  are priced it says so, rather than quietly showing a total that understates the
+  real spend.
 
 - **pricing:** The conversation cost estimate always showed `—` and never
   reported a spend. `token_usage_by_model` buckets are keyed by the
