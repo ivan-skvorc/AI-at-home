@@ -55,9 +55,8 @@ rs.mock("@/core/threads/chat-tabs-api", () => ({
   },
 }));
 
-const { ChatTabsProvider, useChatTabs } = await import(
-  "@/core/threads/chat-tabs-context"
-);
+const { ChatTabsProvider, useChatTabs } =
+  await import("@/core/threads/chat-tabs-context");
 
 const KEY_ANON = `${CHAT_TABS_STORAGE_PREFIX}anonymous`;
 const KEY_DEFAULT = `${CHAT_TABS_STORAGE_PREFIX}default`;
@@ -133,7 +132,7 @@ describe("chat tab persistence across the offline boot", () => {
     window.localStorage.setItem(KEY_DEFAULT, JSON.stringify(STORED));
 
     mountProvider();
-    await act(async () => {});
+    await settle();
 
     // The gateway never came up; the user's tabs are still on disk untouched,
     // so the next (successful) boot restores them.
@@ -145,7 +144,7 @@ describe("chat tab persistence across the offline boot", () => {
     window.localStorage.setItem(KEY_DEFAULT, JSON.stringify(STORED));
 
     mountProvider();
-    await act(async () => {});
+    await settle();
 
     expect(latest?.tabs).toEqual(STORED);
     expect(readTabs(KEY_DEFAULT)).toEqual(STORED);
@@ -159,7 +158,7 @@ describe("chat tab persistence across the offline boot", () => {
     );
 
     mountProvider();
-    await act(async () => {});
+    await settle();
     expect(latest?.tabs).toHaveLength(1);
 
     await act(async () => {

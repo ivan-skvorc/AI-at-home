@@ -7,7 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **chat tabs:** The keep-alive chat tab strip is now persisted **server-side
+  per user** (`GET`/`PUT /api/settings/chat-tabs`, backed by
+  `{base_dir}/users/{user_id}/ui_state.json`), with `localStorage` demoted to a
+  first-paint cache. Tabs were "forgotten" after a machine restart because the
+  browser store is scoped to one browser *and* one origin, so the set was lost
+  to a site-data-on-exit clear, storage eviction for an insecure-origin site (a
+  plain-HTTP LAN deployment), or reopening the app on a different origin than
+  the one that pinned them (`localhost` vs. a LAN/Tailscale address). The
+  provider still renders instantly from the cache, then reconciles: an
+  unreachable gateway — the normal state right after a restart — keeps the
+  cache instead of blanking the strip, and a server with no stored set adopts
+  and seeds from the local one (the upgrade path for existing tabs). Writes are
+  coalesced and flushed on teardown, and the local cache can no longer be
+  blanked by an empty set the user did not produce.
+
 ### Fixed
+
+- **pricing:** The conversation cost estimate always showed `—` and never
+  reported a spend. `token_usage_by_model` buckets are keyed by the
+  *provider-reported* model id rather than the `config.yaml` id — LangChain
+  records the API-resolved model, so Anthropic returns the dated snapshot its
+  alias resolved to (`claude-opus-5` → `claude-opus-5-20260115`), OpenAI
+  appends a dashed date, OpenRouter appends `:variant` tags, and routed slugs
+  carry a `vendor/` prefix. `lookup_pricing` matched the exact string only, so
+  every bucket looked unpriced, every per-model `cost` was null, and
+  `total_cost` stayed null while `currency` was set. Ids are now resolved
+  through an ordered set of normalized forms tried by exact lookup (never a
+  prefix scan), most-specific-first so a configured OpenRouter copy is still
+  billed at its own routed price. Fixes the ops console, the per-thread
+  endpoint, and the memory/suggestions aux counters at once, and holds across
+  mid-conversation model switches.
 
 - **docker build:** The gateway image build failed on a stock install/update
   with `extra 'camoufox' is not defined`. `config.example.yaml` ships

@@ -13,13 +13,13 @@ from types import SimpleNamespace
 import pytest
 
 from app.gateway.pricing import (
+    _pricing_lookup_candidates,
     build_pricing_map,
     lookup_pricing,
     pricing_currency,
     run_cost,
     token_cost,
 )
-from app.gateway.pricing import _pricing_lookup_candidates
 
 
 def _model(name, model, pricing):
