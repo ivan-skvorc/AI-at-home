@@ -27,9 +27,24 @@ reporting rather than producing an invalid aggregate.
 from __future__ import annotations
 
 import logging
+import re
+from functools import lru_cache
 from typing import Any, NamedTuple
 
 _module_logger = logging.getLogger(__name__)
+
+# A provider-appended version stamp: Anthropic/OpenAI resolve an undated alias
+# to a dated snapshot (``claude-opus-5`` -> ``claude-opus-5-20260115``,
+# ``gpt-5.6-sol`` -> ``gpt-5.6-sol-2026-01-15``), and Vertex spells the same
+# thing with ``@``. Deliberately narrow — only a terminal date-shaped token is
+# stripped — so a genuinely different sibling model (``claude-opus-5-turbo``)
+# is never billed at its neighbour's rate.
+_VERSION_SUFFIX_RE = re.compile(r"[-_@](?:\d{4}-\d{2}-\d{2}|\d{8}|\d{6})$")
+
+# An OpenRouter routing variant appended to the slug (``:free``, ``:nitro``,
+# ``:floor``, ``:online``, ...). Tried only after the exact lookup, so an Ollama
+# tag (``qwen3:8b``, the same shape) still matches its own configured entry.
+_VARIANT_SUFFIX_RE = re.compile(r":[A-Za-z0-9._-]+$")
 
 
 class ModelPricing(NamedTuple):
@@ -94,10 +109,60 @@ def pricing_currency(pricing: dict[str, ModelPricing]) -> str | None:
     return next(iter(pricing.values())).currency if pricing else None
 
 
+@lru_cache(maxsize=1024)
+def _pricing_lookup_candidates(model: str) -> tuple[str, ...]:
+    """Normalized forms of a provider-reported model id, most specific first.
+
+    ``token_usage_by_model`` buckets are keyed by what the provider reported
+    (``response_metadata.model_name``), which is frequently *not* the id written
+    in ``config.yaml``: LangChain records the API-resolved model, so an undated
+    Anthropic alias comes back as its dated snapshot, OpenRouter appends a
+    ``:variant`` routing tag, and a routed slug carries a ``vendor/`` prefix.
+    Matching only on the exact string left every bucket unpriced.
+
+    Each candidate is tried against the map by exact lookup (never a prefix
+    scan), so a normalization can only ever hit a model the operator actually
+    configured. Order matters: a configured OpenRouter copy must win over the
+    direct entry its slug also reduces to, since the two carry different prices.
+    """
+    bases: list[str] = [model]
+    # ``anthropic/claude-opus-5`` -> also try ``claude-opus-5``.
+    if "/" in model:
+        bases.append(model.split("/", 1)[1])
+    for base in list(bases):
+        without_variant = _VARIANT_SUFFIX_RE.sub("", base)
+        if without_variant and without_variant != base:
+            bases.append(without_variant)
+    for base in list(bases):
+        without_version = _VERSION_SUFFIX_RE.sub("", base)
+        if without_version and without_version != base:
+            bases.append(without_version)
+
+    candidates: list[str] = []
+    seen: set[str] = set()
+    for base in bases:
+        for form in (base, base.lower()):
+            if form and form not in seen:
+                seen.add(form)
+                candidates.append(form)
+    return tuple(candidates)
+
+
 def lookup_pricing(pricing: dict[str, ModelPricing], model: str | None) -> ModelPricing | None:
-    if not model:
+    """Price for a model id, tolerating provider-reported id variations.
+
+    Returns ``None`` for a model no configured entry can account for — an
+    unpriced local model must stay unpriced rather than inherit a neighbour's
+    rate (see ``_pricing_lookup_candidates`` for why exact-only matching is
+    not enough in practice).
+    """
+    if not model or not pricing:
         return None
-    return pricing.get(model) or pricing.get(model.lower())
+    for candidate in _pricing_lookup_candidates(model):
+        price = pricing.get(candidate)
+        if price is not None:
+            return price
+    return None
 
 
 def token_cost(input_tokens: int, output_tokens: int, price: ModelPricing, cache_read_tokens: int = 0) -> float:

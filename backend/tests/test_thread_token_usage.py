@@ -171,6 +171,54 @@ async def test_cost_tracks_model_switching_across_turns():
     assert agg["total_runs"] == 3
 
 
+def test_thread_token_usage_prices_provider_reported_model_ids(monkeypatch: pytest.MonkeyPatch) -> None:
+    """End-to-end regression for "the cost estimate always showed —".
+
+    The store's per-model buckets are keyed by what the *provider* reported
+    (``response_metadata.model_name``), not by the id in ``config.yaml``:
+    LangChain records the API-resolved model, so Anthropic's undated alias comes
+    back as a dated snapshot and OpenRouter appends a ``:variant`` tag. Every
+    bucket therefore missed the pricing map and ``total_cost`` stayed ``None``
+    while ``currency`` was set — exactly the "—" the header rendered.
+
+    This drives the real endpoint over realistic reported ids across a
+    model switch, so a regression in the id resolution fails here and not only
+    in the pricing unit tests.
+    """
+    aux_usage.reset_aux_usage()
+    run_store = _make_run_store()
+    run_store.aggregate_tokens_by_thread = AsyncMock(
+        return_value={
+            "total_tokens": 8_600_000,
+            "total_input_tokens": 6_000_000,
+            "total_output_tokens": 2_600_000,
+            "total_runs": 3,
+            "by_model": {
+                # Turn 1: direct Anthropic, alias resolved to a dated snapshot.
+                "claude-opus-4-8-20260115": {"tokens": 1_200_000, "runs": 1, "input_tokens": 1_000_000, "output_tokens": 200_000, "cache_read_tokens": 0},
+                # Turn 2: the user switched models mid-conversation.
+                "claude-sonnet-4-6-20260115": {"tokens": 2_400_000, "runs": 1, "input_tokens": 2_000_000, "output_tokens": 400_000, "cache_read_tokens": 0},
+                # Turn 3: routed through OpenRouter with a variant tag.
+                "anthropic/claude-haiku-4-5:nitro": {"tokens": 4_000_000, "runs": 1, "input_tokens": 3_000_000, "output_tokens": 1_000_000, "cache_read_tokens": 0},
+            },
+            "by_caller": {"lead_agent": 8_600_000, "subagent": 0, "middleware": 0},
+        },
+    )
+    monkeypatch.setattr(thread_runs, "build_context_usage", AsyncMock(return_value=None))
+    monkeypatch.setattr(thread_runs, "_thread_pricing_map", _priced_anthropic_map)
+    app = _make_app(run_store)
+
+    with TestClient(app) as client:
+        data = client.get("/api/threads/thread-1/token-usage").json()
+
+    assert data["currency"] == "USD"
+    # Opus 1M@$5 + 0.2M@$25 = 10 ; Sonnet 2M@$3 + 0.4M@$15 = 12 ; Haiku 3M@$1 + 1M@$5 = 8.
+    assert data["by_model"]["claude-opus-4-8-20260115"]["cost"] == pytest.approx(10.0)
+    assert data["by_model"]["claude-sonnet-4-6-20260115"]["cost"] == pytest.approx(12.0)
+    assert data["by_model"]["anthropic/claude-haiku-4-5:nitro"]["cost"] == pytest.approx(8.0)
+    assert data["total_cost"] == pytest.approx(30.0)
+
+
 def test_thread_token_usage_computes_model_aware_cost_and_aux():
     """Cost is priced per model (subagent on a cheaper model billed correctly),
     and memory/suggestions LLM calls surface as separate priced aux counters."""
