@@ -168,6 +168,8 @@ Host-side pnpm consumers, including the root/frontend Makefiles and local diagno
 - Security policy → **[SECURITY.md](SECURITY.md)**
 - Changes → **[CHANGELOG.md](CHANGELOG.md)**
 - Cutting a release → **[RELEASING.md](RELEASING.md)**
+- Candidate future work → **[roadmap.md](roadmap.md)** (fork-specific; each item is
+  written as a self-contained orchestrator prompt)
 
 ## Cross-Cutting Conventions
 
