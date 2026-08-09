@@ -137,6 +137,34 @@ def _restore_title_config_singleton():
 
 
 @pytest.fixture(autouse=True)
+def _isolate_aux_usage_store(monkeypatch):
+    """Keep the durable auxiliary-usage store out of the developer's checkout.
+
+    ``deerflow.runtime.aux_usage`` is write-through to a SQLite file under the
+    DeerFlow home dir (``.deer-flow/aux_usage.sqlite3``) in production. The
+    suite defaults it OFF so no unrelated test writes there and every such test
+    keeps the pre-durability, process-local behaviour; the aux-usage suites opt
+    back in with their own tmp-path fixture. The store handle is dropped around
+    every test so a resolved path never leaks between them.
+    """
+    import os
+
+    try:
+        from deerflow.runtime.aux_usage_store import AUX_USAGE_DB_ENV, reset_aux_usage_store
+    except ImportError:  # pragma: no cover - harness not importable
+        yield
+        return
+
+    if os.environ.get(AUX_USAGE_DB_ENV) is None:
+        monkeypatch.setenv(AUX_USAGE_DB_ENV, "0")
+    reset_aux_usage_store()
+    try:
+        yield
+    finally:
+        reset_aux_usage_store()
+
+
+@pytest.fixture(autouse=True)
 def _auto_user_context(request):
     """Inject a default ``test-user-autouse`` into the contextvar.
 

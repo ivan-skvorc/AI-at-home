@@ -43,7 +43,7 @@ from app.gateway.utils import sanitize_log_param
 from deerflow.agents.middlewares.dynamic_context_middleware import strip_injected_user_message_id_suffix
 from deerflow.config import get_app_config
 from deerflow.runtime import CancelOutcome, RunRecord, RunStatus, serialize_channel_values_for_api
-from deerflow.runtime.aux_usage import get_thread_aux_usage
+from deerflow.runtime.aux_usage import aget_thread_aux_usage
 from deerflow.runtime.secret_context import redact_config_secrets, redact_metadata_secrets
 from deerflow.utils.messages import ORIGINAL_USER_CONTENT_KEY, get_original_user_content_text, message_to_text
 from deerflow.utils.thread_id import ThreadId
@@ -1571,7 +1571,9 @@ async def thread_token_usage(
         )
 
     aux: dict[str, ThreadTokenUsageAuxBreakdown] = {}
-    for category, models in get_thread_aux_usage(thread_id).items():
+    # Read off the event loop: the aux registry is write-through to a durable
+    # SQLite store and hydrates from it on a thread's first touch in this process.
+    for category, models in (await aget_thread_aux_usage(thread_id)).items():
         tokens = input_tokens = output_tokens = calls = 0
         cat_cost: float | None = None
         cat_promo_cost: float | None = None

@@ -684,6 +684,13 @@ def _record_memory_aux_usage(thread_id: Any, model_name: Any, token_usage: Any) 
     Best-effort: the memory updater already wraps ``extraction_callback`` so an
     exception here cannot break memory writes, but keep this defensive anyway —
     a broken cost counter must never disturb memory extraction.
+
+    Deliberately the *synchronous* registry call: this runs on the memory
+    updater's debounce worker thread, which has no event loop, and that is
+    exactly the constraint that made the registry's durable store a dedicated
+    file rather than the async runs engine (see
+    ``deerflow/runtime/aux_usage_store.py``). Async callers use
+    ``arecord_aux_usage`` instead.
     """
     if not isinstance(token_usage, dict) or not thread_id:
         return

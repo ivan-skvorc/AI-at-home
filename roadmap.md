@@ -53,6 +53,13 @@ Work on a feature branch. Do not open a PR unless asked.
 
 ## 1. Durable auxiliary usage accounting
 
+**Status** — ✅ **Implemented.** The registry is now a write-through cache over
+`deerflow/runtime/aux_usage_store.py`, a small dedicated SQLite file
+(`<DeerFlow home>/aux_usage.sqlite3`, kill switch `DEER_FLOW_AUX_USAGE_DB=0`). See
+FORK.md §7 *Durable auxiliary counters* for the store choice and its trade-offs, and
+`backend/tests/test_aux_usage.py` / `test_aux_usage_wiring.py` /
+`blocking_io/test_aux_usage.py` for the coverage. Items 2 and 3 are unblocked.
+
 **Goal** — Memory and follow-up-suggestion token usage survives a Gateway restart, so
 anything built on cost data can be trusted over a period longer than one process
 lifetime.
