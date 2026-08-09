@@ -12,6 +12,7 @@ from __future__ import annotations
 import logging
 import textwrap
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -112,6 +113,40 @@ class TestBundledModelPricing:
             body = "\n".join(re.sub(r"^  # ?", "  ", line) for line in match.group(2).splitlines())
             blocks[match.group(1)] = yaml.safe_load(body) or []
         return blocks
+
+    def test_every_bundled_model_prices_without_its_pricing_block(self):
+        """The block must be redundant, not load-bearing.
+
+        Shipping `pricing:` blocks in `config.example.yaml` only ever reaches a
+        **fresh** `config.yaml`. `sync-api-key-models.py` skips a provider block
+        whose models are already active (correct — it must not duplicate them),
+        and `config_upgrade.py`'s `merge_missing` is dict-based so it cannot add
+        a key inside an existing list entry. So a user who ran DeerFlow before a
+        price shipped keeps that model active and unpriced forever, and their
+        chat header stays on `—` no matter how many times the example is fixed.
+
+        `pricing.py::derive_pricing_from_display_name` closes that by reading the
+        price the name already states. This test pins the property that makes it
+        work: every bundled model must resolve a price from its `display_name`
+        **alone**, with its block removed. A new bundled model whose name does
+        not carry a parseable `($in/out)` pair would price on a fresh install and
+        silently not price on an upgraded one — fail here instead.
+        """
+        from app.gateway.pricing import build_pricing_map, lookup_pricing
+
+        for slug, entries in self._marker_blocks().items():
+            for entry in entries:
+                stripped = SimpleNamespace(name=entry["name"], model=entry["model"], pricing=None, display_name=entry["display_name"])
+                pricing = build_pricing_map([stripped])
+                price = lookup_pricing(pricing, entry["model"])
+                assert price is not None, f"{slug}:{entry['name']} cannot be priced from its display_name alone"
+                # And the derived figures must equal the shipped block, or an
+                # upgraded install would silently bill a different rate than a
+                # fresh one.
+                shipped = entry["pricing"]
+                assert price.input_per_million == pytest.approx(shipped["input_per_million"]), f"{slug}:{entry['name']}"
+                assert price.output_per_million == pytest.approx(shipped["output_per_million"]), f"{slug}:{entry['name']}"
+                assert price.promo() is not None if shipped.get("promo_input_per_million") else price.promo() is None, f"{slug}:{entry['name']}"
 
     def test_every_bundled_model_is_priced(self):
         unpriced = [f"{slug}:{entry.get('name')}" for slug, entries in self._marker_blocks().items() for entry in entries if not entry.get("pricing")]

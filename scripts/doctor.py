@@ -12,6 +12,7 @@ Exit codes:
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -342,6 +343,62 @@ def check_models_configured(config_path: Path) -> CheckResult:
         )
     except Exception as exc:
         return CheckResult("models configured", "fail", str(exc))
+
+
+# The `($<in>/<out>)` pair every bundled model carries in its display_name;
+# `app/gateway/pricing.py` derives a price from it when no `pricing:` block
+# is configured, so a name carrying one is priceable.
+_PRICE_IN_DISPLAY_NAME_RE = re.compile(r"\(\$\d+(?:\.\d+)?/\d+(?:\.\d+)?")
+
+
+def check_model_pricing(config_path: Path) -> CheckResult:
+    """Can the chat header actually show a cost for the configured models?
+
+    The cost estimate has no error path: an unpriceable model contributes
+    nothing and the header renders a bare `—`. That has been mistaken for a
+    broken feature three times, so surface it as a real check. A model is
+    priceable from an explicit `pricing:` block *or* from the `($in/out)` pair
+    in its `display_name`; local Ollama models are unpriced by design and are
+    reported separately rather than as a problem.
+    """
+    if not config_path.exists():
+        return CheckResult("model pricing", "skip")
+    try:
+        data = _load_yaml_file(config_path)
+        models = data.get("models") or []
+        if not models:
+            return CheckResult("model pricing", "skip")
+
+        priceable, unpriced = [], []
+        for model in models:
+            if not isinstance(model, dict):
+                continue
+            name = model.get("name") or "?"
+            display_name = str(model.get("display_name") or "")
+            if isinstance(model.get("pricing"), dict) or _PRICE_IN_DISPLAY_NAME_RE.search(display_name):
+                priceable.append(name)
+            else:
+                unpriced.append(name)
+
+        if not priceable:
+            return CheckResult(
+                "model pricing",
+                "warn",
+                f"no price for any of {len(models)} model(s) — the chat header will show '—'",
+                fix="Give each paid model a `pricing:` block, or a ($in/out) price in its display_name",
+            )
+        if unpriced:
+            # Local models are genuinely free; naming them keeps the note
+            # actionable without implying every entry must be priced.
+            shown = ", ".join(unpriced[:4]) + (", ..." if len(unpriced) > 4 else "")
+            return CheckResult(
+                "model pricing",
+                "ok",
+                f"{len(priceable)} priced; unpriced (free/local?): {shown}",
+            )
+        return CheckResult("model pricing", "ok", f"all {len(priceable)} model(s) priced")
+    except Exception as exc:
+        return CheckResult("model pricing", "warn", str(exc))
 
 
 def check_config_loadable(config_path: Path) -> CheckResult:
@@ -957,6 +1014,7 @@ def main() -> int:
         check_config_version(config_path, project_root),
         check_config_loadable(config_path),
         check_models_configured(config_path),
+        check_model_pricing(config_path),
         check_core_tools(config_path),
         *check_env_placeholders(config_path),
         *check_config_unknown_keys(config_path),

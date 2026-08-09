@@ -383,3 +383,115 @@ class TestPromoPricing:
             token_usage_by_model={"model-m": {"input_tokens": 1_000_000, "output_tokens": 1_000_000}},
         )
         assert cost == pytest.approx(5.0)
+
+
+class TestPricingDerivedFromDisplayName:
+    """A model with no ``pricing:`` block is priced from its display name.
+
+    This is what makes the feature work for an **existing** install. Shipping
+    `pricing:` blocks in `config.example.yaml` only ever reaches a *fresh*
+    `config.yaml`: `sync-api-key-models.py` skips a block whose models are
+    already active (correct — it must not duplicate them), and
+    `config_upgrade.py`'s `merge_missing` is dict-based so it cannot add a key
+    inside an existing list entry. So every user who ran DeerFlow before the
+    blocks were added keeps active, unpriced models forever and the chat header
+    stays on `—`.
+
+    The price is not actually missing from those configs — it is right there in
+    `display_name` (`Grok 4.5 ($2/6) (OpenRouter) (p)`), which is the same pair
+    the shipped `pricing:` blocks are generated from. Deriving from it makes the
+    redundant block optional rather than load-bearing.
+    """
+
+    @staticmethod
+    def _named(display_name: str) -> object:
+        # No `pricing` attribute at all — the shape of a pre-fix config entry.
+        return SimpleNamespace(name="m", model="model-m", pricing=None, display_name=display_name)
+
+    def test_unpriced_model_is_priced_from_its_display_name(self):
+        pricing = build_pricing_map([self._named("Grok 4.5 ($2/6) (OpenRouter) (p)")])
+        price = lookup_pricing(pricing, "model-m")
+        assert price is not None
+        assert (price.input_per_million, price.output_per_million, price.currency) == (2.0, 6.0, "USD")
+        assert token_cost(1_000_000, 1_000_000, price) == pytest.approx(8.0)
+
+    def test_derived_price_carries_the_promo_pair(self):
+        pricing = build_pricing_map([self._named("GLM-5.2 ($1.15/3.6 → $0.28/0.87*) (OpenRouter) (p)")])
+        price = lookup_pricing(pricing, "model-m")
+        assert (price.input_per_million, price.output_per_million) == (1.15, 3.6)
+        promo = price.promo()
+        assert promo is not None
+        assert (promo.input_per_million, promo.output_per_million) == (0.28, 0.87)
+
+    def test_derived_anthropic_price_includes_the_cache_hit_rate(self):
+        # Anthropic publishes cache reads at 0.1x input; the same rule the
+        # generated blocks use, so derived and shipped prices agree.
+        pricing = build_pricing_map([self._named("Claude Opus 4.8 ($5/25) (Anthropic)")])
+        price = lookup_pricing(pricing, "model-m")
+        assert price.input_cache_hit_per_million == pytest.approx(0.5)
+
+    def test_derived_non_anthropic_price_omits_the_cache_hit_rate(self):
+        pricing = build_pricing_map([self._named("Grok 4.5 ($2/6) (OpenRouter) (p)")])
+        assert lookup_pricing(pricing, "model-m").input_cache_hit_per_million is None
+
+    def test_an_explicit_pricing_block_always_wins(self):
+        # An operator who hand-wrote a price (a negotiated rate, a corrected
+        # figure) must never have it silently replaced by the name's.
+        model = SimpleNamespace(
+            name="m",
+            model="model-m",
+            pricing={"currency": "USD", "input_per_million": 9.0, "output_per_million": 9.0},
+            display_name="Grok 4.5 ($2/6) (OpenRouter) (p)",
+        )
+        price = lookup_pricing(build_pricing_map([model]), "model-m")
+        assert (price.input_per_million, price.output_per_million) == (9.0, 9.0)
+
+    def test_a_name_with_no_price_stays_unpriced(self):
+        # Local Ollama and hand-added models must not be invented a price.
+        for name in ["qwen3:32b (Ollama)", "Doubao-Seed-1.8", "", "Gemini 3.6 Flash"]:
+            assert build_pricing_map([self._named(name)]) == {}, name
+
+    def test_a_missing_display_name_attribute_is_tolerated(self):
+        # Ollama entries are generated at runtime and may carry no display_name.
+        assert build_pricing_map([SimpleNamespace(name="m", model="model-m", pricing=None)]) == {}
+
+    def test_malformed_pricing_block_does_not_fall_back_to_the_name(self):
+        # A broken explicit block is an operator error worth surfacing, not
+        # something to paper over with a different number.
+        model = SimpleNamespace(
+            name="m",
+            model="model-m",
+            pricing={"currency": "USD", "input_per_million": "free", "output_per_million": 9.0},
+            display_name="Grok 4.5 ($2/6) (OpenRouter) (p)",
+        )
+        assert build_pricing_map([model]) == {}
+
+    def test_derived_and_shipped_prices_agree_for_every_bundled_model(self):
+        """The derivation must match what `providers.py` generates.
+
+        Two code paths now turn one display name into a price. If they ever
+        disagree, a user's cost silently depends on whether their config
+        happens to carry the redundant block.
+        """
+        import sys
+        from pathlib import Path
+
+        repo_root = Path(__file__).resolve().parents[2]
+        sys.path.insert(0, str(repo_root / "scripts"))
+        try:
+            from wizard.providers import pricing_for_display_name
+        finally:
+            sys.path.pop(0)
+
+        for display_name in [
+            "Claude Opus 4.8 ($5/25) (Anthropic)",
+            "Claude Sonnet 5 ($3/15 → $2/10*) (Anthropic)",
+            "GLM-5.2 ($1.15/3.6 → $0.28/0.87*) (OpenRouter) (p)",
+            "MiniMax M3 ($0.6/2.4 → $0.24/0.96*) (OpenRouter) (p)",
+            "Grok 4.5 ($2/6) (OpenRouter) (p)",
+            "GPT-5.6 Sol ($1.25/10) (OpenAI)",
+        ]:
+            shipped = pricing_for_display_name(display_name)
+            derived = build_pricing_map([self._named(display_name)])
+            from_shipped = build_pricing_map([SimpleNamespace(name="m", model="model-m", pricing=shipped, display_name=display_name)])
+            assert derived == from_shipped, display_name

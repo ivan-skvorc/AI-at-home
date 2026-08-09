@@ -43,6 +43,60 @@ _module_logger = logging.getLogger(__name__)
 # is never billed at its neighbour's rate.
 _VERSION_SUFFIX_RE = re.compile(r"[-_@](?:\d{4}-\d{2}-\d{2}|\d{8}|\d{6})$")
 
+# The price a bundled model already carries in its ``display_name``
+# (``Grok 4.5 ($2/6) (OpenRouter) (p)``), optionally with a starred promo pair
+# (``($1.15/3.6 → $0.28/0.87*)``). Deliberately anchored on the ``$`` and the
+# bracket so a bare version number (``Gemini 3.6 Flash``) is never read as a
+# price. Kept in step with ``scripts/wizard/providers.py::pricing_for_display_name``
+# by ``test_pricing.py::test_derived_and_shipped_prices_agree_for_every_bundled_model``.
+_DISPLAY_NAME_PRICE_RE = re.compile(r"\(\$(\d+(?:\.\d+)?)/(\d+(?:\.\d+)?)(?:\s*→\s*\$(\d+(?:\.\d+)?)/(\d+(?:\.\d+)?)\*)?\)")
+
+# Anthropic publishes prompt-cache reads at 0.1x the input price. Other
+# providers differ or publish none, so their derived blocks omit the hit price
+# and cache reads fall back to the miss price (the conservative upper bound).
+_ANTHROPIC_CACHE_HIT_RATIO = 0.1
+
+
+def derive_pricing_from_display_name(display_name: str | None) -> dict | None:
+    """A ``pricing:``-shaped dict read off a model's display name, or None.
+
+    Every bundled model's name already states its price, and the shipped
+    ``pricing:`` blocks are generated from exactly that pair — the block is a
+    machine-readable copy, not independent data. Treating it as *required*
+    is what left existing installs unpriced: shipping the blocks in
+    ``config.example.yaml`` only reaches a brand-new ``config.yaml``, because
+    ``sync-api-key-models.py`` skips a provider block whose models are already
+    active and ``config_upgrade.py``'s dict-based ``merge_missing`` cannot add a
+    key inside an existing list entry. Deriving from the name makes the block
+    optional, so a config written before the blocks existed prices correctly
+    with no migration, and a hand-added model that follows the naming
+    convention is priced for free.
+
+    An explicit ``pricing:`` block always wins — see ``build_pricing_map``.
+    """
+    if not display_name:
+        return None
+    match = _DISPLAY_NAME_PRICE_RE.search(display_name)
+    if match is None:
+        return None
+    is_anthropic = display_name.rstrip().endswith("(Anthropic)")
+    input_per_million = float(match.group(1))
+    pricing: dict = {
+        "currency": "USD",
+        "input_per_million": input_per_million,
+        "output_per_million": float(match.group(2)),
+    }
+    if is_anthropic:
+        pricing["input_cache_hit_per_million"] = round(input_per_million * _ANTHROPIC_CACHE_HIT_RATIO, 6)
+    if match.group(3) is not None and match.group(4) is not None:
+        promo_input = float(match.group(3))
+        pricing["promo_input_per_million"] = promo_input
+        pricing["promo_output_per_million"] = float(match.group(4))
+        if is_anthropic:
+            pricing["promo_input_cache_hit_per_million"] = round(promo_input * _ANTHROPIC_CACHE_HIT_RATIO, 6)
+    return pricing
+
+
 # An OpenRouter routing variant appended to the slug (``:free``, ``:nitro``,
 # ``:floor``, ``:online``, ...). Tried only after the exact lookup, so an Ollama
 # tag (``qwen3:8b``, the same shape) still matches its own configured entry.
@@ -134,7 +188,14 @@ def build_pricing_map(models: Any, *, logger: logging.Logger | None = None) -> d
     for model_cfg in models or []:
         raw = getattr(model_cfg, "pricing", None)
         if not isinstance(raw, dict):
-            continue
+            # No explicit block: fall back to the price the name already states.
+            # A malformed *explicit* block deliberately does not reach here — it
+            # is an operator error worth surfacing (below), not something to
+            # paper over with a different number.
+            raw = derive_pricing_from_display_name(getattr(model_cfg, "display_name", None))
+            if raw is None:
+                continue
+            log.debug("pricing: derived price for %s from its display name (no pricing: block configured)", getattr(model_cfg, "name", "?"))
         try:
             input_price = float(raw.get("input_per_million") or 0)
             output_price = float(raw.get("output_per_million") or 0)
