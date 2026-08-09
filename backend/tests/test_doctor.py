@@ -703,3 +703,67 @@ class TestCheckEnvPlaceholders:
 
     def test_no_config_returns_empty(self, tmp_path):
         assert doctor.check_env_placeholders(tmp_path / "missing.yaml") == []
+
+
+class TestCheckModelPricing:
+    """`make doctor` must be able to explain a `—` cost estimate.
+
+    The cost display has no error path — an unpriceable model contributes
+    nothing and the header renders a bare dash — so this is the one place a
+    user can find out *why* before reading source.
+    """
+
+    @staticmethod
+    def _config(tmp_path, models: str):
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text(f"config_version: 5\nmodels:\n{models}")
+        return cfg
+
+    def test_explicit_pricing_block_counts_as_priced(self, tmp_path):
+        cfg = self._config(
+            tmp_path,
+            "  - name: m\n    display_name: Some Model\n    pricing:\n      currency: USD\n      input_per_million: 1\n      output_per_million: 2\n",
+        )
+        result = doctor.check_model_pricing(cfg)
+        assert result.status == "ok"
+        assert "1 model(s) priced" in result.detail
+
+    def test_price_in_display_name_counts_as_priced(self, tmp_path):
+        # The upgrade path for an existing install: no `pricing:` block, but the
+        # name carries the pair the backend derives from.
+        cfg = self._config(tmp_path, "  - name: m\n    display_name: Grok 4.5 ($2/6) (OpenRouter) (p)\n")
+        result = doctor.check_model_pricing(cfg)
+        assert result.status == "ok"
+        assert "1 model(s) priced" in result.detail
+
+    def test_no_priceable_model_warns_with_the_symptom(self, tmp_path):
+        cfg = self._config(tmp_path, "  - name: m\n    display_name: Some Model\n  - name: n\n    display_name: Another\n")
+        result = doctor.check_model_pricing(cfg)
+        assert result.status == "warn"
+        assert "—" in result.detail, "the check must name the symptom the user actually sees"
+        assert "pricing:" in result.fix
+
+    def test_mixed_priced_and_local_models_pass_and_name_the_unpriced(self, tmp_path):
+        cfg = self._config(
+            tmp_path,
+            "  - name: cloud\n    display_name: Grok 4.5 ($2/6) (OpenRouter) (p)\n  - name: qwen3:32b\n    display_name: qwen3:32b (Ollama)\n",
+        )
+        result = doctor.check_model_pricing(cfg)
+        # A local model is free by design, so this is informational, not a problem.
+        assert result.status == "ok"
+        assert "qwen3:32b" in result.detail
+
+    def test_bare_version_number_is_not_mistaken_for_a_price(self, tmp_path):
+        cfg = self._config(tmp_path, "  - name: m\n    display_name: Gemini 3.6 Flash\n")
+        assert doctor.check_model_pricing(cfg).status == "warn"
+
+    def test_missing_config_or_no_models_skips(self, tmp_path):
+        assert doctor.check_model_pricing(tmp_path / "nope.yaml").status == "skip"
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text("config_version: 5\nmodels: []\n")
+        assert doctor.check_model_pricing(cfg).status == "skip"
+
+    def test_malformed_config_warns_instead_of_raising(self, tmp_path):
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text("models:\n  - [unclosed\n")
+        assert doctor.check_model_pricing(cfg).status == "warn"

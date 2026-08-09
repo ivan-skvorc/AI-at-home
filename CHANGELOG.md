@@ -57,6 +57,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **pricing:** The cost estimate stayed on `—` for anyone who had run DeerFlow
+  before the prices shipped. Adding `pricing:` blocks to
+  `config.example.yaml` only ever reaches a **brand-new** `config.yaml`:
+  `sync-api-key-models.py` skips a provider block whose models are already
+  active (correct — it must not duplicate them), and `config_upgrade.py`'s
+  `merge_missing` is dict-based, so it cannot add a key inside an existing list
+  entry. An upgraded install therefore kept its models active and unpriced
+  forever, no matter how many times the example was corrected — reproduced with
+  13 active models and 0 pricing blocks, where both launch-path regenerators
+  reported "no changes". The price was never actually missing from those
+  configs: it is in `display_name` (`Grok 4.5 ($2/6) (OpenRouter) (p)`), which
+  is what the shipped blocks are generated from. Cost estimation now derives a
+  price from that pair when no block is configured, so existing installs price
+  correctly with no migration and hand-added models following the convention
+  are priced for free. An explicit block still wins, and a malformed explicit
+  block is deliberately *not* papered over with the name's price. `make doctor`
+  gained a `model pricing` check that names the `—` symptom when nothing
+  configured can be priced.
+
 - **pricing:** Only the six direct-Anthropic models shipped with a machine-readable
   `pricing:` block, so the other **34** bundled paid models were unpriceable and a
   conversation run on any of them reported no cost — the chat header rendered `—`
