@@ -1,0 +1,469 @@
+# Roadmap
+
+Candidate improvements for this fork, written as **orchestrator prompts** — each item is
+self-contained enough to hand to a coding agent as a single unit of work.
+
+These are derived from a comparison of this fork against upstream
+[bytedance/deer-flow](https://github.com/bytedance/deer-flow). The fork's thesis (see
+[FORK.md](./FORK.md)) is a **personal AI you host at home**: private, cheap, reached from
+your phone over Tailscale, mixing free local Ollama models with paid cloud keys. Every
+item below either extends that thesis or reduces a risk the comparison surfaced.
+
+Nothing here is committed work. Items are ordered by dependency and value, not priority —
+pick per appetite.
+
+---
+
+## How to use this file
+
+Each item has a **Goal**, **Why it fits**, **Depends on**, **Scope**, **Key files**, and
+**Done when**. When dispatching one to an agent, prepend the shared context block below;
+the per-item text assumes it.
+
+<details>
+<summary><strong>Shared context block</strong> (prepend to every prompt)</summary>
+
+```
+You are working in the AI-at-home repo, a fork of bytedance/deer-flow. Read AGENTS.md,
+backend/AGENTS.md, and frontend/AGENTS.md before starting, and FORK.md for the fork's
+design intent.
+
+Repo conventions that are not optional:
+- TDD is mandatory for backend work. Tests live in backend/tests/; write the failing test
+  first. Frontend tests live in frontend/tests/.
+- Keep docs in sync in the same change set: README.md for user-facing changes, the
+  relevant AGENTS.md for architecture changes, FORK.md for anything that becomes a
+  fork-vs-upstream difference (including a row in its Post-sync feature checklist).
+- Format before pushing: `cd backend && make format && make lint && make test`;
+  `cd frontend && pnpm format && pnpm check && pnpm test`. CI enforces
+  `ruff format --check` and `prettier --check`.
+- Prefer additive blocks on stable anchors over rewrites of upstream files — this fork
+  merges upstream regularly and every rewritten upstream file becomes a recurring merge
+  conflict.
+- New defaults must be safe for a shared deployment, or must self-disable when
+  DEER_FLOW_ENV/ENVIRONMENT is prod. Follow the pattern in
+  backend/app/gateway/auth_disabled.py.
+
+Work on a feature branch. Do not open a PR unless asked.
+```
+
+</details>
+
+---
+
+## 1. Durable auxiliary usage accounting
+
+**Goal** — Memory and follow-up-suggestion token usage survives a Gateway restart, so
+anything built on cost data can be trusted over a period longer than one process
+lifetime.
+
+**Why it fits** — `deerflow/runtime/aux_usage.py` is deliberately process-local and
+bounded (LRU over 4096 threads), documented in FORK.md §7 as "enough for a single-process
+personal deployment." That was the right call for a display counter. It is the wrong
+foundation for a budget or a spend report, both of which are on this roadmap. This item
+exists to unblock them.
+
+**Depends on** — nothing.
+
+**Scope**
+
+- Persist aux usage (category, model, thread, input/output/cache-read tokens) durably
+  alongside run token usage.
+- Solve the constraint that made it process-local in the first place: memory usage is
+  recorded from the background extraction thread
+  (`agents/memory/manager.py::_host_default_extraction_callback`), which cannot reach the
+  async runs DB. Options worth evaluating before writing code: a sync write path, a queue
+  drained by the Gateway event loop, or a small dedicated store. Pick one, write down why
+  in the PR.
+- Keep the in-memory registry as a write-through cache so the header stays fast.
+- Preserve the existing `aux` shape in `GET /api/threads/{id}/token-usage`.
+
+**Key files** — `backend/packages/harness/deerflow/runtime/aux_usage.py`,
+`backend/packages/harness/deerflow/agents/memory/manager.py`,
+`backend/app/gateway/utils/oneshot_llm.py` (recording side),
+`backend/packages/harness/deerflow/persistence/run/sql.py`,
+`backend/app/gateway/routers/thread_runs.py`.
+
+**Done when** — aux totals for a thread are identical before and after a Gateway restart;
+`backend/tests/test_aux_usage.py` and `test_aux_usage_wiring.py` are extended with a
+cold-start round-trip; the FORK.md §7 "Caveats (deliberate)" paragraph is updated to
+reflect the new behavior.
+
+---
+
+## 2. Currency-denominated spend caps
+
+**Goal** — The operator can set a daily / weekly / monthly budget in real money and have
+runs warn and then hard-stop when it is exhausted.
+
+**Why it fits** — This is the largest single gap the comparison found. The fork built an
+entire pricing layer to make cost **visible** and never made it **bounded**. Upstream's
+`token_budget` does not fill the hole: it is per-run and counted in tokens, and in a fork
+whose premise is mixing Opus, Haiku, and free local Ollama in one session, a token is not
+a unit of cost — 200k tokens is $5 or $0 depending on which model burned them.
+
+**Depends on** — item 1 (a budget that resets on restart is not a budget).
+
+**Scope**
+
+- Add a `spend_budget:` config section mirroring `token_budget:`'s shape
+  (`enabled`, limits, `warn_threshold`, `hard_stop_threshold`) but denominated in the
+  single configured pricing currency, over rolling or calendar windows.
+- Enforce at run admission and during a run, priced through the existing `run_cost` path
+  so lead and subagent tokens are billed at their own model's rate. Model
+  `TokenBudgetMiddleware` for the in-run warn / forced-final-answer behavior.
+- Unpriced models (local Ollama) contribute zero — a fully local run must never be
+  blocked by a spend cap.
+- Surface remaining budget in the existing header dropdown next to the cost figure.
+- Decide and document what happens with no pricing configured (proposal: the feature
+  disables itself and `make doctor` says why).
+
+**Key files** — `backend/packages/harness/deerflow/config/token_budget_config.py` and
+`agents/middlewares/token_budget_middleware.py` (as the pattern to follow),
+`backend/app/gateway/pricing.py`, `config.example.yaml`,
+`frontend/src/components/workspace/token-usage-indicator.tsx`.
+
+**Done when** — a configured cap produces an in-context warning at the warn threshold and
+a forced final answer at the hard stop; a local-only run is never blocked; backend tests
+cover window rollover, the mixed lead/subagent case, and the unpriced-model case;
+README.md and FORK.md document the section.
+
+---
+
+## 3. Spend history and attribution view
+
+**Goal** — A workspace page answering "where did my money go this month," broken down by
+model, thread, and feature.
+
+**Why it fits** — The header answers "what is this conversation costing." It does not
+answer the question a person actually asks at the end of a month. The data is already
+collected per-model and per-feature; this is mostly a view over it.
+
+**Depends on** — item 1.
+
+**Scope**
+
+- Aggregate persisted run costs and aux costs over a time range, grouped by model, by
+  thread, and by category (conversation / memory / suggestions).
+- Add a workspace page alongside `/workspace/scheduled-tasks`.
+- Reuse `pricing.py` end to end — do not add a second cost calculation. Honor the
+  one-currency rule and the promo/standard split already implemented there.
+- Name unpriced models explicitly rather than reporting a quietly low total, matching the
+  `unpriced_models` behavior the header already has.
+
+**Key files** — `backend/app/gateway/pricing.py`,
+`backend/app/gateway/routers/console.py` (existing aggregation to reuse),
+`backend/packages/harness/deerflow/persistence/run/sql.py`,
+`frontend/src/app/workspace/`.
+
+**Done when** — the page reports a breakdown whose total matches the sum of per-thread
+header figures for the same window; unpriced models are named; tests cover the
+aggregation and the empty/no-pricing states.
+
+---
+
+## 4. Automated model and pricing audit
+
+**Goal** — A scheduled CI job that diffs the bundled model roster against live provider
+catalogs and opens an issue when a slug, price, or promo has drifted.
+
+**Why it fits** — FORK.md concedes that the existing tests "do not catch a
+stale-but-well-formed price or a since-renamed slug, because both pass against any
+syntactically valid entry," and names the specific failure: an expired promo leaves the
+chat header advertising a discount nobody is getting. The audit is currently a manual
+discipline documented across two sections. The fork's entire cost story rots silently
+without it — and *silently* is the operative word, which is what makes this worth
+automating over almost anything else here.
+
+**Depends on** — nothing.
+
+**Scope**
+
+- Fetch current model catalogs (OpenRouter's models + promotions endpoints; each
+  first-party lab's catalog where one is machine-readable).
+- Diff against both synced sources — the `# === BEGIN auto-model-config: <provider> ===`
+  marker blocks in `config.example.yaml` and the `*_BUNDLE_MODELS` lists in
+  `scripts/wizard/providers.py` — for: retired or renamed slugs, changed list prices,
+  started or ended promotions.
+- Report as a GitHub issue with a suggested diff. Do not auto-commit price changes; the
+  audit rules in FORK.md require reading the provider's own page, and a wrong automated
+  price is worse than a stale one.
+- Handle unreachable providers as a skip, never a failure — this must not become a red CI
+  job people learn to ignore.
+
+**Key files** — `.github/workflows/`, `config.example.yaml`,
+`scripts/wizard/providers.py`, `scripts/sync-api-key-models.py`,
+`backend/tests/test_config_integrity.py`.
+
+**Done when** — the job runs weekly, produces a readable issue against a deliberately
+stale fixture, skips cleanly when a provider is unreachable, and the
+*Auditing the model list* section of FORK.md points at it as the trigger for the manual
+pass rather than the calendar.
+
+---
+
+## 5. Cost-aware model routing policy
+
+**Goal** — A declarative policy that routes subagents to the cheapest model that can
+actually do the task, so the fork's cost saving is the default rather than a manual
+choice.
+
+**Why it fits** — The fork exposes the lever (per-thread model, per-thread subagent
+override) but the user must pull it every session. FORK.md's own worked example puts
+Sonnet-lead / Haiku-subagents at ~63% cheaper than all-Sonnet and Sonnet-lead /
+local-subagents at ~95%. A policy turns a UI affordance into a standing saving.
+
+**Depends on** — nothing. Item 6 makes it materially safer.
+
+**Scope**
+
+- Add a config-level routing policy: rules matching on task requirements (needs tools,
+  needs vision, needs thinking, estimated context size) mapped to a model preference
+  order.
+- Decide requirements from the capability flags that already exist on model entries
+  (`supports_tools`, `supports_vision`, `supports_thinking`, `context_window`) — do not
+  add an LLM call to classify the task.
+- The existing per-thread "Follow lead" / explicit subagent selection must always win
+  over the policy. The policy fills the default, nothing more.
+- Ship it **off by default**, consistent with how this fork treats anything that changes
+  agent behavior.
+- Show the effective routing decision on the subagent card so it is inspectable rather
+  than mysterious.
+
+**Key files** — `backend/packages/harness/deerflow/tools/builtins/task_tool.py`,
+`backend/packages/harness/deerflow/subagents/executor.py`, `config.example.yaml`,
+`frontend/src/components/workspace/input-box.tsx`.
+
+**Done when** — with a policy configured, a tool-free extraction subtask routes to a cheap
+or local model and a tool-using one does not; an explicit per-thread subagent selection
+overrides the policy; the decision is visible in the UI; backend tests pin rule matching
+and the override precedence.
+
+---
+
+## 6. Model fallback chains
+
+**Goal** — A failed model call retries down a configured chain (local → cheap cloud →
+premium) instead of failing the turn.
+
+**Why it fits** — FORK.md §3 notes that models flagged `supports_tools: false` stay
+selectable and "tool-using subagents will simply fail at runtime." That is one instance of
+a general problem: running local models means absorbing local-model failure modes — daemon
+down, OOM, context overflow, no tool support. Right now the user absorbs them manually.
+This is the reliability cost of the fork's central bet, and paying it makes item 5 safe to
+turn on.
+
+**Depends on** — nothing.
+
+**Scope**
+
+- Per-model or global `fallback:` chain in config.
+- Trigger on: connection failure to the provider, context-length rejection, tool-call
+  unsupported, and provider 5xx. Do **not** fall back on a user interrupt, a budget stop
+  (item 2), or a guardrail refusal — those are intentional stops.
+- Bound the chain and never retry indefinitely; log which model actually served the call.
+- Attribute tokens to the model that actually ran, so cost stays correct — this is
+  load-bearing for items 2 and 3.
+
+**Key files** — `backend/packages/harness/deerflow/models/`,
+`backend/packages/harness/deerflow/subagents/executor.py`,
+`backend/packages/harness/deerflow/runtime/runs/worker.py`.
+
+**Done when** — killing the Ollama daemon mid-session degrades to the configured cloud
+fallback rather than failing the turn; a budget hard-stop does not trigger fallback; token
+usage is attributed to the serving model; tests cover each trigger and each non-trigger.
+
+---
+
+## 7. PWA, service worker, and push notifications
+
+**Goal** — The app installs to a phone home screen and delivers a notification when a
+long-running agent task finishes, with the browser closed.
+
+**Why it fits** — This is the biggest gap relative to the fork's own stated goal. There is
+a notification settings page, but it uses the plain browser Notification API with no
+service worker and no manifest, so a notification only fires while the tab is open — and
+iOS Safari will not deliver at all without an installed PWA. The use case the fork is
+built around ("start a sandbox run from my phone over Tailscale, pocket it, get pinged
+when it's done") does not currently work on the device it is designed for.
+
+**Depends on** — nothing.
+
+**Scope**
+
+- Add `manifest.json`, icons, and a service worker to `frontend/public` / the Next.js app.
+- Add Web Push: VAPID keys generated at setup, subscription stored per user (reuse the
+  `ui_state.json` per-user store pattern in
+  `deerflow/config/user_ui_state.py`), and a Gateway endpoint to deliver on run
+  completion.
+- Extend the existing notification settings page rather than adding a second one; keep it
+  opt-in and off by default.
+- Must work on a plain-HTTP LAN origin **or** fail with a clear explanation — service
+  workers require a secure context, so `localhost` and Tailscale HTTPS work while a plain
+  LAN IP does not. Say so in the UI instead of silently doing nothing. Document the
+  Tailscale HTTPS path in README.md.
+- Audit the mobile chat layout in the same pass — the keep-alive tab strip and artifact
+  panel are desktop-shaped.
+
+**Key files** — `frontend/public/`, `frontend/next.config.js`,
+`frontend/src/core/notification/hooks.ts`,
+`frontend/src/components/workspace/settings/notification-settings-page.tsx`,
+`backend/packages/harness/deerflow/config/user_ui_state.py`,
+`backend/app/gateway/routers/settings.py`.
+
+**Done when** — the app is installable on Android and iOS; a run finishing with the app
+backgrounded produces a notification; an insecure origin shows the explanation rather than
+failing silently; the feature is off until enabled.
+
+---
+
+## 8. Whole-instance backup and restore
+
+**Goal** — One command snapshots everything a personal instance has accumulated, and one
+command restores it.
+
+**Why it fits** — There is per-feature memory import/export, but no snapshot of
+`.deer-flow` as a unit: memory, threads, chat tabs, runtime settings, uploads, integration
+credentials. A personal AI accumulates months of memory on a single machine with no
+redundancy, which is exactly the deployment shape this fork targets. It also doubles as
+the recovery path for the root-owned-files problem FORK.md documents in the Arch / DooD
+section.
+
+**Depends on** — nothing.
+
+**Scope**
+
+- `make backup` / `make restore` writing a single timestamped archive.
+- Include: the DeerFlow home tree, `config.yaml`, `extensions_config.json`, custom skills.
+  Handle the database backend (sqlite file vs. Postgres dump) explicitly.
+- **Secrets need a deliberate decision, not a default.** Integration credentials under
+  `users/{user_id}/integrations/` are `0700`/`0600` for a reason. Either exclude them, or
+  encrypt the archive and refuse to write it world-readable. Document the choice
+  prominently — a backup that quietly widens credential exposure is worse than no backup.
+- Restore must be safe against a running stack: refuse, or stop first, rather than writing
+  underneath a live Gateway.
+- Preserve ownership and permissions so a restore does not recreate the root-owned-files
+  problem.
+
+**Key files** — `Makefile`, `scripts/`, `backend/packages/harness/deerflow/config/`,
+`FORK.md` (Arch / DooD troubleshooting section).
+
+**Done when** — a backup taken on one machine restores onto a clean checkout with threads,
+memory, tabs, and settings intact; restore against a running stack is refused with a clear
+message; the secrets decision is documented in README.md and SECURITY.md.
+
+---
+
+## 9. Ollama daemon lifecycle management
+
+**Goal** — Local models are warm when needed and do not fight each other for VRAM.
+
+**Why it fits** — `scripts/sync-ollama-models.py` computes a per-model VRAM-aware context
+window from real attention geometry, which is the most sophisticated piece of the fork.
+Then it stops at the config file. The daemon itself is unmanaged: no `keep_alive` control,
+so a model unloads between turns and every subagent call pays a cold start; no preload of
+the configured default; no handling for a lead and a subagent that are different local
+models which do not both fit in VRAM. This is the same problem the sync already solves,
+one step further out.
+
+**Depends on** — nothing. Interacts with item 5 (a routing policy that picks local models
+should know whether one is loaded).
+
+**Scope**
+
+- Expose `keep_alive` per model or globally, written into synced entries.
+- Optionally preload the configured default model at startup.
+- Detect the VRAM-contention case — lead and subagent both local, combined weights over
+  budget — and warn at launch with the numbers, reusing the VRAM math already in the sync
+  script. A warning is enough; do not silently reassign the user's model choice.
+- Extend `make doctor` with a local-model readiness check.
+
+**Key files** — `scripts/sync-ollama-models.py`, `scripts/doctor.py`,
+`scripts/serve.sh`, `config.example.yaml`.
+
+**Done when** — `keep_alive` is honored end to end; the contention case warns with actual
+numbers rather than a generic message; `make doctor` reports local-model readiness; the
+sync stays idempotent and still no-ops cleanly when the daemon is unreachable.
+
+---
+
+## 10. Automated upstream sync
+
+**Goal** — A scheduled job that merges `upstream/main`, runs the mechanical gates, and
+opens a PR pre-populated with the post-sync checklist.
+
+**Why it fits** — "Lags upstream" is a real reason to choose upstream over this fork, and
+it compounds: the longer a sync is deferred, the larger the merge and the more likely the
+fork's UI wiring silently breaks. FORK.md already carries a detailed post-sync checklist
+and a Mirror Upstream workflow that solves the network-access half of the problem. This
+turns a manual chore into a standing PR.
+
+**Depends on** — nothing.
+
+**Scope**
+
+- Scheduled workflow: fetch upstream, merge (never rebase — FORK.md explains why), push a
+  sync branch.
+- Run the mechanical gates from the FORK.md checklist: conflict-marker grep, backend
+  `make lint && make test`, frontend `pnpm format && pnpm check && pnpm test`,
+  `uv lock` reconciliation.
+- Open a PR whose body is the fork-feature verification table, so the manual half is a
+  checklist rather than a memory exercise.
+- On conflicts, still open the PR — flagged, with the conflicting paths listed. A conflict
+  is the case where a human is most needed and most needs to know early.
+- Reuse `.github/workflows/mirror-upstream.yml` where it already solves the fetch.
+
+**Key files** — `.github/workflows/mirror-upstream.yml`, `.github/workflows/`, `FORK.md`
+(Post-sync feature checklist, which becomes the PR body template).
+
+**Done when** — the job produces a mergeable PR against a clean upstream delta, produces a
+flagged PR listing paths against a conflicting one, and never force-pushes over the fork's
+published history.
+
+---
+
+## 11. Deployment exposure check in `make doctor`
+
+**Goal** — `make doctor` reports the instance's *effective* network exposure and names the
+fix, instead of leaving the operator to reason about three independent settings.
+
+**Why it fits** — Passwordless plus multi-user-mode-off plus a non-loopback `BIND_HOST` is
+simultaneously this fork's happy path and its worst-case security posture. Each setting is
+individually documented and defensible; the combination is what matters and nothing
+computes it. `make doctor` already gained `check_env_placeholders` for exactly this class
+of "loud beats silent" problem. Of everything here, this most directly reduces the
+strongest argument for using upstream instead.
+
+**Depends on** — nothing.
+
+**Scope**
+
+- Compute effective exposure from: `DEER_FLOW_AUTH_DISABLED`, `DEER_FLOW_ENV` /
+  `ENVIRONMENT`, `BIND_HOST`, multi-user mode in `runtime_settings.json`, and whether the
+  container sandbox is enabled.
+- Report tiers plainly — loopback-only + auth off is fine and should say so; a non-loopback
+  bind with auth off and histories merged is a loud warning naming each contributing
+  setting and its one-line fix.
+- Distinguish a Tailscale interface bind from `0.0.0.0`; they are not the same risk and
+  the fork already treats them differently in `should_cobind_loopback`.
+- Print the same summary line at the end of `make up` and `make dev`, where it is actually
+  read.
+- Do not change any default. This item is diagnosis only — the defaults are the fork's
+  deliberate choice.
+
+**Key files** — `scripts/doctor.py`, `scripts/deploy.sh`, `scripts/serve.sh`,
+`backend/packages/harness/deerflow/config/runtime_settings.py`,
+`backend/tests/test_doctor.py`.
+
+**Done when** — each tier is reachable in tests with the corresponding settings; the
+loopback-only default reports as safe without nagging; the warning names every
+contributing setting; no default changes.
+
+---
+
+## Deliberately not on this roadmap
+
+**More model providers, more IM channels, more bundled skills.** The model bundle is
+curated to a documented shape and FORK.md is explicit that a long list dilutes both the
+picker and the auto-config. Breadth there adds work to every audit pass (item 4) and buys
+a single-user deployment nothing.
