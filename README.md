@@ -11,6 +11,7 @@
 > - 🔀 **Independent model per conversation** — every chat remembers its **own** model (and subagent model, mode, and reasoning effort), stored per-thread instead of in one shared setting. Run a free local Ollama model in one conversation and a cloud model in another, side by side — switching the model in one no longer flips the model in the others. Previously every chat that hadn't been explicitly pinned followed the last model picked *anywhere* (even across browser tabs, via the shared settings sync), which made running local and cloud models simultaneously impossible; now each conversation is isolated and new chats simply start from the configured default model.
 > - 🪃 **Model fallback chains** — when a model call fails for a reason worth retrying (the Ollama daemon is down, the context overflowed, the model turns out not to support tool calls, or the provider returns a 5xx), the turn degrades to the next model you listed instead of failing. Deliberate stops — you hit cancel, a spend cap fired, a guardrail refused — never fall back, and tokens are billed to whichever model actually answered, so your cost figures stay honest. Off until you configure a chain.
 > - 🧭 **Cost-aware subagent routing** — a policy that sends delegated subtasks to the cheapest model that can actually do them, so the saving is the default instead of something you remember to set every session. A tool-free extraction can run on a local model for free while the lead stays on a frontier model. It never picks a model that can't do the job (no tool support, no vision, context window too small), your explicit per-conversation subagent choice always wins, and the subagent card shows which rule decided. Off until you write a policy.
+> - 📱 **Installable on your phone, with notifications that arrive after you close it** — DeerFlow now ships a web app manifest and a service worker, so you can add it to your home screen and get a Web Push notification when a long run finishes, even with the browser closed. Background notifications need a secure origin (`localhost`, or your Tailscale HTTPS name); on a plain-HTTP LAN address the settings page says exactly that and tells you how to fix it, instead of silently doing nothing.
 > - 🧩 **Per-thread subagent model dropdown** — in **Ultra mode**, a second model picker lets you route `task` subagents to a cheaper or local model instead of the lead model (defaults to "Follow lead").
 > - 💡 **Follow-up suggestions off by default** — the clickable follow-up-question chips make an extra model call after every answer, so they now default **off** to save cost. Turn them back on per-browser under **Settings → Suggestions**, where a dropdown also lets you pick which model generates them ("Follow workflow selection" by default, or any configured model — pick a cheap one to keep it cheap).
 > - 🧠 **Long-term memory off by default** — the agent no longer learns from or injects your saved memory until you opt in. Turn it on per-browser under **Settings → Memory** (the operator can still hard-disable it with `memory.enabled: false` in `config.yaml`, which greys out the toggle). When off, each run sends `memory_enabled: false` and the backend skips memory injection, extraction, and memory tools.
@@ -1467,6 +1468,50 @@ putting the security measures below in place.
 **Complete first-run setup before the host becomes reachable.** A fresh
 instance has no accounts yet, so create the admin account through `/setup`
 immediately after starting any deployment that is not loopback-only.
+
+### Notifications on Your Phone (PWA + Web Push)
+
+DeerFlow installs to a phone home screen and can push a notification when a
+long-running task finishes — with the browser closed, which is the whole point
+if you started the run and pocketed the phone.
+
+1. Open DeerFlow over a **secure origin** (see the table below).
+2. Add it to your home screen. On iOS this is mandatory, not optional: iOS only
+   delivers Web Push to installed web apps.
+3. Settings → Notification → **Enable background notifications**, then send the
+   test push to confirm the whole chain works.
+
+Enable delivery on the server first — push encryption ships as an optional
+dependency, so most installs never carry it:
+
+```bash
+cd backend && uv sync --extra webpush
+```
+
+**Background notifications need a secure context.** Service workers are only
+available on `https://` or `http://localhost`, which means a plain-HTTP LAN
+address — the fork's own convenient default — cannot do this at all. The
+settings page detects that and says so, with the fix, rather than leaving a
+switch that does nothing:
+
+| Where you open DeerFlow | Background notifications |
+| --- | --- |
+| `http://localhost:2026` on the machine itself | ✅ works |
+| `https://<machine>.<tailnet>.ts.net` (Tailscale) | ✅ works — this is the phone case |
+| `http://192.168.1.10:2026` (plain LAN) | ❌ browsers disable service workers entirely |
+
+Tailscale issues a real certificate for your machine's name, which is the
+simplest way to get HTTPS on a home network:
+
+```bash
+tailscale cert <machine>.<tailnet>.ts.net    # once
+tailscale serve --bg https / http://127.0.0.1:2026
+```
+
+Then open `https://<machine>.<tailnet>.ts.net` from your phone and install it.
+
+Notifications fire only for runs that took longer than 30 seconds — a ping for
+a two-second question is noise, and noise is how notifications get turned off.
 
 **Check the effective exposure, not the individual settings.** Who can reach
 this instance — and as whom — is decided by `BIND_HOST` *together with*

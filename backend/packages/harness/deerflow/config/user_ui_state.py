@@ -32,6 +32,7 @@ logger = logging.getLogger(__name__)
 
 UI_STATE_FILENAME = "ui_state.json"
 CHAT_TABS_KEY = "chat_tabs"
+PUSH_SUBSCRIPTIONS_KEY = "push_subscriptions"
 
 # Mirrors ``MAX_CHAT_TABS`` in ``frontend/src/core/threads/chat-tabs.ts``: every
 # pinned tab holds a live chat instance, so the ceiling is a resource guard.
@@ -40,6 +41,14 @@ MAX_CHAT_TABS = 8
 # A cached display hint only — the live title is resolved from the thread list.
 MAX_TITLE_CHARS = 200
 MAX_ID_CHARS = 128
+
+# Web Push subscriptions (fork feature). One per browser/device the user opted
+# in from, so the same account can be pushed on a phone and a laptop. Bounded
+# because the endpoint is untrusted input and a stale subscription is never
+# cleaned up by the browser — only by a 404/410 from the push service.
+MAX_PUSH_SUBSCRIPTIONS = 10
+MAX_ENDPOINT_CHARS = 1024
+MAX_KEY_CHARS = 256
 
 # Per-user cache keyed by the file's (mtime, size) so a sibling worker's write or
 # an out-of-band edit is picked up without a restart, matching how
@@ -147,11 +156,22 @@ def set_chat_tabs(user_id: str, tabs: Any) -> list[dict[str, str]]:
     is written rather than treated as a no-op.
     """
     normalized = normalize_chat_tabs(tabs)
+    _write_state(user_id, {CHAT_TABS_KEY: normalized})
+    return normalized
+
+
+def _write_state(user_id: str, updates: dict[str, Any]) -> None:
+    """Merge *updates* into the user's JSON bag and replace the file atomically.
+
+    Merge rather than replace: the file holds several independent pieces of UI
+    state (pinned tabs, push subscriptions), and a writer that only knows about
+    one of them must not delete the others.
+    """
     path = _state_path(user_id)
     path.parent.mkdir(parents=True, exist_ok=True)
     with _lock:
         data = _load(path)
-        data[CHAT_TABS_KEY] = normalized
+        data.update(updates)
         tmp = path.with_name(f"{path.name}.tmp")
         try:
             with tmp.open("w", encoding="utf-8") as handle:
@@ -161,10 +181,89 @@ def set_chat_tabs(user_id: str, tabs: Any) -> list[dict[str, str]]:
             tmp.unlink(missing_ok=True)
             raise
         _cache[str(path)] = (_signature(path), data)
-    return normalized
 
 
 def reset_cache_for_tests() -> None:
     """Drop the in-process cache so a test's fresh state file is re-read."""
     with _lock:
         _cache.clear()
+
+
+# ---------------------------------------------------------------------------
+# Web Push subscriptions (fork feature)
+# ---------------------------------------------------------------------------
+
+
+def normalize_push_subscriptions(raw: Any) -> list[dict[str, Any]]:
+    """Validate and bound a stored/incoming subscription list.
+
+    Same posture as :func:`normalize_chat_tabs`: malformed entries are dropped
+    rather than rejected, because a partially-written store must degrade to
+    "fewer devices notified" and never to a failed settings load. Deduped by
+    endpoint, which is the browser's own identity for a subscription — a
+    re-subscribe on the same device replaces rather than accumulates.
+    """
+    if not isinstance(raw, list):
+        return []
+    subscriptions: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for entry in raw:
+        if not isinstance(entry, dict):
+            continue
+        endpoint = _clean_text(entry.get("endpoint"), MAX_ENDPOINT_CHARS)
+        keys = entry.get("keys")
+        if endpoint is None or not isinstance(keys, dict):
+            continue
+        # A push service endpoint is always https; anything else cannot be
+        # delivered to and is more likely a tampered payload than a typo.
+        if not endpoint.startswith("https://"):
+            continue
+        p256dh = _clean_text(keys.get("p256dh"), MAX_KEY_CHARS)
+        auth = _clean_text(keys.get("auth"), MAX_KEY_CHARS)
+        if p256dh is None or auth is None:
+            continue
+        if endpoint in seen:
+            continue
+        seen.add(endpoint)
+        subscription: dict[str, Any] = {"endpoint": endpoint, "keys": {"p256dh": p256dh, "auth": auth}}
+        label = _clean_text(entry.get("label"), MAX_TITLE_CHARS)
+        if label is not None:
+            subscription["label"] = label
+        subscriptions.append(subscription)
+        if len(subscriptions) >= MAX_PUSH_SUBSCRIPTIONS:
+            break
+    return subscriptions
+
+
+def get_push_subscriptions(user_id: str) -> list[dict[str, Any]]:
+    """The user's registered push subscriptions (empty when none)."""
+    return normalize_push_subscriptions(_read_state(user_id).get(PUSH_SUBSCRIPTIONS_KEY))
+
+
+def set_push_subscriptions(user_id: str, subscriptions: Any) -> list[dict[str, Any]]:
+    """Replace the user's push subscriptions; returns the persisted value."""
+    normalized = normalize_push_subscriptions(subscriptions)
+    _write_state(user_id, {PUSH_SUBSCRIPTIONS_KEY: normalized})
+    return normalized
+
+
+def add_push_subscription(user_id: str, subscription: Any) -> list[dict[str, Any]]:
+    """Register one subscription, replacing any entry with the same endpoint.
+
+    Oldest-first eviction at the cap: the device the user just opted in from is
+    the one they are looking at, so it must never be the one dropped.
+    """
+    existing = get_push_subscriptions(user_id)
+    incoming = normalize_push_subscriptions([subscription])
+    if not incoming:
+        return existing
+    endpoint = incoming[0]["endpoint"]
+    merged = [entry for entry in existing if entry["endpoint"] != endpoint]
+    merged.append(incoming[0])
+    return set_push_subscriptions(user_id, merged[-MAX_PUSH_SUBSCRIPTIONS:])
+
+
+def remove_push_subscription(user_id: str, endpoint: str) -> list[dict[str, Any]]:
+    """Drop one subscription by endpoint (used on unsubscribe and on a 404/410)."""
+    remaining = [entry for entry in get_push_subscriptions(user_id) if entry["endpoint"] != endpoint]
+    return set_push_subscriptions(user_id, remaining)

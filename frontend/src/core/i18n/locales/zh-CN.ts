@@ -1118,6 +1118,24 @@ export const zhCN: Translations = {
       testBody: "这是一条测试通知。",
       notSupported: "当前浏览器不支持通知功能。",
       disableNotification: "关闭通知",
+      push: {
+        title: "关闭浏览器后也通知我",
+        description:
+          "使用 Service Worker 与 Web Push：即使关闭标签页，长时间运行的任务完成后也能推送到手机。默认关闭。",
+        enable: "开启后台通知",
+        disable: "关闭后台通知",
+        test: "发送测试推送",
+        testSent: "已向 {count} 台设备发送测试推送。",
+        testFailed: "测试推送发送失败，请确认本设备仍处于订阅状态。",
+        registered: "已有 {count} 台设备注册后台通知。",
+        insecureContext:
+          "后台通知需要安全连接。当前页面通过局域网地址以纯 HTTP 提供，浏览器会完全禁用 Service Worker。请在本机使用 http://localhost:2026 打开 DeerFlow，或通过 Tailscale 的 HTTPS 域名访问（tailscale cert / serve），该选项即会出现。",
+        unsupported:
+          "此浏览器不支持后台通知（缺少 Service Worker 或 Push API）。",
+        unavailable: "服务端暂时无法发送推送通知：{reason}",
+        iosHint:
+          "在 iPhone / iPad 上，请先将 DeerFlow 添加到主屏幕 —— iOS 仅向已安装的 Web 应用推送。",
+      },
     },
     suggestions: {
       title: "后续建议",

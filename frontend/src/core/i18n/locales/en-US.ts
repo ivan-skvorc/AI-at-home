@@ -1172,6 +1172,26 @@ export const enUS: Translations = {
       testBody: "This is a test notification.",
       notSupported: "Your browser does not support notifications.",
       disableNotification: "Disable notification",
+      push: {
+        title: "Notify me when the browser is closed",
+        description:
+          "Uses a service worker and Web Push, so a long-running task can ping your phone even after you close the tab. Off until you turn it on.",
+        enable: "Enable background notifications",
+        disable: "Turn off background notifications",
+        test: "Send a test push",
+        testSent: "Test push sent to {count} device(s).",
+        testFailed:
+          "The test push could not be delivered. Check that this device is still subscribed.",
+        registered:
+          "{count} device(s) registered for background notifications.",
+        insecureContext:
+          "Background notifications need a secure connection. This page is served over plain HTTP from a LAN address, where browsers disable service workers entirely. Open DeerFlow at http://localhost:2026 on this machine, or over your Tailscale HTTPS name (tailscale cert / serve), and the option will appear.",
+        unsupported:
+          "This browser does not support background notifications (no service worker or Push API).",
+        unavailable: "The server cannot send push notifications yet: {reason}",
+        iosHint:
+          "On iPhone and iPad, add DeerFlow to your Home Screen first — iOS only delivers push to installed web apps.",
+      },
     },
     suggestions: {
       title: "Follow-up suggestions",

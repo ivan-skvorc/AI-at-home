@@ -29,6 +29,7 @@ from app.gateway.routers import (
     mcp,
     memory,
     models,
+    push,
     runs,
     scheduled_tasks,
     settings,
@@ -627,6 +628,8 @@ This gateway provides runtime endpoints for agent runs plus custom endpoints for
     # Skills API is mounted at /api/skills
     app.include_router(skills.router)
     app.include_router(settings.router)
+    # Fork feature: Web Push subscription management (per-user, no admin gate).
+    app.include_router(push.router)
 
     # First-party integrations API is mounted at /api/integrations
     app.include_router(integrations.router)

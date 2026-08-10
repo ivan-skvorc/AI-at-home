@@ -597,8 +597,30 @@ def get_run_context(request: Request) -> RunContext:
         thread_store=get_thread_store(request),
         app_config=get_config(),
         extensions=getattr(request.app.state, "extensions", None),
-        on_run_completed=getattr(request.app.state, "scheduled_task_service", None).handle_run_completion if getattr(request.app.state, "scheduled_task_service", None) is not None else None,
+        on_run_completed=_build_run_completion_hook(request),
     )
+
+
+def _build_run_completion_hook(request: Request):
+    """Compose the run-completion hooks: scheduled tasks + push notifications.
+
+    The worker takes a single callback, so the two consumers are composed here
+    rather than by adding a second hook to the harness. Push delivery is
+    deliberately last and swallows its own failures (`notify_run_completed`
+    never raises): a notification that cannot be sent must not disturb the
+    scheduled-task bookkeeping, let alone the run's own outcome.
+    """
+    scheduled = getattr(request.app.state, "scheduled_task_service", None)
+    scheduled_hook = scheduled.handle_run_completion if scheduled is not None else None
+
+    async def _on_run_completed(record):
+        if scheduled_hook is not None:
+            await scheduled_hook(record)
+        from app.gateway.run_notifications import notify_run_completed
+
+        await asyncio.to_thread(notify_run_completed, record)
+
+    return _on_run_completed
 
 
 # ---------------------------------------------------------------------------

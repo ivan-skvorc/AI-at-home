@@ -828,6 +828,91 @@ question an operator asks, so a reason is produced even when nothing was routed.
 | Card | `core/tasks/lifecycle.ts`, `core/tasks/types.ts`, `components/workspace/messages/subtask-card.tsx` |
 | Tests | `backend/tests/test_model_routing.py`, `frontend/tests/unit/core/tasks/lifecycle.test.ts` |
 
+### 16. Installable PWA + push notifications that survive a closed browser
+
+This was the biggest gap relative to the fork's own stated goal. There was a
+notification settings page, but it used the plain browser `Notification` API
+with **no service worker and no manifest** — so a notification only fired while
+the tab was open, and iOS Safari would not deliver at all. The use case the fork
+is built around ("start a sandbox run from my phone over Tailscale, pocket it,
+get pinged when it's done") did not work on the device it is designed for.
+
+**Installable.** `frontend/public/manifest.webmanifest` plus icons, linked from
+the root layout's `metadata`, with `appleWebApp` set — on iOS, Add to Home Screen
+is not a nicety, it is the *precondition* for receiving push at all.
+
+**The service worker is deliberately push-only.** It handles `push` and
+`notificationclick` and caches nothing. DeerFlow is a live, server-driven app —
+SSE streams, per-thread state, an API that moves with every backend release — so
+a stale cached shell served after an upgrade produces bugs that look like backend
+faults and are miserable to diagnose. That is a far worse trade than offline
+support nobody asked for.
+
+**Web Push, end to end.** VAPID keys are minted on first use and kept
+(`<DeerFlow home>/vapid.json`, mode `0600` from the first byte — regenerating
+them silently invalidates every existing subscription). Subscriptions are stored
+per user in the same `ui_state.json` bag as the pinned chat tabs, deduped by
+endpoint so re-subscribing replaces rather than accumulates. `pywebpush` is an
+**optional extra** (`uv sync --extra webpush`): push encryption is not something
+to hand-roll, and most installs never turn this on, so the feature reports itself
+unavailable with the install hint instead of making everyone carry it.
+
+**A dead subscription deletes itself.** A push service answers 404/410 for a
+subscription the browser discarded, and nothing else ever prunes those, so a user
+who reinstalls their browser would otherwise accumulate undeliverable endpoints
+forever.
+
+**Only runs worth interrupting for.** A notification fires when a run finishes
+*and* took longer than 30 seconds — by then the user has almost certainly
+switched away, which is exactly when a push is useful. A notification for a
+two-second question is noise, and noise is how a user turns notifications off for
+good. An unknown duration is treated as short: a missed notification costs less
+than a stream of unwanted ones. The whole path swallows its own failures — a push
+service outage must never turn a successful run into a failed one.
+
+#### The secure-context problem, said out loud
+
+Service workers require a **secure context**: `https://…` or `http://localhost`.
+The fork's documented deployment — a plain-HTTP LAN address like
+`http://192.168.1.10:2026` — is not one, so on exactly the device this feature
+targets, the browser API is simply **absent**.
+
+Silently doing nothing there is the worst possible behavior: the user flips a
+switch and has no way to find out why nothing happened. So each unsupported case
+is detected separately and rendered with its own explanation and fix. The
+insecure-origin case is checked **first**, because it makes every other API
+absent too and "service workers are unavailable" would send the user hunting for
+a browser setting that does not exist.
+
+| Where you open DeerFlow | Push works? |
+| --- | --- |
+| `http://localhost:2026` on the machine itself | ✅ localhost is a secure context by definition |
+| `https://<host>.ts.net` (Tailscale, see below) | ✅ and this is the phone case the fork is built for |
+| `http://192.168.1.10:2026` (plain LAN) | ❌ explained in the UI, with the fix |
+
+Tailscale issues a real certificate for your machine's `*.ts.net` name:
+
+```bash
+tailscale cert <your-machine>.<your-tailnet>.ts.net   # once
+tailscale serve --bg https / http://127.0.0.1:2026    # proxy HTTPS to DeerFlow
+```
+
+Then open `https://<your-machine>.<your-tailnet>.ts.net` from the phone, install
+it to the home screen, and enable background notifications in Settings.
+
+| Piece | Where |
+| --- | --- |
+| Manifest + icons + SW | `frontend/public/manifest.webmanifest`, `frontend/public/icons/`, `frontend/public/sw.js`, `src/app/layout.tsx` |
+| Browser side | `frontend/src/core/notification/push.ts`, the background-notification block in `settings/notification-settings-page.tsx` |
+| Server side | `backend/app/gateway/web_push.py`, `routers/push.py`, `run_notifications.py`, the push helpers in `deerflow/config/user_ui_state.py` |
+| Tests | `backend/tests/test_web_push.py`, `frontend/tests/unit/core/notification/push.test.ts` |
+
+**Known gap, stated rather than papered over:** the mobile chat layout audit that
+was scoped alongside this is *not* done. The keep-alive tab strip and the
+artifact panel are still desktop-shaped on a narrow viewport. The PWA shell,
+push delivery, and the install path are complete and usable; the responsive
+pass on those two components remains open work.
+
 ### Note: the "older messages disappear in long conversations" investigation
 
 The request that shipped this cost feature also asked to fix messages vanishing from long conversations. Findings, so the next pass has a head start:
@@ -966,6 +1051,7 @@ Then confirm each fork feature end-to-end:
 | **Currency spend caps** (§10) | `cd backend && uv run pytest tests/test_spend_budget_config.py tests/test_spend_budget.py tests/test_spend_budget_middleware.py` covers the config/window math, the window aggregation (runs + auxiliary counters, owner-scoped), and the in-run warn / hard stop. Wiring: `deerflow/config/spend_budget_config.py` + the `spend_budget:` block in `config.example.yaml`; `deerflow/runtime/spend_window.py`; `app/gateway/spend_budget.py`; the **HTTP 402** admission refusal and the `__spend_budget` baseline injection in `app/gateway/services.py::start_run`; `SpendBudgetMiddleware` appended in `agents/lead_agent/agent.py` after `TokenBudgetMiddleware`; `RunJournal.current_token_usage_by_model()`; `scripts/doctor.py::check_spend_budget`; the header line via `GET /api/threads/{id}/token-usage -> spend_budget` and `core/threads/token-usage.ts::threadTokenUsageToSpendBudget`. **The pricing module moved into the harness** (`deerflow/pricing.py`) because the in-graph middleware may not import `app.*`; `app/gateway/pricing.py` is a re-export shim, and `test_pricing.py::test_gateway_shim_re_exports_the_canonical_helpers` fails if it rots. **Three invariants that are easy to break and silent when broken:** (1) an unpriced model must contribute **0**, so a fully local run is never blocked — pinned by `TestLocalModelsAreFree` and `TestLocalRunsAreNeverBlocked`; (2) in-run spend must come from the journal's **per-model** accumulator, or a cheap subagent gets billed at the lead's rate and the cap fires early on exactly the setup this fork recommends (`test_a_cheap_subagent_is_billed_at_its_own_rate`); (3) with nothing priced the feature must **self-disable with a reason**, not enforce against a permanent zero (`TestSelfDisabling`). If upstream restructures `services.py::start_run`, re-add the admission check before `create_or_reject` and the baseline injection after `inject_authenticated_user_context` — the baseline key is `__`-prefixed precisely so `build_run_config` strips a caller-supplied copy. Manual: set a tiny `daily_limit`, run a turn on a priced model (header **Budget left** goes red, the next message 402s), then repeat on a local model and confirm it is never blocked. |
 | **Automated upstream sync** (see *[Upstream sync](#upstream-sync)*) | `cd backend && uv run pytest tests/test_upstream_sync.py` covers parsing this checklist out of FORK.md, the PR body for clean and conflicted merges, gate rendering (pass / fail / **skip**, which must stay distinguishable — a skipped gate reading as green is how a conflicted sync looks mergeable), the 65536-character GitHub body limit, and workflow invariants. Wiring: `scripts/upstream_sync.py`; `.github/workflows/upstream-sync.yml` (weekly + `workflow_dispatch`). **The body is generated from this section, never copied** — a copy is correct exactly once, and every fork feature added afterwards would be missing from the list meant to prove the fork still works. So the two parsers here are load-bearing: the mechanical gates come from the `- [ ]` lines and the features from the table rows below; renaming this heading or restructuring the table silently empties the PR body (`test_the_real_fork_md_parses` is the guard). Workflow invariants pinned by tests: `git merge` and never `git rebase`, no `--force` in any form, and the PR step runs under `if: always()` so a conflicted merge still surfaces. Manual: `python3 scripts/upstream_sync.py --upstream-sha abc --commit-count 1` and read the rendered body. |
 | **Model & pricing audit** (see *[Auditing the model list](#auditing-the-model-list-settings--pricing)*) | `cd backend && uv run pytest tests/test_audit_models.py` covers marker-block parsing, the wizard-bundle load, each drift kind, internal consistency, source parity, the report, and the CLI exit codes. Wiring: `scripts/audit_models.py`; `.github/workflows/model-audit.yml` (weekly + `workflow_dispatch`); `scripts/fixtures/model_audit_stale_catalog.json`. **The fixture is the audit's own regression test** — the workflow's first step asserts it still produces findings, because a broken audit reports "no drift" forever and every clean run afterwards is a false all-clear. Regenerate it if the bundled roster changes (the generator is described in the fixture's `_comment`). **Two properties must not be "fixed" into their opposites:** an unreachable provider yields *zero* findings, never "every slug retired"; and the job must keep exiting 0 on findings (the issue is the signal, not a red tick). Manual: `python3 scripts/audit_models.py --catalog scripts/fixtures/model_audit_stale_catalog.json` and confirm all four drift kinds appear with a suggested diff. |
+| **PWA + push notifications** (§16) | `cd backend && uv run pytest tests/test_web_push.py` plus `cd frontend && pnpm test push` cover VAPID key reuse and file mode, subscription storage (dedupe, cap, https-only), pruning a dead subscription, the run-duration threshold, and the browser-support detection. Wiring: `frontend/public/{manifest.webmanifest,sw.js,icons/}`; `metadata`/`viewport` in `src/app/layout.tsx`; `core/notification/push.ts`; `app/gateway/{web_push.py,routers/push.py,run_notifications.py}` (router registered in `app.py`, delivery composed into `deps.py::_build_run_completion_hook` **after** the scheduled-task hook); the push helpers + shared `_write_state` in `deerflow/config/user_ui_state.py`; the `webpush` extra in `packages/harness/pyproject.toml`. **Four invariants that are silent when broken:** (1) VAPID keys must be reused — regenerating invalidates every subscription with no error anywhere; (2) `vapid.json` is opened `0600`, not chmod'ed after; (3) the insecure-context branch must stay **first** in `detectPushSupport`, or a plain-HTTP LAN user is told service workers are unavailable and goes looking for a browser setting that does not exist; (4) `notify_run_completed` must never raise — it runs on the run-completion path. The service worker deliberately caches nothing; do not add asset caching without a version/cleanup strategy. Manual: open over `https://…ts.net` from a phone, install to the home screen, enable background notifications, send the test push, then run something long with the app closed. |
 | **Cost-aware subagent routing** (§15) | `cd backend && uv run pytest tests/test_model_routing.py` plus `cd frontend && pnpm test lifecycle` cover requirement derivation, capability filtering, rule ordering, the precedence rule, config validation, and the card plumbing. Wiring: `deerflow/subagents/routing.py`; `deerflow/config/model_routing_config.py` + `AppConfig.model_routing`; `task_tool.py::apply_routing_policy` (called after the per-thread override is read, before the executor is built, and it also sets `model_override` so the executor's own re-resolution cannot discard the route); the `routing` key on `task_started`; `core/tasks/lifecycle.ts::normalizeRouting`. **Three invariants that are silent when broken:** (1) an explicit per-thread selection must short-circuit *before* the policy runs — "considering" it is not the same as standing down; (2) requirement derivation must stay free of any model call, or the decision becomes non-deterministic and costs money; (3) capability filtering must stay inside the preference loop, or a cheap model with `supports_tools: false` gets routed a tool-using subtask and the turn fails. `task_tool` resolves the config defensively (an unreadable `config.yaml` means "no policy", never a failed delegation) — `test_task_tool_core_logic.py` runs without a config and will catch a regression here. Manual: configure a `needs_tools: false` rule, run an Ultra-mode turn that delegates an extraction subtask, and confirm the card shows `(via <rule>)` with the reason in its tooltip. |
 | **Model fallback chains** (§14) | `cd backend && uv run pytest tests/test_model_fallback.py` covers the failure/decision classification, chain resolution, the wrapper (sync + async, `bind_tools` across members), and the factory wiring. Wiring: `deerflow/models/fallback.py`; `ModelConfig.fallback` (and its entry in the factory's **exclude** set — `ModelConfig` is `extra="allow"`, so an unexcluded key is forwarded into the provider constructor and then the request payload); `deerflow/config/model_fallback_config.py` + `AppConfig.model_fallback`; `models/factory.py::_wrap_with_fallbacks`. **Four invariants that are silent when broken:** (1) unrecognized errors must keep returning `False` from `should_fall_back` — defaulting to retry doubles the cost of every bug; (2) intentional stops (interrupt, budget, guardrail, 401/403) must never fall back, or a spend cap becomes a spend multiplier; (3) chain members must keep being built with `_is_fallback_member=True`, which is what makes cycles inexpressible rather than merely unlikely; (4) the wrapper must return the serving model's result untouched, or `token_usage_by_model` bills a cloud fallback at the local model's rate of zero. Manual: point a local model's `fallback:` at a cloud model, stop the Ollama daemon mid-session, and confirm the turn completes on the fallback and the header attributes its cost to the cloud model. |
 | **Backup / restore** (§13) | `cd backend && uv run pytest tests/test_backup.py` covers what goes in, the secrets exclusion and the owner-only opt-in archive, the postgres dump abort, the running-stack refusal, archive-path safety, and the mode-preserving round trip. Wiring: `scripts/backup.py`; `backup` / `restore` targets in the root `Makefile`; `/backups/` in `.gitignore`. **Three invariants that are silent when broken:** (1) credentials stay excluded by default — if `SECRET_PATTERNS` stops matching `users/*/integrations/` or `.env`, every backup starts shipping API keys; (2) the archive is opened `0600` via `os.open`, not chmod'ed afterwards, or it is briefly world-readable while being written; (3) extraction must keep `filter="tar"` — the `data` filter strips the permission bits this feature exists to preserve, so `0700` credential dirs would come back `0755`. A failed `pg_dump` must keep aborting: a backup with no database in it fails at restore time, when it is too late. Manual: `make backup`, `python3 scripts/backup.py inspect <archive>`, then restore into an empty directory and confirm threads/memory/tabs are there. |

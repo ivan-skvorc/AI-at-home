@@ -325,6 +325,16 @@ usage is attributed to the serving model; tests cover each trigger and each non-
 
 ## 7. PWA, service worker, and push notifications
 
+**Status** — ✅ **Implemented, with one part deliberately left open.** The app is
+installable (manifest + icons + `appleWebApp` metadata), a push-only service worker
+delivers notifications with the browser closed, VAPID keys are minted once and kept
+`0600`, subscriptions are stored per user beside the chat tabs, dead subscriptions
+prune themselves, and a run longer than 30s notifies on completion. The secure-context
+problem is surfaced rather than hidden: a plain-HTTP LAN origin gets a specific
+explanation and the Tailscale HTTPS fix, documented in README.md. `pywebpush` is an
+optional extra. **Not done:** the mobile chat layout audit — the keep-alive tab strip
+and artifact panel are still desktop-shaped on a narrow viewport. See FORK.md §16.
+
 **Goal** — The app installs to a phone home screen and delivers a notification when a
 long-running agent task finishes, with the browser closed.
 

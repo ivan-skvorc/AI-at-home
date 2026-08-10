@@ -928,6 +928,21 @@ export interface Translations {
       testBody: string;
       notSupported: string;
       disableNotification: string;
+      /** Fork feature: Web Push (notifications with the browser closed). */
+      push: {
+        title: string;
+        description: string;
+        enable: string;
+        disable: string;
+        test: string;
+        testSent: string;
+        testFailed: string;
+        registered: string;
+        insecureContext: string;
+        unsupported: string;
+        unavailable: string;
+        iosHint: string;
+      };
     };
     suggestions: {
       title: string;
