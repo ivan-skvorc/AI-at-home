@@ -183,6 +183,18 @@ aggregation and the empty/no-pricing states.
 
 ## 4. Automated model and pricing audit
 
+**Status** — ✅ **Implemented.** `scripts/audit_models.py` reads both synced sources
+(the `config.example.yaml` marker blocks and `scripts/wizard/providers.py`) and diffs
+them against the live OpenRouter catalog for retired slugs, moved list prices, and
+promos that started or ended — plus two network-free checks (display name vs. its own
+`pricing:` block, and parity between the two sources).
+`.github/workflows/model-audit.yml` runs it weekly and maintains a single
+`model-audit`-labelled issue, closing it when a run comes back clean. It never commits
+a price, an unreachable provider is a skip rather than drift, and
+`scripts/fixtures/model_audit_stale_catalog.json` is the audit's own regression test —
+the workflow asserts it still detects drift before trusting a clean live run. FORK.md's
+*Auditing the model list* now names the job as the trigger.
+
 **Goal** — A scheduled CI job that diffs the bundled model roster against live provider
 catalogs and opens an issue when a slug, price, or promo has drifted.
 
