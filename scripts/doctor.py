@@ -16,9 +16,12 @@ import re
 import shutil
 import subprocess
 import sys
+from collections.abc import Mapping
 from importlib import import_module
 from pathlib import Path
 from typing import Literal
+
+import exposure as exposure_module
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -428,11 +431,7 @@ def check_spend_budget(config_path: Path) -> CheckResult:
             )
 
         models = data.get("models") or []
-        priceable = [
-            model
-            for model in models
-            if isinstance(model, dict) and (isinstance(model.get("pricing"), dict) or _PRICE_IN_DISPLAY_NAME_RE.search(str(model.get("display_name") or "")))
-        ]
+        priceable = [model for model in models if isinstance(model, dict) and (isinstance(model.get("pricing"), dict) or _PRICE_IN_DISPLAY_NAME_RE.search(str(model.get("display_name") or "")))]
         if not priceable:
             return CheckResult(
                 "spend budget",
@@ -551,10 +550,7 @@ def check_env_placeholders(config_path: Path) -> list[CheckResult]:
                 "referenced env vars present",
                 "fail",
                 f"missing from environment/.env: {names}",
-                fix=(
-                    "The Gateway crashes on load (bare nginx 502) if an active section references an unset\n"
-                    f"$VAR. Add the value(s) to .env, or set that section's `enabled: false`:\n  {names}"
-                ),
+                fix=(f"The Gateway crashes on load (bare nginx 502) if an active section references an unset\n$VAR. Add the value(s) to .env, or set that section's `enabled: false`:\n  {names}"),
             )
         )
     else:
@@ -1015,6 +1011,40 @@ def check_sandbox(config_path: Path) -> list[CheckResult]:
         return [CheckResult("sandbox configured", "fail", str(exc))]
 
 
+def check_deployment_exposure(project_root: Path, env: Mapping[str, str] | None = None) -> list[CheckResult]:
+    """Report the *effective* network exposure of each entry surface (fork feature).
+
+    Passwordless + multi-user-mode-off + a non-loopback bind is this fork's happy
+    path and its worst case at the same time. Each setting is individually
+    defensible and separately documented; nothing computed the combination, which
+    is the only thing that decides who can reach the instance and as whom.
+
+    Diagnosis only: no default changes, and the result is never a ``fail`` — the
+    loopback-only default is correct and must not nag, and a deliberately exposed
+    home lab must not make ``make doctor`` exit non-zero.
+    """
+    results: list[CheckResult] = []
+    for surface, label in (("docker", "make up"), ("local", "make dev")):
+        try:
+            result = exposure_module.assess_project(project_root, surface=surface, env=env)
+        except Exception as exc:
+            results.append(CheckResult(f"network exposure ({label})", "warn", str(exc)))
+            continue
+
+        # CheckResult.print already prefixes every fix line with an arrow, so the
+        # per-factor fix is indented plainly rather than carrying a second one.
+        fix_lines: list[str] = []
+        for factor in result.factors:
+            if not factor.contributes:
+                continue
+            fix_lines.append(factor.detail)
+            if factor.fix:
+                fix_lines.append(f"  {factor.fix}")
+        detail = f"{result.tier} — {result.headline}"
+        results.append(CheckResult(f"network exposure ({label})", result.status, detail, fix="\n".join(fix_lines) or None))
+    return results
+
+
 def check_env_file(project_root: Path) -> CheckResult:
     env_path = project_root / ".env"
     if env_path.exists():
@@ -1098,6 +1128,9 @@ def main() -> int:
     # ── Sandbox ──────────────────────────────────────────────────────────────
     sandbox_checks = check_sandbox(config_path)
     sections.append(("Sandbox", sandbox_checks))
+
+    # ── Deployment exposure ──────────────────────────────────────────────────
+    sections.append(("Deployment", check_deployment_exposure(project_root)))
 
     # ── Render ────────────────────────────────────────────────────────────────
     total_fails = 0

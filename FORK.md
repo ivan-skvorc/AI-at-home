@@ -506,6 +506,72 @@ configured the three tables agree with the summary total; switch the window and
 the figures move. On a config with no prices the tables still show tokens and the
 page explains why there is no cost.
 
+### 12. Effective deployment exposure check
+
+Passwordless auth, multi-user mode off, and a non-loopback `BIND_HOST` are
+simultaneously this fork's happy path and its worst-case security posture. Each
+setting is individually documented and individually defensible. The
+*combination* is what decides who can reach the instance and as whom — and until
+now nothing computed it, so the operator had to hold three settings in three
+different files in their head at once.
+
+`scripts/exposure.py` computes it. `make doctor` reports it, and the same
+assessment prints at the end of `make up` and `make dev`, where it is actually
+read.
+
+**It changes no default.** This is diagnosis only — the defaults are the fork's
+deliberate choice, and the check never returns a `fail`, so a home lab that is
+exposed on purpose does not make `make doctor` exit non-zero.
+
+**Two entry surfaces, and they do not share a bind address.** This is the part
+that is easy to get wrong by reading `.env` alone:
+
+| Entry | Bind address | Set by |
+| --- | --- | --- |
+| `make up` (Docker) | `${BIND_HOST:-127.0.0.1}` | `.env` → the published compose port; **loopback by default** |
+| `make dev` / `make start` (local) | every interface | `docker/nginx/nginx.local.conf`'s `listen 2026;` has **no address**, so `BIND_HOST` does not apply at all |
+
+So the local dev stack is on the LAN even when `.env` says `BIND_HOST=127.0.0.1`.
+That is not a regression — it is what the local nginx config has always done —
+but it was invisible. `make doctor` now prints one row per entry.
+
+**Tiers.**
+
+| Tier | When | Reported as |
+| --- | --- | --- |
+| `local-only` | the bind is loopback | ✓ ok, one line, no nagging — every other setting is irrelevant if nobody outside this machine can connect |
+| `trusted-network` | reachable, but either auth is on, or the reach is a tailnet / private LAN | ⚠ warn |
+| `open-network` | no login wall **and** a wildcard / public / unclassifiable bind | ⚠ warn, naming every contributing setting |
+
+A Tailscale bind is deliberately not the same as `0.0.0.0`: 100.64.0.0/10 and
+`fd7a:115c:a1e0::/48` are classified as `tailscale`, not `private`, because a
+tailnet is a device-authenticated overlay. (Python's own `is_private` reports
+CGNAT as private, so the ordering in `classify_bind_host` is load-bearing.)
+`should_cobind_loopback` in `deploy.sh` already treats the two differently; this
+matches it.
+
+**Contributing settings are only named when they can matter.** Multi-user mode
+off on a loopback-only box is the documented personal-server default, not a
+finding — it is reported as contributing only once the instance is reachable
+*and* passwordless. Same for `allow_host_bash`, which becomes "anyone on this
+network gets host code execution" only under those same two conditions. A
+`DEER_FLOW_AUTH_DISABLED=1` that is neutralized by `DEER_FLOW_ENV=production`
+is credited as such rather than counted against the deployment.
+
+| Piece | Where |
+| --- | --- |
+| Assessment | `scripts/exposure.py` (`classify_bind_host`, `resolve_facts`, `assess`) |
+| Doctor check | `scripts/doctor.py::check_deployment_exposure` (one row per entry surface) |
+| Launch summaries | `scripts/deploy.sh` (after the bind line), `scripts/serve.sh` (after the logs line) |
+| Tests | `backend/tests/test_exposure.py` |
+
+**Verify it works.**
+
+```bash
+cd backend && uv run pytest tests/test_exposure.py
+python3 scripts/exposure.py --surface docker      # or --surface local, --format json
+```
+
 ### Note: the "older messages disappear in long conversations" investigation
 
 The request that shipped this cost feature also asked to fix messages vanishing from long conversations. Findings, so the next pass has a head start:
@@ -619,6 +685,7 @@ Then confirm each fork feature end-to-end:
 | **Durable chat tabs** (§9) | `cd backend && uv run pytest tests/test_user_ui_state.py tests/test_chat_tabs_settings_router.py` covers the per-user store (`deerflow/config/user_ui_state.py`, `{base_dir}/users/{user_id}/ui_state.json`) and `GET`/`PUT /api/settings/chat-tabs` (caller-scoped, **no admin gate** — unlike the multi-user-mode routes in the same router). `frontend/tests/unit/core/threads/chat-tabs-persistence.dom.test.tsx` covers the provider's boot path. If upstream restructures `workspace/layout.tsx`'s gateway-offline branch, re-check that an unreachable gateway still **keeps** the local cache instead of blanking the strip (`fetchChatTabs` returns `null` for "unknown", never `[]`), and that a server with no stored set still adopts and seeds from the local cache — that is the upgrade path for tabs pinned before server persistence existed. Manual: pin a tab, restart the stack, hard-reload with site data cleared, and confirm the tabs come back. |
 | **Keep-alive chat tabs** (§9) | `cd frontend && pnpm test chat-tabs` exercises the pure model (`frontend/tests/unit/core/threads/chat-tabs.test.ts`); `pnpm test:e2e chat-tabs` (`frontend/tests/e2e/chat-tabs.spec.ts`) covers drag-from-sidebar onto the empty strip / drag-reorder between chips / open-as-tab / keep-alive switch (both instances stay mounted) / close / reload persistence. Wiring: the live chat is `components/workspace/chats/chat-instance.tsx` (**fully controlled**, own provider stack via `chat-providers.tsx` with a per-instance `storageScope`); `keep-alive-chat-viewport.tsx` is mounted in `workspace-content.tsx` **above** the route inside `ChatTabsProvider` and renders one instance per slot (only the active shown, the rest `display:none`); the tab strip is `chat-tabs-bar.tsx`, which **always renders as a drop zone on chat routes** (an empty-state hint `chatTabs.dropHint` when there are no tabs yet but threads exist, so there is somewhere to drag onto — returning `null` here is the "tabs don't work" bug); `[thread_id]/page.tsx` is a thin registrar in app builds and the classic inline `<ChatInstance>` in static-demo; pure model + persistence in `core/threads/chat-tabs.ts`, state in `chat-tabs-context.tsx`; sidebar drag + **Open in tab** in `recent-chat-list.tsx`; `ChatBox` panel ids keyed by thread id (not pathname). **If upstream restructures `[thread_id]/page.tsx`,** re-extract its body onto `chat-instance.tsx` and keep the registrar/classic split; watch for a barrel (`components/workspace/chats/index.ts`) import of the client viewport into the server `workspace-content.tsx` (import the file directly to keep the `"use client"` boundary). |
 | **Currency spend caps** (§10) | `cd backend && uv run pytest tests/test_spend_budget_config.py tests/test_spend_budget.py tests/test_spend_budget_middleware.py` covers the config/window math, the window aggregation (runs + auxiliary counters, owner-scoped), and the in-run warn / hard stop. Wiring: `deerflow/config/spend_budget_config.py` + the `spend_budget:` block in `config.example.yaml`; `deerflow/runtime/spend_window.py`; `app/gateway/spend_budget.py`; the **HTTP 402** admission refusal and the `__spend_budget` baseline injection in `app/gateway/services.py::start_run`; `SpendBudgetMiddleware` appended in `agents/lead_agent/agent.py` after `TokenBudgetMiddleware`; `RunJournal.current_token_usage_by_model()`; `scripts/doctor.py::check_spend_budget`; the header line via `GET /api/threads/{id}/token-usage -> spend_budget` and `core/threads/token-usage.ts::threadTokenUsageToSpendBudget`. **The pricing module moved into the harness** (`deerflow/pricing.py`) because the in-graph middleware may not import `app.*`; `app/gateway/pricing.py` is a re-export shim, and `test_pricing.py::test_gateway_shim_re_exports_the_canonical_helpers` fails if it rots. **Three invariants that are easy to break and silent when broken:** (1) an unpriced model must contribute **0**, so a fully local run is never blocked — pinned by `TestLocalModelsAreFree` and `TestLocalRunsAreNeverBlocked`; (2) in-run spend must come from the journal's **per-model** accumulator, or a cheap subagent gets billed at the lead's rate and the cap fires early on exactly the setup this fork recommends (`test_a_cheap_subagent_is_billed_at_its_own_rate`); (3) with nothing priced the feature must **self-disable with a reason**, not enforce against a permanent zero (`TestSelfDisabling`). If upstream restructures `services.py::start_run`, re-add the admission check before `create_or_reject` and the baseline injection after `inject_authenticated_user_context` — the baseline key is `__`-prefixed precisely so `build_run_config` strips a caller-supplied copy. Manual: set a tiny `daily_limit`, run a turn on a priced model (header **Budget left** goes red, the next message 402s), then repeat on a local model and confirm it is never blocked. |
+| **Deployment exposure check** (§12) | `cd backend && uv run pytest tests/test_exposure.py` covers the bind classification, the fact resolution (`.env` vs. process env precedence, `runtime_settings.json`, sandbox mode), every tier, and the doctor rows. Wiring: `scripts/exposure.py`; `scripts/doctor.py::check_deployment_exposure` in the new **Deployment** section; the `--surface docker` call at the end of `scripts/deploy.sh` and `--surface local` at the end of `scripts/serve.sh`. **Two things are easy to break silently:** (1) the local surface must stay pinned to the wildcard — it reads `docker/nginx/nginx.local.conf`'s address-less `listen 2026;`, so if upstream gives that config an explicit address, update `LOCAL_BIND_SOURCE`/`resolve_facts` or the check will report a bind the stack does not use; (2) `classify_bind_host` must test the Tailscale ranges **before** `is_private`, because Python classifies CGNAT (100.64.0.0/10) as private and the two tiers are deliberately different. The check must never return `fail` — a deliberately exposed home lab is not a broken install. Manual: `python3 scripts/exposure.py --surface docker`, then set `BIND_HOST=0.0.0.0` in `.env` and confirm the tier moves to `open-network` and names each contributing setting. |
 | **Spend history page** (§11) | `cd backend && uv run pytest tests/test_console_router.py -k ConsoleSpend` covers `GET /api/console/spend`: the three groupings (model / thread / feature) agreeing with the total, unpriced models named and sorted last, the window boundary, the no-pricing state, and the 503 on the memory backend. Wiring: `ConsoleSpendResponse` in `app/gateway/routers/console.py`; `AuxUsageStore.aggregate()`; `frontend/src/core/spend/*`; `frontend/src/app/workspace/spend/page.tsx`; the sidebar entry in `components/workspace/workspace-nav-chat-list.tsx`; i18n `spend.*` in both locales. The page must keep reusing `pricing.py` rather than recomputing cost — a second formula is how the page and the chat header start disagreeing about the same run. Manual: open **Spend** in the sidebar and confirm the tables' totals match the summary tile for the same window. |
 
 **Integration points that tend to need a hand** (where upstream refactors collide with fork additions — check these first when tests fail): the AIO sandbox provider (upstream's cross-instance ownership store adds instance attributes that minimal test fixtures built via `__new__` must seed), the skills tool-policy path (upstream's dynamic `SkillToolPolicyMiddleware` vs. any fork static filtering — reconcile onto the middleware and drop dead build-time filters), `scripts/check.py`'s Docker diagnostics (any upstream test that mocks `run_command` with a strict dict must tolerate the extra `docker` calls), and the `task_tool.py` / `input-box.tsx` model-override plumbing.

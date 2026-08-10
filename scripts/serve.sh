@@ -645,6 +645,17 @@ echo ""
 echo "  📋 Logs: logs/{gateway,frontend,nginx}.log"
 echo ""
 
+# ── Fork: effective exposure summary ─────────────────────────────────────────
+# `make dev` runs nginx from docker/nginx/nginx.local.conf, whose `listen 2026;`
+# has no address — so the local stack is on every interface regardless of
+# BIND_HOST (which only applies to the published Docker port). Combined with the
+# passwordless default above, that is worth saying out loud where it is read.
+# scripts/exposure.py owns the assessment; `make doctor` prints the same one.
+if [ -n "$DETECT_PYTHON" ]; then
+    "$DETECT_PYTHON" "$REPO_ROOT/scripts/exposure.py" --surface local --project-root "$REPO_ROOT" 2>/dev/null || true
+    echo ""
+fi
+
 if $DAEMON_MODE; then
     echo "  🛑 Stop: make stop"
     # Detach — trap is no longer needed

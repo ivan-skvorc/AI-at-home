@@ -1426,6 +1426,27 @@ putting the security measures below in place.
 instance has no accounts yet, so create the admin account through `/setup`
 immediately after starting any deployment that is not loopback-only.
 
+**Check the effective exposure, not the individual settings.** Who can reach
+this instance — and as whom — is decided by `BIND_HOST` *together with*
+`DEER_FLOW_AUTH_DISABLED`, `DEER_FLOW_ENV`, multi-user mode, and the sandbox
+choice. `make doctor` computes the combination and reports one line per entry
+surface, naming every contributing setting and its one-line fix when the
+instance is reachable without a login wall. The same summary prints at the end
+of `make up` and `make dev`, or on demand:
+
+```bash
+python3 scripts/exposure.py --surface docker    # the published Docker port
+python3 scripts/exposure.py --surface local     # make dev / make start
+```
+
+Two surfaces are reported because they do not share a bind address: `make up`
+publishes `${BIND_HOST:-127.0.0.1}:${PORT}`, while `make dev` runs nginx from
+`docker/nginx/nginx.local.conf`, whose `listen 2026;` has **no address** — so
+the local dev stack is reachable from the network regardless of `BIND_HOST`.
+A Tailscale bind is reported as its own tier rather than lumped in with
+`0.0.0.0`. The check changes no defaults and never fails; it only tells you
+where you stand.
+
 ### Security Recommendations
 
 **Note: We strongly recommend deploying DeerFlow in a local trusted network environment.** If you need cross-device or cross-network deployment, you must implement strict security measures, such as:

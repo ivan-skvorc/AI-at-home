@@ -443,6 +443,14 @@ published history.
 
 ## 11. Deployment exposure check in `make doctor`
 
+**Status** — ✅ **Implemented.** `scripts/exposure.py` computes the effective exposure
+from bind address × auth × environment × multi-user mode × sandbox, and reports one
+tier (`local-only` / `trusted-network` / `open-network`) per entry surface. `make doctor`
+gained a **Deployment** section; the same summary prints at the end of `make up` and
+`make dev`. A Tailscale bind is its own tier, the local dev surface is reported honestly
+as the wildcard (`nginx.local.conf` listens without an address), no default changed, and
+the check never returns `fail`. See FORK.md §12.
+
 **Goal** — `make doctor` reports the instance's *effective* network exposure and names the
 fix, instead of leaving the operator to reason about three independent settings.
 
