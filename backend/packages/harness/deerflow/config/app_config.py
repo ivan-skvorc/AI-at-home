@@ -26,6 +26,7 @@ from deerflow.config.input_polish_config import InputPolishConfig
 from deerflow.config.loop_detection_config import LoopDetectionConfig
 from deerflow.config.memory_config import MemoryConfig, load_memory_config_from_dict
 from deerflow.config.model_config import ModelConfig
+from deerflow.config.model_fallback_config import ModelFallbackConfig
 from deerflow.config.read_before_write_config import ReadBeforeWriteConfig
 from deerflow.config.reload_boundary import format_field_description
 from deerflow.config.run_events_config import RunEventsConfig
@@ -207,6 +208,7 @@ class AppConfig(BaseModel):
     token_usage: TokenUsageConfig = Field(default_factory=TokenUsageConfig, description="Token usage tracking configuration")
     token_budget: TokenBudgetConfig = Field(default_factory=TokenBudgetConfig, description="Token Budget tracking and limits configuration.")
     spend_budget: SpendBudgetConfig = Field(default_factory=SpendBudgetConfig, description="Currency-denominated spend caps over a daily/weekly/monthly window (fork feature).")
+    model_fallback: ModelFallbackConfig = Field(default_factory=ModelFallbackConfig, description="Default fallback chain for models that declare no per-model `fallback:` (fork feature).")
     plugins: list[ExtensionSpec] = Field(
         default_factory=list,
         description=format_field_description(

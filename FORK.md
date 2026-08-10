@@ -713,6 +713,66 @@ than extracted over your instance.
 | Targets | `make backup` / `make restore` in the root `Makefile` |
 | Tests | `backend/tests/test_backup.py` |
 
+### 14. Model fallback chains
+
+§3 above notes that models flagged `supports_tools: false` stay selectable and
+"tool-using subagents will simply fail at runtime". That is one instance of a
+general problem: running local models means absorbing local-model failure modes
+— daemon down, OOM, context overflow, no tool support — and the user was
+absorbing them by hand, one lost turn at a time. This is the reliability cost of
+the fork's central bet, and paying it is what makes a cost-aware routing policy
+safe to turn on.
+
+```yaml
+models:
+  - name: qwen3:8b
+    fallback: [claude-haiku-5]     # per-model, wins over the global chain
+
+model_fallback:                    # default for models that declare none
+  enabled: false                   # off by default
+  chain: [claude-haiku-5]
+```
+
+**A failure falls back; a decision does not.** That distinction is the whole
+design. A provider that is down, overloaded, or handed too many tokens has
+failed, and trying the next model beats losing the turn. A user interrupt, a
+spend cap (§10), and a guardrail refusal are things the system *meant* to do —
+retrying those on another model would defeat them **and spend money doing it**.
+A 401/403 is a third case: a bad key is a config error you need to see, not
+something to paper over until the bill arrives.
+
+| Falls back | Does not |
+| --- | --- |
+| connection failure / timeout to the provider | user interrupt (`CancelledError`, LangGraph interrupt) |
+| context-length rejection | spend or token cap |
+| unsupported tool calls | guardrail / moderation refusal |
+| provider 5xx | 401 / 403, and any plain 4xx that is not context/tools |
+
+Anything unrecognized also does **not** fall back: defaulting to "retry on
+another model" would double the cost of every bug and bury the original error
+behind a second, unrelated one.
+
+**Cycles are not detected, they are inexpressible.** A chain member is built
+*without* its own chain, so `a → b → a` is not a shape the config can produce;
+`MAX_CHAIN` (3) bounds the rest. A member that cannot be constructed — missing
+key, bad class path — is dropped with a warning rather than taking down the
+model the user actually selected: degrading to "no fallback" always beats
+degrading to "no model".
+
+**Cost stays correct for free, and that is load-bearing.** The wrapper returns
+the serving model's result untouched, so the `response_metadata.model_name` that
+`RunJournal` keys `token_usage_by_model` on already names whichever model ran.
+Rewriting it to the primary's name would bill a cloud fallback at a local
+model's rate of zero — silently wrong in the direction of the spend cap (§10)
+and the spend report (§11).
+
+| Piece | Where |
+| --- | --- |
+| Classification + wrapper | `backend/packages/harness/deerflow/models/fallback.py` |
+| Config | `ModelConfig.fallback`, `deerflow/config/model_fallback_config.py`, `config.example.yaml` |
+| Wiring | `models/factory.py::_wrap_with_fallbacks` |
+| Tests | `backend/tests/test_model_fallback.py` |
+
 ### Note: the "older messages disappear in long conversations" investigation
 
 The request that shipped this cost feature also asked to fix messages vanishing from long conversations. Findings, so the next pass has a head start:
@@ -851,6 +911,7 @@ Then confirm each fork feature end-to-end:
 | **Currency spend caps** (§10) | `cd backend && uv run pytest tests/test_spend_budget_config.py tests/test_spend_budget.py tests/test_spend_budget_middleware.py` covers the config/window math, the window aggregation (runs + auxiliary counters, owner-scoped), and the in-run warn / hard stop. Wiring: `deerflow/config/spend_budget_config.py` + the `spend_budget:` block in `config.example.yaml`; `deerflow/runtime/spend_window.py`; `app/gateway/spend_budget.py`; the **HTTP 402** admission refusal and the `__spend_budget` baseline injection in `app/gateway/services.py::start_run`; `SpendBudgetMiddleware` appended in `agents/lead_agent/agent.py` after `TokenBudgetMiddleware`; `RunJournal.current_token_usage_by_model()`; `scripts/doctor.py::check_spend_budget`; the header line via `GET /api/threads/{id}/token-usage -> spend_budget` and `core/threads/token-usage.ts::threadTokenUsageToSpendBudget`. **The pricing module moved into the harness** (`deerflow/pricing.py`) because the in-graph middleware may not import `app.*`; `app/gateway/pricing.py` is a re-export shim, and `test_pricing.py::test_gateway_shim_re_exports_the_canonical_helpers` fails if it rots. **Three invariants that are easy to break and silent when broken:** (1) an unpriced model must contribute **0**, so a fully local run is never blocked — pinned by `TestLocalModelsAreFree` and `TestLocalRunsAreNeverBlocked`; (2) in-run spend must come from the journal's **per-model** accumulator, or a cheap subagent gets billed at the lead's rate and the cap fires early on exactly the setup this fork recommends (`test_a_cheap_subagent_is_billed_at_its_own_rate`); (3) with nothing priced the feature must **self-disable with a reason**, not enforce against a permanent zero (`TestSelfDisabling`). If upstream restructures `services.py::start_run`, re-add the admission check before `create_or_reject` and the baseline injection after `inject_authenticated_user_context` — the baseline key is `__`-prefixed precisely so `build_run_config` strips a caller-supplied copy. Manual: set a tiny `daily_limit`, run a turn on a priced model (header **Budget left** goes red, the next message 402s), then repeat on a local model and confirm it is never blocked. |
 | **Automated upstream sync** (see *[Upstream sync](#upstream-sync)*) | `cd backend && uv run pytest tests/test_upstream_sync.py` covers parsing this checklist out of FORK.md, the PR body for clean and conflicted merges, gate rendering (pass / fail / **skip**, which must stay distinguishable — a skipped gate reading as green is how a conflicted sync looks mergeable), the 65536-character GitHub body limit, and workflow invariants. Wiring: `scripts/upstream_sync.py`; `.github/workflows/upstream-sync.yml` (weekly + `workflow_dispatch`). **The body is generated from this section, never copied** — a copy is correct exactly once, and every fork feature added afterwards would be missing from the list meant to prove the fork still works. So the two parsers here are load-bearing: the mechanical gates come from the `- [ ]` lines and the features from the table rows below; renaming this heading or restructuring the table silently empties the PR body (`test_the_real_fork_md_parses` is the guard). Workflow invariants pinned by tests: `git merge` and never `git rebase`, no `--force` in any form, and the PR step runs under `if: always()` so a conflicted merge still surfaces. Manual: `python3 scripts/upstream_sync.py --upstream-sha abc --commit-count 1` and read the rendered body. |
 | **Model & pricing audit** (see *[Auditing the model list](#auditing-the-model-list-settings--pricing)*) | `cd backend && uv run pytest tests/test_audit_models.py` covers marker-block parsing, the wizard-bundle load, each drift kind, internal consistency, source parity, the report, and the CLI exit codes. Wiring: `scripts/audit_models.py`; `.github/workflows/model-audit.yml` (weekly + `workflow_dispatch`); `scripts/fixtures/model_audit_stale_catalog.json`. **The fixture is the audit's own regression test** — the workflow's first step asserts it still produces findings, because a broken audit reports "no drift" forever and every clean run afterwards is a false all-clear. Regenerate it if the bundled roster changes (the generator is described in the fixture's `_comment`). **Two properties must not be "fixed" into their opposites:** an unreachable provider yields *zero* findings, never "every slug retired"; and the job must keep exiting 0 on findings (the issue is the signal, not a red tick). Manual: `python3 scripts/audit_models.py --catalog scripts/fixtures/model_audit_stale_catalog.json` and confirm all four drift kinds appear with a suggested diff. |
+| **Model fallback chains** (§14) | `cd backend && uv run pytest tests/test_model_fallback.py` covers the failure/decision classification, chain resolution, the wrapper (sync + async, `bind_tools` across members), and the factory wiring. Wiring: `deerflow/models/fallback.py`; `ModelConfig.fallback` (and its entry in the factory's **exclude** set — `ModelConfig` is `extra="allow"`, so an unexcluded key is forwarded into the provider constructor and then the request payload); `deerflow/config/model_fallback_config.py` + `AppConfig.model_fallback`; `models/factory.py::_wrap_with_fallbacks`. **Four invariants that are silent when broken:** (1) unrecognized errors must keep returning `False` from `should_fall_back` — defaulting to retry doubles the cost of every bug; (2) intentional stops (interrupt, budget, guardrail, 401/403) must never fall back, or a spend cap becomes a spend multiplier; (3) chain members must keep being built with `_is_fallback_member=True`, which is what makes cycles inexpressible rather than merely unlikely; (4) the wrapper must return the serving model's result untouched, or `token_usage_by_model` bills a cloud fallback at the local model's rate of zero. Manual: point a local model's `fallback:` at a cloud model, stop the Ollama daemon mid-session, and confirm the turn completes on the fallback and the header attributes its cost to the cloud model. |
 | **Backup / restore** (§13) | `cd backend && uv run pytest tests/test_backup.py` covers what goes in, the secrets exclusion and the owner-only opt-in archive, the postgres dump abort, the running-stack refusal, archive-path safety, and the mode-preserving round trip. Wiring: `scripts/backup.py`; `backup` / `restore` targets in the root `Makefile`; `/backups/` in `.gitignore`. **Three invariants that are silent when broken:** (1) credentials stay excluded by default — if `SECRET_PATTERNS` stops matching `users/*/integrations/` or `.env`, every backup starts shipping API keys; (2) the archive is opened `0600` via `os.open`, not chmod'ed afterwards, or it is briefly world-readable while being written; (3) extraction must keep `filter="tar"` — the `data` filter strips the permission bits this feature exists to preserve, so `0700` credential dirs would come back `0755`. A failed `pg_dump` must keep aborting: a backup with no database in it fails at restore time, when it is too late. Manual: `make backup`, `python3 scripts/backup.py inspect <archive>`, then restore into an empty directory and confirm threads/memory/tabs are there. |
 | **Deployment exposure check** (§12) | `cd backend && uv run pytest tests/test_exposure.py` covers the bind classification, the fact resolution (`.env` vs. process env precedence, `runtime_settings.json`, sandbox mode), every tier, and the doctor rows. Wiring: `scripts/exposure.py`; `scripts/doctor.py::check_deployment_exposure` in the new **Deployment** section; the `--surface docker` call at the end of `scripts/deploy.sh` and `--surface local` at the end of `scripts/serve.sh`. **Two things are easy to break silently:** (1) the local surface must stay pinned to the wildcard — it reads `docker/nginx/nginx.local.conf`'s address-less `listen 2026;`, so if upstream gives that config an explicit address, update `LOCAL_BIND_SOURCE`/`resolve_facts` or the check will report a bind the stack does not use; (2) `classify_bind_host` must test the Tailscale ranges **before** `is_private`, because Python classifies CGNAT (100.64.0.0/10) as private and the two tiers are deliberately different. The check must never return `fail` — a deliberately exposed home lab is not a broken install. Manual: `python3 scripts/exposure.py --surface docker`, then set `BIND_HOST=0.0.0.0` in `.env` and confirm the tier moves to `open-network` and names each contributing setting. |
 | **Spend history page** (§11) | `cd backend && uv run pytest tests/test_console_router.py -k ConsoleSpend` covers `GET /api/console/spend`: the three groupings (model / thread / feature) agreeing with the total, unpriced models named and sorted last, the window boundary, the no-pricing state, and the 503 on the memory backend. Wiring: `ConsoleSpendResponse` in `app/gateway/routers/console.py`; `AuxUsageStore.aggregate()`; `frontend/src/core/spend/*`; `frontend/src/app/workspace/spend/page.tsx`; the sidebar entry in `components/workspace/workspace-nav-chat-list.tsx`; i18n `spend.*` in both locales. The page must keep reusing `pricing.py` rather than recomputing cost — a second formula is how the page and the chat header start disagreeing about the same run. Manual: open **Spend** in the sidebar and confirm the tables' totals match the summary tile for the same window. |

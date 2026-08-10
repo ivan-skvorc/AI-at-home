@@ -15,7 +15,7 @@
 # ============================================================================
 # Bump this number when the config schema changes.
 # Run `make config-upgrade` to merge new fields into your local config.yaml.
-config_version: 34
+config_version: 35
 
 # ============================================================================
 # Logging
@@ -106,6 +106,37 @@ spend_budget:
   tz_offset_minutes: 0          # Local offset from UTC for `calendar` boundaries (enforcement is server-side, so this is config, not a browser value)
   warn_threshold: 0.8           # Warn in-context at 80% of the tightest cap
   hard_stop_threshold: 1.0      # Force a final answer (and refuse new runs) at 100%
+
+# ============================================================================
+# Model Fallback Chains (fork feature) — degrade instead of failing the turn
+# ============================================================================
+# Running local models means absorbing local-model failure modes: the daemon is
+# down, the model OOMs, the context overflows, or it turns out not to support
+# tool calls. A fallback chain retries the call on the next model instead of
+# losing the turn.
+#
+# What triggers a fallback: a connection failure to the provider, a
+# context-length rejection, an unsupported-tool-call rejection, or a provider
+# 5xx. What deliberately does NOT: a user interrupt, a spend cap, a guardrail
+# refusal, or a 401/403 — those are decisions (or a config error you need to
+# see), and retrying them on another model would defeat them and spend money.
+# Anything unrecognized also does not fall back: an unknown bug should cost one
+# request, not two.
+#
+# Tokens are attributed to the model that actually served the call, so the cost
+# figures and the spend cap stay correct when a fallback runs.
+#
+# Per-model (wins over the global chain below):
+#   models:
+#     - name: qwen3:8b
+#       fallback: [claude-haiku-5, openrouter-minimax-m3]
+#
+# Global default for models that declare none — the "all my local models fall
+# back to one cheap cloud model" shape, which would otherwise have to be
+# repeated on every entry the Ollama sync regenerates (and wiped on each sync):
+model_fallback:
+  enabled: false                # Off by default, like anything that changes agent behavior
+  chain: []                     # e.g. [claude-haiku-5]. The failing model is always removed from its own chain.
 
 # ============================================================================
 # Recursion Limit — Hard ceiling for a client-supplied run recursion_limit

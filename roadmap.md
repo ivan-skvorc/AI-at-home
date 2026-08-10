@@ -274,6 +274,15 @@ and the override precedence.
 
 ## 6. Model fallback chains
 
+**Status** — ✅ **Implemented.** `deerflow/models/fallback.py` wraps a model in a chain
+resolved from per-model `fallback:` or the global `model_fallback.chain` (off by
+default). It separates a **failure** (connection, context length, unsupported tools,
+5xx → fall back) from a **decision** (interrupt, spend cap, guardrail, 401/403 →
+re-raise), with unrecognized errors also re-raising. Cycles are inexpressible rather
+than detected — chain members are built without their own chains — and tokens are
+attributed to the serving model for free, which the spend cap and spend report depend
+on. See FORK.md §14.
+
 **Goal** — A failed model call retries down a configured chain (local → cheap cloud →
 premium) instead of failing the turn.
 

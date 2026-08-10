@@ -71,8 +71,7 @@ def main() -> int:
         return 0
     if rc != 0:
         print(
-            "[camoufox] fetch failed; the camoufox web_fetch backend will error "
-            "until 'make fetch-browser' succeeds",
+            "[camoufox] fetch failed; the camoufox web_fetch backend will error until 'make fetch-browser' succeeds",
             file=sys.stderr,
         )
     return 0

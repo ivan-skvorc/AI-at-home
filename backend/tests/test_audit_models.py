@@ -120,7 +120,9 @@ class TestDisplayNamePrices:
 class TestDiff:
     def test_matching_prices_produce_no_findings(self):
         entries = audit.parse_marker_blocks(CONFIG_BLOCK)
-        findings = audit.diff_against_catalog(entries, catalog(**{"vendor/alpha": {"input_per_million": 2.0, "output_per_million": 6.0}, "vendor/beta": {"input_per_million": 1.0, "output_per_million": 4.0, "promo_input_per_million": 0.5, "promo_output_per_million": 2.0}}))
+        findings = audit.diff_against_catalog(
+            entries, catalog(**{"vendor/alpha": {"input_per_million": 2.0, "output_per_million": 6.0}, "vendor/beta": {"input_per_million": 1.0, "output_per_million": 4.0, "promo_input_per_million": 0.5, "promo_output_per_million": 2.0}})
+        )
         assert findings == []
 
     def test_a_retired_slug_is_reported(self):
