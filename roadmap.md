@@ -437,6 +437,14 @@ sync stays idempotent and still no-ops cleanly when the daemon is unreachable.
 
 ## 10. Automated upstream sync
 
+**Status** — ✅ **Implemented.** `.github/workflows/upstream-sync.yml` merges
+`upstream/main` weekly onto a dated `upstream-sync/<date>` branch (merge, never rebase;
+never force-pushes), runs the mechanical gates, and opens a PR whose body is generated
+from FORK.md's post-sync checklist by `scripts/upstream_sync.py` — so it stays current as
+the fork grows instead of being a copy that rots. A conflicted merge still opens a PR,
+flagged and listing every conflicted path, with gates reported as *skipped* rather than
+passing. See FORK.md *Upstream sync*.
+
 **Goal** — A scheduled job that merges `upstream/main`, runs the mechanical gates, and
 opens a PR pre-populated with the post-sync checklist.
 
