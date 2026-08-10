@@ -375,6 +375,14 @@ message; the secrets decision is documented in README.md and SECURITY.md.
 
 ## 9. Ollama daemon lifecycle management
 
+**Status** — ✅ **Implemented.** `ollama.keep_alive` (plus `keep_alive_overrides` per
+model) is written into every synced entry; `ollama.preload: true` warms `models[0]` at
+launch via a backgrounded load-only request; a `vram_gb`-aware contention warning names
+the two largest local models with real numbers when they cannot co-reside; and
+`make doctor` gained a **Local Models** section (daemon reachable, configured models
+pulled, `keep_alive` set). All warn-only, and nothing reassigns a model choice. See
+FORK.md §1.
+
 **Goal** — Local models are warm when needed and do not fight each other for VRAM.
 
 **Why it fits** — `scripts/sync-ollama-models.py` computes a per-model VRAM-aware context

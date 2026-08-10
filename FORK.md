@@ -56,6 +56,56 @@ python3 scripts/sync-ollama-models.py --base-url http://ollama:11434
 python3 scripts/sync-ollama-models.py --num-ctx-cap 0
 ```
 
+**Daemon lifecycle (`keep_alive`, preload, contention).** The sizing above stops
+at the config file; the daemon itself was unmanaged, and three things followed
+from that.
+
+*Every subagent call paid a cold start.* Ollama unloads a model ~5 minutes after
+its last call. In a turn where the lead thinks for a while and then delegates,
+the local subagent's weights have already been evicted and get reloaded from
+disk before it can answer — the cost landing on exactly the local-subagent
+configuration this fork recommends. `ollama.keep_alive` is now written into
+every synced entry (and forwarded by `ChatOllama` to the daemon), with
+`ollama.keep_alive_overrides` for per-model values:
+
+```yaml
+ollama:
+  keep_alive: 30m        # "1h", a bare number of seconds, or -1 to never unload
+  preload: true          # warm models[0] at launch
+  keep_alive_overrides:
+    qwen3:8b: 1h
+```
+
+Unset leaves the daemon's own default, which is the prior behavior — pinning
+weights in VRAM is a decision about the whole machine, so the sync does not
+assume it.
+
+*The first message of a session was always slow.* `ollama.preload: true` loads
+`models[0]` (which is what `models/factory.py` resolves an unspecified model to)
+into VRAM at launch, via `/api/generate` with an empty prompt — the load-only
+request, no tokens generated. `scripts/serve.sh` runs it **backgrounded**:
+loading weights can take tens of seconds and must never sit in front of the
+stack starting. It is best-effort in both directions — a busy or absent daemon
+is a no-op, and a cloud `models[0]` means there is nothing local to warm.
+
+*Two local models could not both be resident, silently.* A local lead with a
+local subagent means two sets of weights in VRAM at once. Ollama does not fail
+there — it evicts one to load the other, so every delegation pays a full reload
+and the run just crawls. When `vram_gb` is set, the sync now warns at launch
+with the real numbers, reusing the same geometry math as the context sizing:
+
+```
+[ollama-sync] VRAM contention: qwen3:32b (19.9 GiB) + qwen3:14b (8.9 GiB) need
+~30.3 GiB resident together (weights + a 4096-token KV cache each + 1.5 GiB
+overhead), but the configured budget is 24 GiB. …
+```
+
+A warning, and only a warning: it never silently reassigns the user's model
+choice. `make doctor` gained a matching **Local Models** section — daemon
+reachable, configured models actually pulled (naming the `ollama pull` for any
+that are not), and whether `keep_alive` is set. All warn-only; a deliberately
+stopped daemon is not a broken install.
+
 ### 2. API-key model auto-config in `config.yaml`
 
 A companion to the Ollama sync for **cloud** models. `scripts/sync-api-key-models.py` runs on every launch, reads the provider API keys in your `.env` (falling back to the process environment), and **uncomments** the matching ready-to-use model block in `config.yaml` — so the right models are enabled on first start with no manual editing.
@@ -666,6 +716,7 @@ Then confirm each fork feature end-to-end:
 | Fork feature | How to verify it survived the merge |
 | --- | --- |
 | **Ollama auto-populate** (§1) | `python3 scripts/sync-ollama-models.py --dry-run --verbose` — proposes entries when the daemon is up, prints `unreachable; skipping (no changes)` and exits 0 when it's down. Reconciliation logic is pinned by `backend/tests/test_sync_ollama_models.py`. |
+| **Ollama daemon lifecycle** (§1) | `cd backend && uv run pytest tests/test_ollama_lifecycle.py` covers the `keep_alive` settings parse (including the nested `keep_alive_overrides` map, whose children must **not** leak into the flat `ollama.*` settings), the resolution precedence, the rendered entry, the VRAM-contention warning, `default_local_model`, preload, and the doctor rows. Wiring: `parse_ollama_settings` / `resolve_keep_alive` / `vram_contention_warning` / `default_local_model` / `preload_model` in `scripts/sync-ollama-models.py`; the `--preload-only` **backgrounded** call in `scripts/serve.sh` right after the sync; `scripts/doctor.py::check_ollama_readiness` in the new **Local Models** section; the documented keys in `config.example.yaml`'s `ollama:` block. Model tuples grew a 4th field (`keep_alive`) — `sync()` reads the tail positionally so 2- and 3-tuple callers still work; keep that back-compatibility if the shape changes again. Preload must stay backgrounded in `serve.sh`: it blocks until the weights are loaded. Manual: set `ollama.keep_alive: 30m`, relaunch, and confirm the regenerated marker block carries `keep_alive: 30m` on every entry. |
 | **API-key model auto-config** (§2) | On a *copy* of `config.example.yaml`: `ANTHROPIC_API_KEY=sk-ant-… python3 scripts/sync-api-key-models.py --config <copy> --dry-run --verbose` logs `enabled 'anthropic' model block`; with an empty env the file stays byte-identical. Pinned by `backend/tests/test_sync_api_key_models.py`. All eleven `# === BEGIN/END auto-model-config: <provider> ===` marker blocks (anthropic, openrouter, and the nine first-party home blocks: openai, xai, google, deepseek, mistral, moonshot, qwen, minimax, zai) must still be present in `config.example.yaml`, each in sync with its `*_BUNDLE_MODELS` list in `scripts/wizard/providers.py` (`HOME_API_BUNDLES` registry) and its `PROVIDERS` entry in `scripts/sync-api-key-models.py`. |
 | **Per-thread subagent model override** (§3, Ultra mode) | `input-box.tsx` renders the second "Subagent" `ModelSelector` only under `context.mode === "ultra"`, defaulting to "Follow lead", dimming `lacksToolSupport` models. It sets `subagent_model_name` in thread context; `_CONTEXT_CONFIGURABLE_KEYS` (`app/gateway/services.py`) forwards it; `task_tool.py` applies it as `model_override` and passes it to `SubagentExecutor`. Backend plumbing pinned by `backend/tests/test_task_tool_core_logic.py::test_task_tool_uses_subagent_model_override_for_tool_loading`. |
 | **Follow-up suggestions off by default + model picker** (§4) | `core/settings/local.ts` defaults `suggestions.enabled=false`; Settings → Suggestions page writes `suggestions.{enabled,modelName}`; `input-box.tsx` gates on `suggestionsConfig?.enabled && localSettings.suggestions.enabled` and sends `n: maxFollowupSuggestions`, `model_name: suggestionsModelName ?? context.model_name`. The backend endpoint's `model_name` override is pinned by `backend/tests/test_suggestions_router.py`. |

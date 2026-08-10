@@ -472,6 +472,12 @@ if [ -n "$DETECT_PYTHON" ]; then
     [ -f "backend/config.yaml" ] && _ollama_config="backend/config.yaml"
     [ -n "$DEER_FLOW_CONFIG_PATH" ] && [ -f "$DEER_FLOW_CONFIG_PATH" ] && _ollama_config="$DEER_FLOW_CONFIG_PATH"
     "$DETECT_PYTHON" "$REPO_ROOT/scripts/sync-ollama-models.py" --config "$_ollama_config" --verbose || true
+
+    # ── Fork: preload the default local model ────────────────────────────────
+    # Backgrounded on purpose: loading weights can take tens of seconds and must
+    # not sit in front of the stack starting. --preload-only is a no-op unless
+    # `ollama.preload: true` is configured and models[0] is an Ollama entry.
+    ("$DETECT_PYTHON" "$REPO_ROOT/scripts/sync-ollama-models.py" --config "$_ollama_config" --preload-only >/dev/null 2>&1 || true) &
 fi
 
 # ── API-key model auto-config ────────────────────────────────────────────────

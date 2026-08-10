@@ -301,14 +301,21 @@ def vram_num_ctx_limit(show: dict, weights_bytes, vram_bytes, kv_cache_type: str
 def parse_ollama_settings(text: str) -> dict:
     """Parse the top-level ``ollama:`` section of config.yaml.
 
-    Recognized keys: ``vram_gb`` (positive number) and ``kv_cache_type`` (one of
-    KV_CACHE_BYTES_PER_ELEMENT); malformed values are dropped. Pure-text scan on
+    Recognized keys: ``vram_gb`` (positive number), ``kv_cache_type`` (one of
+    KV_CACHE_BYTES_PER_ELEMENT), ``keep_alive`` (opaque Ollama duration string),
+    ``preload`` (bool), and the nested ``keep_alive_overrides`` map of
+    model name -> duration. Malformed values are dropped. Pure-text scan on
     purpose — this script runs under plain python3 with no PyYAML.
     """
     top_key = re.compile(r"^[A-Za-z_][\w-]*:")
-    entry = re.compile(r"^\s+([A-Za-z_][\w-]*):\s*([^#]*)")
+    entry = re.compile(r"^(\s+)([A-Za-z_][\w.:-]*):\s*([^#]*)")
     raw: dict[str, str] = {}
+    overrides: dict[str, str] = {}
     in_section = False
+    # Indent of the `keep_alive_overrides:` key, so its children are attributed
+    # to the map rather than read as further ollama.* settings.
+    overrides_indent: int | None = None
+
     for line in text.splitlines():
         if not in_section:
             if re.match(r"^ollama:\s*(#.*)?$", line):
@@ -319,8 +326,21 @@ def parse_ollama_settings(text: str) -> dict:
                 break
             continue
         match = entry.match(line)
-        if match:
-            raw[match.group(1)] = match.group(2).strip().strip("\"'")
+        if not match:
+            continue
+        indent, key, value = len(match.group(1)), match.group(2), match.group(3).strip().strip("\"'")
+
+        if overrides_indent is not None:
+            if indent > overrides_indent:
+                if value:
+                    overrides[key] = value
+                continue
+            overrides_indent = None  # dedented back out of the map
+
+        if key == "keep_alive_overrides":
+            overrides_indent = indent
+            continue
+        raw[key] = value
 
     settings: dict = {}
     try:
@@ -331,7 +351,31 @@ def parse_ollama_settings(text: str) -> dict:
         pass
     if raw.get("kv_cache_type") in KV_CACHE_BYTES_PER_ELEMENT:
         settings["kv_cache_type"] = raw["kv_cache_type"]
+    # keep_alive is passed through to Ollama verbatim ("30m", "1h", "-1", "600"),
+    # so it is deliberately not validated here beyond being non-empty.
+    if raw.get("keep_alive"):
+        settings["keep_alive"] = raw["keep_alive"]
+    if raw.get("preload", "").lower() in {"true", "yes", "1"}:
+        settings["preload"] = True
+    if overrides:
+        settings["keep_alive_overrides"] = overrides
     return settings
+
+
+def resolve_keep_alive(name: str, settings: dict, cli_keep_alive: str | None = None) -> str | None:
+    """Resolve a model's ``keep_alive``: CLI > per-model override > global > none.
+
+    Returning None means "write nothing", which leaves the daemon on its own
+    5-minute default. That is the pre-existing behavior and stays the default:
+    pinning weights in VRAM is a decision about the whole machine, not something
+    a config sync should assume.
+    """
+    if cli_keep_alive:
+        return cli_keep_alive
+    override = (settings.get("keep_alive_overrides") or {}).get(name)
+    if override:
+        return override
+    return settings.get("keep_alive") or None
 
 
 def resolve_sizing_settings(cli_vram_gb, cli_kv_cache_type, config_text: str):
@@ -375,7 +419,111 @@ def resolve_num_ctx(native: int | None, cap: int = DEFAULT_NUM_CTX_CAP, vram_lim
     return resolved
 
 
-def render_entry(name: str, caps: list, base_url: str = DEFAULT_HOST, num_ctx: int | None = None) -> str:
+def vram_contention_warning(loaded: list, vram_bytes: int | None, kv_cache_type: str = DEFAULT_KV_CACHE_TYPE) -> str | None:
+    """Warn when the two largest local models cannot be resident at once.
+
+    This is the Ultra-mode shape: a local lead plus a local subagent means two
+    sets of weights in VRAM simultaneously. Ollama does not fail in that case —
+    it evicts one model to load the other, so every delegation pays a full
+    reload and the run silently crawls. The sizing math is the same one that
+    already computes each model's context window; this just applies it to a pair.
+
+    Returns None when there is nothing to say (no budget configured, fewer than
+    two local models, or the pair fits). Never reassigns a model choice — the
+    user's picks are theirs, and a warning with real numbers is the useful thing.
+    """
+    if not vram_bytes or vram_bytes <= 0 or len(loaded) < 2:
+        return None
+
+    def _cost(show: dict, weights: int) -> tuple[int, int]:
+        """(weights, kv bytes for a modest shared window) for one resident model."""
+        per_token = parse_kv_bytes_per_token(show, kv_cache_type)
+        # Geometry may be unreadable; weights alone still prove non-coexistence.
+        kv = int(per_token * MIN_VRAM_NUM_CTX) if per_token else 0
+        return weights or 0, kv
+
+    ranked = sorted(loaded, key=lambda item: item[2] or 0, reverse=True)[:2]
+    (name_a, show_a, weights_a), (name_b, show_b, weights_b) = ranked
+    wa, ka = _cost(show_a, weights_a)
+    wb, kb = _cost(show_b, weights_b)
+    needed = wa + ka + wb + kb + VRAM_OVERHEAD_BYTES
+    if needed <= vram_bytes:
+        return None
+
+    gib = 1024**3
+    return (
+        f"VRAM contention: {name_a} ({wa / gib:.1f} GiB) + {name_b} ({wb / gib:.1f} GiB) "
+        f"need ~{needed / gib:.1f} GiB resident together (weights + a {MIN_VRAM_NUM_CTX}-token KV cache each "
+        f"+ {VRAM_OVERHEAD_BYTES / gib:.1f} GiB overhead), but the configured budget is {vram_bytes / gib:g} GiB. "
+        f"Running both at once (a local lead with a local subagent) makes Ollama evict and reload between calls. "
+        f"Pair a local lead with a smaller local subagent, raise ollama.vram_gb if it understates your GPU, or use q8_0 KV cache."
+    )
+
+
+def default_local_model(text: str) -> str | None:
+    """Return the Ollama model id of ``models[0]``, or None if it is not local.
+
+    ``models/factory.py`` resolves an unspecified model to ``config.models[0]``,
+    so that entry — and only that entry — is the one worth preloading. Warming a
+    different local model would heat the wrong weights and evict the right ones.
+    """
+    lines = text.splitlines()
+    try:
+        start, end = find_models_section(lines)
+    except SystemExit:
+        return None
+    except Exception:
+        return None
+
+    entry_re = re.compile(r"^\s*-\s+(.*)$")
+    first: dict[str, str] = {}
+    seen_entry = False
+    for line in lines[start + 1 : end]:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        match = entry_re.match(line)
+        if match:
+            if seen_entry:
+                break  # only models[0] matters
+            seen_entry = True
+            stripped = match.group(1).strip()
+        elif not seen_entry:
+            continue
+        if ":" in stripped:
+            key, _, value = stripped.partition(":")
+            first.setdefault(key.strip(), value.strip().strip("\"'"))
+
+    if "ollama" not in first.get("use", "").lower():
+        return None
+    return first.get("model") or first.get("name") or None
+
+
+def _post_json(url: str, payload: dict, timeout: float) -> bool:
+    data = json.dumps(payload).encode("utf-8")
+    request = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310 - fixed loopback/daemon URL
+            response.read()
+        return True
+    except (urllib.error.URLError, OSError, TimeoutError):
+        return False
+
+
+def preload_model(host: str, name: str, keep_alive: str | None = None, timeout: float = 300.0, post=_post_json) -> bool:
+    """Load a model's weights into VRAM without generating a token.
+
+    Ollama's ``/api/generate`` with an empty prompt is the documented load-only
+    request. Best-effort: a daemon that is down, slow, or busy returns False and
+    the caller carries on — a warm cache is an optimization, never a precondition.
+    """
+    payload: dict = {"model": name, "prompt": ""}
+    if keep_alive:
+        payload["keep_alive"] = keep_alive
+    return post(f"{normalize_host(host)}/api/generate", payload, timeout)
+
+
+def render_entry(name: str, caps: list, base_url: str = DEFAULT_HOST, num_ctx: int | None = None, keep_alive: str | None = None) -> str:
     """Render a single Ollama model entry as YAML at 2-space indent.
 
     When ``num_ctx`` is known, the entry pins the context window and keeps the
@@ -394,6 +542,10 @@ def render_entry(name: str, caps: list, base_url: str = DEFAULT_HOST, num_ctx: i
     ]
     if num_ctx is not None:
         lines.append(f"{INDENT}  num_ctx: {num_ctx}")
+    if keep_alive:
+        # ChatOllama forwards keep_alive to the daemon, so the model stays
+        # resident between turns instead of paying a cold start per subagent call.
+        lines.append(f"{INDENT}  keep_alive: {keep_alive}")
     lines += [
         f"{INDENT}  num_predict: {num_predict}",
         f"{INDENT}  temperature: 0.7",
@@ -490,11 +642,13 @@ def sync(text: str, models: list, base_url: str = DEFAULT_HOST) -> str:
         new_section.append("")
         new_section.append(f"{INDENT}{BEGIN_MARKER}")
         for entry in models:
-            # Entries are (name, caps) or (name, caps, num_ctx); num_ctx is
-            # optional so pre-existing 2-tuple callers keep working.
+            # Entries are (name, caps), (name, caps, num_ctx), or
+            # (name, caps, num_ctx, keep_alive); the tail fields are optional so
+            # pre-existing shorter-tuple callers keep working.
             name, caps = entry[0], entry[1]
             num_ctx = entry[2] if len(entry) > 2 else None
-            new_section.append(render_entry(name, caps, base_url, num_ctx=num_ctx))
+            keep_alive = entry[3] if len(entry) > 3 else None
+            new_section.append(render_entry(name, caps, base_url, num_ctx=num_ctx, keep_alive=keep_alive))
         new_section.append(f"{INDENT}{END_MARKER}")
 
     new_section.append("")  # blank separator before next top-level key
@@ -521,6 +675,13 @@ def main() -> int:
         default=None,
         help="KV-cache quantization assumed by the sizing (default: `ollama.kv_cache_type` in config.yaml, else f16). Must match the daemon's OLLAMA_KV_CACHE_TYPE to be accurate.",
     )
+    ap.add_argument("--keep-alive", default=None, help="How long the daemon keeps each model resident (e.g. 30m, 1h, -1 for never unload). Default: `ollama.keep_alive` in config.yaml; unset leaves Ollama's own 5-minute default.")
+    ap.add_argument(
+        "--preload-only",
+        action="store_true",
+        help="Skip the config sync; just load the default local model (models[0]) into VRAM so the first turn is not a cold start. No-op unless `ollama.preload: true` or --preload is set.",
+    )
+    ap.add_argument("--preload", action="store_true", help="Preload the default local model after syncing (overrides `ollama.preload`)")
     ap.add_argument("--dry-run", action="store_true", help="Print result to stdout, do not write")
     ap.add_argument("--verbose", action="store_true")
     args = ap.parse_args()
@@ -531,8 +692,28 @@ def main() -> int:
     original = config_path.read_text()
     check_duplicate_top_level_keys(original, config_path)
     vram_bytes, kv_cache_type = resolve_sizing_settings(args.vram_gb, args.kv_cache_type, original)
+    settings = parse_ollama_settings(original)
 
     host = normalize_host(os.environ.get("OLLAMA_HOST") or args.host)
+
+    # ── Preload-only: warm the default local model, touch nothing else ───────
+    # Split out so a launch script can background it: loading weights can take
+    # tens of seconds, which must not sit in front of the stack starting.
+    if args.preload_only:
+        if not (args.preload or settings.get("preload")):
+            return 0
+        name = default_local_model(original)
+        if not name:
+            if args.verbose:
+                print("[ollama-sync] default model is not an Ollama entry; nothing to preload", file=sys.stderr)
+            return 0
+        keep_alive = resolve_keep_alive(name, settings, args.keep_alive)
+        if preload_model(host, name, keep_alive):
+            print(f"[ollama-sync] preloaded {name}" + (f" (keep_alive={keep_alive})" if keep_alive else ""), file=sys.stderr)
+        elif args.verbose:
+            print(f"[ollama-sync] could not preload {name} (daemon unreachable or busy); continuing", file=sys.stderr)
+        return 0
+
     base_url = resolve_base_url(host, args.base_url, args.container)
     if args.verbose:
         print(f"[ollama-sync] querying {host}; writing base_url {base_url}", file=sys.stderr)
@@ -553,17 +734,27 @@ def main() -> int:
             print(f"[ollama-sync] {warning}", file=sys.stderr)
 
     models = []
+    resident = []
     for installed_model in installed:
         name = installed_model["name"]
         show = fetch_show(host, name)
         caps = parse_capabilities(show)
         vram_limit = vram_num_ctx_limit(show, installed_model.get("size"), vram_bytes, kv_cache_type) if vram_bytes else None
         num_ctx = resolve_num_ctx(parse_context_length(show), cap=effective_num_ctx_cap(args.num_ctx_cap, vram_limit), vram_limit=vram_limit)
-        models.append((name, caps, num_ctx))
+        keep_alive = resolve_keep_alive(name, settings, args.keep_alive)
+        models.append((name, caps, num_ctx, keep_alive))
+        resident.append((name, show, installed_model.get("size")))
         if args.verbose:
             ctx_note = num_ctx if num_ctx is not None else "unknown (Ollama default)"
             vram_note = f"  vram_limit={vram_limit}" if vram_limit is not None else ""
-            print(f"  - {name}  caps={caps}  num_ctx={ctx_note}{vram_note}", file=sys.stderr)
+            keep_note = f"  keep_alive={keep_alive}" if keep_alive else ""
+            print(f"  - {name}  caps={caps}  num_ctx={ctx_note}{vram_note}{keep_note}", file=sys.stderr)
+
+    # A local lead with a local subagent means two sets of weights resident at
+    # once. Warn with the numbers rather than silently reassigning a model.
+    contention = vram_contention_warning(resident, vram_bytes, kv_cache_type)
+    if contention:
+        print(f"[ollama-sync] {contention}", file=sys.stderr)
 
     # Tool-capable first, then alphabetical (matches dropdown order in UI)
     models.sort(key=lambda m: (0 if "tools" in m[1] else 1, m[0]))
@@ -581,6 +772,11 @@ def main() -> int:
 
     config_path.write_text(updated)
     print(f"[ollama-sync] updated {config_path} with {len(models)} Ollama model(s)", file=sys.stderr)
+
+    if args.preload or settings.get("preload"):
+        name = default_local_model(updated)
+        if name and preload_model(host, name, resolve_keep_alive(name, settings, args.keep_alive)):
+            print(f"[ollama-sync] preloaded {name}", file=sys.stderr)
     return 0
 
 

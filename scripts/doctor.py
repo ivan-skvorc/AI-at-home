@@ -1011,6 +1011,90 @@ def check_sandbox(config_path: Path) -> list[CheckResult]:
         return [CheckResult("sandbox configured", "fail", str(exc))]
 
 
+def _ollama_installed_models(host: str) -> list[str] | None:
+    """List model names the daemon has, or None when it is unreachable."""
+    import json
+    import urllib.error
+    import urllib.request
+
+    try:
+        with urllib.request.urlopen(f"{host.rstrip('/')}/api/tags", timeout=2.0) as response:  # noqa: S310 - fixed daemon URL
+            data = json.loads(response.read().decode("utf-8"))
+    except (urllib.error.URLError, OSError, ValueError, TimeoutError):
+        return None
+    return [m.get("name", "") for m in data.get("models", []) if isinstance(m, dict)]
+
+
+def check_ollama_readiness(config_path: Path, probe=_ollama_installed_models) -> list[CheckResult]:
+    """Is the local-model half of a mixed local/cloud setup actually ready?
+
+    `scripts/sync-ollama-models.py` computes a VRAM-aware context window per
+    model and then stops at the config file — nothing verified that the daemon
+    is up, that the models the config names are still pulled, or that anything
+    keeps them resident between turns. Each of those fails at chat time as a
+    slow or broken run with no obvious cause.
+
+    Warn-only: a machine with the daemon deliberately stopped is not a broken
+    install, and local models are optional in the first place.
+    """
+    if not config_path.exists():
+        return [CheckResult("local models", "skip")]
+    try:
+        data = _load_yaml_file(config_path)
+    except Exception as exc:
+        return [CheckResult("local models", "warn", str(exc))]
+
+    models = [m for m in (data.get("models") or []) if isinstance(m, dict)]
+    local = [m for m in models if "ollama" in str(m.get("use") or "").lower()]
+    if not local:
+        return [CheckResult("local models", "skip", "no Ollama models configured")]
+
+    host = str(local[0].get("base_url") or os.environ.get("OLLAMA_HOST") or "http://localhost:11434")
+    installed = probe(host)
+    if installed is None:
+        return [
+            CheckResult(
+                "local model daemon",
+                "warn",
+                f"{host} unreachable — configured Ollama models will fail at chat time",
+                fix="Start it with 'ollama serve' (or `systemctl --user start ollama`), or select a cloud model in the picker",
+            )
+        ]
+
+    results = [CheckResult("local model daemon", "ok", f"{host}, {len(installed)} model(s) installed")]
+
+    installed_set = set(installed)
+    wanted = {str(m.get("model") or m.get("name")) for m in local}
+    # An entry may name `qwen3:8b` while `ollama list` reports `qwen3:8b`; a bare
+    # name also matches the daemon's implicit `:latest` tag.
+    missing = sorted(name for name in wanted if name not in installed_set and f"{name}:latest" not in installed_set)
+    if missing:
+        results.append(
+            CheckResult(
+                "local models installed",
+                "warn",
+                f"configured but not pulled: {', '.join(missing)}",
+                fix="\n".join(f"ollama pull {name}" for name in missing),
+            )
+        )
+    else:
+        results.append(CheckResult("local models installed", "ok", f"{len(wanted)} configured, all present"))
+
+    keep_alive_values = {str(m.get("keep_alive")) for m in local if m.get("keep_alive") is not None}
+    if keep_alive_values:
+        results.append(CheckResult("local model keep_alive", "ok", ", ".join(sorted(keep_alive_values))))
+    else:
+        results.append(
+            CheckResult(
+                "local model keep_alive",
+                "ok",
+                "not set — Ollama unloads each model ~5 min after its last call, so subagent turns pay a cold start",
+                fix="Set `ollama.keep_alive: 30m` in config.yaml and re-run a launch (the sync writes it into each entry)",
+            )
+        )
+    return results
+
+
 def check_deployment_exposure(project_root: Path, env: Mapping[str, str] | None = None) -> list[CheckResult]:
     """Report the *effective* network exposure of each entry surface (fork feature).
 
@@ -1128,6 +1212,9 @@ def main() -> int:
     # ── Sandbox ──────────────────────────────────────────────────────────────
     sandbox_checks = check_sandbox(config_path)
     sections.append(("Sandbox", sandbox_checks))
+
+    # ── Local models ─────────────────────────────────────────────────────────
+    sections.append(("Local Models", check_ollama_readiness(config_path)))
 
     # ── Deployment exposure ──────────────────────────────────────────────────
     sections.append(("Deployment", check_deployment_exposure(project_root)))

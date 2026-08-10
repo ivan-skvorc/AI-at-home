@@ -1629,9 +1629,33 @@ models:
 # (older Ollama also needs OLLAMA_FLASH_ATTENTION=1; models without flash
 # attention support silently fall back to f16.)
 #
+# Daemon lifecycle (also consumed by the sync, not by the application):
+#
+# keep_alive controls how long Ollama keeps a model resident after its last
+# call. The daemon's own default is 5 minutes, which means a subagent
+# delegation a few minutes into a turn reloads the weights from disk before it
+# can answer — the cost lands on exactly the local-subagent setup this fork
+# recommends. Set it and the sync writes `keep_alive:` into every generated
+# entry (and per-model overrides win over the global value). Accepts any
+# duration Ollama accepts: "30m", "1h", a bare number of seconds, or -1 to
+# never unload. Unset leaves the daemon's default, which is the prior behavior.
+#
+# preload: true loads models[0] into VRAM at launch (backgrounded, best-effort)
+# so the first message of a session is not a cold start.
+#
+# Note on running two local models at once: a local lead with a local subagent
+# means two sets of weights resident simultaneously. When vram_gb is set, the
+# sync warns at launch — with the actual numbers — if the two largest installed
+# models cannot co-reside; `make doctor` reports the same. It never reassigns
+# your model choice.
+#
 # ollama:
 #   vram_gb: 16            # GPU memory budget in GiB (sum across GPUs)
 #   kv_cache_type: q8_0    # f16 (default) | q8_0 | q4_0 — must match the daemon
+#   keep_alive: 30m        # how long each model stays resident (-1 = never unload)
+#   preload: true          # warm models[0] at launch so turn 1 isn't a cold start
+#   keep_alive_overrides:  # optional, per model — wins over keep_alive above
+#     qwen3:8b: 1h
 
 # ============================================================================
 # Tool Groups Configuration
