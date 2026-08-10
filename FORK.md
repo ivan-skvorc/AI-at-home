@@ -622,6 +622,75 @@ cd backend && uv run pytest tests/test_exposure.py
 python3 scripts/exposure.py --surface docker      # or --surface local, --format json
 ```
 
+### 13. Whole-instance backup and restore (`make backup` / `make restore`)
+
+There is per-feature memory import/export, but nothing snapshotted `.deer-flow`
+**as a unit**: memory, threads, chat tabs, runtime settings, uploads, the
+databases. A personal AI accumulates months of that on one machine with no
+redundancy, which is exactly the deployment shape this fork targets.
+
+```bash
+make backup                              # → backups/deerflow-backup-YYYYmmdd-HHMMSS.tar.gz
+make backup INCLUDE_SECRETS=1            # also .env + integration tokens (see below)
+make restore ARCHIVE=backups/….tar.gz    # refuses while a stack is running
+python3 scripts/backup.py inspect <file> # read the manifest without extracting
+```
+
+**What is in it.** `config.yaml`, `extensions_config.json`, the DeerFlow home
+tree (`backend/.deer-flow` and a repo-root `.deer-flow`), and `skills/custom`.
+Public skills are deliberately out — they are committed, so a restore onto a
+clean checkout already has them. Rebuildable caches are out too (`skills_view`,
+`.retrieval`, `__pycache__`, browser frames, staged `.upload-*.part` files).
+
+**The secrets decision, stated rather than defaulted.** Credentials are
+**excluded** unless you ask for them. Integration credentials under
+`users/{user_id}/integrations/` are `0700`/`0600` for a reason and `.env` holds
+every API key; copying them into a world-readable tarball in `~/Downloads` turns
+a durability feature into a credential-exfiltration feature nobody asked for.
+`--include-secrets` (`INCLUDE_SECRETS=1`) opts in, and then:
+
+- the archive is created `0600` **from the first byte** — opened with an explicit
+  mode rather than chmod'ed afterwards, because an archive that is briefly
+  world-readable while it is written is world-readable;
+- the manifest records `includes_secrets`, so a restore can say what it is about
+  to write;
+- restoring a secret-*free* archive leaves the target's existing credentials in
+  place rather than deleting what the backup does not carry.
+
+**Databases are handled explicitly, not hoped for.** With
+`database.backend: sqlite` the file is inside the home tree and comes along.
+With `postgres`, `pg_dump --no-owner --no-privileges` runs into the archive, and
+a failed dump **aborts the backup** — a snapshot with no database in it is worse
+than an error, because you only find out at restore time. Restore writes the
+dump beside the config and tells you to load it; it never touches a live
+database on your behalf.
+
+**Restore refuses to run underneath a live stack.** Writing over SQLite that a
+Gateway holds open, and over thread directories an active run is using, is how a
+recovery becomes a second outage. `restore` probes the Gateway (8001) and nginx
+(2026) ports and stops with the list of what is up and the `make stop` fix;
+`--force` / `FORCE=1` is the deliberate override.
+
+**Permissions survive; ownership is documented, not faked.** Extraction uses
+`tarfile`'s `filter="tar"`, which keeps the recorded mode bits (so `0700`
+credential directories come back `0700`) while still rejecting absolute paths
+and traversal. The `data` filter would have stripped exactly the modes this
+feature exists to preserve. Ownership can only be restored as root, so it is not
+attempted — which also makes this the recovery path for the root-owned-files
+problem in the Arch / DooD section: restore as your own user and the tree comes
+back owned by you.
+
+**Archive safety is enforced on the way in.** Every member must live under
+`deerflow-backup/`, with no absolute path and no `..` component, and the archive
+must carry a readable DeerFlow manifest — an arbitrary tarball is refused rather
+than extracted over your instance.
+
+| Piece | Where |
+| --- | --- |
+| Script | `scripts/backup.py` (`create_backup`, `restore_backup`, `inspect_backup`, `detect_running_services`) |
+| Targets | `make backup` / `make restore` in the root `Makefile` |
+| Tests | `backend/tests/test_backup.py` |
+
 ### Note: the "older messages disappear in long conversations" investigation
 
 The request that shipped this cost feature also asked to fix messages vanishing from long conversations. Findings, so the next pass has a head start:
@@ -736,6 +805,7 @@ Then confirm each fork feature end-to-end:
 | **Durable chat tabs** (§9) | `cd backend && uv run pytest tests/test_user_ui_state.py tests/test_chat_tabs_settings_router.py` covers the per-user store (`deerflow/config/user_ui_state.py`, `{base_dir}/users/{user_id}/ui_state.json`) and `GET`/`PUT /api/settings/chat-tabs` (caller-scoped, **no admin gate** — unlike the multi-user-mode routes in the same router). `frontend/tests/unit/core/threads/chat-tabs-persistence.dom.test.tsx` covers the provider's boot path. If upstream restructures `workspace/layout.tsx`'s gateway-offline branch, re-check that an unreachable gateway still **keeps** the local cache instead of blanking the strip (`fetchChatTabs` returns `null` for "unknown", never `[]`), and that a server with no stored set still adopts and seeds from the local cache — that is the upgrade path for tabs pinned before server persistence existed. Manual: pin a tab, restart the stack, hard-reload with site data cleared, and confirm the tabs come back. |
 | **Keep-alive chat tabs** (§9) | `cd frontend && pnpm test chat-tabs` exercises the pure model (`frontend/tests/unit/core/threads/chat-tabs.test.ts`); `pnpm test:e2e chat-tabs` (`frontend/tests/e2e/chat-tabs.spec.ts`) covers drag-from-sidebar onto the empty strip / drag-reorder between chips / open-as-tab / keep-alive switch (both instances stay mounted) / close / reload persistence. Wiring: the live chat is `components/workspace/chats/chat-instance.tsx` (**fully controlled**, own provider stack via `chat-providers.tsx` with a per-instance `storageScope`); `keep-alive-chat-viewport.tsx` is mounted in `workspace-content.tsx` **above** the route inside `ChatTabsProvider` and renders one instance per slot (only the active shown, the rest `display:none`); the tab strip is `chat-tabs-bar.tsx`, which **always renders as a drop zone on chat routes** (an empty-state hint `chatTabs.dropHint` when there are no tabs yet but threads exist, so there is somewhere to drag onto — returning `null` here is the "tabs don't work" bug); `[thread_id]/page.tsx` is a thin registrar in app builds and the classic inline `<ChatInstance>` in static-demo; pure model + persistence in `core/threads/chat-tabs.ts`, state in `chat-tabs-context.tsx`; sidebar drag + **Open in tab** in `recent-chat-list.tsx`; `ChatBox` panel ids keyed by thread id (not pathname). **If upstream restructures `[thread_id]/page.tsx`,** re-extract its body onto `chat-instance.tsx` and keep the registrar/classic split; watch for a barrel (`components/workspace/chats/index.ts`) import of the client viewport into the server `workspace-content.tsx` (import the file directly to keep the `"use client"` boundary). |
 | **Currency spend caps** (§10) | `cd backend && uv run pytest tests/test_spend_budget_config.py tests/test_spend_budget.py tests/test_spend_budget_middleware.py` covers the config/window math, the window aggregation (runs + auxiliary counters, owner-scoped), and the in-run warn / hard stop. Wiring: `deerflow/config/spend_budget_config.py` + the `spend_budget:` block in `config.example.yaml`; `deerflow/runtime/spend_window.py`; `app/gateway/spend_budget.py`; the **HTTP 402** admission refusal and the `__spend_budget` baseline injection in `app/gateway/services.py::start_run`; `SpendBudgetMiddleware` appended in `agents/lead_agent/agent.py` after `TokenBudgetMiddleware`; `RunJournal.current_token_usage_by_model()`; `scripts/doctor.py::check_spend_budget`; the header line via `GET /api/threads/{id}/token-usage -> spend_budget` and `core/threads/token-usage.ts::threadTokenUsageToSpendBudget`. **The pricing module moved into the harness** (`deerflow/pricing.py`) because the in-graph middleware may not import `app.*`; `app/gateway/pricing.py` is a re-export shim, and `test_pricing.py::test_gateway_shim_re_exports_the_canonical_helpers` fails if it rots. **Three invariants that are easy to break and silent when broken:** (1) an unpriced model must contribute **0**, so a fully local run is never blocked — pinned by `TestLocalModelsAreFree` and `TestLocalRunsAreNeverBlocked`; (2) in-run spend must come from the journal's **per-model** accumulator, or a cheap subagent gets billed at the lead's rate and the cap fires early on exactly the setup this fork recommends (`test_a_cheap_subagent_is_billed_at_its_own_rate`); (3) with nothing priced the feature must **self-disable with a reason**, not enforce against a permanent zero (`TestSelfDisabling`). If upstream restructures `services.py::start_run`, re-add the admission check before `create_or_reject` and the baseline injection after `inject_authenticated_user_context` — the baseline key is `__`-prefixed precisely so `build_run_config` strips a caller-supplied copy. Manual: set a tiny `daily_limit`, run a turn on a priced model (header **Budget left** goes red, the next message 402s), then repeat on a local model and confirm it is never blocked. |
+| **Backup / restore** (§13) | `cd backend && uv run pytest tests/test_backup.py` covers what goes in, the secrets exclusion and the owner-only opt-in archive, the postgres dump abort, the running-stack refusal, archive-path safety, and the mode-preserving round trip. Wiring: `scripts/backup.py`; `backup` / `restore` targets in the root `Makefile`; `/backups/` in `.gitignore`. **Three invariants that are silent when broken:** (1) credentials stay excluded by default — if `SECRET_PATTERNS` stops matching `users/*/integrations/` or `.env`, every backup starts shipping API keys; (2) the archive is opened `0600` via `os.open`, not chmod'ed afterwards, or it is briefly world-readable while being written; (3) extraction must keep `filter="tar"` — the `data` filter strips the permission bits this feature exists to preserve, so `0700` credential dirs would come back `0755`. A failed `pg_dump` must keep aborting: a backup with no database in it fails at restore time, when it is too late. Manual: `make backup`, `python3 scripts/backup.py inspect <archive>`, then restore into an empty directory and confirm threads/memory/tabs are there. |
 | **Deployment exposure check** (§12) | `cd backend && uv run pytest tests/test_exposure.py` covers the bind classification, the fact resolution (`.env` vs. process env precedence, `runtime_settings.json`, sandbox mode), every tier, and the doctor rows. Wiring: `scripts/exposure.py`; `scripts/doctor.py::check_deployment_exposure` in the new **Deployment** section; the `--surface docker` call at the end of `scripts/deploy.sh` and `--surface local` at the end of `scripts/serve.sh`. **Two things are easy to break silently:** (1) the local surface must stay pinned to the wildcard — it reads `docker/nginx/nginx.local.conf`'s address-less `listen 2026;`, so if upstream gives that config an explicit address, update `LOCAL_BIND_SOURCE`/`resolve_facts` or the check will report a bind the stack does not use; (2) `classify_bind_host` must test the Tailscale ranges **before** `is_private`, because Python classifies CGNAT (100.64.0.0/10) as private and the two tiers are deliberately different. The check must never return `fail` — a deliberately exposed home lab is not a broken install. Manual: `python3 scripts/exposure.py --surface docker`, then set `BIND_HOST=0.0.0.0` in `.env` and confirm the tier moves to `open-network` and names each contributing setting. |
 | **Spend history page** (§11) | `cd backend && uv run pytest tests/test_console_router.py -k ConsoleSpend` covers `GET /api/console/spend`: the three groupings (model / thread / feature) agreeing with the total, unpriced models named and sorted last, the window boundary, the no-pricing state, and the 503 on the memory backend. Wiring: `ConsoleSpendResponse` in `app/gateway/routers/console.py`; `AuxUsageStore.aggregate()`; `frontend/src/core/spend/*`; `frontend/src/app/workspace/spend/page.tsx`; the sidebar entry in `components/workspace/workspace-nav-chat-list.tsx`; i18n `spend.*` in both locales. The page must keep reusing `pricing.py` rather than recomputing cost — a second formula is how the page and the chat header start disagreeing about the same run. Manual: open **Spend** in the sidebar and confirm the tables' totals match the summary tile for the same window. |
 

@@ -1358,6 +1358,46 @@ Current MVP limits:
 
 Enable background polling with `config.yaml -> scheduler.enabled`. Manual trigger uses the same scheduled-task resource and execution path.
 
+## Backup and Restore
+
+A personal instance accumulates months of memory, conversations, pinned tabs and
+settings on one machine. `make backup` snapshots all of it as a single
+timestamped archive, and `make restore` puts it back.
+
+```bash
+make backup                                   # → backups/deerflow-backup-YYYYmmdd-HHMMSS.tar.gz
+make backup INCLUDE_SECRETS=1                 # also .env and integration tokens — see below
+make restore ARCHIVE=backups/deerflow-….tar.gz
+python3 scripts/backup.py inspect <archive>   # what's in it, without extracting
+```
+
+The archive carries `config.yaml`, `extensions_config.json`, your DeerFlow home
+directory (memory, threads, uploads, chat tabs, runtime settings, the SQLite
+database) and `skills/custom`. Public skills and rebuildable caches are left out.
+On `database.backend: postgres` a `pg_dump` is written into the archive instead,
+and a failed dump aborts the backup rather than handing you a snapshot with no
+database in it.
+
+> **Credentials are excluded by default.** `.env` and the per-user integration
+> credentials under `users/*/integrations/` are **not** in the archive unless you
+> pass `INCLUDE_SECRETS=1`. Those files are `0600`/`0700` on disk for a reason,
+> and a backup that quietly copies API keys and OAuth tokens into a tarball in
+> your downloads folder is worse than no backup. When you do opt in, the archive
+> is created owner-only (`0600`) — treat it as a credential file: don't email it,
+> don't drop it in a shared folder, and prefer an encrypted destination.
+> Restoring an archive that carries no credentials leaves the ones already on the
+> machine untouched.
+
+**Restore refuses while DeerFlow is running.** Writing over a database the
+Gateway holds open turns a recovery into a second outage, so `make restore`
+checks the Gateway (8001) and nginx (2026) ports and stops with instructions to
+`make stop` first. Pass `FORCE=1` only if you are certain nothing is live.
+
+File permissions survive the round trip, so credential directories come back
+`0700` rather than world-readable. Ownership is not restored (only root could),
+which is deliberate — restoring as your own user is also the fix if a Docker run
+has left root-owned files behind.
+
 ## Terminal Workbench (TUI)
 
 `deerflow` is a terminal-native workbench for people who live in the shell. It runs **embedded** over `DeerFlowClient` — no Gateway, frontend, nginx, or Docker required — while honoring the same `config.yaml`, checkpointer, skills, memory, MCP, and sandbox settings as the rest of DeerFlow.

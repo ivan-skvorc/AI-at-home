@@ -75,7 +75,7 @@ deer-flow/
 │                                    # Managed integration skill packs are global at .deer-flow/integrations/skills/{provider}/
 │                                    # Integration credentials and enabled state remain per-user
 ├── contracts/                      # Cross-component JSON contracts (e.g. subagent status, skill review)
-├── scripts/                        # Root orchestration scripts invoked by the Makefile (check, configure, doctor, exposure, support_bundle, serve, nginx, docker, deploy, setup_wizard, searxng, detect_searxng, sandbox-preflight, sync-ollama-models, sync-api-key-models, update_camoufox_searxng, install_auto_update)
+├── scripts/                        # Root orchestration scripts invoked by the Makefile (check, configure, doctor, exposure, backup, support_bundle, serve, nginx, docker, deploy, setup_wizard, searxng, detect_searxng, sandbox-preflight, sync-ollama-models, sync-api-key-models, update_camoufox_searxng, install_auto_update)
 ├── tests/                          # Root-level tests (currently tests/skills/ — public skill tests)
 └── docs/                           # Cross-cutting docs, plans, and design notes
 ```
@@ -117,6 +117,8 @@ Scheduled-task note:
 make setup       # Interactive setup wizard (recommended for new users)
 make doctor      # Check configuration and system requirements
 make support-bundle  # Generate redacted troubleshooting summary, AI issue draft, and optional zip
+make backup      # Snapshot the whole instance (credentials excluded unless INCLUDE_SECRETS=1)
+make restore ARCHIVE=<file>  # Restore a snapshot (refuses while the stack is running)
 make config      # Generate local config files from the examples
 make check       # Check that required tools are installed
 make install     # Install all dependencies (frontend + backend + pre-commit hooks)

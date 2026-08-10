@@ -338,6 +338,15 @@ failing silently; the feature is off until enabled.
 
 ## 8. Whole-instance backup and restore
 
+**Status** — ✅ **Implemented.** `make backup` / `make restore` (`scripts/backup.py`)
+write and read one timestamped archive of the DeerFlow home tree, `config.yaml`,
+`extensions_config.json` and custom skills. **The secrets decision: excluded by
+default**, opt in with `INCLUDE_SECRETS=1`, and then the archive is created `0600` at
+open time. Postgres is dumped explicitly and a failed dump aborts the backup; restore
+refuses while the Gateway or nginx is listening, rejects unsafe archive paths, and
+preserves file modes (`filter="tar"`). Documented in README.md and SECURITY.md. See
+FORK.md §13.
+
 **Goal** — One command snapshots everything a personal instance has accumulated, and one
 command restores it.
 
