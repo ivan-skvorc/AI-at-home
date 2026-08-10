@@ -767,3 +767,54 @@ class TestCheckModelPricing:
         cfg = tmp_path / "config.yaml"
         cfg.write_text("models:\n  - [unclosed\n")
         assert doctor.check_model_pricing(cfg).status == "warn"
+
+
+class TestCheckSpendBudget:
+    """`make doctor` must explain a spend cap that is on but doing nothing.
+
+    A currency budget silently measures nothing when no model carries a price —
+    the same class of silent failure `model pricing` exists for, one level up.
+    """
+
+    @staticmethod
+    def _config(tmp_path, body: str):
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text(f"config_version: 34\n{body}")
+        return cfg
+
+    _PRICED_MODEL = "models:\n  - name: m\n    display_name: Some Model ($1/2)\n"
+
+    def test_skipped_when_not_enabled(self, tmp_path):
+        cfg = self._config(tmp_path, "spend_budget:\n  enabled: false\n")
+        assert doctor.check_spend_budget(cfg).status == "skip"
+
+    def test_missing_section_is_skipped(self, tmp_path):
+        assert doctor.check_spend_budget(self._config(tmp_path, "log_level: info\n")).status == "skip"
+
+    def test_enabled_with_a_limit_and_a_priced_model_is_ok(self, tmp_path):
+        cfg = self._config(tmp_path, f"spend_budget:\n  enabled: true\n  daily_limit: 5.0\n  window: calendar\n{self._PRICED_MODEL}")
+        result = doctor.check_spend_budget(cfg)
+        assert result.status == "ok"
+        assert "calendar" in result.detail
+        assert "daily 5" in result.detail
+
+    def test_enabled_with_no_limit_fails_because_the_gateway_will_not_load(self, tmp_path):
+        cfg = self._config(tmp_path, f"spend_budget:\n  enabled: true\n{self._PRICED_MODEL}")
+        result = doctor.check_spend_budget(cfg)
+        assert result.status == "fail"
+        assert "daily_limit" in result.fix
+
+    def test_enabled_without_any_priced_model_warns(self, tmp_path):
+        cfg = self._config(tmp_path, "spend_budget:\n  enabled: true\n  daily_limit: 5.0\nmodels:\n  - name: local\n    display_name: Qwen3 8B (Ollama)\n")
+        result = doctor.check_spend_budget(cfg)
+        assert result.status == "warn"
+        assert "measures nothing" in result.detail
+
+    def test_memory_backend_warns_because_there_is_no_history(self, tmp_path):
+        cfg = self._config(tmp_path, f"spend_budget:\n  enabled: true\n  daily_limit: 5.0\ndatabase:\n  backend: memory\n{self._PRICED_MODEL}")
+        result = doctor.check_spend_budget(cfg)
+        assert result.status == "warn"
+        assert "no persisted spend history" in result.detail
+
+    def test_missing_config_file_is_skipped(self, tmp_path):
+        assert doctor.check_spend_budget(tmp_path / "nope.yaml").status == "skip"

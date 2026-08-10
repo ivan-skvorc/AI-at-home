@@ -401,6 +401,62 @@ def check_model_pricing(config_path: Path) -> CheckResult:
         return CheckResult("model pricing", "warn", str(exc))
 
 
+def check_spend_budget(config_path: Path) -> CheckResult:
+    """Is the configured currency spend cap actually enforceable?
+
+    `spend_budget` is denominated in the pricing currency, so it silently does
+    nothing when no model carries a price — the same class of silent failure the
+    `model pricing` check above exists for, one level up. It also needs a SQL
+    backend, because a window's spend is read from persisted run history.
+    """
+    if not config_path.exists():
+        return CheckResult("spend budget", "skip")
+    try:
+        data = _load_yaml_file(config_path)
+        budget = data.get("spend_budget") or {}
+        if not isinstance(budget, dict) or not budget.get("enabled"):
+            return CheckResult("spend budget", "skip", "not enabled")
+
+        limits = {period: budget.get(f"{period}_limit") for period in ("daily", "weekly", "monthly")}
+        configured = {period: value for period, value in limits.items() if value}
+        if not configured:
+            return CheckResult(
+                "spend budget",
+                "fail",
+                "enabled with no cap configured — the Gateway will refuse to load this config",
+                fix="Set at least one of spend_budget.daily_limit / weekly_limit / monthly_limit",
+            )
+
+        models = data.get("models") or []
+        priceable = [
+            model
+            for model in models
+            if isinstance(model, dict) and (isinstance(model.get("pricing"), dict) or _PRICE_IN_DISPLAY_NAME_RE.search(str(model.get("display_name") or "")))
+        ]
+        if not priceable:
+            return CheckResult(
+                "spend budget",
+                "warn",
+                "enabled but no model carries a price, so the cap measures nothing and is not enforced",
+                fix="Give each paid model a `pricing:` block, or a ($in/out) price in its display_name",
+            )
+
+        backend = str(((data.get("database") or {}) if isinstance(data.get("database"), dict) else {}).get("backend") or "sqlite").strip().lower()
+        if backend == "memory":
+            return CheckResult(
+                "spend budget",
+                "warn",
+                "enabled but database.backend is memory, so there is no persisted spend history to measure a window against",
+                fix="Set database.backend to sqlite or postgres in config.yaml",
+            )
+
+        summary = ", ".join(f"{period} {value:g}" for period, value in configured.items())
+        window = str(budget.get("window") or "rolling")
+        return CheckResult("spend budget", "ok", f"{window} window; {summary}")
+    except Exception as exc:
+        return CheckResult("spend budget", "warn", str(exc))
+
+
 def check_config_loadable(config_path: Path) -> CheckResult:
     if not config_path.exists():
         return CheckResult("config.yaml loadable", "skip")
@@ -1015,6 +1071,7 @@ def main() -> int:
         check_config_loadable(config_path),
         check_models_configured(config_path),
         check_model_pricing(config_path),
+        check_spend_budget(config_path),
         check_core_tools(config_path),
         *check_env_placeholders(config_path),
         *check_config_unknown_keys(config_path),

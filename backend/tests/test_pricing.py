@@ -12,7 +12,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.gateway.pricing import (
+from deerflow.pricing import (
     _pricing_lookup_candidates,
     build_pricing_map,
     lookup_pricing,
@@ -20,6 +20,21 @@ from app.gateway.pricing import (
     run_cost,
     token_cost,
 )
+
+
+def test_gateway_shim_re_exports_the_canonical_helpers():
+    """``app.gateway.pricing`` is a re-export of ``deerflow.pricing``.
+
+    The math lives in the harness so the in-graph spend-budget middleware can
+    price tokens without importing ``app.*``. Gateway routers still import the
+    old path, so the shim must keep exporting the same objects — one
+    implementation, two import paths.
+    """
+    import app.gateway.pricing as shim
+    import deerflow.pricing as canonical
+
+    for name in ("ModelPricing", "build_pricing_map", "derive_pricing_from_display_name", "lookup_pricing", "pricing_currency", "run_cost", "token_cost"):
+        assert getattr(shim, name) is getattr(canonical, name), name
 
 
 def _model(name, model, pricing):

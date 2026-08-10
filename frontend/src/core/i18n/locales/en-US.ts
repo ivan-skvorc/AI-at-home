@@ -309,7 +309,41 @@ export const enUS: Translations = {
     demoChats: "Demo chats",
     agents: "Agents",
     scheduledTasks: "Scheduled tasks",
+    spend: "Spend",
     agentsDisabledTooltip: "Feature not enabled",
+  },
+
+  spend: {
+    title: "Spend",
+    description:
+      "Where your money went, priced per model from config.yaml. Unpriced models (like local Ollama) count as $0.",
+    window: "Window",
+    windowDays: (days: number) => `Last ${days} days`,
+    totalCost: "Total",
+    totalTokens: "Tokens",
+    totalRuns: "Runs",
+    byModel: "By model",
+    byThread: "By conversation",
+    byCategory: "By feature",
+    model: "Model",
+    thread: "Conversation",
+    category: "Feature",
+    cost: "Cost",
+    tokens: "Tokens",
+    runs: "Runs",
+    untitledThread: "Untitled conversation",
+    categories: {
+      conversation: "Conversation",
+      memory: "Memory",
+      suggestions: "Suggestions",
+    },
+    unpriced: "no price configured",
+    unpricedNote: (models: string) =>
+      `Excludes ${models} — no price configured, so the real cost is higher. Add a pricing block to those models in config.yaml.`,
+    noPricing:
+      "No cost shown: no model has a configured price. Add a pricing block (or a ($in/out) pair in the display name) to see spend.",
+    empty: "Nothing recorded in this window yet.",
+    loadFailed: "Could not load the spend report.",
   },
 
   chatTabs: {
@@ -748,6 +782,19 @@ export const enUS: Translations = {
       `Excludes ${models} — no price configured, so the real cost is higher.`,
     promoRate: "promo rate now",
     standardRate: "standard rate",
+    budgetLeft: "Budget left",
+    budgetPeriod: (period: string) =>
+      period === "daily"
+        ? "today"
+        : period === "weekly"
+          ? "this week"
+          : period === "monthly"
+            ? "this month"
+            : period,
+    budgetExceeded:
+      "Spend cap reached — new runs are paused until the window resets.",
+    budgetHint:
+      "What is left of your configured spend_budget cap, across every run and background call in the window. Unpriced models (like local Ollama) cost nothing, so a fully local run is never blocked.",
     memory: "Memory",
     suggestions: "Suggestions",
     auxCallCount: (count: number) =>

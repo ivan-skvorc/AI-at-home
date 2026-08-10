@@ -15,7 +15,7 @@
 # ============================================================================
 # Bump this number when the config schema changes.
 # Run `make config-upgrade` to merge new fields into your local config.yaml.
-config_version: 33
+config_version: 34
 
 # ============================================================================
 # Logging
@@ -78,6 +78,34 @@ token_budget:
   max_output_tokens: null       # Optional separate output-only limit
   warn_threshold: 0.8           # Warn at 80% of the budget
   hard_stop_threshold: 1.0      # Force stop at 100% of the budget
+
+# ============================================================================
+# Spend Budget — Currency-denominated caps over a day / week / month
+# ============================================================================
+# Fork feature. `token_budget` above caps ONE RUN in tokens; this caps REAL
+# MONEY across a window. In a setup that mixes a premium cloud lead with cheap
+# or free local subagents, a token is not a unit of cost — 200k tokens is $5 or
+# $0 depending on which model burned them — so the money cap is the one that
+# matches what you actually care about.
+#
+# Denominated in the single currency your `models[*].pricing` blocks use.
+# Unpriced models (local Ollama) cost 0, so a fully local run is NEVER blocked.
+# The feature self-disables (with a reason in `make doctor`) when no model
+# carries a price, or when database.backend is `memory` — there is no persisted
+# spend history to measure a window against.
+#
+# Enforced in two places: a new run is refused with HTTP 402 when a cap is
+# already spent, and a run in flight gets an in-context warning at
+# warn_threshold then a forced final answer at hard_stop_threshold.
+spend_budget:
+  enabled: false                # Set to true to activate spend enforcement
+  daily_limit: null             # e.g. 5.00 — max spend per day, in the pricing currency
+  weekly_limit: null            # e.g. 25.00
+  monthly_limit: null           # e.g. 80.00
+  window: rolling               # rolling = last 24h / 7d / 30d; calendar = since local midnight / Monday / the 1st
+  tz_offset_minutes: 0          # Local offset from UTC for `calendar` boundaries (enforcement is server-side, so this is config, not a browser value)
+  warn_threshold: 0.8           # Warn in-context at 80% of the tightest cap
+  hard_stop_threshold: 1.0      # Force a final answer (and refuse new runs) at 100%
 
 # ============================================================================
 # Recursion Limit — Hard ceiling for a client-supplied run recursion_limit

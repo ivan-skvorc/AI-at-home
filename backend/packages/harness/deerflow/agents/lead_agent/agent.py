@@ -571,6 +571,24 @@ def build_middlewares(
 
         middlewares.append(TokenBudgetMiddleware.from_config(token_budget_config))
 
+    # SpendBudgetMiddleware — enforce the currency-denominated window cap
+    # (fork feature). Deliberately after the token budget: they are independent
+    # ceilings and whichever binds first wins, but the money cap is the one this
+    # fork's mixed premium/local model story actually needs.
+    spend_budget_config = resolved_app_config.spend_budget
+    if spend_budget_config.enabled:
+        from deerflow.agents.middlewares.spend_budget_middleware import SpendBudgetMiddleware
+        from deerflow.pricing import build_pricing_map
+
+        spend_pricing = build_pricing_map(resolved_app_config.models, logger=logger)
+        if spend_pricing:
+            middlewares.append(SpendBudgetMiddleware.from_config(spend_budget_config, spend_pricing))
+        else:
+            # A budget in a currency nothing is priced in cannot mean anything.
+            # Self-disable loudly rather than enforce a cap against a permanent
+            # zero; `make doctor`'s `spend budget` check says the same thing.
+            logger.warning("spend_budget.enabled is true but no model carries a price, so spend caps are not enforced. Add a pricing: block (or a ($in/out) pair in the display name) to at least one model.")
+
     # Inject custom middlewares before ClarificationMiddleware
     if custom_middlewares:
         middlewares.extend(custom_middlewares)

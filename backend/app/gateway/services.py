@@ -30,8 +30,10 @@ from app.gateway.internal_auth import (
     get_trusted_internal_owner_user_id,
 )
 from app.gateway.run_models import RunCreateRequest
+from app.gateway.spend_budget import exhausted_message, resolve_run_spend_budget
 from app.gateway.utils import sanitize_log_param
 from deerflow.agents.middlewares.dynamic_context_middleware import _DYNAMIC_CONTEXT_REMINDER_KEY, _REMINDER_DATE_KEY
+from deerflow.agents.middlewares.spend_budget_middleware import SPEND_BUDGET_BASELINE_KEY
 from deerflow.agents.middlewares.view_image_middleware import _IMAGE_CONTEXT_MESSAGE_MARKER_KEY
 from deerflow.config.app_config import get_app_config
 from deerflow.config.database_config import resolve_checkpoint_graph_cache_max
@@ -1111,6 +1113,18 @@ async def start_run(
             )
 
     owner_user_id = get_trusted_internal_owner_user_id(request)
+
+    # Spend cap (fork feature): refuse a new run when a configured currency
+    # budget is already exhausted, and resolve the window baseline the in-run
+    # SpendBudgetMiddleware adds this run's own spend to. Resolved once here so
+    # admission and in-run enforcement agree on the same number. Inactive
+    # (feature off / nothing priced / no SQL backend) is always "do not
+    # enforce", never "block everything".
+    spend_budget_status = await resolve_run_spend_budget(request, owner_user_id=owner_user_id)
+    exhausted = spend_budget_status.exceeded
+    if exhausted is not None:
+        raise HTTPException(status_code=402, detail=exhausted_message(exhausted, spend_budget_status.currency))
+
     # Stateless run endpoints carry thread_id in the request *body*, so the
     # @require_permission(owner_check=True) decorator -- which resolves ownership
     # from the path param -- cannot protect them. Enforce thread ownership here,
@@ -1162,6 +1176,10 @@ async def start_run(
             internal_owner_user=internal_owner_user,
             request_context=getattr(body, "context", None),
         )
+        # Server-owned: ``build_run_config`` strips caller-supplied ``__`` keys,
+        # so a client cannot seed a fake low baseline to widen its own cap.
+        if spend_budget_status.active:
+            config.setdefault("context", {})[SPEND_BUDGET_BASELINE_KEY] = spend_budget_status.to_baseline()
 
         async def run_after_metadata(record: RunRecord) -> None:
             metadata_task = asyncio.create_task(

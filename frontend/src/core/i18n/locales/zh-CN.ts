@@ -293,7 +293,41 @@ export const zhCN: Translations = {
     demoChats: "演示对话",
     agents: "智能体",
     scheduledTasks: "定时任务",
+    spend: "支出",
     agentsDisabledTooltip: "功能未启用",
+  },
+
+  spend: {
+    title: "支出",
+    description:
+      "按 config.yaml 中每个模型各自的价格统计费用去向。未配置价格的模型（如本地 Ollama）按 $0 计。",
+    window: "时间范围",
+    windowDays: (days: number) => `最近 ${days} 天`,
+    totalCost: "合计",
+    totalTokens: "Token",
+    totalRuns: "运行次数",
+    byModel: "按模型",
+    byThread: "按会话",
+    byCategory: "按功能",
+    model: "模型",
+    thread: "会话",
+    category: "功能",
+    cost: "费用",
+    tokens: "Token",
+    runs: "运行",
+    untitledThread: "未命名会话",
+    categories: {
+      conversation: "对话",
+      memory: "记忆",
+      suggestions: "建议",
+    },
+    unpriced: "未配置价格",
+    unpricedNote: (models: string) =>
+      `未包含 ${models}（未配置价格），实际费用更高。请在 config.yaml 中为这些模型添加 pricing 配置。`,
+    noPricing:
+      "无法显示费用：没有任何模型配置了价格。请添加 pricing 配置（或在 display_name 中写入 ($in/out) 价格）后再查看支出。",
+    empty: "该时间范围内暂无记录。",
+    loadFailed: "无法加载支出报表。",
   },
 
   chatTabs: {
@@ -719,6 +753,18 @@ export const zhCN: Translations = {
       `未包含 ${models}（未配置价格），实际费用更高。`,
     promoRate: "当前优惠价",
     standardRate: "标准价",
+    budgetLeft: "预算余额",
+    budgetPeriod: (period: string) =>
+      period === "daily"
+        ? "今日"
+        : period === "weekly"
+          ? "本周"
+          : period === "monthly"
+            ? "本月"
+            : period,
+    budgetExceeded: "已达支出上限——在窗口重置前将暂停新的运行。",
+    budgetHint:
+      "已配置的 spend_budget 上限在当前窗口内的剩余额度，涵盖窗口内的所有运行与后台调用。未配置价格的模型（如本地 Ollama）不计费用，因此纯本地运行永远不会被拦截。",
     memory: "记忆",
     suggestions: "建议",
     auxCallCount: (count: number) => `${count} 次调用`,

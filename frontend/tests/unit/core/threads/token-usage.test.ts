@@ -7,6 +7,7 @@ import {
   selectContextUsage,
   threadTokenUsageQueryKey,
   threadTokenUsageToCostSummary,
+  threadTokenUsageToSpendBudget,
   threadTokenUsageToTokenUsage,
 } from "@/core/threads/token-usage";
 import type { ThreadTokenUsageResponse } from "@/core/threads/types";
@@ -395,4 +396,103 @@ test("an aux promo cost equal to its standard cost collapses to null", () => {
     },
   });
   expect(summary!.aux.memory!.promoCost).toBeNull();
+});
+
+// ---------------------------------------------------------------------------
+// Spend budget (roadmap item 2) — the header's "budget left" line
+// ---------------------------------------------------------------------------
+
+const BUDGET_BASE: ThreadTokenUsageResponse = {
+  thread_id: "thread-budget",
+  total_input_tokens: 0,
+  total_output_tokens: 0,
+  total_tokens: 0,
+  total_runs: 0,
+  by_model: {},
+  by_caller: { lead_agent: 0, subagent: 0, middleware: 0 },
+  currency: "USD",
+};
+
+test("no spend budget block yields no budget summary", () => {
+  expect(threadTokenUsageToSpendBudget(BUDGET_BASE)).toBeNull();
+  expect(threadTokenUsageToSpendBudget(undefined)).toBeNull();
+});
+
+test("a budget with no usable limit yields no budget summary", () => {
+  expect(
+    threadTokenUsageToSpendBudget({
+      ...BUDGET_BASE,
+      spend_budget: { currency: "USD", limits: [] },
+    }),
+  ).toBeNull();
+});
+
+test("the tightest window is the one surfaced", () => {
+  const budget = threadTokenUsageToSpendBudget({
+    ...BUDGET_BASE,
+    spend_budget: {
+      currency: "USD",
+      limits: [
+        { period: "daily", limit: 10, spent: 1, remaining: 9, fraction: 0.1 },
+        {
+          period: "weekly",
+          limit: 50,
+          spent: 48,
+          remaining: 2,
+          fraction: 0.96,
+        },
+      ],
+      warn_threshold: 0.8,
+      hard_stop_threshold: 1,
+      exceeded: false,
+    },
+  });
+  expect(budget!.tightest!.period).toBe("weekly");
+  expect(budget!.tightest!.remaining).toBe(2);
+  expect(budget!.limits).toHaveLength(2);
+  expect(budget!.exceeded).toBe(false);
+  expect(budget!.warnThreshold).toBe(0.8);
+});
+
+test("an exhausted cap is reported as exceeded", () => {
+  const budget = threadTokenUsageToSpendBudget({
+    ...BUDGET_BASE,
+    spend_budget: {
+      currency: "USD",
+      limits: [
+        { period: "daily", limit: 10, spent: 12, remaining: 0, fraction: 1.2 },
+      ],
+      exceeded: true,
+    },
+  });
+  expect(budget!.exceeded).toBe(true);
+  expect(budget!.tightest!.remaining).toBe(0);
+});
+
+test("the cost summary carries the spend budget so no extra prop is threaded", () => {
+  const summary = threadTokenUsageToCostSummary({
+    ...BUDGET_BASE,
+    total_cost: 1.5,
+    spend_budget: {
+      currency: "USD",
+      limits: [
+        {
+          period: "daily",
+          limit: 10,
+          spent: 1.5,
+          remaining: 8.5,
+          fraction: 0.15,
+        },
+      ],
+    },
+  });
+  expect(summary!.spendBudget!.tightest!.remaining).toBe(8.5);
+});
+
+test("a cost summary without a budget keeps the field null", () => {
+  const summary = threadTokenUsageToCostSummary({
+    ...BUDGET_BASE,
+    total_cost: 1.5,
+  });
+  expect(summary!.spendBudget).toBeNull();
 });

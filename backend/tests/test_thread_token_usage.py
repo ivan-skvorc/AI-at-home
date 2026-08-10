@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 from app.gateway import context_usage
 from app.gateway.pricing import build_pricing_map, lookup_pricing, token_cost
 from app.gateway.routers import thread_runs
+from deerflow.config.spend_budget_config import SpendBudgetConfig
 from deerflow.runtime import aux_usage
 from deerflow.runtime.runs.store.memory import MemoryRunStore
 
@@ -69,6 +70,8 @@ def test_thread_token_usage_returns_stable_shape(monkeypatch: pytest.MonkeyPatch
         "thread_id": "thread-1",
         **_aggregate_result(),
         "context_usage": None,
+        # The spend cap is off by default, so the header gets no budget line.
+        "spend_budget": None,
     }
     run_store.aggregate_tokens_by_thread.assert_awaited_once_with("thread-1", include_active=False)
     build_context_usage.assert_awaited_once()
@@ -656,3 +659,57 @@ def test_unpriced_subagent_model_does_not_break_the_promo_total(monkeypatch):
     assert data["total_cost"] == pytest.approx(4.75)
     assert data["promo_total_cost"] == pytest.approx(1.15)
     assert data["unpriced_models"] == ["qwen3:32b"]
+
+
+def test_spend_budget_block_reports_remaining_headroom(monkeypatch):
+    """The header's budget line (roadmap item 2): what is left, per window."""
+    from app.gateway.spend_budget import SpendBudgetStatus, SpendLimitStatus
+
+    aux_usage.reset_aux_usage()
+    run_store = _make_run_store()
+    monkeypatch.setattr(thread_runs, "build_context_usage", AsyncMock(return_value=None))
+    monkeypatch.setattr(thread_runs, "_thread_pricing_map", lambda: {})
+    monkeypatch.setattr(
+        thread_runs,
+        "resolve_run_spend_budget",
+        AsyncMock(
+            return_value=SpendBudgetStatus(
+                active=True,
+                currency="USD",
+                limits=(SpendLimitStatus("daily", 10.0, 8.5), SpendLimitStatus("weekly", 50.0, 12.0)),
+                warn_threshold=0.8,
+                hard_stop_threshold=1.0,
+            )
+        ),
+    )
+    app = _make_app(run_store)
+
+    with TestClient(app) as client:
+        data = client.get("/api/threads/thread-1/token-usage").json()
+
+    budget = data["spend_budget"]
+    assert budget["currency"] == "USD"
+    assert budget["exceeded"] is False
+    assert budget["limits"][0] == {"period": "daily", "limit": 10.0, "spent": 8.5, "remaining": 1.5, "fraction": 0.85}
+    assert budget["limits"][1]["remaining"] == 38.0
+
+
+def test_spend_budget_block_is_absent_when_the_cap_is_not_enforceable(monkeypatch):
+    """Feature off / nothing priced / memory backend all render no budget line."""
+    from app.gateway import spend_budget as sb
+
+    aux_usage.reset_aux_usage()
+    run_store = _make_run_store()
+    monkeypatch.setattr(thread_runs, "build_context_usage", AsyncMock(return_value=None))
+    monkeypatch.setattr(thread_runs, "_thread_pricing_map", lambda: {})
+    monkeypatch.setattr(
+        thread_runs,
+        "resolve_run_spend_budget",
+        AsyncMock(return_value=sb.inactive_status(SpendBudgetConfig(), sb.DISABLED_NO_PRICING)),
+    )
+    app = _make_app(run_store)
+
+    with TestClient(app) as client:
+        data = client.get("/api/threads/thread-1/token-usage").json()
+
+    assert data["spend_budget"] is None

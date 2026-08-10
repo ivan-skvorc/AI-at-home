@@ -49,6 +49,8 @@ import os
 import sqlite3
 import threading
 import time
+from collections.abc import Collection
+from dataclasses import dataclass
 from pathlib import Path
 
 from deerflow.config.runtime_paths import runtime_home
@@ -87,6 +89,19 @@ _SCHEMA_STATEMENTS = (
 )
 
 _COUNTER_FIELDS = ("input_tokens", "output_tokens", "total_tokens", "cache_read_tokens", "calls")
+
+# Bound the owner filter's host parameters per statement.
+_THREAD_FILTER_CHUNK = 500
+
+
+@dataclass(frozen=True)
+class AuxUsageRow:
+    """One aggregated (thread, category, model) bucket from :meth:`AuxUsageStore.aggregate`."""
+
+    thread_id: str
+    category: str
+    model_name: str
+    totals: dict[str, int]
 
 
 class AuxUsageStore:
@@ -213,6 +228,68 @@ class AuxUsageStore:
                 self._degrade("clear", exc)
 
     # -- reads -------------------------------------------------------------
+
+    def aggregate(
+        self,
+        *,
+        since: float | None = None,
+        until: float | None = None,
+        thread_ids: Collection[str] | None = None,
+    ) -> list[AuxUsageRow]:
+        """Totals per (thread, category, model) over an optional time window.
+
+        This is the time-sliceable read the append-only row shape exists for:
+        the spend cap sums one window, and the spend report groups a range by
+        model / thread / category. ``thread_ids=None`` means every thread;
+        an empty collection means none (an owner with no threads), which is a
+        different answer and must not be confused with "no filter".
+        """
+        if thread_ids is not None and not thread_ids:
+            return []
+
+        clauses: list[str] = []
+        params: list[object] = []
+        if since is not None:
+            clauses.append("recorded_at >= ?")
+            params.append(float(since))
+        if until is not None:
+            clauses.append("recorded_at < ?")
+            params.append(float(until))
+
+        rows: list[tuple] = []
+        # Chunk the owner filter: SQLite's default host-parameter ceiling is
+        # well above a personal deployment's thread count, but a bound keeps a
+        # long-lived instance from ever hitting it.
+        chunks: list[list[str] | None] = [None] if thread_ids is None else [list(thread_ids)[i : i + _THREAD_FILTER_CHUNK] for i in range(0, len(thread_ids), _THREAD_FILTER_CHUNK)]
+        with self._lock:
+            try:
+                conn = self._connect_locked()
+                for chunk in chunks:
+                    chunk_clauses = list(clauses)
+                    chunk_params = list(params)
+                    if chunk is not None:
+                        chunk_clauses.append(f"thread_id IN ({','.join('?' * len(chunk))})")
+                        chunk_params.extend(chunk)
+                    where = f" WHERE {' AND '.join(chunk_clauses)}" if chunk_clauses else ""
+                    rows.extend(
+                        conn.execute(
+                            f"SELECT thread_id, category, model_name, SUM(input_tokens), SUM(output_tokens), SUM(total_tokens), SUM(cache_read_tokens), SUM(calls) FROM aux_usage_events{where} GROUP BY thread_id, category, model_name",
+                            chunk_params,
+                        ).fetchall()
+                    )
+            except (sqlite3.Error, OSError) as exc:
+                self._degrade("aggregate", exc)
+                return []
+
+        return [
+            AuxUsageRow(
+                thread_id=thread_id,
+                category=category,
+                model_name=model_name,
+                totals={field: int(value or 0) for field, value in zip(_COUNTER_FIELDS, totals, strict=True)},
+            )
+            for thread_id, category, model_name, *totals in rows
+        ]
 
     def read_thread(self, thread_id: str) -> dict[str, dict[str, dict[str, int]]]:
         """Return one thread's persisted totals: category -> model -> counters."""

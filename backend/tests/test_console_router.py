@@ -392,3 +392,120 @@ class TestNoSqlBackend:
             resp = c.get(path)
             assert resp.status_code == 503
             assert "SQL database backend" in resp.json()["detail"]
+
+
+# ---------------------------------------------------------------------------
+# Spend attribution (roadmap item 3)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture()
+def aux_store(tmp_path, monkeypatch):
+    """A per-test durable auxiliary store, seeded through the store directly."""
+    from deerflow.runtime import aux_usage
+    from deerflow.runtime.aux_usage_store import get_aux_usage_store
+
+    monkeypatch.setenv("DEER_FLOW_AUX_USAGE_DB", str(tmp_path / "aux.sqlite3"))
+    aux_usage.reset_aux_usage()
+    store = get_aux_usage_store()
+    assert store is not None
+    yield store
+    aux_usage.reset_aux_usage()
+
+
+def _seed_aux(store, thread_id, category, model, *, when, input_tokens=1_000_000, output_tokens=0):
+    store.add(
+        thread_id,
+        category,
+        model,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        total_tokens=input_tokens + output_tokens,
+        cache_read_tokens=0,
+        calls=1,
+        recorded_at=when.timestamp(),
+    )
+
+
+def _spend_pricing():
+    # $1/M in, $5/M out on minimax-m2; gpt-x priced too; qwen deliberately not.
+    return {
+        "minimax-m2": console.ModelPricing(1.0, 5.0, "USD"),
+        "gpt-x": console.ModelPricing(2.0, 10.0, "USD"),
+    }
+
+
+class TestConsoleSpend:
+    def test_groups_the_same_window_by_model_thread_and_feature(self, client, monkeypatch, aux_store):
+        monkeypatch.setattr(console, "_build_pricing_map", _spend_pricing)
+        _seed_aux(aux_store, "t1", "memory", "minimax-m2", when=NOW - timedelta(hours=3))
+
+        data = client.get("/api/console/spend?days=30").json()
+
+        assert data["currency"] == "USD"
+        # Inside the 30-day window on minimax-m2: r1 (800 in / 400 out =
+        # $0.0028), r2 (200 / 100 = $0.0007) and the 1M-token memory call ($1).
+        # r4 is 40 days old and drops out. gpt-x carries r3's legacy 50 input
+        # tokens ($0.0001).
+        models = {row["model"]: row for row in data["by_model"]}
+        assert models["minimax-m2"]["aux_calls"] == 1
+        assert models["minimax-m2"]["cost"] == pytest.approx(1.0035)
+        assert models["gpt-x"]["cost"] == pytest.approx(0.0001)
+        threads = {row["thread_id"]: row for row in data["by_thread"]}
+        assert threads["t1"]["title"] == "调研鹿角再生"
+        categories = {row["category"]: row for row in data["by_category"]}
+        assert set(categories) == {"conversation", "memory"}
+        assert categories["memory"]["cost"] == pytest.approx(1.0)
+
+    def test_the_groupings_agree_with_the_total(self, client, monkeypatch, aux_store):
+        monkeypatch.setattr(console, "_build_pricing_map", _spend_pricing)
+        _seed_aux(aux_store, "t2", "suggestions", "gpt-x", when=NOW - timedelta(days=1))
+
+        data = client.get("/api/console/spend?days=30").json()
+
+        by_model_total = sum(row["cost"] for row in data["by_model"] if row["cost"] is not None)
+        by_thread_total = sum(row["cost"] for row in data["by_thread"] if row["cost"] is not None)
+        by_category_total = sum(row["cost"] for row in data["by_category"] if row["cost"] is not None)
+        assert data["total_cost"] == pytest.approx(by_model_total)
+        assert data["total_cost"] == pytest.approx(by_thread_total)
+        assert data["total_cost"] == pytest.approx(by_category_total)
+
+    def test_unpriced_models_are_named_rather_than_quietly_dropped(self, client, monkeypatch, aux_store):
+        monkeypatch.setattr(console, "_build_pricing_map", _spend_pricing)
+
+        data = client.get("/api/console/spend?days=30").json()
+
+        # r5 ran on `qwen`, which has no configured price.
+        assert "qwen" in data["unpriced_models"]
+        qwen = next(row for row in data["by_model"] if row["model"] == "qwen")
+        assert qwen["cost"] is None
+        # ...and it sorts last, so it never looks like the cheapest model.
+        assert data["by_model"][-1]["model"] == "qwen"
+
+    def test_the_window_excludes_older_runs(self, client, monkeypatch, aux_store):
+        monkeypatch.setattr(console, "_build_pricing_map", _spend_pricing)
+        # r4 is 40 days old; a 30-day window drops it, a 60-day one keeps it.
+        short = client.get("/api/console/spend?days=30").json()
+        long = client.get("/api/console/spend?days=60").json()
+        assert long["total_runs"] == short["total_runs"] + 1
+
+    def test_no_pricing_configured_reports_null_cost(self, client, aux_store):
+        data = client.get("/api/console/spend?days=30").json()
+        assert data["total_cost"] is None
+        assert data["currency"] is None
+        assert data["unpriced_models"] == []
+        # Token counts still work, so the page is useful before pricing exists.
+        assert data["total_tokens"] > 0
+
+    def test_empty_window_is_an_empty_report_not_an_error(self, client, monkeypatch, aux_store):
+        monkeypatch.setattr(console, "_build_pricing_map", _spend_pricing)
+        monkeypatch.setattr(console, "get_current_user", AsyncMock(return_value="nobody"))
+        data = client.get("/api/console/spend?days=30").json()
+        assert data["total_runs"] == 0
+        assert data["by_model"] == []
+        assert data["by_thread"] == []
+        assert data["by_category"] == []
+
+    def test_requires_a_sql_backend(self, client, monkeypatch):
+        monkeypatch.setattr(console, "get_session_factory", lambda: None)
+        assert client.get("/api/console/spend").status_code == 503

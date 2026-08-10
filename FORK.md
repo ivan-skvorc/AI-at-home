@@ -366,6 +366,146 @@ cd backend && uv run pytest tests/test_user_ui_state.py tests/test_chat_tabs_set
 
 Then end-to-end (`make dev` → land on a new chat): the empty tab strip with its drop hint is already visible; drag a sidebar conversation onto it (or use its **Open in tab** menu) → it becomes a tab and the hint disappears; open a second; switch between them and confirm the background chat keeps its scroll and stream (both instances stay in the DOM, only the active one is visible); drag one chip onto another to reorder; close a chip; reload and confirm the tabs come back. Full frontend gate: `pnpm format && pnpm check && pnpm test`.
 
+### 10. Currency spend caps (`spend_budget`)
+
+§7 made cost **visible**. This makes it **bounded**: a cap in real money over a
+day, week, or month, in whatever single currency your `models[*].pricing` blocks
+use.
+
+Upstream's `token_budget` does not fill this hole. It is per-run and counted in
+tokens, and in a fork whose premise is mixing Opus, Haiku and free local Ollama
+in one session a token is not a unit of cost — 200k tokens is $5 or $0 depending
+on which model burned them. So `spend_budget` mirrors `token_budget`'s shape
+(`enabled`, limits, `warn_threshold`, `hard_stop_threshold`) and changes the
+unit:
+
+```yaml
+spend_budget:
+  enabled: true
+  daily_limit: 5.00        # in the pricing currency
+  weekly_limit: 25.00
+  monthly_limit: 80.00
+  window: rolling          # or `calendar` (since local midnight / Monday / the 1st)
+  tz_offset_minutes: 0     # local offset for `calendar` boundaries
+  warn_threshold: 0.8
+  hard_stop_threshold: 1.0
+```
+
+- **Two enforcement points, one number.** At **run admission** the Gateway sums
+  the window and refuses a new run with **HTTP 402** when a cap is already spent
+  (`Spend budget exhausted: the daily cap of 5 USD is already at 5.12 USD…`).
+  **During a run**, `SpendBudgetMiddleware` — modelled directly on
+  `TokenBudgetMiddleware` — injects an in-context warning at `warn_threshold` and
+  at `hard_stop_threshold` strips tool calls so the agent produces a final answer
+  from what it has. It never raises; a budget stop is an orderly wrap-up. The
+  admission check also hands the run its window **baseline**, and the middleware
+  adds the live run's own spend on top, so one long run cannot blow through a cap
+  it started just under.
+- **Billed per model, so the fork's own lever shows up.** In-run spend is read
+  from the `RunJournal`'s live per-model accumulator (a new
+  `current_token_usage_by_model()`), which already folds subagent usage in by
+  model. A premium lead with Haiku or local subagents is therefore billed
+  Opus-for-Opus and Haiku-for-Haiku, exactly like the header. Without that, a
+  cheap subagent would be billed at the lead's rate and a cap would fire early on
+  precisely the configuration this fork recommends.
+- **Unpriced models cost 0, so a local run is never blocked.** This is a hard
+  requirement, not a side effect of a sparse pricing map: the whole point of
+  local models is that they are free, and a spend cap that stops a fully local
+  session would break the fork's central promise.
+- **What counts.** Persisted run costs **plus** the durable memory/suggestions
+  counters from §7 — those are real money and would otherwise be invisible to a
+  budget. Both are priced through the one shared pricing module.
+- **It self-disables rather than guessing.** With **no model priced**, a currency
+  budget has nothing to measure, so the feature turns itself off with a reason
+  instead of enforcing a cap against a permanent `0` (which would never fire) or
+  against nothing (which would block everything). Same for
+  `database.backend: memory`, which keeps no spend history to measure a window
+  against. `make doctor`'s **`spend budget`** check names whichever applies, and
+  the agent build logs a warning. `enabled: true` with no limit set is a config
+  error and fails loudly at load — turning the feature on and configuring nothing
+  to enforce is a mistake, not a preference.
+- **Where it shows.** The header cost dropdown gains a **Budget left** line for
+  the window with the least headroom (green → amber past the warn threshold →
+  red once spent), plus an explicit note when the cap is reached. Only the
+  tightest window is shown; three rows of headroom is noise.
+
+**Where it's wired.**
+
+| Piece | Location |
+| --- | --- |
+| Config | `deerflow/config/spend_budget_config.py` (`SpendBudgetConfig`, `SpendLimit`), `spend_budget:` block in `config.example.yaml`, `AppConfig.spend_budget` |
+| Window math | `deerflow/runtime/spend_window.py` (`resolve_window_start`, rolling vs. calendar) |
+| Accounting + admission | `backend/app/gateway/spend_budget.py` (`resolve_spend_budget_status`, `SpendBudgetStatus`, `exhausted_message`); the 402 and the baseline injection live in `app/gateway/services.py::start_run` |
+| In-run enforcement | `deerflow/agents/middlewares/spend_budget_middleware.py`, appended in `agents/lead_agent/agent.py` after `TokenBudgetMiddleware` |
+| Live per-model usage | `deerflow/runtime/journal.py::RunJournal.current_token_usage_by_model()` |
+| Pricing | `deerflow/pricing.py` — **moved out of `app/gateway/pricing.py`** so the in-graph middleware can price without importing `app.*` (the harness boundary). `app/gateway/pricing.py` is now a re-export shim, so every existing importer is unchanged |
+| Header line | `GET /api/threads/{id}/token-usage` → `spend_budget`; `core/threads/token-usage.ts::threadTokenUsageToSpendBudget`; `components/workspace/token-usage-indicator.tsx` |
+| Diagnostic | `scripts/doctor.py::check_spend_budget` |
+
+**Verify it works.**
+
+```bash
+cd backend && uv run pytest tests/test_spend_budget_config.py tests/test_spend_budget.py tests/test_spend_budget_middleware.py
+cd backend && uv run pytest tests/blocking_io/test_aux_usage.py   # the window read stays off the event loop
+cd backend && uv run pytest tests/test_doctor.py -k spend_budget
+cd frontend && pnpm test token-usage                               # the header's budget line
+make doctor                                                        # 'spend budget' names why a cap is not enforced
+```
+
+Then in the browser (`make dev`): set `spend_budget.enabled: true` with a
+deliberately tiny `daily_limit` (say `0.01`), run a turn on a **priced** model,
+and the header dropdown's **Budget left** goes red; the next message is refused
+with the 402 message. Set the limit back, switch the thread to a **local Ollama**
+model, and confirm the same tiny cap never blocks it — that is the rule the whole
+feature is built around.
+
+### 11. Spend history and attribution (`/workspace/spend`)
+
+The header answers "what is this conversation costing". This answers the question
+a person actually asks at the end of a month. A new workspace page beside
+`/workspace/scheduled-tasks` reports one window three ways:
+
+- **By feature** — conversation vs. memory vs. suggestions, so the two
+  off-by-default background features from §7 are finally accountable in a
+  cross-thread view rather than only per thread.
+- **By model** — most expensive first, with unpriced models sorted **last** and
+  labelled, never as if they were the cheapest.
+- **By conversation** — with thread titles, so an expensive chat is identifiable.
+
+Windows are 7 / 30 / 90 days. The three groupings are derived from the same
+priced rows, so their totals agree — pinned by a test that asserts exactly that.
+
+- **No second cost calculation.** The endpoint reuses `pricing.py` end to end
+  (`run_cost` for runs, `token_cost` for the auxiliary sinks), so a model can
+  never be billed differently here than in the chat header.
+- **Unpriced models are named.** When nothing is priced the page says so and why;
+  when only some models are, it names the ones missing a price and warns that the
+  real cost is higher — the same rule the header follows, for the same reason (a
+  quietly low total is indistinguishable from a broken feature).
+- **Token counts work before pricing does**, so the page is useful on a config
+  with no `pricing:` blocks at all.
+
+**Where it's wired.**
+
+| Piece | Location |
+| --- | --- |
+| Endpoint | `GET /api/console/spend?days=N` in `backend/app/gateway/routers/console.py` (`ConsoleSpendResponse`) |
+| Auxiliary range read | `deerflow/runtime/aux_usage_store.py::AuxUsageStore.aggregate(since, until, thread_ids)` — the time-sliceable read the append-only `recorded_at` row shape was added for in §7 |
+| Frontend client | `frontend/src/core/spend/{api,hooks,types}.ts` |
+| Page + nav | `frontend/src/app/workspace/spend/page.tsx`, entry in `components/workspace/workspace-nav-chat-list.tsx`, i18n `spend.*` |
+
+**Verify it works.**
+
+```bash
+cd backend && uv run pytest tests/test_console_router.py -k ConsoleSpend
+cd frontend && pnpm check && pnpm test
+```
+
+Then in the browser (`make dev`): open **Spend** in the sidebar. With pricing
+configured the three tables agree with the summary total; switch the window and
+the figures move. On a config with no prices the tables still show tokens and the
+page explains why there is no cost.
+
 ### Note: the "older messages disappear in long conversations" investigation
 
 The request that shipped this cost feature also asked to fix messages vanishing from long conversations. Findings, so the next pass has a head start:
@@ -452,6 +592,7 @@ First, the mechanical gates:
 - [ ] Backend: `make lint && make test` (CI enforces `ruff format --check`).
 - [ ] Frontend: `pnpm format && pnpm check && pnpm test`. **Watch the formatting gate:** `pnpm check` is only `eslint` + `tsc --noEmit` — it does **not** run Prettier, but CI's `lint-frontend` job (`.github/workflows/lint-check.yml`) runs `pnpm format` (`prettier --check .`) as its own step. So a change that is eslint/type-clean can still fail CI on formatting alone; always run `pnpm format` (or fix with `pnpm format:write`) before pushing. `eslint --fix` normalizes imports/optional-chains but not Prettier whitespace.
 - [ ] `backend/uv.lock` reconciled: `cd backend && uv lock` (must include every fork extra — `camoufox`, `ollama`, `pymupdf` — alongside upstream's).
+- [ ] Config schema in step: if the merge (or your own change) touched `config.example.yaml`'s **shape**, `config_version` is bumped and `make config-upgrade` merges the new keys into an existing `config.yaml` without clobbering hand edits. An existing install never gets a new section otherwise — the same delivery trap the pricing blocks hit (see the cost-overview row below).
 - [ ] Model list still current: run the **[Auditing the model list](#auditing-the-model-list-settings--pricing)** pass (or confirm it ran recently). Provider model ids, prices, and promos drift *independently* of upstream DeerFlow, so a sync is only the calendar checkpoint — the audit itself must read each slug/price off the **provider's own page** (`scripts/sync-api-key-models.py --dry-run` and the model-format tests below do **not** catch a stale-but-well-formed price or a since-renamed slug, because both pass against any syntactically valid entry). Regression-gate whatever you change with `python3 scripts/sync-api-key-models.py --dry-run` + `cd backend && uv run pytest tests/test_sync_api_key_models.py tests/test_setup_wizard.py tests/test_config_integrity.py`.
 
 Then confirm each fork feature end-to-end:
@@ -477,6 +618,8 @@ Then confirm each fork feature end-to-end:
 | **Model dropdown sorting/grouping** (§8) | `cd frontend && pnpm test sorting` exercises the parse/sort/group logic (`frontend/tests/unit/core/models/sorting.test.ts`). Wiring: `core/models/sorting.ts` (`parseModelPrice` promo-aware, `parseModelProvider`, `sortModels`, `groupModelsByProvider`, `demoteLast`); preference `modelPicker` in `core/settings/local.ts`; shared UI `components/workspace/model-picker-controls.tsx` (`ModelPickerControls` + `ModelPickerList` + `ModelDisplayName`) used by the lead + subagent pickers in `input-box.tsx` and the sidecar picker in `sidecar/sidecar-panel.tsx`; i18n keys in `core/i18n/locales/{en-US,zh-CN}.ts`. Manual: open the model dropdown → Sort (Default/Name/Price) + direction toggle + Group-by-provider switch appear and reorder/group the list; every row's price renders green, and a discounted entry (MiniMax M3, GLM-5.2, Claude Sonnet 5) shows its red list price beside the green promo. If a whole model name turns green or a price stays uncoloured, `splitModelNamePriceSegments` has drifted from the name format — its reassembly test is the fast check. Then **close** the dropdown on a discounted model and confirm the collapsed trigger still shows both prices at a narrow window width; if it clips, the `w-full` on the three `ModelSelectorName` triggers has been dropped (see §8 — without it the span is `fit-content` inside a `flex-col items-start` and overflows the capped button instead of truncating). This half is CSS with no unit test, so it needs the manual look. |
 | **Durable chat tabs** (§9) | `cd backend && uv run pytest tests/test_user_ui_state.py tests/test_chat_tabs_settings_router.py` covers the per-user store (`deerflow/config/user_ui_state.py`, `{base_dir}/users/{user_id}/ui_state.json`) and `GET`/`PUT /api/settings/chat-tabs` (caller-scoped, **no admin gate** — unlike the multi-user-mode routes in the same router). `frontend/tests/unit/core/threads/chat-tabs-persistence.dom.test.tsx` covers the provider's boot path. If upstream restructures `workspace/layout.tsx`'s gateway-offline branch, re-check that an unreachable gateway still **keeps** the local cache instead of blanking the strip (`fetchChatTabs` returns `null` for "unknown", never `[]`), and that a server with no stored set still adopts and seeds from the local cache — that is the upgrade path for tabs pinned before server persistence existed. Manual: pin a tab, restart the stack, hard-reload with site data cleared, and confirm the tabs come back. |
 | **Keep-alive chat tabs** (§9) | `cd frontend && pnpm test chat-tabs` exercises the pure model (`frontend/tests/unit/core/threads/chat-tabs.test.ts`); `pnpm test:e2e chat-tabs` (`frontend/tests/e2e/chat-tabs.spec.ts`) covers drag-from-sidebar onto the empty strip / drag-reorder between chips / open-as-tab / keep-alive switch (both instances stay mounted) / close / reload persistence. Wiring: the live chat is `components/workspace/chats/chat-instance.tsx` (**fully controlled**, own provider stack via `chat-providers.tsx` with a per-instance `storageScope`); `keep-alive-chat-viewport.tsx` is mounted in `workspace-content.tsx` **above** the route inside `ChatTabsProvider` and renders one instance per slot (only the active shown, the rest `display:none`); the tab strip is `chat-tabs-bar.tsx`, which **always renders as a drop zone on chat routes** (an empty-state hint `chatTabs.dropHint` when there are no tabs yet but threads exist, so there is somewhere to drag onto — returning `null` here is the "tabs don't work" bug); `[thread_id]/page.tsx` is a thin registrar in app builds and the classic inline `<ChatInstance>` in static-demo; pure model + persistence in `core/threads/chat-tabs.ts`, state in `chat-tabs-context.tsx`; sidebar drag + **Open in tab** in `recent-chat-list.tsx`; `ChatBox` panel ids keyed by thread id (not pathname). **If upstream restructures `[thread_id]/page.tsx`,** re-extract its body onto `chat-instance.tsx` and keep the registrar/classic split; watch for a barrel (`components/workspace/chats/index.ts`) import of the client viewport into the server `workspace-content.tsx` (import the file directly to keep the `"use client"` boundary). |
+| **Currency spend caps** (§10) | `cd backend && uv run pytest tests/test_spend_budget_config.py tests/test_spend_budget.py tests/test_spend_budget_middleware.py` covers the config/window math, the window aggregation (runs + auxiliary counters, owner-scoped), and the in-run warn / hard stop. Wiring: `deerflow/config/spend_budget_config.py` + the `spend_budget:` block in `config.example.yaml`; `deerflow/runtime/spend_window.py`; `app/gateway/spend_budget.py`; the **HTTP 402** admission refusal and the `__spend_budget` baseline injection in `app/gateway/services.py::start_run`; `SpendBudgetMiddleware` appended in `agents/lead_agent/agent.py` after `TokenBudgetMiddleware`; `RunJournal.current_token_usage_by_model()`; `scripts/doctor.py::check_spend_budget`; the header line via `GET /api/threads/{id}/token-usage -> spend_budget` and `core/threads/token-usage.ts::threadTokenUsageToSpendBudget`. **The pricing module moved into the harness** (`deerflow/pricing.py`) because the in-graph middleware may not import `app.*`; `app/gateway/pricing.py` is a re-export shim, and `test_pricing.py::test_gateway_shim_re_exports_the_canonical_helpers` fails if it rots. **Three invariants that are easy to break and silent when broken:** (1) an unpriced model must contribute **0**, so a fully local run is never blocked — pinned by `TestLocalModelsAreFree` and `TestLocalRunsAreNeverBlocked`; (2) in-run spend must come from the journal's **per-model** accumulator, or a cheap subagent gets billed at the lead's rate and the cap fires early on exactly the setup this fork recommends (`test_a_cheap_subagent_is_billed_at_its_own_rate`); (3) with nothing priced the feature must **self-disable with a reason**, not enforce against a permanent zero (`TestSelfDisabling`). If upstream restructures `services.py::start_run`, re-add the admission check before `create_or_reject` and the baseline injection after `inject_authenticated_user_context` — the baseline key is `__`-prefixed precisely so `build_run_config` strips a caller-supplied copy. Manual: set a tiny `daily_limit`, run a turn on a priced model (header **Budget left** goes red, the next message 402s), then repeat on a local model and confirm it is never blocked. |
+| **Spend history page** (§11) | `cd backend && uv run pytest tests/test_console_router.py -k ConsoleSpend` covers `GET /api/console/spend`: the three groupings (model / thread / feature) agreeing with the total, unpriced models named and sorted last, the window boundary, the no-pricing state, and the 503 on the memory backend. Wiring: `ConsoleSpendResponse` in `app/gateway/routers/console.py`; `AuxUsageStore.aggregate()`; `frontend/src/core/spend/*`; `frontend/src/app/workspace/spend/page.tsx`; the sidebar entry in `components/workspace/workspace-nav-chat-list.tsx`; i18n `spend.*` in both locales. The page must keep reusing `pricing.py` rather than recomputing cost — a second formula is how the page and the chat header start disagreeing about the same run. Manual: open **Spend** in the sidebar and confirm the tables' totals match the summary tile for the same window. |
 
 **Integration points that tend to need a hand** (where upstream refactors collide with fork additions — check these first when tests fail): the AIO sandbox provider (upstream's cross-instance ownership store adds instance attributes that minimal test fixtures built via `__new__` must seed), the skills tool-policy path (upstream's dynamic `SkillToolPolicyMiddleware` vs. any fork static filtering — reconcile onto the middleware and drop dead build-time filters), `scripts/check.py`'s Docker diagnostics (any upstream test that mocks `run_command` with a strict dict must tolerate the extra `docker` calls), and the `task_tool.py` / `input-box.tsx` model-override plumbing.
 

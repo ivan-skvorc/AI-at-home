@@ -100,6 +100,13 @@ reflect the new behavior.
 
 ## 2. Currency-denominated spend caps
 
+**Status** — ✅ **Implemented.** `config.yaml -> spend_budget` caps real money over a
+rolling or calendar day/week/month window. Enforced at run admission (HTTP 402) and
+in-run by `SpendBudgetMiddleware`, priced per model through the shared
+`deerflow/pricing.py`; unpriced models cost 0 so a local run is never blocked; the
+feature self-disables with a reason when nothing is priced, and `make doctor` says
+which. Remaining budget shows in the chat header. See FORK.md §10.
+
 **Goal** — The operator can set a daily / weekly / monthly budget in real money and have
 runs warn and then hard-stop when it is exhausted.
 
@@ -138,6 +145,11 @@ README.md and FORK.md document the section.
 ---
 
 ## 3. Spend history and attribution view
+
+**Status** — ✅ **Implemented.** `GET /api/console/spend` aggregates persisted run
+costs and the durable auxiliary counters over a window, grouped by model, thread and
+feature, reusing `pricing.py` end to end and naming unpriced models explicitly. The
+page lives at `/workspace/spend`. See FORK.md §11.
 
 **Goal** — A workspace page answering "where did my money go this month," broken down by
 model, thread, and feature.

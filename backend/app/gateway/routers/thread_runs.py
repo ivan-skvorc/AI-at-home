@@ -35,10 +35,12 @@ from app.gateway.checkpoint_lineage import (
 )
 from app.gateway.context_usage import build_context_usage
 from app.gateway.deps import get_current_user, get_feedback_repo, get_run_event_store, get_run_manager, get_run_store, get_stream_bridge
+from app.gateway.internal_auth import get_trusted_internal_owner_user_id
 from app.gateway.pagination import trim_run_message_page
 from app.gateway.pricing import build_pricing_map, lookup_pricing, pricing_currency, token_cost
 from app.gateway.run_models import RunCreateRequest
 from app.gateway.services import build_checkpoint_state_accessor, build_thread_checkpoint_state_accessor, sse_consumer, start_run, wait_for_run_completion
+from app.gateway.spend_budget import resolve_run_spend_budget
 from app.gateway.utils import sanitize_log_param
 from deerflow.agents.middlewares.dynamic_context_middleware import strip_injected_user_message_id_suffix
 from deerflow.config import get_app_config
@@ -207,6 +209,33 @@ class ThreadTokenUsageAuxBreakdown(BaseModel):
     )
 
 
+class ThreadSpendBudgetLimit(BaseModel):
+    """One configured spend-cap window and how much of it is left."""
+
+    period: str = Field(..., description="daily | weekly | monthly")
+    limit: float = Field(..., description="Configured cap in the pricing currency")
+    spent: float = Field(..., description="Spend inside this window so far (runs + auxiliary calls)")
+    remaining: float = Field(..., description="Headroom left in this window; never negative")
+    fraction: float = Field(..., description="spent / limit, so the UI can colour by proximity without re-deriving it")
+
+
+class ThreadSpendBudget(BaseModel):
+    """Currency spend caps (fork feature), so the header can show what is left.
+
+    Present only when ``spend_budget`` is enabled *and* enforceable; the feature
+    self-disables when nothing is priced or there is no SQL backend. The figures
+    are owner-wide rather than per-thread — a budget over a day is not a
+    property of one conversation — but they ride on this endpoint because the
+    header cost dropdown is where a user is already looking at money.
+    """
+
+    currency: str | None = None
+    limits: list[ThreadSpendBudgetLimit] = Field(default_factory=list)
+    warn_threshold: float = 0.8
+    hard_stop_threshold: float = 1.0
+    exceeded: bool = Field(default=False, description="A cap is at or past the hard stop; new runs are refused with HTTP 402")
+
+
 class ThreadContextUsage(BaseModel):
     token_count: int = 0
     max_context_tokens: int | None = None
@@ -243,6 +272,9 @@ class ThreadTokenUsageResponse(BaseModel):
     aux: dict[str, ThreadTokenUsageAuxBreakdown] = Field(default_factory=dict)
     # Real-time context window usage (upstream #3125/#3183).
     context_usage: ThreadContextUsage | None = None
+    # Remaining currency spend budget (fork feature). Null when the cap is off
+    # or not enforceable, so the header simply shows no budget line.
+    spend_budget: ThreadSpendBudget | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -1621,4 +1653,29 @@ async def thread_token_usage(
         unpriced_models=sorted(unpriced_models),
         aux=aux,
         context_usage=context_usage,
+        spend_budget=await _thread_spend_budget(request),
+    )
+
+
+async def _thread_spend_budget(request: Request) -> ThreadSpendBudget | None:
+    """Remaining currency spend budget for the requesting owner, or None.
+
+    Costs nothing when the cap is off: ``resolve_spend_budget_status`` returns
+    before touching the database as soon as ``spend_budget.enabled`` is false,
+    which is the default. Failures degrade to no budget line rather than
+    breaking the header's token counts.
+    """
+    try:
+        status = await resolve_run_spend_budget(request, owner_user_id=get_trusted_internal_owner_user_id(request))
+    except Exception:  # pragma: no cover - defensive: the counter must not break the header
+        logger.warning("thread token-usage: failed to resolve the spend budget", exc_info=True)
+        return None
+    if not status.active:
+        return None
+    return ThreadSpendBudget(
+        currency=status.currency,
+        limits=[ThreadSpendBudgetLimit(period=limit.period, limit=limit.limit, spent=round(limit.spent, 6), remaining=round(limit.remaining, 6), fraction=round(limit.fraction, 6)) for limit in status.limits],
+        warn_threshold=status.warn_threshold,
+        hard_stop_threshold=status.hard_stop_threshold,
+        exceeded=status.exceeded is not None,
     )

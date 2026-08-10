@@ -50,3 +50,44 @@ async def test_async_aux_usage_api_does_not_block_event_loop(durable_aux_store) 
     aux_usage.reset_aux_usage_cache()
     cold = await aux_usage.aget_thread_aux_usage("t-block")
     assert cold == usage
+
+
+async def test_spend_budget_resolution_does_not_block_event_loop(durable_aux_store, tmp_path: Path) -> None:
+    """The spend cap reads the same store on the run-admission hot path.
+
+    ``resolve_spend_budget_status`` runs on every run creation and on every
+    header poll once a cap is configured, and it aggregates the auxiliary store
+    (a SQLite file) alongside the runs table. Both must be offloaded.
+    """
+    from types import SimpleNamespace
+
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+    from sqlalchemy.pool import NullPool
+
+    from app.gateway.spend_budget import resolve_spend_budget_status
+    from deerflow.config.spend_budget_config import SpendBudgetConfig
+    from deerflow.persistence.base import Base
+
+    aux_usage = durable_aux_store
+    await aux_usage.arecord_aux_usage("t-spend", "memory", model_name="premium-1", input_tokens=1000, output_tokens=100)
+
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'spend.db'}", poolclass=NullPool)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+
+    import app.gateway.spend_budget as spend_budget_module
+
+    original = spend_budget_module.get_session_factory
+    spend_budget_module.get_session_factory = lambda: session_factory
+    try:
+        app_config = SimpleNamespace(
+            models=[SimpleNamespace(name="premium", model="premium-1", display_name="Premium", pricing={"currency": "USD", "input_per_million": 1.0, "output_per_million": 5.0})],
+            spend_budget=SpendBudgetConfig(enabled=True, daily_limit=10),
+        )
+        status = await resolve_spend_budget_status(app_config=app_config, user_id=None)
+        assert status.active is True
+        assert status.limits[0].period == "daily"
+    finally:
+        spend_budget_module.get_session_factory = original
+        await engine.dispose()
