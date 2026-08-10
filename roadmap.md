@@ -235,6 +235,14 @@ pass rather than the calendar.
 
 ## 5. Cost-aware model routing policy
 
+**Status** — ✅ **Implemented.** `model_routing:` maps declarative conditions (needs
+tools / vision / thinking, estimated context) to an ordered model preference, resolved
+in `deerflow/subagents/routing.py` from the capability flags that already exist on model
+entries — no LLM call classifies the task. An explicit per-thread subagent selection
+stands the policy down entirely, a candidate that cannot do the job is skipped rather
+than routed to, and the effective decision (rule + skipped candidates) is shown on the
+subagent card. Off by default. See FORK.md §15.
+
 **Goal** — A declarative policy that routes subagents to the cheapest model that can
 actually do the task, so the fork's cost saving is the default rather than a manual
 choice.

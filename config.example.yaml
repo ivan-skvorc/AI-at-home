@@ -15,7 +15,7 @@
 # ============================================================================
 # Bump this number when the config schema changes.
 # Run `make config-upgrade` to merge new fields into your local config.yaml.
-config_version: 35
+config_version: 36
 
 # ============================================================================
 # Logging
@@ -137,6 +137,39 @@ spend_budget:
 model_fallback:
   enabled: false                # Off by default, like anything that changes agent behavior
   chain: []                     # e.g. [claude-haiku-5]. The failing model is always removed from its own chain.
+
+# ============================================================================
+# Cost-Aware Subagent Routing (fork feature) — make the saving the default
+# ============================================================================
+# The per-thread subagent picker already lets you send delegated work to a
+# cheaper model; this makes that a standing policy instead of something to
+# remember every session. A tool-free extraction subtask can run on a local
+# model for free while the lead stays on a frontier model.
+#
+# Requirements are derived from facts already on the table — whether the
+# subagent was given business tools, whether it can view images, and how big
+# the prompt is — never from an extra LLM call, which would spend money to
+# decide how to save money (and make the decision non-deterministic).
+#
+# Two rules keep it safe:
+#   * An explicit per-thread subagent selection ALWAYS wins. The policy only
+#     fills the default that would otherwise be inherited from the lead.
+#   * A model is skipped when it cannot do the job (no tool support, no vision,
+#     context window too small). Trading a cost saving for a failed turn is not
+#     a trade. Skipped candidates are named on the subagent card.
+#
+# The effective decision — which rule matched, and what was skipped — is shown
+# on the subagent card, so routing is inspectable rather than mysterious.
+model_routing:
+  enabled: false                # Off by default. `enabled: true` with no rules is a load-time error.
+  rules: []
+  #  - name: tool-free-to-local
+  #    when:
+  #      needs_tools: false      # unset conditions are wildcards
+  #      max_context: 24000      # estimated prompt + overhead, in tokens
+  #    prefer: [qwen3:8b, claude-haiku-5]
+  #  - name: everything-else-cheap
+  #    prefer: [claude-haiku-5]
 
 # ============================================================================
 # Recursion Limit — Hard ceiling for a client-supplied run recursion_limit

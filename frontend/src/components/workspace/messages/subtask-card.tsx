@@ -161,8 +161,28 @@ export function SubtaskCard({
                     )}
                   >
                     {modelLabel && (
-                      <span className="max-w-32 truncate" title={modelLabel}>
+                      <span
+                        className="max-w-32 truncate"
+                        title={
+                          // Fork feature: when a routing policy picked this
+                          // model, say which rule and why. A routing decision
+                          // nobody can inspect is a routing decision nobody
+                          // trusts.
+                          task.routing
+                            ? `${modelLabel} — ${task.routing.reason}`
+                            : modelLabel
+                        }
+                      >
                         {modelLabel}
+                        {task.routing && (
+                          <span className="ml-1 opacity-70">
+                            (
+                            {task.routing.rule
+                              ? `via ${task.routing.rule}`
+                              : "routed"}
+                            )
+                          </span>
+                        )}
                       </span>
                     )}
                     {runtimeUsageLabel && (

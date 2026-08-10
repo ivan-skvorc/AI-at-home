@@ -25,6 +25,7 @@ from deerflow.subagents.executor import (
     get_background_task_result,
     request_cancel_background_task,
 )
+from deerflow.subagents.routing import RoutingDecision, TaskRequirements, resolve_routed_model
 from deerflow.subagents.status_contract import (
     SubagentStatusValue,
     SubagentStopReasonValue,
@@ -174,6 +175,34 @@ def _report_subagent_usage(runtime: Any, result: Any) -> None:
         result.usage_reported = True
     except Exception:
         logger.warning("Failed to report subagent token usage", exc_info=True)
+
+
+def apply_routing_policy(
+    *,
+    effective_model: str | None,
+    explicit_override: str | None,
+    policy: Any,
+    models: list[Any],
+    requirements: TaskRequirements,
+) -> tuple[str | None, RoutingDecision]:
+    """Resolve the subagent model under the cost-aware routing policy (fork feature).
+
+    The precedence is the whole point: an explicit per-thread subagent selection
+    is the user saying which model to use, so the policy stands down for it
+    entirely rather than "considering" it. The policy only ever fills the
+    default that would otherwise have been inherited from the lead.
+
+    Returns ``(model_name, decision)``; the decision always exists so the card
+    can explain why nothing was routed, which is the first question an operator
+    asks about a policy that appears not to be working.
+    """
+    if explicit_override:
+        return explicit_override, RoutingDecision(None, None, "explicit per-thread subagent selection wins over the routing policy")
+    decision = resolve_routed_model(requirements, policy, models, fallback_model=effective_model)
+    if decision.model_name:
+        logger.info("model routing: %s -> %s (%s)", effective_model, decision.model_name, decision.reason)
+        return decision.model_name, decision
+    return effective_model, decision
 
 
 def _get_runtime_app_config(runtime: Any) -> "AppConfig | None":
@@ -397,6 +426,37 @@ async def task_tool(
             subagent_model_override = override
             effective_model = override
 
+    # ── Fork: cost-aware routing policy ─────────────────────────────────────
+    # Fills the *default* only. The explicit per-thread selection above is
+    # authoritative and is passed in so the policy can stand down for it.
+    # Resolved lazily and defensively: a caller with no config.yaml (embedded
+    # client, tests) must still be able to delegate, so an unreadable config
+    # means "no policy" rather than a failed task.
+    routing_app_config = resolved_app_config
+    if routing_app_config is None:
+        try:
+            routing_app_config = get_app_config()
+        except Exception:
+            routing_app_config = None
+    routing_config = getattr(routing_app_config, "model_routing", None)
+    routing_models = list(getattr(routing_app_config, "models", []) or [])
+    routing_requirements = TaskRequirements.from_task(
+        tool_names=[getattr(tool, "name", "") for tool in (config.tools or [])] if getattr(config, "tools", None) else None,
+        prompt=prompt or "",
+        description=description or "",
+    )
+    effective_model, routing_decision = apply_routing_policy(
+        effective_model=effective_model,
+        explicit_override=subagent_model_override,
+        policy=routing_config,
+        models=routing_models,
+        requirements=routing_requirements,
+    )
+    if routing_decision.model_name:
+        # Routing is authoritative for the executor too, or the executor's own
+        # re-resolution discards it for a subagent that pins a config.model.
+        subagent_model_override = routing_decision.model_name
+
     # Subagents should not have subagent tools enabled (prevent recursive nesting).
     # Subagents also must not get list_uploaded_files — they have an independent
     # ThreadState where runtime.state["uploaded_files"] is absent, so the
@@ -458,6 +518,9 @@ async def task_tool(
             "task_id": task_id,
             "description": description,
             "model_name": effective_model,
+            # Fork feature: how this model was chosen. Present only when a
+            # policy actually routed, so an unrouted card stays unchanged.
+            **({"routing": routing_decision.as_dict()} if routing_decision.model_name else {}),
         },
         writer=writer,
     )

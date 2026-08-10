@@ -6,6 +6,7 @@ type TaskStartedEvent = {
   type: "task_started";
   task_id: string;
   model_name?: unknown;
+  routing?: unknown;
 };
 
 type TaskRunningEvent = {
@@ -34,9 +35,11 @@ export function taskEventToSubtaskUpdate(
       typeof started.model_name === "string" && started.model_name.trim()
         ? started.model_name.trim()
         : undefined;
+    const routing = normalizeRouting(started.routing);
     return {
       id: taskId,
       ...(modelName ? { modelName } : {}),
+      ...(routing ? { routing } : {}),
     };
   }
 
@@ -54,6 +57,27 @@ export function taskEventToSubtaskUpdate(
   }
 
   return null;
+}
+
+/**
+ * Read the routing decision the backend attached to `task_started`.
+ *
+ * Defensive because this is additive metadata on a stream event: an older
+ * backend omits it entirely, and a malformed value must leave the card
+ * showing the model name rather than break the whole update.
+ */
+function normalizeRouting(
+  value: unknown,
+): { rule?: string; reason: string } | undefined {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+  const reason = typeof value.reason === "string" ? value.reason.trim() : "";
+  if (!reason) {
+    return undefined;
+  }
+  const rule = typeof value.rule === "string" ? value.rule.trim() : "";
+  return { reason, ...(rule ? { rule } : {}) };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
