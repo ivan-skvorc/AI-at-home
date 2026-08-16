@@ -3,6 +3,7 @@ import { describe, expect, it } from "@rstest/core";
 import {
   DEFAULT_MODEL_PICKER_PREFS,
   groupModelsByProvider,
+  modelNameSegments,
   modelPriceSortValue,
   compactModelDisplayName,
   parseModelPrice,
@@ -24,6 +25,84 @@ function priced(
 ): Model {
   return { id: name, name, model: name, display_name, price };
 }
+
+describe("modelNameSegments", () => {
+  // Prices left `display_name` and moved into their own field. The rendered
+  // result must be indistinguishable from before, or the dropdown silently
+  // loses the price it has always shown.
+  it("renders the price from the field, coloured, when the name has none", () => {
+    const m = priced("m", "Claude Sonnet 5 (Anthropic)", {
+      currency: "USD",
+      input: 3,
+      output: 15,
+    });
+    expect(modelNameSegments(m)).toEqual([
+      { text: "Claude Sonnet 5 (Anthropic) ", kind: "text" },
+      { text: "($3/15)", kind: "price" },
+    ]);
+  });
+
+  it("renders a live discount as list-then-promo, matching the old pair", () => {
+    const m = priced("m", "Claude Sonnet 5 (Anthropic)", {
+      currency: "USD",
+      input: 3,
+      output: 15,
+      discount_input: 2,
+      discount_output: 10,
+    });
+    expect(modelNameSegments(m)).toEqual([
+      { text: "Claude Sonnet 5 (Anthropic) ", kind: "text" },
+      { text: "($3/15", kind: "listPrice" },
+      { text: " → $2/10*)", kind: "promoPrice" },
+    ]);
+  });
+
+  it("shows no promo once the server has dropped an expired discount", () => {
+    const m = priced("m", "GLM-5.2 (OpenRouter)", {
+      currency: "USD",
+      input: 1.15,
+      output: 3.6,
+    });
+    expect(modelNameSegments(m).some((s) => s.kind === "promoPrice")).toBe(
+      false,
+    );
+  });
+
+  it("keeps fractional rates and trims trailing zeros", () => {
+    const m = priced("m", "M", {
+      currency: "USD",
+      input: 1.15,
+      output: 3.6,
+    });
+    expect(modelNameSegments(m)[1]!.text).toBe("($1.15/3.6)");
+  });
+
+  it("does not render the price twice for a legacy name that still embeds it", () => {
+    // A config written before the move carries the pair in the name *and* may
+    // now also resolve a price; rendering both would read as two prices.
+    const m = priced("m", "Claude Sonnet 5 ($3/15) (Anthropic)", {
+      currency: "USD",
+      input: 3,
+      output: 15,
+    });
+    const text = modelNameSegments(m)
+      .map((s) => s.text)
+      .join("");
+    expect(text).toBe("Claude Sonnet 5 (Anthropic) ($3/15)");
+  });
+
+  it("falls back to parsing the name when no price is configured", () => {
+    const m = priced("m", "Legacy ($5/25) (Anthropic)", null);
+    expect(modelNameSegments(m).some((s) => s.kind === "price")).toBe(true);
+  });
+
+  it("renders an unpriced model's name verbatim", () => {
+    const m = priced("m", "Qwen3 8B (Ollama)", null);
+    expect(modelNameSegments(m)).toEqual([
+      { text: "Qwen3 8B (Ollama)", kind: "text" },
+    ]);
+  });
+});
 
 describe("resolveModelPrice", () => {
   it("prefers the server-resolved price over the display name", () => {

@@ -482,11 +482,43 @@ class TestPricingDerivedFromDisplayName:
         assert build_pricing_map([model]) == {}
 
     def test_derived_and_shipped_prices_agree_for_every_bundled_model(self):
-        """The derivation must match what `providers.py` generates.
+        """Derivation is now a *legacy* path, and must keep working as one.
 
-        Two code paths now turn one display name into a price. If they ever
-        disagree, a user's cost silently depends on whether their config
-        happens to carry the redundant block.
+        Bundled models no longer carry a price in `display_name` — the price is
+        data in `price:`, and the wizard no longer derives one from the name.
+        But a `config.yaml` written before that change still has the old names,
+        and `config_upgrade.py` cannot add a key inside an existing list entry,
+        so those installs are priced by this parser and nothing else. Removing
+        it would silently un-price every pre-existing install.
+
+        These are the exact name shapes the fork used to ship.
+        """
+        cases = {
+            "Claude Opus 4.8 ($5/25) (Anthropic)": (5.0, 25.0, None),
+            "Claude Sonnet 5 ($3/15 → $2/10*) (Anthropic)": (3.0, 15.0, (2.0, 10.0)),
+            "GLM-5.2 ($1.15/3.6 → $0.28/0.87*) (OpenRouter) (p)": (1.15, 3.6, (0.28, 0.87)),
+            "MiniMax M3 ($0.6/2.4 → $0.24/0.96*) (OpenRouter) (p)": (0.6, 2.4, (0.24, 0.96)),
+            "Grok 4.5 ($2/6) (OpenRouter) (p)": (2.0, 6.0, None),
+            "GPT-5.6 Sol ($1.25/10) (OpenAI)": (1.25, 10.0, None),
+        }
+        for display_name, (want_in, want_out, want_promo) in cases.items():
+            price = lookup_pricing(build_pricing_map([self._named(display_name)]), "model-m")
+            assert price is not None, display_name
+            assert price.input_per_million == pytest.approx(want_in), display_name
+            assert price.output_per_million == pytest.approx(want_out), display_name
+            promo = price.promo()
+            if want_promo is None:
+                assert promo is None, display_name
+            else:
+                assert promo is not None, display_name
+                assert (promo.input_per_million, promo.output_per_million) == pytest.approx(want_promo), display_name
+
+    def test_the_wizard_no_longer_derives_a_price_from_a_name(self):
+        """The bundle's price is data, not a string to be re-parsed.
+
+        Keeping a second derivation in the wizard is what allowed the name and
+        the billed figure to drift apart, so its absence is the property worth
+        pinning — not an implementation detail.
         """
         import sys
         from pathlib import Path
@@ -494,19 +526,9 @@ class TestPricingDerivedFromDisplayName:
         repo_root = Path(__file__).resolve().parents[2]
         sys.path.insert(0, str(repo_root / "scripts"))
         try:
-            from wizard.providers import pricing_for_display_name
+            from wizard import providers
         finally:
             sys.path.pop(0)
 
-        for display_name in [
-            "Claude Opus 4.8 ($5/25) (Anthropic)",
-            "Claude Sonnet 5 ($3/15 → $2/10*) (Anthropic)",
-            "GLM-5.2 ($1.15/3.6 → $0.28/0.87*) (OpenRouter) (p)",
-            "MiniMax M3 ($0.6/2.4 → $0.24/0.96*) (OpenRouter) (p)",
-            "Grok 4.5 ($2/6) (OpenRouter) (p)",
-            "GPT-5.6 Sol ($1.25/10) (OpenAI)",
-        ]:
-            shipped = pricing_for_display_name(display_name)
-            derived = build_pricing_map([self._named(display_name)])
-            from_shipped = build_pricing_map([SimpleNamespace(name="m", model="model-m", pricing=shipped, display_name=display_name)])
-            assert derived == from_shipped, display_name
+        assert not hasattr(providers, "pricing_for_display_name")
+        assert providers.MODEL_PRICES, "the wizard must ship an explicit price table"

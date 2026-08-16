@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass, field, replace
 
 
@@ -178,7 +177,7 @@ ANTHROPIC_THINKING_CONFIG = ANTHROPIC_BUDGET_THINKING_CONFIG
 ANTHROPIC_BUNDLE_MODELS: list[dict] = [
     {
         "name": "claude-fable-5",
-        "display_name": "Claude Fable 5 ($10/50) (Anthropic)",
+        "display_name": "Claude Fable 5 (Anthropic)",
         "use": "langchain_anthropic:ChatAnthropic",
         "model": "claude-fable-5",
         "api_key": "$ANTHROPIC_API_KEY",
@@ -190,7 +189,7 @@ ANTHROPIC_BUNDLE_MODELS: list[dict] = [
     },
     {
         "name": "claude-opus-5",
-        "display_name": "Claude Opus 5 ($5/25) (Anthropic)",
+        "display_name": "Claude Opus 5 (Anthropic)",
         "use": "langchain_anthropic:ChatAnthropic",
         "model": "claude-opus-5",
         "api_key": "$ANTHROPIC_API_KEY",
@@ -202,7 +201,7 @@ ANTHROPIC_BUNDLE_MODELS: list[dict] = [
     },
     {
         "name": "claude-opus-4-8",
-        "display_name": "Claude Opus 4.8 ($5/25) (Anthropic)",
+        "display_name": "Claude Opus 4.8 (Anthropic)",
         "use": "langchain_anthropic:ChatAnthropic",
         "model": "claude-opus-4-8",
         "api_key": "$ANTHROPIC_API_KEY",
@@ -214,7 +213,7 @@ ANTHROPIC_BUNDLE_MODELS: list[dict] = [
     },
     {
         "name": "claude-sonnet-5",
-        "display_name": "Claude Sonnet 5 ($3/15 → $2/10*) (Anthropic)",
+        "display_name": "Claude Sonnet 5 (Anthropic)",
         "use": "langchain_anthropic:ChatAnthropic",
         "model": "claude-sonnet-5",
         "api_key": "$ANTHROPIC_API_KEY",
@@ -226,7 +225,7 @@ ANTHROPIC_BUNDLE_MODELS: list[dict] = [
     },
     {
         "name": "claude-sonnet-4-6",
-        "display_name": "Claude Sonnet 4.6 ($3/15) (Anthropic)",
+        "display_name": "Claude Sonnet 4.6 (Anthropic)",
         "use": "langchain_anthropic:ChatAnthropic",
         "model": "claude-sonnet-4-6",
         "api_key": "$ANTHROPIC_API_KEY",
@@ -238,7 +237,7 @@ ANTHROPIC_BUNDLE_MODELS: list[dict] = [
     },
     {
         "name": "claude-haiku-4-5",
-        "display_name": "Claude Haiku 4.5 ($1/5) (Anthropic)",
+        "display_name": "Claude Haiku 4.5 (Anthropic)",
         "use": "langchain_anthropic:ChatAnthropic",
         "model": "claude-haiku-4-5",
         "api_key": "$ANTHROPIC_API_KEY",
@@ -298,28 +297,29 @@ def _openrouter_model(
 #     work and tool use — so the Gemini slot is one Flash entry, upgraded to 3.6.
 #
 # display_name markers (kept in sync with config.example.yaml's OpenRouter block):
-#   ($<in>/<out>)        USD list price per 1M tokens (rough dropdown signal).
-#   ($<list> → $<promo>*) a starred second pair = a temporary discount from
-#                        OpenRouter's promotions page; the first pair is the list
-#                        price. MiniMax M3 (60% off) and GLM-5.2 (76% off) as of
-#                        2026-08 — drop the starred pair back to list when a promo ends.
 #   (p)                  zero-data-retention NOT guaranteed (routed via OpenRouter to
 #                        a third-party provider that may log prompts) — unlike the
 #                        direct Anthropic bundle above.
+#
+# Prices are NOT in the name. They live in `MODEL_PRICES` below and are stamped
+# onto each entry as a structured `price:` / `discount:` block. A name is a
+# label; a price is data, and embedding one in the other meant the number a user
+# read and the number they were billed against were two copies that could drift
+# — and a discount could only "end" by someone editing a string.
 OPENROUTER_BUNDLE_MODELS: list[dict] = [
-    _openrouter_model("openrouter-fable-5", "Claude Fable 5 ($10/50) (OpenRouter) (p)", "anthropic/claude-fable-5", supports_vision=True),
-    _openrouter_model("openrouter-grok-4.5", "Grok 4.5 ($2/6) (OpenRouter) (p)", "x-ai/grok-4.5", supports_vision=True),
-    _openrouter_model("openrouter-gpt-5.6-sol", "GPT-5.6 Sol ($5/30) (OpenRouter) (p)", "openai/gpt-5.6-sol", supports_vision=True),
-    _openrouter_model("openrouter-gpt-5.3-codex", "GPT-5.3 Codex ($1.75/14) (OpenRouter) (p)", "openai/gpt-5.3-codex", supports_vision=True),
-    _openrouter_model("openrouter-gemini-3.6-flash", "Gemini 3.6 Flash ($1.5/7.5) (OpenRouter) (p)", "google/gemini-3.6-flash", supports_vision=True),
-    _openrouter_model("openrouter-llama-4-maverick", "Llama 4 Maverick ($0.2/0.8) (OpenRouter) (p)", "meta-llama/llama-4-maverick", supports_vision=True, supports_thinking=False),
-    _openrouter_model("openrouter-minimax-m3", "MiniMax M3 ($0.6/2.4 → $0.24/0.96*) (OpenRouter) (p)", "minimax/minimax-m3", supports_vision=True, max_tokens=16000, temperature=1.0),
-    _openrouter_model("openrouter-qwen3.7-max", "Qwen3.7 Max ($1.5/4.4) (OpenRouter) (p)", "qwen/qwen3.7-max"),
-    _openrouter_model("openrouter-kimi-k3", "Kimi K3 ($3/15) (OpenRouter) (p)", "moonshotai/kimi-k3", supports_vision=True),
-    _openrouter_model("openrouter-mistral-large-3", "Mistral Large 3 ($0.5/1.5) (OpenRouter) (p)", "mistralai/mistral-large-2512", supports_vision=True, supports_thinking=False),
-    _openrouter_model("openrouter-deepseek-v4-pro", "DeepSeek V4 Pro ($0.44/0.87) (OpenRouter) (p)", "deepseek/deepseek-v4-pro"),
-    _openrouter_model("openrouter-glm-5.2", "GLM-5.2 ($1.15/3.6 → $0.28/0.87*) (OpenRouter) (p)", "z-ai/glm-5.2", max_tokens=16000),
-    _openrouter_model("openrouter-nemotron-3-ultra", "Nemotron 3 Ultra ($0.5/2.2) (OpenRouter) (p)", "nvidia/nemotron-3-ultra-550b-a55b", max_tokens=16000),
+    _openrouter_model("openrouter-fable-5", "Claude Fable 5 (OpenRouter) (p)", "anthropic/claude-fable-5", supports_vision=True),
+    _openrouter_model("openrouter-grok-4.5", "Grok 4.5 (OpenRouter) (p)", "x-ai/grok-4.5", supports_vision=True),
+    _openrouter_model("openrouter-gpt-5.6-sol", "GPT-5.6 Sol (OpenRouter) (p)", "openai/gpt-5.6-sol", supports_vision=True),
+    _openrouter_model("openrouter-gpt-5.3-codex", "GPT-5.3 Codex (OpenRouter) (p)", "openai/gpt-5.3-codex", supports_vision=True),
+    _openrouter_model("openrouter-gemini-3.6-flash", "Gemini 3.6 Flash (OpenRouter) (p)", "google/gemini-3.6-flash", supports_vision=True),
+    _openrouter_model("openrouter-llama-4-maverick", "Llama 4 Maverick (OpenRouter) (p)", "meta-llama/llama-4-maverick", supports_vision=True, supports_thinking=False),
+    _openrouter_model("openrouter-minimax-m3", "MiniMax M3 (OpenRouter) (p)", "minimax/minimax-m3", supports_vision=True, max_tokens=16000, temperature=1.0),
+    _openrouter_model("openrouter-qwen3.7-max", "Qwen3.7 Max (OpenRouter) (p)", "qwen/qwen3.7-max"),
+    _openrouter_model("openrouter-kimi-k3", "Kimi K3 (OpenRouter) (p)", "moonshotai/kimi-k3", supports_vision=True),
+    _openrouter_model("openrouter-mistral-large-3", "Mistral Large 3 (OpenRouter) (p)", "mistralai/mistral-large-2512", supports_vision=True, supports_thinking=False),
+    _openrouter_model("openrouter-deepseek-v4-pro", "DeepSeek V4 Pro (OpenRouter) (p)", "deepseek/deepseek-v4-pro"),
+    _openrouter_model("openrouter-glm-5.2", "GLM-5.2 (OpenRouter) (p)", "z-ai/glm-5.2", max_tokens=16000),
+    _openrouter_model("openrouter-nemotron-3-ultra", "Nemotron 3 Ultra (OpenRouter) (p)", "nvidia/nemotron-3-ultra-550b-a55b", max_tokens=16000),
 ]
 
 
@@ -443,121 +443,135 @@ def _home_gemini_model(name: str, display_name: str, model: str, *, max_tokens: 
 # OpenAI: GPT-5.6 Sol (flagship) + GPT-5.3 Codex (the acclaimed agentic-coding
 # variant — the same double kept on OpenRouter) + a cheaper Mini.
 OPENAI_HOME_BUNDLE_MODELS: list[dict] = [
-    _home_openai_compat_model("openai-gpt-5.6-sol", "GPT-5.6 Sol ($5/30) (OpenAI)", "gpt-5.6-sol", api_key_env="OPENAI_API_KEY", base_url="https://api.openai.com/v1", supports_vision=True),
-    _home_openai_compat_model("openai-gpt-5.3-codex", "GPT-5.3 Codex ($1.75/14) (OpenAI)", "gpt-5.3-codex", api_key_env="OPENAI_API_KEY", base_url="https://api.openai.com/v1", supports_vision=True),
-    _home_openai_compat_model("openai-gpt-5.6-mini", "GPT-5.6 Mini ($0.25/2) (OpenAI)", "gpt-5.6-mini", api_key_env="OPENAI_API_KEY", base_url="https://api.openai.com/v1", supports_vision=True, max_tokens=16000),
+    _home_openai_compat_model("openai-gpt-5.6-sol", "GPT-5.6 Sol (OpenAI)", "gpt-5.6-sol", api_key_env="OPENAI_API_KEY", base_url="https://api.openai.com/v1", supports_vision=True),
+    _home_openai_compat_model("openai-gpt-5.3-codex", "GPT-5.3 Codex (OpenAI)", "gpt-5.3-codex", api_key_env="OPENAI_API_KEY", base_url="https://api.openai.com/v1", supports_vision=True),
+    _home_openai_compat_model("openai-gpt-5.6-mini", "GPT-5.6 Mini (OpenAI)", "gpt-5.6-mini", api_key_env="OPENAI_API_KEY", base_url="https://api.openai.com/v1", supports_vision=True, max_tokens=16000),
 ]
 
 # xAI: Grok 4.5 (flagship) + Grok 4.5 Fast (cheaper/faster tier).
 XAI_HOME_BUNDLE_MODELS: list[dict] = [
-    _home_openai_compat_model("xai-grok-4.5", "Grok 4.5 ($2/6) (xAI)", "grok-4.5", api_key_env="XAI_API_KEY", base_url="https://api.x.ai/v1", supports_vision=True),
-    _home_openai_compat_model("xai-grok-4.5-fast", "Grok 4.5 Fast ($0.5/1.5) (xAI)", "grok-4.5-fast", api_key_env="XAI_API_KEY", base_url="https://api.x.ai/v1", supports_vision=True, max_tokens=16000),
+    _home_openai_compat_model("xai-grok-4.5", "Grok 4.5 (xAI)", "grok-4.5", api_key_env="XAI_API_KEY", base_url="https://api.x.ai/v1", supports_vision=True),
+    _home_openai_compat_model("xai-grok-4.5-fast", "Grok 4.5 Fast (xAI)", "grok-4.5-fast", api_key_env="XAI_API_KEY", base_url="https://api.x.ai/v1", supports_vision=True, max_tokens=16000),
 ]
 
 # Google: Gemini 3.6 Flash (flagship) + 3.5 Flash-Lite (cheaper) + the newest
 # shipped Pro (3.1 Pro preview — the exact set the config's OpenRouter note names).
 GOOGLE_HOME_BUNDLE_MODELS: list[dict] = [
-    _home_gemini_model("google-gemini-3.6-flash", "Gemini 3.6 Flash ($1.5/7.5) (Google)", "gemini-3.6-flash"),
-    _home_gemini_model("google-gemini-3.5-flash-lite", "Gemini 3.5 Flash-Lite ($0.3/1.2) (Google)", "gemini-3.5-flash-lite"),
-    _home_gemini_model("google-gemini-3.1-pro", "Gemini 3.1 Pro ($2.5/10) (Google)", "gemini-3.1-pro-preview"),
+    _home_gemini_model("google-gemini-3.6-flash", "Gemini 3.6 Flash (Google)", "gemini-3.6-flash"),
+    _home_gemini_model("google-gemini-3.5-flash-lite", "Gemini 3.5 Flash-Lite (Google)", "gemini-3.5-flash-lite"),
+    _home_gemini_model("google-gemini-3.1-pro", "Gemini 3.1 Pro (Google)", "gemini-3.1-pro-preview"),
 ]
 
 # DeepSeek: V4 Pro (flagship) + V4 Flash (cheaper) — the pair the wizard already ships.
 DEEPSEEK_HOME_BUNDLE_MODELS: list[dict] = [
-    _home_deepseek_style_model("deepseek-v4-pro", "DeepSeek V4 Pro ($0.44/0.87) (DeepSeek)", "deepseek-v4-pro", api_key_env="DEEPSEEK_API_KEY", api_base="https://api.deepseek.com", supports_vision=False, max_tokens=8192),
-    _home_deepseek_style_model("deepseek-v4-flash", "DeepSeek V4 Flash ($0.14/0.28) (DeepSeek)", "deepseek-v4-flash", api_key_env="DEEPSEEK_API_KEY", api_base="https://api.deepseek.com", supports_vision=False, max_tokens=8192),
+    _home_deepseek_style_model("deepseek-v4-pro", "DeepSeek V4 Pro (DeepSeek)", "deepseek-v4-pro", api_key_env="DEEPSEEK_API_KEY", api_base="https://api.deepseek.com", supports_vision=False, max_tokens=8192),
+    _home_deepseek_style_model("deepseek-v4-flash", "DeepSeek V4 Flash (DeepSeek)", "deepseek-v4-flash", api_key_env="DEEPSEEK_API_KEY", api_base="https://api.deepseek.com", supports_vision=False, max_tokens=8192),
 ]
 
 # Mistral: Large 3 (flagship) + Medium + Small. Mistral Large is not a reasoning
 # model (matching the OpenRouter entry), so the family ships without thinking.
 MISTRAL_HOME_BUNDLE_MODELS: list[dict] = [
-    _home_openai_compat_model("mistral-large-3", "Mistral Large 3 ($0.5/1.5) (Mistral)", "mistral-large-2512", api_key_env="MISTRAL_API_KEY", base_url="https://api.mistral.ai/v1", supports_vision=True, supports_thinking=False),
-    _home_openai_compat_model("mistral-medium-3", "Mistral Medium 3 ($0.4/2) (Mistral)", "mistral-medium-latest", api_key_env="MISTRAL_API_KEY", base_url="https://api.mistral.ai/v1", supports_vision=True, supports_thinking=False),
+    _home_openai_compat_model("mistral-large-3", "Mistral Large 3 (Mistral)", "mistral-large-2512", api_key_env="MISTRAL_API_KEY", base_url="https://api.mistral.ai/v1", supports_vision=True, supports_thinking=False),
+    _home_openai_compat_model("mistral-medium-3", "Mistral Medium 3 (Mistral)", "mistral-medium-latest", api_key_env="MISTRAL_API_KEY", base_url="https://api.mistral.ai/v1", supports_vision=True, supports_thinking=False),
     _home_openai_compat_model(
-        "mistral-small-3", "Mistral Small 3 ($0.1/0.3) (Mistral)", "mistral-small-latest", api_key_env="MISTRAL_API_KEY", base_url="https://api.mistral.ai/v1", supports_vision=True, supports_thinking=False, max_tokens=16000
+        "mistral-small-3", "Mistral Small 3 (Mistral)", "mistral-small-latest", api_key_env="MISTRAL_API_KEY", base_url="https://api.mistral.ai/v1", supports_vision=True, supports_thinking=False, max_tokens=16000
     ),
 ]
 
 # Moonshot/Kimi: K3 (flagship) + K2.6 (cheaper), via the international endpoint.
 MOONSHOT_HOME_BUNDLE_MODELS: list[dict] = [
-    _home_deepseek_style_model("moonshot-kimi-k3", "Kimi K3 ($3/15) (Moonshot)", "kimi-k3", api_key_env="MOONSHOT_API_KEY", api_base="https://api.moonshot.ai/v1", supports_vision=True, max_tokens=32768),
-    _home_deepseek_style_model("moonshot-kimi-k2.6", "Kimi K2.6 ($1/3) (Moonshot)", "kimi-k2.6", api_key_env="MOONSHOT_API_KEY", api_base="https://api.moonshot.ai/v1", supports_vision=False, max_tokens=32768),
+    _home_deepseek_style_model("moonshot-kimi-k3", "Kimi K3 (Moonshot)", "kimi-k3", api_key_env="MOONSHOT_API_KEY", api_base="https://api.moonshot.ai/v1", supports_vision=True, max_tokens=32768),
+    _home_deepseek_style_model("moonshot-kimi-k2.6", "Kimi K2.6 (Moonshot)", "kimi-k2.6", api_key_env="MOONSHOT_API_KEY", api_base="https://api.moonshot.ai/v1", supports_vision=False, max_tokens=32768),
 ]
 
 # Qwen (Alibaba DashScope, international OpenAI-compatible endpoint): 3.7 Max
 # (flagship) + 3.7 Plus (cheaper).
 QWEN_HOME_BUNDLE_MODELS: list[dict] = [
-    _home_openai_compat_model("qwen-3.7-max", "Qwen3.7 Max ($1.5/4.4) (Qwen)", "qwen3.7-max", api_key_env="DASHSCOPE_API_KEY", base_url="https://dashscope-intl.aliyuncs.com/compatible-mode/v1", supports_vision=False),
-    _home_openai_compat_model("qwen-3.7-plus", "Qwen3.7 Plus ($0.4/1.2) (Qwen)", "qwen3.7-plus", api_key_env="DASHSCOPE_API_KEY", base_url="https://dashscope-intl.aliyuncs.com/compatible-mode/v1", supports_vision=False, max_tokens=16000),
+    _home_openai_compat_model("qwen-3.7-max", "Qwen3.7 Max (Qwen)", "qwen3.7-max", api_key_env="DASHSCOPE_API_KEY", base_url="https://dashscope-intl.aliyuncs.com/compatible-mode/v1", supports_vision=False),
+    _home_openai_compat_model("qwen-3.7-plus", "Qwen3.7 Plus (Qwen)", "qwen3.7-plus", api_key_env="DASHSCOPE_API_KEY", base_url="https://dashscope-intl.aliyuncs.com/compatible-mode/v1", supports_vision=False, max_tokens=16000),
 ]
 
 # MiniMax (international endpoint): M3 (flagship, vision) + M2.7 (cheaper, text-only).
 MINIMAX_HOME_BUNDLE_MODELS: list[dict] = [
-    _home_openai_compat_model("minimax-m3", "MiniMax M3 ($0.6/2.4) (MiniMax)", "MiniMax-M3", api_key_env="MINIMAX_API_KEY", base_url="https://api.minimax.io/v1", supports_vision=True, max_tokens=16000, temperature=1.0),
-    _home_openai_compat_model("minimax-m2.7", "MiniMax M2.7 ($0.3/1.2) (MiniMax)", "MiniMax-M2.7", api_key_env="MINIMAX_API_KEY", base_url="https://api.minimax.io/v1", supports_vision=False, max_tokens=16000, temperature=1.0),
+    _home_openai_compat_model("minimax-m3", "MiniMax M3 (MiniMax)", "MiniMax-M3", api_key_env="MINIMAX_API_KEY", base_url="https://api.minimax.io/v1", supports_vision=True, max_tokens=16000, temperature=1.0),
+    _home_openai_compat_model("minimax-m2.7", "MiniMax M2.7 (MiniMax)", "MiniMax-M2.7", api_key_env="MINIMAX_API_KEY", base_url="https://api.minimax.io/v1", supports_vision=False, max_tokens=16000, temperature=1.0),
 ]
 
 # Zhipu / z.ai: GLM-5.2 (flagship) + GLM-5.2 Air (cheaper).
 ZAI_HOME_BUNDLE_MODELS: list[dict] = [
-    _home_openai_compat_model("zai-glm-5.2", "GLM-5.2 ($1.15/3.6) (z-ai)", "glm-5.2", api_key_env="ZAI_API_KEY", base_url="https://api.z.ai/api/paas/v4", supports_vision=False, max_tokens=16000),
-    _home_openai_compat_model("zai-glm-5.2-air", "GLM-5.2 Air ($0.2/1.1) (z-ai)", "glm-5.2-air", api_key_env="ZAI_API_KEY", base_url="https://api.z.ai/api/paas/v4", supports_vision=False, max_tokens=16000),
+    _home_openai_compat_model("zai-glm-5.2", "GLM-5.2 (z-ai)", "glm-5.2", api_key_env="ZAI_API_KEY", base_url="https://api.z.ai/api/paas/v4", supports_vision=False, max_tokens=16000),
+    _home_openai_compat_model("zai-glm-5.2-air", "GLM-5.2 Air (z-ai)", "glm-5.2-air", api_key_env="ZAI_API_KEY", base_url="https://api.z.ai/api/paas/v4", supports_vision=False, max_tokens=16000),
 ]
 
-# ── Machine-readable pricing, derived from the price-in-name pair ────────────
-# Every bundled model's display_name already carries its price as `($<in>/<out>)`
-# (see FORK.md §2). The console/chat cost display needs that same figure as a
-# structured `pricing:` block, and a model without one contributes nothing to the
-# total — so a conversation run entirely on unpriced models shows no cost at all.
-# Deriving the block from the name here (rather than hand-writing it per entry)
-# is what keeps the wizard's output identical to the config.example.yaml marker
-# blocks: there is one number per model, in one place, and it cannot drift.
-_PRICE_IN_NAME_RE = re.compile(r"\(\$(\d+(?:\.\d+)?)/(\d+(?:\.\d+)?)(?:\s*→\s*\$(\d+(?:\.\d+)?)/(\d+(?:\.\d+)?)\*)?\)")
+# ── Machine-readable pricing: the single source of truth ─────────────────────
+# A model's price lives here, as data, and is stamped onto the entry as a
+# structured `price:` / `discount:` block. It is deliberately NOT in the
+# display_name: a name is a label, and embedding the price in it meant the
+# figure a user read and the figure they were billed against were two copies of
+# one number that could drift apart. It also made a discount impossible to
+# expire without a human editing a string, which is exactly how a chat header
+# ends up advertising a promotion that ended months ago.
+#
+# `discount` carries the provider's temporary rate and, when the provider has
+# announced one, the date it ends. Past that date the discount stops being
+# applied on its own (see deerflow/pricing.py). Omitting `until` means "no end
+# date announced" -- inventing one would expire a live discount early.
+#
+# Keep this table, the `config.example.yaml` marker blocks, and FORK.md in sync;
+# `tests/test_config_integrity.py` and `tests/test_setup_wizard.py` pin it.
+MODEL_PRICES: dict[str, dict] = {
+    "claude-fable-5": {"price": {"currency": "USD", "input": 10.0, "output": 50.0, "cache_hit": 1.0}},
+    "claude-opus-5": {"price": {"currency": "USD", "input": 5.0, "output": 25.0, "cache_hit": 0.5}},
+    "claude-opus-4-8": {"price": {"currency": "USD", "input": 5.0, "output": 25.0, "cache_hit": 0.5}},
+    "claude-sonnet-5": {"price": {"currency": "USD", "input": 3.0, "output": 15.0, "cache_hit": 0.3}, "discount": {"input": 2.0, "output": 10.0, "cache_hit": 0.2, "until": "2026-08-31"}},
+    "claude-sonnet-4-6": {"price": {"currency": "USD", "input": 3.0, "output": 15.0, "cache_hit": 0.3}},
+    "claude-haiku-4-5": {"price": {"currency": "USD", "input": 1.0, "output": 5.0, "cache_hit": 0.1}},
+    "deepseek-v4-pro": {"price": {"currency": "USD", "input": 0.44, "output": 0.87}},
+    "deepseek-v4-flash": {"price": {"currency": "USD", "input": 0.14, "output": 0.28}},
+    "google-gemini-3.6-flash": {"price": {"currency": "USD", "input": 1.5, "output": 7.5}},
+    "google-gemini-3.5-flash-lite": {"price": {"currency": "USD", "input": 0.3, "output": 1.2}},
+    "google-gemini-3.1-pro": {"price": {"currency": "USD", "input": 2.5, "output": 10.0}},
+    "minimax-m3": {"price": {"currency": "USD", "input": 0.6, "output": 2.4}},
+    "minimax-m2.7": {"price": {"currency": "USD", "input": 0.3, "output": 1.2}},
+    "mistral-large-3": {"price": {"currency": "USD", "input": 0.5, "output": 1.5}},
+    "mistral-medium-3": {"price": {"currency": "USD", "input": 0.4, "output": 2.0}},
+    "mistral-small-3": {"price": {"currency": "USD", "input": 0.1, "output": 0.3}},
+    "moonshot-kimi-k3": {"price": {"currency": "USD", "input": 3.0, "output": 15.0}},
+    "moonshot-kimi-k2.6": {"price": {"currency": "USD", "input": 1.0, "output": 3.0}},
+    "openai-gpt-5.6-sol": {"price": {"currency": "USD", "input": 5.0, "output": 30.0}},
+    "openai-gpt-5.3-codex": {"price": {"currency": "USD", "input": 1.75, "output": 14.0}},
+    "openai-gpt-5.6-mini": {"price": {"currency": "USD", "input": 0.25, "output": 2.0}},
+    "openrouter-fable-5": {"price": {"currency": "USD", "input": 10.0, "output": 50.0}},
+    "openrouter-grok-4.5": {"price": {"currency": "USD", "input": 2.0, "output": 6.0}},
+    "openrouter-gpt-5.6-sol": {"price": {"currency": "USD", "input": 5.0, "output": 30.0}},
+    "openrouter-gpt-5.3-codex": {"price": {"currency": "USD", "input": 1.75, "output": 14.0}},
+    "openrouter-gemini-3.6-flash": {"price": {"currency": "USD", "input": 1.5, "output": 7.5}},
+    "openrouter-llama-4-maverick": {"price": {"currency": "USD", "input": 0.2, "output": 0.8}},
+    "openrouter-minimax-m3": {"price": {"currency": "USD", "input": 0.6, "output": 2.4}, "discount": {"input": 0.24, "output": 0.96}},
+    "openrouter-qwen3.7-max": {"price": {"currency": "USD", "input": 1.5, "output": 4.4}},
+    "openrouter-kimi-k3": {"price": {"currency": "USD", "input": 3.0, "output": 15.0}},
+    "openrouter-mistral-large-3": {"price": {"currency": "USD", "input": 0.5, "output": 1.5}},
+    "openrouter-deepseek-v4-pro": {"price": {"currency": "USD", "input": 0.44, "output": 0.87}},
+    "openrouter-glm-5.2": {"price": {"currency": "USD", "input": 1.15, "output": 3.6}, "discount": {"input": 0.28, "output": 0.87}},
+    "openrouter-nemotron-3-ultra": {"price": {"currency": "USD", "input": 0.5, "output": 2.2}},
+    "qwen-3.7-max": {"price": {"currency": "USD", "input": 1.5, "output": 4.4}},
+    "qwen-3.7-plus": {"price": {"currency": "USD", "input": 0.4, "output": 1.2}},
+    "xai-grok-4.5": {"price": {"currency": "USD", "input": 2.0, "output": 6.0}},
+    "xai-grok-4.5-fast": {"price": {"currency": "USD", "input": 0.5, "output": 1.5}},
+    "zai-glm-5.2": {"price": {"currency": "USD", "input": 1.15, "output": 3.6}},
+    "zai-glm-5.2-air": {"price": {"currency": "USD", "input": 0.2, "output": 1.1}},
+}
 
-# Anthropic publishes prompt-cache reads at 0.1x the input price. Other providers
-# differ (and several do not publish a cache-read rate at all), so their blocks
-# omit `input_cache_hit_per_million` and cache hits fall back to the full input
-# price — the documented conservative upper bound.
-_ANTHROPIC_CACHE_HIT_RATIO = 0.1
 
-
-def pricing_for_display_name(display_name: str) -> dict | None:
-    """Structured `pricing:` block for a bundled model, or None if unpriced.
-
-    When the name carries a promo pair (`$list → $promo*`), the **standard**
-    (first) price remains what cost reporting bills against — the promo can end
-    at any time, so billing against it would under-report. The discount is
-    carried additively in `promo_*_per_million` so the UI can show what the
-    conversation costs today beside what it costs once the promo lapses. That
-    matches the rule in FORK.md §2.
-    """
-    match = _PRICE_IN_NAME_RE.search(display_name)
-    if match is None:
-        return None
-    is_anthropic = display_name.rstrip().endswith("(Anthropic)")
-    input_per_million = float(match.group(1))
-    pricing: dict = {
-        "currency": "USD",
-        "input_per_million": input_per_million,
-        "output_per_million": float(match.group(2)),
-    }
-    if is_anthropic:
-        pricing["input_cache_hit_per_million"] = round(input_per_million * _ANTHROPIC_CACHE_HIT_RATIO, 6)
-    if match.group(3) is not None and match.group(4) is not None:
-        promo_input = float(match.group(3))
-        pricing["promo_input_per_million"] = promo_input
-        pricing["promo_output_per_million"] = float(match.group(4))
-        if is_anthropic:
-            pricing["promo_input_cache_hit_per_million"] = round(promo_input * _ANTHROPIC_CACHE_HIT_RATIO, 6)
-    return pricing
-
-
-def _with_pricing(models: list[dict]) -> list[dict]:
-    """Stamp the derived `pricing:` block onto every entry that lacks one."""
+def _apply_prices(models: list[dict]) -> list[dict]:
+    """Stamp the structured `price:` / `discount:` block onto every known entry."""
     for entry in models:
-        if "pricing" not in entry:
-            pricing = pricing_for_display_name(entry.get("display_name", ""))
-            if pricing is not None:
-                entry["pricing"] = pricing
+        record = MODEL_PRICES.get(entry.get("name", ""))
+        if record is None:
+            continue
+        entry.setdefault("price", dict(record["price"]))
+        if "discount" in record:
+            entry.setdefault("discount", dict(record["discount"]))
     return models
 
 
@@ -574,7 +588,7 @@ for _bundle in (
     MINIMAX_HOME_BUNDLE_MODELS,
     ZAI_HOME_BUNDLE_MODELS,
 ):
-    _with_pricing(_bundle)
+    _apply_prices(_bundle)
 del _bundle
 
 

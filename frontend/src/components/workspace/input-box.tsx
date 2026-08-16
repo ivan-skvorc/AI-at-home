@@ -2697,6 +2697,7 @@ export function InputBox({
                     <ModelSelectorName className="w-full text-xs font-normal">
                       <ModelDisplayName
                         displayName={selectedModel?.display_name}
+                        price={selectedModel?.price}
                         variant="compact"
                       />
                     </ModelSelectorName>
@@ -2726,7 +2727,10 @@ export function InputBox({
                       >
                         <div className="flex min-w-0 flex-1 flex-col">
                           <ModelSelectorName>
-                            <ModelDisplayName displayName={m.display_name} />
+                            <ModelDisplayName
+                              displayName={m.display_name}
+                              price={m.price}
+                            />
                             {unusable && (
                               <span className="text-muted-foreground ml-1 text-[10px]">
                                 (no tool support)
@@ -2763,6 +2767,7 @@ export function InputBox({
                         {subagentSelected ? (
                           <ModelDisplayName
                             displayName={subagentSelected.display_name}
+                            price={subagentSelected.price}
                             variant="compact"
                           />
                         ) : (
@@ -2811,7 +2816,10 @@ export function InputBox({
                       >
                         <div className="flex min-w-0 flex-1 flex-col">
                           <ModelSelectorName>
-                            <ModelDisplayName displayName={m.display_name} />
+                            <ModelDisplayName
+                              displayName={m.display_name}
+                              price={m.price}
+                            />
                             {lacksToolSupport(m) && (
                               <span className="text-muted-foreground ml-1 text-[10px]">
                                 (no tool support)
