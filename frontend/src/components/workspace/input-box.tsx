@@ -2727,7 +2727,10 @@ export function InputBox({
                       >
                         <div className="flex min-w-0 flex-1 flex-col">
                           <ModelSelectorName>
-                            <ModelDisplayName displayName={m.display_name} price={m.price} />
+                            <ModelDisplayName
+                              displayName={m.display_name}
+                              price={m.price}
+                            />
                             {unusable && (
                               <span className="text-muted-foreground ml-1 text-[10px]">
                                 (no tool support)
@@ -2813,7 +2816,10 @@ export function InputBox({
                       >
                         <div className="flex min-w-0 flex-1 flex-col">
                           <ModelSelectorName>
-                            <ModelDisplayName displayName={m.display_name} price={m.price} />
+                            <ModelDisplayName
+                              displayName={m.display_name}
+                              price={m.price}
+                            />
                             {lacksToolSupport(m) && (
                               <span className="text-muted-foreground ml-1 text-[10px]">
                                 (no tool support)

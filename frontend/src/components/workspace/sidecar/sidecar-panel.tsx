@@ -972,7 +972,10 @@ function SidecarModelSelector({
             >
               <div className="flex min-w-0 flex-1 flex-col">
                 <ModelSelectorName>
-                  <ModelDisplayName displayName={model.display_name} price={model.price} />
+                  <ModelDisplayName
+                    displayName={model.display_name}
+                    price={model.price}
+                  />
                 </ModelSelectorName>
                 <span className="text-muted-foreground truncate text-[10px]">
                   {model.model}
