@@ -1,4 +1,5 @@
 import logging
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
@@ -11,10 +12,34 @@ from app.gateway.authz import (
 from app.gateway.deps import get_config, get_optional_user_from_request
 from deerflow.authz.provider import AuthzDecision, AuthzRequest
 from deerflow.config.app_config import AppConfig
+from deerflow.pricing import build_pricing_map, lookup_pricing
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api", tags=["models"])
+
+
+class ModelPriceResponse(BaseModel):
+    """A model's effective price, per one million tokens (fork feature).
+
+    Resolved server-side from `price:` / the legacy `pricing:` block / the
+    `($in/out)` pair in `display_name`, so the UI renders one shape and never
+    re-implements that precedence or parses a display name.
+
+    The discount fields are already **expiry-filtered**: a lapsed discount is
+    absent here rather than present-and-stale, so a client cannot show a
+    promotion that has ended by forgetting to compare dates. `discount_until` is
+    informational only ("promo rate through Aug 31").
+    """
+
+    currency: str = Field(..., description="ISO currency code; one currency across all priced models")
+    input: float = Field(..., description="Price per 1M input tokens (cache miss)")
+    output: float = Field(..., description="Price per 1M output tokens")
+    cache_hit: float | None = Field(default=None, description="Price per 1M cache-hit input tokens; null means hits bill at the miss price")
+    discount_input: float | None = Field(default=None, description="Discounted input price, when a discount is currently active")
+    discount_output: float | None = Field(default=None, description="Discounted output price, when a discount is currently active")
+    discount_cache_hit: float | None = Field(default=None, description="Discounted cache-hit price, when configured")
+    discount_until: str | None = Field(default=None, description="ISO 8601 instant the active discount lapses; null means no expiry")
 
 
 class ModelResponse(BaseModel):
@@ -27,6 +52,30 @@ class ModelResponse(BaseModel):
     supports_thinking: bool = Field(default=False, description="Whether model supports thinking mode")
     supports_reasoning_effort: bool = Field(default=False, description="Whether model supports reasoning effort")
     supports_tools: bool | None = Field(default=None, description="Whether model supports tool calling (None if unknown)")
+    price: ModelPriceResponse | None = Field(default=None, description="Effective price with any active discount; null when this model has no configured price")
+
+
+def _price_response(pricing: dict, model: Any) -> ModelPriceResponse | None:
+    """The effective price for one model, or None when it has no price.
+
+    Reads the shared pricing map rather than the model config so the API agrees
+    with what actually gets billed — including the one-currency rule, which
+    disables cost reporting wholesale when configured models mix currencies.
+    """
+    entry = lookup_pricing(pricing, model.name) or lookup_pricing(pricing, getattr(model, "model", None))
+    if entry is None:
+        return None
+    promo = entry.promo()
+    return ModelPriceResponse(
+        currency=entry.currency,
+        input=entry.input_per_million,
+        output=entry.output_per_million,
+        cache_hit=entry.input_cache_hit_per_million,
+        discount_input=promo.input_per_million if promo else None,
+        discount_output=promo.output_per_million if promo else None,
+        discount_cache_hit=promo.input_cache_hit_per_million if promo else None,
+        discount_until=entry.discount_until.isoformat() if (promo and entry.discount_until) else None,
+    )
 
 
 class TokenUsageResponse(BaseModel):
@@ -113,6 +162,10 @@ async def list_models(
                     logger.warning("Authorization provider failed while filtering models", exc_info=True)
                     visible_models = [] if fail_closed else config.models
 
+    # Built from the full configured set, not just the visible one: the
+    # one-currency rule is a property of the deployment, so an authorization
+    # filter must not change whether cost reporting is enabled.
+    pricing = build_pricing_map(config.models, logger=logger)
     models = [
         ModelResponse(
             name=model.name,
@@ -122,6 +175,7 @@ async def list_models(
             supports_thinking=model.supports_thinking,
             supports_reasoning_effort=model.supports_reasoning_effort,
             supports_tools=getattr(model, "supports_tools", None),
+            price=_price_response(pricing, model),
         )
         for model in visible_models
     ]
@@ -205,4 +259,5 @@ async def get_model(
         supports_thinking=model.supports_thinking,
         supports_reasoning_effort=model.supports_reasoning_effort,
         supports_tools=getattr(model, "supports_tools", None),
+        price=_price_response(build_pricing_map(config.models, logger=logger), model),
     )

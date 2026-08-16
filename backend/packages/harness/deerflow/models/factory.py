@@ -228,6 +228,10 @@ def create_chat_model(
             # display) — must never reach the provider client, which would
             # forward unknown kwargs into the completion request payload.
             "pricing",
+            # Fork feature: the explicit price/discount surface. Same rule as
+            # `pricing` above — cost metadata, never a provider kwarg.
+            "price",
+            "discount",
             # Fork feature: the fallback chain is resolved by this factory (see
             # _wrap_with_fallbacks below) and is meaningless to a provider
             # client, which would forward it into the request payload.
