@@ -30,10 +30,16 @@ from __future__ import annotations
 
 import logging
 import re
+from datetime import UTC, date, datetime
 from functools import lru_cache
 from typing import Any, NamedTuple
 
 _module_logger = logging.getLogger(__name__)
+
+# Distinguishes "caller did not pass a clock" (resolve the real one) from an
+# explicit ``now=None`` ("the current time is genuinely unknown"), which must
+# fail closed on time-limited discounts rather than silently using wall clock.
+_NOW_UNSET: Any = object()
 
 # A provider-appended version stamp: Anthropic/OpenAI resolve an undated alias
 # to a dated snapshot (``claude-opus-5`` -> ``claude-opus-5-20260115``,
@@ -103,6 +109,50 @@ def derive_pricing_from_display_name(display_name: str | None) -> dict | None:
 _VARIANT_SUFFIX_RE = re.compile(r":[A-Za-z0-9._-]+$")
 
 
+def parse_discount_expiry(value: Any) -> tuple[datetime | None, bool]:
+    """``(expiry, valid)`` for a discount's ``until``.
+
+    ``(None, True)`` means "no expiry configured" — the discount runs until the
+    operator removes it. ``(None, False)`` means the value was present but
+    unreadable, which callers must treat as *expired* rather than eternal: a
+    date nobody can parse is exactly the state in which a stale discount would
+    otherwise be advertised forever.
+
+    A bare ``until: 2026-08-31`` is inclusive — it reads as "through the 31st",
+    not "until the 31st begins" — so a plain date resolves to the last instant
+    of that day. PyYAML hands us a real ``date``/``datetime`` for an unquoted
+    value and a ``str`` for a quoted one; all three spellings are accepted
+    because which one an operator writes is an accident of quoting.
+    """
+    if value is None:
+        return None, True
+    if isinstance(value, bool):  # `until: true` is not a date
+        return None, False
+    if isinstance(value, datetime):
+        parsed = value
+    elif isinstance(value, date):  # after datetime: datetime subclasses date
+        parsed = datetime(value.year, value.month, value.day, 23, 59, 59, tzinfo=UTC)
+    elif isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return None, False
+        try:
+            if len(text) == 10:
+                day = date.fromisoformat(text)
+                parsed = datetime(day.year, day.month, day.day, 23, 59, 59, tzinfo=UTC)
+            else:
+                parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        except ValueError:
+            return None, False
+    else:
+        return None, False
+    if parsed.tzinfo is None:
+        # A naive timestamp is read as UTC rather than local time: the server's
+        # zone is not a property of the provider's promotion.
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed, True
+
+
 class ModelPricing(NamedTuple):
     input_per_million: float
     output_per_million: float
@@ -121,6 +171,11 @@ class ModelPricing(NamedTuple):
     promo_input_per_million: float | None = None
     promo_output_per_million: float | None = None
     promo_input_cache_hit_per_million: float | None = None
+    # When the discount lapses, purely for display ("promo rate through Aug 31").
+    # Enforcement does not read this: an expired discount is dropped in
+    # ``build_pricing_map`` and never reaches a ``ModelPricing`` at all, so every
+    # consumer stays correct without repeating the expiry check.
+    discount_until: datetime | None = None
 
     def promo(self) -> ModelPricing | None:
         """This model's promotional rates as a standalone price, or None.
@@ -173,7 +228,66 @@ def _parse_promo_rates(raw: dict, input_price: float, output_price: float, *, mo
     return promo_input, promo_output, promo_hit
 
 
-def build_pricing_map(models: Any, *, logger: logging.Logger | None = None) -> dict[str, ModelPricing]:
+def _raw_from_price_fields(model_cfg: Any) -> dict | None:
+    """A ``pricing:``-shaped dict from the explicit ``price:`` / ``discount:`` fields.
+
+    These are the operator-facing surface: short, flat keys (``input`` /
+    ``output`` / ``cache_hit``) instead of the ``*_per_million`` spelling, and a
+    ``discount:`` block that carries its own ``until``. Normalizing here means
+    the rest of this module keeps one internal shape, so the legacy block, the
+    display-name fallback, and the new fields cannot drift into three different
+    cost paths.
+    """
+    price = getattr(model_cfg, "price", None)
+    if not isinstance(price, dict):
+        return None
+    raw: dict = {
+        "currency": price.get("currency") or "USD",
+        "input_per_million": price.get("input"),
+        "output_per_million": price.get("output"),
+    }
+    if price.get("cache_hit") is not None:
+        raw["input_cache_hit_per_million"] = price.get("cache_hit")
+    discount = getattr(model_cfg, "discount", None)
+    if isinstance(discount, dict):
+        raw["promo_input_per_million"] = discount.get("input")
+        raw["promo_output_per_million"] = discount.get("output")
+        if discount.get("cache_hit") is not None:
+            raw["promo_input_cache_hit_per_million"] = discount.get("cache_hit")
+        if "until" in discount:
+            raw["promo_until"] = discount.get("until")
+    return raw
+
+
+def _resolve_discount_window(raw: dict, *, now: datetime | None, model_name: str, log: logging.Logger) -> tuple[bool, datetime | None]:
+    """``(keep_discount, expiry)`` for a parsed pricing dict.
+
+    Fails closed in both unknown cases — an unreadable ``until`` and an unknown
+    current time. A cost estimate that is too high is corrected by the provider's
+    bill; one that advertises a discount the provider has stopped offering is the
+    silent failure this whole field exists to remove.
+    """
+    expiry, valid = parse_discount_expiry(raw.get("promo_until"))
+    if not valid:
+        log.warning(
+            "pricing: ignoring the discount on model %s because its `until` expiry could not be read (%r); an unreadable date must not mean 'never expires'",
+            model_name,
+            raw.get("promo_until"),
+        )
+        return False, None
+    if expiry is None:
+        return True, None
+    if now is None:
+        log.warning(
+            "pricing: ignoring the discount on model %s because the current time is unavailable and the discount expires (%s); billing at the standard rate",
+            model_name,
+            expiry.isoformat(),
+        )
+        return False, expiry
+    return now <= expiry, expiry
+
+
+def build_pricing_map(models: Any, *, logger: logging.Logger | None = None, now: datetime | None = _NOW_UNSET) -> dict[str, ModelPricing]:
     """Collect per-model prices from an iterable of model configs.
 
     Entries are keyed by both the config ``name`` and the provider ``model``
@@ -182,11 +296,25 @@ def build_pricing_map(models: Any, *, logger: logging.Logger | None = None) -> d
     reporting disabled) when priced models mix currencies.
     """
     log = logger or _module_logger
+    if now is _NOW_UNSET:
+        # Resolving the clock here rather than at import time keeps a long-lived
+        # process from freezing a discount window at startup. A clock that cannot
+        # be read at all becomes an explicit "unknown", which fails closed below
+        # rather than raising out of cost reporting.
+        try:
+            now = datetime.now(UTC)
+        except (OSError, OverflowError, ValueError):  # pragma: no cover - platform clock failure
+            log.warning("pricing: system clock unavailable; time-limited discounts will be ignored")
+            now = None
     pricing: dict[str, ModelPricing] = {}
     pricing_currency_value: str | None = None
     pricing_currency_model: str | None = None
     for model_cfg in models or []:
-        raw = getattr(model_cfg, "pricing", None)
+        # Precedence: the explicit fields an operator can see and set, then the
+        # legacy block, then the price the display name already states.
+        raw = _raw_from_price_fields(model_cfg)
+        if raw is None:
+            raw = getattr(model_cfg, "pricing", None)
         if not isinstance(raw, dict):
             # No explicit block: fall back to the price the name already states.
             # A malformed *explicit* block deliberately does not reach here — it
@@ -219,8 +347,16 @@ def build_pricing_map(models: Any, *, logger: logging.Logger | None = None) -> d
                 model_cfg.name,
             )
             return {}
-        promo_input, promo_output, promo_hit = _parse_promo_rates(raw, input_price, output_price, model_name=str(getattr(model_cfg, "name", "?")), log=log)
-        entry = ModelPricing(input_price, output_price, model_currency, cache_hit_price, promo_input, promo_output, promo_hit)
+        entry_name = str(getattr(model_cfg, "name", "?"))
+        promo_input, promo_output, promo_hit = _parse_promo_rates(raw, input_price, output_price, model_name=entry_name, log=log)
+        discount_until: datetime | None = None
+        if promo_input is not None or promo_output is not None:
+            keep_discount, discount_until = _resolve_discount_window(raw, now=now, model_name=entry_name, log=log)
+            if not keep_discount:
+                # Dropped here, so an expired discount never reaches a
+                # ``ModelPricing`` and no consumer has to re-check the window.
+                promo_input = promo_output = promo_hit = None
+        entry = ModelPricing(input_price, output_price, model_currency, cache_hit_price, promo_input, promo_output, promo_hit, discount_until if promo_input is not None else None)
         for key in (model_cfg.name, getattr(model_cfg, "model", None)):
             if key:
                 pricing.setdefault(key, entry)

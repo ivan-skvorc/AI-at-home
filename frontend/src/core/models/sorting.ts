@@ -60,7 +60,10 @@ export interface ParsedModelPrice {
 // `GLM-5.2`) from being misread as a price.
 const PRICE_PAIR = /\$\s*(\d+(?:\.\d+)?)\s*\/\s*(\d+(?:\.\d+)?)/g;
 
-type NamedModel = Pick<Model, "display_name" | "name">;
+// `price` is optional on `Model`, so including it here keeps every existing
+// caller (which passes a full model) working while letting the sort read the
+// server-resolved figure when it is present.
+type NamedModel = Pick<Model, "display_name" | "name" | "price">;
 
 /**
  * Extract the *current* price from a `display_name`.
@@ -221,8 +224,35 @@ export function parseModelProvider(
  * price, the dominant cost driver. `null` for unpriced models, which are always
  * ordered last regardless of direction.
  */
+/**
+ * The effective price for a model, preferring the server-resolved `price` field.
+ *
+ * The display name is a *label*; `price` is data. Preferring it means the picker
+ * agrees with what the cost overview bills, prices a hand-added model whose name
+ * carries no `($in/out)` pair, and — the reason this matters most — stops
+ * showing a discount the moment its `until` passes, because the server already
+ * dropped it. Parsing the name remains the fallback for a model with no
+ * configured price, so nothing that worked before stops working.
+ */
+export function resolveModelPrice(
+  model: Pick<Model, "display_name" | "price">,
+): ParsedModelPrice | null {
+  const api = model.price;
+  if (api && Number.isFinite(api.input) && Number.isFinite(api.output)) {
+    const discounted =
+      api.discount_input != null && api.discount_output != null;
+    return {
+      input: discounted ? api.discount_input! : api.input,
+      output: discounted ? api.discount_output! : api.output,
+      discounted,
+      currency: api.currency || "USD",
+    };
+  }
+  return parseModelPrice(model.display_name);
+}
+
 export function modelPriceSortValue(model: NamedModel): number | null {
-  const price = parseModelPrice(model.display_name);
+  const price = resolveModelPrice(model);
   return price ? price.output : null;
 }
 

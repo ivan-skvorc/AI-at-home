@@ -7,14 +7,105 @@ import {
   compactModelDisplayName,
   parseModelPrice,
   parseModelProvider,
+  resolveModelPrice,
   sortModels,
   splitModelNamePriceSegments,
 } from "@/core/models/sorting";
-import type { Model } from "@/core/models/types";
+import type { Model, ModelPrice } from "@/core/models/types";
 
 function model(name: string, display_name: string): Model {
   return { id: name, name, model: name, display_name };
 }
+
+function priced(
+  name: string,
+  display_name: string,
+  price: ModelPrice | null,
+): Model {
+  return { id: name, name, model: name, display_name, price };
+}
+
+describe("resolveModelPrice", () => {
+  it("prefers the server-resolved price over the display name", () => {
+    // The name is a label; `price` is data. When they disagree the field wins,
+    // so the picker agrees with what the cost overview actually bills.
+    const m = priced("m", "M ($99/99)", {
+      currency: "USD",
+      input: 3,
+      output: 15,
+    });
+    expect(resolveModelPrice(m)).toEqual({
+      input: 3,
+      output: 15,
+      discounted: false,
+      currency: "USD",
+    });
+  });
+
+  it("reports an active discount as the current price", () => {
+    const m = priced("m", "M ($3/15)", {
+      currency: "USD",
+      input: 3,
+      output: 15,
+      discount_input: 1.5,
+      discount_output: 7.5,
+    });
+    expect(resolveModelPrice(m)).toEqual({
+      input: 1.5,
+      output: 7.5,
+      discounted: true,
+      currency: "USD",
+    });
+  });
+
+  it("shows no discount once the server has dropped an expired one", () => {
+    // The server applies `until`, so an expired discount simply is not in the
+    // payload. The client must not resurrect it from the display name's
+    // starred pair, which is static text nobody updates.
+    const m = priced("m", "M ($3/15 → $1.5/7.5*)", {
+      currency: "USD",
+      input: 3,
+      output: 15,
+    });
+    expect(resolveModelPrice(m)).toEqual({
+      input: 3,
+      output: 15,
+      discounted: false,
+      currency: "USD",
+    });
+  });
+
+  it("falls back to the display name when no price is configured", () => {
+    expect(resolveModelPrice(priced("m", "M ($3/15)", null))).toEqual({
+      input: 3,
+      output: 15,
+      discounted: false,
+      currency: "USD",
+    });
+  });
+
+  it("is null when neither source carries a price", () => {
+    expect(resolveModelPrice(priced("m", "Qwen3 8B", null))).toBeNull();
+  });
+
+  it("ignores a malformed price payload rather than rendering NaN", () => {
+    const m = priced("m", "M ($3/15)", {
+      currency: "USD",
+      input: Number.NaN,
+      output: 15,
+    });
+    expect(resolveModelPrice(m)?.input).toBe(3);
+  });
+
+  it("sorts by the server price when one is present", () => {
+    const cheap = priced("cheap", "Cheap ($99/99)", {
+      currency: "USD",
+      input: 1,
+      output: 2,
+    });
+    expect(modelPriceSortValue(cheap)).toBe(2);
+  });
+});
 
 describe("parseModelPrice", () => {
   it("reads a single price pair", () => {

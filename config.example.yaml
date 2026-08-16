@@ -15,7 +15,7 @@
 # ============================================================================
 # Bump this number when the config schema changes.
 # Run `make config-upgrade` to merge new fields into your local config.yaml.
-config_version: 37
+config_version: 38
 
 # ============================================================================
 # Logging
@@ -208,6 +208,37 @@ max_recursion_limit: 1000
 #     output_per_million: 32.0         # price per 1M output tokens
 #     input_cache_hit_per_million: 0.8 # price per 1M cache-hit input tokens
 #                                      # (optional; omit → hits billed at miss price)
+#
+# PREFERRED (fork feature): the shorter `price:` / `discount:` pair. Same
+# meaning, fewer characters, and the discount carries its own expiry so nobody
+# has to remember to delete it. Precedence is
+# `price:` > `pricing:` > the ($in/out) pair in `display_name`, so adding
+# `price:` to a model is always safe and always wins.
+#
+#   price:
+#     currency: USD        # optional; defaults to USD. One currency across ALL
+#                          # priced models — a mix disables cost reporting.
+#     input: 3.0           # per 1M input tokens (cache miss)
+#     output: 15.0         # per 1M output tokens
+#     cache_hit: 0.3       # optional; omit → cache hits billed at the miss price
+#
+#   discount:              # optional temporary rate, e.g. an OpenRouter promo
+#     input: 1.5
+#     output: 7.5
+#     cache_hit: 0.15      # optional
+#     until: 2026-08-31    # optional. Inclusive — "through the 31st". Accepts a
+#                          # bare date, a quoted date, or a full timestamp
+#                          # (2026-08-31T12:00:00Z). Omit for no expiry.
+#
+# The discount is ADDITIVE and never billed against: spend is estimated at the
+# standard `price`, and the discount is shown beside it, because a promotion can
+# end at any time and an under-estimate is worse than a slightly high one.
+#
+# Past its `until`, the discount stops being applied on its own — no edit, no
+# restart. Two other cases resolve to "expired" rather than "forever", both
+# deliberately: an `until` that cannot be parsed, and a run where the current
+# time is unavailable. Over-stating cost is corrected by your provider's bill;
+# advertising a discount nobody is getting is the failure this prevents.
 
 models:
   # ══════════════════════════════════════════════════════════════════════════

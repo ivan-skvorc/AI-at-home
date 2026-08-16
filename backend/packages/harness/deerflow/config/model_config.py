@@ -1,3 +1,5 @@
+from typing import Any
+
 from pydantic import BaseModel, ConfigDict, Field
 
 
@@ -51,6 +53,28 @@ class ModelConfig(BaseModel):
             "auth failure — never fall back. Fallback models are built without their own chains, so "
             "the chain is flat and cycles cannot be expressed; it is also capped in length. Overrides "
             "the global `model_fallback.chain`."
+        ),
+    )
+    price: dict[str, Any] | None = Field(
+        default=None,
+        description=(
+            "Fork feature. What this model costs, per one million tokens: `currency` (default USD), "
+            "`input`, `output`, and the optional `cache_hit` for prompt-cache reads. The explicit, "
+            "operator-facing replacement for the older `pricing:` block and for parsing a `($in/out)` "
+            "pair out of `display_name`; both still work, and this wins over both. Presentation and "
+            "budgeting only — it never reaches the provider client."
+        ),
+    )
+    discount: dict[str, Any] | None = Field(
+        default=None,
+        description=(
+            "Fork feature. A temporary rate for this model, in the same shape as `price` (`input`, "
+            "`output`, optional `cache_hit`) plus an optional `until` date/datetime. It is strictly "
+            "additive: spend is still billed at `price`, and the discount is shown beside it, because "
+            "a promotion can end at any time and an under-estimate is worse than a high one. Past its "
+            "`until` the discount stops being applied automatically — as it does when `until` cannot be "
+            "read, or when the current time is unavailable, both of which resolve to 'expired' rather "
+            "than 'forever'."
         ),
     )
     stream_chunk_timeout: float | None = Field(
