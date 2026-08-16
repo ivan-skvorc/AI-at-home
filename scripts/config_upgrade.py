@@ -140,6 +140,31 @@ def upgrade(config_path: Path, example_path: Path, repo_root: Path) -> int:
     example_version = example.get("config_version", 0)
 
     if user_version >= example_version:
+        # An equal version does not mean an equal shape. Upstream merges add
+        # sections to config.example.yaml without touching config_version --
+        # upstream's copy of it sits permanently behind the fork's, because the
+        # fork bumps for its own sections and upstream never sees them. Trusting
+        # the version alone here is what let the 2026-08-12 sync's `mcp_tasks:`
+        # reach a fresh config.yaml and no existing one: the delivery silently
+        # depended on a human noticing and bumping. Decide on the shape instead.
+        #
+        # Deliberately warn rather than deliver. This script runs on every launch
+        # path, and the merge branch below rewrites through yaml.dump, which drops
+        # every comment in the user's config. Silently rewriting a config -- and
+        # destroying its inline documentation -- because the example grew a
+        # section is a worse outcome than the missing section. So: name it, keep
+        # the file byte-identical, and let the version bump stay the explicit gate.
+        probe = copy.deepcopy(user)
+        pending = merge_missing(probe, example)
+        pending.extend(backfill_missing_default_tools(probe, example))
+        if pending:
+            print(f"! config.yaml is stamped current (version {user_version}) but is missing {len(pending)} field(s) the example ships:")
+            for name in pending:
+                print(f"    - {name}")
+            print("  Nothing was written. If you maintain this fork, bump `config_version` in")
+            print("  config.example.yaml (and both chart copies) so this reaches existing installs;")
+            print("  upstream adds sections without bumping it. Then re-run `make config-upgrade`.")
+            return 0
         print(f"OK config.yaml is already up to date (version {user_version}).")
         return 0
 

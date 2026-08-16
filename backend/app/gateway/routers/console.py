@@ -27,6 +27,7 @@ from deerflow.config.agents_config import list_custom_agents
 from deerflow.persistence.engine import get_session_factory
 from deerflow.persistence.run.model import RunRow
 from deerflow.persistence.thread_meta.model import ThreadMetaRow
+from deerflow.runtime.aux_usage_store import get_aux_usage_store
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/console", tags=["console"])
@@ -111,6 +112,61 @@ class ConsoleUsageResponse(BaseModel):
     total_runs: int
     total_cost: float | None = Field(default=None, description="Estimated spend for the window; null when no pricing is configured")
     currency: str | None = Field(default=None, description="Display currency taken from the first configured pricing entry")
+
+
+class ConsoleSpendModelRow(BaseModel):
+    """Spend attributed to one model over the window."""
+
+    model: str
+    cost: float | None = Field(default=None, description="Estimated spend; null when this model has no configured price")
+    tokens: int = 0
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cache_read_tokens: int = 0
+    runs: int = Field(default=0, description="Runs that used this model (non-exclusive)")
+    aux_calls: int = Field(default=0, description="Auxiliary (memory / suggestions) calls on this model")
+
+
+class ConsoleSpendThreadRow(BaseModel):
+    """Spend attributed to one conversation over the window."""
+
+    thread_id: str
+    title: str | None = None
+    cost: float | None = None
+    tokens: int = 0
+    runs: int = 0
+
+
+class ConsoleSpendCategoryRow(BaseModel):
+    """Spend attributed to one feature: conversation / memory / suggestions."""
+
+    category: str
+    cost: float | None = None
+    tokens: int = 0
+
+
+class ConsoleSpendResponse(BaseModel):
+    """Where the money went over a time range (fork feature, roadmap item 3).
+
+    Answers the question the per-thread header cannot: "where did my money go
+    this month". Groups the same priced data three ways — by model, by thread,
+    and by feature — over one window, so the totals of each grouping agree.
+    """
+
+    start: datetime = Field(..., description="Inclusive UTC start of the reported window")
+    end: datetime = Field(..., description="Exclusive UTC end of the reported window")
+    days: int
+    currency: str | None = None
+    total_cost: float | None = Field(default=None, description="Spend for the window; null when no pricing is configured")
+    total_tokens: int = 0
+    total_runs: int = 0
+    by_model: list[ConsoleSpendModelRow] = Field(default_factory=list, description="Most expensive first; unpriced models sort last")
+    by_thread: list[ConsoleSpendThreadRow] = Field(default_factory=list)
+    by_category: list[ConsoleSpendCategoryRow] = Field(default_factory=list)
+    unpriced_models: list[str] = Field(
+        default_factory=list,
+        description="Models that spent tokens with no configured price. Named explicitly rather than left to make the total quietly low — the same rule the chat header follows.",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -404,4 +460,178 @@ async def console_usage(
         total_runs=total_runs,
         total_cost=total_cost,
         currency=_pricing_currency(pricing),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Spend attribution (fork feature, roadmap item 3)
+# ---------------------------------------------------------------------------
+#
+# The chat header answers "what is this conversation costing". This answers the
+# question a person actually asks at the end of a month. It is mostly a view
+# over data already collected: persisted run costs (priced per model through the
+# shared ``run_cost``) plus the durable auxiliary counters (memory extraction and
+# follow-up suggestions), which are real spend and are otherwise invisible in
+# any cross-thread report.
+
+
+def _aux_rows_for_threads(thread_ids: list[str] | None, start: float, end: float):
+    """Auxiliary usage rows in the window (blocking SQLite read — offload it)."""
+    store = get_aux_usage_store()
+    if store is None:
+        return []
+    return store.aggregate(since=start, until=end, thread_ids=thread_ids)
+
+
+@router.get(
+    "/spend",
+    response_model=ConsoleSpendResponse,
+    summary="Spend History and Attribution",
+    description="Where the money went over a time range, grouped by model, thread, and feature.",
+)
+@require_permission("runs", "read")
+async def console_spend(
+    request: Request,
+    days: int = Query(default=30, ge=1, le=365, description="Window length in days, ending now"),
+) -> ConsoleSpendResponse:
+    """Aggregate run and auxiliary spend over a window, three ways."""
+    sf = _session_factory_or_503()
+    user_id = await get_current_user(request)
+
+    end = datetime.now(UTC)
+    start = end - timedelta(days=days)
+
+    run_where = [RunRow.operation_kind == "run", RunRow.created_at >= start]
+    if user_id:
+        run_where.append(RunRow.user_id == user_id)
+
+    async with sf() as session:
+        rows = (await session.execute(select(RunRow).where(*run_where))).scalars().all()
+        thread_titles = dict((await session.execute(select(ThreadMetaRow.thread_id, ThreadMetaRow.display_name))).all())
+        owned_threads: list[str] | None = None
+        if user_id:
+            owned_threads = list((await session.execute(select(ThreadMetaRow.thread_id).where(ThreadMetaRow.user_id == user_id))).scalars().all())
+
+    pricing = _build_pricing_map()
+    currency = _pricing_currency(pricing)
+
+    by_model: dict[str, ConsoleSpendModelRow] = {}
+    by_thread: dict[str, ConsoleSpendThreadRow] = {}
+    unpriced: set[str] = set()
+    total_tokens = 0
+    total_runs = 0
+    conversation_cost: float | None = None
+
+    for row in rows:
+        total_runs += 1
+        total_tokens += row.total_tokens or 0
+        thread_row = by_thread.setdefault(row.thread_id, ConsoleSpendThreadRow(thread_id=row.thread_id, title=thread_titles.get(row.thread_id)))
+        thread_row.runs += 1
+        thread_row.tokens += row.total_tokens or 0
+
+        cost = _run_cost(
+            pricing,
+            model_name=row.model_name,
+            total_input_tokens=row.total_input_tokens,
+            total_output_tokens=row.total_output_tokens,
+            token_usage_by_model=row.token_usage_by_model,
+        )
+        if cost is not None:
+            conversation_cost = round((conversation_cost or 0.0) + cost, 6)
+            thread_row.cost = round((thread_row.cost or 0.0) + cost, 6)
+
+        usage_map = row.token_usage_by_model if isinstance(row.token_usage_by_model, dict) else {}
+        if usage_map:
+            for model, usage in usage_map.items():
+                entry = by_model.setdefault(model, ConsoleSpendModelRow(model=model))
+                entry.runs += 1
+                if not isinstance(usage, dict):
+                    continue
+                model_input = int(usage.get("input_tokens") or 0)
+                model_output = int(usage.get("output_tokens") or 0)
+                model_cache = int(usage.get("cache_read_tokens") or 0)
+                entry.tokens += int(usage.get("total_tokens") or 0)
+                entry.input_tokens += model_input
+                entry.output_tokens += model_output
+                entry.cache_read_tokens += model_cache
+                price = _lookup_pricing(pricing, model)
+                if price is not None:
+                    entry.cost = round((entry.cost or 0.0) + _token_cost(model_input, model_output, price, model_cache), 6)
+                elif pricing and (model_input or model_output):
+                    unpriced.add(model)
+        elif row.model_name and (row.total_tokens or 0) > 0:
+            # Legacy row predating token_usage_by_model.
+            entry = by_model.setdefault(row.model_name, ConsoleSpendModelRow(model=row.model_name))
+            entry.runs += 1
+            entry.tokens += row.total_tokens or 0
+            entry.input_tokens += row.total_input_tokens or 0
+            entry.output_tokens += row.total_output_tokens or 0
+            if cost is not None:
+                entry.cost = round((entry.cost or 0.0) + cost, 6)
+            elif pricing:
+                unpriced.add(row.model_name)
+
+    # Auxiliary sinks: memory extraction and follow-up suggestions are never
+    # graph runs, so without this they would be missing from every cross-thread
+    # spend figure while still costing real money.
+    aux_rows = await asyncio.to_thread(_aux_rows_for_threads, owned_threads, start.timestamp(), end.timestamp())
+    aux_cost_by_category: dict[str, float | None] = {}
+    aux_tokens_by_category: dict[str, int] = {}
+    for aux in aux_rows:
+        totals = aux.totals
+        aux_input = int(totals.get("input_tokens") or 0)
+        aux_output = int(totals.get("output_tokens") or 0)
+        aux_cache = int(totals.get("cache_read_tokens") or 0)
+        aux_total_tokens = int(totals.get("total_tokens") or 0)
+        total_tokens += aux_total_tokens
+        aux_tokens_by_category[aux.category] = aux_tokens_by_category.get(aux.category, 0) + aux_total_tokens
+
+        entry = by_model.setdefault(aux.model_name, ConsoleSpendModelRow(model=aux.model_name))
+        entry.tokens += aux_total_tokens
+        entry.input_tokens += aux_input
+        entry.output_tokens += aux_output
+        entry.cache_read_tokens += aux_cache
+        entry.aux_calls += int(totals.get("calls") or 0)
+
+        thread_row = by_thread.setdefault(aux.thread_id, ConsoleSpendThreadRow(thread_id=aux.thread_id, title=thread_titles.get(aux.thread_id)))
+        thread_row.tokens += aux_total_tokens
+
+        price = _lookup_pricing(pricing, aux.model_name)
+        if price is None:
+            if pricing and (aux_input or aux_output):
+                unpriced.add(aux.model_name)
+            continue
+        cost = _token_cost(aux_input, aux_output, price, aux_cache)
+        entry.cost = round((entry.cost or 0.0) + cost, 6)
+        thread_row.cost = round((thread_row.cost or 0.0) + cost, 6)
+        aux_cost_by_category[aux.category] = round((aux_cost_by_category.get(aux.category) or 0.0) + cost, 6)
+
+    by_category: list[ConsoleSpendCategoryRow] = []
+    conversation_tokens = total_tokens - sum(aux_tokens_by_category.values())
+    if conversation_tokens or conversation_cost is not None:
+        by_category.append(ConsoleSpendCategoryRow(category="conversation", cost=conversation_cost, tokens=conversation_tokens))
+    for category in sorted(set(aux_tokens_by_category) | set(aux_cost_by_category)):
+        by_category.append(ConsoleSpendCategoryRow(category=category, cost=aux_cost_by_category.get(category), tokens=aux_tokens_by_category.get(category, 0)))
+
+    total_cost: float | None = None
+    if pricing:
+        priced = [row.cost for row in by_model.values() if row.cost is not None]
+        total_cost = round(sum(priced), 6) if priced else 0.0
+
+    # Most expensive first; unpriced models sort last rather than as free.
+    model_rows = sorted(by_model.values(), key=lambda row: (row.cost is None, -(row.cost or 0.0), -row.tokens))
+    thread_rows = sorted(by_thread.values(), key=lambda row: (row.cost is None, -(row.cost or 0.0), -row.tokens))
+
+    return ConsoleSpendResponse(
+        start=start,
+        end=end,
+        days=days,
+        currency=currency,
+        total_cost=total_cost,
+        total_tokens=total_tokens,
+        total_runs=total_runs,
+        by_model=model_rows,
+        by_thread=thread_rows,
+        by_category=by_category,
+        unpriced_models=sorted(unpriced),
     )

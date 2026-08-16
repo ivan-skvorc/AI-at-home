@@ -4,15 +4,20 @@
 >
 > On top of upstream, it adds — out of the box:
 >
-> - 🦙 **Auto-populated Ollama models** — `config.yaml`'s `models:` list is synced from your local `ollama pull` list on every launch. Capabilities (thinking / vision / tools) are detected and mapped to DeerFlow's `supports_*` flags, and each model gets a VRAM-aware context window instead of Ollama's tiny 2048-token default.
+> - 🦙 **Auto-populated Ollama models** — `config.yaml`'s `models:` list is synced from your local `ollama pull` list on every launch. Capabilities (thinking / vision / tools) are detected and mapped to DeerFlow's `supports_*` flags, and each model gets a VRAM-aware context window instead of Ollama's tiny 2048-token default. The daemon itself is managed too: set `ollama.keep_alive` so a model stays loaded between turns instead of paying a cold start on every subagent call, `ollama.preload: true` to warm your default model at launch, and — when you've told it your VRAM budget — a launch-time warning with real numbers if a local lead and a local subagent can't both fit in memory.
 > - 🔑 **API-key model auto-config** — on every launch, `scripts/sync-api-key-models.py` reads your `.env` and uncomments the matching cloud-model block in `config.yaml`, so the right models are enabled on first start with no manual editing. It only ever uncomments (never re-comments), skips a block whose models are already active, and no-ops when the key is absent. The auto-enabled models and their conditions:
 >   - **`ANTHROPIC_API_KEY` present** → Claude **Fable 5**, **Opus 5**, **Opus 4.8**, **Sonnet 5**, **Sonnet 4.6**, **Haiku 4.5** (direct Anthropic API). Opus and Sonnet each ship their last 4.x alongside 5; Haiku and Fable ship only the latest.
 >   - **`OPENROUTER_API_KEY` present** → Claude **Fable 5** (the flagship, for OpenRouter-only users — every other Claude is on the direct Anthropic block above), **Grok 4.5**, **GPT-5.6 Sol**, **GPT-5.3 Codex**, **Gemini 3.6 Flash**, **Llama 4 Maverick**, **MiniMax M3**, **Qwen3.7 Max**, **Kimi K3**, **Mistral Large 3**, **DeepSeek V4 Pro**, **GLM-5.2**, **Nemotron 3 Ultra** (all via OpenRouter). One flagship per big-name lab (a second only when the smaller model is acclaimed on its own — e.g. GPT-5.3 Codex).
 > - 🔀 **Independent model per conversation** — every chat remembers its **own** model (and subagent model, mode, and reasoning effort), stored per-thread instead of in one shared setting. Run a free local Ollama model in one conversation and a cloud model in another, side by side — switching the model in one no longer flips the model in the others. Previously every chat that hadn't been explicitly pinned followed the last model picked *anywhere* (even across browser tabs, via the shared settings sync), which made running local and cloud models simultaneously impossible; now each conversation is isolated and new chats simply start from the configured default model.
+> - 🪃 **Model fallback chains** — when a model call fails for a reason worth retrying (the Ollama daemon is down, the context overflowed, the model turns out not to support tool calls, or the provider returns a 5xx), the turn degrades to the next model you listed instead of failing. Deliberate stops — you hit cancel, a spend cap fired, a guardrail refused — never fall back, and tokens are billed to whichever model actually answered, so your cost figures stay honest. Off until you configure a chain.
+> - 🧭 **Cost-aware subagent routing** — a policy that sends delegated subtasks to the cheapest model that can actually do them, so the saving is the default instead of something you remember to set every session. A tool-free extraction can run on a local model for free while the lead stays on a frontier model. It never picks a model that can't do the job (no tool support, no vision, context window too small), your explicit per-conversation subagent choice always wins, and the subagent card shows which rule decided. Off until you write a policy.
+> - 📱 **Installable on your phone, with notifications that arrive after you close it** — DeerFlow now ships a web app manifest and a service worker, so you can add it to your home screen and get a Web Push notification when a long run finishes, even with the browser closed. Background notifications need a secure origin (`localhost`, or your Tailscale HTTPS name); on a plain-HTTP LAN address the settings page says exactly that and tells you how to fix it, instead of silently doing nothing.
 > - 🧩 **Per-thread subagent model dropdown** — in **Ultra mode**, a second model picker lets you route `task` subagents to a cheaper or local model instead of the lead model (defaults to "Follow lead").
 > - 💡 **Follow-up suggestions off by default** — the clickable follow-up-question chips make an extra model call after every answer, so they now default **off** to save cost. Turn them back on per-browser under **Settings → Suggestions**, where a dropdown also lets you pick which model generates them ("Follow workflow selection" by default, or any configured model — pick a cheap one to keep it cheap).
 > - 🧠 **Long-term memory off by default** — the agent no longer learns from or injects your saved memory until you opt in. Turn it on per-browser under **Settings → Memory** (the operator can still hard-disable it with `memory.enabled: false` in `config.yaml`, which greys out the toggle). When off, each run sends `memory_enabled: false` and the backend skips memory injection, extraction, and memory tools.
-> - 💵 **Live cost overview in the conversation header** — the token counter next to a chat now shows an estimated **dollar (or other currency) cost**, priced from each model's `pricing:` block in `config.yaml`. It's **model-aware**: each run's per-model token split is billed at that model's own rate, so subagents on a cheaper or local model are costed correctly — hover the **?** for the note that models without a configured price (like local Ollama) count as $0, ignoring electricity. When the **memory** or **suggestions** features are on, their extra LLM calls get their own separate counters in the dropdown so you can see what each is quietly costing. No pricing configured → the cost line simply hides.
+> - 💵 **Live cost overview in the conversation header** — the token counter next to a chat now shows an estimated **dollar (or other currency) cost**, priced from each model's `pricing:` block in `config.yaml`. It's **model-aware**: each run's per-model token split is billed at that model's own rate, so subagents on a cheaper or local model are costed correctly — hover the **?** for the note that models without a configured price (like local Ollama) count as $0, ignoring electricity. When the **memory** or **suggestions** features are on, their extra LLM calls get their own separate counters in the dropdown so you can see what each is quietly costing — and those two counters are **persisted** (a small `aux_usage.sqlite3` beside your other DeerFlow state), so they survive restarting the stack instead of resetting to zero. No pricing configured → the cost line simply hides.
+> - 🛑 **Spend caps in real money** — set `spend_budget` in `config.yaml` to a daily / weekly / monthly limit in your pricing currency and DeerFlow warns the agent as you approach it, then wraps the run up and refuses new ones once it is spent. Costed per model, so a premium lead with cheap or local subagents is billed correctly — and **unpriced local models count as $0, so a fully local session is never blocked**. The chat header shows what is left.
+> - 🧾 **Spend page** — a **Spend** entry in the sidebar answers "where did my money go this month", broken down by model, by conversation, and by feature (conversation / memory / suggestions) over the last 7, 30, or 90 days.
 > - 🔓 **Passwordless by default (local)** — the local stack (`make dev` / `make start`) starts with no login wall: every request resolves to the built-in `default` admin, so the app — and other devices on your LAN — reach it with no username/password. It's opt-out (`DEER_FLOW_AUTH_DISABLED=0` in `.env` restores the email/password login) and self-disabling in production (`DEER_FLOW_ENV`/`ENVIRONMENT` = `prod` keeps auth on regardless).
 > - 🎬 **Reduced motion by default** — decorative and continuous animations are disabled by default (and honor the OS `prefers-reduced-motion` setting); it's a per-browser preference you can flip back on.
 > - 👥 **Multi-user mode toggle (Settings → Account)** — on by default (each login only sees its own conversations). Turn it off — after a confirmation — to combine every conversation into one shared workspace, so all histories are visible no matter which login or device created them (handy after going passwordless, when old per-account chats are stranded under different ids). Server-wide, admin-only, and reversible; while off, anyone who can reach the server sees all conversations, so keep it to a trusted machine.
@@ -408,7 +413,7 @@ On Windows, run the local development flow from Git Bash. Native `cmd.exe` and P
    make check  # Verifies Node.js 22+, pnpm, uv, nginx
    ```
 
-   The local `make check`, `make install`, `make dev`, and `make start` entry points use a direct `pnpm`/`pnpm.cmd` executable when available and otherwise fall back to `corepack pnpm`. Corepack runs from `frontend/`, so it honors the `packageManager` version pinned in `frontend/package.json`; enabling a global pnpm shim is not required.
+   The local `make check`, `make install`, `make dev`, and `make start` entry points use a direct `pnpm`/`pnpm.cmd` executable when available and otherwise fall back to `corepack pnpm`. The shared runner and diagnostics resolve repository paths absolutely, so these checks work regardless of the caller's current directory. Corepack runs from `frontend/`, so it honors the `packageManager` version pinned in `frontend/package.json`; enabling a global pnpm shim is not required.
 
 2. **Install dependencies**:
    ```bash
@@ -574,6 +579,16 @@ Settings > Tools updates one MCP server at a time: an invalid stdio command on o
 Targeted updates accept both DeerFlow's `type` field and the MCP-spec `transport` field for SSE/HTTP servers.
 Runtime MCP and skill updates replace `extensions_config.json` atomically, so an interrupted write cannot leave the shared configuration truncated or partially written.
 MCP routing hints can also prefer a specific MCP tool for matching requests without forbidding other tools. When `tool_search` defers MCP schemas, matching routing metadata can auto-promote up to `tool_search.auto_promote_top_k` deferred schemas before the model call.
+
+OpenViking users can register the official Streamable HTTP endpoint at `/mcp`
+with an owner-bound USER API key. The native `forget` tool is exposed for
+capability parity; deletion is irreversible, so it should be called only after
+explicit user confirmation. DeerFlow does not enforce that confirmation. This
+explicit, model-selected MCP tool path can run alongside the separate automatic
+OpenViking memory backend; it does not replace automatic turn capture or recall. See the
+[OpenViking MCP tools configuration](backend/docs/MCP_SERVER.md#openviking-mcp-tools).
+
+The Gateway also includes a disabled-by-default, protocol-neutral foundation for durable long-running MCP tasks. It stores remote task handles outside model context, polls them under cross-worker leases, rejects results returned after their lease expires, schedules the next attempt from the time a remote status call finishes, isolates unexpected failures between claimed tasks, cancels in-flight polling during Gateway shutdown, and makes expired claims recoverable after restart. If remote submission succeeds but the handle cannot be persisted, the runtime makes a best-effort cancellation so an untracked task is not silently left running. The exact scoped duplicate-handle conflict is surfaced without cancellation because an existing durable row already owns that remote task. Durable recovery requires a SQL database backend (`sqlite` or `postgres`); the in-memory backend does not initialize this task repository. This foundation does not make existing MCP tools asynchronous by itself: `mcp_tasks.enabled` should remain `false` until a compatible task driver is configured. Ordinary `submit/status/cancel` tools and the future MCP Tasks extension can share the same runtime without making the model remember remote task IDs.
 See the [MCP Server Guide](backend/docs/MCP_SERVER.md) for detailed instructions.
 
 Security: pass per-request MCP credentials only through `config.context.secrets`;
@@ -912,6 +927,16 @@ or extend authorization. If an agent hits missing Lark authorization during a
 conversation, the managed `lark-shared` guidance points the user back to the
 same settings entry with `?settings=integrations`.
 
+Once configured, **Change Lark app** lets a user point their DeerFlow account at
+a different Lark/Feishu app without a reinstall — either by pasting an existing
+app's App ID / App Secret or by re-registering an app in the browser. Switching
+is per-user (it never touches another user's credentials), validates the new
+credentials through the official CLI's live tenant-token probe before replacing
+the active app, and revokes/removes the previous app's OAuth tokens. A rejected
+credential change does not supersede an in-progress setup or authorization flow.
+DeerFlow then immediately opens browser authorization for the newly bound app so
+the switch ends in a usable connection.
+
 Installing the Lark skill pack resolves the latest official `larksuite/cli`
 release from GitHub and downloads that version's skills at install time, so the
 Gateway needs outbound internet access for that step (it falls back to a
@@ -937,8 +962,10 @@ set `DEER_FLOW_LARK_CLI_SANDBOX_RUNTIME_DIR` to that directory.
 > **Sandbox trust boundary:** the browser never receives the Lark app secret, but
 > agent conversations run `lark-cli` inside the sandbox, so the per-user
 > credential directories are mounted into it: `config` (holding the long-lived
-> `appSecret`) is mounted **read-only** and `data` (refreshable OAuth tokens)
-> writable. Both remain *readable* by any process the agent runs there, so code
+> `appSecret`) is mounted **read-only**, its otherwise empty `config/locks`
+> subdirectory is over-mounted writable for `lark-cli` coordination files, and
+> `data` (refreshable OAuth tokens) is writable. The credential-bearing config
+> and data mounts remain *readable* by any process the agent runs there, so code
 > reached via prompt injection in a tool result could read them. Treat the
 > sandbox as inside the Lark credential trust boundary until the sidecar
 > credential-broker follow-up removes these mounts from sandbox execution.
@@ -971,17 +998,21 @@ Advanced deployments can enable pluggable authorization with `authorization.enab
 
 Advanced deployments can also extend the agent runtime itself by declaring zero-argument `AgentMiddleware` classes under `extensions.middlewares` in `config.yaml` or `extensions_config.json`. DeerFlow loads the same configured class list into the lead-agent and subagent pipelines after their built-in runtime middlewares and loop/token guards, but before the terminal-response/safety/clarification tail, so enterprise forks can add domain guardrails, tool-call governance, or observability hooks without patching the built-in middleware builders. Missing packages, invalid classes, and broken modules fail loudly at agent creation. Treat `config.yaml` and `extensions_config.json` as trusted operator-controlled files: middleware paths are code execution, just like custom tool, model, sandbox, guardrail, MCP server, and MCP interceptor declarations. Gateway skill/MCP toggle endpoints preserve this field but do not expose an API write path for `extensions.middlewares`. Per-context parameterization and separate lead-only/subagent-only middleware lists are not supported yet.
 
-For packaged and configurable middleware integrations, use the top-level `plugins:` list
-in `config.yaml`. A plugin exposes `module.path:install`, depends only on the standalone
-`deerflow-extension-api` contract package, and can contribute isolated middleware to
-semantic lead/subagent model or tool positions without patching DeerFlow's builders.
-Plugin order is deterministic, per-plugin configuration is passed to `install()`, and
-`required: true` makes load failure abort startup; otherwise failures are reported and
-skipped. Plugins load once when the Gateway app is constructed, so changes require a
-restart. Because this imports Python code, `plugins:` is intentionally unavailable through
-the API-writable `extensions_config.json`. In Docker deployments, install the plugin in the
-Gateway image rather than only in the host environment. See `config.example.yaml` for
-configuration.
+For packaged and configurable runtime integrations, use the top-level `plugins:` list in
+`config.yaml`. A plugin exposes `module.path:install`, depends only on the standalone
+`deerflow-extension-api` contract package, and can register exactly three contribution
+kinds: isolated middleware at semantic lead/subagent model or tool positions, lead and
+subagent task-lifecycle hooks, and observers for DeerFlow-owned system model calls such as
+goal evaluation, memory extraction, title generation, and summarization. DeerFlow allocates
+a task-scoped extension store only when one of those contribution kinds is registered and
+uses the Gateway's canonical notification loop for lifecycle and system-model callbacks,
+including subagents that execute on isolated loops. Plugin order is deterministic,
+per-plugin configuration is passed to `install()`, and `required: true` makes load failure
+abort startup; otherwise failures are reported and skipped. Plugins load once when the
+Gateway app is constructed, so changes require a restart. Because this imports Python code,
+`plugins:` is intentionally unavailable through the API-writable
+`extensions_config.json`. In Docker deployments, install the plugin in the Gateway image
+rather than only in the host environment. See `config.example.yaml` for configuration.
 
 Gateway-generated follow-up suggestions now normalize both plain-string model output and block/list-style rich content before parsing the JSON array response, so provider-specific content wrappers do not silently drop suggestions.
 
@@ -1079,7 +1110,7 @@ The chat header also shows a context-window gauge when the selected model has a 
 
 Sub-agents are an optimization, not the default response to a complex request.
 
-The lead agent can spawn sub-agents on the fly — each with its own scoped context, tools, and termination conditions — when delegation has clear net benefit from real parallel latency, specialist capability, or context isolation. It keeps interdependent scopes and overlapping side effects out of parallel dispatch; a bounded sequential chain can still run in one sub-agent when specialist or context-isolation benefit clearly wins. The lead uses the fewest useful sub-agents and re-evaluates later batches instead of fanning out solely because a task is large or multi-step. Sub-agents report back structured results, and the lead agent verifies and synthesizes them into a coherent output. Their configured skills are resolved from the same user-scoped catalog as the lead agent, so user-owned custom skills remain available without exposing another user's version. Their internal AI and tool messages stay scoped to the delegated graph instead of entering the parent chat stream. Reloaded thread history enforces the same boundary: callback-captured sub-agent AI responses remain available in run-event diagnostics but are excluded from the parent transcript, while the parent `task` result remains attached to its subtask card. Long-running sub-agents compact older history when summarization is enabled and re-inject the summary as guarded, hidden durable context before continuing, so recent assistant/tool activity remains grounded in the task. Provider/model request failures are reported as failed sub-agent tasks rather than successful results, so the lead agent and Web UI can react to them correctly. Collapsed sub-agent cards show the effective model and, when the provider returns usage metadata, a cumulative token total that updates after each completed sub-agent LLM call and persists after a reload. When token usage tracking is enabled, completed sub-agent usage is also attributed back to the dispatching step.
+The lead agent can spawn sub-agents on the fly — each with its own scoped context, tools, and termination conditions — when delegation has clear net benefit from real parallel latency, specialist capability, or context isolation. It keeps interdependent scopes and overlapping side effects out of parallel dispatch; a bounded sequential chain can still run in one sub-agent when specialist or context-isolation benefit clearly wins. The lead uses the fewest useful sub-agents and re-evaluates later batches instead of fanning out solely because a task is large or multi-step. Sub-agents report back structured results, and the lead agent verifies and synthesizes them into a coherent output. Their configured skills are resolved from the same user-scoped catalog as the lead agent, so user-owned custom skills remain available without exposing another user's version. Their internal AI and tool messages stay scoped to the delegated graph instead of entering the parent chat stream. Reloaded thread history enforces the same boundary: callback-captured sub-agent AI responses remain available in run-event diagnostics but are excluded from the parent transcript, while the parent `task` result remains attached to its subtask card. Long-running sub-agents compact older history when summarization is enabled and re-inject the summary as guarded, hidden durable context before continuing, so recent assistant/tool activity remains grounded in the task. Provider/model request failures are reported as failed sub-agent tasks rather than successful results, so the lead agent and Web UI can react to them correctly. Concurrent parent runs also receive independent server-side sub-agent execution IDs, so a provider that reuses a tool-call ID cannot make one run poll, cancel, or clean up another run's background task. Collapsed sub-agent cards show the effective model and, when the provider returns usage metadata, a cumulative token total that updates after each completed sub-agent LLM call and persists after a reload. When token usage tracking is enabled, completed sub-agent usage is attributed back to the dispatching step from that run's terminal tool-message metadata rather than a process-global provider-ID cache.
 
 For example, independent read-only research can run concurrently when the wall-clock savings outweigh duplicated discovery and synthesis cost, while a repository refactor with shared files and sequential test feedback remains with the lead agent. When `max_concurrent_subagents` is `1`, parallel and multi-batch routing guidance is disabled; delegation remains available only for material specialist or context-isolation benefit.
 
@@ -1356,6 +1387,46 @@ Current MVP limits:
 
 Enable background polling with `config.yaml -> scheduler.enabled`. Manual trigger uses the same scheduled-task resource and execution path.
 
+## Backup and Restore
+
+A personal instance accumulates months of memory, conversations, pinned tabs and
+settings on one machine. `make backup` snapshots all of it as a single
+timestamped archive, and `make restore` puts it back.
+
+```bash
+make backup                                   # → backups/deerflow-backup-YYYYmmdd-HHMMSS.tar.gz
+make backup INCLUDE_SECRETS=1                 # also .env and integration tokens — see below
+make restore ARCHIVE=backups/deerflow-….tar.gz
+python3 scripts/backup.py inspect <archive>   # what's in it, without extracting
+```
+
+The archive carries `config.yaml`, `extensions_config.json`, your DeerFlow home
+directory (memory, threads, uploads, chat tabs, runtime settings, the SQLite
+database) and `skills/custom`. Public skills and rebuildable caches are left out.
+On `database.backend: postgres` a `pg_dump` is written into the archive instead,
+and a failed dump aborts the backup rather than handing you a snapshot with no
+database in it.
+
+> **Credentials are excluded by default.** `.env` and the per-user integration
+> credentials under `users/*/integrations/` are **not** in the archive unless you
+> pass `INCLUDE_SECRETS=1`. Those files are `0600`/`0700` on disk for a reason,
+> and a backup that quietly copies API keys and OAuth tokens into a tarball in
+> your downloads folder is worse than no backup. When you do opt in, the archive
+> is created owner-only (`0600`) — treat it as a credential file: don't email it,
+> don't drop it in a shared folder, and prefer an encrypted destination.
+> Restoring an archive that carries no credentials leaves the ones already on the
+> machine untouched.
+
+**Restore refuses while DeerFlow is running.** Writing over a database the
+Gateway holds open turns a recovery into a second outage, so `make restore`
+checks the Gateway (8001) and nginx (2026) ports and stops with instructions to
+`make stop` first. Pass `FORCE=1` only if you are certain nothing is live.
+
+File permissions survive the round trip, so credential directories come back
+`0700` rather than world-readable. Ownership is not restored (only root could),
+which is deliberate — restoring as your own user is also the fix if a Docker run
+has left root-owned files behind.
+
 ## Terminal Workbench (TUI)
 
 `deerflow` is a terminal-native workbench for people who live in the shell. It runs **embedded** over `DeerFlowClient` — no Gateway, frontend, nginx, or Docker required — while honoring the same `config.yaml`, checkpointer, skills, memory, MCP, and sandbox settings as the rest of DeerFlow.
@@ -1423,6 +1494,71 @@ putting the security measures below in place.
 **Complete first-run setup before the host becomes reachable.** A fresh
 instance has no accounts yet, so create the admin account through `/setup`
 immediately after starting any deployment that is not loopback-only.
+
+### Notifications on Your Phone (PWA + Web Push)
+
+DeerFlow installs to a phone home screen and can push a notification when a
+long-running task finishes — with the browser closed, which is the whole point
+if you started the run and pocketed the phone.
+
+1. Open DeerFlow over a **secure origin** (see the table below).
+2. Add it to your home screen. On iOS this is mandatory, not optional: iOS only
+   delivers Web Push to installed web apps.
+3. Settings → Notification → **Enable background notifications**, then send the
+   test push to confirm the whole chain works.
+
+Enable delivery on the server first — push encryption ships as an optional
+dependency, so most installs never carry it:
+
+```bash
+cd backend && uv sync --extra webpush
+```
+
+**Background notifications need a secure context.** Service workers are only
+available on `https://` or `http://localhost`, which means a plain-HTTP LAN
+address — the fork's own convenient default — cannot do this at all. The
+settings page detects that and says so, with the fix, rather than leaving a
+switch that does nothing:
+
+| Where you open DeerFlow | Background notifications |
+| --- | --- |
+| `http://localhost:2026` on the machine itself | ✅ works |
+| `https://<machine>.<tailnet>.ts.net` (Tailscale) | ✅ works — this is the phone case |
+| `http://192.168.1.10:2026` (plain LAN) | ❌ browsers disable service workers entirely |
+
+Tailscale issues a real certificate for your machine's name, which is the
+simplest way to get HTTPS on a home network:
+
+```bash
+tailscale cert <machine>.<tailnet>.ts.net    # once
+tailscale serve --bg https / http://127.0.0.1:2026
+```
+
+Then open `https://<machine>.<tailnet>.ts.net` from your phone and install it.
+
+Notifications fire only for runs that took longer than 30 seconds — a ping for
+a two-second question is noise, and noise is how notifications get turned off.
+
+**Check the effective exposure, not the individual settings.** Who can reach
+this instance — and as whom — is decided by `BIND_HOST` *together with*
+`DEER_FLOW_AUTH_DISABLED`, `DEER_FLOW_ENV`, multi-user mode, and the sandbox
+choice. `make doctor` computes the combination and reports one line per entry
+surface, naming every contributing setting and its one-line fix when the
+instance is reachable without a login wall. The same summary prints at the end
+of `make up` and `make dev`, or on demand:
+
+```bash
+python3 scripts/exposure.py --surface docker    # the published Docker port
+python3 scripts/exposure.py --surface local     # make dev / make start
+```
+
+Two surfaces are reported because they do not share a bind address: `make up`
+publishes `${BIND_HOST:-127.0.0.1}:${PORT}`, while `make dev` runs nginx from
+`docker/nginx/nginx.local.conf`, whose `listen 2026;` has **no address** — so
+the local dev stack is reachable from the network regardless of `BIND_HOST`.
+A Tailscale bind is reported as its own tier rather than lumped in with
+`0.0.0.0`. The check changes no defaults and never fails; it only tells you
+where you stand.
 
 ### Security Recommendations
 

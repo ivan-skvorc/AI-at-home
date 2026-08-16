@@ -171,7 +171,9 @@ def _apply_stream_chunk_timeout_default(model_class: type, model_settings_from_c
     model_settings_from_config["stream_chunk_timeout"] = _DEFAULT_STREAM_CHUNK_TIMEOUT_SECONDS
 
 
-def create_chat_model(name: str | None = None, thinking_enabled: bool = False, *, app_config: AppConfig | None = None, attach_tracing: bool = True, model_overrides: dict | None = None, **kwargs) -> BaseChatModel:
+def create_chat_model(
+    name: str | None = None, thinking_enabled: bool = False, *, app_config: AppConfig | None = None, attach_tracing: bool = True, model_overrides: dict | None = None, _is_fallback_member: bool = False, **kwargs
+) -> BaseChatModel:
     """Create a chat model instance from the config.
 
     Args:
@@ -226,6 +228,10 @@ def create_chat_model(name: str | None = None, thinking_enabled: bool = False, *
             # display) — must never reach the provider client, which would
             # forward unknown kwargs into the completion request payload.
             "pricing",
+            # Fork feature: the fallback chain is resolved by this factory (see
+            # _wrap_with_fallbacks below) and is meaningless to a provider
+            # client, which would forward it into the request payload.
+            "fallback",
         },
     )
     # Layer per-caller sampling overrides (e.g. a custom agent's temperature /
@@ -318,4 +324,58 @@ def create_chat_model(name: str | None = None, thinking_enabled: bool = False, *
             existing_callbacks = model_instance.callbacks or []
             model_instance.callbacks = [*existing_callbacks, *callbacks]
             logger.debug(f"Tracing attached to model '{name}' with providers={len(callbacks)}")
+
+    if not _is_fallback_member:
+        model_instance = _wrap_with_fallbacks(model_instance, name, config, thinking_enabled=thinking_enabled, attach_tracing=attach_tracing)
     return model_instance
+
+
+def _wrap_with_fallbacks(
+    model_instance: BaseChatModel,
+    name: str,
+    config: "AppConfig",
+    *,
+    thinking_enabled: bool,
+    attach_tracing: bool,
+) -> BaseChatModel:
+    """Wrap *model_instance* in a fallback chain when one is configured (fork feature).
+
+    Chain members are built with ``_is_fallback_member=True`` so they never get
+    chains of their own: that is what makes ``a -> b -> a`` an inexpressible
+    shape rather than a cycle to detect.
+
+    A member that cannot be constructed (missing key, bad class path) is dropped
+    with a warning. A broken *fallback* must never take down the model the user
+    actually selected — degrading to "no fallback" is always better than
+    degrading to "no model".
+    """
+    from deerflow.models.fallback import FallbackChatModel, resolve_fallback_chain
+
+    model_configs = {entry.name: entry for entry in config.models}
+    global_chain = list(config.model_fallback.chain) if config.model_fallback.enabled else []
+    chain = resolve_fallback_chain(name, model_configs, global_chain=global_chain, known=set(model_configs))
+    if not chain:
+        return model_instance
+
+    members: list[BaseChatModel] = []
+    resolved_names: list[str] = [name]
+    for candidate in chain:
+        try:
+            members.append(
+                create_chat_model(
+                    candidate,
+                    thinking_enabled=thinking_enabled,
+                    app_config=config,
+                    attach_tracing=attach_tracing,
+                    _is_fallback_member=True,
+                )
+            )
+            resolved_names.append(candidate)
+        except Exception as exc:
+            logger.warning("model fallback: cannot build %r for %r's chain (%s); dropping it", candidate, name, exc)
+
+    if not members:
+        return model_instance
+
+    logger.info("model %r has a fallback chain: %s", name, " → ".join(resolved_names))
+    return FallbackChatModel(primary=model_instance, fallbacks=members, model_names=resolved_names)

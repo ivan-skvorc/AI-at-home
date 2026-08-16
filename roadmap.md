@@ -53,6 +53,13 @@ Work on a feature branch. Do not open a PR unless asked.
 
 ## 1. Durable auxiliary usage accounting
 
+**Status** — ✅ **Implemented.** The registry is now a write-through cache over
+`deerflow/runtime/aux_usage_store.py`, a small dedicated SQLite file
+(`<DeerFlow home>/aux_usage.sqlite3`, kill switch `DEER_FLOW_AUX_USAGE_DB=0`). See
+FORK.md §7 *Durable auxiliary counters* for the store choice and its trade-offs, and
+`backend/tests/test_aux_usage.py` / `test_aux_usage_wiring.py` /
+`blocking_io/test_aux_usage.py` for the coverage. Items 2 and 3 are unblocked.
+
 **Goal** — Memory and follow-up-suggestion token usage survives a Gateway restart, so
 anything built on cost data can be trusted over a period longer than one process
 lifetime.
@@ -93,6 +100,13 @@ reflect the new behavior.
 
 ## 2. Currency-denominated spend caps
 
+**Status** — ✅ **Implemented.** `config.yaml -> spend_budget` caps real money over a
+rolling or calendar day/week/month window. Enforced at run admission (HTTP 402) and
+in-run by `SpendBudgetMiddleware`, priced per model through the shared
+`deerflow/pricing.py`; unpriced models cost 0 so a local run is never blocked; the
+feature self-disables with a reason when nothing is priced, and `make doctor` says
+which. Remaining budget shows in the chat header. See FORK.md §10.
+
 **Goal** — The operator can set a daily / weekly / monthly budget in real money and have
 runs warn and then hard-stop when it is exhausted.
 
@@ -132,6 +146,11 @@ README.md and FORK.md document the section.
 
 ## 3. Spend history and attribution view
 
+**Status** — ✅ **Implemented.** `GET /api/console/spend` aggregates persisted run
+costs and the durable auxiliary counters over a window, grouped by model, thread and
+feature, reusing `pricing.py` end to end and naming unpriced models explicitly. The
+page lives at `/workspace/spend`. See FORK.md §11.
+
 **Goal** — A workspace page answering "where did my money go this month," broken down by
 model, thread, and feature.
 
@@ -163,6 +182,18 @@ aggregation and the empty/no-pricing states.
 ---
 
 ## 4. Automated model and pricing audit
+
+**Status** — ✅ **Implemented.** `scripts/audit_models.py` reads both synced sources
+(the `config.example.yaml` marker blocks and `scripts/wizard/providers.py`) and diffs
+them against the live OpenRouter catalog for retired slugs, moved list prices, and
+promos that started or ended — plus two network-free checks (display name vs. its own
+`pricing:` block, and parity between the two sources).
+`.github/workflows/model-audit.yml` runs it weekly and maintains a single
+`model-audit`-labelled issue, closing it when a run comes back clean. It never commits
+a price, an unreachable provider is a skip rather than drift, and
+`scripts/fixtures/model_audit_stale_catalog.json` is the audit's own regression test —
+the workflow asserts it still detects drift before trusting a clean live run. FORK.md's
+*Auditing the model list* now names the job as the trigger.
 
 **Goal** — A scheduled CI job that diffs the bundled model roster against live provider
 catalogs and opens an issue when a slug, price, or promo has drifted.
@@ -204,6 +235,14 @@ pass rather than the calendar.
 
 ## 5. Cost-aware model routing policy
 
+**Status** — ✅ **Implemented.** `model_routing:` maps declarative conditions (needs
+tools / vision / thinking, estimated context) to an ordered model preference, resolved
+in `deerflow/subagents/routing.py` from the capability flags that already exist on model
+entries — no LLM call classifies the task. An explicit per-thread subagent selection
+stands the policy down entirely, a candidate that cannot do the job is skipped rather
+than routed to, and the effective decision (rule + skipped candidates) is shown on the
+subagent card. Off by default. See FORK.md §15.
+
 **Goal** — A declarative policy that routes subagents to the cheapest model that can
 actually do the task, so the fork's cost saving is the default rather than a manual
 choice.
@@ -243,6 +282,15 @@ and the override precedence.
 
 ## 6. Model fallback chains
 
+**Status** — ✅ **Implemented.** `deerflow/models/fallback.py` wraps a model in a chain
+resolved from per-model `fallback:` or the global `model_fallback.chain` (off by
+default). It separates a **failure** (connection, context length, unsupported tools,
+5xx → fall back) from a **decision** (interrupt, spend cap, guardrail, 401/403 →
+re-raise), with unrecognized errors also re-raising. Cycles are inexpressible rather
+than detected — chain members are built without their own chains — and tokens are
+attributed to the serving model for free, which the spend cap and spend report depend
+on. See FORK.md §14.
+
 **Goal** — A failed model call retries down a configured chain (local → cheap cloud →
 premium) instead of failing the turn.
 
@@ -276,6 +324,16 @@ usage is attributed to the serving model; tests cover each trigger and each non-
 ---
 
 ## 7. PWA, service worker, and push notifications
+
+**Status** — ✅ **Implemented, with one part deliberately left open.** The app is
+installable (manifest + icons + `appleWebApp` metadata), a push-only service worker
+delivers notifications with the browser closed, VAPID keys are minted once and kept
+`0600`, subscriptions are stored per user beside the chat tabs, dead subscriptions
+prune themselves, and a run longer than 30s notifies on completion. The secure-context
+problem is surfaced rather than hidden: a plain-HTTP LAN origin gets a specific
+explanation and the Tailscale HTTPS fix, documented in README.md. `pywebpush` is an
+optional extra. **Not done:** the mobile chat layout audit — the keep-alive tab strip
+and artifact panel are still desktop-shaped on a narrow viewport. See FORK.md §16.
 
 **Goal** — The app installs to a phone home screen and delivers a notification when a
 long-running agent task finishes, with the browser closed.
@@ -319,6 +377,15 @@ failing silently; the feature is off until enabled.
 
 ## 8. Whole-instance backup and restore
 
+**Status** — ✅ **Implemented.** `make backup` / `make restore` (`scripts/backup.py`)
+write and read one timestamped archive of the DeerFlow home tree, `config.yaml`,
+`extensions_config.json` and custom skills. **The secrets decision: excluded by
+default**, opt in with `INCLUDE_SECRETS=1`, and then the archive is created `0600` at
+open time. Postgres is dumped explicitly and a failed dump aborts the backup; restore
+refuses while the Gateway or nginx is listening, rejects unsafe archive paths, and
+preserves file modes (`filter="tar"`). Documented in README.md and SECURITY.md. See
+FORK.md §13.
+
 **Goal** — One command snapshots everything a personal instance has accumulated, and one
 command restores it.
 
@@ -356,6 +423,14 @@ message; the secrets decision is documented in README.md and SECURITY.md.
 
 ## 9. Ollama daemon lifecycle management
 
+**Status** — ✅ **Implemented.** `ollama.keep_alive` (plus `keep_alive_overrides` per
+model) is written into every synced entry; `ollama.preload: true` warms `models[0]` at
+launch via a backgrounded load-only request; a `vram_gb`-aware contention warning names
+the two largest local models with real numbers when they cannot co-reside; and
+`make doctor` gained a **Local Models** section (daemon reachable, configured models
+pulled, `keep_alive` set). All warn-only, and nothing reassigns a model choice. See
+FORK.md §1.
+
 **Goal** — Local models are warm when needed and do not fight each other for VRAM.
 
 **Why it fits** — `scripts/sync-ollama-models.py` computes a per-model VRAM-aware context
@@ -388,6 +463,14 @@ sync stays idempotent and still no-ops cleanly when the daemon is unreachable.
 ---
 
 ## 10. Automated upstream sync
+
+**Status** — ✅ **Implemented.** `.github/workflows/upstream-sync.yml` merges
+`upstream/main` weekly onto a dated `upstream-sync/<date>` branch (merge, never rebase;
+never force-pushes), runs the mechanical gates, and opens a PR whose body is generated
+from FORK.md's post-sync checklist by `scripts/upstream_sync.py` — so it stays current as
+the fork grows instead of being a copy that rots. A conflicted merge still opens a PR,
+flagged and listing every conflicted path, with gates reported as *skipped* rather than
+passing. See FORK.md *Upstream sync*.
 
 **Goal** — A scheduled job that merges `upstream/main`, runs the mechanical gates, and
 opens a PR pre-populated with the post-sync checklist.
@@ -423,6 +506,14 @@ published history.
 ---
 
 ## 11. Deployment exposure check in `make doctor`
+
+**Status** — ✅ **Implemented.** `scripts/exposure.py` computes the effective exposure
+from bind address × auth × environment × multi-user mode × sandbox, and reports one
+tier (`local-only` / `trusted-network` / `open-network`) per entry surface. `make doctor`
+gained a **Deployment** section; the same summary prints at the end of `make up` and
+`make dev`. A Tailscale bind is its own tier, the local dev surface is reported honestly
+as the wildcard (`nginx.local.conf` listens without an address), no default changed, and
+the check never returns `fail`. See FORK.md §12.
 
 **Goal** — `make doctor` reports the instance's *effective* network exposure and names the
 fix, instead of leaving the operator to reason about three independent settings.

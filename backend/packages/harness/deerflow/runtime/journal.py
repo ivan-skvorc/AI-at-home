@@ -749,6 +749,20 @@ class RunJournal(BaseCallbackHandler):
 
     # -- Public methods (called by worker) --
 
+    def current_token_usage_by_model(self) -> dict[str, dict[str, int]]:
+        """Live per-model token totals for the in-flight run (a copy).
+
+        ``get_completion_data`` is the terminal snapshot the worker persists;
+        this is the same accumulator read *during* the run, which is what
+        ``SpendBudgetMiddleware`` needs to price the run so far at each model's
+        own rate. Subagent usage is already folded in here by
+        ``record_external_llm_usage_records``, so a cheap-subagent run is not
+        billed at the lead's rate — that per-model attribution is the whole
+        reason a currency cap reads this instead of summing ``usage_metadata``
+        off the message list.
+        """
+        return {model: dict(usage) for model, usage in self._tokens_by_model.items()}
+
     def record_external_llm_usage_records(
         self,
         records: list[dict[str, int | str | None]],

@@ -472,6 +472,12 @@ if [ -n "$DETECT_PYTHON" ]; then
     [ -f "backend/config.yaml" ] && _ollama_config="backend/config.yaml"
     [ -n "$DEER_FLOW_CONFIG_PATH" ] && [ -f "$DEER_FLOW_CONFIG_PATH" ] && _ollama_config="$DEER_FLOW_CONFIG_PATH"
     "$DETECT_PYTHON" "$REPO_ROOT/scripts/sync-ollama-models.py" --config "$_ollama_config" --verbose || true
+
+    # ── Fork: preload the default local model ────────────────────────────────
+    # Backgrounded on purpose: loading weights can take tens of seconds and must
+    # not sit in front of the stack starting. --preload-only is a no-op unless
+    # `ollama.preload: true` is configured and models[0] is an Ollama entry.
+    ("$DETECT_PYTHON" "$REPO_ROOT/scripts/sync-ollama-models.py" --config "$_ollama_config" --preload-only >/dev/null 2>&1 || true) &
 fi
 
 # ── API-key model auto-config ────────────────────────────────────────────────
@@ -644,6 +650,17 @@ echo "           /api/*              →  Gateway REST API (8001)"
 echo ""
 echo "  📋 Logs: logs/{gateway,frontend,nginx}.log"
 echo ""
+
+# ── Fork: effective exposure summary ─────────────────────────────────────────
+# `make dev` runs nginx from docker/nginx/nginx.local.conf, whose `listen 2026;`
+# has no address — so the local stack is on every interface regardless of
+# BIND_HOST (which only applies to the published Docker port). Combined with the
+# passwordless default above, that is worth saying out loud where it is read.
+# scripts/exposure.py owns the assessment; `make doctor` prints the same one.
+if [ -n "$DETECT_PYTHON" ]; then
+    "$DETECT_PYTHON" "$REPO_ROOT/scripts/exposure.py" --surface local --project-root "$REPO_ROOT" 2>/dev/null || true
+    echo ""
+fi
 
 if $DAEMON_MODE; then
     echo "  🛑 Stop: make stop"

@@ -9,7 +9,7 @@ from app.gateway.authz import require_permission
 from app.gateway.deps import get_config
 from deerflow.config.app_config import AppConfig
 from deerflow.config.suggestions_config import DEFAULT_MAX_SUGGESTIONS, MAX_SUGGESTIONS_LIMIT
-from deerflow.runtime.aux_usage import record_aux_usage
+from deerflow.runtime.aux_usage import arecord_aux_usage
 from deerflow.utils.oneshot_llm import run_oneshot_llm_with_usage
 from deerflow.utils.thread_id import ThreadId
 
@@ -84,14 +84,18 @@ def _configured_max_suggestions(config: AppConfig) -> int:
     return getattr(config.suggestions, "max_suggestions", DEFAULT_MAX_SUGGESTIONS)
 
 
-def _record_suggestions_usage(thread_id: str, model_name: str | None, usage: dict | None) -> None:
-    """Record the suggestions LLM call's tokens for the sidebar counter (best-effort)."""
+async def _record_suggestions_usage(thread_id: str, model_name: str | None, usage: dict | None) -> None:
+    """Record the suggestions LLM call's tokens for the sidebar counter (best-effort).
+
+    The registry is write-through to a durable SQLite store, so recording is
+    file IO; ``arecord_aux_usage`` keeps it off the event loop.
+    """
     if not isinstance(usage, dict):
         return
     input_details = usage.get("input_token_details")
     cache_read = input_details.get("cache_read") if isinstance(input_details, dict) else 0
     try:
-        record_aux_usage(
+        await arecord_aux_usage(
             thread_id,
             "suggestions",
             model_name=model_name,
@@ -160,7 +164,7 @@ async def generate_suggestions(
             model_name=body.model_name,
             thread_id=thread_id,
         )
-        _record_suggestions_usage(thread_id, result.model_name, result.usage)
+        await _record_suggestions_usage(thread_id, result.model_name, result.usage)
         suggestions = _parse_json_string_list(result.text) or []
         cleaned = [s.replace("\n", " ").strip() for s in suggestions if s.strip()]
         cleaned = cleaned[:n]

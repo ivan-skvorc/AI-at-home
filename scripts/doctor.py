@@ -16,16 +16,19 @@ import re
 import shutil
 import subprocess
 import sys
+from collections.abc import Mapping
 from importlib import import_module
 from pathlib import Path
 from typing import Literal
+
+import exposure as exposure_module
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
 Status = Literal["ok", "warn", "fail", "skip"]
-PNPM_SCRIPT_PATH = Path(__file__).with_name("pnpm.py")
+PNPM_SCRIPT_PATH = Path(__file__).resolve().with_name("pnpm.py")
 FRONTEND_DIR = PNPM_SCRIPT_PATH.parent.parent / "frontend"
 
 
@@ -401,6 +404,58 @@ def check_model_pricing(config_path: Path) -> CheckResult:
         return CheckResult("model pricing", "warn", str(exc))
 
 
+def check_spend_budget(config_path: Path) -> CheckResult:
+    """Is the configured currency spend cap actually enforceable?
+
+    `spend_budget` is denominated in the pricing currency, so it silently does
+    nothing when no model carries a price — the same class of silent failure the
+    `model pricing` check above exists for, one level up. It also needs a SQL
+    backend, because a window's spend is read from persisted run history.
+    """
+    if not config_path.exists():
+        return CheckResult("spend budget", "skip")
+    try:
+        data = _load_yaml_file(config_path)
+        budget = data.get("spend_budget") or {}
+        if not isinstance(budget, dict) or not budget.get("enabled"):
+            return CheckResult("spend budget", "skip", "not enabled")
+
+        limits = {period: budget.get(f"{period}_limit") for period in ("daily", "weekly", "monthly")}
+        configured = {period: value for period, value in limits.items() if value}
+        if not configured:
+            return CheckResult(
+                "spend budget",
+                "fail",
+                "enabled with no cap configured — the Gateway will refuse to load this config",
+                fix="Set at least one of spend_budget.daily_limit / weekly_limit / monthly_limit",
+            )
+
+        models = data.get("models") or []
+        priceable = [model for model in models if isinstance(model, dict) and (isinstance(model.get("pricing"), dict) or _PRICE_IN_DISPLAY_NAME_RE.search(str(model.get("display_name") or "")))]
+        if not priceable:
+            return CheckResult(
+                "spend budget",
+                "warn",
+                "enabled but no model carries a price, so the cap measures nothing and is not enforced",
+                fix="Give each paid model a `pricing:` block, or a ($in/out) price in its display_name",
+            )
+
+        backend = str(((data.get("database") or {}) if isinstance(data.get("database"), dict) else {}).get("backend") or "sqlite").strip().lower()
+        if backend == "memory":
+            return CheckResult(
+                "spend budget",
+                "warn",
+                "enabled but database.backend is memory, so there is no persisted spend history to measure a window against",
+                fix="Set database.backend to sqlite or postgres in config.yaml",
+            )
+
+        summary = ", ".join(f"{period} {value:g}" for period, value in configured.items())
+        window = str(budget.get("window") or "rolling")
+        return CheckResult("spend budget", "ok", f"{window} window; {summary}")
+    except Exception as exc:
+        return CheckResult("spend budget", "warn", str(exc))
+
+
 def check_config_loadable(config_path: Path) -> CheckResult:
     if not config_path.exists():
         return CheckResult("config.yaml loadable", "skip")
@@ -495,10 +550,7 @@ def check_env_placeholders(config_path: Path) -> list[CheckResult]:
                 "referenced env vars present",
                 "fail",
                 f"missing from environment/.env: {names}",
-                fix=(
-                    "The Gateway crashes on load (bare nginx 502) if an active section references an unset\n"
-                    f"$VAR. Add the value(s) to .env, or set that section's `enabled: false`:\n  {names}"
-                ),
+                fix=(f"The Gateway crashes on load (bare nginx 502) if an active section references an unset\n$VAR. Add the value(s) to .env, or set that section's `enabled: false`:\n  {names}"),
             )
         )
     else:
@@ -959,6 +1011,124 @@ def check_sandbox(config_path: Path) -> list[CheckResult]:
         return [CheckResult("sandbox configured", "fail", str(exc))]
 
 
+def _ollama_installed_models(host: str) -> list[str] | None:
+    """List model names the daemon has, or None when it is unreachable."""
+    import json
+    import urllib.error
+    import urllib.request
+
+    try:
+        with urllib.request.urlopen(f"{host.rstrip('/')}/api/tags", timeout=2.0) as response:  # noqa: S310 - fixed daemon URL
+            data = json.loads(response.read().decode("utf-8"))
+    except (urllib.error.URLError, OSError, ValueError, TimeoutError):
+        return None
+    return [m.get("name", "") for m in data.get("models", []) if isinstance(m, dict)]
+
+
+def check_ollama_readiness(config_path: Path, probe=_ollama_installed_models) -> list[CheckResult]:
+    """Is the local-model half of a mixed local/cloud setup actually ready?
+
+    `scripts/sync-ollama-models.py` computes a VRAM-aware context window per
+    model and then stops at the config file — nothing verified that the daemon
+    is up, that the models the config names are still pulled, or that anything
+    keeps them resident between turns. Each of those fails at chat time as a
+    slow or broken run with no obvious cause.
+
+    Warn-only: a machine with the daemon deliberately stopped is not a broken
+    install, and local models are optional in the first place.
+    """
+    if not config_path.exists():
+        return [CheckResult("local models", "skip")]
+    try:
+        data = _load_yaml_file(config_path)
+    except Exception as exc:
+        return [CheckResult("local models", "warn", str(exc))]
+
+    models = [m for m in (data.get("models") or []) if isinstance(m, dict)]
+    local = [m for m in models if "ollama" in str(m.get("use") or "").lower()]
+    if not local:
+        return [CheckResult("local models", "skip", "no Ollama models configured")]
+
+    host = str(local[0].get("base_url") or os.environ.get("OLLAMA_HOST") or "http://localhost:11434")
+    installed = probe(host)
+    if installed is None:
+        return [
+            CheckResult(
+                "local model daemon",
+                "warn",
+                f"{host} unreachable — configured Ollama models will fail at chat time",
+                fix="Start it with 'ollama serve' (or `systemctl --user start ollama`), or select a cloud model in the picker",
+            )
+        ]
+
+    results = [CheckResult("local model daemon", "ok", f"{host}, {len(installed)} model(s) installed")]
+
+    installed_set = set(installed)
+    wanted = {str(m.get("model") or m.get("name")) for m in local}
+    # An entry may name `qwen3:8b` while `ollama list` reports `qwen3:8b`; a bare
+    # name also matches the daemon's implicit `:latest` tag.
+    missing = sorted(name for name in wanted if name not in installed_set and f"{name}:latest" not in installed_set)
+    if missing:
+        results.append(
+            CheckResult(
+                "local models installed",
+                "warn",
+                f"configured but not pulled: {', '.join(missing)}",
+                fix="\n".join(f"ollama pull {name}" for name in missing),
+            )
+        )
+    else:
+        results.append(CheckResult("local models installed", "ok", f"{len(wanted)} configured, all present"))
+
+    keep_alive_values = {str(m.get("keep_alive")) for m in local if m.get("keep_alive") is not None}
+    if keep_alive_values:
+        results.append(CheckResult("local model keep_alive", "ok", ", ".join(sorted(keep_alive_values))))
+    else:
+        results.append(
+            CheckResult(
+                "local model keep_alive",
+                "ok",
+                "not set — Ollama unloads each model ~5 min after its last call, so subagent turns pay a cold start",
+                fix="Set `ollama.keep_alive: 30m` in config.yaml and re-run a launch (the sync writes it into each entry)",
+            )
+        )
+    return results
+
+
+def check_deployment_exposure(project_root: Path, env: Mapping[str, str] | None = None) -> list[CheckResult]:
+    """Report the *effective* network exposure of each entry surface (fork feature).
+
+    Passwordless + multi-user-mode-off + a non-loopback bind is this fork's happy
+    path and its worst case at the same time. Each setting is individually
+    defensible and separately documented; nothing computed the combination, which
+    is the only thing that decides who can reach the instance and as whom.
+
+    Diagnosis only: no default changes, and the result is never a ``fail`` — the
+    loopback-only default is correct and must not nag, and a deliberately exposed
+    home lab must not make ``make doctor`` exit non-zero.
+    """
+    results: list[CheckResult] = []
+    for surface, label in (("docker", "make up"), ("local", "make dev")):
+        try:
+            result = exposure_module.assess_project(project_root, surface=surface, env=env)
+        except Exception as exc:
+            results.append(CheckResult(f"network exposure ({label})", "warn", str(exc)))
+            continue
+
+        # CheckResult.print already prefixes every fix line with an arrow, so the
+        # per-factor fix is indented plainly rather than carrying a second one.
+        fix_lines: list[str] = []
+        for factor in result.factors:
+            if not factor.contributes:
+                continue
+            fix_lines.append(factor.detail)
+            if factor.fix:
+                fix_lines.append(f"  {factor.fix}")
+        detail = f"{result.tier} — {result.headline}"
+        results.append(CheckResult(f"network exposure ({label})", result.status, detail, fix="\n".join(fix_lines) or None))
+    return results
+
+
 def check_env_file(project_root: Path) -> CheckResult:
     env_path = project_root / ".env"
     if env_path.exists():
@@ -1015,6 +1185,7 @@ def main() -> int:
         check_config_loadable(config_path),
         check_models_configured(config_path),
         check_model_pricing(config_path),
+        check_spend_budget(config_path),
         check_core_tools(config_path),
         *check_env_placeholders(config_path),
         *check_config_unknown_keys(config_path),
@@ -1041,6 +1212,12 @@ def main() -> int:
     # ── Sandbox ──────────────────────────────────────────────────────────────
     sandbox_checks = check_sandbox(config_path)
     sections.append(("Sandbox", sandbox_checks))
+
+    # ── Local models ─────────────────────────────────────────────────────────
+    sections.append(("Local Models", check_ollama_readiness(config_path)))
+
+    # ── Deployment exposure ──────────────────────────────────────────────────
+    sections.append(("Deployment", check_deployment_exposure(project_root)))
 
     # ── Render ────────────────────────────────────────────────────────────────
     total_fails = 0

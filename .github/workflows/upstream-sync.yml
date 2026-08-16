@@ -1,0 +1,194 @@
+# Automated upstream sync (fork feature, roadmap item 10).
+#
+# "Lags upstream" is a real reason to choose upstream over this fork, and it
+# compounds: the longer a sync is deferred, the larger the merge and the more
+# likely the fork's UI wiring silently breaks. This turns the chore into a
+# standing PR.
+#
+# Three rules it must keep:
+#   1. Merge, never rebase. This fork's main carries its own merge commits and
+#      merged PRs; a rebase would rewrite published history and orphan them.
+#   2. Never force-push. The sync branch is disposable, the fork's history is not.
+#   3. On conflicts, still open the PR — flagged, with the paths listed. A
+#      conflict is when a human is most needed and most needs to know early.
+name: Upstream Sync
+
+on:
+  schedule:
+    # Mondays 05:23 UTC, before the model audit so a sync PR and its audit
+    # issue do not land in the same minute.
+    - cron: "23 5 * * 1"
+  workflow_dispatch:
+    inputs:
+      branch_suffix:
+        description: "Suffix for the sync branch (default: the date)"
+        required: false
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: upstream-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Resolve the sync branch name
+        id: branch
+        run: |
+          suffix="${{ inputs.branch_suffix }}"
+          [ -n "$suffix" ] || suffix="$(date -u +%Y%m%d)"
+          echo "name=upstream-sync/$suffix" >> "$GITHUB_OUTPUT"
+
+      - name: Merge upstream/main
+        id: merge
+        run: |
+          set +e
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote add upstream https://github.com/bytedance/deer-flow.git
+          git fetch upstream main || { echo "upstream unreachable"; exit 1; }
+
+          upstream_sha="$(git rev-parse upstream/main)"
+          echo "sha=$upstream_sha" >> "$GITHUB_OUTPUT"
+          count="$(git rev-list --count HEAD..upstream/main)"
+          echo "count=$count" >> "$GITHUB_OUTPUT"
+
+          if [ "$count" = "0" ]; then
+            echo "already=true" >> "$GITHUB_OUTPUT"
+            echo "Already up to date with upstream."
+            exit 0
+          fi
+
+          git checkout -B "${{ steps.branch.outputs.name }}"
+          # Merge, never rebase — see the header comment.
+          git merge --no-edit upstream/main
+          merge_status=$?
+
+          if [ $merge_status -ne 0 ]; then
+            git diff --name-only --diff-filter=U > /tmp/conflicts.txt
+            echo "conflicts=true" >> "$GITHUB_OUTPUT"
+            echo "Conflicted paths:"; cat /tmp/conflicts.txt
+            # Commit the conflicted tree so the branch is pushable and a human
+            # can check it out and resolve. The PR body says do not merge.
+            git add -A
+            git commit -m "chore: merge upstream/main (CONFLICTED — resolve before merging)" --no-verify
+          else
+            : > /tmp/conflicts.txt
+            echo "conflicts=false" >> "$GITHUB_OUTPUT"
+          fi
+
+          git diff --name-only HEAD~1 HEAD -- .github/workflows > /tmp/workflow-files.txt || : > /tmp/workflow-files.txt
+          exit 0
+
+      - name: Run the mechanical gates
+        id: gates
+        if: steps.merge.outputs.already != 'true'
+        run: |
+          set +e
+          conflicts="${{ steps.merge.outputs.conflicts }}"
+          conflict_markers=skip; backend_lint=skip; backend_test=skip; frontend_check=skip; uv_lock=skip
+
+          # A conflicted tree has nothing coherent to test; the gates stay
+          # "skipped" so the PR body cannot read as a green build.
+          if [ "$conflicts" != "true" ]; then
+            if git grep -nE '^(<{7}|={7}|>{7})( |$)' -- . ; then conflict_markers=fail; else conflict_markers=pass; fi
+
+            curl -LsSf https://astral.sh/uv/install.sh | sh
+            export PATH="$HOME/.local/bin:$PATH"
+
+            (cd backend && uv sync --frozen 2>/dev/null || uv sync) && \
+              (cd backend && uv run ruff check . && uv run ruff format --check .) && backend_lint=pass || backend_lint=fail
+            (cd backend && PYTHONPATH=. uv run pytest -q --timeout=900) && backend_test=pass || backend_test=fail
+            (cd backend && uv lock --check) && uv_lock=pass || uv_lock=fail
+            frontend_check=skip
+          fi
+
+          python3 - <<PY > /tmp/gates.json
+          import json
+          print(json.dumps({
+              "conflict_markers": "$conflict_markers",
+              "backend_lint": "$backend_lint",
+              "backend_test": "$backend_test",
+              "frontend_check": "$frontend_check",
+              "uv_lock": "$uv_lock",
+          }))
+          PY
+          cat /tmp/gates.json
+          exit 0
+
+      - name: Frontend gates
+        id: frontend
+        if: steps.merge.outputs.already != 'true' && steps.merge.outputs.conflicts != 'true'
+        continue-on-error: true
+        run: |
+          set +e
+          corepack enable
+          (cd frontend && python3 ../scripts/pnpm.py install --frozen-lockfile) || exit 0
+          status=pass
+          (cd frontend && python3 ../scripts/pnpm.py format) || status=fail
+          (cd frontend && python3 ../scripts/pnpm.py check) || status=fail
+          (cd frontend && python3 ../scripts/pnpm.py test) || status=fail
+          python3 - <<PY
+          import json, pathlib
+          path = pathlib.Path("/tmp/gates.json")
+          gates = json.loads(path.read_text()) if path.exists() else {}
+          gates["frontend_check"] = "$status"
+          path.write_text(json.dumps(gates))
+          PY
+          exit 0
+
+      # Deliberately `always()` for the merge-conflict case: an unflagged
+      # conflict that never becomes a PR is the failure mode this job exists to
+      # remove. Skipped only when there is genuinely nothing to sync.
+      - name: Push the sync branch and open the PR
+        if: always() && steps.merge.outputs.already != 'true' && steps.merge.outputs.sha != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          python3 scripts/upstream_sync.py \
+            --gates /tmp/gates.json \
+            --conflicts /tmp/conflicts.txt \
+            --workflow-files /tmp/workflow-files.txt \
+            --upstream-sha "${{ steps.merge.outputs.sha }}" \
+            --commit-count "${{ steps.merge.outputs.count }}" \
+            --output /tmp/pr-body.md > /dev/null
+
+          branch="${{ steps.branch.outputs.name }}"
+          # Plain push, no lease and no force: the fork's published history is
+          # never rewritten by this job. A rejected push means the branch
+          # already exists with different content — a new dated branch is the
+          # correct answer, not overwriting someone's resolution in progress.
+          if ! git push -u origin "$branch"; then
+            echo "::warning::push rejected for $branch — it may already exist, or the merge touches .github/workflows (GITHUB_TOKEN cannot push those)."
+            exit 0
+          fi
+
+          title="chore: sync upstream/main (${{ steps.merge.outputs.count }} commits)"
+          if [ "${{ steps.merge.outputs.conflicts }}" = "true" ]; then
+            title="⚠️ $title — CONFLICTED"
+          fi
+
+          existing=$(gh pr list --head "$branch" --state open --json number --jq '.[0].number // empty')
+          if [ -n "$existing" ]; then
+            gh pr edit "$existing" --title "$title" --body-file /tmp/pr-body.md
+          else
+            gh pr create --base main --head "$branch" --title "$title" --body-file /tmp/pr-body.md
+          fi
+
+      - name: Report when already up to date
+        if: steps.merge.outputs.already == 'true'
+        run: echo "Nothing to sync — no PR opened."

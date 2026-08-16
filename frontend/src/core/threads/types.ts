@@ -121,4 +121,25 @@ export interface ThreadTokenUsageResponse {
   aux?: Record<string, ThreadTokenUsageAuxBreakdown>;
   // Real-time context window usage (upstream #3125/#3183).
   context_usage?: ThreadContextUsage | null;
+  // Remaining currency spend budget (fork feature). Owner-wide rather than
+  // per-thread, but it rides on this response because the header cost dropdown
+  // is where the user is already looking at money. Null when the cap is off or
+  // not enforceable.
+  spend_budget?: ThreadSpendBudgetResponse | null;
+}
+
+export interface ThreadSpendBudgetLimitResponse {
+  period: string;
+  limit: number;
+  spent: number;
+  remaining: number;
+  fraction: number;
+}
+
+export interface ThreadSpendBudgetResponse {
+  currency?: string | null;
+  limits?: ThreadSpendBudgetLimitResponse[];
+  warn_threshold?: number;
+  hard_stop_threshold?: number;
+  exceeded?: boolean;
 }

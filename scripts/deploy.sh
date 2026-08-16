@@ -559,6 +559,17 @@ else
     fi
 fi
 echo ""
+
+# ── Fork: effective exposure summary ─────────────────────────────────────────
+# The bind line above reports one setting. Who can actually reach this instance,
+# and as whom, is decided by BIND_HOST *together with* DEER_FLOW_AUTH_DISABLED,
+# DEER_FLOW_ENV, multi-user mode, and the sandbox choice. scripts/exposure.py
+# computes the combination; `make doctor` prints the same assessment. Diagnosis
+# only — it changes nothing and never fails the launch.
+if [ -n "$_detect_python" ]; then
+    "$_detect_python" "$REPO_ROOT/scripts/exposure.py" --surface docker --project-root "$REPO_ROOT" 2>/dev/null || true
+    echo ""
+fi
 echo "  Manage:"
 echo "    make down        — stop and remove containers"
 echo "    make docker-logs — view logs"

@@ -293,7 +293,41 @@ export const zhCN: Translations = {
     demoChats: "演示对话",
     agents: "智能体",
     scheduledTasks: "定时任务",
+    spend: "支出",
     agentsDisabledTooltip: "功能未启用",
+  },
+
+  spend: {
+    title: "支出",
+    description:
+      "按 config.yaml 中每个模型各自的价格统计费用去向。未配置价格的模型（如本地 Ollama）按 $0 计。",
+    window: "时间范围",
+    windowDays: (days: number) => `最近 ${days} 天`,
+    totalCost: "合计",
+    totalTokens: "Token",
+    totalRuns: "运行次数",
+    byModel: "按模型",
+    byThread: "按会话",
+    byCategory: "按功能",
+    model: "模型",
+    thread: "会话",
+    category: "功能",
+    cost: "费用",
+    tokens: "Token",
+    runs: "运行",
+    untitledThread: "未命名会话",
+    categories: {
+      conversation: "对话",
+      memory: "记忆",
+      suggestions: "建议",
+    },
+    unpriced: "未配置价格",
+    unpricedNote: (models: string) =>
+      `未包含 ${models}（未配置价格），实际费用更高。请在 config.yaml 中为这些模型添加 pricing 配置。`,
+    noPricing:
+      "无法显示费用：没有任何模型配置了价格。请添加 pricing 配置（或在 display_name 中写入 ($in/out) 价格）后再查看支出。",
+    empty: "该时间范围内暂无记录。",
+    loadFailed: "无法加载支出报表。",
   },
 
   chatTabs: {
@@ -591,6 +625,7 @@ export const zhCN: Translations = {
     saveAndConnect: "保存并连接",
     saveChanges: "保存修改",
     descriptions: {
+      buzz: "通过 DeerFlow 智能体接收 Buzz 频道消息和私聊。",
       telegram: "通过 DeerFlow Bot 接收 Telegram 私聊消息。",
       slack: "接收 Slack 工作区消息和提及。",
       discord: "通过 DeerFlow Bot 接收 Discord 服务器消息。",
@@ -719,6 +754,18 @@ export const zhCN: Translations = {
       `未包含 ${models}（未配置价格），实际费用更高。`,
     promoRate: "当前优惠价",
     standardRate: "标准价",
+    budgetLeft: "预算余额",
+    budgetPeriod: (period: string) =>
+      period === "daily"
+        ? "今日"
+        : period === "weekly"
+          ? "本周"
+          : period === "monthly"
+            ? "本月"
+            : period,
+    budgetExceeded: "已达支出上限——在窗口重置前将暂停新的运行。",
+    budgetHint:
+      "已配置的 spend_budget 上限在当前窗口内的剩余额度，涵盖窗口内的所有运行与后台调用。未配置价格的模型（如本地 Ollama）不计费用，因此纯本地运行永远不会被拦截。",
     memory: "记忆",
     suggestions: "建议",
     auxCallCount: (count: number) => `${count} 次调用`,
@@ -910,6 +957,19 @@ export const zhCN: Translations = {
         requestPermissions: "申请新权限",
         alreadyConnected:
           "飞书已连接，无需重复授权。如果授权已过期，刷新状态后可重新连接。",
+        changeAppButton: "切换飞书 Bot",
+        changeAppTitle: "切换到其他飞书 App",
+        changeAppDescription:
+          "把你的 DeerFlow 账号指向另一个 Lark/飞书 App。只影响你自己的账号，不影响其他用户。",
+        changeAppIdLabel: "App ID",
+        changeAppSecretLabel: "App Secret",
+        changeAppAuthResetNote:
+          "切换时会撤销旧 App 的授权，随后需要授权新 App。",
+        changeAppSubmit: "切换 App",
+        changeAppReRegister: "在浏览器重新注册",
+        changeAppSwitched: "已切换飞书 App。请重新连接以授权新 App。",
+        brandFeishu: "飞书",
+        brandLark: "Lark",
         connectionStarted: "连接链接已打开",
         connectionReady: "连接准备已完成，正在打开授权链接",
         authStarted: "授权页已打开，DeerFlow 会自动检测授权结果。",
@@ -1072,6 +1132,24 @@ export const zhCN: Translations = {
       testBody: "这是一条测试通知。",
       notSupported: "当前浏览器不支持通知功能。",
       disableNotification: "关闭通知",
+      push: {
+        title: "关闭浏览器后也通知我",
+        description:
+          "使用 Service Worker 与 Web Push：即使关闭标签页，长时间运行的任务完成后也能推送到手机。默认关闭。",
+        enable: "开启后台通知",
+        disable: "关闭后台通知",
+        test: "发送测试推送",
+        testSent: "已向 {count} 台设备发送测试推送。",
+        testFailed: "测试推送发送失败，请确认本设备仍处于订阅状态。",
+        registered: "已有 {count} 台设备注册后台通知。",
+        insecureContext:
+          "后台通知需要安全连接。当前页面通过局域网地址以纯 HTTP 提供，浏览器会完全禁用 Service Worker。请在本机使用 http://localhost:2026 打开 DeerFlow，或通过 Tailscale 的 HTTPS 域名访问（tailscale cert / serve），该选项即会出现。",
+        unsupported:
+          "此浏览器不支持后台通知（缺少 Service Worker 或 Push API）。",
+        unavailable: "服务端暂时无法发送推送通知：{reason}",
+        iosHint:
+          "在 iPhone / iPad 上，请先将 DeerFlow 添加到主屏幕 —— iOS 仅向已安装的 Web 应用推送。",
+      },
     },
     suggestions: {
       title: "后续建议",

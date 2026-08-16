@@ -42,6 +42,17 @@ class ModelConfig(BaseModel):
             "percentage."
         ),
     )
+    fallback: list[str] | None = Field(
+        default=None,
+        description=(
+            "Fork feature. Ordered model names to try when a call to this model fails with a "
+            "recoverable provider error (connection failure, context-length rejection, unsupported "
+            "tool calls, or a 5xx). Intentional stops — user interrupt, spend cap, guardrail refusal, "
+            "auth failure — never fall back. Fallback models are built without their own chains, so "
+            "the chain is flat and cycles cannot be expressed; it is also capped in length. Overrides "
+            "the global `model_fallback.chain`."
+        ),
+    )
     stream_chunk_timeout: float | None = Field(
         default=None,
         description=(

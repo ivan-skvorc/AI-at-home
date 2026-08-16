@@ -309,7 +309,41 @@ export const enUS: Translations = {
     demoChats: "Demo chats",
     agents: "Agents",
     scheduledTasks: "Scheduled tasks",
+    spend: "Spend",
     agentsDisabledTooltip: "Feature not enabled",
+  },
+
+  spend: {
+    title: "Spend",
+    description:
+      "Where your money went, priced per model from config.yaml. Unpriced models (like local Ollama) count as $0.",
+    window: "Window",
+    windowDays: (days: number) => `Last ${days} days`,
+    totalCost: "Total",
+    totalTokens: "Tokens",
+    totalRuns: "Runs",
+    byModel: "By model",
+    byThread: "By conversation",
+    byCategory: "By feature",
+    model: "Model",
+    thread: "Conversation",
+    category: "Feature",
+    cost: "Cost",
+    tokens: "Tokens",
+    runs: "Runs",
+    untitledThread: "Untitled conversation",
+    categories: {
+      conversation: "Conversation",
+      memory: "Memory",
+      suggestions: "Suggestions",
+    },
+    unpriced: "no price configured",
+    unpricedNote: (models: string) =>
+      `Excludes ${models} — no price configured, so the real cost is higher. Add a pricing block to those models in config.yaml.`,
+    noPricing:
+      "No cost shown: no model has a configured price. Add a pricing block (or a ($in/out) pair in the display name) to see spend.",
+    empty: "Nothing recorded in this window yet.",
+    loadFailed: "Could not load the spend report.",
   },
 
   chatTabs: {
@@ -617,6 +651,7 @@ export const enUS: Translations = {
     saveAndConnect: "Save and connect",
     saveChanges: "Save changes",
     descriptions: {
+      buzz: "Buzz channels and direct messages through your DeerFlow agent.",
       telegram: "Telegram direct messages through your DeerFlow bot.",
       slack: "Slack workspace messages and mentions.",
       discord: "Discord server messages through your DeerFlow bot.",
@@ -748,6 +783,19 @@ export const enUS: Translations = {
       `Excludes ${models} — no price configured, so the real cost is higher.`,
     promoRate: "promo rate now",
     standardRate: "standard rate",
+    budgetLeft: "Budget left",
+    budgetPeriod: (period: string) =>
+      period === "daily"
+        ? "today"
+        : period === "weekly"
+          ? "this week"
+          : period === "monthly"
+            ? "this month"
+            : period,
+    budgetExceeded:
+      "Spend cap reached — new runs are paused until the window resets.",
+    budgetHint:
+      "What is left of your configured spend_budget cap, across every run and background call in the window. Unpriced models (like local Ollama) cost nothing, so a fully local run is never blocked.",
     memory: "Memory",
     suggestions: "Suggestions",
     auxCallCount: (count: number) =>
@@ -949,6 +997,20 @@ export const enUS: Translations = {
         requestPermissions: "Request permissions",
         alreadyConnected:
           "Lark is already connected. If authorization expires, refresh the status and reconnect.",
+        changeAppButton: "Change Lark app",
+        changeAppTitle: "Switch to a different Lark app",
+        changeAppDescription:
+          "Point your DeerFlow account at a different Lark/Feishu app. This only affects your account; other users are not changed.",
+        changeAppIdLabel: "App ID",
+        changeAppSecretLabel: "App Secret",
+        changeAppAuthResetNote:
+          "Switching revokes the previous app's authorization. You will authorize the new app next.",
+        changeAppSubmit: "Switch app",
+        changeAppReRegister: "Re-register in browser",
+        changeAppSwitched:
+          "Lark app switched. Reconnect to authorize the new app.",
+        brandFeishu: "Feishu",
+        brandLark: "Lark",
         connectionStarted: "Connection link opened",
         connectionReady: "Connection is ready. Opening authorization...",
         authStarted:
@@ -1125,6 +1187,26 @@ export const enUS: Translations = {
       testBody: "This is a test notification.",
       notSupported: "Your browser does not support notifications.",
       disableNotification: "Disable notification",
+      push: {
+        title: "Notify me when the browser is closed",
+        description:
+          "Uses a service worker and Web Push, so a long-running task can ping your phone even after you close the tab. Off until you turn it on.",
+        enable: "Enable background notifications",
+        disable: "Turn off background notifications",
+        test: "Send a test push",
+        testSent: "Test push sent to {count} device(s).",
+        testFailed:
+          "The test push could not be delivered. Check that this device is still subscribed.",
+        registered:
+          "{count} device(s) registered for background notifications.",
+        insecureContext:
+          "Background notifications need a secure connection. This page is served over plain HTTP from a LAN address, where browsers disable service workers entirely. Open DeerFlow at http://localhost:2026 on this machine, or over your Tailscale HTTPS name (tailscale cert / serve), and the option will appear.",
+        unsupported:
+          "This browser does not support background notifications (no service worker or Push API).",
+        unavailable: "The server cannot send push notifications yet: {reason}",
+        iosHint:
+          "On iPhone and iPad, add DeerFlow to your Home Screen first — iOS only delivers push to installed web apps.",
+      },
     },
     suggestions: {
       title: "Follow-up suggestions",

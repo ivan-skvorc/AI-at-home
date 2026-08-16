@@ -256,14 +256,23 @@ def _authorize_model_name(
     return model_name
 
 
-def _create_summarization_middleware(*, app_config: AppConfig | None = None, run_model_name: str | None = None) -> DeerFlowSummarizationMiddleware | None:
+def _create_summarization_middleware(
+    *,
+    app_config: AppConfig | None = None,
+    run_model_name: str | None = None,
+    extensions=None,
+) -> DeerFlowSummarizationMiddleware | None:
     """Create and configure the summarization middleware from config.
 
     ``run_model_name`` is the resolved run model; it is the source of truth for
     ``model_name: null`` summarization and the explicit-summary-model fallback, so a
     custom agent's model is used instead of ``config.models[0]``.
     """
-    return create_summarization_middleware(app_config=app_config, run_model_name=run_model_name)
+    return create_summarization_middleware(
+        app_config=app_config,
+        run_model_name=run_model_name,
+        extensions=extensions,
+    )
 
 
 def _create_todo_list_middleware(is_plan_mode: bool) -> TodoMiddleware | None:
@@ -433,6 +442,9 @@ def build_middlewares(
         List of middleware instances.
     """
     resolved_app_config = app_config or get_app_config()
+    from deerflow.extensions import get_agent_build_extensions
+
+    resolved_extensions = extensions if extensions is not None else get_agent_build_extensions()
     runtime_middleware_kwargs = {
         "app_config": resolved_app_config,
         "lazy_init": True,
@@ -490,7 +502,11 @@ def build_middlewares(
     )
 
     # Add summarization middleware if enabled
-    summarization_middleware = _create_summarization_middleware(app_config=resolved_app_config, run_model_name=model_name)
+    summarization_middleware = _create_summarization_middleware(
+        app_config=resolved_app_config,
+        run_model_name=model_name,
+        extensions=resolved_extensions,
+    )
     if summarization_middleware is not None:
         middlewares.append(summarization_middleware)
 
@@ -506,7 +522,12 @@ def build_middlewares(
         middlewares.append(TokenUsageMiddleware())
 
     # Add TitleMiddleware
-    middlewares.append(TitleMiddleware(app_config=resolved_app_config))
+    middlewares.append(
+        TitleMiddleware(
+            app_config=resolved_app_config,
+            extensions=resolved_extensions,
+        )
+    )
 
     # Add MemoryMiddleware after TitleMiddleware. Tool mode normally skips it;
     # conversation-extraction backends may explicitly retain passive writes.
@@ -571,6 +592,24 @@ def build_middlewares(
 
         middlewares.append(TokenBudgetMiddleware.from_config(token_budget_config))
 
+    # SpendBudgetMiddleware — enforce the currency-denominated window cap
+    # (fork feature). Deliberately after the token budget: they are independent
+    # ceilings and whichever binds first wins, but the money cap is the one this
+    # fork's mixed premium/local model story actually needs.
+    spend_budget_config = resolved_app_config.spend_budget
+    if spend_budget_config.enabled:
+        from deerflow.agents.middlewares.spend_budget_middleware import SpendBudgetMiddleware
+        from deerflow.pricing import build_pricing_map
+
+        spend_pricing = build_pricing_map(resolved_app_config.models, logger=logger)
+        if spend_pricing:
+            middlewares.append(SpendBudgetMiddleware.from_config(spend_budget_config, spend_pricing))
+        else:
+            # A budget in a currency nothing is priced in cannot mean anything.
+            # Self-disable loudly rather than enforce a cap against a permanent
+            # zero; `make doctor`'s `spend budget` check says the same thing.
+            logger.warning("spend_budget.enabled is true but no model carries a price, so spend caps are not enforced. Add a pricing: block (or a ($in/out) pair in the display name) to at least one model.")
+
     # Inject custom middlewares before ClarificationMiddleware
     if custom_middlewares:
         middlewares.extend(custom_middlewares)
@@ -608,10 +647,8 @@ def build_middlewares(
     # above, changing what "the final request" means for observers.
     from deerflow_extension_api import AgentScope
 
-    from deerflow.extensions import get_agent_build_extensions
     from deerflow.extensions.stack import compose_with_extensions
 
-    resolved_extensions = extensions if extensions is not None else get_agent_build_extensions()
     if not resolved_extensions.has_middleware_contributors:
         return compose_with_extensions(middlewares, AgentScope.LEAD, None, resolved_extensions)
 

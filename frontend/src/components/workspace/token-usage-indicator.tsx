@@ -235,6 +235,65 @@ export function TokenUsageIndicator({
                       )}
                 </div>
               )}
+              {cost.spendBudget?.tightest && (
+                // The cap is money too, so it belongs beside the cost rather
+                // than in a settings page nobody opens mid-conversation. Only
+                // the tightest window is shown: three rows of headroom is noise,
+                // and the one about to bite is the one that matters.
+                <div
+                  data-testid="token-usage-spend-budget"
+                  className="mt-1 flex items-center justify-between gap-4 border-t pt-1"
+                >
+                  <span className="text-muted-foreground flex items-center gap-1">
+                    {t.tokenUsage.budgetLeft}
+                    <span className="opacity-70">
+                      (
+                      {t.tokenUsage.budgetPeriod(
+                        cost.spendBudget.tightest.period,
+                      )}
+                      )
+                    </span>
+                    <Tooltip
+                      content={
+                        <span className="block max-w-72 text-xs leading-relaxed">
+                          {t.tokenUsage.budgetHint}
+                        </span>
+                      }
+                    >
+                      <CircleHelpIcon
+                        className="text-muted-foreground size-3 cursor-help"
+                        aria-label={t.tokenUsage.budgetHint}
+                      />
+                    </Tooltip>
+                  </span>
+                  <span
+                    className={cn(
+                      "font-mono font-medium",
+                      cost.spendBudget.exceeded
+                        ? "text-red-500"
+                        : cost.spendBudget.tightest.fraction >=
+                            cost.spendBudget.warnThreshold
+                          ? "text-amber-500"
+                          : "text-emerald-500",
+                    )}
+                  >
+                    {cost.spendBudget.currency
+                      ? formatCost(
+                          cost.spendBudget.tightest.remaining,
+                          cost.spendBudget.currency,
+                        )
+                      : cost.spendBudget.tightest.remaining.toFixed(2)}
+                  </span>
+                </div>
+              )}
+              {cost.spendBudget?.exceeded && (
+                <div
+                  data-testid="token-usage-spend-budget-exceeded"
+                  className="mt-1 text-[11px] leading-snug text-red-500"
+                >
+                  {t.tokenUsage.budgetExceeded}
+                </div>
+              )}
               {auxEntries.length > 0 && (
                 <div className="mt-1 space-y-1 border-t pt-1">
                   {auxEntries.map(([category, entry]) => (

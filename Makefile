@@ -1,6 +1,6 @@
 # DeerFlow - Unified Development Environment
 
-.PHONY: help config config-upgrade check install setup doctor support-bundle detect-thread-boundaries detect-blocking-io dev dev-daemon start start-daemon nginx stop up up-start down clean docker-init docker-start docker-stop docker-logs docker-logs-frontend docker-logs-gateway docker-logs-redis searxng searxng-stop sandbox-up sandbox-down sandbox-logs sandbox-enable sandbox-disable fetch-browser auto-update auto-update-install auto-update-uninstall
+.PHONY: help config config-upgrade check install setup doctor support-bundle detect-thread-boundaries detect-blocking-io backup restore dev dev-daemon start start-daemon nginx stop up up-start down clean docker-init docker-start docker-stop docker-logs docker-logs-frontend docker-logs-gateway docker-logs-redis searxng searxng-stop sandbox-up sandbox-down sandbox-logs sandbox-enable sandbox-disable fetch-browser auto-update auto-update-install auto-update-uninstall
 
 # docker compose shim: prefer the v2 plugin, fall back to legacy docker-compose.
 DOCKER_COMPOSE ?= docker compose
@@ -27,6 +27,8 @@ help:
 	@echo "  make setup           - Interactive setup wizard (recommended for new users)"
 	@echo "  make doctor          - Check configuration and system requirements"
 	@echo "  make support-bundle  - Create a redacted issue summary, AI draft, and evidence bundle"
+	@echo "  make backup          - Snapshot this instance (credentials excluded; INCLUDE_SECRETS=1 to carry them)"
+	@echo "  make restore ARCHIVE=<file> - Restore a snapshot (refuses while the stack is running)"
 	@echo "  make config          - Generate local config files (aborts if config already exists)"
 	@echo "  make config-upgrade  - Merge new fields from config.example.yaml into config.yaml"
 	@echo "  make check           - Check if all required tools are installed"
@@ -76,6 +78,18 @@ doctor:
 
 support-bundle:
 	@$(BACKEND_UV_RUN) python ../scripts/support_bundle.py --include-doctor
+
+# Whole-instance snapshot: memory, threads, chat tabs, runtime settings, uploads,
+# config, custom skills. Credentials (.env, integration tokens) are EXCLUDED by
+# default — add INCLUDE_SECRETS=1 to carry them in an owner-only archive.
+backup:
+	@$(PYTHON) scripts/backup.py create $(if $(INCLUDE_SECRETS),--include-secrets,) $(if $(OUTPUT_DIR),--output-dir $(OUTPUT_DIR),)
+
+# Refuses while a stack is running (restoring under a live Gateway corrupts the
+# database it holds open). Stop first, or pass FORCE=1.
+restore:
+	@if [ -z "$(ARCHIVE)" ]; then echo "Usage: make restore ARCHIVE=backups/deerflow-backup-YYYYmmdd-HHMMSS.tar.gz"; exit 1; fi
+	@$(PYTHON) scripts/backup.py restore "$(ARCHIVE)" $(if $(FORCE),--force,)
 
 detect-thread-boundaries:
 	@$(BACKEND_UV_RUN) python ../scripts/detect_thread_boundaries.py --json-output ../.deer-flow/thread-boundary-inventory.json

@@ -11,6 +11,11 @@ export interface Subtask {
   description: string;
   /** Effective DeerFlow model selected for this subagent run. */
   modelName?: string;
+  /**
+   * Fork feature: how the cost-aware routing policy chose this model.
+   * Absent unless a policy actually routed, so an unrouted card is unchanged.
+   */
+  routing?: { rule?: string; reason: string };
   /** Latest cumulative token snapshot reported while the subagent runs. */
   usage?: TokenUsage;
   latestMessage?: AIMessage;

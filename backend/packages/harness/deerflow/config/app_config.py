@@ -24,8 +24,11 @@ from deerflow.config.file_signature import get_config_signature as _get_config_s
 from deerflow.config.guardrails_config import GuardrailsConfig, load_guardrails_config_from_dict
 from deerflow.config.input_polish_config import InputPolishConfig
 from deerflow.config.loop_detection_config import LoopDetectionConfig
+from deerflow.config.mcp_tasks_config import McpTasksConfig
 from deerflow.config.memory_config import MemoryConfig, load_memory_config_from_dict
 from deerflow.config.model_config import ModelConfig
+from deerflow.config.model_fallback_config import ModelFallbackConfig
+from deerflow.config.model_routing_config import ModelRoutingConfig
 from deerflow.config.read_before_write_config import ReadBeforeWriteConfig
 from deerflow.config.reload_boundary import format_field_description
 from deerflow.config.run_events_config import RunEventsConfig
@@ -37,6 +40,7 @@ from deerflow.config.scheduler_config import SchedulerConfig
 from deerflow.config.skill_evolution_config import SkillEvolutionConfig
 from deerflow.config.skill_scan_config import SkillScanConfig
 from deerflow.config.skills_config import SkillsConfig
+from deerflow.config.spend_budget_config import SpendBudgetConfig
 from deerflow.config.stream_bridge_config import StreamBridgeConfig, load_stream_bridge_config_from_dict
 from deerflow.config.subagents_config import SubagentsAppConfig, load_subagents_config_from_dict
 from deerflow.config.suggestions_config import SuggestionsConfig
@@ -205,6 +209,9 @@ class AppConfig(BaseModel):
     )
     token_usage: TokenUsageConfig = Field(default_factory=TokenUsageConfig, description="Token usage tracking configuration")
     token_budget: TokenBudgetConfig = Field(default_factory=TokenBudgetConfig, description="Token Budget tracking and limits configuration.")
+    spend_budget: SpendBudgetConfig = Field(default_factory=SpendBudgetConfig, description="Currency-denominated spend caps over a daily/weekly/monthly window (fork feature).")
+    model_fallback: ModelFallbackConfig = Field(default_factory=ModelFallbackConfig, description="Default fallback chain for models that declare no per-model `fallback:` (fork feature).")
+    model_routing: ModelRoutingConfig = Field(default_factory=ModelRoutingConfig, description="Cost-aware subagent routing policy; off by default and always overridden by an explicit per-thread subagent selection (fork feature).")
     plugins: list[ExtensionSpec] = Field(
         default_factory=list,
         description=format_field_description(
@@ -289,6 +296,13 @@ class AppConfig(BaseModel):
         description=format_field_description(
             "scheduler",
             field_doc="Scheduled task runtime configuration (background poller for one-time and cron agent runs).",
+        ),
+    )
+    mcp_tasks: McpTasksConfig = Field(
+        default_factory=McpTasksConfig,
+        description=format_field_description(
+            "mcp_tasks",
+            field_doc="Long-running MCP task persistence and background polling runtime.",
         ),
     )
     checkpointer: CheckpointerConfig | None = Field(

@@ -56,6 +56,56 @@ python3 scripts/sync-ollama-models.py --base-url http://ollama:11434
 python3 scripts/sync-ollama-models.py --num-ctx-cap 0
 ```
 
+**Daemon lifecycle (`keep_alive`, preload, contention).** The sizing above stops
+at the config file; the daemon itself was unmanaged, and three things followed
+from that.
+
+*Every subagent call paid a cold start.* Ollama unloads a model ~5 minutes after
+its last call. In a turn where the lead thinks for a while and then delegates,
+the local subagent's weights have already been evicted and get reloaded from
+disk before it can answer — the cost landing on exactly the local-subagent
+configuration this fork recommends. `ollama.keep_alive` is now written into
+every synced entry (and forwarded by `ChatOllama` to the daemon), with
+`ollama.keep_alive_overrides` for per-model values:
+
+```yaml
+ollama:
+  keep_alive: 30m        # "1h", a bare number of seconds, or -1 to never unload
+  preload: true          # warm models[0] at launch
+  keep_alive_overrides:
+    qwen3:8b: 1h
+```
+
+Unset leaves the daemon's own default, which is the prior behavior — pinning
+weights in VRAM is a decision about the whole machine, so the sync does not
+assume it.
+
+*The first message of a session was always slow.* `ollama.preload: true` loads
+`models[0]` (which is what `models/factory.py` resolves an unspecified model to)
+into VRAM at launch, via `/api/generate` with an empty prompt — the load-only
+request, no tokens generated. `scripts/serve.sh` runs it **backgrounded**:
+loading weights can take tens of seconds and must never sit in front of the
+stack starting. It is best-effort in both directions — a busy or absent daemon
+is a no-op, and a cloud `models[0]` means there is nothing local to warm.
+
+*Two local models could not both be resident, silently.* A local lead with a
+local subagent means two sets of weights in VRAM at once. Ollama does not fail
+there — it evicts one to load the other, so every delegation pays a full reload
+and the run just crawls. When `vram_gb` is set, the sync now warns at launch
+with the real numbers, reusing the same geometry math as the context sizing:
+
+```
+[ollama-sync] VRAM contention: qwen3:32b (19.9 GiB) + qwen3:14b (8.9 GiB) need
+~30.3 GiB resident together (weights + a 4096-token KV cache each + 1.5 GiB
+overhead), but the configured budget is 24 GiB. …
+```
+
+A warning, and only a warning: it never silently reassigns the user's model
+choice. `make doctor` gained a matching **Local Models** section — daemon
+reachable, configured models actually pulled (naming the `ollama pull` for any
+that are not), and whether `keep_alive` is set. All warn-only; a deliberately
+stopped daemon is not a broken install.
+
 ### 2. API-key model auto-config in `config.yaml`
 
 A companion to the Ollama sync for **cloud** models. `scripts/sync-api-key-models.py` runs on every launch, reads the provider API keys in your `.env` (falling back to the process environment), and **uncomments** the matching ready-to-use model block in `config.yaml` — so the right models are enabled on first start with no manual editing.
@@ -195,7 +245,29 @@ Rules for keeping it honest:
 
 #### Auditing the model list (settings + pricing)
 
-Run this pass **periodically, whenever you touch the bundle, and as a step of the [Post-sync feature checklist](#post-sync-feature-checklist) on every upstream merge** — models, prices, and promos shift on the providers' schedule, not upstream's, so the sync is just a convenient recurring checkpoint to re-verify them. It keeps the enabled models, their per-model settings, and their prices honest. Everything below lives in the **two synced sources** — the `config.example.yaml` marker blocks and `scripts/wizard/providers.py` — so apply every change to both.
+**The trigger for this pass is the weekly audit job, not the calendar.**
+`.github/workflows/model-audit.yml` runs `scripts/audit_models.py` every Monday:
+it reads both synced sources and diffs them against the live OpenRouter catalog,
+then opens (or updates) a single `model-audit`-labelled issue listing retired or
+renamed slugs, list prices that moved, and promotions that started or ended —
+with a suggested diff. It **never commits a price**: this checklist's rule is
+that a price is confirmed against the provider's own page, and a wrong automated
+price is worse than a stale one because it is wrong with confidence and silences
+the next audit. An unreachable provider is reported as *skipped*, never as drift,
+so the job does not become a weekly red tick people learn to ignore. The issue
+closes itself when a later run comes back clean.
+
+Two things the job checks without any network, so they hold for every provider:
+each entry's display-name price agrees with its own `pricing:` block (the
+half-update that renders a wrong number with nothing raising), and the two synced
+sources still agree with each other. Providers without a machine-readable
+catalog are listed as skipped in the issue — for those, the manual steps below
+are still the whole audit. Run it yourself any time with
+`python3 scripts/audit_models.py`, or against the deliberately stale fixture
+(`--catalog scripts/fixtures/model_audit_stale_catalog.json`) to confirm the
+audit itself still detects drift.
+
+Run this pass **when that issue appears, whenever you touch the bundle, and as a step of the [Post-sync feature checklist](#post-sync-feature-checklist) on every upstream merge** — models, prices, and promos shift on the providers' schedule, not upstream's, so the sync is just a convenient recurring checkpoint to re-verify them. It keeps the enabled models, their per-model settings, and their prices honest. Everything below lives in the **two synced sources** — the `config.example.yaml` marker blocks and `scripts/wizard/providers.py` — so apply every change to both.
 
 1. **Roster & order.** The bundle stays grouped by provider in this order: **Anthropic** (direct) → **OpenRouter** → the **first-party "home" blocks** (OpenAI, xAI, Google, DeepSeek, Mistral, Moonshot, Qwen, MiniMax, z-ai — in `config.example.yaml`'s FIRST-PARTY HOME API BLOCKS section) → **Ollama** (populated at runtime by `scripts/sync-ollama-models.py`, so it lands after the static blocks). Keep the "one flagship per big-name lab + a couple of cheaper picks" shape from *Which models to keep in the bundle* above, and keep each lab's flagship **doubled** (home + OpenRouter).
 2. **Slugs.** Confirm each `model:` is the exact current id (bare Anthropic ids like `claude-opus-5`; OpenRouter `provider/model` slugs; **home** blocks use each lab's own bare id — the OpenRouter slug minus its `provider/` prefix, e.g. `openai/gpt-5.6-sol` → `gpt-5.6-sol`, `z-ai/glm-5.2` → `glm-5.2`). A wrong/unreleased id fails at request time, not at load — verify against the provider's / OpenRouter's catalog, never from memory.
@@ -257,7 +329,7 @@ The conversation header already showed a token counter (input / output / total f
 - **Model-aware, so subagents are billed correctly.** The cost is summed from each run's **per-model** `token_usage_by_model` split, not a flat rate on the thread total. A run whose lead was Opus and whose subagents ran on Haiku or a local Ollama model is priced Opus-for-Opus and Haiku-for-Haiku — the lever this fork exposes (§3, the per-thread subagent model dropdown) shows up directly in the number. Prompt-cache hits are billed at the cache-hit rate when configured (a conservative upper bound otherwise), reusing the exact same cache-aware math as the ops console.
 - **Provider-reported model ids are resolved back to your config entry.** `token_usage_by_model` buckets are keyed by what the *provider* reported (`response_metadata.model_name`), which is routinely **not** the id in `config.yaml`: LangChain records the API-resolved model, so Anthropic hands back the dated snapshot its alias resolved to (`claude-opus-5` → `claude-opus-5-20260115`), OpenAI does the same, OpenRouter appends `:variant` routing tags, and a routed slug carries a `vendor/` prefix. Exact-string matching therefore found **no** price for any bucket, so every per-model `cost` was null and `total_cost` stayed null while `currency` was set — which is exactly the `—` the header rendered from the day this feature shipped. `lookup_pricing` now tries a small ordered set of normalized forms by **exact** lookup (never a prefix scan, so a normalization can only ever hit a model the operator actually configured): the reported id, then with the `vendor/` prefix peeled, the `:variant` tag dropped, and a terminal date stamp (`-20260115`, `-2026-01-15`, `@20260115`) removed. Most-specific-first, so a configured OpenRouter copy is still billed at its own routed price rather than the direct entry its slug reduces to; the date pattern is deliberately narrow, so a genuinely different sibling (`claude-opus-5-turbo`) stays unpriced instead of inheriting a neighbour's rate. Ollama tags (`qwen3:8b`) match exactly first and are unaffected.
 - **Ollama / unpriced = $0.** A model with no `pricing:` block contributes nothing to the cost — local inference is treated as free even though it burns electricity. The header's **?** tooltip says exactly this so the number is never mistaken for a billing statement.
-- **Separate memory & suggestions counters.** The two optional, off-by-default features that quietly cost tokens — background **memory** extraction (§"Long-term memory off by default") and follow-up **suggestions** (§4) — never become graph runs, so their tokens never reached the thread's run totals. They are now tracked in a small **process-local** per-thread registry and shown as their **own** priced counters in the header dropdown when non-zero, so you can see what each is costing on top of the conversation itself.
+- **Separate memory & suggestions counters.** The two optional, off-by-default features that quietly cost tokens — background **memory** extraction (§"Long-term memory off by default") and follow-up **suggestions** (§4) — never become graph runs, so their tokens never reached the thread's run totals. They are now tracked in a small **durable** per-thread registry and shown as their **own** priced counters in the header dropdown when non-zero, so you can see what each is costing on top of the conversation itself. The registry survives a Gateway restart — see *Durable auxiliary counters* below.
 
 **Where it's wired.**
 
@@ -266,27 +338,39 @@ The conversation header already showed a token counter (input / output / total f
 | Shared pricing math (build map, provider-id resolution, per-token cost, per-run cost, one-currency guard, promo rates) | `backend/app/gateway/pricing.py` — extracted from `routers/console.py` so the console and the thread endpoint price identically. `_pricing_lookup_candidates` owns the provider-reported-id normalization, so the console, the thread endpoint, and the memory/suggestions aux counters all resolve ids the same way. `_parse_promo_rates` validates a discount (both directions, positive, at or below list) and `ModelPricing.promo()` hands it back as an ordinary `ModelPricing`, so `token_cost` prices a promo through the same formula as a standard rate rather than a second one that could drift |
 | Bundled model prices | All 40 paid entries in `config.example.yaml`'s marker blocks, mirrored by `scripts/wizard/providers.py::pricing_for_display_name()` (derived from the price-in-name pair — including the starred promo half — so the two sources cannot drift) |
 | Thread cost endpoint | `GET /api/threads/{id}/token-usage` (`routers/thread_runs.py`) now returns `total_cost`, `promo_total_cost` (the same whole-thread total at live discount rates, null when nothing is discounted), `currency`, `unpriced_models` (models that spent tokens with no configured price), per-model `cost`/`input`/`output`/`cache_read`, and an `aux` map (memory/suggestions tokens+cost). The store aggregation (`runs/store/memory.py`, `persistence/run/sql.py`, shared `new_by_model_usage_entry()`) now carries the per-model input/output/cache-read split the pricing needs |
-| Auxiliary-usage registry | `backend/packages/harness/deerflow/runtime/aux_usage.py` — thread-safe, bounded (LRU over 4096 threads), process-local. Memory records via the existing `_host_default_extraction_callback` (`agents/memory/manager.py`); suggestions records via `run_oneshot_llm_with_usage` (`utils/oneshot_llm.py`) from `routers/suggestions.py` |
+| Auxiliary-usage registry | `backend/packages/harness/deerflow/runtime/aux_usage.py` — thread-safe, bounded (LRU over 4096 threads), and **durable**: a write-through cache over `runtime/aux_usage_store.py`, a small dedicated SQLite file at `<DeerFlow home>/aux_usage.sqlite3`. Memory records via the existing `_host_default_extraction_callback` (`agents/memory/manager.py`); suggestions records via `run_oneshot_llm_with_usage` (`utils/oneshot_llm.py`) from `routers/suggestions.py`. Async callers (`routers/suggestions.py`, the `token-usage` endpoint) go through `arecord_aux_usage` / `aget_thread_aux_usage`, which offload the file IO |
 | Frontend | `token-usage-indicator.tsx` renders the green cost (plus the red standard rate and its legend while a promo is live) + `?` tooltip + aux rows + the unpriced-model note; `core/threads/token-usage.ts` (`threadTokenUsageToCostSummary`, `formatCost`); both chat pages pass the summary; i18n `tokenUsage.cost` / `costHint` / `unpricedOnly` / `unpricedPartial` / `promoRate` / `standardRate` / `memory` / `suggestions` |
 
 **Verify it works.** The pricing math and the endpoint are both offline-testable, so the backend tests are the fast gate:
 
 ```bash
 cd backend && uv run pytest tests/test_pricing.py tests/test_thread_token_usage.py tests/test_aux_usage.py tests/test_aux_usage_wiring.py
+cd backend && uv run pytest tests/blocking_io/test_aux_usage.py   # the durable aux store's IO stays off the event loop
 make doctor      # 'model pricing' names the symptom when nothing configured can be priced
 cd backend && uv run pytest tests/test_config_integrity.py -k BundledModelPricing   # every model priced; name pair == pricing block; promo pair == promo block
 cd frontend && pnpm test token-usage                                                 # cost summary incl. promo + aux promo collapse
 ```
 
-Then in the browser (`make dev` → open a chat that has run at least one turn): the header pill shows a **green** dollar amount; opening it shows **Estimated cost** in green, and — if any model in the thread is currently discounted — a red standard total beside it with the `promo rate now` / `standard rate` legend. Run an **Ultra-mode** turn with the subagent set to a discounted model (GLM-5.2 / MiniMax M3) and a full-price lead: the gap between the two totals should equal the subagent's saving only. Memory/suggestions rows are green and priced per their own model.
+Then in the browser (`make dev` → open a chat that has run at least one turn): the header pill shows a **green** dollar amount; opening it shows **Estimated cost** in green, and — if any model in the thread is currently discounted — a red standard total beside it with the `promo rate now` / `standard rate` legend. Run an **Ultra-mode** turn with the subagent set to a discounted model (GLM-5.2 / MiniMax M3) and a full-price lead: the gap between the two totals should equal the subagent's saving only. Memory/suggestions rows are green and priced per their own model. **Then restart the Gateway** (`make stop && make dev`) and reopen the same thread: the memory/suggestions rows must come back with the same totals — that is the durability half, and it is the one thing a unit test cannot show you end to end. `<DeerFlow home>/aux_usage.sqlite3` is the file behind them.
 
-**Caveats (deliberate).** The aux counters are **process-local and reset on Gateway restart** — recording memory usage from the background updater thread rules out the async runs DB, and "since server start" is enough for a single-process personal deployment (the fork's target). The durable main token/cost counter is unaffected. Cost reflects **persisted runs only** (in-flight stream deltas aren't priced until the run completes). All priced models must share one currency (mixed currencies disable cost, same rule as the console).
+**Durable auxiliary counters.** The memory and suggestions counters used to be process-local and reset on every Gateway restart. That was fine for a display counter and a bad foundation for a budget or a spend report, so they are now persisted.
+
+- **Where.** `runtime/aux_usage_store.py`, a small dedicated SQLite file at `<DeerFlow home>/aux_usage.sqlite3` (default `backend/.deer-flow/`). Set `DEER_FLOW_AUX_USAGE_DB=<path>` to move it, or `DEER_FLOW_AUX_USAGE_DB=0` to go back to the old process-local counter.
+- **Why a dedicated store and not the runs DB.** Memory usage is recorded from the memory updater's debounce worker — an ordinary `threading.Timer` thread with **no event loop** — and the application database is an async SQLAlchemy engine bound to the Gateway's loop. Reaching it would need a queue drained by that loop, which only works while a Gateway is running and loses whatever has not drained at shutdown. A plain `sqlite3` connection is usable from any thread, so one code path serves the Gateway, the embedded client, and the TUI; it commits where the call happens (nothing to lose on a hard crash); it needs no synchronous Postgres driver and no alembic revision; and aux usage has no foreign key into `runs`, so co-locating it buys nothing.
+- **The in-memory registry is still there, as a write-through cache**, hydrated from the store on a thread's first touch — so the header keeps reading from memory. The LRU cap (4096 threads) now evicts *cache entries* rather than data: an evicted thread re-hydrates on its next touch.
+- **Rows are append-only events with a `recorded_at`**, so a later spend window or attribution report can slice by date without a schema migration.
+- **It is best-effort.** A store that cannot be opened or written logs one warning and the counter falls back to process-local for that run; memory extraction and chat responses are never disturbed.
+- **Blocking IO.** The store is a local file, so `record_aux_usage` / `get_thread_aux_usage` touch the disk. They are safe from any thread (that is the point) but not from the event loop; async callers use `arecord_aux_usage` / `aget_thread_aux_usage`, pinned by `backend/tests/blocking_io/test_aux_usage.py`.
+- **Multi-worker caveat.** The cache is per process, so with several Gateway workers one worker's header can lag a sibling's aux writes until that thread re-hydrates (restart or LRU eviction). The persisted totals are always complete; only a cached view can be behind. The fork's target is a single-process personal deployment.
+
+**Caveats (deliberate).** Cost reflects **persisted runs only** (in-flight stream deltas aren't priced until the run completes). All priced models must share one currency (mixed currencies disable cost, same rule as the console).
 
 **Tests (does it calculate correctly?).**
 
 - `backend/tests/test_pricing.py` — the pricing math end-to-end: per-million pricing, cache-hit vs miss, the multi-model (subagent) run cost, unpriced/zero-priced skipping, and the mixed-currency guard. Also pins the **provider-reported id resolution** that made the header show `—`: Anthropic dated snapshots, OpenAI dashed-date and Vertex `@date` suffixes, OpenRouter `:variant` tags, a routed slug falling back to a direct entry, a configured routed copy still winning over that direct entry, sibling models never inheriting each other's rate (`claude-opus-4-8-…` vs `claude-opus-5`), an unconfigured/local id still resolving to `None`, and candidate ordering. `TestPricingDerivedFromDisplayName` covers the fallback that reaches existing installs — derivation from the name, the promo pair and Anthropic cache rate carried through, an explicit block always winning, a malformed explicit block *not* falling back, an unpriced name (Ollama, bare version numbers) staying unpriced, and a cross-check that the derived figures equal what `providers.py` generates for every bundled shape. `TestPromoPricing` covers the additive discount: promo rates exposed as a standalone `ModelPricing`, promo cache-hit accounting, `run_cost` still billing the standard rate, and every way an invalid promo (half-specified, malformed, zero/negative, above list) is dropped **whole** while the standard price survives.
-- `backend/tests/test_aux_usage.py` — the registry: accumulation, category/model/thread isolation, deep-copy reads, the LRU cap, and thread-safety under concurrent writers.
-- `backend/tests/test_aux_usage_wiring.py` — memory (`_host_default_extraction_callback`) and suggestions (`_record_suggestions_usage`) actually record into the registry.
+- `backend/tests/test_aux_usage.py` — the registry: accumulation, category/model/thread isolation, deep-copy reads, the LRU cap, and thread-safety under concurrent writers. Plus **durability**: totals identical across a simulated restart (`reset_aux_usage_cache()` drops the cache and store handle, keeps the file), a post-restart write extending the hydrated totals instead of replaying them, a read miss never taking an LRU slot, an evicted thread re-hydrating rather than losing data, a second reader of the same file seeing the same totals, the `DEER_FLOW_AUX_USAGE_DB=0` kill switch restoring the old process-local behaviour, an unusable store degrading to the cache with exactly one warning, path resolution (default/disabled/explicit), the SQLite store's own aggregation, and the async wrappers.
+- `backend/tests/test_aux_usage_wiring.py` — memory (`_host_default_extraction_callback`) and suggestions (`_record_suggestions_usage`) actually record into the registry, and both sinks survive a restart end to end.
+- `backend/tests/blocking_io/test_aux_usage.py` — the strict Blockbuster anchor: `arecord_aux_usage` / `aget_thread_aux_usage` must offload the store's SQLite IO, so pointing the suggestions route or the `token-usage` endpoint back at the synchronous registry API fails CI instead of quietly stalling the event loop on every answer.
 - `backend/tests/test_thread_token_usage.py` — the endpoint computes model-aware `total_cost`, per-model cost, and priced/unpriced `aux` counters (a worked example: Opus lead + cheap subagent + memory-on-unpriced + suggestions-on-priced), and nulls everything when no pricing is configured. `test_cost_tracks_model_switching_across_turns` pins the **"as the conversation goes on" property**: three turns on three different priced models (Opus → Sonnet → Haiku) drive the *real* cross-run per-model store aggregation through the *real* pricing helpers, asserting the cumulative cost is the sum of each turn billed at the model that actually ran it — no turn's tokens cross-attributed to another model's rate. `test_thread_token_usage_prices_provider_reported_model_ids` is the end-to-end regression for the `—` bug: it drives the **real endpoint** over the ids providers actually report (dated Anthropic snapshots plus an OpenRouter `:variant` slug) across a mid-conversation model switch and asserts a non-null cumulative cost — so a regression in the id resolution fails at the endpoint, not only in the pricing unit tests. Five further tests pin `promo_total_cost`: a mixed thread (one discounted model + one full-price) where the promo total bills the undiscounted model at its ordinary rate; null on both the no-promo and no-pricing-at-all paths; `test_promo_total_is_model_aware_across_lead_subagent_and_aux`, the Ultra-mode shape — full-price lead (dated Anthropic snapshot) + **discounted subagent** (OpenRouter `:variant` slug) + memory on the discounted model + suggestions on the full-price one, asserting the saving equals the subagent's alone rather than being smeared across the lead's tokens; and `test_unpriced_subagent_model_does_not_break_the_promo_total`, where a local Ollama subagent contributes 0 to both totals and is still named in `unpriced_models`.
 - `backend/tests/test_token_usage_by_model.py`, `test_run_repository.py`, `test_persistence_scaffold.py` — updated for the enriched `by_model` shape (now carrying the input/output/cache-read split). `test_token_usage_by_model.py` also pins the store's cross-run merge when the lead model changes between turns, and memory/SQL-store parity (`test_memory_and_sql_stores_agree`).
 - `frontend/tests/unit/core/threads/token-usage.test.ts` — `threadTokenUsageToCostSummary` (null without currency, drops zero-token aux rows, carries `promoTotalCost` and nulls it when absent **or** equal to the standard total) and `formatCost` (sub-cent precision, malformed-currency fallback).
@@ -353,6 +437,481 @@ cd backend && uv run pytest tests/test_user_ui_state.py tests/test_chat_tabs_set
 ```
 
 Then end-to-end (`make dev` → land on a new chat): the empty tab strip with its drop hint is already visible; drag a sidebar conversation onto it (or use its **Open in tab** menu) → it becomes a tab and the hint disappears; open a second; switch between them and confirm the background chat keeps its scroll and stream (both instances stay in the DOM, only the active one is visible); drag one chip onto another to reorder; close a chip; reload and confirm the tabs come back. Full frontend gate: `pnpm format && pnpm check && pnpm test`.
+
+### 10. Currency spend caps (`spend_budget`)
+
+§7 made cost **visible**. This makes it **bounded**: a cap in real money over a
+day, week, or month, in whatever single currency your `models[*].pricing` blocks
+use.
+
+Upstream's `token_budget` does not fill this hole. It is per-run and counted in
+tokens, and in a fork whose premise is mixing Opus, Haiku and free local Ollama
+in one session a token is not a unit of cost — 200k tokens is $5 or $0 depending
+on which model burned them. So `spend_budget` mirrors `token_budget`'s shape
+(`enabled`, limits, `warn_threshold`, `hard_stop_threshold`) and changes the
+unit:
+
+```yaml
+spend_budget:
+  enabled: true
+  daily_limit: 5.00        # in the pricing currency
+  weekly_limit: 25.00
+  monthly_limit: 80.00
+  window: rolling          # or `calendar` (since local midnight / Monday / the 1st)
+  tz_offset_minutes: 0     # local offset for `calendar` boundaries
+  warn_threshold: 0.8
+  hard_stop_threshold: 1.0
+```
+
+- **Two enforcement points, one number.** At **run admission** the Gateway sums
+  the window and refuses a new run with **HTTP 402** when a cap is already spent
+  (`Spend budget exhausted: the daily cap of 5 USD is already at 5.12 USD…`).
+  **During a run**, `SpendBudgetMiddleware` — modelled directly on
+  `TokenBudgetMiddleware` — injects an in-context warning at `warn_threshold` and
+  at `hard_stop_threshold` strips tool calls so the agent produces a final answer
+  from what it has. It never raises; a budget stop is an orderly wrap-up. The
+  admission check also hands the run its window **baseline**, and the middleware
+  adds the live run's own spend on top, so one long run cannot blow through a cap
+  it started just under.
+- **Billed per model, so the fork's own lever shows up.** In-run spend is read
+  from the `RunJournal`'s live per-model accumulator (a new
+  `current_token_usage_by_model()`), which already folds subagent usage in by
+  model. A premium lead with Haiku or local subagents is therefore billed
+  Opus-for-Opus and Haiku-for-Haiku, exactly like the header. Without that, a
+  cheap subagent would be billed at the lead's rate and a cap would fire early on
+  precisely the configuration this fork recommends.
+- **Unpriced models cost 0, so a local run is never blocked.** This is a hard
+  requirement, not a side effect of a sparse pricing map: the whole point of
+  local models is that they are free, and a spend cap that stops a fully local
+  session would break the fork's central promise.
+- **What counts.** Persisted run costs **plus** the durable memory/suggestions
+  counters from §7 — those are real money and would otherwise be invisible to a
+  budget. Both are priced through the one shared pricing module.
+- **It self-disables rather than guessing.** With **no model priced**, a currency
+  budget has nothing to measure, so the feature turns itself off with a reason
+  instead of enforcing a cap against a permanent `0` (which would never fire) or
+  against nothing (which would block everything). Same for
+  `database.backend: memory`, which keeps no spend history to measure a window
+  against. `make doctor`'s **`spend budget`** check names whichever applies, and
+  the agent build logs a warning. `enabled: true` with no limit set is a config
+  error and fails loudly at load — turning the feature on and configuring nothing
+  to enforce is a mistake, not a preference.
+- **Where it shows.** The header cost dropdown gains a **Budget left** line for
+  the window with the least headroom (green → amber past the warn threshold →
+  red once spent), plus an explicit note when the cap is reached. Only the
+  tightest window is shown; three rows of headroom is noise.
+
+**Where it's wired.**
+
+| Piece | Location |
+| --- | --- |
+| Config | `deerflow/config/spend_budget_config.py` (`SpendBudgetConfig`, `SpendLimit`), `spend_budget:` block in `config.example.yaml`, `AppConfig.spend_budget` |
+| Window math | `deerflow/runtime/spend_window.py` (`resolve_window_start`, rolling vs. calendar) |
+| Accounting + admission | `backend/app/gateway/spend_budget.py` (`resolve_spend_budget_status`, `SpendBudgetStatus`, `exhausted_message`); the 402 and the baseline injection live in `app/gateway/services.py::start_run` |
+| In-run enforcement | `deerflow/agents/middlewares/spend_budget_middleware.py`, appended in `agents/lead_agent/agent.py` after `TokenBudgetMiddleware` |
+| Live per-model usage | `deerflow/runtime/journal.py::RunJournal.current_token_usage_by_model()` |
+| Pricing | `deerflow/pricing.py` — **moved out of `app/gateway/pricing.py`** so the in-graph middleware can price without importing `app.*` (the harness boundary). `app/gateway/pricing.py` is now a re-export shim, so every existing importer is unchanged |
+| Header line | `GET /api/threads/{id}/token-usage` → `spend_budget`; `core/threads/token-usage.ts::threadTokenUsageToSpendBudget`; `components/workspace/token-usage-indicator.tsx` |
+| Diagnostic | `scripts/doctor.py::check_spend_budget` |
+
+**Verify it works.**
+
+```bash
+cd backend && uv run pytest tests/test_spend_budget_config.py tests/test_spend_budget.py tests/test_spend_budget_middleware.py
+cd backend && uv run pytest tests/blocking_io/test_aux_usage.py   # the window read stays off the event loop
+cd backend && uv run pytest tests/test_doctor.py -k spend_budget
+cd frontend && pnpm test token-usage                               # the header's budget line
+make doctor                                                        # 'spend budget' names why a cap is not enforced
+```
+
+Then in the browser (`make dev`): set `spend_budget.enabled: true` with a
+deliberately tiny `daily_limit` (say `0.01`), run a turn on a **priced** model,
+and the header dropdown's **Budget left** goes red; the next message is refused
+with the 402 message. Set the limit back, switch the thread to a **local Ollama**
+model, and confirm the same tiny cap never blocks it — that is the rule the whole
+feature is built around.
+
+### 11. Spend history and attribution (`/workspace/spend`)
+
+The header answers "what is this conversation costing". This answers the question
+a person actually asks at the end of a month. A new workspace page beside
+`/workspace/scheduled-tasks` reports one window three ways:
+
+- **By feature** — conversation vs. memory vs. suggestions, so the two
+  off-by-default background features from §7 are finally accountable in a
+  cross-thread view rather than only per thread.
+- **By model** — most expensive first, with unpriced models sorted **last** and
+  labelled, never as if they were the cheapest.
+- **By conversation** — with thread titles, so an expensive chat is identifiable.
+
+Windows are 7 / 30 / 90 days. The three groupings are derived from the same
+priced rows, so their totals agree — pinned by a test that asserts exactly that.
+
+- **No second cost calculation.** The endpoint reuses `pricing.py` end to end
+  (`run_cost` for runs, `token_cost` for the auxiliary sinks), so a model can
+  never be billed differently here than in the chat header.
+- **Unpriced models are named.** When nothing is priced the page says so and why;
+  when only some models are, it names the ones missing a price and warns that the
+  real cost is higher — the same rule the header follows, for the same reason (a
+  quietly low total is indistinguishable from a broken feature).
+- **Token counts work before pricing does**, so the page is useful on a config
+  with no `pricing:` blocks at all.
+
+**Where it's wired.**
+
+| Piece | Location |
+| --- | --- |
+| Endpoint | `GET /api/console/spend?days=N` in `backend/app/gateway/routers/console.py` (`ConsoleSpendResponse`) |
+| Auxiliary range read | `deerflow/runtime/aux_usage_store.py::AuxUsageStore.aggregate(since, until, thread_ids)` — the time-sliceable read the append-only `recorded_at` row shape was added for in §7 |
+| Frontend client | `frontend/src/core/spend/{api,hooks,types}.ts` |
+| Page + nav | `frontend/src/app/workspace/spend/page.tsx`, entry in `components/workspace/workspace-nav-chat-list.tsx`, i18n `spend.*` |
+
+**Verify it works.**
+
+```bash
+cd backend && uv run pytest tests/test_console_router.py -k ConsoleSpend
+cd frontend && pnpm check && pnpm test
+```
+
+Then in the browser (`make dev`): open **Spend** in the sidebar. With pricing
+configured the three tables agree with the summary total; switch the window and
+the figures move. On a config with no prices the tables still show tokens and the
+page explains why there is no cost.
+
+### 12. Effective deployment exposure check
+
+Passwordless auth, multi-user mode off, and a non-loopback `BIND_HOST` are
+simultaneously this fork's happy path and its worst-case security posture. Each
+setting is individually documented and individually defensible. The
+*combination* is what decides who can reach the instance and as whom — and until
+now nothing computed it, so the operator had to hold three settings in three
+different files in their head at once.
+
+`scripts/exposure.py` computes it. `make doctor` reports it, and the same
+assessment prints at the end of `make up` and `make dev`, where it is actually
+read.
+
+**It changes no default.** This is diagnosis only — the defaults are the fork's
+deliberate choice, and the check never returns a `fail`, so a home lab that is
+exposed on purpose does not make `make doctor` exit non-zero.
+
+**Two entry surfaces, and they do not share a bind address.** This is the part
+that is easy to get wrong by reading `.env` alone:
+
+| Entry | Bind address | Set by |
+| --- | --- | --- |
+| `make up` (Docker) | `${BIND_HOST:-127.0.0.1}` | `.env` → the published compose port; **loopback by default** |
+| `make dev` / `make start` (local) | every interface | `docker/nginx/nginx.local.conf`'s `listen 2026;` has **no address**, so `BIND_HOST` does not apply at all |
+
+So the local dev stack is on the LAN even when `.env` says `BIND_HOST=127.0.0.1`.
+That is not a regression — it is what the local nginx config has always done —
+but it was invisible. `make doctor` now prints one row per entry.
+
+**Tiers.**
+
+| Tier | When | Reported as |
+| --- | --- | --- |
+| `local-only` | the bind is loopback | ✓ ok, one line, no nagging — every other setting is irrelevant if nobody outside this machine can connect |
+| `trusted-network` | reachable, but either auth is on, or the reach is a tailnet / private LAN | ⚠ warn |
+| `open-network` | no login wall **and** a wildcard / public / unclassifiable bind | ⚠ warn, naming every contributing setting |
+
+A Tailscale bind is deliberately not the same as `0.0.0.0`: 100.64.0.0/10 and
+`fd7a:115c:a1e0::/48` are classified as `tailscale`, not `private`, because a
+tailnet is a device-authenticated overlay. (Python's own `is_private` reports
+CGNAT as private, so the ordering in `classify_bind_host` is load-bearing.)
+`should_cobind_loopback` in `deploy.sh` already treats the two differently; this
+matches it.
+
+**Contributing settings are only named when they can matter.** Multi-user mode
+off on a loopback-only box is the documented personal-server default, not a
+finding — it is reported as contributing only once the instance is reachable
+*and* passwordless. Same for `allow_host_bash`, which becomes "anyone on this
+network gets host code execution" only under those same two conditions. A
+`DEER_FLOW_AUTH_DISABLED=1` that is neutralized by `DEER_FLOW_ENV=production`
+is credited as such rather than counted against the deployment.
+
+| Piece | Where |
+| --- | --- |
+| Assessment | `scripts/exposure.py` (`classify_bind_host`, `resolve_facts`, `assess`) |
+| Doctor check | `scripts/doctor.py::check_deployment_exposure` (one row per entry surface) |
+| Launch summaries | `scripts/deploy.sh` (after the bind line), `scripts/serve.sh` (after the logs line) |
+| Tests | `backend/tests/test_exposure.py` |
+
+**Verify it works.**
+
+```bash
+cd backend && uv run pytest tests/test_exposure.py
+python3 scripts/exposure.py --surface docker      # or --surface local, --format json
+```
+
+### 13. Whole-instance backup and restore (`make backup` / `make restore`)
+
+There is per-feature memory import/export, but nothing snapshotted `.deer-flow`
+**as a unit**: memory, threads, chat tabs, runtime settings, uploads, the
+databases. A personal AI accumulates months of that on one machine with no
+redundancy, which is exactly the deployment shape this fork targets.
+
+```bash
+make backup                              # → backups/deerflow-backup-YYYYmmdd-HHMMSS.tar.gz
+make backup INCLUDE_SECRETS=1            # also .env + integration tokens (see below)
+make restore ARCHIVE=backups/….tar.gz    # refuses while a stack is running
+python3 scripts/backup.py inspect <file> # read the manifest without extracting
+```
+
+**What is in it.** `config.yaml`, `extensions_config.json`, the DeerFlow home
+tree (`backend/.deer-flow` and a repo-root `.deer-flow`), and `skills/custom`.
+Public skills are deliberately out — they are committed, so a restore onto a
+clean checkout already has them. Rebuildable caches are out too (`skills_view`,
+`.retrieval`, `__pycache__`, browser frames, staged `.upload-*.part` files).
+
+**The secrets decision, stated rather than defaulted.** Credentials are
+**excluded** unless you ask for them. Integration credentials under
+`users/{user_id}/integrations/` are `0700`/`0600` for a reason and `.env` holds
+every API key; copying them into a world-readable tarball in `~/Downloads` turns
+a durability feature into a credential-exfiltration feature nobody asked for.
+`--include-secrets` (`INCLUDE_SECRETS=1`) opts in, and then:
+
+- the archive is created `0600` **from the first byte** — opened with an explicit
+  mode rather than chmod'ed afterwards, because an archive that is briefly
+  world-readable while it is written is world-readable;
+- the manifest records `includes_secrets`, so a restore can say what it is about
+  to write;
+- restoring a secret-*free* archive leaves the target's existing credentials in
+  place rather than deleting what the backup does not carry.
+
+**Databases are handled explicitly, not hoped for.** With
+`database.backend: sqlite` the file is inside the home tree and comes along.
+With `postgres`, `pg_dump --no-owner --no-privileges` runs into the archive, and
+a failed dump **aborts the backup** — a snapshot with no database in it is worse
+than an error, because you only find out at restore time. Restore writes the
+dump beside the config and tells you to load it; it never touches a live
+database on your behalf.
+
+**Restore refuses to run underneath a live stack.** Writing over SQLite that a
+Gateway holds open, and over thread directories an active run is using, is how a
+recovery becomes a second outage. `restore` probes the Gateway (8001) and nginx
+(2026) ports and stops with the list of what is up and the `make stop` fix;
+`--force` / `FORCE=1` is the deliberate override.
+
+**Permissions survive; ownership is documented, not faked.** Extraction uses
+`tarfile`'s `filter="tar"`, which keeps the recorded mode bits (so `0700`
+credential directories come back `0700`) while still rejecting absolute paths
+and traversal. The `data` filter would have stripped exactly the modes this
+feature exists to preserve. Ownership can only be restored as root, so it is not
+attempted — which also makes this the recovery path for the root-owned-files
+problem in the Arch / DooD section: restore as your own user and the tree comes
+back owned by you.
+
+**Archive safety is enforced on the way in.** Every member must live under
+`deerflow-backup/`, with no absolute path and no `..` component, and the archive
+must carry a readable DeerFlow manifest — an arbitrary tarball is refused rather
+than extracted over your instance.
+
+| Piece | Where |
+| --- | --- |
+| Script | `scripts/backup.py` (`create_backup`, `restore_backup`, `inspect_backup`, `detect_running_services`) |
+| Targets | `make backup` / `make restore` in the root `Makefile` |
+| Tests | `backend/tests/test_backup.py` |
+
+### 14. Model fallback chains
+
+§3 above notes that models flagged `supports_tools: false` stay selectable and
+"tool-using subagents will simply fail at runtime". That is one instance of a
+general problem: running local models means absorbing local-model failure modes
+— daemon down, OOM, context overflow, no tool support — and the user was
+absorbing them by hand, one lost turn at a time. This is the reliability cost of
+the fork's central bet, and paying it is what makes a cost-aware routing policy
+safe to turn on.
+
+```yaml
+models:
+  - name: qwen3:8b
+    fallback: [claude-haiku-5]     # per-model, wins over the global chain
+
+model_fallback:                    # default for models that declare none
+  enabled: false                   # off by default
+  chain: [claude-haiku-5]
+```
+
+**A failure falls back; a decision does not.** That distinction is the whole
+design. A provider that is down, overloaded, or handed too many tokens has
+failed, and trying the next model beats losing the turn. A user interrupt, a
+spend cap (§10), and a guardrail refusal are things the system *meant* to do —
+retrying those on another model would defeat them **and spend money doing it**.
+A 401/403 is a third case: a bad key is a config error you need to see, not
+something to paper over until the bill arrives.
+
+| Falls back | Does not |
+| --- | --- |
+| connection failure / timeout to the provider | user interrupt (`CancelledError`, LangGraph interrupt) |
+| context-length rejection | spend or token cap |
+| unsupported tool calls | guardrail / moderation refusal |
+| provider 5xx | 401 / 403, and any plain 4xx that is not context/tools |
+
+Anything unrecognized also does **not** fall back: defaulting to "retry on
+another model" would double the cost of every bug and bury the original error
+behind a second, unrelated one.
+
+**Cycles are not detected, they are inexpressible.** A chain member is built
+*without* its own chain, so `a → b → a` is not a shape the config can produce;
+`MAX_CHAIN` (3) bounds the rest. A member that cannot be constructed — missing
+key, bad class path — is dropped with a warning rather than taking down the
+model the user actually selected: degrading to "no fallback" always beats
+degrading to "no model".
+
+**Cost stays correct for free, and that is load-bearing.** The wrapper returns
+the serving model's result untouched, so the `response_metadata.model_name` that
+`RunJournal` keys `token_usage_by_model` on already names whichever model ran.
+Rewriting it to the primary's name would bill a cloud fallback at a local
+model's rate of zero — silently wrong in the direction of the spend cap (§10)
+and the spend report (§11).
+
+| Piece | Where |
+| --- | --- |
+| Classification + wrapper | `backend/packages/harness/deerflow/models/fallback.py` |
+| Config | `ModelConfig.fallback`, `deerflow/config/model_fallback_config.py`, `config.example.yaml` |
+| Wiring | `models/factory.py::_wrap_with_fallbacks` |
+| Tests | `backend/tests/test_model_fallback.py` |
+
+### 15. Cost-aware subagent routing
+
+The fork exposes the cost lever — a per-thread lead model and a per-thread
+subagent override (§3) — but the user has to pull it every session. The worked
+example in *Cost story* below puts Sonnet-lead / Haiku-subagents at **~63%
+cheaper** than all-Sonnet, and Sonnet-lead / local-subagents at **~95%**. A
+policy turns that UI affordance into a standing saving.
+
+```yaml
+model_routing:
+  enabled: false                # off by default
+  rules:
+    - name: tool-free-to-local
+      when:
+        needs_tools: false      # unset conditions are wildcards
+        max_context: 24000      # estimated prompt + overhead, in tokens
+      prefer: [qwen3:8b, claude-haiku-5]
+    - name: everything-else-cheap
+      prefer: [claude-haiku-5]
+```
+
+**No LLM classifies the task.** Requirements are read from facts already on the
+table: whether the subagent was given business tools, whether it can view images
+(`view_image` is only bound to a vision-capable model, so its presence is a real
+capability signal), and the size of the prompt. Adding a classification call
+would spend money to decide how to save money, and would make the routing
+decision non-deterministic — two identical delegations could route differently.
+
+**The explicit selection always wins, and it wins by standing the policy down
+entirely** rather than by "outranking" it: `apply_routing_policy` returns the
+override before the policy is consulted at all. The policy only ever fills the
+default that would otherwise be inherited from the lead.
+
+**A model is only chosen if it can do the job.** Capability filtering is applied
+*to* the preference order, not merely alongside it: a candidate with
+`supports_tools: false` is skipped for a tool-using subtask, one without vision
+is skipped for an image subtask, and one whose `context_window` is below the
+estimate is skipped too. Trading a cost saving for a failed turn is not a trade.
+A rule that matches but offers nothing capable falls through to the next rule
+rather than failing the delegation.
+
+**The decision is inspectable.** The subagent card shows `(via <rule>)` beside
+the model name, and the tooltip carries the full reason — including which
+candidates were skipped and why. A routing decision nobody can inspect is a
+routing decision nobody trusts, and "why did this *not* route?" is the first
+question an operator asks, so a reason is produced even when nothing was routed.
+
+| Piece | Where |
+| --- | --- |
+| Policy config | `deerflow/config/model_routing_config.py`, `model_routing:` in `config.example.yaml` |
+| Requirements + resolution | `deerflow/subagents/routing.py` |
+| Precedence | `tools/builtins/task_tool.py::apply_routing_policy` |
+| Card | `core/tasks/lifecycle.ts`, `core/tasks/types.ts`, `components/workspace/messages/subtask-card.tsx` |
+| Tests | `backend/tests/test_model_routing.py`, `frontend/tests/unit/core/tasks/lifecycle.test.ts` |
+
+### 16. Installable PWA + push notifications that survive a closed browser
+
+This was the biggest gap relative to the fork's own stated goal. There was a
+notification settings page, but it used the plain browser `Notification` API
+with **no service worker and no manifest** — so a notification only fired while
+the tab was open, and iOS Safari would not deliver at all. The use case the fork
+is built around ("start a sandbox run from my phone over Tailscale, pocket it,
+get pinged when it's done") did not work on the device it is designed for.
+
+**Installable.** `frontend/public/manifest.webmanifest` plus icons, linked from
+the root layout's `metadata`, with `appleWebApp` set — on iOS, Add to Home Screen
+is not a nicety, it is the *precondition* for receiving push at all.
+
+**The service worker is deliberately push-only.** It handles `push` and
+`notificationclick` and caches nothing. DeerFlow is a live, server-driven app —
+SSE streams, per-thread state, an API that moves with every backend release — so
+a stale cached shell served after an upgrade produces bugs that look like backend
+faults and are miserable to diagnose. That is a far worse trade than offline
+support nobody asked for.
+
+**Web Push, end to end.** VAPID keys are minted on first use and kept
+(`<DeerFlow home>/vapid.json`, mode `0600` from the first byte — regenerating
+them silently invalidates every existing subscription). Subscriptions are stored
+per user in the same `ui_state.json` bag as the pinned chat tabs, deduped by
+endpoint so re-subscribing replaces rather than accumulates. `pywebpush` is an
+**optional extra** (`uv sync --extra webpush`): push encryption is not something
+to hand-roll, and most installs never turn this on, so the feature reports itself
+unavailable with the install hint instead of making everyone carry it.
+
+**A dead subscription deletes itself.** A push service answers 404/410 for a
+subscription the browser discarded, and nothing else ever prunes those, so a user
+who reinstalls their browser would otherwise accumulate undeliverable endpoints
+forever.
+
+**Only runs worth interrupting for.** A notification fires when a run finishes
+*and* took longer than 30 seconds — by then the user has almost certainly
+switched away, which is exactly when a push is useful. A notification for a
+two-second question is noise, and noise is how a user turns notifications off for
+good. An unknown duration is treated as short: a missed notification costs less
+than a stream of unwanted ones. The whole path swallows its own failures — a push
+service outage must never turn a successful run into a failed one.
+
+#### The secure-context problem, said out loud
+
+Service workers require a **secure context**: `https://…` or `http://localhost`.
+The fork's documented deployment — a plain-HTTP LAN address like
+`http://192.168.1.10:2026` — is not one, so on exactly the device this feature
+targets, the browser API is simply **absent**.
+
+Silently doing nothing there is the worst possible behavior: the user flips a
+switch and has no way to find out why nothing happened. So each unsupported case
+is detected separately and rendered with its own explanation and fix. The
+insecure-origin case is checked **first**, because it makes every other API
+absent too and "service workers are unavailable" would send the user hunting for
+a browser setting that does not exist.
+
+| Where you open DeerFlow | Push works? |
+| --- | --- |
+| `http://localhost:2026` on the machine itself | ✅ localhost is a secure context by definition |
+| `https://<host>.ts.net` (Tailscale, see below) | ✅ and this is the phone case the fork is built for |
+| `http://192.168.1.10:2026` (plain LAN) | ❌ explained in the UI, with the fix |
+
+Tailscale issues a real certificate for your machine's `*.ts.net` name:
+
+```bash
+tailscale cert <your-machine>.<your-tailnet>.ts.net   # once
+tailscale serve --bg https / http://127.0.0.1:2026    # proxy HTTPS to DeerFlow
+```
+
+Then open `https://<your-machine>.<your-tailnet>.ts.net` from the phone, install
+it to the home screen, and enable background notifications in Settings.
+
+| Piece | Where |
+| --- | --- |
+| Manifest + icons + SW | `frontend/public/manifest.webmanifest`, `frontend/public/icons/`, `frontend/public/sw.js`, `src/app/layout.tsx` |
+| Browser side | `frontend/src/core/notification/push.ts`, the background-notification block in `settings/notification-settings-page.tsx` |
+| Server side | `backend/app/gateway/web_push.py`, `routers/push.py`, `run_notifications.py`, the push helpers in `deerflow/config/user_ui_state.py` |
+| Tests | `backend/tests/test_web_push.py`, `frontend/tests/unit/core/notification/push.test.ts` |
+
+**Known gap, stated rather than papered over:** the mobile chat layout audit that
+was scoped alongside this is *not* done. The keep-alive tab strip and the
+artifact panel are still desktop-shaped on a narrow viewport. The PWA shell,
+push delivery, and the install path are complete and usable; the responsive
+pass on those two components remains open work.
 
 ### Note: the "older messages disappear in long conversations" investigation
 
@@ -430,6 +989,28 @@ The fork's added files (`scripts/sync-ollama-models.py`, `scripts/sync-api-key-m
 
 **Merge, not rebase.** This is a long-lived, published fork whose `main` carries its own merge commits and merged PRs, so a sync is a `git merge upstream/main` — never a rebase, which would rewrite that public history, orphan the merged-PR refs, and force every overlapping-file conflict to be re-resolved commit-by-commit. Merge resolves each conflict once and keeps a clean "fork vs. upstream" audit trail.
 
+**It also runs itself weekly.** `.github/workflows/upstream-sync.yml` fetches
+upstream every Monday, merges (never rebases) onto a dated
+`upstream-sync/<date>` branch, runs the mechanical gates below, and opens a PR
+whose body is the checklist that follows — generated from this file by
+`scripts/upstream_sync.py`, not copied into the workflow, so it stays current as
+the fork grows. Nothing to sync means no PR.
+
+Two behaviors are deliberate. **A conflicted merge still opens a PR**, flagged in
+the title and listing every conflicted path, because a conflict is exactly when a
+human is most needed and most needs to know early; the gates report as *skipped*
+rather than passing, since a conflicted tree has nothing coherent to test, and
+the body says not to merge it as-is. And **the job never force-pushes** — a
+rejected push is reported as a warning and left alone, because the branch may
+carry someone's in-progress resolution. The PR is a starting point: the feature
+verification below is still a human pass, which is the whole reason the body is
+a checklist rather than a green tick.
+
+One known limitation: `GITHUB_TOKEN` may not push changes to files under
+`.github/workflows/`, and upstream regularly changes theirs. When a merge touches
+them the push is rejected; the PR body calls out the affected paths so the sync
+can be finished locally with a personal access token.
+
 ### Post-sync feature checklist
 
 After every upstream merge, run this checklist before pushing — passing unit tests do not prove the fork's *UI wiring* or *launch-time scripts* survived a large merge. Root commands run from the repo root; backend commands from `backend/`.
@@ -440,6 +1021,25 @@ First, the mechanical gates:
 - [ ] Backend: `make lint && make test` (CI enforces `ruff format --check`).
 - [ ] Frontend: `pnpm format && pnpm check && pnpm test`. **Watch the formatting gate:** `pnpm check` is only `eslint` + `tsc --noEmit` — it does **not** run Prettier, but CI's `lint-frontend` job (`.github/workflows/lint-check.yml`) runs `pnpm format` (`prettier --check .`) as its own step. So a change that is eslint/type-clean can still fail CI on formatting alone; always run `pnpm format` (or fix with `pnpm format:write`) before pushing. `eslint --fix` normalizes imports/optional-chains but not Prettier whitespace.
 - [ ] `backend/uv.lock` reconciled: `cd backend && uv lock` (must include every fork extra — `camoufox`, `ollama`, `pymupdf` — alongside upstream's).
+- [ ] Config schema in step: if the merge (or your own change) touched `config.example.yaml`'s **shape**, `config_version` is bumped, **the chart's copy is bumped with it** (`deploy/helm/deer-flow/values.yaml` *and* that chart's `README.md` — `scripts/check_config_version.sh` fails the `validate-chart` job otherwise, and it is easy to miss because nothing outside CI reads it), and `make config-upgrade` merges the new keys into an existing `config.yaml` without clobbering hand edits. An existing install never gets a new section otherwise — the same delivery trap the pricing blocks hit (see the cost-overview row below). Verify on a copy: `python3 scripts/config_upgrade.py <copy-of-an-older-config> config.example.yaml` must report the new field and leave the rest alone.
+- [ ] **Upstream added a config section — bump `config_version` yourself.** This is not a rare case, it is the *expected* one on any sync that touches `config.example.yaml`, and it fails silently. Upstream's `config_version` sits **behind** the fork's (the fork bumps for its own sections, upstream never sees them), so upstream adding a top-level key does **not** move a version number the fork compares against. `config_upgrade.py` gates delivery on that version, so at equal versions an existing install keeps a config permanently missing the new upstream section. Observed live: the `bytedance/deer-flow@main` sync of 2026-08-12 added `mcp_tasks:` while leaving upstream's `config_version` at 33; the fork was at 36, so the upgrade was a no-op until the fork bumped to 37.
+
+  It no longer fails *silently*: `config_upgrade.py` now compares the **shape** as well as the version, and a config that is stamped current but missing a shipped section is named on stdout with the fix. It still does not auto-deliver, and that is deliberate — the script runs on every launch path and the merge branch rewrites through `yaml.dump`, so auto-delivering would silently strip every comment from a user's config (see the limitation below). Warning loudly and leaving the file byte-identical is the trade; the version bump stays the explicit gate. Pinned by `backend/tests/test_config_upgrade_script.py::TestUpstreamSectionDelivery`. Detect it mechanically before trusting the gate above:
+
+  ```bash
+  # top-level keys upstream added that the fork's previous example did not have
+  diff <(git show HEAD:config.example.yaml   | grep -oE '^[a-z_]+:') \
+       <(git show upstream/main:config.example.yaml | grep -oE '^[a-z_]+:')
+  ```
+
+  Any line the merge introduces means **bump `config_version`** (plus both chart copies) even though upstream did not, then re-run the delivery check above and confirm the new key actually appears in the upgraded copy. **Known limitation, deliberately not fixed here — and it bites exactly when this gate fires.** The two upgrade paths behave differently: a *version-stamp-only* upgrade (no missing keys) is text surgery and preserves comments, pinned by `test_comments_survive_a_version_stamp_upgrade`. But the *merge* path — the one that runs precisely because a new section had to be delivered — rewrites through `yaml.dump` and drops **every comment** in the user's `config.yaml` (~3300 lines of inline documentation; measured on the `mcp_tasks` delivery above). Hand-edited *values* survive; a `.bak` is written beside the file. So the sync that finally delivers a new upstream section is also the one that strips a user's config of its documentation. Say so in the release note, and keep the `.bak` until the result has been re-read.
+- [ ] **Upstream re-implemented something the fork already forked.** The fork does not only *edit* upstream files, it sometimes *replaces* one with its own module. When upstream later extracts or rewrites the same code into a **new** file, git reports no conflict — both sides "added" different files — and the fork silently ends up with two parallel implementations, only one of which is wired up. The dead copy then absorbs upstream's future improvements forever, invisibly. Observed live: upstream #4765 extracted the chat body into `frontend/src/components/workspace/chats/chat-page.tsx`, which duplicates the fork's `chat-instance.tsx` (the keep-alive tab renderer) but **lacks the fork's cost header**. Resolution taken: keep `chat-instance.tsx` as the single renderer, delete upstream's copy, and let the next sync raise a loud modify/delete conflict that forces a port. After every merge, list the files upstream added and check none of them shadows a fork module:
+
+  ```bash
+  git diff --diff-filter=A --name-only HEAD@{1}...upstream/main -- frontend/src backend/packages
+  ```
+
+  For each hit, confirm it is actually imported. An added upstream file that nothing references is the signature of this failure, not tidy dead code.
 - [ ] Model list still current: run the **[Auditing the model list](#auditing-the-model-list-settings--pricing)** pass (or confirm it ran recently). Provider model ids, prices, and promos drift *independently* of upstream DeerFlow, so a sync is only the calendar checkpoint — the audit itself must read each slug/price off the **provider's own page** (`scripts/sync-api-key-models.py --dry-run` and the model-format tests below do **not** catch a stale-but-well-formed price or a since-renamed slug, because both pass against any syntactically valid entry). Regression-gate whatever you change with `python3 scripts/sync-api-key-models.py --dry-run` + `cd backend && uv run pytest tests/test_sync_api_key_models.py tests/test_setup_wizard.py tests/test_config_integrity.py`.
 
 Then confirm each fork feature end-to-end:
@@ -447,6 +1047,7 @@ Then confirm each fork feature end-to-end:
 | Fork feature | How to verify it survived the merge |
 | --- | --- |
 | **Ollama auto-populate** (§1) | `python3 scripts/sync-ollama-models.py --dry-run --verbose` — proposes entries when the daemon is up, prints `unreachable; skipping (no changes)` and exits 0 when it's down. Reconciliation logic is pinned by `backend/tests/test_sync_ollama_models.py`. |
+| **Ollama daemon lifecycle** (§1) | `cd backend && uv run pytest tests/test_ollama_lifecycle.py` covers the `keep_alive` settings parse (including the nested `keep_alive_overrides` map, whose children must **not** leak into the flat `ollama.*` settings), the resolution precedence, the rendered entry, the VRAM-contention warning, `default_local_model`, preload, and the doctor rows. Wiring: `parse_ollama_settings` / `resolve_keep_alive` / `vram_contention_warning` / `default_local_model` / `preload_model` in `scripts/sync-ollama-models.py`; the `--preload-only` **backgrounded** call in `scripts/serve.sh` right after the sync; `scripts/doctor.py::check_ollama_readiness` in the new **Local Models** section; the documented keys in `config.example.yaml`'s `ollama:` block. Model tuples grew a 4th field (`keep_alive`) — `sync()` reads the tail positionally so 2- and 3-tuple callers still work; keep that back-compatibility if the shape changes again. Preload must stay backgrounded in `serve.sh`: it blocks until the weights are loaded. Manual: set `ollama.keep_alive: 30m`, relaunch, and confirm the regenerated marker block carries `keep_alive: 30m` on every entry. |
 | **API-key model auto-config** (§2) | On a *copy* of `config.example.yaml`: `ANTHROPIC_API_KEY=sk-ant-… python3 scripts/sync-api-key-models.py --config <copy> --dry-run --verbose` logs `enabled 'anthropic' model block`; with an empty env the file stays byte-identical. Pinned by `backend/tests/test_sync_api_key_models.py`. All eleven `# === BEGIN/END auto-model-config: <provider> ===` marker blocks (anthropic, openrouter, and the nine first-party home blocks: openai, xai, google, deepseek, mistral, moonshot, qwen, minimax, zai) must still be present in `config.example.yaml`, each in sync with its `*_BUNDLE_MODELS` list in `scripts/wizard/providers.py` (`HOME_API_BUNDLES` registry) and its `PROVIDERS` entry in `scripts/sync-api-key-models.py`. |
 | **Per-thread subagent model override** (§3, Ultra mode) | `input-box.tsx` renders the second "Subagent" `ModelSelector` only under `context.mode === "ultra"`, defaulting to "Follow lead", dimming `lacksToolSupport` models. It sets `subagent_model_name` in thread context; `_CONTEXT_CONFIGURABLE_KEYS` (`app/gateway/services.py`) forwards it; `task_tool.py` applies it as `model_override` and passes it to `SubagentExecutor`. Backend plumbing pinned by `backend/tests/test_task_tool_core_logic.py::test_task_tool_uses_subagent_model_override_for_tool_loading`. |
 | **Follow-up suggestions off by default + model picker** (§4) | `core/settings/local.ts` defaults `suggestions.enabled=false`; Settings → Suggestions page writes `suggestions.{enabled,modelName}`; `input-box.tsx` gates on `suggestionsConfig?.enabled && localSettings.suggestions.enabled` and sends `n: maxFollowupSuggestions`, `model_name: suggestionsModelName ?? context.model_name`. The backend endpoint's `model_name` override is pinned by `backend/tests/test_suggestions_router.py`. |
@@ -461,10 +1062,19 @@ Then confirm each fork feature end-to-end:
 | **Passwordless by default** (§5) | `scripts/serve.sh::apply_default_auth_mode` exports `DEER_FLOW_AUTH_DISABLED="${DEER_FLOW_AUTH_DISABLED:-1}"` after loading `.env` (pinned by `backend/tests/test_serve_auth_default.py`); both `.env.example` files document the `=0` opt-out. Backend honors it via `auth_disabled.py`, frontend via `core/auth/auth-disabled-user.ts` (both ignore it when `DEER_FLOW_ENV`/`ENVIRONMENT` is prod). |
 | **Dev-origin defaults (§5, LAN/Tailscale)** | `frontend/src/dev-origins.js::getAllowedDevOrigins()` returns `DEFAULT_DEV_ORIGIN_PATTERNS` (private-LAN + Tailscale) merged with `DEER_FLOW_DEV_ALLOWED_ORIGINS`, unless `DEER_FLOW_DEV_ALLOWED_ORIGINS_STRICT`; wired in `next.config.js`. Pinned by `frontend/tests/unit/dev-origins.test.ts` (runs the defaults through Next's real `isCsrfOriginAllowed` matcher). |
 | **Multi-user mode toggle** (§6) | `deerflow/config/runtime_settings.py` (`is_multi_user_mode_enabled` / `set_multi_user_mode` / `resolve_owner_scope`, default ON) gates `thread_meta` `search`/`get`/`check_access` and run-store read helpers (writes keep the real owner); `GET`/`PUT /api/settings/multi-user-mode` (`app/gateway/routers/settings.py`, PUT admin-gated). Frontend toggle + confirm dialog in `account-settings-page.tsx` via `core/settings/multi-user-mode.ts`. Pinned by `backend/tests/test_multi_user_mode.py` + `frontend/tests/unit/core/settings/multi-user-mode.test.ts`. |
-| **Cost overview + aux counters** (§7) | Shared `app/gateway/pricing.py` (console + thread endpoint import it); `GET /api/threads/{id}/token-usage` returns `total_cost`/`promo_total_cost`/`currency`/per-model `cost`/`aux`; store aggregation carries the input/output/cache-read split (`new_by_model_usage_entry`); `deerflow/runtime/aux_usage.py` records memory (`agents/memory/manager.py::_host_default_extraction_callback`) + suggestions (`utils/oneshot_llm.py::run_oneshot_llm_with_usage`). Frontend `token-usage-indicator.tsx` + `core/threads/token-usage.ts`. Pinned by `backend/tests/test_pricing.py`, `test_aux_usage.py`, `test_aux_usage_wiring.py`, `test_thread_token_usage.py` + `frontend/tests/unit/core/threads/token-usage.test.ts`. **Two things make this render `—`, and neither raises an error.** (1) The provider-id resolution (`pricing.py::_pricing_lookup_candidates`): buckets are keyed by the *provider-reported* model id, not the `config.yaml` id, so exact-only matching nulls every cost — pinned by `test_thread_token_usage.py::test_thread_token_usage_prices_provider_reported_model_ids`. (2) A bundled model with no `pricing:` block contributes nothing, so a run on unpriced models reports no cost — pinned by `test_config_integrity.py::TestBundledModelPricing`, which fails if any bundled model loses its price or the two synced sources disagree. **The second one has a delivery trap worth reading twice:** fixing `config.example.yaml` does **not** fix an existing install. `sync-api-key-models.py` skips already-active provider blocks and `config_upgrade.py`'s `merge_missing` cannot add a key inside a list entry, so a config written before a price shipped keeps that model active and unpriced forever. That is why `pricing.py` derives the price from the `($in/out)` pair in `display_name` when no block is configured, and why `test_every_bundled_model_prices_without_its_pricing_block` requires every bundled model to survive with its block stripped. **Any future change to the bundled model blocks must answer the same question: does this reach a config that already exists?** `make doctor`'s `model pricing` check is the user-facing version — it warns, with the `—` symptom named, when nothing configured can be priced. **A third failure is silent rather than visible:** an *expired* promo. `promo_*_per_million` and the starred `($list → $promo*)` name are two spellings of one discount, so updating only one leaves the header advertising a price nobody is getting — pinned in both directions by `TestBundledModelPricing::test_promo_price_matches_the_starred_pair_in_the_name` (starred name with no promo block, promo block with no starred name, and a promo at or above list). Re-verify the live promos as part of step 4 of the [model audit](#auditing-the-model-list-settings--pricing); the test only checks the two sources agree with each other, never that the discount is still running. Cost is **per model everywhere**, including the promo: run buckets, and the memory/suggestions `aux` sinks, are each priced at their own model's rate, so an Ultra run with a discounted subagent and a full-price lead discounts only the subagent's tokens (`test_promo_total_is_model_aware_across_lead_subagent_and_aux`). Manual: run a turn (ideally Ultra mode, so a subagent model is involved too) and confirm the header shows a **green** dollar amount; on a discounted model the dropdown shows the green promo total beside the red standard one; if it shows `—`, the dropdown now names the unpriced model. |
+| **Cost overview + aux counters** (§7) | Shared `app/gateway/pricing.py` (console + thread endpoint import it); `GET /api/threads/{id}/token-usage` returns `total_cost`/`promo_total_cost`/`currency`/per-model `cost`/`aux`; store aggregation carries the input/output/cache-read split (`new_by_model_usage_entry`); `deerflow/runtime/aux_usage.py` records memory (`agents/memory/manager.py::_host_default_extraction_callback`) + suggestions (`utils/oneshot_llm.py::run_oneshot_llm_with_usage`), **write-through to the durable `deerflow/runtime/aux_usage_store.py`** (`<DeerFlow home>/aux_usage.sqlite3`, kill switch `DEER_FLOW_AUX_USAGE_DB=0`). Frontend `token-usage-indicator.tsx` + `core/threads/token-usage.ts`. Pinned by `backend/tests/test_pricing.py`, `test_aux_usage.py`, `test_aux_usage_wiring.py`, `test_thread_token_usage.py`, `tests/blocking_io/test_aux_usage.py` + `frontend/tests/unit/core/threads/token-usage.test.ts`. **The aux registry's store is a local file, so its sync API blocks.** If upstream (or a refactor) re-points the suggestions route or the `token-usage` endpoint at `record_aux_usage` / `get_thread_aux_usage` instead of the `a*` wrappers, the strict Blockbuster anchor fails — do not "fix" it by marking the anchor `allow_blocking_io`; restore the offload. Equally, do not make the memory path async: it runs on the memory updater's loop-less debounce thread, which is the whole reason the durable store is a dedicated SQLite file rather than the async runs engine. **Two things make this render `—`, and neither raises an error.** (1) The provider-id resolution (`pricing.py::_pricing_lookup_candidates`): buckets are keyed by the *provider-reported* model id, not the `config.yaml` id, so exact-only matching nulls every cost — pinned by `test_thread_token_usage.py::test_thread_token_usage_prices_provider_reported_model_ids`. (2) A bundled model with no `pricing:` block contributes nothing, so a run on unpriced models reports no cost — pinned by `test_config_integrity.py::TestBundledModelPricing`, which fails if any bundled model loses its price or the two synced sources disagree. **The second one has a delivery trap worth reading twice:** fixing `config.example.yaml` does **not** fix an existing install. `sync-api-key-models.py` skips already-active provider blocks and `config_upgrade.py`'s `merge_missing` cannot add a key inside a list entry, so a config written before a price shipped keeps that model active and unpriced forever. That is why `pricing.py` derives the price from the `($in/out)` pair in `display_name` when no block is configured, and why `test_every_bundled_model_prices_without_its_pricing_block` requires every bundled model to survive with its block stripped. **Any future change to the bundled model blocks must answer the same question: does this reach a config that already exists?** `make doctor`'s `model pricing` check is the user-facing version — it warns, with the `—` symptom named, when nothing configured can be priced. **A third failure is silent rather than visible:** an *expired* promo. `promo_*_per_million` and the starred `($list → $promo*)` name are two spellings of one discount, so updating only one leaves the header advertising a price nobody is getting — pinned in both directions by `TestBundledModelPricing::test_promo_price_matches_the_starred_pair_in_the_name` (starred name with no promo block, promo block with no starred name, and a promo at or above list). Re-verify the live promos as part of step 4 of the [model audit](#auditing-the-model-list-settings--pricing); the test only checks the two sources agree with each other, never that the discount is still running. Cost is **per model everywhere**, including the promo: run buckets, and the memory/suggestions `aux` sinks, are each priced at their own model's rate, so an Ultra run with a discounted subagent and a full-price lead discounts only the subagent's tokens (`test_promo_total_is_model_aware_across_lead_subagent_and_aux`). Manual: run a turn (ideally Ultra mode, so a subagent model is involved too) and confirm the header shows a **green** dollar amount; on a discounted model the dropdown shows the green promo total beside the red standard one; if it shows `—`, the dropdown now names the unpriced model. |
 | **Model dropdown sorting/grouping** (§8) | `cd frontend && pnpm test sorting` exercises the parse/sort/group logic (`frontend/tests/unit/core/models/sorting.test.ts`). Wiring: `core/models/sorting.ts` (`parseModelPrice` promo-aware, `parseModelProvider`, `sortModels`, `groupModelsByProvider`, `demoteLast`); preference `modelPicker` in `core/settings/local.ts`; shared UI `components/workspace/model-picker-controls.tsx` (`ModelPickerControls` + `ModelPickerList` + `ModelDisplayName`) used by the lead + subagent pickers in `input-box.tsx` and the sidecar picker in `sidecar/sidecar-panel.tsx`; i18n keys in `core/i18n/locales/{en-US,zh-CN}.ts`. Manual: open the model dropdown → Sort (Default/Name/Price) + direction toggle + Group-by-provider switch appear and reorder/group the list; every row's price renders green, and a discounted entry (MiniMax M3, GLM-5.2, Claude Sonnet 5) shows its red list price beside the green promo. If a whole model name turns green or a price stays uncoloured, `splitModelNamePriceSegments` has drifted from the name format — its reassembly test is the fast check. Then **close** the dropdown on a discounted model and confirm the collapsed trigger still shows both prices at a narrow window width; if it clips, the `w-full` on the three `ModelSelectorName` triggers has been dropped (see §8 — without it the span is `fit-content` inside a `flex-col items-start` and overflows the capped button instead of truncating). This half is CSS with no unit test, so it needs the manual look. |
 | **Durable chat tabs** (§9) | `cd backend && uv run pytest tests/test_user_ui_state.py tests/test_chat_tabs_settings_router.py` covers the per-user store (`deerflow/config/user_ui_state.py`, `{base_dir}/users/{user_id}/ui_state.json`) and `GET`/`PUT /api/settings/chat-tabs` (caller-scoped, **no admin gate** — unlike the multi-user-mode routes in the same router). `frontend/tests/unit/core/threads/chat-tabs-persistence.dom.test.tsx` covers the provider's boot path. If upstream restructures `workspace/layout.tsx`'s gateway-offline branch, re-check that an unreachable gateway still **keeps** the local cache instead of blanking the strip (`fetchChatTabs` returns `null` for "unknown", never `[]`), and that a server with no stored set still adopts and seeds from the local cache — that is the upgrade path for tabs pinned before server persistence existed. Manual: pin a tab, restart the stack, hard-reload with site data cleared, and confirm the tabs come back. |
-| **Keep-alive chat tabs** (§9) | `cd frontend && pnpm test chat-tabs` exercises the pure model (`frontend/tests/unit/core/threads/chat-tabs.test.ts`); `pnpm test:e2e chat-tabs` (`frontend/tests/e2e/chat-tabs.spec.ts`) covers drag-from-sidebar onto the empty strip / drag-reorder between chips / open-as-tab / keep-alive switch (both instances stay mounted) / close / reload persistence. Wiring: the live chat is `components/workspace/chats/chat-instance.tsx` (**fully controlled**, own provider stack via `chat-providers.tsx` with a per-instance `storageScope`); `keep-alive-chat-viewport.tsx` is mounted in `workspace-content.tsx` **above** the route inside `ChatTabsProvider` and renders one instance per slot (only the active shown, the rest `display:none`); the tab strip is `chat-tabs-bar.tsx`, which **always renders as a drop zone on chat routes** (an empty-state hint `chatTabs.dropHint` when there are no tabs yet but threads exist, so there is somewhere to drag onto — returning `null` here is the "tabs don't work" bug); `[thread_id]/page.tsx` is a thin registrar in app builds and the classic inline `<ChatInstance>` in static-demo; pure model + persistence in `core/threads/chat-tabs.ts`, state in `chat-tabs-context.tsx`; sidebar drag + **Open in tab** in `recent-chat-list.tsx`; `ChatBox` panel ids keyed by thread id (not pathname). **If upstream restructures `[thread_id]/page.tsx`,** re-extract its body onto `chat-instance.tsx` and keep the registrar/classic split; watch for a barrel (`components/workspace/chats/index.ts`) import of the client viewport into the server `workspace-content.tsx` (import the file directly to keep the `"use client"` boundary). |
+| **Keep-alive chat tabs** (§9) | `cd frontend && pnpm test chat-tabs` exercises the pure model (`frontend/tests/unit/core/threads/chat-tabs.test.ts`); `pnpm test:e2e chat-tabs` (`frontend/tests/e2e/chat-tabs.spec.ts`) covers drag-from-sidebar onto the empty strip / drag-reorder between chips / open-as-tab / keep-alive switch (both instances stay mounted) / close / reload persistence. Wiring: the live chat is `components/workspace/chats/chat-instance.tsx` (**fully controlled**, own provider stack via `chat-providers.tsx` with a per-instance `storageScope`); `keep-alive-chat-viewport.tsx` is mounted in `workspace-content.tsx` **above** the route inside `ChatTabsProvider` and renders one instance per slot (only the active shown, the rest `display:none`); the tab strip is `chat-tabs-bar.tsx`, which **always renders as a drop zone on chat routes** (an empty-state hint `chatTabs.dropHint` when there are no tabs yet but threads exist, so there is somewhere to drag onto — returning `null` here is the "tabs don't work" bug); `[thread_id]/page.tsx` is a thin registrar in app builds and the classic inline `<ChatInstance>` in static-demo; pure model + persistence in `core/threads/chat-tabs.ts`, state in `chat-tabs-context.tsx`; sidebar drag + **Open in tab** in `recent-chat-list.tsx`; `ChatBox` panel ids keyed by thread id (not pathname). **If upstream restructures `[thread_id]/page.tsx`,** re-extract its body onto `chat-instance.tsx` and keep the registrar/classic split; watch for a barrel (`components/workspace/chats/index.ts`) import of the client viewport into the server `workspace-content.tsx` (import the file directly to keep the `"use client"` boundary). **Upstream may also extract the same body into a *new* file rather than restructuring the route** — #4765 added `chats/chat-page.tsx`, a slot-less duplicate of `chat-instance.tsx` missing the fork's cost header. That is an *add/add*, so git reports no conflict and the duplicate silently becomes the file upstream's future chat work lands in. `chat-page.tsx` is therefore **deliberately deleted in this fork**; if a sync reintroduces it, port the delta into `chat-instance.tsx` and delete it again rather than wiring any route to it. |
+| **Currency spend caps** (§10) | `cd backend && uv run pytest tests/test_spend_budget_config.py tests/test_spend_budget.py tests/test_spend_budget_middleware.py` covers the config/window math, the window aggregation (runs + auxiliary counters, owner-scoped), and the in-run warn / hard stop. Wiring: `deerflow/config/spend_budget_config.py` + the `spend_budget:` block in `config.example.yaml`; `deerflow/runtime/spend_window.py`; `app/gateway/spend_budget.py`; the **HTTP 402** admission refusal and the `__spend_budget` baseline injection in `app/gateway/services.py::start_run`; `SpendBudgetMiddleware` appended in `agents/lead_agent/agent.py` after `TokenBudgetMiddleware`; `RunJournal.current_token_usage_by_model()`; `scripts/doctor.py::check_spend_budget`; the header line via `GET /api/threads/{id}/token-usage -> spend_budget` and `core/threads/token-usage.ts::threadTokenUsageToSpendBudget`. **The pricing module moved into the harness** (`deerflow/pricing.py`) because the in-graph middleware may not import `app.*`; `app/gateway/pricing.py` is a re-export shim, and `test_pricing.py::test_gateway_shim_re_exports_the_canonical_helpers` fails if it rots. **Three invariants that are easy to break and silent when broken:** (1) an unpriced model must contribute **0**, so a fully local run is never blocked — pinned by `TestLocalModelsAreFree` and `TestLocalRunsAreNeverBlocked`; (2) in-run spend must come from the journal's **per-model** accumulator, or a cheap subagent gets billed at the lead's rate and the cap fires early on exactly the setup this fork recommends (`test_a_cheap_subagent_is_billed_at_its_own_rate`); (3) with nothing priced the feature must **self-disable with a reason**, not enforce against a permanent zero (`TestSelfDisabling`). If upstream restructures `services.py::start_run`, re-add the admission check before `create_or_reject` and the baseline injection after `inject_authenticated_user_context` — the baseline key is `__`-prefixed precisely so `build_run_config` strips a caller-supplied copy. Manual: set a tiny `daily_limit`, run a turn on a priced model (header **Budget left** goes red, the next message 402s), then repeat on a local model and confirm it is never blocked. |
+| **Automated upstream sync** (see *[Upstream sync](#upstream-sync)*) | `cd backend && uv run pytest tests/test_upstream_sync.py` covers parsing this checklist out of FORK.md, the PR body for clean and conflicted merges, gate rendering (pass / fail / **skip**, which must stay distinguishable — a skipped gate reading as green is how a conflicted sync looks mergeable), the 65536-character GitHub body limit, and workflow invariants. Wiring: `scripts/upstream_sync.py`; `.github/workflows/upstream-sync.yml` (weekly + `workflow_dispatch`). **The body is generated from this section, never copied** — a copy is correct exactly once, and every fork feature added afterwards would be missing from the list meant to prove the fork still works. So the two parsers here are load-bearing: the mechanical gates come from the `- [ ]` lines and the features from the table rows below; renaming this heading or restructuring the table silently empties the PR body (`test_the_real_fork_md_parses` is the guard). Workflow invariants pinned by tests: `git merge` and never `git rebase`, no `--force` in any form, and the PR step runs under `if: always()` so a conflicted merge still surfaces. Manual: `python3 scripts/upstream_sync.py --upstream-sha abc --commit-count 1` and read the rendered body. |
+| **Model & pricing audit** (see *[Auditing the model list](#auditing-the-model-list-settings--pricing)*) | `cd backend && uv run pytest tests/test_audit_models.py` covers marker-block parsing, the wizard-bundle load, each drift kind, internal consistency, source parity, the report, and the CLI exit codes. Wiring: `scripts/audit_models.py`; `.github/workflows/model-audit.yml` (weekly + `workflow_dispatch`); `scripts/fixtures/model_audit_stale_catalog.json`. **The fixture is the audit's own regression test** — the workflow's first step asserts it still produces findings, because a broken audit reports "no drift" forever and every clean run afterwards is a false all-clear. Regenerate it if the bundled roster changes (the generator is described in the fixture's `_comment`). **Two properties must not be "fixed" into their opposites:** an unreachable provider yields *zero* findings, never "every slug retired"; and the job must keep exiting 0 on findings (the issue is the signal, not a red tick). Manual: `python3 scripts/audit_models.py --catalog scripts/fixtures/model_audit_stale_catalog.json` and confirm all four drift kinds appear with a suggested diff. |
+| **PWA + push notifications** (§16) | `cd backend && uv run pytest tests/test_web_push.py` plus `cd frontend && pnpm test push` cover VAPID key reuse and file mode, subscription storage (dedupe, cap, https-only), pruning a dead subscription, the run-duration threshold, and the browser-support detection. Wiring: `frontend/public/{manifest.webmanifest,sw.js,icons/}`; `metadata`/`viewport` in `src/app/layout.tsx`; `core/notification/push.ts`; `app/gateway/{web_push.py,routers/push.py,run_notifications.py}` (router registered in `app.py`, delivery composed into `deps.py::_build_run_completion_hook` **after** the scheduled-task hook); the push helpers + shared `_write_state` in `deerflow/config/user_ui_state.py`; the `webpush` extra in `packages/harness/pyproject.toml`. **Four invariants that are silent when broken:** (1) VAPID keys must be reused — regenerating invalidates every subscription with no error anywhere; (2) `vapid.json` is opened `0600`, not chmod'ed after; (3) the insecure-context branch must stay **first** in `detectPushSupport`, or a plain-HTTP LAN user is told service workers are unavailable and goes looking for a browser setting that does not exist; (4) `notify_run_completed` must never raise — it runs on the run-completion path. The service worker deliberately caches nothing; do not add asset caching without a version/cleanup strategy. Manual: open over `https://…ts.net` from a phone, install to the home screen, enable background notifications, send the test push, then run something long with the app closed. |
+| **Cost-aware subagent routing** (§15) | `cd backend && uv run pytest tests/test_model_routing.py` plus `cd frontend && pnpm test lifecycle` cover requirement derivation, capability filtering, rule ordering, the precedence rule, config validation, and the card plumbing. Wiring: `deerflow/subagents/routing.py`; `deerflow/config/model_routing_config.py` + `AppConfig.model_routing`; `task_tool.py::apply_routing_policy` (called after the per-thread override is read, before the executor is built, and it also sets `model_override` so the executor's own re-resolution cannot discard the route); the `routing` key on `task_started`; `core/tasks/lifecycle.ts::normalizeRouting`. **Three invariants that are silent when broken:** (1) an explicit per-thread selection must short-circuit *before* the policy runs — "considering" it is not the same as standing down; (2) requirement derivation must stay free of any model call, or the decision becomes non-deterministic and costs money; (3) capability filtering must stay inside the preference loop, or a cheap model with `supports_tools: false` gets routed a tool-using subtask and the turn fails. `task_tool` resolves the config defensively (an unreadable `config.yaml` means "no policy", never a failed delegation) — `test_task_tool_core_logic.py` runs without a config and will catch a regression here. Manual: configure a `needs_tools: false` rule, run an Ultra-mode turn that delegates an extraction subtask, and confirm the card shows `(via <rule>)` with the reason in its tooltip. |
+| **Model fallback chains** (§14) | `cd backend && uv run pytest tests/test_model_fallback.py` covers the failure/decision classification, chain resolution, the wrapper (sync + async, `bind_tools` across members), and the factory wiring. Wiring: `deerflow/models/fallback.py`; `ModelConfig.fallback` (and its entry in the factory's **exclude** set — `ModelConfig` is `extra="allow"`, so an unexcluded key is forwarded into the provider constructor and then the request payload); `deerflow/config/model_fallback_config.py` + `AppConfig.model_fallback`; `models/factory.py::_wrap_with_fallbacks`. **Four invariants that are silent when broken:** (1) unrecognized errors must keep returning `False` from `should_fall_back` — defaulting to retry doubles the cost of every bug; (2) intentional stops (interrupt, budget, guardrail, 401/403) must never fall back, or a spend cap becomes a spend multiplier; (3) chain members must keep being built with `_is_fallback_member=True`, which is what makes cycles inexpressible rather than merely unlikely; (4) the wrapper must return the serving model's result untouched, or `token_usage_by_model` bills a cloud fallback at the local model's rate of zero. Manual: point a local model's `fallback:` at a cloud model, stop the Ollama daemon mid-session, and confirm the turn completes on the fallback and the header attributes its cost to the cloud model. |
+| **Backup / restore** (§13) | `cd backend && uv run pytest tests/test_backup.py` covers what goes in, the secrets exclusion and the owner-only opt-in archive, the postgres dump abort, the running-stack refusal, archive-path safety, and the mode-preserving round trip. Wiring: `scripts/backup.py`; `backup` / `restore` targets in the root `Makefile`; `/backups/` in `.gitignore`. **Three invariants that are silent when broken:** (1) credentials stay excluded by default — if `SECRET_PATTERNS` stops matching `users/*/integrations/` or `.env`, every backup starts shipping API keys; (2) the archive is opened `0600` via `os.open`, not chmod'ed afterwards, or it is briefly world-readable while being written; (3) extraction must keep `filter="tar"` — the `data` filter strips the permission bits this feature exists to preserve, so `0700` credential dirs would come back `0755`. A failed `pg_dump` must keep aborting: a backup with no database in it fails at restore time, when it is too late. Manual: `make backup`, `python3 scripts/backup.py inspect <archive>`, then restore into an empty directory and confirm threads/memory/tabs are there. |
+| **Deployment exposure check** (§12) | `cd backend && uv run pytest tests/test_exposure.py` covers the bind classification, the fact resolution (`.env` vs. process env precedence, `runtime_settings.json`, sandbox mode), every tier, and the doctor rows. Wiring: `scripts/exposure.py`; `scripts/doctor.py::check_deployment_exposure` in the new **Deployment** section; the `--surface docker` call at the end of `scripts/deploy.sh` and `--surface local` at the end of `scripts/serve.sh`. **Two things are easy to break silently:** (1) the local surface must stay pinned to the wildcard — it reads `docker/nginx/nginx.local.conf`'s address-less `listen 2026;`, so if upstream gives that config an explicit address, update `LOCAL_BIND_SOURCE`/`resolve_facts` or the check will report a bind the stack does not use; (2) `classify_bind_host` must test the Tailscale ranges **before** `is_private`, because Python classifies CGNAT (100.64.0.0/10) as private and the two tiers are deliberately different. The check must never return `fail` — a deliberately exposed home lab is not a broken install. Manual: `python3 scripts/exposure.py --surface docker`, then set `BIND_HOST=0.0.0.0` in `.env` and confirm the tier moves to `open-network` and names each contributing setting. |
+| **Spend history page** (§11) | `cd backend && uv run pytest tests/test_console_router.py -k ConsoleSpend` covers `GET /api/console/spend`: the three groupings (model / thread / feature) agreeing with the total, unpriced models named and sorted last, the window boundary, the no-pricing state, and the 503 on the memory backend. Wiring: `ConsoleSpendResponse` in `app/gateway/routers/console.py`; `AuxUsageStore.aggregate()`; `frontend/src/core/spend/*`; `frontend/src/app/workspace/spend/page.tsx`; the sidebar entry in `components/workspace/workspace-nav-chat-list.tsx`; i18n `spend.*` in both locales. The page must keep reusing `pricing.py` rather than recomputing cost — a second formula is how the page and the chat header start disagreeing about the same run. Manual: open **Spend** in the sidebar and confirm the tables' totals match the summary tile for the same window. |
 
 **Integration points that tend to need a hand** (where upstream refactors collide with fork additions — check these first when tests fail): the AIO sandbox provider (upstream's cross-instance ownership store adds instance attributes that minimal test fixtures built via `__new__` must seed), the skills tool-policy path (upstream's dynamic `SkillToolPolicyMiddleware` vs. any fork static filtering — reconcile onto the middleware and drop dead build-time filters), `scripts/check.py`'s Docker diagnostics (any upstream test that mocks `run_command` with a strict dict must tolerate the extra `docker` calls), and the `task_tool.py` / `input-box.tsx` model-override plumbing.
 

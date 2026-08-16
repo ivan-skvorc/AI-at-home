@@ -15,7 +15,7 @@
 # ============================================================================
 # Bump this number when the config schema changes.
 # Run `make config-upgrade` to merge new fields into your local config.yaml.
-config_version: 33
+config_version: 37
 
 # ============================================================================
 # Logging
@@ -78,6 +78,98 @@ token_budget:
   max_output_tokens: null       # Optional separate output-only limit
   warn_threshold: 0.8           # Warn at 80% of the budget
   hard_stop_threshold: 1.0      # Force stop at 100% of the budget
+
+# ============================================================================
+# Spend Budget — Currency-denominated caps over a day / week / month
+# ============================================================================
+# Fork feature. `token_budget` above caps ONE RUN in tokens; this caps REAL
+# MONEY across a window. In a setup that mixes a premium cloud lead with cheap
+# or free local subagents, a token is not a unit of cost — 200k tokens is $5 or
+# $0 depending on which model burned them — so the money cap is the one that
+# matches what you actually care about.
+#
+# Denominated in the single currency your `models[*].pricing` blocks use.
+# Unpriced models (local Ollama) cost 0, so a fully local run is NEVER blocked.
+# The feature self-disables (with a reason in `make doctor`) when no model
+# carries a price, or when database.backend is `memory` — there is no persisted
+# spend history to measure a window against.
+#
+# Enforced in two places: a new run is refused with HTTP 402 when a cap is
+# already spent, and a run in flight gets an in-context warning at
+# warn_threshold then a forced final answer at hard_stop_threshold.
+spend_budget:
+  enabled: false                # Set to true to activate spend enforcement
+  daily_limit: null             # e.g. 5.00 — max spend per day, in the pricing currency
+  weekly_limit: null            # e.g. 25.00
+  monthly_limit: null           # e.g. 80.00
+  window: rolling               # rolling = last 24h / 7d / 30d; calendar = since local midnight / Monday / the 1st
+  tz_offset_minutes: 0          # Local offset from UTC for `calendar` boundaries (enforcement is server-side, so this is config, not a browser value)
+  warn_threshold: 0.8           # Warn in-context at 80% of the tightest cap
+  hard_stop_threshold: 1.0      # Force a final answer (and refuse new runs) at 100%
+
+# ============================================================================
+# Model Fallback Chains (fork feature) — degrade instead of failing the turn
+# ============================================================================
+# Running local models means absorbing local-model failure modes: the daemon is
+# down, the model OOMs, the context overflows, or it turns out not to support
+# tool calls. A fallback chain retries the call on the next model instead of
+# losing the turn.
+#
+# What triggers a fallback: a connection failure to the provider, a
+# context-length rejection, an unsupported-tool-call rejection, or a provider
+# 5xx. What deliberately does NOT: a user interrupt, a spend cap, a guardrail
+# refusal, or a 401/403 — those are decisions (or a config error you need to
+# see), and retrying them on another model would defeat them and spend money.
+# Anything unrecognized also does not fall back: an unknown bug should cost one
+# request, not two.
+#
+# Tokens are attributed to the model that actually served the call, so the cost
+# figures and the spend cap stay correct when a fallback runs.
+#
+# Per-model (wins over the global chain below):
+#   models:
+#     - name: qwen3:8b
+#       fallback: [claude-haiku-5, openrouter-minimax-m3]
+#
+# Global default for models that declare none — the "all my local models fall
+# back to one cheap cloud model" shape, which would otherwise have to be
+# repeated on every entry the Ollama sync regenerates (and wiped on each sync):
+model_fallback:
+  enabled: false                # Off by default, like anything that changes agent behavior
+  chain: []                     # e.g. [claude-haiku-5]. The failing model is always removed from its own chain.
+
+# ============================================================================
+# Cost-Aware Subagent Routing (fork feature) — make the saving the default
+# ============================================================================
+# The per-thread subagent picker already lets you send delegated work to a
+# cheaper model; this makes that a standing policy instead of something to
+# remember every session. A tool-free extraction subtask can run on a local
+# model for free while the lead stays on a frontier model.
+#
+# Requirements are derived from facts already on the table — whether the
+# subagent was given business tools, whether it can view images, and how big
+# the prompt is — never from an extra LLM call, which would spend money to
+# decide how to save money (and make the decision non-deterministic).
+#
+# Two rules keep it safe:
+#   * An explicit per-thread subagent selection ALWAYS wins. The policy only
+#     fills the default that would otherwise be inherited from the lead.
+#   * A model is skipped when it cannot do the job (no tool support, no vision,
+#     context window too small). Trading a cost saving for a failed turn is not
+#     a trade. Skipped candidates are named on the subagent card.
+#
+# The effective decision — which rule matched, and what was skipped — is shown
+# on the subagent card, so routing is inspectable rather than mysterious.
+model_routing:
+  enabled: false                # Off by default. `enabled: true` with no rules is a load-time error.
+  rules: []
+  #  - name: tool-free-to-local
+  #    when:
+  #      needs_tools: false      # unset conditions are wildcards
+  #      max_context: 24000      # estimated prompt + overhead, in tokens
+  #    prefer: [qwen3:8b, claude-haiku-5]
+  #  - name: everything-else-cheap
+  #    prefer: [claude-haiku-5]
 
 # ============================================================================
 # Recursion Limit — Hard ceiling for a client-supplied run recursion_limit
@@ -1601,9 +1693,33 @@ models:
 # (older Ollama also needs OLLAMA_FLASH_ATTENTION=1; models without flash
 # attention support silently fall back to f16.)
 #
+# Daemon lifecycle (also consumed by the sync, not by the application):
+#
+# keep_alive controls how long Ollama keeps a model resident after its last
+# call. The daemon's own default is 5 minutes, which means a subagent
+# delegation a few minutes into a turn reloads the weights from disk before it
+# can answer — the cost lands on exactly the local-subagent setup this fork
+# recommends. Set it and the sync writes `keep_alive:` into every generated
+# entry (and per-model overrides win over the global value). Accepts any
+# duration Ollama accepts: "30m", "1h", a bare number of seconds, or -1 to
+# never unload. Unset leaves the daemon's default, which is the prior behavior.
+#
+# preload: true loads models[0] into VRAM at launch (backgrounded, best-effort)
+# so the first message of a session is not a cold start.
+#
+# Note on running two local models at once: a local lead with a local subagent
+# means two sets of weights resident simultaneously. When vram_gb is set, the
+# sync warns at launch — with the actual numbers — if the two largest installed
+# models cannot co-reside; `make doctor` reports the same. It never reassigns
+# your model choice.
+#
 # ollama:
 #   vram_gb: 16            # GPU memory budget in GiB (sum across GPUs)
 #   kv_cache_type: q8_0    # f16 (default) | q8_0 | q4_0 — must match the daemon
+#   keep_alive: 30m        # how long each model stays resident (-1 = never unload)
+#   preload: true          # warm models[0] at launch so turn 1 isn't a cold start
+#   keep_alive_overrides:  # optional, per model — wins over keep_alive above
+#     qwen3:8b: 1h
 
 # ============================================================================
 # Tool Groups Configuration
@@ -2757,6 +2873,18 @@ memory:
   # For a host-installed OpenViking used by Docker DeerFlow, set base_url to
   # http://host.docker.internal:1933 and allow_insecure_http: true. The bundled
   # optional Compose overlay uses the internal http://openviking:1933 address.
+  #
+  # Honcho example (replace this DeerMem backend_config block when
+  # manager_class is honcho). This remote HTTP adapter uses Honcho's server-side
+  # deriver to build user-model memory representations; no local LLM calls.
+  #
+  # backend_config:
+  #   base_url: http://localhost:8000
+  #   # api_key: $HONCHO_API_KEY   # hosted Honcho; plain-http + api_key needs allow_insecure_http: true
+  #   workspace_prefix: deerflow-u-   # one isolated workspace per user id
+  #   # workspace_overrides: {}    # map specific user ids to custom workspaces
+  #   # user_peer_overrides: {}    # map specific user ids to custom peer names
+  #   assistant_peer: deerflow
   backend_config:
     storage_path: ""            # empty = deer-flow base_dir (factory injects absolute runtime_home); a non-empty path is the root DIRECTORY (per-user memory under {storage_path}/users/{uid}/memory.json)
     storage_class: file         # file (default) or a dotted MemoryStorage class path; invalid persistent backends fail fast
@@ -3088,6 +3216,24 @@ scheduler:
   lease_seconds: 120
   max_concurrent_runs: 3
   min_once_delay_seconds: 60
+
+# ============================================================================
+# Long-running MCP Tasks Configuration
+# ============================================================================
+# Protocol-neutral durable task runtime. This foundation is disabled by
+# default; an MCP task driver must be configured before tasks can be submitted.
+# All fields are restart-required (captured at Gateway lifespan startup).
+#
+# mcp_tasks:
+#   enabled: false               # Master switch for the background status poller
+#   poll_interval_seconds: 5     # Scan interval and default task retry interval
+#   lease_seconds: 120           # Expired claims become recoverable after this delay
+#   max_concurrent_polls: 8      # Maximum status calls started by one worker per scan
+mcp_tasks:
+  enabled: false
+  poll_interval_seconds: 5
+  lease_seconds: 120
+  max_concurrent_polls: 8
 
 # ============================================================================
 # Run Ownership Configuration

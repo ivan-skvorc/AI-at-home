@@ -33,6 +33,71 @@ export interface AuxCostEntry {
   promoCost: number | null;
 }
 
+export interface SpendBudgetLimit {
+  /** "daily" | "weekly" | "monthly". */
+  period: string;
+  limit: number;
+  spent: number;
+  remaining: number;
+  /** spent / limit, so the UI can colour by proximity. */
+  fraction: number;
+}
+
+export interface SpendBudgetSummary {
+  currency: string | null;
+  limits: SpendBudgetLimit[];
+  /**
+   * The window with the least headroom. A budget can have three windows; the
+   * one about to bite is the only one worth a line in the header.
+   */
+  tightest: SpendBudgetLimit | null;
+  /** A cap is spent — new runs are refused (HTTP 402) until the window rolls. */
+  exceeded: boolean;
+  /** Fraction at which the agent starts getting in-context warnings. */
+  warnThreshold: number;
+}
+
+/**
+ * Remaining spend budget, or null when the cap is off or unenforceable.
+ *
+ * A spend cap is denominated in the pricing currency, so it can only be active
+ * when pricing is configured — which is why this rides inside the cost summary
+ * rather than needing its own prop through every chat page.
+ */
+export function threadTokenUsageToSpendBudget(
+  usage: ThreadTokenUsageResponse | null | undefined,
+): SpendBudgetSummary | null {
+  const budget = usage?.spend_budget;
+  if (!budget) {
+    return null;
+  }
+  const limits: SpendBudgetLimit[] = (budget.limits ?? [])
+    .filter(
+      (entry) => entry && typeof entry.limit === "number" && entry.limit > 0,
+    )
+    .map((entry) => ({
+      period: entry.period,
+      limit: entry.limit,
+      spent: entry.spent ?? 0,
+      remaining:
+        entry.remaining ?? Math.max(entry.limit - (entry.spent ?? 0), 0),
+      fraction: entry.fraction ?? (entry.spent ?? 0) / entry.limit,
+    }));
+  if (limits.length === 0) {
+    return null;
+  }
+  const tightest = limits.reduce((least, entry) =>
+    entry.remaining < least.remaining ? entry : least,
+  );
+  return {
+    currency: budget.currency ?? null,
+    limits,
+    tightest,
+    exceeded: budget.exceeded === true,
+    warnThreshold: budget.warn_threshold ?? 0.8,
+  };
+}
+
 export interface ThreadCostSummary {
   /** Estimated spend across the thread's runs, or null when unpriced. */
   totalCost: number | null;
@@ -52,6 +117,8 @@ export interface ThreadCostSummary {
    * the figure covers only the priced models and understates the real spend.
    */
   unpricedModels: string[];
+  /** Remaining currency spend cap, when one is configured and enforceable. */
+  spendBudget: SpendBudgetSummary | null;
 }
 
 /**
@@ -96,6 +163,7 @@ export function threadTokenUsageToCostSummary(
     unpricedModels: (usage.unpriced_models ?? []).filter(
       (name): name is string => typeof name === "string" && name.length > 0,
     ),
+    spendBudget: threadTokenUsageToSpendBudget(usage),
   };
 }
 

@@ -233,8 +233,42 @@ export interface Translations {
     demoChats: string;
     agents: string;
     scheduledTasks: string;
+    spend: string;
     agentsDisabledTooltip: string;
     channels: string;
+  };
+
+  // Spend history and attribution (fork feature).
+  spend: {
+    title: string;
+    description: string;
+    window: string;
+    windowDays: (days: number) => string;
+    totalCost: string;
+    totalTokens: string;
+    totalRuns: string;
+    byModel: string;
+    byThread: string;
+    byCategory: string;
+    model: string;
+    thread: string;
+    category: string;
+    cost: string;
+    tokens: string;
+    runs: string;
+    untitledThread: string;
+    categories: {
+      conversation: string;
+      memory: string;
+      suggestions: string;
+    };
+    /** Suffix on a model row with no configured price. */
+    unpriced: string;
+    /** Named, never silently dropped — a quietly low total reads as a bug. */
+    unpricedNote: (models: string) => string;
+    noPricing: string;
+    empty: string;
+    loadFailed: string;
   };
 
   // Browser-style keep-alive chat tabs (fork feature).
@@ -628,6 +662,12 @@ export interface Translations {
     promoRate: string;
     /** Legend for the red figure — what the thread costs once the promo ends. */
     standardRate: string;
+    /** Remaining currency spend cap (fork feature, roadmap item 2). */
+    budgetLeft: string;
+    /** Human label for a cap window: "today" / "this week" / "this month". */
+    budgetPeriod: (period: string) => string;
+    budgetExceeded: string;
+    budgetHint: string;
     memory: string;
     suggestions: string;
     auxCallCount: (count: number) => string;
@@ -807,6 +847,17 @@ export interface Translations {
         connectedAction: string;
         requestPermissions: string;
         alreadyConnected: string;
+        changeAppButton: string;
+        changeAppTitle: string;
+        changeAppDescription: string;
+        changeAppIdLabel: string;
+        changeAppSecretLabel: string;
+        changeAppAuthResetNote: string;
+        changeAppSubmit: string;
+        changeAppReRegister: string;
+        changeAppSwitched: string;
+        brandFeishu: string;
+        brandLark: string;
         connectionStarted: string;
         connectionReady: string;
         authStarted: string;
@@ -888,6 +939,21 @@ export interface Translations {
       testBody: string;
       notSupported: string;
       disableNotification: string;
+      /** Fork feature: Web Push (notifications with the browser closed). */
+      push: {
+        title: string;
+        description: string;
+        enable: string;
+        disable: string;
+        test: string;
+        testSent: string;
+        testFailed: string;
+        registered: string;
+        insecureContext: string;
+        unsupported: string;
+        unavailable: string;
+        iosHint: string;
+      };
     };
     suggestions: {
       title: string;
