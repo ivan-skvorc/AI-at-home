@@ -79,7 +79,7 @@ deer-flow/
 │                                    # Integration credentials and enabled state remain per-user
 ├── contracts/                      # Cross-component JSON contracts (e.g. subagent status, skill review)
 ├── examples/deerflow-extension-example/ # Standalone package demonstrating all extension contribution kinds
-├── scripts/                        # Root orchestration scripts invoked by the Makefile (check, configure, doctor, exposure, backup, support_bundle, serve, nginx, docker, deploy, setup_wizard, searxng, detect_searxng, sandbox-preflight, sync-ollama-models, sync-api-key-models, update_camoufox_searxng, install_auto_update)
+├── scripts/                        # Root orchestration scripts invoked by the Makefile — see scripts/AGENTS.md
 ├── tests/                          # Root-level tests (currently tests/skills/ — public skill tests)
 └── docs/                           # Cross-cutting docs, plans, and design notes
 ```
@@ -102,19 +102,11 @@ servers + skills). Both real files are gitignored and may be edited at runtime v
 Gateway API. Config schema and resolution order are documented in
 [backend/AGENTS.md](backend/AGENTS.md).
 
-Skill quality review note:
-- `skills/public/skill-reviewer/` is the built-in read-only skill quality reviewer.
-  It uses the harness-layer `review_skill_package` tool and contracts in
-  `contracts/skill_review/`. Model-visible review data is compact and
-  tag-neutralized; full raw payloads stay in tool artifacts. See
-  [backend/AGENTS.md](backend/AGENTS.md) for the non-activation, SkillScan, and
-  `skill-creator` ownership boundaries.
-- The skill-review CI gate (`scripts/review_changed_public_skills.py`) supports
-  digest-pinned acknowledgments in `skills/public/.review-acknowledgments.json`
-  for pre-existing packages whose findings were human-reviewed (e.g. upstream
-  packages predating the gate). An acknowledgment suppresses the failure only
-  while the package's content digest matches; any change to the package re-arms
-  the full gate. Tests: `backend/tests/test_review_changed_public_skills.py`.
+Skill quality review note: `skills/public/skill-reviewer/` is the built-in
+read-only reviewer, and `scripts/review_changed_public_skills.py` is its CI gate
+(with digest-pinned acknowledgments in `skills/public/.review-acknowledgments.json`).
+See [the skills guide](backend/packages/harness/deerflow/skills/AGENTS.md) for the
+ownership boundaries and the acknowledgment rules.
 
 Scheduled-task note:
 - The scheduled-task MVP adds a workspace page at `/workspace/scheduled-tasks` plus a background scheduler service gated by `config.yaml -> scheduler.enabled`.
