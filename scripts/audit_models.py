@@ -69,6 +69,7 @@ class BundledModel:
     promo_input_per_million: float | None
     promo_output_per_million: float | None
     source: str
+    discount_until: object | None = None
 
 
 @dataclass(frozen=True)
@@ -102,10 +103,15 @@ def _entry_to_model(provider: str, entry: dict, source: str) -> BundledModel | N
     name = entry.get("name")
     if not name:
         return None
-    pricing = entry.get("pricing") or {}
+    # `price:`/`discount:` are the current shape; `pricing:` is still read so the
+    # audit keeps working against an older config (and against the committed
+    # stale fixture, which is deliberately frozen in the old shape).
+    price = entry.get("price") or {}
+    discount = entry.get("discount") or {}
+    legacy = entry.get("pricing") or {}
 
-    def _num(key: str) -> float | None:
-        value = pricing.get(key)
+    def _num(source_map: dict, key: str) -> float | None:
+        value = source_map.get(key)
         try:
             return float(value) if value is not None else None
         except (TypeError, ValueError):
@@ -116,10 +122,11 @@ def _entry_to_model(provider: str, entry: dict, source: str) -> BundledModel | N
         name=str(name),
         slug=str(entry.get("model") or name),
         display_name=str(entry.get("display_name") or ""),
-        input_per_million=_num("input_per_million"),
-        output_per_million=_num("output_per_million"),
-        promo_input_per_million=_num("promo_input_per_million"),
-        promo_output_per_million=_num("promo_output_per_million"),
+        input_per_million=_num(price, "input") if price else _num(legacy, "input_per_million"),
+        output_per_million=_num(price, "output") if price else _num(legacy, "output_per_million"),
+        promo_input_per_million=_num(discount, "input") if discount else _num(legacy, "promo_input_per_million"),
+        promo_output_per_million=_num(discount, "output") if discount else _num(legacy, "promo_output_per_million"),
+        discount_until=discount.get("until") if discount else None,
         source=source,
     )
 
@@ -135,7 +142,7 @@ def parse_marker_blocks(text: str) -> list[BundledModel]:
     models: list[BundledModel] = []
     provider: str | None = None
     entry: dict = {}
-    in_pricing = False
+    in_pricing: str | None = None
 
     def _flush() -> None:
         nonlocal entry, in_pricing
@@ -144,7 +151,7 @@ def parse_marker_blocks(text: str) -> list[BundledModel]:
             if model:
                 models.append(model)
         entry = {}
-        in_pricing = False
+        in_pricing = None
 
     for line in text.splitlines():
         begin = BEGIN_RE.match(line)
@@ -181,11 +188,14 @@ def parse_marker_blocks(text: str) -> list[BundledModel]:
         # Strip trailing comments, which the pricing block uses heavily.
         value = value.split("#", 1)[0].strip().strip("\"'")
 
-        if key == "pricing":
-            in_pricing = True
-            entry.setdefault("pricing", {})
+        if key in {"price", "discount", "pricing"}:
+            # `price:`/`discount:` are the current shape; `pricing:` is still
+            # read so the audit works against an older config and against the
+            # committed stale fixture.
+            in_pricing = key
+            entry.setdefault(key, {})
             continue
-        if in_pricing and key in {
+        if in_pricing == "pricing" and key in {
             "currency",
             "input_per_million",
             "output_per_million",
@@ -196,11 +206,14 @@ def parse_marker_blocks(text: str) -> list[BundledModel]:
         }:
             entry.setdefault("pricing", {})[key] = value
             continue
+        if in_pricing in {"price", "discount"} and key in {"currency", "input", "output", "cache_hit", "until"}:
+            entry.setdefault(in_pricing, {})[key] = value
+            continue
         if key in {"name", "display_name", "model"}:
-            in_pricing = False
+            in_pricing = None
             entry.setdefault(key, value)
         else:
-            in_pricing = False
+            in_pricing = None
 
     _flush()
     return models
@@ -385,16 +398,30 @@ def check_internal_consistency(entries: Iterable[BundledModel]) -> list[Finding]
     """
     findings: list[Finding] = []
     for entry in entries:
+        # A price in the name is a second copy of a number that is already data.
+        # It is where the old drift came from, so re-adding one is a finding in
+        # itself rather than something to reconcile.
         name_in, name_out, name_promo_in, name_promo_out = prices_in_display_name(entry.display_name)
-        if name_in is None:
-            continue
-        mismatches = []
-        if _differs(name_in, entry.input_per_million) or _differs(name_out, entry.output_per_million):
-            mismatches.append(f"name says ${name_in}/{name_out}, block says ${entry.input_per_million}/{entry.output_per_million}")
-        if (name_promo_in is None) != (entry.promo_input_per_million is None):
-            mismatches.append(f"promo present in {'the name' if name_promo_in is not None else 'the pricing block'} but not the other")
-        elif _differs(name_promo_in, entry.promo_input_per_million) or _differs(name_promo_out, entry.promo_output_per_million):
-            mismatches.append(f"promo differs: name ${name_promo_in}/{name_promo_out}, block ${entry.promo_input_per_million}/{entry.promo_output_per_million}")
+        if name_in is not None:
+            findings.append(
+                Finding(
+                    kind="price_in_display_name",
+                    provider=entry.provider,
+                    name=entry.name,
+                    slug=entry.slug,
+                    detail=(f"`{entry.display_name}` carries a price in its name (${name_in}/{name_out}). Prices belong in the `price:` block only — a second copy drifts, and a discount spelled into a name can only end when a human edits the string."),
+                    suggestion=f"remove the ({'$'}{name_in}/{name_out}...) pair from display_name; keep `price:`",
+                )
+            )
+        # A discount with no `until` is deliberately NOT a finding here. Several
+        # providers run open-ended promotions with no announced end date, so it
+        # is a permanent condition a maintainer cannot resolve — and a weekly
+        # issue nobody can close is how this job becomes one people ignore. The
+        # `promo_ended` check below still catches a discount the provider has
+        # actually stopped offering, which is the actionable half. FORK.md's
+        # post-sync checklist covers the "add an `until` once one is announced"
+        # review, where a human is already reading.
+        mismatches: list[str] = []
         if mismatches:
             findings.append(
                 Finding(

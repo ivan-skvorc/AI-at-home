@@ -35,7 +35,39 @@ def _load_script():
 audit = _load_script()
 
 
+# The current shape: the price is data in `price:`/`discount:`, and the name is
+# only a label. `TestLegacyPricingBlock` keeps the old `pricing:` spelling
+# covered, because a user's own config may still carry it.
 CONFIG_BLOCK = """models:
+  # === BEGIN auto-model-config: openrouter (uncommented at startup when OPENROUTER_API_KEY is set) ===
+  # - name: openrouter-alpha
+  #   display_name: Alpha (OpenRouter) (p)
+  #   use: langchain_openai:ChatOpenAI
+  #   model: vendor/alpha
+  #   price:
+  #     currency: USD
+  #     input: 2.0
+  #     output: 6.0
+  #
+  # - name: openrouter-beta
+  #   display_name: Beta (OpenRouter) (p)
+  #   use: langchain_openai:ChatOpenAI
+  #   model: vendor/beta
+  #   price:
+  #     currency: USD
+  #     input: 1.0
+  #     output: 4.0
+  #   discount:
+  #     input: 0.5
+  #     output: 2.0
+  #     until: 2099-12-31
+  # === END auto-model-config: openrouter ===
+"""
+
+# A config written before prices moved out of the name. The audit must keep
+# reading these, because `config_upgrade.py` cannot rewrite a list entry, so
+# every pre-existing install still looks exactly like this.
+LEGACY_CONFIG_BLOCK = """models:
   # === BEGIN auto-model-config: openrouter (uncommented at startup when OPENROUTER_API_KEY is set) ===
   # - name: openrouter-alpha
   #   display_name: Alpha ($2/6) (OpenRouter) (p)
@@ -45,17 +77,6 @@ CONFIG_BLOCK = """models:
   #     currency: USD
   #     input_per_million: 2.0
   #     output_per_million: 6.0
-  #
-  # - name: openrouter-beta
-  #   display_name: Beta ($1/4 → $0.5/2*) (OpenRouter) (p)
-  #   use: langchain_openai:ChatOpenAI
-  #   model: vendor/beta
-  #   pricing:
-  #     currency: USD
-  #     input_per_million: 1.0
-  #     output_per_million: 4.0
-  #     promo_input_per_million: 0.5
-  #     promo_output_per_million: 2.0
   # === END auto-model-config: openrouter ===
 """
 
@@ -173,18 +194,36 @@ class TestDiff:
 
 
 class TestInternalConsistency:
-    def test_a_display_name_that_disagrees_with_its_pricing_block_is_a_finding(self):
-        text = CONFIG_BLOCK.replace("display_name: Alpha ($2/6)", "display_name: Alpha ($9/6)")
-        findings = audit.check_internal_consistency(audit.parse_marker_blocks(text))
-        assert [f.kind for f in findings] == ["name_price_mismatch"]
+    def test_a_price_in_a_display_name_is_a_finding(self):
+        """The regression guard for the change that moved prices out of names.
 
-    def test_a_starred_name_with_no_promo_block_is_a_finding(self):
-        text = CONFIG_BLOCK.replace("display_name: Alpha ($2/6)", "display_name: Alpha ($2/6 → $1/3*)")
+        A price in the name is a second copy of a number that is already data;
+        re-adding one brings back the drift where the figure a user reads and
+        the figure they are billed against can disagree.
+        """
+        text = CONFIG_BLOCK.replace("display_name: Alpha", "display_name: Alpha ($9/6)")
         findings = audit.check_internal_consistency(audit.parse_marker_blocks(text))
-        assert [f.kind for f in findings] == ["name_price_mismatch"]
+        assert [f.kind for f in findings] == ["price_in_display_name"]
 
-    def test_the_shipped_config_is_internally_consistent(self):
+    def test_a_starred_promo_pair_in_a_name_is_also_a_finding(self):
+        text = CONFIG_BLOCK.replace("display_name: Alpha", "display_name: Alpha ($2/6 -> $1/3*)".replace("->", "\u2192"))
+        findings = audit.check_internal_consistency(audit.parse_marker_blocks(text))
+        assert [f.kind for f in findings] == ["price_in_display_name"]
+
+    def test_the_shipped_config_carries_no_price_in_any_name(self):
         entries = audit.parse_marker_blocks((REPO_ROOT / "config.example.yaml").read_text(encoding="utf-8"))
+        assert audit.check_internal_consistency(entries) == []
+
+    def test_an_open_ended_discount_is_not_reported(self):
+        """Deliberately quiet: several providers run promotions with no end date.
+
+        A weekly issue for a condition the maintainer cannot resolve is how this
+        job becomes one people learn to ignore, which costs more than the drift
+        it detects. FORK.md's checklist covers the human review instead.
+        """
+        entries = audit.parse_marker_blocks((REPO_ROOT / "config.example.yaml").read_text(encoding="utf-8"))
+        open_ended = [e for e in entries if e.promo_input_per_million is not None and not e.discount_until]
+        assert open_ended, "fixture assumption: the bundle still ships an open-ended discount"
         assert audit.check_internal_consistency(entries) == []
 
     def test_the_two_synced_sources_agree_today(self):
@@ -341,3 +380,29 @@ class TestStaleFixture:
         assert code == 0
         assert "No drift" not in body
         assert "```diff" in body
+
+
+class TestLegacyPricingBlock:
+    """A config written before prices moved out of `display_name`.
+
+    `config_upgrade.py` cannot add or rewrite a key inside an existing list
+    entry, so every install that predates the change still carries the old
+    `pricing:` block and the old name. The audit must keep reading those, or it
+    goes quiet on exactly the configs most likely to have drifted.
+    """
+
+    def test_a_legacy_pricing_block_is_still_read(self):
+        entries = audit.parse_marker_blocks(LEGACY_CONFIG_BLOCK)
+        assert len(entries) == 1
+        assert entries[0].input_per_million == 2.0
+        assert entries[0].output_per_million == 6.0
+
+    def test_a_legacy_entry_still_diffs_against_the_catalog(self):
+        entries = audit.parse_marker_blocks(LEGACY_CONFIG_BLOCK)
+        findings = audit.diff_against_catalog(entries, catalog(**{"vendor/alpha": {"input_per_million": 9.0, "output_per_million": 6.0}}))
+        assert [f.kind for f in findings] == ["price_changed"]
+
+    def test_a_legacy_name_is_reported_so_it_gets_migrated(self):
+        # Its price lives in the name, which is the thing being moved away from.
+        findings = audit.check_internal_consistency(audit.parse_marker_blocks(LEGACY_CONFIG_BLOCK))
+        assert [f.kind for f in findings] == ["price_in_display_name"]

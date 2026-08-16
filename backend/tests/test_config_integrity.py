@@ -86,12 +86,18 @@ class TestShippedExampleConfig:
 
 
 class TestBundledModelPricing:
-    """Every bundled paid model must carry a machine-readable ``pricing:`` block.
+    """Every bundled paid model must carry a structured ``price:`` block — and
+    must NOT carry the price in its ``display_name``.
 
-    A model without one contributes nothing to the chat header's cost estimate,
-    so a conversation run entirely on unpriced models reports no cost at all —
-    which is what shipped when only the Anthropic block was priced. These pin
-    the whole bundle so a newly added model cannot silently reintroduce it.
+    A model without a price contributes nothing to the chat header's estimate,
+    so a conversation run entirely on unpriced models reports no cost at all.
+    These pin the whole bundle so a newly added model cannot reintroduce that.
+
+    The second half is the newer rule. A price used to live in the name as
+    ``($3/15)`` and again in a machine-readable block, i.e. one number kept in
+    two places. It drifted the obvious way: a promotion could only "end" by a
+    human editing a string, so an expired discount kept being advertised. The
+    price is now data in one place, and the name is only a label.
     """
 
     @staticmethod
@@ -108,127 +114,114 @@ class TestBundledModelPricing:
             text,
             re.S,
         ):
-            # Uncomment the block the same way sync-api-key-models.py does, then
-            # parse it as the YAML list it becomes once enabled.
             body = "\n".join(re.sub(r"^  # ?", "  ", line) for line in match.group(2).splitlines())
             blocks[match.group(1)] = yaml.safe_load(body) or []
         return blocks
 
-    def test_every_bundled_model_prices_without_its_pricing_block(self):
-        """The block must be redundant, not load-bearing.
+    def test_every_bundled_model_is_priced(self):
+        unpriced = [f"{slug}:{entry.get('name')}" for slug, entries in self._marker_blocks().items() for entry in entries if not entry.get("price")]
+        assert unpriced == [], f"bundled models missing a `price:` block: {unpriced}"
 
-        Shipping `pricing:` blocks in `config.example.yaml` only ever reaches a
-        **fresh** `config.yaml`. `sync-api-key-models.py` skips a provider block
-        whose models are already active (correct — it must not duplicate them),
-        and `config_upgrade.py`'s `merge_missing` is dict-based so it cannot add
-        a key inside an existing list entry. So a user who ran DeerFlow before a
-        price shipped keeps that model active and unpriced forever, and their
-        chat header stays on `—` no matter how many times the example is fixed.
+    def test_no_bundled_model_carries_its_price_in_the_display_name(self):
+        """The rule this change exists to enforce.
 
-        `pricing.py::derive_pricing_from_display_name` closes that by reading the
-        price the name already states. This test pins the property that makes it
-        work: every bundled model must resolve a price from its `display_name`
-        **alone**, with its block removed. A new bundled model whose name does
-        not carry a parseable `($in/out)` pair would price on a fresh install and
-        silently not price on an upgraded one — fail here instead.
+        A price in the name is a second copy of a number that is already data.
+        Re-adding one would resurrect the drift: the figure a user reads and the
+        figure they are billed against could disagree, and a discount would once
+        again only end when someone edited a string.
         """
+        import re
+
+        pair = re.compile(r"\(\$\d")
+        offenders = [f"{slug}:{entry['name']} -> {entry['display_name']}" for slug, entries in self._marker_blocks().items() for entry in entries if pair.search(entry.get("display_name") or "")]
+        assert offenders == [], f"prices belong in `price:`, not the display name: {offenders}"
+
+    def test_every_bundled_model_prices_from_its_price_block(self):
         from app.gateway.pricing import build_pricing_map, lookup_pricing
 
         for slug, entries in self._marker_blocks().items():
             for entry in entries:
-                stripped = SimpleNamespace(name=entry["name"], model=entry["model"], pricing=None, display_name=entry["display_name"])
-                pricing = build_pricing_map([stripped])
-                price = lookup_pricing(pricing, entry["model"])
-                assert price is not None, f"{slug}:{entry['name']} cannot be priced from its display_name alone"
-                # And the derived figures must equal the shipped block, or an
-                # upgraded install would silently bill a different rate than a
-                # fresh one.
-                shipped = entry["pricing"]
-                assert price.input_per_million == pytest.approx(shipped["input_per_million"]), f"{slug}:{entry['name']}"
-                assert price.output_per_million == pytest.approx(shipped["output_per_million"]), f"{slug}:{entry['name']}"
-                assert price.promo() is not None if shipped.get("promo_input_per_million") else price.promo() is None, f"{slug}:{entry['name']}"
+                cfg = SimpleNamespace(
+                    name=entry["name"],
+                    model=entry["model"],
+                    display_name=entry["display_name"],
+                    price=entry.get("price"),
+                    discount=entry.get("discount"),
+                    pricing=None,
+                )
+                price = lookup_pricing(build_pricing_map([cfg]), entry["model"])
+                assert price is not None, f"{slug}:{entry['name']} cannot be priced"
+                assert price.input_per_million == pytest.approx(entry["price"]["input"]), f"{slug}:{entry['name']}"
+                assert price.output_per_million == pytest.approx(entry["price"]["output"]), f"{slug}:{entry['name']}"
 
-    def test_every_bundled_model_is_priced(self):
-        unpriced = [f"{slug}:{entry.get('name')}" for slug, entries in self._marker_blocks().items() for entry in entries if not entry.get("pricing")]
-        assert unpriced == [], f"bundled models missing a pricing block: {unpriced}"
-
-    def test_pricing_blocks_are_well_formed_and_single_currency(self):
+    def test_price_blocks_are_well_formed_and_single_currency(self):
         currencies: set[str] = set()
         for slug, entries in self._marker_blocks().items():
             for entry in entries:
-                pricing = entry["pricing"]
+                price = entry["price"]
                 name = f"{slug}:{entry.get('name')}"
-                currencies.add(pricing["currency"])
-                assert pricing["input_per_million"] > 0, name
-                assert pricing["output_per_million"] > 0, name
-                hit = pricing.get("input_cache_hit_per_million")
-                # Optional, but when present it must be cheaper than a miss —
+                currencies.add(price.get("currency", "USD"))
+                assert price["input"] > 0, name
+                assert price["output"] > 0, name
+                hit = price.get("cache_hit")
+                # Optional, but when present it must be cheaper than a miss --
                 # otherwise caching would be priced as a penalty.
-                assert hit is None or 0 <= hit <= pricing["input_per_million"], name
-        # Mixed currencies disable cost reporting entirely (see FORK.md §2).
+                assert hit is None or 0 <= hit <= price["input"], name
+        # Mixed currencies disable cost reporting entirely (see FORK.md).
         assert currencies == {"USD"}, currencies
 
-    def test_price_matches_the_price_in_name_pair(self):
-        """The two prices a model carries must agree.
+    def test_discounts_are_real_discounts_and_parse_their_expiry(self):
+        """A discount must be below list, and any `until` must be readable.
 
-        `display_name` shows `($<in>/<out>)` for humans and `pricing:` bills
-        against it. A promo name (`$list → $promo*`) bills at the **standard**
-        rate — the promo can end at any time.
+        An unreadable `until` is treated as *expired* by the pricing loader, so
+        a typo here would silently switch the discount off rather than fail --
+        catch it where the fix is obvious.
         """
-        import re
+        from deerflow.pricing import parse_discount_expiry
 
-        pair = re.compile(r"\(\$(\d+(?:\.\d+)?)/(\d+(?:\.\d+)?)")
         for slug, entries in self._marker_blocks().items():
             for entry in entries:
-                match = pair.search(entry["display_name"])
-                assert match, f"{slug}:{entry['name']} has no price in its display_name"
-                assert entry["pricing"]["input_per_million"] == pytest.approx(float(match.group(1))), entry["name"]
-                assert entry["pricing"]["output_per_million"] == pytest.approx(float(match.group(2))), entry["name"]
-
-    def test_promo_price_matches_the_starred_pair_in_the_name(self):
-        """A starred `$list → $promo*` name and its `promo_*` block must agree.
-
-        The starred pair is the human-readable "you pay less right now" signal
-        and `promo_*_per_million` is the machine-readable one the header renders
-        in green. They are two spellings of one number: if a promo ends and only
-        the name is updated, the UI keeps advertising a discount that no longer
-        exists, which is worse than showing no promo at all. This also enforces
-        the converse — a `promo_*` block with no starred pair in the name.
-        """
-        import re
-
-        starred = re.compile(r"\(\$\d+(?:\.\d+)?/\d+(?:\.\d+)?\s*→\s*\$(\d+(?:\.\d+)?)/(\d+(?:\.\d+)?)\*\)")
-        for slug, entries in self._marker_blocks().items():
-            for entry in entries:
-                pricing = entry["pricing"]
-                label = f"{slug}:{entry['name']}"
-                match = starred.search(entry["display_name"])
-                has_promo_block = "promo_input_per_million" in pricing or "promo_output_per_million" in pricing
-                if match is None:
-                    assert not has_promo_block, f"{label} has promo pricing but no starred pair in its display_name"
+                discount = entry.get("discount")
+                if not discount:
                     continue
-                assert has_promo_block, f"{label} advertises a promo in its display_name but ships no promo_* pricing"
-                assert pricing["promo_input_per_million"] == pytest.approx(float(match.group(1))), label
-                assert pricing["promo_output_per_million"] == pytest.approx(float(match.group(2))), label
-                # A "promo" at or above list price would be billed as a discount
-                # while costing the user more — the pricing loader drops it, so
-                # catch it here where the fix is obvious.
-                assert pricing["promo_input_per_million"] <= pricing["input_per_million"], label
-                assert pricing["promo_output_per_million"] <= pricing["output_per_million"], label
+                label = f"{slug}:{entry['name']}"
+                price = entry["price"]
+                assert 0 < discount["input"] <= price["input"], label
+                assert 0 < discount["output"] <= price["output"], label
+                if "until" in discount:
+                    _, valid = parse_discount_expiry(discount["until"])
+                    assert valid, f"{label} has an unreadable `until`: {discount['until']!r}"
 
-    def test_wizard_bundles_match_the_config_marker_blocks(self):
-        """`make setup` and the auto-config path must write identical prices."""
+    def test_the_wizard_bundles_and_the_example_agree(self):
+        """The two synced sources must ship the same price for the same model.
+
+        They are separate files a human edits, so nothing but a test stops them
+        from disagreeing -- and a disagreement means a fresh install prices
+        differently depending on whether the wizard or the marker block wrote
+        the entry.
+        """
         import sys
 
         sys.path.insert(0, str(REPO_ROOT / "scripts"))
-        import wizard.providers as providers
+        from wizard.providers import MODEL_PRICES
 
-        wizard = {"anthropic": providers.ANTHROPIC_BUNDLE_MODELS, "openrouter": providers.OPENROUTER_BUNDLE_MODELS}
-        wizard.update({slug: bundle for slug, (_, bundle) in providers.HOME_API_BUNDLES.items()})
+        from deerflow.pricing import parse_discount_expiry
 
-        config = {entry["name"]: entry.get("pricing") for entries in self._marker_blocks().values() for entry in entries}
-        drift = [(entry["name"], entry.get("pricing"), config.get(entry["name"])) for bundle in wizard.values() for entry in bundle if entry.get("pricing") != config.get(entry["name"])]
-        assert drift == [], f"pricing drift between providers.py and config.example.yaml: {drift}"
+        for slug, entries in self._marker_blocks().items():
+            for entry in entries:
+                record = MODEL_PRICES.get(entry["name"])
+                assert record is not None, f"{slug}:{entry['name']} is not in wizard MODEL_PRICES"
+                assert entry["price"] == record["price"], f"{slug}:{entry['name']} price differs between the example and the wizard"
+                # Compare the discount by meaning, not spelling: YAML parses a
+                # bare `until: 2026-08-31` into a `date` while the wizard table
+                # holds the string. Both are accepted inputs and resolve to the
+                # same instant, so only a real disagreement should fail here.
+                example_discount = dict(entry.get("discount") or {})
+                wizard_discount = dict(record.get("discount") or {})
+                example_until = example_discount.pop("until", None)
+                wizard_until = wizard_discount.pop("until", None)
+                assert example_discount == wizard_discount, f"{slug}:{entry['name']} discount differs between the example and the wizard"
+                assert parse_discount_expiry(example_until) == parse_discount_expiry(wizard_until), f"{slug}:{entry['name']} discount expiry differs between the example and the wizard"
 
 
 class TestSandboxKeyLint:

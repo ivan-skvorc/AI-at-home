@@ -15,7 +15,7 @@
 # ============================================================================
 # Bump this number when the config schema changes.
 # Run `make config-upgrade` to merge new fields into your local config.yaml.
-config_version: 38
+config_version: 39
 
 # ============================================================================
 # Logging
@@ -277,22 +277,28 @@ models:
   # Model ids and thinking formats below are current as of 2026-07. Adjust
   # max_tokens / supports_vision to taste and delete the models you don't want.
   #
-  # Display-name markers: each display_name carries the model's price as a
-  # bracketed `($<input>/<output>)` pair in USD per 1M tokens (e.g. `($3/15)` =
-  # $3 in / $15 out). It shows in the model dropdown so you can compare cost at a
-  # glance. These are OpenRouter / Anthropic list prices as of 2026-07 — a rough
-  # guide, not billing truth (promos, cache hits and provider variants shift
-  # them); confirm on the model's OpenRouter page. The machine-readable `pricing:`
-  # block (Anthropic entries) is what actually powers the console cost display.
-  # Two extra markers ride on the OpenRouter entries (see the OpenRouter header
-  # below for the full note):
-  #   ($<list> → $<promo>*)  a starred second pair = a temporary discount from
-  #                          OpenRouter's promotions page; the first pair is the
-  #                          standard list price, the starred pair is what you pay
-  #                          now (e.g. MiniMax M3, GLM-5.2 as of 2026-07).
+  # Prices are NOT in the display name. Each model carries a `price:` block (and
+  # a `discount:` block when the provider is running one), per 1M tokens. That
+  # block is the single source of truth: it powers the cost figure in the chat
+  # header, the spend page, the budget caps, and the price shown in the model
+  # dropdown — which renders it from the field, so the number you read is the
+  # number you are billed against.
+  #
+  # It used to live in the name as `($3/15)` as well, i.e. one number in two
+  # places. It drifted the way that always drifts: a promotion could only "end"
+  # by a human editing a string, so an expired discount kept being advertised.
+  # A `discount:` now carries its own `until:` and stops applying on its own.
+  #
+  # A name written the old way still prices correctly — the parser is kept for
+  # exactly that — so an existing config.yaml needs no migration.
+  #
+  # One marker still rides on the name:
   #   (p)                    privacy caveat: zero-data-retention is NOT guaranteed
   #                          (routed via OpenRouter to a third-party provider that
   #                          may log prompts), unlike the direct Anthropic entries.
+  #
+  # Prices below are provider list prices as of 2026-08; confirm on the model's
+  # own page before relying on them for billing.
   # ══════════════════════════════════════════════════════════════════════════
 
   # ── Anthropic — auto-enabled when ANTHROPIC_API_KEY is set ─────────────────
@@ -317,7 +323,7 @@ models:
   # you can also uncomment them by hand.
   # === BEGIN auto-model-config: anthropic (uncommented at startup when ANTHROPIC_API_KEY is set) ===
   # - name: claude-fable-5
-  #   display_name: Claude Fable 5 ($10/50) (Anthropic)
+  #   display_name: Claude Fable 5 (Anthropic)
   #   use: langchain_anthropic:ChatAnthropic
   #   model: claude-fable-5
   #   api_key: $ANTHROPIC_API_KEY
@@ -326,11 +332,11 @@ models:
   #   max_tokens: 32000
   #   supports_vision: true
   #   supports_thinking: true
-  #   pricing:                        # Anthropic API list price (USD / 1M tokens); powers the console cost display
+  #   price:                          # per 1M tokens; the single source of truth for cost display and budgets
   #     currency: USD
-  #     input_per_million: 10.0
-  #     output_per_million: 50.0
-  #     input_cache_hit_per_million: 1.0   # cache reads ≈ 0.1x input
+  #     input: 10.0
+  #     output: 50.0
+  #     cache_hit: 1.0        # prompt-cache reads
   #   when_thinking_enabled:
   #     thinking:
   #       type: adaptive
@@ -341,7 +347,7 @@ models:
   #       display: summarized
   #
   # - name: claude-opus-5
-  #   display_name: Claude Opus 5 ($5/25) (Anthropic)
+  #   display_name: Claude Opus 5 (Anthropic)
   #   use: langchain_anthropic:ChatAnthropic
   #   model: claude-opus-5
   #   api_key: $ANTHROPIC_API_KEY
@@ -350,11 +356,11 @@ models:
   #   max_tokens: 32000
   #   supports_vision: true
   #   supports_thinking: true
-  #   pricing:                        # Anthropic API list price (USD / 1M tokens); powers the console cost display
+  #   price:                          # per 1M tokens; the single source of truth for cost display and budgets
   #     currency: USD
-  #     input_per_million: 5.0
-  #     output_per_million: 25.0
-  #     input_cache_hit_per_million: 0.5   # cache reads ≈ 0.1x input
+  #     input: 5.0
+  #     output: 25.0
+  #     cache_hit: 0.5        # prompt-cache reads
   #   when_thinking_enabled:
   #     thinking:
   #       type: adaptive
@@ -364,7 +370,7 @@ models:
   #       type: disabled
   #
   # - name: claude-opus-4-8
-  #   display_name: Claude Opus 4.8 ($5/25) (Anthropic)
+  #   display_name: Claude Opus 4.8 (Anthropic)
   #   use: langchain_anthropic:ChatAnthropic
   #   model: claude-opus-4-8
   #   api_key: $ANTHROPIC_API_KEY
@@ -373,11 +379,11 @@ models:
   #   max_tokens: 32000
   #   supports_vision: true
   #   supports_thinking: true
-  #   pricing:                        # Anthropic API list price (USD / 1M tokens); powers the console cost display
+  #   price:                          # per 1M tokens; the single source of truth for cost display and budgets
   #     currency: USD
-  #     input_per_million: 5.0
-  #     output_per_million: 25.0
-  #     input_cache_hit_per_million: 0.5   # cache reads ≈ 0.1x input
+  #     input: 5.0
+  #     output: 25.0
+  #     cache_hit: 0.5        # prompt-cache reads
   #   when_thinking_enabled:
   #     thinking:
   #       type: adaptive
@@ -387,7 +393,7 @@ models:
   #       type: disabled
   #
   # - name: claude-sonnet-5
-  #   display_name: Claude Sonnet 5 ($3/15 → $2/10*) (Anthropic)
+  #   display_name: Claude Sonnet 5 (Anthropic)
   #   use: langchain_anthropic:ChatAnthropic
   #   model: claude-sonnet-5
   #   api_key: $ANTHROPIC_API_KEY
@@ -396,14 +402,16 @@ models:
   #   max_tokens: 32000
   #   supports_vision: true
   #   supports_thinking: true
-  #   pricing:                        # Anthropic API list price (USD / 1M tokens); powers the console cost display
-  #     currency: USD                 # standard rates; cost is billed against these because the intro window can end
-  #     input_per_million: 3.0
-  #     output_per_million: 15.0
-  #     input_cache_hit_per_million: 0.3   # cache reads ≈ 0.1x input
-  #     promo_input_per_million: 2.0       # intro pricing (the starred pair) through 2026-08-31 — shown beside the
-  #     promo_output_per_million: 10.0     # standard cost, never billed instead of it. Drop these when it ends.
-  #     promo_input_cache_hit_per_million: 0.2
+  #   price:                          # per 1M tokens; the single source of truth for cost display and budgets
+  #     currency: USD
+  #     input: 3.0
+  #     output: 15.0
+  #     cache_hit: 0.3        # prompt-cache reads
+  #   discount:                       # shown beside the standard rate, never billed instead of it
+  #     input: 2.0
+  #     output: 10.0
+  #     cache_hit: 0.2
+  #     until: 2026-08-31               # stops applying on its own after this date
   #   when_thinking_enabled:
   #     thinking:
   #       type: adaptive
@@ -413,7 +421,7 @@ models:
   #       type: disabled
   #
   # - name: claude-sonnet-4-6
-  #   display_name: Claude Sonnet 4.6 ($3/15) (Anthropic)
+  #   display_name: Claude Sonnet 4.6 (Anthropic)
   #   use: langchain_anthropic:ChatAnthropic
   #   model: claude-sonnet-4-6
   #   api_key: $ANTHROPIC_API_KEY
@@ -422,11 +430,11 @@ models:
   #   max_tokens: 32000
   #   supports_vision: true
   #   supports_thinking: true
-  #   pricing:                        # Anthropic API list price (USD / 1M tokens); powers the console cost display
+  #   price:                          # per 1M tokens; the single source of truth for cost display and budgets
   #     currency: USD
-  #     input_per_million: 3.0
-  #     output_per_million: 15.0
-  #     input_cache_hit_per_million: 0.3   # cache reads ≈ 0.1x input
+  #     input: 3.0
+  #     output: 15.0
+  #     cache_hit: 0.3        # prompt-cache reads
   #   when_thinking_enabled:
   #     thinking:
   #       type: adaptive
@@ -436,7 +444,7 @@ models:
   #       type: disabled
   #
   # - name: claude-haiku-4-5
-  #   display_name: Claude Haiku 4.5 ($1/5) (Anthropic)
+  #   display_name: Claude Haiku 4.5 (Anthropic)
   #   use: langchain_anthropic:ChatAnthropic
   #   model: claude-haiku-4-5
   #   api_key: $ANTHROPIC_API_KEY
@@ -445,11 +453,11 @@ models:
   #   max_tokens: 16000
   #   supports_vision: true
   #   supports_thinking: true
-  #   pricing:                        # Anthropic API list price (USD / 1M tokens); powers the console cost display
+  #   price:                          # per 1M tokens; the single source of truth for cost display and budgets
   #     currency: USD
-  #     input_per_million: 1.0
-  #     output_per_million: 5.0
-  #     input_cache_hit_per_million: 0.1   # cache reads ≈ 0.1x input
+  #     input: 1.0
+  #     output: 5.0
+  #     cache_hit: 0.1        # prompt-cache reads
   #   when_thinking_enabled:
   #     thinking:
   #       type: enabled
@@ -493,7 +501,7 @@ models:
   # Delete any you don't want after they are enabled.
   # === BEGIN auto-model-config: openrouter (uncommented at startup when OPENROUTER_API_KEY is set) ===
   # - name: openrouter-fable-5
-  #   display_name: Claude Fable 5 ($10/50) (OpenRouter) (p)
+  #   display_name: Claude Fable 5 (OpenRouter) (p)
   #   use: langchain_openai:ChatOpenAI
   #   model: anthropic/claude-fable-5
   #   api_key: $OPENROUTER_API_KEY
@@ -503,13 +511,13 @@ models:
   #   max_tokens: 32000
   #   supports_vision: true
   #   supports_thinking: true
-  #   pricing:                        # OpenRouter list price (USD / 1M tokens); powers the console cost display
+  #   price:                          # per 1M tokens; the single source of truth for cost display and budgets
   #     currency: USD
-  #     input_per_million: 10.0
-  #     output_per_million: 50.0
+  #     input: 10.0
+  #     output: 50.0
   #
   # - name: openrouter-grok-4.5
-  #   display_name: Grok 4.5 ($2/6) (OpenRouter) (p)
+  #   display_name: Grok 4.5 (OpenRouter) (p)
   #   use: langchain_openai:ChatOpenAI
   #   model: x-ai/grok-4.5
   #   api_key: $OPENROUTER_API_KEY
@@ -519,13 +527,13 @@ models:
   #   max_tokens: 32000
   #   supports_vision: true
   #   supports_thinking: true
-  #   pricing:                        # OpenRouter list price (USD / 1M tokens); powers the console cost display
+  #   price:                          # per 1M tokens; the single source of truth for cost display and budgets
   #     currency: USD
-  #     input_per_million: 2.0
-  #     output_per_million: 6.0
+  #     input: 2.0
+  #     output: 6.0
   #
   # - name: openrouter-gpt-5.6-sol
-  #   display_name: GPT-5.6 Sol ($5/30) (OpenRouter) (p)
+  #   display_name: GPT-5.6 Sol (OpenRouter) (p)
   #   use: langchain_openai:ChatOpenAI
   #   model: openai/gpt-5.6-sol
   #   api_key: $OPENROUTER_API_KEY
@@ -535,13 +543,13 @@ models:
   #   max_tokens: 32000
   #   supports_vision: true
   #   supports_thinking: true
-  #   pricing:                        # OpenRouter list price (USD / 1M tokens); powers the console cost display
+  #   price:                          # per 1M tokens; the single source of truth for cost display and budgets
   #     currency: USD
-  #     input_per_million: 5.0
-  #     output_per_million: 30.0
+  #     input: 5.0
+  #     output: 30.0
   #
   # - name: openrouter-gpt-5.3-codex
-  #   display_name: GPT-5.3 Codex ($1.75/14) (OpenRouter) (p)
+  #   display_name: GPT-5.3 Codex (OpenRouter) (p)
   #   use: langchain_openai:ChatOpenAI
   #   model: openai/gpt-5.3-codex
   #   api_key: $OPENROUTER_API_KEY
@@ -551,13 +559,13 @@ models:
   #   max_tokens: 32000
   #   supports_vision: true
   #   supports_thinking: true
-  #   pricing:                        # OpenRouter list price (USD / 1M tokens); powers the console cost display
+  #   price:                          # per 1M tokens; the single source of truth for cost display and budgets
   #     currency: USD
-  #     input_per_million: 1.75
-  #     output_per_million: 14.0
+  #     input: 1.75
+  #     output: 14.0
   #
   # - name: openrouter-minimax-m3
-  #   display_name: MiniMax M3 ($0.6/2.4 → $0.24/0.96*) (OpenRouter) (p)
+  #   display_name: MiniMax M3 (OpenRouter) (p)
   #   use: langchain_openai:ChatOpenAI
   #   model: minimax/minimax-m3
   #   api_key: $OPENROUTER_API_KEY
@@ -568,17 +576,17 @@ models:
   #   temperature: 1.0
   #   supports_vision: true
   #   supports_thinking: true
-  #   pricing:                        # OpenRouter STANDARD list price (USD / 1M tokens); powers the console
-  #                                  # cost display. Cost is billed against the standard rate — the promo below
-  #                                  # is additive and only shown beside it, because a promo can end any time.
+  #   price:                          # per 1M tokens; the single source of truth for cost display and budgets
   #     currency: USD
-  #     input_per_million: 0.6
-  #     output_per_million: 2.4
-  #     promo_input_per_million: 0.24   # the starred pair in the name (60% off as of 2026-08);
-  #     promo_output_per_million: 0.96  # drop both lines when the promo ends
+  #     input: 0.6
+  #     output: 2.4
+  #   discount:                       # shown beside the standard rate, never billed instead of it
+  #     input: 0.24
+  #     output: 0.96
+  #     # no `until`: the provider has not announced an end date. Add one when they do.
   #
   # - name: openrouter-qwen3.7-max
-  #   display_name: Qwen3.7 Max ($1.5/4.4) (OpenRouter) (p)
+  #   display_name: Qwen3.7 Max (OpenRouter) (p)
   #   use: langchain_openai:ChatOpenAI
   #   model: qwen/qwen3.7-max
   #   api_key: $OPENROUTER_API_KEY
@@ -588,13 +596,13 @@ models:
   #   max_tokens: 32000
   #   supports_vision: false
   #   supports_thinking: true
-  #   pricing:                        # OpenRouter list price (USD / 1M tokens); powers the console cost display
+  #   price:                          # per 1M tokens; the single source of truth for cost display and budgets
   #     currency: USD
-  #     input_per_million: 1.5
-  #     output_per_million: 4.4
+  #     input: 1.5
+  #     output: 4.4
   #
   # - name: openrouter-kimi-k3
-  #   display_name: Kimi K3 ($3/15) (OpenRouter) (p)
+  #   display_name: Kimi K3 (OpenRouter) (p)
   #   use: langchain_openai:ChatOpenAI
   #   model: moonshotai/kimi-k3
   #   api_key: $OPENROUTER_API_KEY
@@ -604,13 +612,13 @@ models:
   #   max_tokens: 32000
   #   supports_vision: true
   #   supports_thinking: true
-  #   pricing:                        # OpenRouter list price (USD / 1M tokens); powers the console cost display
+  #   price:                          # per 1M tokens; the single source of truth for cost display and budgets
   #     currency: USD
-  #     input_per_million: 3.0
-  #     output_per_million: 15.0
+  #     input: 3.0
+  #     output: 15.0
   #
   # - name: openrouter-gemini-3.6-flash
-  #   display_name: Gemini 3.6 Flash ($1.5/7.5) (OpenRouter) (p)
+  #   display_name: Gemini 3.6 Flash (OpenRouter) (p)
   #   use: langchain_openai:ChatOpenAI
   #   model: google/gemini-3.6-flash
   #   api_key: $OPENROUTER_API_KEY
@@ -620,13 +628,13 @@ models:
   #   max_tokens: 32000
   #   supports_vision: true
   #   supports_thinking: true
-  #   pricing:                        # OpenRouter list price (USD / 1M tokens); powers the console cost display
+  #   price:                          # per 1M tokens; the single source of truth for cost display and budgets
   #     currency: USD
-  #     input_per_million: 1.5
-  #     output_per_million: 7.5
+  #     input: 1.5
+  #     output: 7.5
   #
   # - name: openrouter-llama-4-maverick
-  #   display_name: Llama 4 Maverick ($0.2/0.8) (OpenRouter) (p)
+  #   display_name: Llama 4 Maverick (OpenRouter) (p)
   #   use: langchain_openai:ChatOpenAI
   #   model: meta-llama/llama-4-maverick
   #   api_key: $OPENROUTER_API_KEY
@@ -636,13 +644,13 @@ models:
   #   max_tokens: 16000
   #   supports_vision: true
   #   supports_thinking: false
-  #   pricing:                        # OpenRouter list price (USD / 1M tokens); powers the console cost display
+  #   price:                          # per 1M tokens; the single source of truth for cost display and budgets
   #     currency: USD
-  #     input_per_million: 0.2
-  #     output_per_million: 0.8
+  #     input: 0.2
+  #     output: 0.8
   #
   # - name: openrouter-deepseek-v4-pro
-  #   display_name: DeepSeek V4 Pro ($0.44/0.87) (OpenRouter) (p)
+  #   display_name: DeepSeek V4 Pro (OpenRouter) (p)
   #   use: langchain_openai:ChatOpenAI
   #   model: deepseek/deepseek-v4-pro
   #   api_key: $OPENROUTER_API_KEY
@@ -652,13 +660,13 @@ models:
   #   max_tokens: 32000
   #   supports_vision: false
   #   supports_thinking: true
-  #   pricing:                        # OpenRouter list price (USD / 1M tokens); powers the console cost display
+  #   price:                          # per 1M tokens; the single source of truth for cost display and budgets
   #     currency: USD
-  #     input_per_million: 0.44
-  #     output_per_million: 0.87
+  #     input: 0.44
+  #     output: 0.87
   #
   # - name: openrouter-glm-5.2
-  #   display_name: GLM-5.2 ($1.15/3.6 → $0.28/0.87*) (OpenRouter) (p)
+  #   display_name: GLM-5.2 (OpenRouter) (p)
   #   use: langchain_openai:ChatOpenAI
   #   model: z-ai/glm-5.2
   #   api_key: $OPENROUTER_API_KEY
@@ -668,17 +676,17 @@ models:
   #   max_tokens: 16000
   #   supports_vision: false
   #   supports_thinking: true
-  #   pricing:                        # OpenRouter STANDARD list price (USD / 1M tokens); powers the console
-  #                                  # cost display. Cost is billed against the standard rate — the promo below
-  #                                  # is additive and only shown beside it, because a promo can end any time.
+  #   price:                          # per 1M tokens; the single source of truth for cost display and budgets
   #     currency: USD
-  #     input_per_million: 1.15
-  #     output_per_million: 3.6
-  #     promo_input_per_million: 0.28   # the starred pair in the name (76% off as of 2026-08);
-  #     promo_output_per_million: 0.87  # drop both lines when the promo ends
+  #     input: 1.15
+  #     output: 3.6
+  #   discount:                       # shown beside the standard rate, never billed instead of it
+  #     input: 0.28
+  #     output: 0.87
+  #     # no `until`: the provider has not announced an end date. Add one when they do.
   #
   # - name: openrouter-mistral-large-3
-  #   display_name: Mistral Large 3 ($0.5/1.5) (OpenRouter) (p)
+  #   display_name: Mistral Large 3 (OpenRouter) (p)
   #   use: langchain_openai:ChatOpenAI
   #   model: mistralai/mistral-large-2512
   #   api_key: $OPENROUTER_API_KEY
@@ -688,13 +696,13 @@ models:
   #   max_tokens: 32000
   #   supports_vision: true
   #   supports_thinking: false
-  #   pricing:                        # OpenRouter list price (USD / 1M tokens); powers the console cost display
+  #   price:                          # per 1M tokens; the single source of truth for cost display and budgets
   #     currency: USD
-  #     input_per_million: 0.5
-  #     output_per_million: 1.5
+  #     input: 0.5
+  #     output: 1.5
   #
   # - name: openrouter-nemotron-3-ultra
-  #   display_name: Nemotron 3 Ultra ($0.5/2.2) (OpenRouter) (p)
+  #   display_name: Nemotron 3 Ultra (OpenRouter) (p)
   #   use: langchain_openai:ChatOpenAI
   #   model: nvidia/nemotron-3-ultra-550b-a55b
   #   api_key: $OPENROUTER_API_KEY
@@ -704,10 +712,10 @@ models:
   #   max_tokens: 16000
   #   supports_vision: false
   #   supports_thinking: true
-  #   pricing:                        # OpenRouter list price (USD / 1M tokens); powers the console cost display
+  #   price:                          # per 1M tokens; the single source of truth for cost display and budgets
   #     currency: USD
-  #     input_per_million: 0.5
-  #     output_per_million: 2.2
+  #     input: 0.5
+  #     output: 2.2
   # === END auto-model-config: openrouter ===
 
   # ══════════════════════════════════════════════════════════════════════════
@@ -735,7 +743,7 @@ models:
   # entries below when it finds a real OPENAI_API_KEY in your .env.
   # === BEGIN auto-model-config: openai (uncommented at startup when OPENAI_API_KEY is set) ===
   # - name: openai-gpt-5.6-sol
-  #   display_name: GPT-5.6 Sol ($5/30) (OpenAI)
+  #   display_name: GPT-5.6 Sol (OpenAI)
   #   use: langchain_openai:ChatOpenAI
   #   model: gpt-5.6-sol
   #   api_key: $OPENAI_API_KEY
@@ -745,13 +753,13 @@ models:
   #   max_tokens: 32000
   #   supports_vision: true
   #   supports_thinking: true
-  #   pricing:                        # OpenAI list price (USD / 1M tokens); powers the console cost display
+  #   price:                          # per 1M tokens; the single source of truth for cost display and budgets
   #     currency: USD
-  #     input_per_million: 5.0
-  #     output_per_million: 30.0
+  #     input: 5.0
+  #     output: 30.0
   #
   # - name: openai-gpt-5.3-codex
-  #   display_name: GPT-5.3 Codex ($1.75/14) (OpenAI)
+  #   display_name: GPT-5.3 Codex (OpenAI)
   #   use: langchain_openai:ChatOpenAI
   #   model: gpt-5.3-codex
   #   api_key: $OPENAI_API_KEY
@@ -761,13 +769,13 @@ models:
   #   max_tokens: 32000
   #   supports_vision: true
   #   supports_thinking: true
-  #   pricing:                        # OpenAI list price (USD / 1M tokens); powers the console cost display
+  #   price:                          # per 1M tokens; the single source of truth for cost display and budgets
   #     currency: USD
-  #     input_per_million: 1.75
-  #     output_per_million: 14.0
+  #     input: 1.75
+  #     output: 14.0
   #
   # - name: openai-gpt-5.6-mini
-  #   display_name: GPT-5.6 Mini ($0.25/2) (OpenAI)
+  #   display_name: GPT-5.6 Mini (OpenAI)
   #   use: langchain_openai:ChatOpenAI
   #   model: gpt-5.6-mini
   #   api_key: $OPENAI_API_KEY
@@ -777,10 +785,10 @@ models:
   #   max_tokens: 16000
   #   supports_vision: true
   #   supports_thinking: true
-  #   pricing:                        # OpenAI list price (USD / 1M tokens); powers the console cost display
+  #   price:                          # per 1M tokens; the single source of truth for cost display and budgets
   #     currency: USD
-  #     input_per_million: 0.25
-  #     output_per_million: 2.0
+  #     input: 0.25
+  #     output: 2.0
   # === END auto-model-config: openai ===
 
   # ── xAI Grok — auto-enabled when XAI_API_KEY is set ───────────────────────
@@ -789,7 +797,7 @@ models:
   # entries below when it finds a real XAI_API_KEY in your .env.
   # === BEGIN auto-model-config: xai (uncommented at startup when XAI_API_KEY is set) ===
   # - name: xai-grok-4.5
-  #   display_name: Grok 4.5 ($2/6) (xAI)
+  #   display_name: Grok 4.5 (xAI)
   #   use: langchain_openai:ChatOpenAI
   #   model: grok-4.5
   #   api_key: $XAI_API_KEY
@@ -799,13 +807,13 @@ models:
   #   max_tokens: 32000
   #   supports_vision: true
   #   supports_thinking: true
-  #   pricing:                        # xAI list price (USD / 1M tokens); powers the console cost display
+  #   price:                          # per 1M tokens; the single source of truth for cost display and budgets
   #     currency: USD
-  #     input_per_million: 2.0
-  #     output_per_million: 6.0
+  #     input: 2.0
+  #     output: 6.0
   #
   # - name: xai-grok-4.5-fast
-  #   display_name: Grok 4.5 Fast ($0.5/1.5) (xAI)
+  #   display_name: Grok 4.5 Fast (xAI)
   #   use: langchain_openai:ChatOpenAI
   #   model: grok-4.5-fast
   #   api_key: $XAI_API_KEY
@@ -815,10 +823,10 @@ models:
   #   max_tokens: 16000
   #   supports_vision: true
   #   supports_thinking: true
-  #   pricing:                        # xAI list price (USD / 1M tokens); powers the console cost display
+  #   price:                          # per 1M tokens; the single source of truth for cost display and budgets
   #     currency: USD
-  #     input_per_million: 0.5
-  #     output_per_million: 1.5
+  #     input: 0.5
+  #     output: 1.5
   # === END auto-model-config: xai ===
 
   # ── Google Gemini — auto-enabled when GEMINI_API_KEY is set ───────────────
@@ -830,7 +838,7 @@ models:
   # entries below when it finds a real GEMINI_API_KEY in your .env.
   # === BEGIN auto-model-config: google (uncommented at startup when GEMINI_API_KEY is set) ===
   # - name: google-gemini-3.6-flash
-  #   display_name: Gemini 3.6 Flash ($1.5/7.5) (Google)
+  #   display_name: Gemini 3.6 Flash (Google)
   #   use: langchain_google_genai:ChatGoogleGenerativeAI
   #   model: gemini-3.6-flash
   #   gemini_api_key: $GEMINI_API_KEY
@@ -838,13 +846,13 @@ models:
   #   max_retries: 2
   #   max_tokens: 8192
   #   supports_vision: true
-  #   pricing:                        # Google list price (USD / 1M tokens); powers the console cost display
+  #   price:                          # per 1M tokens; the single source of truth for cost display and budgets
   #     currency: USD
-  #     input_per_million: 1.5
-  #     output_per_million: 7.5
+  #     input: 1.5
+  #     output: 7.5
   #
   # - name: google-gemini-3.5-flash-lite
-  #   display_name: Gemini 3.5 Flash-Lite ($0.3/1.2) (Google)
+  #   display_name: Gemini 3.5 Flash-Lite (Google)
   #   use: langchain_google_genai:ChatGoogleGenerativeAI
   #   model: gemini-3.5-flash-lite
   #   gemini_api_key: $GEMINI_API_KEY
@@ -852,13 +860,13 @@ models:
   #   max_retries: 2
   #   max_tokens: 8192
   #   supports_vision: true
-  #   pricing:                        # Google list price (USD / 1M tokens); powers the console cost display
+  #   price:                          # per 1M tokens; the single source of truth for cost display and budgets
   #     currency: USD
-  #     input_per_million: 0.3
-  #     output_per_million: 1.2
+  #     input: 0.3
+  #     output: 1.2
   #
   # - name: google-gemini-3.1-pro
-  #   display_name: Gemini 3.1 Pro ($2.5/10) (Google)
+  #   display_name: Gemini 3.1 Pro (Google)
   #   use: langchain_google_genai:ChatGoogleGenerativeAI
   #   model: gemini-3.1-pro-preview
   #   gemini_api_key: $GEMINI_API_KEY
@@ -867,10 +875,10 @@ models:
   #   max_tokens: 8192
   #   supports_vision: true
   
-  #   pricing:                        # Google list price (USD / 1M tokens); powers the console cost display
+  #   price:                          # per 1M tokens; the single source of truth for cost display and budgets
   #     currency: USD
-  #     input_per_million: 2.5
-  #     output_per_million: 10.0
+  #     input: 2.5
+  #     output: 10.0
 # === END auto-model-config: google ===
 
   # ── DeepSeek — auto-enabled when DEEPSEEK_API_KEY is set ──────────────────
@@ -879,7 +887,7 @@ models:
   # entries below when it finds a real DEEPSEEK_API_KEY in your .env.
   # === BEGIN auto-model-config: deepseek (uncommented at startup when DEEPSEEK_API_KEY is set) ===
   # - name: deepseek-v4-pro
-  #   display_name: DeepSeek V4 Pro ($0.44/0.87) (DeepSeek)
+  #   display_name: DeepSeek V4 Pro (DeepSeek)
   #   use: deerflow.models.patched_deepseek:PatchedChatDeepSeek
   #   model: deepseek-v4-pro
   #   api_base: https://api.deepseek.com
@@ -889,10 +897,10 @@ models:
   #   max_tokens: 8192
   #   supports_vision: false
   #   supports_thinking: true
-  #   pricing:                        # DeepSeek list price (USD / 1M tokens); powers the console cost display
+  #   price:                          # per 1M tokens; the single source of truth for cost display and budgets
   #     currency: USD
-  #     input_per_million: 0.44
-  #     output_per_million: 0.87
+  #     input: 0.44
+  #     output: 0.87
   #   when_thinking_enabled:
   #     extra_body:
   #       thinking:
@@ -903,7 +911,7 @@ models:
   #         type: disabled
   #
   # - name: deepseek-v4-flash
-  #   display_name: DeepSeek V4 Flash ($0.14/0.28) (DeepSeek)
+  #   display_name: DeepSeek V4 Flash (DeepSeek)
   #   use: deerflow.models.patched_deepseek:PatchedChatDeepSeek
   #   model: deepseek-v4-flash
   #   api_base: https://api.deepseek.com
@@ -913,10 +921,10 @@ models:
   #   max_tokens: 8192
   #   supports_vision: false
   #   supports_thinking: true
-  #   pricing:                        # DeepSeek list price (USD / 1M tokens); powers the console cost display
+  #   price:                          # per 1M tokens; the single source of truth for cost display and budgets
   #     currency: USD
-  #     input_per_million: 0.14
-  #     output_per_million: 0.28
+  #     input: 0.14
+  #     output: 0.28
   #   when_thinking_enabled:
   #     extra_body:
   #       thinking:
@@ -934,7 +942,7 @@ models:
   # entries below when it finds a real MISTRAL_API_KEY in your .env.
   # === BEGIN auto-model-config: mistral (uncommented at startup when MISTRAL_API_KEY is set) ===
   # - name: mistral-large-3
-  #   display_name: Mistral Large 3 ($0.5/1.5) (Mistral)
+  #   display_name: Mistral Large 3 (Mistral)
   #   use: langchain_openai:ChatOpenAI
   #   model: mistral-large-2512
   #   api_key: $MISTRAL_API_KEY
@@ -943,13 +951,13 @@ models:
   #   max_retries: 2
   #   max_tokens: 32000
   #   supports_vision: true
-  #   pricing:                        # Mistral list price (USD / 1M tokens); powers the console cost display
+  #   price:                          # per 1M tokens; the single source of truth for cost display and budgets
   #     currency: USD
-  #     input_per_million: 0.5
-  #     output_per_million: 1.5
+  #     input: 0.5
+  #     output: 1.5
   #
   # - name: mistral-medium-3
-  #   display_name: Mistral Medium 3 ($0.4/2) (Mistral)
+  #   display_name: Mistral Medium 3 (Mistral)
   #   use: langchain_openai:ChatOpenAI
   #   model: mistral-medium-latest
   #   api_key: $MISTRAL_API_KEY
@@ -958,13 +966,13 @@ models:
   #   max_retries: 2
   #   max_tokens: 32000
   #   supports_vision: true
-  #   pricing:                        # Mistral list price (USD / 1M tokens); powers the console cost display
+  #   price:                          # per 1M tokens; the single source of truth for cost display and budgets
   #     currency: USD
-  #     input_per_million: 0.4
-  #     output_per_million: 2.0
+  #     input: 0.4
+  #     output: 2.0
   #
   # - name: mistral-small-3
-  #   display_name: Mistral Small 3 ($0.1/0.3) (Mistral)
+  #   display_name: Mistral Small 3 (Mistral)
   #   use: langchain_openai:ChatOpenAI
   #   model: mistral-small-latest
   #   api_key: $MISTRAL_API_KEY
@@ -974,10 +982,10 @@ models:
   #   max_tokens: 16000
   #   supports_vision: true
   
-  #   pricing:                        # Mistral list price (USD / 1M tokens); powers the console cost display
+  #   price:                          # per 1M tokens; the single source of truth for cost display and budgets
   #     currency: USD
-  #     input_per_million: 0.1
-  #     output_per_million: 0.3
+  #     input: 0.1
+  #     output: 0.3
 # === END auto-model-config: mistral ===
 
   # ── Moonshot (Kimi) — auto-enabled when MOONSHOT_API_KEY is set ───────────
@@ -986,7 +994,7 @@ models:
   # entries below when it finds a real MOONSHOT_API_KEY in your .env.
   # === BEGIN auto-model-config: moonshot (uncommented at startup when MOONSHOT_API_KEY is set) ===
   # - name: moonshot-kimi-k3
-  #   display_name: Kimi K3 ($3/15) (Moonshot)
+  #   display_name: Kimi K3 (Moonshot)
   #   use: deerflow.models.patched_deepseek:PatchedChatDeepSeek
   #   model: kimi-k3
   #   api_base: https://api.moonshot.ai/v1
@@ -996,10 +1004,10 @@ models:
   #   max_tokens: 32768
   #   supports_vision: true
   #   supports_thinking: true
-  #   pricing:                        # Moonshot list price (USD / 1M tokens); powers the console cost display
+  #   price:                          # per 1M tokens; the single source of truth for cost display and budgets
   #     currency: USD
-  #     input_per_million: 3.0
-  #     output_per_million: 15.0
+  #     input: 3.0
+  #     output: 15.0
   #   when_thinking_enabled:
   #     extra_body:
   #       thinking:
@@ -1010,7 +1018,7 @@ models:
   #         type: disabled
   #
   # - name: moonshot-kimi-k2.6
-  #   display_name: Kimi K2.6 ($1/3) (Moonshot)
+  #   display_name: Kimi K2.6 (Moonshot)
   #   use: deerflow.models.patched_deepseek:PatchedChatDeepSeek
   #   model: kimi-k2.6
   #   api_base: https://api.moonshot.ai/v1
@@ -1020,10 +1028,10 @@ models:
   #   max_tokens: 32768
   #   supports_vision: false
   #   supports_thinking: true
-  #   pricing:                        # Moonshot list price (USD / 1M tokens); powers the console cost display
+  #   price:                          # per 1M tokens; the single source of truth for cost display and budgets
   #     currency: USD
-  #     input_per_million: 1.0
-  #     output_per_million: 3.0
+  #     input: 1.0
+  #     output: 3.0
   #   when_thinking_enabled:
   #     extra_body:
   #       thinking:
@@ -1040,7 +1048,7 @@ models:
   # entries below when it finds a real DASHSCOPE_API_KEY in your .env.
   # === BEGIN auto-model-config: qwen (uncommented at startup when DASHSCOPE_API_KEY is set) ===
   # - name: qwen-3.7-max
-  #   display_name: Qwen3.7 Max ($1.5/4.4) (Qwen)
+  #   display_name: Qwen3.7 Max (Qwen)
   #   use: langchain_openai:ChatOpenAI
   #   model: qwen3.7-max
   #   api_key: $DASHSCOPE_API_KEY
@@ -1050,13 +1058,13 @@ models:
   #   max_tokens: 32000
   #   supports_vision: false
   #   supports_thinking: true
-  #   pricing:                        # Qwen list price (USD / 1M tokens); powers the console cost display
+  #   price:                          # per 1M tokens; the single source of truth for cost display and budgets
   #     currency: USD
-  #     input_per_million: 1.5
-  #     output_per_million: 4.4
+  #     input: 1.5
+  #     output: 4.4
   #
   # - name: qwen-3.7-plus
-  #   display_name: Qwen3.7 Plus ($0.4/1.2) (Qwen)
+  #   display_name: Qwen3.7 Plus (Qwen)
   #   use: langchain_openai:ChatOpenAI
   #   model: qwen3.7-plus
   #   api_key: $DASHSCOPE_API_KEY
@@ -1066,10 +1074,10 @@ models:
   #   max_tokens: 16000
   #   supports_vision: false
   #   supports_thinking: true
-  #   pricing:                        # Qwen list price (USD / 1M tokens); powers the console cost display
+  #   price:                          # per 1M tokens; the single source of truth for cost display and budgets
   #     currency: USD
-  #     input_per_million: 0.4
-  #     output_per_million: 1.2
+  #     input: 0.4
+  #     output: 1.2
   # === END auto-model-config: qwen ===
 
   # ── MiniMax — auto-enabled when MINIMAX_API_KEY is set ────────────────────
@@ -1078,7 +1086,7 @@ models:
   # entries below when it finds a real MINIMAX_API_KEY in your .env.
   # === BEGIN auto-model-config: minimax (uncommented at startup when MINIMAX_API_KEY is set) ===
   # - name: minimax-m3
-  #   display_name: MiniMax M3 ($0.6/2.4) (MiniMax)
+  #   display_name: MiniMax M3 (MiniMax)
   #   use: langchain_openai:ChatOpenAI
   #   model: MiniMax-M3
   #   api_key: $MINIMAX_API_KEY
@@ -1089,13 +1097,13 @@ models:
   #   temperature: 1.0
   #   supports_vision: true
   #   supports_thinking: true
-  #   pricing:                        # MiniMax list price (USD / 1M tokens); powers the console cost display
+  #   price:                          # per 1M tokens; the single source of truth for cost display and budgets
   #     currency: USD
-  #     input_per_million: 0.6
-  #     output_per_million: 2.4
+  #     input: 0.6
+  #     output: 2.4
   #
   # - name: minimax-m2.7
-  #   display_name: MiniMax M2.7 ($0.3/1.2) (MiniMax)
+  #   display_name: MiniMax M2.7 (MiniMax)
   #   use: langchain_openai:ChatOpenAI
   #   model: MiniMax-M2.7
   #   api_key: $MINIMAX_API_KEY
@@ -1106,10 +1114,10 @@ models:
   #   temperature: 1.0
   #   supports_vision: false
   #   supports_thinking: true
-  #   pricing:                        # MiniMax list price (USD / 1M tokens); powers the console cost display
+  #   price:                          # per 1M tokens; the single source of truth for cost display and budgets
   #     currency: USD
-  #     input_per_million: 0.3
-  #     output_per_million: 1.2
+  #     input: 0.3
+  #     output: 1.2
   # === END auto-model-config: minimax ===
 
   # ── Zhipu z.ai (GLM) — auto-enabled when ZAI_API_KEY is set ───────────────
@@ -1118,7 +1126,7 @@ models:
   # entries below when it finds a real ZAI_API_KEY in your .env.
   # === BEGIN auto-model-config: zai (uncommented at startup when ZAI_API_KEY is set) ===
   # - name: zai-glm-5.2
-  #   display_name: GLM-5.2 ($1.15/3.6) (z-ai)
+  #   display_name: GLM-5.2 (z-ai)
   #   use: langchain_openai:ChatOpenAI
   #   model: glm-5.2
   #   api_key: $ZAI_API_KEY
@@ -1128,13 +1136,13 @@ models:
   #   max_tokens: 16000
   #   supports_vision: false
   #   supports_thinking: true
-  #   pricing:                        # z.ai list price (USD / 1M tokens); powers the console cost display
+  #   price:                          # per 1M tokens; the single source of truth for cost display and budgets
   #     currency: USD
-  #     input_per_million: 1.15
-  #     output_per_million: 3.6
+  #     input: 1.15
+  #     output: 3.6
   #
   # - name: zai-glm-5.2-air
-  #   display_name: GLM-5.2 Air ($0.2/1.1) (z-ai)
+  #   display_name: GLM-5.2 Air (z-ai)
   #   use: langchain_openai:ChatOpenAI
   #   model: glm-5.2-air
   #   api_key: $ZAI_API_KEY
@@ -1144,10 +1152,10 @@ models:
   #   max_tokens: 16000
   #   supports_vision: false
   #   supports_thinking: true
-  #   pricing:                        # z.ai list price (USD / 1M tokens); powers the console cost display
+  #   price:                          # per 1M tokens; the single source of truth for cost display and budgets
   #     currency: USD
-  #     input_per_million: 0.2
-  #     output_per_million: 1.1
+  #     input: 0.2
+  #     output: 1.1
   # === END auto-model-config: zai ===
 
   # Example: Volcengine (Doubao) model

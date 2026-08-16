@@ -948,6 +948,7 @@ function SidecarModelSelector({
             <ModelSelectorName className="w-full text-xs font-normal">
               <ModelDisplayName
                 displayName={selectedModel.display_name}
+                price={selectedModel.price}
                 variant="compact"
               />
             </ModelSelectorName>
@@ -971,7 +972,7 @@ function SidecarModelSelector({
             >
               <div className="flex min-w-0 flex-1 flex-col">
                 <ModelSelectorName>
-                  <ModelDisplayName displayName={model.display_name} />
+                  <ModelDisplayName displayName={model.display_name} price={model.price} />
                 </ModelSelectorName>
                 <span className="text-muted-foreground truncate text-[10px]">
                   {model.model}

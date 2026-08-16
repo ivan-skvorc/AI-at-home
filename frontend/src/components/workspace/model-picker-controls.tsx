@@ -18,7 +18,7 @@ import {
   type ModelSortKey,
   compactModelDisplayName,
   sortModels,
-  splitModelNamePriceSegments,
+  modelNameSegments,
 } from "@/core/models/sorting";
 import type { Model } from "@/core/models/types";
 import { cn } from "@/lib/utils";
@@ -121,10 +121,18 @@ export function ModelPickerControls({
  */
 export function ModelDisplayName({
   displayName,
+  price,
   className,
   variant = "inline",
 }: {
   displayName: string | null | undefined;
+  /**
+   * The model's structured price. Supplied, it is the source of the coloured
+   * price suffix; omitted, the price is parsed out of `displayName` as it was
+   * before prices moved into their own field (which is still how a config
+   * written before that change carries them).
+   */
+  price?: Model["price"];
   className?: string;
   /**
    * `"compact"` is for the width-capped trigger button: the name is shortened
@@ -143,10 +151,11 @@ export function ModelDisplayName({
   const compact = variant === "compact";
   const segments = useMemo(
     () =>
-      splitModelNamePriceSegments(
+      modelNameSegments(
+        { display_name: displayName ?? "", price },
         compact ? compactModelDisplayName(displayName) : displayName,
       ),
-    [displayName, compact],
+    [displayName, price, compact],
   );
   return (
     <span

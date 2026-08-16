@@ -121,6 +121,12 @@ export interface ModelNameSegment {
 // caller by using match indices.
 const PRICE_PAIR_ONCE = /\$\s*\d+(?:\.\d+)?\s*\/\s*\d+(?:\.\d+)?/g;
 
+// A whole parenthesised price group, including a starred promo pair, as legacy
+// `display_name`s embed it. Used to strip the stale copy when the model also
+// carries a structured price.
+const PRICE_PAIR_IN_NAME =
+  /\s*\(\$\d+(?:\.\d+)?\/\d+(?:\.\d+)?(?:\s*→\s*\$\d+(?:\.\d+)?\/\d+(?:\.\d+)?\*)?\)/g;
+
 /**
  * Split a `display_name` into text and price runs for colour rendering.
  *
@@ -249,6 +255,52 @@ export function resolveModelPrice(
     };
   }
   return parseModelPrice(model.display_name);
+}
+
+/** Trim trailing zeros so 3.0 renders as `$3` and 1.15 stays `$1.15`. */
+function formatRate(value: number): string {
+  return String(Number(value.toFixed(4)));
+}
+
+/**
+ * Segments for a model's name plus its price, for colour rendering.
+ *
+ * Prices are no longer embedded in `display_name` — a name is a label and a
+ * price is data, and keeping the number in both places meant the figure a user
+ * read and the figure they were billed against were two copies that could
+ * drift, with a discount that could only "end" by someone editing a string.
+ * The rendered result is deliberately identical to what the old embedded pair
+ * produced: `($in/out)` in green, or a live discount as the list price in red
+ * followed by the promo in green.
+ *
+ * The `display_name` parser stays as the fallback for configs written before
+ * this change, whose names still carry the pair; when a model has both, the
+ * embedded copy is stripped so the price is not rendered twice.
+ */
+export function modelNameSegments(
+  model: Pick<Model, "display_name" | "price">,
+  displayNameOverride?: string | null,
+): ModelNameSegment[] {
+  const name = displayNameOverride ?? model.display_name;
+  const price = model.price;
+  if (!price || !Number.isFinite(price.input) || !Number.isFinite(price.output)) {
+    return splitModelNamePriceSegments(name);
+  }
+  const bare = (name ?? "").replace(PRICE_PAIR_IN_NAME, "").trimEnd();
+  const discounted =
+    price.discount_input != null && price.discount_output != null;
+  const list = `($${formatRate(price.input)}/${formatRate(price.output)}`;
+  const segments: ModelNameSegment[] = [{ text: `${bare} `, kind: "text" }];
+  if (discounted) {
+    segments.push({ text: list, kind: "listPrice" });
+    segments.push({
+      text: ` → $${formatRate(price.discount_input!)}/${formatRate(price.discount_output!)}*)`,
+      kind: "promoPrice",
+    });
+  } else {
+    segments.push({ text: `${list})`, kind: "price" });
+  }
+  return segments;
 }
 
 export function modelPriceSortValue(model: NamedModel): number | null {
