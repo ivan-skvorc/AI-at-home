@@ -34,6 +34,8 @@ from datetime import UTC, date, datetime
 from functools import lru_cache
 from typing import Any, NamedTuple
 
+from deerflow.model_ids import normalize_reported_model_name
+
 _module_logger = logging.getLogger(__name__)
 
 # Distinguishes "caller did not pass a clock" (resolve the real one) from an
@@ -384,11 +386,21 @@ def _pricing_lookup_candidates(model: str) -> tuple[str, ...]:
     scan), so a normalization can only ever hit a model the operator actually
     configured. Order matters: a configured OpenRouter copy must win over the
     direct entry its slug also reduces to, since the two carry different prices.
+
+    A *duplicated* id is normalized here as well as at the source
+    (``deerflow.model_ids``), because every run persisted before the source was
+    fixed still carries the doubled key in its ``token_usage_by_model`` — those
+    threads must keep pricing without a data migration.
     """
     bases: list[str] = [model]
+    # ``deepseek/deepseek-v4-prodeepseek/deepseek-v4-pro`` -> one copy.
+    collapsed = normalize_reported_model_name(model)
+    if collapsed and collapsed != model:
+        bases.append(collapsed)
     # ``anthropic/claude-opus-5`` -> also try ``claude-opus-5``.
-    if "/" in model:
-        bases.append(model.split("/", 1)[1])
+    for base in list(bases):
+        if "/" in base:
+            bases.append(base.split("/", 1)[1])
     for base in list(bases):
         without_variant = _VARIANT_SUFFIX_RE.sub("", base)
         if without_variant and without_variant != base:

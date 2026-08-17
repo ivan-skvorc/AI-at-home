@@ -52,6 +52,7 @@ from langgraph.runtime import Runtime
 
 from deerflow.agents.middlewares._bounded_dict import BoundedDict
 from deerflow.config.spend_budget_config import SpendBudgetConfig
+from deerflow.model_ids import normalize_reported_model_name
 from deerflow.pricing import ModelPricing, lookup_pricing, token_cost
 
 logger = logging.getLogger(__name__)
@@ -124,12 +125,18 @@ def price_usage_by_model(usage_by_model: dict[str, Any], pricing: dict[str, Mode
 
 
 def _message_model_name(message: AIMessage) -> str | None:
+    """The model that produced a message, as the cap should price it.
+
+    Normalized because a streamed id can arrive repeated (see
+    ``deerflow.model_ids``); an unrecognized id prices at zero, which would let
+    a capped account keep spending on the one provider whose stream is affected.
+    """
     metadata = getattr(message, "response_metadata", None)
     if isinstance(metadata, dict):
         for key in ("model_name", "model"):
             value = metadata.get(key)
             if isinstance(value, str) and value.strip():
-                return value
+                return normalize_reported_model_name(value)
     return None
 
 

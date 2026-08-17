@@ -15,6 +15,7 @@ from sqlalchemy import case, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from deerflow.config.runtime_settings import resolve_owner_scope
+from deerflow.model_ids import normalize_reported_model_name
 from deerflow.persistence.run.model import RunRow
 from deerflow.runtime.runs.store.base import (
     LeaseRenewal,
@@ -474,7 +475,11 @@ class RunRepository(RunStore):
             usage_by_model = r.token_usage_by_model or {}
             if usage_by_model:
                 for model, usage in usage_by_model.items():
-                    entry = by_model.setdefault(model, new_by_model_usage_entry())
+                    # Keys written before the source normalization landed can be
+                    # a doubled id (see ``deerflow.model_ids``); normalizing on
+                    # read merges those runs into the bucket they belong to
+                    # instead of showing the thread two rows for one model.
+                    entry = by_model.setdefault(normalize_reported_model_name(model) or "unknown", new_by_model_usage_entry())
                     entry["tokens"] += usage.get("total_tokens", 0)
                     entry["input_tokens"] += usage.get("input_tokens", 0) or 0
                     entry["output_tokens"] += usage.get("output_tokens", 0) or 0

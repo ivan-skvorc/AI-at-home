@@ -427,6 +427,17 @@ def _seed_aux(store, thread_id, category, model, *, when, input_tokens=1_000_000
     )
 
 
+def _seed_extra_run(sf, row: RunRow) -> None:
+    """Add one run to the seeded database, leaving the shared fixture alone."""
+
+    async def _insert() -> None:
+        async with sf() as session:
+            session.add(row)
+            await session.commit()
+
+    asyncio.run(_insert())
+
+
 def _spend_pricing():
     # $1/M in, $5/M out on minimax-m2; gpt-x priced too; qwen deliberately not.
     return {
@@ -481,6 +492,40 @@ class TestConsoleSpend:
         assert qwen["cost"] is None
         # ...and it sorts last, so it never looks like the cheapest model.
         assert data["by_model"][-1]["model"] == "qwen"
+
+    def test_a_duplicated_model_id_folds_into_the_model_it_names(self, client, session_factory, monkeypatch, aux_store):
+        """A doubled id must not become a second row for the same model.
+
+        Runs persisted before the id was normalized at the source carry
+        ``"gpt-xgpt-x"`` — LangChain concatenates ``model_name`` when it merges
+        two stream chunks that both carry it. Read raw, that row would be an
+        extra unpriced line item for a model the operator has priced.
+        """
+        monkeypatch.setattr(console, "_build_pricing_map", _spend_pricing)
+        _seed_extra_run(
+            session_factory,
+            RunRow(
+                run_id="r-doubled",
+                thread_id="t2",
+                user_id="user-a",
+                status="success",
+                model_name="gpt-x",
+                total_tokens=1_000_000,
+                total_input_tokens=1_000_000,
+                total_output_tokens=0,
+                token_usage_by_model={"gpt-xgpt-x": {"input_tokens": 1_000_000, "output_tokens": 0, "total_tokens": 1_000_000}},
+                created_at=NOW - timedelta(hours=1),
+                updated_at=NOW - timedelta(hours=1) + timedelta(seconds=5),
+            ),
+        )
+
+        data = client.get("/api/console/spend?days=30").json()
+
+        models = {row["model"]: row for row in data["by_model"]}
+        assert "gpt-xgpt-x" not in models
+        assert data["unpriced_models"] == ["qwen"]
+        # r3's legacy 50 input tokens ($0.0001) plus this run's 1M ($2).
+        assert models["gpt-x"]["cost"] == pytest.approx(2.0001)
 
     def test_the_window_excludes_older_runs(self, client, monkeypatch, aux_store):
         monkeypatch.setattr(console, "_build_pricing_map", _spend_pricing)

@@ -263,6 +263,34 @@ def test_lookup_candidates_are_ordered_most_specific_first():
     assert candidates.index("claude-opus-5") > candidates.index("anthropic/claude-opus-5")
 
 
+def test_lookup_prices_a_model_id_that_stream_merging_duplicated():
+    """A doubled id still prices — historical rows already carry the corrupt key.
+
+    ``merge_dicts`` concatenates the ``model_name`` of two stream chunks that
+    both carry a ``finish_reason``, and every run persisted before that was
+    fixed at the source stored the doubled id in ``token_usage_by_model``.
+    Reopening one of those threads must still show its cost.
+    """
+    pricing = build_pricing_map(
+        [_model("openrouter-deepseek-v4-pro", "deepseek/deepseek-v4-pro", {"currency": "USD", "input_per_million": 0.44, "output_per_million": 0.87})],
+    )
+    doubled = lookup_pricing(pricing, "deepseek/deepseek-v4-prodeepseek/deepseek-v4-pro")
+    assert doubled is not None and doubled.output_per_million == 0.87
+    # The collapsed form is tried after the exact one, so a (hypothetical)
+    # configured entry for the doubled id itself would still win.
+    candidates = _pricing_lookup_candidates("deepseek/deepseek-v4-prodeepseek/deepseek-v4-pro")
+    assert candidates[0] == "deepseek/deepseek-v4-prodeepseek/deepseek-v4-pro"
+    # Peeling the vendor prefix is applied to the collapsed form too, so a
+    # direct DeepSeek entry would price an OpenRouter-routed doubled report.
+    assert "deepseek-v4-pro" in candidates
+
+
+def test_lookup_does_not_price_two_different_ids_that_were_concatenated():
+    """Only an exact repetition collapses; a mismatched pair stays unpriced."""
+    pricing = _anthropic_map()
+    assert lookup_pricing(pricing, "claude-opus-5claude-haiku-4-5") is None
+
+
 def test_run_cost_prices_provider_reported_ids_across_a_model_switch():
     """The lever this fork exposes: turns on different models, priced per model."""
     pricing = _anthropic_map()
