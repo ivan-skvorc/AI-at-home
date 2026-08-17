@@ -22,6 +22,7 @@ from typing import Any
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from deerflow.config.app_config import AppConfig
+from deerflow.model_ids import normalize_reported_model_name
 from deerflow.models import create_chat_model
 from deerflow.runtime.user_context import get_effective_user_id
 from deerflow.tracing import inject_langfuse_metadata
@@ -47,12 +48,18 @@ class OneshotResult:
 
 
 def _response_model_name(response: Any, requested: str | None) -> str | None:
+    """The model that served this call, normalized for pricing.
+
+    A model configured with ``streaming: true`` assembles even an ``ainvoke``
+    from chunks, which can report the id twice over (see
+    ``deerflow.model_ids``); the aux counters this feeds are priced by that id.
+    """
     metadata = getattr(response, "response_metadata", None)
     if isinstance(metadata, dict):
         for key in ("model_name", "model"):
             value = metadata.get(key)
             if isinstance(value, str) and value.strip():
-                return value
+                return normalize_reported_model_name(value)
     return requested
 
 

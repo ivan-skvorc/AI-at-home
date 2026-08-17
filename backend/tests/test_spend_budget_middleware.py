@@ -224,6 +224,21 @@ class TestMessageFallback:
         assert result is not None
         assert result["messages"][0].tool_calls == []
 
+    def test_a_stream_duplicated_model_id_still_counts_against_the_cap(self):
+        """A doubled id would price at zero, which is a cap that stops capping.
+
+        Merging chunks concatenates equal ``response_metadata`` strings, so a
+        message can name ``premium-1premium-1``. Unrecognized, it reads as a
+        free local model and the spend cap never fires on that provider.
+        """
+        mw = _mw()
+        runtime = _runtime(_baseline(9.5))
+        runtime.config = {}
+        state = {"messages": [_ai(model="premium-1premium-1", input_tokens=100_000, tool_calls=[{"name": "bash", "args": {}, "id": "c1"}])]}
+        result = mw._apply(state, runtime)
+        assert result is not None
+        assert result["messages"][0].tool_calls == []
+
     def test_messages_from_an_unpriced_model_contribute_nothing(self):
         mw = _mw()
         runtime = _runtime(_baseline(9.5))

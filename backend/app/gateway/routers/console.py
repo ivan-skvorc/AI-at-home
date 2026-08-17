@@ -24,6 +24,7 @@ from app.gateway.deps import get_current_user
 from app.gateway.pricing import ModelPricing, build_pricing_map, lookup_pricing, pricing_currency, run_cost, token_cost
 from deerflow.config import get_app_config
 from deerflow.config.agents_config import list_custom_agents
+from deerflow.model_ids import normalize_reported_model_name
 from deerflow.persistence.engine import get_session_factory
 from deerflow.persistence.run.model import RunRow
 from deerflow.persistence.thread_meta.model import ThreadMetaRow
@@ -434,6 +435,9 @@ async def console_usage(
         usage_map = row.token_usage_by_model or {}
         if isinstance(usage_map, dict) and usage_map:
             for model, usage in usage_map.items():
+                # See the spend report below: a doubled id from an older row is
+                # collapsed so one model reads as one breakdown entry.
+                model = normalize_reported_model_name(model) or "unknown"
                 entry = by_model.setdefault(model, ConsoleUsageModelBreakdown())
                 entry.runs += 1
                 if not isinstance(usage, dict):
@@ -543,6 +547,11 @@ async def console_spend(
         usage_map = row.token_usage_by_model if isinstance(row.token_usage_by_model, dict) else {}
         if usage_map:
             for model, usage in usage_map.items():
+                # Rows written before the source normalization landed can carry
+                # a doubled id (see ``deerflow.model_ids``). Normalized here so
+                # one model is one row rather than two, and so the report does
+                # not print a model id that does not exist.
+                model = normalize_reported_model_name(model) or "unknown"
                 entry = by_model.setdefault(model, ConsoleSpendModelRow(model=model))
                 entry.runs += 1
                 if not isinstance(usage, dict):
@@ -583,10 +592,13 @@ async def console_spend(
         aux_output = int(totals.get("output_tokens") or 0)
         aux_cache = int(totals.get("cache_read_tokens") or 0)
         aux_total_tokens = int(totals.get("total_tokens") or 0)
+        # Same treatment as the run rows above: an aux record written before the
+        # source normalization landed can name a doubled model id.
+        aux_model_name = normalize_reported_model_name(aux.model_name) or "unknown"
         total_tokens += aux_total_tokens
         aux_tokens_by_category[aux.category] = aux_tokens_by_category.get(aux.category, 0) + aux_total_tokens
 
-        entry = by_model.setdefault(aux.model_name, ConsoleSpendModelRow(model=aux.model_name))
+        entry = by_model.setdefault(aux_model_name, ConsoleSpendModelRow(model=aux_model_name))
         entry.tokens += aux_total_tokens
         entry.input_tokens += aux_input
         entry.output_tokens += aux_output
@@ -596,10 +608,10 @@ async def console_spend(
         thread_row = by_thread.setdefault(aux.thread_id, ConsoleSpendThreadRow(thread_id=aux.thread_id, title=thread_titles.get(aux.thread_id)))
         thread_row.tokens += aux_total_tokens
 
-        price = _lookup_pricing(pricing, aux.model_name)
+        price = _lookup_pricing(pricing, aux_model_name)
         if price is None:
             if pricing and (aux_input or aux_output):
-                unpriced.add(aux.model_name)
+                unpriced.add(aux_model_name)
             continue
         cost = _token_cost(aux_input, aux_output, price, aux_cache)
         entry.cost = round((entry.cost or 0.0) + cost, 6)

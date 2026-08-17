@@ -296,6 +296,36 @@ def test_thread_token_usage_reports_unpriced_models(monkeypatch, by_model, expec
         assert data["total_cost"] == pytest.approx(expected_cost)
 
 
+def test_a_stream_duplicated_model_id_still_prices_and_is_named_once(monkeypatch):
+    """The reported bug, end to end: a doubled id must not blank out the cost.
+
+    Merging a chunk stream concatenates equal ``response_metadata`` strings, so
+    a provider that repeats ``model`` on two ``finish_reason`` frames leaves
+    ``deepseek/deepseek-v4-prodeepseek/deepseek-v4-pro`` in the bucket key of
+    every run already persisted. Those threads must price from the operator's
+    configured entry rather than reporting a model id that does not exist.
+    """
+    aux_usage.reset_aux_usage()
+    run_store = _make_run_store()
+    run_store.aggregate_tokens_by_thread = AsyncMock(
+        return_value=_agg_with_models(
+            {"deepseek/deepseek-v4-prodeepseek/deepseek-v4-pro": {"tokens": 0, "runs": 1, "input_tokens": 1_000_000, "output_tokens": 1_000_000, "cache_read_tokens": 0}},
+        ),
+    )
+    monkeypatch.setattr(thread_runs, "build_context_usage", AsyncMock(return_value=None))
+    monkeypatch.setattr(
+        thread_runs,
+        "_thread_pricing_map",
+        lambda: build_pricing_map([SimpleNamespace(name="openrouter-deepseek-v4-pro", model="deepseek/deepseek-v4-pro", pricing={"currency": "USD", "input_per_million": 0.44, "output_per_million": 0.87})]),
+    )
+
+    with TestClient(_make_app(run_store)) as client:
+        data = client.get("/api/threads/thread-1/token-usage").json()
+
+    assert data["unpriced_models"] == []
+    assert data["total_cost"] == pytest.approx(1.31)
+
+
 def test_unpriced_models_empty_when_no_pricing_configured(monkeypatch):
     """With no pricing at all the cost UI is hidden, so the list stays quiet.
 

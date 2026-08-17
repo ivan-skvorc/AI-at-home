@@ -30,6 +30,7 @@ from langchain_core.messages import AIMessage, AnyMessage, BaseMessage, HumanMes
 from langgraph.types import Command
 
 from deerflow.agents.human_input import read_human_input_response
+from deerflow.model_ids import normalize_reported_model_name
 from deerflow.runtime.events.catalog import (
     LLM_AI_RESPONSE_EVENT,
     LLM_ERROR_EVENT,
@@ -719,6 +720,12 @@ class RunJournal(BaseCallbackHandler):
         bucket so the breakdown stays usable when a provider doesn't surface
         ``response_metadata.model_name``.
 
+        A streamed id is normalized first: merging chunks concatenates equal
+        ``response_metadata`` strings, so a provider that repeats ``model``
+        across two ``finish_reason`` frames reports it twice over. This is the
+        single write path for the buckets every cost consumer reads, so it is
+        the one place that has to hold (see ``deerflow.model_ids``).
+
         ``cache_read_tokens`` (prompt-cache hits, from
         ``usage_metadata.input_token_details.cache_read``) is stored as a
         sparse bucket key — only written when non-zero — so buckets from
@@ -727,7 +734,7 @@ class RunJournal(BaseCallbackHandler):
         if total_tokens <= 0:
             return
         bucket = self._tokens_by_model.setdefault(
-            model_name or "unknown",
+            normalize_reported_model_name(model_name) or "unknown",
             {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0},
         )
         bucket["input_tokens"] += int(input_tokens or 0)

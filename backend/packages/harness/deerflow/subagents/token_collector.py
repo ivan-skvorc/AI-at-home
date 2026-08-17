@@ -12,6 +12,8 @@ from typing import Any
 
 from langchain_core.callbacks import BaseCallbackHandler
 
+from deerflow.model_ids import normalize_reported_model_name
+
 
 class SubagentTokenCollector(BaseCallbackHandler):
     """Lightweight callback handler that collects LLM token usage within a subagent."""
@@ -61,7 +63,10 @@ class SubagentTokenCollector(BaseCallbackHandler):
                 response_metadata = getattr(gen.message, "response_metadata", None) or {}
                 model_name: str | None = None
                 if isinstance(response_metadata, Mapping):
-                    model_name = response_metadata.get("model_name") or response_metadata.get("model")
+                    # Normalized here as well as in the parent journal so the
+                    # record itself names a real model — a streamed id can
+                    # arrive repeated (see ``deerflow.model_ids``).
+                    model_name = normalize_reported_model_name(response_metadata.get("model_name") or response_metadata.get("model"))
                 self._counted_run_ids.add(rid)
                 record: dict[str, int | str | None] = {
                     "source_run_id": rid,

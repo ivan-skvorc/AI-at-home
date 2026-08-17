@@ -57,6 +57,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **pricing:** A conversation on some OpenAI-compatible providers (OpenRouter
+  among them) showed no cost at all, and the note meant to explain it named a
+  model that does not exist: *"no price is configured for
+  `deepseek/deepseek-v4-prodeepseek/deepseek-v4-pro`"*. The id was **assembled**,
+  not reported. LangChain merges a streamed response chunk by chunk with
+  `merge_dicts`, which *concatenates* two equal strings under the same
+  `response_metadata` key; `langchain_openai` writes `model_name` on every chunk
+  carrying a `finish_reason`, and these providers send more than one such chunk
+  — so the assembled message named the model twice over (its `finish_reason`
+  reads `stopstop` for the same reason). That doubled id is what
+  `token_usage_by_model` is keyed on, so it matched no configured model, every
+  token counted as unpriced, and the header fell back to `—`. A provider-reported
+  id is now collapsed to one copy where it is read (`deerflow.model_ids`), which
+  also keeps the spend cap and the spend report honest — an unrecognized model
+  prices at zero, so a cap could never fire on the affected provider. The
+  collapse is deliberately narrow: only a whole id repeated end to end, never a
+  mismatched pair, because guessing there would bill one model at another's
+  rate. Threads that already ran keep working with no migration — the price
+  lookup and the per-model aggregations normalize the stored key on read, so an
+  old doubled bucket merges into the model it names instead of showing up as a
+  second, unpriced row.
+
 - **pricing:** The cost estimate stayed on `—` for anyone who had run DeerFlow
   before the prices shipped. Adding `pricing:` blocks to
   `config.example.yaml` only ever reaches a **brand-new** `config.yaml`:

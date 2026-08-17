@@ -111,6 +111,54 @@ class TestJournalByModel:
         assert data["lead_agent_tokens"] == 15
         assert data["middleware_tokens"] == 5
 
+    def test_a_stream_duplicated_model_id_lands_on_one_bucket(self) -> None:
+        """Merging chunks concatenates equal ``response_metadata`` strings.
+
+        ``langchain_openai`` writes ``model_name`` on every chunk carrying a
+        ``finish_reason``, and some OpenAI-compatible providers repeat that on
+        the trailing usage frame, so the assembled message names the model
+        twice over. Left alone the bucket key matches no configured model and
+        the whole conversation reports as unpriced.
+        """
+        j = _journal()
+        j.on_llm_end(
+            _make_llm_response(usage={"input_tokens": 10, "output_tokens": 5, "total_tokens": 15}, model_name="deepseek/deepseek-v4-prodeepseek/deepseek-v4-pro"),
+            run_id=uuid4(),
+            parent_run_id=None,
+            tags=["lead_agent"],
+        )
+        # A later call whose stream happened not to repeat it must land on the
+        # same bucket rather than splitting the model in two.
+        j.on_llm_end(
+            _make_llm_response(usage={"input_tokens": 4, "output_tokens": 1, "total_tokens": 5}, model_name="deepseek/deepseek-v4-pro"),
+            run_id=uuid4(),
+            parent_run_id=None,
+            tags=["lead_agent"],
+        )
+        data = j.get_completion_data()
+        assert data["token_usage_by_model"] == {
+            "deepseek/deepseek-v4-pro": {"input_tokens": 14, "output_tokens": 6, "total_tokens": 20},
+        }
+
+    def test_a_subagent_record_with_a_duplicated_model_id_is_normalized(self) -> None:
+        j = _journal()
+        j.record_external_llm_usage_records(
+            [
+                {
+                    "source_run_id": "sub-1",
+                    "caller": "subagent:general-purpose",
+                    "model_name": "z-ai/glm-5.2z-ai/glm-5.2",
+                    "input_tokens": 15,
+                    "output_tokens": 10,
+                    "total_tokens": 25,
+                },
+            ],
+        )
+        data = j.get_completion_data()
+        assert data["token_usage_by_model"] == {
+            "z-ai/glm-5.2": {"input_tokens": 15, "output_tokens": 10, "total_tokens": 25},
+        }
+
     def test_missing_model_name_falls_back_to_unknown(self) -> None:
         j = _journal()
         j.on_llm_end(
@@ -397,6 +445,57 @@ async def test_memory_and_sql_stores_agree(tmp_path):
         mem_agg = await mem.aggregate_tokens_by_thread(_THREAD)
         sql_agg = await sql.aggregate_tokens_by_thread(_THREAD)
         assert mem_agg == sql_agg
+    finally:
+        await _close_sql_engine()
+
+
+_DUPLICATED_ID_RUNS = [
+    # Persisted before the id was normalized at the source: the key names the
+    # model twice over.
+    _completed_run(
+        "run-dup",
+        model_name="openrouter-deepseek-v4-pro",
+        total_tokens=100,
+        lead=100,
+        by_model={"deepseek/deepseek-v4-prodeepseek/deepseek-v4-pro": {"input_tokens": 60, "output_tokens": 40, "total_tokens": 100}},
+    ),
+    # A later run on the same model, written after the fix.
+    _completed_run(
+        "run-clean",
+        model_name="openrouter-deepseek-v4-pro",
+        total_tokens=20,
+        lead=20,
+        by_model={"deepseek/deepseek-v4-pro": {"input_tokens": 12, "output_tokens": 8, "total_tokens": 20}},
+    ),
+]
+
+
+@pytest.mark.anyio
+async def test_memory_store_merges_a_duplicated_model_id_with_its_real_bucket():
+    """One model is one row, whether or not its id was duplicated when stored.
+
+    Without this a thread that spans the fix shows the same model twice — once
+    under a name that does not exist — and only half of it prices.
+    """
+    store = MemoryRunStore()
+    for fix in _DUPLICATED_ID_RUNS:
+        await _seed_run(store, run_id=fix["run_id"], model_name=fix["model_name"], completion=fix["completion"])
+    agg = await store.aggregate_tokens_by_thread(_THREAD)
+    assert agg["by_model"] == {
+        "deepseek/deepseek-v4-pro": {"tokens": 120, "runs": 2, "input_tokens": 72, "output_tokens": 48, "cache_read_tokens": 0},
+    }
+
+
+@pytest.mark.anyio
+async def test_sql_store_merges_a_duplicated_model_id_with_its_real_bucket(tmp_path):
+    repo = await _make_sql_repo(tmp_path)
+    try:
+        for fix in _DUPLICATED_ID_RUNS:
+            await _seed_run(repo, run_id=fix["run_id"], model_name=fix["model_name"], completion=fix["completion"])
+        agg = await repo.aggregate_tokens_by_thread(_THREAD)
+        assert agg["by_model"] == {
+            "deepseek/deepseek-v4-pro": {"tokens": 120, "runs": 2, "input_tokens": 72, "output_tokens": 48, "cache_read_tokens": 0},
+        }
     finally:
         await _close_sql_engine()
 
