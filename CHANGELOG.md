@@ -158,6 +158,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **config:** `config_version` 39 → 40. Upstream's hybrid fact-eviction work
+  added ten new fields under `memory.backend_config`
+  (`fact_eviction_policy`, the eviction weights and half-lives, the correction
+  reserve, and the audit cap) without moving its own `config_version`, which
+  sits behind this fork's. `config_upgrade.py` gates delivery on that number, so
+  at an unchanged version an existing `config.yaml` would have stayed
+  permanently without the new section — the documented sync trap. Run
+  `make config-upgrade` to receive the fields; hand-edited values are preserved
+  and a `.bak` is written, but note the merge path rewrites through `yaml.dump`
+  and drops comments, so keep the `.bak` until you have re-read the result.
+
 - **suggestions:** Follow-up question suggestions now default **off** to avoid
   the extra per-turn LLM call (and its cost). A new **Settings → Suggestions**
   page adds a per-browser toggle plus a model dropdown to choose which model
