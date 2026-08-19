@@ -1,4 +1,4 @@
-.env
+**/.env
 Dockerfile
 .dockerignore
 .git
@@ -72,10 +72,16 @@ backend/.coverage
 # context: BuildKit's context sender cannot read the root-owned files and the
 # whole `docker build` fails ("error from sender: open .../.deer-flow/...:
 # permission denied"), and it would otherwise bake user data / credentials into
-# the image. Matches both the repo-root `.deer-flow/` and nested copies such as
-# `backend/.deer-flow/`.
+# the image (the sqlite database, per-user uploads, `.jwt_secret`). Matches both
+# the repo-root `.deer-flow/` and nested copies such as `backend/.deer-flow/`.
 .deer-flow/
 **/.deer-flow/
+
+# The local sandbox provider's workspace root, created by `backend/Makefile` and
+# written by agent runs. Same reasoning as above: `backend/Dockerfile` does
+# `COPY backend ./backend`, so anything under `backend/` that is not excluded
+# here ships in the image.
+backend/sandbox/
 
 *.md
 !README.md
