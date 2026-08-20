@@ -233,17 +233,17 @@ class TestRealExampleConfig:
         ids = {m["model"] for m in data["models"]}
         expected = {
             "anthropic/claude-fable-5",
-            "x-ai/grok-4.5",
+            "x-ai/grok-4.6",
             "openai/gpt-5.6-sol",
             "openai/gpt-5.3-codex",
             "google/gemini-3.6-flash",
             "meta-llama/llama-4-maverick",
             "minimax/minimax-m3",
-            "qwen/qwen3.7-max",
+            "qwen/qwen3.8-max",
             "moonshotai/kimi-k3",
             "mistralai/mistral-large-2512",
             "deepseek/deepseek-v4-pro",
-            "z-ai/glm-5.2",
+            "z-ai/glm-5.3",
             "nvidia/nemotron-3-ultra-550b-a55b",
         }
         assert expected == ids

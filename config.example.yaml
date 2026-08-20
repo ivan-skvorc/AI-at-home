@@ -516,10 +516,10 @@ models:
   #     input: 10.0
   #     output: 50.0
   #
-  # - name: openrouter-grok-4.5
-  #   display_name: Grok 4.5 (OpenRouter) (p)
+  # - name: openrouter-grok-4.6
+  #   display_name: Grok 4.6 (OpenRouter) (p)
   #   use: langchain_openai:ChatOpenAI
-  #   model: x-ai/grok-4.5
+  #   model: x-ai/grok-4.6
   #   api_key: $OPENROUTER_API_KEY
   #   base_url: https://openrouter.ai/api/v1
   #   request_timeout: 600.0
@@ -585,10 +585,10 @@ models:
   #     output: 0.96
   #     # no `until`: the provider has not announced an end date. Add one when they do.
   #
-  # - name: openrouter-qwen3.7-max
-  #   display_name: Qwen3.7 Max (OpenRouter) (p)
+  # - name: openrouter-qwen3.8-max
+  #   display_name: Qwen3.8 Max (OpenRouter) (p)
   #   use: langchain_openai:ChatOpenAI
-  #   model: qwen/qwen3.7-max
+  #   model: qwen/qwen3.8-max
   #   api_key: $OPENROUTER_API_KEY
   #   base_url: https://openrouter.ai/api/v1
   #   request_timeout: 600.0
@@ -598,8 +598,8 @@ models:
   #   supports_thinking: true
   #   price:                          # per 1M tokens; the single source of truth for cost display and budgets
   #     currency: USD
-  #     input: 1.5
-  #     output: 4.4
+  #     input: 2.0
+  #     output: 6.0
   #
   # - name: openrouter-kimi-k3
   #   display_name: Kimi K3 (OpenRouter) (p)
@@ -665,10 +665,10 @@ models:
   #     input: 0.44
   #     output: 0.87
   #
-  # - name: openrouter-glm-5.2
-  #   display_name: GLM-5.2 (OpenRouter) (p)
+  # - name: openrouter-glm-5.3
+  #   display_name: GLM-5.3 (OpenRouter) (p)
   #   use: langchain_openai:ChatOpenAI
-  #   model: z-ai/glm-5.2
+  #   model: z-ai/glm-5.3
   #   api_key: $OPENROUTER_API_KEY
   #   base_url: https://openrouter.ai/api/v1
   #   request_timeout: 600.0
@@ -678,12 +678,10 @@ models:
   #   supports_thinking: true
   #   price:                          # per 1M tokens; the single source of truth for cost display and budgets
   #     currency: USD
-  #     input: 1.15
-  #     output: 3.6
-  #   discount:                       # shown beside the standard rate, never billed instead of it
-  #     input: 0.28
-  #     output: 0.87
-  #     # no `until`: the provider has not announced an end date. Add one when they do.
+  #     input: 1.4
+  #     output: 4.4
+  #   # No `discount:` — GLM-5.2's 76%-off OpenRouter promotion belonged to that
+  #   # entry and left with it. Re-add one only against the promotions page.
   #
   # - name: openrouter-mistral-large-3
   #   display_name: Mistral Large 3 (OpenRouter) (p)
@@ -792,14 +790,14 @@ models:
   # === END auto-model-config: openai ===
 
   # ── xAI Grok — auto-enabled when XAI_API_KEY is set ───────────────────────
-  # Grok 4.5 flagship + the cheaper/faster Grok 4.5 Fast, on the direct xAI API.
+  # Grok 4.6 flagship + the cheaper/faster Grok 4.5 Fast, on the direct xAI API.
   # The startup auto-config (scripts/sync-api-key-models.py) uncomments the
   # entries below when it finds a real XAI_API_KEY in your .env.
   # === BEGIN auto-model-config: xai (uncommented at startup when XAI_API_KEY is set) ===
-  # - name: xai-grok-4.5
-  #   display_name: Grok 4.5 (xAI)
+  # - name: xai-grok-4.6
+  #   display_name: Grok 4.6 (xAI)
   #   use: langchain_openai:ChatOpenAI
-  #   model: grok-4.5
+  #   model: grok-4.6
   #   api_key: $XAI_API_KEY
   #   base_url: https://api.x.ai/v1
   #   request_timeout: 600.0
@@ -956,10 +954,14 @@ models:
   #     input: 0.5
   #     output: 1.5
   #
-  # - name: mistral-medium-3
-  #   display_name: Mistral Medium 3 (Mistral)
+  # - name: mistral-medium-3.5
+  #   display_name: Mistral Medium 3.5 (Mistral)
   #   use: langchain_openai:ChatOpenAI
-  #   model: mistral-medium-latest
+  #   # Pinned rather than `mistral-medium-latest`: an alias silently re-points at
+  #   # a new model, so the name, the slug, and the price below drift apart with
+  #   # nothing raising — which is how this entry ended up labelled "Medium 3" at
+  #   # Medium 3's price while the alias had already moved on.
+  #   model: mistral-medium-3-5
   #   api_key: $MISTRAL_API_KEY
   #   base_url: https://api.mistral.ai/v1
   #   request_timeout: 600.0
@@ -968,8 +970,8 @@ models:
   #   supports_vision: true
   #   price:                          # per 1M tokens; the single source of truth for cost display and budgets
   #     currency: USD
-  #     input: 0.4
-  #     output: 2.0
+  #     input: 1.5
+  #     output: 7.5
   #
   # - name: mistral-small-3
   #   display_name: Mistral Small 3 (Mistral)
@@ -1043,14 +1045,14 @@ models:
   # === END auto-model-config: moonshot ===
 
   # ── Qwen (Alibaba DashScope) — auto-enabled when DASHSCOPE_API_KEY is set ─
-  # Qwen3.7 Max + Plus, via the international DashScope OpenAI-compatible endpoint.
+  # Qwen3.8 Max + 3.7 Plus, via the international DashScope OpenAI-compatible endpoint.
   # The startup auto-config (scripts/sync-api-key-models.py) uncomments the
   # entries below when it finds a real DASHSCOPE_API_KEY in your .env.
   # === BEGIN auto-model-config: qwen (uncommented at startup when DASHSCOPE_API_KEY is set) ===
-  # - name: qwen-3.7-max
-  #   display_name: Qwen3.7 Max (Qwen)
+  # - name: qwen-3.8-max
+  #   display_name: Qwen3.8 Max (Qwen)
   #   use: langchain_openai:ChatOpenAI
-  #   model: qwen3.7-max
+  #   model: qwen3.8-max
   #   api_key: $DASHSCOPE_API_KEY
   #   base_url: https://dashscope-intl.aliyuncs.com/compatible-mode/v1
   #   request_timeout: 600.0
@@ -1060,8 +1062,8 @@ models:
   #   supports_thinking: true
   #   price:                          # per 1M tokens; the single source of truth for cost display and budgets
   #     currency: USD
-  #     input: 1.5
-  #     output: 4.4
+  #     input: 2.0
+  #     output: 6.0
   #
   # - name: qwen-3.7-plus
   #   display_name: Qwen3.7 Plus (Qwen)
@@ -1121,14 +1123,14 @@ models:
   # === END auto-model-config: minimax ===
 
   # ── Zhipu z.ai (GLM) — auto-enabled when ZAI_API_KEY is set ───────────────
-  # GLM-5.2 + GLM-5.2 Air, on the direct z.ai API.
+  # GLM-5.3 + GLM-5.2 Air, on the direct z.ai API.
   # The startup auto-config (scripts/sync-api-key-models.py) uncomments the
   # entries below when it finds a real ZAI_API_KEY in your .env.
   # === BEGIN auto-model-config: zai (uncommented at startup when ZAI_API_KEY is set) ===
-  # - name: zai-glm-5.2
-  #   display_name: GLM-5.2 (z-ai)
+  # - name: zai-glm-5.3
+  #   display_name: GLM-5.3 (z-ai)
   #   use: langchain_openai:ChatOpenAI
-  #   model: glm-5.2
+  #   model: glm-5.3
   #   api_key: $ZAI_API_KEY
   #   base_url: https://api.z.ai/api/paas/v4
   #   request_timeout: 600.0
@@ -1138,8 +1140,8 @@ models:
   #   supports_thinking: true
   #   price:                          # per 1M tokens; the single source of truth for cost display and budgets
   #     currency: USD
-  #     input: 1.15
-  #     output: 3.6
+  #     input: 1.4
+  #     output: 4.4
   #
   # - name: zai-glm-5.2-air
   #   display_name: GLM-5.2 Air (z-ai)
