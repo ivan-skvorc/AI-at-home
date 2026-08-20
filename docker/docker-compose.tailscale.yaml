@@ -1,0 +1,35 @@
+# Tailnet publish overlay (fork feature).
+#
+# Appended by scripts/docker.sh and scripts/deploy.sh ONLY when
+# scripts/detect_tailscale.py found a live tailnet IPv4 on this host (and
+# DEER_FLOW_TAILSCALE_PUBLISH is not turned off). Without Tailscale running,
+# nothing here is ever applied and the published surface is exactly what it was.
+#
+# Why an extra published port instead of BIND_HOST=0.0.0.0:
+#
+#   * 100.64.0.0/10 is Tailscale's CGNAT range. An address in it is reachable
+#     only by devices in the same tailnet — publishing on it does NOT expose the
+#     app to the LAN or the internet, which a 0.0.0.0 bind would.
+#   * BIND_HOST is a single bind interface, not an allowlist. Setting it to the
+#     tailnet IP publishes ONLY that address and refuses the host's own
+#     http://localhost:PORT. Compose concatenates `ports` across -f files, so
+#     this overlay ADDS the tailnet mapping beside the base loopback one and
+#     both keep working.
+#
+# The two access styles this supports:
+#
+#   1. http://<tailscale-ipv4>:<PORT>   — answered by the port published here.
+#      This is the URL existing bookmarks and phones already use.
+#   2. https://<magicdns>.ts.net        — answered by `tailscale serve` on the
+#      host, which terminates TLS and forwards to loopback. That path needs no
+#      published port at all; it is served by the base 127.0.0.1 mapping.
+#
+# DEER_FLOW_TAILSCALE_IPV4 is exported by the launch script from the detector's
+# output. It has no default on purpose: if it were ever empty, "${VAR}:${PORT}:2026"
+# would collapse to "${PORT}:2026", which binds 0.0.0.0 — the exact wildcard this
+# overlay exists to avoid. Compose fails loudly on the empty value instead, and
+# the launch scripts only add this file when the detector produced one.
+services:
+  nginx:
+    ports:
+      - "${DEER_FLOW_TAILSCALE_IPV4:?tailnet publish overlay requires a detected tailnet IPv4}:${PORT:-2026}:2026"

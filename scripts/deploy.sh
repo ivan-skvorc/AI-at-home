@@ -46,6 +46,10 @@ esac
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
+# Shared tailnet publish + origin merging, identical to the `make docker-start` path.
+# shellcheck source=scripts/tailscale_lib.sh
+. "$REPO_ROOT/scripts/tailscale_lib.sh"
+
 ENV_FILE="$REPO_ROOT/.env"
 DOCKER_DIR="$REPO_ROOT/docker"
 if [ -f "$ENV_FILE" ]; then
@@ -501,6 +505,22 @@ if [ "$sandbox_mode" = "aio" ]; then
     COMPOSE_CMD+=(-f "$DOCKER_DIR/docker-compose.dood.yaml")
 fi
 
+# ── Tailnet reachability (fork) ──────────────────────────────────────────────
+# Publish nginx on this host's Tailscale CGNAT address IN ADDITION to whatever
+# BIND_HOST already publishes, and merge the tailnet origins into every
+# allowlist that could reject a browser on another tailnet device. A no-op
+# without Tailscale (or with DEER_FLOW_TAILSCALE_PUBLISH=0), so the documented
+# loopback-only default is unchanged for everyone else.
+DEER_FLOW_ENTRY_PORT="$(read_dotenv_value PORT)"
+DEER_FLOW_ENTRY_PORT="${DEER_FLOW_ENTRY_PORT:-2026}"
+DEER_FLOW_TAILNET_PORT="$DEER_FLOW_ENTRY_PORT"
+tailscale_detect "$DEER_FLOW_ENTRY_PORT"
+tailscale_merge_origins
+if tailscale_should_publish; then
+    COMPOSE_CMD+=(-f "$DOCKER_DIR/docker-compose.tailscale.yaml")
+    echo -e "${GREEN}✓ Tailscale detected — also publishing on ${DEER_FLOW_TAILNET_IPV4}:${DEER_FLOW_ENTRY_PORT} (tailnet only, not the LAN).${NC}"
+fi
+
 # ── Loopback co-bind (fork) ──────────────────────────────────────────────────
 # See should_cobind_loopback above. When BIND_HOST is a single external
 # interface (e.g. a Tailscale IP), also publish the entry port on 127.0.0.1 so
@@ -561,6 +581,8 @@ echo "  🌐 Application: http://localhost:${RESOLVED_PORT}"
 echo "  📡 API Gateway: http://localhost:${RESOLVED_PORT}/api/*"
 echo "  🤖 Runtime:     Gateway embedded"
 echo "  API:            /api/langgraph/* → Gateway"
+# Print every URL that actually listens, not just localhost.
+tailscale_print_urls "$RESOLVED_PORT"
 echo ""
 if [ "$RESOLVED_BIND_HOST" = "127.0.0.1" ] || [ "$RESOLVED_BIND_HOST" = "::1" ] || [ "$RESOLVED_BIND_HOST" = "localhost" ]; then
     echo "  🔒 Bound to ${RESOLVED_BIND_HOST} — reachable from this machine only."
