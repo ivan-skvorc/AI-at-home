@@ -26,7 +26,7 @@ DOCKER_DIR="$PROJECT_ROOT/docker"
 # populates that container's environment; it has no effect on interpolation.)
 # The symptom is silent: you set BIND_HOST in the root .env, `make docker-start`
 # reports success, and nginx is still published on 127.0.0.1 only.
-# Pinned by backend/tests/test_docker_dev_env_interpolation.py.
+# Pinned by backend/tests/test_docker_dev_tailnet.py.
 COMPOSE_CMD="docker compose -p deer-flow-dev"
 if [ -f "$PROJECT_ROOT/.env" ]; then
     COMPOSE_CMD="$COMPOSE_CMD --env-file $PROJECT_ROOT/.env"
