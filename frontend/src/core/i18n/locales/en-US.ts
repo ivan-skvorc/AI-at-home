@@ -53,11 +53,10 @@ export const enUS: Translations = {
     exportSuccess: "Conversation exported",
     exportFailed: "Failed to export conversation.",
     regenerate: "Regenerate",
-    editAndRerun: "Edit and rerun",
-    updateAndRerun: "Update and rerun",
-    editRerunWarning:
-      "Rerunning restores conversation state only. Files, memory, and external actions are not undone.",
-    branch: "Branch conversation",
+    editMessage: "Edit message",
+    saveAndSend: "Save and send",
+    editVersionNotice:
+      "Sending replays the conversation from here with the edited message. The current version is kept and stays reachable from the switcher on this message.",
     showArtifacts: "Show artifacts of this conversation",
     browser: "Browser",
     showBrowser: "Open browser panel",
@@ -589,8 +588,10 @@ export const enUS: Translations = {
   conversation: {
     noMessages: "No messages yet",
     startConversation: "Start a conversation to see messages here",
-    branchCreated: "Conversation branch created",
-    branchFailed: "Failed to branch conversation.",
+    editVersionPrevious: "Previous version",
+    editVersionNext: "Next version",
+    editVersionCounter: (current, total) => `${current}/${total}`,
+    editVersionFailed: "Failed to create the edited version.",
     streamReplayGap:
       "Some live updates expired. The conversation was restored from saved state.",
   },

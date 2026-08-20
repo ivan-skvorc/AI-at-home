@@ -110,6 +110,43 @@ export async function branchThreadFromTurn(
   return (await response.json()) as ThreadBranchResponse;
 }
 
+export type CreateThreadInput = {
+  metadata?: Record<string, unknown>;
+  assistantId?: string | null;
+};
+
+/**
+ * Create an empty thread up front.
+ *
+ * Editing the *first* user message has no assistant turn to branch from, so the
+ * version it produces starts from a genuinely empty conversation. Going through
+ * the REST endpoint rather than the "new chat" route keeps the flow identical to
+ * every other turn: the id exists before the edit navigates, so the version
+ * metadata and the replayed message can both be addressed to it.
+ */
+export async function createThread(
+  input: CreateThreadInput = {},
+): Promise<{ thread_id: string }> {
+  const response = await fetchWithAuth(`${getBackendBaseURL()}/api/threads`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      ...(input.metadata ? { metadata: input.metadata } : {}),
+      ...(input.assistantId ? { assistant_id: input.assistantId } : {}),
+    }),
+  });
+
+  if (!response.ok) {
+    throw new Error(
+      await readThreadAPIError(response, "Failed to create conversation."),
+    );
+  }
+
+  return (await response.json()) as { thread_id: string };
+}
+
 export async function patchThreadMetadata(
   threadId: string,
   metadata: ThreadMetadataPatch,

@@ -53,11 +53,10 @@ export const zhCN: Translations = {
     exportSuccess: "对话已导出",
     exportFailed: "导出对话失败。",
     regenerate: "重新生成",
-    editAndRerun: "编辑并重新运行",
-    updateAndRerun: "更新并重新运行",
-    editRerunWarning:
-      "重新运行只恢复对话状态，不会撤销文件、Memory 或外部操作。",
-    branch: "分叉",
+    editMessage: "编辑消息",
+    saveAndSend: "保存并发送",
+    editVersionNotice:
+      "发送后将以编辑后的消息从这里重新运行对话。当前版本会被保留，可通过这条消息上的切换器返回。",
     showArtifacts: "查看此对话的文件",
     browser: "浏览器",
     showBrowser: "打开浏览器面板",
@@ -564,8 +563,10 @@ export const zhCN: Translations = {
   conversation: {
     noMessages: "还没有消息",
     startConversation: "开始新的对话以查看消息",
-    branchCreated: "已创建分叉对话",
-    branchFailed: "创建分叉对话失败。",
+    editVersionPrevious: "上一个版本",
+    editVersionNext: "下一个版本",
+    editVersionCounter: (current, total) => `${current}/${total}`,
+    editVersionFailed: "创建编辑版本失败。",
     streamReplayGap: "部分实时更新已过期，已从持久化状态恢复对话。",
   },
 

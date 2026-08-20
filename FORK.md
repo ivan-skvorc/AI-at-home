@@ -993,6 +993,58 @@ One trap worth restating: `ModelConfig` is `extra="allow"`, so `price` and
 forwarded into the provider client and from there into the completion request
 payload — a cost annotation would become a malformed API call.
 
+### 18. Edit a message into a hidden conversation version (with a switcher)
+
+Upstream's per-turn action was **Branch**: it forked the conversation from a
+completed turn into a *separate chat*, which then sat in the sidebar next to the
+original as "Branch of …". That is the right primitive and the wrong surface —
+trying three phrasings of the same question left four entries in the sidebar and
+no indication of which was which.
+
+This fork replaces that button with **Edit**, on the user message itself. Editing
+a message replays the conversation from that point with the new wording; the
+version you were reading is kept, and a `‹ 2/2 ›` switcher appears **on the
+edited message** to move between them. One conversation stays one entry in the
+sidebar, however many times it is edited.
+
+**It is the branch endpoint underneath.** Nothing about `POST /api/threads/{id}/branches`
+changed — the fork is entirely in how the result is presented:
+
+1. Editing the message at turn *k* branches the thread at the terminal assistant
+   message of turn *k-1*, so the new thread carries the history up to (but not
+   including) the edited turn. Editing the **first** message has nothing to
+   branch from, so it creates an empty thread (`POST /api/threads`) instead;
+   that is the only case with no branch call, and it is the common one.
+2. The new thread is stamped `deerflow_edit_version: true` and is filtered out of
+   every primary thread list (`filterThreadSearchResults`), so it never appears
+   in the sidebar, the chats page, or the tab strip.
+3. The family's **root** thread records the group in `deerflow_edit_version_groups`
+   and the reader's current choice in `deerflow_edit_active_version`.
+4. The edited text is parked in session storage and replayed by whichever chat
+   instance mounts the new thread — the click site navigates away, so it cannot
+   send the message itself.
+
+**Two design points are load-bearing and easy to "fix" into bugs.**
+
+*Groups are keyed on the assistant message they branch from, not on the turn
+number.* Turn 4 of the original and turn 4 of a version that diverged at turn 2
+are different conversations that happen to share an ordinal; keying on the base
+message id makes them different groups automatically, because a version only
+shares a base message id with threads whose history up to that point is the same
+copied history. The turn index is stored alongside for display only.
+
+*The single sidebar entry follows the reader.* `pathOfThread()` routes the root's
+entry to `deerflow_edit_active_version`, and the switcher writes that key before
+navigating. Without it the sidebar keeps reopening version 1 forever, which reads
+as the edit having been lost — the exact failure the feature exists to avoid.
+
+Known limits, deliberately: a turn whose predecessor ended in tool calls or a
+clarification has no settled assistant message to fork from, so it shows no edit
+button (the first turn is always editable); deleting the root does not delete its
+hidden versions, which stay as unreferenced threads; and the older latest-turn-only
+*in-place* edit (`/runs/edit-regenerate/prepare`) is still implemented on both
+sides but is no longer wired to any button.
+
 ## Why mix local and cloud
 
 Each tier of model has a job it's good at. Mixing them is how you get most of the quality of frontier models at a fraction of the cost:
@@ -1159,6 +1211,7 @@ Then confirm each fork feature end-to-end:
 | **Backup / restore** (§13) | `cd backend && uv run pytest tests/test_backup.py` covers what goes in, the secrets exclusion and the owner-only opt-in archive, the postgres dump abort, the running-stack refusal, archive-path safety, and the mode-preserving round trip. Wiring: `scripts/backup.py`; `backup` / `restore` targets in the root `Makefile`; `/backups/` in `.gitignore`. **Three invariants that are silent when broken:** (1) credentials stay excluded by default — if `SECRET_PATTERNS` stops matching `users/*/integrations/` or `.env`, every backup starts shipping API keys; (2) the archive is opened `0600` via `os.open`, not chmod'ed afterwards, or it is briefly world-readable while being written; (3) extraction must keep `filter="tar"` — the `data` filter strips the permission bits this feature exists to preserve, so `0700` credential dirs would come back `0755`. A failed `pg_dump` must keep aborting: a backup with no database in it fails at restore time, when it is too late. Manual: `make backup`, `python3 scripts/backup.py inspect <archive>`, then restore into an empty directory and confirm threads/memory/tabs are there. |
 | **Deployment exposure check** (§12) | `cd backend && uv run pytest tests/test_exposure.py` covers the bind classification, the fact resolution (`.env` vs. process env precedence, `runtime_settings.json`, sandbox mode), every tier, and the doctor rows. Wiring: `scripts/exposure.py`; `scripts/doctor.py::check_deployment_exposure` in the new **Deployment** section; the `--surface docker` call at the end of `scripts/deploy.sh` and `--surface local` at the end of `scripts/serve.sh`. **Two things are easy to break silently:** (1) the local surface must stay pinned to the wildcard — it reads `docker/nginx/nginx.local.conf`'s address-less `listen 2026;`, so if upstream gives that config an explicit address, update `LOCAL_BIND_SOURCE`/`resolve_facts` or the check will report a bind the stack does not use; (2) `classify_bind_host` must test the Tailscale ranges **before** `is_private`, because Python classifies CGNAT (100.64.0.0/10) as private and the two tiers are deliberately different. The check must never return `fail` — a deliberately exposed home lab is not a broken install. Manual: `python3 scripts/exposure.py --surface docker`, then set `BIND_HOST=0.0.0.0` in `.env` and confirm the tier moves to `open-network` and names each contributing setting. |
 | **Spend history page** (§11) | `cd backend && uv run pytest tests/test_console_router.py -k ConsoleSpend` covers `GET /api/console/spend`: the three groupings (model / thread / feature) agreeing with the total, unpriced models named and sorted last, the window boundary, the no-pricing state, and the 503 on the memory backend. Wiring: `ConsoleSpendResponse` in `app/gateway/routers/console.py`; `AuxUsageStore.aggregate()`; `frontend/src/core/spend/*`; `frontend/src/app/workspace/spend/page.tsx`; the sidebar entry in `components/workspace/workspace-nav-chat-list.tsx`; i18n `spend.*` in both locales. The page must keep reusing `pricing.py` rather than recomputing cost — a second formula is how the page and the chat header start disagreeing about the same run. Manual: open **Spend** in the sidebar and confirm the tables' totals match the summary tile for the same window. |
+| **Edit into a hidden version** (§18) | `cd frontend && pnpm test edit-versions && pnpm test pending-edit-send && pnpm test "core/messages/utils"` covers the version model (group keying on the base message id, lineage resolution, a descendant inheriting its ancestor's position, the malformed-entry guards), the session-storage hand-off (read consumes it, so an edit is never replayed twice), and the per-turn edit anchors. `pnpm test:e2e edit-message-versions` drives the whole flow: edit a middle turn, land on the version with the earlier history and without the replaced answer, one sidebar entry pointing at the version, `2/2` on the edited message, switch back to `1/2`. Wiring: `core/threads/edit-versions.ts` (model + metadata keys); `core/threads/pending-edit-send.ts`; `useCreateEditVersion` / `useSetActiveEditVersion` in `core/threads/hooks.ts`; `createThread` in `core/threads/api.ts`; `components/workspace/chats/use-edit-versions.ts`; `components/workspace/messages/message-version-switcher.tsx`; the `onEditMessage` / `editVersionSwitchers` props on `MessageList`; the `deerflow_edit_version` filter in `core/threads/thread-search-query.ts`; the active-version hop in `pathOfThread` (`core/threads/utils.ts`). **Three things are silent when broken:** (1) groups must stay keyed on the **base message id** — keying on the turn index merges lineages that only share an ordinal; (2) `pathOfThread` must keep honouring `deerflow_edit_active_version`, or the one sidebar entry reopens version 1 forever and the edit reads as lost; (3) `takePendingEditSend` must keep *removing* on read — a non-consuming read replays the edited turn on every remount. If upstream restores a Branch button on the assistant action row, decide deliberately: this fork removed it on purpose, and two buttons that both fork the conversation is the confusing state the feature replaced. Manual: edit the first message of a chat (the no-branch path) and confirm the switcher appears, then reload from the sidebar and confirm you land back on the edited version. |
 
 **Integration points that tend to need a hand** (where upstream refactors collide with fork additions — check these first when tests fail): the AIO sandbox provider (upstream's cross-instance ownership store adds instance attributes that minimal test fixtures built via `__new__` must seed), the skills tool-policy path (upstream's dynamic `SkillToolPolicyMiddleware` vs. any fork static filtering — reconcile onto the middleware and drop dead build-time filters), `scripts/check.py`'s Docker diagnostics (any upstream test that mocks `run_command` with a strict dict must tolerate the extra `docker` calls), and the `task_tool.py` / `input-box.tsx` model-override plumbing.
 

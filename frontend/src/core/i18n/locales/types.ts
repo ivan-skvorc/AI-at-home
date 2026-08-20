@@ -42,10 +42,9 @@ export interface Translations {
     exportSuccess: string;
     exportFailed: string;
     regenerate: string;
-    editAndRerun: string;
-    updateAndRerun: string;
-    editRerunWarning: string;
-    branch: string;
+    editMessage: string;
+    saveAndSend: string;
+    editVersionNotice: string;
     showArtifacts: string;
     browser: string;
     showBrowser: string;
@@ -482,8 +481,10 @@ export interface Translations {
   conversation: {
     noMessages: string;
     startConversation: string;
-    branchCreated: string;
-    branchFailed: string;
+    editVersionPrevious: string;
+    editVersionNext: string;
+    editVersionCounter: (current: number, total: number) => string;
+    editVersionFailed: string;
     streamReplayGap: string;
   };
 

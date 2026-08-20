@@ -6,8 +6,7 @@ import {
   extractContentFromMessage,
   extractTextFromMessage,
   extractReasoningContentFromMessage,
-  getBranchableAssistantGroupIds,
-  getLatestEditableTurn,
+  getHumanTurnEditPoints,
   getMessageCopyData,
   getAssistantTurnCopyData,
   getAssistantTurnUsageMessages,
@@ -89,7 +88,7 @@ test("aggregates token usage messages once per assistant turn", () => {
   ).toEqual([null, null, ["ai-1", "ai-2"], null, ["ai-3"]]);
 });
 
-describe("branchable assistant groups", () => {
+describe("human turn edit points", () => {
   const messages = [
     { id: "human-1", type: "human", content: "First question" },
     { id: "ai-history", type: "ai", content: "Historical final answer" },
@@ -111,38 +110,48 @@ describe("branchable assistant groups", () => {
     { id: "ai-final", type: "ai", content: "Final answer" },
   ] as Message[];
 
-  test("keeps historical turns branchable and selects only the final AI group in the current completed turn", () => {
-    const groups = getMessageGroups(messages);
+  test("anchors every turn on the assistant message that precedes it", () => {
+    const editPoints = getHumanTurnEditPoints(
+      getMessageGroups(messages),
+      false,
+    );
 
-    expect([...getBranchableAssistantGroupIds(groups, false)]).toEqual([
-      "ai-history",
-      "ai-final",
-    ]);
+    expect(editPoints.get("human-1")).toEqual({
+      turnIndex: 0,
+      baseMessageId: null,
+      baseMessageIds: [],
+      editable: true,
+    });
+    expect(editPoints.get("human-2")).toEqual({
+      turnIndex: 1,
+      baseMessageId: "ai-history",
+      baseMessageIds: ["ai-history"],
+      editable: true,
+    });
   });
 
-  test("does not expose the current turn while it is still loading", () => {
-    const groups = getMessageGroups(messages);
+  test("keeps the first turn editable even though it has nothing to branch from", () => {
+    const editPoints = getHumanTurnEditPoints(
+      getMessageGroups(messages.slice(0, 1)),
+      false,
+    );
 
-    expect([...getBranchableAssistantGroupIds(groups, true)]).toEqual([
-      "ai-history",
-    ]);
+    expect(editPoints.get("human-1")?.editable).toBe(true);
+    expect(editPoints.get("human-1")?.baseMessageId).toBeNull();
   });
 
-  test("does not expose a completed turn that ends in processing", () => {
-    const groups = getMessageGroups(messages.slice(0, -1));
+  test("does not offer the turn in flight while it is still loading", () => {
+    const editPoints = getHumanTurnEditPoints(getMessageGroups(messages), true);
 
-    expect([...getBranchableAssistantGroupIds(groups, false)]).toEqual([
-      "ai-history",
-    ]);
+    // The historical turn is settled and stays editable; only the live one is
+    // withheld, because its own response has not landed yet.
+    expect(editPoints.get("human-1")?.editable).toBe(true);
+    expect(editPoints.get("human-2")?.editable).toBe(false);
   });
-});
 
-describe("latest editable user turn", () => {
-  test("returns the latest completed human turn", () => {
-    const messages = [
-      { id: "human-1", type: "human", content: "First question" },
-      { id: "ai-history", type: "ai", content: "Historical answer" },
-      { id: "human-2", type: "human", content: "Use tools" },
+  test("cannot edit a turn whose predecessor ended in tool calls", () => {
+    const interrupted = [
+      { id: "human-1", type: "human", content: "Use tools" },
       {
         id: "ai-tool",
         type: "ai",
@@ -156,66 +165,43 @@ describe("latest editable user turn", () => {
         tool_call_id: "tool-1",
         content: "result",
       },
-      { id: "ai-final", type: "ai", content: "Final answer" },
-    ] as Message[];
-
-    const turn = getLatestEditableTurn(getMessageGroups(messages), false);
-
-    expect(turn?.humanMessage.id).toBe("human-2");
-  });
-
-  test("returns null while the current turn is loading", () => {
-    const messages = [
-      { id: "human-1", type: "human", content: "Question" },
-      { id: "ai-1", type: "ai", content: "Answer" },
-    ] as Message[];
-
-    expect(getLatestEditableTurn(getMessageGroups(messages), true)).toBeNull();
-  });
-
-  test("returns null when the latest turn has no final assistant text", () => {
-    const messages = [
-      { id: "human-1", type: "human", content: "Question" },
-      {
-        id: "ai-tool",
-        type: "ai",
-        content: "",
-        tool_calls: [{ id: "tool-1", name: "web_search", args: {} }],
-      },
-      {
-        id: "tool-result",
-        type: "tool",
-        name: "web_search",
-        tool_call_id: "tool-1",
-        content: "result",
-      },
-    ] as Message[];
-
-    expect(getLatestEditableTurn(getMessageGroups(messages), false)).toBeNull();
-  });
-
-  test("returns null when the latest assistant text still has tool calls", () => {
-    const messages = [
-      { id: "human-1", type: "human", content: "Question" },
-      {
-        id: "ai-tool",
-        type: "ai",
-        content: "Let me search first.",
-        tool_calls: [{ id: "tool-1", name: "web_search", args: {} }],
-      },
-    ] as Message[];
-
-    expect(getLatestEditableTurn(getMessageGroups(messages), false)).toBeNull();
-  });
-
-  test("returns null when a later human turn is incomplete", () => {
-    const messages = [
-      { id: "human-1", type: "human", content: "First question" },
-      { id: "ai-1", type: "ai", content: "First answer" },
       { id: "human-2", type: "human", content: "Follow up" },
     ] as Message[];
 
-    expect(getLatestEditableTurn(getMessageGroups(messages), false)).toBeNull();
+    const editPoints = getHumanTurnEditPoints(
+      getMessageGroups(interrupted),
+      false,
+    );
+
+    expect(editPoints.get("human-2")).toEqual({
+      turnIndex: 1,
+      baseMessageId: null,
+      baseMessageIds: [],
+      editable: false,
+    });
+  });
+
+  test("skips messages hidden from the UI when numbering turns", () => {
+    const withHidden = [
+      { id: "human-1", type: "human", content: "First question" },
+      { id: "ai-1", type: "ai", content: "First answer" },
+      {
+        id: "human-hidden",
+        type: "human",
+        content: "control",
+        additional_kwargs: { hide_from_ui: true },
+      },
+      { id: "human-2", type: "human", content: "Second question" },
+      { id: "ai-2", type: "ai", content: "Second answer" },
+    ] as Message[];
+
+    const editPoints = getHumanTurnEditPoints(
+      getMessageGroups(withHidden),
+      false,
+    );
+
+    expect(editPoints.has("human-hidden")).toBe(false);
+    expect(editPoints.get("human-2")?.turnIndex).toBe(1);
   });
 });
 

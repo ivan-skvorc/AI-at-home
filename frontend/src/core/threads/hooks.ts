@@ -36,10 +36,25 @@ import { promptInputFilePartToFile, uploadFiles } from "../uploads";
 
 import {
   branchThreadFromTurn,
+  createThread,
   fetchThreadTokenUsage,
   patchThreadMetadata,
   type ThreadMetadataPatch,
 } from "./api";
+import {
+  addEditVersionToGroups,
+  buildEditVersionThreadMetadata,
+  CONVERSATION_START_BASE_MESSAGE_ID,
+  EDIT_ACTIVE_VERSION_METADATA_KEY,
+  EDIT_VERSION_GROUPS_METADATA_KEY,
+  readEditVersionGroups,
+  resolveEditVersionLineage,
+  resolveEditVersionRootThreadId,
+} from "./edit-versions";
+import {
+  getSessionPendingEditSendStorage,
+  writePendingEditSend,
+} from "./pending-edit-send";
 import {
   buildThreadsSearchQueryOptions,
   DEFAULT_THREAD_SEARCH_PARAMS,
@@ -3017,6 +3032,157 @@ export function useBranchThread() {
       void queryClient.invalidateQueries({ queryKey: ["threads", "search"] });
       void queryClient.invalidateQueries({
         queryKey: INFINITE_THREADS_QUERY_KEY_PREFIX,
+      });
+    },
+  });
+}
+
+export type CreateEditVersionInput = {
+  /** The thread the edited message currently lives in. */
+  threadId: string;
+  /** That thread's metadata, so a version-of-a-version keeps its ancestry. */
+  threadMetadata?: Record<string, unknown> | null;
+  /** The family root's metadata, which owns the version groups. */
+  rootMetadata?: Record<string, unknown> | null;
+  turnIndex: number;
+  /** Terminal assistant message of the previous turn; ``null`` starts fresh. */
+  baseMessageId: string | null;
+  baseMessageIds?: string[];
+  title?: string | null;
+  agentName?: string | null;
+  text: string;
+};
+
+/**
+ * Fork the conversation at an edited message into a hidden version thread.
+ *
+ * The work is three writes and a hand-off, in an order chosen so a failure
+ * never leaves a half-registered version: create the thread (branching from the
+ * previous turn, or empty for the first one), stamp it as a version, register it
+ * on the root, then park the edited text for the new thread to replay. The
+ * caller navigates; the chat instance that mounts there sends the message.
+ */
+export function useCreateEditVersion() {
+  const queryClient = useQueryClient();
+  const apiClient = getAPIClient();
+  return useMutation({
+    mutationFn: async ({
+      threadId,
+      threadMetadata,
+      rootMetadata,
+      turnIndex,
+      baseMessageId,
+      baseMessageIds,
+      title,
+      agentName,
+      text,
+    }: CreateEditVersionInput) => {
+      const rootThreadId = resolveEditVersionRootThreadId(
+        threadId,
+        threadMetadata,
+      );
+      const parentLineage = resolveEditVersionLineage(threadId, threadMetadata);
+      const baseKey = baseMessageId ?? CONVERSATION_START_BASE_MESSAGE_ID;
+
+      const versionThreadId = baseMessageId
+        ? (
+            await branchThreadFromTurn(threadId, {
+              messageId: baseMessageId,
+              messageIds: baseMessageIds ?? [baseMessageId],
+              ...(title ? { title } : {}),
+            })
+          ).thread_id
+        : (await createThread()).thread_id;
+
+      await patchThreadMetadata(
+        versionThreadId,
+        buildEditVersionThreadMetadata({
+          rootThreadId,
+          parentThreadId: threadId,
+          baseMessageId: baseKey,
+          turnIndex,
+          parentLineage,
+          agentName,
+        }),
+      );
+
+      // The groups array is rewritten whole, so it is read back from the server
+      // immediately before the write: a cached snapshot taken before another tab
+      // (or an earlier edit in this one) registered a sibling would silently
+      // drop that sibling. A failed read falls back to the caller's snapshot —
+      // the version thread already exists by now, so refusing here would strand
+      // it.
+      let currentRootMetadata =
+        rootThreadId === threadId ? threadMetadata : rootMetadata;
+      try {
+        const rootThread = (await apiClient.threads.get(
+          rootThreadId,
+        )) as AgentThread;
+        currentRootMetadata = rootThread.metadata ?? currentRootMetadata;
+      } catch {
+        // Keep the snapshot the caller passed in.
+      }
+
+      await patchThreadMetadata(rootThreadId, {
+        [EDIT_VERSION_GROUPS_METADATA_KEY]: addEditVersionToGroups(
+          readEditVersionGroups(currentRootMetadata),
+          {
+            baseMessageId: baseKey,
+            turnIndex,
+            parentThreadId: threadId,
+            versionThreadId,
+          },
+        ),
+        [EDIT_ACTIVE_VERSION_METADATA_KEY]: versionThreadId,
+      });
+
+      writePendingEditSend(
+        getSessionPendingEditSendStorage(),
+        versionThreadId,
+        {
+          text,
+        },
+      );
+
+      return { threadId: versionThreadId, rootThreadId };
+    },
+    onSuccess({ threadId: versionThreadId, rootThreadId }) {
+      void queryClient.invalidateQueries({
+        queryKey: ["thread", "metadata", rootThreadId],
+      });
+      void queryClient.invalidateQueries({
+        queryKey: ["thread", "metadata", versionThreadId],
+      });
+      void queryClient.invalidateQueries({ queryKey: ["threads", "search"] });
+      void queryClient.invalidateQueries({
+        queryKey: INFINITE_THREADS_QUERY_KEY_PREFIX,
+      });
+    },
+  });
+}
+
+/**
+ * Point the family's single list entry at the version the user switched to.
+ *
+ * Without this the switcher would only move the current tab: the sidebar would
+ * keep opening version 1 forever, which reads as the edit having been lost.
+ */
+export function useSetActiveEditVersion() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      rootThreadId,
+      versionThreadId,
+    }: {
+      rootThreadId: string;
+      versionThreadId: string;
+    }) =>
+      patchThreadMetadata(rootThreadId, {
+        [EDIT_ACTIVE_VERSION_METADATA_KEY]: versionThreadId,
+      }),
+    onSuccess(_, { rootThreadId, versionThreadId }) {
+      setThreadMetadataInCaches(queryClient, rootThreadId, {
+        [EDIT_ACTIVE_VERSION_METADATA_KEY]: versionThreadId,
       });
     },
   });
