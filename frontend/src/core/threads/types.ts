@@ -118,6 +118,10 @@ export interface ThreadTokenUsageResponse {
   // contributed nothing to `total_cost`. Lets the UI say *which* model needs a
   // price instead of rendering an unexplained "—".
   unpriced_models?: string[];
+  // What each conversation step cost, oldest first — one entry per completed
+  // run, i.e. per user message and the answer to it. Powers the per-step chart
+  // in the cost dropdown. Empty when the thread has no completed runs.
+  steps?: ThreadTokenUsageStepResponse[];
   aux?: Record<string, ThreadTokenUsageAuxBreakdown>;
   // Real-time context window usage (upstream #3125/#3183).
   context_usage?: ThreadContextUsage | null;
@@ -126,6 +130,18 @@ export interface ThreadTokenUsageResponse {
   // is where the user is already looking at money. Null when the cap is off or
   // not enforceable.
   spend_budget?: ThreadSpendBudgetResponse | null;
+}
+
+export interface ThreadTokenUsageStepResponse {
+  /** 1-based: the nth user message in this thread. */
+  index: number;
+  run_id: string;
+  created_at?: string | null;
+  tokens: number;
+  /** Standard-rate spend for this step; null when every model in it is unpriced. */
+  cost?: number | null;
+  /** This step at live promo rates; null when nothing in it is discounted. */
+  promo_cost?: number | null;
 }
 
 export interface ThreadSpendBudgetLimitResponse {

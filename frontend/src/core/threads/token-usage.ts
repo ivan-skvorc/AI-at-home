@@ -1,6 +1,9 @@
 import type { TokenUsage } from "@/core/messages/usage";
 
-import type { ThreadTokenUsageResponse } from "./types";
+import type {
+  ThreadTokenUsageResponse,
+  ThreadTokenUsageStepResponse,
+} from "./types";
 
 export function threadTokenUsageQueryKey(threadId?: string | null) {
   return ["thread-token-usage", threadId] as const;
@@ -98,6 +101,23 @@ export function threadTokenUsageToSpendBudget(
   };
 }
 
+export interface ThreadCostStep {
+  /** 1-based step number — the nth user message in the thread. */
+  index: number;
+  runId: string;
+  /** When the step ran, for the point's tooltip. Null on older rows. */
+  createdAt: string | null;
+  tokens: number;
+  /** What this step cost on its own, at standard rates. Null when unpriced. */
+  cost: number | null;
+  /** This step alone at live promo rates; null when nothing in it is discounted. */
+  promoCost: number | null;
+  /** Standard-rate spend for step 1 through this one, inclusive. */
+  cumulativeCost: number;
+  /** The same running total at live promo rates. */
+  cumulativePromoCost: number;
+}
+
 export interface ThreadCostSummary {
   /** Estimated spend across the thread's runs, or null when unpriced. */
   totalCost: number | null;
@@ -117,8 +137,54 @@ export interface ThreadCostSummary {
    * the figure covers only the priced models and understates the real spend.
    */
   unpricedModels: string[];
+  /**
+   * Per-step cost, oldest first, with the running total carried alongside so a
+   * chart can switch between "what each turn cost" and "what it had cost by
+   * then" without recomputing. Empty when the thread has no priced steps.
+   */
+  steps: ThreadCostStep[];
   /** Remaining currency spend cap, when one is configured and enforceable. */
   spendBudget: SpendBudgetSummary | null;
+}
+
+/**
+ * Turn the endpoint's per-run costs into chart-ready steps.
+ *
+ * Two decisions worth stating, because both are visible in the chart:
+ *
+ * - A step with no price keeps `cost: null` rather than `0`. Zero would draw a
+ *   real point on the floor and read as "this turn was free"; null lets the
+ *   chart leave a gap for a turn nothing could price (a local Ollama run).
+ * - The **cumulative** series treats an unpriced step as contributing nothing,
+ *   so the running total stays flat across it instead of breaking. That matches
+ *   the thread total, which also skips unpriced models — the last cumulative
+ *   value therefore equals the headline figure.
+ */
+export function threadStepsToCostSteps(
+  steps: ThreadTokenUsageStepResponse[] | null | undefined,
+): ThreadCostStep[] {
+  let runningCost = 0;
+  let runningPromo = 0;
+  return (steps ?? []).map((step) => {
+    const cost = step.cost ?? null;
+    const rawPromo = step.promo_cost ?? null;
+    // Same rule as the headline pair: an equal promo is not a discount.
+    const promoCost = rawPromo != null && rawPromo !== cost ? rawPromo : null;
+    runningCost += cost ?? 0;
+    // An undiscounted step contributes its ordinary cost to the promo running
+    // total too, so the two series stay directly comparable.
+    runningPromo += promoCost ?? cost ?? 0;
+    return {
+      index: step.index,
+      runId: step.run_id ?? "",
+      createdAt: step.created_at ?? null,
+      tokens: step.tokens ?? 0,
+      cost,
+      promoCost,
+      cumulativeCost: runningCost,
+      cumulativePromoCost: runningPromo,
+    };
+  });
 }
 
 /**
@@ -163,6 +229,7 @@ export function threadTokenUsageToCostSummary(
     unpricedModels: (usage.unpriced_models ?? []).filter(
       (name): name is string => typeof name === "string" && name.length > 0,
     ),
+    steps: threadStepsToCostSteps(usage.steps),
     spendBudget: threadTokenUsageToSpendBudget(usage),
   };
 }

@@ -773,6 +773,14 @@ export const zhCN: Translations = {
     memory: "记忆",
     suggestions: "建议",
     auxCallCount: (count: number) => `${count} 次调用`,
+    chartTitle: "每步费用",
+    chartPerStep: "单步",
+    chartCumulative: "累计",
+    chartModeLabel: "费用图表模式",
+    chartStepLabel: (step: number, amount: string) =>
+      `第 ${step} 步：${amount}`,
+    chartEmpty: "暂无已计价的步骤。",
+    chartAxisHint: "步骤（你的消息）",
   },
 
   contextUsage: {

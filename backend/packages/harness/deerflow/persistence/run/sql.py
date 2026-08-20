@@ -21,7 +21,9 @@ from deerflow.runtime.runs.store.base import (
     LeaseRenewal,
     RunStore,
     StatusFinalization,
+    add_per_run_model_usage,
     new_by_model_usage_entry,
+    new_per_run_usage_entry,
 )
 from deerflow.runtime.user_context import AUTO, _AutoSentinel, resolve_user_id
 from deerflow.utils.time import coerce_iso
@@ -443,16 +445,24 @@ class RunRepository(RunStore):
         _thread = RunRow.thread_id == thread_id
         _run_operation = RunRow.operation_kind == "run"
 
-        stmt = select(
-            RunRow.model_name,
-            RunRow.total_tokens,
-            RunRow.total_input_tokens,
-            RunRow.total_output_tokens,
-            RunRow.lead_agent_tokens,
-            RunRow.subagent_tokens,
-            RunRow.middleware_tokens,
-            RunRow.token_usage_by_model,
-        ).where(_thread, _run_operation, _completed)
+        stmt = (
+            select(
+                RunRow.run_id,
+                RunRow.created_at,
+                RunRow.model_name,
+                RunRow.total_tokens,
+                RunRow.total_input_tokens,
+                RunRow.total_output_tokens,
+                RunRow.lead_agent_tokens,
+                RunRow.subagent_tokens,
+                RunRow.middleware_tokens,
+                RunRow.token_usage_by_model,
+            )
+            .where(_thread, _run_operation, _completed)
+            # Oldest first, so ``by_run`` reads as "step 1, step 2, …" the way
+            # the user experienced the conversation.
+            .order_by(RunRow.created_at.asc())
+        )
 
         async with self._sf() as session:
             rows = (await session.execute(stmt)).all()
@@ -460,8 +470,11 @@ class RunRepository(RunStore):
         total_tokens = total_input = total_output = total_runs = 0
         lead_agent = subagent = middleware = 0
         by_model: dict[str, dict] = {}
+        by_run: list[dict] = []
         for r in rows:
             total_runs += 1
+            run_entry = new_per_run_usage_entry(r.run_id, coerce_iso(r.created_at) if isinstance(r.created_at, datetime) else r.created_at)
+            by_run.append(run_entry)
             total_tokens += r.total_tokens
             total_input += r.total_input_tokens
             total_output += r.total_output_tokens
@@ -485,6 +498,7 @@ class RunRepository(RunStore):
                     entry["output_tokens"] += usage.get("output_tokens", 0) or 0
                     entry["cache_read_tokens"] += usage.get("cache_read_tokens", 0) or 0
                     entry["runs"] += 1
+                    add_per_run_model_usage(run_entry, normalize_reported_model_name(model) or "unknown", usage)
             else:
                 model = r.model_name or "unknown"
                 entry = by_model.setdefault(model, new_by_model_usage_entry())
@@ -492,6 +506,15 @@ class RunRepository(RunStore):
                 entry["input_tokens"] += r.total_input_tokens or 0
                 entry["output_tokens"] += r.total_output_tokens or 0
                 entry["runs"] += 1
+                add_per_run_model_usage(
+                    run_entry,
+                    model,
+                    {
+                        "input_tokens": r.total_input_tokens or 0,
+                        "output_tokens": r.total_output_tokens or 0,
+                        "total_tokens": r.total_tokens or 0,
+                    },
+                )
 
         return {
             "total_tokens": total_tokens,
@@ -499,6 +522,10 @@ class RunRepository(RunStore):
             "total_output_tokens": total_output,
             "total_runs": total_runs,
             "by_model": by_model,
+            # One entry per completed run, oldest first — the conversation's
+            # steps. The endpoint prices each one so the header can chart what
+            # each turn cost.
+            "by_run": by_run,
             "by_caller": {
                 "lead_agent": lead_agent,
                 "subagent": subagent,
