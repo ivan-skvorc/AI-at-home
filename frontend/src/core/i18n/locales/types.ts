@@ -674,6 +674,20 @@ export interface Translations {
     memory: string;
     suggestions: string;
     auxCallCount: (count: number) => string;
+    /** Heading for the per-step cost chart in the cost dropdown. */
+    chartTitle: string;
+    /** Toggle: plot what each step cost on its own. */
+    chartPerStep: string;
+    /** Toggle: plot the running total up to each step. */
+    chartCumulative: string;
+    /** Accessible name for the per-step/cumulative toggle group. */
+    chartModeLabel: string;
+    /** Tooltip/aria text for one plotted step. */
+    chartStepLabel: (step: number, amount: string) => string;
+    /** Shown instead of the chart when a thread has no priced steps yet. */
+    chartEmpty: string;
+    /** Axis caption naming what the x axis counts. */
+    chartAxisHint: string;
   };
 
   contextUsage: {

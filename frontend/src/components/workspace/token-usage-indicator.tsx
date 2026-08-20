@@ -34,6 +34,7 @@ import {
 import { cn } from "@/lib/utils";
 
 import { formatContextUsagePercentage } from "./context-usage-format";
+import { CostPerStepChart } from "./cost-per-step-chart";
 import { Tooltip } from "./tooltip";
 
 interface TokenUsageIndicatorProps {
@@ -234,6 +235,12 @@ export function TokenUsageIndicator({
                         cost.unpricedModels.join(", "),
                       )}
                 </div>
+              )}
+              {cost.steps.length > 0 && cost.currency && (
+                // The totals above say what the conversation cost; this says
+                // which turn cost it. Only rendered once there is a step to
+                // plot, so a fresh thread shows no empty axes.
+                <CostPerStepChart steps={cost.steps} currency={cost.currency} />
               )}
               {cost.spendBudget?.tightest && (
                 // The cap is money too, so it belongs beside the cost rather

@@ -9,7 +9,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from deerflow.model_ids import normalize_reported_model_name
-from deerflow.runtime.runs.store.base import LeaseRenewal, RunStore, StatusFinalization, new_by_model_usage_entry
+from deerflow.runtime.runs.store.base import LeaseRenewal, RunStore, StatusFinalization, add_per_run_model_usage, new_by_model_usage_entry, new_per_run_usage_entry
 
 
 class MemoryRunStore(RunStore):
@@ -207,8 +207,16 @@ class MemoryRunStore(RunStore):
         # scanning every run in the process (mirrors ``list_by_thread``).
         run_ids = self._runs_by_thread.get(thread_id) or ()
         completed = [run for run_id in run_ids if (run := self._runs.get(run_id)) is not None and run.get("operation_kind", "run") == "run" and run.get("status") in statuses]
+        # Chronological, so ``by_run`` below is "step 1, step 2, …" as the user
+        # experienced the conversation. ``_runs_by_thread`` is an insertion index
+        # and a resumed/replayed run can land out of order, so sort explicitly
+        # (mirrors ``list_by_thread``, which sorts for the same reason).
+        completed.sort(key=lambda r: r.get("created_at") or "")
         by_model: dict[str, dict] = {}
+        by_run: list[dict] = []
         for r in completed:
+            run_entry = new_per_run_usage_entry(r.get("run_id") or "", r.get("created_at"))
+            by_run.append(run_entry)
             usage_by_model = r.get("token_usage_by_model") or {}
             if usage_by_model:
                 for model, usage in usage_by_model.items():
@@ -222,6 +230,7 @@ class MemoryRunStore(RunStore):
                     entry["output_tokens"] += usage.get("output_tokens", 0) or 0
                     entry["cache_read_tokens"] += usage.get("cache_read_tokens", 0) or 0
                     entry["runs"] += 1
+                    add_per_run_model_usage(run_entry, normalize_reported_model_name(model) or "unknown", usage)
             else:
                 # Fallback for rows written before per-model accounting landed:
                 # attribute the whole run to its single ``model_name``. Keeps
@@ -233,12 +242,25 @@ class MemoryRunStore(RunStore):
                 entry["input_tokens"] += r.get("total_input_tokens", 0) or 0
                 entry["output_tokens"] += r.get("total_output_tokens", 0) or 0
                 entry["runs"] += 1
+                add_per_run_model_usage(
+                    run_entry,
+                    model,
+                    {
+                        "input_tokens": r.get("total_input_tokens", 0) or 0,
+                        "output_tokens": r.get("total_output_tokens", 0) or 0,
+                        "total_tokens": r.get("total_tokens", 0) or 0,
+                    },
+                )
         return {
             "total_tokens": sum(r.get("total_tokens", 0) for r in completed),
             "total_input_tokens": sum(r.get("total_input_tokens", 0) for r in completed),
             "total_output_tokens": sum(r.get("total_output_tokens", 0) for r in completed),
             "total_runs": len(completed),
             "by_model": by_model,
+            # One entry per completed run, oldest first — the conversation's
+            # steps. The endpoint prices each one so the header can chart what
+            # each turn cost.
+            "by_run": by_run,
             "by_caller": {
                 "lead_agent": sum(r.get("lead_agent_tokens", 0) for r in completed),
                 "subagent": sum(r.get("subagent_tokens", 0) for r in completed),
