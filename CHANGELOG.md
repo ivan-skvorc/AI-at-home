@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **chat:** The per-turn **Branch** button is replaced by an **Edit** button on
+  the user message itself. Editing replays the conversation from that turn with
+  the new wording and keeps the version you were reading, reachable through a
+  `‹ 2/2 ›` switcher on the edited message. The alternative versions are hidden
+  from the sidebar, the chats page, and the tab strip, so one conversation stays
+  one entry however many times it is edited, and the entry reopens whichever
+  version you last switched to. Editing the first message of a chat works too.
+  Under the hood this is still the existing branch endpoint — the change is in
+  how the result is presented. See FORK.md §18.
+
 - **pricing:** The conversation cost is now rendered in **green**, so it reads
   as money rather than as another token counter, and a model on a live
   promotional/introductory rate shows **both** prices. The `pricing:` block

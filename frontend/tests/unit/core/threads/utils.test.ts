@@ -52,6 +52,32 @@ test("uses agent chat route when thread context has agent_name", () => {
   ).toBe("/workspace/agents/researcher/chats/thread-123");
 });
 
+test("an edited conversation's single entry opens the version last switched to", () => {
+  expect(
+    pathOfThread(
+      makeThread("root-1", { deerflow_edit_active_version: "version-2" }),
+    ),
+  ).toBe("/workspace/chats/version-2");
+});
+
+test("the active version follows the thread's agent route", () => {
+  expect(
+    pathOfThread(
+      makeThread("root-1", {
+        agent_name: "researcher",
+        deerflow_edit_active_version: "version-2",
+      }),
+    ),
+  ).toBe("/workspace/agents/researcher/chats/version-2");
+});
+
+test("a thread whose active version is itself keeps its own route", () => {
+  expect(
+    pathOfThread(makeThread("root-1", { deerflow_edit_active_version: "" })),
+  ).toBe("/workspace/chats/root-1");
+  expect(pathOfThread("root-1")).toBe("/workspace/chats/root-1");
+});
+
 test("uses provided context when pathOfThread is called with a thread id", () => {
   expect(pathOfThread("thread-123", { agent_name: "ops agent" })).toBe(
     "/workspace/agents/ops%20agent/chats/thread-123",

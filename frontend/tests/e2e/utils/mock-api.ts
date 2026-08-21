@@ -14,6 +14,7 @@ import type { Page, Route } from "@playwright/test";
 
 export const MOCK_THREAD_ID = "00000000-0000-0000-0000-000000000001";
 export const MOCK_THREAD_ID_2 = "00000000-0000-0000-0000-000000000002";
+export const MOCK_THREAD_ID_3 = "00000000-0000-0000-0000-000000000003";
 export const MOCK_SIDECAR_THREAD_ID = "00000000-0000-0000-0000-0000000000aa";
 export const MOCK_RUN_ID = "00000000-0000-0000-0000-000000000099";
 // Keep in sync with frontend runtime thread utils and the backend thread_meta
@@ -97,6 +98,16 @@ export type MockAPIOptions = {
     browserControlEnabled?: boolean;
   };
   runStreamHandler?: (route: Route) => Promise<void>;
+  /**
+   * Keep the thread's existing messages in front of the ones a run produces.
+   *
+   * The default handler replaces a thread's history with just the run's input
+   * plus its answer, which is fine for a fresh chat but wrong for any test that
+   * sends into a thread that already has a transcript. Opt in where the
+   * inherited history is the point — e.g. a conversation branched at an earlier
+   * turn.
+   */
+  appendRunMessagesToHistory?: boolean;
 };
 
 const DEFAULT_SKILLS: MockSkill[] = [
@@ -132,8 +143,32 @@ function isHiddenInputMessage(message: unknown) {
   );
 }
 
+// The gateway stamps an id on every message it persists. The submitted human
+// message arrives without one, so anything keyed by message id (the version
+// switcher, `data-message-id`) would be invisible to tests without this.
+let mockInputMessageSequence = 0;
+
+function withStableMessageIds(messages: unknown[]) {
+  return messages.map((message) => {
+    if (
+      typeof message !== "object" ||
+      message === null ||
+      messageId(message) !== undefined
+    ) {
+      return message;
+    }
+    mockInputMessageSequence += 1;
+    return {
+      ...(message as Record<string, unknown>),
+      id: `mock-input-${mockInputMessageSequence}`,
+    };
+  });
+}
+
 function visibleInputMessages(messages: unknown[]) {
-  return messages.filter((message) => !isHiddenInputMessage(message));
+  return withStableMessageIds(
+    messages.filter((message) => !isHiddenInputMessage(message)),
+  );
 }
 
 function mockMessageRunId(message: unknown, fallback: string) {
@@ -779,10 +814,16 @@ export function mockLangGraphAPI(page: Page, options?: MockAPIOptions) {
         thread_id?: string;
         metadata?: Record<string, unknown>;
       };
-      const threadId = body.thread_id ?? MOCK_SIDECAR_THREAD_ID;
+      // Two callers create a thread up front: the sidecar, and an edit of the
+      // very first user message (which has no assistant turn to branch from).
+      // Give them distinct ids so a test can tell which one ran.
+      const isSidecar = body.metadata?.deerflow_sidecar === true;
+      const threadId =
+        body.thread_id ??
+        (isSidecar ? MOCK_SIDECAR_THREAD_ID : MOCK_THREAD_ID_3);
       upsertThread({
         thread_id: threadId,
-        title: "Side chat",
+        title: isSidecar ? "Side chat" : "New Chat",
         updated_at: new Date().toISOString(),
         metadata: body.metadata ?? {},
         messages: [],
@@ -1129,15 +1170,21 @@ export function mockLangGraphAPI(page: Page, options?: MockAPIOptions) {
       );
       const fallbackGoal = threads.find((thread) => thread.goal)?.goal ?? null;
       const goal = existingThread?.goal ?? fallbackGoal;
+      const inputMessages = options?.appendRunMessagesToHistory
+        ? [
+            ...(existingThread?.messages ?? []),
+            ...visibleRunInputMessages(route),
+          ]
+        : undefined;
       upsertThread({
         thread_id: threadId,
         title: threadId === MOCK_SIDECAR_THREAD_ID ? "Side chat" : "New Chat",
         updated_at: new Date().toISOString(),
         goal,
         metadata: existingThread?.metadata,
-        messages: mockStreamMessages(route),
+        messages: mockStreamMessages(route, inputMessages),
       });
-      return handleRunStream(route, { goal });
+      return handleRunStream(route, { goal }, inputMessages);
     });
 
   void page.route("**/api/langgraph/runs/stream", handleMockRunStream);

@@ -11,6 +11,10 @@ import { AgentWelcome } from "@/components/workspace/agent-welcome";
 import { ArtifactTrigger } from "@/components/workspace/artifacts";
 import { BrowserTrigger } from "@/components/workspace/browser-view";
 import { ChatBox, useThreadChat } from "@/components/workspace/chats";
+import {
+  useEditVersions,
+  usePendingEditSend,
+} from "@/components/workspace/chats/use-edit-versions";
 import { ContextUsageBadge } from "@/components/workspace/context-usage-badge";
 import { ExportTrigger } from "@/components/workspace/export-trigger";
 import { GoalStatus } from "@/components/workspace/goal-status";
@@ -104,7 +108,6 @@ export default function AgentChatPage() {
     pendingUsageMessages,
     sendMessage,
     regenerateMessage,
-    editAndRegenerateMessage,
     isUploading,
     isHistoryLoading,
     hasMoreHistory,
@@ -222,11 +225,27 @@ export default function AgentChatPage() {
       regenerateMessage(threadId, messageId, supersededMessageIds),
     [regenerateMessage, threadId],
   );
-  const handleEditAndRegenerate = useCallback(
-    (messageId: string, replacementText: string) =>
-      editAndRegenerateMessage(threadId, messageId, replacementText),
-    [editAndRegenerateMessage, threadId],
-  );
+  const editVersionsEnabled =
+    !isNewThread && !isMock && env.NEXT_PUBLIC_STATIC_WEBSITE_ONLY !== "true";
+  const {
+    editVersionSwitchers,
+    handleEditMessage,
+    handleSelectEditVersion,
+    isReady: isEditVersionsReady,
+    isCreatingEditVersion,
+  } = useEditVersions({
+    threadId,
+    threadMetadata: threadMetadata.data?.metadata,
+    isThreadMetadataLoading: threadMetadata.isLoading,
+    enabled: editVersionsEnabled,
+    agentName: agent_name,
+    title: thread.values.title,
+  });
+  usePendingEditSend({
+    threadId,
+    enabled: editVersionsEnabled && !isHistoryLoading,
+    sendMessage,
+  });
 
   const tokenUsageInlineMode = tokenUsageEnabled
     ? localSettings.tokenUsage.inlineMode
@@ -338,15 +357,16 @@ export default function AgentChatPage() {
                   }
                   onRegenerateMessage={handleRegenerate}
                   canEdit={
-                    !isNewThread &&
-                    !isMock &&
-                    env.NEXT_PUBLIC_STATIC_WEBSITE_ONLY !== "true" &&
+                    isEditVersionsReady &&
                     !isUploading &&
                     !thread.isLoading &&
+                    !isCreatingEditVersion &&
                     !hasGoal &&
                     !hasOpenHumanInputCard
                   }
-                  onEditAndRegenerateMessage={handleEditAndRegenerate}
+                  onEditMessage={handleEditMessage}
+                  editVersionSwitchers={editVersionSwitchers}
+                  onSelectEditVersion={handleSelectEditVersion}
                   onSubmitHumanInput={
                     isMock || env.NEXT_PUBLIC_STATIC_WEBSITE_ONLY === "true"
                       ? undefined

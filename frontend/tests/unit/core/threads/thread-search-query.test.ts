@@ -52,6 +52,23 @@ test("thread search hides sidecar threads from primary lists by default", async 
   ]);
 });
 
+test("thread search hides edit versions so one conversation stays one entry", async () => {
+  const search = rs.fn().mockResolvedValue([
+    makeThread("root-1"),
+    makeThread("version-1", {
+      deerflow_edit_version: true,
+      edit_root_thread_id: "root-1",
+      edit_parent_thread_id: "root-1",
+    }),
+  ]);
+  const options = buildThreadsSearchQueryOptions(
+    { threads: { search } },
+    DEFAULT_THREAD_SEARCH_PARAMS,
+  );
+
+  await expect(options.queryFn()).resolves.toEqual([makeThread("root-1")]);
+});
+
 test("thread search can explicitly include sidecar threads for parent lookup", async () => {
   const sidecar = makeThread("sidecar-1", {
     deerflow_sidecar: true,

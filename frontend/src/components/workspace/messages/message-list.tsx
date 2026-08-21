@@ -2,7 +2,6 @@ import type { Message } from "@langchain/langgraph-sdk";
 import type { BaseStream } from "@langchain/langgraph-sdk/react";
 import {
   ChevronUpIcon,
-  GitBranchPlusIcon,
   Loader2Icon,
   MessageCircleIcon,
   MessageSquarePlusIcon,
@@ -51,8 +50,7 @@ import {
   extractPresentFilesFromMessage,
   extractTextFromMessage,
   getAssistantTurnCopyData,
-  getBranchableAssistantGroupIds,
-  getLatestEditableTurn,
+  getHumanTurnEditPoints,
   getStreamMetadataSnapshot,
   getStreamingMessageLookup,
   hasContent,
@@ -75,6 +73,10 @@ import {
   parseSubtaskResult,
 } from "@/core/tasks/subtask-result";
 import type { AgentThreadState } from "@/core/threads";
+import {
+  CONVERSATION_START_BASE_MESSAGE_ID,
+  type EditVersionSwitcher,
+} from "@/core/threads/edit-versions";
 import { cn } from "@/lib/utils";
 
 import { ArtifactFileList } from "../artifacts/artifact-file-list";
@@ -94,6 +96,7 @@ import {
   MessageTokenUsageDebugList,
   MessageTokenUsageList,
 } from "./message-token-usage";
+import { MessageVersionSwitcher } from "./message-version-switcher";
 import { RunActivity, RunDuration } from "./run-duration";
 import { MessageListSkeleton } from "./skeleton";
 import { SubtaskCard } from "./subtask-card";
@@ -280,12 +283,12 @@ export function MessageList({
   loadMoreHistory,
   isHistoryLoading,
   onRegenerateMessage,
-  onEditAndRegenerateMessage,
+  onEditMessage,
   onSubmitHumanInput,
-  onBranchTurn,
+  editVersionSwitchers,
+  onSelectEditVersion,
   canRegenerate = false,
   canEdit = false,
-  canBranch = false,
   enableSidecarActions = true,
   sidecarSurface = false,
   initialScroll = "smooth",
@@ -304,21 +307,26 @@ export function MessageList({
     messageId: string,
     supersededMessageIds: string[],
   ) => boolean | void | Promise<boolean | void>;
-  onEditAndRegenerateMessage?: (
-    messageId: string,
-    replacementText: string,
-  ) => boolean | Promise<boolean>;
+  /**
+   * Fork the conversation at `messageId` with `replacementText`. Resolving
+   * `false` keeps the inline editor open so the draft is not lost.
+   */
+  onEditMessage?: (input: {
+    messageId: string;
+    turnIndex: number;
+    baseMessageId: string | null;
+    baseMessageIds: string[];
+    replacementText: string;
+  }) => boolean | Promise<boolean>;
   onSubmitHumanInput?: (
     request: HumanInputRequest,
     response: HumanInputResponse,
   ) => HumanInputSubmitResult | Promise<HumanInputSubmitResult>;
-  onBranchTurn?: (
-    messageId: string,
-    messageIds: string[],
-  ) => void | Promise<void>;
+  /** Alternative versions of an edited turn, keyed by the turn's base message id. */
+  editVersionSwitchers?: ReadonlyMap<string, EditVersionSwitcher>;
+  onSelectEditVersion?: (versionThreadId: string) => void;
   canRegenerate?: boolean;
   canEdit?: boolean;
-  canBranch?: boolean;
   enableSidecarActions?: boolean;
   sidecarSurface?: boolean;
   initialScroll?: ConversationProps["initial"];
@@ -415,9 +423,6 @@ export function MessageList({
   const [pendingHumanInputRequestIds, setPendingHumanInputRequestIds] =
     useState<Set<string>>(() => new Set());
   const previousHumanInputThreadError = useRef<unknown>(thread.error);
-  const [branchingMessageId, setBranchingMessageId] = useState<string | null>(
-    null,
-  );
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
   const hasActiveAssistantText = useMemo(() => {
     let lastHumanIndex = -1;
@@ -644,19 +649,12 @@ export function MessageList({
     }
     return null;
   }, [groupedMessages, thread.isLoading]);
-  const branchableAssistantGroupIds = useMemo(
-    () => getBranchableAssistantGroupIds(groupedMessages, thread.isLoading),
+  const humanTurnEditPoints = useMemo(
+    () => getHumanTurnEditPoints(groupedMessages, thread.isLoading),
     [groupedMessages, thread.isLoading],
   );
-  const latestEditableTurn = useMemo(
-    () => getLatestEditableTurn(groupedMessages, thread.isLoading),
-    [groupedMessages, thread.isLoading],
-  );
-  const latestEditableHumanMessageId = latestEditableTurn?.humanMessage.id;
   const replayActionBusy =
-    regeneratingMessageId != null ||
-    branchingMessageId != null ||
-    editingMessageId != null;
+    regeneratingMessageId != null || editingMessageId != null;
 
   const clearSelectionToolbar = useCallback(() => {
     setSelectionToolbar(null);
@@ -797,7 +795,6 @@ export function MessageList({
     (
       messages: Message[],
       isStreaming: boolean,
-      enableBranchForTurn: boolean,
       enableRegenerateForTurn: boolean,
     ) => {
       const clipboardData = getAssistantTurnCopyData(messages, { isStreaming });
@@ -815,43 +812,6 @@ export function MessageList({
       return (
         <div className="mt-2 flex justify-start gap-1 opacity-0 transition-opacity delay-200 duration-300 group-hover/assistant-turn:opacity-100">
           {clipboardData && <CopyButton clipboardData={clipboardData} />}
-          {enableBranchForTurn &&
-            !isStreaming &&
-            actionTarget?.id &&
-            onBranchTurn && (
-              <Tooltip content={t.common.branch}>
-                <Button
-                  aria-label={t.common.branch}
-                  size="icon-sm"
-                  type="button"
-                  variant="ghost"
-                  disabled={
-                    !canBranch ||
-                    replayActionBusy ||
-                    branchingMessageId === actionTarget.id
-                  }
-                  onClick={() => {
-                    const targetId = actionTarget.id;
-                    if (!targetId) {
-                      return;
-                    }
-                    setBranchingMessageId(targetId);
-                    void Promise.resolve(
-                      onBranchTurn(targetId, assistantMessageIds),
-                    ).finally(() => {
-                      setBranchingMessageId(null);
-                    });
-                  }}
-                >
-                  <GitBranchPlusIcon
-                    className={cn(
-                      "size-4",
-                      branchingMessageId === actionTarget.id && "animate-pulse",
-                    )}
-                  />
-                </Button>
-              </Tooltip>
-            )}
           {enableRegenerateForTurn &&
             actionTarget?.id &&
             onRegenerateMessage && (
@@ -893,14 +853,10 @@ export function MessageList({
       );
     },
     [
-      branchingMessageId,
-      canBranch,
       canRegenerate,
-      onBranchTurn,
       onRegenerateMessage,
       regeneratingMessageId,
       replayActionBusy,
-      t.common.branch,
       t.common.regenerate,
     ],
   );
@@ -1042,6 +998,16 @@ export function MessageList({
                     )}
                   >
                     {group.messages.map((msg) => {
+                      const editPoint =
+                        group.type === "human" && msg.id
+                          ? humanTurnEditPoints.get(msg.id)
+                          : undefined;
+                      const versionSwitcher = editPoint
+                        ? editVersionSwitchers?.get(
+                            editPoint.baseMessageId ??
+                              CONVERSATION_START_BASE_MESSAGE_ID,
+                          )
+                        : undefined;
                       const item = (
                         <MessageListItem
                           message={msg}
@@ -1061,18 +1027,14 @@ export function MessageList({
                             groupIndex,
                           )}
                           canEdit={
-                            group.type === "human" &&
-                            Boolean(msg.id) &&
-                            msg.id === latestEditableHumanMessageId &&
+                            editPoint?.editable === true &&
                             canEdit &&
                             !replayActionBusy &&
-                            Boolean(onEditAndRegenerateMessage)
+                            Boolean(onEditMessage)
                           }
                           isEditPending={editingMessageId === msg.id}
                           onEditAndRegenerate={
-                            group.type === "human" &&
-                            msg.id &&
-                            onEditAndRegenerateMessage
+                            editPoint && msg.id && onEditMessage
                               ? async (replacementText) => {
                                   const targetId = msg.id;
                                   if (!targetId) {
@@ -1080,15 +1042,34 @@ export function MessageList({
                                   }
                                   setEditingMessageId(targetId);
                                   try {
-                                    return await onEditAndRegenerateMessage(
-                                      targetId,
+                                    return await onEditMessage({
+                                      messageId: targetId,
+                                      turnIndex: editPoint.turnIndex,
+                                      baseMessageId: editPoint.baseMessageId,
+                                      baseMessageIds: editPoint.baseMessageIds,
                                       replacementText,
-                                    );
+                                    });
                                   } finally {
                                     setEditingMessageId(null);
                                   }
                                 }
                               : undefined
+                          }
+                          versionSwitcher={
+                            versionSwitcher && onSelectEditVersion ? (
+                              <MessageVersionSwitcher
+                                currentIndex={versionSwitcher.currentIndex}
+                                disabled={thread.isLoading || replayActionBusy}
+                                onSelectIndex={(index) => {
+                                  const target =
+                                    versionSwitcher.threadIds[index];
+                                  if (target) {
+                                    onSelectEditVersion(target);
+                                  }
+                                }}
+                                total={versionSwitcher.threadIds.length}
+                              />
+                            ) : undefined
                           }
                         />
                       );
@@ -1127,8 +1108,6 @@ export function MessageList({
                           group.messages,
                           streamingMessages,
                         ),
-                        group.id !== undefined &&
-                          branchableAssistantGroupIds.has(group.id),
                         group.id === latestAssistantGroupId,
                       )}
                   </div>,

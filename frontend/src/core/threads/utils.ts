@@ -1,5 +1,6 @@
 import type { Message } from "@langchain/langgraph-sdk";
 
+import { readActiveEditVersionThreadId } from "./edit-versions";
 import type { AgentThread, AgentThreadContext } from "./types";
 
 // Namespaced to match other internal metadata keys (``deerflow_sidecar``,
@@ -26,7 +27,18 @@ export function pathOfThread(
   thread: ThreadRouteTarget,
   context?: Pick<AgentThreadContext, "agent_name"> | null,
 ) {
-  const threadId = typeof thread === "string" ? thread : thread.thread_id;
+  // A thread that has been edited keeps one entry in every list, but that entry
+  // must open the version the user last switched to — otherwise the sidebar
+  // silently walks them back to version 1 on the next visit. Only the family's
+  // root ever carries the key, so this cannot chain.
+  const activeVersionThreadId =
+    typeof thread === "string"
+      ? null
+      : readActiveEditVersionThreadId(thread.metadata);
+  const threadId =
+    typeof thread === "string"
+      ? thread
+      : (activeVersionThreadId ?? thread.thread_id);
   const encodedThreadId = encodeURIComponent(threadId);
   let agentName: string | undefined;
   if (typeof thread === "string") {

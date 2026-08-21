@@ -14,6 +14,7 @@ import {
   useMemo,
   useState,
   type ImgHTMLAttributes,
+  type ReactNode,
 } from "react";
 
 import { Loader } from "@/components/ai-elements/loader";
@@ -149,6 +150,7 @@ export function MessageListItem({
   canEdit = false,
   isEditPending = false,
   onEditAndRegenerate,
+  versionSwitcher,
 }: {
   className?: string;
   message: Message;
@@ -162,6 +164,8 @@ export function MessageListItem({
   canEdit?: boolean;
   isEditPending?: boolean;
   onEditAndRegenerate?: (replacementText: string) => void | Promise<boolean>;
+  /** `‹ n/m ›` control for a message that has alternative edited versions. */
+  versionSwitcher?: ReactNode;
 }) {
   const { t } = useI18n();
   const isHuman = message.type === "human";
@@ -206,6 +210,7 @@ export function MessageListItem({
   return (
     <AIElementMessage
       className={cn("group/conversation-message relative w-full", className)}
+      data-message-id={message.id}
       from={isHuman ? "user" : "assistant"}
     >
       <MessageContent
@@ -229,39 +234,49 @@ export function MessageListItem({
             : undefined
         }
       />
-      {!isLoading && showCopyButton && (
+      {!isLoading && (showCopyButton || versionSwitcher) && (
         <MessageToolbar
           className={cn(
             isHuman
               ? "absolute right-0 -bottom-9 left-0 justify-end"
               : "absolute right-0 bottom-0 left-0",
-            "z-20 opacity-0 transition-opacity delay-200 duration-300 group-hover/conversation-message:opacity-100",
+            "z-20",
           )}
         >
-          <div className="pointer-events-auto flex gap-1">
-            <CopyButton clipboardData={getMessageCopyData(message)} />
-            {canEdit && isHuman && onEditAndRegenerate && !isEditing && (
-              <Tooltip content={t.common.editAndRerun}>
-                <Button
-                  aria-label={t.common.editAndRerun}
-                  size="icon-sm"
-                  type="button"
-                  variant="ghost"
-                  disabled={isEditPending || isSubmittingEdit}
-                  onClick={startEditing}
-                >
-                  <PencilIcon className="size-3" />
-                </Button>
-              </Tooltip>
-            )}
-            {feedback !== undefined && runId && threadId && (
-              <FeedbackButtons
-                threadId={threadId}
-                runId={runId}
-                initialFeedback={feedback}
-              />
-            )}
-          </div>
+          {/* The switcher is the only affordance telling the reader this turn
+              has other versions, so unlike the hover actions beside it, it stays
+              visible. */}
+          {versionSwitcher && (
+            <div className="pointer-events-auto flex items-center">
+              {versionSwitcher}
+            </div>
+          )}
+          {showCopyButton && (
+            <div className="pointer-events-auto flex gap-1 opacity-0 transition-opacity delay-200 duration-300 group-hover/conversation-message:opacity-100">
+              <CopyButton clipboardData={getMessageCopyData(message)} />
+              {canEdit && isHuman && onEditAndRegenerate && !isEditing && (
+                <Tooltip content={t.common.editMessage}>
+                  <Button
+                    aria-label={t.common.editMessage}
+                    size="icon-sm"
+                    type="button"
+                    variant="ghost"
+                    disabled={isEditPending || isSubmittingEdit}
+                    onClick={startEditing}
+                  >
+                    <PencilIcon className="size-3" />
+                  </Button>
+                </Tooltip>
+              )}
+              {feedback !== undefined && runId && threadId && (
+                <FeedbackButtons
+                  threadId={threadId}
+                  runId={runId}
+                  initialFeedback={feedback}
+                />
+              )}
+            </div>
+          )}
         </MessageToolbar>
       )}
     </AIElementMessage>
@@ -524,7 +539,7 @@ function MessageContent_({
               }}
             />
             <div className="text-muted-foreground text-xs">
-              {t.common.editRerunWarning}
+              {t.common.editVersionNotice}
             </div>
             <div className="flex justify-end gap-1">
               <Button
@@ -544,7 +559,7 @@ function MessageContent_({
                 onClick={() => void editState.onSubmit()}
               >
                 <CheckIcon className="size-3" />
-                {t.common.updateAndRerun}
+                {t.common.saveAndSend}
               </Button>
             </div>
           </div>

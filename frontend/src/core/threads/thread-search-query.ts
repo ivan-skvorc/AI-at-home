@@ -5,6 +5,7 @@ import {
   shouldShowInPrimaryThreadLists,
 } from "@/core/sidecar/thread";
 
+import { isEditVersionThread } from "./edit-versions";
 import type { AgentThread, AgentThreadState } from "./types";
 
 type ThreadsSearchClient = {
@@ -45,7 +46,13 @@ export function filterThreadSearchResults(
   if (shouldIncludeSidecarThreads(params)) {
     return threads;
   }
-  return threads.filter(shouldShowInPrimaryThreadLists);
+  // Hidden edit versions are reachable only through the switcher on the message
+  // they diverge at; listing them would turn one conversation into a column of
+  // near-identical entries.
+  return threads.filter(
+    (thread) =>
+      shouldShowInPrimaryThreadLists(thread) && !isEditVersionThread(thread),
+  );
 }
 
 export function buildThreadsSearchQueryOptions(

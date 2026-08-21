@@ -195,124 +195,95 @@ export function getMessageGroups(
   return groups;
 }
 
-export function getBranchableAssistantGroupIds(
-  groups: MessageGroup[],
-  isCurrentTurnLoading: boolean,
-): Set<string> {
-  // Hidden messages were already removed by getMessageGroups, matching the
-  // backend's branch checkpoint visibility rules. Within each visible human
-  // turn, branching is exposed only when the final AI-bearing group is a
-  // terminal assistant text group. Processing, present-files, and subagent
-  // groups do not render assistant actions.
-  const branchableGroupIds = new Set<string>();
-  let lastAIGroup: MessageGroup | null = null;
-
-  const completeTurn = () => {
-    if (lastAIGroup?.type === "assistant" && lastAIGroup.id) {
-      branchableGroupIds.add(lastAIGroup.id);
-    }
-    lastAIGroup = null;
-  };
-
-  for (const group of groups) {
-    if (group.type === "human") {
-      completeTurn();
-      continue;
-    }
-
-    if (group.messages.some((message) => message.type === "ai")) {
-      lastAIGroup = group;
-    }
-  }
-
-  if (!isCurrentTurnLoading) {
-    completeTurn();
-  }
-
-  return branchableGroupIds;
-}
-
-export type EditableTurn = {
-  humanMessage: Message;
+export type HumanTurnEditPoint = {
+  /** Ordinal of this turn among the conversation's visible user messages. */
+  turnIndex: number;
+  /**
+   * Terminal assistant message of the *previous* turn — the point an edited
+   * version of this turn branches from. ``null`` for the first turn, which
+   * branches from the start of the conversation.
+   */
+  baseMessageId: string | null;
+  /** Every assistant message id in that terminal group (the branch payload). */
+  baseMessageIds: string[];
+  /**
+   * Whether the turn can be edited right now. The first turn always can; any
+   * later turn needs a settled assistant turn before it to branch from.
+   */
+  editable: boolean;
 };
 
-function isTerminalAssistantTextMessage(message: Message | undefined): boolean {
-  return (
-    message?.type === "ai" &&
-    Boolean(extractTextFromMessage(message).trim()) &&
-    !hasToolCalls(message)
-  );
-}
-
-export function getLatestEditableTurn(
+/**
+ * Edit anchors for every visible user message, keyed by message id.
+ *
+ * Editing a message replays the conversation from the turn *before* it, so the
+ * anchor a turn needs is its predecessor's terminal assistant group — the same
+ * group the branch endpoint accepts as a fork point. A turn whose predecessor
+ * ended in tool calls, a clarification, or a still-streaming response has no
+ * such anchor and is reported as not editable rather than being silently
+ * dropped, so the caller can still place a version switcher on it.
+ */
+export function getHumanTurnEditPoints(
   groups: MessageGroup[],
   isCurrentTurnLoading: boolean,
-): EditableTurn | null {
-  if (isCurrentTurnLoading) {
-    return null;
-  }
-
-  let candidate: EditableTurn | null = null;
-  let currentHumanGroup: MessageGroup | null = null;
-  let currentTurnGroups: MessageGroup[] = [];
+): Map<string, HumanTurnEditPoint> {
+  const editPoints = new Map<string, HumanTurnEditPoint>();
+  let turnIndex = -1;
+  let pendingHumanMessageId: string | null = null;
   let lastAIGroup: MessageGroup | null = null;
+  // Anchor for the turn currently being scanned; only replaced once the
+  // previous turn is known to have settled on an assistant text group.
+  let baseGroup: MessageGroup | null = null;
 
-  const completeTurn = () => {
-    if (!currentHumanGroup) {
-      currentTurnGroups = [];
-      lastAIGroup = null;
+  const settleTurn = () => {
+    baseGroup = lastAIGroup?.type === "assistant" ? lastAIGroup : null;
+    lastAIGroup = null;
+  };
+
+  const openTurn = (group: MessageGroup) => {
+    const humanMessageId = group.messages.find(
+      (message) => message.type === "human" && message.id,
+    )?.id;
+    turnIndex += 1;
+    pendingHumanMessageId = humanMessageId ?? null;
+    if (!humanMessageId) {
       return;
     }
-
-    const humanMessage = currentHumanGroup?.messages.find(
-      (message) => message.type === "human" && message.id,
-    );
-    let assistantMessage: Message | undefined;
-    for (let i = (lastAIGroup?.messages.length ?? 0) - 1; i >= 0; i -= 1) {
-      const message = lastAIGroup?.messages[i];
-      if (message?.type === "ai" && message.id) {
-        assistantMessage = message;
-        break;
-      }
-    }
-
-    if (
-      currentHumanGroup &&
-      lastAIGroup?.type === "assistant" &&
-      humanMessage &&
-      isTerminalAssistantTextMessage(assistantMessage)
-    ) {
-      candidate = {
-        humanMessage,
-      };
-    } else {
-      candidate = null;
-    }
-
-    currentHumanGroup = null;
-    currentTurnGroups = [];
-    lastAIGroup = null;
+    const baseMessageIds =
+      baseGroup?.messages
+        .filter((message) => message.type === "ai" && message.id)
+        .map((message) => message.id)
+        .filter((id): id is string => typeof id === "string") ?? [];
+    const baseMessageId = baseMessageIds.at(-1) ?? null;
+    editPoints.set(humanMessageId, {
+      turnIndex,
+      baseMessageId,
+      baseMessageIds,
+      editable: turnIndex === 0 || baseMessageId !== null,
+    });
   };
 
   for (const group of groups) {
     if (group.type === "human") {
-      completeTurn();
-      currentHumanGroup = group;
-      currentTurnGroups = [group];
+      settleTurn();
+      openTurn(group);
       continue;
     }
-
-    if (currentHumanGroup) {
-      currentTurnGroups.push(group);
-    }
-
     if (group.messages.some((message) => message.type === "ai")) {
       lastAIGroup = group;
     }
   }
 
-  completeTurn();
-  return candidate;
+  // The turn in flight has not settled, so nothing branches from it — but that
+  // only matters for a *following* turn, which does not exist yet.
+  if (isCurrentTurnLoading && pendingHumanMessageId) {
+    const current = editPoints.get(pendingHumanMessageId);
+    if (current) {
+      editPoints.set(pendingHumanMessageId, { ...current, editable: false });
+    }
+  }
+
+  return editPoints;
 }
 
 export function groupMessages<T>(

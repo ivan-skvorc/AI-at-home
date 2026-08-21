@@ -2,7 +2,6 @@
 
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { toast } from "sonner";
 
 import { type PromptInputMessage } from "@/components/ai-elements/prompt-input";
 import { SidebarTrigger } from "@/components/ui/sidebar";
@@ -43,7 +42,6 @@ import { useModels } from "@/core/models/hooks";
 import { useNotification } from "@/core/notification/hooks";
 import { useLocalSettings, useThreadSettings } from "@/core/settings";
 import {
-  useBranchThread,
   useThreadMetadata,
   useThreadStream,
   useThreadTokenUsage,
@@ -60,6 +58,7 @@ import { cn } from "@/lib/utils";
 import { ChatBox } from "./chat-box";
 import { ChatProviders } from "./chat-providers";
 import { useSpecificChatMode } from "./use-chat-mode";
+import { useEditVersions, usePendingEditSend } from "./use-edit-versions";
 
 export type ChatInstanceProps = {
   // Stable identity of the mounted slot. The owner sets this as the React key,
@@ -120,7 +119,6 @@ function ChatInstanceContent({
     enabled: !isNewThread && !isMock,
     isMock,
   });
-  const branchThread = useBranchThread();
   const backendTokenUsage = threadTokenUsageToTokenUsage(threadTokenUsage.data);
   const backendCostSummary = threadTokenUsageToCostSummary(
     threadTokenUsage.data,
@@ -154,7 +152,6 @@ function ChatInstanceContent({
     pendingUsageMessages,
     sendMessage,
     regenerateMessage,
-    editAndRegenerateMessage,
     isUploading,
     isHistoryLoading,
     hasMoreHistory,
@@ -269,37 +266,28 @@ function ChatInstanceContent({
       regenerateMessage(threadId, messageId, supersededMessageIds),
     [regenerateMessage, threadId],
   );
-  const handleEditAndRegenerate = useCallback(
-    (messageId: string, replacementText: string) =>
-      editAndRegenerateMessage(threadId, messageId, replacementText),
-    [editAndRegenerateMessage, threadId],
-  );
-  const handleBranchTurn = useCallback(
-    async (messageId: string, messageIds: string[]) => {
-      if (
-        isNewThread ||
-        isMock ||
-        env.NEXT_PUBLIC_STATIC_WEBSITE_ONLY === "true"
-      ) {
-        return;
-      }
-
-      try {
-        const response = await branchThread.mutateAsync({
-          threadId,
-          messageId,
-          messageIds,
-        });
-        toast.success(t.conversation.branchCreated);
-        router.push(`/workspace/chats/${response.thread_id}`);
-      } catch (error) {
-        toast.error(
-          error instanceof Error ? error.message : t.conversation.branchFailed,
-        );
-      }
-    },
-    [branchThread, isMock, isNewThread, router, t, threadId],
-  );
+  const editVersionsEnabled =
+    !isNewThread && !isMock && env.NEXT_PUBLIC_STATIC_WEBSITE_ONLY !== "true";
+  const {
+    editVersionSwitchers,
+    handleEditMessage,
+    handleSelectEditVersion,
+    isReady: isEditVersionsReady,
+    isCreatingEditVersion,
+  } = useEditVersions({
+    threadId,
+    threadMetadata: threadMetadata.data?.metadata,
+    isThreadMetadataLoading: threadMetadata.isLoading,
+    enabled: editVersionsEnabled,
+    title: thread.values.title,
+  });
+  usePendingEditSend({
+    threadId,
+    // Only the visible slot replays: a background tab must not start a run the
+    // user cannot see, and the "new" slot has no version thread to replay into.
+    enabled: editVersionsEnabled && isActive && !isHistoryLoading,
+    sendMessage,
+  });
 
   const tokenUsageInlineMode = tokenUsageEnabled
     ? localSettings.tokenUsage.inlineMode
@@ -388,30 +376,21 @@ function ChatInstanceContent({
                   }
                   onRegenerateMessage={handleRegenerate}
                   canEdit={
-                    !isNewThread &&
-                    !isMock &&
-                    env.NEXT_PUBLIC_STATIC_WEBSITE_ONLY !== "true" &&
+                    isEditVersionsReady &&
                     !isUploading &&
                     !thread.isLoading &&
-                    !branchThread.isPending &&
+                    !isCreatingEditVersion &&
                     !hasGoal &&
                     !hasOpenHumanInputCard
                   }
-                  onEditAndRegenerateMessage={handleEditAndRegenerate}
+                  onEditMessage={handleEditMessage}
+                  editVersionSwitchers={editVersionSwitchers}
+                  onSelectEditVersion={handleSelectEditVersion}
                   onSubmitHumanInput={
                     isMock || env.NEXT_PUBLIC_STATIC_WEBSITE_ONLY === "true"
                       ? undefined
                       : handleSubmitHumanInput
                   }
-                  canBranch={
-                    !isNewThread &&
-                    !isMock &&
-                    env.NEXT_PUBLIC_STATIC_WEBSITE_ONLY !== "true" &&
-                    !isUploading &&
-                    !thread.isLoading &&
-                    !branchThread.isPending
-                  }
-                  onBranchTurn={handleBranchTurn}
                 />
               </div>
               <div
