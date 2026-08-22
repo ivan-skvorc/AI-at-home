@@ -168,6 +168,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **docs:** The model-and-pricing audit now states **where a price may come
+  from**, as three ordered tiers instead of one absolute rule. *Verified* (the
+  provider's own page) stays the standard; when that page cannot be reached, a
+  figure that **two or more independent sources state identically** is now an
+  accepted outcome rather than a rule being bent — provided the sources are
+  genuinely independent, agree exactly on both numbers (a disagreement is a stop,
+  never an average), carry no discount, and are recorded as corroborated in the
+  audit log so the next pass is directed at them. Failing both, the entry is left
+  alone; a price is still never carried from memory. Shipping a lab's flagship
+  with no `price:` block is the failure this permits you to avoid, because an
+  unpriced model contributes nothing to every cost total. The weekly job's report
+  says the same thing and still never commits a price. See FORK.md, *Where a
+  price may come from*.
+
+- **docs:** The README's fork feature list gained the two features it was
+  missing: the **price graph** in the cost dropdown and **gaslight mode** (the
+  per-message edit that replays the conversation into a hidden version).
+  "Gaslight mode" is the documented name of the behaviour in the README and
+  FORK.md §18; the per-message button is still labelled **Edit** in the UI.
+
 - **config:** `config_version` 39 → 40. Upstream's hybrid fact-eviction work
   added ten new fields under `memory.backend_config`
   (`fact_eviction_policy`, the eviction weights and half-lives, the correction

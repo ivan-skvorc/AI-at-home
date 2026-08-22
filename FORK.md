@@ -218,7 +218,7 @@ The logic that block feeds, and the rules for writing it:
 - **The block is optional because the name already carries the price.** When a model entry has no `pricing:` block, `app/gateway/pricing.py::derive_pricing_from_display_name` reads the `($<in>/<out>)` pair (and any starred promo) straight out of `display_name`. **This is what makes the feature work on an existing install, and it is not a convenience.** Shipping blocks in `config.example.yaml` only ever reaches a *brand-new* `config.yaml`: `sync-api-key-models.py` skips a provider block whose models are already active (correct — it must not duplicate them) and `config_upgrade.py`'s `merge_missing` is dict-based, so it cannot add a key inside an existing list entry. Anyone who ran DeerFlow before a price shipped therefore keeps that model active and **unpriced forever**, and their chat header stays on `—` no matter how many times the example is corrected. Reproduced end to end: an upgraded config with 13 active models and 0 `pricing:` blocks produced `no changes` from both launch-path regenerators. An explicit block always wins over the derived one, and a malformed explicit block is *not* silently replaced by the name's price — that is an operator error worth surfacing. Pinned by `TestBundledModelPricing::test_every_bundled_model_prices_without_its_pricing_block`, which strips each bundled block and requires the same figures back.
 - **Pricing is optional and additive.** A model with no `pricing:` block yields `cost: null` (it just doesn't contribute to the total); when *no* model is priced, the console omits cost columns. `ModelConfig` is `extra="allow"`, so adding the block needs no schema change.
 - **What ships priced: everything.** All **40** bundled paid models across all eleven marker blocks carry a `price:` block, in both synced sources. This is load-bearing, not a nicety — a model without one contributes nothing to the total, so a conversation run entirely on unpriced models reports **no cost at all**. Shipping only the Anthropic block priced is exactly what made the chat header render `—` for anyone using another provider. Only Ollama (populated at runtime, genuinely free) stays unpriced. The price is **data, in one place**: `config.example.yaml` carries the block literally and `scripts/wizard/providers.py::MODEL_PRICES` holds the same figures for the wizard, with `test_config_integrity.py::TestBundledModelPricing::test_the_wizard_bundles_and_the_example_agree` asserting the two agree. It is deliberately **not** derived from the display name any more — see §17. `cache_hit` is set only on the Anthropic entries (0.1x input, their published cache-read rate); other providers differ or do not publish one, so their blocks omit it and cache hits fall back to the full input price, the documented conservative upper bound. The two currently-discounted entries (Claude Sonnet 5's intro window and MiniMax M3 on OpenRouter) additionally carry a `discount:` block; Sonnet's has the `until:` Anthropic announced, and the OpenRouter promotion is open-ended. GLM-5.2's 76%-off promotion left with the entry when the roster rolled forward to GLM-5.3 — a discount belongs to the model it was quoted for, so it is not carried across a version bump. Pinned by `backend/tests/test_config_integrity.py::TestBundledModelPricing` (every model priced, no price in any name, well-formed, single-currency, discounts below list with a readable expiry, and the two sources agree).
-- **Keep it current with the roster.** The `pricing:` block is part of the same living bundle as the model list — refresh it on the same cadence as slugs and thinking config (see *Auditing the model list* below), reading each figure off the provider's own model page, never from memory.
+- **Keep it current with the roster.** The `pricing:` block is part of the same living bundle as the model list — refresh it on the same cadence as slugs and thinking config (see *Auditing the model list* below), reading each figure off the provider's own model page — or, when that page is unreachable, off several independent sources that agree (*Where a price may come from*) — never from memory.
 
 #### Price signal in the display name
 
@@ -239,7 +239,7 @@ The privacy marker rides only on the OpenRouter entries:
 Rules for keeping it honest:
 
 - **It is a rough signal, not billing truth.** Round to a clean pair; prompt-cache discounts and provider-variant routing shift the real number. The machine-readable `pricing:` block is what actually feeds the console and chat-header cost displays — keep that exact, keep the name approximate. (The two are kept from drifting apart by `TestBundledModelPricing`, which asserts the block matches the name pair, so "approximate" means *choose* a clean number, not let the two spellings diverge.)
-- **Verify, never invent.** When adding or re-pricing a model, read the current figure off the provider's / OpenRouter's own model page (and its promotions/discounts page for a starred promo). Do not carry a price from memory for a model past your knowledge cutoff.
+- **Verify, never invent — and corroborate when you cannot verify.** When adding or re-pricing a model, read the current figure off the provider's / OpenRouter's own model page (and its promotions/discounts page for a starred promo). When that page cannot be reached, *Where a price may come from* permits a figure that **several independent sources state identically**, recorded as corroborated in the audit log so the next pass re-checks it; a starred promo never qualifies. Do not carry a price from memory for a model past your knowledge cutoff — that is what neither tier allows.
 - **Refresh the pair when you re-slug or re-tier a model, and when a promo starts or ends**, the same way you re-check the slug and thinking config above — a stale price in the name is worse than none. When a promo ends, drop the starred pair back to the plain list price; when one starts, add the `$list → $promo*` pair.
 - **Keep both model sources in sync.** A model's price lives in two places that must match: the `price:`/`discount:` blocks in `config.example.yaml`'s marker blocks (the auto-config path) and `scripts/wizard/providers.py::MODEL_PRICES` (`make setup`). Edit both, or a user gets a priced model on one path and an unpriced one on the other — `test_the_wizard_bundles_and_the_example_agree` fails if they diverge. The `(p)` marker lives in the same two places; keep it in sync too.
 
@@ -250,10 +250,12 @@ Rules for keeping it honest:
 it reads both synced sources and diffs them against the live OpenRouter catalog,
 then opens (or updates) a single `model-audit`-labelled issue listing retired or
 renamed slugs, list prices that moved, and promotions that started or ended —
-with a suggested diff. It **never commits a price**: this checklist's rule is
-that a price is confirmed against the provider's own page, and a wrong automated
-price is worse than a stale one because it is wrong with confidence and silences
-the next audit. An unreachable provider is reported as *skipped*, never as drift,
+with a suggested diff. It **never commits a price**: a price is confirmed against the
+provider's own page, or — when that page cannot be reached — against several
+independent sources that agree, and recorded as such (*Where a price may come
+from*, below). Both are judgements a person makes and writes down; a wrong
+automated price is worse than a stale one because it is wrong with confidence and
+silences the next audit. An unreachable provider is reported as *skipped*, never as drift,
 so the job does not become a weekly red tick people learn to ignore. The issue
 closes itself when a later run comes back clean.
 
@@ -272,13 +274,86 @@ Run this pass **when that issue appears, whenever you touch the bundle, and as a
 1. **Roster & order.** The bundle stays grouped by provider in this order: **Anthropic** (direct) → **OpenRouter** → the **first-party "home" blocks** (OpenAI, xAI, Google, DeepSeek, Mistral, Moonshot, Qwen, MiniMax, z-ai — in `config.example.yaml`'s FIRST-PARTY HOME API BLOCKS section) → **Ollama** (populated at runtime by `scripts/sync-ollama-models.py`, so it lands after the static blocks). Keep the "one flagship per big-name lab + a couple of cheaper picks" shape from *Which models to keep in the bundle* above, and keep each lab's flagship **doubled** (home + OpenRouter).
 2. **Slugs.** Confirm each `model:` is the exact current id (bare Anthropic ids like `claude-opus-5`; OpenRouter `provider/model` slugs; **home** blocks use each lab's own bare id — the OpenRouter slug minus its `provider/` prefix, e.g. `openai/gpt-5.6-sol` → `gpt-5.6-sol`, `z-ai/glm-5.3` → `glm-5.3`). A wrong/unreleased id fails at request time, not at load — verify against the provider's / OpenRouter's catalog, never from memory.
 3. **Per-model settings.** Sanity-check `max_tokens`, `supports_vision`, `supports_thinking`, `temperature`, and the thinking config against the model family (adaptive Claude vs. Haiku budget vs. OpenAI-compatible `extra_body` toggles — see *Keep the model format current* above). `supports_thinking: true` is load-bearing; drop deprecated fields. Confirm each home block's `base_url`/`api_base` and env var match the lab (e.g. `https://api.x.ai/v1` + `XAI_API_KEY`); Google's home block uses the native `ChatGoogleGenerativeAI` SDK with `gemini_api_key` and no thinking toggle.
-4. **Pricing.** Read each price off the provider's / OpenRouter's own model page and refresh the `($<in>/<out>)` pair — **and the model's `pricing:` block with it** (all 40 bundled paid models carry one; `config.example.yaml` holds them literally, `providers.py` derives them from the same name pair, and `TestBundledModelPricing` fails if the two ever disagree). Then show both prices as `($<list> → $<promo>*)` for **any** currently discounted model — from OpenRouter's **promotions/discounts page** (derive list as `list = discounted / (1 − discount)`) **or** an Anthropic **introductory-pricing** window (a newly launched Claude below its standard rate for a fixed window, e.g. Sonnet 5 through 2026-08-31). Drop the starred pair back to plain list when a promo or intro window ends — **and drop the entry's `promo_*_per_million` lines in the same edit**, or the header keeps advertising a discount that has expired (the block is derived automatically in `providers.py`, but `config.example.yaml` holds it literally). **Home entries use the lab's own list price with no promo star** (the OpenRouter promo is a routing property that stays on the OpenRouter copy). Keep the machine-readable `pricing:` block exact: `input_per_million`/`output_per_million` stay the **standard** rate — the conservative upper bound cost is billed against even while a discount is live — and `promo_*_per_million` carries the starred figures beside it.
+4. **Pricing.** Read each price off the provider's / OpenRouter's own model page — or, when that page cannot be reached, off several independent sources that agree exactly, logged as corroborated (*Where a price may come from*, below). Refresh the `($<in>/<out>)` pair — **and the model's `pricing:` block with it** (all 40 bundled paid models carry one; `config.example.yaml` holds them literally, `providers.py` derives them from the same name pair, and `TestBundledModelPricing` fails if the two ever disagree). Then show both prices as `($<list> → $<promo>*)` for **any** currently discounted model — from OpenRouter's **promotions/discounts page** (derive list as `list = discounted / (1 − discount)`) **or** an Anthropic **introductory-pricing** window (a newly launched Claude below its standard rate for a fixed window, e.g. Sonnet 5 through 2026-08-31). Drop the starred pair back to plain list when a promo or intro window ends — **and drop the entry's `promo_*_per_million` lines in the same edit**, or the header keeps advertising a discount that has expired (the block is derived automatically in `providers.py`, but `config.example.yaml` holds it literally). **Home entries use the lab's own list price with no promo star** (the OpenRouter promo is a routing property that stays on the OpenRouter copy). Keep the machine-readable `pricing:` block exact: `input_per_million`/`output_per_million` stay the **standard** rate — the conservative upper bound cost is billed against even while a discount is live — and `promo_*_per_million` carries the starred figures beside it.
 5. **Privacy marker.** Every OpenRouter entry carries `(p)` (zero-data-retention not guaranteed); the direct Anthropic, first-party **home**, and Ollama entries do not (they hit the lab directly, no middleman). Add `(p)` to any new OpenRouter entry, and the lab's own name suffix (`(OpenAI)`, `(xAI)`, …) to any new home entry.
 6. **Regression-test.** `python3 scripts/sync-api-key-models.py --dry-run` must still uncomment the blocks cleanly, and `cd backend && uv run pytest tests/test_sync_api_key_models.py tests/test_setup_wizard.py tests/test_config_integrity.py` must stay green.
+
+##### Where a price may come from: verified, corroborated, or left alone
+
+A price is only worth shipping if you can say where it came from. Three tiers, in
+order of preference — use the first one that is actually available on the day:
+
+1. **Verified — the provider's own page.** The lab's own pricing or model page
+   (and its promotions page for a discount). For an **OpenRouter** entry, that
+   model's OpenRouter page *is* the authoritative page, because OpenRouter's
+   rate is what the entry bills at. This is the standard, and the only tier that
+   needs no note.
+2. **Corroborated — several independent sources that state the same figure.**
+   When the authoritative page cannot be reached — an egress-restricted
+   environment, a provider behind a login, a page that is simply down — a price
+   **may** be taken from **two or more independent sources that agree exactly**.
+   This is an allowed outcome, not a rule being bent: leaving a lab's current
+   flagship out of the bundle, or shipping it with **no** `price:` block, is
+   worse, because an unpriced model contributes *nothing* to every cost total
+   (§17) and so under-reports spend silently. Conditions, all of them:
+   - **Independent means independent.** Two sites reprinting one launch post, a
+     tracker and its own API, or an aggregator and the mirror that scraped it,
+     are **one** source. Prefer sources that had to look separately: a routing
+     marketplace's model page, a comparison site that dates its figures, the
+     lab's own docs when its pricing page is what is unreachable.
+   - **They must agree exactly, on both numbers.** Input *and* output. A
+     disagreement is a **stop**, not an input to a judgement call — never
+     average, never take the lower or the higher, never round the gap away. Two
+     sources that differ mean the price is unknown; fall to tier 3.
+   - **Standard rate only, never a discount.** A promotion or intro window is
+     the most volatile figure on the page and the one whose absence costs
+     nothing, since spend is billed at the standard rate either way (§17). A
+     discount that cannot be read off the provider's own promotions page is not
+     shipped, and a discount is never carried across a version bump.
+   - **Record it in the audit log.** Name the model, the figure, and that it was
+     corroborated. This is the whole point of allowing the tier: a corroborated
+     price nobody knows to re-check is precisely the wrong-with-confidence
+     failure the verify rule exists to prevent, and a named list defeats that by
+     **directing** the next pass instead of being silenced by it.
+3. **Neither — leave the entry alone.** No authoritative page and no agreeing
+   sources means the price is unknown. Keep what is already shipped, log the
+   provider as unreachable, move on. **Never carry a price from memory**, and
+   never let a model past your knowledge cutoff keep a figure you have not seen
+   this pass — that is the one thing no tier permits.
+
+The same three tiers cover a **slug** when the catalogs behind step 2 cannot be
+reached; a wrong slug fails loudly at request time, so it is the less dangerous
+of the two, but it gets logged the same way.
+
+**The automated job stays at tier 1.** `scripts/audit_models.py` still never
+commits a price. Corroboration is a judgement someone makes and writes down —
+naming what they read and what agreed — not something a weekly cron can assert
+on its own.
 
 ##### Audit log
 
 Record each pass here — a dated line is what tells the next person whether the roster was checked last week or last year, and *which* providers the pass could actually reach.
+
+- **2026-08-22 — offline only, no changes made.** Run as a step of the upstream-sync
+  checklist. The mechanical half is clean: `scripts/audit_models.py` reports **no
+  drift** (display-name/`price:` agreement and two-source parity both hold), the
+  stale-fixture self-test (`--catalog scripts/fixtures/model_audit_stale_catalog.json`)
+  still surfaces all four drift kinds, `sync-api-key-models.py --dry-run` is a
+  clean no-op on an empty env, and `tests/test_audit_models.py`,
+  `test_sync_api_key_models.py`, `test_setup_wizard.py`, `test_config_integrity.py`,
+  `test_model_price_fields.py` and `test_pricing.py` are green (269 passed).
+  **The network half could not run at all:** this environment's egress policy
+  refuses `openrouter.ai` (403 on CONNECT) *and* every first-party provider host
+  tried (anthropic.com, x.ai, platform.openai.com, deepseek.com, z.ai), so the
+  audit listed openrouter as *skipped* — correctly, not as drift — and no figure
+  could be read off a provider's own page. With no reachable page **and** no
+  reachable secondary source, tier 2 was unavailable too, so this pass is tier 3
+  throughout: **every entry left exactly as shipped**. Nothing here is evidence
+  that the roster is current — only that it is self-consistent.
+  **Still owed to the next unrestricted pass:** the four labs rolled forward on
+  2026-08-20 from corroborated sources (Grok 4.6, Qwen3.8 Max, GLM-5.3, Mistral
+  Medium 3.5) are still un-verified, and GLM-5.3's price remains the most
+  provisional of them.
 
 - **2026-08-20 — partial.** Offline half clean: `scripts/audit_models.py` reported no drift (display-name/price agreement and two-source parity both hold), the stale-fixture self-test still surfaces all four drift kinds, and `sync-api-key-models.py --dry-run` plus the four regression suites are green. **Anthropic block fully verified** against the provider's current model list — all six slugs (`claude-fable-5`, `claude-opus-5`, `claude-opus-4-8`, `claude-sonnet-5`, `claude-sonnet-4-6`, `claude-haiku-4-5`), all six price pairs, the 0.1x cache-read rates, and Sonnet 5's `$2/10` intro window through **2026-08-31** all match; the roster shape (Opus/Sonnet keep last-4.x + current-5, Haiku/Fable latest only) is correct as-is, and Mythos 5 stays out because it is invitation-only, so a normal `ANTHROPIC_API_KEY` cannot reach it. **Every other provider unverified:** the environment this pass ran in blocks egress to `openrouter.ai` and to all eleven first-party provider hosts, so no figure could be read off a provider's own page. Existing entries were therefore left alone — a price that is wrong *with confidence* silences the next audit, which is worse than one that is merely stale — but four labs had shipped a new flagship, and those were rolled forward from corroborated secondary sources and named below so the next pass re-checks them.
 
@@ -291,7 +366,7 @@ Record each pass here — a dated line is what tells the next person whether the
   | z.ai | GLM-5.2 | **GLM-5.3** | `glm-5.3` / `z-ai/glm-5.3` | $1.4/4.4 (was $1.15/3.6) |
   | Mistral | Medium 3 | **Medium 3.5** | `mistral-medium-3-5` | $1.5/7.5 (was $0.4/2.0) |
 
-  **What "corroborated" means here, and why it is not the same as verified.** Every figure and slug above agreed across several independent price trackers *and* matched an OpenRouter model-page URL for the same slug — but none was read off the provider's own page, because the environment this pass ran in blocks egress to all of them. That is weaker than this checklist's standard. It is recorded rather than hidden precisely so the next audit is **directed** at these four rather than silenced by them: the failure mode the "verify, never invent" rule guards against is a wrong price that nobody knows to re-check, and a named list defeats that.
+  **What "corroborated" means here, and why it is not the same as verified.** Every figure and slug above agreed across several independent price trackers *and* matched an OpenRouter model-page URL for the same slug — but none was read off the provider's own page, because the environment this pass ran in blocks egress to all of them. That is tier 2 of *Where a price may come from* — an allowed outcome rather than a rule bent, but weaker than a verified figure, so it is recorded rather than hidden precisely so the next audit is **directed** at these four rather than silenced by them: the failure mode the "verify, never invent" rule guards against is a wrong price that nobody knows to re-check, and a named list defeats that.
 
   Three judgement calls inside the roll-forward, each of which a later pass may reverse:
 
@@ -1032,7 +1107,7 @@ One trap worth restating: `ModelConfig` is `extra="allow"`, so `price` and
 forwarded into the provider client and from there into the completion request
 payload — a cost annotation would become a malformed API call.
 
-### 18. Edit a message into a hidden conversation version (with a switcher)
+### 18. Gaslight mode — edit a message into a hidden conversation version
 
 Upstream's per-turn action was **Branch**: it forked the conversation from a
 completed turn into a *separate chat*, which then sat in the sidebar next to the
@@ -1040,11 +1115,14 @@ original as "Branch of …". That is the right primitive and the wrong surface �
 trying three phrasings of the same question left four entries in the sidebar and
 no indication of which was which.
 
-This fork replaces that button with **Edit**, on the user message itself. Editing
-a message replays the conversation from that point with the new wording; the
-version you were reading is kept, and a `‹ 2/2 ›` switcher appears **on the
-edited message** to move between them. One conversation stays one entry in the
-sidebar, however many times it is edited.
+This fork replaces that button with **Edit**, on the user message itself — the
+feature is **gaslight mode**, because the conversation carries on as though you
+had always phrased it the new way. Editing a message replays the conversation
+from that point with the new wording; the version you were reading is kept, and a
+`‹ 2/2 ›` switcher appears **on the edited message** to move between them. One
+conversation stays one entry in the sidebar, however many times it is edited. The
+per-message button stays labelled **Edit** — "gaslight mode" is the name of the
+behaviour, in this file and in the README, not a string in the UI.
 
 **It is the branch endpoint underneath.** Nothing about `POST /api/threads/{id}/branches`
 changed — the fork is entirely in how the result is presented:
@@ -1214,7 +1292,7 @@ First, the mechanical gates:
   The first command is a hard gate — `test_no_bundled_model_carries_its_price_in_the_display_name` and the audit's `price_in_display_name` finding both enforce it. The second is a **review, not a gate**: several providers run open-ended promotions with no announced end date, so a missing `until` is legitimate and is deliberately *not* an audit finding (a weekly issue nobody can close is how that job becomes one people ignore). Add an `until` when the provider announces one.
 
   An expiry that has already passed is *not* a failure — that is the mechanism working, and the entry is inert until someone refreshes it. Removing the stale block is tidying, not a fix. Note the two fail-closed cases while you are here, because both look like "the discount vanished": an `until` that cannot be parsed, and a run where the current time is unavailable, are both treated as expired rather than eternal. Pinned by `backend/tests/test_model_price_fields.py::TestDiscountExpiry`.
-- [ ] Model list still current: run the **[Auditing the model list](#auditing-the-model-list-settings--pricing)** pass (or confirm it ran recently). Provider model ids, prices, and promos drift *independently* of upstream DeerFlow, so a sync is only the calendar checkpoint — the audit itself must read each slug/price off the **provider's own page** (`scripts/sync-api-key-models.py --dry-run` and the model-format tests below do **not** catch a stale-but-well-formed price or a since-renamed slug, because both pass against any syntactically valid entry). Regression-gate whatever you change with `python3 scripts/sync-api-key-models.py --dry-run` + `cd backend && uv run pytest tests/test_sync_api_key_models.py tests/test_setup_wizard.py tests/test_config_integrity.py`.
+- [ ] Model list still current: run the **[Auditing the model list](#auditing-the-model-list-settings--pricing)** pass (or confirm it ran recently). Provider model ids, prices, and promos drift *independently* of upstream DeerFlow, so a sync is only the calendar checkpoint — the audit itself must read each slug/price off the **provider's own page** — or, when that page cannot be reached, off several independent sources that agree exactly, recorded as corroborated in the audit log (*Where a price may come from*) (`scripts/sync-api-key-models.py --dry-run` and the model-format tests below do **not** catch a stale-but-well-formed price or a since-renamed slug, because both pass against any syntactically valid entry). Regression-gate whatever you change with `python3 scripts/sync-api-key-models.py --dry-run` + `cd backend && uv run pytest tests/test_sync_api_key_models.py tests/test_setup_wizard.py tests/test_config_integrity.py`.
 
 Then confirm each fork feature end-to-end:
 
@@ -1252,7 +1330,7 @@ Then confirm each fork feature end-to-end:
 | **Backup / restore** (§13) | `cd backend && uv run pytest tests/test_backup.py` covers what goes in, the secrets exclusion and the owner-only opt-in archive, the postgres dump abort, the running-stack refusal, archive-path safety, and the mode-preserving round trip. Wiring: `scripts/backup.py`; `backup` / `restore` targets in the root `Makefile`; `/backups/` in `.gitignore`. **Three invariants that are silent when broken:** (1) credentials stay excluded by default — if `SECRET_PATTERNS` stops matching `users/*/integrations/` or `.env`, every backup starts shipping API keys; (2) the archive is opened `0600` via `os.open`, not chmod'ed afterwards, or it is briefly world-readable while being written; (3) extraction must keep `filter="tar"` — the `data` filter strips the permission bits this feature exists to preserve, so `0700` credential dirs would come back `0755`. A failed `pg_dump` must keep aborting: a backup with no database in it fails at restore time, when it is too late. Manual: `make backup`, `python3 scripts/backup.py inspect <archive>`, then restore into an empty directory and confirm threads/memory/tabs are there. |
 | **Deployment exposure check** (§12) | `cd backend && uv run pytest tests/test_exposure.py` covers the bind classification, the fact resolution (`.env` vs. process env precedence, `runtime_settings.json`, sandbox mode), every tier, and the doctor rows. Wiring: `scripts/exposure.py`; `scripts/doctor.py::check_deployment_exposure` in the new **Deployment** section; the `--surface docker` call at the end of `scripts/deploy.sh` and `--surface local` at the end of `scripts/serve.sh`. **Two things are easy to break silently:** (1) the local surface must stay pinned to the wildcard — it reads `docker/nginx/nginx.local.conf`'s address-less `listen 2026;`, so if upstream gives that config an explicit address, update `LOCAL_BIND_SOURCE`/`resolve_facts` or the check will report a bind the stack does not use; (2) `classify_bind_host` must test the Tailscale ranges **before** `is_private`, because Python classifies CGNAT (100.64.0.0/10) as private and the two tiers are deliberately different. The check must never return `fail` — a deliberately exposed home lab is not a broken install. Manual: `python3 scripts/exposure.py --surface docker`, then set `BIND_HOST=0.0.0.0` in `.env` and confirm the tier moves to `open-network` and names each contributing setting. |
 | **Spend history page** (§11) | `cd backend && uv run pytest tests/test_console_router.py -k ConsoleSpend` covers `GET /api/console/spend`: the three groupings (model / thread / feature) agreeing with the total, unpriced models named and sorted last, the window boundary, the no-pricing state, and the 503 on the memory backend. Wiring: `ConsoleSpendResponse` in `app/gateway/routers/console.py`; `AuxUsageStore.aggregate()`; `frontend/src/core/spend/*`; `frontend/src/app/workspace/spend/page.tsx`; the sidebar entry in `components/workspace/workspace-nav-chat-list.tsx`; i18n `spend.*` in both locales. The page must keep reusing `pricing.py` rather than recomputing cost — a second formula is how the page and the chat header start disagreeing about the same run. Manual: open **Spend** in the sidebar and confirm the tables' totals match the summary tile for the same window. |
-| **Edit into a hidden version** (§18) | `cd frontend && pnpm test edit-versions && pnpm test pending-edit-send && pnpm test "core/messages/utils"` covers the version model (group keying on the base message id, lineage resolution, a descendant inheriting its ancestor's position, the malformed-entry guards), the session-storage hand-off (read consumes it, so an edit is never replayed twice), and the per-turn edit anchors. `pnpm test:e2e edit-message-versions` drives the whole flow: edit a middle turn, land on the version with the earlier history and without the replaced answer, one sidebar entry pointing at the version, `2/2` on the edited message, switch back to `1/2`. Wiring: `core/threads/edit-versions.ts` (model + metadata keys); `core/threads/pending-edit-send.ts`; `useCreateEditVersion` / `useSetActiveEditVersion` in `core/threads/hooks.ts`; `createThread` in `core/threads/api.ts`; `components/workspace/chats/use-edit-versions.ts`; `components/workspace/messages/message-version-switcher.tsx`; the `onEditMessage` / `editVersionSwitchers` props on `MessageList`; the `deerflow_edit_version` filter in `core/threads/thread-search-query.ts`; the active-version hop in `pathOfThread` (`core/threads/utils.ts`). **Three things are silent when broken:** (1) groups must stay keyed on the **base message id** — keying on the turn index merges lineages that only share an ordinal; (2) `pathOfThread` must keep honouring `deerflow_edit_active_version`, or the one sidebar entry reopens version 1 forever and the edit reads as lost; (3) `takePendingEditSend` must keep *removing* on read — a non-consuming read replays the edited turn on every remount. If upstream restores a Branch button on the assistant action row, decide deliberately: this fork removed it on purpose, and two buttons that both fork the conversation is the confusing state the feature replaced. Manual: edit the first message of a chat (the no-branch path) and confirm the switcher appears, then reload from the sidebar and confirm you land back on the edited version. |
+| **Gaslight mode — edit into a hidden version** (§18) | `cd frontend && pnpm test edit-versions && pnpm test pending-edit-send && pnpm test "core/messages/utils"` covers the version model (group keying on the base message id, lineage resolution, a descendant inheriting its ancestor's position, the malformed-entry guards), the session-storage hand-off (read consumes it, so an edit is never replayed twice), and the per-turn edit anchors. `pnpm test:e2e edit-message-versions` drives the whole flow: edit a middle turn, land on the version with the earlier history and without the replaced answer, one sidebar entry pointing at the version, `2/2` on the edited message, switch back to `1/2`. Wiring: `core/threads/edit-versions.ts` (model + metadata keys); `core/threads/pending-edit-send.ts`; `useCreateEditVersion` / `useSetActiveEditVersion` in `core/threads/hooks.ts`; `createThread` in `core/threads/api.ts`; `components/workspace/chats/use-edit-versions.ts`; `components/workspace/messages/message-version-switcher.tsx`; the `onEditMessage` / `editVersionSwitchers` props on `MessageList`; the `deerflow_edit_version` filter in `core/threads/thread-search-query.ts`; the active-version hop in `pathOfThread` (`core/threads/utils.ts`). **Three things are silent when broken:** (1) groups must stay keyed on the **base message id** — keying on the turn index merges lineages that only share an ordinal; (2) `pathOfThread` must keep honouring `deerflow_edit_active_version`, or the one sidebar entry reopens version 1 forever and the edit reads as lost; (3) `takePendingEditSend` must keep *removing* on read — a non-consuming read replays the edited turn on every remount. If upstream restores a Branch button on the assistant action row, decide deliberately: this fork removed it on purpose, and two buttons that both fork the conversation is the confusing state the feature replaced. Manual: edit the first message of a chat (the no-branch path) and confirm the switcher appears, then reload from the sidebar and confirm you land back on the edited version. |
 
 **Integration points that tend to need a hand** (where upstream refactors collide with fork additions — check these first when tests fail): the AIO sandbox provider (upstream's cross-instance ownership store adds instance attributes that minimal test fixtures built via `__new__` must seed), the skills tool-policy path (upstream's dynamic `SkillToolPolicyMiddleware` vs. any fork static filtering — reconcile onto the middleware and drop dead build-time filters), `scripts/check.py`'s Docker diagnostics (any upstream test that mocks `run_command` with a strict dict must tolerate the extra `docker` calls), and the `task_tool.py` / `input-box.tsx` model-override plumbing.
 
