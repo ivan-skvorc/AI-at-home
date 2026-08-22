@@ -12,8 +12,26 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 DOCKER_DIR="$PROJECT_ROOT/docker"
 
-# Docker Compose command with project name
-COMPOSE_CMD="docker compose -p deer-flow-dev -f docker-compose-dev.yaml"
+# Shared tailnet publish + origin merging, identical to the `make up` path.
+# shellcheck source=scripts/tailscale_lib.sh
+. "$SCRIPT_DIR/tailscale_lib.sh"
+
+# Docker Compose command with project name.
+#
+# `--env-file` is load-bearing, not cosmetic. Every command below runs after
+# `cd "$DOCKER_DIR"`, so without it Compose resolves the `${BIND_HOST}` /
+# `${PORT}` in docker-compose-dev.yaml's `ports:` against `docker/.env` — a file
+# that does not exist — and the repo-root `.env` the README documents is simply
+# ignored for **port interpolation**. (`env_file: ../.env` on a service only
+# populates that container's environment; it has no effect on interpolation.)
+# The symptom is silent: you set BIND_HOST in the root .env, `make docker-start`
+# reports success, and nginx is still published on 127.0.0.1 only.
+# Pinned by backend/tests/test_docker_dev_tailnet.py.
+COMPOSE_CMD="docker compose -p deer-flow-dev"
+if [ -f "$PROJECT_ROOT/.env" ]; then
+    COMPOSE_CMD="$COMPOSE_CMD --env-file $PROJECT_ROOT/.env"
+fi
+COMPOSE_CMD="$COMPOSE_CMD -f docker-compose-dev.yaml"
 
 load_proxy_env_from_dotenv() {
     local env_file="$PROJECT_ROOT/.env"
@@ -39,6 +57,58 @@ load_proxy_env_from_dotenv() {
             fi
         fi
     done
+}
+
+# Read one key from the repo-root .env the way `docker compose --env-file`
+# interpolates it, so the banner reports the values the stack actually came up
+# with. The shell never sources .env, so reading these from the environment
+# alone would report "loopback only" for a stack that .env exposed elsewhere.
+# Mirrors scripts/deploy.sh::read_dotenv_value.
+read_dotenv_value() {
+    local key="$1"
+    local line=""
+    local value=""
+
+    # An exported shell variable wins, matching compose precedence.
+    if [ -n "${!key+x}" ]; then
+        printf '%s' "${!key}"
+        return 0
+    fi
+
+    [ -f "$PROJECT_ROOT/.env" ] || return 0
+
+    line="$(grep -E "^[[:space:]]*(export[[:space:]]+)?${key}[[:space:]]*=" "$PROJECT_ROOT/.env" | tail -n 1 || true)"
+    [ -n "$line" ] || return 0
+
+    value="${line#*=}"
+    value="${value%$'\r'}"
+    value="${value#"${value%%[![:space:]]*}"}"
+    value="${value%"${value##*[![:space:]]}"}"
+    case "$value" in
+        \"*\") value="${value#\"}"; value="${value%\"}" ;;
+        \'*\') value="${value#\'}"; value="${value%\'}" ;;
+    esac
+    printf '%s' "$value"
+}
+
+# BIND_HOST publishes exactly ONE interface (it is a bind address, not an
+# allowlist), so pointing it at a single external interface refuses the host's
+# own http://localhost:PORT. Echo "yes" when that is the case so the caller can
+# append docker/docker-compose.loopback.yaml and ALSO publish on 127.0.0.1.
+# Wildcards already cover loopback (a second mapping would collide on the port);
+# loopback binds need nothing extra. Mirrors scripts/deploy.sh so both Docker
+# paths behave identically. Pinned by backend/tests/test_docker_dev_tailnet.py.
+should_cobind_loopback() {
+    local bind
+    bind="$(read_dotenv_value BIND_HOST)"
+    case "$bind" in
+        "" | 127.0.0.1 | ::1 | localhost | 0.0.0.0 | ::)
+            echo "no"
+            ;;
+        *)
+            echo "yes"
+            ;;
+    esac
 }
 
 _pick_python() {
@@ -333,6 +403,32 @@ start() {
 
     load_proxy_env_from_dotenv
 
+    # ── Tailnet reachability ─────────────────────────────────────────────
+    # Publish nginx on this host's Tailscale CGNAT address IN ADDITION to the
+    # loopback default, and merge the tailnet origins into every allowlist that
+    # could reject a browser on another tailnet device. Entirely a no-op when
+    # Tailscale is not running (or DEER_FLOW_TAILSCALE_PUBLISH=0): the default
+    # published surface stays 127.0.0.1 only.
+    local entry_port
+    entry_port="$(read_dotenv_value PORT)"
+    entry_port="${entry_port:-2026}"
+    DEER_FLOW_TAILNET_PORT="$entry_port"
+    tailscale_detect "$entry_port"
+    tailscale_merge_origins
+    if tailscale_should_publish; then
+        COMPOSE_CMD="$COMPOSE_CMD -f $DOCKER_DIR/docker-compose.tailscale.yaml"
+        echo -e "${GREEN}✓ Tailscale detected — also publishing on ${DEER_FLOW_TAILNET_IPV4}:${entry_port} (tailnet only, not the LAN).${NC}"
+    fi
+
+    # BIND_HOST names a single interface, so pointing it at an external one
+    # (e.g. a Tailscale IP, the pre-overlay way of doing the above) refuses the
+    # host's own localhost. Co-bind 127.0.0.1 so both keep working — same rule
+    # deploy.sh already applies to `make up`.
+    if [ "$(should_cobind_loopback)" = "yes" ]; then
+        COMPOSE_CMD="$COMPOSE_CMD -f $DOCKER_DIR/docker-compose.loopback.yaml"
+        echo -e "${GREEN}✓ Co-binding 127.0.0.1 so http://localhost stays reachable (BIND_HOST=$(read_dotenv_value BIND_HOST)).${NC}"
+    fi
+
     echo "Building and starting containers..."
     cd "$DOCKER_DIR" && $COMPOSE_CMD up --build -d --remove-orphans $services
     echo ""
@@ -340,10 +436,12 @@ start() {
     echo "  DeerFlow Docker is starting!"
     echo "=========================================="
     echo ""
-    echo "  🌐 Application: http://localhost:2026"
-    echo "  📡 API Gateway: http://localhost:2026/api/*"
+    echo "  🌐 Application: http://localhost:${entry_port}"
+    echo "  📡 API Gateway: http://localhost:${entry_port}/api/*"
     echo "  🤖 Runtime:     Gateway embedded"
     echo "  API:            /api/langgraph/* → Gateway"
+    # Print every URL that actually listens, not just localhost.
+    tailscale_print_urls "$entry_port"
     echo ""
     echo "  📋 View logs: make docker-logs"
     echo "  🛑 Stop:      make docker-stop"
@@ -424,7 +522,14 @@ restart() {
     echo ""
     echo -e "${GREEN}✓ Docker services restarted${NC}"
     echo ""
-    echo "  🌐 Application: http://localhost:2026"
+    local entry_port
+    entry_port="$(read_dotenv_value PORT)"
+    entry_port="${entry_port:-2026}"
+    echo "  🌐 Application: http://localhost:${entry_port}"
+    # `compose restart` restarts containers in place, so the published set is
+    # whatever `start` created — including the tailnet port. Report it.
+    tailscale_detect "$entry_port"
+    tailscale_print_urls "$entry_port"
     echo "  📋 View logs: make docker-logs"
     echo ""
 }

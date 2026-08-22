@@ -578,6 +578,8 @@ class TestRunRepository:
             "total_output_tokens": 0,
             "total_runs": 0,
             "by_model": {},
+            # No rows → no conversation steps to chart.
+            "by_run": [],
             "by_caller": {"lead_agent": 0, "subagent": 0, "middleware": 0},
         }
         assert len(captured) == 1

@@ -327,8 +327,8 @@ def _completed_run(
     }
 
 
-async def _seed_run(store, *, run_id: str, model_name: str | None, completion: dict) -> None:
-    await store.put(run_id, thread_id=_THREAD, status="pending", model_name=model_name)
+async def _seed_run(store, *, run_id: str, model_name: str | None, completion: dict, created_at: str | None = None) -> None:
+    await store.put(run_id, thread_id=_THREAD, status="pending", model_name=model_name, created_at=created_at)
     await store.update_run_completion(run_id, **completion)
 
 
@@ -370,9 +370,22 @@ _RUN_FIXTURES = [
 ]
 
 
+# Fixed timestamps rather than wall-clock ones: ``by_run`` now carries each
+# run's ``created_at``, and seeding the two stores one after the other would
+# otherwise stamp them microseconds apart and fail the byte-identical parity
+# assertion on a difference that is the fixture's, not the stores'.
+_SEED_TIMESTAMPS = ["2026-08-01T10:00:00+00:00", "2026-08-01T10:05:00+00:00", "2026-08-01T10:10:00+00:00"]
+
+
 async def _seed_all(store) -> None:
-    for fix in _RUN_FIXTURES:
-        await _seed_run(store, run_id=fix["run_id"], model_name=fix["model_name"], completion=fix["completion"])
+    for index, fix in enumerate(_RUN_FIXTURES):
+        await _seed_run(
+            store,
+            run_id=fix["run_id"],
+            model_name=fix["model_name"],
+            completion=fix["completion"],
+            created_at=_SEED_TIMESTAMPS[index % len(_SEED_TIMESTAMPS)],
+        )
 
 
 def _assert_aggregate_shape(agg: dict) -> None:

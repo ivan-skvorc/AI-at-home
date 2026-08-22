@@ -51,13 +51,17 @@ internal; the published nginx port is the entire external surface, and the Gatew
 address; `backend/tests/test_compose_default_bind_host.py` pins this for every service
 in both compose files.
 Because `BIND_HOST` is a single bind interface (not an allowlist), setting it to one
-non-loopback, non-wildcard interface (e.g. a Tailscale IP) publishes only that
-interface and refuses the host's own `localhost`. `scripts/deploy.sh::should_cobind_loopback`
-detects that case and appends `docker/docker-compose.loopback.yaml`, an overlay that
-*also* publishes the entry port on `127.0.0.1` (host-only, so the external surface is
-unchanged), so `make up` stays reachable at `http://localhost:${PORT}` on the host too.
-Wildcards (`0.0.0.0`/`::`) and loopback binds skip the overlay — a second `127.0.0.1`
-mapping there would collide on the port. Pinned by `backend/tests/test_deploy_loopback_cobind.py`.
+non-loopback, non-wildcard interface publishes only that interface and refuses the host's
+own `localhost`. Both Docker scripts detect that (`should_cobind_loopback`) and append
+`docker/docker-compose.loopback.yaml` to *also* publish on `127.0.0.1` (host-only, so the
+external surface is unchanged); wildcards and loopback binds skip it, since a second
+`127.0.0.1` mapping would collide on the port. Pinned by
+`backend/tests/test_deploy_loopback_cobind.py`.
+
+Two rules ride along, pinned by `test_docker_dev_tailnet.py`: a Docker script runs Compose
+after `cd docker/`, so it must pass an absolute `--env-file <repo-root>/.env` or `ports:`
+interpolation silently ignores the root `.env`; and tailnet reach is *detected*, not
+configured — see FORK.md, *Reaching the stack over Tailscale*.
 
 ## Repository Map
 

@@ -805,6 +805,13 @@ export const enUS: Translations = {
     suggestions: "Suggestions",
     auxCallCount: (count: number) =>
       count === 1 ? "1 call" : `${count} calls`,
+    chartTitle: "Cost per step",
+    chartPerStep: "Each step",
+    chartCumulative: "Running total",
+    chartModeLabel: "Cost chart mode",
+    chartStepLabel: (step: number, amount: string) => `Step ${step}: ${amount}`,
+    chartEmpty: "No priced steps yet.",
+    chartAxisHint: "Steps (your messages)",
   },
 
   contextUsage: {

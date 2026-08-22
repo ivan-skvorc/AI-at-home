@@ -1300,6 +1300,12 @@ creates while Redis or initial inventory is unavailable. Run Redis with persiste
 E2B acquisition uses a bounded executor. Waiting acquisitions do not use the
 default asyncio executor.
 
+Each E2B mount upload pass accepts at most 512 MiB and 2,000 files. The pass
+also has a cooperative 120-second deadline. Skill projections and configured
+mounts share these limits. The provider checks the deadline before each mount
+and during directory preflight. The deadline stops new file uploads after it
+expires. It does not interrupt active filesystem or E2B SDK calls.
+
 An E2B VM keeps its slot until E2B confirms destruction. This rule covers
 create and reclaim operations. Discovery can find a VM from another Gateway.
 Shutdown closes an unowned discovery client without destroying its VM.
@@ -1316,7 +1322,7 @@ The built-in `grep` tool searches either one text file or all matching text file
 
 Image bytes loaded for a vision-model call are transient: DeerFlow removes the hidden base64 message after the model consumes it so later checkpoints do not keep duplicating that payload.
 
-After each run, DeerFlow records a workspace change summary for the run-owned `workspace` and `outputs` directories. The Web UI shows a compact "files changed" badge on the assistant turn; opening it reveals created, modified, and deleted files with text diffs when safe to display. Uploads are excluded because they are user inputs, not agent-generated changes. Large, binary, or sensitive-looking files are shown as metadata only.
+After each run, DeerFlow records a workspace change summary for the run-owned `workspace` and `outputs` directories. The Web UI shows a compact "files changed" badge on the assistant turn; opening it reveals created, modified, and deleted files with text diffs when safe to display. Uploads are excluded because they are user inputs, not agent-generated changes, and stdio MCP temporary/debug files under the DeerFlow-owned `.mcp/` namespace are excluded because they are process-internal state (like `.git/` and `node_modules/`, any directory named `.mcp` is excluded at any depth). Large, binary, or sensitive-looking files are shown as metadata only.
 
 Files presented through `present_files` remain part of the thread's artifact state, and the Web UI restores the artifact panel and selected document after a page refresh. The currently selected formal artifact is refreshed once when the run finishes so edits become visible without a manual reload. Existing UTF-8 text artifacts under `/mnt/user-data/outputs` can also be edited and explicitly saved from the panel on Unix and Windows while the thread is idle; saves use content revisions to prevent overwriting agent changes.
 
@@ -1665,14 +1671,75 @@ putting the security measures below in place.
 > so `BIND_HOST` is a **single bind interface, not an allowlist**. Setting it to
 > just your Tailscale IP (e.g. `BIND_HOST=100.x.y.z`) binds *only* that interface
 > and drops loopback — the app then works over Tailscale but **not** at
-> `http://localhost:2026` on the host itself. To reach it from **both** localhost
-> and Tailscale, use `BIND_HOST=0.0.0.0` (all interfaces), not the Tailscale IP
-> alone. After editing `.env`, apply the change with `./scripts/deploy.sh start`
-> (or `make up-start`) — a config-only change needs no image rebuild.
+> `http://localhost:2026` on the host itself. Both Docker paths now co-bind
+> `127.0.0.1` for you in that case, but you no longer need `BIND_HOST` at all for
+> tailnet access — see the next section. After editing `.env`, apply the change
+> with `./scripts/deploy.sh start` (or `make up-start`) — a config-only change
+> needs no image rebuild.
 
 **Complete first-run setup before the host becomes reachable.** A fresh
 instance has no accounts yet, so create the admin account through `/setup`
 immediately after starting any deployment that is not loopback-only.
+
+### Reach This From Your Phone Over Tailscale
+
+If the host is on a [tailnet](https://tailscale.com/), both `make up` and
+`make docker-start` detect it and make DeerFlow reachable from your other
+tailnet devices automatically. **No `.env` edit is required, and it survives
+`git pull` and reboots** — detection runs on every start.
+
+What happens on start when `tailscale status` reports a running daemon:
+
+- nginx is published on this host's `100.x` CGNAT address **in addition to**
+  `127.0.0.1` (via `docker/docker-compose.tailscale.yaml`). That range is
+  routable only inside your tailnet, so this does **not** expose the LAN or the
+  internet — unlike `BIND_HOST=0.0.0.0`, which does.
+- The tailnet origins are merged into `GATEWAY_CORS_ORIGINS`,
+  `DEER_FLOW_TRUSTED_ORIGINS`, and `DEER_FLOW_DEV_ALLOWED_ORIGINS` so the API
+  accepts requests from a page loaded at that address. Publishing the port
+  without this loads the UI shell and then 403s every API call — half a fix
+  looks exactly like a Tailscale problem.
+- Your own entries in those variables are kept; the merge only ever adds, and
+  re-running a launch script does not grow the list.
+
+Two URLs work, and the start banner prints whichever ones are live:
+
+| URL | When | Notes |
+| --- | --- | --- |
+| `http://<tailscale-ipv4>:2026` | Always, once detected | What existing bookmarks and phones already use. Plain HTTP — fine inside a tailnet, but **not** a secure origin, so Web Push stays unavailable. |
+| `https://<magicdns>.ts.net` | After you configure Tailscale Serve | A real certificate, so it is a secure origin: PWA install and Web Push work. |
+
+To enable the HTTPS URL, run Tailscale Serve on the **host** (it terminates TLS
+and forwards to loopback, so it needs no published port of its own):
+
+```bash
+tailscale serve --bg --https=443 http://127.0.0.1:2026
+```
+
+Serve usually needs elevated rights — either run it with `sudo`, or make
+yourself the operator once with `sudo tailscale set --operator=$USER`. Fish
+users can paste both commands as-is; neither uses bash-only syntax.
+
+DeerFlow never runs `tailscale serve` for you and never runs
+`tailscale serve reset`: Serve configuration is global to the machine and may
+carry rules for your other services, so a DeerFlow start or stop must not touch
+it. If Serve is not configured, everything else still works over the `100.x`
+URL.
+
+> **Do not use `https://100.x.y.z`.** Tailscale issues its certificate for the
+> MagicDNS *name*, not the IP, so an HTTPS URL on the bare address is a
+> certificate error every time. Use `http://` with the IP, or `https://` with
+> the MagicDNS name.
+
+Opt out on a host that is on a tailnet but should not serve DeerFlow to it:
+
+```bash
+# .env
+DEER_FLOW_TAILSCALE_PUBLISH=0
+```
+
+Without Tailscale running, none of this applies: nothing extra is published and
+the default remains `127.0.0.1` only.
 
 ### Notifications on Your Phone (PWA + Web Push)
 
@@ -1800,4 +1867,4 @@ Your unwavering commitment and expertise have been the driving force behind Deer
 
 ## Star History
 
-[![Star History Chart](https://api.star-history.com/svg?repos=bytedance/deer-flow&type=Date)](https://star-history.com/#bytedance/deer-flow&Date)
+[![Star History Chart](https://star-history.dera.page/svg?repos=bytedance/deer-flow&type=Date)](https://star-history.dera.page/#bytedance/deer-flow&Date)

@@ -209,6 +209,31 @@ class ThreadTokenUsageAuxBreakdown(BaseModel):
     )
 
 
+class ThreadTokenUsageStep(BaseModel):
+    """What one conversation step — a user message and its answer — cost.
+
+    A "step" is one completed run, so the sequence is exactly the turns the user
+    took, oldest first. Priced the same way the thread total is: each model in
+    the run at its own rate, so an Ultra-mode step whose subagent ran on a
+    cheaper model is not billed at the lead's rate.
+
+    Auxiliary sinks (memory extraction, follow-up suggestions) are deliberately
+    **not** included. They are tracked per thread and per category rather than
+    per run, so attributing them to a step would mean inventing an attribution
+    the data does not carry; the header keeps reporting them as their own rows.
+    """
+
+    index: int = Field(..., description="1-based step number — the nth user message in this thread")
+    run_id: str = ""
+    created_at: str | None = Field(default=None, description="When the run started, so the UI can label a point with a time")
+    tokens: int = 0
+    cost: float | None = Field(default=None, description="Standard-rate spend for this step; null when every model in it is unpriced")
+    promo_cost: float | None = Field(
+        default=None,
+        description="This step at live promotional rates; null when nothing in it is discounted, matching the headline total's convention so the chart can switch bases without mixing them.",
+    )
+
+
 class ThreadSpendBudgetLimit(BaseModel):
     """One configured spend-cap window and how much of it is left."""
 
@@ -269,6 +294,10 @@ class ThreadTokenUsageResponse(BaseModel):
     # tell which model needs a price — the difference between "cost is broken"
     # and "add a pricing block for gpt-5.6-sol".
     unpriced_models: list[str] = Field(default_factory=list)
+    # Per-step cost, oldest first, so the header can chart what each turn of the
+    # conversation cost instead of only the running total. Empty when the store
+    # predates the per-run aggregation or the thread has no completed runs.
+    steps: list[ThreadTokenUsageStep] = Field(default_factory=list)
     aux: dict[str, ThreadTokenUsageAuxBreakdown] = Field(default_factory=dict)
     # Real-time context window usage (upstream #3125/#3183).
     context_usage: ThreadContextUsage | None = None
@@ -1607,6 +1636,41 @@ async def thread_token_usage(
             cost=model_cost,
         )
 
+    # Per-step cost. Priced through exactly the same helpers as the thread total
+    # above, so a step's figure and the running total can never disagree about
+    # what a model costs. ``by_run`` is absent on a store that predates the
+    # per-run aggregation, which degrades to an empty chart rather than an error.
+    steps: list[ThreadTokenUsageStep] = []
+    for index, run_entry in enumerate(agg.get("by_run") or [], start=1):
+        step_cost: float | None = None
+        step_promo_cost: float | None = None
+        step_has_promo = False
+        for model, usage in (run_entry.get("by_model") or {}).items():
+            step_input = int(usage.get("input_tokens") or 0)
+            step_output = int(usage.get("output_tokens") or 0)
+            step_cache_read = int(usage.get("cache_read_tokens") or 0)
+            price = lookup_pricing(pricing, model)
+            if price is None or not (step_input or step_output):
+                continue
+            model_cost = token_cost(step_input, step_output, price, step_cache_read)
+            step_cost = round((step_cost or 0.0) + model_cost, 6)
+            promo_price = price.promo()
+            step_has_promo = step_has_promo or promo_price is not None
+            promo_model_cost = token_cost(step_input, step_output, promo_price, step_cache_read) if promo_price is not None else model_cost
+            step_promo_cost = round((step_promo_cost or 0.0) + promo_model_cost, 6)
+        steps.append(
+            ThreadTokenUsageStep(
+                index=index,
+                run_id=str(run_entry.get("run_id") or ""),
+                created_at=run_entry.get("created_at"),
+                tokens=int(run_entry.get("tokens") or 0),
+                cost=step_cost,
+                # Same rule as ``promo_total_cost``: no discount in this step
+                # means one figure, not the same number printed twice.
+                promo_cost=step_promo_cost if step_has_promo else None,
+            )
+        )
+
     aux: dict[str, ThreadTokenUsageAuxBreakdown] = {}
     # Read off the event loop: the aux registry is write-through to a durable
     # SQLite store and hydrates from it on a thread's first touch in this process.
@@ -1656,6 +1720,7 @@ async def thread_token_usage(
         promo_total_cost=promo_total_cost if thread_has_promo else None,
         currency=currency,
         unpriced_models=sorted(unpriced_models),
+        steps=steps,
         aux=aux,
         context_usage=context_usage,
         spend_budget=await _thread_spend_budget(request),
