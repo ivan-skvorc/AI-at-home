@@ -43,6 +43,31 @@ export const EDIT_VERSION_ANCESTORS_KEY = "edit_ancestor_thread_ids";
  */
 export const CONVERSATION_START_BASE_MESSAGE_ID = "";
 
+/** Which half of a turn an edit rewrote. */
+export type EditVersionKind = "prompt" | "answer";
+
+/**
+ * Namespace for answer-edit group keys.
+ *
+ * Editing the answer of turn *k* and editing the prompt of turn *k+1* branch
+ * from the same assistant message, so a bare message id would merge two
+ * unrelated sets of versions into one switcher shown on both messages. The
+ * prefix keeps them apart. Prompt groups stay on the bare id, so every group
+ * written before answer edits existed keeps resolving unchanged.
+ */
+export const ANSWER_EDIT_GROUP_KEY_PREFIX = "answer:";
+
+/** The group key an edit of `kind` at `baseMessageId` belongs to. */
+export function editVersionGroupKey(
+  kind: EditVersionKind,
+  baseMessageId: string | null,
+): string {
+  if (kind === "answer") {
+    return `${ANSWER_EDIT_GROUP_KEY_PREFIX}${baseMessageId ?? ""}`;
+  }
+  return baseMessageId ?? CONVERSATION_START_BASE_MESSAGE_ID;
+}
+
 type ThreadMetadata = Record<string, unknown> | null | undefined;
 
 type ThreadLike = Pick<AgentThread, "metadata"> | { metadata?: ThreadMetadata };

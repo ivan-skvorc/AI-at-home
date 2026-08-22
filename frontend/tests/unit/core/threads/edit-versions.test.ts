@@ -4,6 +4,7 @@ import {
   addEditVersionToGroups,
   buildEditVersionThreadMetadata,
   CONVERSATION_START_BASE_MESSAGE_ID,
+  editVersionGroupKey,
   EDIT_ACTIVE_VERSION_METADATA_KEY,
   isEditVersionThread,
   readActiveEditVersionThreadId,
@@ -237,4 +238,48 @@ test("the active version is only read when it names a thread", () => {
     readActiveEditVersionThreadId({ [EDIT_ACTIVE_VERSION_METADATA_KEY]: "" }),
   ).toBeNull();
   expect(readActiveEditVersionThreadId({})).toBeNull();
+});
+
+describe("editVersionGroupKey", () => {
+  test("keeps an answer edit apart from the prompt edit that shares its anchor", () => {
+    // Editing the answer of turn k and the prompt of turn k+1 branch from the
+    // same assistant message. A bare id would merge the two sets of versions
+    // into one switcher rendered on both messages.
+    expect(editVersionGroupKey("answer", "ai-2")).not.toBe(
+      editVersionGroupKey("prompt", "ai-2"),
+    );
+  });
+
+  test("a prompt edit keeps the bare message id", () => {
+    // Every group written before answer edits existed is stored under the bare
+    // id, so changing this would orphan them.
+    expect(editVersionGroupKey("prompt", "ai-2")).toBe("ai-2");
+    expect(editVersionGroupKey("prompt", null)).toBe(
+      CONVERSATION_START_BASE_MESSAGE_ID,
+    );
+  });
+
+  test("groups resolve through the same key they were written under", () => {
+    const groups: EditVersionGroup[] = [
+      {
+        base_message_id: editVersionGroupKey("answer", "ai-1"),
+        turn_index: 0,
+        thread_ids: ["root", "answer-version"],
+      },
+      {
+        base_message_id: editVersionGroupKey("prompt", "ai-1"),
+        turn_index: 1,
+        thread_ids: ["root", "prompt-version"],
+      },
+    ];
+
+    const switchers = resolveEditVersionSwitchers(groups, ["root"]);
+
+    expect(
+      switchers.get(editVersionGroupKey("answer", "ai-1"))?.threadIds,
+    ).toEqual(["root", "answer-version"]);
+    expect(
+      switchers.get(editVersionGroupKey("prompt", "ai-1"))?.threadIds,
+    ).toEqual(["root", "prompt-version"]);
+  });
 });

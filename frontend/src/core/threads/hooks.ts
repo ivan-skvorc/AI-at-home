@@ -44,9 +44,10 @@ import {
 import {
   addEditVersionToGroups,
   buildEditVersionThreadMetadata,
-  CONVERSATION_START_BASE_MESSAGE_ID,
   EDIT_ACTIVE_VERSION_METADATA_KEY,
   EDIT_VERSION_GROUPS_METADATA_KEY,
+  editVersionGroupKey,
+  type EditVersionKind,
   readEditVersionGroups,
   resolveEditVersionLineage,
   resolveEditVersionRootThreadId,
@@ -3045,12 +3046,22 @@ export type CreateEditVersionInput = {
   /** The family root's metadata, which owns the version groups. */
   rootMetadata?: Record<string, unknown> | null;
   turnIndex: number;
-  /** Terminal assistant message of the previous turn; ``null`` starts fresh. */
+  /**
+   * The branch anchor. For a prompt edit it is the terminal assistant message of
+   * the *previous* turn (``null`` starts fresh); for an answer edit it is the
+   * assistant message being rewritten, so the branch carries that turn too.
+   */
   baseMessageId: string | null;
   baseMessageIds?: string[];
   title?: string | null;
   agentName?: string | null;
   text: string;
+  /**
+   * Which half of the turn was edited. ``"prompt"`` replays the new wording as
+   * a fresh send; ``"answer"`` writes the new wording into the branch itself and
+   * sends nothing — there is no run to make, the edited text *is* the answer.
+   */
+  kind?: EditVersionKind;
 };
 
 /**
@@ -3076,13 +3087,15 @@ export function useCreateEditVersion() {
       title,
       agentName,
       text,
+      kind = "prompt",
     }: CreateEditVersionInput) => {
       const rootThreadId = resolveEditVersionRootThreadId(
         threadId,
         threadMetadata,
       );
       const parentLineage = resolveEditVersionLineage(threadId, threadMetadata);
-      const baseKey = baseMessageId ?? CONVERSATION_START_BASE_MESSAGE_ID;
+      const baseKey = editVersionGroupKey(kind, baseMessageId);
+      const isAnswerEdit = kind === "answer";
 
       const versionThreadId = baseMessageId
         ? (
@@ -3090,6 +3103,12 @@ export function useCreateEditVersion() {
               messageId: baseMessageId,
               messageIds: baseMessageIds ?? [baseMessageId],
               ...(title ? { title } : {}),
+              ...(isAnswerEdit
+                ? {
+                    replacementAssistantMessageId: baseMessageId,
+                    replacementAssistantText: text,
+                  }
+                : {}),
             })
           ).thread_id
         : (await createThread()).thread_id;
@@ -3136,13 +3155,18 @@ export function useCreateEditVersion() {
         [EDIT_ACTIVE_VERSION_METADATA_KEY]: versionThreadId,
       });
 
-      writePendingEditSend(
-        getSessionPendingEditSendStorage(),
-        versionThreadId,
-        {
-          text,
-        },
-      );
+      // Only a prompt edit has something to send: the branch already carries the
+      // rewritten answer, so parking one here would replay the assistant's words
+      // back as a user message on the next mount.
+      if (!isAnswerEdit) {
+        writePendingEditSend(
+          getSessionPendingEditSendStorage(),
+          versionThreadId,
+          {
+            text,
+          },
+        );
+      }
 
       return { threadId: versionThreadId, rootThreadId };
     },

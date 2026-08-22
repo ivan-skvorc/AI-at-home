@@ -6,6 +6,7 @@ import {
   extractContentFromMessage,
   extractTextFromMessage,
   extractReasoningContentFromMessage,
+  getAssistantTurnEditPoints,
   getHumanTurnEditPoints,
   getMessageCopyData,
   getAssistantTurnCopyData,
@@ -1356,5 +1357,95 @@ describe("orphan tool messages", () => {
     const t1b = allMessages.find((m) => m.id === "t-1b");
     expect(t1b).toBeDefined();
     expect(t1b?.type).toBe("tool");
+  });
+});
+
+describe("getAssistantTurnEditPoints", () => {
+  const twoTurns = [
+    { id: "h-1", type: "human", content: "First question" },
+    { id: "ai-1", type: "ai", content: "First answer" },
+    { id: "h-2", type: "human", content: "Second question" },
+    { id: "ai-2", type: "ai", content: "Second answer" },
+  ] as Message[];
+
+  test("anchors each answer on itself, so the branch keeps its own prompt", () => {
+    const points = getAssistantTurnEditPoints(
+      getMessageGroups(twoTurns),
+      false,
+    );
+
+    // The anchor is the answer being rewritten, not the previous turn: the
+    // version has to carry the question that produced it, or the edit would
+    // read as a reply to nothing.
+    expect(points.get("ai-1")).toMatchObject({
+      turnIndex: 0,
+      baseMessageId: "ai-1",
+      baseMessageIds: ["ai-1"],
+      editable: true,
+    });
+    expect(points.get("ai-2")).toMatchObject({
+      turnIndex: 1,
+      baseMessageId: "ai-2",
+      editable: true,
+    });
+  });
+
+  test("never anchors a prompt", () => {
+    const points = getAssistantTurnEditPoints(
+      getMessageGroups(twoTurns),
+      false,
+    );
+
+    expect(points.has("h-1")).toBe(false);
+    expect(points.has("h-2")).toBe(false);
+  });
+
+  test("the answer still streaming is not editable", () => {
+    const points = getAssistantTurnEditPoints(getMessageGroups(twoTurns), true);
+
+    // There is nothing settled to rewrite yet, but the anchor stays so a
+    // switcher can still be placed on the turn.
+    expect(points.get("ai-2")?.editable).toBe(false);
+    expect(points.get("ai-1")?.editable).toBe(true);
+  });
+
+  test("only the terminal assistant message of a turn is the answer", () => {
+    const withToolCall = [
+      { id: "h-1", type: "human", content: "Run it" },
+      {
+        id: "ai-call",
+        type: "ai",
+        content: "",
+        tool_calls: [{ id: "call-1", name: "bash", args: {} }],
+      },
+      {
+        id: "t-1",
+        type: "tool",
+        name: "bash",
+        tool_call_id: "call-1",
+        content: "ok",
+      },
+      { id: "ai-final", type: "ai", content: "Done." },
+    ] as Message[];
+
+    const points = getAssistantTurnEditPoints(
+      getMessageGroups(withToolCall),
+      false,
+    );
+
+    // Rewriting the tool-calling message would leave the turn describing work
+    // that never happened, so only the final message answers the prompt.
+    expect(points.get("ai-final")?.editable).toBe(true);
+    expect(points.has("ai-call")).toBe(false);
+  });
+
+  test("an assistant message with no preceding prompt is skipped", () => {
+    const orphan = [{ id: "ai-0", type: "ai", content: "Hi" }] as Message[];
+
+    // Nothing to branch from: the backend needs a human message before the
+    // target turn, so offering the edit would fail at save time.
+    expect(
+      getAssistantTurnEditPoints(getMessageGroups(orphan), false).size,
+    ).toBe(0);
   });
 });

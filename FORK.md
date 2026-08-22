@@ -1115,33 +1115,75 @@ original as "Branch of …". That is the right primitive and the wrong surface �
 trying three phrasings of the same question left four entries in the sidebar and
 no indication of which was which.
 
-This fork replaces that button with **Edit**, on the user message itself — the
-feature is **gaslight mode**, because the conversation carries on as though you
-had always phrased it the new way. Editing a message replays the conversation
-from that point with the new wording; the version you were reading is kept, and a
-`‹ 2/2 ›` switcher appears **on the edited message** to move between them. One
-conversation stays one entry in the sidebar, however many times it is edited. The
-per-message button stays labelled **Edit** — "gaslight mode" is the name of the
-behaviour, in this file and in the README, not a string in the UI.
+This fork replaces that button with **Edit**, on **either half of a turn** — the
+feature is **gaslight mode**, because the conversation carries on as though the
+words had always been what you just made them. The version you were reading is
+kept, and a `‹ 2/2 ›` switcher appears **on the edited message** to move between
+them. One conversation stays one entry in the sidebar, however many times it is
+edited. The per-message button stays labelled **Edit** — "gaslight mode" is the
+name of the behaviour, in this file and in the README, not a string in the UI.
 
-**It is the branch endpoint underneath.** Nothing about `POST /api/threads/{id}/branches`
-changed — the fork is entirely in how the result is presented:
+**Two halves, one mechanism, and the difference is what happens after the fork:**
 
-1. Editing the message at turn *k* branches the thread at the terminal assistant
-   message of turn *k-1*, so the new thread carries the history up to (but not
-   including) the edited turn. Editing the **first** message has nothing to
-   branch from, so it creates an empty thread (`POST /api/threads`) instead;
-   that is the only case with no branch call, and it is the common one.
+- **Edit a prompt** — the conversation replays from that turn with the new
+  wording, and the model answers the new question. The branch is taken at turn
+  *k-1*'s terminal assistant message, so the new thread stops short of the turn
+  being replaced, and the edited text is *sent* into it.
+- **Edit an answer** — the branch is taken at that turn's **own** assistant
+  message, so the new thread carries the question *and* its answer, and the
+  Gateway writes your words in place of what the model said. **Nothing is
+  re-generated**: there is no run to make, because the edited text is the answer.
+  Whatever you send next is answered with those words standing in the history.
+  This is the half the feature is named for.
+
+The asymmetry is not an oversight. Re-running the turn after an answer edit would
+discard the edit — the model's fresh reply would replace the words you just
+wrote — so an answer edit that "regenerates" cannot keep what it was asked to
+keep. The one that does nothing afterwards is the one that works.
+
+**It is the branch endpoint underneath.** The prompt half changed nothing about
+`POST /api/threads/{id}/branches`; the answer half adds one optional pair to it
+(`replacement_assistant_message_id` + `replacement_assistant_text`), applied to
+the copied checkpoint messages **and** to the seeded run events, because the
+thread feed reads the latter — seeding it from the originals would show the old
+answer the moment the feed refreshed, and the edit would read as silently
+reverted. The pair is all-or-nothing, and the id must be one of the assistant
+messages the branch is taken from: a half-specified or out-of-turn rewrite is
+refused rather than branching without the edit that was asked for. The rest of
+the fork is in how the result is presented:
+
+1. Editing the **prompt** at turn *k* branches the thread at the terminal
+   assistant message of turn *k-1*, so the new thread carries the history up to
+   (but not including) the edited turn. Editing the **first** message has nothing
+   to branch from, so it creates an empty thread (`POST /api/threads`) instead;
+   that is the only case with no branch call, and it is the common one. Editing
+   an **answer** always has something to branch from — its own turn — so it
+   always takes the branch path.
 2. The new thread is stamped `deerflow_edit_version: true` and is filtered out of
    every primary thread list (`filterThreadSearchResults`), so it never appears
    in the sidebar, the chats page, or the tab strip.
 3. The family's **root** thread records the group in `deerflow_edit_version_groups`
    and the reader's current choice in `deerflow_edit_active_version`.
-4. The edited text is parked in session storage and replayed by whichever chat
-   instance mounts the new thread — the click site navigates away, so it cannot
-   send the message itself.
+4. A **prompt** edit parks its text in session storage, replayed by whichever
+   chat instance mounts the new thread — the click site navigates away, so it
+   cannot send the message itself. An **answer** edit parks nothing: the branch
+   already contains the rewritten answer, so a parked send would post the
+   assistant's own words back as the user's next message.
 
-**Two design points are load-bearing and easy to "fix" into bugs.**
+**Three design points are load-bearing and easy to "fix" into bugs.**
+
+*An answer edit must not park a pending send.* The prompt half hands its text to
+the next mount through session storage (point 4 below); the answer half must not,
+because the branch already contains the edited answer — parking it would post the
+assistant's own words back as the user's next message. Pinned by
+`edit-version-answer.dom.test.tsx`.
+
+*The two halves need different group keys.* Editing the answer of turn *k* and
+editing the prompt of turn *k+1* branch from the **same** assistant message, so a
+bare message id would merge two unrelated sets of versions into one switcher
+rendered on both messages. Answer groups are namespaced (`answer:<id>`); prompt
+groups keep the bare id, so every group written before answer edits existed keeps
+resolving unchanged.
 
 *Groups are keyed on the assistant message they branch from, not on the turn
 number.* Turn 4 of the original and turn 4 of a version that diverged at turn 2
@@ -1156,11 +1198,15 @@ navigating. Without it the sidebar keeps reopening version 1 forever, which read
 as the edit having been lost — the exact failure the feature exists to avoid.
 
 Known limits, deliberately: a turn whose predecessor ended in tool calls or a
-clarification has no settled assistant message to fork from, so it shows no edit
-button (the first turn is always editable); deleting the root does not delete its
-hidden versions, which stay as unreferenced threads; and the older latest-turn-only
-*in-place* edit (`/runs/edit-regenerate/prepare`) is still implemented on both
-sides but is no longer wired to any button.
+clarification has no settled assistant message to fork from, so its **prompt**
+shows no edit button (the first turn is always editable); only a turn's
+**terminal** assistant message is editable, because rewriting an intermediate
+tool-calling message would leave the turn describing work that never happened;
+an answer still streaming is not editable, since there is nothing settled to
+rewrite; deleting the root does not delete its hidden versions, which stay as
+unreferenced threads; and the older latest-turn-only *in-place* edit
+(`/runs/edit-regenerate/prepare`) is still implemented on both sides but is no
+longer wired to any button.
 
 ## Why mix local and cloud
 
@@ -1330,7 +1376,7 @@ Then confirm each fork feature end-to-end:
 | **Backup / restore** (§13) | `cd backend && uv run pytest tests/test_backup.py` covers what goes in, the secrets exclusion and the owner-only opt-in archive, the postgres dump abort, the running-stack refusal, archive-path safety, and the mode-preserving round trip. Wiring: `scripts/backup.py`; `backup` / `restore` targets in the root `Makefile`; `/backups/` in `.gitignore`. **Three invariants that are silent when broken:** (1) credentials stay excluded by default — if `SECRET_PATTERNS` stops matching `users/*/integrations/` or `.env`, every backup starts shipping API keys; (2) the archive is opened `0600` via `os.open`, not chmod'ed afterwards, or it is briefly world-readable while being written; (3) extraction must keep `filter="tar"` — the `data` filter strips the permission bits this feature exists to preserve, so `0700` credential dirs would come back `0755`. A failed `pg_dump` must keep aborting: a backup with no database in it fails at restore time, when it is too late. Manual: `make backup`, `python3 scripts/backup.py inspect <archive>`, then restore into an empty directory and confirm threads/memory/tabs are there. |
 | **Deployment exposure check** (§12) | `cd backend && uv run pytest tests/test_exposure.py` covers the bind classification, the fact resolution (`.env` vs. process env precedence, `runtime_settings.json`, sandbox mode), every tier, and the doctor rows. Wiring: `scripts/exposure.py`; `scripts/doctor.py::check_deployment_exposure` in the new **Deployment** section; the `--surface docker` call at the end of `scripts/deploy.sh` and `--surface local` at the end of `scripts/serve.sh`. **Two things are easy to break silently:** (1) the local surface must stay pinned to the wildcard — it reads `docker/nginx/nginx.local.conf`'s address-less `listen 2026;`, so if upstream gives that config an explicit address, update `LOCAL_BIND_SOURCE`/`resolve_facts` or the check will report a bind the stack does not use; (2) `classify_bind_host` must test the Tailscale ranges **before** `is_private`, because Python classifies CGNAT (100.64.0.0/10) as private and the two tiers are deliberately different. The check must never return `fail` — a deliberately exposed home lab is not a broken install. Manual: `python3 scripts/exposure.py --surface docker`, then set `BIND_HOST=0.0.0.0` in `.env` and confirm the tier moves to `open-network` and names each contributing setting. |
 | **Spend history page** (§11) | `cd backend && uv run pytest tests/test_console_router.py -k ConsoleSpend` covers `GET /api/console/spend`: the three groupings (model / thread / feature) agreeing with the total, unpriced models named and sorted last, the window boundary, the no-pricing state, and the 503 on the memory backend. Wiring: `ConsoleSpendResponse` in `app/gateway/routers/console.py`; `AuxUsageStore.aggregate()`; `frontend/src/core/spend/*`; `frontend/src/app/workspace/spend/page.tsx`; the sidebar entry in `components/workspace/workspace-nav-chat-list.tsx`; i18n `spend.*` in both locales. The page must keep reusing `pricing.py` rather than recomputing cost — a second formula is how the page and the chat header start disagreeing about the same run. Manual: open **Spend** in the sidebar and confirm the tables' totals match the summary tile for the same window. |
-| **Gaslight mode — edit into a hidden version** (§18) | `cd frontend && pnpm test edit-versions && pnpm test pending-edit-send && pnpm test "core/messages/utils"` covers the version model (group keying on the base message id, lineage resolution, a descendant inheriting its ancestor's position, the malformed-entry guards), the session-storage hand-off (read consumes it, so an edit is never replayed twice), and the per-turn edit anchors. `pnpm test:e2e edit-message-versions` drives the whole flow: edit a middle turn, land on the version with the earlier history and without the replaced answer, one sidebar entry pointing at the version, `2/2` on the edited message, switch back to `1/2`. Wiring: `core/threads/edit-versions.ts` (model + metadata keys); `core/threads/pending-edit-send.ts`; `useCreateEditVersion` / `useSetActiveEditVersion` in `core/threads/hooks.ts`; `createThread` in `core/threads/api.ts`; `components/workspace/chats/use-edit-versions.ts`; `components/workspace/messages/message-version-switcher.tsx`; the `onEditMessage` / `editVersionSwitchers` props on `MessageList`; the `deerflow_edit_version` filter in `core/threads/thread-search-query.ts`; the active-version hop in `pathOfThread` (`core/threads/utils.ts`). **Three things are silent when broken:** (1) groups must stay keyed on the **base message id** — keying on the turn index merges lineages that only share an ordinal; (2) `pathOfThread` must keep honouring `deerflow_edit_active_version`, or the one sidebar entry reopens version 1 forever and the edit reads as lost; (3) `takePendingEditSend` must keep *removing* on read — a non-consuming read replays the edited turn on every remount. If upstream restores a Branch button on the assistant action row, decide deliberately: this fork removed it on purpose, and two buttons that both fork the conversation is the confusing state the feature replaced. Manual: edit the first message of a chat (the no-branch path) and confirm the switcher appears, then reload from the sidebar and confirm you land back on the edited version. |
+| **Gaslight mode — edit into a hidden version** (§18) | `cd backend && uv run pytest tests/test_threads_router.py -k answer` covers the answer half end to end: the branch rewrites only the edited assistant message, the run-event seed carries the replacement (the feed reads events, not the checkpoint), a branch without the pair is byte-unchanged, and every half-specified or out-of-turn rewrite is refused. `cd frontend && pnpm test edit-version-answer && pnpm test edit-versions && pnpm test pending-edit-send && pnpm test "core/messages/utils"` covers the version model (group keying on the base message id, lineage resolution, a descendant inheriting its ancestor's position, the malformed-entry guards), the session-storage hand-off (read consumes it, so an edit is never replayed twice), and the per-turn edit anchors. `pnpm test:e2e edit-message-versions` drives the whole flow: edit a middle turn, land on the version with the earlier history and without the replaced answer, one sidebar entry pointing at the version, `2/2` on the edited message, switch back to `1/2`. Wiring: `core/threads/edit-versions.ts` (model + metadata keys); `core/threads/pending-edit-send.ts`; `useCreateEditVersion` / `useSetActiveEditVersion` in `core/threads/hooks.ts`; `createThread` in `core/threads/api.ts`; `components/workspace/chats/use-edit-versions.ts`; `components/workspace/messages/message-version-switcher.tsx`; the `onEditMessage` / `editVersionSwitchers` props on `MessageList`; the `deerflow_edit_version` filter in `core/threads/thread-search-query.ts`; the active-version hop in `pathOfThread` (`core/threads/utils.ts`). **Five things are silent when broken:** (0a) an **answer** edit must not park a pending send — the branch already carries the rewritten answer, so parking one replays the assistant's words back as the user's next message; (0b) answer groups must stay namespaced (`answer:<id>`) — editing the answer of turn *k* and the prompt of turn *k+1* branch from the same message, so a shared key renders both sets of versions on both messages; (1) groups must stay keyed on the **base message id** — keying on the turn index merges lineages that only share an ordinal; (2) `pathOfThread` must keep honouring `deerflow_edit_active_version`, or the one sidebar entry reopens version 1 forever and the edit reads as lost; (3) `takePendingEditSend` must keep *removing* on read — a non-consuming read replays the edited turn on every remount. If upstream restores a Branch button on the assistant action row, decide deliberately: this fork removed it on purpose, and two buttons that both fork the conversation is the confusing state the feature replaced. Manual: edit the first message of a chat (the no-branch path) and confirm the switcher appears, then reload from the sidebar and confirm you land back on the edited version. |
 
 **Integration points that tend to need a hand** (where upstream refactors collide with fork additions — check these first when tests fail): the AIO sandbox provider (upstream's cross-instance ownership store adds instance attributes that minimal test fixtures built via `__new__` must seed), the skills tool-policy path (upstream's dynamic `SkillToolPolicyMiddleware` vs. any fork static filtering — reconcile onto the middleware and drop dead build-time filters), `scripts/check.py`'s Docker diagnostics (any upstream test that mocks `run_command` with a strict dict must tolerate the extra `docker` calls), and the `task_tool.py` / `input-box.tsx` model-override plumbing.
 

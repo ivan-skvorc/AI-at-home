@@ -90,6 +90,63 @@ test.describe("Edit a message into a hidden version", () => {
     );
   });
 
+  test("edits an answer into a version that keeps its prompt and runs nothing", async ({
+    page,
+  }) => {
+    mockLangGraphAPI(page, {
+      appendRunMessagesToHistory: true,
+      threads: [
+        {
+          thread_id: MOCK_THREAD_ID,
+          title: "Original chat",
+          messages: CONVERSATION,
+        },
+      ],
+    });
+
+    await page.goto(`/workspace/chats/${MOCK_THREAD_ID}`);
+
+    const answer = page.locator('[data-message-id="ai-2"]');
+    await expect(answer).toBeVisible();
+    await answer.hover();
+    await answer.getByRole("button", { name: /edit answer/i }).click();
+
+    const editor = answer.getByRole("textbox");
+    await expect(editor).toHaveValue("Second answer");
+    await editor.fill("Second answer, in my words");
+    // Saving an answer sends nothing, so the button must not say it will.
+    await answer.getByRole("button", { name: /save version/i }).click();
+
+    await expect(page).toHaveURL(
+      new RegExp(`/workspace/chats/${MOCK_THREAD_ID_2}$`),
+    );
+
+    // The version carries the question *and* the rewritten answer: an answer
+    // edit branches at its own turn, unlike a prompt edit which stops short of
+    // the turn it replaces.
+    await expect(page.getByText("Second question")).toBeVisible();
+    await expect(page.getByText("Second answer, in my words")).toBeVisible();
+    await expect(page.getByText("Second answer", { exact: true })).toHaveCount(
+      0,
+    );
+
+    // Still one conversation in the sidebar, and the original is one switch away.
+    await expect(
+      page.locator(`a[href="/workspace/chats/${MOCK_THREAD_ID_2}"]`),
+    ).toHaveCount(1);
+
+    const switcher = page.getByTestId("message-version-switcher");
+    await expect(switcher).toContainText("2/2");
+
+    await switcher.getByRole("button", { name: /previous version/i }).click();
+    await expect(page).toHaveURL(
+      new RegExp(`/workspace/chats/${MOCK_THREAD_ID}$`),
+    );
+    await expect(
+      page.getByText("Second answer", { exact: true }),
+    ).toBeVisible();
+  });
+
   test("edits the first message by starting the version from an empty conversation", async ({
     page,
   }) => {

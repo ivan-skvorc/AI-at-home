@@ -184,6 +184,59 @@ def _matches_branch_target(messages: list[Any], target_message_ids: set[str]) ->
     return not any(_is_branch_visible_message(message) for message in messages[target_end_index + 1 :])
 
 
+def _resolve_branch_answer_rewrite(body: ThreadBranchRequest, target_message_ids: set[str]) -> tuple[str, str] | None:
+    """Validate the optional answer rewrite, or return ``None`` if absent.
+
+    Every rejection here is a case where honouring *part* of the request would
+    produce a version that quietly disagrees with what was asked: a half-
+    specified pair says nothing usable, blank text would erase the answer rather
+    than change it, and an id outside the branched turn would rewrite copied
+    history somewhere the user was not looking.
+    """
+    message_id = body.replacement_assistant_message_id
+    raw_text = body.replacement_assistant_text
+    if message_id is None and raw_text is None:
+        return None
+    if message_id is None or raw_text is None:
+        raise HTTPException(
+            status_code=422,
+            detail="replacement_assistant_message_id and replacement_assistant_text must be given together.",
+        )
+    text = raw_text.strip()
+    if not text:
+        raise HTTPException(status_code=409, detail="The edited answer cannot be empty.")
+    if message_id not in target_message_ids:
+        raise HTTPException(
+            status_code=409,
+            detail="The edited answer must be one of the assistant messages this branch is taken from.",
+        )
+    return message_id, text
+
+
+def _rewrite_branch_answer(messages: list[Any], message_id: str, text: str) -> list[Any]:
+    """Return ``messages`` with ``message_id``'s content replaced by ``text``.
+
+    Only the content changes. The id, type, and every other field are kept, so
+    the branched turn reads as the same answer reworded rather than as a
+    different message appearing where the old one was.
+    """
+    rewritten: list[Any] = []
+    for message in messages:
+        if _message_id(message) != message_id:
+            rewritten.append(message)
+            continue
+        if isinstance(message, dict):
+            rewritten.append({**message, "content": text})
+            continue
+        copier = getattr(message, "model_copy", None)
+        if not callable(copier):
+            # Failing here is loud on purpose: silently keeping the original
+            # text would present the un-edited answer as the edited one.
+            raise HTTPException(status_code=500, detail="Failed to apply the edited answer")
+        rewritten.append(copier(update={"content": text}))
+    return rewritten
+
+
 def _branch_target_human_message(messages: list[Any], target_message_ids: set[str]) -> Any | None:
     index_by_id = {_message_id(message): index for index, message in enumerate(messages) if _message_id(message)}
     if not target_message_ids.issubset(index_by_id.keys()):
@@ -505,6 +558,18 @@ class ThreadBranchRequest(BaseModel):
     message_id: str = Field(..., min_length=1, description="Target assistant message ID to branch from")
     message_ids: list[str] = Field(default_factory=list, description="All assistant message IDs in the target turn")
     title: str | None = Field(default=None, max_length=256, description="Optional title for the branched thread")
+    # Gaslight-mode answer edit. The branch already copies the target turn
+    # verbatim; these two fields say "and give this assistant message different
+    # words". They are a pair on purpose -- see _resolve_branch_answer_rewrite.
+    replacement_assistant_message_id: str | None = Field(
+        default=None,
+        min_length=1,
+        description="Assistant message in the branched turn whose text this branch replaces",
+    )
+    replacement_assistant_text: str | None = Field(
+        default=None,
+        description="Replacement text for replacement_assistant_message_id",
+    )
 
 
 class ThreadBranchResponse(BaseModel):
@@ -805,6 +870,7 @@ async def branch_thread(thread_id: ThreadId, body: ThreadBranchRequest, request:
     )
 
     target_message_ids = {body.message_id, *body.message_ids}
+    answer_rewrite = _resolve_branch_answer_rewrite(body, target_message_ids)
     snapshot = await _find_branch_checkpoint(source_accessor, source_config, target_message_ids)
     parent_checkpoint_id = _checkpoint_id(snapshot)
     if not parent_checkpoint_id:
@@ -866,7 +932,13 @@ async def branch_thread(thread_id: ThreadId, body: ThreadBranchRequest, request:
             if key in _BRANCH_EXCLUDED_CHANNELS:
                 continue
             if key in branch_reducer_fields:
-                values[key] = Overwrite(list(value) if key == "messages" and isinstance(value, list) else value)
+                if key == "messages" and isinstance(value, list):
+                    branch_messages = list(value)
+                    if answer_rewrite is not None:
+                        branch_messages = _rewrite_branch_answer(branch_messages, *answer_rewrite)
+                    values[key] = Overwrite(branch_messages)
+                else:
+                    values[key] = Overwrite(value)
             else:
                 values[key] = value
         return values
@@ -920,8 +992,11 @@ async def branch_thread(thread_id: ThreadId, body: ThreadBranchRequest, request:
     # from. Best-effort: on failure the branch stays usable, with history
     # visible only through the checkpoint overlay until it is re-branched.
     try:
+        seed_messages = _checkpoint_messages(snapshot)
+        if answer_rewrite is not None:
+            seed_messages = _rewrite_branch_answer(seed_messages, *answer_rewrite)
         seed_events = build_branch_history_seed_events(
-            _checkpoint_messages(snapshot),
+            seed_messages,
             thread_id=new_thread_id,
             run_id_prefix=f"branch-seed-{new_thread_id}",
             parent_thread_id=thread_id,

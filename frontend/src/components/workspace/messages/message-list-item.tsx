@@ -170,8 +170,8 @@ export function MessageListItem({
   const { t } = useI18n();
   const isHuman = message.type === "human";
   const editableText = useMemo(
-    () => (isHuman ? (getMessageCopyData(message) ?? "") : ""),
-    [isHuman, message],
+    () => getMessageCopyData(message) ?? "",
+    [message],
   );
   const [isEditing, setIsEditing] = useState(false);
   const [draft, setDraft] = useState("");
@@ -182,6 +182,10 @@ export function MessageListItem({
     isSubmittingEdit ||
     trimmedDraft.length === 0 ||
     trimmedDraft === editableText.trim();
+
+  const editLabel = isHuman ? t.common.editMessage : t.common.editAnswer;
+  const showEditButton =
+    canEdit && Boolean(onEditAndRegenerate) && !isEditing && !isLoading;
 
   const startEditing = useCallback(() => {
     setDraft(editableText);
@@ -222,7 +226,7 @@ export function MessageListItem({
         runId={runId}
         showWorkspaceChanges={showWorkspaceChanges}
         editState={
-          isHuman && isEditing
+          isEditing
             ? {
                 draft,
                 disabled: isEditPending || isSubmittingEdit,
@@ -230,11 +234,20 @@ export function MessageListItem({
                 onCancel: cancelEditing,
                 onDraftChange: setDraft,
                 onSubmit: submitEdit,
+                // An answer edit sends nothing — the edited words *are* the
+                // answer — so it must not promise a reply the way a prompt
+                // edit does.
+                notice: isHuman
+                  ? t.common.editVersionNotice
+                  : t.common.editAnswerVersionNotice,
+                submitLabel: isHuman
+                  ? t.common.saveAndSend
+                  : t.common.saveAnswerVersion,
               }
             : undefined
         }
       />
-      {!isLoading && (showCopyButton || versionSwitcher) && (
+      {!isLoading && (showCopyButton || showEditButton || versionSwitcher) && (
         <MessageToolbar
           className={cn(
             isHuman
@@ -251,13 +264,15 @@ export function MessageListItem({
               {versionSwitcher}
             </div>
           )}
-          {showCopyButton && (
+          {(showCopyButton || showEditButton) && (
             <div className="pointer-events-auto flex gap-1 opacity-0 transition-opacity delay-200 duration-300 group-hover/conversation-message:opacity-100">
-              <CopyButton clipboardData={getMessageCopyData(message)} />
-              {canEdit && isHuman && onEditAndRegenerate && !isEditing && (
-                <Tooltip content={t.common.editMessage}>
+              {showCopyButton && (
+                <CopyButton clipboardData={getMessageCopyData(message)} />
+              )}
+              {showEditButton && (
+                <Tooltip content={editLabel}>
                   <Button
-                    aria-label={t.common.editMessage}
+                    aria-label={editLabel}
                     size="icon-sm"
                     type="button"
                     variant="ghost"
@@ -268,13 +283,16 @@ export function MessageListItem({
                   </Button>
                 </Tooltip>
               )}
-              {feedback !== undefined && runId && threadId && (
-                <FeedbackButtons
-                  threadId={threadId}
-                  runId={runId}
-                  initialFeedback={feedback}
-                />
-              )}
+              {showCopyButton &&
+                feedback !== undefined &&
+                runId &&
+                threadId && (
+                  <FeedbackButtons
+                    threadId={threadId}
+                    runId={runId}
+                    initialFeedback={feedback}
+                  />
+                )}
             </div>
           )}
         </MessageToolbar>
@@ -373,6 +391,72 @@ function HumanSlashSkillText({ content }: { content: string }) {
   );
 }
 
+type MessageEditState = {
+  draft: string;
+  disabled: boolean;
+  submitDisabled: boolean;
+  onCancel: () => void;
+  onDraftChange: (value: string) => void;
+  onSubmit: () => void | Promise<void>;
+  /** What saving will do — it differs between the two halves of a turn. */
+  notice: string;
+  submitLabel: string;
+};
+
+/**
+ * The in-place editor shown in place of a message's content.
+ *
+ * Shared by both halves of a turn: a prompt edit replays a new question, an
+ * answer edit rewrites the reply and sends nothing, and the only difference the
+ * editor itself knows about is the wording handed to it.
+ */
+function MessageEditor({ editState }: { editState: MessageEditState }) {
+  const { t } = useI18n();
+  return (
+    <div className="bg-background border-border flex w-full min-w-0 flex-col gap-2 rounded-lg border p-2 shadow-sm">
+      <Textarea
+        autoFocus
+        className="min-h-24 resize-y"
+        disabled={editState.disabled}
+        value={editState.draft}
+        onChange={(event) => editState.onDraftChange(event.currentTarget.value)}
+        onKeyDown={(event) => {
+          if (event.key === "Escape") {
+            event.preventDefault();
+            editState.onCancel();
+          }
+          if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+            event.preventDefault();
+            void editState.onSubmit();
+          }
+        }}
+      />
+      <div className="text-muted-foreground text-xs">{editState.notice}</div>
+      <div className="flex justify-end gap-1">
+        <Button
+          size="sm"
+          type="button"
+          variant="ghost"
+          disabled={editState.disabled}
+          onClick={editState.onCancel}
+        >
+          <XIcon className="size-3" />
+          {t.common.cancel}
+        </Button>
+        <Button
+          size="sm"
+          type="button"
+          disabled={editState.submitDisabled}
+          onClick={() => void editState.onSubmit()}
+        >
+          <CheckIcon className="size-3" />
+          {editState.submitLabel}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 function MessageContent_({
   className,
   message,
@@ -390,14 +474,7 @@ function MessageContent_({
   artifactPaths: readonly string[];
   runId?: string;
   showWorkspaceChanges?: boolean;
-  editState?: {
-    draft: string;
-    disabled: boolean;
-    submitDisabled: boolean;
-    onCancel: () => void;
-    onDraftChange: (value: string) => void;
-    onSubmit: () => void | Promise<void>;
-  };
+  editState?: MessageEditState;
 }) {
   const { t } = useI18n();
   const isHuman = message.type === "human";
@@ -518,57 +595,21 @@ function MessageContent_({
         )}
         {filesList}
         {editState ? (
-          <div className="bg-background border-border flex w-full min-w-0 flex-col gap-2 rounded-lg border p-2 shadow-sm">
-            <Textarea
-              autoFocus
-              className="min-h-24 resize-y"
-              disabled={editState.disabled}
-              value={editState.draft}
-              onChange={(event) =>
-                editState.onDraftChange(event.currentTarget.value)
-              }
-              onKeyDown={(event) => {
-                if (event.key === "Escape") {
-                  event.preventDefault();
-                  editState.onCancel();
-                }
-                if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
-                  event.preventDefault();
-                  void editState.onSubmit();
-                }
-              }}
-            />
-            <div className="text-muted-foreground text-xs">
-              {t.common.editVersionNotice}
-            </div>
-            <div className="flex justify-end gap-1">
-              <Button
-                size="sm"
-                type="button"
-                variant="ghost"
-                disabled={editState.disabled}
-                onClick={editState.onCancel}
-              >
-                <XIcon className="size-3" />
-                {t.common.cancel}
-              </Button>
-              <Button
-                size="sm"
-                type="button"
-                disabled={editState.submitDisabled}
-                onClick={() => void editState.onSubmit()}
-              >
-                <CheckIcon className="size-3" />
-                {t.common.saveAndSend}
-              </Button>
-            </div>
-          </div>
+          <MessageEditor editState={editState} />
         ) : contentToDisplay ? (
           <AIElementMessageContent className="w-full max-w-full">
             <HumanMessageText content={contentToDisplay} />
           </AIElementMessageContent>
         ) : null}
       </div>
+    );
+  }
+
+  if (editState) {
+    return (
+      <AIElementMessageContent className={className}>
+        <MessageEditor editState={editState} />
+      </AIElementMessageContent>
     );
   }
 

@@ -43,8 +43,11 @@ export interface Translations {
     exportFailed: string;
     regenerate: string;
     editMessage: string;
+    editAnswer: string;
     saveAndSend: string;
+    saveAnswerVersion: string;
     editVersionNotice: string;
+    editAnswerVersionNotice: string;
     showArtifacts: string;
     browser: string;
     showBrowser: string;

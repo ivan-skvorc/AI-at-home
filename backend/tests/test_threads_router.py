@@ -2874,3 +2874,210 @@ def test_update_thread_state_inserts_new_checkpoint_each_call() -> None:
     assert all(cid is not None for cid in resp_ids), f"response missing checkpoint_id: {resp_ids}"
     assert set(resp_ids) <= set(ids), f"aput discarded endpoint-assigned id: returned {resp_ids}, stored {ids}"
     assert resp_ids[1] > resp_ids[0], f"endpoint-assigned uuid6 not preserved/ordered through aput: {resp_ids}"
+
+
+# ── gaslight mode: branch with the answer rewritten ───────────────────────────
+
+
+def _seed_two_turn_thread(checkpointer, store, thread_id: str, initial_config: dict) -> None:
+    """Two settled turns, so ``ai-2`` is a terminal answer that can be rewritten."""
+    human_1 = HumanMessage(id="human-1", content="First question")
+    ai_1 = AIMessage(id="ai-1", content="First answer")
+    human_2 = HumanMessage(id="human-2", content="What is the capital of France?")
+    ai_2 = AIMessage(id="ai-2", content="Paris.")
+
+    async def _seed(parent_config: dict) -> None:
+        after_human_1 = await _write_checkpoint(checkpointer, thread_id, str(uuid6()), [human_1], step=1, parent_config=parent_config)
+        after_ai_1 = await _write_checkpoint(checkpointer, thread_id, str(uuid6()), [human_1, ai_1], step=2, parent_config=after_human_1)
+        after_human_2 = await _write_checkpoint(
+            checkpointer,
+            thread_id,
+            str(uuid6()),
+            [human_1, ai_1, human_2],
+            step=3,
+            parent_config=after_ai_1,
+        )
+        await _write_checkpoint(
+            checkpointer,
+            thread_id,
+            str(uuid6()),
+            [human_1, ai_1, human_2, ai_2],
+            step=4,
+            parent_config=after_human_2,
+        )
+
+    asyncio.run(_seed(initial_config))
+    asyncio.run(
+        store.aput(
+            THREADS_NS,
+            thread_id,
+            {
+                "thread_id": thread_id,
+                "assistant_id": "agent",
+                "user_id": None,
+                "status": "idle",
+                "created_at": "2026-07-05T00:00:00Z",
+                "updated_at": "2026-07-05T00:00:00Z",
+                "display_name": "Original chat",
+                "metadata": {},
+            },
+        )
+    )
+
+
+def _branch_with_answer_edit(client, thread_id: str, payload: dict):
+    return client.post(f"/api/threads/{thread_id}/branches", json=payload)
+
+
+def test_branch_rewrites_the_edited_answer_and_leaves_every_other_message_alone() -> None:
+    """An answer edit replaces only that message's text in the new version."""
+    app, store, checkpointer = _build_thread_app()
+    source_thread_id = "answer-edit-source"
+
+    with TestClient(app) as client:
+        created = client.post("/api/threads", json={"thread_id": source_thread_id, "metadata": {}, "assistant_id": "agent"})
+        assert created.status_code == 200, created.text
+        initial = asyncio.run(checkpointer.aget_tuple({"configurable": {"thread_id": source_thread_id, "checkpoint_ns": ""}}))
+        assert initial is not None
+        _seed_two_turn_thread(checkpointer, store, source_thread_id, initial.config)
+
+        response = _branch_with_answer_edit(
+            client,
+            source_thread_id,
+            {
+                "message_id": "ai-2",
+                "message_ids": ["ai-2"],
+                "replacement_assistant_message_id": "ai-2",
+                "replacement_assistant_text": "Lyon.",
+            },
+        )
+        assert response.status_code == 200, response.text
+        new_thread_id = response.json()["thread_id"]
+        state_response = client.get(f"/api/threads/{new_thread_id}/state")
+
+    assert state_response.status_code == 200, state_response.text
+    messages = state_response.json()["values"]["messages"]
+    assert [message["id"] for message in messages] == ["human-1", "ai-1", "human-2", "ai-2"]
+    by_id = {message["id"]: message for message in messages}
+    # The edited answer carries the new text ...
+    assert by_id["ai-2"]["content"] == "Lyon."
+    # ... and nothing else moved: the prompt that produced it is untouched, so
+    # the version reads as "it answered this", not "I asked something else".
+    assert by_id["human-2"]["content"] == "What is the capital of France?"
+    assert by_id["ai-1"]["content"] == "First answer"
+    assert by_id["human-1"]["content"] == "First question"
+
+
+def test_branch_answer_edit_seeds_the_history_feed_with_the_replacement() -> None:
+    """The rewritten text must reach the run-event feed, not just the checkpoint.
+
+    The thread feed reads run events, so seeding it from the *original* messages
+    would show the old answer the moment the feed refreshed -- the edit would
+    look as though it had been silently reverted.
+    """
+
+    class _CapturingStore:
+        def __init__(self) -> None:
+            self.events: list = []
+
+        async def put_batch(self, events):
+            self.events.extend(events)
+
+    app, store, checkpointer = _build_thread_app()
+    event_store = _CapturingStore()
+    app.state.run_event_store = event_store
+    source_thread_id = "answer-edit-seed"
+
+    with TestClient(app) as client:
+        created = client.post("/api/threads", json={"thread_id": source_thread_id, "metadata": {}, "assistant_id": "agent"})
+        assert created.status_code == 200, created.text
+        initial = asyncio.run(checkpointer.aget_tuple({"configurable": {"thread_id": source_thread_id, "checkpoint_ns": ""}}))
+        assert initial is not None
+        _seed_two_turn_thread(checkpointer, store, source_thread_id, initial.config)
+
+        response = _branch_with_answer_edit(
+            client,
+            source_thread_id,
+            {
+                "message_id": "ai-2",
+                "message_ids": ["ai-2"],
+                "replacement_assistant_message_id": "ai-2",
+                "replacement_assistant_text": "Lyon.",
+            },
+        )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["history_seed_mode"] == "seeded"
+    seeded = str([getattr(event, "__dict__", event) for event in event_store.events])
+    assert "Lyon." in seeded
+    assert "Paris." not in seeded
+
+
+def test_branch_without_a_replacement_is_unchanged() -> None:
+    """A plain branch (the prompt-edit path) still copies the answer verbatim."""
+    app, store, checkpointer = _build_thread_app()
+    source_thread_id = "answer-edit-absent"
+
+    with TestClient(app) as client:
+        created = client.post("/api/threads", json={"thread_id": source_thread_id, "metadata": {}, "assistant_id": "agent"})
+        assert created.status_code == 200, created.text
+        initial = asyncio.run(checkpointer.aget_tuple({"configurable": {"thread_id": source_thread_id, "checkpoint_ns": ""}}))
+        assert initial is not None
+        _seed_two_turn_thread(checkpointer, store, source_thread_id, initial.config)
+
+        response = _branch_with_answer_edit(client, source_thread_id, {"message_id": "ai-2", "message_ids": ["ai-2"]})
+        assert response.status_code == 200, response.text
+        state_response = client.get(f"/api/threads/{response.json()['thread_id']}/state")
+
+    messages = state_response.json()["values"]["messages"]
+    assert {message["id"]: message["content"] for message in messages}["ai-2"] == "Paris."
+
+
+@pytest.mark.parametrize(
+    ("payload", "reason"),
+    [
+        (
+            {"replacement_assistant_message_id": "ai-2", "replacement_assistant_text": "   "},
+            "an all-whitespace replacement would blank the answer",
+        ),
+        (
+            {"replacement_assistant_message_id": "ai-2"},
+            "an id with no text is a half-specified edit",
+        ),
+        (
+            {"replacement_assistant_text": "Lyon."},
+            "text with no id does not say which answer to rewrite",
+        ),
+        (
+            {"replacement_assistant_message_id": "ai-1", "replacement_assistant_text": "Lyon."},
+            "ai-1 is not in the branched turn, so rewriting it would edit copied history",
+        ),
+        (
+            {"replacement_assistant_message_id": "human-2", "replacement_assistant_text": "Lyon."},
+            "a human message is not an answer",
+        ),
+    ],
+)
+def test_branch_rejects_a_malformed_answer_edit(payload: dict, reason: str) -> None:
+    """Every half-specified or out-of-turn replacement is refused whole.
+
+    Accepting one would create a version that silently disagrees with what the
+    user asked for -- the failure the explicit-field design exists to avoid.
+    """
+    app, store, checkpointer = _build_thread_app()
+    source_thread_id = "answer-edit-invalid"
+
+    with TestClient(app) as client:
+        created = client.post("/api/threads", json={"thread_id": source_thread_id, "metadata": {}, "assistant_id": "agent"})
+        assert created.status_code == 200, created.text
+        initial = asyncio.run(checkpointer.aget_tuple({"configurable": {"thread_id": source_thread_id, "checkpoint_ns": ""}}))
+        assert initial is not None
+        _seed_two_turn_thread(checkpointer, store, source_thread_id, initial.config)
+
+        response = _branch_with_answer_edit(
+            client,
+            source_thread_id,
+            {"message_id": "ai-2", "message_ids": ["ai-2"], **payload},
+        )
+
+    assert response.status_code in (409, 422), f"{reason}: got {response.status_code} {response.text}"

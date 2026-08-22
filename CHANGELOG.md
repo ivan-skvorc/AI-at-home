@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **chat:** **Gaslight mode now covers answers, not just prompts.** The Edit
+  button appears on the assistant's reply too: your text simply *becomes* what it
+  said, in a new hidden version, and nothing is re-generated — whatever you send
+  next is answered with those words standing in the history. Re-running the turn
+  would have discarded the edit (the model's fresh reply replacing the words you
+  just wrote), so an answer edit deliberately makes no run. `POST
+  /api/threads/{id}/branches` gains an optional
+  `replacement_assistant_message_id` + `replacement_assistant_text` pair, applied
+  to the copied checkpoint messages *and* the seeded run events; the pair is
+  all-or-nothing and the id must be one of the assistant messages the branch is
+  taken from, so a half-specified or out-of-turn rewrite is refused rather than
+  branching without the edit that was asked for. Only a turn's terminal assistant
+  message is editable, and not while it is still streaming. See FORK.md §18.
+
 - **chat:** The per-turn **Branch** button is replaced by an **Edit** button on
   the user message itself. Editing replays the conversation from that turn with
   the new wording and keeps the version you were reading, reachable through a
