@@ -308,17 +308,17 @@ def _openrouter_model(
 # — and a discount could only "end" by someone editing a string.
 OPENROUTER_BUNDLE_MODELS: list[dict] = [
     _openrouter_model("openrouter-fable-5", "Claude Fable 5 (OpenRouter) (p)", "anthropic/claude-fable-5", supports_vision=True),
-    _openrouter_model("openrouter-grok-4.5", "Grok 4.5 (OpenRouter) (p)", "x-ai/grok-4.5", supports_vision=True),
+    _openrouter_model("openrouter-grok-4.6", "Grok 4.6 (OpenRouter) (p)", "x-ai/grok-4.6", supports_vision=True),
     _openrouter_model("openrouter-gpt-5.6-sol", "GPT-5.6 Sol (OpenRouter) (p)", "openai/gpt-5.6-sol", supports_vision=True),
     _openrouter_model("openrouter-gpt-5.3-codex", "GPT-5.3 Codex (OpenRouter) (p)", "openai/gpt-5.3-codex", supports_vision=True),
     _openrouter_model("openrouter-gemini-3.6-flash", "Gemini 3.6 Flash (OpenRouter) (p)", "google/gemini-3.6-flash", supports_vision=True),
     _openrouter_model("openrouter-llama-4-maverick", "Llama 4 Maverick (OpenRouter) (p)", "meta-llama/llama-4-maverick", supports_vision=True, supports_thinking=False),
     _openrouter_model("openrouter-minimax-m3", "MiniMax M3 (OpenRouter) (p)", "minimax/minimax-m3", supports_vision=True, max_tokens=16000, temperature=1.0),
-    _openrouter_model("openrouter-qwen3.7-max", "Qwen3.7 Max (OpenRouter) (p)", "qwen/qwen3.7-max"),
+    _openrouter_model("openrouter-qwen3.8-max", "Qwen3.8 Max (OpenRouter) (p)", "qwen/qwen3.8-max"),
     _openrouter_model("openrouter-kimi-k3", "Kimi K3 (OpenRouter) (p)", "moonshotai/kimi-k3", supports_vision=True),
     _openrouter_model("openrouter-mistral-large-3", "Mistral Large 3 (OpenRouter) (p)", "mistralai/mistral-large-2512", supports_vision=True, supports_thinking=False),
     _openrouter_model("openrouter-deepseek-v4-pro", "DeepSeek V4 Pro (OpenRouter) (p)", "deepseek/deepseek-v4-pro"),
-    _openrouter_model("openrouter-glm-5.2", "GLM-5.2 (OpenRouter) (p)", "z-ai/glm-5.2", max_tokens=16000),
+    _openrouter_model("openrouter-glm-5.3", "GLM-5.3 (OpenRouter) (p)", "z-ai/glm-5.3", max_tokens=16000),
     _openrouter_model("openrouter-nemotron-3-ultra", "Nemotron 3 Ultra (OpenRouter) (p)", "nvidia/nemotron-3-ultra-550b-a55b", max_tokens=16000),
 ]
 
@@ -448,9 +448,9 @@ OPENAI_HOME_BUNDLE_MODELS: list[dict] = [
     _home_openai_compat_model("openai-gpt-5.6-mini", "GPT-5.6 Mini (OpenAI)", "gpt-5.6-mini", api_key_env="OPENAI_API_KEY", base_url="https://api.openai.com/v1", supports_vision=True, max_tokens=16000),
 ]
 
-# xAI: Grok 4.5 (flagship) + Grok 4.5 Fast (cheaper/faster tier).
+# xAI: Grok 4.6 (flagship) + Grok 4.5 Fast (cheaper/faster tier).
 XAI_HOME_BUNDLE_MODELS: list[dict] = [
-    _home_openai_compat_model("xai-grok-4.5", "Grok 4.5 (xAI)", "grok-4.5", api_key_env="XAI_API_KEY", base_url="https://api.x.ai/v1", supports_vision=True),
+    _home_openai_compat_model("xai-grok-4.6", "Grok 4.6 (xAI)", "grok-4.6", api_key_env="XAI_API_KEY", base_url="https://api.x.ai/v1", supports_vision=True),
     _home_openai_compat_model("xai-grok-4.5-fast", "Grok 4.5 Fast (xAI)", "grok-4.5-fast", api_key_env="XAI_API_KEY", base_url="https://api.x.ai/v1", supports_vision=True, max_tokens=16000),
 ]
 
@@ -468,11 +468,14 @@ DEEPSEEK_HOME_BUNDLE_MODELS: list[dict] = [
     _home_deepseek_style_model("deepseek-v4-flash", "DeepSeek V4 Flash (DeepSeek)", "deepseek-v4-flash", api_key_env="DEEPSEEK_API_KEY", api_base="https://api.deepseek.com", supports_vision=False, max_tokens=8192),
 ]
 
-# Mistral: Large 3 (flagship) + Medium + Small. Mistral Large is not a reasoning
+# Mistral: Large 3 (flagship) + Medium 3.5 + Small. Mistral Large is not a reasoning
 # model (matching the OpenRouter entry), so the family ships without thinking.
+# Medium is pinned to an explicit version rather than `mistral-medium-latest`: an
+# alias re-points silently, so the name, the slug and the price drift apart with
+# nothing raising.
 MISTRAL_HOME_BUNDLE_MODELS: list[dict] = [
     _home_openai_compat_model("mistral-large-3", "Mistral Large 3 (Mistral)", "mistral-large-2512", api_key_env="MISTRAL_API_KEY", base_url="https://api.mistral.ai/v1", supports_vision=True, supports_thinking=False),
-    _home_openai_compat_model("mistral-medium-3", "Mistral Medium 3 (Mistral)", "mistral-medium-latest", api_key_env="MISTRAL_API_KEY", base_url="https://api.mistral.ai/v1", supports_vision=True, supports_thinking=False),
+    _home_openai_compat_model("mistral-medium-3.5", "Mistral Medium 3.5 (Mistral)", "mistral-medium-3-5", api_key_env="MISTRAL_API_KEY", base_url="https://api.mistral.ai/v1", supports_vision=True, supports_thinking=False),
     _home_openai_compat_model(
         "mistral-small-3", "Mistral Small 3 (Mistral)", "mistral-small-latest", api_key_env="MISTRAL_API_KEY", base_url="https://api.mistral.ai/v1", supports_vision=True, supports_thinking=False, max_tokens=16000
     ),
@@ -484,10 +487,10 @@ MOONSHOT_HOME_BUNDLE_MODELS: list[dict] = [
     _home_deepseek_style_model("moonshot-kimi-k2.6", "Kimi K2.6 (Moonshot)", "kimi-k2.6", api_key_env="MOONSHOT_API_KEY", api_base="https://api.moonshot.ai/v1", supports_vision=False, max_tokens=32768),
 ]
 
-# Qwen (Alibaba DashScope, international OpenAI-compatible endpoint): 3.7 Max
+# Qwen (Alibaba DashScope, international OpenAI-compatible endpoint): 3.8 Max
 # (flagship) + 3.7 Plus (cheaper).
 QWEN_HOME_BUNDLE_MODELS: list[dict] = [
-    _home_openai_compat_model("qwen-3.7-max", "Qwen3.7 Max (Qwen)", "qwen3.7-max", api_key_env="DASHSCOPE_API_KEY", base_url="https://dashscope-intl.aliyuncs.com/compatible-mode/v1", supports_vision=False),
+    _home_openai_compat_model("qwen-3.8-max", "Qwen3.8 Max (Qwen)", "qwen3.8-max", api_key_env="DASHSCOPE_API_KEY", base_url="https://dashscope-intl.aliyuncs.com/compatible-mode/v1", supports_vision=False),
     _home_openai_compat_model("qwen-3.7-plus", "Qwen3.7 Plus (Qwen)", "qwen3.7-plus", api_key_env="DASHSCOPE_API_KEY", base_url="https://dashscope-intl.aliyuncs.com/compatible-mode/v1", supports_vision=False, max_tokens=16000),
 ]
 
@@ -497,9 +500,9 @@ MINIMAX_HOME_BUNDLE_MODELS: list[dict] = [
     _home_openai_compat_model("minimax-m2.7", "MiniMax M2.7 (MiniMax)", "MiniMax-M2.7", api_key_env="MINIMAX_API_KEY", base_url="https://api.minimax.io/v1", supports_vision=False, max_tokens=16000, temperature=1.0),
 ]
 
-# Zhipu / z.ai: GLM-5.2 (flagship) + GLM-5.2 Air (cheaper).
+# Zhipu / z.ai: GLM-5.3 (flagship) + GLM-5.2 Air (cheaper).
 ZAI_HOME_BUNDLE_MODELS: list[dict] = [
-    _home_openai_compat_model("zai-glm-5.2", "GLM-5.2 (z-ai)", "glm-5.2", api_key_env="ZAI_API_KEY", base_url="https://api.z.ai/api/paas/v4", supports_vision=False, max_tokens=16000),
+    _home_openai_compat_model("zai-glm-5.3", "GLM-5.3 (z-ai)", "glm-5.3", api_key_env="ZAI_API_KEY", base_url="https://api.z.ai/api/paas/v4", supports_vision=False, max_tokens=16000),
     _home_openai_compat_model("zai-glm-5.2-air", "GLM-5.2 Air (z-ai)", "glm-5.2-air", api_key_env="ZAI_API_KEY", base_url="https://api.z.ai/api/paas/v4", supports_vision=False, max_tokens=16000),
 ]
 
@@ -534,7 +537,7 @@ MODEL_PRICES: dict[str, dict] = {
     "minimax-m3": {"price": {"currency": "USD", "input": 0.6, "output": 2.4}},
     "minimax-m2.7": {"price": {"currency": "USD", "input": 0.3, "output": 1.2}},
     "mistral-large-3": {"price": {"currency": "USD", "input": 0.5, "output": 1.5}},
-    "mistral-medium-3": {"price": {"currency": "USD", "input": 0.4, "output": 2.0}},
+    "mistral-medium-3.5": {"price": {"currency": "USD", "input": 1.5, "output": 7.5}},
     "mistral-small-3": {"price": {"currency": "USD", "input": 0.1, "output": 0.3}},
     "moonshot-kimi-k3": {"price": {"currency": "USD", "input": 3.0, "output": 15.0}},
     "moonshot-kimi-k2.6": {"price": {"currency": "USD", "input": 1.0, "output": 3.0}},
@@ -542,23 +545,23 @@ MODEL_PRICES: dict[str, dict] = {
     "openai-gpt-5.3-codex": {"price": {"currency": "USD", "input": 1.75, "output": 14.0}},
     "openai-gpt-5.6-mini": {"price": {"currency": "USD", "input": 0.25, "output": 2.0}},
     "openrouter-fable-5": {"price": {"currency": "USD", "input": 10.0, "output": 50.0}},
-    "openrouter-grok-4.5": {"price": {"currency": "USD", "input": 2.0, "output": 6.0}},
+    "openrouter-grok-4.6": {"price": {"currency": "USD", "input": 2.0, "output": 6.0}},
     "openrouter-gpt-5.6-sol": {"price": {"currency": "USD", "input": 5.0, "output": 30.0}},
     "openrouter-gpt-5.3-codex": {"price": {"currency": "USD", "input": 1.75, "output": 14.0}},
     "openrouter-gemini-3.6-flash": {"price": {"currency": "USD", "input": 1.5, "output": 7.5}},
     "openrouter-llama-4-maverick": {"price": {"currency": "USD", "input": 0.2, "output": 0.8}},
     "openrouter-minimax-m3": {"price": {"currency": "USD", "input": 0.6, "output": 2.4}, "discount": {"input": 0.24, "output": 0.96}},
-    "openrouter-qwen3.7-max": {"price": {"currency": "USD", "input": 1.5, "output": 4.4}},
+    "openrouter-qwen3.8-max": {"price": {"currency": "USD", "input": 2.0, "output": 6.0}},
     "openrouter-kimi-k3": {"price": {"currency": "USD", "input": 3.0, "output": 15.0}},
     "openrouter-mistral-large-3": {"price": {"currency": "USD", "input": 0.5, "output": 1.5}},
     "openrouter-deepseek-v4-pro": {"price": {"currency": "USD", "input": 0.44, "output": 0.87}},
-    "openrouter-glm-5.2": {"price": {"currency": "USD", "input": 1.15, "output": 3.6}, "discount": {"input": 0.28, "output": 0.87}},
+    "openrouter-glm-5.3": {"price": {"currency": "USD", "input": 1.4, "output": 4.4}},
     "openrouter-nemotron-3-ultra": {"price": {"currency": "USD", "input": 0.5, "output": 2.2}},
-    "qwen-3.7-max": {"price": {"currency": "USD", "input": 1.5, "output": 4.4}},
+    "qwen-3.8-max": {"price": {"currency": "USD", "input": 2.0, "output": 6.0}},
     "qwen-3.7-plus": {"price": {"currency": "USD", "input": 0.4, "output": 1.2}},
-    "xai-grok-4.5": {"price": {"currency": "USD", "input": 2.0, "output": 6.0}},
+    "xai-grok-4.6": {"price": {"currency": "USD", "input": 2.0, "output": 6.0}},
     "xai-grok-4.5-fast": {"price": {"currency": "USD", "input": 0.5, "output": 1.5}},
-    "zai-glm-5.2": {"price": {"currency": "USD", "input": 1.15, "output": 3.6}},
+    "zai-glm-5.3": {"price": {"currency": "USD", "input": 1.4, "output": 4.4}},
     "zai-glm-5.2-air": {"price": {"currency": "USD", "input": 0.2, "output": 1.1}},
 }
 
@@ -955,7 +958,7 @@ LLM_PROVIDERS: list[LLMProvider] = [
     LLMProvider(
         name="xai",
         display_name="xAI Grok",
-        description="Grok 4.5 + Grok 4.5 Fast (direct xAI API)",
+        description="Grok 4.6 + Grok 4.5 Fast (direct xAI API)",
         use="langchain_openai:ChatOpenAI",
         models=[entry["model"] for entry in XAI_HOME_BUNDLE_MODELS],
         default_model=XAI_HOME_BUNDLE_MODELS[0]["model"],
@@ -974,7 +977,7 @@ LLM_PROVIDERS: list[LLMProvider] = [
     LLMProvider(
         name="mistral",
         display_name="Mistral",
-        description="Mistral Large 3 + Medium + Small (direct Mistral API)",
+        description="Mistral Large 3 + Medium 3.5 + Small (direct Mistral API)",
         use="langchain_openai:ChatOpenAI",
         models=[entry["model"] for entry in MISTRAL_HOME_BUNDLE_MODELS],
         default_model=MISTRAL_HOME_BUNDLE_MODELS[0]["model"],
@@ -993,7 +996,7 @@ LLM_PROVIDERS: list[LLMProvider] = [
     LLMProvider(
         name="qwen",
         display_name="Qwen (Alibaba DashScope)",
-        description="Qwen3.7 Max + Plus (international DashScope OpenAI-compatible endpoint)",
+        description="Qwen3.8 Max + 3.7 Plus (international DashScope OpenAI-compatible endpoint)",
         use="langchain_openai:ChatOpenAI",
         models=[entry["model"] for entry in QWEN_HOME_BUNDLE_MODELS],
         default_model=QWEN_HOME_BUNDLE_MODELS[0]["model"],
@@ -1012,7 +1015,7 @@ LLM_PROVIDERS: list[LLMProvider] = [
     LLMProvider(
         name="zai",
         display_name="Zhipu z.ai (GLM)",
-        description="GLM-5.2 + GLM-5.2 Air (direct z.ai API)",
+        description="GLM-5.3 + GLM-5.2 Air (direct z.ai API)",
         use="langchain_openai:ChatOpenAI",
         models=[entry["model"] for entry in ZAI_HOME_BUNDLE_MODELS],
         default_model=ZAI_HOME_BUNDLE_MODELS[0]["model"],

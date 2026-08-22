@@ -259,7 +259,7 @@ class TestHomeApiBundleProviders:
             # `MiniMax-M3`, OpenRouter uses `minimax/minimax-m3`).
             return any(slug.split("/", 1)[-1].lower() == bare.lower() for slug in openrouter_ids)
 
-        for flagship in ("gpt-5.6-sol", "gpt-5.3-codex", "grok-4.5", "gemini-3.6-flash", "deepseek-v4-pro", "mistral-large-2512", "kimi-k3", "qwen3.7-max", "MiniMax-M3", "glm-5.2"):
+        for flagship in ("gpt-5.6-sol", "gpt-5.3-codex", "grok-4.6", "gemini-3.6-flash", "deepseek-v4-pro", "mistral-large-2512", "kimi-k3", "qwen3.8-max", "MiniMax-M3", "glm-5.3"):
             assert flagship in home_ids, f"{flagship} missing from a home block"
             assert routed(flagship), f"{flagship} not doubled on OpenRouter"
 

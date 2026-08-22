@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **chat:** **Gaslight mode now covers answers, not just prompts.** The Edit
+  button appears on the assistant's reply too: your text simply *becomes* what it
+  said, in a new hidden version, and nothing is re-generated — whatever you send
+  next is answered with those words standing in the history. Re-running the turn
+  would have discarded the edit (the model's fresh reply replacing the words you
+  just wrote), so an answer edit deliberately makes no run. `POST
+  /api/threads/{id}/branches` gains an optional
+  `replacement_assistant_message_id` + `replacement_assistant_text` pair, applied
+  to the copied checkpoint messages *and* the seeded run events; the pair is
+  all-or-nothing and the id must be one of the assistant messages the branch is
+  taken from, so a half-specified or out-of-turn rewrite is refused rather than
+  branching without the edit that was asked for. Only a turn's terminal assistant
+  message is editable, and not while it is still streaming. See FORK.md §18.
+
 - **chat:** The per-turn **Branch** button is replaced by an **Edit** button on
   the user message itself. Editing replays the conversation from that turn with
   the new wording and keeps the version you were reading, reachable through a
@@ -167,6 +181,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`test_skill_tool_policy_middleware.py`, `test_lead_agent_model_resolution.py`).
 
 ### Changed
+
+- **docs:** The model-and-pricing audit now states **where a price may come
+  from**, as three ordered tiers instead of one absolute rule. *Verified* (the
+  provider's own page) stays the standard; when that page cannot be reached, a
+  figure that **two or more independent sources state identically** is now an
+  accepted outcome rather than a rule being bent — provided the sources are
+  genuinely independent, agree exactly on both numbers (a disagreement is a stop,
+  never an average), carry no discount, and are recorded as corroborated in the
+  audit log so the next pass is directed at them. Failing both, the entry is left
+  alone; a price is still never carried from memory. Shipping a lab's flagship
+  with no `price:` block is the failure this permits you to avoid, because an
+  unpriced model contributes nothing to every cost total. The weekly job's report
+  says the same thing and still never commits a price. See FORK.md, *Where a
+  price may come from*.
+
+- **docs:** The README's fork feature list gained the two features it was
+  missing: the **price graph** in the cost dropdown and **gaslight mode** (the
+  per-message edit that replays the conversation into a hidden version).
+  "Gaslight mode" is the documented name of the behaviour in the README and
+  FORK.md §18; the per-message button is still labelled **Edit** in the UI.
 
 - **config:** `config_version` 39 → 40. Upstream's hybrid fact-eviction work
   added ten new fields under `memory.backend_config`

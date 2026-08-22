@@ -25,6 +25,31 @@ def new_by_model_usage_entry() -> dict[str, int]:
     return {"tokens": 0, "runs": 0, "input_tokens": 0, "output_tokens": 0, "cache_read_tokens": 0}
 
 
+def new_per_run_usage_entry(run_id: str, created_at: str | None) -> dict[str, Any]:
+    """Zeroed per-*run* bucket for ``aggregate_tokens_by_thread`` results.
+
+    One entry per completed run, in the order the runs happened, so the caller
+    can price each conversation step separately instead of only the thread
+    total. The per-model split is kept rather than a single token count because
+    a step is priced exactly like the thread is — each model at its own rate —
+    and an Ultra-mode step whose subagent ran on a cheaper model would otherwise
+    be billed at the lead's rate.
+
+    Shared by the memory and SQL stores so the two aggregations cannot drift.
+    """
+    return {"run_id": run_id, "created_at": created_at, "tokens": 0, "by_model": {}}
+
+
+def add_per_run_model_usage(entry: dict[str, Any], model: str, usage: dict[str, Any]) -> None:
+    """Fold one model's usage into a per-run bucket produced above."""
+    bucket = entry["by_model"].setdefault(model, {"input_tokens": 0, "output_tokens": 0, "cache_read_tokens": 0, "total_tokens": 0})
+    bucket["input_tokens"] += usage.get("input_tokens", 0) or 0
+    bucket["output_tokens"] += usage.get("output_tokens", 0) or 0
+    bucket["cache_read_tokens"] += usage.get("cache_read_tokens", 0) or 0
+    bucket["total_tokens"] += usage.get("total_tokens", 0) or 0
+    entry["tokens"] += usage.get("total_tokens", 0) or 0
+
+
 @dataclass(frozen=True)
 class EditReplayVisibility:
     hidden_source_run_ids: set[str] = field(default_factory=set)

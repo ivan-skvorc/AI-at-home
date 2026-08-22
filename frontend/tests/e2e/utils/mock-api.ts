@@ -200,7 +200,12 @@ function messageId(message: unknown): string | undefined {
   return typeof raw === "string" ? raw : undefined;
 }
 
-function branchMessagesFromTurn(messages: unknown[], targetIds: Set<string>) {
+function branchMessagesFromTurn(
+  messages: unknown[],
+  targetIds: Set<string>,
+  /** Gaslight-mode answer edit, applied the way the Gateway applies it. */
+  rewrite?: { messageId: string; text: string },
+) {
   let targetEndIndex = -1;
   for (const [index, message] of messages.entries()) {
     const id = messageId(message);
@@ -208,7 +213,16 @@ function branchMessagesFromTurn(messages: unknown[], targetIds: Set<string>) {
       targetEndIndex = Math.max(targetEndIndex, index);
     }
   }
-  return targetEndIndex >= 0 ? messages.slice(0, targetEndIndex + 1) : messages;
+  const branched =
+    targetEndIndex >= 0 ? messages.slice(0, targetEndIndex + 1) : messages;
+  if (!rewrite) {
+    return branched;
+  }
+  return branched.map((message) =>
+    messageId(message) === rewrite.messageId
+      ? { ...(message as Record<string, unknown>), content: rewrite.text }
+      : message,
+  );
 }
 
 function mockStreamMessages(
@@ -906,6 +920,8 @@ export function mockLangGraphAPI(page: Page, options?: MockAPIOptions) {
         message_id?: string;
         message_ids?: string[];
         title?: string;
+        replacement_assistant_message_id?: string;
+        replacement_assistant_text?: string;
       };
       const targetIds = new Set(
         [body.message_id, ...(body.message_ids ?? [])].filter(
@@ -931,6 +947,13 @@ export function mockLangGraphAPI(page: Page, options?: MockAPIOptions) {
         messages: branchMessagesFromTurn(
           sourceThread?.messages ?? [],
           targetIds,
+          body.replacement_assistant_message_id !== undefined &&
+            body.replacement_assistant_text !== undefined
+            ? {
+                messageId: body.replacement_assistant_message_id,
+                text: body.replacement_assistant_text,
+              }
+            : undefined,
         ),
       });
 

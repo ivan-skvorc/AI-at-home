@@ -11,6 +11,7 @@ import {
   resolveEditVersionLineage,
   resolveEditVersionRootThreadId,
   resolveEditVersionSwitchers,
+  type EditVersionKind,
   type EditVersionSwitcher,
 } from "@/core/threads/edit-versions";
 import {
@@ -30,6 +31,8 @@ export type EditMessageInput = {
   baseMessageId: string | null;
   baseMessageIds: string[];
   replacementText: string;
+  /** Prompt edit (replay a new question) or answer edit (rewrite the reply). */
+  kind?: EditVersionKind;
 };
 
 /**
@@ -107,6 +110,7 @@ export function useEditVersions({
       baseMessageId,
       baseMessageIds,
       replacementText,
+      kind = "prompt",
     }: EditMessageInput) => {
       if (!isReady) {
         return false;
@@ -122,6 +126,7 @@ export function useEditVersions({
           title,
           agentName,
           text: replacementText,
+          kind,
         });
         routeTo(created.threadId);
         return true;

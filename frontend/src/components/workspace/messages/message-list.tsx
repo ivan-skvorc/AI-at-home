@@ -50,6 +50,7 @@ import {
   extractPresentFilesFromMessage,
   extractTextFromMessage,
   getAssistantTurnCopyData,
+  getAssistantTurnEditPoints,
   getHumanTurnEditPoints,
   getStreamMetadataSnapshot,
   getStreamingMessageLookup,
@@ -74,7 +75,8 @@ import {
 } from "@/core/tasks/subtask-result";
 import type { AgentThreadState } from "@/core/threads";
 import {
-  CONVERSATION_START_BASE_MESSAGE_ID,
+  editVersionGroupKey,
+  type EditVersionKind,
   type EditVersionSwitcher,
 } from "@/core/threads/edit-versions";
 import { cn } from "@/lib/utils";
@@ -317,12 +319,14 @@ export function MessageList({
     baseMessageId: string | null;
     baseMessageIds: string[];
     replacementText: string;
+    /** Which half of the turn was edited: the prompt, or the answer to it. */
+    kind: EditVersionKind;
   }) => boolean | Promise<boolean>;
   onSubmitHumanInput?: (
     request: HumanInputRequest,
     response: HumanInputResponse,
   ) => HumanInputSubmitResult | Promise<HumanInputSubmitResult>;
-  /** Alternative versions of an edited turn, keyed by the turn's base message id. */
+  /** Alternative versions of an edited turn, keyed by `editVersionGroupKey`. */
   editVersionSwitchers?: ReadonlyMap<string, EditVersionSwitcher>;
   onSelectEditVersion?: (versionThreadId: string) => void;
   canRegenerate?: boolean;
@@ -651,6 +655,10 @@ export function MessageList({
   }, [groupedMessages, thread.isLoading]);
   const humanTurnEditPoints = useMemo(
     () => getHumanTurnEditPoints(groupedMessages, thread.isLoading),
+    [groupedMessages, thread.isLoading],
+  );
+  const assistantTurnEditPoints = useMemo(
+    () => getAssistantTurnEditPoints(groupedMessages, thread.isLoading),
     [groupedMessages, thread.isLoading],
   );
   const replayActionBusy =
@@ -998,14 +1006,22 @@ export function MessageList({
                     )}
                   >
                     {group.messages.map((msg) => {
-                      const editPoint =
-                        group.type === "human" && msg.id
+                      // A prompt and an answer are edited the same way; only
+                      // the anchor differs, so both resolve into one editPoint
+                      // and every wiring below is shared.
+                      const editKind =
+                        group.type === "human" ? "prompt" : "answer";
+                      const editPoint = !msg.id
+                        ? undefined
+                        : group.type === "human"
                           ? humanTurnEditPoints.get(msg.id)
-                          : undefined;
+                          : assistantTurnEditPoints.get(msg.id);
                       const versionSwitcher = editPoint
                         ? editVersionSwitchers?.get(
-                            editPoint.baseMessageId ??
-                              CONVERSATION_START_BASE_MESSAGE_ID,
+                            editVersionGroupKey(
+                              editKind,
+                              editPoint.baseMessageId,
+                            ),
                           )
                         : undefined;
                       const item = (
@@ -1048,6 +1064,7 @@ export function MessageList({
                                       baseMessageId: editPoint.baseMessageId,
                                       baseMessageIds: editPoint.baseMessageIds,
                                       replacementText,
+                                      kind: editKind,
                                     });
                                   } finally {
                                     setEditingMessageId(null);

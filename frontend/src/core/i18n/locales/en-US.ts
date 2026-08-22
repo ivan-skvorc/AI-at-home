@@ -54,9 +54,13 @@ export const enUS: Translations = {
     exportFailed: "Failed to export conversation.",
     regenerate: "Regenerate",
     editMessage: "Edit message",
+    editAnswer: "Edit answer",
     saveAndSend: "Save and send",
+    saveAnswerVersion: "Save version",
     editVersionNotice:
       "Sending replays the conversation from here with the edited message. The current version is kept and stays reachable from the switcher on this message.",
+    editAnswerVersionNotice:
+      "Saving keeps this conversation and adds a version in which the assistant answered this instead. Nothing is re-generated \u2014 your words become the answer, and whatever you send next is answered with them in the history.",
     showArtifacts: "Show artifacts of this conversation",
     browser: "Browser",
     showBrowser: "Open browser panel",
@@ -805,6 +809,13 @@ export const enUS: Translations = {
     suggestions: "Suggestions",
     auxCallCount: (count: number) =>
       count === 1 ? "1 call" : `${count} calls`,
+    chartTitle: "Cost per step",
+    chartPerStep: "Each step",
+    chartCumulative: "Running total",
+    chartModeLabel: "Cost chart mode",
+    chartStepLabel: (step: number, amount: string) => `Step ${step}: ${amount}`,
+    chartEmpty: "No priced steps yet.",
+    chartAxisHint: "Steps (your messages)",
   },
 
   contextUsage: {

@@ -95,6 +95,73 @@ test("branchThreadFromTurn posts the selected turn ids to the gateway", async ()
   );
 });
 
+test("branchThreadFromTurn sends an answer rewrite as a pair", async () => {
+  fetchWithAuth.mockResolvedValue({
+    ok: true,
+    json: async () => ({
+      thread_id: "branch-thread",
+      parent_thread_id: "thread-1",
+      parent_checkpoint_id: "checkpoint-2",
+      branched_from_message_id: "ai-2",
+      workspace_clone_mode: "skipped_historical_turn",
+    }),
+  });
+
+  const { branchThreadFromTurn } = await import("@/core/threads/api");
+
+  await branchThreadFromTurn("thread-1", {
+    messageId: "ai-2",
+    messageIds: ["ai-2"],
+    replacementAssistantMessageId: "ai-2",
+    replacementAssistantText: "Lyon.",
+  });
+
+  expect(fetchWithAuth).toHaveBeenCalledWith(
+    expect.stringContaining("/api/threads/thread-1/branches"),
+    expect.objectContaining({
+      body: JSON.stringify({
+        message_id: "ai-2",
+        message_ids: ["ai-2"],
+        replacement_assistant_message_id: "ai-2",
+        replacement_assistant_text: "Lyon.",
+      }),
+    }),
+  );
+});
+
+test("branchThreadFromTurn omits a half-specified answer rewrite", async () => {
+  fetchWithAuth.mockResolvedValue({
+    ok: true,
+    json: async () => ({
+      thread_id: "branch-thread",
+      parent_thread_id: "thread-1",
+      parent_checkpoint_id: "checkpoint-2",
+      branched_from_message_id: "ai-2",
+      workspace_clone_mode: "skipped_historical_turn",
+    }),
+  });
+
+  const { branchThreadFromTurn } = await import("@/core/threads/api");
+
+  // The Gateway refuses a half-specified pair, so sending one would turn a
+  // plain branch into a 422 rather than degrading to "no rewrite".
+  await branchThreadFromTurn("thread-1", {
+    messageId: "ai-2",
+    messageIds: ["ai-2"],
+    replacementAssistantMessageId: "ai-2",
+  });
+
+  expect(fetchWithAuth).toHaveBeenCalledWith(
+    expect.stringContaining("/api/threads/thread-1/branches"),
+    expect.objectContaining({
+      body: JSON.stringify({
+        message_id: "ai-2",
+        message_ids: ["ai-2"],
+      }),
+    }),
+  );
+});
+
 test("branchThreadFromTurn surfaces gateway detail on failure", async () => {
   fetchWithAuth.mockResolvedValue({
     ok: false,

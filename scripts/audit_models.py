@@ -14,9 +14,12 @@ reporting retired or renamed slugs, changed list prices, and promotions that
 started or ended.
 
 **It proposes, it never commits.** FORK.md's audit rules require reading the
-price off the provider's own page, and a wrong automated price is worse than a
-stale one: it is wrong *with confidence*, and it silences the next audit. The
-output is a report for a human, with a suggested diff for both sources.
+price off the provider's own page — or, when that page cannot be reached, off
+several independent sources that state it identically, recorded as corroborated
+in the audit log. Both are judgements a person makes and writes down. A wrong
+automated price is worse than a stale one: it is wrong *with confidence*, and it
+silences the next audit. The output is a report for a human, with a suggested
+diff for both sources.
 
 **An unreachable provider is a skip, never a failure.** A weekly red job is a
 job people learn to ignore, which would cost more than the drift it detects.
@@ -507,7 +510,10 @@ def render_report(findings: list[Finding], skipped: list[str]) -> str:
         "**Every change here is a suggestion and is not auto-applied.** The audit reads what a",
         "provider's API reports; the fork's rule is that a price is confirmed by reading the",
         "**provider's own page**, because a wrong automated price is worse than a stale one — it is",
-        "wrong with confidence and silences the next audit.",
+        "wrong with confidence and silences the next audit. When that page cannot be reached, a figure",
+        "**several independent sources state identically** is accepted instead, provided it is logged as",
+        "corroborated so the next pass re-checks it (FORK.md, *Where a price may come from*). A discount",
+        "never qualifies for that fallback — only a standard rate does.",
         "",
         f"Any edit belongs in **both** synced sources: `{CONFIG_SOURCE}` (what a fresh install gets)",
         f"and `{WIZARD_PROVIDERS}` (what `make setup` writes). Changing one gives two users different prices.",

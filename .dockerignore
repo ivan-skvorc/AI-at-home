@@ -1,4 +1,4 @@
-.env
+**/.env
 Dockerfile
 .dockerignore
 .git
@@ -76,6 +76,11 @@ backend/.coverage
 # `backend/.deer-flow/`.
 .deer-flow/
 **/.deer-flow/
+
+# Same reasoning for the sandbox's runtime scratch (upstream #4853): it is
+# written by a running DeerFlow, is not a build input, and `COPY backend
+# ./backend` would otherwise bake it into the image.
+backend/sandbox/
 
 *.md
 !README.md

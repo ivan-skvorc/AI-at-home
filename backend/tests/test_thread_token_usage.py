@@ -69,6 +69,10 @@ def test_thread_token_usage_returns_stable_shape(monkeypatch: pytest.MonkeyPatch
     assert response.json() == {
         "thread_id": "thread-1",
         **_aggregate_result(),
+        # Per-step costs (fork feature). The mocked aggregate carries no
+        # ``by_run``, which is exactly the pre-per-run-aggregation store shape:
+        # an empty chart, not an error.
+        "steps": [],
         "context_usage": None,
         # The spend cap is off by default, so the header gets no budget line.
         "spend_budget": None,

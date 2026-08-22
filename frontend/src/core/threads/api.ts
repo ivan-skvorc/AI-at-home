@@ -32,6 +32,14 @@ export type BranchThreadFromTurnInput = {
   messageId: string;
   messageIds?: string[];
   title?: string;
+  /**
+   * Gaslight-mode answer edit: rewrite this assistant message's words in the
+   * branch. It must be one of `messageIds`, and the two fields travel together —
+   * the Gateway refuses a half-specified pair rather than branching without the
+   * edit the caller asked for.
+   */
+  replacementAssistantMessageId?: string;
+  replacementAssistantText?: string;
 };
 
 export type ThreadMetadataPatch = Record<string, unknown>;
@@ -97,6 +105,14 @@ export async function branchThreadFromTurn(
         message_id: input.messageId,
         message_ids: input.messageIds ?? [input.messageId],
         ...(input.title ? { title: input.title } : {}),
+        ...(input.replacementAssistantMessageId !== undefined &&
+        input.replacementAssistantText !== undefined
+          ? {
+              replacement_assistant_message_id:
+                input.replacementAssistantMessageId,
+              replacement_assistant_text: input.replacementAssistantText,
+            }
+          : {}),
       }),
     },
   );

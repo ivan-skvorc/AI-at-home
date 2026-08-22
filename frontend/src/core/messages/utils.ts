@@ -286,6 +286,90 @@ export function getHumanTurnEditPoints(
   return editPoints;
 }
 
+export type AssistantTurnEditPoint = {
+  /** Ordinal of the turn this answer belongs to, among visible user messages. */
+  turnIndex: number;
+  /**
+   * The assistant message being rewritten. It is also the branch anchor: the
+   * new version copies the conversation *through* this turn and then replaces
+   * this message's words, so the prompt that produced it stays as it was.
+   */
+  baseMessageId: string;
+  /** Every assistant message id in the turn (the branch payload). */
+  baseMessageIds: string[];
+  /**
+   * Whether the answer can be edited right now. A turn still streaming has no
+   * settled answer to rewrite, so it is reported as not editable rather than
+   * dropped — the caller still needs the anchor to place a version switcher.
+   */
+  editable: boolean;
+};
+
+/**
+ * Edit anchors for the settled answer of every turn, keyed by message id.
+ *
+ * Editing an answer is the mirror of editing a prompt, one turn later: the
+ * prompt edit branches from the *previous* turn and replays a new question,
+ * while the answer edit branches from *this* turn and replaces what came back.
+ * Only the turn's terminal assistant message qualifies — an intermediate group
+ * (tool calls, a clarification) is not the answer, and rewriting one would
+ * leave the turn describing work that never happened.
+ */
+export function getAssistantTurnEditPoints(
+  groups: MessageGroup[],
+  isCurrentTurnLoading: boolean,
+): Map<string, AssistantTurnEditPoint> {
+  const editPoints = new Map<string, AssistantTurnEditPoint>();
+  let turnIndex = -1;
+  let lastAnswerMessageId: string | null = null;
+
+  const aiMessageIds = (group: MessageGroup) =>
+    group.messages
+      .filter((message) => message.type === "ai" && message.id)
+      .map((message) => message.id)
+      .filter((id): id is string => typeof id === "string");
+
+  for (const group of groups) {
+    if (group.type === "human") {
+      turnIndex += 1;
+      continue;
+    }
+    if (group.type !== "assistant" || turnIndex < 0) {
+      continue;
+    }
+    const baseMessageIds = aiMessageIds(group);
+    const baseMessageId = baseMessageIds.at(-1);
+    if (!baseMessageId) {
+      continue;
+    }
+    // A later assistant group in the same turn supersedes this one: only the
+    // last is the answer, so drop the anchor the earlier group had claimed.
+    if (lastAnswerMessageId && lastAnswerMessageId !== baseMessageId) {
+      const superseded = editPoints.get(lastAnswerMessageId);
+      if (superseded?.turnIndex === turnIndex) {
+        editPoints.delete(lastAnswerMessageId);
+      }
+    }
+    editPoints.set(baseMessageId, {
+      turnIndex,
+      baseMessageId,
+      baseMessageIds,
+      editable: true,
+    });
+    lastAnswerMessageId = baseMessageId;
+  }
+
+  // The answer in flight has not settled, so there is nothing stable to rewrite.
+  if (isCurrentTurnLoading && lastAnswerMessageId) {
+    const current = editPoints.get(lastAnswerMessageId);
+    if (current) {
+      editPoints.set(lastAnswerMessageId, { ...current, editable: false });
+    }
+  }
+
+  return editPoints;
+}
+
 export function groupMessages<T>(
   messages: Message[],
   mapper: (group: MessageGroup) => T,

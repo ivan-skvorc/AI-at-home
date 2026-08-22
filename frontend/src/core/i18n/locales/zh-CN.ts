@@ -54,9 +54,13 @@ export const zhCN: Translations = {
     exportFailed: "导出对话失败。",
     regenerate: "重新生成",
     editMessage: "编辑消息",
+    editAnswer: "编辑回答",
     saveAndSend: "保存并发送",
+    saveAnswerVersion: "保存版本",
     editVersionNotice:
       "发送后将以编辑后的消息从这里重新运行对话。当前版本会被保留，可通过这条消息上的切换器返回。",
+    editAnswerVersionNotice:
+      "保存后会保留当前对话，并新增一个版本，其中助手改为这样回答。不会重新生成任何内容——你写的文字就是这条回答，之后发送的消息会基于它继续。",
     showArtifacts: "查看此对话的文件",
     browser: "浏览器",
     showBrowser: "打开浏览器面板",
@@ -774,6 +778,14 @@ export const zhCN: Translations = {
     memory: "记忆",
     suggestions: "建议",
     auxCallCount: (count: number) => `${count} 次调用`,
+    chartTitle: "每步费用",
+    chartPerStep: "单步",
+    chartCumulative: "累计",
+    chartModeLabel: "费用图表模式",
+    chartStepLabel: (step: number, amount: string) =>
+      `第 ${step} 步：${amount}`,
+    chartEmpty: "暂无已计价的步骤。",
+    chartAxisHint: "步骤（你的消息）",
   },
 
   contextUsage: {

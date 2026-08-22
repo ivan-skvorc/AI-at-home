@@ -9,6 +9,7 @@
 >   - **`ANTHROPIC_API_KEY` present** → Claude **Fable 5**, **Opus 5**, **Opus 4.8**, **Sonnet 5**, **Sonnet 4.6**, **Haiku 4.5** (direct Anthropic API). Opus and Sonnet each ship their last 4.x alongside 5; Haiku and Fable ship only the latest.
 >   - **`OPENROUTER_API_KEY` present** → Claude **Fable 5** (the flagship, for OpenRouter-only users — every other Claude is on the direct Anthropic block above), **Grok 4.5**, **GPT-5.6 Sol**, **GPT-5.3 Codex**, **Gemini 3.6 Flash**, **Llama 4 Maverick**, **MiniMax M3**, **Qwen3.7 Max**, **Kimi K3**, **Mistral Large 3**, **DeepSeek V4 Pro**, **GLM-5.2**, **Nemotron 3 Ultra** (all via OpenRouter). One flagship per big-name lab (a second only when the smaller model is acclaimed on its own — e.g. GPT-5.3 Codex).
 > - 🔀 **Independent model per conversation** — every chat remembers its **own** model (and subagent model, mode, and reasoning effort), stored per-thread instead of in one shared setting. Run a free local Ollama model in one conversation and a cloud model in another, side by side — switching the model in one no longer flips the model in the others. Previously every chat that hadn't been explicitly pinned followed the last model picked *anywhere* (even across browser tabs, via the shared settings sync), which made running local and cloud models simultaneously impossible; now each conversation is isolated and new chats simply start from the configured default model.
+> - 🕯️ **Gaslight mode** — edit **either half of a turn** and the conversation carries on as if those had always been the words. Edit your own message and it replays from there with the new wording; edit **the assistant's answer** and your text simply *becomes* what it said — nothing is re-generated, and whatever you send next is answered with those words standing in the history. The version you were reading is kept either way, and a `‹ 2/2 ›` switcher appears **on the edited message** to move between them. Upstream's **Branch** button forked each attempt into a *separate* chat, so trying three phrasings of one question left four entries in the sidebar with no clue which was which; here the alternatives are hidden threads and **one conversation stays one sidebar entry**, however many times you edit it — and the entry follows whichever version you are actually reading. Editing the very first message has nothing to fork from, so it simply starts a fresh version.
 > - 🪃 **Model fallback chains** — when a model call fails for a reason worth retrying (the Ollama daemon is down, the context overflowed, the model turns out not to support tool calls, or the provider returns a 5xx), the turn degrades to the next model you listed instead of failing. Deliberate stops — you hit cancel, a spend cap fired, a guardrail refused — never fall back, and tokens are billed to whichever model actually answered, so your cost figures stay honest. Off until you configure a chain.
 > - 🧭 **Cost-aware subagent routing** — a policy that sends delegated subtasks to the cheapest model that can actually do them, so the saving is the default instead of something you remember to set every session. A tool-free extraction can run on a local model for free while the lead stays on a frontier model. It never picks a model that can't do the job (no tool support, no vision, context window too small), your explicit per-conversation subagent choice always wins, and the subagent card shows which rule decided. Off until you write a policy.
 > - 📱 **Installable on your phone, with notifications that arrive after you close it** — DeerFlow now ships a web app manifest and a service worker, so you can add it to your home screen and get a Web Push notification when a long run finishes, even with the browser closed. Background notifications need a secure origin (`localhost`, or your Tailscale HTTPS name); on a plain-HTTP LAN address the settings page says exactly that and tells you how to fix it, instead of silently doing nothing.
@@ -16,6 +17,7 @@
 > - 💡 **Follow-up suggestions off by default** — the clickable follow-up-question chips make an extra model call after every answer, so they now default **off** to save cost. Turn them back on per-browser under **Settings → Suggestions**, where a dropdown also lets you pick which model generates them ("Follow workflow selection" by default, or any configured model — pick a cheap one to keep it cheap).
 > - 🧠 **Long-term memory off by default** — the agent no longer learns from or injects your saved memory until you opt in. Turn it on per-browser under **Settings → Memory** (the operator can still hard-disable it with `memory.enabled: false` in `config.yaml`, which greys out the toggle). When off, each run sends `memory_enabled: false` and the backend skips memory injection, extraction, and memory tools.
 > - 💵 **Live cost overview in the conversation header** — the token counter next to a chat now shows an estimated **dollar (or other currency) cost**, priced from each model's `pricing:` block in `config.yaml`. It's **model-aware**: each run's per-model token split is billed at that model's own rate, so subagents on a cheaper or local model are costed correctly — hover the **?** for the note that models without a configured price (like local Ollama) count as $0, ignoring electricity. When the **memory** or **suggestions** features are on, their extra LLM calls get their own separate counters in the dropdown so you can see what each is quietly costing — and those two counters are **persisted** (a small `aux_usage.sqlite3` beside your other DeerFlow state), so they survive restarting the stack instead of resetting to zero. No pricing configured → the cost line simply hides.
+> - 📈 **Price graph — what each step cost** — the same dropdown also plots the cost of every step of the conversation (a step = one user message and the answer to it), with a toggle between **each step** (columns) and the **running total** (a line). The headline figure says what the conversation has cost; the graph says *which turn* cost it — the question a thread that switches models mid-way actually raises. It is priced through the same code as the total, so the last cumulative point always equals the number printed right above it, and the y axis is anchored at zero so near-identical turns look near-identical. A turn run on an unpriced local model draws **no** column rather than a zero-height one — "nothing could price this turn" is a different claim from "this turn was free".
 > - 🛑 **Spend caps in real money** — set `spend_budget` in `config.yaml` to a daily / weekly / monthly limit in your pricing currency and DeerFlow warns the agent as you approach it, then wraps the run up and refuses new ones once it is spent. Costed per model, so a premium lead with cheap or local subagents is billed correctly — and **unpriced local models count as $0, so a fully local session is never blocked**. The chat header shows what is left.
 > - 🧾 **Spend page** — a **Spend** entry in the sidebar answers "where did my money go this month", broken down by model, by conversation, and by feature (conversation / memory / suggestions) over the last 7, 30, or 90 days.
 > - 🔓 **Passwordless by default (local)** — the local stack (`make dev` / `make start`) starts with no login wall: every request resolves to the built-in `default` admin, so the app — and other devices on your LAN — reach it with no username/password. It's opt-out (`DEER_FLOW_AUTH_DISABLED=0` in `.env` restores the email/password login) and self-disabling in production (`DEER_FLOW_ENV`/`ENVIRONMENT` = `prod` keeps auth on regardless).
@@ -1300,6 +1302,12 @@ creates while Redis or initial inventory is unavailable. Run Redis with persiste
 E2B acquisition uses a bounded executor. Waiting acquisitions do not use the
 default asyncio executor.
 
+Each E2B mount upload pass accepts at most 512 MiB and 2,000 files. The pass
+also has a cooperative 120-second deadline. Skill projections and configured
+mounts share these limits. The provider checks the deadline before each mount
+and during directory preflight. The deadline stops new file uploads after it
+expires. It does not interrupt active filesystem or E2B SDK calls.
+
 An E2B VM keeps its slot until E2B confirms destruction. This rule covers
 create and reclaim operations. Discovery can find a VM from another Gateway.
 Shutdown closes an unowned discovery client without destroying its VM.
@@ -1316,7 +1324,7 @@ The built-in `grep` tool searches either one text file or all matching text file
 
 Image bytes loaded for a vision-model call are transient: DeerFlow removes the hidden base64 message after the model consumes it so later checkpoints do not keep duplicating that payload.
 
-After each run, DeerFlow records a workspace change summary for the run-owned `workspace` and `outputs` directories. The Web UI shows a compact "files changed" badge on the assistant turn; opening it reveals created, modified, and deleted files with text diffs when safe to display. Uploads are excluded because they are user inputs, not agent-generated changes. Large, binary, or sensitive-looking files are shown as metadata only.
+After each run, DeerFlow records a workspace change summary for the run-owned `workspace` and `outputs` directories. The Web UI shows a compact "files changed" badge on the assistant turn; opening it reveals created, modified, and deleted files with text diffs when safe to display. Uploads are excluded because they are user inputs, not agent-generated changes, and stdio MCP temporary/debug files under the DeerFlow-owned `.mcp/` namespace are excluded because they are process-internal state (like `.git/` and `node_modules/`, any directory named `.mcp` is excluded at any depth). Large, binary, or sensitive-looking files are shown as metadata only.
 
 Files presented through `present_files` remain part of the thread's artifact state, and the Web UI restores the artifact panel and selected document after a page refresh. The currently selected formal artifact is refreshed once when the run finishes so edits become visible without a manual reload. Existing UTF-8 text artifacts under `/mnt/user-data/outputs` can also be edited and explicitly saved from the panel on Unix and Windows while the thread is idle; saves use content revisions to prevent overwriting agent changes.
 
@@ -1665,14 +1673,75 @@ putting the security measures below in place.
 > so `BIND_HOST` is a **single bind interface, not an allowlist**. Setting it to
 > just your Tailscale IP (e.g. `BIND_HOST=100.x.y.z`) binds *only* that interface
 > and drops loopback — the app then works over Tailscale but **not** at
-> `http://localhost:2026` on the host itself. To reach it from **both** localhost
-> and Tailscale, use `BIND_HOST=0.0.0.0` (all interfaces), not the Tailscale IP
-> alone. After editing `.env`, apply the change with `./scripts/deploy.sh start`
-> (or `make up-start`) — a config-only change needs no image rebuild.
+> `http://localhost:2026` on the host itself. Both Docker paths now co-bind
+> `127.0.0.1` for you in that case, but you no longer need `BIND_HOST` at all for
+> tailnet access — see the next section. After editing `.env`, apply the change
+> with `./scripts/deploy.sh start` (or `make up-start`) — a config-only change
+> needs no image rebuild.
 
 **Complete first-run setup before the host becomes reachable.** A fresh
 instance has no accounts yet, so create the admin account through `/setup`
 immediately after starting any deployment that is not loopback-only.
+
+### Reach This From Your Phone Over Tailscale
+
+If the host is on a [tailnet](https://tailscale.com/), both `make up` and
+`make docker-start` detect it and make DeerFlow reachable from your other
+tailnet devices automatically. **No `.env` edit is required, and it survives
+`git pull` and reboots** — detection runs on every start.
+
+What happens on start when `tailscale status` reports a running daemon:
+
+- nginx is published on this host's `100.x` CGNAT address **in addition to**
+  `127.0.0.1` (via `docker/docker-compose.tailscale.yaml`). That range is
+  routable only inside your tailnet, so this does **not** expose the LAN or the
+  internet — unlike `BIND_HOST=0.0.0.0`, which does.
+- The tailnet origins are merged into `GATEWAY_CORS_ORIGINS`,
+  `DEER_FLOW_TRUSTED_ORIGINS`, and `DEER_FLOW_DEV_ALLOWED_ORIGINS` so the API
+  accepts requests from a page loaded at that address. Publishing the port
+  without this loads the UI shell and then 403s every API call — half a fix
+  looks exactly like a Tailscale problem.
+- Your own entries in those variables are kept; the merge only ever adds, and
+  re-running a launch script does not grow the list.
+
+Two URLs work, and the start banner prints whichever ones are live:
+
+| URL | When | Notes |
+| --- | --- | --- |
+| `http://<tailscale-ipv4>:2026` | Always, once detected | What existing bookmarks and phones already use. Plain HTTP — fine inside a tailnet, but **not** a secure origin, so Web Push stays unavailable. |
+| `https://<magicdns>.ts.net` | After you configure Tailscale Serve | A real certificate, so it is a secure origin: PWA install and Web Push work. |
+
+To enable the HTTPS URL, run Tailscale Serve on the **host** (it terminates TLS
+and forwards to loopback, so it needs no published port of its own):
+
+```bash
+tailscale serve --bg --https=443 http://127.0.0.1:2026
+```
+
+Serve usually needs elevated rights — either run it with `sudo`, or make
+yourself the operator once with `sudo tailscale set --operator=$USER`. Fish
+users can paste both commands as-is; neither uses bash-only syntax.
+
+DeerFlow never runs `tailscale serve` for you and never runs
+`tailscale serve reset`: Serve configuration is global to the machine and may
+carry rules for your other services, so a DeerFlow start or stop must not touch
+it. If Serve is not configured, everything else still works over the `100.x`
+URL.
+
+> **Do not use `https://100.x.y.z`.** Tailscale issues its certificate for the
+> MagicDNS *name*, not the IP, so an HTTPS URL on the bare address is a
+> certificate error every time. Use `http://` with the IP, or `https://` with
+> the MagicDNS name.
+
+Opt out on a host that is on a tailnet but should not serve DeerFlow to it:
+
+```bash
+# .env
+DEER_FLOW_TAILSCALE_PUBLISH=0
+```
+
+Without Tailscale running, none of this applies: nothing extra is published and
+the default remains `127.0.0.1` only.
 
 ### Notifications on Your Phone (PWA + Web Push)
 
@@ -1800,4 +1869,4 @@ Your unwavering commitment and expertise have been the driving force behind Deer
 
 ## Star History
 
-[![Star History Chart](https://api.star-history.com/svg?repos=bytedance/deer-flow&type=Date)](https://star-history.com/#bytedance/deer-flow&Date)
+[![Star History Chart](https://star-history.dera.page/svg?repos=bytedance/deer-flow&type=Date)](https://star-history.dera.page/#bytedance/deer-flow&Date)
