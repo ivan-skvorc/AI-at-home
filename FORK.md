@@ -334,6 +334,67 @@ on its own.
 
 Record each pass here — a dated line is what tells the next person whether the roster was checked last week or last year, and *which* providers the pass could actually reach.
 
+- **2026-08-22 (second pass, upstream sync `f1f4af9`) — corroborated; one price corrected,
+  and the four figures the last pass left owed are now cleared.** Provider pages were
+  *still* unreachable — `openrouter.ai` and every first-party host answer 403 on CONNECT,
+  so **tier 1 was unavailable again and nothing here is verified**. What was different this
+  time is that general web search *was* reachable, so tier 2 could actually run instead of
+  falling straight through to tier 3. Mechanical half clean, exactly as before:
+  `scripts/audit_models.py` reports **no drift**, the stale-fixture self-test
+  (`--catalog scripts/fixtures/model_audit_stale_catalog.json`) still surfaces all four
+  drift kinds, `sync-api-key-models.py --dry-run` is a clean no-op on an empty env, and the
+  six model/pricing suites are green (269 passed).
+
+  **The four still-owed figures from 2026-08-20 all corroborate at the shipped numbers** —
+  each read off several independent trackers that agree exactly on *both* numbers, none of
+  them reprinting a single launch post. No edit was needed for any of them:
+
+  | Model | Shipped | Corroborated | Verdict |
+  | --- | --- | --- | --- |
+  | Grok 4.6 | $2/6 | $2/6 (base tier; 200K+ prompts bill the whole request at $4/12) | confirmed |
+  | Qwen3.8 Max | $2/6 | $2/6 | confirmed |
+  | GLM-5.3 | $1.4/4.4 | $1.4/4.4 (z.ai list; resellers quote 10% off the same list) | confirmed |
+  | Mistral Medium 3.5 | $1.5/7.5 | $1.5/7.5 | confirmed |
+
+  GLM-5.3 was called out last pass as the most provisional of the four; it now has the same
+  corroboration as the rest. These stay **corroborated, not verified** — the next
+  unrestricted pass should still read them off the providers' own pages, but they are no
+  longer the open risk they were.
+
+  **One correction, applied to both synced sources: Gemini 3.1 Pro was priced wrong on both
+  numbers — `$2.5/10.0` → `$2.0/12.0`.** Two independent searches over separate tracker sets
+  agree exactly on $2.00 in / $12.00 out for the standard tier (prompts ≤200K; above that
+  Google bills 2x input and 1.5x output, and per the Grok 4.6 precedent the `price:` block
+  carries the base tier). Output was under-reported by 20% and input over-reported, so every
+  cost total involving Google's flagship was wrong in both directions depending on the
+  input/output mix. Corroborated, not verified — re-check it first on the next unrestricted pass.
+
+  **Deliberately not changed — Gemini 3.7 Flash (shipped 2026-08-13) supersedes the bundled
+  Gemini 3.6 Flash.** Two reasons it was left alone rather than rolled forward, both of which
+  a later pass may reverse. First, the roll-forward rule in *Which models to keep in the
+  bundle* moves a lab's **flagship** and leaves the cheaper siblings untouched; Google's
+  flagship is Gemini 3.1 Pro (confirmed still current this pass — 3.5 Pro has slipped past
+  its announced window and has no API model id), and 3.6 Flash is a cheaper sibling, so the
+  mechanical rule does not fire here. Second, 3.7 Flash's *current* price is an introductory
+  window ($0.75/3.75 through 2026-12-31, reverting to $1.5/7.5) — and tier 2 forbids shipping
+  a discount from secondary sources, so the only figure this pass could legitimately give it
+  is the post-window standard rate, which would over-report its real cost roughly 2x for the
+  next four months. Deciding whether that trade is worth it is a judgement for a pass that
+  can read Google's own page.
+
+  **Discounts left alone, as the tier rules require.** MiniMax M3's OpenRouter promo could not
+  be checked at all (OpenRouter unreachable) and a discount never qualifies for corroboration,
+  so it ships unchanged. Claude Sonnet 5's `$2/10` intro window through **2026-08-31** was
+  verified on 2026-08-20 and is still open; it expires on its own, and an expired window is the
+  mechanism working, not a finding.
+
+  **Still owed to the next unrestricted pass**, in priority order: Gemini 3.1 Pro's corrected
+  `$2/12` (the one figure this pass changed), the Gemini 3.7 Flash roster decision above, the
+  four corroborated figures in the table, and MiniMax M3's promo status. Also worth a look
+  while there: Google is the one lab whose OpenRouter double is a cheaper sibling
+  (Gemini 3.6 Flash) rather than its flagship, so the "every flagship doubled home +
+  OpenRouter" shape does not currently hold for it.
+
 - **2026-08-22 — offline only, no changes made.** Run as a step of the upstream-sync
   checklist. The mechanical half is clean: `scripts/audit_models.py` reports **no
   drift** (display-name/`price:` agreement and two-source parity both hold), the

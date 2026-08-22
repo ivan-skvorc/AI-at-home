@@ -533,7 +533,7 @@ MODEL_PRICES: dict[str, dict] = {
     "deepseek-v4-flash": {"price": {"currency": "USD", "input": 0.14, "output": 0.28}},
     "google-gemini-3.6-flash": {"price": {"currency": "USD", "input": 1.5, "output": 7.5}},
     "google-gemini-3.5-flash-lite": {"price": {"currency": "USD", "input": 0.3, "output": 1.2}},
-    "google-gemini-3.1-pro": {"price": {"currency": "USD", "input": 2.5, "output": 10.0}},
+    "google-gemini-3.1-pro": {"price": {"currency": "USD", "input": 2.0, "output": 12.0}},
     "minimax-m3": {"price": {"currency": "USD", "input": 0.6, "output": 2.4}},
     "minimax-m2.7": {"price": {"currency": "USD", "input": 0.3, "output": 1.2}},
     "mistral-large-3": {"price": {"currency": "USD", "input": 0.5, "output": 1.5}},

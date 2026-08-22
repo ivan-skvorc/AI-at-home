@@ -9,7 +9,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from deerflow.model_ids import normalize_reported_model_name
-from deerflow.runtime.runs.store.base import LeaseRenewal, RunStore, StatusFinalization, add_per_run_model_usage, new_by_model_usage_entry, new_per_run_usage_entry
+from deerflow.runtime.runs.store.base import LeaseRenewal, RunIdempotencyConflict, RunStore, StatusFinalization, add_per_run_model_usage, new_by_model_usage_entry, new_per_run_usage_entry
 
 
 class MemoryRunStore(RunStore):
@@ -51,6 +51,7 @@ class MemoryRunStore(RunStore):
         created_at=None,
         owner_worker_id=None,
         lease_expires_at=None,
+        idempotency_key=None,
     ):
         now = datetime.now(UTC).isoformat()
         existing = self._runs.get(run_id)
@@ -71,6 +72,7 @@ class MemoryRunStore(RunStore):
             "updated_at": now,
             "owner_worker_id": owner_worker_id,
             "lease_expires_at": lease_expires_at,
+            "idempotency_key": idempotency_key,
             # ``put`` is an idempotent snapshot write. Preserve a cancellation
             # request that may have raced a retry of an earlier snapshot.
             "cancel_action": existing.get("cancel_action") if existing else None,
@@ -434,11 +436,17 @@ class MemoryRunStore(RunStore):
         kwargs: dict[str, Any] | None = None,
         created_at: str | None = None,
         grace_seconds: int = 10,
+        idempotency_key: str | None = None,
     ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
         from deerflow.runtime.runs.manager import ConflictError
 
         now = datetime.now(UTC).isoformat()
         cutoff = datetime.now(UTC) - timedelta(seconds=grace_seconds)
+
+        if idempotency_key is not None:
+            for existing in self._runs.values():
+                if existing.get("idempotency_key") == idempotency_key:
+                    raise RunIdempotencyConflict(existing)
 
         # For reject: check if any active run exists
         if multitask_strategy == "reject":
@@ -506,6 +514,7 @@ class MemoryRunStore(RunStore):
             "error": None,
             "owner_worker_id": owner_worker_id,
             "lease_expires_at": lease_expires_at,
+            "idempotency_key": idempotency_key,
             "cancel_action": None,
             "cancel_requested_at": None,
             "created_at": created_at or now,
