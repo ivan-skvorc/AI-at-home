@@ -36,6 +36,7 @@ from app.gateway.routers import (
     settings,
     skills,
     suggestions,
+    system_prompt,
     thread_runs,
     threads,
     uploads,
@@ -720,6 +721,8 @@ This gateway provides runtime endpoints for agent runs plus custom endpoints for
     # Skills API is mounted at /api/skills
     app.include_router(skills.router)
     app.include_router(settings.router)
+    # Fork feature: read/edit the lead-agent system prompt (admin-gated).
+    app.include_router(system_prompt.router)
     # Fork feature: Web Push subscription management (per-user, no admin gate).
     app.include_router(push.router)
 

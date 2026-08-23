@@ -1269,6 +1269,64 @@ unreferenced threads; and the older latest-turn-only *in-place* edit
 (`/runs/edit-regenerate/prepare`) is still implemented on both sides but is no
 longer wired to any button.
 
+### 19. The system prompt is a text box, not a black box
+
+Every run starts from a system prompt the user never saw. It is assembled in
+`backend/packages/harness/deerflow/agents/lead_agent/prompt.py` from a template
+plus twelve substituted sections (soul, skills, subagents, deferred tools, ACP,
+mounts, …), and nothing in the UI or the HTTP API exposed either the template or
+the rendered result. Changing it meant editing Python and restarting the
+Gateway.
+
+**Settings → System prompt** puts it on screen and makes it editable:
+
+- **Edit** shows the template in force — the built-in one, or your override —
+  in a monospace editor, with the twelve placeholders listed as one-click
+  insert buttons.
+- **Preview** shows the *rendered* prompt: every placeholder substituted, i.e.
+  the exact text the lead agent receives, with a switch for the Ultra-mode
+  subagent block (which is where the available subagent roster is listed, so
+  this is also the only place in the UI that names `general-purpose` / `bash`
+  and any `subagents.custom_agents` you configured).
+- **Reset to default** discards the override.
+
+The override is a single Markdown file, `{base_dir}/SYSTEM_PROMPT.md`, written
+atomically beside `USER.md`. `apply_prompt_template()` re-reads it on every
+agent build, so a save applies from the next run with no Gateway restart, and
+`make backup` picks it up with the rest of the instance state.
+
+Three design points worth keeping if this is ever refactored:
+
+- **The allowed placeholder set is derived from the built-in template, never
+  duplicated.** `SYSTEM_PROMPT_PLACEHOLDERS` is
+  `extract_placeholders(SYSTEM_PROMPT_TEMPLATE)`, so adding a `{new_section}`
+  to the template automatically permits it in an override and lists it in the
+  editor. A hardcoded second list would silently rot.
+- **A saved prompt can change a run but must never break one.** Validation runs
+  on save *and* again on every read, and `apply_prompt_template` still wraps the
+  `.format()` call: an override that is hand-edited on disk, restored from an
+  old backup, or written against a placeholder this version no longer supplies
+  degrades to the built-in template with a warning instead of raising inside the
+  agent build. Pinned by
+  `backend/tests/test_system_prompt_store.py::TestApplyPromptTemplate`.
+- **Omitting a placeholder is a feature, not an error.** Dropping
+  `{skills_section}` is how you strip that block from the prompt, so the API
+  reports `missing_placeholders` for the UI to note rather than refusing the
+  save. What *is* refused: an unknown name (`KeyError` at render), a positional
+  field (`IndexError` — the renderer passes keywords only), and dotted or
+  indexed access like `{soul.__class__}` (renders object internals into the
+  prompt).
+
+The routes (`GET`/`PUT`/`DELETE /api/system-prompt`, `GET
+/api/system-prompt/preview`) are admin-gated with the same
+`require_admin_user` helper as skill and MCP management — writing the prompt has
+that blast radius, and reading it returns context the prompt itself tells the
+agent not to disclose. Under §5 (passwordless by default) the local user *is*
+the admin, so the page works out of the box; no new `config.yaml` section was
+added for it. The editor warns — but does not block — when an edit drops the
+built-in **System-Context Confidentiality** section, because the consequence
+(the agent will happily recite your prompt) is invisible until someone asks.
+
 ## Why mix local and cloud
 
 Each tier of model has a job it's good at. Mixing them is how you get most of the quality of frontier models at a fraction of the cost:
@@ -1409,6 +1467,7 @@ Then confirm each fork feature end-to-end:
 | **Ollama daemon lifecycle** (§1) | `cd backend && uv run pytest tests/test_ollama_lifecycle.py` covers the `keep_alive` settings parse (including the nested `keep_alive_overrides` map, whose children must **not** leak into the flat `ollama.*` settings), the resolution precedence, the rendered entry, the VRAM-contention warning, `default_local_model`, preload, and the doctor rows. Wiring: `parse_ollama_settings` / `resolve_keep_alive` / `vram_contention_warning` / `default_local_model` / `preload_model` in `scripts/sync-ollama-models.py`; the `--preload-only` **backgrounded** call in `scripts/serve.sh` right after the sync; `scripts/doctor.py::check_ollama_readiness` in the new **Local Models** section; the documented keys in `config.example.yaml`'s `ollama:` block. Model tuples grew a 4th field (`keep_alive`) — `sync()` reads the tail positionally so 2- and 3-tuple callers still work; keep that back-compatibility if the shape changes again. Preload must stay backgrounded in `serve.sh`: it blocks until the weights are loaded. Manual: set `ollama.keep_alive: 30m`, relaunch, and confirm the regenerated marker block carries `keep_alive: 30m` on every entry. |
 | **API-key model auto-config** (§2) | On a *copy* of `config.example.yaml`: `ANTHROPIC_API_KEY=sk-ant-… python3 scripts/sync-api-key-models.py --config <copy> --dry-run --verbose` logs `enabled 'anthropic' model block`; with an empty env the file stays byte-identical. Pinned by `backend/tests/test_sync_api_key_models.py`. All eleven `# === BEGIN/END auto-model-config: <provider> ===` marker blocks (anthropic, openrouter, and the nine first-party home blocks: openai, xai, google, deepseek, mistral, moonshot, qwen, minimax, zai) must still be present in `config.example.yaml`, each in sync with its `*_BUNDLE_MODELS` list in `scripts/wizard/providers.py` (`HOME_API_BUNDLES` registry) and its `PROVIDERS` entry in `scripts/sync-api-key-models.py`. |
 | **Per-thread subagent model override** (§3, Ultra mode) | `input-box.tsx` renders the second "Subagent" `ModelSelector` only under `context.mode === "ultra"`, defaulting to "Follow lead", dimming `lacksToolSupport` models. It sets `subagent_model_name` in thread context; `_CONTEXT_CONFIGURABLE_KEYS` (`app/gateway/services.py`) forwards it; `task_tool.py` applies it as `model_override` and passes it to `SubagentExecutor`. Backend plumbing pinned by `backend/tests/test_task_tool_core_logic.py::test_task_tool_uses_subagent_model_override_for_tool_loading`. |
+| **Editable system prompt** (§19) | Settings → System prompt must render both tabs: **Edit** (template + one-click placeholder buttons) and **Preview** (placeholders substituted; the subagent switch changes the output). Wiring: `system-prompt-settings-page.tsx` registered in `settings-dialog.tsx` as a `dynamic()` import — `frontend/tests/unit/components/workspace/lazy-panels.test.ts` counts those imports, so adding or removing a settings page must bump that number; `core/system-prompt/{api,hooks,types}.ts`; `app/gateway/routers/system_prompt.py` registered in `app/gateway/app.py`. Backend pinned by `backend/tests/test_system_prompt_store.py` (validation, persistence, render fallback) and `backend/tests/test_system_prompt_router.py` (routes + admin gate). Manual: save an override, confirm `~/.deer-flow/SYSTEM_PROMPT.md` appears and the **next** run uses it with no restart; then hand-edit that file to `{bogus}` and confirm the run still works on the built-in prompt. |
 | **Follow-up suggestions off by default + model picker** (§4) | `core/settings/local.ts` defaults `suggestions.enabled=false`; Settings → Suggestions page writes `suggestions.{enabled,modelName}`; `input-box.tsx` gates on `suggestionsConfig?.enabled && localSettings.suggestions.enabled` and sends `n: maxFollowupSuggestions`, `model_name: suggestionsModelName ?? context.model_name`. The backend endpoint's `model_name` override is pinned by `backend/tests/test_suggestions_router.py`. |
 | **Memory toggle (off by default)** | `core/settings/local.ts` defaults `memory.enabled=false`; Settings → Memory page writes it; `core/threads/hooks.ts` sends `memory_enabled` in run context; `agents/lead_agent/agent.py::_apply_memory_preference` consumes it (operator `memory.enabled: false` still wins). Frontend defaults pinned by `frontend/tests/unit/core/settings/local.test.ts`; the backend `_apply_memory_preference` behavior (override-false disables injection/extraction/tools; operator config still wins) by `backend/tests/test_lead_agent_memory_toggle.py`. |
 | **Camoufox default `web_fetch`** | `config.example.yaml` web_fetch entry has `backend: camoufox`; `scripts/detect_uv_extras.py` emits `--extra camoufox` for it (pinned by `test_detect_uv_extras.py`). The dispatcher's code-level default — a `web_fetch` entry with no `backend:` key still routes to camoufox — is pinned by `backend/tests/test_web_fetch_dispatcher.py`; the browser auto-install by `backend/tests/test_ensure_camoufox.py` + `test_camoufox_fetch.py`. |

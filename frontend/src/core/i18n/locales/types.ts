@@ -763,6 +763,7 @@ export interface Translations {
       skills: string;
       notification: string;
       suggestions: string;
+      systemPrompt: string;
       about: string;
     };
     memory: {
@@ -1021,6 +1022,38 @@ export interface Translations {
       modelHint: string;
       followWorkflow: string;
       serverDisabledHint: string;
+    };
+    systemPrompt: {
+      title: string;
+      description: string;
+      editorLabel: string;
+      editorHint: string;
+      placeholdersLabel: string;
+      placeholdersHint: string;
+      missingPlaceholders: (names: string) => string;
+      customBadge: string;
+      defaultBadge: string;
+      save: string;
+      saving: string;
+      saved: string;
+      reset: string;
+      resetting: string;
+      resetConfirmTitle: string;
+      resetConfirmDescription: string;
+      resetConfirmAction: string;
+      cancel: string;
+      revertEdits: string;
+      unsavedChanges: string;
+      charCount: (used: number, max: number) => string;
+      tabEdit: string;
+      tabPreview: string;
+      previewDescription: string;
+      previewSubagentToggle: string;
+      previewEmpty: string;
+      loadFailed: string;
+      saveFailed: string;
+      adminRequired: string;
+      confidentialityWarning: string;
     };
     account: {
       profileTitle: string;
