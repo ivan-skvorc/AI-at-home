@@ -17,7 +17,9 @@ from deerflow.agents.lead_agent.prompt import (
     apply_prompt_template,
     get_system_prompt_template,
 )
+from deerflow.config.app_config import AppConfig
 from deerflow.config.paths import Paths
+from deerflow.config.sandbox_config import SandboxConfig
 
 
 @pytest.fixture
@@ -25,6 +27,18 @@ def base_dir(tmp_path):
     """Point the override store at an isolated base directory."""
     with patch.object(store, "get_paths", return_value=Paths(base_dir=tmp_path)):
         yield tmp_path
+
+
+@pytest.fixture
+def app_config() -> AppConfig:
+    """An in-memory AppConfig for the render tests.
+
+    ``apply_prompt_template`` falls back to loading the repo-root
+    ``config.yaml`` when it gets ``None``. That file is gitignored, so relying
+    on it makes a test pass on a machine that has run ``make config`` and fail
+    in CI. Every render below passes this explicitly.
+    """
+    return AppConfig(sandbox=SandboxConfig(use="test"))
 
 
 class TestPlaceholderExtraction:
@@ -150,28 +164,53 @@ class TestResolution:
         assert get_system_prompt_template() == "You are {agent_name}."
 
 
+class TestConfigIndependence:
+    """These tests must not depend on a repo-root ``config.yaml``.
+
+    ``config.yaml`` is gitignored: it exists on a developer machine that has run
+    ``make config`` and nowhere in CI. An earlier version of this file rendered
+    without passing ``app_config``, so ``apply_prompt_template`` fell back to
+    loading that file — green locally, ``FileNotFoundError`` in CI. This guard
+    fails loudly if a future edit reintroduces the fallback.
+    """
+
+    def test_rendering_never_resolves_config_from_disk(self, base_dir, app_config, monkeypatch):
+        # Trip on *any* attempt to resolve config.yaml. Checking "does it work
+        # without the file" is not enough: `_legacy_config_candidates()` locates
+        # the repo root from `__file__`, so a developer's config.yaml is found
+        # whatever the cwd, and the fallback stays invisible until CI. Every
+        # disk resolution funnels through resolve_config_path, so failing it
+        # here makes the omission fail on the developer's machine instead.
+        def _fail() -> None:
+            raise AssertionError("apply_prompt_template resolved config.yaml from disk; pass app_config explicitly")
+
+        monkeypatch.setattr(AppConfig, "resolve_config_path", staticmethod(_fail))
+        rendered = apply_prompt_template(agent_name="Tester", app_config=app_config)
+        assert "<role>" in rendered
+
+
 class TestApplyPromptTemplate:
-    def test_uses_the_override(self, base_dir):
+    def test_uses_the_override(self, base_dir, app_config):
         store.save_custom_system_prompt("CUSTOM PROMPT for {agent_name}", allowed=SYSTEM_PROMPT_PLACEHOLDERS)
-        rendered = apply_prompt_template(agent_name="Tester")
+        rendered = apply_prompt_template(agent_name="Tester", app_config=app_config)
         assert rendered == "CUSTOM PROMPT for Tester"
 
-    def test_falls_back_when_the_override_cannot_render(self, base_dir):
+    def test_falls_back_when_the_override_cannot_render(self, base_dir, app_config):
         # Simulate a template that passes validation but still explodes at
         # render time (a placeholder the renderer does not supply); the run must
         # survive it on the built-in prompt.
         with patch("deerflow.agents.lead_agent.prompt.get_system_prompt_template", return_value="{agent_name} {boom}"):
-            rendered = apply_prompt_template(agent_name="Tester")
+            rendered = apply_prompt_template(agent_name="Tester", app_config=app_config)
         assert "<role>" in rendered
         assert "You are Tester" in rendered
 
-    def test_default_path_still_renders_the_builtin(self, base_dir):
-        rendered = apply_prompt_template(agent_name="Tester")
+    def test_default_path_still_renders_the_builtin(self, base_dir, app_config):
+        rendered = apply_prompt_template(agent_name="Tester", app_config=app_config)
         assert "<role>" in rendered
         assert "You are Tester" in rendered
 
-    def test_an_override_dropping_a_section_renders_without_it(self, base_dir):
+    def test_an_override_dropping_a_section_renders_without_it(self, base_dir, app_config):
         store.save_custom_system_prompt("Only skills:\n{skills_section}", allowed=SYSTEM_PROMPT_PLACEHOLDERS)
-        rendered = apply_prompt_template(agent_name="Tester")
+        rendered = apply_prompt_template(agent_name="Tester", app_config=app_config)
         assert rendered.startswith("Only skills:")
         assert "<thinking_style>" not in rendered

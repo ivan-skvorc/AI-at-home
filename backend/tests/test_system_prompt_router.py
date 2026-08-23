@@ -17,10 +17,13 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from app.gateway.auth.models import User
+from app.gateway.deps import get_config
 from app.gateway.routers import system_prompt as system_prompt_router
 from deerflow.agents.lead_agent import system_prompt_store as store
 from deerflow.agents.lead_agent.prompt import SYSTEM_PROMPT_TEMPLATE
+from deerflow.config.app_config import AppConfig
 from deerflow.config.paths import Paths
+from deerflow.config.sandbox_config import SandboxConfig
 
 
 def _make_admin_user() -> User:
@@ -33,6 +36,12 @@ def _make_plain_user() -> User:
 
 def _make_app(*, admin: bool = True) -> FastAPI:
     app = make_authed_test_app(user_factory=_make_admin_user if admin else _make_plain_user)
+    # Override get_config so the preview route never falls back to reading the
+    # repo-root config.yaml, which is gitignored and absent in CI. Without this
+    # the preview tests pass only on a developer machine that has run
+    # `make config` -- exactly the divergence that made these green locally and
+    # red in CI.
+    app.dependency_overrides[get_config] = lambda: AppConfig(sandbox=SandboxConfig(use="test"))
     app.include_router(system_prompt_router.router)
     return app
 

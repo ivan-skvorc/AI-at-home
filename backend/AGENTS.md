@@ -312,33 +312,8 @@ counters, currency spend caps (`SpendBudgetMiddleware`, HTTP 402 at admission),
 the spend attribution endpoint, cost-aware subagent routing, model fallback
 chains, explicit `price:`/`discount:` model fields with a self-expiring
 discount, Web Push delivery, multi-user mode, the chat-tab store, and an
-editable lead-agent system prompt.
-
-### Editable system prompt
-
-`agents/lead_agent/prompt.py` renders `SYSTEM_PROMPT_TEMPLATE`, but the template
-it renders comes from `get_system_prompt_template()`, which prefers a
-user-authored override stored at `{base_dir}/SYSTEM_PROMPT.md` (see
-`agents/lead_agent/system_prompt_store.py`). It is read on every agent build, so
-an edit saved through `PUT /api/system-prompt` applies from the next run without
-a Gateway restart.
-
-Two invariants hold and are pinned by `tests/test_system_prompt_store.py`:
-
-- **The allowed placeholder set is derived, never duplicated.**
-  `SYSTEM_PROMPT_PLACEHOLDERS` is `extract_placeholders(SYSTEM_PROMPT_TEMPLATE)`.
-  Adding a placeholder to the template permits it in an override and lists it in
-  the Settings editor automatically — do not introduce a second hardcoded list.
-- **An override may change a run, never break one.** Validation runs on save
-  *and* on every read, and `apply_prompt_template` still wraps `.format()`; a
-  file that is hand-edited, restored from an old backup, or written against a
-  placeholder this version no longer supplies falls back to the built-in
-  template with a warning rather than raising inside the agent build.
-
-Omitting a placeholder is legitimate (it drops that section), so the API reports
-`missing_placeholders` instead of rejecting the save. The routes live in
-`app/gateway/routers/system_prompt.py` and are admin-gated with the shared
-`require_admin_user` helper, matching the skills and MCP management routes.
+editable lead-agent system prompt (`lead_agent/system_prompt_store.py`; the
+invariants live in `packages/harness/deerflow/agents/AGENTS.md`).
 
 Each is documented in **[FORK.md](../FORK.md)** with its rationale, its
 invariants, and a row in the post-sync feature checklist naming the tests that

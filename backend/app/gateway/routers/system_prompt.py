@@ -13,10 +13,10 @@ disclose; so both sit behind :func:`require_admin_user`, like those routers.
 import asyncio
 import logging
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
-from app.gateway.deps import require_admin_user
+from app.gateway.deps import get_config, require_admin_user
 from deerflow.agents.lead_agent.prompt import (
     SYSTEM_PROMPT_PLACEHOLDERS,
     SYSTEM_PROMPT_TEMPLATE,
@@ -30,6 +30,7 @@ from deerflow.agents.lead_agent.system_prompt_store import (
     load_custom_system_prompt,
     save_custom_system_prompt,
 )
+from deerflow.config.app_config import AppConfig
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["system-prompt"])
@@ -149,6 +150,7 @@ async def reset_system_prompt(request: Request) -> SystemPromptResponse:
 async def preview_system_prompt(
     request: Request,
     subagent_enabled: bool = Query(default=True, description="Render the subagent block, as Ultra mode does"),
+    config: AppConfig = Depends(get_config),
 ) -> SystemPromptPreviewResponse:
     """Render the prompt exactly as a run would build it.
 
@@ -158,10 +160,13 @@ async def preview_system_prompt(
     await require_admin_user(request, detail=_ADMIN_REQUIRED_DETAIL)
 
     def _render() -> SystemPromptPreviewResponse:
-        # apply_prompt_template reads skills and config from disk; keep it off
-        # the event loop.
+        # Pass the request's AppConfig explicitly: apply_prompt_template falls
+        # back to re-reading config.yaml from disk when it gets None, which is
+        # both a redundant read per preview and a hard failure anywhere the file
+        # is absent. apply_prompt_template also reads skills from disk, so keep
+        # the whole call off the event loop.
         return SystemPromptPreviewResponse(
-            rendered=apply_prompt_template(subagent_enabled=subagent_enabled),
+            rendered=apply_prompt_template(subagent_enabled=subagent_enabled, app_config=config),
             is_custom=load_custom_system_prompt() is not None,
         )
 
