@@ -110,6 +110,7 @@ DeerFlow has newly integrated the intelligent search and crawling toolset indepe
     - [Session Goals](#session-goals)
     - [Manual Context Compaction](#manual-context-compaction)
     - [Sub-Agents](#sub-agents)
+    - [Generating Agents From Your History](#generating-agents-from-your-history)
     - [Sandbox \& File System](#sandbox--file-system)
     - [Context Engineering](#context-engineering)
     - [System Prompt](#system-prompt)
@@ -1282,6 +1283,50 @@ Sub-agents are an optimization, not the default response to a complex request.
 The lead agent can spawn sub-agents on the fly — each with its own scoped context, tools, and termination conditions — when delegation has clear net benefit from real parallel latency, specialist capability, or context isolation. It keeps interdependent scopes and overlapping side effects out of parallel dispatch; a bounded sequential chain can still run in one sub-agent when specialist or context-isolation benefit clearly wins. The lead uses the fewest useful sub-agents and re-evaluates later batches instead of fanning out solely because a task is large or multi-step. Sub-agents report back structured results, and the lead agent verifies and synthesizes them into a coherent output. Their configured skills are resolved from the same user-scoped catalog as the lead agent, so user-owned custom skills remain available without exposing another user's version. Their internal AI and tool messages stay scoped to the delegated graph instead of entering the parent chat stream. Reloaded thread history enforces the same boundary: callback-captured sub-agent AI responses remain available in run-event diagnostics but are excluded from the parent transcript, while the parent `task` result remains attached to its subtask card. Long-running sub-agents compact older history when summarization is enabled and re-inject the summary as guarded, hidden durable context before continuing, so recent assistant/tool activity remains grounded in the task. Provider/model request failures are reported as failed sub-agent tasks rather than successful results, so the lead agent and Web UI can react to them correctly. Concurrent parent runs also receive independent server-side sub-agent execution IDs, so a provider that reuses a tool-call ID cannot make one run poll, cancel, or clean up another run's background task. Collapsed sub-agent cards show the effective model and, when the provider returns usage metadata, a cumulative token total that updates after each completed sub-agent LLM call and persists after a reload. When token usage tracking is enabled, completed sub-agent usage is attributed back to the dispatching step from that run's terminal tool-message metadata rather than a process-global provider-ID cache.
 
 For example, independent read-only research can run concurrently when the wall-clock savings outweigh duplicated discovery and synthesis cost, while a repository refactor with shared files and sequential test feedback remains with the lead agent. When `max_concurrent_subagents` is `1`, parallel and multi-batch routing guidance is disabled; delegation remains available only for material specialist or context-isolation benefit.
+
+### Generating Agents From Your History
+
+Custom agents normally start from a conversation on `/workspace/agents/new`, where the
+bootstrap flow interviews you and writes a `SOUL.md`. **Generate from history** is the
+second way in: instead of answering questions, you point a model at work you have
+already done and let it decide whether a new agent is warranted at all.
+
+The flow lives on `/workspace/agents` behind the **Generate from history** button:
+
+1. Pick the model that runs the analysis (any configured chat model, or the default).
+2. Pick the past conversations and/or scheduled tasks the new agent should be shaped around.
+3. The model reads digested transcripts of exactly those sources, compares them against
+   the custom agents you already have, and returns one of two answers.
+
+**"No new agent needed" is a first-class outcome.** If the selected work is one-off, too
+varied to specialize, or already covered by an existing agent, the flow says so — and
+names the agent that covers it — rather than inventing one. The prompt is deliberately
+biased that way: a roster full of near-duplicate agents is worse than no agent.
+
+When a gap *is* found, you get an editable draft — name, description, and full `SOUL.md` —
+and nothing is written until you press **Create agent**. The analysis route itself is
+strictly read-only; it can propose an agent but cannot persist one.
+
+Transcripts are digested before they are sent: tool-result bodies are dropped (the calling
+turn still names the tools), only the most recent turns of each conversation are kept, and
+per-message / per-source character caps apply. Every source is ownership-checked against
+the caller, so the analysis can only read your own history. The call is billed to the
+`agent_generation` category on the Spend page.
+
+Enable it with `config.yaml -> agent_generation.enabled` — it also requires
+`agents_api.enabled`, since the accepted draft is created through the custom-agent API.
+Both are off by default. The same section tunes the analysis model and the size caps:
+
+```yaml
+agent_generation:
+  enabled: true
+  model_name: null # null = primary chat model
+  max_sources: 10
+  max_messages_per_source: 40
+  max_chars_per_message: 1500
+  max_chars_per_source: 8000
+  max_runs_per_task: 5
+```
 
 ### Sandbox & File System
 

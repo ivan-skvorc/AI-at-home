@@ -9,6 +9,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **agents:** **Generate a custom agent from work you have already done.** A new
+  **Generate from history** button on `/workspace/agents` opens a wizard: pick the
+  model to run the analysis, pick the past conversations and/or scheduled tasks the
+  agent should be shaped around, and the model decides whether a new agent is
+  warranted at all. Concluding that one is *not* — because the work is one-off, too
+  varied, or already covered by an agent you have — is a first-class answer, and the
+  covering agent is named; the prompt is biased that way on purpose, since a roster
+  of near-duplicate agents is worse than no agent. When a gap is found you get an
+  editable draft (name, description, full `SOUL.md`) and nothing is written until you
+  press **Create agent**: `POST /api/agent-generation/analyze` is strictly read-only,
+  so a hallucinated proposal cannot become an agent unattended. Transcripts are
+  digested before they are sent — tool-result bodies dropped (the calling turn still
+  names the tools), most-recent turns kept, per-message and per-source character caps
+  — and every source is ownership-checked against the caller, so the analysis only
+  ever reads your own history. The call is billed to the new `agent_generation`
+  category on the Spend page. Off by default: enable
+  `agent_generation.enabled` (it also needs `agents_api.enabled`), which is where the
+  analysis model and the size caps are tuned. `config_version` is now `41`.
+
 - **chat:** **Gaslight mode now covers answers, not just prompts.** The Edit
   button appears on the assistant's reply too: your text simply *becomes* what it
   said, in a new hidden version, and nothing is re-generated — whatever you send

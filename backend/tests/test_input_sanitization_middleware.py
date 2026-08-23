@@ -262,6 +262,15 @@ _EXEMPT_BLOCK_TAGS = {
     "consolidation_candidates",
     "existing_summary",
     "new_messages",
+    # Wrapper the agent-generation analysis puts around a user's own digested
+    # conversation text (agents/generation/transcript.py). Like the entries
+    # above it belongs to a *different* LLM call — a one-shot
+    # run_oneshot_llm request, not the ModelRequest this middleware rewrites —
+    # so blocking it here would be false coverage. The delimiter is instead
+    # neutralized at the point it is introduced, by
+    # transcript.py::neutralize_source_delimiters, which is what actually stops
+    # a transcript containing "</source>" from breaking out of its block.
+    "source",
     # MindIE provider wire format: parsed out of model *output*, never injected
     # into model input, so it is not framework authority context.
     "function",

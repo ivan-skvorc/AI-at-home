@@ -1,4 +1,5 @@
 from . import (
+    agent_generation,
     artifacts,
     assistants_compat,
     browser,
@@ -14,6 +15,7 @@ from . import (
 )
 
 __all__ = [
+    "agent_generation",
     "artifacts",
     "assistants_compat",
     "browser",
