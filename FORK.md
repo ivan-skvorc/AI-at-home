@@ -1269,6 +1269,92 @@ unreferenced threads; and the older latest-turn-only *in-place* edit
 (`/runs/edit-regenerate/prepare`) is still implemented on both sides but is no
 longer wired to any button.
 
+### 19. The system prompt is a text box, not a black box
+
+Every run starts from a system prompt the user never saw. It is assembled in
+`backend/packages/harness/deerflow/agents/lead_agent/prompt.py` from a template
+plus twelve substituted sections (soul, skills, subagents, deferred tools, ACP,
+mounts, …), and nothing in the UI or the HTTP API exposed either the template or
+the rendered result. Changing it meant editing Python and restarting the
+Gateway.
+
+**Settings → System prompt** puts it on screen and makes it editable:
+
+- **Edit** shows the template in force — the built-in one, or your override —
+  in a monospace editor, with the twelve placeholders listed as one-click
+  insert buttons.
+- **Preview** shows the *rendered* prompt: every placeholder substituted, i.e.
+  the exact text the lead agent receives, with a switch for the Ultra-mode
+  subagent block (which is where the available subagent roster is listed, so
+  this is also the only place in the UI that names `general-purpose` / `bash`
+  and any `subagents.custom_agents` you configured).
+- **Reset to default** discards the override.
+
+The override is a single Markdown file, `{base_dir}/SYSTEM_PROMPT.md`, written
+atomically beside `USER.md`. `apply_prompt_template()` re-reads it on every
+agent build, so a save applies from the next run with no Gateway restart, and
+`make backup` picks it up with the rest of the instance state.
+
+Three design points worth keeping if this is ever refactored:
+
+- **The allowed placeholder set is derived from the built-in template, never
+  duplicated.** `SYSTEM_PROMPT_PLACEHOLDERS` is
+  `extract_placeholders(SYSTEM_PROMPT_TEMPLATE)`, so adding a `{new_section}`
+  to the template automatically permits it in an override and lists it in the
+  editor. A hardcoded second list would silently rot.
+- **A saved prompt can change a run but must never break one.** Validation runs
+  on save *and* again on every read, and `apply_prompt_template` still wraps the
+  `.format()` call: an override that is hand-edited on disk, restored from an
+  old backup, or written against a placeholder this version no longer supplies
+  degrades to the built-in template with a warning instead of raising inside the
+  agent build. Pinned by
+  `backend/tests/test_system_prompt_store.py::TestApplyPromptTemplate`.
+- **Omitting a placeholder is a feature, not an error.** Dropping
+  `{skills_section}` is how you strip that block from the prompt, so the API
+  reports `missing_placeholders` for the UI to note rather than refusing the
+  save. What *is* refused: an unknown name (`KeyError` at render), a positional
+  field (`IndexError` — the renderer passes keywords only), and dotted or
+  indexed access like `{soul.__class__}` (renders object internals into the
+  prompt).
+
+**What a change to the prompt needs to be tested with.** The prompt is now two
+things — a template *and* a stored override — so a change to either has a wider
+blast radius than editing a string used to have. Anything touching
+`prompt.py`'s template, `apply_prompt_template()`, or `system_prompt_store.py`
+should carry:
+
+- **A placeholder round-trip.** Adding or removing a `{placeholder}` changes the
+  contract an existing saved override was written against. Adding one is safe by
+  construction (the allowed set is derived), but *removing* one silently
+  invalidates every override that used it — those fall back to the built-in
+  template, which is the designed behaviour and must stay covered by
+  `TestResolution::test_an_invalid_override_on_disk_falls_back_to_the_builtin`.
+  Say so in the release note too: the user's saved prompt stops applying.
+- **A render that passes `app_config` explicitly.** See the config gate in the
+  mechanical checklist above — a `None` default reads the gitignored root
+  `config.yaml` and splits local from CI.
+- **A validation case per rejection class.** `validate_system_prompt_template`
+  refuses unknown names, positional fields, dotted/indexed access, nested format
+  specs, empty, and oversized. Each is a distinct failure mode at render time, so
+  each keeps its own test; the nested-spec one exists specifically because field
+  names alone do not prove renderability.
+- **The admin gate on every route.** `TestAuthorization` covers all four. A new
+  route on this router without a `require_admin_user` call is a way to read the
+  prompt (and the skills roster it renders) unauthenticated.
+- **The settings-page count.** `frontend/tests/unit/components/workspace/lazy-panels.test.ts`
+  asserts the exact number of `dynamic()` imports in `settings-dialog.tsx`. Adding
+  or removing any settings page — not just this one — must bump it.
+
+The routes (`GET`/`PUT`/`DELETE /api/system-prompt`, `GET
+/api/system-prompt/preview`) are admin-gated with the same
+`require_admin_user` helper as skill and MCP management — writing the prompt has
+that blast radius, and reading it returns context the prompt itself tells the
+agent not to disclose. Under §5 (passwordless by default) the local user *is*
+the admin, so the page works out of the box; no new `config.yaml` section was
+added for it. The editor warns — but does not block — when an edit drops the
+built-in **System-Context Confidentiality** section, because the consequence
+(the agent will happily recite your prompt) is invisible until someone asks.
+
 ## Why mix local and cloud
 
 Each tier of model has a job it's good at. Mixing them is how you get most of the quality of frontier models at a fraction of the cost:
@@ -1367,6 +1453,20 @@ First, the mechanical gates:
 - [ ] No leftover conflict markers: `git grep -nE '^(<{7}|={7}|>{7})( |$)'` returns nothing.
 - [ ] Backend: `make lint && make test` (CI enforces `ruff format --check`).
 - [ ] Frontend: `pnpm format && pnpm check && pnpm test`. **Watch the formatting gate:** `pnpm check` is only `eslint` + `tsc --noEmit` — it does **not** run Prettier, but CI's `lint-frontend` job (`.github/workflows/lint-check.yml`) runs `pnpm format` (`prettier --check .`) as its own step. So a change that is eslint/type-clean can still fail CI on formatting alone; always run `pnpm format` (or fix with `pnpm format:write`) before pushing. `eslint --fix` normalizes imports/optional-chains but not Prettier whitespace.
+- [ ] **The backend suite passes with no `config.yaml` on disk.** `config.yaml` is gitignored: it exists on any machine that has run `make config` and on none of CI's runners. `make test` therefore tests a *different* repository state locally than in CI, and the gap is silent in the direction that matters — a test that reaches for ambient config is green here and red there. Observed live: PR #71's `apply_prompt_template` render tests called it with `app_config=None`, which falls back to `AppConfig.from_file()`; four store tests and three router tests passed locally and failed CI with `FileNotFoundError: config.yaml file not found`. The rule for new tests is to **inject the config** (`AppConfig(sandbox=SandboxConfig(use="test"))`, or `app.dependency_overrides[get_config]` for a route) rather than letting a `None` default find the developer's file. Verify the way CI sees it before pushing:
+
+  ```bash
+  mv config.yaml /tmp/config.yaml.aside      # CI has no config.yaml
+  cd backend && make test
+  mv /tmp/config.yaml.aside ../config.yaml   # put it back — make dev needs it
+  ```
+
+  Pinned for the prompt feature by `backend/tests/test_system_prompt_store.py::TestConfigIndependence`; the same trap applies to anything that resolves config, paths, skills, or models through a `None` default.
+- [ ] **`AGENTS.md` byte budgets** — `backend/tests/test_agent_guidance_check.py` asserts every guidance file is at or under a **soft** budget (root 16 KiB, module 24 KiB, local 40 KiB, chain 80 KiB), and it is a hard assert, not a warning. The two module files run close to the line (`backend/AGENTS.md` had ~600 bytes of headroom when this was written; the root file had ~26), so *documenting a feature can fail CI on its own*. When a section does not fit, push the depth down to the nearest local guide — which has a 40 KiB budget and sits beside the code anyway — and leave a one-line pointer in the module file, the way `models/AGENTS.md` and `agents/AGENTS.md` already carry pricing and prompt detail. Check before pushing:
+
+  ```bash
+  cd backend && uv run pytest tests/test_agent_guidance_check.py -q
+  ```
 - [ ] `backend/uv.lock` reconciled: `cd backend && uv lock` (must include every fork extra — `camoufox`, `ollama`, `pymupdf` — alongside upstream's).
 - [ ] Config schema in step: if the merge (or your own change) touched `config.example.yaml`'s **shape**, `config_version` is bumped, **the chart's copy is bumped with it** (`deploy/helm/deer-flow/values.yaml` *and* that chart's `README.md` — `scripts/check_config_version.sh` fails the `validate-chart` job otherwise, and it is easy to miss because nothing outside CI reads it), and `make config-upgrade` merges the new keys into an existing `config.yaml` without clobbering hand edits. An existing install never gets a new section otherwise — the same delivery trap the pricing blocks hit (see the cost-overview row below). Verify on a copy: `python3 scripts/config_upgrade.py <copy-of-an-older-config> config.example.yaml` must report the new field and leave the rest alone.
 - [ ] **Upstream added a config section — bump `config_version` yourself.** This is not a rare case, it is the *expected* one on any sync that touches `config.example.yaml`, and it fails silently. Upstream's `config_version` sits **behind** the fork's (the fork bumps for its own sections, upstream never sees them), so upstream adding a top-level key does **not** move a version number the fork compares against. `config_upgrade.py` gates delivery on that version, so at equal versions an existing install keeps a config permanently missing the new upstream section. Observed live: the `bytedance/deer-flow@main` sync of 2026-08-12 added `mcp_tasks:` while leaving upstream's `config_version` at 33; the fork was at 36, so the upgrade was a no-op until the fork bumped to 37.
@@ -1409,6 +1509,7 @@ Then confirm each fork feature end-to-end:
 | **Ollama daemon lifecycle** (§1) | `cd backend && uv run pytest tests/test_ollama_lifecycle.py` covers the `keep_alive` settings parse (including the nested `keep_alive_overrides` map, whose children must **not** leak into the flat `ollama.*` settings), the resolution precedence, the rendered entry, the VRAM-contention warning, `default_local_model`, preload, and the doctor rows. Wiring: `parse_ollama_settings` / `resolve_keep_alive` / `vram_contention_warning` / `default_local_model` / `preload_model` in `scripts/sync-ollama-models.py`; the `--preload-only` **backgrounded** call in `scripts/serve.sh` right after the sync; `scripts/doctor.py::check_ollama_readiness` in the new **Local Models** section; the documented keys in `config.example.yaml`'s `ollama:` block. Model tuples grew a 4th field (`keep_alive`) — `sync()` reads the tail positionally so 2- and 3-tuple callers still work; keep that back-compatibility if the shape changes again. Preload must stay backgrounded in `serve.sh`: it blocks until the weights are loaded. Manual: set `ollama.keep_alive: 30m`, relaunch, and confirm the regenerated marker block carries `keep_alive: 30m` on every entry. |
 | **API-key model auto-config** (§2) | On a *copy* of `config.example.yaml`: `ANTHROPIC_API_KEY=sk-ant-… python3 scripts/sync-api-key-models.py --config <copy> --dry-run --verbose` logs `enabled 'anthropic' model block`; with an empty env the file stays byte-identical. Pinned by `backend/tests/test_sync_api_key_models.py`. All eleven `# === BEGIN/END auto-model-config: <provider> ===` marker blocks (anthropic, openrouter, and the nine first-party home blocks: openai, xai, google, deepseek, mistral, moonshot, qwen, minimax, zai) must still be present in `config.example.yaml`, each in sync with its `*_BUNDLE_MODELS` list in `scripts/wizard/providers.py` (`HOME_API_BUNDLES` registry) and its `PROVIDERS` entry in `scripts/sync-api-key-models.py`. |
 | **Per-thread subagent model override** (§3, Ultra mode) | `input-box.tsx` renders the second "Subagent" `ModelSelector` only under `context.mode === "ultra"`, defaulting to "Follow lead", dimming `lacksToolSupport` models. It sets `subagent_model_name` in thread context; `_CONTEXT_CONFIGURABLE_KEYS` (`app/gateway/services.py`) forwards it; `task_tool.py` applies it as `model_override` and passes it to `SubagentExecutor`. Backend plumbing pinned by `backend/tests/test_task_tool_core_logic.py::test_task_tool_uses_subagent_model_override_for_tool_loading`. |
+| **Editable system prompt** (§19) | Settings → System prompt must render both tabs: **Edit** (template + one-click placeholder buttons) and **Preview** (placeholders substituted; the subagent switch changes the output). Wiring: `system-prompt-settings-page.tsx` registered in `settings-dialog.tsx` as a `dynamic()` import — `frontend/tests/unit/components/workspace/lazy-panels.test.ts` counts those imports, so adding or removing a settings page must bump that number; `core/system-prompt/{api,hooks,types}.ts`; `app/gateway/routers/system_prompt.py` registered in `app/gateway/app.py`. Backend pinned by `backend/tests/test_system_prompt_store.py` (validation, persistence, render fallback, config independence) and `backend/tests/test_system_prompt_router.py` (routes + admin gate). Run both **with `config.yaml` moved aside** — the render paths reach for it through a `None` default otherwise, which is how these first passed locally and failed CI. The full list of what a prompt change must be tested with is in §19. Manual: save an override, confirm `~/.deer-flow/SYSTEM_PROMPT.md` appears and the **next** run uses it with no restart; then hand-edit that file to `{bogus}` and confirm the run still works on the built-in prompt. |
 | **Follow-up suggestions off by default + model picker** (§4) | `core/settings/local.ts` defaults `suggestions.enabled=false`; Settings → Suggestions page writes `suggestions.{enabled,modelName}`; `input-box.tsx` gates on `suggestionsConfig?.enabled && localSettings.suggestions.enabled` and sends `n: maxFollowupSuggestions`, `model_name: suggestionsModelName ?? context.model_name`. The backend endpoint's `model_name` override is pinned by `backend/tests/test_suggestions_router.py`. |
 | **Memory toggle (off by default)** | `core/settings/local.ts` defaults `memory.enabled=false`; Settings → Memory page writes it; `core/threads/hooks.ts` sends `memory_enabled` in run context; `agents/lead_agent/agent.py::_apply_memory_preference` consumes it (operator `memory.enabled: false` still wins). Frontend defaults pinned by `frontend/tests/unit/core/settings/local.test.ts`; the backend `_apply_memory_preference` behavior (override-false disables injection/extraction/tools; operator config still wins) by `backend/tests/test_lead_agent_memory_toggle.py`. |
 | **Camoufox default `web_fetch`** | `config.example.yaml` web_fetch entry has `backend: camoufox`; `scripts/detect_uv_extras.py` emits `--extra camoufox` for it (pinned by `test_detect_uv_extras.py`). The dispatcher's code-level default — a `web_fetch` entry with no `backend:` key still routes to camoufox — is pinned by `backend/tests/test_web_fetch_dispatcher.py`; the browser auto-install by `backend/tests/test_ensure_camoufox.py` + `test_camoufox_fetch.py`. |

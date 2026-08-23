@@ -9,6 +9,10 @@ from dataclasses import dataclass, field
 from functools import lru_cache
 from typing import TYPE_CHECKING
 
+from deerflow.agents.lead_agent.system_prompt_store import (
+    extract_placeholders,
+    resolve_system_prompt_template,
+)
 from deerflow.config.agents_config import load_agent_soul
 from deerflow.config.subagents_config import (
     DEFAULT_MAX_TOTAL_SUBAGENTS_PER_RUN,
@@ -701,6 +705,20 @@ combined with a FastAPI gateway for REST API access [citation:FastAPI](https://f
 </critical_reminders>
 """
 
+# Field names the template substitutes. Derived from the template itself so a
+# new placeholder is permitted in a user-authored override (and listed in the
+# Settings editor) without a second list to keep in step.
+SYSTEM_PROMPT_PLACEHOLDERS: frozenset[str] = extract_placeholders(SYSTEM_PROMPT_TEMPLATE)
+
+
+def get_system_prompt_template() -> str:
+    """Return the template in force: a saved override, else the built-in one.
+
+    Read on every agent build, so an edit saved from Settings takes effect on
+    the next run with no Gateway restart.
+    """
+    return resolve_system_prompt_template(SYSTEM_PROMPT_TEMPLATE)
+
 
 def _get_memory_context(
     agent_name: str | None = None,
@@ -1068,7 +1086,7 @@ def apply_prompt_template(
     # Memory and current date are injected per-turn via DynamicContextMiddleware
     # as a <system-reminder> in the first HumanMessage, keeping this prompt
     # identical across users and sessions for maximum prefix-cache reuse.
-    return SYSTEM_PROMPT_TEMPLATE.format(
+    fields = dict(
         agent_name=agent_name or "DeerFlow 2.0",
         soul=get_agent_soul(agent_name, user_id=user_id),
         self_update_section=_build_self_update_section(agent_name),
@@ -1082,3 +1100,14 @@ def apply_prompt_template(
         subagent_thinking=subagent_thinking,
         acp_section=acp_and_mounts_section,
     )
+
+    # A user-authored override is validated on save *and* on read, so this
+    # rarely fires — but rendering happens inside the agent build, and a prompt
+    # the operator can edit must never be able to stop a run. Fall back to the
+    # built-in template rather than propagating a formatting error.
+    template = get_system_prompt_template()
+    try:
+        return template.format(**fields)
+    except (KeyError, IndexError, ValueError) as exc:
+        logger.warning("Custom system prompt could not be rendered (%s); falling back to the built-in template.", exc)
+        return SYSTEM_PROMPT_TEMPLATE.format(**fields)

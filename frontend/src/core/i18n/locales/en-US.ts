@@ -892,6 +892,7 @@ export const enUS: Translations = {
       skills: "Skills",
       notification: "Notification",
       suggestions: "Suggestions",
+      systemPrompt: "System prompt",
       about: "About",
     },
     memory: {
@@ -1275,6 +1276,46 @@ export const enUS: Translations = {
       followWorkflow: "Follow workflow selection",
       serverDisabledHint:
         "Follow-up suggestions are disabled by the server configuration (suggestions.enabled in config.yaml). Enable it there to use this toggle.",
+    },
+    systemPrompt: {
+      title: "System prompt",
+      description:
+        "The instructions every run starts from, before your first message. Edit them to change how the agent behaves across all threads — the next run picks up the change, with no restart.",
+      editorLabel: "Prompt template",
+      editorHint:
+        "Placeholders in braces are filled in when a run starts. Keep the ones whose sections you want; drop one and that block disappears from the prompt. Write a literal brace as {{.",
+      placeholdersLabel: "Available placeholders",
+      placeholdersHint: "Click one to insert it at the cursor.",
+      missingPlaceholders: (names: string) =>
+        `Not used by your prompt, so these sections are omitted: ${names}.`,
+      customBadge: "Customized",
+      defaultBadge: "Built-in default",
+      save: "Save",
+      saving: "Saving…",
+      saved: "System prompt saved. It applies from the next run.",
+      reset: "Reset to default",
+      resetting: "Resetting…",
+      resetConfirmTitle: "Reset the system prompt?",
+      resetConfirmDescription:
+        "Your customized prompt will be discarded and the built-in default restored. This cannot be undone.",
+      resetConfirmAction: "Reset",
+      cancel: "Cancel",
+      revertEdits: "Discard edits",
+      unsavedChanges: "You have unsaved changes.",
+      charCount: (used: number, max: number) =>
+        `${used.toLocaleString()} / ${max.toLocaleString()} characters`,
+      tabEdit: "Edit",
+      tabPreview: "Preview",
+      previewDescription:
+        "The prompt with every placeholder filled in — what the lead agent actually receives.",
+      previewSubagentToggle: "Include subagents (Ultra mode)",
+      previewEmpty: "Nothing to preview yet.",
+      loadFailed: "Could not load the system prompt.",
+      saveFailed: "Could not save the system prompt.",
+      adminRequired:
+        "Editing the system prompt requires an admin account. Sign in as an admin to view and change it.",
+      confidentialityWarning:
+        "The built-in prompt tells the agent not to reveal its own instructions. If you remove that section, the agent may repeat your prompt back to anyone who asks.",
     },
     account: {
       profileTitle: "Profile",

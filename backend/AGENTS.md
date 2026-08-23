@@ -38,7 +38,7 @@ deer-flow/
 │   │       ├── pyproject.toml
 │   │       └── deerflow/
 │   │           ├── agents/            # LangGraph agent system
-│   │           │   ├── lead_agent/    # Main agent (factory + system prompt)
+│   │           │   ├── lead_agent/    # Main agent (factory + system prompt + editable override)
 │   │           │   ├── middlewares/   # middleware components (see Middleware Chain section)
 │   │           │   ├── memory/        # Memory extraction, queue, prompts
 │   │           │   └── thread_state.py # ThreadState schema
@@ -65,7 +65,7 @@ deer-flow/
 │   ├── app/                   # Application layer (import: app.*)
 │   │   ├── gateway/           # FastAPI Gateway API
 │   │   │   ├── app.py         # FastAPI application
-│   │   │   └── routers/       # FastAPI route modules (models, mcp, memory, skills, uploads, threads, artifacts, agents, suggestions, channels)
+│   │   │   └── routers/       # FastAPI route modules (models, mcp, memory, skills, system_prompt, uploads, threads, artifacts, agents, suggestions, channels)
 │   │   └── channels/          # IM platform integrations
 │   ├── tests/                 # Test suite
 │   └── docs/                  # Documentation
@@ -311,7 +311,9 @@ This fork adds backend behaviour upstream does not have: durable auxiliary token
 counters, currency spend caps (`SpendBudgetMiddleware`, HTTP 402 at admission),
 the spend attribution endpoint, cost-aware subagent routing, model fallback
 chains, explicit `price:`/`discount:` model fields with a self-expiring
-discount, Web Push delivery, multi-user mode, and the chat-tab store.
+discount, Web Push delivery, multi-user mode, the chat-tab store, and an
+editable lead-agent system prompt (`lead_agent/system_prompt_store.py`; the
+invariants live in `packages/harness/deerflow/agents/AGENTS.md`).
 
 Each is documented in **[FORK.md](../FORK.md)** with its rationale, its
 invariants, and a row in the post-sync feature checklist naming the tests that

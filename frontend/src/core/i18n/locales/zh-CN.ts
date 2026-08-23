@@ -858,6 +858,7 @@ export const zhCN: Translations = {
       skills: "技能",
       notification: "通知",
       suggestions: "建议",
+      systemPrompt: "系统提示词",
       about: "关于",
     },
     memory: {
@@ -1217,6 +1218,46 @@ export const zhCN: Translations = {
       followWorkflow: "跟随工作流选择",
       serverDisabledHint:
         "后续建议已被服务器配置禁用（config.yaml 中的 suggestions.enabled）。请在那里启用后再使用此开关。",
+    },
+    systemPrompt: {
+      title: "系统提示词",
+      description:
+        "每次运行在你的第一条消息之前所依据的指令。修改它即可改变智能体在所有会话中的行为——下次运行即刻生效，无需重启。",
+      editorLabel: "提示词模板",
+      editorHint:
+        "花括号中的占位符会在运行开始时被填充。保留你需要的部分；删掉某个占位符，对应的内容块就会从提示词中消失。若要输出字面量花括号，请写作 {{。",
+      placeholdersLabel: "可用占位符",
+      placeholdersHint: "点击即可插入到光标位置。",
+      missingPlaceholders: (names: string) =>
+        `你的提示词未使用以下占位符，因此这些内容块会被省略：${names}。`,
+      customBadge: "已自定义",
+      defaultBadge: "内置默认",
+      save: "保存",
+      saving: "保存中…",
+      saved: "系统提示词已保存，将从下次运行开始生效。",
+      reset: "恢复默认",
+      resetting: "恢复中…",
+      resetConfirmTitle: "恢复系统提示词？",
+      resetConfirmDescription:
+        "你自定义的提示词将被丢弃并恢复为内置默认值，此操作无法撤销。",
+      resetConfirmAction: "恢复",
+      cancel: "取消",
+      revertEdits: "放弃修改",
+      unsavedChanges: "你有未保存的修改。",
+      charCount: (used: number, max: number) =>
+        `${used.toLocaleString()} / ${max.toLocaleString()} 字符`,
+      tabEdit: "编辑",
+      tabPreview: "预览",
+      previewDescription:
+        "所有占位符均已填充的提示词——即主智能体实际收到的内容。",
+      previewSubagentToggle: "包含子智能体（Ultra 模式）",
+      previewEmpty: "暂无可预览的内容。",
+      loadFailed: "无法加载系统提示词。",
+      saveFailed: "无法保存系统提示词。",
+      adminRequired:
+        "编辑系统提示词需要管理员账号。请以管理员身份登录后查看和修改。",
+      confidentialityWarning:
+        "内置提示词会要求智能体不要泄露自身指令。如果你删除该部分，智能体可能会向任何询问者复述你的提示词。",
     },
     account: {
       profileTitle: "个人信息",

@@ -8,6 +8,7 @@ import {
   LightbulbIcon,
   PaletteIcon,
   PlugZapIcon,
+  ScrollTextIcon,
   SparklesIcon,
   UserIcon,
   WrenchIcon,
@@ -84,6 +85,15 @@ const SuggestionsSettingsPage = dynamic(
     ),
   { loading: SettingsPageLoading },
 );
+// Fork-only system-prompt editor (not present upstream); lazy-loaded like the
+// other settings pages so the prompt template never lands in the main bundle.
+const SystemPromptSettingsPage = dynamic(
+  () =>
+    import("./system-prompt-settings-page").then(
+      (module) => module.SystemPromptSettingsPage,
+    ),
+  { loading: SettingsPageLoading },
+);
 const SkillSettingsPage = dynamic(
   () =>
     import("./skill-settings-page").then((module) => module.SkillSettingsPage),
@@ -110,6 +120,7 @@ export type SettingsSection =
   | "skills"
   | "notification"
   | "suggestions"
+  | "systemPrompt"
   | "about";
 
 type SettingsDialogProps = React.ComponentProps<typeof Dialog> & {
@@ -169,6 +180,11 @@ export function SettingsDialog(props: SettingsDialogProps) {
       },
       { id: "tools", label: t.settings.sections.tools, icon: WrenchIcon },
       { id: "skills", label: t.settings.sections.skills, icon: SparklesIcon },
+      {
+        id: "systemPrompt",
+        label: t.settings.sections.systemPrompt,
+        icon: ScrollTextIcon,
+      },
       { id: "about", label: t.settings.sections.about, icon: InfoIcon },
     ],
     [
@@ -181,6 +197,7 @@ export function SettingsDialog(props: SettingsDialogProps) {
       t.settings.sections.skills,
       t.settings.sections.notification,
       t.settings.sections.suggestions,
+      t.settings.sections.systemPrompt,
       t.settings.sections.about,
     ],
   );
@@ -239,6 +256,7 @@ export function SettingsDialog(props: SettingsDialogProps) {
               {activeSection === "suggestions" && <SuggestionsSettingsPage />}
               {activeSection === "channels" && <ChannelsSettingsPage />}
               {activeSection === "integrations" && <IntegrationsSettingsPage />}
+              {activeSection === "systemPrompt" && <SystemPromptSettingsPage />}
               {activeSection === "about" && <AboutSettingsPage />}
             </div>
           </ScrollArea>
