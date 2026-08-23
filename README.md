@@ -112,6 +112,7 @@ DeerFlow has newly integrated the intelligent search and crawling toolset indepe
     - [Sub-Agents](#sub-agents)
     - [Sandbox \& File System](#sandbox--file-system)
     - [Context Engineering](#context-engineering)
+    - [System Prompt](#system-prompt)
     - [Long-Term Memory](#long-term-memory)
   - [Recommended Models](#recommended-models)
   - [Embedded Python Client](#embedded-python-client)
@@ -1437,6 +1438,26 @@ request the binary capability retain the legacy JSON/base64 frame protocol.
 **Strict Tool-Call Recovery**: When a provider or middleware interrupts a tool-call loop, DeerFlow now strips provider-level raw tool-call metadata on forced-stop assistant messages and injects placeholder tool results for dangling calls before the next model invocation. This keeps OpenAI-compatible reasoning models that strictly validate `tool_call_id` sequences from failing with malformed history errors.
 
 **Visible Tool-Run Completion**: For interactive turns, DeerFlow retries an empty post-tool final response once, then surfaces a visible error instead of reporting a silent successful run.
+
+### System Prompt
+
+Every run starts from a system prompt — roughly 12,000 characters of instructions assembled before your first message ever reaches the model. It sets the agent's role, how it thinks, when it delegates to sub-agents, which skills it can reach for, and what it is allowed to say about itself. In most agent frameworks that text is a constant buried in the source. Here it is a page in the app.
+
+**Settings → System prompt** has two tabs:
+
+- **Edit** — the template in force, in a monospace editor. The twelve placeholders the runtime fills in (`{skills_section}`, `{subagent_section}`, `{soul}`, `{memory_tool_section}`, …) are listed as one-click insert buttons, with a character budget and a *Discard edits* escape hatch.
+- **Preview** — the same prompt with every placeholder substituted: the exact text the lead agent receives, not an approximation. A switch toggles the Ultra-mode sub-agent block, which is also where the available sub-agent roster is listed — so this is the one place in the UI that shows which agents `task` can delegate to, including any you defined under `subagents.custom_agents`.
+
+Edits are saved to `SYSTEM_PROMPT.md` beside your other DeerFlow state and re-read on every agent build, so **a change applies from your next run with no restart**. `make backup` carries it along with the rest of your instance. **Reset to default** restores the built-in prompt at any time.
+
+Templates are validated before they are saved, not after: an unknown placeholder is refused with the offending name rather than accepted and then silently ignored. Because saving proves the template renders, anything the editor accepts is guaranteed to work on the next run. Leaving a placeholder *out* is not an error — it is how you remove that section from the prompt, and the page tells you which blocks a given template omits.
+
+Two guardrails worth knowing:
+
+- **A saved prompt can change a run, but never break one.** If the file is hand-edited on disk, restored from an older backup, or written against a placeholder a newer version no longer provides, the agent falls back to the built-in prompt with a warning instead of failing to start.
+- **The built-in prompt tells the agent not to disclose its own instructions.** You may remove that section — some people want an agent that can explain itself — and the editor warns you when an edit does, because the effect is invisible until someone asks the agent to recite its prompt.
+
+The routes behind the page (`GET`/`PUT`/`DELETE /api/system-prompt` and `GET /api/system-prompt/preview`) require an admin account, the same bar as skill and MCP management. In the default passwordless local setup, that is you.
 
 ### Long-Term Memory
 
