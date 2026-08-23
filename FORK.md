@@ -6,6 +6,28 @@
 
 Convenience features on top of upstream, designed around running DeerFlow locally with mixed cloud + local models (more are covered in the sections further down):
 
+### Adding a new fork feature — what to write, and where
+
+A feature that only exists in code is a feature the next person deletes by accident. Every fork addition lands the same five documents in the **same change set** as the code, and the two guidance files below are byte-budgeted, so where the depth goes is a decision, not a preference.
+
+- **`README.md` — the user-facing half.** Add a `###` subsection under **Core Features** (or a top-level `##` if the feature is not a core-agent behavior, the way *Scheduled Tasks* and *Backup and Restore* sit on their own). Write it for someone deciding whether to turn the feature on, not for someone maintaining it. Cover, in this order and in prose rather than a bare list:
+  - **What it is, in one paragraph**, naming the UI entry point (the page and the button) so the reader can find it. If it replaces or sits beside an existing flow, say which and how they differ.
+  - **The interesting behavior**, especially any outcome a user would not expect — a feature that is allowed to say "no", a step that is deliberately read-only, a default that is off. Bold the surprising part; that sentence is what makes the section worth reading.
+  - **The limits that bite**: size caps, ownership scoping, anything digested or truncated before a model sees it. Users hit these and file bugs otherwise.
+  - **How to turn it on**, with the literal `config.yaml` block, every key that matters, and any *other* switch it depends on. State the default explicitly — "off by default" is not implied by an example that shows `enabled: true`.
+  - **Add the anchor to the Table of Contents** in the same edit. The TOC is hand-maintained; a section missing from it is a section nobody browses to.
+- **`FORK.md` — this file, the maintainer's half.** Add a numbered `### N.` section under *What this fork adds* covering the reasoning the README deliberately omits: why the design is shaped this way, which properties are load-bearing, and what a future refactor must not "simplify" away. Then add a row to the [Post-sync feature checklist](#post-sync-feature-checklist) naming **the exact command that verifies it** and the specific asserts that are silent when broken — that row is what a sync 18 months from now actually runs, and `scripts/upstream_sync.py` renders it into every auto-generated sync PR.
+- **The nearest `AGENTS.md` — the agent's half.** Invariants an AI coding agent needs *before* editing the code go beside the code, in the module-local guide. **Do not grow the root or module files**: `backend/tests/test_agent_guidance_check.py` is a hard assert (root 16 KiB, module 24 KiB, local 40 KiB), both module files run within a few hundred bytes of their budget, and *documenting a feature can fail CI on its own*. Put the depth in a local `AGENTS.md` next to the code, leave a one-line pointer in the module file, and register the new path in that test's approved-guidance list.
+- **`CHANGELOG.md` — the release half.** One `### Added` bullet under `## [Unreleased]`, written from the user's perspective and leading with what changed for them, not with the module you touched. Name the config key and its default in the same bullet.
+- **Config, if the feature has any.** **Any** new key means bumping `config_version` **and both chart copies** (`deploy/helm/deer-flow/values.yaml` and that chart's `README.md`) — `scripts/check_config_version.sh` is CI's `validate-chart` job, and nothing outside CI reads those copies. It is tempting to assume a single leaf key inside an existing section is exempt; it is not. `config_upgrade.py` compares the **shape**, nested keys included, and at equal versions it *warns and writes nothing*, so an existing install keeps a config permanently missing the key while every launch path prints the warning. Don't reason about it — prove it, on a copy of the previous example:
+
+  ```bash
+  git show HEAD:config.example.yaml > /tmp/prev-config.yaml
+  python3 scripts/config_upgrade.py /tmp/prev-config.yaml config.example.yaml
+  ```
+
+  It must print `+ <your key>` and stamp the new version. If it instead says *stamped current but is missing N field(s)*, the bump is missing.
+
 ### 1. Auto-synced Ollama models in `config.yaml`
 
 `scripts/sync-ollama-models.py` queries the local Ollama daemon (or remote, via `OLLAMA_HOST`) and reconciles `config.yaml`'s `models:` section with whatever you have installed via `ollama pull`. Capabilities (`thinking`, `vision`, `tools`) are detected via `/api/show` and translated into DeerFlow's `supports_*` flags.
@@ -1469,6 +1491,54 @@ agents, so a draft can never 409 on the create route it is destined for. A
 `setup_agent` rejects one (#3549) — an agent without a soul is unusable, and
 failing loudly lets you retry instead of leaving a broken draft on screen.
 
+**The optional goal box, and why it does not decide the verdict.** Above the
+pickers is a free-text *What should this agent do?* field. It is deliberately
+**optional**: the feature's original value is "read my history and tell me", and
+requiring an intent statement would replace discovery with a worse version of the
+bootstrap chat. When present it rides in its own `<goal>` block *before* the
+transcripts — a one-line instruction buried under several thousand characters of
+transcript is one the model ignores — and the system prompt gains a clause telling
+it to weigh the goal as the primary signal of intent while still grounding every
+claim in the sources. That clause explicitly forbids restating the goal back as
+the `SOUL.md`, because an agent whose soul is the user's own sentence echoed at
+them is exactly what `/workspace/agents/new` already does, better.
+
+Crucially, **a goal does not remove the `no_gap` verdict.** Stating what you want
+steers the analysis; it does not settle whether the agent should exist. Losing that
+would cost the feature its best property, so `test_goal_alone_does_not_remove_the_no_gap_option`
+pins that the two-verdict menu survives a stated goal.
+
+**Overriding is a separate, explicit act.** A `no_gap` screen carries a *Generate
+anyway* button, which re-runs with `force_proposal`. That mode **removes** the
+`no_gap` option from the prompt rather than merely discouraging it — the user has
+already been shown the overlap and decided, so re-offering the verdict would let
+the model silently overrule a decision that is no longer its to make. For the same
+reason `parse_analysis(require_proposal=True)` treats a `no_gap` reply as a
+retryable failure rather than an answer to render. The overlapping agent is still
+named and shown on the resulting draft: overriding the verdict must not mean hiding
+what it collided with.
+
+**Refining edits the draft; it does not regenerate one.** The result screen carries
+a *Refine this draft* box whose guidance is sent alongside the draft **as it stands
+in the form**, hand edits included, in a `<draft>` block. The revision prompt is a
+separate, narrower instruction: apply the guidance and change nothing else, do not
+re-litigate whether the agent should exist, do not rename it. A revision that
+quietly rewrites the untouched half is indistinguishable from a regeneration and
+throws away edits the user already made — which is also why a revision keeps the
+draft's own name instead of re-uniquifying it against the roster, an operation that
+would rename the agent out from under someone mid-edit
+(`test_revision_keeps_the_drafts_own_name`). Refining with an empty box is a 422:
+"make it shorter" needs something to be shorter *than*.
+
+All three inputs are user-typed text embedded in a prompt, so `<goal>` and
+`<draft>` join `<source>` in `transcript.py::BLOCK_TAG_NAMES` and are escaped by
+the one shared `neutralize_block_delimiters`; both are classified in the
+`test_input_sanitization_middleware.py` anti-drift guard for the same reason
+`<source>` is. The goal is capped by `agent_generation.max_goal_chars` (default
+2000), enforced in the route rather than as a Pydantic `max_length` so raising the
+cap does not need a schema change, and mirrored in the UI so the limit is visible
+while typing instead of after a round trip.
+
 Off by default via `agent_generation.enabled`, and it additionally requires
 `agents_api.enabled` (§ the custom-agent API), since that is the route the
 accepted draft is created through — the config endpoint reports `enabled` only
@@ -1632,7 +1702,7 @@ Then confirm each fork feature end-to-end:
 | **Ollama daemon lifecycle** (§1) | `cd backend && uv run pytest tests/test_ollama_lifecycle.py` covers the `keep_alive` settings parse (including the nested `keep_alive_overrides` map, whose children must **not** leak into the flat `ollama.*` settings), the resolution precedence, the rendered entry, the VRAM-contention warning, `default_local_model`, preload, and the doctor rows. Wiring: `parse_ollama_settings` / `resolve_keep_alive` / `vram_contention_warning` / `default_local_model` / `preload_model` in `scripts/sync-ollama-models.py`; the `--preload-only` **backgrounded** call in `scripts/serve.sh` right after the sync; `scripts/doctor.py::check_ollama_readiness` in the new **Local Models** section; the documented keys in `config.example.yaml`'s `ollama:` block. Model tuples grew a 4th field (`keep_alive`) — `sync()` reads the tail positionally so 2- and 3-tuple callers still work; keep that back-compatibility if the shape changes again. Preload must stay backgrounded in `serve.sh`: it blocks until the weights are loaded. Manual: set `ollama.keep_alive: 30m`, relaunch, and confirm the regenerated marker block carries `keep_alive: 30m` on every entry. |
 | **API-key model auto-config** (§2) | On a *copy* of `config.example.yaml`: `ANTHROPIC_API_KEY=sk-ant-… python3 scripts/sync-api-key-models.py --config <copy> --dry-run --verbose` logs `enabled 'anthropic' model block`; with an empty env the file stays byte-identical. Pinned by `backend/tests/test_sync_api_key_models.py`. All eleven `# === BEGIN/END auto-model-config: <provider> ===` marker blocks (anthropic, openrouter, and the nine first-party home blocks: openai, xai, google, deepseek, mistral, moonshot, qwen, minimax, zai) must still be present in `config.example.yaml`, each in sync with its `*_BUNDLE_MODELS` list in `scripts/wizard/providers.py` (`HOME_API_BUNDLES` registry) and its `PROVIDERS` entry in `scripts/sync-api-key-models.py`. |
 | **Per-thread subagent model override** (§3, Ultra mode) | `input-box.tsx` renders the second "Subagent" `ModelSelector` only under `context.mode === "ultra"`, defaulting to "Follow lead", dimming `lacksToolSupport` models. It sets `subagent_model_name` in thread context; `_CONTEXT_CONFIGURABLE_KEYS` (`app/gateway/services.py`) forwards it; `task_tool.py` applies it as `model_override` and passes it to `SubagentExecutor`. Backend plumbing pinned by `backend/tests/test_task_tool_core_logic.py::test_task_tool_uses_subagent_model_override_for_tool_loading`. |
-| **Generate an agent from history** (§20) | `cd backend && uv run pytest tests/test_agent_generation.py tests/test_agent_generation_router.py` — the pure layer (digestion, caps, `<source>` delimiter escaping, name normalization, verdict parsing) and the route (feature switches, per-source ownership, dedupe/cap, verdicts, model selection, 502 paths, aux accounting). Wiring: `app/gateway/routers/agent_generation.py` registered in `app/gateway/app.py`; `packages/harness/deerflow/agents/generation/`; `config/agent_generation_config.py` wired into `AppConfig`; frontend `core/agent-generation/` + `components/workspace/agents/agent-generator.tsx` + the **Generate from history** button in `agent-gallery.tsx`. **Three asserts must not be 'simplified' away:** `test_analyze_never_creates_the_agent_itself` (the route stays read-only — a draft must never become an agent unattended), `test_build_system_instruction_biases_toward_no_gap` (a prompt edit must not drop the bias against proposing), and the delimiter-escaping tests (a transcript containing `</source>` must not break out of its block). `<source>` is classified in `test_input_sanitization_middleware.py::_EXEMPT_BLOCK_TAGS` with the reason — that guard will fail if a future block tag is added without a decision. Also note `backend/AGENTS.md` carries only a pointer: the depth lives in `packages/harness/deerflow/agents/generation/AGENTS.md`, registered in `test_agent_guidance_check.py`'s approved list. Manual: enable both `agent_generation.enabled` and `agents_api.enabled`, pick two conversations, and confirm a `no_gap` verdict renders as a result rather than an error. |
+| **Generate an agent from history** (§20) | `cd backend && uv run pytest tests/test_agent_generation.py tests/test_agent_generation_router.py` — the pure layer (digestion, caps, `<source>` delimiter escaping, name normalization, verdict parsing) and the route (feature switches, per-source ownership, dedupe/cap, verdicts, model selection, 502 paths, aux accounting). Wiring: `app/gateway/routers/agent_generation.py` registered in `app/gateway/app.py`; `packages/harness/deerflow/agents/generation/`; `config/agent_generation_config.py` wired into `AppConfig`; frontend `core/agent-generation/` + `components/workspace/agents/agent-generator.tsx` + the **Generate from history** button in `agent-gallery.tsx`. **Five asserts must not be 'simplified' away:** `test_analyze_never_creates_the_agent_itself` (the route stays read-only — a draft must never become an agent unattended), `test_build_system_instruction_biases_toward_no_gap` (a prompt edit must not drop the bias against proposing), `test_goal_alone_does_not_remove_the_no_gap_option` (a stated goal steers the analysis but must not decide the verdict), `test_force_proposal_rejects_a_no_gap_reply` (an override the model ignores is a failure, not an answer), and the delimiter-escaping tests (a transcript, goal, or draft containing `</source>`, `</goal>`, or `</draft>` must not break out of its block). Ownership survives both overrides — `test_revision_still_checks_source_ownership` and `test_forced_draft_still_checks_source_ownership` pin that skipping the verdict never skips the authorization. `<source>`, `<goal>`, and `<draft>` are classified in `test_input_sanitization_middleware.py::_EXEMPT_BLOCK_TAGS` with the reason — that guard will fail if a future block tag is added without a decision. Also note `backend/AGENTS.md` carries only a pointer: the depth lives in `packages/harness/deerflow/agents/generation/AGENTS.md`, registered in `test_agent_guidance_check.py`'s approved list. Frontend: `cd frontend && pnpm rstest run agent-generation` covers the selection and goal-cap helpers. Manual: enable both `agent_generation.enabled` and `agents_api.enabled`, pick two conversations, and confirm a `no_gap` verdict renders as a result rather than an error; then press **Generate anyway** and confirm the overlapping agent is still named on the draft, and that a **Refine** round keeps a hand edit you made to the SOUL.md before refining. |
 | **Editable system prompt** (§19) | Settings → System prompt must render both tabs: **Edit** (template + one-click placeholder buttons) and **Preview** (placeholders substituted; the subagent switch changes the output). Wiring: `system-prompt-settings-page.tsx` registered in `settings-dialog.tsx` as a `dynamic()` import — `frontend/tests/unit/components/workspace/lazy-panels.test.ts` counts those imports, so adding or removing a settings page must bump that number; `core/system-prompt/{api,hooks,types}.ts`; `app/gateway/routers/system_prompt.py` registered in `app/gateway/app.py`. Backend pinned by `backend/tests/test_system_prompt_store.py` (validation, persistence, render fallback, config independence) and `backend/tests/test_system_prompt_router.py` (routes + admin gate). Run both **with `config.yaml` moved aside** — the render paths reach for it through a `None` default otherwise, which is how these first passed locally and failed CI. The full list of what a prompt change must be tested with is in §19. Manual: save an override, confirm `~/.deer-flow/SYSTEM_PROMPT.md` appears and the **next** run uses it with no restart; then hand-edit that file to `{bogus}` and confirm the run still works on the built-in prompt. |
 | **Follow-up suggestions off by default + model picker** (§4) | `core/settings/local.ts` defaults `suggestions.enabled=false`; Settings → Suggestions page writes `suggestions.{enabled,modelName}`; `input-box.tsx` gates on `suggestionsConfig?.enabled && localSettings.suggestions.enabled` and sends `n: maxFollowupSuggestions`, `model_name: suggestionsModelName ?? context.model_name`. The backend endpoint's `model_name` override is pinned by `backend/tests/test_suggestions_router.py`. |
 | **Memory toggle (off by default)** | `core/settings/local.ts` defaults `memory.enabled=false`; Settings → Memory page writes it; `core/threads/hooks.ts` sends `memory_enabled` in run context; `agents/lead_agent/agent.py::_apply_memory_preference` consumes it (operator `memory.enabled: false` still wins). Frontend defaults pinned by `frontend/tests/unit/core/settings/local.test.ts`; the backend `_apply_memory_preference` behavior (override-false disables injection/extraction/tools; operator config still wins) by `backend/tests/test_lead_agent_memory_toggle.py`. |

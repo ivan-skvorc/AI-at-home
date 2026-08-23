@@ -1307,6 +1307,20 @@ When a gap *is* found, you get an editable draft — name, description, and full
 and nothing is written until you press **Create agent**. The analysis route itself is
 strictly read-only; it can propose an agent but cannot persist one.
 
+**You can also just say what you want.** Above the pickers there is an optional
+**What should this agent do?** box — a rough description of what to tune the agent for
+("something that drafts my weekly client updates in my voice and flags anything needing a
+decision"). It steers which parts of the selected work matter and shapes the draft, but it
+does **not** decide the verdict: a stated goal still gets checked against your existing
+roster, and the flow can still tell you an agent already covers it. When it does, a
+**Generate anyway** button on that screen overrides it — the overlap is then carried onto
+the draft as a note rather than a dead end, so you keep seeing what it collides with.
+
+**Drafts are refined in place, not regenerated.** Under the draft is a **Refine this
+draft** box: "make it more concise", "focus on the review side". It sends the draft exactly
+as it stands in the form — including edits you typed yourself — and only what you asked
+about is changed; everything else survives verbatim, and the agent is not renamed.
+
 Transcripts are digested before they are sent: tool-result bodies are dropped (the calling
 turn still names the tools), only the most recent turns of each conversation are kept, and
 per-message / per-source character caps apply. Every source is ownership-checked against
@@ -1326,6 +1340,7 @@ agent_generation:
   max_chars_per_message: 1500
   max_chars_per_source: 8000
   max_runs_per_task: 5
+  max_goal_chars: 2000 # cap on the "what should this agent do?" / refine text
 ```
 
 ### Sandbox & File System

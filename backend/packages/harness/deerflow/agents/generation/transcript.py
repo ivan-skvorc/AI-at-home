@@ -33,25 +33,32 @@ HUMAN_EVENT_TYPES = frozenset({"llm.human.input"})
 AI_EVENT_TYPES = frozenset({"llm.ai.response"})
 
 
-# Matches an opening or closing ``<source …>`` delimiter, with the same tolerance
-# for whitespace and attributes that the production blocked-tag pattern uses — so
-# a spaced or attributed forgery cannot slip past.
-_SOURCE_DELIMITER_RE = re.compile(r"<\s*/?\s*source\b[^>]*>?", re.IGNORECASE)
+# Every block tag this module wraps model-bound content in. A tag listed here is
+# escaped out of the content itself, so a transcript or a user-typed goal cannot
+# forge the structure the prompt uses to separate framework text from quoted
+# input. Adding a block tag to a prompt means adding it here, and classifying it
+# in ``tests/test_input_sanitization_middleware.py``'s anti-drift guard.
+BLOCK_TAG_NAMES: tuple[str, ...] = ("source", "goal", "draft")
+
+# Matches an opening or closing delimiter for any of the tags above, with the
+# same tolerance for whitespace and attributes that the production blocked-tag
+# pattern uses — so a spaced or attributed forgery cannot slip past.
+_BLOCK_DELIMITER_RE = re.compile(r"<\s*/?\s*(?:" + "|".join(BLOCK_TAG_NAMES) + r")\b[^>]*>?", re.IGNORECASE)
 
 
-def neutralize_source_delimiters(text: str) -> str:
-    """Render any ``<source>`` / ``</source>`` delimiter in ``text`` inert.
+def neutralize_block_delimiters(text: str) -> str:
+    """Render any prompt block delimiter in ``text`` inert.
 
-    Escapes only the delimiter shape rather than every angle bracket: transcripts
-    routinely contain code and markup, and mangling all of it would cost the
-    analysis the very signal it is reading for.
+    Escapes only the delimiter shapes in :data:`BLOCK_TAG_NAMES` rather than every
+    angle bracket: transcripts and goals routinely contain code and markup, and
+    mangling all of it would cost the analysis the very signal it is reading for.
     """
-    return _SOURCE_DELIMITER_RE.sub(lambda match: match.group(0).replace("<", "&lt;").replace(">", "&gt;"), text)
+    return _BLOCK_DELIMITER_RE.sub(lambda match: match.group(0).replace("<", "&lt;").replace(">", "&gt;"), text)
 
 
-def _escape_attribute(value: str) -> str:
+def escape_block_attribute(value: str) -> str:
     """Make a value safe to interpolate into a double-quoted block attribute."""
-    return neutralize_source_delimiters(value).replace('"', "&quot;")
+    return neutralize_block_delimiters(value).replace('"', "&quot;")
 
 
 @dataclass(frozen=True)
@@ -72,10 +79,11 @@ class SourceTranscript:
         as prompt structure rather than as quoted history. This one-shot analysis
         call does not pass through ``InputSanitizationMiddleware`` (which only
         rewrites the lead agent's ``ModelRequest``), so the escaping has to happen
-        here, where the delimiter is introduced.
+        here, where the delimiter is introduced. The same escaping covers the
+        user-typed goal and a draft carried back in for revision.
         """
-        header = f'<source kind="{_escape_attribute(self.kind)}" id="{_escape_attribute(self.source_id)}" title="{_escape_attribute(self.title)}">'
-        return f"{header}\n{neutralize_source_delimiters(self.body)}\n</source>"
+        header = f'<source kind="{escape_block_attribute(self.kind)}" id="{escape_block_attribute(self.source_id)}" title="{escape_block_attribute(self.title)}">'
+        return f"{header}\n{neutralize_block_delimiters(self.body)}\n</source>"
 
 
 def truncate(text: str, limit: int, *, marker: str = TRUNCATION_MARKER) -> str:

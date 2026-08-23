@@ -583,6 +583,21 @@ export const zhCN: Translations = {
     title: "从历史记录生成智能体",
     description:
       "选择一个模型，以及新智能体应该参考的历史对话或定时任务。在你确认草稿之前，不会保存任何内容。",
+    goalLabel: "这个智能体应该做什么？",
+    goalPlaceholder:
+      "例如：帮我用我的语气起草每周客户汇报，并标出需要我决策的地方",
+    goalHint:
+      "可选。简单描述希望智能体被调整成什么样——它决定所选记录中哪些部分更重要。",
+    optional: "可选",
+    generateAnyway: "仍然生成",
+    overlapNote: (agentName: string) =>
+      `注意：这与你已有的“${agentName}”智能体存在重叠。`,
+    refineLabel: "调整这份草稿",
+    refinePlaceholder: "例如：写得更简洁一些，并侧重代码审查部分",
+    refineHint:
+      "会在上面的草稿（含你的修改）基础上修订，未提到的部分保持不变。",
+    refine: "调整",
+    refining: "调整中…",
     modelLabel: "分析模型",
     modelDefault: "默认模型",
     modelHint: "该模型会阅读你选择的记录，并判断是否值得新增一个智能体。",

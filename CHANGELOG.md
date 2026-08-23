@@ -9,6 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **agents:** **Tell the agent generator what you're after.** The
+  *Generate from history* wizard gains an optional **What should this agent do?**
+  box — a rough description of what to tune the agent for. It steers which parts of
+  the selected work matter and shapes the draft, but it deliberately does **not**
+  decide the verdict: a stated goal is still checked against your existing roster,
+  and the flow can still tell you an agent already covers it. When it does, a new
+  **Generate anyway** button overrides it, carrying the overlapping agent onto the
+  draft as a note rather than hiding it. Drafts also gain a **Refine this draft**
+  box — "make it more concise", "focus on the review side" — which revises the
+  draft exactly as it stands in the form, hand edits included: only what you asked
+  about changes, everything else survives verbatim, and the agent is not renamed.
+  `POST /api/agent-generation/analyze` gains `goal`, `force_proposal`, and
+  `revise_from`; the goal is capped by the new `agent_generation.max_goal_chars`
+  (default 2000). `config_version` is now `42`: `config_upgrade.py` compares the
+  config's nested shape, so even one new key needs the bump to reach an existing
+  install.
+
 - **agents:** **Generate a custom agent from work you have already done.** A new
   **Generate from history** button on `/workspace/agents` opens a wizard: pick the
   model to run the analysis, pick the past conversations and/or scheduled tasks the

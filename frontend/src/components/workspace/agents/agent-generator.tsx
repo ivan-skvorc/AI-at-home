@@ -8,6 +8,7 @@ import {
   LightbulbIcon,
   MessageSquareIcon,
   SparklesIcon,
+  WandSparklesIcon,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useCallback, useMemo, useState } from "react";
@@ -28,12 +29,17 @@ import { Textarea } from "@/components/ui/textarea";
 import {
   AgentGenerationError,
   canAnalyze,
+  canRefine,
+  goalLength,
+  isGoalWithinCap,
   isSelected,
+  normalizeGoal,
   toggleSource,
   useAgentGenerationConfig,
   useAnalyzeSources,
 } from "@/core/agent-generation";
 import type {
+  AnalyzeRequest,
   AnalyzeResult,
   GenerationSource,
 } from "@/core/agent-generation/types";
@@ -116,6 +122,8 @@ export function AgentGenerator() {
   const createAgent = useCreateAgent();
 
   const [step, setStep] = useState<Step>("select");
+  const [goal, setGoal] = useState("");
+  const [refinement, setRefinement] = useState("");
   const [modelValue, setModelValue] = useState(DEFAULT_MODEL_VALUE);
   const [selection, setSelection] = useState<GenerationSource[]>([]);
   const [result, setResult] = useState<AnalyzeResult | null>(null);
@@ -124,7 +132,9 @@ export function AgentGenerator() {
   const [draftSoul, setDraftSoul] = useState("");
 
   const maxSources = config?.max_sources ?? 0;
+  const maxGoalChars = config?.max_goal_chars ?? 0;
   const atCap = maxSources > 0 && selection.length >= maxSources;
+  const goalWithinCap = isGoalWithinCap(goal, maxGoalChars);
 
   const handleToggle = useCallback(
     (source: GenerationSource) => {
@@ -139,27 +149,61 @@ export function AgentGenerator() {
     [maxSources, t],
   );
 
-  const handleAnalyze = useCallback(async () => {
-    try {
-      const analysis = await analyze.mutateAsync({
-        sources: selection,
-        model_name: modelValue === DEFAULT_MODEL_VALUE ? null : modelValue,
-      });
-      setResult(analysis);
-      if (analysis.proposal) {
-        setDraftName(analysis.proposal.name);
-        setDraftDescription(analysis.proposal.description);
-        setDraftSoul(analysis.proposal.soul);
+  // One call path for all three buttons — Analyze, Generate anyway, Refine —
+  // so the draft-state bookkeeping after a successful run cannot drift between
+  // them. Only the request differs.
+  const run = useCallback(
+    async (extra: Partial<AnalyzeRequest>) => {
+      try {
+        const analysis = await analyze.mutateAsync({
+          sources: selection,
+          model_name: modelValue === DEFAULT_MODEL_VALUE ? null : modelValue,
+          ...extra,
+        });
+        setResult(analysis);
+        if (analysis.proposal) {
+          setDraftName(analysis.proposal.name);
+          setDraftDescription(analysis.proposal.description);
+          setDraftSoul(analysis.proposal.soul);
+          setRefinement("");
+        }
+        setStep("result");
+      } catch (error) {
+        const message =
+          error instanceof AgentGenerationError
+            ? error.message
+            : t.agentGeneration.analyzeFailed;
+        toast.error(message);
       }
-      setStep("result");
-    } catch (error) {
-      const message =
-        error instanceof AgentGenerationError
-          ? error.message
-          : t.agentGeneration.analyzeFailed;
-      toast.error(message);
-    }
-  }, [analyze, modelValue, selection, t]);
+    },
+    [analyze, modelValue, selection, t],
+  );
+
+  const handleAnalyze = useCallback(
+    () => run({ goal: normalizeGoal(goal) }),
+    [goal, run],
+  );
+
+  const handleGenerateAnyway = useCallback(
+    () => run({ goal: normalizeGoal(goal), force_proposal: true }),
+    [goal, run],
+  );
+
+  // Refining sends the draft as it currently stands in the form, hand edits and
+  // all, so the model revises what the user is looking at rather than the last
+  // thing it generated.
+  const handleRefine = useCallback(
+    () =>
+      run({
+        goal: normalizeGoal(refinement),
+        revise_from: {
+          name: draftName,
+          description: draftDescription,
+          soul: draftSoul,
+        },
+      }),
+    [draftDescription, draftName, draftSoul, refinement, run],
+  );
 
   const handleCreate = useCallback(async () => {
     if (!result?.proposal) {
@@ -244,6 +288,40 @@ export function AgentGenerator() {
       <div className="flex-1 overflow-y-auto p-6">
         {step === "select" ? (
           <div className="mx-auto flex max-w-3xl flex-col gap-6">
+            <div className="space-y-1.5">
+              <div className="flex items-baseline justify-between">
+                <span className="text-sm font-medium">
+                  {t.agentGeneration.goalLabel}
+                </span>
+                <span className="text-muted-foreground text-xs">
+                  {t.agentGeneration.optional}
+                </span>
+              </div>
+              <Textarea
+                value={goal}
+                onChange={(event) => setGoal(event.target.value)}
+                placeholder={t.agentGeneration.goalPlaceholder}
+                className="min-h-20"
+              />
+              <div className="flex items-baseline justify-between gap-4">
+                <p className="text-muted-foreground text-xs">
+                  {t.agentGeneration.goalHint}
+                </p>
+                {maxGoalChars > 0 && goalLength(goal) > 0 ? (
+                  <span
+                    className={cn(
+                      "shrink-0 text-xs tabular-nums",
+                      goalWithinCap
+                        ? "text-muted-foreground"
+                        : "text-destructive",
+                    )}
+                  >
+                    {goalLength(goal)}/{maxGoalChars}
+                  </span>
+                ) : null}
+              </div>
+            </div>
+
             <div className="space-y-1.5">
               <span className="text-sm font-medium">
                 {t.agentGeneration.modelLabel}
@@ -355,7 +433,9 @@ export function AgentGenerator() {
               <Button
                 onClick={() => void handleAnalyze()}
                 disabled={
-                  !canAnalyze(selection, maxSources) || analyze.isPending
+                  !canAnalyze(selection, maxSources) ||
+                  !goalWithinCap ||
+                  analyze.isPending
                 }
               >
                 <SparklesIcon className="mr-1.5 h-4 w-4" />
@@ -381,9 +461,19 @@ export function AgentGenerator() {
                     {t.agentGeneration.coveredBy(result.covered_by)}
                   </p>
                 ) : null}
-                <div className="mt-2 flex gap-2">
+                <div className="mt-2 flex flex-wrap justify-center gap-2">
                   <Button variant="outline" onClick={() => setStep("select")}>
                     {t.agentGeneration.changeSelection}
+                  </Button>
+                  <Button
+                    variant="outline"
+                    onClick={() => void handleGenerateAnyway()}
+                    disabled={analyze.isPending}
+                  >
+                    <SparklesIcon className="mr-1.5 h-4 w-4" />
+                    {analyze.isPending
+                      ? t.agentGeneration.analyzing
+                      : t.agentGeneration.generateAnyway}
                   </Button>
                   <Button onClick={() => router.push("/workspace/agents")}>
                     {t.agents.backToGallery}
@@ -394,7 +484,14 @@ export function AgentGenerator() {
               <>
                 <Alert>
                   <BotIcon className="h-4 w-4" />
-                  <AlertDescription>{result?.rationale}</AlertDescription>
+                  <AlertDescription>
+                    {result?.rationale}
+                    {result?.forced && result?.covered_by ? (
+                      <span className="text-muted-foreground mt-1 block">
+                        {t.agentGeneration.overlapNote(result.covered_by)}
+                      </span>
+                    ) : null}
+                  </AlertDescription>
                 </Alert>
 
                 <div className="space-y-1.5">
@@ -430,6 +527,36 @@ export function AgentGenerator() {
                   />
                   <p className="text-muted-foreground text-xs">
                     {t.agentGeneration.proposalSoulHint}
+                  </p>
+                </div>
+
+                <div className="space-y-1.5 rounded-md border p-3">
+                  <span className="text-sm font-medium">
+                    {t.agentGeneration.refineLabel}
+                  </span>
+                  <div className="flex items-start gap-2">
+                    <Textarea
+                      value={refinement}
+                      onChange={(event) => setRefinement(event.target.value)}
+                      placeholder={t.agentGeneration.refinePlaceholder}
+                      className="min-h-16 flex-1"
+                    />
+                    <Button
+                      variant="outline"
+                      onClick={() => void handleRefine()}
+                      disabled={
+                        !canRefine(refinement, maxGoalChars) ||
+                        analyze.isPending
+                      }
+                    >
+                      <WandSparklesIcon className="mr-1.5 h-4 w-4" />
+                      {analyze.isPending
+                        ? t.agentGeneration.refining
+                        : t.agentGeneration.refine}
+                    </Button>
+                  </div>
+                  <p className="text-muted-foreground text-xs">
+                    {t.agentGeneration.refineHint}
                   </p>
                 </div>
 

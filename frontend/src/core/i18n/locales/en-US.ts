@@ -610,6 +610,22 @@ export const enUS: Translations = {
     title: "Generate an agent from your history",
     description:
       "Pick a model and the past conversations or scheduled tasks a new agent should be shaped around. Nothing is saved until you accept the draft.",
+    goalLabel: "What should this agent do?",
+    goalPlaceholder:
+      "e.g. Something that drafts my weekly client updates in my voice and flags anything that needs a decision",
+    goalHint:
+      "Optional. A rough description of what to tune the agent for — it steers which parts of the selected work matter.",
+    optional: "Optional",
+    generateAnyway: "Generate anyway",
+    overlapNote: (agentName: string) =>
+      `Note: this overlaps with your existing "${agentName}" agent.`,
+    refineLabel: "Refine this draft",
+    refinePlaceholder:
+      "e.g. Make it more concise, and focus on the review side",
+    refineHint:
+      "Revises the draft above, including your own edits. Anything you don't mention is left alone.",
+    refine: "Refine",
+    refining: "Refining…",
     modelLabel: "Analysis model",
     modelDefault: "Default model",
     modelHint:
