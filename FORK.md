@@ -334,6 +334,49 @@ on its own.
 
 Record each pass here — a dated line is what tells the next person whether the roster was checked last week or last year, and *which* providers the pass could actually reach.
 
+- **2026-08-23 (feature PR, not a sync) — mechanical half clean, tier 1 unavailable again, one
+  figure re-corroborated, no roster or price change.** Run as the audit step while adding §20,
+  not after an upstream merge. **Tier 1 was unavailable for the fourth pass running:** the egress
+  proxy refuses every provider host tried (`openrouter.ai`, `www.anthropic.com`, `api.x.ai`,
+  `platform.openai.com`, `z.ai`, `api-docs.deepseek.com`, `ai.google.dev` — all fail at CONNECT),
+  and `audit_models.py` correctly listed openrouter as *skipped* rather than as drift. General
+  web search **was** reachable, so tier 2 could run.
+
+  Mechanical half green throughout: `scripts/audit_models.py` reports **no drift**; the
+  stale-fixture self-test (`--catalog scripts/fixtures/model_audit_stale_catalog.json`) still
+  surfaces all four drift kinds and still exits 0 on findings; `sync-api-key-models.py --dry-run`
+  is a clean no-op on an empty env; the `display_name`-carries-a-price gate prints nothing; and
+  the six model/pricing suites are green (269 passed).
+
+  **Gemini 3.1 Pro re-corroborates at the corrected `$2/12`.** That was the single figure the
+  2026-08-22 pass changed, so it was the highest-risk entry in the bundle and the one worth
+  re-reading first. Independent trackers agree exactly on $2.00 in / $12.00 out for the standard
+  tier (≤200K prompts; above that Google bills 2x input / 1.5x output, and per the Grok 4.6
+  precedent the `price:` block carries the base tier). Still **corroborated, not verified** — it
+  stays top of the owed list.
+
+  **Roster checked for currency, nothing to roll forward.** The August 2026 releases visible from
+  tier 2 are Grok 4.6, Qwen3.8-Max, GPT-5.6, Claude Fable 5, Gemini 3.7 Flash, GLM-5.2 Turbo, and
+  DeepSeek V4-Pro-0813 GA. Every flagship among them is already bundled; DeepSeek's GA is the
+  same `deepseek-v4-pro` id reaching general availability, not a new slug; GLM-5.2 Turbo is behind
+  the bundled GLM-5.3; and Gemini 3.7 Flash remains deliberately out for the two reasons the last
+  pass recorded (it is a cheaper sibling, not Google's flagship, and its current price is an
+  introductory window that tier 2 may not ship). **No entry was edited this pass.**
+
+  **Still owed to the next unrestricted pass**, unchanged in priority from 2026-08-22 minus the
+  re-check above: Gemini 3.1 Pro's `$2/12` (now corroborated twice, still never verified), the
+  Gemini 3.7 Flash roster decision, the four figures in the 2026-08-22 table (Grok 4.6, Qwen3.8
+  Max, GLM-5.3, Mistral Medium 3.5), and MiniMax M3's promo status — a discount never qualifies
+  for corroboration, so only a reachable OpenRouter promotions page can resolve it. Claude Sonnet
+  5's `$2/10` intro window through **2026-08-31** is still open and expires on its own.
+
+  **One checklist gate caught a real defect in the PR this pass ran alongside.** `config.example.yaml`
+  gained an `agent_generation:` section and `config_version` was bumped 40 → 41, but the chart's two
+  copies (`deploy/helm/deer-flow/values.yaml` and that chart's `README.md`) were left at 40 —
+  exactly the "nothing outside CI reads it" trap the gate exists for. `scripts/check_config_version.sh`
+  failed, both copies were bumped, and delivery was then verified end to end on a copy of the
+  pre-change example: `config_upgrade.py` reports `+ agent_generation` and stamps 41.
+
 - **2026-08-22 (second pass, upstream sync `f1f4af9`) — corroborated; one price corrected,
   and the four figures the last pass left owed are now cleared.** Provider pages were
   *still* unreachable — `openrouter.ai` and every first-party host answer 403 on CONNECT,
@@ -1355,6 +1398,86 @@ added for it. The editor warns — but does not block — when an edit drops the
 built-in **System-Context Confidentiality** section, because the consequence
 (the agent will happily recite your prompt) is invisible until someone asks.
 
+### 20. Generate an agent from work you have already done
+
+Creating a custom agent used to mean answering an interview on
+`/workspace/agents/new`. That works when you already know what agent you want —
+but the best evidence for *which* agent you need is the work already sitting in
+your history, and nothing read it. **Generate from history** (a button beside
+**New Agent** on `/workspace/agents`) is the second way in: pick the model that
+runs the analysis, pick the past conversations and/or scheduled tasks the agent
+should be shaped around, and let it decide.
+
+**Deciding "no" is the point, not a failure mode.** The verdict is one of two,
+and `no_gap` — the work is one-off, too varied to specialize, or already covered
+by an agent you have, named — is a first-class success. The system prompt says
+out loud that this is the safe answer, because the obvious failure of a feature
+like this is an eager one that proposes an agent for every selection until the
+roster is five near-duplicates nobody maintains. That bias is load-bearing
+enough to have its own test
+(`test_build_system_instruction_biases_toward_no_gap`), so a later prompt edit
+cannot quietly drop it.
+
+When a gap *is* found you get an editable draft — name, description, full
+`SOUL.md` — and **nothing is written until you press Create agent.**
+`POST /api/agent-generation/analyze` is strictly read-only; creation stays on the
+existing `POST /api/agents` behind an explicit click. That split is deliberate:
+this is the one feature in the fork where a model's output would otherwise become
+a persistent, privileged object (an agent with its own prompt and tool access)
+with no human between the two.
+
+Three properties carry the feature, and each is silent when broken:
+
+- **Read-only analysis.** Pinned by
+  `test_analyze_never_creates_the_agent_itself`, which asserts the agent store's
+  `create`/`update` are never called on a `propose` verdict. Without it, a
+  refactor that "helpfully" persisted the draft would look like a working feature.
+- **Per-source ownership.** `require_permission`'s `owner_check` can only see a
+  single `thread_id` path parameter, so it cannot cover a *list* of sources —
+  this route checks each thread with
+  `ThreadMetaStore.check_access(..., require_existing=True)` and each task through
+  `ScheduledTaskRepo.get(..., user_id=…)`, and passes `user_id` into
+  `list_messages` so the event store applies its own isolation too. Under §6
+  (multi-user mode) this is what stops one user's analysis from reading another's
+  conversations. Adding a new source kind means adding its ownership check —
+  there is no decorator doing it for you.
+- **Bounded prompt.** Threads here routinely run to hundreds of turns with
+  multi-megabyte tool payloads, so sources are digested before concatenation:
+  tool-result *bodies* are dropped (the calling assistant turn still names the
+  tools it reached for, which is the signal without the bytes), only the most
+  recent turns survive, and per-message / per-source character caps apply. The row
+  fetch deliberately asks for *more* rows than the message cap, because digestion
+  discards some — fetching exactly the cap leaves a busy conversation nearly empty.
+
+**One injection surface, closed at the source.** Each digest is wrapped in a
+`<source …>` block whose body is the user's own text, so a conversation
+containing `</source>` could close the block early and have whatever followed
+read as prompt structure. `transcript.py::neutralize_source_delimiters` escapes
+that shape (with the same whitespace/attribute tolerance as the production
+blocked-tag pattern) before it is embedded. This cannot be delegated to
+`InputSanitizationMiddleware`: that middleware only rewrites the *lead agent's*
+`ModelRequest` and never sees a one-shot `run_oneshot_llm` call — the same reason
+the summarizer and memory-updater blocks are exempted in its anti-drift guard,
+where `<source>` is now classified with that reasoning. Only the delimiter shape
+is escaped, never every angle bracket: transcripts carry code, and mangling all
+of it would cost the analysis the signal it is reading for.
+
+The parse layer coerces a model-authored name ("Weekly Report Writer") to
+`^[A-Za-z0-9-]+$` and then suffixes it (`-2`, `-3`…) against your existing
+agents, so a draft can never 409 on the create route it is destined for. A
+`propose` verdict carrying an empty `SOUL.md` is rejected exactly as
+`setup_agent` rejects one (#3549) — an agent without a soul is unusable, and
+failing loudly lets you retry instead of leaving a broken draft on screen.
+
+Off by default via `agent_generation.enabled`, and it additionally requires
+`agents_api.enabled` (§ the custom-agent API), since that is the route the
+accepted draft is created through — the config endpoint reports `enabled` only
+when **both** are on, so the UI never offers a draft you cannot save. The
+analysis call is billed to a new `agent_generation` aux-usage category (§7),
+under a dedicated pseudo-thread id: one analysis spans several conversations, so
+billing it to any single one would misattribute the cost, and a dedicated bucket
+gives it its own row on `/workspace/spend`.
+
 ## Why mix local and cloud
 
 Each tier of model has a job it's good at. Mixing them is how you get most of the quality of frontier models at a fraction of the cost:
@@ -1509,6 +1632,7 @@ Then confirm each fork feature end-to-end:
 | **Ollama daemon lifecycle** (§1) | `cd backend && uv run pytest tests/test_ollama_lifecycle.py` covers the `keep_alive` settings parse (including the nested `keep_alive_overrides` map, whose children must **not** leak into the flat `ollama.*` settings), the resolution precedence, the rendered entry, the VRAM-contention warning, `default_local_model`, preload, and the doctor rows. Wiring: `parse_ollama_settings` / `resolve_keep_alive` / `vram_contention_warning` / `default_local_model` / `preload_model` in `scripts/sync-ollama-models.py`; the `--preload-only` **backgrounded** call in `scripts/serve.sh` right after the sync; `scripts/doctor.py::check_ollama_readiness` in the new **Local Models** section; the documented keys in `config.example.yaml`'s `ollama:` block. Model tuples grew a 4th field (`keep_alive`) — `sync()` reads the tail positionally so 2- and 3-tuple callers still work; keep that back-compatibility if the shape changes again. Preload must stay backgrounded in `serve.sh`: it blocks until the weights are loaded. Manual: set `ollama.keep_alive: 30m`, relaunch, and confirm the regenerated marker block carries `keep_alive: 30m` on every entry. |
 | **API-key model auto-config** (§2) | On a *copy* of `config.example.yaml`: `ANTHROPIC_API_KEY=sk-ant-… python3 scripts/sync-api-key-models.py --config <copy> --dry-run --verbose` logs `enabled 'anthropic' model block`; with an empty env the file stays byte-identical. Pinned by `backend/tests/test_sync_api_key_models.py`. All eleven `# === BEGIN/END auto-model-config: <provider> ===` marker blocks (anthropic, openrouter, and the nine first-party home blocks: openai, xai, google, deepseek, mistral, moonshot, qwen, minimax, zai) must still be present in `config.example.yaml`, each in sync with its `*_BUNDLE_MODELS` list in `scripts/wizard/providers.py` (`HOME_API_BUNDLES` registry) and its `PROVIDERS` entry in `scripts/sync-api-key-models.py`. |
 | **Per-thread subagent model override** (§3, Ultra mode) | `input-box.tsx` renders the second "Subagent" `ModelSelector` only under `context.mode === "ultra"`, defaulting to "Follow lead", dimming `lacksToolSupport` models. It sets `subagent_model_name` in thread context; `_CONTEXT_CONFIGURABLE_KEYS` (`app/gateway/services.py`) forwards it; `task_tool.py` applies it as `model_override` and passes it to `SubagentExecutor`. Backend plumbing pinned by `backend/tests/test_task_tool_core_logic.py::test_task_tool_uses_subagent_model_override_for_tool_loading`. |
+| **Generate an agent from history** (§20) | `cd backend && uv run pytest tests/test_agent_generation.py tests/test_agent_generation_router.py` — the pure layer (digestion, caps, `<source>` delimiter escaping, name normalization, verdict parsing) and the route (feature switches, per-source ownership, dedupe/cap, verdicts, model selection, 502 paths, aux accounting). Wiring: `app/gateway/routers/agent_generation.py` registered in `app/gateway/app.py`; `packages/harness/deerflow/agents/generation/`; `config/agent_generation_config.py` wired into `AppConfig`; frontend `core/agent-generation/` + `components/workspace/agents/agent-generator.tsx` + the **Generate from history** button in `agent-gallery.tsx`. **Three asserts must not be 'simplified' away:** `test_analyze_never_creates_the_agent_itself` (the route stays read-only — a draft must never become an agent unattended), `test_build_system_instruction_biases_toward_no_gap` (a prompt edit must not drop the bias against proposing), and the delimiter-escaping tests (a transcript containing `</source>` must not break out of its block). `<source>` is classified in `test_input_sanitization_middleware.py::_EXEMPT_BLOCK_TAGS` with the reason — that guard will fail if a future block tag is added without a decision. Also note `backend/AGENTS.md` carries only a pointer: the depth lives in `packages/harness/deerflow/agents/generation/AGENTS.md`, registered in `test_agent_guidance_check.py`'s approved list. Manual: enable both `agent_generation.enabled` and `agents_api.enabled`, pick two conversations, and confirm a `no_gap` verdict renders as a result rather than an error. |
 | **Editable system prompt** (§19) | Settings → System prompt must render both tabs: **Edit** (template + one-click placeholder buttons) and **Preview** (placeholders substituted; the subagent switch changes the output). Wiring: `system-prompt-settings-page.tsx` registered in `settings-dialog.tsx` as a `dynamic()` import — `frontend/tests/unit/components/workspace/lazy-panels.test.ts` counts those imports, so adding or removing a settings page must bump that number; `core/system-prompt/{api,hooks,types}.ts`; `app/gateway/routers/system_prompt.py` registered in `app/gateway/app.py`. Backend pinned by `backend/tests/test_system_prompt_store.py` (validation, persistence, render fallback, config independence) and `backend/tests/test_system_prompt_router.py` (routes + admin gate). Run both **with `config.yaml` moved aside** — the render paths reach for it through a `None` default otherwise, which is how these first passed locally and failed CI. The full list of what a prompt change must be tested with is in §19. Manual: save an override, confirm `~/.deer-flow/SYSTEM_PROMPT.md` appears and the **next** run uses it with no restart; then hand-edit that file to `{bogus}` and confirm the run still works on the built-in prompt. |
 | **Follow-up suggestions off by default + model picker** (§4) | `core/settings/local.ts` defaults `suggestions.enabled=false`; Settings → Suggestions page writes `suggestions.{enabled,modelName}`; `input-box.tsx` gates on `suggestionsConfig?.enabled && localSettings.suggestions.enabled` and sends `n: maxFollowupSuggestions`, `model_name: suggestionsModelName ?? context.model_name`. The backend endpoint's `model_name` override is pinned by `backend/tests/test_suggestions_router.py`. |
 | **Memory toggle (off by default)** | `core/settings/local.ts` defaults `memory.enabled=false`; Settings → Memory page writes it; `core/threads/hooks.ts` sends `memory_enabled` in run context; `agents/lead_agent/agent.py::_apply_memory_preference` consumes it (operator `memory.enabled: false` still wins). Frontend defaults pinned by `frontend/tests/unit/core/settings/local.test.ts`; the backend `_apply_memory_preference` behavior (override-false disables injection/extraction/tools; operator config still wins) by `backend/tests/test_lead_agent_memory_toggle.py`. |
