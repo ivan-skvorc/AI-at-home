@@ -65,7 +65,7 @@ deer-flow/
 │   ├── app/                   # Application layer (import: app.*)
 │   │   ├── gateway/           # FastAPI Gateway API
 │   │   │   ├── app.py         # FastAPI application
-│   │   │   └── routers/       # FastAPI route modules (models, mcp, memory, skills, system_prompt, uploads, threads, artifacts, agents, suggestions, channels)
+│   │   │   └── routers/       # FastAPI route modules (models, mcp, memory, skills, system_prompt, uploads, threads, artifacts, agents, agent_generation, suggestions, channels)
 │   │   └── channels/          # IM platform integrations
 │   ├── tests/                 # Test suite
 │   └── docs/                  # Documentation
@@ -304,6 +304,13 @@ See `docs/` directory for detailed documentation:
 - [PATH_EXAMPLES.md](docs/PATH_EXAMPLES.md) - Path types and usage
 - [summarization.md](docs/summarization.md) - Context summarization
 - [plan_mode_usage.md](docs/plan_mode_usage.md) - Plan mode with TodoList
+
+## Agent Generation (`app/gateway/routers/agent_generation.py`)
+
+`POST /api/agent-generation/analyze` asks one model whether a user's own
+conversations / scheduled tasks warrant a NEW custom agent. Read-only by design:
+it returns a draft, never an agent. Invariants live in
+[`deerflow/agents/generation/AGENTS.md`](packages/harness/deerflow/agents/generation/AGENTS.md).
 
 ## Fork-specific backend features
 

@@ -13,6 +13,7 @@ from app.gateway.config import get_gateway_config
 from app.gateway.csrf_middleware import CORS_EXPOSED_HEADERS, CSRFMiddleware, get_configured_cors_origins
 from app.gateway.deps import langgraph_runtime
 from app.gateway.routers import (
+    agent_generation,
     agents,
     artifacts,
     assistants_compat,
@@ -746,6 +747,9 @@ This gateway provides runtime endpoints for agent runs plus custom endpoints for
 
     # Agents API is mounted at /api/agents
     app.include_router(agents.router)
+
+    # Agent generation API is mounted at /api/agent-generation
+    app.include_router(agent_generation.router)
 
     # Suggestions API is mounted at /api/threads/{thread_id}/suggestions
     app.include_router(suggestions.router)

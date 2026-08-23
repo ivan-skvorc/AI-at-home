@@ -578,6 +578,43 @@ export const zhCN: Translations = {
     settingsInvalidMaxTokens: "最大输出 token 必须为不超过 200,000 的正整数",
   },
 
+  agentGeneration: {
+    entryPoint: "从历史生成",
+    title: "从历史记录生成智能体",
+    description:
+      "选择一个模型，以及新智能体应该参考的历史对话或定时任务。在你确认草稿之前，不会保存任何内容。",
+    modelLabel: "分析模型",
+    modelDefault: "默认模型",
+    modelHint: "该模型会阅读你选择的记录，并判断是否值得新增一个智能体。",
+    sourcesLabel: "对话与任务",
+    sourcesHint:
+      "选择会重复出现的工作。一次性的对话通常不足以支撑一个专属智能体。",
+    conversations: "对话",
+    scheduledTasks: "定时任务",
+    untitledConversation: "未命名对话",
+    noSources: "目前还没有可分析的对话或定时任务。等积累一些历史记录后再来吧。",
+    selectedCount: (selected: number, max: number) =>
+      `已选择 ${selected} / ${max}`,
+    capReached: (max: number) => `一次最多只能分析 ${max} 条记录。`,
+    analyze: "开始分析",
+    analyzing: "分析中…",
+    analyzeFailed: "分析未能完成，请重试。",
+    noGapTitle: "无需新增智能体",
+    coveredBy: (agentName: string) => `已由“${agentName}”覆盖。`,
+    changeSelection: "重新选择",
+    proposalName: "智能体名称",
+    proposalDescription: "描述",
+    proposalSoul: "SOUL.md",
+    proposalSoulHint: "它定义了智能体的身份与行为。创建前可以随意修改。",
+    create: "创建智能体",
+    creating: "创建中…",
+    created: "智能体已创建",
+    createFailed: "智能体创建失败。",
+    disabledTitle: "未启用智能体生成功能",
+    disabledDescription:
+      "请在 config.yaml 中将 agent_generation.enabled 和 agents_api.enabled 设为 true 以使用此功能。",
+  },
+
   // Breadcrumb
   breadcrumb: {
     workspace: "工作区",

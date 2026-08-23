@@ -605,6 +605,47 @@ export const enUS: Translations = {
       "Max output tokens must be a positive integer up to 200,000",
   },
 
+  agentGeneration: {
+    entryPoint: "Generate from history",
+    title: "Generate an agent from your history",
+    description:
+      "Pick a model and the past conversations or scheduled tasks a new agent should be shaped around. Nothing is saved until you accept the draft.",
+    modelLabel: "Analysis model",
+    modelDefault: "Default model",
+    modelHint:
+      "The model that reads your selected work and decides whether a new agent is warranted.",
+    sourcesLabel: "Conversations and tasks",
+    sourcesHint:
+      "Pick work that repeats. One-off conversations rarely justify a dedicated agent.",
+    conversations: "Conversations",
+    scheduledTasks: "Scheduled tasks",
+    untitledConversation: "Untitled conversation",
+    noSources:
+      "There are no conversations or scheduled tasks to analyze yet. Come back once you have some history.",
+    selectedCount: (selected: number, max: number) =>
+      `${selected} of ${max} selected`,
+    capReached: (max: number) =>
+      `You can analyze at most ${max} sources at a time.`,
+    analyze: "Analyze",
+    analyzing: "Analyzing…",
+    analyzeFailed: "The analysis could not be completed. Please try again.",
+    noGapTitle: "No new agent needed",
+    coveredBy: (agentName: string) => `Already covered by "${agentName}".`,
+    changeSelection: "Change selection",
+    proposalName: "Agent name",
+    proposalDescription: "Description",
+    proposalSoul: "SOUL.md",
+    proposalSoulHint:
+      "This defines the agent's identity and behavior. Edit anything before creating it.",
+    create: "Create agent",
+    creating: "Creating…",
+    created: "Agent created",
+    createFailed: "The agent could not be created.",
+    disabledTitle: "Agent generation is not enabled",
+    disabledDescription:
+      "Set agent_generation.enabled and agents_api.enabled to true in config.yaml to use this feature.",
+  },
+
   // Breadcrumb
   breadcrumb: {
     workspace: "Workspace",

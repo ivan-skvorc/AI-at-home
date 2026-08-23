@@ -1,9 +1,10 @@
 "use client";
 
-import { BotIcon, PlusIcon } from "lucide-react";
+import { BotIcon, PlusIcon, SparklesIcon } from "lucide-react";
 import { useRouter } from "next/navigation";
 
 import { Button } from "@/components/ui/button";
+import { useAgentGenerationConfig } from "@/core/agent-generation";
 import { useAgents } from "@/core/agents";
 import { useI18n } from "@/core/i18n/hooks";
 
@@ -12,10 +13,15 @@ import { AgentCard } from "./agent-card";
 export function AgentGallery() {
   const { t } = useI18n();
   const { agents, isLoading } = useAgents();
+  const { enabled: canGenerate } = useAgentGenerationConfig();
   const router = useRouter();
 
   const handleNewAgent = () => {
     router.push("/workspace/agents/new");
+  };
+
+  const handleGenerateAgent = () => {
+    router.push("/workspace/agents/generate");
   };
 
   return (
@@ -28,10 +34,18 @@ export function AgentGallery() {
             {t.agents.description}
           </p>
         </div>
-        <Button onClick={handleNewAgent}>
-          <PlusIcon className="mr-1.5 h-4 w-4" />
-          {t.agents.newAgent}
-        </Button>
+        <div className="flex items-center gap-2">
+          {canGenerate ? (
+            <Button variant="outline" onClick={handleGenerateAgent}>
+              <SparklesIcon className="mr-1.5 h-4 w-4" />
+              {t.agentGeneration.entryPoint}
+            </Button>
+          ) : null}
+          <Button onClick={handleNewAgent}>
+            <PlusIcon className="mr-1.5 h-4 w-4" />
+            {t.agents.newAgent}
+          </Button>
+        </div>
       </div>
 
       {/* Content */}
@@ -51,10 +65,18 @@ export function AgentGallery() {
                 {t.agents.emptyDescription}
               </p>
             </div>
-            <Button variant="outline" className="mt-2" onClick={handleNewAgent}>
-              <PlusIcon className="mr-1.5 h-4 w-4" />
-              {t.agents.newAgent}
-            </Button>
+            <div className="mt-2 flex items-center gap-2">
+              <Button variant="outline" onClick={handleNewAgent}>
+                <PlusIcon className="mr-1.5 h-4 w-4" />
+                {t.agents.newAgent}
+              </Button>
+              {canGenerate ? (
+                <Button variant="ghost" onClick={handleGenerateAgent}>
+                  <SparklesIcon className="mr-1.5 h-4 w-4" />
+                  {t.agentGeneration.entryPoint}
+                </Button>
+              ) : null}
+            </div>
           </div>
         ) : (
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">

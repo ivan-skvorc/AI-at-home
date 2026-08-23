@@ -15,7 +15,7 @@
 # ============================================================================
 # Bump this number when the config schema changes.
 # Run `make config-upgrade` to merge new fields into your local config.yaml.
-config_version: 40
+config_version: 41
 
 # ============================================================================
 # Logging
@@ -3037,6 +3037,27 @@ memory:
 # Keep this disabled unless the gateway is behind a trusted authenticated admin boundary.
 agents_api:
   enabled: false
+
+# ============================================================================
+# Automatic Agent Generation
+# ============================================================================
+# Lets the Agents page analyze conversations / scheduled tasks you pick and
+# decide whether a NEW custom agent is worth adding. Read-only: it returns a
+# draft, and nothing is saved until you accept it. Requires agents_api.enabled
+# too, since the accepted draft is created through the custom-agent API.
+agent_generation:
+  enabled: false
+  # Model used when the request does not pick one. null = primary chat model.
+  model_name: null
+  # Maximum conversations / tasks a single analysis may read (1-25).
+  max_sources: 10
+  # Per-conversation message cap; the most recent messages are kept.
+  max_messages_per_source: 40
+  # Character caps applied before sources are concatenated into one prompt.
+  max_chars_per_message: 1500
+  max_chars_per_source: 8000
+  # Recent runs summarized for each selected scheduled task.
+  max_runs_per_task: 5
 
 # ============================================================================
 # Skill Self-Evolution Configuration

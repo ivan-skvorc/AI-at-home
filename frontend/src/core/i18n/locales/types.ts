@@ -495,6 +495,40 @@ export interface Translations {
     settingsInvalidMaxTokens: string;
   };
 
+  // Automatic agent generation
+  agentGeneration: {
+    entryPoint: string;
+    title: string;
+    description: string;
+    modelLabel: string;
+    modelDefault: string;
+    modelHint: string;
+    sourcesLabel: string;
+    sourcesHint: string;
+    conversations: string;
+    scheduledTasks: string;
+    untitledConversation: string;
+    noSources: string;
+    selectedCount: (selected: number, max: number) => string;
+    capReached: (max: number) => string;
+    analyze: string;
+    analyzing: string;
+    analyzeFailed: string;
+    noGapTitle: string;
+    coveredBy: (agentName: string) => string;
+    changeSelection: string;
+    proposalName: string;
+    proposalDescription: string;
+    proposalSoul: string;
+    proposalSoulHint: string;
+    create: string;
+    creating: string;
+    created: string;
+    createFailed: string;
+    disabledTitle: string;
+    disabledDescription: string;
+  };
+
   // Breadcrumb
   breadcrumb: {
     workspace: string;
