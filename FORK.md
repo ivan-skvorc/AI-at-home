@@ -8,7 +8,7 @@ Convenience features on top of upstream, designed around running DeerFlow locall
 
 ### Adding a new fork feature — what to write, and where
 
-A feature that only exists in code is a feature the next person deletes by accident. Every fork addition lands the same five documents in the **same change set** as the code, and the two guidance files below are byte-budgeted, so where the depth goes is a decision, not a preference.
+A feature that only exists in code is a feature the next person deletes by accident. Every fork addition lands the same documents — and its own tests — in the **same change set** as the code, and the two guidance files below are byte-budgeted, so where the depth goes is a decision, not a preference.
 
 - **`README.md` — the user-facing half.** Add a `###` subsection under **Core Features** (or a top-level `##` if the feature is not a core-agent behavior, the way *Scheduled Tasks* and *Backup and Restore* sit on their own). Write it for someone deciding whether to turn the feature on, not for someone maintaining it. Cover, in this order and in prose rather than a bare list:
   - **What it is, in one paragraph**, naming the UI entry point (the page and the button) so the reader can find it. If it replaces or sits beside an existing flow, say which and how they differ.
@@ -16,8 +16,12 @@ A feature that only exists in code is a feature the next person deletes by accid
   - **The limits that bite**: size caps, ownership scoping, anything digested or truncated before a model sees it. Users hit these and file bugs otherwise.
   - **How to turn it on**, with the literal `config.yaml` block, every key that matters, and any *other* switch it depends on. State the default explicitly — "off by default" is not implied by an example that shows `enabled: true`.
   - **Add the anchor to the Table of Contents** in the same edit. The TOC is hand-maintained; a section missing from it is a section nobody browses to.
+  - **Add a bullet to the leading list** in the blockquote at the top of the file ("On top of upstream, it adds — out of the box:"). That list is the fork's shop window and is meant to be **exhaustive** — every fork upgrade gets a line, with its own emoji, in the same change set that adds the feature. It is not a summary of the section below it: write two or three sentences that lead with what a user *gets*, name the surprising behavior, and say what it costs to turn on (a config key, a daemon setting, nothing). A feature that is documented everywhere except here is a feature nobody discovers, because this list is as far as most readers get.
 - **`FORK.md` — this file, the maintainer's half.** Add a numbered `### N.` section under *What this fork adds* covering the reasoning the README deliberately omits: why the design is shaped this way, which properties are load-bearing, and what a future refactor must not "simplify" away. Then add a row to the [Post-sync feature checklist](#post-sync-feature-checklist) naming **the exact command that verifies it** and the specific asserts that are silent when broken — that row is what a sync 18 months from now actually runs, and `scripts/upstream_sync.py` renders it into every auto-generated sync PR.
 - **The nearest `AGENTS.md` — the agent's half.** Invariants an AI coding agent needs *before* editing the code go beside the code, in the module-local guide. **Do not grow the root or module files**: `backend/tests/test_agent_guidance_check.py` is a hard assert (root 16 KiB, module 24 KiB, local 40 KiB), both module files run within a few hundred bytes of their budget, and *documenting a feature can fail CI on its own*. Put the depth in a local `AGENTS.md` next to the code, leave a one-line pointer in the module file, and register the new path in that test's approved-guidance list.
+- **The checks themselves — write them, don't just cite them.** The FORK.md row above names a command; this is the work of making that command exist and mean something. A fork feature ships with **new** tests, not a note that the existing suite still passes: the pure model or helper in a unit test, the wiring in whatever layer owns it (`backend/tests/` for Python — TDD is mandatory there — `frontend/tests/unit/` for logic and hooks, `frontend/tests/e2e/` for anything a user clicks through), and a launch-time script in the test that already covers that script. Two rules make the difference between a test and a decoration:
+  - **Prove the test fails without the change.** Revert the behavior (or neutralize the one line that implements it), watch the new test go red, put it back. A test that passes both ways pins nothing, and the fork is full of invariants — a per-thread lock, a stripped request option, a default that must stay off — where the broken state is *silent* and every other test stays green.
+  - **Pin the property, not the implementation.** Name the thing that would be quietly "simplified" away and assert on that: the option that must reach the wire, the lock that must stay scoped, the branch that must decline rather than evict. Then say so in the row and in the local `AGENTS.md`, so the next person reads why before they refactor.
 - **`CHANGELOG.md` — the release half.** One `### Added` bullet under `## [Unreleased]`, written from the user's perspective and leading with what changed for them, not with the module you touched. Name the config key and its default in the same bullet.
 - **Config, if the feature has any.** **Any** new key means bumping `config_version` **and both chart copies** (`deploy/helm/deer-flow/values.yaml` and that chart's `README.md`) — `scripts/check_config_version.sh` is CI's `validate-chart` job, and nothing outside CI reads those copies. It is tempting to assume a single leaf key inside an existing section is exempt; it is not. `config_upgrade.py` compares the **shape**, nested keys included, and at equal versions it *warns and writes nothing*, so an existing install keeps a config permanently missing the key while every launch path prints the warning. Don't reason about it — prove it, on a copy of the previous example:
 
@@ -355,6 +359,35 @@ on its own.
 ##### Audit log
 
 Record each pass here — a dated line is what tells the next person whether the roster was checked last week or last year, and *which* providers the pass could actually reach.
+
+- **2026-08-24 (feature PR, not a sync) — mechanical half clean, tier 1 unavailable for the
+  fifth pass running, no roster or price change.** Run as the audit step of the checklist while
+  adding §21 (concurrent chats), not after an upstream merge. **Tier 1 remains unreachable:** the
+  egress proxy still refuses `openrouter.ai` at CONNECT (`Tunnel connection failed: 403
+  Forbidden`), and `audit_models.py` listed openrouter as *skipped* rather than as drift — the
+  property that keeps this job from becoming a weekly red tick. The other eleven providers have
+  no machine-readable catalog and are covered by the manual pass, which needs the same blocked
+  pages. **No figure was corroborated this pass either**, because general web search was not
+  reachable from this environment; nothing was edited, which is the correct outcome — a price
+  written from memory is wrong with confidence and silences the next audit.
+
+  Mechanical half green throughout: `scripts/audit_models.py` reports **no drift** (both offline
+  checks hold — every entry's display-name price agrees with its own block, and the two synced
+  sources agree with each other); the stale-fixture self-test
+  (`--catalog scripts/fixtures/model_audit_stale_catalog.json`) still surfaces all four drift
+  kinds with suggested diffs and still exits 0 on findings; `sync-api-key-models.py --dry-run` is
+  a clean no-op on an empty env; the `display_name`-carries-a-price gate prints nothing; and the
+  six model/pricing suites are green (269 passed).
+
+  **Discount review, no change.** Claude Sonnet 5's `$2/10` intro window through **2026-08-31**
+  is still open and expires on its own. MiniMax M3's OpenRouter promo still carries no `until` —
+  legitimate and deliberately not a finding, and still resolvable only by a reachable promotions
+  page.
+
+  **Still owed to the next unrestricted pass**, unchanged from 2026-08-23: Gemini 3.1 Pro's
+  `$2/12` (corroborated twice, never verified), the Gemini 3.7 Flash roster decision, the four
+  figures in the 2026-08-22 table (Grok 4.6, Qwen3.8 Max, GLM-5.3, Mistral Medium 3.5), and
+  MiniMax M3's promo status.
 
 - **2026-08-23 (feature PR, not a sync) — mechanical half clean, tier 1 unavailable again, one
   figure re-corroborated, no roster or price change.** Run as the audit step while adding §20,
