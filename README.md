@@ -1327,9 +1327,12 @@ per-message / per-source character caps apply. Every source is ownership-checked
 the caller, so the analysis can only read your own history. The call is billed to the
 `agent_generation` category on the Spend page.
 
-Enable it with `config.yaml -> agent_generation.enabled` — it also requires
-`agents_api.enabled`, since the accepted draft is created through the custom-agent API.
-Both are off by default. The same section tunes the analysis model and the size caps:
+It is **on by default** in this fork, together with `agents_api.enabled` (which it
+depends on, since the accepted draft is created through the custom-agent API — these
+are the same routes the Agents pages already use to create and edit agents). Both
+suit the local-trusted, loopback-only deployment this fork ships for; set
+`agents_api.enabled: false` before exposing the gateway on an untrusted network, which
+also hides this feature. The same section tunes the analysis model and the size caps:
 
 ```yaml
 agent_generation:

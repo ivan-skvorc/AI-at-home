@@ -1539,10 +1539,18 @@ the one shared `neutralize_block_delimiters`; both are classified in the
 cap does not need a schema change, and mirrored in the UI so the limit is visible
 while typing instead of after a round trip.
 
-Off by default via `agent_generation.enabled`, and it additionally requires
-`agents_api.enabled` (§ the custom-agent API), since that is the route the
-accepted draft is created through — the config endpoint reports `enabled` only
-when **both** are on, so the UI never offers a draft you cannot save. The
+On by default via `agent_generation.enabled`, alongside `agents_api.enabled`
+(§ the custom-agent API), since that is the route the accepted draft is created
+through — the config endpoint reports `enabled` only when **both** are on, so the
+UI never offers a draft you cannot save. Both defaulting on matches the fork's
+local-trusted, passwordless posture (§5), where the local user is the admin;
+`agents_api` still carries admin-equivalent write access to agent SOUL.md / config,
+so a deployment that leaves the loopback model behind it should turn it back off.
+The Pydantic defaults stay `false` (`agents_api_config.py`,
+`agent_generation_config.py`): a config that omits the section entirely still
+fails safe, and `config_upgrade.py` never overwrites a value an existing install
+has already set — so this flips only what a *fresh* `make config` writes, not
+anyone's hand-set choice. The
 analysis call is billed to a new `agent_generation` aux-usage category (§7),
 under a dedicated pseudo-thread id: one analysis spans several conversations, so
 billing it to any single one would misattribute the cost, and a dedicated bucket
