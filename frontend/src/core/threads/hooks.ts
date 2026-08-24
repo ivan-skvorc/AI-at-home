@@ -2229,6 +2229,15 @@ export function useThreadStream({
             // custom events, while subgraph frames would leak a delegated
             // subagent's values/messages into the thread view (#4399).
             streamResumable: true,
+            // Concurrent chats: the run must outlive this SSE consumer. Leaving
+            // a chat (or closing the tab) tears the stream down, and the Gateway
+            // cancels a run on disconnect unless told otherwise — which would
+            // kill the answer the user walked away to wait for. Sent explicitly
+            // rather than inherited from the SDK's `streamResumable` default,
+            // because `sanitizeRunStreamOptions` strips that flag before the
+            // request: the survival of a backgrounded run must not depend on an
+            // option the Gateway never sees. Rejoining is `reconnectOnMount`.
+            onDisconnect: "continue",
             config: {
               recursion_limit: 1000,
             },
@@ -2352,6 +2361,8 @@ export function useThreadStream({
           metadata: prepared.metadata,
           // No streamSubgraphs — same contract as the main submit path (#4399).
           streamResumable: true,
+          // Survives a disconnect like the main submit path above.
+          onDisconnect: "continue",
           config: {
             recursion_limit: 1000,
           },

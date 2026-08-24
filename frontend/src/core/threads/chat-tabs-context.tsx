@@ -37,10 +37,14 @@ export type { ChatTab } from "./chat-tabs";
 // fire in bursts during a chat, so writes to the server are coalesced.
 const CHAT_TABS_SAVE_DEBOUNCE_MS = 400;
 
+// Stable identity so an idle provider never hands consumers a fresh Set.
+const EMPTY_BUSY_KEYS: ReadonlySet<string> = new Set<string>();
+
 // The transient, non-pinned chat the user is currently viewing. Exactly one
 // exists at a time; it is replaced whenever the route moves to a different
 // unpinned chat. Only pinned tabs are keep-alive — the current slot is the
-// classic "one live chat" and is allowed to remount on navigation.
+// classic "one live chat" and is allowed to remount on navigation, *unless*
+// it is still streaming, in which case leaving it pins it (see `syncRoute`).
 export type CurrentSlot = {
   key: string;
   threadId: string;
@@ -75,6 +79,14 @@ export type ChatTabsContextValue = {
   reorderTabs: (sourceKey: string, targetKey: string) => void;
   /** A slot's instance reports its new→real thread-id promotion. */
   promoteSlotThreadId: (slotKey: string, threadId: string) => void;
+  /**
+   * Slot keys whose chat currently has a run in flight. Keyed by slot (not
+   * thread) because that is the identity the mounted instances and the strip
+   * both address, and it survives a new→real promotion.
+   */
+  busyKeys: ReadonlySet<string>;
+  /** A slot's instance reports whether its chat is streaming right now. */
+  reportBusy: (slotKey: string, busy: boolean) => void;
   /** A slot's instance reports the thread's resolved title (cached on tabs). */
   reportTitle: (threadId: string, title: string) => void;
 };
@@ -93,6 +105,8 @@ export function ChatTabsProvider({ children }: { children: ReactNode }) {
   const [tabs, setTabs] = useState<ChatTab[]>([]);
   const [current, setCurrent] = useState<CurrentSlot | null>(null);
   const [activeKey, setActiveKey] = useState<string | null>(null);
+  const [busyKeys, setBusyKeys] =
+    useState<ReadonlySet<string>>(EMPTY_BUSY_KEYS);
 
   // Latest-value refs so the stable callbacks below can read current state
   // without nested state updaters or churning their dependency arrays (the
@@ -103,6 +117,8 @@ export function ChatTabsProvider({ children }: { children: ReactNode }) {
   currentRef.current = current;
   const activeKeyRef = useRef(activeKey);
   activeKeyRef.current = activeKey;
+  const busyKeysRef = useRef(busyKeys);
+  busyKeysRef.current = busyKeys;
 
   const storageKeyRef = useRef(storageKey);
   storageKeyRef.current = storageKey;
@@ -241,33 +257,59 @@ export function ChatTabsProvider({ children }: { children: ReactNode }) {
     };
   }, [enabled, flushSave]);
 
-  const syncRoute = useCallback((route: ChatRoute | null) => {
-    if (route === null) {
-      // Left the chat routes; keep pinned instances mounted but show nothing.
-      setActiveKey(null);
-      return;
-    }
-    const pinned = findTabByThreadId(tabsRef.current, route.threadId);
-    if (pinned) {
-      setActiveKey(pinned.key);
-      return;
-    }
-    // The slot key encodes the *original* route identity and is stable across a
-    // new→real promotion (the id changes, the key does not). Matching on the key
-    // — not the mutable threadId/isNew — means re-reporting the same route after
-    // its chat was sent re-selects the promoted slot instead of clobbering it
-    // with a fresh empty one (Next keeps the pre-replaceState params).
-    const key = route.isNew
-      ? `new:${route.threadId}`
-      : `route:${route.threadId}`;
-    const prevCurrent = currentRef.current;
-    if (prevCurrent?.key === key) {
-      setActiveKey(prevCurrent.key);
-      return;
-    }
-    setCurrent({ key, threadId: route.threadId, isNew: route.isNew });
-    setActiveKey(key);
-  }, []);
+  const syncRoute = useCallback(
+    (route: ChatRoute | null) => {
+      if (route === null) {
+        // Left the chat routes; keep pinned instances mounted but show nothing.
+        setActiveKey(null);
+        return;
+      }
+      const pinned = findTabByThreadId(tabsRef.current, route.threadId);
+      if (pinned) {
+        setActiveKey(pinned.key);
+        return;
+      }
+      // The slot key encodes the *original* route identity and is stable across a
+      // new→real promotion (the id changes, the key does not). Matching on the key
+      // — not the mutable threadId/isNew — means re-reporting the same route after
+      // its chat was sent re-selects the promoted slot instead of clobbering it
+      // with a fresh empty one (Next keeps the pre-replaceState params).
+      const key = route.isNew
+        ? `new:${route.threadId}`
+        : `route:${route.threadId}`;
+      const prevCurrent = currentRef.current;
+      if (prevCurrent?.key === key) {
+        setActiveKey(prevCurrent.key);
+        return;
+      }
+      // Concurrent chats: the slot we are leaving is normally dropped, which
+      // unmounts its instance and ends its live view. When that chat is still
+      // streaming, pin it instead — reusing its key so the instance is not torn
+      // down — so the answer keeps arriving in a background tab while the user
+      // writes the next prompt somewhere else. A full strip declines the pin; the
+      // run itself still survives (`onDisconnect: "continue"`) and is rejoined on
+      // return. A slot that has not been promoted to a real thread id yet is left
+      // alone: a pinned tab is addressed by thread id, which it does not have.
+      if (
+        prevCurrent &&
+        !prevCurrent.isNew &&
+        busyKeysRef.current.has(prevCurrent.key)
+      ) {
+        const prevTabs = tabsRef.current;
+        const nextTabs = pinTab(prevTabs, {
+          key: prevCurrent.key,
+          threadId: prevCurrent.threadId,
+        });
+        if (nextTabs !== prevTabs) {
+          markDirty();
+          setTabs(nextTabs);
+        }
+      }
+      setCurrent({ key, threadId: route.threadId, isNew: route.isNew });
+      setActiveKey(key);
+    },
+    [markDirty],
+  );
 
   const activateTab = useCallback((key: string) => {
     setActiveKey(key);
@@ -352,6 +394,21 @@ export function ChatTabsProvider({ children }: { children: ReactNode }) {
     [markDirty],
   );
 
+  const reportBusy = useCallback((slotKey: string, busy: boolean) => {
+    setBusyKeys((prevKeys) => {
+      if (prevKeys.has(slotKey) === busy) {
+        return prevKeys;
+      }
+      const next = new Set(prevKeys);
+      if (busy) {
+        next.add(slotKey);
+      } else {
+        next.delete(slotKey);
+      }
+      return next;
+    });
+  }, []);
+
   const reportTitle = useCallback(
     (threadId: string, title: string) => {
       if (!title) {
@@ -403,6 +460,8 @@ export function ChatTabsProvider({ children }: { children: ReactNode }) {
       closeTab,
       reorderTabs,
       promoteSlotThreadId,
+      busyKeys,
+      reportBusy,
       reportTitle,
     }),
     [
@@ -417,6 +476,8 @@ export function ChatTabsProvider({ children }: { children: ReactNode }) {
       closeTab,
       reorderTabs,
       promoteSlotThreadId,
+      busyKeys,
+      reportBusy,
       reportTitle,
     ],
   );

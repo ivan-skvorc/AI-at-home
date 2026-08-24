@@ -1556,6 +1556,81 @@ under a dedicated pseudo-thread id: one analysis spans several conversations, so
 billing it to any single one would misattribute the cost, and a dedicated bucket
 gives it its own row on `/workspace/spend`.
 
+### 21. Concurrent chats — a second prompt without waiting for the first answer
+
+§9 made a background chat *stay mounted*. This makes a background chat *keep
+working*: start something slow in one conversation, leave it, and ask a second
+conversation something else while the first is still thinking. Both answers
+arrive.
+
+Three things had to be true at once, and only the first was.
+
+- **The backend already runs chats in parallel — keep it that way.** The run
+  lock is scoped to one thread (`_checkpoint_thread_lock(thread_id)` in
+  `runtime/runs/worker.py`), so two chats stream concurrently while two runs in
+  *one* chat still take turns — which they must, since they mutate the same
+  checkpoint. Nothing in the suite noticed the difference: a lock widened to a
+  process-global one would have passed every existing test and quietly turned
+  concurrent chats back into a queue. `backend/tests/test_concurrent_thread_runs.py`
+  now pins both directions, the cross-thread case through a rendezvous that
+  deadlocks (and times out) the moment the two runs are serialized.
+
+- **Leaving a chat cancelled its run.** `on_disconnect` defaults to `"cancel"`
+  (`app/gateway/run_models.py`), and leaving a chat that is not pinned as a tab
+  tears its SSE stream down — so walking away from a slow answer to write the
+  next prompt killed the answer you walked away to wait for. The submit paths in
+  `core/threads/hooks.ts` now send `onDisconnect: "continue"` **explicitly**.
+  They arguably did already: the SDK derives that value from `streamResumable`,
+  which the fork passes — but `sanitizeRunStreamOptions` **strips
+  `streamResumable` before the request** (the Gateway rejects it), so the
+  survival of every backgrounded run rested on an SDK default keyed off a flag
+  the Gateway never sees. One upstream change to that default and every
+  backgrounded chat dies silently. It is asserted now, in
+  `frontend/tests/unit/core/threads/run-disconnect.test.ts`, which fails if the
+  option is dropped. Coming back to the chat rejoins the live run through the
+  existing `reconnectOnMount` path. **This also changes what closing the browser
+  does**: a run now finishes on the server instead of dying with the page —
+  which is what §16's "get pinged when it's done" push notification always
+  assumed, and it is the only reason a phone that locks its screen mid-run still
+  gets an answer. The explicit **Stop** button is unaffected: it cancels the run
+  through the cancel API, not by dropping the stream, and a runaway run is still
+  bounded by the spend cap (§10).
+
+- **Leaving a running chat dropped its live view.** Only *pinned* tabs are
+  keep-alive; the current unpinned slot is replaced on navigation by design. So
+  the run survived, but the chat you left went dark until you came back. Now
+  `syncRoute` pins a slot it is leaving **while that slot reports a run in
+  flight**, reusing the slot key so the mounted instance — stream, scroll,
+  panels — is never torn down. Instances report their state through
+  `reportBusy(slotKey, isStreaming)`; the strip renders a pulsing dot on a tab
+  that is still answering, which is the only signal that a background chat is
+  working, and its disappearance is the signal that it is done. Deliberate
+  limits: a slot that has **not been promoted to a real thread id** is not
+  pinned (a tab is addressed by thread id, and a brand-new chat's id is a
+  client-side placeholder until the backend creates the thread), and a **full
+  strip declines** rather than evicting a tab someone chose — in both cases the
+  run still survives server-side and is rejoined on return. The completion
+  notification also fires for a chat that is merely *not the visible slot*, not
+  only for a hidden/unfocused document: a background tab is exactly the case
+  where the user cannot see the run finish.
+
+**Ollama is the part that needs a hand.** Everything above is about DeerFlow;
+with a local model the queue moves into the daemon. Ollama serves
+`OLLAMA_NUM_PARALLEL` requests per model at a time — **1** unless raised — and
+queues the rest, so the second chat sits at "thinking" until the first finishes
+even though both runs are genuinely live. Raising it is a daemon-side setting
+(`systemctl edit ollama` → `Environment="OLLAMA_NUM_PARALLEL=2"`), and it has a
+cost the sizing has to know about: Ollama allocates a **full KV cache per slot**
+(`opts.NumCtx * numParallel` in its scheduler), so N slots divide the affordable
+per-chat `num_ctx` by N. `ollama.num_parallel` in `config.yaml` is what tells
+`scripts/sync-ollama-models.py` about it — it does not change the daemon, and
+the two must be set to match. Set it and each model's synced `num_ctx` shrinks
+accordingly, and the VRAM-contention warning (§1) counts the slots too; leave it
+unset and the sizing is exactly what it was. `make doctor` reports the effective
+number under **Local Models** with the fix, alongside the existing `keep_alive`
+advisory — as an `ok`, not a warning, because one slot is a perfectly reasonable
+choice on a small GPU.
+
 ## Why mix local and cloud
 
 Each tier of model has a job it's good at. Mixing them is how you get most of the quality of frontier models at a fraction of the cost:
@@ -1728,6 +1803,7 @@ Then confirm each fork feature end-to-end:
 | **Explicit `price:` / `discount:` fields** (§17) | `cd backend && uv run pytest tests/test_model_price_fields.py tests/test_config_integrity.py tests/test_pricing.py tests/test_audit_models.py` and `cd frontend && pnpm test sorting`. Covers: the field precedence (`price:` > legacy `pricing:` > a `($in/out)` pair in `display_name`), the additive discount, every expiry rule, that **no bundled model carries a price in its name**, that the two synced sources ship the same price, and that the dropdown renders the price from the field. Wiring: `deerflow/pricing.py` (`parse_discount_expiry`, `_raw_from_price_fields`, `_resolve_discount_window`), the `price`/`discount` fields on `ModelConfig`, the **factory exclude set** in `models/factory.py`, `ModelPriceResponse` on `GET /api/models`, `wizard/providers.py::MODEL_PRICES`, and `core/models/sorting.ts` (`resolveModelPrice`, `modelNameSegments`). **Four properties must not be "fixed" into their opposites:** (1) an expired discount is dropped in `build_pricing_map`, so it never reaches a `ModelPricing` and no consumer re-checks the window — do not add a second expiry check downstream; (2) an unparseable `until` and an unavailable clock both mean *expired*, never *eternal*; (3) `price`/`discount` must stay in the factory's exclude set, because `ModelConfig` is `extra="allow"` and an unexcluded key is forwarded into the provider client and from there into the completion request payload; (4) the display-name price **parser stays**, as the legacy path — `config_upgrade.py` cannot add a key inside an existing list entry, so every install written before this change is priced by that parser and nothing else. Manual: set a `discount:` with `until:` in the past and confirm the header and the dropdown both show only the standard rate; confirm the dropdown still shows a price at all. |
 | **Model dropdown sorting/grouping** (§8) | `cd frontend && pnpm test sorting` exercises the parse/sort/group logic (`frontend/tests/unit/core/models/sorting.test.ts`). Wiring: `core/models/sorting.ts` (`parseModelPrice` promo-aware, `parseModelProvider`, `sortModels`, `groupModelsByProvider`, `demoteLast`); preference `modelPicker` in `core/settings/local.ts`; shared UI `components/workspace/model-picker-controls.tsx` (`ModelPickerControls` + `ModelPickerList` + `ModelDisplayName`) used by the lead + subagent pickers in `input-box.tsx` and the sidecar picker in `sidecar/sidecar-panel.tsx`; i18n keys in `core/i18n/locales/{en-US,zh-CN}.ts`. Manual: open the model dropdown → Sort (Default/Name/Price) + direction toggle + Group-by-provider switch appear and reorder/group the list; every row's price renders green, and a discounted entry (MiniMax M3, Claude Sonnet 5) shows its red list price beside the green promo. If a whole model name turns green or a price stays uncoloured, `splitModelNamePriceSegments` has drifted from the name format — its reassembly test is the fast check. Then **close** the dropdown on a discounted model and confirm the collapsed trigger still shows both prices at a narrow window width; if it clips, the `w-full` on the three `ModelSelectorName` triggers has been dropped (see §8 — without it the span is `fit-content` inside a `flex-col items-start` and overflows the capped button instead of truncating). This half is CSS with no unit test, so it needs the manual look. |
 | **Durable chat tabs** (§9) | `cd backend && uv run pytest tests/test_user_ui_state.py tests/test_chat_tabs_settings_router.py` covers the per-user store (`deerflow/config/user_ui_state.py`, `{base_dir}/users/{user_id}/ui_state.json`) and `GET`/`PUT /api/settings/chat-tabs` (caller-scoped, **no admin gate** — unlike the multi-user-mode routes in the same router). `frontend/tests/unit/core/threads/chat-tabs-persistence.dom.test.tsx` covers the provider's boot path. If upstream restructures `workspace/layout.tsx`'s gateway-offline branch, re-check that an unreachable gateway still **keeps** the local cache instead of blanking the strip (`fetchChatTabs` returns `null` for "unknown", never `[]`), and that a server with no stored set still adopts and seeds from the local cache — that is the upgrade path for tabs pinned before server persistence existed. Manual: pin a tab, restart the stack, hard-reload with site data cleared, and confirm the tabs come back. |
+| **Concurrent chats** (§21) | `cd backend && uv run pytest tests/test_concurrent_thread_runs.py` pins that two threads stream at once (the cross-thread test rendezvouses, so a process-global run lock times out instead of passing) and that two runs in one thread still serialize. `cd frontend && pnpm test run-disconnect chat-tabs-busy` covers the two frontend halves: every `thread.submit` sends `onDisconnect: "continue"` (the Gateway's default is `"cancel"`, and the SDK's own default is derived from the `streamResumable` flag `sanitizeRunStreamOptions` strips — so this must stay explicit), and `syncRoute` pins the slot it is leaving while that slot is streaming instead of dropping it (not pinned when the slot has no real thread id yet; a full strip declines). `pnpm test:e2e concurrent-chats` is the whole user story in one run: prompt chat A with its SSE response withheld, navigate to chat B, assert A became a keep-alive tab with `chat-tab-busy` visible and both `[data-slot-key]` instances mounted, send in B and get its answer while A is still unanswered, then release A and see its answer land in the background tab. Ollama half: `cd backend && uv run pytest tests/test_ollama_lifecycle.py -k "Parallel or concurrency"` — `ollama.num_parallel` parsing, CLI-over-config precedence, N slots dividing the sized `num_ctx`, slots counted in the contention warning, and the `make doctor` line. |
 | **Keep-alive chat tabs** (§9) | `cd frontend && pnpm test chat-tabs` exercises the pure model (`frontend/tests/unit/core/threads/chat-tabs.test.ts`); `pnpm test:e2e chat-tabs` (`frontend/tests/e2e/chat-tabs.spec.ts`) covers drag-from-sidebar onto the empty strip / drag-reorder between chips / open-as-tab / keep-alive switch (both instances stay mounted) / close / reload persistence. Wiring: the live chat is `components/workspace/chats/chat-instance.tsx` (**fully controlled**, own provider stack via `chat-providers.tsx` with a per-instance `storageScope`); `keep-alive-chat-viewport.tsx` is mounted in `workspace-content.tsx` **above** the route inside `ChatTabsProvider` and renders one instance per slot (only the active shown, the rest `display:none`); the tab strip is `chat-tabs-bar.tsx`, which **always renders as a drop zone on chat routes** (an empty-state hint `chatTabs.dropHint` when there are no tabs yet but threads exist, so there is somewhere to drag onto — returning `null` here is the "tabs don't work" bug); `[thread_id]/page.tsx` is a thin registrar in app builds and the classic inline `<ChatInstance>` in static-demo; pure model + persistence in `core/threads/chat-tabs.ts`, state in `chat-tabs-context.tsx`; sidebar drag + **Open in tab** in `recent-chat-list.tsx`; `ChatBox` panel ids keyed by thread id (not pathname). **If upstream restructures `[thread_id]/page.tsx`,** re-extract its body onto `chat-instance.tsx` and keep the registrar/classic split; watch for a barrel (`components/workspace/chats/index.ts`) import of the client viewport into the server `workspace-content.tsx` (import the file directly to keep the `"use client"` boundary). **Upstream may also extract the same body into a *new* file rather than restructuring the route** — #4765 added `chats/chat-page.tsx`, a slot-less duplicate of `chat-instance.tsx` missing the fork's cost header. That is an *add/add*, so git reports no conflict and the duplicate silently becomes the file upstream's future chat work lands in. `chat-page.tsx` is therefore **deliberately deleted in this fork**; if a sync reintroduces it, port the delta into `chat-instance.tsx` and delete it again rather than wiring any route to it. |
 | **Currency spend caps** (§10) | `cd backend && uv run pytest tests/test_spend_budget_config.py tests/test_spend_budget.py tests/test_spend_budget_middleware.py` covers the config/window math, the window aggregation (runs + auxiliary counters, owner-scoped), and the in-run warn / hard stop. Wiring: `deerflow/config/spend_budget_config.py` + the `spend_budget:` block in `config.example.yaml`; `deerflow/runtime/spend_window.py`; `app/gateway/spend_budget.py`; the **HTTP 402** admission refusal and the `__spend_budget` baseline injection in `app/gateway/services.py::start_run`; `SpendBudgetMiddleware` appended in `agents/lead_agent/agent.py` after `TokenBudgetMiddleware`; `RunJournal.current_token_usage_by_model()`; `scripts/doctor.py::check_spend_budget`; the header line via `GET /api/threads/{id}/token-usage -> spend_budget` and `core/threads/token-usage.ts::threadTokenUsageToSpendBudget`. **The pricing module moved into the harness** (`deerflow/pricing.py`) because the in-graph middleware may not import `app.*`; `app/gateway/pricing.py` is a re-export shim, and `test_pricing.py::test_gateway_shim_re_exports_the_canonical_helpers` fails if it rots. **Three invariants that are easy to break and silent when broken:** (1) an unpriced model must contribute **0**, so a fully local run is never blocked — pinned by `TestLocalModelsAreFree` and `TestLocalRunsAreNeverBlocked`; (2) in-run spend must come from the journal's **per-model** accumulator, or a cheap subagent gets billed at the lead's rate and the cap fires early on exactly the setup this fork recommends (`test_a_cheap_subagent_is_billed_at_its_own_rate`); (3) with nothing priced the feature must **self-disable with a reason**, not enforce against a permanent zero (`TestSelfDisabling`). Invariant (1) has a dark mirror: a model whose *reported* id arrived doubled (see the cost-overview row) also prices at zero, so the cap silently stops capping on exactly the provider whose stream is affected — `_message_model_name` normalizes it through `deerflow/model_ids.py`, pinned by `test_spend_budget_middleware.py::test_a_stream_duplicated_model_id_still_counts_against_the_cap`. If upstream restructures `services.py::start_run`, re-add the admission check before `create_or_reject` and the baseline injection after `inject_authenticated_user_context` — the baseline key is `__`-prefixed precisely so `build_run_config` strips a caller-supplied copy. Manual: set a tiny `daily_limit`, run a turn on a priced model (header **Budget left** goes red, the next message 402s), then repeat on a local model and confirm it is never blocked. |
 | **Automated upstream sync** (see *[Upstream sync](#upstream-sync)*) | `cd backend && uv run pytest tests/test_upstream_sync.py` covers parsing this checklist out of FORK.md, the PR body for clean and conflicted merges, gate rendering (pass / fail / **skip**, which must stay distinguishable — a skipped gate reading as green is how a conflicted sync looks mergeable), the 65536-character GitHub body limit, and workflow invariants. Wiring: `scripts/upstream_sync.py`; `.github/workflows/upstream-sync.yml` (weekly + `workflow_dispatch`). **The body is generated from this section, never copied** — a copy is correct exactly once, and every fork feature added afterwards would be missing from the list meant to prove the fork still works. So the two parsers here are load-bearing: the mechanical gates come from the `- [ ]` lines and the features from the table rows below; renaming this heading or restructuring the table silently empties the PR body (`test_the_real_fork_md_parses` is the guard). Workflow invariants pinned by tests: `git merge` and never `git rebase`, no `--force` in any form, and the PR step runs under `if: always()` so a conflicted merge still surfaces. Manual: `python3 scripts/upstream_sync.py --upstream-sha abc --commit-count 1` and read the rendered body. |

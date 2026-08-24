@@ -1749,6 +1749,18 @@ models:
 # preload: true loads models[0] into VRAM at launch (backgrounded, best-effort)
 # so the first message of a session is not a cold start.
 #
+# num_parallel is how many requests the daemon answers per model at the same
+# time — its OLLAMA_NUM_PARALLEL. On the default of 1, a second chat started
+# while the first is still answering simply queues: it shows as "thinking" until
+# the first one finishes. Raise it to run chats concurrently:
+#   sudo systemctl edit ollama   # add:  [Service]  Environment="OLLAMA_NUM_PARALLEL=2"
+# and set the same number here so the context sizing knows about it. Ollama
+# allocates a full KV cache per slot, so N slots divide the affordable num_ctx
+# by N — this value is what keeps that estimate honest (it does not change the
+# daemon; the two must be set to match). The rest of the stack is already
+# concurrent: separate chats run as separate LangGraph runs, and the Gateway
+# only serializes runs within one chat.
+#
 # Note on running two local models at once: a local lead with a local subagent
 # means two sets of weights resident simultaneously. When vram_gb is set, the
 # sync warns at launch — with the actual numbers — if the two largest installed
@@ -1760,6 +1772,7 @@ models:
 #   kv_cache_type: q8_0    # f16 (default) | q8_0 | q4_0 — must match the daemon
 #   keep_alive: 30m        # how long each model stays resident (-1 = never unload)
 #   preload: true          # warm models[0] at launch so turn 1 isn't a cold start
+#   num_parallel: 2        # concurrent chats per model — must match the daemon's OLLAMA_NUM_PARALLEL
 #   keep_alive_overrides:  # optional, per model — wins over keep_alive above
 #     qwen3:8b: 1h
 

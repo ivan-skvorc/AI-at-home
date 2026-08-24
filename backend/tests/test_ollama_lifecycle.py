@@ -173,6 +173,75 @@ class TestVramContentionWarning:
 
 
 # ---------------------------------------------------------------------------
+# Concurrent chats (OLLAMA_NUM_PARALLEL)
+# ---------------------------------------------------------------------------
+
+
+class TestParseNumParallel:
+    def test_absent_section_yields_no_num_parallel(self):
+        settings = sync_ollama.parse_ollama_settings("models:\n  - name: x\n")
+        assert "num_parallel" not in settings
+
+    def test_positive_integer_is_read(self):
+        assert sync_ollama.parse_ollama_settings("ollama:\n  num_parallel: 4\n")["num_parallel"] == 4
+
+    def test_zero_and_negative_and_garbage_are_dropped(self):
+        for raw in ("0", "-2", "many", ""):
+            settings = sync_ollama.parse_ollama_settings(f"ollama:\n  num_parallel: {raw}\n")
+            assert "num_parallel" not in settings, raw
+
+
+class TestResolveNumParallel:
+    def test_defaults_to_one_slot(self):
+        assert sync_ollama.resolve_num_parallel(None, {}) == 1
+
+    def test_config_value_is_used(self):
+        assert sync_ollama.resolve_num_parallel(None, {"num_parallel": 3}) == 3
+
+    def test_cli_wins_over_config(self):
+        assert sync_ollama.resolve_num_parallel(2, {"num_parallel": 8}) == 2
+
+    def test_an_unusable_value_falls_through_to_the_next_source(self):
+        assert sync_ollama.resolve_num_parallel(0, {"num_parallel": 3}) == 3
+        assert sync_ollama.resolve_num_parallel(None, {"num_parallel": "lots"}) == 1
+
+
+class TestNumParallelContextSizing:
+    """Every parallel slot allocates its own KV cache, so N slots divide the window."""
+
+    def test_one_slot_is_the_previous_behavior(self):
+        single = sync_ollama.vram_num_ctx_limit(SHOW_8B, 5 * 1024**3, 24 * 1024**3, "f16")
+        explicit = sync_ollama.vram_num_ctx_limit(SHOW_8B, 5 * 1024**3, 24 * 1024**3, "f16", 1)
+        assert single == explicit
+
+    def test_two_slots_roughly_halve_the_window(self):
+        one = sync_ollama.vram_num_ctx_limit(SHOW_8B, 5 * 1024**3, 24 * 1024**3, "f16", 1)
+        two = sync_ollama.vram_num_ctx_limit(SHOW_8B, 5 * 1024**3, 24 * 1024**3, "f16", 2)
+        assert two < one
+        # Floored to NUM_CTX_STEP, so compare against the step rather than exactly.
+        assert abs(two - one // 2) <= sync_ollama.NUM_CTX_STEP
+
+    def test_the_floor_still_holds_when_slots_outgrow_the_budget(self):
+        # Sixteen slots cannot fit; the model still gets a usable window because
+        # Ollama offloads to CPU rather than refusing to load.
+        assert sync_ollama.vram_num_ctx_limit(SHOW_8B, 5 * 1024**3, 8 * 1024**3, "f16", 16) == sync_ollama.MIN_VRAM_NUM_CTX
+
+    def test_unknown_geometry_still_falls_back_to_the_flat_cap(self):
+        blind = {"model_info": {}, "capabilities": []}
+        assert sync_ollama.vram_num_ctx_limit(blind, 5 * 1024**3, 24 * 1024**3, "f16", 4) is None
+
+
+class TestNumParallelContention:
+    def test_parallel_slots_are_counted_in_the_coexistence_estimate(self):
+        # A pair that co-resides on one slot each may not with four slots each.
+        loaded = [("big-a", SHOW_8B, 9 * 1024**3), ("big-b", SHOW_8B, 9 * 1024**3)]
+        assert sync_ollama.vram_contention_warning(loaded, 24 * 1024**3, "f16", 1) is None
+        warning = sync_ollama.vram_contention_warning(loaded, 24 * 1024**3, "f16", 64)
+        assert warning is not None
+        assert "parallel slots" in warning
+
+
+# ---------------------------------------------------------------------------
 # Preload
 # ---------------------------------------------------------------------------
 
@@ -296,6 +365,31 @@ class TestDoctorOllamaReadiness:
         keep_alive = next(r for r in results if r.label == "local model keep_alive")
         assert keep_alive.status == "ok"
         assert "30m" in keep_alive.detail
+
+    def test_single_slot_concurrency_is_reported_with_the_fix(self, tmp_path):
+        import doctor
+
+        config = tmp_path / "config.yaml"
+        config.write_text("models:\n  - name: qwen3:8b\n    use: langchain_ollama:ChatOllama\n", encoding="utf-8")
+        results = doctor.check_ollama_readiness(config, probe=lambda host: ["qwen3:8b"])
+        concurrency = next(r for r in results if r.label == "local model concurrency")
+        # Advisory, not a failure: one slot is a reasonable choice on a small GPU.
+        assert concurrency.status == "ok"
+        assert "one request at a time" in concurrency.detail
+        assert "OLLAMA_NUM_PARALLEL" in (concurrency.fix or "")
+
+    def test_configured_slots_are_reported(self, tmp_path):
+        import doctor
+
+        config = tmp_path / "config.yaml"
+        config.write_text(
+            "models:\n  - name: qwen3:8b\n    use: langchain_ollama:ChatOllama\nollama:\n  num_parallel: 3\n",
+            encoding="utf-8",
+        )
+        results = doctor.check_ollama_readiness(config, probe=lambda host: ["qwen3:8b"])
+        concurrency = next(r for r in results if r.label == "local model concurrency")
+        assert concurrency.status == "ok"
+        assert "3" in concurrency.detail
 
     def test_readiness_never_fails_the_doctor_exit_code(self, tmp_path):
         import doctor

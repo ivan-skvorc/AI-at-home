@@ -9,6 +9,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **chat:** **A second chat no longer waits for the first one's answer.** Ask one
+  conversation something slow, leave it, and prompt another one — both keep
+  going. Leaving a chat used to cancel its run (the Gateway cancels on client
+  disconnect unless the run says otherwise), and a chat you left went dark even
+  when it survived. Now every run is submitted with `on_disconnect: "continue"`,
+  and a chat you leave **while it is still answering** is kept as a keep-alive
+  tab instead of being torn down: it goes on streaming in the background with a
+  pulsing dot on its tab, and the completion notification fires for a chat that
+  is merely off-screen, not only for a hidden window. Closing the browser no
+  longer cancels a run either — it finishes on the server, which is what the
+  run-finished push notification always assumed; **Stop** still cancels
+  outright, and a spend cap still bounds a runaway run. Nothing to turn on. With a
+  **local Ollama model** there is one more step: the daemon answers
+  `OLLAMA_NUM_PARALLEL` requests per model at a time (1 by default) and queues
+  the rest, so raise it on the daemon and set the new `ollama.num_parallel` in
+  `config.yaml` to match — each slot allocates its own KV cache, and that value
+  is what divides each model's synced `num_ctx` accordingly. `make doctor`
+  reports how many chats can generate at once under **Local Models**. No
+  `config_version` bump: the `ollama:` block is commented out in the example, so
+  the config shape is unchanged.
+
 - **agents:** **Agent creation and generation now work out of the box.**
   `config.example.yaml` ships `agents_api.enabled` and `agent_generation.enabled`
   set to `true`, so a fresh `make config` gets the Agents pages — create/edit an
