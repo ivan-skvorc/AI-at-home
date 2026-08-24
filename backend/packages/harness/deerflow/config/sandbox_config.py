@@ -74,8 +74,8 @@ class SandboxConfig(BaseModel):
         allow_host_bash: Enable host-side bash execution for LocalSandboxProvider.
             Dangerous and intended only for fully trusted local workflows.
 
-    AioSandboxProvider, BoxliteProvider, and E2BSandboxProvider shared options:
-        image: Sandbox image to use (Docker/AIO image or BoxLite OCI image)
+    AioSandboxProvider, BoxliteProvider, E2BSandboxProvider, and OpenSandboxProvider shared options:
+        image: Sandbox image to use (Docker/AIO, BoxLite OCI, or OpenSandbox image)
         replicas: Positive provider capacity. E2B shares it across Gateway
             workers when ownership uses Redis; other modes/providers keep
             process-local accounting.
@@ -103,6 +103,13 @@ class SandboxConfig(BaseModel):
     AioSandboxProvider and E2BSandboxProvider shared options:
         ownership: Cross-instance sandbox ownership store (memory | redis). Multi-instance
             deployments sharing a sandbox backend need redis; see SandboxOwnershipConfig.
+
+    OpenSandboxProvider specific options:
+        api_key, domain, protocol, request_timeout, use_server_proxy: OpenSandbox
+            management and execd connection settings.
+        ready_timeout: Create/readiness deadline in seconds (default: 30).
+        sandbox_timeout: Remote lifetime in seconds (default: 14400); 0 requires
+            explicit provider cleanup.
     """
 
     use: str = Field(
@@ -115,7 +122,7 @@ class SandboxConfig(BaseModel):
     )
     image: str | None = Field(
         default=None,
-        description="Sandbox image to use (Docker/AIO image or BoxLite OCI image)",
+        description="Sandbox image to use (Docker/AIO, BoxLite OCI, or OpenSandbox image)",
     )
     port: int | None = Field(
         default=None,
@@ -225,10 +232,16 @@ class SandboxConfig(BaseModel):
         default=600,
         gt=0,
         description=(
+<<<<<<< HEAD
             "Maximum wall-clock seconds a host bash command may run before it is terminated, process group and all (LocalSandboxProvider). "
             "Keeps a blocking foreground command (e.g. an un-backgrounded server) from hanging the turn; background `&` processes return immediately. "
             "Also forwarded as the AIO sandbox per-command budget: the idle (no-new-output) timeout on the persistent-shell path and the wall-clock "
             "hard timeout on the env-bearing bash.exec path. Raise `request_timeout` alongside this value — the HTTP client must outlive the command."
+=======
+            "Maximum wall-clock seconds a bash command may run before it is terminated. LocalSandboxProvider applies it to the host process group; "
+            "OpenSandboxProvider forwards it to the remote exec service when a call has no explicit timeout. Keeps a blocking foreground command "
+            "(e.g. an un-backgrounded server) from hanging the turn; background `&` processes return immediately."
+>>>>>>> upstream/main
         ),
     )
 
