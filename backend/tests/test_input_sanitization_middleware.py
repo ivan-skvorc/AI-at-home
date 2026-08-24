@@ -268,9 +268,16 @@ _EXEMPT_BLOCK_TAGS = {
     # run_oneshot_llm request, not the ModelRequest this middleware rewrites —
     # so blocking it here would be false coverage. The delimiter is instead
     # neutralized at the point it is introduced, by
-    # transcript.py::neutralize_source_delimiters, which is what actually stops
+    # transcript.py::neutralize_block_delimiters, which is what actually stops
     # a transcript containing "</source>" from breaking out of its block.
     "source",
+    # The other two blocks in that same one-shot prompt: <goal> carries the
+    # user's own typed intent (or revision guidance) and <draft> carries the
+    # proposal they are editing. Same call, same reasoning, same defence — both
+    # are listed in transcript.py::BLOCK_TAG_NAMES and escaped out of every
+    # value interpolated into the prompt.
+    "goal",
+    "draft",
     # MindIE provider wire format: parsed out of model *output*, never injected
     # into model input, so it is not framework authority context.
     "function",

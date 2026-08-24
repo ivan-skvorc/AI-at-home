@@ -13,7 +13,15 @@ from .analysis import (
     parse_analysis,
     uniquify_agent_name,
 )
-from .transcript import SourceTranscript, format_message_rows, format_scheduled_task, neutralize_source_delimiters, truncate
+from .transcript import (
+    BLOCK_TAG_NAMES,
+    SourceTranscript,
+    escape_block_attribute,
+    format_message_rows,
+    format_scheduled_task,
+    neutralize_block_delimiters,
+    truncate,
+)
 
 __all__ = [
     "VALID_VERDICTS",
@@ -22,12 +30,14 @@ __all__ = [
     "AgentAnalysis",
     "AgentAnalysisError",
     "AgentProposal",
+    "BLOCK_TAG_NAMES",
     "SourceTranscript",
     "build_system_instruction",
+    "escape_block_attribute",
     "build_user_content",
     "format_message_rows",
     "format_scheduled_task",
-    "neutralize_source_delimiters",
+    "neutralize_block_delimiters",
     "normalize_agent_name",
     "parse_analysis",
     "truncate",

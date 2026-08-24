@@ -335,3 +335,161 @@ def test_analyze_survives_an_aux_usage_failure(wiring, monkeypatch):
     monkeypatch.setattr(agent_generation, "arecord_aux_usage", AsyncMock(side_effect=RuntimeError("store down")))
     _stub_model(monkeypatch, NO_GAP_REPLY)
     assert _analyze(_thread_request("t1")).verdict == "no_gap"
+
+
+# ---------------------------------------------------------------------------
+# Goal, forced drafts, and revision
+# ---------------------------------------------------------------------------
+
+
+def _goal_request(goal, *, force=False, revise_from=None, ids=("t1",)):
+    return agent_generation.AnalyzeRequest(
+        sources=[agent_generation.GenerationSource(kind="thread", id=i) for i in ids],
+        goal=goal,
+        force_proposal=force,
+        revise_from=revise_from,
+    )
+
+
+def _draft_input(soul="**Identity**\nA report writer."):
+    return agent_generation.DraftInput(name="report-writer", description="writes reports", soul=soul)
+
+
+def _sent_messages(fake_model):
+    return fake_model.ainvoke.await_args.args[0]
+
+
+def test_config_route_reports_the_goal_cap(monkeypatch):
+    monkeypatch.setattr(agent_generation, "get_agents_api_config", lambda: SimpleNamespace(enabled=True))
+    result = asyncio.run(agent_generation.get_generation_config(config=_config(max_goal_chars=500)))
+    assert result.max_goal_chars == 500
+
+
+def test_goal_reaches_the_model(wiring, monkeypatch):
+    fake_model = _stub_model(monkeypatch, NO_GAP_REPLY)
+    _analyze(_goal_request("write my weekly client updates"))
+    user_message = _sent_messages(fake_model)[1]
+    assert "<goal>\nwrite my weekly client updates\n</goal>" in user_message.content
+
+
+def test_goal_switches_the_system_instruction(wiring, monkeypatch):
+    fake_model = _stub_model(monkeypatch, NO_GAP_REPLY)
+    _analyze(_goal_request("write my weekly client updates"))
+    assert "<goal> block" in _sent_messages(fake_model)[0].content
+
+
+def test_a_goal_does_not_force_a_proposal(wiring, monkeypatch):
+    # The goal steers the analysis; the verdict stays the model's to make.
+    _stub_model(monkeypatch, NO_GAP_REPLY)
+    result = _analyze(_goal_request("write my weekly client updates"))
+    assert result.verdict == "no_gap"
+    assert result.forced is False
+
+
+def test_blank_goal_is_treated_as_absent(wiring, monkeypatch):
+    fake_model = _stub_model(monkeypatch, NO_GAP_REPLY)
+    _analyze(_goal_request("   "))
+    assert "<goal>" not in _sent_messages(fake_model)[1].content
+
+
+def test_goal_over_the_cap_is_rejected(wiring, monkeypatch):
+    _stub_model(monkeypatch, NO_GAP_REPLY)
+    with pytest.raises(HTTPException) as exc:
+        _analyze(_goal_request("x" * 51), config=_config(max_goal_chars=50))
+    assert exc.value.status_code == 422
+    assert "50" in exc.value.detail
+
+
+def test_goal_at_the_cap_is_accepted(wiring, monkeypatch):
+    _stub_model(monkeypatch, NO_GAP_REPLY)
+    assert _analyze(_goal_request("x" * 50), config=_config(max_goal_chars=50)).verdict == "no_gap"
+
+
+def test_force_proposal_marks_the_result_forced(wiring, monkeypatch):
+    _stub_model(monkeypatch, PROPOSE_REPLY)
+    result = _analyze(_goal_request(None, force=True))
+    assert result.forced is True
+    assert result.proposal is not None
+
+
+def test_force_proposal_rejects_a_no_gap_reply(wiring, monkeypatch):
+    # The user overrode the verdict; the model returning it anyway is a failure
+    # to follow instructions, not an answer to surface.
+    _stub_model(monkeypatch, NO_GAP_REPLY)
+    with pytest.raises(HTTPException) as exc:
+        _analyze(_goal_request(None, force=True))
+    assert exc.value.status_code == 502
+
+
+def test_revision_requires_guidance(wiring, monkeypatch):
+    # "Refine" with an empty box has nothing to act on.
+    _stub_model(monkeypatch, PROPOSE_REPLY)
+    with pytest.raises(HTTPException) as exc:
+        _analyze(_goal_request(None, revise_from=_draft_input()))
+    assert exc.value.status_code == 422
+
+
+def test_revision_implies_force(wiring, monkeypatch):
+    _stub_model(monkeypatch, PROPOSE_REPLY)
+    assert _analyze(_goal_request("make it shorter", revise_from=_draft_input())).forced is True
+
+
+def test_revision_sends_the_draft_and_the_guidance(wiring, monkeypatch):
+    fake_model = _stub_model(monkeypatch, PROPOSE_REPLY)
+    _analyze(_goal_request("make it shorter", revise_from=_draft_input()))
+    system, user = _sent_messages(fake_model)
+    assert "revising a DRAFT" in system.content
+    assert '<draft name="report-writer"' in user.content
+    assert "<goal>\nmake it shorter\n</goal>" in user.content
+
+
+def test_revision_uses_its_own_run_name(wiring, monkeypatch):
+    fake_model = _stub_model(monkeypatch, PROPOSE_REPLY)
+    _analyze(_goal_request("shorter", revise_from=_draft_input()))
+    assert fake_model.ainvoke.await_args.kwargs["config"]["run_name"] == "agent_generation_revision"
+
+
+def test_revision_keeps_the_drafts_own_name(wiring, monkeypatch):
+    # Uniquifying against the roster on every refine would rename the agent out
+    # from under the user mid-edit.
+    monkeypatch.setattr(agent_generation, "list_custom_agents", lambda user_id=None: [SimpleNamespace(name="report-writer", description="d")])
+    _stub_model(monkeypatch, PROPOSE_REPLY)
+    result = _analyze(_goal_request("shorter", revise_from=_draft_input()))
+    assert result.proposal is not None
+    assert result.proposal.name == "report-writer"
+
+
+def test_a_fresh_analysis_still_uniquifies_the_name(wiring, monkeypatch):
+    monkeypatch.setattr(agent_generation, "list_custom_agents", lambda user_id=None: [SimpleNamespace(name="report-writer", description="d")])
+    _stub_model(monkeypatch, PROPOSE_REPLY)
+    result = _analyze(_goal_request("write reports"))
+    assert result.proposal is not None
+    assert result.proposal.name == "report-writer-2"
+
+
+def test_revision_still_never_creates_the_agent(wiring, monkeypatch):
+    from deerflow.persistence import agents as agents_persistence
+
+    store = MagicMock()
+    monkeypatch.setattr(agents_persistence, "get_agent_store", lambda: store)
+    _stub_model(monkeypatch, PROPOSE_REPLY)
+    _analyze(_goal_request("shorter", revise_from=_draft_input()))
+    store.create.assert_not_called()
+    store.update.assert_not_called()
+
+
+def test_revision_still_checks_source_ownership(wiring, monkeypatch):
+    # The override skips the verdict, never the authorization.
+    wiring.thread_store._allowed = False
+    _stub_model(monkeypatch, PROPOSE_REPLY)
+    with pytest.raises(HTTPException) as exc:
+        _analyze(_goal_request("shorter", revise_from=_draft_input()))
+    assert exc.value.status_code == 404
+
+
+def test_forced_draft_still_checks_source_ownership(wiring, monkeypatch):
+    wiring.thread_store._allowed = False
+    _stub_model(monkeypatch, PROPOSE_REPLY)
+    with pytest.raises(HTTPException) as exc:
+        _analyze(_goal_request(None, force=True))
+    assert exc.value.status_code == 404

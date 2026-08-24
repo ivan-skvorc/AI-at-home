@@ -15,7 +15,7 @@
 # ============================================================================
 # Bump this number when the config schema changes.
 # Run `make config-upgrade` to merge new fields into your local config.yaml.
-config_version: 41
+config_version: 42
 
 # ============================================================================
 # Logging
@@ -3058,6 +3058,9 @@ agent_generation:
   max_chars_per_source: 8000
   # Recent runs summarized for each selected scheduled task.
   max_runs_per_task: 5
+  # Maximum length of the optional "what should this agent do?" text
+  # (also used for revision guidance when refining a draft).
+  max_goal_chars: 2000
 
 # ============================================================================
 # Skill Self-Evolution Configuration

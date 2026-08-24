@@ -30,9 +30,11 @@ character caps apply. The row fetch deliberately asks for *more* rows than the
 message cap because digestion discards some — fetching exactly the cap leaves a
 busy conversation nearly empty.
 
-**Delimiter escaping.** `SourceTranscript.render()` wraps each digest in a
-`<source …>` block, and the body is the user's own text. `transcript.py::
-neutralize_source_delimiters` escapes any `<source>` / `</source>` shape (with
+**Delimiter escaping.** The prompt wraps content in three block tags, listed in
+`transcript.py::BLOCK_TAG_NAMES`: `<source>` (a digest), `<goal>` (the user's
+typed intent or revision guidance), and `<draft>` (the proposal being revised).
+Every one wraps user-controlled text, so `neutralize_block_delimiters` escapes
+all three shapes out of every interpolated value (with
 the same whitespace/attribute tolerance as the production blocked-tag pattern) so
 a conversation containing `</source>` cannot close the block early and have what
 follows read as prompt structure. This is required *here* rather than left to
@@ -41,7 +43,9 @@ follows read as prompt structure. This is required *here* rather than left to
 the summarizer/memory-updater blocks are exempted in
 `tests/test_input_sanitization_middleware.py`. Only the delimiter shape is
 escaped, not every angle bracket: transcripts carry code, and mangling all of it
-would cost the analysis the signal it is reading for.
+would cost the analysis the signal it is reading for. **Adding a block tag to a
+prompt means adding it to `BLOCK_TAG_NAMES` and classifying it in that guard** —
+the guard fails until you do, which is the point.
 
 **Verdict contract** (`analysis.py`, pure and unit-tested):
 
@@ -63,3 +67,32 @@ would cost the analysis the signal it is reading for.
 under a dedicated pseudo-thread id. One analysis spans several conversations, so
 billing it to any single one would misattribute the cost; the dedicated bucket
 gives it its own row on the Spend page instead.
+
+**Four prompt modes, one builder.** `build_system_instruction` takes `has_goal`,
+`force_proposal`, and `revising`, because the four shapes share the SOUL.md
+structure and the JSON contract and would drift apart as separate strings.
+
+| Mode | Trigger | Verdict menu |
+| --- | --- | --- |
+| analyze | none | both verdicts, biased to `no_gap` |
+| analyze with intent | `goal` | both verdicts — a goal steers, it does not decide |
+| forced draft | `force_proposal` | `propose` only |
+| revise | `revise_from` | `propose` only, narrow "change nothing else" prompt |
+
+The last two **remove** `no_gap` from the prompt rather than discouraging it, and
+`parse_analysis(require_proposal=True)` rejects a `no_gap` reply as a retryable
+failure. Both follow from the same rule: the user has already been shown the
+overlap and decided, so re-offering the verdict lets the model overrule a decision
+that is no longer its to make. What the override must *not* skip is authorization —
+ownership is checked before any of this, and
+`test_{revision,forced_draft}_still_checks_source_ownership` pin that.
+
+**Ordering inside the user content is load-bearing.** `<draft>`, then `<goal>`,
+then the sources. The first two are short and are what the model is being asked to
+act on; the sources are bulk evidence. A one-line instruction placed after several
+thousand characters of transcript is a one-line instruction that gets ignored.
+
+**A revision keeps the draft's own name.** `existing_names` is passed empty on the
+revise path, so `uniquify_agent_name` does not fire. Re-uniquifying on every refine
+would rename the agent out from under someone mid-edit, and the name is already in
+the form they are looking at.

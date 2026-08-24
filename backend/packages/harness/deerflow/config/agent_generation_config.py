@@ -58,3 +58,9 @@ class AgentGenerationConfig(BaseModel):
         le=50,
         description="Maximum recent runs summarized for each selected scheduled task.",
     )
+    max_goal_chars: int = Field(
+        default=2000,
+        ge=1,
+        le=20000,
+        description="Maximum length of the optional goal / revision guidance the user types into the wizard.",
+    )

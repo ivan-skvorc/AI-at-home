@@ -500,6 +500,17 @@ export interface Translations {
     entryPoint: string;
     title: string;
     description: string;
+    goalLabel: string;
+    goalPlaceholder: string;
+    goalHint: string;
+    optional: string;
+    generateAnyway: string;
+    overlapNote: (agentName: string) => string;
+    refineLabel: string;
+    refinePlaceholder: string;
+    refineHint: string;
+    refine: string;
+    refining: string;
     modelLabel: string;
     modelDefault: string;
     modelHint: string;

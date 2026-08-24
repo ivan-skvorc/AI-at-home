@@ -21,7 +21,7 @@ from typing import Any
 
 from deerflow.utils import llm_text
 
-from .transcript import SourceTranscript, truncate
+from .transcript import SourceTranscript, escape_block_attribute, neutralize_block_delimiters, truncate
 
 VERDICT_PROPOSE = "propose"
 VERDICT_NO_GAP = "no_gap"
@@ -36,6 +36,7 @@ MAX_NAME_LENGTH = 48
 FALLBACK_AGENT_NAME = "generated-agent"
 
 MAX_RATIONALE_CHARS = 2000
+MAX_GOAL_PROMPT_CHARS = 4000
 MAX_DESCRIPTION_CHARS = 300
 MAX_SOUL_CHARS = 8000
 
@@ -114,8 +115,30 @@ def _existing_agents_block(existing_agents: Sequence[dict[str, Any]]) -> str:
     return "\n".join(lines) or "(none — this user has no custom agents yet)"
 
 
-def build_system_instruction(existing_agents: Sequence[dict[str, Any]]) -> str:
-    """Instruction for the one-shot analysis call."""
+def build_system_instruction(
+    existing_agents: Sequence[dict[str, Any]],
+    *,
+    has_goal: bool = False,
+    force_proposal: bool = False,
+    revising: bool = False,
+) -> str:
+    """Instruction for the one-shot analysis call.
+
+    Four shapes come out of this one builder, because they share the SOUL.md
+    structure and the JSON contract and would drift apart as separate strings:
+
+    - plain analysis (today's behavior),
+    - analysis steered by a user-stated goal,
+    - a forced draft (the user saw a ``no_gap`` verdict and asked anyway), and
+    - a revision of a draft the user is already looking at.
+
+    ``force_proposal`` and ``revising`` both drop the ``no_gap`` option entirely
+    rather than merely discouraging it: the user has already been shown the
+    overlap and chosen to proceed, so offering the verdict again would let the
+    model overrule a decision that is no longer its to make.
+    """
+    if revising:
+        return _build_revision_instruction()
     return (
         "You analyze a user's past work with an AI assistant and decide whether they would "
         "benefit from a NEW custom agent — a reusable assistant persona with its own SOUL.md.\n"
@@ -123,14 +146,77 @@ def build_system_instruction(existing_agents: Sequence[dict[str, Any]]) -> str:
         "The user's existing custom agents are:\n"
         f"{_existing_agents_block(existing_agents)}\n"
         "\n"
-        "Decide between exactly two verdicts:\n"
-        f'- "{VERDICT_NO_GAP}": the work in the sources is one-off, too varied to specialize, or already '
-        "covered by an existing agent. Prefer this verdict when in doubt — an unnecessary agent is worse "
-        "than none, because it dilutes the user's roster and has to be maintained.\n"
-        f'- "{VERDICT_PROPOSE}": the sources show a RECURRING kind of work with a consistent shape '
-        "(same domain, same deliverable, same standards) that no existing agent covers. Only then, draft the agent.\n"
+        + (
+            "The user has stated what they want this agent for, in the <goal> block below. Treat it as the "
+            "primary signal of intent: read the sources for evidence about THAT kind of work, and let it decide "
+            "which parts of the sources matter. It steers the draft; it is not itself the draft — ground every "
+            "claim in what the sources actually show, and never simply restate the goal back as the SOUL.md.\n\n"
+            if has_goal
+            else ""
+        )
+        + (
+            "The user has already been shown that an existing agent may overlap, and asked for a draft anyway. "
+            f'Do NOT return "{VERDICT_NO_GAP}" — that decision has been made. Return "{VERDICT_PROPOSE}" with a '
+            "proposal, and if an existing agent does overlap, name it in covered_by so the user keeps seeing it.\n\n"
+            if force_proposal
+            else "Decide between exactly two verdicts:\n"
+        )
+        + (
+            ""
+            if force_proposal
+            else (
+                f'- "{VERDICT_NO_GAP}": the work in the sources is one-off, too varied to specialize, or already '
+                "covered by an existing agent. Prefer this verdict when in doubt — an unnecessary agent is worse "
+                "than none, because it dilutes the user's roster and has to be maintained.\n"
+                f'- "{VERDICT_PROPOSE}": the sources show a RECURRING kind of work with a consistent shape '
+                "(same domain, same deliverable, same standards) that no existing agent covers. Only then, draft the agent.\n"
+                "\n"
+            )
+        )
+        + (
+            "When proposing, the SOUL.md must follow this structure, with these exact bold section headers:\n"
+            "**Identity** — one dense paragraph: what the agent is, the specific domain it owns, and what that frees the user from.\n"
+            "**Core Traits** — 3 to 5 lines, each an imperative behavioral rule grounded in evidence from the sources, not an adjective.\n"
+            "**Communication** — tone, default language (match the language the user writes in), and format expectations.\n"
+            "**Growth** — how the agent should learn this user's preferences over time.\n"
+            "**Lessons Learned** — leave as the placeholder line: _(Mistakes and insights recorded here to avoid repeating them.)_\n"
+            "Keep the whole SOUL.md under 300 words. Ground every claim in the sources; invent nothing.\n"
+            "\n"
+            "Reply with ONE JSON object and nothing else — no prose, no markdown fence:\n"
+            "{\n"
+            f'  "verdict": "{VERDICT_PROPOSE}" | "{VERDICT_NO_GAP}",\n'
+            '  "rationale": "2-4 sentences citing concrete evidence from the sources",\n'
+            '  "covered_by": "<existing agent name, or null>",\n'
+            '  "proposal": {\n'
+            '    "name": "hyphen-case-name",\n'
+            '    "description": "one line, under 200 characters",\n'
+            '    "soul": "the full SOUL.md markdown"\n'
+            f'  }} // omit or null when the verdict is "{VERDICT_NO_GAP}"\n'
+            "}\n"
+        )
+    )
+
+
+def _build_revision_instruction() -> str:
+    """Instruction for revising a draft the user is already looking at.
+
+    Deliberately narrow. "Make it more concise" only means something relative to
+    an existing draft, so the model is given that draft and told to change what
+    the guidance asks for and nothing else — a revision that quietly rewrites the
+    untouched half is indistinguishable from a regeneration, and loses edits the
+    user already made by hand in the form.
+    """
+    return (
+        "You are revising a DRAFT custom agent the user is looking at right now.\n"
         "\n"
-        "When proposing, the SOUL.md must follow this structure, with these exact bold section headers:\n"
+        "The current draft is in the <draft> block and the user's revision guidance is in the <goal> block. "
+        "The original source material follows both.\n"
+        "\n"
+        "Apply the guidance and change NOTHING else. Any part of the draft the guidance does not speak to — "
+        "including edits the user has already made by hand — must survive verbatim. Do not regenerate from "
+        "scratch, do not re-litigate whether the agent should exist, and do not rename it unless asked.\n"
+        "\n"
+        "The SOUL.md keeps this structure, with these exact bold section headers:\n"
         "**Identity** — one dense paragraph: what the agent is, the specific domain it owns, and what that frees the user from.\n"
         "**Core Traits** — 3 to 5 lines, each an imperative behavioral rule grounded in evidence from the sources, not an adjective.\n"
         "**Communication** — tone, default language (match the language the user writes in), and format expectations.\n"
@@ -140,22 +226,47 @@ def build_system_instruction(existing_agents: Sequence[dict[str, Any]]) -> str:
         "\n"
         "Reply with ONE JSON object and nothing else — no prose, no markdown fence:\n"
         "{\n"
-        f'  "verdict": "{VERDICT_PROPOSE}" | "{VERDICT_NO_GAP}",\n'
-        '  "rationale": "2-4 sentences citing concrete evidence from the sources",\n'
-        '  "covered_by": "<existing agent name, or null>",\n'
+        f'  "verdict": "{VERDICT_PROPOSE}",\n'
+        '  "rationale": "1-2 sentences on what you changed and why",\n'
         '  "proposal": {\n'
         '    "name": "hyphen-case-name",\n'
         '    "description": "one line, under 200 characters",\n'
-        '    "soul": "the full SOUL.md markdown"\n'
-        f'  }} // omit or null when the verdict is "{VERDICT_NO_GAP}"\n'
+        '    "soul": "the full revised SOUL.md markdown"\n'
+        "  }\n"
         "}\n"
     )
 
 
-def build_user_content(sources: Sequence[SourceTranscript]) -> str:
-    """Render the selected sources as the analysis request body."""
+def _goal_block(goal: str | None) -> str:
+    """Render the user's stated goal / revision guidance as an escaped block."""
+    if not goal or not goal.strip():
+        return ""
+    return f"<goal>\n{neutralize_block_delimiters(truncate(goal.strip(), MAX_GOAL_PROMPT_CHARS))}\n</goal>\n\n"
+
+
+def _draft_block(draft: AgentProposal | None) -> str:
+    """Render the draft being revised as an escaped block."""
+    if draft is None:
+        return ""
+    return f'<draft name="{escape_block_attribute(draft.name)}" description="{escape_block_attribute(draft.description)}">\n{neutralize_block_delimiters(draft.soul)}\n</draft>\n\n'
+
+
+def build_user_content(
+    sources: Sequence[SourceTranscript],
+    *,
+    goal: str | None = None,
+    revise_from: AgentProposal | None = None,
+) -> str:
+    """Render the request body: the user's goal, any draft being revised, then the sources.
+
+    The goal and the draft come *before* the transcripts on purpose. Both are
+    short and are what the model is being asked to act on; the sources are bulk
+    evidence, and burying a one-line instruction under several thousand
+    characters of transcript is how it gets ignored.
+    """
     rendered = "\n\n".join(source.render() for source in sources)
-    return f"Here are {len(sources)} source(s) of the user's past work.\n\n{rendered}\n\nDecide whether a new custom agent is warranted, and reply with the JSON object."
+    closing = "Apply the guidance to the draft and reply with the JSON object." if revise_from is not None else "Decide whether a new custom agent is warranted, and reply with the JSON object."
+    return f"{_draft_block(revise_from)}{_goal_block(goal)}Here are {len(sources)} source(s) of the user's past work.\n\n{rendered}\n\n{closing}"
 
 
 def _extract_json_object(text: str) -> dict[str, Any]:
@@ -187,13 +298,24 @@ def _clean_skills(raw: Any) -> list[str] | None:
     return skills or None
 
 
-def parse_analysis(text: str, *, existing_names: Sequence[str] = ()) -> AgentAnalysis:
+def parse_analysis(text: str, *, existing_names: Sequence[str] = (), require_proposal: bool = False) -> AgentAnalysis:
     """Read the model's reply into an :class:`AgentAnalysis`.
+
+    Args:
+        text: The raw model reply.
+        existing_names: The user's current agent names, used to keep a proposed
+            name from colliding with one of them.
+        require_proposal: Set when the caller explicitly asked for a draft (the
+            "generate anyway" and revise paths). A ``no_gap`` reply is then a
+            failure to follow instructions, not a valid answer — the user has
+            already been shown the overlap and decided, so the model returning
+            the verdict again would silently discard that decision.
 
     Raises:
         AgentAnalysisError: when the reply is not usable — no JSON object, an
-            unknown verdict, or a "propose" verdict with no SOUL.md content. The
-            route surfaces these as a retryable failure rather than persisting a
+            unknown verdict, a "propose" verdict with no SOUL.md content, or a
+            ``no_gap`` verdict when ``require_proposal`` is set. The route
+            surfaces these as a retryable failure rather than persisting a
             half-formed agent.
     """
     data = _extract_json_object(text)
@@ -201,6 +323,8 @@ def parse_analysis(text: str, *, existing_names: Sequence[str] = ()) -> AgentAna
     verdict = str(data.get("verdict") or "").strip().lower()
     if verdict not in VALID_VERDICTS:
         raise AgentAnalysisError(f"The analysis model returned an unknown verdict: {verdict or '(missing)'}")
+    if require_proposal and verdict == VERDICT_NO_GAP:
+        raise AgentAnalysisError("A draft was requested, but the analysis model returned a no-gap verdict instead.")
 
     rationale = truncate(str(data.get("rationale") or "").strip(), MAX_RATIONALE_CHARS)
 

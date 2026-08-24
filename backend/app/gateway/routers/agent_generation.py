@@ -28,6 +28,7 @@ from app.gateway.deps import (
 )
 from deerflow.agents.generation import (
     AgentAnalysisError,
+    AgentProposal,
     SourceTranscript,
     build_system_instruction,
     build_user_content,
@@ -49,6 +50,10 @@ router = APIRouter(prefix="/api/agent-generation", tags=["agent-generation"])
 # Aux-usage bucket for this feature. The analysis spans several conversations at
 # once, so billing it to any one of them would misattribute the cost; a dedicated
 # pseudo-thread keeps it visible on the Spend page under its own row instead.
+# A draft comes back from the client with the user's hand edits, so the inbound
+# cap is the generator's own SOUL cap plus headroom rather than an exact match.
+MAX_SOUL_INPUT_CHARS = 20000
+
 USAGE_THREAD_ID = "agent-generation"
 USAGE_CATEGORY = "agent_generation"
 
@@ -62,11 +67,22 @@ class GenerationSource(BaseModel):
     id: str = Field(..., min_length=1, max_length=200, description="Thread id or scheduled task id")
 
 
+class DraftInput(BaseModel):
+    """A draft the caller is asking to have revised."""
+
+    name: str = Field(..., min_length=1, max_length=200, description="Current draft agent name")
+    description: str = Field(default="", max_length=1000, description="Current draft description")
+    soul: str = Field(..., min_length=1, max_length=MAX_SOUL_INPUT_CHARS, description="Current draft SOUL.md, including any hand edits")
+
+
 class AnalyzeRequest(BaseModel):
     """Request body for an agent-generation analysis."""
 
     sources: list[GenerationSource] = Field(..., min_length=1, max_length=MAX_SOURCES_LIMIT, description="Conversations / scheduled tasks the new agent should be shaped around")
     model_name: str | None = Field(default=None, description="Model to run the analysis with. Null uses the configured default.")
+    goal: str | None = Field(default=None, description="Optional: what the user wants the agent for, or — when revising — what to change about the draft.")
+    force_proposal: bool = Field(default=False, description="Draft an agent even if an existing one overlaps. Set after the user has seen a no_gap verdict and asked anyway.")
+    revise_from: DraftInput | None = Field(default=None, description="Revise this draft instead of analyzing afresh. Implies force_proposal.")
 
 
 class ProposalResponse(BaseModel):
@@ -87,6 +103,7 @@ class AnalyzeResponse(BaseModel):
     proposal: ProposalResponse | None = Field(default=None, description="The drafted agent, present only when the verdict is propose")
     analyzed_sources: int = Field(..., description="How many sources contributed content to the analysis")
     model_name: str | None = Field(default=None, description="Model that served the analysis")
+    forced: bool = Field(default=False, description="True when this draft was produced because the caller overrode a no_gap verdict or revised a draft")
 
 
 class GenerationConfigResponse(BaseModel):
@@ -95,6 +112,7 @@ class GenerationConfigResponse(BaseModel):
     enabled: bool = Field(..., description="Whether the flow is usable end to end (needs both agent_generation and agents_api enabled)")
     max_sources: int = Field(..., description="Maximum conversations / tasks one analysis may read")
     default_model_name: str | None = Field(default=None, description="Model used when the request does not pick one")
+    max_goal_chars: int = Field(..., description="Maximum length of the goal / revision guidance text")
 
 
 def _require_enabled(config: AppConfig) -> None:
@@ -112,6 +130,24 @@ def _require_enabled(config: AppConfig) -> None:
             status_code=403,
             detail="Agent generation needs the custom-agent management API. Set agents_api.enabled=true to expose agent routes over HTTP.",
         )
+
+
+def _validate_goal(goal: str | None, *, limit: int) -> str | None:
+    """Normalize the caller's goal text, rejecting one that exceeds the cap.
+
+    Enforced here rather than by a Pydantic ``max_length`` so the bound tracks
+    ``agent_generation.max_goal_chars`` at request time — an operator raising the
+    cap must not need a restart-time schema change — and so an over-long goal
+    fails with a message naming the limit instead of a generic 422.
+    """
+    if goal is None:
+        return None
+    trimmed = goal.strip()
+    if not trimmed:
+        return None
+    if len(trimmed) > limit:
+        raise HTTPException(status_code=422, detail=f"Goal is too long: {len(trimmed)} characters, but at most {limit} are allowed.")
+    return trimmed
 
 
 def _dedupe_sources(sources: list[GenerationSource], *, limit: int) -> list[GenerationSource]:
@@ -217,6 +253,7 @@ async def get_generation_config(config: AppConfig = Depends(get_config)) -> Gene
         enabled=gen.enabled and get_agents_api_config().enabled,
         max_sources=gen.max_sources,
         default_model_name=gen.model_name,
+        max_goal_chars=gen.max_goal_chars,
     )
 
 
@@ -240,6 +277,20 @@ async def analyze_sources(
     user_id = str(user.id)
 
     sources = _dedupe_sources(body.sources, limit=config.agent_generation.max_sources)
+    goal = _validate_goal(body.goal, limit=config.agent_generation.max_goal_chars)
+
+    # Revising a draft the user is already looking at means the "should this agent
+    # exist" question is settled, so a revision always implies the override.
+    revise_from = None
+    if body.revise_from is not None:
+        revise_from = AgentProposal(
+            name=body.revise_from.name,
+            description=body.revise_from.description,
+            soul=body.revise_from.soul,
+        )
+        if goal is None:
+            raise HTTPException(status_code=422, detail="Revising a draft requires guidance describing what to change.")
+    force_proposal = body.force_proposal or revise_from is not None
 
     transcripts: list[SourceTranscript] = []
     for source in sources:
@@ -262,9 +313,14 @@ async def analyze_sources(
 
     try:
         result = await run_oneshot_llm_with_usage(
-            system_instruction=build_system_instruction(existing_agents),
-            user_content=build_user_content(transcripts),
-            run_name="agent_generation_analysis",
+            system_instruction=build_system_instruction(
+                existing_agents,
+                has_goal=goal is not None,
+                force_proposal=force_proposal,
+                revising=revise_from is not None,
+            ),
+            user_content=build_user_content(transcripts, goal=goal, revise_from=revise_from),
+            run_name="agent_generation_revision" if revise_from is not None else "agent_generation_analysis",
             app_config=config,
             model_name=model_name,
         )
@@ -275,7 +331,11 @@ async def analyze_sources(
     await _record_usage(result.model_name, result.usage)
 
     try:
-        analysis = parse_analysis(result.text, existing_names=[agent.name for agent in existing])
+        # A revision keeps the draft's own name: it is already in the form the
+        # user is editing, and uniquifying it again would rename the agent out
+        # from under them on every refine.
+        existing_names = [] if revise_from is not None else [agent.name for agent in existing]
+        analysis = parse_analysis(result.text, existing_names=existing_names, require_proposal=force_proposal)
     except AgentAnalysisError as exc:
         logger.warning("Agent-generation analysis returned an unusable reply: %s", exc)
         raise HTTPException(status_code=502, detail=str(exc))
@@ -296,4 +356,5 @@ async def analyze_sources(
         proposal=proposal,
         analyzed_sources=len(transcripts),
         model_name=result.model_name,
+        forced=force_proposal,
     )

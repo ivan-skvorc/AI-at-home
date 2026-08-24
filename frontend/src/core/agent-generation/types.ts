@@ -26,11 +26,26 @@ export interface AnalyzeResult {
   proposal: AgentProposal | null;
   analyzed_sources: number;
   model_name: string | null;
+  /** True when this draft came from overriding a no_gap verdict, or from a revision. */
+  forced: boolean;
+}
+
+/** The draft being revised, carried back so a refine edits rather than regenerates. */
+export interface DraftInput {
+  name: string;
+  description: string;
+  soul: string;
 }
 
 export interface AnalyzeRequest {
   sources: GenerationSource[];
   model_name?: string | null;
+  /** What the user wants the agent for, or — when revising — what to change. */
+  goal?: string | null;
+  /** Draft an agent even though an existing one may overlap. */
+  force_proposal?: boolean;
+  /** Revise this draft instead of analyzing afresh. Implies force_proposal. */
+  revise_from?: DraftInput | null;
 }
 
 export interface AgentGenerationConfig {
@@ -38,4 +53,5 @@ export interface AgentGenerationConfig {
   enabled: boolean;
   max_sources: number;
   default_model_name: string | null;
+  max_goal_chars: number;
 }

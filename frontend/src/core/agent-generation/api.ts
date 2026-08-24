@@ -32,7 +32,12 @@ export async function fetchAgentGenerationConfig(): Promise<AgentGenerationConfi
     // Treat that like "disabled" rather than surfacing an error in the gallery.
   );
   if (DISABLED_STATUSES.has(res.status)) {
-    return { enabled: false, max_sources: 0, default_model_name: null };
+    return {
+      enabled: false,
+      max_sources: 0,
+      default_model_name: null,
+      max_goal_chars: 0,
+    };
   }
   if (!res.ok) {
     throw new Error(
