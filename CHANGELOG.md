@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **agents:** **Agent creation and generation now work out of the box.**
+  `config.example.yaml` ships `agents_api.enabled` and `agent_generation.enabled`
+  set to `true`, so a fresh `make config` gets the Agents pages — create/edit an
+  agent, and *Generate from history* — without hand-editing config. This matches
+  the fork's local-trusted, loopback-only, passwordless posture, where the local
+  user is the admin. `agents_api` still grants admin-equivalent write access to
+  agent SOUL.md / config, so set it back to `false` before exposing the gateway on
+  an untrusted network (which also hides generation). Only what a fresh install
+  writes changes: the Pydantic defaults stay `false` so an absent section fails
+  safe, and `config_upgrade.py` never overwrites a value an existing `config.yaml`
+  already carries. No `config_version` bump — the change is a value, not the config
+  shape.
+
 - **agents:** **Tell the agent generator what you're after.** The
   *Generate from history* wizard gains an optional **What should this agent do?**
   box — a rough description of what to tune the agent for. It steers which parts of

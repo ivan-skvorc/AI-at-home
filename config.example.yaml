@@ -3034,19 +3034,26 @@ memory:
 # Custom Agent Management API
 # ============================================================================
 # Controls whether the HTTP gateway exposes custom-agent SOUL/USER.md management.
-# Keep this disabled unless the gateway is behind a trusted authenticated admin boundary.
+# On by default in this fork, which ships for the local-trusted, loopback-only
+# deployment described in the Security Notice (and is passwordless there, so the
+# local user is the admin). This is what lets the Agents pages create and edit
+# agents out of the box, including "Generate from history" below.
+# Set this to false before exposing the gateway on an untrusted network unless it
+# is behind a trusted authenticated admin boundary — these routes read and write
+# agent SOUL.md / config / USER.md, so treat them as admin-equivalent.
 agents_api:
-  enabled: false
+  enabled: true
 
 # ============================================================================
 # Automatic Agent Generation
 # ============================================================================
 # Lets the Agents page analyze conversations / scheduled tasks you pick and
 # decide whether a NEW custom agent is worth adding. Read-only: it returns a
-# draft, and nothing is saved until you accept it. Requires agents_api.enabled
-# too, since the accepted draft is created through the custom-agent API.
+# draft, and nothing is saved until you accept it. Needs agents_api.enabled too
+# (above), since the accepted draft is created through the custom-agent API — so
+# disabling that one also hides this. On by default alongside it.
 agent_generation:
-  enabled: false
+  enabled: true
   # Model used when the request does not pick one. null = primary chat model.
   model_name: null
   # Maximum conversations / tasks a single analysis may read (1-25).
