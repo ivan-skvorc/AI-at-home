@@ -339,6 +339,70 @@ class TestHomeApiBlocks:
         assert by_name["openrouter-gpt-5.3-codex"]["model"] == "openai/gpt-5.3-codex"
 
 
+class TestFirstPartyKeyCoverage:
+    """FORK.md, *Auditing the model list* step 2 — every big name gets its own key.
+
+    A lab that ships a public API must be reachable **two ways**: a home block
+    gated by that lab's own `.env` key, carrying more than just the flagship, and
+    that flagship *also* on OpenRouter for users who hold only an
+    `OPENROUTER_API_KEY` — the Anthropic shape (six Claudes on the direct key,
+    Fable 5 additionally routed) generalised to Grok, GPT, Gemini, Qwen, Kimi,
+    DeepSeek and the rest. Everything mechanical about that rule is pinned here,
+    so the audit step needs no network.
+    """
+
+    # The two labs with no first-party consumer chat API: deliberately routed-only.
+    ROUTED_ONLY_PREFIXES = {"meta-llama", "nvidia"}
+
+    def setup_method(self):
+        self.text = (REPO_ROOT / "config.example.yaml").read_text()
+        self.env_example = (REPO_ROOT / ".env.example").read_text()
+        from wizard.providers import HOME_API_BUNDLES
+
+        self.bundles = HOME_API_BUNDLES
+        all_slugs = {slug for slug, _env in sync_api.PROVIDERS}
+        self.models = yaml.safe_load(sync_api.sync(self.text, all_slugs))["models"]
+
+    def _env_key_section(self) -> str:
+        """The '── Model provider API keys ──' block of .env.example, up to '# Optional:'."""
+        _, _, rest = self.env_example.partition("Model provider API keys")
+        section, sep, _ = rest.partition("# Optional:")
+        assert sep, ".env.example lost its '# Optional:' marker below the provider keys"
+        return section
+
+    def test_every_provider_key_is_documented_in_env_example(self):
+        """A key nobody knows to set enables nothing — and it must sit in the
+        provider-key section, not down among the generic OpenAI-compatible ones."""
+        section = self._env_key_section()
+        for _slug, env_var in sync_api.PROVIDERS:
+            assert f"# {env_var}=" in section, f"{env_var} missing from .env.example's model-provider key section"
+
+    def test_no_home_block_is_trimmed_to_a_lone_flagship(self):
+        """The fuller lineup is the whole reason to hold a lab's own key; the
+        routed flagship already covers the one-model case."""
+        for slug, (_env, bundle) in self.bundles.items():
+            assert len(bundle) >= 2, f"home block {slug} carries only {len(bundle)} model(s) — a lone flagship is a finding"
+
+    def test_every_lab_with_a_home_block_has_its_flagship_doubled(self):
+        """A home id is the OpenRouter slug minus its 'provider/' prefix (modulo
+        case, e.g. minimax/minimax-m3 ↔ MiniMax-M3)."""
+        direct_ids = {m["model"].lower() for m in self.models if not m["name"].startswith("openrouter-")}
+        routed = {m["model"].split("/", 1)[1].lower() for m in self.models if m["name"].startswith("openrouter-") and "/" in m["model"]}
+        for slug, (_env, bundle) in self.bundles.items():
+            bare = {m["model"].lower() for m in bundle}
+            assert bare & routed, f"{slug}: no home model is doubled on OpenRouter"
+        # The template case this generalises: Anthropic's Fable 5 is direct *and* routed.
+        assert "claude-fable-5" in direct_ids
+        assert "claude-fable-5" in routed
+
+    def test_only_meta_and_nvidia_stay_openrouter_only(self):
+        """Every other routed lab must own a direct block; when an OpenRouter-only
+        lab ships a first-party API, this fails until it gets a home block."""
+        direct_ids = {m["model"].lower() for m in self.models if not m["name"].startswith("openrouter-")}
+        uncovered = {m["model"].split("/", 1)[0] for m in self.models if m["name"].startswith("openrouter-") and "/" in m["model"] and m["model"].split("/", 1)[1].lower() not in direct_ids}
+        assert uncovered == self.ROUTED_ONLY_PREFIXES, f"routed-only labs drifted: {sorted(uncovered)}"
+
+
 class TestDuplicateTopLevelKeys:
     def test_duplicate_models_aborts(self):
         text = "models: []\nsandbox:\n  use: a\nmodels: []\n"

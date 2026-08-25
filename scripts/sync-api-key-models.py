@@ -8,11 +8,11 @@ in ``config.yaml`` so the models light up on first start with no manual editing.
 
     ANTHROPIC_API_KEY  -> direct Claude Fable 5 / Opus 5 / Opus 4.8 / Sonnet 5 /
                           Sonnet 4.6 / Haiku 4.5
-    OPENROUTER_API_KEY -> Claude Fable 5 / Grok 4.5 /
+    OPENROUTER_API_KEY -> Claude Fable 5 / Grok 4.6 /
                           GPT-5.6 Sol / GPT-5.3 Codex / MiniMax M3 /
-                          Qwen3.7 Max / Kimi K3 / Mistral Large 3 /
-                          Gemini 3.6 Flash / DeepSeek V4 Pro / GLM-5.2 /
-                          Nemotron 3 Ultra (all via OpenRouter)
+                          Qwen3.8 Max / Kimi K3 / Mistral Large 3 /
+                          Gemini 3.6 Flash / DeepSeek V4 Pro / GLM-5.3 /
+                          Llama 4 Maverick / Nemotron 3 Ultra (all via OpenRouter)
 
 Every big-name lab that ships a first-party API also gets a "home" block enabled
 by that lab's own key, mirroring how Anthropic is handled — the lab's full lineup
@@ -20,14 +20,14 @@ on its direct API, so its flagship is reachable through both the home API and
 OpenRouter:
 
     OPENAI_API_KEY     -> GPT-5.6 Sol / GPT-5.3 Codex / GPT-5.6 Mini (OpenAI)
-    XAI_API_KEY        -> Grok 4.5 / Grok 4.5 Fast (xAI)
+    XAI_API_KEY        -> Grok 4.6 / Grok 4.5 Fast (xAI)
     GEMINI_API_KEY     -> Gemini 3.6 Flash / 3.5 Flash-Lite / 3.1 Pro (Google)
     DEEPSEEK_API_KEY   -> DeepSeek V4 Pro / V4 Flash (DeepSeek)
-    MISTRAL_API_KEY    -> Mistral Large 3 / Medium / Small (Mistral)
+    MISTRAL_API_KEY    -> Mistral Large 3 / Medium 3.5 / Small 3 (Mistral)
     MOONSHOT_API_KEY   -> Kimi K3 / Kimi K2.6 (Moonshot)
-    DASHSCOPE_API_KEY  -> Qwen3.7 Max / Qwen3.7 Plus (Qwen)
+    DASHSCOPE_API_KEY  -> Qwen3.8 Max / Qwen3.7 Plus (Qwen)
     MINIMAX_API_KEY    -> MiniMax M3 / MiniMax M2.7 (MiniMax)
-    ZAI_API_KEY        -> GLM-5.2 / GLM-5.2 Air (z-ai)
+    ZAI_API_KEY        -> GLM-5.3 / GLM-5.2 Air (z-ai)
 
 Idempotent and bounded: the script only ever *uncomments* the model entries
 between a provider's ``BEGIN/END auto-model-config`` markers, and never touches
