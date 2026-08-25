@@ -1,6 +1,6 @@
 # DeerFlow - Unified Development Environment
 
-.PHONY: help config config-upgrade check check-agent-guidance install extension-install extension-list extension-enable extension-disable extension-remove setup doctor support-bundle detect-thread-boundaries detect-blocking-io backup restore dev dev-daemon start start-daemon nginx stop up up-start down clean docker-init docker-start docker-stop docker-logs docker-logs-frontend docker-logs-gateway docker-logs-redis searxng searxng-stop sandbox-up sandbox-down sandbox-logs sandbox-enable sandbox-disable fetch-browser auto-update auto-update-install auto-update-uninstall
+.PHONY: help config config-upgrade check check-agent-guidance install extension-install extension-list extension-enable extension-disable extension-remove setup doctor support-bundle detect-thread-boundaries detect-blocking-io backup restore dev dev-daemon start start-daemon nginx stop up up-start down clean docker-init docker-start docker-stop docker-logs docker-logs-frontend docker-logs-gateway docker-logs-redis searxng searxng-stop sandbox-up sandbox-down sandbox-logs sandbox-enable sandbox-disable setup-sandbox fetch-browser auto-update auto-update-install auto-update-uninstall
 
 # docker compose shim: prefer the v2 plugin, fall back to legacy docker-compose.
 DOCKER_COMPOSE ?= docker compose
