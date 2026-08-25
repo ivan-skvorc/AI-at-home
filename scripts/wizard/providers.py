@@ -526,7 +526,7 @@ MODEL_PRICES: dict[str, dict] = {
     "claude-fable-5": {"price": {"currency": "USD", "input": 10.0, "output": 50.0, "cache_hit": 1.0}},
     "claude-opus-5": {"price": {"currency": "USD", "input": 5.0, "output": 25.0, "cache_hit": 0.5}},
     "claude-opus-4-8": {"price": {"currency": "USD", "input": 5.0, "output": 25.0, "cache_hit": 0.5}},
-    "claude-sonnet-5": {"price": {"currency": "USD", "input": 3.0, "output": 15.0, "cache_hit": 0.3}, "discount": {"input": 2.0, "output": 10.0, "cache_hit": 0.2, "until": "2026-08-31"}},
+    "claude-sonnet-5": {"price": {"currency": "USD", "input": 2.0, "output": 10.0, "cache_hit": 0.2}},
     "claude-sonnet-4-6": {"price": {"currency": "USD", "input": 3.0, "output": 15.0, "cache_hit": 0.3}},
     "claude-haiku-4-5": {"price": {"currency": "USD", "input": 1.0, "output": 5.0, "cache_hit": 0.1}},
     "deepseek-v4-pro": {"price": {"currency": "USD", "input": 0.44, "output": 0.87}},

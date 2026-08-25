@@ -2391,7 +2391,10 @@ def test_launch_scheduled_thread_run_falls_back_when_config_unloadable(_stub_app
     from types import SimpleNamespace
     from unittest.mock import patch
 
-    from app.gateway.services import launch_scheduled_thread_run
+    # Assert against the constant, not a literal: this fork raises the server
+    # default from upstream's 100 to 250 (see the comment on the constant), and
+    # the fallback must track whatever that default is.
+    from app.gateway.services import _DEFAULT_RECURSION_LIMIT, launch_scheduled_thread_run
 
     async def _scenario():
         captured: dict[str, object] = {}
@@ -2419,8 +2422,8 @@ def test_launch_scheduled_thread_run_falls_back_when_config_unloadable(_stub_app
 
     caplog.set_level(logging.WARNING, logger="app.gateway.services")
     captured = asyncio.run(_scenario())
-    assert captured["config"] == {"recursion_limit": 100}
-    assert any("failed to load app config; falling back to recursion_limit=100" in r.message for r in caplog.records)
+    assert captured["config"] == {"recursion_limit": _DEFAULT_RECURSION_LIMIT}
+    assert any(f"failed to load app config; falling back to recursion_limit={_DEFAULT_RECURSION_LIMIT}" in r.message for r in caplog.records)
 
 
 def test_launch_scheduled_thread_run_rejects_legacy_auth_token():

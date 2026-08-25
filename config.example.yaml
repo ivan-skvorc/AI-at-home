@@ -404,14 +404,9 @@ models:
   #   supports_thinking: true
   #   price:                          # per 1M tokens; the single source of truth for cost display and budgets
   #     currency: USD
-  #     input: 3.0
-  #     output: 15.0
-  #     cache_hit: 0.3        # prompt-cache reads
-  #   discount:                       # shown beside the standard rate, never billed instead of it
-  #     input: 2.0
+  #     input: 2.0                      # the launch "introductory" rate is now the standard price
   #     output: 10.0
-  #     cache_hit: 0.2
-  #     until: 2026-08-31               # stops applying on its own after this date
+  #     cache_hit: 0.2        # prompt-cache reads
   #   when_thinking_enabled:
   #     thinking:
   #       type: adaptive

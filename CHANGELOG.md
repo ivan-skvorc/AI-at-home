@@ -151,6 +151,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **pricing:** **Claude Sonnet 5 was about to get 50% more expensive on paper,
+  against a price nobody is charged.** It shipped priced at a `$3/15` standard
+  rate with a `$2/10` introductory discount set to expire on 2026-08-31 — the
+  window Anthropic announced at launch. Anthropic has since made the `$2/10`
+  rate permanent and cancelled the 1 September increase, so on that date every
+  cost figure for a Sonnet 5 thread — the chat header, the cost overview, and
+  anything a spend cap is measured against — would have silently jumped to the
+  higher rate while the real bill stayed flat. Sonnet 5 is now priced at a plain
+  `$2/10` standard rate (cache reads `$0.20`) with no discount attached. Nothing
+  to configure; an existing `config.yaml` written before this change keeps the
+  old figures, and `make config-upgrade` does not rewrite a value you already
+  have — re-copy the Anthropic block, or edit the two numbers by hand.
+
 - **pricing:** A conversation on some OpenAI-compatible providers (OpenRouter
   among them) showed no cost at all, and the note meant to explain it named a
   model that does not exist: *"no price is configured for

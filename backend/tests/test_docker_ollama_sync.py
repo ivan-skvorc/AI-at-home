@@ -44,6 +44,12 @@ def _make_worktree(tmp_path: Path) -> Path:
     (worktree / "backend").mkdir()
     (worktree / "config.yaml").write_text(_MINIMAL_CONFIG, encoding="utf-8")
     (worktree / "extensions_config.json").write_text('{"mcpServers":{},"skills":{}}\n', encoding="utf-8")
+    # docker.sh's ensure_env_files copies .env from .env.example and exits 1 when
+    # neither exists (Compose env_file entries fail closed on Windows). The real
+    # repo always ships the example, so the worktree must too.
+    (worktree / ".env.example").write_text("", encoding="utf-8")
+    (worktree / "frontend").mkdir()
+    (worktree / "frontend" / ".env.example").write_text("", encoding="utf-8")
 
     sync_stub = worktree / "scripts" / "sync-ollama-models.py"
     sync_stub.write_text(_SYNC_STUB, encoding="utf-8")
