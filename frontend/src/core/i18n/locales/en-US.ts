@@ -203,6 +203,9 @@ export const enUS: Translations = {
     ultraMode: "Ultra",
     ultraModeDescription:
       "Pro mode with subagents to divide work; best for complex multi-step tasks",
+    democracyMode: "Democracy",
+    democracyModeDescription:
+      "Several different models answer the same question independently, review each other, then one organizer synthesizes the result. Very token-heavy.",
     reasoningEffort: "Reasoning Effort",
     reasoningEffortMinimal: "Minimal",
     reasoningEffortMinimalDescription: "Retrieval + Direct Output",
@@ -314,6 +317,36 @@ export const enUS: Translations = {
     scheduledTasks: "Scheduled tasks",
     spend: "Spend",
     agentsDisabledTooltip: "Feature not enabled",
+  },
+
+  democracy: {
+    launch: "Democracy",
+    title: "Start a Democracy panel",
+    description:
+      "Several models answer the same question independently, review each other's answers, then one organizer synthesizes the result.",
+    panelists: "Panelists",
+    organizer: "Organizer",
+    organizerHint:
+      "Gathers the shared facts once, dispatches the identical brief to every panelist, and synthesizes the result. Asked to stay objective and to report dissent rather than average it away.",
+    panelist: (index: number) => `Panelist ${index}`,
+    pickModel: "Pick a model",
+    task: "Task",
+    taskPlaceholder:
+      "e.g. Summarize this week's macroeconomic news, then assess which industrial sectors are likely to grow, hold, or shrink.",
+    start: "Start panel",
+    cancel: "Cancel",
+    duplicateWarning: "Each panelist must be a different model.",
+    incompleteWarning: "Pick a model for every panelist.",
+    taskWarning: "Describe the task for the panel.",
+    costTitle: "This burns tokens",
+    costRuns: (runs: number) =>
+      `Dispatches up to ${runs} full model runs — every panelist answers, then reviews the others — on top of the organizer's own research and synthesis.`,
+    costMultiple: (multiple: number) =>
+      `At list rates one panel round costs roughly ${multiple}x a single answer from the organizer.`,
+    costUnpriced: (names: string) =>
+      `Excludes ${names} — no price configured, so the real figure is higher.`,
+    costHint:
+      "Facts are gathered once and taken as given; the panel is not asked to verify them. Spend caps and the cost overview still apply.",
   },
 
   spend: {

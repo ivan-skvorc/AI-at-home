@@ -229,6 +229,31 @@ def apply_routing_policy(
     return effective_model, decision
 
 
+def resolve_requested_subagent_model(requested: str, models: list[Any]) -> tuple[str | None, str | None]:
+    """Validate a per-call ``model=`` against the configured catalog.
+
+    Returns ``(model_name, error)``; exactly one is non-None.
+
+    An unknown name is an **error**, never a silent fallback. The caller that
+    uses this argument is running one assignment across deliberately different
+    models, so quietly substituting the inherited model would collapse the panel
+    onto a single model while still reporting N independent opinions — a wrong
+    answer that looks like a right one. Failing the single delegation leaves the
+    other panelists intact and tells the organizer exactly what to fix.
+
+    A caller with no readable model catalog (embedded client, tests) cannot be
+    validated against anything, so the name is accepted as given rather than
+    failing a delegation the configuration cannot adjudicate.
+    """
+    if not models:
+        return requested, None
+    names = [str(getattr(model, "name", "")) for model in models]
+    if requested in names:
+        return requested, None
+    available = ", ".join(name for name in names if name) or "none"
+    return None, f"Unknown model '{requested}'. Configure it in config.yaml or use one of: {available}"
+
+
 def _get_runtime_app_config(runtime: Any) -> "AppConfig | None":
     explicit = _explicit_app_config.get()
     if explicit is not None:
@@ -291,6 +316,7 @@ async def task_tool(
     prompt: str,
     subagent_type: str,
     tool_call_id: Annotated[str, InjectedToolCallId],
+    model: str | None = None,
 ) -> str | Command:
     """Delegate a bounded task to a specialized subagent in its own context.
 
@@ -338,6 +364,12 @@ async def task_tool(
         description: A short (3-5 word) description of the task for logging/display. ALWAYS PROVIDE THIS PARAMETER FIRST.
         prompt: The task description for the subagent. Be specific and clear about what needs to be done. ALWAYS PROVIDE THIS PARAMETER SECOND.
         subagent_type: The type of subagent to use. ALWAYS PROVIDE THIS PARAMETER THIRD.
+        model: Optional name of a configured model to run this one delegation on, overriding
+            the model the subagent would otherwise inherit. Use it only when running the *same*
+            assignment on deliberately different models is the point (a deliberation panel), or
+            when a specific model is the specialist capability being delegated for. An unknown
+            name fails the call rather than falling back, so a panel cannot silently collapse
+            onto one model. Omit it to inherit normally.
     """
     runtime_app_config = _get_runtime_app_config(runtime)
     metadata: dict = runtime.config.get("metadata", {}) if runtime is not None else {}
@@ -475,6 +507,22 @@ async def task_tool(
             routing_app_config = None
     routing_config = getattr(routing_app_config, "model_routing", None)
     routing_models = list(getattr(routing_app_config, "models", []) or [])
+
+    # ── Fork: explicit per-call model (Democracy panels) ────────────────────
+    # The most specific selection there is: this one delegation, this model. It
+    # therefore outranks the per-thread subagent dropdown, and — because it is
+    # written into ``subagent_model_override`` before the policy is consulted —
+    # it stands the cost-aware routing policy down entirely, exactly as an
+    # explicit per-thread selection does. Without that, a routing rule could
+    # rewrite two panelists onto the same cheap model and the panel would report
+    # two independent opinions that came from one model.
+    if model:
+        requested_model, model_error = resolve_requested_subagent_model(model, routing_models)
+        if model_error is not None:
+            return _task_result_command(tool_call_id=tool_call_id, status="failed", error=model_error)
+        subagent_model_override = requested_model
+        effective_model = requested_model
+
     routing_requirements = TaskRequirements.from_task(
         tool_names=[getattr(tool, "name", "") for tool in (config.tools or [])] if getattr(config, "tools", None) else None,
         prompt=prompt or "",

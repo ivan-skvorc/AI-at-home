@@ -193,6 +193,9 @@ export const zhCN: Translations = {
     ultraMode: "Ultra",
     ultraModeDescription:
       "继承自 Pro 模式，可调用子代理分工协作，适合复杂多步骤任务，能力最强",
+    democracyMode: "众议",
+    democracyModeDescription:
+      "由多个不同模型独立回答同一问题并互相评审，再由一个组织者模型汇总结论。Token 消耗极高。",
     reasoningEffort: "推理深度",
     reasoningEffortMinimal: "最低",
     reasoningEffortMinimalDescription: "检索 + 直接输出",
@@ -298,6 +301,36 @@ export const zhCN: Translations = {
     scheduledTasks: "定时任务",
     spend: "支出",
     agentsDisabledTooltip: "功能未启用",
+  },
+
+  democracy: {
+    launch: "众议",
+    title: "发起众议面板",
+    description:
+      "多个模型独立回答同一问题，互相评审各自的答案，再由一个组织者模型汇总结论。",
+    panelists: "参与模型",
+    organizer: "组织者",
+    organizerHint:
+      "统一收集一次共享事实，将完全相同的任务简报分发给每个参与模型，并汇总结论。要求保持客观，并如实呈现分歧而非取平均。",
+    panelist: (index: number) => `参与模型 ${index}`,
+    pickModel: "选择模型",
+    task: "任务",
+    taskPlaceholder:
+      "例如：总结本周宏观经济新闻，并评估哪些工业板块可能增长、持平或萎缩。",
+    start: "开始",
+    cancel: "取消",
+    duplicateWarning: "每个参与模型必须不同。",
+    incompleteWarning: "请为每个参与模型选择一个模型。",
+    taskWarning: "请描述交给面板的任务。",
+    costTitle: "Token 消耗很高",
+    costRuns: (runs: number) =>
+      `最多会触发 ${runs} 次完整模型运行——每个参与模型先作答，再评审他人——此外还有组织者自身的调研与汇总。`,
+    costMultiple: (multiple: number) =>
+      `按标准价计算，一轮面板的费率约为组织者单次回答的 ${multiple} 倍。`,
+    costUnpriced: (names: string) =>
+      `不包含 ${names}——未配置价格，实际花费更高。`,
+    costHint:
+      "事实只收集一次并直接采信，面板不会再去核验。支出上限与费用概览依然生效。",
   },
 
   spend: {

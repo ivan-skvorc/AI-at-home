@@ -17,6 +17,7 @@
 > - 🪃 **Model fallback chains** — when a model call fails for a reason worth retrying (the Ollama daemon is down, the context overflowed, the model turns out not to support tool calls, or the provider returns a 5xx), the turn degrades to the next model you listed instead of failing. Deliberate stops — you hit cancel, a spend cap fired, a guardrail refused — never fall back, and tokens are billed to whichever model actually answered, so your cost figures stay honest. Off until you configure a chain.
 > - 🧭 **Cost-aware subagent routing** — a policy that sends delegated subtasks to the cheapest model that can actually do them, so the saving is the default instead of something you remember to set every session. A tool-free extraction can run on a local model for free while the lead stays on a frontier model. It never picks a model that can't do the job (no tool support, no vision, context window too small), your explicit per-conversation subagent choice always wins, and the subagent card shows which rule decided. Off until you write a policy.
 > - 📱 **Installable on your phone, with notifications that arrive after you close it** — DeerFlow now ships a web app manifest and a service worker, so you can add it to your home screen and get a Web Push notification when a long run finishes, even with the browser closed. Background notifications need a secure origin (`localhost`, or your Tailscale HTTPS name); on a plain-HTTP LAN address the settings page says exactly that and tells you how to fix it, instead of silently doing nothing.
+> - 🏛️ **Democracy — several models answer, then decide together** — a launcher under *New chat* where you pick an organizer model, how many panelists, and which model fills each seat. The organizer researches **once** and hands every panelist the identical brief, they answer independently and then review each other **anonymously**, and the organizer synthesizes — reporting the split and naming dissenters rather than averaging them away. Facts are gathered once and deliberately **not** re-verified by the panel, because that is the cost this design refuses to pay. It is **extremely token-heavy** (up to N x 2 full model runs for N panelists) and the setup dialog estimates the multiple against a single answer before you commit. No config keys: it works as soon as two models are configured.
 > - 🧩 **Per-thread subagent model dropdown** — in **Ultra mode**, a second model picker lets you route `task` subagents to a cheaper or local model instead of the lead model (defaults to "Follow lead").
 > - 🔃 **Sortable, grouped model picker** — with a couple of dozen bundled models across premium-cloud, cheap-cloud, and local tiers, the flat list is hard to scan, so the dropdown can **sort by name or price** and **group by provider** in one click (each row's price is coloured; a discounted model shows list vs. promo). Remembered per browser, and the default stays config order so nothing moves until you opt in.
 > - 💡 **Follow-up suggestions off by default** — the clickable follow-up-question chips make an extra model call after every answer, so they now default **off** to save cost. Turn them back on per-browser under **Settings → Suggestions**, where a dropdown also lets you pick which model generates them ("Follow workflow selection" by default, or any configured model — pick a cheap one to keep it cheap).
@@ -118,6 +119,7 @@ DeerFlow has newly integrated the intelligent search and crawling toolset indepe
     - [Session Goals](#session-goals)
     - [Manual Context Compaction](#manual-context-compaction)
     - [Sub-Agents](#sub-agents)
+    - [Democracy — Several Models Answer, Then Decide Together](#democracy--several-models-answer-then-decide-together)
     - [Generating Agents From Your History](#generating-agents-from-your-history)
     - [Sandbox \& File System](#sandbox--file-system)
     - [Context Engineering](#context-engineering)
@@ -1323,6 +1325,71 @@ The factory still does not load YAML or create SQL infrastructure: the caller su
 Administrators can add, edit, disable, and delete reusable worker definitions from **Settings → Subagents**. Built-in and `config.yaml` definitions remain visible there as read-only entries. The default Lead Agent can use every enabled runtime sub-agent; each page-created Custom Agent can instead allow all, none, or a selected set. That selection is enforced both in the model-visible directory and by the server-side `task` tool. Managed definitions are deployment-wide in this version and follow `agent_storage.backend`: atomic files for a local deployment or the shared application database for multiple instances.
 
 For example, independent read-only research can run concurrently when the wall-clock savings outweigh duplicated discovery and synthesis cost, while a repository refactor with shared files and sequential test feedback remains with the lead agent. When `max_concurrent_subagents` is `1`, parallel and multi-batch routing guidance is disabled; delegation remains available only for material specialist or context-isolation benefit.
+
+### Democracy — Several Models Answer, Then Decide Together
+
+Every other model control in this fork exists to spend *less*. **Democracy**
+deliberately spends more, for the one thing a single model cannot give you: a
+second opinion that did not come from the same model. One **organizer** model
+gathers the facts, puts the identical question to several different **panelist**
+models, has them read each other's answers and revise or hold, and then
+synthesizes the result — reporting where they agreed, where they split, and who
+dissented.
+
+Start it from **Democracy**, directly under *New chat* in the sidebar. The dialog
+asks how many panelists you want, which model organizes, which model fills each
+seat, and what the task is. Your task then lands in the composer of a fresh chat
+rather than being sent automatically, so you get a last look before spending it.
+
+**The organizer does the research once, and nobody double-checks it.** This is
+the part that keeps the mode affordable. Asking five models to each look up the
+same interest-rate decision costs five times as much *and* gives you five
+slightly different datasets — so your panel ends up disagreeing about its inputs
+while looking like it disagrees about its judgement. Instead the organizer
+collects everything itself, writes one plain factual brief, and hands **the same
+brief, word for word**, to every panelist. Facts are then taken as given: sources
+are recorded and anything contested is flagged, but the panel is **not** asked to
+verify them, because a verification round across five models is exactly the cost
+this design refuses to pay. Treat the facts as one model's research, not as five
+models' agreement.
+
+**Panelists review each other anonymously.** In the review round each one sees
+the others' answers labelled "Panelist A", "Panelist B" — never which model wrote
+them. A model told it is arguing with a bigger-name model tends to defer to the
+name instead of the argument, which would turn a panel into an expensive way of
+asking one model twice.
+
+**The synthesis is asked to stay objective, and specifically not to average.**
+The organizer must report the real distribution including a lone dissenter, must
+not flatten a 4-1 split into "the panel concluded", must not treat model count as
+evidence, and must not favour its own earlier hunch or the panelist that happens
+to be the model it likes. A well-argued minority position can be the right one.
+
+**It is extremely token-heavy, and the dialog says so before you commit.** A
+panel of N models dispatches up to **N x 2 full model runs** — every panelist
+answers, then every panelist reviews — on top of the organizer's own research and
+synthesis. The warning box also estimates, from your configured prices, roughly
+how many times a single organizer answer the panel's rates come to. That figure
+is a **rate multiple, not a bill**: predicting a run's token count would be a
+guess dressed up as a number. Local Ollama models count as $0 here as everywhere
+else, and are named in the warning so a suspiciously cheap-looking panel explains
+itself. Your `spend_budget` caps and the per-step cost chart still apply, so the
+real cost shows up per panelist after the run.
+
+**Limits worth knowing.** A panel needs at least 2 and at most 12 models, and
+each seat must be a *different* model — the same model twice is one opinion at
+twice the price. Panelists actually run concurrently only up to
+`subagent_runtime.max_running` (default **3**); a larger panel still runs in full,
+it just queues. Raise that value in `config.yaml` and restart if you want the
+whole panel in flight at once:
+
+```yaml
+subagent_runtime:
+  max_running: 5    # default 3 — concurrent panelists, restart required
+```
+
+There is nothing to switch on: Democracy needs no config keys and is available as
+soon as you have two or more models configured.
 
 ### Generating Agents From Your History
 

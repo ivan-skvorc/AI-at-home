@@ -1,15 +1,15 @@
 import type { Model } from "./types";
 
-export type InputMode = "flash" | "thinking" | "pro" | "ultra";
+export type InputMode = "flash" | "thinking" | "pro" | "ultra" | "democracy";
 
 /**
  * Resolve the requested input mode against the selected model's capabilities.
  *
  * Only "thinking" mode strictly requires `supports_thinking` — it is a pure
- * extended-thinking toggle and meaningless without it. "pro" and "ultra" also
- * enable plan mode / subagents, which work on any model; the backend already
- * degrades gracefully by disabling thinking on models that lack it, so those
- * modes must stay selectable.
+ * extended-thinking toggle and meaningless without it. "pro", "ultra", and
+ * "democracy" also enable plan mode / subagents, which work on any model; the
+ * backend already degrades gracefully by disabling thinking on models that lack
+ * it, so those modes must stay selectable.
  */
 export function getResolvedMode(
   mode: InputMode | undefined,

@@ -61,6 +61,7 @@ import { cn } from "@/lib/utils";
 import { ChatBox } from "./chat-box";
 import { ChatProviders } from "./chat-providers";
 import { useSpecificChatMode } from "./use-chat-mode";
+import { useDemocracyLaunch } from "./use-democracy-launch";
 import { useEditVersions, usePendingEditSend } from "./use-edit-versions";
 
 export type ChatInstanceProps = {
@@ -128,9 +129,27 @@ function ChatInstanceContent({
   );
   const contextUsage = selectContextUsage(threadTokenUsage.data);
   const mountedRef = useRef(false);
+  // The launch callback merges onto the thread's current context; reading it
+  // through a ref keeps the one-shot effect from re-running on every settings
+  // change (and re-claiming nothing, since the stash is already consumed).
+  const settingsRef = useRef(settings);
+  settingsRef.current = settings;
   // Only the visible slot seeds the composer from ?mode=skill; background
   // instances share the same route params and must not fight over it.
   useSpecificChatMode(isActive);
+  // A Democracy launch (sidebar → setup dialog) lands here: the dialog stashes
+  // the panel, this new chat claims it and becomes the panel's thread.
+  useDemocracyLaunch({
+    enabled: isActive,
+    isNewThread,
+    applyLaunch: (launch) =>
+      setSettings("context", {
+        ...settingsRef.current.context,
+        mode: "democracy",
+        model_name: launch.organizer,
+        democracy_participants: launch.participants,
+      }),
+  });
   // Route-affecting side effects (URL rewrite on new→real, "thread gone"
   // redirect) must run only for the visible slot, read through a ref so the
   // stream callbacks always see the latest value.

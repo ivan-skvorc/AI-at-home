@@ -1737,6 +1737,124 @@ number under **Local Models** with the fix, alongside the existing `keep_alive`
 advisory — as an `ok`, not a warning, because one slot is a perfectly reasonable
 choice on a small GPU.
 
+### 22. Democracy — several models answer, review each other, and one organizes
+
+The fork's other model levers are about spending *less*: a cheap subagent (§3), a
+routing policy (§15), a fallback chain (§14). This one deliberately spends more,
+for the one thing a single model cannot give you — **a second opinion that did
+not come from the same model.** A Democracy run is one **organizer** that gathers
+the shared facts once and then puts the identical question to several
+deliberately different **panelist** models, has them review each other
+anonymously, and synthesizes what came back including where they disagreed.
+
+It is started from **Democracy**, directly under *New chat* in the sidebar: pick
+how many panelists, pick the organizer, pick each panelist's model, write the
+task. Not a mode-dropdown entry — a panel means nothing without a roster, and the
+dialog is the only moment at which the cost can be shown *before* it is spent.
+
+**The organizer collects the facts once, and the panel is not asked to check
+them.** This is the design decision that makes the mode affordable at all. The
+naive reading of "ask five models" has five models each fetch the same Fed rate
+decision: five times the retrieval cost, and — worse — five slightly different
+datasets, so the panel ends up disagreeing about its inputs while appearing to
+disagree about its judgement. The organizer therefore does all retrieval itself,
+condenses it into one plain factual brief, and hands **that identical brief** to
+every panelist. Facts are then taken as given: sources are recorded so the reader
+can judge them and anything known to be contested is flagged, but a verification
+round across the panel is exactly the cost this design refuses to pay.
+
+**Every panelist gets the same words.** Varying the brief between panelists
+measures your prompts, not their judgement, so the organizer is told at length to
+reuse it verbatim. Phase 3 then shows each panelist the others' answers
+**anonymized** — a model told it is arguing with a bigger-name model defers to the
+name rather than to the argument.
+
+**The synthesis is where a panel goes wrong, so most of the prompt is about it.**
+The organizer must report the actual distribution including a lone dissenter,
+must not flatten 4-1 into "the panel concluded", must not hold a vote as though
+model count were evidence, and must not privilege either its own Phase 1 hunch or
+the panelist that happens to be the model it would have picked. A panel that
+launders a real disagreement into false confidence is *worse* than one model,
+because it charges five times as much for a more confident wrong answer.
+
+**The load-bearing primitive is one new `task` argument.** `task(model=...)` runs
+a single delegation on a named configured model. Its precedence is the whole
+feature and is deliberately absolute: it outranks the per-thread subagent
+dropdown (§3) and it stands the cost-aware routing policy (§15) **down entirely**,
+the same way an explicit per-thread selection does. Either of those winning would
+quietly run several panelists on one cheap model, and the run would then report N
+independent opinions that came from one model — a wrong answer wearing the
+costume of a right one. For the same reason an **unknown model name fails that
+one delegation** rather than falling back to the inherited model: a loud failure
+leaves the rest of the panel intact and tells the organizer what to fix, while a
+silent substitution is undetectable in the output.
+
+**The roster is filtered, never trusted.** `normalize_democracy_participants`
+drops names that are not configured models and returns *no panel* when fewer than
+two distinct models survive — a "panel" of one model asked twice is one opinion at
+twice the price. A thread whose `config.yaml` changed underneath it therefore
+degrades to an ordinary Ultra run rather than dispatching panelists onto models
+that no longer exist.
+
+**The delegation budget travels with the panel.** `subagents.max_total_per_run`
+defaults to **6**; a three-model panel needs 6 for its happy path alone, and
+`task` calls beyond the ledger are *discarded with their work lost*. So the
+frontend — the only layer that knows the panel size — sends `max_total_subagents`
+sized at participants x 2 phases plus headroom for a retry. Without it the panel
+is silently truncated partway through phase two and the organizer synthesizes
+from whichever panelists happened to fit. Real *concurrency* is still capped by
+the startup-frozen `subagent_runtime.max_running` (default 3), so a five-model
+panel queues rather than over-subscribing; raise it in `config.yaml` and restart
+if you want the whole panel in flight at once.
+
+**The organizer section rides `{subagent_section}`, not a placeholder of its
+own.** An operator who saved a custom `SYSTEM_PROMPT.md` (§19) before this feature
+existed has no `{democracy_section}` in their template, and a missing placeholder
+is silently dropped by `str.format` — they would have got a panel with no
+organizer rules at all. A panel is dispatched entirely through `task`, so any
+template that can run one already carries the subagent block; appending there
+means the rules cannot go missing from a working configuration.
+
+**`<democracy_panel>` is a framework authority block, so it is denylisted.** The
+section tells the lead which models the panel runs on and how to weigh their
+answers, which makes a counterfeit copy in user input a way to re-roster or bias
+a panel from inside the message. It is therefore registered in
+`InputSanitizationMiddleware._BLOCKED_TAG_NAMES` alongside `<subagent_system>`
+and the rest. `tests/test_input_sanitization_middleware.py::test_denylist_covers_framework_authority_blocks`
+scans the harness for paired tags and fails on any that is neither blocked nor
+explicitly exempted — so this is enforced for the next such block too, not just
+this one.
+
+**Warnings, and what they can honestly say.** The dialog states the number of
+full model runs the panel will dispatch and — computed from the `price:` blocks
+already on `/api/models` — roughly how many times a single organizer answer the
+panel's *rates* come to. Deliberately a **rate multiple, not a currency figure**:
+predicting a run's token count would be a guess dressed as a number, and this
+fork's cost surfaces (§7) only ever report money actually spent. Unpriced local
+models contribute zero, exactly as everywhere else, and are **named** so that a
+suspiciously low multiple explains itself instead of reading as a bug. The
+existing controls still apply on top: `spend_budget` (§10) refuses a run at
+admission with HTTP 402, and the per-step cost chart (§7) prices a Democracy turn
+per model, so the panel's real cost shows up per panelist afterwards.
+
+**No new config keys.** The whole feature is per-run context, so there is nothing
+to add to `config.yaml`, no `config_version` bump, and no Helm chart copies to
+keep in step. The two existing knobs that matter to it —
+`subagents.max_total_per_run` and `subagent_runtime.max_running` — already exist.
+
+| Piece | Where |
+| --- | --- |
+| Per-call model + precedence | `tools/builtins/task_tool.py` (`resolve_requested_subagent_model`, the `model` argument, and the block that writes `subagent_model_override` **before** `apply_routing_policy`) |
+| Roster + organizer prompt | `agents/lead_agent/democracy.py` (`normalize_democracy_participants`, `build_democracy_section`, `DEMOCRACY_SECTION_TEMPLATE`) |
+| Prompt wiring | `agents/lead_agent/prompt.py` (`apply_prompt_template(democracy_participants=...)`, appended to `subagent_section`); roster resolved in `agents/lead_agent/agent.py` |
+| Context forwarding | `app/gateway/services.py::_CONTEXT_CONFIGURABLE_KEYS` (`democracy_participants`) |
+| Prompt-injection denylist | `agents/middlewares/input_sanitization_middleware.py::_BLOCKED_TAG_NAMES` (`democracy_panel`) |
+| Launch spec + cost estimate | `core/threads/democracy.ts` |
+| Mode → run context | `core/threads/run-context.ts` (`deriveModeContext`, shared by the submit and regenerate paths) |
+| Dialog + entry point | `components/workspace/democracy-dialog.tsx`, `workspace-header.tsx`; handoff in `chats/use-democracy-launch.ts` |
+| Tests | `backend/tests/test_democracy_panel.py`, `frontend/tests/unit/core/threads/democracy.{test,dom.test}.ts`, `frontend/tests/e2e/democracy-panel.spec.ts` |
+
+
 ## Why mix local and cloud
 
 Each tier of model has a job it's good at. Mixing them is how you get most of the quality of frontier models at a fraction of the cost:
@@ -1890,6 +2008,7 @@ Then confirm each fork feature end-to-end:
 | **Ollama auto-populate** (§1) | `python3 scripts/sync-ollama-models.py --dry-run --verbose` — proposes entries when the daemon is up, prints `unreachable; skipping (no changes)` and exits 0 when it's down. Reconciliation logic is pinned by `backend/tests/test_sync_ollama_models.py`. |
 | **Ollama daemon lifecycle** (§1) | `cd backend && uv run pytest tests/test_ollama_lifecycle.py` covers the `keep_alive` settings parse (including the nested `keep_alive_overrides` map, whose children must **not** leak into the flat `ollama.*` settings), the resolution precedence, the rendered entry, the VRAM-contention warning, `default_local_model`, preload, and the doctor rows. Wiring: `parse_ollama_settings` / `resolve_keep_alive` / `vram_contention_warning` / `default_local_model` / `preload_model` in `scripts/sync-ollama-models.py`; the `--preload-only` **backgrounded** call in `scripts/serve.sh` right after the sync; `scripts/doctor.py::check_ollama_readiness` in the new **Local Models** section; the documented keys in `config.example.yaml`'s `ollama:` block. Model tuples grew a 4th field (`keep_alive`) — `sync()` reads the tail positionally so 2- and 3-tuple callers still work; keep that back-compatibility if the shape changes again. Preload must stay backgrounded in `serve.sh`: it blocks until the weights are loaded. Manual: set `ollama.keep_alive: 30m`, relaunch, and confirm the regenerated marker block carries `keep_alive: 30m` on every entry. |
 | **API-key model auto-config** (§2) | On a *copy* of `config.example.yaml`: `ANTHROPIC_API_KEY=sk-ant-… python3 scripts/sync-api-key-models.py --config <copy> --dry-run --verbose` logs `enabled 'anthropic' model block`; with an empty env the file stays byte-identical. Pinned by `backend/tests/test_sync_api_key_models.py`. All eleven `# === BEGIN/END auto-model-config: <provider> ===` marker blocks (anthropic, openrouter, and the nine first-party home blocks: openai, xai, google, deepseek, mistral, moonshot, qwen, minimax, zai) must still be present in `config.example.yaml`, each in sync with its `*_BUNDLE_MODELS` list in `scripts/wizard/providers.py` (`HOME_API_BUNDLES` registry) and its `PROVIDERS` entry in `scripts/sync-api-key-models.py`. **The big-name shape is a rule, not a coincidence** — every lab with a public API gets its own `.env` key enabling a fuller lineup (never a lone flagship), with that flagship *also* on OpenRouter, exactly as `ANTHROPIC_API_KEY` gives six Claudes while only Fable 5 is routed. `TestFirstPartyKeyCoverage` fails if a key stops being documented in `.env.example`, a home block is trimmed to one model, a home flagship loses its OpenRouter twin, or a lab beyond Meta/NVIDIA is left routed-only. The two things no test can read — the script's `QUICK START` docstring and the README bullet advertising the keys — are step 2 of the [model audit](#auditing-the-model-list-settings--pricing). |
+| **Democracy panels** (§22) | `cd backend && uv run pytest tests/test_democracy_panel.py` covers the four properties that fail *silently*: a per-call `task(model=...)` beating both the per-thread subagent dropdown and the routing policy, an unknown model failing that delegation instead of falling back, the roster being filtered to configured models with a sub-quorum panel rendering **no** organizer section, and the organizer section carrying the collect-facts-once / do-not-verify / report-dissent rules. Also asserts `democracy_participants` is in `_CONTEXT_CONFIGURABLE_KEYS` — drop it and every panel degrades to a plain Ultra turn with no error anywhere. `cd frontend && pnpm test democracy` covers the launch spec (quorum, duplicate rejection, count clamping), the **delegation budget** (`max_total_subagents` must exceed participants x 2, or the panel is truncated mid-run and the organizer synthesizes from whoever fit), the rate-multiple estimate incl. unpriced models counting as zero *and being named*, and `deriveModeContext` leaving the other four modes byte-identical. `pnpm test:e2e democracy-panel` clicks the real flow: sidebar → dialog → cost warning visible before *Start panel* is enabled → a complete panel seeds the composer and flips the thread to Democracy → a duplicate panelist is refused. **The precedence asserts are the ones that are silent when broken** — a routing rule that wins over `model=` still produces a confident synthesized answer, it is just several "independent" opinions from one model; verify by neutralizing the `subagent_model_override = requested_model` line and watching three `TestPerCallModel` tests go red. **Manual:** open the dialog with a mixed cloud+Ollama roster and confirm the local model is named in the "no price configured" line rather than silently lowering the multiple; then launch a panel from a chat that is *already* `/workspace/chats/new` — same-route `router.push` does not remount, so if the composer is not seeded, the `DEMOCRACY_LAUNCH_EVENT` listener in `use-democracy-launch.ts` has been dropped and the button does nothing at all. |
 | **Per-thread subagent model override** (§3, Ultra mode) | `input-box.tsx` renders the second "Subagent" `ModelSelector` only under `context.mode === "ultra"`, defaulting to "Follow lead", dimming `lacksToolSupport` models. It sets `subagent_model_name` in thread context; `_CONTEXT_CONFIGURABLE_KEYS` (`app/gateway/services.py`) forwards it; `task_tool.py` applies it as `model_override` and passes it to `SubagentExecutor`. Backend plumbing pinned by `backend/tests/test_task_tool_core_logic.py::test_task_tool_uses_subagent_model_override_for_tool_loading`. |
 | **Generate an agent from history** (§20) | `cd backend && uv run pytest tests/test_agent_generation.py tests/test_agent_generation_router.py` — the pure layer (digestion, caps, `<source>` delimiter escaping, name normalization, verdict parsing) and the route (feature switches, per-source ownership, dedupe/cap, verdicts, model selection, 502 paths, aux accounting). Wiring: `app/gateway/routers/agent_generation.py` registered in `app/gateway/app.py`; `packages/harness/deerflow/agents/generation/`; `config/agent_generation_config.py` wired into `AppConfig`; frontend `core/agent-generation/` + `components/workspace/agents/agent-generator.tsx` + the **Generate from history** button in `agent-gallery.tsx`. **Five asserts must not be 'simplified' away:** `test_analyze_never_creates_the_agent_itself` (the route stays read-only — a draft must never become an agent unattended), `test_build_system_instruction_biases_toward_no_gap` (a prompt edit must not drop the bias against proposing), `test_goal_alone_does_not_remove_the_no_gap_option` (a stated goal steers the analysis but must not decide the verdict), `test_force_proposal_rejects_a_no_gap_reply` (an override the model ignores is a failure, not an answer), and the delimiter-escaping tests (a transcript, goal, or draft containing `</source>`, `</goal>`, or `</draft>` must not break out of its block). Ownership survives both overrides — `test_revision_still_checks_source_ownership` and `test_forced_draft_still_checks_source_ownership` pin that skipping the verdict never skips the authorization. `<source>`, `<goal>`, and `<draft>` are classified in `test_input_sanitization_middleware.py::_EXEMPT_BLOCK_TAGS` with the reason — that guard will fail if a future block tag is added without a decision. Also note `backend/AGENTS.md` carries only a pointer: the depth lives in `packages/harness/deerflow/agents/generation/AGENTS.md`, registered in `test_agent_guidance_check.py`'s approved list. Frontend: `cd frontend && pnpm rstest run agent-generation` covers the selection and goal-cap helpers. Manual: enable both `agent_generation.enabled` and `agents_api.enabled`, pick two conversations, and confirm a `no_gap` verdict renders as a result rather than an error; then press **Generate anyway** and confirm the overlapping agent is still named on the draft, and that a **Refine** round keeps a hand edit you made to the SOUL.md before refining. |
 | **Editable system prompt** (§19) | Settings → System prompt must render both tabs: **Edit** (template + one-click placeholder buttons) and **Preview** (placeholders substituted; the subagent switch changes the output). Wiring: `system-prompt-settings-page.tsx` registered in `settings-dialog.tsx` as a `dynamic()` import — `frontend/tests/unit/components/workspace/lazy-panels.test.ts` counts those imports, so adding or removing a settings page must bump that number; `core/system-prompt/{api,hooks,types}.ts`; `app/gateway/routers/system_prompt.py` registered in `app/gateway/app.py`. Backend pinned by `backend/tests/test_system_prompt_store.py` (validation, persistence, render fallback, config independence) and `backend/tests/test_system_prompt_router.py` (routes + admin gate). Run both **with `config.yaml` moved aside** — the render paths reach for it through a `None` default otherwise, which is how these first passed locally and failed CI. The full list of what a prompt change must be tested with is in §19. Manual: save an override, confirm `~/.deer-flow/SYSTEM_PROMPT.md` appears and the **next** run uses it with no restart; then hand-edit that file to `{bogus}` and confirm the run still works on the built-in prompt. |

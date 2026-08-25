@@ -168,6 +168,8 @@ export interface Translations {
     proModeDescription: string;
     ultraMode: string;
     ultraModeDescription: string;
+    democracyMode: string;
+    democracyModeDescription: string;
     reasoningEffort: string;
     reasoningEffortMinimal: string;
     reasoningEffortMinimalDescription: string;
@@ -241,6 +243,29 @@ export interface Translations {
   };
 
   // Spend history and attribution (fork feature).
+  democracy: {
+    launch: string;
+    title: string;
+    description: string;
+    panelists: string;
+    organizer: string;
+    organizerHint: string;
+    panelist: (index: number) => string;
+    pickModel: string;
+    task: string;
+    taskPlaceholder: string;
+    start: string;
+    cancel: string;
+    duplicateWarning: string;
+    incompleteWarning: string;
+    taskWarning: string;
+    costTitle: string;
+    costRuns: (runs: number) => string;
+    costMultiple: (multiple: number) => string;
+    costUnpriced: (names: string) => string;
+    costHint: string;
+  };
+
   spend: {
     title: string;
     description: string;

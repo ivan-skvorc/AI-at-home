@@ -1050,6 +1050,7 @@ def apply_prompt_template(
     skill_names: frozenset[str] | None = None,
     allowed_subagents: list[str] | None = None,
     subagent_execution_capacity: int | None = None,
+    democracy_participants: list[str] | None = None,
 ) -> str:
     # Include subagent section only if enabled (from runtime parameter)
     n = (
@@ -1070,6 +1071,7 @@ def apply_prompt_template(
         total = getattr(subagents_config, "max_total_per_run", DEFAULT_MAX_TOTAL_SUBAGENTS_PER_RUN)
     total = clamp_total_subagents_per_run(total)
     if subagent_enabled:
+        from deerflow.agents.lead_agent.democracy import build_democracy_section
         from deerflow.subagents.batch_runtime import is_subagent_batch_runtime_available
 
         subagent_section = _build_subagent_section(
@@ -1079,6 +1081,14 @@ def apply_prompt_template(
             allowed_subagents=allowed_subagents,
             batch_enabled=is_subagent_batch_runtime_available(),
         )
+        # Fork: the Democracy organizer section rides `subagent_section` rather
+        # than claiming a placeholder of its own. A panel is dispatched entirely
+        # through `task`, so it is meaningless without the block that documents
+        # `task` — and an operator whose saved SYSTEM_PROMPT.md predates this
+        # feature (§19) keeps `{subagent_section}` and therefore still gets the
+        # organizer rules, instead of silently running a panel with no organizer.
+        if subagent_section and democracy_participants:
+            subagent_section = f"{subagent_section}\n{build_democracy_section(democracy_participants, max_total=total)}"
     else:
         subagent_section = ""
 

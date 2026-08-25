@@ -80,6 +80,10 @@ _BLOCKED_TAG_NAMES: frozenset[str] = frozenset(
         "uploaded_files",  # old uploads tag — still processed by deermem for backward-compat
         "current_uploads",
         "subagent_system",
+        # Fork: the Democracy organizer brief. It tells the lead which models the
+        # panel runs on and how to weigh their answers, so a counterfeit block in
+        # user input could re-roster or bias a panel from inside the message.
+        "democracy_panel",
         "skill_system",
         "skill_index",
         "available_skills",

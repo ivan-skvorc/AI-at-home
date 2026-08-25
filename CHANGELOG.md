@@ -9,6 +9,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **chat:** **Democracy — several models answer the same question, then decide
+  together.** A new **Democracy** launcher under *New chat* asks how many
+  panelists you want, which model organizes, which model fills each seat, and
+  what the task is. The organizer gathers the facts **once** and hands every
+  panelist the identical brief (five models each doing the same lookup costs five
+  times as much and produces five slightly different datasets), the panelists
+  answer independently and then review each other **anonymously**, and the
+  organizer synthesizes — reporting the real split and naming dissenters instead
+  of averaging them into "the panel concluded". Facts are deliberately taken as
+  given and **not** re-verified by the panel. It is extremely token-heavy — up to
+  N x 2 full model runs for N panelists, on top of the organizer's own work — so
+  the setup dialog states the run count and estimates the panel's rates as a
+  multiple of one ordinary answer, naming any unpriced local model that counts as
+  $0, before you commit. Under the hood `task` gained a per-call `model=`
+  argument that outranks both the per-thread subagent dropdown and the cost-aware
+  routing policy, so a panel cannot silently collapse onto one model. Needs no
+  config keys and works as soon as two models are configured; panelists run
+  concurrently up to `subagent_runtime.max_running` (default 3, restart required
+  to raise).
+
 - **chat:** **A second chat no longer waits for the first one's answer.** Ask one
   conversation something slow, leave it, and prompt another one — both keep
   going. Leaving a chat used to cancel its run (the Gateway cancels on client
