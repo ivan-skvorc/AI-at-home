@@ -133,7 +133,10 @@ function getResolvedMode(
 }
 
 function reasoningEffortForMode(mode: SidecarInputMode) {
-  return mode === "ultra"
+  // Democracy is not offered in the sidecar (a side conversation is not a
+  // panel), but the mode union is shared, so it is mapped rather than left to
+  // fall through to "minimal" if a thread ever carries it in here.
+  return mode === "ultra" || mode === "democracy"
     ? "high"
     : mode === "pro"
       ? "medium"

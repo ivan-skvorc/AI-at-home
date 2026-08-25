@@ -44,6 +44,10 @@ export interface AgentThreadContext extends Record<string, unknown> {
   is_plan_mode: boolean;
   subagent_enabled: boolean;
   subagent_model_name?: string;
+  // Democracy panels (fork feature): the panelist models this thread dispatches
+  // to. Present only on a Democracy run; a roster below quorum is no panel and
+  // the backend degrades the turn to an ordinary Ultra one.
+  democracy_participants?: string[];
   reasoning_effort?: "minimal" | "low" | "medium" | "high";
   agent_name?: string;
   // Per-user long-term memory opt-in. When false the backend skips memory

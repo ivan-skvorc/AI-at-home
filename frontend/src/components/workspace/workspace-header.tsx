@@ -1,8 +1,9 @@
 "use client";
 
-import { MessageSquarePlus } from "lucide-react";
+import { MessageSquarePlus, UsersRoundIcon } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useState } from "react";
 
 import {
   SidebarMenu,
@@ -15,8 +16,11 @@ import { useI18n } from "@/core/i18n/hooks";
 import { env } from "@/env";
 import { cn } from "@/lib/utils";
 
+import { DemocracyDialog } from "./democracy-dialog";
+
 export function WorkspaceHeader({ className }: { className?: string }) {
   const { t } = useI18n();
+  const [democracyOpen, setDemocracyOpen] = useState(false);
   const { state } = useSidebar();
   const pathname = usePathname();
   return (
@@ -61,7 +65,21 @@ export function WorkspaceHeader({ className }: { className?: string }) {
             </Link>
           </SidebarMenuButton>
         </SidebarMenuItem>
+        {/* Democracy sits directly under New chat because it is the same kind of
+            action — start a conversation — that happens to need a panel picked
+            first. It opens a dialog rather than navigating, since the roster has
+            to exist before the thread does. */}
+        <SidebarMenuItem>
+          <SidebarMenuButton
+            className="text-muted-foreground"
+            onClick={() => setDemocracyOpen(true)}
+          >
+            <UsersRoundIcon size={16} />
+            <span>{t.democracy.launch}</span>
+          </SidebarMenuButton>
+        </SidebarMenuItem>
       </SidebarMenu>
+      <DemocracyDialog open={democracyOpen} onOpenChange={setDemocracyOpen} />
     </>
   );
 }

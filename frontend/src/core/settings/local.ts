@@ -69,6 +69,9 @@ const LEGACY_THREAD_MODEL_KEY_PREFIX = "deerflow.thread-model.";
 export const THREAD_SCOPED_CONTEXT_KEYS = [
   "model_name",
   "subagent_model_name",
+  // The Democracy panel is per conversation, like the model it runs on: two open
+  // panels must not overwrite each other's rosters.
+  "democracy_participants",
   "mode",
   "reasoning_effort",
 ] as const;
@@ -164,7 +167,7 @@ export interface LocalSettings {
   > & {
     model_name?: string | undefined;
     subagent_model_name?: string | undefined;
-    mode: "flash" | "thinking" | "pro" | "ultra" | undefined;
+    mode: "flash" | "thinking" | "pro" | "ultra" | "democracy" | undefined;
     reasoning_effort?: "minimal" | "low" | "medium" | "high";
   };
 }

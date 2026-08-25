@@ -354,6 +354,11 @@ _CONTEXT_CONFIGURABLE_KEYS: frozenset[str] = frozenset(
         "subagent_model_name",
         "max_concurrent_subagents",
         "max_total_subagents",
+        # Fork: the Democracy panel roster (list of configured model names).
+        # A single key, not a roster plus an `enabled` flag: two keys can
+        # disagree, and "which models are on the panel" already answers
+        # "is this a panel run" — an empty or sub-quorum list is no panel.
+        "democracy_participants",
         "agent_name",
         "is_bootstrap",
         # Per-user long-term memory opt-in. When explicitly ``false`` the lead

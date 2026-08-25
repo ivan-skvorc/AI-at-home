@@ -56,6 +56,7 @@ import {
   getSessionPendingEditSendStorage,
   writePendingEditSend,
 } from "./pending-edit-send";
+import { deriveModeContext } from "./run-context";
 import {
   buildThreadsSearchQueryOptions,
   DEFAULT_THREAD_SEARCH_PARAMS,
@@ -2244,19 +2245,8 @@ export function useThreadStream({
             context: {
               ...extraContext,
               ...context,
-              thinking_enabled: context.mode !== "flash",
-              is_plan_mode: context.mode === "pro" || context.mode === "ultra",
-              subagent_enabled: context.mode === "ultra",
+              ...deriveModeContext(context),
               memory_enabled: getLocalSettings().memory.enabled,
-              reasoning_effort:
-                context.reasoning_effort ??
-                (context.mode === "ultra"
-                  ? "high"
-                  : context.mode === "pro"
-                    ? "medium"
-                    : context.mode === "thinking"
-                      ? "low"
-                      : undefined),
               thread_id: threadId,
             },
           },
@@ -2368,19 +2358,8 @@ export function useThreadStream({
           },
           context: {
             ...context,
-            thinking_enabled: context.mode !== "flash",
-            is_plan_mode: context.mode === "pro" || context.mode === "ultra",
-            subagent_enabled: context.mode === "ultra",
+            ...deriveModeContext(context),
             memory_enabled: getLocalSettings().memory.enabled,
-            reasoning_effort:
-              context.reasoning_effort ??
-              (context.mode === "ultra"
-                ? "high"
-                : context.mode === "pro"
-                  ? "medium"
-                  : context.mode === "thinking"
-                    ? "low"
-                    : undefined),
             thread_id: threadId,
           },
         });

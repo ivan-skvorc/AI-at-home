@@ -34,6 +34,7 @@ from langchain.agents import create_agent
 from langchain.agents.middleware import AgentMiddleware
 from langchain_core.runnables import RunnableConfig
 
+from deerflow.agents.lead_agent.democracy import normalize_democracy_participants
 from deerflow.agents.lead_agent.prompt import apply_prompt_template
 from deerflow.agents.middlewares.clarification_middleware import ClarificationMiddleware
 from deerflow.agents.middlewares.configured_extensions import load_configured_extension_middlewares
@@ -930,6 +931,20 @@ def _assemble_lead_agent(config: RunnableConfig, *, app_config: AppConfig) -> Le
         execution_capacity=subagent_execution_capacity,
     )
     max_total_subagents = cfg.get("max_total_subagents", _default_max_total_subagents(resolved_app_config))
+    # Fork: the Democracy panel roster for this run. Filtered against the model
+    # catalog here (not at the UI), so a thread whose config.yaml changed under
+    # it degrades to an ordinary Ultra run rather than dispatching panelists on
+    # models that no longer exist.
+    # ``models`` is read defensively: this factory also accepts lightweight
+    # config-shaped objects that predate it. Absent means "no catalog to check
+    # against" (skip the filter), which is not the same as a configured-but-empty
+    # catalog (drop everything) — so the None is passed through rather than
+    # flattened to a list.
+    _configured_models = getattr(resolved_app_config, "models", None)
+    democracy_participants = normalize_democracy_participants(
+        cfg.get("democracy_participants"),
+        configured_models=None if _configured_models is None else [getattr(model, "name", "") for model in _configured_models],
+    )
     is_bootstrap = cfg.get("is_bootstrap", False)
     non_interactive = bool(cfg.get("non_interactive", False))
     agent_name = validate_agent_name(cfg.get("agent_name"))
@@ -1203,6 +1218,7 @@ def _assemble_lead_agent(config: RunnableConfig, *, app_config: AppConfig) -> Le
         skill_names=skill_setup.skill_names or None,
         allowed_subagents=allowed_subagents,
         subagent_execution_capacity=subagent_execution_capacity,
+        democracy_participants=democracy_participants,
     )
     graph = create_agent(
         model=create_chat_model(name=model_name, thinking_enabled=thinking_enabled, reasoning_effort=reasoning_effort, app_config=resolved_app_config, attach_tracing=False, model_overrides=agent_model_overrides),

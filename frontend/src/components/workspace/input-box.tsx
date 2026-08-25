@@ -16,6 +16,7 @@ import {
   SquareIcon,
   TargetIcon,
   Undo2Icon,
+  UsersRoundIcon,
   XIcon,
   ZapIcon,
 } from "lucide-react";
@@ -303,7 +304,7 @@ export function InputBox({
     AgentThreadContext,
     "thread_id" | "is_plan_mode" | "thinking_enabled" | "subagent_enabled"
   > & {
-    mode: "flash" | "thinking" | "pro" | "ultra" | undefined;
+    mode: "flash" | "thinking" | "pro" | "ultra" | "democracy" | undefined;
     reasoning_effort?: "minimal" | "low" | "medium" | "high";
   };
   extraHeader?: React.ReactNode;
@@ -329,7 +330,7 @@ export function InputBox({
       AgentThreadContext,
       "thread_id" | "is_plan_mode" | "thinking_enabled" | "subagent_enabled"
     > & {
-      mode: "flash" | "thinking" | "pro" | "ultra" | undefined;
+      mode: "flash" | "thinking" | "pro" | "ultra" | "democracy" | undefined;
       reasoning_effort?: "minimal" | "low" | "medium" | "high";
     },
   ) => void;
@@ -2373,7 +2374,8 @@ export function InputBox({
                   context.mode === "flash" ||
                   context.mode === "thinking" ||
                   context.mode === "pro" ||
-                  context.mode === "ultra"
+                  context.mode === "ultra" ||
+                  context.mode === "democracy"
                     ? context.mode
                     : "flash"
                 }
@@ -2393,6 +2395,9 @@ export function InputBox({
                     {context.mode === "ultra" && (
                       <RocketIcon className="size-3 text-[#dabb5e]" />
                     )}
+                    {context.mode === "democracy" && (
+                      <UsersRoundIcon className="size-3 text-[#7c9ec4]" />
+                    )}
                   </div>
                   <div
                     className={cn(
@@ -2404,7 +2409,9 @@ export function InputBox({
                       (context.mode === "thinking" &&
                         t.inputBox.reasoningMode) ||
                       (context.mode === "pro" && t.inputBox.proMode) ||
-                      (context.mode === "ultra" && t.inputBox.ultraMode)}
+                      (context.mode === "ultra" && t.inputBox.ultraMode) ||
+                      (context.mode === "democracy" &&
+                        t.inputBox.democracyMode)}
                   </div>
                 </PromptInputActionMenuTrigger>
               </ModeHoverGuide>
@@ -2753,6 +2760,9 @@ export function InputBox({
               </ModelSelectorContent>
             </ModelSelector>
             {context.mode === "ultra" && (
+              // Deliberately not rendered for Democracy: a panel names its model
+              // per `task` call, and a thread-wide subagent override would be
+              // outranked by every one of them (see FORK.md §22 precedence).
               <ModelSelector
                 open={subagentModelDialogOpen}
                 onOpenChange={setSubagentModelDialogOpen}
