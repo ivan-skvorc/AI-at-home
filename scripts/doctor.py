@@ -19,7 +19,7 @@ import sys
 from collections.abc import Mapping
 from importlib import import_module
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 import exposure as exposure_module
 
@@ -1092,7 +1092,44 @@ def check_ollama_readiness(config_path: Path, probe=_ollama_installed_models) ->
                 fix="Set `ollama.keep_alive: 30m` in config.yaml and re-run a launch (the sync writes it into each entry)",
             )
         )
+
+    results.append(_ollama_concurrency_result(data))
     return results
+
+
+def _ollama_concurrency_result(data: Mapping[str, Any]) -> CheckResult:
+    """How many chats a local model can actually answer at the same time.
+
+    Ollama serves ``OLLAMA_NUM_PARALLEL`` requests per model concurrently and
+    queues the rest, so on the default of 1 a second chat sits at "thinking"
+    until the first one finishes — the concurrent-chat equivalent of the
+    keep_alive cold start above. The daemon owns the real setting; config.yaml's
+    ``ollama.num_parallel`` is what tells the model sync to divide each model's
+    sized ``num_ctx`` across those slots (each slot allocates its own KV cache).
+    Reported, never enforced: one slot is a perfectly reasonable choice on a
+    small GPU.
+    """
+    section = data.get("ollama")
+    raw = section.get("num_parallel") if isinstance(section, Mapping) else None
+    try:
+        slots = int(raw)
+    except (TypeError, ValueError):
+        slots = 0
+    if slots > 1:
+        return CheckResult(
+            "local model concurrency",
+            "ok",
+            f"ollama.num_parallel={slots} — up to {slots} chats generate at once (the daemon must run with OLLAMA_NUM_PARALLEL={slots} to match)",
+        )
+    return CheckResult(
+        "local model concurrency",
+        "ok",
+        "one request at a time — a second chat cannot start generating until the first one finishes",
+        fix=(
+            "Raise the daemon's slot count (sudo systemctl edit ollama -> [Service] Environment=\"OLLAMA_NUM_PARALLEL=2\"), "
+            "set `ollama.num_parallel: 2` in config.yaml to match, and re-run a launch so each model's num_ctx is resized for the extra KV cache"
+        ),
+    )
 
 
 def check_deployment_exposure(project_root: Path, env: Mapping[str, str] | None = None) -> list[CheckResult]:

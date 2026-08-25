@@ -10,6 +10,7 @@
 >   - **`OPENROUTER_API_KEY` present** → Claude **Fable 5** (the flagship, for OpenRouter-only users — every other Claude is on the direct Anthropic block above), **Grok 4.5**, **GPT-5.6 Sol**, **GPT-5.3 Codex**, **Gemini 3.6 Flash**, **Llama 4 Maverick**, **MiniMax M3**, **Qwen3.7 Max**, **Kimi K3**, **Mistral Large 3**, **DeepSeek V4 Pro**, **GLM-5.2**, **Nemotron 3 Ultra** (all via OpenRouter). One flagship per big-name lab (a second only when the smaller model is acclaimed on its own — e.g. GPT-5.3 Codex).
 > - 🔀 **Independent model per conversation** — every chat remembers its **own** model (and subagent model, mode, and reasoning effort), stored per-thread instead of in one shared setting. Run a free local Ollama model in one conversation and a cloud model in another, side by side — switching the model in one no longer flips the model in the others. Previously every chat that hadn't been explicitly pinned followed the last model picked *anywhere* (even across browser tabs, via the shared settings sync), which made running local and cloud models simultaneously impossible; now each conversation is isolated and new chats simply start from the configured default model.
 > - 🗂️ **Browser-style keep-alive chat tabs** — drag conversations up into a tab strip and they stay **mounted and running in the background**: a tab you switch away from keeps streaming and keeps its scroll position, artifacts, and browser panel, instead of upstream's single pane that tears the previous chat down on every switch. The tab set is saved server-side per user, so it survives a browser restart — and even reopening the app on a different address (`localhost` vs. your LAN / Tailscale name).
+> - 🚦 **Concurrent chats** — ask one conversation something slow, leave it, and prompt another one; both keep going. Leaving a chat used to **cancel** its run (the Gateway cancels a run when the browser disconnects unless told otherwise), so walking away from a long answer to write the next prompt killed the answer you walked away to wait for. Now a chat you leave *while it is still answering* is kept as a keep-alive tab and goes on streaming in the background, with a pulsing dot on its tab and a notification when it lands. With a **local Ollama model** the queue moves into the daemon: it answers `OLLAMA_NUM_PARALLEL` requests per model at a time (**1** by default), so raise it and set `ollama.num_parallel` to match — `make doctor` tells you where you stand.
 > - 🕯️ **Gaslight mode** — edit **either half of a turn** and the conversation carries on as if those had always been the words. Edit your own message and it replays from there with the new wording; edit **the assistant's answer** and your text simply *becomes* what it said — nothing is re-generated, and whatever you send next is answered with those words standing in the history. The version you were reading is kept either way, and a `‹ 2/2 ›` switcher appears **on the edited message** to move between them. Upstream's **Branch** button forked each attempt into a *separate* chat, so trying three phrasings of one question left four entries in the sidebar with no clue which was which; here the alternatives are hidden threads and **one conversation stays one sidebar entry**, however many times you edit it — and the entry follows whichever version you are actually reading. Editing the very first message has nothing to fork from, so it simply starts a fresh version.
 > - 🤖 **Generate a custom agent from your history** — instead of hand-writing a persona, point a model at past conversations or scheduled tasks and let it decide whether a *new* agent is even worth adding. It is allowed to say **no** — naming the existing agent that already covers the work — so your roster doesn't fill up with near-duplicates. When it does propose one you get an editable **SOUL.md** draft, and nothing is saved until you press **Create**; the analysis itself never writes an agent. An optional *what should this agent do?* box steers it toward a goal, and a **Refine** box adjusts the draft in place without regenerating it. On by default alongside the custom-agent API (**Agents → Generate from history**).
 > - 🪃 **Model fallback chains** — when a model call fails for a reason worth retrying (the Ollama daemon is down, the context overflowed, the model turns out not to support tool calls, or the provider returns a 5xx), the turn degrades to the next model you listed instead of failing. Deliberate stops — you hit cancel, a spend cap fired, a guardrail refused — never fall back, and tokens are billed to whichever model actually answered, so your cost figures stay honest. Off until you configure a chain.
@@ -121,6 +122,7 @@ DeerFlow has newly integrated the intelligent search and crawling toolset indepe
     - [Context Engineering](#context-engineering)
     - [System Prompt](#system-prompt)
     - [Long-Term Memory](#long-term-memory)
+    - [Concurrent Chats](#concurrent-chats)
   - [Recommended Models](#recommended-models)
   - [Embedded Python Client](#embedded-python-client)
   - [Scheduled Tasks](#scheduled-tasks)
@@ -1581,6 +1583,64 @@ PYTHONPATH=. python scripts/migrate_memory_markdown.py --storage-path /path/to/d
 The v1-to-v2 storage migration is one-way for a running application: pre-PR code does not read Markdown facts. Before upgrading a persistent deployment, stop DeerFlow and take a filesystem snapshot or full backup of the configured memory storage root. The migration also durably retains each destructive JSON source beside the original path as `{manifest_filename}.v1.bak` before writing v2 data; an existing mismatched backup or a backup-write failure stops migration without modifying the v1 source. This local backup preserves pre-migration data but is not a substitute for a full snapshot and does not contain facts created after the upgrade.
 
 `--user-id` may be repeated. `--all-users` discovers the existing directory-safe buckets below the selected storage root; standalone integrations that passed raw IDs containing characters such as `@` should use the original value with `--user-id`. A failed user's migration is reported without hiding the rest of the audit, and the command exits non-zero when any user fails. The automatic first-read path remains enabled, so running this CLI is not required for startup.
+
+### Concurrent Chats
+
+Chats run independently of each other. Ask one conversation for something slow —
+a long research pass, a sandbox build — then leave it and prompt a different
+conversation while the first is still working. Both answers arrive, and the one
+you walked away from is still there, still streaming, when you come back.
+
+**Leaving a running chat now keeps it, rather than ending it.** Two things used
+to get in the way. A run is cancelled when its browser stream disconnects
+(`on_disconnect` defaults to `cancel` on the Gateway's run API), which is exactly
+what leaving a chat does — so the answer you walked away to wait for was killed
+on the way out. And even a surviving run went dark, because only chats you have
+explicitly pinned to the tab strip stay mounted. Now every run is submitted as
+"keep going if my stream drops", and a chat you leave **while it is still
+answering** is automatically kept as a keep-alive tab: it keeps streaming in the
+background with a pulsing dot on its tab chip, and the dot disappearing is how
+you know it finished. The desktop notification fires for a chat that is merely
+off-screen too, not just when the whole window is hidden. Nothing to configure.
+
+This also means **closing the browser no longer cancels a run** — it finishes on
+the server, which is what the "notify me when it's done" push notification
+assumed all along, and why a phone that locks its screen mid-run still gets an
+answer. The **Stop** button is unaffected: it cancels the run outright, and a
+runaway run is still bounded by your spend cap.
+
+Two deliberate limits: a brand-new chat whose thread the backend has not created
+yet is not kept as a tab (a tab is addressed by thread id), and a full tab strip
+declines rather than evicting a tab you chose. In both cases the run itself still
+survives on the server and you rejoin it when you open the chat again.
+
+Within a **single** conversation, turns still take one at a time — two runs in one
+chat would fight over the same conversation state. Concurrency is across chats.
+
+**If your model is local (Ollama), there is one more step.** Everything above is
+about DeerFlow; Ollama has its own queue. It answers `OLLAMA_NUM_PARALLEL`
+requests **per model** at a time — **1** unless you raise it — and queues the
+rest, so a second chat sits at "thinking" until the first one finishes even
+though both runs are genuinely live. Raise it on the daemon, and tell DeerFlow
+the same number:
+
+```bash
+sudo systemctl edit ollama    # add:  [Service]  Environment="OLLAMA_NUM_PARALLEL=2"
+sudo systemctl restart ollama
+```
+
+```yaml
+ollama:
+  num_parallel: 2   # must match the daemon's OLLAMA_NUM_PARALLEL (default: 1)
+```
+
+The config value does not change the daemon — it tells the model sync what the
+daemon is doing. That matters because **Ollama allocates a full KV cache per
+slot**: two slots halve the context window each chat can afford, so the
+`num_ctx` written for each model on the next launch shrinks to match (see the
+VRAM-aware sizing above). Leave it unset and everything is sized exactly as
+before. `make doctor` reports how many chats can generate at once under **Local
+Models**, with the fix if the answer is one.
 
 ## Recommended Models
 

@@ -35,6 +35,7 @@ export function ChatTabsBar() {
     pinThread,
     closeTab,
     reorderTabs,
+    busyKeys,
   } = useChatTabs();
 
   const { data } = useInfiniteThreads();
@@ -215,6 +216,14 @@ export function ChatTabsBar() {
                 : "text-muted-foreground hover:bg-background/60 border-transparent",
             )}
           >
+            {busyKeys.has(tab.key) && (
+              <span
+                data-testid="chat-tab-busy"
+                aria-label={t.chatTabs.running}
+                title={t.chatTabs.running}
+                className="bg-primary size-1.5 shrink-0 animate-pulse rounded-full"
+              />
+            )}
             <span className="min-w-0 flex-1 truncate">
               {titleFor(tab.threadId, tab.title)}
             </span>

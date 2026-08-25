@@ -281,6 +281,7 @@ export interface Translations {
     openInTab: string;
     untitled: string;
     dropHint: string;
+    running: string;
   };
 
   // Thread-scoped MCP background tasks

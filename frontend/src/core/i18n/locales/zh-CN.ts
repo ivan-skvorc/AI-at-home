@@ -340,6 +340,7 @@ export const zhCN: Translations = {
     openInTab: "在标签页中打开",
     untitled: "新对话",
     dropHint: "将对话拖到这里，即可固定为标签页",
+    running: "正在回答",
   },
 
   backgroundTasks: {

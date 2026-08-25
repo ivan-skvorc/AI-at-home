@@ -12,6 +12,7 @@ Usage:
                                           [--base-url URL] [--container]
                                           [--num-ctx-cap N] [--vram-gb G]
                                           [--kv-cache-type f16|q8_0|q4_0]
+                                          [--num-parallel N]
 
 Environment:
     OLLAMA_HOST: override Ollama endpoint (default: http://localhost:11434)
@@ -42,6 +43,14 @@ quantization the daemon runs (``OLLAMA_KV_CACHE_TYPE``): ``q8_0`` roughly halves
 the per-token cost versus the default ``f16``, roughly doubling the affordable
 window. An explicit ``--num-ctx-cap`` still applies as a hard ceiling; models
 whose geometry can't be read fall back to the flat-cap behavior.
+
+Concurrent chats: Ollama answers ``OLLAMA_NUM_PARALLEL`` requests per model at a
+time and queues the rest, so on the default of 1 a second chat cannot start
+generating until the first one finishes. Tell the sizing how many slots the
+daemon actually runs with ``ollama.num_parallel`` / ``--num-parallel``: Ollama
+allocates a KV cache per slot, so N slots divide the affordable per-chat
+``num_ctx`` by N. The two settings must agree — the daemon owns the slot count
+(``OLLAMA_NUM_PARALLEL``), this one only tells the estimate about it.
 """
 
 from __future__ import annotations
@@ -86,11 +95,21 @@ KV_CACHE_BYTES_PER_ELEMENT = {"f16": 2.0, "q8_0": 34 / 32, "q4_0": 18 / 32}
 DEFAULT_KV_CACHE_TYPE = "f16"
 # VRAM reserved for everything that is neither weights nor KV cache: compute
 # graph buffers, CUDA/ROCm/Metal context, display, fragmentation. Deliberately
-# conservative — and the estimate assumes OLLAMA_NUM_PARALLEL=1 (the modern
-# Ollama default; each extra parallel slot multiplies the KV allocation). If the
-# estimate is still too optimistic, Ollama degrades by offloading layers to CPU
-# (slow, not fatal).
+# conservative. The number of concurrent slots comes from
+# ``ollama.num_parallel`` (see DEFAULT_NUM_PARALLEL below) — each extra parallel
+# slot multiplies the KV allocation. If the estimate is still too optimistic,
+# Ollama degrades by offloading layers to CPU (slow, not fatal).
 VRAM_OVERHEAD_BYTES = int(1.5 * 1024**3)
+# Concurrent chats: Ollama serves ``OLLAMA_NUM_PARALLEL`` requests per model at
+# once and queues the rest, so with the default of 1 a second chat's first token
+# waits for the first chat to finish. Raising it is a daemon-side setting; what
+# this script owns is the consequence — Ollama multiplies the requested
+# ``num_ctx`` by the slot count when it allocates the KV cache
+# (``opts.NumCtx * numParallel`` in its scheduler), so N slots divide the
+# affordable per-chat window by N. ``ollama.num_parallel`` in config.yaml tells
+# the sizing how many slots the daemon runs; the default of 1 reproduces the
+# previous math exactly.
+DEFAULT_NUM_PARALLEL = 1
 # Floor/step for the computed window: below 4096 the agent's system prompt alone
 # doesn't fit, and odd sizes buy nothing.
 MIN_VRAM_NUM_CTX = 4096
@@ -279,18 +298,28 @@ def parse_kv_bytes_per_token(show: dict, kv_cache_type: str = DEFAULT_KV_CACHE_T
     return block_count * kv_heads * (key_dim + value_dim) * bytes_per_element
 
 
-def vram_num_ctx_limit(show: dict, weights_bytes, vram_bytes, kv_cache_type: str = DEFAULT_KV_CACHE_TYPE) -> int | None:
+def vram_num_ctx_limit(
+    show: dict,
+    weights_bytes,
+    vram_bytes,
+    kv_cache_type: str = DEFAULT_KV_CACHE_TYPE,
+    num_parallel: int = DEFAULT_NUM_PARALLEL,
+) -> int | None:
     """Largest context window whose KV cache fits VRAM next to the weights.
 
-    ``(vram - weights - VRAM_OVERHEAD_BYTES) / kv_bytes_per_token``, floored to
-    ``NUM_CTX_STEP`` and never below ``MIN_VRAM_NUM_CTX`` (a model that doesn't
-    fit at all still gets a usable window — Ollama offloads layers to CPU rather
-    than failing). Returns None when the geometry or weights size is unknown, so
-    callers can fall back to the flat cap.
+    ``(vram - weights - VRAM_OVERHEAD_BYTES) / (kv_bytes_per_token × slots)``,
+    floored to ``NUM_CTX_STEP`` and never below ``MIN_VRAM_NUM_CTX`` (a model
+    that doesn't fit at all still gets a usable window — Ollama offloads layers
+    to CPU rather than failing). ``num_parallel`` is the daemon's
+    ``OLLAMA_NUM_PARALLEL``: Ollama allocates the KV cache for every slot up
+    front, so serving two chats at once halves the window each one can have.
+    Returns None when the geometry or weights size is unknown, so callers can
+    fall back to the flat cap.
     """
     per_token = parse_kv_bytes_per_token(show, kv_cache_type)
     if per_token is None or not weights_bytes or weights_bytes <= 0 or not vram_bytes or vram_bytes <= 0:
         return None
+    per_token *= max(1, num_parallel)
     available = vram_bytes - weights_bytes - VRAM_OVERHEAD_BYTES
     if available <= 0:
         return MIN_VRAM_NUM_CTX
@@ -302,10 +331,11 @@ def parse_ollama_settings(text: str) -> dict:
     """Parse the top-level ``ollama:`` section of config.yaml.
 
     Recognized keys: ``vram_gb`` (positive number), ``kv_cache_type`` (one of
-    KV_CACHE_BYTES_PER_ELEMENT), ``keep_alive`` (opaque Ollama duration string),
-    ``preload`` (bool), and the nested ``keep_alive_overrides`` map of
-    model name -> duration. Malformed values are dropped. Pure-text scan on
-    purpose — this script runs under plain python3 with no PyYAML.
+    KV_CACHE_BYTES_PER_ELEMENT), ``num_parallel`` (positive integer),
+    ``keep_alive`` (opaque Ollama duration string), ``preload`` (bool), and the
+    nested ``keep_alive_overrides`` map of model name -> duration. Malformed
+    values are dropped. Pure-text scan on purpose — this script runs under plain
+    python3 with no PyYAML.
     """
     top_key = re.compile(r"^[A-Za-z_][\w-]*:")
     entry = re.compile(r"^(\s+)([A-Za-z_][\w.:-]*):\s*([^#]*)")
@@ -351,6 +381,12 @@ def parse_ollama_settings(text: str) -> dict:
         pass
     if raw.get("kv_cache_type") in KV_CACHE_BYTES_PER_ELEMENT:
         settings["kv_cache_type"] = raw["kv_cache_type"]
+    try:
+        num_parallel = int(raw["num_parallel"])
+        if num_parallel > 0:
+            settings["num_parallel"] = num_parallel
+    except (KeyError, ValueError):
+        pass
     # keep_alive is passed through to Ollama verbatim ("30m", "1h", "-1", "600"),
     # so it is deliberately not validated here beyond being non-empty.
     if raw.get("keep_alive"):
@@ -387,6 +423,23 @@ def resolve_sizing_settings(cli_vram_gb, cli_kv_cache_type, config_text: str):
     return vram_bytes, kv_cache_type
 
 
+def resolve_num_parallel(cli_num_parallel, settings: dict) -> int:
+    """Resolve the daemon's concurrent-slot count: CLI > config > 1.
+
+    Kept separate from :func:`resolve_sizing_settings` because it is not only a
+    sizing input — a caller may want to report how many chats can generate at
+    once without computing a context window at all.
+    """
+    for candidate in (cli_num_parallel, settings.get("num_parallel")):
+        try:
+            value = int(candidate)
+        except (TypeError, ValueError):
+            continue
+        if value > 0:
+            return value
+    return DEFAULT_NUM_PARALLEL
+
+
 def effective_num_ctx_cap(explicit_cap: int | None, vram_limit: int | None) -> int:
     """Cap precedence: explicit ``--num-ctx-cap`` > VRAM sizing (cap off) > flat default.
 
@@ -419,7 +472,12 @@ def resolve_num_ctx(native: int | None, cap: int = DEFAULT_NUM_CTX_CAP, vram_lim
     return resolved
 
 
-def vram_contention_warning(loaded: list, vram_bytes: int | None, kv_cache_type: str = DEFAULT_KV_CACHE_TYPE) -> str | None:
+def vram_contention_warning(
+    loaded: list,
+    vram_bytes: int | None,
+    kv_cache_type: str = DEFAULT_KV_CACHE_TYPE,
+    num_parallel: int = DEFAULT_NUM_PARALLEL,
+) -> str | None:
     """Warn when the two largest local models cannot be resident at once.
 
     This is the Ultra-mode shape: a local lead plus a local subagent means two
@@ -435,11 +493,13 @@ def vram_contention_warning(loaded: list, vram_bytes: int | None, kv_cache_type:
     if not vram_bytes or vram_bytes <= 0 or len(loaded) < 2:
         return None
 
+    slots = max(1, num_parallel)
+
     def _cost(show: dict, weights: int) -> tuple[int, int]:
         """(weights, kv bytes for a modest shared window) for one resident model."""
         per_token = parse_kv_bytes_per_token(show, kv_cache_type)
         # Geometry may be unreadable; weights alone still prove non-coexistence.
-        kv = int(per_token * MIN_VRAM_NUM_CTX) if per_token else 0
+        kv = int(per_token * MIN_VRAM_NUM_CTX * slots) if per_token else 0
         return weights or 0, kv
 
     ranked = sorted(loaded, key=lambda item: item[2] or 0, reverse=True)[:2]
@@ -453,7 +513,8 @@ def vram_contention_warning(loaded: list, vram_bytes: int | None, kv_cache_type:
     gib = 1024**3
     return (
         f"VRAM contention: {name_a} ({wa / gib:.1f} GiB) + {name_b} ({wb / gib:.1f} GiB) "
-        f"need ~{needed / gib:.1f} GiB resident together (weights + a {MIN_VRAM_NUM_CTX}-token KV cache each "
+        f"need ~{needed / gib:.1f} GiB resident together (weights + a {MIN_VRAM_NUM_CTX}-token KV cache each"
+        f"{f' × {slots} parallel slots' if slots > 1 else ''} "
         f"+ {VRAM_OVERHEAD_BYTES / gib:.1f} GiB overhead), but the configured budget is {vram_bytes / gib:g} GiB. "
         f"Running both at once (a local lead with a local subagent) makes Ollama evict and reload between calls. "
         f"Pair a local lead with a smaller local subagent, raise ollama.vram_gb if it understates your GPU, or use q8_0 KV cache."
@@ -675,6 +736,12 @@ def main() -> int:
         default=None,
         help="KV-cache quantization assumed by the sizing (default: `ollama.kv_cache_type` in config.yaml, else f16). Must match the daemon's OLLAMA_KV_CACHE_TYPE to be accurate.",
     )
+    ap.add_argument(
+        "--num-parallel",
+        type=int,
+        default=None,
+        help="How many requests the daemon serves per model at once, i.e. its OLLAMA_NUM_PARALLEL (default: `ollama.num_parallel` in config.yaml, else 1). Each slot gets its own KV cache, so this divides the sized num_ctx.",
+    )
     ap.add_argument("--keep-alive", default=None, help="How long the daemon keeps each model resident (e.g. 30m, 1h, -1 for never unload). Default: `ollama.keep_alive` in config.yaml; unset leaves Ollama's own 5-minute default.")
     ap.add_argument(
         "--preload-only",
@@ -693,6 +760,7 @@ def main() -> int:
     check_duplicate_top_level_keys(original, config_path)
     vram_bytes, kv_cache_type = resolve_sizing_settings(args.vram_gb, args.kv_cache_type, original)
     settings = parse_ollama_settings(original)
+    num_parallel = resolve_num_parallel(args.num_parallel, settings)
 
     host = normalize_host(os.environ.get("OLLAMA_HOST") or args.host)
 
@@ -718,7 +786,11 @@ def main() -> int:
     if args.verbose:
         print(f"[ollama-sync] querying {host}; writing base_url {base_url}", file=sys.stderr)
         if vram_bytes:
-            print(f"[ollama-sync] sizing num_ctx for {vram_bytes / 1024**3:g} GiB VRAM (kv_cache_type={kv_cache_type})", file=sys.stderr)
+            print(
+                f"[ollama-sync] sizing num_ctx for {vram_bytes / 1024**3:g} GiB VRAM "
+                f"(kv_cache_type={kv_cache_type}, num_parallel={num_parallel})",
+                file=sys.stderr,
+            )
 
     installed = fetch_tags(host)
     if installed is None:
@@ -739,7 +811,7 @@ def main() -> int:
         name = installed_model["name"]
         show = fetch_show(host, name)
         caps = parse_capabilities(show)
-        vram_limit = vram_num_ctx_limit(show, installed_model.get("size"), vram_bytes, kv_cache_type) if vram_bytes else None
+        vram_limit = vram_num_ctx_limit(show, installed_model.get("size"), vram_bytes, kv_cache_type, num_parallel) if vram_bytes else None
         num_ctx = resolve_num_ctx(parse_context_length(show), cap=effective_num_ctx_cap(args.num_ctx_cap, vram_limit), vram_limit=vram_limit)
         keep_alive = resolve_keep_alive(name, settings, args.keep_alive)
         models.append((name, caps, num_ctx, keep_alive))
@@ -752,7 +824,7 @@ def main() -> int:
 
     # A local lead with a local subagent means two sets of weights resident at
     # once. Warn with the numbers rather than silently reassigning a model.
-    contention = vram_contention_warning(resident, vram_bytes, kv_cache_type)
+    contention = vram_contention_warning(resident, vram_bytes, kv_cache_type, num_parallel)
     if contention:
         print(f"[ollama-sync] {contention}", file=sys.stderr)
 

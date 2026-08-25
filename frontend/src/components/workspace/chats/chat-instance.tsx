@@ -42,6 +42,7 @@ import { isHiddenFromUIMessage } from "@/core/messages/utils";
 import { useModels } from "@/core/models/hooks";
 import { useNotification } from "@/core/notification/hooks";
 import { useLocalSettings, useThreadSettings } from "@/core/settings";
+import { useMaybeChatTabs } from "@/core/threads/chat-tabs-context";
 import {
   useThreadMetadata,
   useThreadStream,
@@ -147,6 +148,9 @@ function ChatInstanceContent({
   }, [isNewThread]);
 
   const { showNotification } = useNotification();
+  // Null outside the keep-alive viewport (static-demo / showcase render a bare
+  // instance), so every use below stays optional.
+  const reportBusy = useMaybeChatTabs()?.reportBusy;
 
   const {
     thread,
@@ -179,7 +183,9 @@ function ChatInstanceContent({
       onThreadStarted?.(slotKey, createdThreadId);
     },
     onFinish: (state) => {
-      if (document.hidden || !document.hasFocus()) {
+      // A background tab is exactly the case this notification is for: the
+      // user moved on to another chat and cannot see this one finish.
+      if (document.hidden || !document.hasFocus() || !isActiveRef.current) {
         let body = "Conversation finished";
         const lastMessage = state.messages.at(-1);
         if (lastMessage) {
@@ -195,6 +201,17 @@ function ChatInstanceContent({
       }
     },
   });
+
+  // Report the run state to the tab strip: it decides whether leaving this
+  // chat should pin it (so it keeps streaming in the background) and renders
+  // the running indicator on the chip.
+  const isStreaming = thread.isLoading;
+  useEffect(() => {
+    reportBusy?.(slotKey, isStreaming);
+  }, [reportBusy, slotKey, isStreaming]);
+  useEffect(() => {
+    return () => reportBusy?.(slotKey, false);
+  }, [reportBusy, slotKey]);
 
   const hasThreadMessages = thread.messages.length > 0;
 

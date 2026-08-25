@@ -356,6 +356,7 @@ export const enUS: Translations = {
     openInTab: "Open in tab",
     untitled: "New chat",
     dropHint: "Drag a chat here to keep it open as a tab",
+    running: "Still answering",
   },
 
   backgroundTasks: {
