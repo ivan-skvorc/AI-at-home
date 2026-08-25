@@ -24,6 +24,7 @@ import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { createMarkdownLinkComponent } from "@/components/workspace/messages/markdown-link";
 import { useI18n } from "@/core/i18n/hooks";
 import { exportMemory } from "@/core/memory/api";
 import {
@@ -41,7 +42,10 @@ import type {
   UserMemory,
 } from "@/core/memory/types";
 import { useLocalSettings } from "@/core/settings";
-import { SafeStreamdown } from "@/core/streamdown/components";
+import {
+  SafeStreamdown,
+  toStreamdownComponents,
+} from "@/core/streamdown/components";
 import { streamdownPlugins } from "@/core/streamdown/plugins";
 import { pathOfThread } from "@/core/threads/utils";
 import { formatTimeAgo } from "@/core/utils/datetime";
@@ -671,6 +675,13 @@ export function MemorySettingsPage() {
                 <SafeStreamdown
                   className="size-full min-w-0 [overflow-wrap:anywhere] [&>*:first-child]:mt-0 [&>*:last-child]:mb-0"
                   {...streamdownPlugins}
+                  components={toStreamdownComponents({
+                    // Defense in depth on top of the rehype-sanitize step in
+                    // streamdownPlugins: memory summaries are LLM/stored
+                    // content, so never render an unsafe href (javascript:,
+                    // data:, …) as a clickable anchor.
+                    a: createMarkdownLinkComponent(),
+                  })}
                 >
                   {summariesToMarkdown(memory, filteredSectionGroups, t)}
                 </SafeStreamdown>
