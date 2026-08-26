@@ -325,8 +325,8 @@ class TestHomeApiBlocks:
         out = sync_api.sync(self.text, all_slugs)
         names = [m["name"] for m in yaml.safe_load(out)["models"]]
         assert len(names) == len(set(names)), "model names collide when every key is set"
-        # 6 Anthropic + 13 OpenRouter + 21 home = 40 distinct models.
-        assert len(names) == 40
+        # 6 Anthropic + 13 OpenRouter + 22 home = 41 distinct models.
+        assert len(names) == 41
 
     def test_openai_home_and_openrouter_gpt_are_distinct_entries(self):
         """The GPT flagship is doubled: a direct OpenAI entry AND the OpenRouter

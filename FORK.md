@@ -140,15 +140,15 @@ A companion to the Ollama sync for **cloud** models. `scripts/sync-api-key-model
 | --- | --- | --- |
 | `ANTHROPIC_API_KEY` | Claude **Fable 5**, **Opus 5**, **Opus 4.8**, **Sonnet 5**, **Sonnet 4.6**, **Haiku 4.5** | direct Anthropic API (`langchain_anthropic:ChatAnthropic`) |
 | `OPENROUTER_API_KEY` | Claude **Fable 5**, **Grok 4.6**, **GPT-5.6 Sol**, **GPT-5.3 Codex**, **Gemini 3.6 Flash**, **Llama 4 Maverick**, **MiniMax M3**, **Qwen3.8 Max**, **Kimi K3**, **Mistral Large 3**, **DeepSeek V4 Pro**, **GLM-5.3**, **Nemotron 3 Ultra** | OpenRouter (`langchain_openai:ChatOpenAI` + `base_url`) |
-| `OPENAI_API_KEY` | **GPT-5.6 Sol**, **GPT-5.3 Codex**, **GPT-5.6 Mini** | direct OpenAI API (`langchain_openai:ChatOpenAI`) |
-| `XAI_API_KEY` | **Grok 4.6**, **Grok 4.5 Fast** | direct xAI API (`langchain_openai:ChatOpenAI` + `base_url`) |
+| `OPENAI_API_KEY` | **GPT-5.6 Sol**, **GPT-5.3 Codex**, **GPT-5.6 Terra**, **GPT-5.6 Luna** | direct OpenAI API (`langchain_openai:ChatOpenAI`) |
+| `XAI_API_KEY` | **Grok 4.6**, **Grok 4.3** | direct xAI API (`langchain_openai:ChatOpenAI` + `base_url`) |
 | `GEMINI_API_KEY` | **Gemini 3.6 Flash**, **3.5 Flash-Lite**, **3.1 Pro** | native Gemini SDK (`langchain_google_genai:ChatGoogleGenerativeAI`) |
 | `DEEPSEEK_API_KEY` | **DeepSeek V4 Pro**, **V4 Flash** | direct DeepSeek API (`deerflow.models.patched_deepseek:PatchedChatDeepSeek`) |
-| `MISTRAL_API_KEY` | **Mistral Large 3**, **Medium**, **Small** | direct Mistral API (`langchain_openai:ChatOpenAI` + `base_url`) |
+| `MISTRAL_API_KEY` | **Mistral Large 3**, **Medium 3.5**, **Small 3** | direct Mistral API (`langchain_openai:ChatOpenAI` + `base_url`) |
 | `MOONSHOT_API_KEY` | **Kimi K3**, **Kimi K2.6** | direct Moonshot API (`deerflow.models.patched_deepseek:PatchedChatDeepSeek`) |
 | `DASHSCOPE_API_KEY` | **Qwen3.8 Max**, **Qwen3.7 Plus** | Alibaba DashScope (`langchain_openai:ChatOpenAI` + `base_url`) |
 | `MINIMAX_API_KEY` | **MiniMax M3**, **MiniMax M2.7** | direct MiniMax API (`langchain_openai:ChatOpenAI` + `base_url`) |
-| `ZAI_API_KEY` | **GLM-5.3**, **GLM-5.2 Air** | direct z.ai API (`langchain_openai:ChatOpenAI` + `base_url`) |
+| `ZAI_API_KEY` | **GLM-5.3**, **GLM-4.5 Air** | direct z.ai API (`langchain_openai:ChatOpenAI` + `base_url`) |
 
 The first two rows are the aggregators; the rest are **first-party "home" API blocks**, one per big-name lab that ships its own API. This mirrors how Anthropic is handled — a lab's full lineup lives on the lab's own key, and the flagship is *doubled*: it's reachable through both its home API AND OpenRouter (the direct copy carries no `(p)` privacy caveat). So with a lab's own key set, its cheaper siblings light up on the home API only, while its flagship exists on both. OpenRouter keeps its trim "one flagship per lab" set unchanged — including the GPT **Sol + Codex** double.
 
@@ -243,7 +243,7 @@ The logic that block feeds, and the rules for writing it:
 - **One currency across every priced model.** The console sums cost across models, so a mix of currencies is meaningless — if two priced models declare different `currency` values, cost reporting is **disabled entirely** (the cost/currency fields go null) rather than producing an invalid total. Pick one currency and price every `pricing:` block in it.
 - **The block is optional because the name already carries the price.** When a model entry has no `pricing:` block, `app/gateway/pricing.py::derive_pricing_from_display_name` reads the `($<in>/<out>)` pair (and any starred promo) straight out of `display_name`. **This is what makes the feature work on an existing install, and it is not a convenience.** Shipping blocks in `config.example.yaml` only ever reaches a *brand-new* `config.yaml`: `sync-api-key-models.py` skips a provider block whose models are already active (correct — it must not duplicate them) and `config_upgrade.py`'s `merge_missing` is dict-based, so it cannot add a key inside an existing list entry. Anyone who ran DeerFlow before a price shipped therefore keeps that model active and **unpriced forever**, and their chat header stays on `—` no matter how many times the example is corrected. Reproduced end to end: an upgraded config with 13 active models and 0 `pricing:` blocks produced `no changes` from both launch-path regenerators. An explicit block always wins over the derived one, and a malformed explicit block is *not* silently replaced by the name's price — that is an operator error worth surfacing. Pinned by `TestBundledModelPricing::test_every_bundled_model_prices_without_its_pricing_block`, which strips each bundled block and requires the same figures back.
 - **Pricing is optional and additive.** A model with no `pricing:` block yields `cost: null` (it just doesn't contribute to the total); when *no* model is priced, the console omits cost columns. `ModelConfig` is `extra="allow"`, so adding the block needs no schema change.
-- **What ships priced: everything.** All **40** bundled paid models across all eleven marker blocks carry a `price:` block, in both synced sources. This is load-bearing, not a nicety — a model without one contributes nothing to the total, so a conversation run entirely on unpriced models reports **no cost at all**. Shipping only the Anthropic block priced is exactly what made the chat header render `—` for anyone using another provider. Only Ollama (populated at runtime, genuinely free) stays unpriced. The price is **data, in one place**: `config.example.yaml` carries the block literally and `scripts/wizard/providers.py::MODEL_PRICES` holds the same figures for the wizard, with `test_config_integrity.py::TestBundledModelPricing::test_the_wizard_bundles_and_the_example_agree` asserting the two agree. It is deliberately **not** derived from the display name any more — see §17. `cache_hit` is set only on the Anthropic entries (0.1x input, their published cache-read rate); other providers differ or do not publish one, so their blocks omit it and cache hits fall back to the full input price, the documented conservative upper bound. Exactly one entry is currently discounted — **MiniMax M3 on OpenRouter** — and it alone carries a `discount:` block; that promotion is open-ended, so it has no `until:`. Claude Sonnet 5 used to be the second: it launched on a `$2/10` introductory rate against a `$3/15` list, and on 2026-08-10 Anthropic made that rate **permanent** (the scheduled 2026-09-01 increase will not happen), so the discount was removed and `$2/10` is now its plain standard price — the intro window ending *upward* into a list price is the case the mechanism was built for, and it ending *downward* into the list price is the case it also has to survive. GLM-5.2's 76%-off promotion left with the entry when the roster rolled forward to GLM-5.3 — a discount belongs to the model it was quoted for, so it is not carried across a version bump. Pinned by `backend/tests/test_config_integrity.py::TestBundledModelPricing` (every model priced, no price in any name, well-formed, single-currency, discounts below list with a readable expiry, and the two sources agree).
+- **What ships priced: everything.** All **41** bundled paid models across all eleven marker blocks carry a `price:` block, in both synced sources. This is load-bearing, not a nicety — a model without one contributes nothing to the total, so a conversation run entirely on unpriced models reports **no cost at all**. Shipping only the Anthropic block priced is exactly what made the chat header render `—` for anyone using another provider. Only Ollama (populated at runtime, genuinely free) stays unpriced. The price is **data, in one place**: `config.example.yaml` carries the block literally and `scripts/wizard/providers.py::MODEL_PRICES` holds the same figures for the wizard, with `test_config_integrity.py::TestBundledModelPricing::test_the_wizard_bundles_and_the_example_agree` asserting the two agree. It is deliberately **not** derived from the display name any more — see §17. `cache_hit` is set only on the Anthropic entries (0.1x input, their published cache-read rate); other providers differ or do not publish one, so their blocks omit it and cache hits fall back to the full input price, the documented conservative upper bound. Exactly one entry is currently discounted — **MiniMax M3 on OpenRouter** — and it alone carries a `discount:` block; that promotion is open-ended, so it has no `until:`. Claude Sonnet 5 used to be the second: it launched on a `$2/10` introductory rate against a `$3/15` list, and on 2026-08-10 Anthropic made that rate **permanent** (the scheduled 2026-09-01 increase will not happen), so the discount was removed and `$2/10` is now its plain standard price — the intro window ending *upward* into a list price is the case the mechanism was built for, and it ending *downward* into the list price is the case it also has to survive. GLM-5.2's 76%-off promotion left with the entry when the roster rolled forward to GLM-5.3 — a discount belongs to the model it was quoted for, so it is not carried across a version bump. Pinned by `backend/tests/test_config_integrity.py::TestBundledModelPricing` (every model priced, no price in any name, well-formed, single-currency, discounts below list with a readable expiry, and the two sources agree).
 - **Keep it current with the roster.** The `pricing:` block is part of the same living bundle as the model list — refresh it on the same cadence as slugs and thinking config (see *Auditing the model list* below), reading each figure off the provider's own model page — or, when that page is unreachable, off several independent sources that agree (*Where a price may come from*) — never from memory.
 
 #### Price signal in the display name
@@ -298,17 +298,19 @@ audit itself still detects drift.
 Run this pass **when that issue appears, whenever you touch the bundle, and as a step of the [Post-sync feature checklist](#post-sync-feature-checklist) on every upstream merge** — models, prices, and promos shift on the providers' schedule, not upstream's, so the sync is just a convenient recurring checkpoint to re-verify them. It keeps the enabled models, their per-model settings, and their prices honest. Everything below lives in the **two synced sources** — the `config.example.yaml` marker blocks and `scripts/wizard/providers.py` — so apply every change to both.
 
 1. **Roster & order.** The bundle stays grouped by provider in this order: **Anthropic** (direct) → **OpenRouter** → the **first-party "home" blocks** (OpenAI, xAI, Google, DeepSeek, Mistral, Moonshot, Qwen, MiniMax, z-ai — in `config.example.yaml`'s FIRST-PARTY HOME API BLOCKS section) → **Ollama** (populated at runtime by `scripts/sync-ollama-models.py`, so it lands after the static blocks). Keep the "one flagship per big-name lab + a couple of cheaper picks" shape from *Which models to keep in the bundle* above, and keep each lab's flagship **doubled** (home + OpenRouter).
-2. **First-party key coverage — every big name gets its own `.env` key.** Every big-name lab that ships a public API must be reachable **two ways**: a **home block gated by that lab's own key**, carrying a fuller lineup, *and* its flagship on **OpenRouter**, for users who hold only an `OPENROUTER_API_KEY`. This is the Anthropic shape generalised — `ANTHROPIC_API_KEY` lights up six Claudes while only Fable 5 is *also* routed — so `XAI_API_KEY` → Grok, `OPENAI_API_KEY` → ChatGPT/GPT, `GEMINI_API_KEY` → Gemini, `DASHSCOPE_API_KEY` → Qwen, `MOONSHOT_API_KEY` → Kimi, `DEEPSEEK_API_KEY` → DeepSeek, and the remaining home labs all behave the same way. A key drifts out of exactly one of **five** places at a time, so check all five:
-   - **`config.example.yaml`** — an `auto-model-config: <provider>` marker block gated on that key, holding **more than the flagship**: flagship + 1–2 acclaimed or cheaper siblings. A home block that is a lone flagship is itself a finding — the fuller lineup *is* the reason to hold the lab's own key, and the routed flagship already covers the other case.
-   - **`scripts/wizard/providers.py`** — the same lineup in `HOME_API_BUNDLES`, so `make setup` and the launch-path sync enable an identical set.
-   - **`scripts/sync-api-key-models.py`** — the `(slug, ENV_VAR)` pair in `PROVIDERS`, **and** the key → lineup line in its `QUICK START` docstring. That docstring is one of the two entries no test reads (the README bullet below is the other), so it is where a roster roll-forward silently leaves a stale model name behind.
+2. **First-party key coverage — every big name gets its own `.env` key.** Every big-name lab that ships a public API must be reachable **two ways**: a **home block gated by that lab's own key**, carrying a fuller lineup, *and* its flagship on **OpenRouter**, for users who hold only an `OPENROUTER_API_KEY`. This is the Anthropic shape generalised — `ANTHROPIC_API_KEY` lights up six Claudes while only Fable 5 is *also* routed — so `XAI_API_KEY` → Grok, `OPENAI_API_KEY` → ChatGPT/GPT, `GEMINI_API_KEY` → Gemini, `DASHSCOPE_API_KEY` → Qwen, `MOONSHOT_API_KEY` → Kimi, `DEEPSEEK_API_KEY` → DeepSeek, and the remaining home labs all behave the same way. A key drifts out of exactly one place at a time, and there are **seven** of them, so check all seven:
+   - **`config.example.yaml`** — an `auto-model-config: <provider>` marker block gated on that key, holding **more than the flagship**: flagship + 1–2 acclaimed or cheaper siblings. A home block that is a lone flagship is itself a finding — the fuller lineup *is* the reason to hold the lab's own key, and the routed flagship already covers the other case. **Then re-read the `QUICK START` comment at the top of `models:` in the same file** — it lists every key → lineup a second time, in prose no test parses, and it is the copy a user actually reads while editing the file. It had drifted three roster rolls behind (Grok 4.5, Qwen3.7 Max, GLM-5.2) by 2026-08-26.
+   - **`scripts/wizard/providers.py`** — the same lineup in `HOME_API_BUNDLES`, so `make setup` and the launch-path sync enable an identical set. Its `LLMProvider(...)` entry for the lab also carries a prose `description=` that names the models; that string is what `make setup` prints, and no test reads it either.
+   - **`scripts/sync-api-key-models.py`** — the `(slug, ENV_VAR)` pair in `PROVIDERS`, **and** the key → lineup line in its `QUICK START` docstring. That docstring is one of the four entries no test reads, so it is where a roster roll-forward silently leaves a stale model name behind.
    - **`.env.example`** — a commented `# <LAB>_API_KEY=your-…-api-key` line in the **Model provider API keys** section (not down in the generic OpenAI-compatible list), naming the models it unlocks and, where the key is not obvious to obtain, the console that issues it. A key nobody knows to set enables nothing.
-   - **`README.md`** — the §2 leading bullet's *A big name's own key present* line, which is where a user actually learns the option exists. The other four are wiring; this one is the advertisement, and a lab missing from it is a feature nobody uses.
+   - **`README.md`** — the §2 leading bullet's *A big name's own key present* line, which is where a user actually learns the option exists. The other six are wiring; this one is the advertisement, and a lab missing from it is a feature nobody uses.
 
-   Then confirm the **doubling** still holds: each home flagship's bare id appears in the OpenRouter block as `<provider>/<same id>` (modulo case — `minimax/minimax-m3` ↔ MiniMax's own `MiniMax-M3`). `TestFirstPartyKeyCoverage` in `backend/tests/test_sync_api_key_models.py` pins the machine-readable half of this — every registered key documented in `.env.example`'s provider section, no home block trimmed to a lone flagship, every home flagship doubled, and **exactly** `meta-llama` + `nvidia` left routed-only — so that half needs no network. The docstring and the README bullet are the two it cannot read for you. **When a lab that was OpenRouter-only ships a first-party consumer API, give it a home block**; that is how the list grows. OpenRouter-only is reserved for labs with no such API — currently **Meta Llama** and **NVIDIA Nemotron**, whose flagships stay routed and alone.
-3. **Slugs.** Confirm each `model:` is the exact current id (bare Anthropic ids like `claude-opus-5`; OpenRouter `provider/model` slugs; **home** blocks use each lab's own bare id — the OpenRouter slug minus its `provider/` prefix, e.g. `openai/gpt-5.6-sol` → `gpt-5.6-sol`, `z-ai/glm-5.3` → `glm-5.3`). A wrong/unreleased id fails at request time, not at load — verify against the provider's / OpenRouter's catalog, never from memory.
+   Four of the seven are prose that **no test can read** — `providers.py`'s `description=`, `config.example.yaml`'s `QUICK START` comment, the sync script's `QUICK START` docstring, and the README bullet. Those are where a roll-forward goes stale unnoticed; read all four by eye every pass.
+
+   Then confirm the **doubling** still holds: each home flagship's bare id appears in the OpenRouter block as `<provider>/<same id>` (modulo case — `minimax/minimax-m3` ↔ MiniMax's own `MiniMax-M3`). `TestFirstPartyKeyCoverage` in `backend/tests/test_sync_api_key_models.py` pins the machine-readable half of this — every registered key documented in `.env.example`'s provider section, no home block trimmed to a lone flagship, every home flagship doubled, and **exactly** `meta-llama` + `nvidia` left routed-only — so that half needs no network. The four prose copies above are the ones it cannot read for you. **When a lab that was OpenRouter-only ships a first-party consumer API, give it a home block**; that is how the list grows. OpenRouter-only is reserved for labs with no such API — currently **Meta Llama** and **NVIDIA Nemotron**, whose flagships stay routed and alone.
+3. **Slugs.** Confirm each `model:` is the exact current id (bare Anthropic ids like `claude-opus-5`; OpenRouter `provider/model` slugs; **home** blocks use each lab's own bare id — the OpenRouter slug minus its `provider/` prefix, e.g. `openai/gpt-5.6-sol` → `gpt-5.6-sol`, `z-ai/glm-5.3` → `glm-5.3`). A wrong/unreleased id fails at request time, not at load — verify against the provider's / OpenRouter's catalog, never from memory. **The cheaper siblings need this more than the flagships do**, because a lab's tier naming invites you to *derive* the sibling's id instead of reading it, and the derived one looks right: the 2026-08-26 pass found three bundled entries — `gpt-5.6-mini`, `grok-4.5-fast`, `glm-5.2-air` — that were named that way and pointed at models no lab ever shipped. Two of the three carried a *plausible* price, because the price had been taken from the real model the name was groping for, so nothing about the entry looked wrong until a request failed. Enumerate the lab's model list and pick the sibling **off it**; never spell one out of the flagship's name.
 4. **Per-model settings.** Sanity-check `max_tokens`, `supports_vision`, `supports_thinking`, `temperature`, and the thinking config against the model family (adaptive Claude vs. Haiku budget vs. OpenAI-compatible `extra_body` toggles — see *Keep the model format current* above). `supports_thinking: true` is load-bearing; drop deprecated fields. Confirm each home block's `base_url`/`api_base` and env var match the lab (e.g. `https://api.x.ai/v1` + `XAI_API_KEY`); Google's home block uses the native `ChatGoogleGenerativeAI` SDK with `gemini_api_key` and no thinking toggle.
-5. **Pricing.** Read each price off the provider's / OpenRouter's own model page — or, when that page cannot be reached, off several independent sources that agree exactly, logged as corroborated (*Where a price may come from*, below). Refresh the `($<in>/<out>)` pair — **and the model's `pricing:` block with it** (all 40 bundled paid models carry one; `config.example.yaml` holds them literally, `providers.py` derives them from the same name pair, and `TestBundledModelPricing` fails if the two ever disagree). Then show both prices as `($<list> → $<promo>*)` for **any** currently discounted model — from OpenRouter's **promotions/discounts page** (derive list as `list = discounted / (1 − discount)`) **or** an Anthropic **introductory-pricing** window (a newly launched Claude below its standard rate for a fixed window). Re-read the provider's note as well as its table: an intro window can end by lapsing *up* to the list price **or** by the lab making the intro rate permanent, and the second means lowering `price:` and deleting `discount:` (what happened to Sonnet 5 on 2026-08-10). Drop the starred pair back to plain list when a promo or intro window ends — **and drop the entry's `promo_*_per_million` lines in the same edit**, or the header keeps advertising a discount that has expired (the block is derived automatically in `providers.py`, but `config.example.yaml` holds it literally). **Home entries use the lab's own list price with no promo star** (the OpenRouter promo is a routing property that stays on the OpenRouter copy). Keep the machine-readable `pricing:` block exact: `input_per_million`/`output_per_million` stay the **standard** rate — the conservative upper bound cost is billed against even while a discount is live — and `promo_*_per_million` carries the starred figures beside it.
+5. **Pricing.** Read each price off the provider's / OpenRouter's own model page — or, when that page cannot be reached, off several independent sources that agree exactly, logged as corroborated (*Where a price may come from*, below). Refresh the `($<in>/<out>)` pair — **and the model's `pricing:` block with it** (all 41 bundled paid models carry one; `config.example.yaml` holds them literally, `providers.py` derives them from the same name pair, and `TestBundledModelPricing` fails if the two ever disagree). Then show both prices as `($<list> → $<promo>*)` for **any** currently discounted model — from OpenRouter's **promotions/discounts page** (derive list as `list = discounted / (1 − discount)`) **or** an Anthropic **introductory-pricing** window (a newly launched Claude below its standard rate for a fixed window). Re-read the provider's note as well as its table: an intro window can end by lapsing *up* to the list price **or** by the lab making the intro rate permanent, and the second means lowering `price:` and deleting `discount:` (what happened to Sonnet 5 on 2026-08-10). Drop the starred pair back to plain list when a promo or intro window ends — **and drop the entry's `promo_*_per_million` lines in the same edit**, or the header keeps advertising a discount that has expired (the block is derived automatically in `providers.py`, but `config.example.yaml` holds it literally). **Home entries use the lab's own list price with no promo star** (the OpenRouter promo is a routing property that stays on the OpenRouter copy). Keep the machine-readable `pricing:` block exact: `input_per_million`/`output_per_million` stay the **standard** rate — the conservative upper bound cost is billed against even while a discount is live — and `promo_*_per_million` carries the starred figures beside it.
 6. **Privacy marker.** Every OpenRouter entry carries `(p)` (zero-data-retention not guaranteed); the direct Anthropic, first-party **home**, and Ollama entries do not (they hit the lab directly, no middleman). Add `(p)` to any new OpenRouter entry, and the lab's own name suffix (`(OpenAI)`, `(xAI)`, …) to any new home entry.
 7. **Regression-test.** `python3 scripts/sync-api-key-models.py --dry-run` must still uncomment the blocks cleanly, and `cd backend && uv run pytest tests/test_sync_api_key_models.py tests/test_setup_wizard.py tests/test_config_integrity.py` must stay green.
 
@@ -367,6 +369,145 @@ on its own.
 ##### Audit log
 
 Record each pass here — a dated line is what tells the next person whether the roster was checked last week or last year, and *which* providers the pass could actually reach.
+
+- **2026-08-26 (upstream sync) — Anthropic verified at tier 1 again; three bundled slugs that
+  do not exist found and replaced; three prices corrected, one of them a 3x under-report.** Run as
+  the audit step of the post-sync checklist for the `bytedance/deer-flow@main` merge of 3 commits.
+  This was the first pass since the roster was assembled where **general web search was available
+  at the same time as a tier-1 Anthropic page**, and it turned up a systematic defect the previous
+  six passes could not see.
+
+  **Reachability.** `platform.claude.com` answers, so all six Claude entries were read straight off
+  Anthropic's own pricing table and *Model IDs and versioning* page. Every other provider host —
+  `openrouter.ai`, `developers.openai.com`, `x.ai` / `docs.x.ai` / `api.x.ai`, `ai.google.dev`,
+  `platform.moonshot.ai`, `docs.mistral.ai`, `api-docs.deepseek.com` — is refused at CONNECT
+  (`403 Forbidden`), and direct page fetches are blocked too. For those labs, **the web-search tool
+  could still read the lab's own models/pricing page and quote it**, which is stronger evidence
+  than a tracker but is not the same as reading the page by hand; every figure taken that way is
+  named below and is corroborated by at least one independent source that agrees exactly.
+
+  **The systematic defect: a "cheaper sibling" invented from the lab's tier naming.** The bundle's
+  header comment says non-flagship siblings "follow each lab's established tier naming" — and three
+  of them had been *named by that convention rather than read off a catalog*, so they pointed at
+  models that do not exist. Each fails at request time, not at load, which is exactly what step 3
+  exists to catch, and each carried a price attached to a model nobody can call:
+
+  | Was | Price it carried | Is now | Why |
+  | --- | --- | --- | --- |
+  | `gpt-5.6-mini` "GPT-5.6 Mini" | $0.25/2 | `gpt-5.6-terra` **+** `gpt-5.6-luna` | GPT-5.6 went GA 2026-07-09 as **Sol / Terra / Luna**, with no `-mini` or `-nano` member. Terra is the tier that took `mini`'s place; Luna sits below it. |
+  | `grok-4.5-fast` "Grok 4.5 Fast" | $0.5/1.5 | `grok-4.3` "Grok 4.3" | xAI's own models table lists `grok-4.6`, `grok-4.5`, `grok-4.3`, the `grok-4.20-0309` pair and `grok-build-0.1` — no `-fast` text model. `grok-4.5` is priced identically to 4.6, so **4.3** ($1.25/2.50, 1M context) is the actual cheaper tier. |
+  | `glm-5.2-air` "GLM-5.2 Air" | $0.2/1.1 | `glm-4.5-air` "GLM-4.5 Air" | z.ai's own pricing table ships Air only in the 4.5 generation (GLM-4.5-Air, GLM-4.5-AirX). $0.2/1.1 **is** GLM-4.5-Air's published rate — the price was always right, the id and the name were not. |
+
+  So the price beside a made-up slug is not necessarily made up: it is usually the real price of the
+  real model the name was groping for. That is what makes this failure quiet — the numbers look
+  plausible and only the request fails. **Step 3's "never from memory" now has to cover the
+  sibling as hard as the flagship.**
+
+  **GPT-5.6 Terra and Luna, added.** Terra `$2/12`, Luna `$0.20/1.20`, both the **post-cut** rates:
+  OpenAI cut Terra 20% and Luna 80% on **2026-07-30** (from `$2.50/15` and `$1/6`). Figures from
+  OpenAI's own model pages (`developers.openai.com/api/docs/models/gpt-5.6-terra` and
+  `…/gpt-5.6-luna`, which also give 1.05M context, 128K max output and text+image input),
+  corroborated by CNBC, Axios, Reuters and the LLM Gateway changelog stating the same two pairs.
+  Both ship `supports_vision: true` and `supports_thinking: true` like the Sol entry beside them;
+  Terra takes the block's default 32000 `max_tokens`, Luna the 16000 the old Mini used.
+
+  **DeepSeek re-priced on 2026-08-16 and the bundle was under-reporting by 3x on input and up to 4.5x on output.** DeepSeek
+  moved both bundled models onto a **peak / off-peak** schedule (peak 01:00–04:00 and 06:00–10:00
+  UTC, Mon–Fri; every other hour, weekends included, is off-peak at half the peak rate) *and*
+  raised the underlying rate. The bundle was still carrying the pre-2026-08-16 flat rates:
+
+  | Model | Was (old flat) | Peak | Off-peak |
+  | --- | --- | --- | --- |
+  | `deepseek-v4-pro` | $0.44/0.87 | **$1.32/3.96** | $0.66/1.98 |
+  | `deepseek-v4-flash` | $0.14/0.28 | **$0.44/1.32** | $0.22/0.66 |
+
+  `price:` is a single flat pair, so **both home entries now carry the peak rate**, with the
+  off-peak figure in a comment beside each. That is the fork's standing direction of error:
+  over-stating cost is corrected by the provider's bill, while under-stating it silently stops a
+  `spend_budget:` cap from capping (§10's `TestLocalRunsAreNeverBlocked` has a dark mirror — a cap
+  measured against a rate several times too low does not fire). Read off `api-docs.deepseek.com`'s pricing page
+  and its change log via search, corroborated exactly by press coverage of the change (TechTimes,
+  TechJournal, Zeli) and by independent trackers (pricepertoken, costgoat, aipricing.guru) — all
+  quoting the same four pairs and the same peak window. **The OpenRouter copy
+  `deepseek/deepseek-v4-pro` was deliberately left at `$0.44/0.87`**: OpenRouter's own rate is what
+  that entry bills at, its page is unreachable, and the sources that mention it disagree with each
+  other (one quotes `$0.435/0.87` for the bare slug, another `$0.792/2.376`). A disagreement is a
+  stop, so it stays and is named below.
+
+  **Kimi K2.6 corrected to `$0.95/4.00`** (was `$1.00/3.00` — output under-reported by 25%).
+  Corroborated exactly across Moonshot's own rate card as quoted by several independent trackers
+  (Spheron, DeepInfra, pricepertoken, costgoat) with no disagreement.
+
+  **Anthropic: verified, no change.** All six bundled Claudes still match the provider's table
+  exactly — Fable 5 `$10/50`, Opus 5 `$5/25`, Opus 4.8 `$5/25`, Sonnet 5 `$2/10`, Sonnet 4.6
+  `$3/15`, Haiku 4.5 `$1/5`, each with its 0.1x cache-read rate. The page still carries the note
+  that Sonnet 5's `$2/10` is now the standard price and the 2026-09-01 rise to `$3/15` will not
+  happen, confirming the 2026-08-25 correction from the other side of that date. All six slugs
+  re-checked against *Model IDs and versioning* as well: the 4.6-generation dateless format gives
+  `claude-sonnet-4-6` / `claude-opus-4-8` / `claude-sonnet-5` / `claude-opus-5` / `claude-fable-5`
+  verbatim, and `claude-haiku-4-5` is the documented short alias for the pre-4.6 snapshot
+  `claude-haiku-4-5-20251001`. Roster shape unchanged: Opus 4.7/4.6/4.5 and Sonnet 4.5 are listed
+  and deliberately dropped, and Mythos 5 stays out as limited-availability.
+
+  **Three of the four figures owed since 2026-08-20 now agree with their lab's own page:**
+  Grok 4.6 `$2/6` (xAI's table, base <200K tier — it doubles to `$4/12` at 200K+, and per the
+  standing precedent the block carries the base tier), Qwen3.8 Max `$2/6`, GLM-5.3 `$1.40/4.40`.
+  Gemini 3.6 Flash's `$1.50/7.50` standard rate also agrees with Google's page.
+
+  **Two live discounts were found and deliberately *not* shipped.** GPT-5.6 Sol's short-context
+  rate was cut to `$4/20` on 2026-08-22, promotional and stated as available at least through
+  **2026-11-21** (standard unchanged at `$5/30`); and a Gemini Flash introductory
+  `$0.75/3.75` runs through **2026-12-31** against a `$1.50/7.50` standard — though two reads of
+  Google's page disagreed about whether that window belongs to **3.6** Flash (the bundled entry) or
+  to **3.7** Flash, which is a second reason not to ship it. *Where a price may come from* bars a
+  discount that could not be read off the provider's own promotions page **directly**, and neither
+  could be, so both entries keep their plain standard rate with no `discount:` block.
+  Skipping a discount errs toward over-reporting, which the bill corrects; shipping an unverified
+  one under-reports, which nothing corrects. Both are top of the owed list.
+
+  **Everything else: tier 3, left alone.** Mistral Medium 3.5 and Small (sources quote *Medium 3*
+  at `$1/3` and several different Small variants — no exact agreement on the bundled entries),
+  Qwen3.7 Plus (no tracker publishes a per-token rate), MiniMax M2.7 (sources describe the whole
+  M-series sharing one standard tier, which does not reconcile cleanly with the home block carrying
+  M3 at list and M2.7 at half), Gemini 3.5 Flash-Lite and 3.1 Pro, and every OpenRouter figure.
+  Existence *was* confirmed this pass for `deepseek-v4-flash`, `gpt-5.3-codex`,
+  `gemini-3.5-flash-lite`, `mistral-medium-3-5`, `MiniMax-M2.7` and `qwen3.7-plus`, so no bundled
+  home slug beyond the three above failed a check — but that is "none found", not "none exist", and
+  the thirteen OpenRouter slugs could not be checked at all with the catalog unreachable. Roster currency: the August 2026 releases are Gemini 3.7 Flash
+  (2026-08-13) and GLM-5.2 Turbo (2026-08-17); GLM-5.2 Turbo is behind the bundled GLM-5.3, and
+  Gemini 3.7 Flash stays out for the two reasons the 2026-08-22 pass recorded — a cheaper sibling
+  rather than Google's flagship, on an introductory window tier 2 may not ship.
+
+  **Four prose copies of the roster were stale — two in places step 2 did not name.** The
+  2026-08-25 pass fixed `.env.example` and the sync script's `QUICK START` docstring after the
+  2026-08-20 roll-forward; it missed the same lineup written twice more. `config.example.yaml`'s
+  own `QUICK START` comment at the top of `models:` still advertised **Grok 4.5**, **Qwen3.7 Max**,
+  **GLM-5.2** and an unversioned *Mistral Medium / Small*; `providers.py`'s `openai` `LLMProvider`
+  carried `description="… + GPT-5.6 Mini"`, which is the string `make setup` prints; and this
+  file's own §2 table listed *Mistral Medium / Small* the same way. All four now match
+  `config.example.yaml`'s marker blocks, and **step 2 above now names all seven places**, flagging
+  the four that are pure prose no test can read.
+
+  **The bundle is 41 paid models** — 6 Anthropic + 13 OpenRouter + 22 home — and every count in
+  this file and in `test_sync_api_key_models.py` moved with it.
+
+  Mechanical half green: `scripts/audit_models.py` reports **no drift** before and after the edits
+  (display-name/price agreement and two-source parity both hold) and correctly lists openrouter as
+  *skipped* rather than as drift; the stale-fixture self-test
+  (`--catalog scripts/fixtures/model_audit_stale_catalog.json`) still surfaces all four drift kinds
+  and exits 0 — the fixture covers only the OpenRouter block, which this pass did not touch, so it
+  needed no regeneration; `sync-api-key-models.py` is byte-identical on an empty env and uncomments
+  every changed block with the right prices on a per-key copy; the price-in-a-`display_name` grep
+  prints nothing; and `check_config_version.sh` is OK at 43 — the edits change list entries and
+  values, not keys, so no bump was due.
+
+  **Still owed to the next pass that can reach a provider page directly**, in priority order:
+  **GPT-5.6 Sol's `$4/20` window through 2026-11-21** and **Gemini 3.6 Flash's `$0.75/3.75` window
+  through 2026-12-31** (both live, both knowingly unshipped); the **OpenRouter DeepSeek V4 Pro**
+  figure, where two sources disagree and the routed rate may or may not have followed DeepSeek's
+  2026-08-16 rise; MiniMax M3's OpenRouter promo status; Mistral Medium 3.5 / Small 3, Qwen3.7 Plus
+  and MiniMax M2.7, all left alone for want of agreeing sources; and Gemini 3.1 Pro's `$2/12`,
+  corroborated three times and still never verified.
 
 - **2026-08-25 (upstream sync) — Anthropic verified at tier 1 for the first time in six passes;
   one real price change shipped. Every other provider still unreachable, so unchanged.** Run as the
@@ -655,7 +796,7 @@ Pinned by `backend/tests/test_multi_user_mode.py` (setting round-trip, owner-sco
 
 The conversation header already showed a token counter (input / output / total for the whole thread). This fork adds a **real-cost estimate** next to it, and — because a personal deployment mixes premium, cheap, and free-local models on purpose (§"Why mix local and cloud" below) — makes it **model-aware** so the number reflects what you actually spent, not a single headline rate.
 
-- **Where the price comes from.** Each model's `pricing:` block in `config.yaml` (`currency`, `input_per_million`, `output_per_million`, optional `input_cache_hit_per_million`, optional `promo_*_per_million`) — the same machine-readable pricing documented in §2's *"The machine-readable `pricing:` block"*. **All 40 bundled paid models ship priced** on both the auto-config and `make setup` paths, so the estimate works out of the box whichever provider you use; only unpriced local Ollama models contribute nothing. No `pricing:` anywhere → the cost line simply hides (token counts still show).
+- **Where the price comes from.** Each model's `pricing:` block in `config.yaml` (`currency`, `input_per_million`, `output_per_million`, optional `input_cache_hit_per_million`, optional `promo_*_per_million`) — the same machine-readable pricing documented in §2's *"The machine-readable `pricing:` block"*. **All 41 bundled paid models ship priced** on both the auto-config and `make setup` paths, so the estimate works out of the box whichever provider you use; only unpriced local Ollama models contribute nothing. No `pricing:` anywhere → the cost line simply hides (token counts still show).
 - **The cost is green, and a live discount shows both prices.** The figure reads as money rather than as another token counter, so it is rendered in green (`text-emerald-500`) in both the header pill and the dropdown. When any model in the thread is currently discounted, the dropdown shows **two** totals side by side — the green one is what the conversation costs at today's promo rate, the red one (`text-red-500`) is the same thread billed at the standard rate it reverts to when the promo ends — with a `promo rate now` / `standard rate` legend beneath. Both totals cover the **whole** thread: an undiscounted model contributes its ordinary cost to each, so the pair is directly comparable rather than being a discounted subtotal beside a full total. The header pill stays a single number (what you actually pay now); there is no room there to label a pair. `promo_total_cost` is null — and the UI falls back to one green figure — when nothing in the thread is discounted, or when the promo total happens to equal the standard one, because printing the same number twice in two colours claims a discount that does not exist.
 - **A missing price explains itself.** A model that burned tokens with no `pricing:` block is reported in the endpoint's `unpriced_models`, and the header names it: *"No cost shown: no price is configured for `<model>`"* when nothing was priceable, or *"Excludes `<model>` — no price configured, so the real cost is higher"* when the total covers only some of the run. Without this a hand-added model silently renders a bare `—` (or a quietly low total), which is indistinguishable from the feature being broken — the exact failure that hid the two bugs above.
 - **Model-aware, so subagents are billed correctly.** The cost is summed from each run's **per-model** `token_usage_by_model` split, not a flat rate on the thread total. A run whose lead was Opus and whose subagents ran on Haiku or a local Ollama model is priced Opus-for-Opus and Haiku-for-Haiku — the lever this fork exposes (§3, the per-thread subagent model dropdown) shows up directly in the number. Prompt-cache hits are billed at the cache-hit rate when configured (a conservative upper bound otherwise), reusing the exact same cache-aware math as the ops console.
@@ -669,7 +810,7 @@ The conversation header already showed a token counter (input / output / total f
 | Piece | Location |
 | --- | --- |
 | Shared pricing math (build map, provider-id resolution, per-token cost, per-run cost, one-currency guard, promo rates) | `backend/app/gateway/pricing.py` — extracted from `routers/console.py` so the console and the thread endpoint price identically. `_pricing_lookup_candidates` owns the provider-reported-id normalization, so the console, the thread endpoint, and the memory/suggestions aux counters all resolve ids the same way. `_parse_promo_rates` validates a discount (both directions, positive, at or below list) and `ModelPricing.promo()` hands it back as an ordinary `ModelPricing`, so `token_cost` prices a promo through the same formula as a standard rate rather than a second one that could drift |
-| Bundled model prices | All 40 paid entries carry a `price:` block in `config.example.yaml`'s marker blocks, mirrored by `scripts/wizard/providers.py::MODEL_PRICES`; a test asserts the two agree, and no price may appear in a `display_name` (§17) |
+| Bundled model prices | All 41 paid entries carry a `price:` block in `config.example.yaml`'s marker blocks, mirrored by `scripts/wizard/providers.py::MODEL_PRICES`; a test asserts the two agree, and no price may appear in a `display_name` (§17) |
 | Thread cost endpoint | `GET /api/threads/{id}/token-usage` (`routers/thread_runs.py`) now returns `total_cost`, `promo_total_cost` (the same whole-thread total at live discount rates, null when nothing is discounted), `currency`, `unpriced_models` (models that spent tokens with no configured price), per-model `cost`/`input`/`output`/`cache_read`, and an `aux` map (memory/suggestions tokens+cost). The store aggregation (`runs/store/memory.py`, `persistence/run/sql.py`, shared `new_by_model_usage_entry()`) now carries the per-model input/output/cache-read split the pricing needs |
 | Auxiliary-usage registry | `backend/packages/harness/deerflow/runtime/aux_usage.py` — thread-safe, bounded (LRU over 4096 threads), and **durable**: a write-through cache over `runtime/aux_usage_store.py`, a small dedicated SQLite file at `<DeerFlow home>/aux_usage.sqlite3`. Memory records via the existing `_host_default_extraction_callback` (`agents/memory/manager.py`); suggestions records via `run_oneshot_llm_with_usage` (`utils/oneshot_llm.py`) from `routers/suggestions.py`. Async callers (`routers/suggestions.py`, the `token-usage` endpoint) go through `arecord_aux_usage` / `aget_thread_aux_usage`, which offload the file IO |
 | Frontend | `token-usage-indicator.tsx` renders the green cost (plus the red standard rate and its legend while a promo is live) + `?` tooltip + aux rows + the unpriced-model note; `core/threads/token-usage.ts` (`threadTokenUsageToCostSummary`, `formatCost`); both chat pages pass the summary; i18n `tokenUsage.cost` / `costHint` / `unpricedOnly` / `unpricedPartial` / `promoRate` / `standardRate` / `memory` / `suggestions` |

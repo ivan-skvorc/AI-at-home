@@ -340,8 +340,13 @@ OPENROUTER_BUNDLE_MODELS: list[dict] = [
 # (DeepSeek) / (Mistral) / (Moonshot) / (Qwen) / (MiniMax) / (z-ai), mirroring
 # (Anthropic) — and never the `(p)` marker (no OpenRouter middleman). The price
 # pair in the name is the provider's own list price; the OpenRouter-only promo
-# stars stay on the OpenRouter entries. Slugs current as of 2026-07; the
-# non-flagship siblings follow each lab's established tier naming.
+# stars stay on the OpenRouter entries. Slugs current as of 2026-08.
+#
+# The non-flagship siblings *look* like they follow each lab's tier naming, but
+# that is an observation, not a rule you may apply: read every sibling id off the
+# lab's own model list. Deriving one from the flagship's name is how the bundle
+# came to ship `gpt-5.6-mini`, `grok-4.5-fast` and `glm-5.2-air`, none of which
+# any lab released (FORK.md, audit log 2026-08-26).
 
 
 def _home_openai_compat_model(
@@ -441,17 +446,23 @@ def _home_gemini_model(name: str, display_name: str, model: str, *, max_tokens: 
 
 
 # OpenAI: GPT-5.6 Sol (flagship) + GPT-5.3 Codex (the acclaimed agentic-coding
-# variant — the same double kept on OpenRouter) + a cheaper Mini.
+# variant — the same double kept on OpenRouter) + the two cheaper GPT-5.6 tiers.
+# GPT-5.6 shipped as Sol / Terra / Luna rather than a `-mini`/`-nano` pair, so
+# `gpt-5.6-mini` never existed — Terra is the tier that took `mini`'s place and
+# Luna the one below it.
 OPENAI_HOME_BUNDLE_MODELS: list[dict] = [
     _home_openai_compat_model("openai-gpt-5.6-sol", "GPT-5.6 Sol (OpenAI)", "gpt-5.6-sol", api_key_env="OPENAI_API_KEY", base_url="https://api.openai.com/v1", supports_vision=True),
     _home_openai_compat_model("openai-gpt-5.3-codex", "GPT-5.3 Codex (OpenAI)", "gpt-5.3-codex", api_key_env="OPENAI_API_KEY", base_url="https://api.openai.com/v1", supports_vision=True),
-    _home_openai_compat_model("openai-gpt-5.6-mini", "GPT-5.6 Mini (OpenAI)", "gpt-5.6-mini", api_key_env="OPENAI_API_KEY", base_url="https://api.openai.com/v1", supports_vision=True, max_tokens=16000),
+    _home_openai_compat_model("openai-gpt-5.6-terra", "GPT-5.6 Terra (OpenAI)", "gpt-5.6-terra", api_key_env="OPENAI_API_KEY", base_url="https://api.openai.com/v1", supports_vision=True),
+    _home_openai_compat_model("openai-gpt-5.6-luna", "GPT-5.6 Luna (OpenAI)", "gpt-5.6-luna", api_key_env="OPENAI_API_KEY", base_url="https://api.openai.com/v1", supports_vision=True, max_tokens=16000),
 ]
 
-# xAI: Grok 4.6 (flagship) + Grok 4.5 Fast (cheaper/faster tier).
+# xAI: Grok 4.6 (flagship) + Grok 4.3 (the cheaper, 1M-context tier). There is
+# no `grok-4.5-fast` in xAI's models table, and grok-4.5 is priced identically to
+# 4.6, so 4.3 is the real cheaper pick. Prices are the <200K-prompt base tier.
 XAI_HOME_BUNDLE_MODELS: list[dict] = [
     _home_openai_compat_model("xai-grok-4.6", "Grok 4.6 (xAI)", "grok-4.6", api_key_env="XAI_API_KEY", base_url="https://api.x.ai/v1", supports_vision=True),
-    _home_openai_compat_model("xai-grok-4.5-fast", "Grok 4.5 Fast (xAI)", "grok-4.5-fast", api_key_env="XAI_API_KEY", base_url="https://api.x.ai/v1", supports_vision=True, max_tokens=16000),
+    _home_openai_compat_model("xai-grok-4.3", "Grok 4.3 (xAI)", "grok-4.3", api_key_env="XAI_API_KEY", base_url="https://api.x.ai/v1", supports_vision=True, max_tokens=16000),
 ]
 
 # Google: Gemini 3.6 Flash (flagship) + 3.5 Flash-Lite (cheaper) + the newest
@@ -500,10 +511,11 @@ MINIMAX_HOME_BUNDLE_MODELS: list[dict] = [
     _home_openai_compat_model("minimax-m2.7", "MiniMax M2.7 (MiniMax)", "MiniMax-M2.7", api_key_env="MINIMAX_API_KEY", base_url="https://api.minimax.io/v1", supports_vision=False, max_tokens=16000, temperature=1.0),
 ]
 
-# Zhipu / z.ai: GLM-5.3 (flagship) + GLM-5.2 Air (cheaper).
+# Zhipu / z.ai: GLM-5.3 (flagship) + GLM-4.5 Air (cheaper). z.ai ships Air only
+# in the 4.5 generation — there is no `glm-5.2-air` — and $0.2/1.1 is 4.5-Air's rate.
 ZAI_HOME_BUNDLE_MODELS: list[dict] = [
     _home_openai_compat_model("zai-glm-5.3", "GLM-5.3 (z-ai)", "glm-5.3", api_key_env="ZAI_API_KEY", base_url="https://api.z.ai/api/paas/v4", supports_vision=False, max_tokens=16000),
-    _home_openai_compat_model("zai-glm-5.2-air", "GLM-5.2 Air (z-ai)", "glm-5.2-air", api_key_env="ZAI_API_KEY", base_url="https://api.z.ai/api/paas/v4", supports_vision=False, max_tokens=16000),
+    _home_openai_compat_model("zai-glm-4.5-air", "GLM-4.5 Air (z-ai)", "glm-4.5-air", api_key_env="ZAI_API_KEY", base_url="https://api.z.ai/api/paas/v4", supports_vision=False, max_tokens=16000),
 ]
 
 # ── Machine-readable pricing: the single source of truth ─────────────────────
@@ -529,8 +541,10 @@ MODEL_PRICES: dict[str, dict] = {
     "claude-sonnet-5": {"price": {"currency": "USD", "input": 2.0, "output": 10.0, "cache_hit": 0.2}},
     "claude-sonnet-4-6": {"price": {"currency": "USD", "input": 3.0, "output": 15.0, "cache_hit": 0.3}},
     "claude-haiku-4-5": {"price": {"currency": "USD", "input": 1.0, "output": 5.0, "cache_hit": 0.1}},
-    "deepseek-v4-pro": {"price": {"currency": "USD", "input": 0.44, "output": 0.87}},
-    "deepseek-v4-flash": {"price": {"currency": "USD", "input": 0.14, "output": 0.28}},
+    # DeepSeek bills peak/off-peak since 2026-08-16; these are the peak (upper-bound)
+    # rates, matching config.example.yaml. Off-peak is exactly half.
+    "deepseek-v4-pro": {"price": {"currency": "USD", "input": 1.32, "output": 3.96}},
+    "deepseek-v4-flash": {"price": {"currency": "USD", "input": 0.44, "output": 1.32}},
     "google-gemini-3.6-flash": {"price": {"currency": "USD", "input": 1.5, "output": 7.5}},
     "google-gemini-3.5-flash-lite": {"price": {"currency": "USD", "input": 0.3, "output": 1.2}},
     "google-gemini-3.1-pro": {"price": {"currency": "USD", "input": 2.0, "output": 12.0}},
@@ -540,10 +554,11 @@ MODEL_PRICES: dict[str, dict] = {
     "mistral-medium-3.5": {"price": {"currency": "USD", "input": 1.5, "output": 7.5}},
     "mistral-small-3": {"price": {"currency": "USD", "input": 0.1, "output": 0.3}},
     "moonshot-kimi-k3": {"price": {"currency": "USD", "input": 3.0, "output": 15.0}},
-    "moonshot-kimi-k2.6": {"price": {"currency": "USD", "input": 1.0, "output": 3.0}},
+    "moonshot-kimi-k2.6": {"price": {"currency": "USD", "input": 0.95, "output": 4.0}},
     "openai-gpt-5.6-sol": {"price": {"currency": "USD", "input": 5.0, "output": 30.0}},
     "openai-gpt-5.3-codex": {"price": {"currency": "USD", "input": 1.75, "output": 14.0}},
-    "openai-gpt-5.6-mini": {"price": {"currency": "USD", "input": 0.25, "output": 2.0}},
+    "openai-gpt-5.6-terra": {"price": {"currency": "USD", "input": 2.0, "output": 12.0}},
+    "openai-gpt-5.6-luna": {"price": {"currency": "USD", "input": 0.2, "output": 1.2}},
     "openrouter-fable-5": {"price": {"currency": "USD", "input": 10.0, "output": 50.0}},
     "openrouter-grok-4.6": {"price": {"currency": "USD", "input": 2.0, "output": 6.0}},
     "openrouter-gpt-5.6-sol": {"price": {"currency": "USD", "input": 5.0, "output": 30.0}},
@@ -560,9 +575,9 @@ MODEL_PRICES: dict[str, dict] = {
     "qwen-3.8-max": {"price": {"currency": "USD", "input": 2.0, "output": 6.0}},
     "qwen-3.7-plus": {"price": {"currency": "USD", "input": 0.4, "output": 1.2}},
     "xai-grok-4.6": {"price": {"currency": "USD", "input": 2.0, "output": 6.0}},
-    "xai-grok-4.5-fast": {"price": {"currency": "USD", "input": 0.5, "output": 1.5}},
+    "xai-grok-4.3": {"price": {"currency": "USD", "input": 1.25, "output": 2.5}},
     "zai-glm-5.3": {"price": {"currency": "USD", "input": 1.4, "output": 4.4}},
-    "zai-glm-5.2-air": {"price": {"currency": "USD", "input": 0.2, "output": 1.1}},
+    "zai-glm-4.5-air": {"price": {"currency": "USD", "input": 0.2, "output": 1.1}},
 }
 
 
@@ -693,7 +708,7 @@ LLM_PROVIDERS: list[LLMProvider] = [
     LLMProvider(
         name="openai",
         display_name="OpenAI",
-        description="GPT-5.6 Sol + GPT-5.3 Codex + GPT-5.6 Mini (direct OpenAI API)",
+        description="GPT-5.6 Sol + GPT-5.3 Codex + GPT-5.6 Terra + Luna (direct OpenAI API)",
         use="langchain_openai:ChatOpenAI",
         models=[entry["model"] for entry in OPENAI_HOME_BUNDLE_MODELS],
         default_model=OPENAI_HOME_BUNDLE_MODELS[0]["model"],
@@ -958,7 +973,7 @@ LLM_PROVIDERS: list[LLMProvider] = [
     LLMProvider(
         name="xai",
         display_name="xAI Grok",
-        description="Grok 4.6 + Grok 4.5 Fast (direct xAI API)",
+        description="Grok 4.6 + Grok 4.3 (direct xAI API)",
         use="langchain_openai:ChatOpenAI",
         models=[entry["model"] for entry in XAI_HOME_BUNDLE_MODELS],
         default_model=XAI_HOME_BUNDLE_MODELS[0]["model"],
@@ -1015,7 +1030,7 @@ LLM_PROVIDERS: list[LLMProvider] = [
     LLMProvider(
         name="zai",
         display_name="Zhipu z.ai (GLM)",
-        description="GLM-5.3 + GLM-5.2 Air (direct z.ai API)",
+        description="GLM-5.3 + GLM-4.5 Air (direct z.ai API)",
         use="langchain_openai:ChatOpenAI",
         models=[entry["model"] for entry in ZAI_HOME_BUNDLE_MODELS],
         default_model=ZAI_HOME_BUNDLE_MODELS[0]["model"],
