@@ -359,6 +359,10 @@ _CONTEXT_CONFIGURABLE_KEYS: frozenset[str] = frozenset(
         # disagree, and "which models are on the panel" already answers
         # "is this a panel run" — an empty or sub-quorum list is no panel.
         "democracy_participants",
+        # Fork: how the organizer scores each panelist ("five_point" / "boolean").
+        # Absent means no grading — never a default scale, or a run nobody asked
+        # to be scored comes back with a scoreboard in it.
+        "democracy_grading",
         "agent_name",
         "is_bootstrap",
         # Per-user long-term memory opt-in. When explicitly ``false`` the lead

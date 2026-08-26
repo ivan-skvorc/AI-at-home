@@ -130,6 +130,7 @@ describe("run context", () => {
       organizer: "organizer",
       participants: ["panelist-a", "panelist-b"],
       task: "q",
+      grading: "off",
     });
     expect(context.democracy_participants).toEqual([
       "panelist-a",
@@ -145,6 +146,7 @@ describe("run context", () => {
       organizer: "organizer",
       participants,
       task: "q",
+      grading: "off",
     });
     participants.push("panelist-c");
     expect(context.democracy_participants).toHaveLength(2);
@@ -284,6 +286,84 @@ describe("launch parsing", () => {
       organizer: "organizer",
       participants: ["a", "b"],
       task: "q",
+      grading: "off",
     });
+  });
+});
+
+describe("grading", () => {
+  test("a chosen scale reaches the run context", () => {
+    const context = democracyRunContext({
+      organizer: "organizer",
+      participants: ["panelist-a", "panelist-b"],
+      task: "q",
+      grading: "five_point",
+    });
+    expect(context.democracy_grading).toBe("five_point");
+  });
+
+  test("'off' is sent as absent, not as a magic string", () => {
+    // The backend's own rule is that an unrecognized scale means no grading, so
+    // sending nothing makes the two agree by default rather than by a shared
+    // literal that could drift on one side.
+    const context = democracyRunContext({
+      organizer: "organizer",
+      participants: ["panelist-a", "panelist-b"],
+      task: "q",
+      grading: "off",
+    });
+    expect(context.democracy_grading).toBeUndefined();
+  });
+
+  test("the scale rides the mode-derived context", () => {
+    const derived = deriveModeContext({
+      mode: "democracy",
+      model_name: "organizer",
+      democracy_participants: ["a", "b"],
+      democracy_grading: "boolean",
+    });
+    expect(derived.democracy_grading).toBe("boolean");
+  });
+
+  test("switching a panel thread to another mode drops the scale too", () => {
+    // A leftover scale would put a scoreboard on an ordinary Ultra answer.
+    const derived = deriveModeContext({
+      mode: "ultra",
+      model_name: "organizer",
+      democracy_participants: ["a", "b"],
+      democracy_grading: "five_point",
+    });
+    expect("democracy_grading" in derived).toBe(true);
+    expect(derived.democracy_grading).toBeUndefined();
+  });
+
+  test("a stash from a build that predates grading still starts a panel", () => {
+    const raw = JSON.stringify({
+      organizer: "organizer",
+      participants: ["a", "b"],
+      task: "q",
+    });
+    // Degrades to no grading rather than failing the whole launch.
+    expect(parseDemocracyLaunch(raw)?.grading).toBe("off");
+  });
+
+  test("an unrecognized scale degrades to no grading", () => {
+    const raw = JSON.stringify({
+      organizer: "organizer",
+      participants: ["a", "b"],
+      task: "q",
+      grading: "ten_point",
+    });
+    expect(parseDemocracyLaunch(raw)?.grading).toBe("off");
+  });
+
+  test("a valid scale round-trips through the stash", () => {
+    const raw = JSON.stringify({
+      organizer: "organizer",
+      participants: ["a", "b"],
+      task: "q",
+      grading: "boolean",
+    });
+    expect(parseDemocracyLaunch(raw)?.grading).toBe("boolean");
   });
 });

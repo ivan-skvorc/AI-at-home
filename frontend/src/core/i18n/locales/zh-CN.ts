@@ -304,6 +304,19 @@ export const zhCN: Translations = {
   },
 
   democracy: {
+    grading: "为参与模型评分",
+    gradingHint:
+      "答案由组织者定夺，因此也由它评价每个参与模型的价值——评的是本轮的贡献，而非是否附和结论。",
+    gradingOption: (option: string) =>
+      option === "five_point"
+        ? "5 分制"
+        : option === "boolean"
+          ? "是 / 否——是否值回 token？"
+          : "不评分",
+    attachFiles: "添加文件",
+    attachHint: "可选。组织者只读取一次，并共享给整个面板。",
+    removeFile: (name: string) => `移除 ${name}`,
+    costPerTurn: "以上为单个问题的开销。面板是常设的：每次追问都会再跑一轮。",
     launch: "众议",
     title: "发起众议面板",
     description:

@@ -17,7 +17,7 @@
 > - 🪃 **Model fallback chains** — when a model call fails for a reason worth retrying (the Ollama daemon is down, the context overflowed, the model turns out not to support tool calls, or the provider returns a 5xx), the turn degrades to the next model you listed instead of failing. Deliberate stops — you hit cancel, a spend cap fired, a guardrail refused — never fall back, and tokens are billed to whichever model actually answered, so your cost figures stay honest. Off until you configure a chain.
 > - 🧭 **Cost-aware subagent routing** — a policy that sends delegated subtasks to the cheapest model that can actually do them, so the saving is the default instead of something you remember to set every session. A tool-free extraction can run on a local model for free while the lead stays on a frontier model. It never picks a model that can't do the job (no tool support, no vision, context window too small), your explicit per-conversation subagent choice always wins, and the subagent card shows which rule decided. Off until you write a policy.
 > - 📱 **Installable on your phone, with notifications that arrive after you close it** — DeerFlow now ships a web app manifest and a service worker, so you can add it to your home screen and get a Web Push notification when a long run finishes, even with the browser closed. Background notifications need a secure origin (`localhost`, or your Tailscale HTTPS name); on a plain-HTTP LAN address the settings page says exactly that and tells you how to fix it, instead of silently doing nothing.
-> - 🏛️ **Democracy — several models answer, then decide together** — a launcher under *New chat* where you pick an organizer model, how many panelists, and which model fills each seat. The organizer researches **once** and hands every panelist the identical brief, they answer independently and then review each other **anonymously**, and the organizer synthesizes — reporting the split and naming dissenters rather than averaging them away. Facts are gathered once and deliberately **not** re-verified by the panel, because that is the cost this design refuses to pay. It is **extremely token-heavy** (up to N x 2 full model runs for N panelists) and the setup dialog estimates the multiple against a single answer before you commit. No config keys: it works as soon as two models are configured.
+> - 🏛️ **Democracy — several models answer, then decide together** — a setup page under *New chat* where you pick an organizer model, how many panelists, which model fills each seat, and whether the organizer grades them (out of 5, or yes/no) on what they actually contributed. Attach files to the task, not just text. The organizer researches **once** and hands every panelist the identical brief, they answer independently and then review each other **anonymously**, and the organizer synthesizes — reporting the split and naming dissenters rather than averaging them away. Facts are gathered once and deliberately **not** re-verified by the panel, because that is the cost this design refuses to pay. Ask a follow-up and the whole panel runs again, each panelist re-briefed with its own previous answers and the discussion — you always get one answer, the organizer's, never a fan-out to reconcile. It is **extremely token-heavy** (up to N x 2 full model runs for N panelists, *per question*) and the setup page estimates the multiple against a single answer before you commit. No config keys: it works as soon as two models are configured.
 > - 🧩 **Per-thread subagent model dropdown** — in **Ultra mode**, a second model picker lets you route `task` subagents to a cheaper or local model instead of the lead model (defaults to "Follow lead").
 > - 🔃 **Sortable, grouped model picker** — with a couple of dozen bundled models across premium-cloud, cheap-cloud, and local tiers, the flat list is hard to scan, so the dropdown can **sort by name or price** and **group by provider** in one click (each row's price is coloured; a discounted model shows list vs. promo). Remembered per browser, and the default stays config order so nothing moves until you opt in.
 > - 💡 **Follow-up suggestions off by default** — the clickable follow-up-question chips make an extra model call after every answer, so they now default **off** to save cost. Turn them back on per-browser under **Settings → Suggestions**, where a dropdown also lets you pick which model generates them ("Follow workflow selection" by default, or any configured model — pick a cheap one to keep it cheap).
@@ -1336,10 +1336,30 @@ models, has them read each other's answers and revise or hold, and then
 synthesizes the result — reporting where they agreed, where they split, and who
 dissented.
 
-Start it from **Democracy**, directly under *New chat* in the sidebar. The dialog
-asks how many panelists you want, which model organizes, which model fills each
-seat, and what the task is. Your task then lands in the composer of a fresh chat
+Start it from **Democracy**, directly under *New chat* in the sidebar. It opens a
+setup page — a real page, like *New chat*, not a popup — asking how many
+panelists you want, which model organizes, which model fills each seat, how the
+panelists get graded, and what the task is. **You can attach files to the task**,
+not just type it: the organizer reads them once and shares them with the panel
+like any other shared fact. Your task then lands in the composer of a fresh chat
 rather than being sent automatically, so you get a last look before spending it.
+
+**It stays a panel after the first answer.** Ask a follow-up and the whole panel
+runs again — you are not left talking to the organizer alone once the interesting
+part is over. Each panelist is re-briefed with its own previous answers, what the
+review round argued about, and the answer you were given last time, so it can
+build on the discussion instead of starting from scratch. You still see exactly
+one answer per question: the organizer's. The panel does not fan out into
+separate replies for you to reconcile.
+
+**The organizer also grades the panelists**, if you ask it to. Pick *Score out of
+5* or a plain *yes/no* at setup and each answer ends with a short table: how each
+model contributed this turn, and why. It grades the **contribution**, not
+agreement with the conclusion — a dissent that turned out to be right scores
+well, and a panelist that just restated the majority does not, however correct it
+happened to be. Over a few turns that is a straight read on which models are
+earning their seat. Leave it on *No grading* and answers end where they always
+did.
 
 **The organizer does the research once, and nobody double-checks it.** This is
 the part that keeps the mode affordable. Asking five models to each look up the
@@ -1368,7 +1388,8 @@ to be the model it likes. A well-argued minority position can be the right one.
 **It is extremely token-heavy, and the dialog says so before you commit.** A
 panel of N models dispatches up to **N x 2 full model runs** — every panelist
 answers, then every panelist reviews — on top of the organizer's own research and
-synthesis. The warning box also estimates, from your configured prices, roughly
+synthesis, **and that is per question**: a standing panel bills again on every
+follow-up. The warning box also estimates, from your configured prices, roughly
 how many times a single organizer answer the panel's rates come to. That figure
 is a **rate multiple, not a bill**: predicting a run's token count would be a
 guess dressed up as a number. Local Ollama models count as $0 here as everywhere

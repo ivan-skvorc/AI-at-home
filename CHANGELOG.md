@@ -9,6 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **chat:** **Democracy panels are now a setup page, keep running after the first
+  answer, take files, and grade their panelists.** The launcher under *New chat*
+  opens a page of its own (`/workspace/democracy/new`) instead of a popup, with
+  room for the roster and the cost warning. The task now accepts **file
+  attachments** alongside text — the organizer reads them once and shares them
+  with the panel. Ask a **follow-up** and the whole panel runs again rather than
+  leaving you with the organizer alone: each panelist is re-briefed with its own
+  previous answers, what the review round argued about, and the last final
+  answer, and you still get exactly one answer per question instead of a fan-out
+  to reconcile. Finally, the organizer can **grade** each panelist — *Score out
+  of 5* or a plain *yes/no*, chosen at setup — on what it contributed that turn,
+  scoring the contribution rather than agreement with the conclusion, so a
+  dissent that turned out to be right scores well and an echo of the majority
+  does not. Leave grading off and answers end exactly where they did. The cost
+  warning now says the charge is per question, because a standing panel bills
+  again on every follow-up.
+
 - **chat:** **Democracy — several models answer the same question, then decide
   together.** A new **Democracy** launcher under *New chat* asks how many
   panelists you want, which model organizes, which model fills each seat, and

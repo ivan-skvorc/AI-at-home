@@ -1,6 +1,10 @@
 import type { InputMode } from "../models/capabilities";
 
-import { democracyRunContext, isValidDemocracyPanel } from "./democracy";
+import {
+  type DemocracyGrading,
+  democracyRunContext,
+  isValidDemocracyPanel,
+} from "./democracy";
 
 /**
  * Derive the run context the backend actually reads from the composer's mode.
@@ -18,6 +22,7 @@ export interface ModeDerivedContext {
   subagent_enabled: boolean;
   reasoning_effort?: "minimal" | "low" | "medium" | "high";
   democracy_participants?: string[];
+  democracy_grading?: DemocracyGrading;
   max_total_subagents?: number;
   max_concurrent_subagents?: number;
 }
@@ -27,6 +32,7 @@ interface ModeContextInput {
   reasoning_effort?: "minimal" | "low" | "medium" | "high";
   model_name?: string | undefined;
   democracy_participants?: string[];
+  democracy_grading?: DemocracyGrading;
 }
 
 function defaultReasoningEffort(
@@ -66,6 +72,9 @@ export function deriveModeContext(
     // `subagent_enabled`) would render on a run the user did not ask to be a
     // panel. Overwriting with `undefined` is what actually removes it.
     democracy_participants: undefined,
+    // Cleared for the same reason as the roster: a scale left over from a panel
+    // thread would otherwise put a scoreboard on an ordinary Ultra answer.
+    democracy_grading: undefined,
   };
 
   const participants = context.democracy_participants ?? [];
@@ -80,6 +89,7 @@ export function deriveModeContext(
         organizer: context.model_name ?? "",
         participants,
         task: "",
+        grading: context.democracy_grading ?? "off",
       }),
     );
     // `democracyRunContext` also returns the organizer as `model_name`, which is

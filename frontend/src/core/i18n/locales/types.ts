@@ -244,6 +244,13 @@ export interface Translations {
 
   // Spend history and attribution (fork feature).
   democracy: {
+    grading: string;
+    gradingHint: string;
+    gradingOption: (option: string) => string;
+    attachFiles: string;
+    attachHint: string;
+    removeFile: (name: string) => string;
+    costPerTurn: string;
     launch: string;
     title: string;
     description: string;

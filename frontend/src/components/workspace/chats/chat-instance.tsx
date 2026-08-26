@@ -139,7 +139,7 @@ function ChatInstanceContent({
   useSpecificChatMode(isActive);
   // A Democracy launch (sidebar → setup dialog) lands here: the dialog stashes
   // the panel, this new chat claims it and becomes the panel's thread.
-  useDemocracyLaunch({
+  const { seededTask: democracyTask } = useDemocracyLaunch({
     enabled: isActive,
     isNewThread,
     applyLaunch: (launch) =>
@@ -148,6 +148,10 @@ function ChatInstanceContent({
         mode: "democracy",
         model_name: launch.organizer,
         democracy_participants: launch.participants,
+        // "off" is stored as absent so the thread context matches what the
+        // backend is sent, rather than carrying a sentinel it would ignore.
+        democracy_grading:
+          launch.grading === "off" ? undefined : launch.grading,
       }),
   });
   // Route-affecting side effects (URL rewrite on new→real, "thread gone"
@@ -499,6 +503,7 @@ function ChatInstanceContent({
                             : "ready"
                       }
                       context={settings.context}
+                      initialValue={democracyTask}
                       extraHeader={
                         isWelcomeMode &&
                         !hasGoal &&

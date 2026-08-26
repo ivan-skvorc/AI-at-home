@@ -34,7 +34,7 @@ from langchain.agents import create_agent
 from langchain.agents.middleware import AgentMiddleware
 from langchain_core.runnables import RunnableConfig
 
-from deerflow.agents.lead_agent.democracy import normalize_democracy_participants
+from deerflow.agents.lead_agent.democracy import normalize_democracy_grading, normalize_democracy_participants
 from deerflow.agents.lead_agent.prompt import apply_prompt_template
 from deerflow.agents.middlewares.clarification_middleware import ClarificationMiddleware
 from deerflow.agents.middlewares.configured_extensions import load_configured_extension_middlewares
@@ -945,6 +945,7 @@ def _assemble_lead_agent(config: RunnableConfig, *, app_config: AppConfig) -> Le
         cfg.get("democracy_participants"),
         configured_models=None if _configured_models is None else [getattr(model, "name", "") for model in _configured_models],
     )
+    democracy_grading = normalize_democracy_grading(cfg.get("democracy_grading"))
     is_bootstrap = cfg.get("is_bootstrap", False)
     non_interactive = bool(cfg.get("non_interactive", False))
     agent_name = validate_agent_name(cfg.get("agent_name"))
@@ -1219,6 +1220,7 @@ def _assemble_lead_agent(config: RunnableConfig, *, app_config: AppConfig) -> Le
         allowed_subagents=allowed_subagents,
         subagent_execution_capacity=subagent_execution_capacity,
         democracy_participants=democracy_participants,
+        democracy_grading=democracy_grading,
     )
     graph = create_agent(
         model=create_chat_model(name=model_name, thinking_enabled=thinking_enabled, reasoning_effort=reasoning_effort, app_config=resolved_app_config, attach_tracing=False, model_overrides=agent_model_overrides),

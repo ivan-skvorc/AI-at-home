@@ -48,6 +48,8 @@ export interface AgentThreadContext extends Record<string, unknown> {
   // to. Present only on a Democracy run; a roster below quorum is no panel and
   // the backend degrades the turn to an ordinary Ultra one.
   democracy_participants?: string[];
+  // How the organizer grades each panelist per turn; absent = no grading.
+  democracy_grading?: "five_point" | "boolean";
   reasoning_effort?: "minimal" | "low" | "medium" | "high";
   agent_name?: string;
   // Per-user long-term memory opt-in. When false the backend skips memory

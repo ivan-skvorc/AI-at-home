@@ -46,6 +46,27 @@ is the gate.
   flattening 4-1 into "the panel concluded". The tests normalize whitespace, so
   re-wrapping a paragraph is allowed and dropping a rule is not.
 
+- **The panel is standing, and the prompt is the only thing holding that up.**
+  Every follow-up turn re-runs the roster, and each panelist is re-briefed with
+  its *own* prior answers, the review discussion, and the previous final answer.
+  Subagents get a fresh `ThreadState` per call and remember nothing, so
+  continuity exists solely because the organizer carries it into the dispatch
+  prompt; deleting any of those four items turns turn two into a brand-new panel
+  wearing turn one's roster, with no error anywhere. The budget line says **per
+  turn** on purpose: `max_total_per_run` is per *run* and each user message is
+  its own run, so an organizer told it had one allowance for the conversation
+  would ration a panel that gets a fresh one every turn.
+
+- **Grading scores the contribution, never agreement.**
+  `normalize_democracy_grading` accepts only `five_point` / `boolean`; anything
+  else — including absent — is `None`, i.e. no grading. Never default to a scale:
+  a user who did not ask for a scoreboard should not get one appended to every
+  answer. The criteria in `_GRADING_PREAMBLE` are the design, not decoration: a
+  dissent that turned out to be right is a high grade and restating the majority
+  is not, because grading closeness-to-my-conclusion rewards the echo and
+  punishes the signal — the panelist actually worth paying for. Grades are
+  per-turn so nothing coasts on an earlier turn.
+
 `<democracy_panel>` is a framework authority block and is registered in
 `InputSanitizationMiddleware._BLOCKED_TAG_NAMES`: it names the panel's models and
 says how to weigh them, so a counterfeit copy in user input could re-roster or

@@ -47,8 +47,21 @@ async function mockModels(page: Page) {
   );
 }
 
+/** Fill a complete two-model panel on the setup page. */
+async function fillPanel(page: Page) {
+  await page.getByLabel("Panelists").fill("2");
+  const selects = page.getByRole("combobox");
+  // 0 = organizer, 1..n = panelists, last = the grading scale.
+  await selects.nth(0).click();
+  await page.getByRole("option", { name: "Organizer Model" }).click();
+  await selects.nth(1).click();
+  await page.getByRole("option", { name: "Panelist A" }).click();
+  await selects.nth(2).click();
+  await page.getByRole("option", { name: "Panelist B" }).click();
+}
+
 test.describe("Democracy panel", () => {
-  test("the sidebar opens the setup dialog and warns before a panel is started", async ({
+  test("the sidebar navigates to a setup page, not a modal", async ({
     page,
   }) => {
     mockLangGraphAPI(page);
@@ -59,50 +72,51 @@ test.describe("Democracy panel", () => {
       timeout: 20_000,
     });
 
-    await page.getByRole("button", { name: "Democracy" }).click();
+    await page.getByRole("link", { name: "Democracy" }).click();
 
-    const dialog = page.getByRole("dialog");
-    await expect(dialog).toBeVisible();
-    // The cost warning is the reason this flow is a dialog rather than a mode
-    // chip: the user must see what a panel costs *before* spending it.
-    await expect(dialog.getByText(/burns tokens/i)).toBeVisible();
-    await expect(dialog.getByText(/full model runs/i)).toBeVisible();
-
-    // The default roster is empty, so the panel cannot be started yet.
+    // A route of its own, so the panel setup is back/forward-navigable and the
+    // roster is not trapped in a dialog that scrolls internally.
+    await expect(page).toHaveURL(/\/workspace\/democracy\/new/);
+    await expect(page.getByRole("dialog")).toHaveCount(0);
     await expect(
-      dialog.getByRole("button", { name: "Start panel" }),
+      page.getByRole("heading", { name: /Start a Democracy panel/i }),
+    ).toBeVisible();
+
+    // The cost warning is on the page, above the button that spends the money.
+    await expect(page.getByText(/burns tokens/i)).toBeVisible();
+    await expect(page.getByText(/full model runs/i)).toBeVisible();
+    // ...and says the charge repeats, because the panel is standing.
+    await expect(
+      page.getByText(/every follow-up runs it again/i),
+    ).toBeVisible();
+
+    await expect(
+      page.getByRole("button", { name: "Start panel" }),
     ).toBeDisabled();
   });
 
-  test("a complete panel is dispatched with its roster, organizer, and task", async ({
+  test("a complete panel is dispatched with its roster, grading, and task", async ({
     page,
   }) => {
     mockLangGraphAPI(page);
     await mockModels(page);
 
-    await page.goto("/workspace/chats/new");
-    await expect(page.getByPlaceholder(/how can i assist you/i)).toBeVisible({
-      timeout: 20_000,
-    });
-    await page.getByRole("button", { name: "Democracy" }).click();
+    await page.goto("/workspace/democracy/new");
+    await expect(
+      page.getByRole("heading", { name: /Start a Democracy panel/i }),
+    ).toBeVisible({ timeout: 20_000 });
 
-    const dialog = page.getByRole("dialog");
-    await dialog.getByLabel("Panelists").fill("2");
+    await fillPanel(page);
 
-    const selects = dialog.getByRole("combobox");
-    // 0 = organizer, then one per panelist.
-    await selects.nth(0).click();
-    await page.getByRole("option", { name: "Organizer Model" }).click();
-    await selects.nth(1).click();
-    await page.getByRole("option", { name: "Panelist A" }).click();
-    await selects.nth(2).click();
-    await page.getByRole("option", { name: "Panelist B" }).click();
+    // Grading is the last combobox on the page.
+    await page.getByRole("combobox").last().click();
+    await page.getByRole("option", { name: /Score out of 5/i }).click();
 
-    await dialog
+    await page
       .getByLabel("Task")
       .fill("Assess which sectors grow, hold, or shrink.");
 
-    await dialog.getByRole("button", { name: "Start panel" }).click();
+    await page.getByRole("button", { name: "Start panel" }).click();
 
     // The composer is seeded rather than auto-sent, so the user gets a last look
     // at what a panel-priced run is about to be asked.
@@ -110,8 +124,40 @@ test.describe("Democracy panel", () => {
       /Assess which sectors/,
       { timeout: 15_000 },
     );
-    // The thread is now a Democracy run.
     await expect(page.getByText("Democracy").last()).toBeVisible();
+  });
+
+  test("a file attached at setup arrives on the chat composer", async ({
+    page,
+  }) => {
+    mockLangGraphAPI(page);
+    await mockModels(page);
+
+    await page.goto("/workspace/democracy/new");
+    await expect(
+      page.getByRole("heading", { name: /Start a Democracy panel/i }),
+    ).toBeVisible({ timeout: 20_000 });
+
+    await fillPanel(page);
+    await page.getByLabel("Task").fill("Read the attached figures.");
+
+    // Setup has no thread yet, so the file cannot be uploaded here; it rides the
+    // composer's own upload path on send instead.
+    await page.setInputFiles('input[type="file"]', {
+      name: "rates.csv",
+      mimeType: "text/csv",
+      buffer: Buffer.from("date,rate\n2026-01-01,4.5\n"),
+    });
+    await expect(page.getByText("rates.csv")).toBeVisible();
+
+    await page.getByRole("button", { name: "Start panel" }).click();
+
+    await expect(page.getByPlaceholder(/how can i assist you/i)).toHaveValue(
+      /attached figures/,
+      { timeout: 15_000 },
+    );
+    // The attachment survived the hop and is staged on the composer.
+    await expect(page.getByText("rates.csv")).toBeVisible({ timeout: 10_000 });
   });
 
   test("a duplicate panelist is refused rather than dispatched twice", async ({
@@ -120,25 +166,22 @@ test.describe("Democracy panel", () => {
     mockLangGraphAPI(page);
     await mockModels(page);
 
-    await page.goto("/workspace/chats/new");
-    await expect(page.getByPlaceholder(/how can i assist you/i)).toBeVisible({
-      timeout: 20_000,
-    });
-    await page.getByRole("button", { name: "Democracy" }).click();
+    await page.goto("/workspace/democracy/new");
+    await expect(
+      page.getByRole("heading", { name: /Start a Democracy panel/i }),
+    ).toBeVisible({ timeout: 20_000 });
 
-    const dialog = page.getByRole("dialog");
-    await dialog.getByLabel("Panelists").fill("2");
-
-    const selects = dialog.getByRole("combobox");
+    await page.getByLabel("Panelists").fill("2");
+    const selects = page.getByRole("combobox");
     await selects.nth(1).click();
     await page.getByRole("option", { name: "Panelist A" }).click();
     await selects.nth(2).click();
     await page.getByRole("option", { name: "Panelist A" }).click();
 
     // One model asked twice is one opinion at twice the price.
-    await expect(dialog.getByText(/must be a different model/i)).toBeVisible();
+    await expect(page.getByText(/must be a different model/i)).toBeVisible();
     await expect(
-      dialog.getByRole("button", { name: "Start panel" }),
+      page.getByRole("button", { name: "Start panel" }),
     ).toBeDisabled();
   });
 });
