@@ -39,6 +39,7 @@ from deerflow.agents.lead_agent.democracy import (
     MAX_DEMOCRACY_PARTICIPANTS,
     MIN_DEMOCRACY_PARTICIPANTS,
     build_democracy_section,
+    normalize_democracy_grading,
     normalize_democracy_participants,
 )
 from deerflow.subagents.config import SubagentConfig
@@ -485,3 +486,95 @@ class TestGatewayContextForwarding:
         from app.gateway.services import _CONTEXT_CONFIGURABLE_KEYS
 
         assert "democracy_participants" in _CONTEXT_CONFIGURABLE_KEYS
+
+
+# ---------------------------------------------------------------------------
+# Grading
+# ---------------------------------------------------------------------------
+
+
+class TestGradingScale:
+    @pytest.mark.parametrize("scale", ["five_point", "boolean"])
+    def test_the_two_supported_scales_survive(self, scale):
+        assert normalize_democracy_grading(scale) == scale
+
+    @pytest.mark.parametrize("raw", [None, "", "ten_point", "yes", 5, True, ["boolean"]])
+    def test_anything_else_is_no_grading_rather_than_a_default(self, raw):
+        # Inventing a scale for a malformed context would put a scoreboard in an
+        # answer the user never asked to have scored.
+        assert normalize_democracy_grading(raw) is None
+
+    def test_no_grading_renders_no_grading_phase(self):
+        section = build_democracy_section(PANEL, max_total=12)
+        assert "Phase 5" not in section
+        # ...and leaves no hole where the section would have been.
+        assert "\n\n\n" not in section
+
+    @pytest.mark.parametrize("scale", ["five_point", "boolean"])
+    def test_grading_scores_the_contribution_not_agreement(self, scale):
+        section = build_democracy_section(PANEL, max_total=12, grading=scale)
+        assert "Phase 5" in section
+        assert "Grade the **contribution**, never agreement with your conclusion" in _flat(section)
+        # The two failure modes a naive grader falls into, named explicitly.
+        assert "A dissent that turned out to be right is a high grade" in _flat(section)
+        assert "Restating the majority view adds nothing" in _flat(section)
+
+    def test_grading_is_per_turn_not_cumulative(self):
+        section = build_democracy_section(PANEL, max_total=12, grading="five_point")
+        assert "Grade only what happened this turn" in _flat(section)
+
+    def test_five_point_asks_for_a_score_out_of_five(self):
+        section = build_democracy_section(PANEL, max_total=12, grading="five_point")
+        assert "out of **5**" in section
+        assert "integers only" in section
+        # A scale everyone scores 4 on has stopped carrying information.
+        assert "Use the whole range" in _flat(section)
+        assert "yes/no" not in section
+
+    def test_boolean_asks_for_a_yes_or_no(self):
+        section = build_democracy_section(PANEL, max_total=12, grading="boolean")
+        assert "plain **yes/no**" in section
+        assert "earn the tokens this\nturn" in section
+        assert "out of **5**" not in section
+
+
+# ---------------------------------------------------------------------------
+# The standing panel
+# ---------------------------------------------------------------------------
+
+
+class TestStandingPanel:
+    def test_a_follow_up_re_runs_the_panel(self):
+        section = build_democracy_section(PANEL, max_total=12)
+        flat = _flat(section)
+        assert "The panel is standing. Every follow-up question runs it again." in flat
+        assert "never answer a follow-up yourself while the panel sits idle" in flat
+
+    def test_each_panelist_is_re_briefed_with_its_own_history(self):
+        """Subagents get a fresh ThreadState per call and remember nothing, so
+        continuity exists only because the organizer carries it into the dispatch
+        prompt. All four items are load-bearing and named individually.
+        """
+        flat = _flat(build_democracy_section(PANEL, max_total=12))
+        assert "Panelists remember nothing between turns" in flat
+        assert "X's own previous answers**, in X's own words, not your paraphrase" in flat
+        assert "what the review round argued about last turn" in flat
+        assert "the final answer you gave the user last turn" in flat
+        # And why each matters, so a future edit knows what it would be removing.
+        assert "a panelist contradicts itself across turns without knowing it" in flat
+        assert "pays for the same debate twice" in flat
+
+    def test_the_user_sees_one_answer_not_a_pile_of_transcripts(self):
+        flat = _flat(build_democracy_section(PANEL, max_total=12))
+        assert "The user reads you, and only you." in flat
+        assert "One question in, one synthesized answer out" in flat
+        assert "do not split your answer into branches" in flat
+        assert "Panelist positions belong *inside* that answer, attributed" in flat
+
+    def test_the_budget_is_stated_per_turn_because_the_ledger_resets(self):
+        # `max_total_per_run` is per run, and each user message is its own run —
+        # so an organizer told it has one budget "for the conversation" would
+        # ration a panel that actually gets a fresh allowance every turn.
+        flat = _flat(build_democracy_section(PANEL, max_total=12))
+        assert "`task` calls **per turn**" in flat
+        assert "The allowance refreshes for each new user question" in flat

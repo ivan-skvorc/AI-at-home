@@ -16,6 +16,16 @@ Two design rules are load-bearing and must survive refactors:
   the naive reading of "ask five models" is to let five models each do the
   retrieval, which multiplies cost by five *and* gives the panel five slightly
   different datasets to disagree about.
+* **The panel is standing, not per-question.** Every follow-up turn re-dispatches
+  the same roster, and each panelist is re-briefed with its *own* prior answers,
+  the review discussion, and the previous final answer. Subagents get a fresh
+  ThreadState per call and remember nothing, so continuity exists only because
+  the organizer carries it forward in the dispatch prompt. Drop that and turn two
+  is a brand-new panel wearing turn one's roster.
+* **Grades are of the contribution, not of agreement.** When grading is on, the
+  organizer scores each panelist. A panelist that merely agreed with the majority
+  added little; a dissenter who turned out to be right added a lot. Grading
+  "closeness to my conclusion" would reward the echo and punish the signal.
 """
 
 from __future__ import annotations
@@ -35,6 +45,10 @@ MAX_DEMOCRACY_PARTICIPANTS = 12
 # A panel needs at least two *different* models; one model asked twice is not a
 # second opinion, it is the same opinion at twice the price.
 MIN_DEMOCRACY_PARTICIPANTS = 2
+
+# How the organizer scores each panelist's contribution, chosen at setup.
+# ``off`` is the absent/unrecognized case and renders no grading phase at all.
+DEMOCRACY_GRADING_SCALES = ("five_point", "boolean")
 
 
 DEMOCRACY_SECTION_TEMPLATE = """
@@ -92,10 +106,87 @@ This is the part that is easy to do badly:
   panel's, present it as one more labelled view.
 - Attribute each position to the model that held it, so the reader can weigh it.
 
+{grading_section}**The panel is standing. Every follow-up question runs it again.**
+This conversation is one continuous panel, not a one-shot. When the user asks a
+follow-up, run the same phases again with the same roster — never answer a
+follow-up yourself while the panel sits idle, and never quietly shrink the panel
+because a question "seems easy".
+
+Panelists remember nothing between turns: each dispatch is a fresh context. So
+continuity is *your* job, and it is not optional. Keep a short running dossier per
+panelist and open every follow-up dispatch to panelist X with:
+1. the user's new question;
+2. **X's own previous answers**, in X's own words, not your paraphrase of them;
+3. what the review round argued about last turn — the substance of the
+   disagreement, still anonymized by panelist letter;
+4. the final answer you gave the user last turn.
+Without (2) a panelist contradicts itself across turns without knowing it;
+without (3) and (4) it re-argues a point the panel already settled and the user
+pays for the same debate twice.
+
+**The user reads you, and only you.** Whatever the panel produces, the user sees
+one answer per question: yours. Do not hand back a pile of per-panelist
+transcripts, do not ask the user to pick between panelists, and do not split your
+answer into branches for them to reconcile. One question in, one synthesized
+answer out, and the conversation continues from there. Panelist positions belong
+*inside* that answer, attributed, not beside it as separate replies.
+
 **Budget.** Each phase costs one full model run per panelist. You have {total}
-`task` calls for the whole run; {count} panelists over two phases is {two_phase}.
-Stay inside it — spend it on the panel, not on exploratory delegations.
+`task` calls **per turn**; {count} panelists over two phases is {two_phase}. The
+allowance refreshes for each new user question, so spend the turn's budget on the
+panel rather than on exploratory delegations.
 </democracy_panel>"""
+
+
+# Shared preamble for both scales. The criteria are what stop a grade from
+# degenerating into "how close were you to my answer", which would reward the
+# panelist that added nothing and punish the one that was usefully wrong.
+_GRADING_PREAMBLE = """**Phase 5 — grade each panelist, every turn.**
+You decided the answer, so you are also the one who can say what each panelist
+was worth. After the synthesis, grade every panelist on this turn's contribution.
+
+Grade the **contribution**, never agreement with your conclusion:
+- Did it engage the shared facts, or answer from generic priors?
+- Was its reasoning checkable, or an assertion with confidence attached?
+- Did it change position for a stated reason, or drift and cave?
+- Did it add something no other panelist did? A dissent that turned out to be
+  right is a high grade. Restating the majority view adds nothing, however
+  correct it happened to be.
+
+Grade only what happened this turn; a panelist that carried a previous turn does
+not get credit for it again. Give a one-line justification per panelist, and say
+so plainly when a panelist underperformed — a grading scheme where everyone
+always scores well tells the user nothing about which models are earning their
+place on the panel."""
+
+DEMOCRACY_GRADING_SECTIONS = {
+    "five_point": _GRADING_PREAMBLE
+    + """
+
+Score each panelist out of **5** (integers only, 1 = worthless on this question,
+5 = materially shaped the answer). Use the whole range: if everything is a 4 the
+scale has stopped carrying information. Close with a compact table of
+panelist, model, score, and the one-line reason.""",
+    "boolean": _GRADING_PREAMBLE
+    + """
+
+Give each panelist a plain **yes/no**: did its contribution earn the tokens this
+turn? "Yes" means the answer would have been worse without it — not merely that
+it was inoffensive or agreed with the rest. Close with a compact table of
+panelist, model, yes/no, and the one-line reason.""",
+}
+
+
+def normalize_democracy_grading(raw: object) -> str | None:
+    """Return the grading scale for a run, or ``None`` for no grading.
+
+    Anything unrecognized is ``None`` rather than a default scale: grading is a
+    per-run choice the user made at setup, and inventing one for a malformed
+    context would put a scoreboard in an answer nobody asked to be scored.
+    """
+    if isinstance(raw, str) and raw in DEMOCRACY_GRADING_SCALES:
+        return raw
+    return None
 
 
 def normalize_democracy_participants(
@@ -137,14 +228,18 @@ def normalize_democracy_participants(
     return panel
 
 
-def build_democracy_section(participants: list[str], *, max_total: int) -> str:
+def build_democracy_section(participants: list[str], *, max_total: int, grading: str | None = None) -> str:
     """Render the organizer section for a panel, or ``""`` when there is none."""
     if len(participants) < MIN_DEMOCRACY_PARTICIPANTS:
         return ""
     participant_lines = "\n".join(f'- `model="{name}"`' for name in participants)
+    grading_section = DEMOCRACY_GRADING_SECTIONS.get(grading or "", "")
     return DEMOCRACY_SECTION_TEMPLATE.format(
         participant_lines=participant_lines,
         count=len(participants),
         total=clamp_total_subagents_per_run(max_total),
         two_phase=len(participants) * 2,
+        # Rendered with its own blank line only when grading is on, so the
+        # section does not leave a hole in the prompt when it is off.
+        grading_section=f"{grading_section}\n\n" if grading_section else "",
     )

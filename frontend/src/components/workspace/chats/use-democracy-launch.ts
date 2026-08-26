@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { usePromptInputController } from "@/components/ai-elements/prompt-input";
 import {
+  consumeDemocracyFiles,
   consumeDemocracyLaunch,
   DEMOCRACY_LAUNCH_EVENT,
   type DemocracyLaunch,
@@ -35,6 +36,13 @@ import {
  *
  * The one-shot `consumeDemocracyLaunch` is what makes claiming safe from both
  * paths: whichever fires first removes the stash, and the other finds nothing.
+ *
+ * The claimed task is returned rather than pushed into the composer with
+ * `setInput`. The composer's textarea is uncontrolled and its draft-hydration
+ * effect runs *after* mount, so a value written during mount is overwritten with
+ * the (empty) restored draft — which is why seeding worked when the launch came
+ * from the same route and silently did nothing when it came from the setup page.
+ * `initialValue` is the channel hydration itself respects, so it cannot race.
  */
 export function useDemocracyLaunch({
   enabled,
@@ -45,9 +53,10 @@ export function useDemocracyLaunch({
   isNewThread: boolean;
   applyLaunch: (launch: DemocracyLaunch) => void;
 }) {
+  const [seededTask, setSeededTask] = useState<string | undefined>(undefined);
   const promptInputController = usePromptInputController();
-  const setInputRef = useRef(promptInputController.textInput.setInput);
-  setInputRef.current = promptInputController.textInput.setInput;
+  const addFilesRef = useRef(promptInputController.attachments.add);
+  addFilesRef.current = promptInputController.attachments.add;
   const applyRef = useRef(applyLaunch);
   applyRef.current = applyLaunch;
 
@@ -58,13 +67,22 @@ export function useDemocracyLaunch({
       const launch = consumeDemocracyLaunch();
       if (!launch) return;
       applyRef.current(launch);
-      // The task is seeded into the composer rather than sent, so the user gets
-      // a last look at what a panel-priced run is about to be asked.
-      setInputRef.current(launch.task);
+      // Seeded, not sent: the user gets a last look at what a panel-priced run
+      // is about to be asked.
+      setSeededTask(launch.task);
+      // Attachments ride the composer's own upload path on send, which is the
+      // only one that has a thread id to upload against. Setup has no thread yet,
+      // so handing the files to the composer is what makes them reachable at all.
+      const files = consumeDemocracyFiles();
+      if (files.length > 0) {
+        addFilesRef.current(files);
+      }
     };
 
     claim();
     window.addEventListener(DEMOCRACY_LAUNCH_EVENT, claim);
     return () => window.removeEventListener(DEMOCRACY_LAUNCH_EVENT, claim);
   }, [enabled, isNewThread]);
+
+  return { seededTask };
 }

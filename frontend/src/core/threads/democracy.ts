@@ -38,6 +38,20 @@ const MAX_TOTAL_SUBAGENTS = 50;
  */
 const DEMOCRACY_BUDGET_HEADROOM = 2;
 
+/**
+ * How the organizer scores each panelist's contribution, chosen at setup.
+ *
+ * `"off"` is a real choice, not an absence: a user who did not ask for a
+ * scoreboard should not get one appended to every answer.
+ */
+export type DemocracyGrading = "off" | "five_point" | "boolean";
+
+export const DEMOCRACY_GRADING_OPTIONS: readonly DemocracyGrading[] = [
+  "off",
+  "five_point",
+  "boolean",
+];
+
 export interface DemocracyLaunch {
   /** Model that collects the shared facts, dispatches, and synthesizes. */
   organizer: string;
@@ -45,6 +59,8 @@ export interface DemocracyLaunch {
   participants: string[];
   /** The question put to the panel. */
   task: string;
+  /** How the organizer grades panelists each turn. */
+  grading: DemocracyGrading;
 }
 
 /**
@@ -158,18 +174,51 @@ export function estimateDemocracyCost(
 export function democracyRunContext(launch: DemocracyLaunch): {
   model_name: string;
   democracy_participants: string[];
+  democracy_grading: DemocracyGrading | undefined;
   max_total_subagents: number;
   max_concurrent_subagents: number;
 } {
   return {
     model_name: launch.organizer,
     democracy_participants: [...launch.participants],
+    // "off" is sent as absent rather than as a value: the backend's own rule is
+    // that an unrecognized scale means no grading, so the two agree by default
+    // instead of by a shared magic string.
+    democracy_grading: launch.grading === "off" ? undefined : launch.grading,
     max_total_subagents: democracyDelegationBudget(launch.participants.length),
     // Asking for the whole panel at once is the point — they are independent by
     // construction. The backend still clamps this to the process-wide execution
     // pool, so a larger panel queues rather than over-subscribing.
     max_concurrent_subagents: launch.participants.length,
   };
+}
+
+/**
+ * Files the setup page attached to the task, carried to the chat it opens.
+ *
+ * Deliberately **in memory**, not in the stash beside the rest of the launch:
+ * a `File` is a handle to browser-held bytes and does not survive
+ * `JSON.stringify`, so the alternatives were reading every attachment into a
+ * data URL (blowing the localStorage quota on the first PDF) or uploading before
+ * a thread exists to upload to. The setup page navigates client-side, so the
+ * module lives across that hop.
+ *
+ * The cost is honest and bounded: a hard reload between setup and chat loses the
+ * attachments while the text half of the launch survives. That degrades to a
+ * panel with no files rather than to a broken one, and the user can re-attach in
+ * the composer — which is where the files end up anyway.
+ */
+let pendingDemocracyFiles: File[] = [];
+
+export function stashDemocracyFiles(files: readonly File[]): void {
+  pendingDemocracyFiles = [...files];
+}
+
+/** Take the pending attachments, clearing them so they are used exactly once. */
+export function consumeDemocracyFiles(): File[] {
+  const files = pendingDemocracyFiles;
+  pendingDemocracyFiles = [];
+  return files;
 }
 
 const DEMOCRACY_LAUNCH_KEY = "deerflow.democracy-launch";
@@ -202,7 +251,13 @@ export function stashDemocracyLaunch(launch: DemocracyLaunch): void {
 /** Read and clear the pending launch. Returns null when there is none. */
 export function consumeDemocracyLaunch(): DemocracyLaunch | null {
   const raw = safeLocalStorage.getItem(DEMOCRACY_LAUNCH_KEY);
-  if (!raw) return null;
+  if (!raw) {
+    // No launch to claim means any files still sitting here belong to an
+    // abandoned setup; drop them rather than let them ride along with whatever
+    // panel is started next.
+    pendingDemocracyFiles = [];
+    return null;
+  }
   safeLocalStorage.removeItem(DEMOCRACY_LAUNCH_KEY);
   return parseDemocracyLaunch(raw);
 }
@@ -222,7 +277,10 @@ export function parseDemocracyLaunch(raw: string): DemocracyLaunch | null {
     return null;
   }
   if (!parsed || typeof parsed !== "object") return null;
-  const { organizer, participants, task } = parsed as Record<string, unknown>;
+  const { organizer, participants, task, grading } = parsed as Record<
+    string,
+    unknown
+  >;
   if (typeof organizer !== "string" || organizer.length === 0) return null;
   if (typeof task !== "string") return null;
   if (!Array.isArray(participants)) return null;
@@ -230,5 +288,20 @@ export function parseDemocracyLaunch(raw: string): DemocracyLaunch | null {
     (name): name is string => typeof name === "string" && name.length > 0,
   );
   if (!isValidDemocracyPanel(roster)) return null;
-  return { organizer, participants: roster, task };
+  return {
+    organizer,
+    participants: roster,
+    task,
+    // An unrecognized or missing scale degrades to no grading rather than
+    // failing the whole launch — a stash written by an older build still starts
+    // a usable panel, it just does not score it.
+    grading: isDemocracyGrading(grading) ? grading : "off",
+  };
+}
+
+function isDemocracyGrading(value: unknown): value is DemocracyGrading {
+  return (
+    typeof value === "string" &&
+    (DEMOCRACY_GRADING_OPTIONS as readonly string[]).includes(value)
+  );
 }

@@ -72,6 +72,7 @@ export const THREAD_SCOPED_CONTEXT_KEYS = [
   // The Democracy panel is per conversation, like the model it runs on: two open
   // panels must not overwrite each other's rosters.
   "democracy_participants",
+  "democracy_grading",
   "mode",
   "reasoning_effort",
 ] as const;

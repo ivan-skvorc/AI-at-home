@@ -320,6 +320,21 @@ export const enUS: Translations = {
   },
 
   democracy: {
+    grading: "Grade panelists",
+    gradingHint:
+      "The organizer decides the answer, so it can also say what each panelist was worth — scored on this turn's contribution, not on agreeing with the conclusion.",
+    gradingOption: (option: string) =>
+      option === "five_point"
+        ? "Score out of 5"
+        : option === "boolean"
+          ? "Yes / no — did it earn its tokens?"
+          : "No grading",
+    attachFiles: "Attach files",
+    attachHint:
+      "Optional. The organizer reads them once and shares them with the panel.",
+    removeFile: (name: string) => `Remove ${name}`,
+    costPerTurn:
+      "That is per question. The panel is standing: every follow-up runs it again.",
     launch: "Democracy",
     title: "Start a Democracy panel",
     description:

@@ -1051,6 +1051,7 @@ def apply_prompt_template(
     allowed_subagents: list[str] | None = None,
     subagent_execution_capacity: int | None = None,
     democracy_participants: list[str] | None = None,
+    democracy_grading: str | None = None,
 ) -> str:
     # Include subagent section only if enabled (from runtime parameter)
     n = (
@@ -1088,7 +1089,7 @@ def apply_prompt_template(
         # feature (§19) keeps `{subagent_section}` and therefore still gets the
         # organizer rules, instead of silently running a panel with no organizer.
         if subagent_section and democracy_participants:
-            subagent_section = f"{subagent_section}\n{build_democracy_section(democracy_participants, max_total=total)}"
+            subagent_section = f"{subagent_section}\n{build_democracy_section(democracy_participants, max_total=total, grading=democracy_grading)}"
     else:
         subagent_section = ""
 
