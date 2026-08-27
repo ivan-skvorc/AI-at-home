@@ -188,6 +188,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **models:** **Three bundled models did not exist, and picking any of them
+  failed at request time.** Each was a "cheaper sibling" whose id had been spelled
+  out of the flagship's name instead of read off the lab's model list, so the
+  entry looked right until a run failed:
+  - `gpt-5.6-mini` — GPT-5.6 shipped as **Sol / Terra / Luna**, with no `-mini`
+    member. Replaced by the two real tiers: **GPT-5.6 Terra** (`gpt-5.6-terra`,
+    `$2/12`) and **GPT-5.6 Luna** (`gpt-5.6-luna`, `$0.20/1.20`).
+  - `grok-4.5-fast` — xAI's model list has no `-fast` text model, and `grok-4.5`
+    costs the same as the flagship. Replaced by **Grok 4.3** (`grok-4.3`,
+    `$1.25/2.50`, 1M context), which is xAI's actual cheaper tier.
+  - `glm-5.2-air` — z.ai ships Air only in the 4.5 generation. Replaced by
+    **GLM-4.5 Air** (`glm-4.5-air`); the `$0.20/1.10` price was already
+    GLM-4.5 Air's, so only the id and the name were wrong.
+
+  The bundle is now **41** priced models. An existing `config.yaml` keeps
+  whatever it already has — `make config-upgrade` does not rewrite entries you
+  already have — so delete the three old entries and re-copy the OpenAI, xAI and
+  z.ai blocks from `config.example.yaml`.
+
+- **pricing:** **DeepSeek runs were being costed at a third of their real input
+  price and under a quarter of their real output price.** DeepSeek moved to
+  peak/off-peak billing on 2026-08-16 and raised its rates; the bundle still
+  carried the old flat ones. **DeepSeek V4 Pro** goes
+  from `$0.44/0.87` to `$1.32/3.96` and **V4 Flash** from `$0.14/0.28` to
+  `$0.44/1.32` — the **peak** rate in both cases, because `price:` is a single
+  flat pair and under-stating cost is what silently stops a `spend_budget:` cap
+  from firing. Off-peak (every hour outside 01:00–04:00 and 06:00–10:00 UTC
+  Mon–Fri, weekends included) is exactly half; the figure is in a comment beside
+  each entry if you want to halve them. The OpenRouter copy of DeepSeek V4 Pro is
+  unchanged — it bills at OpenRouter's rate, not DeepSeek's.
+
+- **pricing:** **Kimi K2.6** is `$0.95/4.00`, not `$1.00/3.00` — its output rate
+  had been under-reported by 25%.
+
+- **docs:** Four places that only *describe* the bundled roster had drifted
+  behind it: `config.example.yaml`'s `QUICK START` comment still advertised
+  Grok 4.5, Qwen3.7 Max and GLM-5.2 three roster rolls after they were replaced,
+  the setup wizard's OpenAI provider description named the removed GPT-5.6 Mini,
+  and two lineup tables listed an unversioned "Mistral Medium / Small". All now
+  match the shipped blocks.
+
 - **pricing:** **Claude Sonnet 5 was about to get 50% more expensive on paper,
   against a price nobody is charged.** It shipped priced at a `$3/15` standard
   rate with a `$2/10` introductory discount set to expire on 2026-08-31 — the
