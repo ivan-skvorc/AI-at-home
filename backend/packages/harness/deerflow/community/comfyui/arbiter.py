@@ -34,12 +34,17 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import importlib
 import logging
+import os
 import shutil
 import subprocess
+import sys
 import time
 from collections.abc import AsyncIterator, Callable, Sequence
 from dataclasses import dataclass, field
+from functools import lru_cache
+from pathlib import Path
 from typing import Any, Protocol
 
 import httpx
@@ -118,27 +123,73 @@ def compute_policy(config: GpuArbiterConfig, budget_gb: float | None) -> PolicyD
     return PolicyDecision("exclusive", f"local tenants need {total:.1f} GiB but budget leaves only {usable:.1f} GiB")
 
 
-def detect_budget_gb(config: GpuArbiterConfig, detector: Callable[[], tuple[float, str] | None] | None = None) -> float | None:
-    """Resolve ``budget_gb``, reusing the setup wizard's own VRAM detection.
+def _load_wizard_vram_detector() -> Callable[[], tuple[float, str] | None] | None:
+    """Import ``scripts/wizard/steps/ollama.py::detect_vram_gb``, or None.
 
-    ``scripts/wizard/steps/ollama.py::detect_vram_gb`` already parses
-    nvidia-smi / rocm-smi / Apple unified memory. A second detector would drift
-    from it, so this imports that one and degrades to "unknown" when the wizard
-    package is not importable (a packaged install without the repo scripts).
+    That function already parses nvidia-smi / rocm-smi / Apple unified memory,
+    and a second detector would drift from it. The Gateway runs from
+    ``backend/`` with the repo's ``scripts/`` directory off ``sys.path``, so the
+    plain import fails there; the repo root is located from this file's own
+    path (or ``DEER_FLOW_REPO_ROOT``) before giving up. A packaged install
+    without the repo scripts degrades to "budget unknown", which the policy
+    reads as exclusive — the safe direction.
     """
+    for module_path in ("wizard.steps.ollama", "scripts.wizard.steps.ollama"):
+        try:
+            module = importlib.import_module(module_path)
+        except ImportError:
+            continue
+        return getattr(module, "detect_vram_gb", None)
+
+    roots: list[Path] = []
+    env_root = os.environ.get("DEER_FLOW_REPO_ROOT", "").strip()
+    if env_root:
+        roots.append(Path(env_root))
+    roots.extend(Path(__file__).resolve().parents[:8])
+    for root in roots:
+        candidate = root / "scripts" / "wizard" / "steps" / "ollama.py"
+        if not candidate.is_file():
+            continue
+        # Import it as the package it is, rather than loading the file alone:
+        # the module imports its siblings (`wizard.ui`, `wizard.providers`), so
+        # a bare file load fails on the first of them. Appended, never
+        # prepended — the repo's scripts/ directory must not shadow anything.
+        scripts_dir = str(root / "scripts")
+        if scripts_dir not in sys.path:
+            sys.path.append(scripts_dir)
+        try:
+            module = importlib.import_module("wizard.steps.ollama")
+        except Exception as exc:
+            logger.debug(f"could not import the wizard VRAM detector from {candidate}: {exc}")
+            return None
+        return getattr(module, "detect_vram_gb", None)
+    logger.debug("media.gpu.budget_gb is 'auto' but the wizard VRAM detector could not be located")
+    return None
+
+
+@lru_cache(maxsize=1)
+def _detected_budget_gb() -> float | None:
+    """Detected VRAM, cached for the process.
+
+    Detection shells out to nvidia-smi / rocm-smi; a generation must not pay
+    that on every call, and a card does not change size while the Gateway runs.
+    """
+    detect = _load_wizard_vram_detector()
+    if detect is None:
+        return None
+    return _run_detector(detect)
+
+
+def detect_budget_gb(config: GpuArbiterConfig, detector: Callable[[], tuple[float, str] | None] | None = None) -> float | None:
+    """Resolve ``budget_gb``: an explicit number, or the wizard's detection."""
     if config.budget_gb != "auto":
         return float(config.budget_gb)
-    detect = detector
-    if detect is None:
-        try:
-            from wizard.steps.ollama import detect_vram_gb  # type: ignore[import-not-found]
-        except ImportError:
-            try:
-                from scripts.wizard.steps.ollama import detect_vram_gb  # type: ignore[import-not-found,no-redef]
-            except ImportError:
-                logger.debug("media.gpu.budget_gb is 'auto' but the wizard VRAM detector is not importable")
-                return None
-        detect = detect_vram_gb
+    if detector is None:
+        return _detected_budget_gb()
+    return _run_detector(detector)
+
+
+def _run_detector(detect: Callable[[], tuple[float, str] | None]) -> float | None:
     try:
         detected = detect()
     except Exception as exc:  # pragma: no cover - defensive

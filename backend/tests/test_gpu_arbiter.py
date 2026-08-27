@@ -18,7 +18,9 @@ because Ollama offloaded layers to system RAM. So each test pins one of:
 from __future__ import annotations
 
 import asyncio
+import sys
 from dataclasses import dataclass, field
+from pathlib import Path
 
 import pytest
 
@@ -28,6 +30,7 @@ from deerflow.community.comfyui.arbiter import (
     GpuArbiter,
     GpuBusyError,
     OllamaTenant,
+    _load_wizard_vram_detector,
     build_controllers,
     compute_policy,
     detect_budget_gb,
@@ -127,6 +130,23 @@ class TestBudgetDetection:
 
     def test_auto_degrades_to_unknown_when_nothing_is_detectable(self):
         assert detect_budget_gb(_config(budget_gb="auto"), lambda: None) is None
+
+    def test_the_wizard_detector_is_reachable_with_scripts_off_sys_path(self, monkeypatch):
+        """The Gateway runs from backend/, with the repo's scripts/ off sys.path.
+
+        pytest's conftest puts it *on* the path, so the plain import succeeds
+        here and hides the real deployment. Take it back off: without the
+        file-path fallback, ``budget_gb: auto`` silently detects nothing
+        forever in the process that actually generates.
+        """
+        scripts_dir = str(Path(__file__).resolve().parents[2] / "scripts")
+        monkeypatch.setattr(sys, "path", [entry for entry in sys.path if Path(entry).resolve() != Path(scripts_dir).resolve()])
+        for name in [module for module in sys.modules if module == "wizard" or module.startswith("wizard.")]:
+            monkeypatch.delitem(sys.modules, name, raising=False)
+
+        detector = _load_wizard_vram_detector()
+        assert detector is not None
+        assert detector.__name__ == "detect_vram_gb"
 
     def test_nvidia_smi_sums_every_card(self):
         assert nvidia_smi_used_mb(lambda _cmd: "1024\n2048\n") == 3072.0

@@ -379,3 +379,53 @@ class TestClientRunLoop:
 
 async def _no_sleep(_seconds: float) -> None:
     return None
+
+
+class TestConfigWiring:
+    """Unit tests do not prove the tools actually load from a config file.
+
+    The `use:` paths in `config.example.yaml` are strings; a rename that leaves
+    them stale fails only at chat time, with the tool simply missing.
+    """
+
+    def _config_with_media_tools(self):
+        import re
+
+        from deerflow.config.app_config import AppConfig
+
+        text = (REPO_ROOT / "config.example.yaml").read_text(encoding="utf-8")
+        entries = re.findall(r"^\s*#\s*-\s*name:\s*(\S+)\n\s*#\s*group:\s*media\n\s*#\s*use:\s*(\S+)\s*$", text, re.MULTILINE)
+        assert entries, "config.example.yaml no longer documents the media tool entries"
+        return (
+            AppConfig.model_validate(
+                {
+                    "sandbox": {"use": "deerflow.sandbox.local:LocalSandboxProvider"},
+                    "tool_groups": [{"name": "media"}],
+                    "tools": [{"name": name, "group": "media", "use": use} for name, use in entries],
+                }
+            ),
+            entries,
+        )
+
+    def test_every_documented_use_path_resolves_to_a_tool_of_that_name(self):
+        from deerflow.tools.tools import get_available_tools
+
+        config, entries = self._config_with_media_tools()
+        tools_by_name = {tool.name: tool for tool in get_available_tools(groups=["media"], include_mcp=False, app_config=config)}
+        for name, use in entries:
+            assert name in tools_by_name, f"{use} did not load as a tool named {name}"
+
+    def test_the_documented_entries_cover_the_whole_package(self):
+        from deerflow.community import comfyui
+
+        _, entries = self._config_with_media_tools()
+        exported = {tool.name for tool in (getattr(comfyui, attr) for attr in comfyui.__all__)}
+        assert {name for name, _ in entries} == exported
+
+    def test_the_tools_are_reachable_without_a_group_filter(self):
+        """The lead agent binds with groups=None, so a media group must not hide them."""
+        from deerflow.tools.tools import get_available_tools
+
+        config, entries = self._config_with_media_tools()
+        names = {tool.name for tool in get_available_tools(include_mcp=False, app_config=config)}
+        assert {name for name, _ in entries} <= names
