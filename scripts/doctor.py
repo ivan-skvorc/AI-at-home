@@ -1133,6 +1133,104 @@ def _ollama_concurrency_result(data: Mapping[str, Any]) -> CheckResult:
     )
 
 
+def _comfyui_tools_enabled(data: Mapping[str, Any]) -> bool:
+    tools = data.get("tools")
+    if not isinstance(tools, list):
+        return False
+    return any(isinstance(tool, Mapping) and "deerflow.community.comfyui" in str(tool.get("use") or "") for tool in tools)
+
+
+def _comfyui_probe(base_url: str) -> dict | None:
+    """Read ComfyUI's /system_stats, or None when it is unreachable."""
+    import json
+    import urllib.error
+    import urllib.request
+
+    try:
+        with urllib.request.urlopen(f"{base_url.rstrip('/')}/system_stats", timeout=2.0) as response:  # noqa: S310 - fixed service URL
+            return json.loads(response.read().decode("utf-8"))
+    except (urllib.error.URLError, OSError, ValueError, TimeoutError):
+        return None
+
+
+def check_media_generation(config_path: Path, probe=_comfyui_probe, nvidia_used=None) -> list[CheckResult]:
+    """Is local image/video generation ready, and is the GPU actually free?
+
+    The second half is the one that matters day to day. A Gateway that died
+    mid-generation leaves model weights resident, and nothing complains: the
+    next local chat turn just runs several times slower because Ollama silently
+    offloaded layers to system RAM. This surfaces that as a row instead.
+
+    Warn-only: an idle card is not a broken install, and the media tools are
+    off by default.
+    """
+    if not config_path.exists():
+        return [CheckResult("local media generation", "skip")]
+    try:
+        data = _load_yaml_file(config_path)
+    except Exception as exc:
+        return [CheckResult("local media generation", "warn", str(exc))]
+
+    if not _comfyui_tools_enabled(data):
+        return [CheckResult("local media generation", "skip", "ComfyUI media tools not enabled in config.yaml")]
+
+    media = data.get("media") if isinstance(data.get("media"), Mapping) else {}
+    comfy = media.get("comfyui") if isinstance(media.get("comfyui"), Mapping) else {}
+    base_url = str(os.environ.get("DEER_FLOW_COMFYUI_BASE_URL") or comfy.get("base_url") or "http://localhost:8188")
+
+    stats = probe(base_url)
+    if stats is None:
+        return [
+            CheckResult(
+                "ComfyUI service",
+                "warn",
+                f"{base_url} unreachable — generate_image / generate_video will fail at chat time",
+                fix="Start it with 'make comfy-up', or set media.comfyui.base_url / DEER_FLOW_COMFYUI_BASE_URL to an instance you already run",
+            )
+        ]
+
+    results = [CheckResult("ComfyUI service", "ok", base_url)]
+    results.append(_gpu_residency_result(stats, nvidia_used))
+    return results
+
+
+def _gpu_residency_result(stats: Mapping[str, Any], nvidia_used=None) -> CheckResult:
+    """VRAM held while nothing is generating is the silent-degradation case."""
+    devices = stats.get("devices") if isinstance(stats.get("devices"), list) else []
+    torch_held_bytes = 0.0
+    for device in devices:
+        if isinstance(device, Mapping):
+            torch_held_bytes += float(device.get("torch_vram_total") or 0)
+    held_gb = torch_held_bytes / 1024**3
+
+    if nvidia_used is None:
+
+        def nvidia_used() -> float | None:
+            output = _run(["nvidia-smi", "--query-gpu=memory.used", "--format=csv,noheader,nounits"])
+            if not output:
+                return None
+            total = 0.0
+            for line in output.splitlines():
+                try:
+                    total += float(line.strip())
+                except ValueError:
+                    continue
+            return total
+
+    used_mb = nvidia_used()
+    if held_gb >= 0.5:
+        return CheckResult(
+            "GPU residency",
+            "warn",
+            f"ComfyUI is holding {held_gb:.1f} GiB while nothing is generating — a local chat model will offload layers to RAM and run several times slower",
+            fix="The arbiter frees it on the next generation; to free it now: curl -X POST "
+            + "http://localhost:8188/free -d '{\"unload_models\":true,\"free_memory\":true}'",
+        )
+    if used_mb is not None and used_mb >= 1024:
+        return CheckResult("GPU residency", "ok", f"ComfyUI holds nothing; {used_mb:.0f} MiB in use by other processes (local models, desktop)")
+    return CheckResult("GPU residency", "ok", "card is free")
+
+
 def check_deployment_exposure(project_root: Path, env: Mapping[str, str] | None = None) -> list[CheckResult]:
     """Report the *effective* network exposure of each entry surface (fork feature).
 
@@ -1253,6 +1351,9 @@ def main() -> int:
 
     # ── Local models ─────────────────────────────────────────────────────────
     sections.append(("Local Models", check_ollama_readiness(config_path)))
+
+    # ── Local media generation ───────────────────────────────────────────────
+    sections.append(("Local Media", check_media_generation(config_path)))
 
     # ── Deployment exposure ──────────────────────────────────────────────────
     sections.append(("Deployment", check_deployment_exposure(project_root)))

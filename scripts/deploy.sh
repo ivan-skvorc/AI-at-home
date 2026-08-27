@@ -484,6 +484,28 @@ case "$searxng_resolution" in
         ;;
 esac
 
+# ── ComfyUI (local image/video generation) ───────────────────────────────────
+# Resolve only, never start: the ComfyUI container is gigabytes and claims the
+# GPU, so `make comfy-up` stays the explicit door. Reuse is the point — an
+# instance already running on this host is found and exported so the stack
+# never points at a second one.
+comfyui_resolution="skip"
+if [ -n "$_detect_python" ]; then
+    _comfyui_args=(--context docker --config "$DEER_FLOW_CONFIG_PATH")
+    [ -f "$ENV_FILE" ] && _comfyui_args+=(--env-file "$ENV_FILE")
+    comfyui_resolution="$("$_detect_python" "$REPO_ROOT/scripts/detect_comfyui.py" "${_comfyui_args[@]}" || echo skip)"
+fi
+
+case "$comfyui_resolution" in
+    external\ *)
+        export DEER_FLOW_COMFYUI_BASE_URL="${comfyui_resolution#external }"
+        echo -e "${GREEN}✓ ComfyUI: using existing instance at $DEER_FLOW_COMFYUI_BASE_URL${NC}"
+        ;;
+    bundled)
+        echo -e "${BLUE}ComfyUI: media tools are enabled but nothing answered on :8188 — run 'make comfy-up'${NC}"
+        ;;
+esac
+
 # ── DEER_FLOW_DOCKER_SOCKET (aio / pure-DooD mode only) ──────────────────────
 # Only aio mode (AioSandboxProvider without provisioner_url) needs the host
 # Docker socket. It is mounted via the opt-in docker-compose.dood.yaml overlay,

@@ -2118,6 +2118,207 @@ keep in step. The two existing knobs that matter to it —
 | Tests | `backend/tests/test_democracy_panel.py`, `frontend/tests/unit/core/threads/democracy.{test,dom.test}.ts`, `frontend/tests/e2e/democracy-panel.spec.ts` |
 
 
+### 23. Local image and video generation (ComfyUI, a GPU arbiter, and a refine loop)
+
+The fork's central move, applied to a second modality. Text inference already has
+a free local tier — Ollama, auto-synced, priced at zero (§1). Images and video did
+not: both bundled media skills call MiniMax or Gemini over HTTPS, so every picture
+cost money and every prompt left the house, which is exactly the pair of properties
+this fork replaced for chat. Roadmap items 12–15 in one change set.
+
+**Why a Gateway-side tool and not a skill script.** The two cloud media skills are
+Python scripts that run *inside the sandbox*. Following that shape here would tie
+the feature to the sandbox mode: a remote AIO container cannot reach a host GPU,
+a local container can only reach it through a bind mount, and the host-local
+sandbox is a different filesystem again. The tool runs in the Gateway process and
+writes straight to the thread's host-side outputs directory — the same path
+`present_files` normalizes against — so it is correct under *every* sandbox mode,
+including the per-thread container one. It also puts the process-wide GPU
+semaphore on the same side of the wall as the code that generates, which a
+subprocess could not do.
+
+**ComfyUI, not a simpler HTTP wrapper.** The deciding feature is `/object_info`:
+the enum on `CheckpointLoaderSimple.ckpt_name` *is* the list of installed
+checkpoints, and the same is true for unets, VAEs, text encoders, samplers and
+schedulers. That single endpoint is what lets one sentence pick a model, keeps
+model names out of the code entirely, and makes a fresh install with exactly one
+checkpoint work with no configuration. It is also what makes template validation
+possible.
+
+**Templates plus typed parameters — the model never authors graph JSON.** A model
+that can emit arbitrary node graphs can also load arbitrary files and run arbitrary
+custom nodes on the machine holding the GPU and the data. So the graphs are files
+an operator can read (`templates/*.json`, ComfyUI's API format), the model passes
+`prompt`/`seed`/`steps`/`cfg`/dimensions/checkpoint, and a parameter the template
+does not bind is an **error** rather than a silent no-op — a dropped seed is what
+turns an iteration loop into a slot machine. Each template file wraps the
+submittable graph in binding metadata so that metadata never reaches ComfyUI, and
+the submitted graph alone is saved beside every output as `<name>.workflow.json`:
+it opens in ComfyUI's own editor and reproduces the result by hand, which is the
+whole of the "inspect how the nodes are set up" requirement.
+
+**Validation names the node that moved.** API-format graphs address nodes by
+numeric id, so a custom-node update or a renamed input silently invalidates a
+template and ComfyUI's native complaint is a validation dump. `validate_template`
+compares the graph against `/object_info` and returns sentences naming node and
+input. It runs at *first use per (base_url, template)*, cached for the process —
+**not** at Gateway startup, because ComfyUI is usually not running when the
+Gateway boots and a startup check that cannot reach the service checks nothing.
+`make doctor` runs the reachable version of the same idea.
+
+**The URL guard is used, not bypassed.** A loopback ComfyUI is the textbook
+intentional-internal-target case, so it goes through the shared
+`validate_public_http_url` with the documented `allow_private_addresses` opt-out —
+defaulted to `true` for this tool, unlike the web tools. Bypassing the guard for
+"it's just localhost" would make the setting dead, and the day someone points
+`base_url` at a public host there would be nothing to turn on.
+
+#### The GPU arbiter (roadmap 13)
+
+A language model and a diffusion model both want the whole card, and on a 24 GB
+consumer GPU they do not both fit. **The failure is silent, which is the entire
+reason this exists:** Ollama does not error when weights do not fit, it offloads
+layers to system RAM and answers several times slower. Five properties are
+load-bearing:
+
+1. **Eviction happens inside the tool call.** An agent turn is a chain of model
+   calls, so the lead model reloads the moment a tool returns; a swap sequenced at
+   the plan level therefore puts both tenants on the card at once. `generate_image`
+   evicts, generates, evicts itself, and returns an empty card. The agent never
+   needs to know VRAM exists.
+2. **Tenants, not special cases.** Each declares `location: local | cloud`. A cloud
+   tenant is never resident, so every eviction against it is a no-op *without a
+   branch of its own* — switch the lead to a cloud model and the swapping stops.
+3. **Verify, never assume.** Residency is re-read per acquire (Ollama `/api/ps`,
+   ComfyUI `/system_stats`, `nvidia-smi` as tiebreak) rather than trusted from
+   in-process bookkeeping. A Gateway that died mid-generation leaves the card held;
+   the tiebreak — VRAM in use while no tenant claims it — is what recovers that on
+   the next acquire instead of on the next restart.
+4. **The policy is computed and logged.** `auto` derives exclusive vs. shared from
+   `budget_gb - reserve_gb` against the sum of local tenant estimates, with the
+   reasoning in the log line. That is what makes a later GPU upgrade a config
+   outcome rather than a code change: a bigger card resolves to `shared` on its own
+   and the swapping stops. `budget_gb: auto` reuses
+   `scripts/wizard/steps/ollama.py::detect_vram_gb` — do not write a second
+   detector.
+5. **Ollama's eviction is per request.** `keep_alive: 0` is passed on the eviction
+   call only; the global `ollama.keep_alive` exists to stop subagent cold starts
+   and keeps its value for ordinary chat. A global override would reintroduce
+   exactly the problem it was added to fix.
+
+One depth-1 semaphore, per event loop, serializes *tenants* rather than callers —
+two threads generating at once would otherwise thrash with neither finishing — and
+a caller that waits is told it is waiting.
+
+#### The refine loop (roadmap 14)
+
+Local generation is free at the margin, which changes what is worth doing: four
+attempts on a metered API cost four times as much, on your own GPU they cost
+electricity. First-attempt diffusion quality is genuinely poor, and iteration is
+how good results are actually produced.
+
+**The agent owns the loop; there is no loop engine.** `skills/public/image-refine/`
+instructs generate → view → judge → adjust → repeat. Building the loop inside a
+tool that calls the model itself would bypass the run journal's per-model token
+accounting, hide the reasoning from the transcript, and break streaming.
+
+What the server holds is exactly what a model cannot be trusted with:
+
+- **The rubric is frozen before iteration 1** — 3–6 checkable criteria, and a
+  verdict may not judge anything outside them. An open-ended "is this good?"
+  either accepts immediately or never converges, because the standard drifts with
+  each look.
+- **The counter is at the tool boundary.** The tool returns a `session_id`, the
+  server counts, and iteration N+1 is *refused* with a message written to be
+  reported verbatim. Models lose count; this is the classic way these loops run
+  away. Same for the wall-clock budget, which is what makes video safe to iterate
+  on. A failed generation still consumes its iteration — otherwise a loop that
+  fails every time never stops.
+- **One named change per retry**, rejected when it reads as several. One change
+  per iteration is what makes the loop diagnosable.
+- **Seed discipline is instructed, not enforced** — hold the seed when changing
+  wording or weights so the delta is attributable; changing the seed is itself the
+  one change, for an unlucky composition. It cannot be enforced without deciding
+  for the model *which* change it is making.
+
+The session JSON beside the outputs (criteria, and per iteration the params, seed,
+verdict and filename) is the audit trail — it is what makes "target achieved"
+reviewable rather than asserted. And the skill says out loud that a text-only local
+lead has no judging step at all, because `view_image` is only bound when the model
+reports vision support: better a documented refusal than a loop that quietly
+degrades to the model guessing at its own output.
+
+#### Video (roadmap 15)
+
+Two constraints shape it. **No model can watch an MP4** — `view_image` takes
+png/jpg/webp/gif only, capped at 20 MB — so the template saves the decoded frames
+alongside the assembled clip and the tool writes evenly spaced stills *and* one
+tiled contact sheet. The sheet is the better critic input for two independent
+reasons: one `view_image` call instead of six (vision tokens are billed per image,
+every round, on a cloud lead), and temporal faults — flicker, morphing, identity
+drift — read far more clearly side by side than frame by frame. `select_indices`
+includes both endpoints deliberately: drift shows up at the ends, and a sheet
+sampled from the middle hides the fault the critic is looking for. Pillow is
+imported lazily and a missing Pillow degrades to "no contact sheet" with a named
+error — it must never lose a clip that took minutes to render.
+
+**Minutes per clip** is why `video_timeout` is its own config value rather than the
+image budget or an inherited default: one shared timeout either abandons working
+clips or lets a wedged image run hold the GPU for half an hour. Being a
+Gateway-side tool, it is also not bound by `sandbox.bash_command_timeout`.
+
+The shipped default template stays on core ComfyUI nodes so a stock install
+validates; `txt2video-gguf` is offered alongside it and the config comments say
+why GGUF is preferred over fp8 on a 24 GB card — Ampere and older have **no FP8
+tensor cores**, so fp8 saves memory but runs the matmuls by emulation. That is a
+stated trade-off in the comments, not a silent choice.
+
+#### Service, not sandbox tenant
+
+ComfyUI is a long-lived service holding weights between requests, so it follows the
+SearXNG pattern: a compose file (`docker/docker-compose.comfyui.yml`), a
+loopback-only published port (the ComfyUI API has no authentication at all and can
+read and write files on the machine holding the GPU), `make comfy-up` /
+`comfy-down` / `comfy-logs`, and a `DEER_FLOW_COMFYUI_BASE_URL` override
+documented in `.env.example` — named without `KEY`/`TOKEN`/`SECRET` so
+`env_policy.build_sandbox_env` does not scrub it from skill subprocesses.
+
+`scripts/detect_comfyui.py` differs from its SearXNG sibling in one deliberate way:
+it **resolves but never starts**. An instance you already run is found and exported
+(the point: two ComfyUIs on one card is how a GPU ends up thrashing), but nothing
+is auto-started, because a multi-gigabyte GPU container appearing as a side effect
+of `make dev` would be a surprise. `make comfy-up` is the explicit door.
+
+**Not vendored: the image.** ComfyUI publishes no official container image, so the
+compose file names a community build behind `DEER_FLOW_COMFYUI_IMAGE` and the
+comments tell the operator to pin the dated tag their driver needs. Models are
+never baked in or downloaded automatically — that is roadmap item 16's problem, and
+it is deliberately still open.
+
+**Not declared: Pillow.** `uv lock` cannot currently be re-run in this repo at all —
+the pre-existing `tenki` extra's `tenki-sandbox` 404s on PyPI, so any `pyproject.toml`
+change makes every `uv run` fail to resolve. Pillow arrives transitively via
+`markitdown[all]`; the import is lazy and names itself in the error. When the
+`tenki` dependency is fixed, add `comfyui = ["pillow>=11.0"]` as an extra and map
+`generate_video` to it in `scripts/detect_uv_extras.py`.
+
+| Piece | Where |
+| --- | --- |
+| HTTP transport (submit/poll/view/object_info/free/system_stats) | `community/comfyui/client.py` |
+| Templates + validation + patching | `community/comfyui/templates.py`, `community/comfyui/templates/*.json` |
+| Config/env resolution, URL guard, model resolution, output writing | `community/comfyui/service.py` |
+| GPU residency arbiter | `community/comfyui/arbiter.py` |
+| Refine sessions (frozen rubric, counter, budget, verdicts) | `community/comfyui/sessions.py` |
+| Stills + contact sheet | `community/comfyui/frames.py` |
+| Agent tools | `community/comfyui/tools.py` (`generate_image`, `generate_video`, `list_media_models`, `refine_start`, `refine_verdict`) |
+| The loop itself | `skills/public/image-refine/SKILL.md` |
+| Config | `config.example.yaml` → `media:` (`config_version` 44), `deploy/helm/deer-flow/{values.yaml,README.md}` |
+| Service | `docker/docker-compose.comfyui.yml`, `scripts/detect_comfyui.py`, `Makefile` (`comfy-up`/`comfy-down`/`comfy-logs`), launch wiring in `scripts/{serve,docker,deploy}.sh` |
+| Doctor | `scripts/doctor.py::check_media_generation` (service reachable + VRAM held while idle) |
+| Invariants for agents | `backend/packages/harness/deerflow/community/comfyui/AGENTS.md` |
+| Tests | `backend/tests/test_comfyui_tools.py`, `test_gpu_arbiter.py`, `test_refine_session.py`, `test_comfyui_video.py`, `test_detect_comfyui.py`, `test_doctor.py::TestCheckMediaGeneration` |
+
+
 ## Why mix local and cloud
 
 Each tier of model has a job it's good at. Mixing them is how you get most of the quality of frontier models at a fraction of the cost:
@@ -2305,6 +2506,9 @@ Then confirm each fork feature end-to-end:
 | **Deployment exposure check** (§12) | `cd backend && uv run pytest tests/test_exposure.py` covers the bind classification, the fact resolution (`.env` vs. process env precedence, `runtime_settings.json`, sandbox mode), every tier, and the doctor rows. Wiring: `scripts/exposure.py`; `scripts/doctor.py::check_deployment_exposure` in the new **Deployment** section; the `--surface docker` call at the end of `scripts/deploy.sh` and `--surface local` at the end of `scripts/serve.sh`. **Two things are easy to break silently:** (1) the local surface must stay pinned to the wildcard — it reads `docker/nginx/nginx.local.conf`'s address-less `listen 2026;`, so if upstream gives that config an explicit address, update `LOCAL_BIND_SOURCE`/`resolve_facts` or the check will report a bind the stack does not use; (2) `classify_bind_host` must test the Tailscale ranges **before** `is_private`, because Python classifies CGNAT (100.64.0.0/10) as private and the two tiers are deliberately different. The check must never return `fail` — a deliberately exposed home lab is not a broken install. Manual: `python3 scripts/exposure.py --surface docker`, then set `BIND_HOST=0.0.0.0` in `.env` and confirm the tier moves to `open-network` and names each contributing setting. |
 | **Spend history page** (§11) | `cd backend && uv run pytest tests/test_console_router.py -k ConsoleSpend` covers `GET /api/console/spend`: the three groupings (model / thread / feature) agreeing with the total, unpriced models named and sorted last, the window boundary, the no-pricing state, and the 503 on the memory backend. Wiring: `ConsoleSpendResponse` in `app/gateway/routers/console.py`; `AuxUsageStore.aggregate()`; `frontend/src/core/spend/*`; `frontend/src/app/workspace/spend/page.tsx`; the sidebar entry in `components/workspace/workspace-nav-chat-list.tsx`; i18n `spend.*` in both locales. The page must keep reusing `pricing.py` rather than recomputing cost — a second formula is how the page and the chat header start disagreeing about the same run. Manual: open **Spend** in the sidebar and confirm the tables' totals match the summary tile for the same window. |
 | **Gaslight mode — edit into a hidden version** (§18) | `cd backend && uv run pytest tests/test_threads_router.py -k answer` covers the answer half end to end: the branch rewrites only the edited assistant message, the run-event seed carries the replacement (the feed reads events, not the checkpoint), a branch without the pair is byte-unchanged, and every half-specified or out-of-turn rewrite is refused. `cd frontend && pnpm test edit-version-answer && pnpm test edit-versions && pnpm test pending-edit-send && pnpm test "core/messages/utils"` covers the version model (group keying on the base message id, lineage resolution, a descendant inheriting its ancestor's position, the malformed-entry guards), the session-storage hand-off (read consumes it, so an edit is never replayed twice), and the per-turn edit anchors. `pnpm test:e2e edit-message-versions` drives the whole flow: edit a middle turn, land on the version with the earlier history and without the replaced answer, one sidebar entry pointing at the version, `2/2` on the edited message, switch back to `1/2`. Wiring: `core/threads/edit-versions.ts` (model + metadata keys); `core/threads/pending-edit-send.ts`; `useCreateEditVersion` / `useSetActiveEditVersion` in `core/threads/hooks.ts`; `createThread` in `core/threads/api.ts`; `components/workspace/chats/use-edit-versions.ts`; `components/workspace/messages/message-version-switcher.tsx`; the `onEditMessage` / `editVersionSwitchers` props on `MessageList`; the `deerflow_edit_version` filter in `core/threads/thread-search-query.ts`; the active-version hop in `pathOfThread` (`core/threads/utils.ts`). **Five things are silent when broken:** (0a) an **answer** edit must not park a pending send — the branch already carries the rewritten answer, so parking one replays the assistant's words back as the user's next message; (0b) answer groups must stay namespaced (`answer:<id>`) — editing the answer of turn *k* and the prompt of turn *k+1* branch from the same message, so a shared key renders both sets of versions on both messages; (1) groups must stay keyed on the **base message id** — keying on the turn index merges lineages that only share an ordinal; (2) `pathOfThread` must keep honouring `deerflow_edit_active_version`, or the one sidebar entry reopens version 1 forever and the edit reads as lost; (3) `takePendingEditSend` must keep *removing* on read — a non-consuming read replays the edited turn on every remount. If upstream restores a Branch button on the assistant action row, decide deliberately: this fork removed it on purpose, and two buttons that both fork the conversation is the confusing state the feature replaced. Manual: edit the first message of a chat (the no-branch path) and confirm the switcher appears, then reload from the sidebar and confirm you land back on the edited version. |
+| **Local image generation** (§23) | `cd backend && uv run pytest tests/test_comfyui_tools.py tests/test_detect_comfyui.py` covers the template contract (typed parameters only, an unbound parameter refused rather than ignored, no path traversal in a template name, and a patched graph that cannot leak back into the cached template), validation against `/object_info` naming the node that moved *before* anything is submitted, checkpoint resolution from the loader node's own enum (request → config → first installed) and the "not installed" message that lists what is, the SSRF guard being **used** with its documented `allow_private_addresses` opt-out rather than bypassed, the submit → poll → fetch loop against a mock transport including its wall-clock timeout, and the detector reusing an already-running ComfyUI instead of starting a second one. **Silent when broken:** the saved `<name>.workflow.json` must equal the graph that actually ran and must not carry binding metadata (otherwise "reproducible by hand" quietly stops being true); the reported seed must be the seed that reached the graph (otherwise every iteration is a fresh random draw and critique is noise); an active tool entry must never ship in `config.example.yaml` (a fresh machine has no ComfyUI, so it would fail at chat time); and the compose port must stay loopback-bound — the ComfyUI API has no authentication and can read and write host files. Manual: `make comfy-up`, uncomment the five `media` tool entries, ask for a picture, confirm the PNG opens in the artifact panel and that the sidecar workflow file loads in ComfyUI and reproduces it. |
+| **GPU residency arbiter** (§23) | `cd backend && uv run pytest tests/test_gpu_arbiter.py` plus `tests/test_doctor.py -k Media`. Covers the computed policy (a small card resolves to `exclusive`, a bigger one to `shared` **on its own**, an unknown estimate or unknown budget falls back to exclusive and names why), eviction on acquire *and* self-eviction on release, residency re-read from the services on every acquire, the `nvidia-smi` tiebreak that evicts when VRAM is held while no tenant claims it, serialization of two concurrent generations, the honest timeout instead of an unbounded queue, and the doctor row for VRAM held while idle. **Silent when broken:** Ollama's unload must stay a **per-request** `keep_alive: 0` — writing it globally reintroduces the subagent cold starts `ollama.keep_alive` exists to prevent; a cloud tenant must remain not-resident rather than gaining a branch of its own; and dropping the release-time self-eviction leaves the diffusion weights on the card, which does not fail, it just makes the next chat turn several times slower. Manual: with a local lead configured, generate twice in a row and confirm `nvidia-smi` shows an empty card between generations. |
+| **Refine loop and local video** (§23) | `cd backend && uv run pytest tests/test_refine_session.py tests/test_comfyui_video.py` covers the frozen rubric (3–6 checkable criteria, a verdict that may not judge anything outside them, every criterion judged each round), the **server-held** counter and wall-clock budget refusing iteration N+1 with a reportable message — asserted at the tool boundary, not just in the model layer — the one-named-change rule on a retry, the session JSON audit trail, evenly spaced still selection with both endpoints included, the contact sheet, and the video tool's own timeout. **Silent when broken:** the video budget must stay a separate config value (sharing the image timeout abandons working clips; inheriting `sandbox.bash_command_timeout` abandons them sooner); a contact-sheet failure must never lose the clip that took minutes to render; and the skill's instruction text is asserted too — the seed discipline, "only view the newest result each round", the `view_image` vision constraint, and the refusal to open a second session to get around the cap are load-bearing sentences, not prose. Manual: ask for a deliberately vague image and confirm it converges within the cap; ask for an impossible one and confirm it abandons instead of spinning. |
 
 **Integration points that tend to need a hand** (where upstream refactors collide with fork additions — check these first when tests fail): the AIO sandbox provider (upstream's cross-instance ownership store adds instance attributes that minimal test fixtures built via `__new__` must seed), the skills tool-policy path (upstream's dynamic `SkillToolPolicyMiddleware` vs. any fork static filtering — reconcile onto the middleware and drop dead build-time filters), `scripts/check.py`'s Docker diagnostics (any upstream test that mocks `run_command` with a strict dict must tolerate the extra `docker` calls), and the `task_tool.py` / `input-box.tsx` model-override plumbing.
 

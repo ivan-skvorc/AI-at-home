@@ -1,0 +1,85 @@
+{
+  "name": "txt2video-gguf",
+  "kind": "video",
+  "description": "Same Wan-class 5B pipeline as txt2video, loading a GGUF-quantized UNet through the ComfyUI-GGUF custom node (UnetLoaderGGUF). Preferred over fp8 on Ampere and older: those cards have no FP8 tensor cores, so fp8 saves memory but runs the matmuls by emulation. Requires https://github.com/city96/ComfyUI-GGUF — a stock ComfyUI fails validation here naming node 1, which is the intended failure.",
+  "bindings": {
+    "prompt": { "node": "4", "input": "text" },
+    "negative_prompt": { "node": "5", "input": "text" },
+    "unet": { "node": "1", "input": "unet_name" },
+    "clip": { "node": "2", "input": "clip_name" },
+    "vae": { "node": "3", "input": "vae_name" },
+    "seed": { "node": "8", "input": "seed" },
+    "steps": { "node": "8", "input": "steps" },
+    "cfg": { "node": "8", "input": "cfg" },
+    "sampler": { "node": "8", "input": "sampler_name" },
+    "scheduler": { "node": "8", "input": "scheduler" },
+    "width": { "node": "6", "input": "width" },
+    "height": { "node": "6", "input": "height" },
+    "frames": { "node": "6", "input": "length" },
+    "fps": { "node": "11", "input": "fps" },
+    "filename_prefix": { "node": "12", "input": "filename_prefix" },
+    "frames_filename_prefix": { "node": "10", "input": "filename_prefix" }
+  },
+  "outputs": { "video": "12", "frames": "10" },
+  "prompt": {
+    "1": {
+      "class_type": "UnetLoaderGGUF",
+      "inputs": { "unet_name": "" }
+    },
+    "2": {
+      "class_type": "CLIPLoader",
+      "inputs": { "clip_name": "", "type": "wan", "device": "default" }
+    },
+    "3": {
+      "class_type": "VAELoader",
+      "inputs": { "vae_name": "" }
+    },
+    "4": {
+      "class_type": "CLIPTextEncode",
+      "inputs": { "text": "", "clip": ["2", 0] }
+    },
+    "5": {
+      "class_type": "CLIPTextEncode",
+      "inputs": { "text": "", "clip": ["2", 0] }
+    },
+    "6": {
+      "class_type": "EmptyHunyuanLatentVideo",
+      "inputs": { "width": 832, "height": 480, "length": 49, "batch_size": 1 }
+    },
+    "7": {
+      "class_type": "ModelSamplingSD3",
+      "inputs": { "model": ["1", 0], "shift": 8.0 }
+    },
+    "8": {
+      "class_type": "KSampler",
+      "inputs": {
+        "seed": 0,
+        "steps": 20,
+        "cfg": 6.0,
+        "sampler_name": "uni_pc",
+        "scheduler": "simple",
+        "denoise": 1.0,
+        "model": ["7", 0],
+        "positive": ["4", 0],
+        "negative": ["5", 0],
+        "latent_image": ["6", 0]
+      }
+    },
+    "9": {
+      "class_type": "VAEDecode",
+      "inputs": { "samples": ["8", 0], "vae": ["3", 0] }
+    },
+    "10": {
+      "class_type": "SaveImage",
+      "inputs": { "filename_prefix": "deerflow-frames", "images": ["9", 0] }
+    },
+    "11": {
+      "class_type": "CreateVideo",
+      "inputs": { "images": ["9", 0], "fps": 16 }
+    },
+    "12": {
+      "class_type": "SaveVideo",
+      "inputs": { "video": ["11", 0], "filename_prefix": "deerflow", "format": "auto", "codec": "auto" }
+    }
+  }
+}

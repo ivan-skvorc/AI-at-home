@@ -9,6 +9,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **media:** **Images and short video clips now generate on your own GPU, with no
+  API key and nothing leaving the house.** A long-lived ComfyUI service (`make
+  comfy-up`, published loopback-only on `127.0.0.1:8188`) backs five new tools —
+  `generate_image`, `generate_video`, `list_media_models`, `refine_start` and
+  `refine_verdict` — that run in the Gateway and write straight into the chat's
+  outputs directory, so the result opens in the artifact panel on its own and the
+  exact workflow that produced it is saved beside it as `<name>.workflow.json`.
+  Models are read from the running ComfyUI itself, so the agent can only pick
+  checkpoints you actually installed, and it needs none: a bare "make me a
+  picture" uses `media.default_checkpoint`, or the first one ComfyUI reports.
+  The new `image-refine` skill then lets the agent **look at what it made and try
+  again** — three to six criteria frozen before the first attempt, one named
+  change per round, and an iteration counter the *server* holds, so attempt five
+  is refused rather than trusted to stop. Clips get evenly spaced stills and a
+  contact-sheet PNG, because `view_image` cannot read an MP4. Sharing one card
+  between a chat model and a diffusion model is handled by a GPU arbiter that
+  evicts and restores inside the tool call, verifies residency from the services
+  rather than from memory, and derives its exclusive/shared policy from
+  `media.gpu.budget_gb` (default `auto`) — so a bigger card stops the swapping
+  with no code change. **Off by default:** the `media:` config section ships
+  configured (`config_version` 44) but the tool entries are commented out, since
+  a fresh machine has neither ComfyUI nor a checkpoint. `make doctor` reports
+  whether the service is reachable and whether VRAM is being held while nothing
+  is generating.
+
 - **chat:** **Democracy panels are now a setup page, keep running after the first
   answer, take files, and grade their panelists.** The launcher under *New chat*
   opens a page of its own (`/workspace/democracy/new`) instead of a popup, with

@@ -33,6 +33,7 @@
 > - 👥 **Multi-user mode toggle (Settings → Account)** — on by default (each login only sees its own conversations). Turn it off — after a confirmation — to combine every conversation into one shared workspace, so all histories are visible no matter which login or device created them (handy after going passwordless, when old per-account chats are stranded under different ids). Server-wide, admin-only, and reversible; while off, anyone who can reach the server sees all conversations, so keep it to a trusted machine.
 > - 🦊 **Camoufox as the default `web_fetch`** — a local, key-less, JavaScript-capable browser backend replaces the Jina cloud reader as the default. The package and its browser install automatically on every launch path (no API key).
 > - 🔎 **Self-hosted SearXNG as the default `web_search`** — a bundled metasearch backend, auto-provisioned at startup (an existing reachable instance is reused, otherwise the bundled container starts). No search API key required.
+> - 🖼️ **Local image and video generation, on your own GPU** — ask for a picture and get a PNG in the artifact panel with **no API key and nothing leaving the house**; the bundled media skills call MiniMax or Gemini over HTTPS, this renders on a ComfyUI service you start with `make comfy-up`. The agent can then **look at what it made and try again**: a refine loop judges each attempt against three to six criteria frozen before the first one, changes exactly one thing per round, and is stopped by a counter the *server* holds rather than by the model remembering to stop. Clips work too — and because no model can watch an MP4, each one also produces a contact sheet of evenly spaced frames, which is what gets critiqued. A GPU arbiter swaps your chat model out and back inside the tool call, so a 24 GB card runs both without the silent slowdown of Ollama quietly offloading to RAM. Costs a `make comfy-up`, your own checkpoints, and uncommenting five tool entries.
 > - 🔄 **Self-updating browser & search** — the two things the repo installs for itself, the Camoufox browser and the bundled SearXNG image, refresh themselves instead of silently rotting after first install: throttled once-a-day on launch (opt out with `DEER_FLOW_AUTO_UPDATE=0`), or via a `systemd --user` timer (`make auto-update-install`) that also fires on boot so a machine that was off at the daily slot catches up. `make auto-update` runs it on demand; every path is idempotent and best-effort.
 > - 📄 **PDF / Office uploads that just work** — `pymupdf4llm` is bundled and converted files are written under both name conventions, so PDF / DOCX / PPTX / XLSX uploads are reliably readable by the agent (enable with `uploads.auto_convert_documents: true`).
 > - 🐳 **Full clone-and-debug sandbox runs** — one-command per-thread containers, host-reachable ports, native debuggers (`gdb` / `strace`), longer command timeouts, and a `repo-runner` skill that encodes clone → install → run → debug.
@@ -129,6 +130,7 @@ DeerFlow has newly integrated the intelligent search and crawling toolset indepe
   - [Recommended Models](#recommended-models)
   - [Embedded Python Client](#embedded-python-client)
   - [Scheduled Tasks](#scheduled-tasks)
+  - [Local Image and Video Generation](#local-image-and-video-generation)
   - [Terminal Workbench (TUI)](#terminal-workbench-tui)
   - [Documentation](#documentation)
   - [⚠️ Security Notice](#️-security-notice)
@@ -1891,6 +1893,112 @@ File permissions survive the round trip, so credential directories come back
 `0700` rather than world-readable. Ownership is not restored (only root could),
 which is deliberate — restoring as your own user is also the fix if a Docker run
 has left root-owned files behind.
+
+## Local Image and Video Generation
+
+Ask for a picture and get one back rendered on your own GPU: a prompt in chat
+produces a PNG in the artifact panel, with **no API key set and nothing leaving
+the house**. The two bundled media skills (`image-generation`,
+`video-generation`) call MiniMax or Gemini over HTTPS — every image costs money
+and every prompt leaves your network. This is the local tier for the same
+modality, the same move this fork already made for chat with Ollama: a
+long-lived [ComfyUI](https://github.com/comfyanonymous/ComfyUI) service on your
+machine, driven by Gateway-side tools (`generate_image`, `generate_video`,
+`list_media_models`) rather than by a skill script. Start the service with
+`make comfy-up`; results appear in the chat's artifact panel on their own, and
+video clips play there too.
+
+**The agent can look at what it made and try again.** The `image-refine` skill
+runs a generate → view → judge → change-one-thing loop against three to six
+criteria it fixes *before* the first attempt, and the **server**, not the model,
+counts the iterations: attempt N+1 is refused outright when the cap or the time
+budget is spent. A verdict must judge every frozen criterion and a retry must
+name exactly one change — so when the fourth attempt is better you can see which
+change did it. The loop is allowed to give up: an `abandon` verdict says what
+could not be achieved instead of burning the cap. Every session is written
+beside the outputs as JSON — criteria, and per iteration the seed, parameters,
+verdict and filename.
+
+**A language model and a diffusion model do not both fit on one consumer card,
+and that failure is silent** — Ollama does not error when weights do not fit, it
+offloads layers to system RAM and answers several times slower. So generation
+takes the GPU through an arbiter: it evicts the chat model, generates, and hands
+back an empty card, all *inside the tool call*. Residency is re-read from the
+services on every acquire (a Gateway killed mid-generation is recovered by the
+next one, not by a restart), and the policy is **computed** from your VRAM
+budget — put a bigger card in and it resolves to "both resident" on its own,
+with no config edit. Switch your lead model to a cloud one and every eviction
+becomes a no-op.
+
+Limits worth knowing before you turn it on:
+
+- **You supply the models.** Checkpoints, unets, VAEs and text encoders go in
+  ComfyUI's own `models/` directory; nothing is bundled or downloaded for you.
+  `list_media_models` reports what is actually installed, read from the running
+  ComfyUI, so the agent can only pick from real files.
+- **Video is minutes per clip**, not seconds — it has its own timeout
+  (`video_timeout`, 40 minutes by default) separate from images.
+- **No model can watch an MP4.** `view_image` accepts png/jpg/webp/gif only, so
+  every clip is also written as evenly spaced stills plus one **contact sheet**
+  PNG, and that sheet is what the critique step looks at. Flicker, morphing and
+  identity drift are far easier to see side by side than frame by frame.
+- **A text-only local model cannot run the refine loop.** `view_image` is bound
+  only when the model reports vision support; without it the skill generates
+  once and says it cannot see the result, rather than iterating blind.
+- The workflow that produced each result is saved next to it as
+  `<name>.workflow.json`, in ComfyUI's API format — open it in ComfyUI and you
+  get the same image by hand.
+
+**Off by default.** The `media:` section ships configured in
+`config.example.yaml`, but the tools themselves are commented out, because a
+fresh machine has neither ComfyUI nor a checkpoint. To turn it on, start the
+service and uncomment the tool entries:
+
+```bash
+make comfy-up   # docker/docker-compose.comfyui.yml, publishes 127.0.0.1:8188
+```
+
+```yaml
+# config.yaml
+tools:
+  - name: list_media_models
+    group: media
+    use: deerflow.community.comfyui.tools:list_media_models_tool
+  - name: generate_image
+    group: media
+    use: deerflow.community.comfyui.tools:generate_image_tool
+  - name: generate_video
+    group: media
+    use: deerflow.community.comfyui.tools:generate_video_tool
+  - name: refine_start
+    group: media
+    use: deerflow.community.comfyui.tools:refine_start_tool
+  - name: refine_verdict
+    group: media
+    use: deerflow.community.comfyui.tools:refine_verdict_tool
+
+media:
+  default_checkpoint: null # null = use the first checkpoint ComfyUI reports
+  comfyui:
+    base_url: http://localhost:8188 # DEER_FLOW_COMFYUI_BASE_URL overrides it
+    image_timeout: 600
+    video_timeout: 2400
+  refine:
+    max_iterations: 4 # the server refuses attempt 5
+    budget_seconds: 1800
+  gpu:
+    enabled: true
+    budget_gb: auto # nvidia-smi / rocm-smi / Apple unified memory
+    policy: auto # computed: exclusive on a small card, shared on a big one
+```
+
+Already running a ComfyUI? Leave it running — every launch path detects it
+(`scripts/detect_comfyui.py`) and points the Gateway at it instead of starting a
+second one, because two ComfyUIs on one card is how a GPU ends up thrashing. Set
+`DEER_FLOW_COMFYUI_BASE_URL` to name a specific instance, including one on
+another machine on your tailnet. `make doctor` reports whether the service is
+reachable and — the check that matters day to day — whether VRAM is being held
+while nothing is generating.
 
 ## Terminal Workbench (TUI)
 

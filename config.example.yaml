@@ -15,7 +15,7 @@
 # ============================================================================
 # Bump this number when the config schema changes.
 # Run `make config-upgrade` to merge new fields into your local config.yaml.
-config_version: 43
+config_version: 44
 
 # ============================================================================
 # Logging
@@ -1807,12 +1807,129 @@ models:
 #     qwen3:8b: 1h
 
 # ============================================================================
+# Local Media Generation (ComfyUI) — fork feature
+# ============================================================================
+# Images and video rendered by a diffusion model on your own GPU: no API key,
+# nothing leaves the house, free at the margin. The bundled `image-generation`
+# and `video-generation` skills still call MiniMax / Gemini over HTTPS; this is
+# the local alternative, driven by Gateway-side tools instead of skill scripts
+# (a Gateway-side tool writes straight to the thread's outputs directory, which
+# is what keeps it correct under every sandbox mode).
+#
+# Turning it on takes two steps, and this section alone does NOT enable it:
+#   1. Run a ComfyUI:  make comfy-up   (or point base_url at one you already
+#      run — `scripts/detect_comfyui.py` prefers an existing instance, because
+#      two ComfyUIs on one card is how a GPU ends up thrashing).
+#   2. Uncomment the generate_image / generate_video / list_media_models /
+#      refine_start / refine_verdict tool entries in the `tools:` list below.
+#
+# Model files are yours to install: put checkpoints in ComfyUI's models/
+# directory. `list_media_models` reads the loader nodes' own enums, so whatever
+# is installed is what the agent can pick from — no hardcoded model names.
+media:
+  # Checkpoint used when a request names none. Unset (null) resolves the first
+  # checkpoint ComfyUI reports, so a fresh install with one model still works.
+  default_checkpoint: null
+
+  comfyui:
+    base_url: http://localhost:8188 # DEER_FLOW_COMFYUI_BASE_URL overrides this
+    # SSRF opt-out for the shared URL guard. A loopback / LAN ComfyUI is the
+    # intentional-internal-target case, so this is true by default here (web
+    # tools default it to false). Set false when base_url is a public host.
+    allow_private_addresses: true
+    request_timeout: 30 # per HTTP call (submit, poll, download)
+    poll_interval: 1.5 # seconds between /history polls
+    image_timeout: 600 # wall clock for one image
+    # Video gets its own budget on purpose: a clip is minutes, not seconds, and
+    # a single shared timeout would either abandon working clips or let a
+    # wedged image run hold the GPU for half an hour.
+    video_timeout: 2400
+
+  image:
+    template: txt2img # workflow template (API format) shipped with the tool
+    width: 1024
+    height: 1024
+    steps: 25
+    cfg: 6.0
+    sampler: euler
+    scheduler: normal
+    negative_prompt: ""
+
+  video:
+    # txt2img/txt2video use core ComfyUI nodes only. `txt2video-gguf` loads a
+    # GGUF-quantized UNet through the ComfyUI-GGUF custom node and is the
+    # better choice on a 24 GB card: prefer GGUF over fp8 unless you are on
+    # Ada/Hopper or newer, because Ampere and older have no FP8 tensor cores —
+    # fp8 there saves memory but runs the matmuls by emulation (p).
+    template: txt2video
+    # Model files for the video template. Unset resolves the first one ComfyUI
+    # reports for each loader node.
+    unet: null
+    clip: null
+    vae: null
+    width: 832 # sized for what a 24 GB consumer card actually runs
+    height: 480
+    frames: 49 # ~3 seconds at 16 fps
+    fps: 16
+    steps: 20
+    cfg: 6.0
+    # No model can watch an MP4 (view_image takes png/jpg/webp/gif only), so
+    # the tool also writes evenly spaced stills AND one contact sheet. The
+    # sheet is the better critic input: one view_image call instead of six, and
+    # flicker / morphing / identity drift read far more clearly side by side.
+    contact_sheet_stills: 6
+    contact_sheet_columns: 3
+    contact_sheet_tile_width: 480
+
+  # Self-critiquing loop caps. The counter lives on the server precisely
+  # because models lose count — iteration N+1 is refused with a message the
+  # agent reports, rather than trusted to stop on its own.
+  refine:
+    max_iterations: 4
+    budget_seconds: 1800
+    min_criteria: 3
+    max_criteria: 6
+
+  # GPU residency arbiter. A language model and a diffusion model both want the
+  # whole card, and on a 24 GB GPU they do not both fit. The failure is silent:
+  # Ollama does not error when weights do not fit, it offloads layers to system
+  # RAM and runs several times slower. Eviction happens INSIDE the tool call,
+  # never in the agent's plan — a turn is a chain of model calls, so the lead
+  # model reloads the moment a tool returns.
+  gpu:
+    enabled: true
+    # 'auto' detects the card the same way the setup wizard does (nvidia-smi /
+    # rocm-smi / Apple unified memory). A number is in GiB.
+    budget_gb: auto
+    reserve_gb: 1.0
+    # 'auto' computes exclusive vs shared from budget_gb - reserve_gb against
+    # the sum of local tenant estimates, and logs the reasoning — which is what
+    # makes a later GPU upgrade a config outcome rather than a code change.
+    # 'exclusive' always swaps, 'shared' never evicts, 'none' disables it.
+    policy: auto
+    wait_timeout_seconds: 900
+    # A cloud tenant is never resident, so its eviction is a no-op with no code
+    # path of its own: switch the lead to a cloud model and the swapping stops.
+    tenants:
+      - name: ollama
+        location: local
+        kind: ollama # evicted with a per-request keep_alive: 0 (the global
+        # ollama.keep_alive keeps its value for ordinary chat)
+        base_url: http://localhost:11434
+        estimate_gb: 0 # 0 = unknown, which makes an auto policy assume exclusive
+      - name: comfyui
+        location: local
+        kind: comfyui # evicted with ComfyUI's own POST /free
+        estimate_gb: 0
+
+# ============================================================================
 # Tool Groups Configuration
 # ============================================================================
 # Define groups of tools for organization and access control
 
 tool_groups:
   - name: web
+  - name: media
   - name: file:read
   - name: file:write
   - name: bash
@@ -2187,6 +2304,44 @@ tools:
   #   # safesearch: strict
   #   # spellcheck: true
   #   # api_key: $BRAVE_SEARCH_API_KEY  # Optional explicit env-var reference
+
+  # ── Local image + video generation (ComfyUI, fork feature) ────────────────
+  # Rendered on your own GPU: no API key, no network egress, free at the
+  # margin. Requires a running ComfyUI (`make comfy-up`, or set
+  # media.comfyui.base_url / DEER_FLOW_COMFYUI_BASE_URL to one you already
+  # run) and at least one checkpoint installed in its models directory.
+  # Commented out by default because neither is true on a fresh machine.
+  # Settings live in the `media:` section above, not here.
+  #
+  # generate_image writes the PNG straight into the thread's outputs directory
+  # (it opens in the artifact panel with no present_files call) and saves the
+  # exact submitted graph beside it as <name>.workflow.json, so any result can
+  # be reproduced by hand in ComfyUI's own editor.
+  # - name: list_media_models
+  #   group: media
+  #   use: deerflow.community.comfyui.tools:list_media_models_tool
+  #
+  # - name: generate_image
+  #   group: media
+  #   use: deerflow.community.comfyui.tools:generate_image_tool
+  #
+  # generate_video also writes evenly spaced stills and one contact-sheet PNG,
+  # because view_image cannot read an MP4 — the sheet is what the critic looks
+  # at. Minutes per clip; media.comfyui.video_timeout is its own budget.
+  # - name: generate_video
+  #   group: media
+  #   use: deerflow.community.comfyui.tools:generate_video_tool
+  #
+  # The self-critiquing loop (skills/public/image-refine). The rubric is frozen
+  # before the first attempt and the iteration counter lives on the server, so
+  # a model that loses count is refused rather than trusted.
+  # - name: refine_start
+  #   group: media
+  #   use: deerflow.community.comfyui.tools:refine_start_tool
+  #
+  # - name: refine_verdict
+  #   group: media
+  #   use: deerflow.community.comfyui.tools:refine_verdict_tool
 
   # File operations tools
   - name: ls

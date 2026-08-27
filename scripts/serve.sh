@@ -544,6 +544,25 @@ case "$_searxng_resolution" in
         ;;
 esac
 
+# ── ComfyUI (local image/video generation) ───────────────────────────────────
+# Only resolves an endpoint; it deliberately does NOT start anything. A ComfyUI
+# container pulls gigabytes and takes the GPU, so starting one as a side effect
+# of `make dev` would be a surprise — `make comfy-up` is the explicit door. What
+# this does buy is reuse: an instance you already run is found and exported, so
+# the stack never points at a second one.
+if [ -n "$DETECT_PYTHON" ]; then
+    _comfyui_resolution="$("$DETECT_PYTHON" "$REPO_ROOT/scripts/detect_comfyui.py" --context host --config "$_searxng_config" 2>/dev/null || echo skip)"
+    case "$_comfyui_resolution" in
+        external\ *)
+            export DEER_FLOW_COMFYUI_BASE_URL="${_comfyui_resolution#external }"
+            echo "✓ ComfyUI: using existing instance at $DEER_FLOW_COMFYUI_BASE_URL"
+            ;;
+        bundled)
+            echo "⚠ ComfyUI: the media tools are enabled but no instance answered on :8188 — run 'make comfy-up' (image/video generation will fail until one is reachable)." >&2
+            ;;
+    esac
+fi
+
 # ── Daily Camoufox + SearXNG auto-update (throttled) ─────────────────────────
 # Neither the Camoufox browser binaries nor the bundled SearXNG :latest image
 # self-update after their first install. Refresh them at most once a day, in the

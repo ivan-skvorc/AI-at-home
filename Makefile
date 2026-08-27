@@ -1,10 +1,11 @@
 # DeerFlow - Unified Development Environment
 
-.PHONY: help config config-upgrade check check-agent-guidance install extension-install extension-list extension-enable extension-disable extension-remove setup doctor support-bundle detect-thread-boundaries detect-blocking-io backup restore dev dev-daemon start start-daemon nginx stop up up-start down clean docker-init docker-start docker-stop docker-logs docker-logs-frontend docker-logs-gateway docker-logs-redis searxng searxng-stop sandbox-up sandbox-down sandbox-logs sandbox-enable sandbox-disable setup-sandbox fetch-browser auto-update auto-update-install auto-update-uninstall
+.PHONY: help config config-upgrade check check-agent-guidance install extension-install extension-list extension-enable extension-disable extension-remove setup doctor support-bundle detect-thread-boundaries detect-blocking-io backup restore dev dev-daemon start start-daemon nginx stop up up-start down clean docker-init docker-start docker-stop docker-logs docker-logs-frontend docker-logs-gateway docker-logs-redis searxng searxng-stop comfy-up comfy-down comfy-logs sandbox-up sandbox-down sandbox-logs sandbox-enable sandbox-disable setup-sandbox fetch-browser auto-update auto-update-install auto-update-uninstall
 
 # docker compose shim: prefer the v2 plugin, fall back to legacy docker-compose.
 DOCKER_COMPOSE ?= docker compose
 SANDBOX_COMPOSE_FILE = docker/docker-compose.sandbox.yml
+COMFYUI_COMPOSE_FILE = docker/docker-compose.comfyui.yml
 
 BASH ?= bash
 BACKEND_UV_RUN = cd backend && uv run
@@ -54,6 +55,9 @@ help:
 	@echo "  make dev             - Start all services in development mode (with hot-reloading)"
 	@echo "  make searxng         - Start only the SearXNG search container (launch paths auto-start it when needed)"
 	@echo "  make searxng-stop    - Stop the standalone SearXNG search container"
+	@echo "  make comfy-up        - Start the ComfyUI service backing local image/video generation (localhost:8188)"
+	@echo "  make comfy-down      - Stop and remove the ComfyUI container"
+	@echo "  make comfy-logs      - Follow the ComfyUI container logs"
 	@echo "  make dev-daemon      - Start dev services in background (daemon mode)"
 	@echo "  make start           - Start all services in production mode (optimized, no hot-reloading)"
 	@echo "  make start-daemon    - Start prod services in background (daemon mode)"
@@ -303,3 +307,18 @@ searxng:
 
 searxng-stop:
 	@$(RUN_WITH_GIT_BASH) ./scripts/searxng.sh stop
+
+# ComfyUI service backing the local image/video tools (docker/docker-compose.comfyui.yml).
+# A LONG-LIVED service, not a sandbox tenant: it keeps model weights on the GPU
+# between requests, so it is started once and left running. Publishes
+# 127.0.0.1:8188 to match media.comfyui.base_url's default.
+# `scripts/detect_comfyui.py` prefers a ComfyUI you already run over starting
+# this one — two instances on one card is how a GPU ends up thrashing.
+comfy-up:
+	$(DOCKER_COMPOSE) -f $(COMFYUI_COMPOSE_FILE) up -d
+
+comfy-down:
+	$(DOCKER_COMPOSE) -f $(COMFYUI_COMPOSE_FILE) down
+
+comfy-logs:
+	$(DOCKER_COMPOSE) -f $(COMFYUI_COMPOSE_FILE) logs --tail=100 -f
