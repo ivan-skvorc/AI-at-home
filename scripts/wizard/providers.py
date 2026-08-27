@@ -992,7 +992,7 @@ LLM_PROVIDERS: list[LLMProvider] = [
     LLMProvider(
         name="mistral",
         display_name="Mistral",
-        description="Mistral Large 3 + Medium 3.5 + Small (direct Mistral API)",
+        description="Mistral Large 3 + Medium 3.5 + Small 3 (direct Mistral API)",
         use="langchain_openai:ChatOpenAI",
         models=[entry["model"] for entry in MISTRAL_HOME_BUNDLE_MODELS],
         default_model=MISTRAL_HOME_BUNDLE_MODELS[0]["model"],
