@@ -856,3 +856,68 @@ class TestCheckSpendBudget:
 
     def test_missing_config_file_is_skipped(self, tmp_path):
         assert doctor.check_spend_budget(tmp_path / "nope.yaml").status == "skip"
+
+
+class TestCheckMediaGeneration:
+    """`make doctor` must surface VRAM held while nothing is generating.
+
+    That is the silent case the GPU arbiter exists for: a Gateway that died
+    mid-generation leaves the diffusion weights resident, nothing errors, and
+    the next local chat turn merely runs several times slower because Ollama
+    offloaded layers to system RAM.
+    """
+
+    @staticmethod
+    def _config(tmp_path, body: str):
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text(f"config_version: 44\n{body}")
+        return cfg
+
+    _ENABLED = "tools:\n  - name: generate_image\n    use: deerflow.community.comfyui.tools:generate_image_tool\n"
+
+    def test_skipped_when_the_media_tools_are_not_enabled(self, tmp_path):
+        cfg = self._config(tmp_path, "tools:\n  - name: image_search\n    use: deerflow.community.image_search.tools:image_search_tool\n")
+        results = doctor.check_media_generation(cfg)
+        assert [r.status for r in results] == ["skip"]
+
+    def test_commented_out_tool_entries_do_not_enable_the_check(self, tmp_path):
+        cfg = self._config(tmp_path, "tools:\n  # - name: generate_image\n  #   use: deerflow.community.comfyui.tools:generate_image_tool\n")
+        assert doctor.check_media_generation(cfg)[0].status == "skip"
+
+    def test_an_unreachable_service_warns_with_the_fix(self, tmp_path):
+        cfg = self._config(tmp_path, self._ENABLED)
+        results = doctor.check_media_generation(cfg, probe=lambda _url: None)
+        assert results[0].status == "warn"
+        assert "make comfy-up" in results[0].fix
+
+    def test_a_free_card_is_ok(self, tmp_path):
+        cfg = self._config(tmp_path, self._ENABLED)
+        results = doctor.check_media_generation(cfg, probe=lambda _url: {"devices": [{"torch_vram_total": 0}]}, nvidia_used=lambda: 200.0)
+        assert [r.status for r in results] == ["ok", "ok"]
+        assert "free" in results[1].detail
+
+    def test_held_vram_while_idle_warns_and_says_how_to_free_it(self, tmp_path):
+        cfg = self._config(tmp_path, self._ENABLED)
+        results = doctor.check_media_generation(cfg, probe=lambda _url: {"devices": [{"torch_vram_total": 8 * 1024**3}]}, nvidia_used=lambda: 9000.0)
+        residency = results[1]
+        assert residency.status == "warn"
+        assert "8.0 GiB" in residency.detail
+        assert "/free" in residency.fix
+
+    def test_vram_used_by_other_processes_is_reported_but_not_blamed_on_comfyui(self, tmp_path):
+        cfg = self._config(tmp_path, self._ENABLED)
+        results = doctor.check_media_generation(cfg, probe=lambda _url: {"devices": [{"torch_vram_total": 0}]}, nvidia_used=lambda: 12000.0)
+        assert results[1].status == "ok"
+        assert "other processes" in results[1].detail
+
+    def test_the_base_url_comes_from_config_when_no_env_override(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("DEER_FLOW_COMFYUI_BASE_URL", raising=False)
+        cfg = self._config(tmp_path, self._ENABLED + "media:\n  comfyui:\n    base_url: http://gpu-box:8188\n")
+        seen = []
+
+        def probe(url):
+            seen.append(url)
+            return None
+
+        doctor.check_media_generation(cfg, probe=probe)
+        assert seen == ["http://gpu-box:8188"]

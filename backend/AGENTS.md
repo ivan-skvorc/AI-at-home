@@ -328,6 +328,11 @@ discount, Web Push delivery, multi-user mode, the chat-tab store, and an
 editable lead-agent system prompt (`lead_agent/system_prompt_store.py`; the
 invariants live in `packages/harness/deerflow/agents/AGENTS.md`).
 
+Local image/video generation through a ComfyUI service — with its GPU
+residency arbiter and self-critiquing refine loop — lives in
+`packages/harness/deerflow/community/comfyui/`; its invariants are in that
+package's own `AGENTS.md`.
+
 Each is documented in **[FORK.md](../FORK.md)** with its rationale, its
 invariants, and a row in the post-sync feature checklist naming the tests that
 pin it. Read that file before changing any of them — several carry properties

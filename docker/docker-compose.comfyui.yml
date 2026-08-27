@@ -1,0 +1,58 @@
+# Standalone ComfyUI service for DeerFlow's local image/video generation.
+#
+# This is a LONG-LIVED SERVICE, not a sandbox tenant: it holds model weights on
+# the GPU between requests, so it is started once and left running, the same
+# way the bundled SearXNG container is. Manage it with:
+#
+#   make comfy-up      # start (this file)
+#   make comfy-logs    # follow logs
+#   make comfy-down    # stop and remove
+#
+# The Gateway reaches it at http://localhost:8188 by default; set
+# DEER_FLOW_COMFYUI_BASE_URL (or media.comfyui.base_url in config.yaml) to
+# point at an instance you already run. `scripts/detect_comfyui.py` prefers an
+# existing instance precisely so two ComfyUIs never fight over one card.
+#
+# THE IMAGE IS NOT VENDORED BY THIS PROJECT. ComfyUI publishes no official
+# container image, so the default below names a community build and it is
+# YOUR call which one to trust. Pin the dated tag your driver/CUDA version
+# needs rather than tracking a rolling tag:
+#
+#   DEER_FLOW_COMFYUI_IMAGE=yanwk/comfyui-boot:cu124-megapak-20250105
+#
+# Models are NOT baked into any of these images. Point DEER_FLOW_COMFYUI_MODELS
+# at the directory holding your checkpoints/unet/vae/clip subdirectories; it is
+# bind-mounted read-write so ComfyUI can also write its own cache.
+
+services:
+  comfyui:
+    image: ${DEER_FLOW_COMFYUI_IMAGE:-yanwk/comfyui-boot:cu124-megapak}
+    container_name: deer-flow-comfyui
+    # Loopback-only, like every other service this repo publishes: the ComfyUI
+    # API has no authentication whatsoever, and it can read and write files on
+    # the machine holding your GPU. Do not widen this without a front door.
+    ports:
+      - "${BIND_HOST:-127.0.0.1}:${DEER_FLOW_COMFYUI_PORT:-8188}:8188"
+    volumes:
+      - ${DEER_FLOW_COMFYUI_MODELS:-../.deer-flow/comfyui/models}:/root/ComfyUI/models
+      - ${DEER_FLOW_COMFYUI_OUTPUT:-../.deer-flow/comfyui/output}:/root/ComfyUI/output
+    environment:
+      CLI_ARGS: ${DEER_FLOW_COMFYUI_CLI_ARGS:-}
+    # NVIDIA GPU passthrough needs the nvidia-container-toolkit on the host.
+    # On an AMD card, swap the image for a ROCm build and replace this block
+    # with the /dev/kfd + /dev/dri device mappings that build documents.
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    restart: unless-stopped
+    healthcheck:
+      # Same endpoint the detector probes and the GPU arbiter reads.
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8188/system_stats || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 120s

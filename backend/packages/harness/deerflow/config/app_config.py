@@ -26,6 +26,7 @@ from deerflow.config.guardrails_config import GuardrailsConfig, load_guardrails_
 from deerflow.config.input_polish_config import InputPolishConfig
 from deerflow.config.loop_detection_config import LoopDetectionConfig
 from deerflow.config.mcp_tasks_config import McpTasksConfig
+from deerflow.config.media_config import MediaConfig
 from deerflow.config.memory_config import MemoryConfig, load_memory_config_from_dict
 from deerflow.config.model_config import ModelConfig
 from deerflow.config.model_fallback_config import ModelFallbackConfig
@@ -216,6 +217,7 @@ class AppConfig(BaseModel):
     spend_budget: SpendBudgetConfig = Field(default_factory=SpendBudgetConfig, description="Currency-denominated spend caps over a daily/weekly/monthly window (fork feature).")
     model_fallback: ModelFallbackConfig = Field(default_factory=ModelFallbackConfig, description="Default fallback chain for models that declare no per-model `fallback:` (fork feature).")
     model_routing: ModelRoutingConfig = Field(default_factory=ModelRoutingConfig, description="Cost-aware subagent routing policy; off by default and always overridden by an explicit per-thread subagent selection (fork feature).")
+    media: MediaConfig = Field(default_factory=MediaConfig, description="Local image/video generation through a ComfyUI service, its generation defaults, the refine-loop caps, and the GPU residency arbiter (fork feature).")
     plugins: list[ExtensionSpec] = Field(
         default_factory=list,
         description=format_field_description(

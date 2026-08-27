@@ -267,6 +267,19 @@ resolve_searxng() {
     fi
 }
 
+# Prints "skip", "bundled", or "external <url>" — see scripts/detect_comfyui.py.
+resolve_comfyui() {
+    local detect_python
+    detect_python="$(_pick_python || true)"
+    if [ -n "$detect_python" ]; then
+        local args=(--context docker --config "$PROJECT_ROOT/config.yaml")
+        [ -f "$PROJECT_ROOT/.env" ] && args+=(--env-file "$PROJECT_ROOT/.env")
+        "$detect_python" "$SCRIPT_DIR/detect_comfyui.py" "${args[@]}" || echo "skip"
+    else
+        echo "skip"
+    fi
+}
+
 detect_sandbox_mode() {
     local config_file="$PROJECT_ROOT/config.yaml"
     local sandbox_use=""
@@ -529,6 +542,21 @@ start() {
             export DEER_FLOW_SEARXNG_BASE_URL="http://searxng:8080"
             services="$services searxng"
             echo -e "${BLUE}SearXNG: no existing instance found — starting the bundled service${NC}"
+            ;;
+    esac
+
+    # ComfyUI (local image/video generation): resolve only, never start. The
+    # container is gigabytes and takes the GPU, so `make comfy-up` is the door;
+    # what this buys is reuse of an instance already running on the host.
+    local comfyui_resolution
+    comfyui_resolution="$(resolve_comfyui)"
+    case "$comfyui_resolution" in
+        external\ *)
+            export DEER_FLOW_COMFYUI_BASE_URL="${comfyui_resolution#external }"
+            echo -e "${GREEN}✓ ComfyUI: using existing instance at $DEER_FLOW_COMFYUI_BASE_URL${NC}"
+            ;;
+        bundled)
+            echo -e "${BLUE}ComfyUI: media tools are enabled but nothing answered on :8188 — run 'make comfy-up'${NC}"
             ;;
     esac
 
