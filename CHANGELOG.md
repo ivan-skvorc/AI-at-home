@@ -188,6 +188,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **docs:** The setup wizard's Mistral provider description still listed an
+  unversioned "Small" — the last of the seven places that describe the bundled
+  roster to carry it, after the 2026-08-26 pass corrected the other six.
+  `make setup` now prints **Mistral Large 3 + Medium 3.5 + Small 3**, matching the
+  bundled `mistral-small-3` entry.
+
 - **models:** **Three bundled models did not exist, and picking any of them
   failed at request time.** Each was a "cheaper sibling" whose id had been spelled
   out of the flagship's name instead of read off the lab's model list, so the

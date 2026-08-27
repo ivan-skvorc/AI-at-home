@@ -370,6 +370,78 @@ on its own.
 
 Record each pass here — a dated line is what tells the next person whether the roster was checked last week or last year, and *which* providers the pass could actually reach.
 
+- **2026-08-27 (upstream sync) — Anthropic re-verified at tier 1; no drift anywhere the network
+  could reach; one stale prose copy fixed; no roster change.** Run as the audit step of the
+  post-sync checklist for the `bytedance/deer-flow@main` merge of 7 commits, one day after the
+  2026-08-26 pass. A pass this close behind another is deliberately a *re-check*, not a
+  re-derivation: the standing rule is that a price nobody could read this pass stays as shipped, so
+  the value here is in what changed in a day and in the copies no test reads.
+
+  **Reachability — unchanged from the previous pass.** `platform.claude.com` answers, so all six
+  Claude entries were read straight off Anthropic's own pricing table. Every other provider host is
+  refused at the egress proxy: `openrouter.ai` is blocked by name, and `developers.openai.com`,
+  `x.ai`, `ai.google.dev`, `api-docs.deepseek.com`, `docs.mistral.ai` and `platform.moonshot.ai`
+  all return no response at all. `audit_models.py` therefore listed openrouter as **skipped**
+  rather than as drift, which is the property that must never be "fixed" into its opposite.
+  General web search was available and was used for the corroboration re-checks below.
+
+  **Anthropic: verified, no change.** All six bundled Claudes still match the provider's table
+  exactly — Fable 5 `$10/50`, Opus 5 `$5/25`, Opus 4.8 `$5/25`, Sonnet 5 `$2/10`, Sonnet 4.6
+  `$3/15`, Haiku 4.5 `$1/5` — each with its 0.1x cache-read rate (`1.0 / 0.5 / 0.5 / 0.2 / 0.3 /
+  0.1`). The page still carries the note that Sonnet 5's `$2/10` **is** the standard price and that
+  the 2026-09-01 rise to `$3/15` will not happen. That note is worth re-reading every pass until
+  that date is behind us: the entry's `price:` comment asserts it in prose, and nothing mechanical
+  would catch a reversal. Mythos 5 stays out — the table still marks it limited-availability, so a
+  normal `ANTHROPIC_API_KEY` cannot reach it. Roster shape unchanged (Opus/Sonnet keep last-4.x +
+  current-5, Haiku/Fable latest only).
+
+  **The one new release is a cheaper sibling, not a flagship, so the roster does not move.** z.ai
+  shipped **GLM-5.3-Flash** on 2026-08-26, the day after the previous pass. It stays out for the
+  same two reasons the 2026-08-22 pass recorded for Gemini 3.7 Flash: it is a cheaper sibling
+  rather than the lab's flagship (bundled `glm-5.3` is z.ai's flagship and GLM-4.5 Air already
+  fills the cheap seat), and its launch price is an **introductory** one — `$0.075/0.25` through
+  2026-09-09 24:00 UTC+8 against a `$0.15/0.50` standard — which tier 2 may not ship. Checking it
+  did re-corroborate the bundled **GLM-5.3 at `$1.40/4.40`**, still quoted unchanged.
+
+  **The two owed discounts are still owed, and still deliberately not shipped.** GPT-5.6 Sol's
+  promotional **`$4/20`** (standard `$5/30`, stated as running at least through **2026-11-21**)
+  was re-confirmed this pass: OpenAI's own model and pricing pages, its developer-community
+  announcement, and independent coverage all quote the same pair with no disagreement. It stays
+  unshipped anyway, because `developers.openai.com` cannot be reached and *Where a price may come
+  from* bars a **discount** from the corroborated tier however many sources agree — the rule is
+  about which page was read, not how strong the agreement is. The Gemini Flash introductory
+  `$0.75/3.75` is unchanged in status, including the unresolved 3.6-vs-3.7 ambiguity that is its
+  second disqualifier. Both stay top of the owed list.
+
+  **One live discount could not be checked at all, and it is the one that can go wrong quietly.**
+  The bundle carries exactly one `discount:` block — `openrouter-minimax-m3` at `$0.24/0.96`, with
+  no `until` because the provider announced no end date, which is legitimate and deliberately not a
+  finding. Confirming it is still running needs OpenRouter's catalog, which is precisely what is
+  unreachable, so the audit's *promotion ended* check is skipped for it. Left alone at tier 3, and
+  named here because it is the single bundled entry that would keep advertising a discount nobody
+  is getting if that promo has quietly ended.
+
+  **Prose copies: six of the seven were current, one was stale and is fixed.** All seven places
+  step 2 names were read by eye. `config.example.yaml`'s `QUICK START` comment, the sync script's
+  `QUICK START` docstring, `.env.example`, the README §2 bullet and `providers.py`'s
+  `HOME_API_BUNDLES` all match the marker blocks exactly. `providers.py`'s **`mistral`
+  `LLMProvider`** still read `description="Mistral Large 3 + Medium 3.5 + Small (direct Mistral
+  API)"` — the unversioned *Small* that the 2026-08-26 pass corrected in the other copies and
+  missed here. It now reads **Small 3**, matching the `mistral-small-3` entry and the other six
+  copies. That string is what `make setup` prints and no test reads it, which is exactly why it
+  survived a pass that was looking for it.
+
+  **Bundle unchanged at 41 paid models** — 6 Anthropic + 13 OpenRouter + 22 home.
+
+  Mechanical half green: `scripts/audit_models.py` reports **no drift** (display-name/price
+  agreement and two-source parity both hold) and correctly lists openrouter as *skipped*; the
+  stale-fixture self-test (`--catalog scripts/fixtures/model_audit_stale_catalog.json`) still
+  surfaces all four drift kinds and exits 0, so this pass's "no drift" is a real all-clear rather
+  than a broken audit; `sync-api-key-models.py --dry-run` leaves a copy byte-identical on an empty
+  env; the price-in-a-`display_name` grep prints nothing; and `test_sync_api_key_models.py`,
+  `test_setup_wizard.py`, `test_config_integrity.py`, `test_audit_models.py`, `test_pricing.py`
+  and `test_model_price_fields.py` are green (285 passed).
+
 - **2026-08-26 (upstream sync) — Anthropic verified at tier 1 again; three bundled slugs that
   do not exist found and replaced; three prices corrected, one of them a 3x under-report.** Run as
   the audit step of the post-sync checklist for the `bytedance/deer-flow@main` merge of 3 commits.
@@ -2142,7 +2214,7 @@ After every upstream merge, run this checklist before pushing — passing unit t
 First, the mechanical gates:
 
 - [ ] No leftover conflict markers: `git grep -nE '^(<{7}|={7}|>{7})( |$)'` returns nothing.
-- [ ] Backend: `make lint && make test` (CI enforces `ruff format --check`).
+- [ ] Backend: `make lint && make test` (CI enforces `ruff format --check`). **One failure is environmental, not yours:** `test_browser_automation.py::test_real_playwright_navigate_click_type` launches a real headless Chromium, and its only guard is `pytest.importorskip("playwright.async_api")` — which checks the *Python package*, not the *browser binary*. So on any machine whose pre-baked Playwright browsers are older than the pinned `playwright` (1.60.0 wants build `1223`; a sandbox image shipping `chromium_headless_shell-1194` is the common case), it fails with `Executable doesn't exist at …/chromium_headless_shell-<build>/…` while the other 49 tests in that file pass. It is deterministic, not a flake, and it is not a regression — confirm with `git diff HEAD@{1} HEAD -- backend/tests/test_browser_automation.py backend/packages/harness/deerflow/community/browser_automation/`, which is empty on a sync that did not touch them. Don't skip or quarantine the test, and don't run `playwright install` in an agent sandbox that pre-bakes its browsers; just note it and read the rest of the suite.
 - [ ] Frontend: `pnpm format && pnpm check && pnpm test`. **Watch the formatting gate:** `pnpm check` is only `eslint` + `tsc --noEmit` — it does **not** run Prettier, but CI's `lint-frontend` job (`.github/workflows/lint-check.yml`) runs `pnpm format` (`prettier --check .`) as its own step. So a change that is eslint/type-clean can still fail CI on formatting alone; always run `pnpm format` (or fix with `pnpm format:write`) before pushing. `eslint --fix` normalizes imports/optional-chains but not Prettier whitespace.
 - [ ] **The backend suite passes with no `config.yaml` on disk.** `config.yaml` is gitignored: it exists on any machine that has run `make config` and on none of CI's runners. `make test` therefore tests a *different* repository state locally than in CI, and the gap is silent in the direction that matters — a test that reaches for ambient config is green here and red there. Observed live: PR #71's `apply_prompt_template` render tests called it with `app_config=None`, which falls back to `AppConfig.from_file()`; four store tests and three router tests passed locally and failed CI with `FileNotFoundError: config.yaml file not found`. The rule for new tests is to **inject the config** (`AppConfig(sandbox=SandboxConfig(use="test"))`, or `app.dependency_overrides[get_config]` for a route) rather than letting a `None` default find the developer's file. Verify the way CI sees it before pushing:
 
