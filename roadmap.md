@@ -21,6 +21,13 @@ post-sync feature checklist. Their numbers stay retired because the codebase cit
 (`grep -rn "roadmap item"` finds references across workflows, routers and test
 docstrings), so recycling one would silently point an existing comment at unrelated work.
 
+Items **16–18** came out of working against the fork itself — gaps and loose ends noticed
+while shipping earlier ones. Items **19–25** came from a different exercise: reading the
+codebase against what the wider AI ecosystem settled on during 2026, and keeping only the
+ideas that this fork's own thesis argues for. The rejected candidates from that pass are
+recorded at the bottom of this file, because knowing what was considered and declined is
+worth as much as the list itself.
+
 ---
 
 ## How to use this file
@@ -177,6 +184,356 @@ artifact panel are operable at that width; and the desktop layout is unchanged.
 
 ---
 
+## 19. Local voice — speech in, speech out, without the audio leaving
+
+**Goal** — Hold a spoken conversation with the instance from a phone on the tailnet, with
+no audio reaching a third party.
+
+**Why it fits** — The fork's shape is already "start a run from your phone over Tailscale,
+pocket it, get pinged when it's done" (FORK.md §16). Voice is the modality that shape is
+missing: the one input that works while walking or cooking, and the one the PWA cannot
+fake. It is also the single place where the fork's own privacy claim currently leaks
+silently — `frontend/src/core/voice-input/speech-recognition.ts` is the browser Web Speech
+API, which on Chrome ships the audio to Google. A fork whose entire thesis is "your data
+stays on your machine" should not have a microphone button that means the opposite without
+saying so.
+
+The hardware argument is already settled by the media work: the card that holds a diffusion
+checkpoint has room for a small STT and a small TTS model, and `arbiter.py` exists
+precisely to stop tenants from thrashing each other off it.
+
+**Depends on** — the GPU residency arbiter (former item 12; FORK.md §23).
+
+**Scope**
+
+- STT and TTS run as their own long-lived local services reached over HTTP, the way
+  ComfyUI is — not in-process, and not in the sandbox. The reasoning is the one already
+  recorded under "GPU passthrough into the sandbox container": weights are large stateful
+  data with no business inside a per-thread, `--rm`, warm-pooled container.
+- **A resident tenant is a new arbiter concept, not a third `kind`.** `GpuTenantConfig.kind`
+  is `Literal["ollama", "comfyui"]` and the semaphore is depth-1 — "one tenant at a time".
+  Voice models are ~100 MB–1 GB and want to stay resident *through* a lead-model turn, which
+  is the opposite of what the current eviction contract expresses. Model that explicitly
+  (a pinned class that is never evicted and never evicts) rather than bolting voice onto the
+  evictable path, where every spoken turn would cost a lead-model reload.
+- Stream TTS against the token stream, not after the final answer. Synthesizing a finished
+  response makes perceived latency the whole response, which is the difference between a
+  usable voice mode and a demo.
+- Push-to-talk only. An always-listening microphone is a different feature with a different
+  consent story and it must not arrive as a side effect of this one.
+- If the Web Speech path stays as a fallback, label it in the UI as the one that leaves the
+  machine. Offering no voice is better than offering cloud voice unmarked.
+
+**Key files** — `frontend/src/core/voice-input/`,
+`frontend/src/components/workspace/input-box.tsx`,
+`backend/packages/harness/deerflow/community/comfyui/arbiter.py`,
+`backend/packages/harness/deerflow/config/media_config.py`, `config.example.yaml` (a
+`voice:` section shaped like `media:`), `scripts/doctor.py`, `scripts/detect_comfyui.py`
+(the detect-or-start precedent), `backend/tests/test_voice_service.py` (new).
+
+**Done when** — a phone on the tailnet completes a spoken round trip; `make doctor` reports
+the voice services the way it reports ComfyUI and SearXNG; the default path sends no audio
+off the machine; and a spoken turn does not evict the lead model mid-answer.
+
+---
+
+## 20. Measure — then expose — the local speed layer
+
+**Goal** — Know what the local models actually cost in latency, and turn on the 2026
+decoding wins where this machine supports them.
+
+**Why it fits** — The cost story (FORK.md §Cost story) rests on a boundary: free local
+models do the ordinary work, paid keys do the hard work. That boundary is set by local
+*speed* as much as by local quality — a subagent that answers three times slower gets routed
+around by hand, and then the 95%-saving row in that table is aspirational rather than
+lived. The same section already admits the gap in its own footnote: subagent quality is
+something "you should benchmark on your actual tasks", and there is no benchmark.
+
+Meanwhile the decoding layer moved. Ollama grew a `DRAFT` Modelfile directive and MTP
+speculative decoding, but it landed on the MLX runner first and rolled out unevenly across
+backends — which for this fork's Arch/NVIDIA host means the honest answer is *unknown*, not
+*yes*. The fork drives Ollama with its defaults and exposes no knob and no measurement, so
+there is currently no way to find out.
+
+**Depends on** — nothing.
+
+**Scope**
+
+- A repeatable local bench: fixed prompts, tokens/sec and time-to-first-token, per configured
+  local model, written where a later run can diff against it. Model it on
+  `scripts/audit_models.py` — an opt-in pass with a dated log, not a CI gate — and log it
+  next to `docs/model-audit-log.md`.
+- Detect and report whether the installed Ollama supports draft/MTP decoding on *this*
+  backend before offering to configure it. Reporting "not available on this runner" is a
+  successful outcome for this item; guessing is not.
+- If it is available: a config surface for pairing a small draft model with a large target,
+  and wizard support for syncing both (`scripts/wizard/steps/ollama.py`,
+  `scripts/sync-api-key-models.py`) so a paired setup survives a re-sync.
+- Feed the numbers back to the feature that needs them: cost-aware subagent routing
+  (FORK.md §15) picks models on price, and price without latency is half the decision.
+- Opt-in throughout. A speculative-decoding setup that backfires on a given model/hardware
+  pair is a real outcome, and the bench is what should decide it.
+
+**Key files** — `scripts/audit_models.py` (the shape to copy), `scripts/bench_local_models.py`
+(new), `docs/model-audit-log.md` (sibling log), `scripts/wizard/steps/ollama.py`,
+`backend/packages/harness/deerflow/config/model_config.py`,
+`backend/tests/test_local_model_bench.py` (new).
+
+**Done when** — one command reports tokens/sec and TTFT for every configured local model and
+writes a dated row; the report states plainly whether draft/MTP decoding is available on this
+host; and if it is, enabling it is a documented config change whose effect the same command
+measures.
+
+---
+
+## 21. Local embedding retrieval for DeerMem
+
+**Goal** — Memory recall that survives the user not reusing the same words.
+
+**Why it fits** — DeerMem's retrieval adapter is SQLite FTS5/BM25 with a substring fallback:
+lexical matching, no semantics. It is a good default — rebuildable derived data, no extra
+service, no vendor — and it is why the fork can ship memory that works offline. But it misses
+the paraphrase, which is the ordinary case in a personal assistant ("what did I decide about
+the car" against a fact stored as "chose the Skoda over the Toyota"). The alternatives the
+backend registry already offers — `mem0`, `honcho`, `openviking` — all solve this by sending
+the facts to someone else's service, which is the trade this fork exists to refuse.
+
+Ollama is already running and already serves embedding models. The missing piece is small:
+one more adapter behind the same `RetrievalPort`.
+
+**Depends on** — nothing. (Sequence it after item 20 if the bench exists, so the added
+latency per recall is a measured number rather than an impression.)
+
+**Scope**
+
+- A second `RetrievalPort` adapter using a local embedding model through the existing Ollama
+  connection, selected by config, with FTS5 remaining the default and the fallback.
+- Hybrid, not replacement. BM25 wins on names, IDs, and exact strings; embeddings win on
+  paraphrase. Fuse both rather than swapping one for the other.
+- Honour the existing derived-data contract: the vectors are rebuildable, live beside the
+  FTS index, and a corrupt store is deleted and rebuilt once before falling back — the same
+  discipline `retrieval.py` already applies.
+- Re-embedding on a model change is a migration, not a silent degradation. Record the model
+  and dimension with the index and rebuild when they change.
+- No new service and no new daemon. If it needs a vector database, it is the wrong design
+  for this item.
+
+**Key files** —
+`backend/packages/harness/deerflow/agents/memory/backends/deermem/deermem/core/retrieval.py`,
+`.../core/storage.py` (the `RetrievalPort` boundary),
+`backend/packages/harness/deerflow/config/memory_config.py`,
+`backend/packages/harness/deerflow/agents/memory/AGENTS.md`,
+`backend/tests/test_memory_retrieval_embeddings.py` (new).
+
+**Done when** — a paraphrased query retrieves a fact that BM25 alone misses; FTS5 remains
+the default and still works with the adapter disabled; an embedding-model change triggers a
+rebuild rather than silently mixing dimensions; and recall latency is documented.
+
+---
+
+## 22. Event triggers — the scheduler learns to watch, not only to wait
+
+**Goal** — A task can fire because something happened, not only because a clock said so.
+
+**Why it fits** — The fork already has every part of a proactive assistant except the
+trigger. Scheduled tasks run non-interactively through the normal run lifecycle; push
+notifications survive a closed browser (FORK.md §16); the IM channels give it somewhere to
+speak. What it lacks is a reason to start: `scheduler/schedules.py` understands `cron` and
+one-shot times and nothing else, so every "tell me when X happens" has to be spelled as
+"check every fifteen minutes whether X happened" — which burns tokens on the 95% of polls
+that find nothing, and still reports late.
+
+This is also where the protocol is going: the MCP 2026 roadmap names triggers and
+event-driven updates as an explicit direction, so building the concept now means adopting a
+standard later rather than inventing one.
+
+**Depends on** — the scheduled-task MVP and the PWA push work (FORK.md §16).
+
+**Scope**
+
+- A trigger abstraction alongside the schedule types, dispatching through the *same*
+  `launch_scheduled_thread_run` path. `backend/AGENTS.md` is explicit that the scheduler may
+  decide when work runs but must not grow a parallel execution stack; that rule governs this
+  item completely.
+- Start with sources the fork already has credentials for rather than adding integrations:
+  a filesystem watch, an IM message matching a pattern, an HTTP webhook endpoint. Resist the
+  urge to ship an email trigger in the same change — it is the one that needs its own
+  auth story.
+- The one-active-occurrence invariant is the hard part, not the watching.
+  `uq_scheduled_task_run_active` allows one non-terminal occurrence per task, and an event
+  source can fire ten times in a second. Decide the coalescing rule explicitly — latest-wins,
+  debounce window, or queue-one-more — and pin it with a test that fires a burst.
+- Every trigger needs a rate limit and a kill switch reachable from the UI. A misconfigured
+  watch on a busy directory is an infinite loop that spends money, and `spend_budget`
+  (FORK.md §10) is the backstop, not the design.
+- **Treat trigger payloads as untrusted input.** The content that fires a run frequently
+  becomes the content the run reasons about, which is item 23's problem arriving through a
+  new door.
+
+**Key files** — `backend/packages/harness/deerflow/scheduler/schedules.py`,
+`backend/packages/harness/deerflow/config/scheduler_config.py`,
+`backend/app/gateway/routers/github_webhooks.py` (an existing webhook receiver to model on),
+`frontend/src/app/workspace/scheduled-tasks/`, `config.example.yaml`,
+`backend/tests/test_scheduler_triggers.py` (new).
+
+**Done when** — a file appearing in a watched directory starts a run that pushes a
+notification to a phone; a burst of ten events produces exactly the coalescing behaviour the
+tests specify and never a second concurrent occurrence; and every trigger can be paused from
+the workspace page.
+
+---
+
+## 23. An untrusted-content boundary for the agent loop
+
+**Goal** — Web pages, tool output, and file contents cannot quietly redirect the agent, and
+when they try, it is visible.
+
+**Why it fits** — This fork reads the open web by default (SearXNG, Camoufox, the fetch
+tools), runs MCP servers, holds cloud API keys, and can spend real money. Prompt injection
+is the #1 entry in the OWASP LLM top ten and Google measured a 32% rise in injection
+payloads embedded in web content over a single recent quarter — which means the fork's most
+distinctive surfaces are also its most exposed ones. The defences it has are real but
+partial and each covers one door: `url_safety.py` screens SSRF, the MCP stdio allowlist
+screens what a config can launch, the sandbox screens what code can touch. None of them
+covers the case where a page the agent *legitimately* fetched contains instructions.
+
+There is a good anchor to build on rather than a green field: `guardrails/` already defines a
+provider interface with `GuardrailDecision` / `GuardrailRequest` and an allowlist provider.
+It gates tools by name today; the missing axis is provenance.
+
+**Depends on** — nothing. Item 22 widens the surface this covers, so landing this first is
+worth something.
+
+**Scope**
+
+- Mark content by origin at the point it enters the loop — fetched pages, tool results,
+  file reads, trigger payloads — and keep the marking through summarization and memory
+  extraction, which are exactly where provenance is currently lost.
+- Gate the *consequential* tools on it: spending, sending (IM channels), writing outside the
+  workspace, installing anything. Reading is not where the blast radius is. The capability
+  framing matters more than detection — the 2026 consensus is that no filter catches every
+  injection, so the design goal is a bounded blast radius, not a clean detector.
+- Extend the existing guardrail provider rather than adding a parallel mechanism, so
+  `guardrails_config.py` stays the one place an operator looks.
+- Surface it in the UI. A blocked action the user never sees is a bug report about the agent
+  being broken; the system prompt is already a text box (FORK.md §19), so this fork's
+  precedent is to show the machinery rather than hide it.
+- **Memory is the persistence path and deserves its own test.** An injected instruction that
+  gets extracted into a durable fact survives every future conversation, which turns a
+  one-page compromise into a permanent one.
+
+**Key files** — `backend/packages/harness/deerflow/guardrails/` (provider, middleware,
+builtin), `backend/packages/harness/deerflow/config/guardrails_config.py`,
+`backend/packages/harness/deerflow/community/url_safety.py`,
+`backend/packages/harness/deerflow/agents/memory/` (the extraction path),
+`backend/packages/harness/deerflow/agents/middlewares/`, `SECURITY.md`,
+`backend/tests/test_untrusted_content_boundary.py` (new).
+
+**Done when** — a fetched page carrying an instruction to send a message or spend money is
+refused with a reason naming the origin; the refusal is visible in the conversation; an
+injected instruction does not reach durable memory; and ordinary browsing and tool use are
+unaffected.
+
+---
+
+## 24. Track the MCP 2026-07-28 specification
+
+**Goal** — The fork's largest integration surface stays current with the standard it
+implements.
+
+**Why it fits** — MCP is where this fork has invested most heavily outside the agent itself:
+three transports, OAuth, per-request credential mapping, interceptors, a stdio session pool,
+a durable long-running-task runtime with leases and dead-lettering. All of that is written
+against a specification that moved materially in 2026 — a stateless protocol core,
+multi-round-trip requests, header-based routing, cacheable list results, authorization
+hardening, and a formal extensions framework — and the protocol is now under
+vendor-neutral governance at the Linux Foundation rather than one vendor's roadmap.
+
+The reason to schedule this rather than let it drift: the fork's own value here is *depth*,
+and depth against a moving spec is what turns into a silent incompatibility with a server
+somebody wants to use. The stateless core in particular is a direct fit — it removes sticky
+sessions, which is the assumption `session_pool.py` is built around.
+
+**Depends on** — nothing.
+
+**Scope**
+
+- Audit first, implement second, and write the audit down. Which spec version does the
+  pinned SDK implement, which of the 2026 changes does the fork's own code assume the
+  absence of, and which of them would change `session_pool.py`, `cache.py`, or the task
+  drivers. This may well be the whole item.
+- Cacheable list results are the cheapest concrete win and interact directly with the
+  existing content-signature invalidation in `cache.py` — check them for conflict before
+  adopting either.
+- The extensions framework deserves a deliberate answer, not adoption by default. This repo
+  already has a Python extension system with its own security posture (operator-controlled
+  `plugins:` in `config.yaml`, precisely because that list executes code); an MCP-level
+  extension mechanism must not become a second, weaker path to the same privileges.
+- Do not weaken the stdio launch policy in the process. `routers/mcp.py`'s command/args/env
+  denylists are pinned against the real launchers' behaviour and are the fork's own work,
+  not the spec's.
+
+**Key files** — `backend/packages/harness/deerflow/mcp/` (`client.py`, `session_pool.py`,
+`cache.py`, `tasks/`), `backend/packages/harness/deerflow/mcp/AGENTS.md`,
+`backend/app/gateway/routers/mcp.py`, `backend/pyproject.toml` (the SDK pin),
+`docs/plans/` (the audit).
+
+**Done when** — a written audit states the fork's position against each 2026-07-28 change;
+anything adopted has a test; the stdio launch policy is unchanged or strengthened; and
+`mcp/AGENTS.md` names the spec version the code targets.
+
+---
+
+## 25. A behavioural regression suite for the agent itself
+
+**Goal** — Answer "did that change make it worse" with a number instead of a hunch.
+
+**Why it fits** — This is the item every other item on this list wants to exist. The fork
+now has twenty-three features that shape agent behaviour — fallback chains, cost-aware
+routing, democracy, the editable system prompt, memory extraction — and the only current way
+to tell whether a change to any of them helped is to use the thing for a week and form an
+impression. The cost story asks for exactly this in its own words: swapping subagents to
+local models costs "subagent quality you should benchmark on your actual tasks", and there
+is nothing to benchmark with.
+
+Note what this is *not*: observability, which the fork already has three of (LangSmith,
+Langfuse, Monocle). Traces say what happened in one run. This is about whether the outcome
+was good, repeatedly, across a change.
+
+**Depends on** — nothing, but it is most valuable last: every earlier item is a change whose
+effect it would measure.
+
+**Scope**
+
+- A small fixed set of tasks reflecting real use of *this* instance — a research question, a
+  sandbox coding task, a memory recall across sessions, a tool-selection case with a
+  plausible wrong answer — not a public benchmark. The point is regression detection on a
+  personal deployment, not a leaderboard.
+- Run against the existing tracing rather than beside it. Langfuse metadata is already
+  wired at the graph root with session/user/trace attributes; a suite that emits its own
+  parallel telemetry is a second thing to maintain.
+- Judged, not asserted. Exact-match scoring on agent output produces a suite that fails on
+  rewording, which gets muted and then ignored. Use a model as judge with the rubric in the
+  repo, and pin the judge model explicitly so a judge upgrade is a visible change.
+- **Opt-in and out of CI.** It calls real models and costs real money, which makes it a
+  sibling of `make test-live` and `scripts/audit_models.py`, not of `make test`. Dated log,
+  run when asked.
+- Report per-configuration so the interesting comparison is native: the same tasks under
+  all-local, mixed, and all-cloud is precisely the table FORK.md's cost story fills in with
+  illustrative numbers today.
+
+**Key files** — `backend/tests/behavioural/` (new, excluded from `make test`),
+`scripts/run_behaviour_suite.py` (new), `docs/behaviour-suite-log.md` (new),
+`backend/packages/harness/deerflow/tracing/`, `Makefile` (a target beside `test-live`),
+`FORK.md` (the cost-story table gains real numbers).
+
+**Done when** — one command runs the suite under a named model configuration and writes a
+dated scored row; deliberately degrading a component (a worse subagent model, memory
+disabled) moves the score in the expected direction; and the suite never runs in ordinary
+CI.
+
+---
+
 ## Deliberately not on this roadmap
 
 **More model providers, more IM channels, more bundled skills.** The model bundle is
@@ -192,3 +549,28 @@ would reload tens of gigabytes of weights, and a models directory is large state
 with no business inside an ephemeral container. The fork already answered this question
 once for local inference: Ollama runs on the host and containers reach it through the
 mapped host-gateway alias.
+
+**Fine-tuning or LoRA training on the host.** Tempting next to a card that already holds
+diffusion checkpoints, and wrong for this fork. Training is a long-running, stateful,
+babysat job with its own dataset management and its own failure modes; the fork is an
+*inference consumer* whose whole GPU story is one card with tenants that evict each other
+(FORK.md §23). A training run holds the card for hours, which breaks every other feature on
+the machine for as long as it runs. If this is ever wanted it belongs on separate hardware,
+reached the way any other model provider is.
+
+**A vector database service.** Item 21 deliberately adds a local embedding *adapter* behind
+the existing `RetrievalPort` rather than a new daemon. A personal instance's memory is
+thousands of facts, not millions; SQLite already holds the derived index; and the memory
+backend registry already offers `mem0`, `honcho`, and `openviking` for anyone who wants a
+managed store. Another always-on service to install, monitor, back up, and restore
+(`make backup` covers what exists today) is a real cost with no matching benefit at this
+scale.
+
+**General desktop / computer-use control.** The most-starred local agents of 2026 got there
+by driving the whole machine — browser, terminal, files — and the pull is obvious. The fork
+already has the useful half of it: `browser_automation`, the fetch backends, and a sandbox
+where code runs under a contract. What it does not have is unconstrained control of the
+host session, and that is the one surface where a prompt injection stops being a bad answer
+and becomes a keystroke. Item 23 exists because the *current* exposure already justifies a
+provenance boundary; widening the blast radius to the desktop before that lands has the
+order backwards.
