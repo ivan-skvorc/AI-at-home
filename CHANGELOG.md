@@ -31,7 +31,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   list in `config.yaml` order with the price as grey text. All five now use the
   same picker as the chat, and they share one saved preference — so a sort you
   choose in a conversation is already applied everywhere else. The default stays
-  config order, so nothing moves until you opt in.
+  config order, so nothing moves until you opt in. The picker publishes a stable
+  `data-slot="model-select"` so tests can find it without depending on whichever
+  primitive it is built from.
 - **media:** **Images and short video clips now generate on your own GPU, with no
   API key and nothing leaving the house.** A long-lived ComfyUI service (`make
   comfy-up`, published loopback-only on `127.0.0.1:8188`) backs five new tools —

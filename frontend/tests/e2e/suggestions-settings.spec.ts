@@ -86,9 +86,14 @@ test.describe("Suggestions settings (model picker)", () => {
     ).toBeVisible({ timeout: 10_000 });
 
     // Pick a concrete model from the dropdown.
-    await dialog.getByRole("combobox").click();
+    //
+    // Targeted by `data-slot="model-select"`, the shared picker's own contract —
+    // never by `getByRole("combobox")`, which is the role of whichever primitive
+    // is underneath and vanishes the moment the picker is re-implemented.
+    const picker = dialog.locator('[data-slot="model-select"]');
+    await picker.click();
     await page.getByRole("option", { name: "Model One" }).click();
-    await expect(dialog.getByRole("combobox")).toContainText("Model One");
+    await expect(picker).toContainText("Model One");
 
     // The pick is persisted to localStorage so the suggestions request uses it.
     const stored = await page.evaluate(() => {

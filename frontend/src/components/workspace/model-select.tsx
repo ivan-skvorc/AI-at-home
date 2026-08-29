@@ -112,6 +112,18 @@ export function ModelSelect({
           id={id}
           disabled={disabled}
           data-testid={dataTestId}
+          // The stable hook every test targets a model picker through.
+          //
+          // It exists because the alternative already broke: e2e specs used to
+          // find these pickers by `getByRole("combobox")`, which is the ARIA
+          // role of whatever primitive happens to be underneath — Radix
+          // `Select` at the time. Swapping the primitive for this dialog + cmdk
+          // picker deleted that role, and every spec driving a picker failed
+          // with a 30s timeout on a locator that no longer matched anything.
+          // `data-slot` is this component's *own* contract: it survives any
+          // future re-implementation, so a spec written against it does not
+          // have to know what the picker is built from.
+          data-slot="model-select"
           // Matches `SelectTrigger` so a picker swapped in beside other form
           // controls does not read as a different kind of control.
           className={cn(
