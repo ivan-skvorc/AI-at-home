@@ -11,6 +11,72 @@ Newest first. Append a pass; never rewrite one. A dated line is what tells the
 next person whether the roster was checked last week or last year, and *which*
 providers that pass could actually reach.
 
+- **2026-08-29 — Anthropic re-verified at tier 1; the four corroborated roll-forwards re-checked and
+  unchanged; one stale prose copy fixed; no price or roster change.** Run because it was asked for,
+  alongside a README edit — not a sync, and not a drift report from the weekly job.
+
+  **Reachability.** `platform.claude.com` answers, so all six Claude entries were read straight off
+  Anthropic's own pricing and models pages. Every other provider host is refused at the egress proxy:
+  `openrouter.ai` is blocked by name (403 at CONNECT, which is exactly what `audit_models.py` reports
+  as *skipped* rather than as drift), and `www.anthropic.com`, `platform.openai.com`, `ai.google.dev`,
+  `api-docs.deepseek.com` and `docs.z.ai` all return the same refusal. General web **search** was
+  available and was used for the tier-2 re-checks below; fetches of the tracker pages it surfaced were
+  themselves blocked, so those re-checks rest on search results rather than on the pages.
+
+  **Mechanical half: clean.** `scripts/audit_models.py` reports **no drift** (display-name/`price:`
+  agreement and two-source parity both hold); the stale-fixture self-test
+  (`--catalog scripts/fixtures/model_audit_stale_catalog.json`) still surfaces all four drift kinds;
+  the `price_in_display_name` grep over both sources prints nothing; `sync-api-key-models.py` enables
+  the `anthropic` block on a dry run against a copy and leaves the file byte-identical on an empty env.
+  `cd backend && make lint && make test` is green (**14032 passed, 80 skipped**) with no `config.yaml`
+  on disk, `uv lock --check` is in sync, and frontend `pnpm format` / `pnpm check` / `pnpm test`
+  (1367 passed) are green.
+
+  **Anthropic: verified, no change.** All six bundled Claudes still match the provider's table exactly
+  — Fable 5 `$10/50`, Opus 5 `$5/25`, Opus 4.8 `$5/25`, Sonnet 5 `$2/10`, Sonnet 4.6 `$3/15`, Haiku 4.5
+  `$1/5` — as do the 0.1x cache-read rates each entry carries. The ids are current (`claude-fable-5`,
+  `claude-opus-5`, `claude-sonnet-5`, `claude-haiku-4-5`; the dateless `claude-opus-4-8` and
+  `claude-sonnet-4-6` are the right form for the 4.6-generation-and-later scheme). Anthropic's page now
+  settles the Sonnet 5 question outright: the `$2/10` introductory rate **is** the standard price and
+  the September 1 increase to `$3/15` **will not occur** — which is what the entry's comment already
+  says, so nothing changed. Roster shape is correct as-is: Opus keeps 4.8 + 5 and Sonnet keeps 4.6 + 5
+  (Opus 4.7 / 4.6 / 4.5 and Sonnet 4.5 are all still listed as available and all correctly excluded by
+  the last-4.x rule), Haiku and Fable keep only their latest, and Mythos 5 stays out because it is
+  still limited-availability.
+
+  **The four 2026-08-20 roll-forwards: re-checked at tier 2, all four agree with what is shipped.**
+  Grok 4.6 `$2/6` (the base tier — the 200K long-context band still doubles the whole request, and the
+  block carries the base rate on purpose), Qwen3.8 Max `$2/6`, GLM-5.3 `$1.4/4.4` and Mistral Medium 3.5
+  `$1.5/7.5`. None could be read off its provider's own page, so all four **stay corroborated, not
+  verified**, and remain owed to the next unrestricted pass.
+
+  **One finding, deliberately left alone: the DeepSeek home block and its OpenRouter twin disagree by
+  3x.** `deepseek-v4-pro` ships at `$1.32/3.96` on the home block and `$0.44/0.87` on OpenRouter — one
+  model, two prices. Two independent search-tier sources agree that DeepSeek's current rate is
+  `$0.435/0.87`, but both also report that since **2026-08-16** DeepSeek bills by time of day: peak
+  hours (01:00–04:00 and 06:00–10:00 UTC) cost double the off-peak rate, and one puts V4-Pro's peak
+  output at exactly the `$3.96` the home block already carries. So the shipped pair looks like the peak
+  rate and the OpenRouter pair like the off-peak one, and a single `price:` field cannot be both.
+  Which tier the bundle should quote is a judgement (the Grok 4.6 precedent says the base rate) that
+  needs the provider's own page, and that page is unreachable — so **nothing was changed**. This is the
+  first thing the next unrestricted pass should settle: confirm DeepSeek's peak and off-peak numbers,
+  decide which tier one `price:` field carries, and make the two halves of the doubled model agree.
+
+  **One stale prose copy fixed.** `scripts/wizard/providers.py`'s OpenRouter `description=` read *"One
+  key: Claude Fable/Opus 5 + …"*, but the OpenRouter bundle carries **only** Fable 5 — every other
+  Claude is deliberately direct-only. That string is one of the four copies no test reads, and it is
+  what `make setup` prints, so it advertised a model the key does not unlock; it now reads *"One key:
+  Claude Fable 5 + …"*. The other three prose copies (`config.example.yaml`'s QUICK START, the sync
+  script's docstring, the README §2 bullet) and `.env.example`'s eleven key lines were read by eye and
+  are correct.
+
+  **Structure, unchanged:** 41 bundled paid models, every one carrying a `price:` block; 11 marker
+  blocks in the prescribed order (Anthropic → OpenRouter → the nine home blocks); the doubling holds
+  for all ten home flagships (`minimax/minimax-m3` ↔ `MiniMax-M3` modulo case); all 13 OpenRouter
+  entries carry `(p)` and no direct, home or Ollama entry does. The one live discount
+  (`openrouter-minimax-m3`, `$0.24/0.96`) still has no `until`, and MiniMax's promotions page is
+  unreachable, so it stays as shipped.
+
 - **2026-08-27 (upstream sync) — Anthropic re-verified at tier 1; no drift anywhere the network
   could reach; one stale prose copy fixed; no roster change.** Run as the audit step of the
   post-sync checklist for the `bytedance/deer-flow@main` merge of 7 commits, one day after the
