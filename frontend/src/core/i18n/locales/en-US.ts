@@ -218,6 +218,8 @@ export const enUS: Translations = {
     reasoningEffortHighDescription:
       "Full-dimensional Logic Deduction + Multi-path Verification + Backward Check",
     searchModels: "Search models...",
+    noModelsFound: "No models found.",
+    noToolSupport: "(no tool support)",
     sortModelsBy: "Sort",
     sortByDefault: "Default",
     sortByName: "Name",
@@ -387,6 +389,9 @@ export const enUS: Translations = {
       conversation: "Conversation",
       memory: "Memory",
       suggestions: "Suggestions",
+      input_polish: "Prompt polish",
+      goal: "Goal check",
+      agent_generation: "Agent generation",
     },
     unpriced: "no price configured",
     unpricedNote: (models: string) =>
@@ -990,6 +995,8 @@ export const enUS: Translations = {
       "What is left of your configured spend_budget cap, across every run and background call in the window. Unpriced models (like local Ollama) cost nothing, so a fully local run is never blocked.",
     memory: "Memory",
     suggestions: "Suggestions",
+    inputPolish: "Prompt polish",
+    goal: "Goal check",
     auxCallCount: (count: number) =>
       count === 1 ? "1 call" : `${count} calls`,
     chartTitle: "Cost per step",

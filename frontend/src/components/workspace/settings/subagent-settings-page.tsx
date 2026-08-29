@@ -31,8 +31,10 @@ import {
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
+import { ModelSelect } from "@/components/workspace/model-select";
 import { useAuth } from "@/core/auth/AuthProvider";
 import { useI18n } from "@/core/i18n/hooks";
+import { lacksToolSupport } from "@/core/models/capabilities";
 import { useModels } from "@/core/models/hooks";
 import {
   useCreateManagedSubagent,
@@ -355,24 +357,29 @@ function SubagentEditor({
             />
           </Field>
           <Field label={t.settings.subagents.model}>
-            <Select
+            <ModelSelect
+              models={models}
               value={draft.model}
-              onValueChange={(next) => set("model", next)}
-            >
-              <SelectTrigger className="w-full">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="inherit">
-                  {t.settings.subagents.inheritModel}
-                </SelectItem>
-                {models.map((model) => (
-                  <SelectItem key={model.name} value={model.name}>
-                    {model.display_name || model.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+              onChange={(next) => set("model", next)}
+              options={[
+                {
+                  value: "inherit",
+                  label: t.settings.subagents.inheritModel,
+                },
+              ]}
+              // A subagent is delegated to through the `task` tool, so a model
+              // that cannot call tools is a poor pick — demoted, not hidden, in
+              // case the capability flag is wrong (same rule as the composer's
+              // subagent picker, FORK.md §3).
+              demoteLast={lacksToolSupport}
+              annotate={(model) =>
+                lacksToolSupport(model) ? (
+                  <span className="text-muted-foreground ml-1 text-[10px]">
+                    {t.inputBox.noToolSupport}
+                  </span>
+                ) : null
+              }
+            />
           </Field>
           <Field label={t.settings.subagents.tools}>
             <OptionalNameListField

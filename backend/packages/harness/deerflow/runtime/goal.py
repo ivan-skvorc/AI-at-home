@@ -342,7 +342,42 @@ async def evaluate_goal_completion(
             invoke=lambda: model.ainvoke(prompt_messages, config=invoke_config),
             task_store=task_store,
         )
+    await _record_goal_aux_usage(thread_id, model_name, response)
     return parse_goal_evaluation_response(_extract_response_text(response.content))
+
+
+async def _record_goal_aux_usage(thread_id: str | None, requested_model: str | None, response: Any) -> None:
+    """Bill this evaluator call to the conversation that triggered it.
+
+    The evaluator fires once per turn for as long as a goal is active and again
+    for every hidden continuation, so on a long-running goal it is not a rounding
+    error. It runs *after* the graph run has finished, which is exactly why its
+    tokens never reach ``token_usage_by_model``: there is no run left to attach
+    them to. Recording it here is what keeps the header's figure equal to what
+    the conversation actually spent.
+
+    ``model_name`` is read off the response rather than taken from the request,
+    because the evaluator usually runs on the configured default (``model_name``
+    is ``None``) and pricing needs the id the provider actually served — the same
+    rule ``oneshot_llm`` follows.
+    """
+    from deerflow.model_ids import normalize_reported_model_name
+    from deerflow.runtime.aux_usage import AUX_CATEGORY_GOAL, arecord_aux_usage_metadata
+
+    served = requested_model
+    metadata = getattr(response, "response_metadata", None)
+    if isinstance(metadata, dict):
+        for key in ("model_name", "model"):
+            value = metadata.get(key)
+            if isinstance(value, str) and value.strip():
+                served = normalize_reported_model_name(value)
+                break
+    await arecord_aux_usage_metadata(
+        thread_id,
+        AUX_CATEGORY_GOAL,
+        model_name=served,
+        usage=getattr(response, "usage_metadata", None),
+    )
 
 
 def should_continue_goal(goal: GoalState, evaluation: GoalEvaluation, *, no_progress_count: int | None = None) -> bool:

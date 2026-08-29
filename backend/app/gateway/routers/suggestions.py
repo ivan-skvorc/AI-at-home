@@ -9,7 +9,7 @@ from app.gateway.authz import require_permission
 from app.gateway.deps import get_config
 from deerflow.config.app_config import AppConfig
 from deerflow.config.suggestions_config import DEFAULT_MAX_SUGGESTIONS, MAX_SUGGESTIONS_LIMIT
-from deerflow.runtime.aux_usage import arecord_aux_usage
+from deerflow.runtime.aux_usage import AUX_CATEGORY_SUGGESTIONS, arecord_aux_usage_metadata
 from deerflow.utils.oneshot_llm import run_oneshot_llm_with_usage
 from deerflow.utils.thread_id import ThreadId
 
@@ -88,22 +88,16 @@ async def _record_suggestions_usage(thread_id: str, model_name: str | None, usag
     """Record the suggestions LLM call's tokens for the sidebar counter (best-effort).
 
     The registry is write-through to a durable SQLite store, so recording is
-    file IO; ``arecord_aux_usage`` keeps it off the event loop.
+    file IO; the ``a``-prefixed helper keeps it off the event loop. Unpacking the
+    response's ``usage_metadata`` — including the cache-hit count nested under
+    ``input_token_details`` — is shared with the other auxiliary sinks so the
+    four of them cannot disagree about how a usage payload is read.
+
+    The guard is kept on top of the helper's own so the "a broken counter never
+    breaks the answer" property holds even if a layer beneath this line changes.
     """
-    if not isinstance(usage, dict):
-        return
-    input_details = usage.get("input_token_details")
-    cache_read = input_details.get("cache_read") if isinstance(input_details, dict) else 0
     try:
-        await arecord_aux_usage(
-            thread_id,
-            "suggestions",
-            model_name=model_name,
-            input_tokens=usage.get("input_tokens"),
-            output_tokens=usage.get("output_tokens"),
-            total_tokens=usage.get("total_tokens"),
-            cache_read_tokens=cache_read,
-        )
+        await arecord_aux_usage_metadata(thread_id, AUX_CATEGORY_SUGGESTIONS, model_name=model_name, usage=usage)
     except Exception:  # pragma: no cover - defensive: counter must not break suggestions
         logger.debug("failed to record suggestions aux usage", exc_info=True)
 

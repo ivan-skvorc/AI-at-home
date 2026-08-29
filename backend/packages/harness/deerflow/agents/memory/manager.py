@@ -771,24 +771,9 @@ def _record_memory_aux_usage(thread_id: Any, model_name: Any, token_usage: Any) 
     ``deerflow/runtime/aux_usage_store.py``). Async callers use
     ``arecord_aux_usage`` instead.
     """
-    if not isinstance(token_usage, dict) or not thread_id:
-        return
-    try:
-        from deerflow.runtime.aux_usage import record_aux_usage
+    from deerflow.runtime.aux_usage import AUX_CATEGORY_MEMORY, record_aux_usage_metadata
 
-        input_details = token_usage.get("input_token_details")
-        cache_read = input_details.get("cache_read") if isinstance(input_details, dict) else 0
-        record_aux_usage(
-            str(thread_id),
-            "memory",
-            model_name=str(model_name) if model_name else None,
-            input_tokens=token_usage.get("input_tokens"),
-            output_tokens=token_usage.get("output_tokens"),
-            total_tokens=token_usage.get("total_tokens"),
-            cache_read_tokens=cache_read,
-        )
-    except Exception:  # pragma: no cover - defensive: counter must not break memory
-        logger.debug("failed to record memory aux usage", exc_info=True)
+    record_aux_usage_metadata(thread_id, AUX_CATEGORY_MEMORY, model_name=model_name, usage=token_usage)
 
 
 def _host_default_extraction_callback(payload: Any) -> None:

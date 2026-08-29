@@ -35,16 +35,3 @@ export function lacksToolSupport(
 ): boolean {
   return model.supports_tools === false;
 }
-
-/**
- * Sort models for tool-requiring pickers (Ultra mode): tool-capable models
- * first, alphabetical by display name within each group. Returns a new array.
- */
-export function sortModelsByToolSupport(models: Model[]): Model[] {
-  return [...models].sort((a, b) => {
-    const aBad = lacksToolSupport(a) ? 1 : 0;
-    const bBad = lacksToolSupport(b) ? 1 : 0;
-    if (aBad !== bBad) return aBad - bBad;
-    return (a.display_name ?? a.name).localeCompare(b.display_name ?? b.name);
-  });
-}

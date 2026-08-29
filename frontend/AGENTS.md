@@ -120,3 +120,16 @@ This fork adds the keep-alive chat tab strip, the spend page, the PWA shell and
 Web Push, the model-picker sort/group controls, and the cost overview in the
 chat header. They are documented in **[FORK.md](../FORK.md)**, which also names
 the tests pinning each; `src/AGENTS.md` carries the code-adjacent notes.
+
+**One model picker, everywhere.** Selecting a model is
+`components/workspace/model-select.tsx` (`ModelSelect`) — or, inside the
+composer and sidecar, the `ModelPickerControls` + `ModelPickerList` pair it is
+built from (`components/workspace/model-picker-controls.tsx`). Do **not** map
+`models` into `SelectItem`s: that is the state this feature existed to end, and
+it is silent when reintroduced — a flat list in `config.yaml` order with a grey
+price is not an error, it just makes a model impossible to find on that one
+screen while every other screen sorts, groups, searches and colours. All the
+pickers share the single `modelPicker` entry in `core/settings/local.ts`, so a
+sort chosen in a conversation is already applied in Settings. Pinned by
+`tests/unit/components/workspace/model-select.dom.test.tsx` and
+`tests/unit/core/models/sorting.test.ts`.

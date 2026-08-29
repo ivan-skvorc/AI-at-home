@@ -7,7 +7,8 @@ import deerflow.utils.llm_text as llm_text
 from app.gateway.authz import require_permission
 from app.gateway.deps import get_config
 from deerflow.config.app_config import AppConfig
-from deerflow.utils.oneshot_llm import run_oneshot_llm
+from deerflow.runtime.aux_usage import AUX_CATEGORY_INPUT_POLISH, arecord_aux_usage_metadata
+from deerflow.utils.oneshot_llm import run_oneshot_llm_with_usage
 
 logger = logging.getLogger(__name__)
 
@@ -17,7 +18,7 @@ router = APIRouter(prefix="/api", tags=["input-polish"])
 class InputPolishRequest(BaseModel):
     text: str = Field(..., description="Draft text currently shown in the composer")
     locale: str | None = Field(default=None, description="Optional UI locale hint")
-    thread_id: str | None = Field(default=None, description="Optional thread id for tracing only")
+    thread_id: str | None = Field(default=None, description="Optional thread id; used for tracing and to bill the call to that conversation")
 
 
 class InputPolishResponse(BaseModel):
@@ -85,7 +86,7 @@ async def polish_input(
 
     model_name = config.input_polish.model_name
     try:
-        raw = await run_oneshot_llm(
+        result = await run_oneshot_llm_with_usage(
             system_instruction=_build_system_instruction(),
             user_content=_build_user_content(text, body.locale),
             run_name="input_polish",
@@ -93,7 +94,22 @@ async def polish_input(
             model_name=model_name,
             thread_id=body.thread_id,
         )
-        rewritten = _clean_rewritten_text(raw)
+        # Bill the rewrite to the conversation it was drafted in. This is a
+        # composer feature that is ``enabled: true`` out of the box, so it is the
+        # one auxiliary sink a user pays for without opting into anything —
+        # leaving it uncounted makes the chat header quietly understate what the
+        # conversation actually cost. Priced per model, so a cheap
+        # ``input_polish.model_name`` shows up as the saving it is.
+        try:
+            await arecord_aux_usage_metadata(
+                body.thread_id,
+                AUX_CATEGORY_INPUT_POLISH,
+                model_name=result.model_name,
+                usage=result.usage,
+            )
+        except Exception:  # pragma: no cover - defensive: counter must not break polishing
+            logger.debug("failed to record input-polish aux usage", exc_info=True)
+        rewritten = _clean_rewritten_text(result.text)
     except Exception as exc:
         logger.exception("Failed to polish input: thread_id=%s err=%s", body.thread_id, exc)
         raise HTTPException(status_code=503, detail="Failed to polish input") from exc

@@ -2740,7 +2740,7 @@ export function InputBox({
                             />
                             {unusable && (
                               <span className="text-muted-foreground ml-1 text-[10px]">
-                                (no tool support)
+                                {t.inputBox.noToolSupport}
                               </span>
                             )}
                           </ModelSelectorName>
@@ -2832,7 +2832,7 @@ export function InputBox({
                             />
                             {lacksToolSupport(m) && (
                               <span className="text-muted-foreground ml-1 text-[10px]">
-                                (no tool support)
+                                {t.inputBox.noToolSupport}
                               </span>
                             )}
                           </ModelSelectorName>

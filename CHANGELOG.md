@@ -9,6 +9,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **cost:** **The chat's cost figure now covers everything the conversation
+  spends, not just its answers.** Two LLM calls were being made per conversation
+  and billed to nobody: the composer's **prompt polish** rewrite — which is
+  `input_polish.enabled: true` out of the box, so it is the one you pay for
+  without having turned anything on — and the per-turn **goal check** that runs
+  while a goal is active. Neither becomes a run of its own, so neither reached
+  the header's total; the number was simply lower than the money spent, with
+  nothing on screen to say so. Both now appear as their own priced rows in the
+  cost dropdown ("Prompt polish", "Goal check") beside the existing memory and
+  suggestions counters, each billed at the rate of the model that actually
+  served it — so pointing `input_polish.model_name` at a cheap model shows up as
+  the saving it is. Like the other two, they are persisted in
+  `aux_usage.sqlite3` and survive restarting the stack or the machine. No new
+  config keys; nothing to turn on.
+- **models:** **The sortable, grouped model picker is now on every screen that
+  picks a model.** Sorting by name or price, grouping by provider, the search
+  box and the coloured prices were only ever in the chat composer; Democracy
+  setup, the follow-up-suggestions model, the subagent default in Settings, the
+  agent generator and a custom agent's own settings each still showed a plain
+  list in `config.yaml` order with the price as grey text. All five now use the
+  same picker as the chat, and they share one saved preference — so a sort you
+  choose in a conversation is already applied everywhere else. The default stays
+  config order, so nothing moves until you opt in. The picker publishes a stable
+  `data-slot="model-select"` so tests can find it without depending on whichever
+  primitive it is built from.
 - **media:** **Images and short video clips now generate on your own GPU, with no
   API key and nothing leaving the house.** A long-lived ComfyUI service (`make
   comfy-up`, published loopback-only on `127.0.0.1:8188`) backs five new tools —
