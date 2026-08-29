@@ -20,6 +20,8 @@ landed together as one change set: see [FORK.md §23](./FORK.md) and its three r
 post-sync feature checklist. Their numbers stay retired because the codebase cites them
 (`grep -rn "roadmap item"` finds references across workflows, routers and test
 docstrings), so recycling one would silently point an existing comment at unrelated work.
+Removing a shipped item means removing its **At a glance** bullet in the same edit — an index
+that outlives the item it points at is worse than no index.
 
 Items **16–18** came out of working against the fork itself — gaps and loose ends noticed
 while shipping earlier ones. Items **19–25** came from a different exercise: reading the
@@ -27,6 +29,39 @@ codebase against what the wider AI ecosystem settled on during 2026, and keeping
 ideas that this fork's own thesis argues for. The rejected candidates from that pass are
 recorded at the bottom of this file, because knowing what was considered and declined is
 worth as much as the list itself.
+
+---
+
+## At a glance
+
+Open items, one line each. The full orchestrator prompts follow.
+
+- **16. Guarded local model downloads** — new checkpoints arrive without leaving the chat,
+  under limits an operator sets; never custom nodes, not even behind a flag.
+- **17. Output egress for the external AIO sandbox** — a file written to
+  `/mnt/user-data/outputs` either reaches the artifact panel or says loudly that it cannot.
+- **18. Mobile chat layout audit** — the chat route operable one-handed at 390px, with the
+  desktop layout unchanged.
+- **19. Local voice** — a spoken round trip from a phone on the tailnet, with no audio
+  leaving the machine on the default path.
+- **20. Measure, then expose, the local speed layer** — tokens/sec and TTFT per local model,
+  and draft/MTP decoding where this host actually supports it.
+- **21. Local embedding retrieval for DeerMem** — paraphrase recall without shipping the
+  facts to a remote memory backend.
+- **22. Event triggers** — a task fires because something happened, dispatched through the
+  existing run lifecycle rather than a parallel one.
+- **23. An untrusted-content boundary** — provenance as a second axis beside tool-name
+  gating, with the consequential tools gated on it.
+- **24. Track the MCP 2026-07-28 specification** — audit the fork's deepest surface against
+  the stateless core and its neighbours.
+- **25. A behavioural regression suite** — opt-in, judged, out of CI; the measuring stick for
+  everything above it.
+
+**Suggested order for 19–25.** Voice first (19), since it is the one missing modality and it
+closes a live privacy leak. Then the injection boundary (23), *before* anything widens the
+surface it defends. Then the two that make local models worth preferring rather than
+tolerating (20, 21). Then proactive triggers and spec upkeep (22, 24). The regression suite
+last (25), because every earlier item is a change it would have measured.
 
 ---
 
