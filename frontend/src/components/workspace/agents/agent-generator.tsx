@@ -18,14 +18,8 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { ModelSelect } from "@/components/workspace/model-select";
 import {
   AgentGenerationError,
   canAnalyze,
@@ -326,21 +320,17 @@ export function AgentGenerator() {
               <span className="text-sm font-medium">
                 {t.agentGeneration.modelLabel}
               </span>
-              <Select value={modelValue} onValueChange={setModelValue}>
-                <SelectTrigger className="w-full">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value={DEFAULT_MODEL_VALUE}>
-                    {t.agentGeneration.modelDefault}
-                  </SelectItem>
-                  {models.map((model) => (
-                    <SelectItem key={model.name} value={model.name}>
-                      {model.display_name || model.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <ModelSelect
+                models={models}
+                value={modelValue}
+                onChange={setModelValue}
+                options={[
+                  {
+                    value: DEFAULT_MODEL_VALUE,
+                    label: t.agentGeneration.modelDefault,
+                  },
+                ]}
+              />
               <p className="text-muted-foreground text-xs">
                 {t.agentGeneration.modelHint}
               </p>

@@ -1,13 +1,7 @@
 "use client";
 
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
+import { ModelSelect } from "@/components/workspace/model-select";
 import { useI18n } from "@/core/i18n/hooks";
 import { useModels } from "@/core/models/hooks";
 import { useLocalSettings } from "@/core/settings";
@@ -15,8 +9,8 @@ import { useSuggestionsConfig } from "@/core/suggestions/hooks";
 
 import { SettingsSection } from "./settings-section";
 
-// Sentinel Select value for "follow the workflow's selected model" — Radix
-// Select values must be non-empty strings, so undefined is mapped to this.
+// Sentinel picker value for "follow the workflow's selected model": the stored
+// preference is `undefined`, and a picker row needs a non-empty value.
 const FOLLOW_WORKFLOW = "__follow_workflow__";
 
 export function SuggestionsSettingsPage() {
@@ -74,21 +68,18 @@ export function SuggestionsSettingsPage() {
             <div className="text-sm font-medium">
               {t.settings.suggestions.modelLabel}
             </div>
-            <Select value={selectValue} onValueChange={handleModelChange}>
-              <SelectTrigger className="w-full max-w-sm">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value={FOLLOW_WORKFLOW}>
-                  {t.settings.suggestions.followWorkflow}
-                </SelectItem>
-                {models.map((model) => (
-                  <SelectItem key={model.name} value={model.name}>
-                    {model.display_name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <ModelSelect
+              className="max-w-sm"
+              models={models}
+              value={selectValue}
+              onChange={handleModelChange}
+              options={[
+                {
+                  value: FOLLOW_WORKFLOW,
+                  label: t.settings.suggestions.followWorkflow,
+                },
+              ]}
+            />
             <p className="text-muted-foreground text-xs">
               {t.settings.suggestions.modelHint}
             </p>

@@ -180,6 +180,8 @@ export interface Translations {
     reasoningEffortHigh: string;
     reasoningEffortHighDescription: string;
     searchModels: string;
+    noModelsFound: string;
+    noToolSupport: string;
     sortModelsBy: string;
     sortByDefault: string;
     sortByName: string;
@@ -295,6 +297,9 @@ export interface Translations {
       conversation: string;
       memory: string;
       suggestions: string;
+      input_polish: string;
+      goal: string;
+      agent_generation: string;
     };
     /** Suffix on a model row with no configured price. */
     unpriced: string;
@@ -827,6 +832,8 @@ export interface Translations {
     budgetHint: string;
     memory: string;
     suggestions: string;
+    inputPolish: string;
+    goal: string;
     auxCallCount: (count: number) => string;
     /** Heading for the per-step cost chart in the cost dropdown. */
     chartTitle: string;

@@ -40,7 +40,7 @@ from deerflow.config.agent_generation_config import MAX_SOURCES_LIMIT
 from deerflow.config.agents_api_config import get_agents_api_config
 from deerflow.config.agents_config import list_custom_agents
 from deerflow.config.app_config import AppConfig
-from deerflow.runtime.aux_usage import arecord_aux_usage
+from deerflow.runtime.aux_usage import arecord_aux_usage_metadata
 from deerflow.utils.oneshot_llm import run_oneshot_llm_with_usage
 
 logger = logging.getLogger(__name__)
@@ -222,21 +222,20 @@ async def _scheduled_task_transcript(source: GenerationSource, *, request: Reque
 
 
 async def _record_usage(model_name: str | None, usage: dict[str, Any] | None) -> None:
-    """Bill the analysis call to the aux-usage counter (best-effort)."""
-    if not isinstance(usage, dict):
-        return
-    input_details = usage.get("input_token_details")
-    cache_read = input_details.get("cache_read") if isinstance(input_details, dict) else 0
+    """Bill the analysis call to the aux-usage counter (best-effort).
+
+    Billed to a synthetic thread id, not a conversation: the analysis reads
+    several threads and belongs to none of them, so it appears on the spend
+    page's feature table rather than in any chat header.
+
+    The shared helper already swallows a store failure; the guard here is
+    deliberately kept on top of it so the property survives a break in *any*
+    layer beneath this line. The analysis has already been paid for at the
+    provider by the time we get here — a broken counter must never cost the user
+    the result they bought.
+    """
     try:
-        await arecord_aux_usage(
-            USAGE_THREAD_ID,
-            USAGE_CATEGORY,
-            model_name=model_name,
-            input_tokens=usage.get("input_tokens"),
-            output_tokens=usage.get("output_tokens"),
-            total_tokens=usage.get("total_tokens"),
-            cache_read_tokens=cache_read,
-        )
+        await arecord_aux_usage_metadata(USAGE_THREAD_ID, USAGE_CATEGORY, model_name=model_name, usage=usage)
     except Exception:  # pragma: no cover - defensive: accounting must not break the feature
         logger.debug("failed to record agent-generation aux usage", exc_info=True)
 

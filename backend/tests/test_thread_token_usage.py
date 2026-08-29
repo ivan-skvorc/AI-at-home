@@ -747,3 +747,117 @@ def test_spend_budget_block_is_absent_when_the_cap_is_not_enforceable(monkeypatc
         data = client.get("/api/threads/thread-1/token-usage").json()
 
     assert data["spend_budget"] is None
+
+
+def test_every_chat_aux_sink_is_priced_at_its_own_model():
+    """The whole "what has this chat cost me" picture, in one thread.
+
+    The header's job is to account for **everything one conversation spends**,
+    and a conversation spends money in five places that are priced separately:
+    the lead model, an Ultra-mode subagent on a different model, background
+    memory extraction, the follow-up suggestions call, the composer's draft
+    polish, and the per-turn goal check. The last two used to be spent with
+    nothing counting them at all — a header total quietly lower than the money
+    that left the account, with no note explaining the gap.
+
+    Each sink is billed at the rate of the model that actually served it, which
+    is the property that makes the cheap-auxiliary-model advice in FORK.md
+    ("set input_polish.model_name to your cheapest model") visible as a saving
+    rather than smeared across the lead's rate.
+    """
+    aux_usage.reset_aux_usage()
+    # Memory on an unpriced local model: real electricity, no configured price.
+    aux_usage.record_aux_usage("thread-all", "memory", model_name="ollama-model", input_tokens=1000, output_tokens=200)
+    # Suggestions and the goal check on the cheap model; polish on the cheap one too.
+    aux_usage.record_aux_usage("thread-all", "suggestions", model_name="sub-model", input_tokens=500_000, output_tokens=100_000)
+    aux_usage.record_aux_usage("thread-all", "input_polish", model_name="sub-model", input_tokens=200_000, output_tokens=50_000)
+    aux_usage.record_aux_usage("thread-all", "goal", model_name="lead-model", input_tokens=100_000, output_tokens=10_000)
+
+    run_store = MagicMock()
+    run_store.aggregate_tokens_by_thread = AsyncMock(
+        return_value={
+            "total_tokens": 5_000_000,
+            "total_input_tokens": 3_000_000,
+            "total_output_tokens": 2_000_000,
+            "total_runs": 2,
+            "by_model": {
+                "lead-model": {"tokens": 2_000_000, "runs": 2, "input_tokens": 1_000_000, "output_tokens": 1_000_000, "cache_read_tokens": 0},
+                "sub-model": {"tokens": 3_000_000, "runs": 1, "input_tokens": 2_000_000, "output_tokens": 1_000_000, "cache_read_tokens": 0},
+            },
+            "by_caller": {"lead_agent": 2_000_000, "subagent": 3_000_000, "middleware": 0},
+        },
+    )
+    app = _make_app(run_store)
+
+    try:
+        with (
+            patch.object(thread_runs, "_thread_pricing_map", side_effect=_priced_map),
+            patch.object(thread_runs, "build_context_usage", AsyncMock(return_value=None)),
+            TestClient(app) as client,
+        ):
+            data = client.get("/api/threads/thread-all/token-usage").json()
+    finally:
+        aux_usage.reset_aux_usage()
+
+    # Runs: lead 1M@$5 + 1M@$25 = 30 ; sub 2M@$1 + 1M@$4 = 6.
+    assert data["total_cost"] == pytest.approx(36.0)
+
+    aux = data["aux"]
+    assert set(aux) == {"memory", "suggestions", "input_polish", "goal"}
+    # Unpriced sink: tokens are still reported, cost stays null rather than 0 —
+    # "nothing could price this" is a different claim from "this was free".
+    assert aux["memory"]["tokens"] == 1200
+    assert aux["memory"]["cost"] is None
+    # suggestions on sub-model: 0.5M@$1 + 0.1M@$4 = 0.9
+    assert aux["suggestions"]["cost"] == pytest.approx(0.9)
+    # input_polish on sub-model: 0.2M@$1 + 0.05M@$4 = 0.4
+    assert aux["input_polish"]["cost"] == pytest.approx(0.4)
+    # goal on lead-model: 0.1M@$5 + 0.01M@$25 = 0.75 — NOT the sub-model rate.
+    assert aux["goal"]["cost"] == pytest.approx(0.75)
+
+
+def test_aux_sinks_survive_a_gateway_restart_at_the_endpoint(tmp_path, monkeypatch):
+    """Reopening a thread after a restart must not make it look cheaper.
+
+    The runs half is durable because it lives in the run store; this is the aux
+    half, driven through the real endpoint so a regression in the registry's
+    hydrate-on-read path fails here and not only in the registry's own tests.
+
+    ``conftest`` points the aux store at ``DEER_FLOW_AUX_USAGE_DB=0`` (durability
+    off) so the rest of the suite stays off the disk; this test is about
+    durability, so it opts into a real per-test SQLite file. Without that
+    override it passes for the wrong reason — an empty registry equals an empty
+    registry.
+    """
+    from app.gateway import spend_budget as sb
+
+    monkeypatch.setenv("DEER_FLOW_AUX_USAGE_DB", str(tmp_path / "aux_usage.sqlite3"))
+    aux_usage.reset_aux_usage()
+    run_store = _make_run_store()
+    # No cap configured; injected rather than resolved so the test does not
+    # reach for an ambient config.yaml (which CI does not have).
+    inactive = sb.inactive_status(SpendBudgetConfig(), sb.DISABLED_NO_PRICING)
+
+    def read() -> dict:
+        app = _make_app(run_store)
+        with (
+            patch.object(thread_runs, "_thread_pricing_map", side_effect=_priced_map),
+            patch.object(thread_runs, "build_context_usage", AsyncMock(return_value=None)),
+            patch.object(thread_runs, "resolve_run_spend_budget", AsyncMock(return_value=inactive)),
+            TestClient(app) as client,
+        ):
+            return client.get("/api/threads/thread-restart/token-usage").json()
+
+    try:
+        for category, model in (("input_polish", "sub-model"), ("goal", "lead-model")):
+            aux_usage.record_aux_usage("thread-restart", category, model_name=model, input_tokens=200_000, output_tokens=50_000)
+        before = read()["aux"]
+
+        # The "closed the laptop" shape: cache and store handle dropped, the
+        # SQLite file left on disk exactly as a restart leaves it.
+        aux_usage.reset_aux_usage_cache()
+
+        assert read()["aux"] == before
+        assert before["input_polish"]["cost"] == pytest.approx(0.4)
+    finally:
+        aux_usage.reset_aux_usage()

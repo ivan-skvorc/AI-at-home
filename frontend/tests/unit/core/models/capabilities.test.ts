@@ -1,20 +1,6 @@
 import { describe, expect, test } from "@rstest/core";
 
-import {
-  getResolvedMode,
-  lacksToolSupport,
-  sortModelsByToolSupport,
-} from "@/core/models/capabilities";
-import type { Model } from "@/core/models/types";
-
-function makeModel(overrides: Partial<Model> & { name: string }): Model {
-  return {
-    id: overrides.name,
-    model: overrides.name,
-    display_name: overrides.name,
-    ...overrides,
-  } as Model;
-}
+import { getResolvedMode, lacksToolSupport } from "@/core/models/capabilities";
 
 describe("getResolvedMode", () => {
   test("keeps pro and ultra selectable on models without thinking support", () => {
@@ -52,32 +38,5 @@ describe("lacksToolSupport", () => {
     // cloud models) must be treated as tool-capable.
     expect(lacksToolSupport({})).toBe(false);
     expect(lacksToolSupport({ supports_tools: undefined })).toBe(false);
-  });
-});
-
-describe("sortModelsByToolSupport", () => {
-  test("puts tool-capable models first, alphabetical within groups", () => {
-    const models = [
-      makeModel({ name: "zeta", supports_tools: false }),
-      makeModel({ name: "beta" }),
-      makeModel({ name: "alpha", supports_tools: false }),
-      makeModel({ name: "delta", supports_tools: true }),
-    ];
-    expect(sortModelsByToolSupport(models).map((m) => m.name)).toEqual([
-      "beta",
-      "delta",
-      "alpha",
-      "zeta",
-    ]);
-  });
-
-  test("does not mutate the input array", () => {
-    const models = [
-      makeModel({ name: "b", supports_tools: false }),
-      makeModel({ name: "a" }),
-    ];
-    const before = models.map((m) => m.name);
-    sortModelsByToolSupport(models);
-    expect(models.map((m) => m.name)).toEqual(before);
   });
 });

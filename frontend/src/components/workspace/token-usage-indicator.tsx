@@ -37,6 +37,34 @@ import { formatContextUsagePercentage } from "./context-usage-format";
 import { CostPerStepChart } from "./cost-per-step-chart";
 import { Tooltip } from "./tooltip";
 
+/**
+ * Label for one auxiliary spend row.
+ *
+ * The backend's category is a free-form string
+ * (`deerflow/runtime/aux_usage.py::CHAT_AUX_CATEGORIES`), and a chain of
+ * ternaries here grew a branch every time a sink was added — which is how a new
+ * sink ends up rendering its raw snake_case key in the header. A lookup keeps
+ * that to one entry, and an unknown category still falls back to its own name
+ * rather than disappearing: a row with no label is still money spent.
+ */
+function auxCategoryLabel(
+  category: string,
+  t: ReturnType<typeof useI18n>["t"],
+): string {
+  switch (category) {
+    case "memory":
+      return t.tokenUsage.memory;
+    case "suggestions":
+      return t.tokenUsage.suggestions;
+    case "input_polish":
+      return t.tokenUsage.inputPolish;
+    case "goal":
+      return t.tokenUsage.goal;
+    default:
+      return category;
+  }
+}
+
 interface TokenUsageIndicatorProps {
   threadId?: string;
   messages: Message[];
@@ -309,11 +337,7 @@ export function TokenUsageIndicator({
                       className="flex items-center justify-between gap-4"
                     >
                       <span className="text-muted-foreground">
-                        {category === "memory"
-                          ? t.tokenUsage.memory
-                          : category === "suggestions"
-                            ? t.tokenUsage.suggestions
-                            : category}
+                        {auxCategoryLabel(category, t)}
                       </span>
                       {/* One figure, on the same basis as the headline: what
                           this sink costs now. Memory and suggestions can each run

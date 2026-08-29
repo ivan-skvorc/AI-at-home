@@ -20,6 +20,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { ModelSelect } from "@/components/workspace/model-select";
 import { useUpdateAgent } from "@/core/agents";
 import type { Agent, ReasoningEffort } from "@/core/agents";
 import { useI18n } from "@/core/i18n/hooks";
@@ -170,21 +171,17 @@ export function AgentSettingsDialog({
             <span className="text-sm font-medium">
               {t.agents.settingsModel}
             </span>
-            <Select value={model} onValueChange={setModel}>
-              <SelectTrigger className="w-full">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value={DEFAULT_MODEL_VALUE}>
-                  {t.agents.settingsModelDefault}
-                </SelectItem>
-                {models.map((m) => (
-                  <SelectItem key={m.name} value={m.name}>
-                    {m.display_name || m.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <ModelSelect
+              models={models}
+              value={model}
+              onChange={setModel}
+              options={[
+                {
+                  value: DEFAULT_MODEL_VALUE,
+                  label: t.agents.settingsModelDefault,
+                },
+              ]}
+            />
           </div>
 
           {/* Temperature */}

@@ -47,17 +47,25 @@ async function mockModels(page: Page) {
   );
 }
 
+/**
+ * Pick a model in one of the setup page's pickers.
+ *
+ * The model pickers are the shared `ModelSelect` (a dialog + cmdk list, the same
+ * control as the chat composer's), not a Radix `<Select>` — so they are targeted
+ * by test id rather than by the `combobox` role, which now belongs only to the
+ * grading scale and to the picker's own search box while it is open.
+ */
+async function pickModel(page: Page, testId: string, name: string) {
+  await page.getByTestId(testId).click();
+  await page.getByRole("option", { name, exact: false }).first().click();
+}
+
 /** Fill a complete two-model panel on the setup page. */
 async function fillPanel(page: Page) {
   await page.getByLabel("Panelists").fill("2");
-  const selects = page.getByRole("combobox");
-  // 0 = organizer, 1..n = panelists, last = the grading scale.
-  await selects.nth(0).click();
-  await page.getByRole("option", { name: "Organizer Model" }).click();
-  await selects.nth(1).click();
-  await page.getByRole("option", { name: "Panelist A" }).click();
-  await selects.nth(2).click();
-  await page.getByRole("option", { name: "Panelist B" }).click();
+  await pickModel(page, "democracy-organizer-model", "Organizer Model");
+  await pickModel(page, "democracy-panelist-0", "Panelist A");
+  await pickModel(page, "democracy-panelist-1", "Panelist B");
 }
 
 test.describe("Democracy panel", () => {
@@ -108,7 +116,8 @@ test.describe("Democracy panel", () => {
 
     await fillPanel(page);
 
-    // Grading is the last combobox on the page.
+    // Grading is now the only `<Select>` left on the page — the model rows are
+    // the shared dialog picker.
     await page.getByRole("combobox").last().click();
     await page.getByRole("option", { name: /Score out of 5/i }).click();
 
@@ -172,11 +181,8 @@ test.describe("Democracy panel", () => {
     ).toBeVisible({ timeout: 20_000 });
 
     await page.getByLabel("Panelists").fill("2");
-    const selects = page.getByRole("combobox");
-    await selects.nth(1).click();
-    await page.getByRole("option", { name: "Panelist A" }).click();
-    await selects.nth(2).click();
-    await page.getByRole("option", { name: "Panelist A" }).click();
+    await pickModel(page, "democracy-panelist-0", "Panelist A");
+    await pickModel(page, "democracy-panelist-1", "Panelist A");
 
     // One model asked twice is one opinion at twice the price.
     await expect(page.getByText(/must be a different model/i)).toBeVisible();

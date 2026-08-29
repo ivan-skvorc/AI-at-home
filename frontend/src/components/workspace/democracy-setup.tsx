@@ -25,10 +25,7 @@ import {
   WorkspaceHeader,
 } from "@/components/workspace/workspace-container";
 import { useI18n } from "@/core/i18n/hooks";
-import {
-  lacksToolSupport,
-  sortModelsByToolSupport,
-} from "@/core/models/capabilities";
+import { lacksToolSupport } from "@/core/models/capabilities";
 import { useModels } from "@/core/models/hooks";
 import type { Model } from "@/core/models/types";
 import {
@@ -43,7 +40,7 @@ import {
   stashDemocracyLaunch,
 } from "@/core/threads/democracy";
 
-import { ModelDisplayName } from "./model-picker-controls";
+import { ModelSelect } from "./model-select";
 
 const DEFAULT_PARTICIPANT_COUNT = 3;
 
@@ -77,10 +74,12 @@ export function DemocracySetup() {
     () => models.filter((model) => !lacksToolSupport(model)),
     [models],
   );
-  const panelistModels = useMemo(
-    () => sortModelsByToolSupport(models),
-    [models],
-  );
+  // Panelists keep tool-incapable models available but last. That ordering is
+  // now the picker's `demoteLast` rather than a pre-sorted array: the shared
+  // picker re-sorts whatever it is handed (by name, by price, grouped by
+  // provider), so a pre-sort here would simply be discarded — and silently, with
+  // no-tool models scattered back through the list.
+  const panelistModels = models;
 
   // An empty selection means "not chosen yet", so the first tool-capable model
   // stands in until the user picks — `||` rather than `??` because "" is the
@@ -191,6 +190,7 @@ export function DemocracySetup() {
               models={organizerModels}
               placeholder={t.democracy.pickModel}
               onChange={setOrganizer}
+              data-testid="democracy-organizer-model"
             />
             <p className="text-muted-foreground text-xs">
               {t.democracy.organizerHint}
@@ -208,6 +208,8 @@ export function DemocracySetup() {
                   models={panelistModels}
                   placeholder={t.democracy.pickModel}
                   onChange={(next) => setParticipantAt(index, next)}
+                  demoteLast={lacksToolSupport}
+                  data-testid={`democracy-panelist-${index}`}
                 />
               </div>
             ))}
@@ -369,34 +371,4 @@ export function DemocracySetup() {
 function modelLabel(models: readonly Model[], name: string): string {
   const model = models.find((entry) => entry.name === name);
   return model?.display_name ?? name;
-}
-
-function ModelSelect({
-  value,
-  models,
-  placeholder,
-  onChange,
-}: {
-  value: string;
-  models: readonly Model[];
-  placeholder: string;
-  onChange: (name: string) => void;
-}) {
-  return (
-    <Select value={value || undefined} onValueChange={onChange}>
-      <SelectTrigger className="w-full">
-        <SelectValue placeholder={placeholder} />
-      </SelectTrigger>
-      <SelectContent>
-        {models.map((model) => (
-          <SelectItem key={model.name} value={model.name}>
-            <ModelDisplayName
-              displayName={model.display_name}
-              price={model.price}
-            />
-          </SelectItem>
-        ))}
-      </SelectContent>
-    </Select>
-  );
 }

@@ -75,7 +75,7 @@ def wiring(monkeypatch):
     monkeypatch.setattr(agent_generation, "get_agents_api_config", lambda: SimpleNamespace(enabled=True))
     monkeypatch.setattr(agent_generation, "list_custom_agents", lambda user_id=None: [SimpleNamespace(name="researcher", description="digs into papers")])
     # Aux accounting writes to a durable store; keep the unit tests off the disk.
-    monkeypatch.setattr(agent_generation, "arecord_aux_usage", AsyncMock())
+    monkeypatch.setattr(agent_generation, "arecord_aux_usage_metadata", AsyncMock())
 
     return SimpleNamespace(thread_store=thread_store, event_store=event_store, task_repo=task_repo, task_run_repo=task_run_repo)
 
@@ -323,16 +323,16 @@ def test_analyze_reports_an_unusable_reply_as_502(wiring, monkeypatch):
 def test_analyze_records_aux_usage(wiring, monkeypatch):
     _stub_model(monkeypatch, NO_GAP_REPLY)
     _analyze(_thread_request("t1"))
-    agent_generation.arecord_aux_usage.assert_awaited_once()
-    args, kwargs = agent_generation.arecord_aux_usage.await_args
+    agent_generation.arecord_aux_usage_metadata.assert_awaited_once()
+    args, kwargs = agent_generation.arecord_aux_usage_metadata.await_args
     assert args[1] == agent_generation.USAGE_CATEGORY
-    assert kwargs["input_tokens"] == 10
+    assert kwargs["usage"]["input_tokens"] == 10
 
 
 def test_analyze_survives_an_aux_usage_failure(wiring, monkeypatch):
     # Accounting is best-effort: a broken counter must not cost the user their
     # analysis, which has already been paid for at the provider.
-    monkeypatch.setattr(agent_generation, "arecord_aux_usage", AsyncMock(side_effect=RuntimeError("store down")))
+    monkeypatch.setattr(agent_generation, "arecord_aux_usage_metadata", AsyncMock(side_effect=RuntimeError("store down")))
     _stub_model(monkeypatch, NO_GAP_REPLY)
     assert _analyze(_thread_request("t1")).verdict == "no_gap"
 
