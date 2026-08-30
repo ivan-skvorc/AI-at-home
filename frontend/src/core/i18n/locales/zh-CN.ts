@@ -183,6 +183,14 @@ export const zhCN: Translations = {
     voiceInputNetworkError: "无法连接浏览器语音识别服务。",
     voiceInputNoSpeech: "没有检测到语音，请重试。",
     voiceInputFailed: "语音输入失败，请重试。",
+    voiceInputTranscribing: "正在你的服务器上转录……",
+    voiceInputUnavailable:
+      "语音输入不可用：此浏览器无法在设备上识别语音，且未配置本地转录服务。请在 config.yaml 中设置 voice.stt.enabled，或通过 voice.allow_cloud_fallback 允许浏览器的云端识别。",
+    voiceInputInsecureContext:
+      "语音输入需要安全连接。请打开 https:// 地址（通过 Tailscale 时使用 MagicDNS 名称而非原始 IP）。",
+    voiceInputCloudNotice:
+      "正在使用浏览器的云端语音服务——这段音频会离开你的机器。",
+    voiceInputServerNotice: "录音中……点击停止并在你的服务器上转录。",
     mode: "模式",
     flashMode: "闪速",
     flashModeDescription: "快速且高效的完成任务，但可能不够精准",

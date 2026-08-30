@@ -208,6 +208,7 @@ Then confirm each fork feature end-to-end:
 | **Local image generation** (§23) | `cd backend && uv run pytest tests/test_comfyui_tools.py tests/test_detect_comfyui.py` covers the template contract (typed parameters only, an unbound parameter refused rather than ignored, no path traversal in a template name, and a patched graph that cannot leak back into the cached template), validation against `/object_info` naming the node that moved *before* anything is submitted, checkpoint resolution from the loader node's own enum (request → config → first installed) and the "not installed" message that lists what is, the SSRF guard being **used** with its documented `allow_private_addresses` opt-out rather than bypassed, the submit → poll → fetch loop against a mock transport including its wall-clock timeout, and the detector reusing an already-running ComfyUI instead of starting a second one. **Silent when broken:** the saved `<name>.workflow.json` must equal the graph that actually ran and must not carry binding metadata (otherwise "reproducible by hand" quietly stops being true); the reported seed must be the seed that reached the graph (otherwise every iteration is a fresh random draw and critique is noise); an active tool entry must never ship in `config.example.yaml` (a fresh machine has no ComfyUI, so it would fail at chat time); and the compose port must stay loopback-bound — the ComfyUI API has no authentication and can read and write host files. Manual: `make comfy-up`, uncomment the five `media` tool entries, ask for a picture, confirm the PNG opens in the artifact panel and that the sidecar workflow file loads in ComfyUI and reproduces it. |
 | **GPU residency arbiter** (§23) | `cd backend && uv run pytest tests/test_gpu_arbiter.py` plus `tests/test_doctor.py -k Media`. Covers the computed policy (a small card resolves to `exclusive`, a bigger one to `shared` **on its own**, an unknown estimate or unknown budget falls back to exclusive and names why), eviction on acquire *and* self-eviction on release, residency re-read from the services on every acquire, the `nvidia-smi` tiebreak that evicts when VRAM is held while no tenant claims it, serialization of two concurrent generations, the honest timeout instead of an unbounded queue, and the doctor row for VRAM held while idle. **Silent when broken:** Ollama's unload must stay a **per-request** `keep_alive: 0` — writing it globally reintroduces the subagent cold starts `ollama.keep_alive` exists to prevent; a cloud tenant must remain not-resident rather than gaining a branch of its own; and dropping the release-time self-eviction leaves the diffusion weights on the card, which does not fail, it just makes the next chat turn several times slower. Manual: with a local lead configured, generate twice in a row and confirm `nvidia-smi` shows an empty card between generations. |
 | **Refine loop and local video** (§23) | `cd backend && uv run pytest tests/test_refine_session.py tests/test_comfyui_video.py` covers the frozen rubric (3–6 checkable criteria, a verdict that may not judge anything outside them, every criterion judged each round), the **server-held** counter and wall-clock budget refusing iteration N+1 with a reportable message — asserted at the tool boundary, not just in the model layer — the one-named-change rule on a retry, the session JSON audit trail, evenly spaced still selection with both endpoints included, the contact sheet, and the video tool's own timeout. **Silent when broken:** the video budget must stay a separate config value (sharing the image timeout abandons working clips; inheriting `sandbox.bash_command_timeout` abandons them sooner); a contact-sheet failure must never lose the clip that took minutes to render; and the skill's instruction text is asserted too — the seed discipline, "only view the newest result each round", the `view_image` vision constraint, and the refusal to open a second session to get around the cap are load-bearing sentences, not prose. Manual: ask for a deliberately vague image and confirm it converges within the cap; ask for an impossible one and confirm it abandons instead of spinning. |
+| **Tiered voice input** (§24) | `cd backend && uv run pytest tests/test_voice_stt.py` plus `python3 scripts/pnpm.py rstest run voice-input`. The asserts that are silent when broken: `voice.allow_cloud_fallback` and `voice.stt.enabled` both default **false** and `resolveVoiceInputTier` returns `null` rather than `"cloud"` when neither local tier is available; `DEFAULT_VOICE_SERVER_CONFIG` keeps cloud off when `/api/voice/config` errors or is unreachable (fail closed, not open); `is_local_endpoint` treats Tailscale CGNAT `100.64.0.0/10` as local, so a tailnet STT service is not mislabelled as off-machine; the upload size cap refuses **before** the STT service is called; error text never echoes the service body (a transcript is speech); and `recorder.test.ts` proves the microphone track is stopped on all four exits — success, recorder error, failed construction, and abandonment. A regression in the first two reads as "voice still works" while audio goes back to the vendor. |
 
 **Integration points that tend to need a hand** (where upstream refactors collide with fork additions — check these first when tests fail): the AIO sandbox provider (upstream's cross-instance ownership store adds instance attributes that minimal test fixtures built via `__new__` must seed), the skills tool-policy path (upstream's dynamic `SkillToolPolicyMiddleware` vs. any fork static filtering — reconcile onto the middleware and drop dead build-time filters), `scripts/check.py`'s Docker diagnostics (any upstream test that mocks `run_command` with a strict dict must tolerate the extra `docker` calls), and the `task_tool.py` / `input-box.tsx` model-override plumbing.
 
@@ -2133,6 +2134,73 @@ change makes every `uv run` fail to resolve. Pillow arrives transitively via
 | Doctor | `scripts/doctor.py::check_media_generation` (service reachable + VRAM held while idle) |
 | Invariants for agents | `backend/packages/harness/deerflow/community/comfyui/AGENTS.md` |
 | Tests | `backend/tests/test_comfyui_tools.py`, `test_gpu_arbiter.py`, `test_refine_session.py`, `test_comfyui_video.py`, `test_detect_comfyui.py`, `test_doctor.py::TestCheckMediaGeneration` |
+
+### 24. Tiered voice input — on-device, then your own server, then nobody
+
+The composer had a microphone button before this change, and it was the single
+place where the fork's privacy claim was false in a way nothing surfaced.
+
+`SpeechRecognition` does not recognize speech in the browser. Chrome's
+implementation streams the audio to Google, Safari's to Apple — and it does so
+**from the browser directly**, over the public internet, never touching the
+Gateway. So none of the work that makes this fork private applied to it: not the
+self-hosting, not the auth, not the tailnet. A user who chose this fork
+specifically to keep their data home was shipping their voice to a model vendor
+by pressing the obvious button, and the tooltip said "audio is handled by your
+browser or system speech service", which is true and completely misleading.
+
+**Four properties are load-bearing; a refactor must not "simplify" any away.**
+
+**1. The order of the tiers, and the fact that the last one is off.**
+`resolveVoiceInputTier` tries on-device, then the server, then the vendor cloud,
+and `voice.allow_cloud_fallback` defaults to false. An install with neither of
+the first two reports voice as *unavailable*. That is the feature working. The
+tempting "fix" — restore the old behavior as a silent last resort so the button
+always does something — is precisely the bug, and it is invisible once made:
+everything keeps working, and the audio goes back to Google.
+
+**2. Both sides default closed.** The frontend's `DEFAULT_VOICE_SERVER_CONFIG`
+repeats the server's defaults rather than assuming an answer, so a Gateway that
+is slow, erroring, or unreachable produces "no cloud" rather than "cloud". A
+capability probe that fails open is a privacy switch that turns itself off under
+load.
+
+**3. Tailscale's CGNAT range counts as local.** CPython classifies
+`100.64.0.0/10` as neither `is_private` nor `is_global`, so the shared
+`url_safety.is_blocked_address` predicate reads a tailnet peer as a public host.
+Reaching the stack over Tailscale is this fork's documented access path, so
+without the explicit CGNAT check in `is_local_endpoint`, a user's own home server
+would be labelled as sending their audio off the machine. **Do not fix this by
+widening `is_blocked_address`** — that predicate governs what the *web* tools may
+fetch, and adding CGNAT there would newly refuse tailnet URLs to all of them. The
+two questions look identical and point opposite ways: the shared guard stops the
+Gateway reaching *into* private space; this feature's risk is an endpoint that
+sends audio *out*. Neither subsumes the other.
+
+**4. The microphone is always released.** Every exit from `startRecording` —
+success, recorder error, a container the browser refuses to construct, a thread
+switch mid-recording — stops the `MediaStreamTrack`. A live track keeps the
+browser's recording indicator lit, which on a phone reads as an app that is
+still listening. This is the one property with no server-side symptom at all: it
+is silent in every log and every test that only checks transcripts, which is why
+`recorder.test.ts` asserts on track release in each of those four paths
+specifically.
+
+Two smaller decisions worth not re-litigating. The size cap is enforced *while*
+reading the upload rather than after, because the point is never to hold an
+arbitrary body in memory — a length check on a completed `read()` passes the same
+tests and defeats the purpose. And error strings never echo the transcription
+service's response body: a transcript is speech, and speech in a log file
+outlives the conversation it came from.
+
+The engine is deliberately unnamed. The client speaks the OpenAI
+`/v1/audio/transcriptions` shape, which faster-whisper-server, speaches,
+whisper.cpp's `server` and LocalAI all implement, so the operator picks a backend
+and the fork stays out of the argument — the same reasoning that keeps ComfyUI a
+service rather than an in-process dependency (§23).
+
+Depth for agents editing this lives in
+[`backend/packages/harness/deerflow/community/speech/AGENTS.md`](backend/packages/harness/deerflow/community/speech/AGENTS.md).
 
 ## Why mix local and cloud
 

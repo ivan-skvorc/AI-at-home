@@ -38,6 +38,7 @@
 > - 📄 **PDF / Office uploads that just work** — `pymupdf4llm` is bundled and converted files are written under both name conventions, so PDF / DOCX / PPTX / XLSX uploads are reliably readable by the agent (enable with `uploads.auto_convert_documents: true`).
 > - 🔄 **Self-updating browser & search** — the two things the repo installs for itself, the Camoufox browser and the bundled SearXNG image, refresh themselves instead of silently rotting after first install: throttled once-a-day on launch (opt out with `DEER_FLOW_AUTO_UPDATE=0`), or via a `systemd --user` timer (`make auto-update-install`) that also fires on boot so a machine that was off at the daily slot catches up. `make auto-update` runs it on demand; every path is idempotent and best-effort.
 > - 🎬 **Reduced motion by default** — decorative and continuous animations are disabled by default (and honor the OS `prefers-reduced-motion` setting); it's a per-browser preference you can flip back on.
+> - 🎙️ **Dictation that stops shipping your voice to Google** — the microphone button used to wrap the browser's `SpeechRecognition` API, which streams audio from your browser straight to Google (or Apple), bypassing the Gateway entirely — so nothing about self-hosting or Tailscale protected it. It now runs in tiers: Chrome's on-device recognition first (no audio leaves the phone), then transcription by a Whisper-compatible service on **your own machine**, and the vendor cloud only if you set `voice.allow_cloud_fallback: true` — **off by default, so an install with neither tier says voice is unavailable rather than quietly reaching for Google**. Costs nothing to turn on for the on-device tier; the server tier wants `voice.stt.enabled` and a local STT endpoint.
 > - 🩹 **Arch / CachyOS fixes** — an nginx temp-path patch and bundled `langchain-ollama` so `make dev` works for non-root users out of the box.
 >
 > See [`FORK.md`](./FORK.md) for details, cost analysis, and disclaimers. Upstream is the source of truth for everything else.
@@ -131,6 +132,7 @@ DeerFlow has newly integrated the intelligent search and crawling toolset indepe
   - [Embedded Python Client](#embedded-python-client)
   - [Scheduled Tasks](#scheduled-tasks)
   - [Local Image and Video Generation](#local-image-and-video-generation)
+  - [Voice Input](#voice-input)
   - [Terminal Workbench (TUI)](#terminal-workbench-tui)
   - [Documentation](#documentation)
   - [⚠️ Security Notice](#️-security-notice)
@@ -1999,6 +2001,64 @@ second one, because two ComfyUIs on one card is how a GPU ends up thrashing. Set
 another machine on your tailnet. `make doctor` reports whether the service is
 reachable and — the check that matters day to day — whether VRAM is being held
 while nothing is generating.
+
+## Voice Input
+
+The microphone button in the composer dictates into the message box. What
+changed in this fork is where the audio goes.
+
+The browser `SpeechRecognition` API that button used to wrap does **not**
+recognize speech locally by default: Chrome streams the audio to Google, Safari
+to Apple. That traffic leaves the browser directly, so it never passes through
+the Gateway — which means self-hosting, authentication and Tailscale did nothing
+for it, and the UI did not say so. Voice input now runs in three tiers, tried in
+order:
+
+1. **On-device** — Chrome 139+ recognizes speech locally (`processLocally`),
+   downloading the language pack if that is all that is missing. No audio leaves
+   the device and no server is involved. Nothing to configure.
+2. **Your own server** — the recording is posted to the Gateway, which forwards
+   it to a transcription service on your machine. This is the tier that makes
+   dictation work on iOS Safari and other browsers with no on-device support.
+3. **The vendor cloud** — the old behavior, and **off by default**.
+
+**The surprising part: with no local service configured and no cloud opt-in,
+voice input reports itself unavailable rather than falling back to Google.**
+That is deliberate — a privacy fork whose microphone quietly uses a cloud
+recognizer is worse than one that offers no microphone. When the cloud tier does
+run, the composer says so every time.
+
+**Limits that bite.** The microphone needs a **secure context**, which over
+Tailscale means the `https://<magicdns>.ts.net` address (`tailscale serve`), not
+the plain-HTTP tailnet IP — the same constraint that already gates Web Push, and
+the composer says which one you are on. The server tier has **no interim
+results**: unlike live recognition, the transcript arrives once, after you stop
+recording, and the button shows a spinner while it is on its way. Recordings
+above `voice.stt.max_audio_bytes` (25 MiB by default) are refused before any
+byte reaches the transcription service.
+
+To enable the server tier, point it at any service speaking the OpenAI
+`/v1/audio/transcriptions` shape — faster-whisper-server, speaches,
+whisper.cpp's `server`, LocalAI:
+
+```yaml
+voice:
+  prefer_on_device: true # try the browser's local recognizer first
+  allow_cloud_fallback: false # default; true permits Google/Apple as a last resort
+  stt:
+    enabled: false # default; set true once base_url points at a service
+    base_url: http://localhost:8000 # DEER_FLOW_STT_BASE_URL overrides
+    model: Systran/faster-whisper-small
+    language: null # null auto-detects
+    max_audio_bytes: 26214400
+```
+
+`voice.stt.enabled` and `voice.allow_cloud_fallback` are both **off by default**;
+only the on-device tier works with no configuration at all. If you point
+`base_url` at a host that is not this machine or its private network (Tailscale's
+`100.64.0.0/10` counts as private), the Gateway logs a warning at startup and the
+composer labels the tier — the endpoint is not refused, but you are told your
+audio is leaving the house.
 
 ## Terminal Workbench (TUI)
 

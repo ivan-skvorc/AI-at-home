@@ -20,6 +20,7 @@ EXPECTED_GUIDANCE_PATHS = {
     "backend/packages/harness/deerflow/agents/generation/AGENTS.md",
     "backend/packages/harness/deerflow/agents/lead_agent/AGENTS.md",
     "backend/packages/harness/deerflow/community/comfyui/AGENTS.md",
+    "backend/packages/harness/deerflow/community/speech/AGENTS.md",
     "backend/packages/harness/deerflow/config/AGENTS.md",
     "backend/packages/harness/deerflow/extensions/AGENTS.md",
     "backend/packages/harness/deerflow/runtime/AGENTS.md",

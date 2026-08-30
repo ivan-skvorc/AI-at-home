@@ -9,6 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **voice:** **Dictation no longer sends your audio to Google.** The composer's
+  microphone wrapped the browser `SpeechRecognition` API, whose implementation
+  streams audio from the browser straight to Google (Chrome) or Apple (Safari) —
+  bypassing the Gateway entirely, so self-hosting, auth and Tailscale never
+  covered it. Voice input now runs in tiers: Chrome 139+'s on-device recognition
+  first (no audio leaves the device, nothing to configure), then transcription by
+  a service on your own machine, then the vendor cloud only if you opt in. With
+  neither local tier available the button reports voice as **unavailable** rather
+  than quietly falling back — `voice.allow_cloud_fallback` defaults to `false`,
+  and so does `voice.stt.enabled`. Point `voice.stt.base_url` at anything
+  speaking the OpenAI `/v1/audio/transcriptions` shape (faster-whisper-server,
+  speaches, whisper.cpp, LocalAI) to enable the server tier; a `base_url` outside
+  this machine or its private network — Tailscale's `100.64.0.0/10` counts as
+  private — is warned about at startup and labelled in the composer. Note the
+  microphone needs a secure context, so over Tailscale use the
+  `https://<magicdns>.ts.net` address rather than the plain-HTTP tailnet IP.
+
 - **cost:** **The chat's cost figure now covers everything the conversation
   spends, not just its answers.** Two LLM calls were being made per conversation
   and billed to nobody: the composer's **prompt polish** rewrite — which is
