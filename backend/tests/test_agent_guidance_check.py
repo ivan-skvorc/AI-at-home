@@ -133,6 +133,36 @@ def test_repository_has_the_approved_scoped_guidance_shape() -> None:
     assert actual == EXPECTED_GUIDANCE_PATHS
 
 
+def test_repository_guidance_has_no_checker_errors() -> None:
+    """Run the real repository through the checker the CI job runs.
+
+    The test below asserts each guidance file against its **own** soft budget.
+    That is not the same check as the CI job, and the gap is a whole dimension:
+    an *effective chain* (root + module + every guide down to a leaf) has its own
+    budget, and nothing here used to evaluate it against the real tree — the
+    chain tests in this file build synthetic files in a tmp_path, so they prove
+    the checker works, not that this repository passes it.
+
+    An upstream merge can therefore add a paragraph to four files that are each
+    comfortably inside their own budget and push a leaf's inherited chain over
+    the hard limit, with `make test` green and only `agent-guidance` in CI red.
+    Observed exactly that way on the 2026-08-30 sync: every per-file budget
+    passed while `agents/middlewares/AGENTS.md` inherited 99508 bytes against a
+    98304 hard limit.
+
+    This runs `analyze` over the worktree the way the job does, and fails on any
+    finding it reports as an error — chain budgets and per-file hard limits
+    alike. Warnings are deliberately not failed on: the job runs without
+    `--strict-warnings`, so failing here would be stricter than CI, and several
+    chains sit legitimately above the soft limit.
+    """
+    files = {PurePosixPath(relative): (REPO_ROOT / relative).read_text(encoding="utf-8") for relative in EXPECTED_GUIDANCE_PATHS}
+
+    errors = [finding for finding in checker.analyze(REPO_ROOT, files) if finding.severity == "error"]
+
+    assert not errors, "checker errors (the `agent-guidance` CI job fails on these):\n  " + "\n  ".join(f"{finding.code} {finding.path}: {finding.message}" for finding in errors)
+
+
 def test_repository_guidance_stays_below_soft_budgets_and_avoids_doc_indexes() -> None:
     for relative_text in EXPECTED_GUIDANCE_PATHS:
         relative = PurePosixPath(relative_text)
