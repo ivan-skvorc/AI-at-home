@@ -414,6 +414,7 @@ function ChatInstanceContent({
                   testId="main-message-list"
                   threadId={threadId}
                   thread={thread}
+                  enableConversationOutline
                   paddingBottom={MESSAGE_LIST_DEFAULT_PADDING_BOTTOM}
                   hasMoreHistory={hasMoreHistory}
                   loadMoreHistory={loadMoreHistory}

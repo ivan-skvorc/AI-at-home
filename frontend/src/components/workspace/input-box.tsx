@@ -2879,7 +2879,7 @@ export function InputBox({
                   className="max-w-40 min-w-0 sm:max-w-56"
                   disabled={composerLocked}
                 >
-                  <div className="flex min-w-0 flex-col items-start text-left">
+                  <div className="flex min-w-0 flex-col text-left">
                     <span className="text-muted-foreground text-[10px] leading-none">
                       Main agent
                     </span>

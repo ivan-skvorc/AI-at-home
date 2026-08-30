@@ -169,10 +169,22 @@ export function MessageListItem({
 }) {
   const { t } = useI18n();
   const isHuman = message.type === "human";
-  const editableText = useMemo(
-    () => getMessageCopyData(message) ?? "",
-    [message],
+  // One derivation serves both editing and the toolbar, and only runs when a
+  // consumer can actually use it, instead of deriving for every settled row.
+  // Upstream can skip assistant rows outright (the sole call site passes
+  // showCopyButton only for non-assistant ones, and upstream edits prompts
+  // only); this fork also edits *answers* into hidden versions (FORK.md §18),
+  // so an editable assistant row still needs its text — with the guard left
+  // as upstream wrote it, an answer edit would open on an empty draft.
+  const isRowEditable = canEdit && Boolean(onEditAndRegenerate);
+  const copyData = useMemo(
+    () =>
+      isHuman || isRowEditable || (!isLoading && showCopyButton)
+        ? (getMessageCopyData(message) ?? "")
+        : "",
+    [isHuman, isRowEditable, isLoading, showCopyButton, message],
   );
+  const editableText = copyData;
   const [isEditing, setIsEditing] = useState(false);
   const [draft, setDraft] = useState("");
   const [isSubmittingEdit, setIsSubmittingEdit] = useState(false);
@@ -266,9 +278,7 @@ export function MessageListItem({
           )}
           {(showCopyButton || showEditButton) && (
             <div className="pointer-events-auto flex gap-1 opacity-0 transition-opacity delay-200 duration-300 group-hover/conversation-message:opacity-100">
-              {showCopyButton && (
-                <CopyButton clipboardData={getMessageCopyData(message)} />
-              )}
+              {showCopyButton && <CopyButton clipboardData={copyData} />}
               {showEditButton && (
                 <Tooltip content={editLabel}>
                   <Button
