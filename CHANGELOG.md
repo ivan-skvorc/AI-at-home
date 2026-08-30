@@ -416,6 +416,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **sandbox:** A debug port opened with `sandbox.expose_ports` no longer lands on
+  **every** host interface when the sandbox host is non-loopback (the
+  Docker-outside-of-Docker case, `DEER_FLOW_SANDBOX_HOST=host.docker.internal`).
+  That path used to publish `0.0.0.0:<port>`, which put the program under test —
+  and, on the API port, an **unauthenticated shell endpoint** — in front of
+  anything that could reach the machine. Both now bind the address the sandbox
+  host actually resolves to, so the port is still reachable exactly where the
+  sandbox itself is, and nowhere else. Loopback runs are unaffected (they already
+  bound `127.0.0.1`). Operators who genuinely need the old behavior — a remote
+  client talking to the sandbox API directly — restore it with
+  `DEER_FLOW_SANDBOX_BIND_HOST=0.0.0.0`, which should be paired with an external
+  firewall.
+
 - **docs:** The model-and-pricing audit now states **where a price may come
   from**, as three ordered tiers instead of one absolute rule. *Verified* (the
   provider's own page) stays the standard; when that page cannot be reached, a
