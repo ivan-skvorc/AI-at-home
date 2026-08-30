@@ -111,14 +111,30 @@ import {
   type UploadLimitViolation,
 } from "@/core/uploads";
 import {
+  startRecording,
+  type ActiveRecording,
+} from "@/core/voice-input/recorder";
+import {
+  DEFAULT_VOICE_SERVER_CONFIG,
+  fetchVoiceServerConfig,
+  supportsAudioRecording,
+  transcribeRecording,
+  VoiceTranscriptionError,
+  type VoiceServerConfig,
+} from "@/core/voice-input/server-transcription";
+import {
   appendSpeechTranscript,
   getSpeechRecognitionConstructor,
   getSpeechRecognitionLanguage,
   mapSpeechRecognitionError,
   readSpeechRecognitionTranscript,
   shouldRestartSpeechRecognition,
+  prepareOnDeviceRecognition,
+  applyOnDeviceProcessing,
+  resolveVoiceInputTier,
   type BrowserSpeechRecognition,
   type SpeechRecognitionErrorKind,
+  type VoiceInputTier,
 } from "@/core/voice-input/speech-recognition";
 import { isIMEComposing } from "@/lib/ime";
 import { cn } from "@/lib/utils";
@@ -226,6 +242,8 @@ export type InputBoxSubmitOptions = {
 };
 
 type VoiceRecognitionStartOptions = {
+  /** Ask the browser to keep recognition on the device (Chrome 139+). */
+  onDevice?: boolean;
   focusAfterStart?: boolean;
 };
 
@@ -374,6 +392,11 @@ export function InputBox({
   const voiceLatestTextRef = useRef("");
   const voiceLastErrorKindRef = useRef<SpeechRecognitionErrorKind | null>(null);
   const voiceStopRequestedRef = useRef(false);
+  // Server-transcription tier: the live recording, and the tier chosen for the
+  // current session (fixed at start, so a mid-session config change cannot
+  // reroute audio that is already being captured).
+  const voiceRecordingRef = useRef<ActiveRecording | null>(null);
+  const voiceTierRef = useRef<VoiceInputTier | null>(null);
   const voiceRestartTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
     null,
   );
@@ -406,6 +429,14 @@ export function InputBox({
   const [followupsLoading, setFollowupsLoading] = useState(false);
   const [polishingInput, setPolishingInput] = useState(false);
   const [voiceListening, setVoiceListening] = useState(false);
+  const [voiceTranscribing, setVoiceTranscribing] = useState(false);
+  // Mirrors voiceTierRef for rendering. A ref read during render is not a
+  // reactive dependency, so the tooltip would keep whatever tier the previous
+  // render happened to see.
+  const [voiceTier, setVoiceTier] = useState<VoiceInputTier | null>(null);
+  const [voiceServerConfig, setVoiceServerConfig] = useState<VoiceServerConfig>(
+    DEFAULT_VOICE_SERVER_CONFIG,
+  );
   const [inputPolishUndo, setInputPolishUndo] = useState<{
     originalText: string;
     rewrittenText: string;
@@ -462,8 +493,20 @@ export function InputBox({
   );
 
   const abortVoiceInput = useCallback(() => {
-    const recognition = voiceRecognitionRef.current;
     voiceStopRequestedRef.current = true;
+    // Abandon a server-tier recording without transcribing it, and release the
+    // microphone. Skipping this leaves the browser's recording indicator lit
+    // after a thread switch or unmount, which reads as an app still listening.
+    const recording = voiceRecordingRef.current;
+    if (recording) {
+      voiceRecordingRef.current = null;
+      voiceTierRef.current = null;
+      setVoiceTier(null);
+      recording.cancel();
+      setVoiceListening(false);
+      setVoiceTranscribing(false);
+    }
+    const recognition = voiceRecognitionRef.current;
     if (!recognition) {
       cleanupVoiceRecognition(null);
       return;
@@ -1362,7 +1405,27 @@ export function InputBox({
         : getSpeechRecognitionConstructor(window),
     [],
   );
-  const voiceInputSupported = speechRecognitionConstructor !== null;
+  // The Gateway is the only side that knows whether a local transcription
+  // service exists and whether the vendor cloud tier is permitted at all.
+  useEffect(() => {
+    let cancelled = false;
+    void fetchVoiceServerConfig().then((config) => {
+      if (!cancelled) {
+        setVoiceServerConfig(config);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const voiceRecordingSupported = useMemo(
+    () => (typeof window === "undefined" ? false : supportsAudioRecording()),
+    [],
+  );
+  const voiceInputSupported =
+    speechRecognitionConstructor !== null ||
+    (voiceServerConfig.server_transcription && voiceRecordingSupported);
 
   const getVoiceInputErrorMessage = useCallback(
     (kind: SpeechRecognitionErrorKind) => {
@@ -1397,6 +1460,12 @@ export function InputBox({
       recognition.interimResults = true;
       recognition.lang = getSpeechRecognitionLanguage(locale);
       recognition.maxAlternatives = 1;
+      // Only the on-device tier sets this. On the cloud tier the flag is
+      // deliberately left alone: asking for local processing on a browser that
+      // ignores it would make the session look local when it is not.
+      if (options.onDevice) {
+        applyOnDeviceProcessing(recognition);
+      }
       voiceLastErrorKindRef.current = null;
       voiceLatestTextRef.current = voiceBaseTextRef.current;
       voiceRecognitionRef.current = recognition;
@@ -1487,9 +1556,51 @@ export function InputBox({
     startVoiceRecognitionRef.current = startVoiceRecognition;
   }, [startVoiceRecognition]);
 
+  /**
+   * Stop the recording and transcribe it on the user's own server.
+   *
+   * A 503 means the server tier is not configured after all; that is reported
+   * plainly rather than silently retried through the browser's cloud service,
+   * which is the fallback this whole feature exists to avoid taking by accident.
+   */
+  const finishServerDictation = useCallback(async () => {
+    const recording = voiceRecordingRef.current;
+    voiceRecordingRef.current = null;
+    if (!recording) {
+      return;
+    }
+    setVoiceListening(false);
+    setVoiceTranscribing(true);
+    try {
+      const { blob, fileName } = await recording.stop();
+      const text = await transcribeRecording(blob, { fileName });
+      if (text) {
+        textInput.setInput(
+          appendSpeechTranscript(voiceBaseTextRef.current, text),
+        );
+      } else {
+        toast.error(t.inputBox.voiceInputNoSpeech);
+      }
+    } catch (error) {
+      const message =
+        error instanceof VoiceTranscriptionError
+          ? error.message
+          : t.inputBox.voiceInputFailed;
+      toast.error(message);
+    } finally {
+      setVoiceTranscribing(false);
+      voiceTierRef.current = null;
+      setVoiceTier(null);
+    }
+  }, [t.inputBox.voiceInputFailed, t.inputBox.voiceInputNoSpeech, textInput]);
+
   const stopVoiceInput = useCallback(() => {
-    const recognition = voiceRecognitionRef.current;
     voiceStopRequestedRef.current = true;
+    if (voiceRecordingRef.current) {
+      void finishServerDictation();
+      return;
+    }
+    const recognition = voiceRecognitionRef.current;
     if (!recognition) {
       cleanupVoiceRecognition(null);
       return;
@@ -1499,18 +1610,39 @@ export function InputBox({
     } catch {
       cleanupVoiceRecognition(recognition);
     }
-  }, [cleanupVoiceRecognition]);
+  }, [cleanupVoiceRecognition, finishServerDictation]);
 
-  const toggleVoiceInput = useCallback(() => {
-    if (voiceListening) {
-      stopVoiceInput();
-      return;
-    }
-    if (composerLocked) {
-      return;
-    }
-    if (!speechRecognitionConstructor) {
-      toast.error(t.inputBox.voiceInputUnsupported);
+  /**
+   * Choose a tier and start dictating.
+   *
+   * The tier is resolved per session rather than once at mount because
+   * on-device availability is a per-language question the browser answers
+   * asynchronously — and because installing a language pack can flip the
+   * answer between one session and the next.
+   */
+  const beginVoiceInput = useCallback(async () => {
+    const language = getSpeechRecognitionLanguage(locale);
+    const onDeviceReady = voiceServerConfig.prefer_on_device
+      ? await prepareOnDeviceRecognition(speechRecognitionConstructor, language)
+      : false;
+
+    const tier = resolveVoiceInputTier({
+      onDeviceReady,
+      serverTranscription: voiceServerConfig.server_transcription,
+      allowCloudFallback: voiceServerConfig.allow_cloud_fallback,
+      recognitionSupported: speechRecognitionConstructor !== null,
+      recordingSupported: voiceRecordingSupported,
+    });
+
+    if (!tier) {
+      // Distinguish "your browser can't" from "this page isn't a secure
+      // origin", because the second has a fix the user can act on: open the
+      // https:// address instead of the plain-HTTP one.
+      toast.error(
+        !voiceRecordingSupported && voiceServerConfig.server_transcription
+          ? t.inputBox.voiceInputInsecureContext
+          : t.inputBox.voiceInputUnavailable,
+      );
       return;
     }
 
@@ -1521,16 +1653,64 @@ export function InputBox({
     voiceStopRequestedRef.current = false;
     voiceBaseTextRef.current = textInput.value ?? "";
     voiceLatestTextRef.current = voiceBaseTextRef.current;
-    startVoiceRecognition({ focusAfterStart: true });
+    voiceTierRef.current = tier;
+    setVoiceTier(tier);
+
+    if (tier === "server") {
+      setVoiceListening(true);
+      try {
+        voiceRecordingRef.current = await startRecording();
+      } catch {
+        setVoiceListening(false);
+        voiceTierRef.current = null;
+        setVoiceTier(null);
+        toast.error(t.inputBox.voiceInputMicrophoneUnavailable);
+      }
+      return;
+    }
+
+    if (tier === "cloud") {
+      // The one tier that leaves the machine says so every time it runs.
+      toast.warning(t.inputBox.voiceInputCloudNotice);
+    }
+    startVoiceRecognition({
+      focusAfterStart: true,
+      onDevice: tier === "on_device",
+    });
   }, [
     abortInputPolishRequest,
-    composerLocked,
+    locale,
     speechRecognitionConstructor,
     startVoiceRecognition,
-    stopVoiceInput,
-    t.inputBox.voiceInputUnsupported,
+    t.inputBox.voiceInputCloudNotice,
+    t.inputBox.voiceInputInsecureContext,
+    t.inputBox.voiceInputMicrophoneUnavailable,
+    t.inputBox.voiceInputUnavailable,
     textInput,
+    voiceRecordingSupported,
+    voiceServerConfig,
+  ]);
+
+  const toggleVoiceInput = useCallback(() => {
+    if (voiceTranscribing) {
+      // The recording is already on its way to the server; a second click
+      // must not start a new session on top of it.
+      return;
+    }
+    if (voiceListening) {
+      stopVoiceInput();
+      return;
+    }
+    if (composerLocked) {
+      return;
+    }
+    void beginVoiceInput();
+  }, [
+    beginVoiceInput,
+    composerLocked,
+    stopVoiceInput,
     voiceListening,
+    voiceTranscribing,
   ]);
 
   useEffect(() => {
@@ -2332,7 +2512,9 @@ export function InputBox({
             <VoiceInputButton
               disabled={composerLocked}
               listening={voiceListening}
+              serverTier={voiceTier === "server"}
               supported={voiceInputSupported}
+              transcribing={voiceTranscribing}
               onToggle={toggleVoiceInput}
             />
             <Tooltip
@@ -2917,19 +3099,29 @@ function VoiceInputButton({
   disabled,
   listening,
   supported,
+  transcribing,
+  serverTier,
   onToggle,
 }: {
   disabled?: boolean;
   listening: boolean;
   supported: boolean;
+  /** The recording is on its way to the server; the button is busy, not idle. */
+  transcribing?: boolean;
+  /** Recording for server-side transcription rather than live recognition. */
+  serverTier?: boolean;
   onToggle: () => void;
 }) {
   const { t } = useI18n();
   const tooltipContent = !supported
     ? t.inputBox.voiceInputUnsupported
-    : listening
-      ? t.inputBox.voiceInputListening
-      : t.inputBox.voiceInputStart;
+    : transcribing
+      ? t.inputBox.voiceInputTranscribing
+      : listening
+        ? serverTier
+          ? t.inputBox.voiceInputServerNotice
+          : t.inputBox.voiceInputListening
+        : t.inputBox.voiceInputStart;
   const label = listening
     ? t.inputBox.voiceInputStopLabel
     : t.inputBox.voiceInputStartLabel;
@@ -2944,10 +3136,12 @@ function VoiceInputButton({
           listening && "text-primary bg-primary/10 hover:bg-primary/15",
         )}
         data-testid="voice-input-button"
-        disabled={(disabled ?? false) || !supported}
+        disabled={(disabled ?? false) || !supported || (transcribing ?? false)}
         onClick={onToggle}
       >
-        {listening ? (
+        {transcribing ? (
+          <Loader2Icon className="size-3 animate-spin" />
+        ) : listening ? (
           <SquareIcon className="size-3 fill-current" />
         ) : (
           <MicIcon className="size-3" />

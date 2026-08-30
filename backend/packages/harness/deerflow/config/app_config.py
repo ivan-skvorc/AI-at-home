@@ -57,6 +57,7 @@ from deerflow.config.tool_output_config import ToolOutputConfig
 from deerflow.config.tool_progress_config import ToolProgressConfig
 from deerflow.config.tool_search_config import ToolSearchConfig, load_tool_search_config_from_dict
 from deerflow.config.verification_config import VerificationConfig
+from deerflow.config.voice_config import VoiceConfig
 from deerflow.config.yaml_guard import safe_load_guarded
 from deerflow.extensions.loader import ExtensionSpec
 
@@ -218,6 +219,9 @@ class AppConfig(BaseModel):
     model_fallback: ModelFallbackConfig = Field(default_factory=ModelFallbackConfig, description="Default fallback chain for models that declare no per-model `fallback:` (fork feature).")
     model_routing: ModelRoutingConfig = Field(default_factory=ModelRoutingConfig, description="Cost-aware subagent routing policy; off by default and always overridden by an explicit per-thread subagent selection (fork feature).")
     media: MediaConfig = Field(default_factory=MediaConfig, description="Local image/video generation through a ComfyUI service, its generation defaults, the refine-loop caps, and the GPU residency arbiter (fork feature).")
+    voice: VoiceConfig = Field(
+        default_factory=VoiceConfig, description="Voice input tiers: browser on-device recognition, server-side transcription through a local STT service, and whether the browser's cloud recognition is permitted at all (fork feature)."
+    )
     plugins: list[ExtensionSpec] = Field(
         default_factory=list,
         description=format_field_description(

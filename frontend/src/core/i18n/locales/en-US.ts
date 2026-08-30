@@ -176,7 +176,7 @@ export const enUS: Translations = {
     voiceInputStartLabel: "Dictate with voice",
     voiceInputStopLabel: "Stop voice input",
     voiceInputStart:
-      "Dictate with voice. DeerFlow receives only transcribed text; audio is handled by your browser or system speech service.",
+      "Dictate with voice. Speech is recognized on your device when your browser supports it, otherwise transcribed by your own server.",
     voiceInputStop: "Stop voice input",
     voiceInputListening: "Listening... Click to stop voice input.",
     voiceInputUnsupported:
@@ -191,6 +191,15 @@ export const enUS: Translations = {
       "Voice input could not reach the browser speech service.",
     voiceInputNoSpeech: "No speech was detected. Please try again.",
     voiceInputFailed: "Voice input failed. Please try again.",
+    voiceInputTranscribing: "Transcribing on your server...",
+    voiceInputUnavailable:
+      "Voice input is unavailable: this browser cannot recognize speech on-device, and no local transcription service is configured. Set voice.stt.enabled in config.yaml, or allow the browser's cloud recognition with voice.allow_cloud_fallback.",
+    voiceInputInsecureContext:
+      "Voice input needs a secure connection. Open the https:// address (over Tailscale, the MagicDNS name rather than the raw IP).",
+    voiceInputCloudNotice:
+      "Using your browser's cloud speech service — this audio leaves your machine.",
+    voiceInputServerNotice:
+      "Recording... Click to stop and transcribe on your server.",
     mode: "Mode",
     flashMode: "Flash",
     flashModeDescription: "Fast and efficient, but may not be accurate",

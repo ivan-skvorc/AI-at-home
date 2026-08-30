@@ -12,6 +12,8 @@ DeerFlow is a LangGraph-based AI super agent system with a full-stack architectu
 - **Nginx** (port 2026): Unified reverse proxy entry point
 - **Provisioner** (port 8002, optional in Docker dev): Started only when sandbox is configured for provisioner/Kubernetes mode
 
+**Voice input**: server-side speech-to-text lives in `packages/harness/deerflow/community/speech/` (see its `AGENTS.md`); the cloud tier is off by default and Tailscale CGNAT counts as local.
+
 **Runtime**:
 - `make dev`, Docker dev, and production all run the agent runtime in Gateway via `RunManager` + `run_agent()` + `StreamBridge` (`packages/harness/deerflow/runtime/`). Nginx exposes that runtime at `/api/langgraph/*` and rewrites it to Gateway's native `/api/*` routers.
 - Gateway streams `write_file` and `str_replace` argument deltas in bounded batches when clients also subscribe to `values`; messages-only consumers retain the original per-chunk contract, while `values` preserves the complete tool call.

@@ -15,7 +15,7 @@
 # ============================================================================
 # Bump this number when the config schema changes.
 # Run `make config-upgrade` to merge new fields into your local config.yaml.
-config_version: 44
+config_version: 45
 
 # ============================================================================
 # Logging
@@ -1921,6 +1921,70 @@ media:
         location: local
         kind: comfyui # evicted with ComfyUI's own POST /free
         estimate_gb: 0
+
+# ============================================================================
+# Voice Input Configuration
+# ============================================================================
+# The composer's microphone button used to wrap the browser SpeechRecognition
+# API, whose default implementation streams the audio to the vendor — Google in
+# Chrome, Apple in Safari. That traffic goes from the browser straight to the
+# vendor: it never passes through the Gateway, so none of the Tailscale work
+# protects it, and nothing in the UI said so.
+#
+# Voice input now runs in tiers, tried in this order:
+#   1. on-device  — Chrome 139+ `processLocally`. No audio leaves the phone and
+#                   no server is involved. Needs nothing configured here.
+#   2. server     — the recording is posted to the Gateway and transcribed by a
+#                   service on this machine. Configure `stt` below.
+#   3. cloud      — the browser's vendor recognition. Off unless you say
+#                   otherwise, and labelled in the UI whenever it runs.
+#
+# The microphone needs a secure context either way. Over Tailscale that means
+# the https://<magicdns>.ts.net URL (tailscale serve), not the plain-HTTP
+# tailnet IP — the same constraint that already gates Web Push.
+
+voice:
+  # Ask the browser to recognize speech on-device when it can. Set false to
+  # skip straight to server transcription, which is worth doing when your local
+  # STT model is better than the browser's.
+  prefer_on_device: true
+
+  # Permit the browser's cloud recognition when neither tier above is
+  # available. Left false, voice input reports itself unavailable instead of
+  # sending audio off this machine — which is the point of the feature.
+  allow_cloud_fallback: false
+
+  stt:
+    # Off by default: without a reachable local service the endpoint has
+    # nothing to call. Turn it on once `base_url` points at one.
+    enabled: false
+    # Any server speaking the OpenAI /v1/audio/transcriptions shape works —
+    # faster-whisper-server, speaches, whisper.cpp's `server`, LocalAI. That is
+    # why no engine is named here. DEER_FLOW_STT_BASE_URL overrides this.
+    base_url: http://localhost:8000
+    # Passed through to the service verbatim; DeerFlow does not validate it
+    # against a list it cannot know.
+    model: Systran/faster-whisper-small
+    # BCP-47 hint. Null lets the service auto-detect, which is right for a
+    # multilingual household.
+    language: null
+    # SSRF opt-out for the shared URL guard. A loopback / LAN transcription
+    # service is the intentional-internal-target case, so this is true by
+    # default here (web tools default it to false). Set false when base_url
+    # points at a public host.
+    #
+    # Note this guard runs the other way from the feature's own risk: it stops
+    # the Gateway reaching *into* private space, while the thing worth avoiding
+    # here is an endpoint that sends your audio *out*. A base_url that is not
+    # on this machine or its private network (Tailscale's 100.64.0.0/10
+    # included) is logged at startup and flagged in the composer.
+    allow_private_addresses: true
+    # Generous on purpose: a CPU-only whisper backend is slow, and a truncated
+    # request wastes the whole recording.
+    request_timeout: 60
+    # Largest upload the transcribe endpoint accepts, in bytes. Rejected before
+    # any byte reaches the STT service.
+    max_audio_bytes: 26214400
 
 # ============================================================================
 # Tool Groups Configuration

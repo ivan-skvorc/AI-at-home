@@ -159,6 +159,11 @@ export interface Translations {
     voiceInputNetworkError: string;
     voiceInputNoSpeech: string;
     voiceInputFailed: string;
+    voiceInputTranscribing: string;
+    voiceInputUnavailable: string;
+    voiceInputInsecureContext: string;
+    voiceInputCloudNotice: string;
+    voiceInputServerNotice: string;
     mode: string;
     flashMode: string;
     flashModeDescription: string;

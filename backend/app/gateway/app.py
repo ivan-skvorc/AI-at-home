@@ -44,6 +44,7 @@ from app.gateway.routers import (
     thread_runs,
     threads,
     uploads,
+    voice,
 )
 from app.gateway.trace_middleware import TraceMiddleware, resolve_trace_enabled
 from deerflow.config import app_config as deerflow_app_config
@@ -807,6 +808,7 @@ This gateway provides runtime endpoints for agent runs plus custom endpoints for
     app.include_router(system_prompt.router)
     # Fork feature: Web Push subscription management (per-user, no admin gate).
     app.include_router(push.router)
+    app.include_router(voice.router)
 
     # First-party integrations API is mounted at /api/integrations
     app.include_router(integrations.router)
