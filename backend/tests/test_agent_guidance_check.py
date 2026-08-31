@@ -214,3 +214,39 @@ def test_repository_exposes_one_local_and_one_ci_entrypoint() -> None:
     assert "fetch-depth: 0" in workflow
     assert "--base-ref" in workflow
     assert "--before" in workflow
+
+
+def test_editing_guidance_is_gated_locally_before_ci_sees_it() -> None:
+    """A pre-commit hook must run the repo-wide checker on any AGENTS.md edit.
+
+    The chain rule makes this failure *non-local*: the error the CI job reports
+    names a module the change never touched, because a few paragraphs added to
+    the root `AGENTS.md` are inherited by every nested guide. It has now been hit
+    twice — the 2026-08-30 sync (see the chain test above) and the change that
+    added this hook, where a service-topology row pushed
+    `agents/middlewares/AGENTS.md` 564 bytes over the hard limit.
+
+    Both times the tests above existed and both times they were run *before* the
+    doc edit that broke them. That is what a hook fixes and a test cannot: this
+    one only pins that the hook is still configured, still points at the
+    checker, still matches the files that trigger the rule, and still runs
+    repo-wide — `pass_filenames: true` would hand the script a file list it does
+    not take, and the chain it has to measure spans files the commit did not
+    touch.
+    """
+    import re
+
+    import yaml
+
+    config = yaml.safe_load((REPO_ROOT / ".pre-commit-config.yaml").read_text(encoding="utf-8"))
+    hooks = [hook for repo in config["repos"] for hook in repo.get("hooks", [])]
+    hook = next((hook for hook in hooks if hook.get("id") == "agent-guidance"), None)
+
+    assert hook is not None, "the agent-guidance pre-commit hook is gone; an over-budget chain is CI's problem again"
+    assert "check_agent_guidance.py" in hook["entry"]
+    assert hook.get("pass_filenames") is False, "the chain check must run repo-wide, not on the staged files"
+    pattern = hook["files"]
+    assert re.search(pattern, "AGENTS.md")
+    assert re.search(pattern, "backend/packages/harness/deerflow/agents/AGENTS.md")
+    assert not re.search(pattern, "README.md")
+    assert not re.search(pattern, "docs/AGENTS.md.bak")

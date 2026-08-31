@@ -21,6 +21,23 @@ repos:
         pass_filenames: false
         files: ^backend/(pyproject\.toml|uv\.lock|packages/harness/pyproject\.toml)$
 
+  # Guidance budgets: any AGENTS.md edit re-checks EVERY chain, not just its own.
+  # A file's own size is the small half of the rule — the checker's error is on
+  # the *effective chain* a nested guide inherits, so a few paragraphs added to
+  # the root AGENTS.md can push an unrelated module's chain over the hard limit
+  # and fail `agent-guidance` (and `test_agent_guidance_check.py`) on a change
+  # that never touched that module. Running the repo-wide check here is what
+  # keeps that from being discovered in CI. Exits 1 on errors only; warnings
+  # (the soft budgets) do not block a commit.
+  - repo: local
+    hooks:
+      - id: agent-guidance
+        name: agent guidance budgets
+        entry: python3 scripts/check_agent_guidance.py
+        language: system
+        pass_filenames: false
+        files: (^|/)AGENTS\.md$
+
   # Frontend: eslint + prettier (must run from frontend/ for node_modules resolution)
   - repo: local
     hooks:
