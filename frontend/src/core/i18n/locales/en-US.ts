@@ -342,12 +342,34 @@ export const enUS: Translations = {
     kindVideo: "Video clip",
     videoHint:
       "A clip is minutes per attempt, not seconds. Keep it short and iterate on the prompt rather than asking for length.",
-    prompt: "What to generate",
+    promptMode: "Who writes the prompt",
+    promptModeAssisted: "Describe it, the assistant writes the prompt",
+    promptModeDirect: "I will write the prompt myself",
+    promptModeHint: (mode: string) =>
+      mode === "direct"
+        ? "Your text is submitted to the diffusion model exactly as written — no rewriting, no additions. Use this when you already have a prompt worth reproducing."
+        : "Describe the picture in ordinary words. The assistant turns it into a positive prompt, and a negative prompt when the model uses one, and shows you both before it generates.",
+    prompt: "Prompt",
     promptPlaceholder:
       "A rain-slick Tokyo street at night, neon reflections, shot on 35mm film",
     promptHint:
-      "Be specific about subject, composition, lighting and style — diffusion models reward detail.",
-    aspect: "Shape",
+      "Submitted verbatim. Be specific about subject, composition, lighting and style — diffusion models reward detail.",
+    brief: "What to generate",
+    briefPlaceholder: "A rainy Tokyo street at night, cinematic, film look",
+    briefHint:
+      "Plain description is enough — the assistant supplies the prompt vocabulary.",
+    negativePrompt: "Negative prompt (optional)",
+    negativePromptPlaceholder: "blurry, watermark, text, extra limbs",
+    negativePromptHint:
+      "What to keep out of the result. Also submitted verbatim.",
+    negativePromptWritten:
+      "The assistant writes the negative prompt and shows it with the positive one before generating.",
+    negativePromptUnsupported: (checkpoint: string) =>
+      `${checkpoint} looks like a distilled model sampled at CFG 1, where the negative branch is never evaluated — a negative prompt would be ignored, so it is left out. Put exclusions in the prompt itself.`,
+    resolution: "Resolution",
+    width: "Width",
+    height: "Height",
+    aspect: "Shape preset",
     aspectOption: (option: string) =>
       option === "square"
         ? "Square"
@@ -358,6 +380,10 @@ export const enUS: Translations = {
             : "Landscape",
     size: (width: number, height: number) =>
       `${width}x${height} pixels — sized for what a consumer GPU actually runs.`,
+    resolutionHint: (min: number, max: number, step: number) =>
+      `${min}-${max} pixels per side, rounded to the nearest ${step} (the latent grid). A preset fills these in; edit either number to use your own.`,
+    resolutionWarning: (min: number, max: number) =>
+      `Width and height must each be between ${min} and ${max} pixels.`,
     checkpoint: "Checkpoint (optional)",
     checkpointPlaceholder: "Leave empty to use the configured default",
     checkpointHint:

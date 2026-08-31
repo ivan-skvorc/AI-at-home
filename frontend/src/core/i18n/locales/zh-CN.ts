@@ -325,11 +325,31 @@ export const zhCN: Translations = {
     kindVideo: "视频片段",
     videoHint:
       "一个片段需要几分钟而不是几秒。先生成短片并迭代提示词，而不是一味加长。",
-    prompt: "生成内容",
+    promptMode: "提示词由谁来写",
+    promptModeAssisted: "我来描述，由助手写提示词",
+    promptModeDirect: "我自己写提示词",
+    promptModeHint: (mode: string) =>
+      mode === "direct"
+        ? "你输入的文本会原样提交给扩散模型：不改写、不追加。适合已经有一份想复现的提示词的情况。"
+        : "用日常语言描述画面即可。助手会写成正向提示词，并在模型支持时一并写出负向提示词，并在生成前先展示给你。",
+    prompt: "提示词",
     promptPlaceholder: "雨后的东京夜街，霓虹倒影，35mm 胶片质感",
     promptHint:
-      "尽量具体地描述主体、构图、光线与风格——扩散模型对细节非常敏感。",
-    aspect: "画幅",
+      "原样提交。尽量具体地描述主体、构图、光线与风格——扩散模型对细节非常敏感。",
+    brief: "生成内容",
+    briefPlaceholder: "雨夜的东京街头，电影感，胶片质感",
+    briefHint: "用平实的描述就够了——提示词的专业措辞交给助手补齐。",
+    negativePrompt: "负向提示词（可选）",
+    negativePromptPlaceholder: "模糊、水印、文字、多余的肢体",
+    negativePromptHint: "希望画面中不要出现的内容，同样原样提交。",
+    negativePromptWritten:
+      "负向提示词由助手撰写，并会在生成前与正向提示词一起展示。",
+    negativePromptUnsupported: (checkpoint: string) =>
+      `${checkpoint} 看起来是以 CFG 1 采样的蒸馏模型，不会计算负向分支——负向提示词会被忽略，因此这里不再提供。请把要排除的内容写进提示词本身。`,
+    resolution: "分辨率",
+    width: "宽度",
+    height: "高度",
+    aspect: "画幅预设",
     aspectOption: (option: string) =>
       option === "square"
         ? "正方形"
@@ -340,6 +360,10 @@ export const zhCN: Translations = {
             : "横版",
     size: (width: number, height: number) =>
       `${width}x${height} 像素——按消费级显卡实际能跑的尺寸设置。`,
+    resolutionHint: (min: number, max: number, step: number) =>
+      `每边 ${min}-${max} 像素，并按 ${step} 的倍数取整（潜空间网格）。选择预设会填入数值，也可以直接改写任意一边。`,
+    resolutionWarning: (min: number, max: number) =>
+      `宽度和高度都必须在 ${min} 到 ${max} 像素之间。`,
     checkpoint: "模型文件（可选）",
     checkpointPlaceholder: "留空则使用配置中的默认模型",
     checkpointHint:
