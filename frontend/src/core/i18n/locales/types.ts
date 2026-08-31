@@ -252,6 +252,30 @@ export interface Translations {
   };
 
   // Spend history and attribution (fork feature).
+  imageGeneration: {
+    launch: string;
+    title: string;
+    description: string;
+    kind: string;
+    kindImage: string;
+    kindVideo: string;
+    videoHint: string;
+    prompt: string;
+    promptPlaceholder: string;
+    promptHint: string;
+    aspect: string;
+    aspectOption: (option: string) => string;
+    size: (width: number, height: number) => string;
+    checkpoint: string;
+    checkpointPlaceholder: string;
+    checkpointHint: string;
+    refine: string;
+    refineHint: string;
+    promptWarning: string;
+    start: string;
+    cancel: string;
+  };
+
   democracy: {
     grading: string;
     gradingHint: string;

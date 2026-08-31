@@ -222,9 +222,10 @@ Then confirm each fork feature end-to-end:
 | **Deployment exposure check** (§12) | `cd backend && uv run pytest tests/test_exposure.py` covers the bind classification, the fact resolution (`.env` vs. process env precedence, `runtime_settings.json`, sandbox mode), every tier, and the doctor rows. Wiring: `scripts/exposure.py`; `scripts/doctor.py::check_deployment_exposure` in the new **Deployment** section; the `--surface docker` call at the end of `scripts/deploy.sh` and `--surface local` at the end of `scripts/serve.sh`. **Two things are easy to break silently:** (1) the local surface must stay pinned to the wildcard — it reads `docker/nginx/nginx.local.conf`'s address-less `listen 2026;`, so if upstream gives that config an explicit address, update `LOCAL_BIND_SOURCE`/`resolve_facts` or the check will report a bind the stack does not use; (2) `classify_bind_host` must test the Tailscale ranges **before** `is_private`, because Python classifies CGNAT (100.64.0.0/10) as private and the two tiers are deliberately different. The check must never return `fail` — a deliberately exposed home lab is not a broken install. Manual: `python3 scripts/exposure.py --surface docker`, then set `BIND_HOST=0.0.0.0` in `.env` and confirm the tier moves to `open-network` and names each contributing setting. |
 | **Spend history page** (§11) | `cd backend && uv run pytest tests/test_console_router.py -k ConsoleSpend` covers `GET /api/console/spend`: the three groupings (model / thread / feature) agreeing with the total, unpriced models named and sorted last, the window boundary, the no-pricing state, and the 503 on the memory backend. Wiring: `ConsoleSpendResponse` in `app/gateway/routers/console.py`; `AuxUsageStore.aggregate()`; `frontend/src/core/spend/*`; `frontend/src/app/workspace/spend/page.tsx`; the sidebar entry in `components/workspace/workspace-nav-chat-list.tsx`; i18n `spend.*` in both locales. The page must keep reusing `pricing.py` rather than recomputing cost — a second formula is how the page and the chat header start disagreeing about the same run. Manual: open **Spend** in the sidebar and confirm the tables' totals match the summary tile for the same window. |
 | **Gaslight mode — edit into a hidden version** (§18) | `cd backend && uv run pytest tests/test_threads_router.py -k answer` covers the answer half end to end: the branch rewrites only the edited assistant message, the run-event seed carries the replacement (the feed reads events, not the checkpoint), a branch without the pair is byte-unchanged, and every half-specified or out-of-turn rewrite is refused. `cd frontend && pnpm test edit-version-answer && pnpm test edit-versions && pnpm test pending-edit-send && pnpm test "core/messages/utils"` covers the version model (group keying on the base message id, lineage resolution, a descendant inheriting its ancestor's position, the malformed-entry guards), the session-storage hand-off (read consumes it, so an edit is never replayed twice), and the per-turn edit anchors. `pnpm test:e2e edit-message-versions` drives the whole flow: edit a middle turn, land on the version with the earlier history and without the replaced answer, one sidebar entry pointing at the version, `2/2` on the edited message, switch back to `1/2`. Wiring: `core/threads/edit-versions.ts` (model + metadata keys); `core/threads/pending-edit-send.ts`; `useCreateEditVersion` / `useSetActiveEditVersion` in `core/threads/hooks.ts`; `createThread` in `core/threads/api.ts`; `components/workspace/chats/use-edit-versions.ts`; `components/workspace/messages/message-version-switcher.tsx`; the `onEditMessage` / `editVersionSwitchers` props on `MessageList`; the `deerflow_edit_version` filter in `core/threads/thread-search-query.ts`; the active-version hop in `pathOfThread` (`core/threads/utils.ts`). **Five things are silent when broken:** (0a) an **answer** edit must not park a pending send — the branch already carries the rewritten answer, so parking one replays the assistant's words back as the user's next message; (0b) answer groups must stay namespaced (`answer:<id>`) — editing the answer of turn *k* and the prompt of turn *k+1* branch from the same message, so a shared key renders both sets of versions on both messages; (1) groups must stay keyed on the **base message id** — keying on the turn index merges lineages that only share an ordinal; (2) `pathOfThread` must keep honouring `deerflow_edit_active_version`, or the one sidebar entry reopens version 1 forever and the edit reads as lost; (3) `takePendingEditSend` must keep *removing* on read — a non-consuming read replays the edited turn on every remount. If upstream restores a Branch button on the assistant action row, decide deliberately: this fork removed it on purpose, and two buttons that both fork the conversation is the confusing state the feature replaced. Manual: edit the first message of a chat (the no-branch path) and confirm the switcher appears, then reload from the sidebar and confirm you land back on the edited version. |
-| **Local image generation** (§23) | `cd backend && uv run pytest tests/test_comfyui_tools.py tests/test_detect_comfyui.py` covers the template contract (typed parameters only, an unbound parameter refused rather than ignored, no path traversal in a template name, and a patched graph that cannot leak back into the cached template), validation against `/object_info` naming the node that moved *before* anything is submitted, checkpoint resolution from the loader node's own enum (request → config → first installed) and the "not installed" message that lists what is, the SSRF guard being **used** with its documented `allow_private_addresses` opt-out rather than bypassed, the submit → poll → fetch loop against a mock transport including its wall-clock timeout, and the detector reusing an already-running ComfyUI instead of starting a second one. **Silent when broken:** the saved `<name>.workflow.json` must equal the graph that actually ran and must not carry binding metadata (otherwise "reproducible by hand" quietly stops being true); the reported seed must be the seed that reached the graph (otherwise every iteration is a fresh random draw and critique is noise); an active tool entry must never ship in `config.example.yaml` (a fresh machine has no ComfyUI, so it would fail at chat time); and the compose port must stay loopback-bound — the ComfyUI API has no authentication and can read and write host files. Manual: `make comfy-up`, uncomment the five `media` tool entries, ask for a picture, confirm the PNG opens in the artifact panel and that the sidecar workflow file loads in ComfyUI and reproduces it. |
+| **Local image generation** (§23) | `cd backend && uv run pytest tests/test_comfyui_tools.py tests/test_detect_comfyui.py` covers the template contract (typed parameters only, an unbound parameter refused rather than ignored, no path traversal in a template name, and a patched graph that cannot leak back into the cached template), validation against `/object_info` naming the node that moved *before* anything is submitted, checkpoint resolution from the loader node's own enum (request → config → first installed) and the "not installed" message that lists what is, the SSRF guard being **used** with its documented `allow_private_addresses` opt-out rather than bypassed, the submit → poll → fetch loop against a mock transport including its wall-clock timeout, and the detector reusing an already-running ComfyUI instead of starting a second one. **Silent when broken:** the saved `<name>.workflow.json` must equal the graph that actually ran and must not carry binding metadata (otherwise "reproducible by hand" quietly stops being true); the reported seed must be the seed that reached the graph (otherwise every iteration is a fresh random draw and critique is noise); the active tool entries in `config.example.yaml` and the launch-time provisioning are **one decision** and must move together (§26 — the detector reads that file to decide whether to bother, so commenting the entries out switches the whole feature off, and active entries with nothing provisioning them fail at chat time on a fresh machine); and the compose port must stay loopback-bound — the ComfyUI API has no authentication and can read and write host files. Manual: `make dev` on a GPU machine with no ComfyUI running, confirm the bundled container comes up on its own, ask for a picture, confirm the PNG opens in the artifact panel and that the sidecar workflow file loads in ComfyUI and reproduces it. |
 | **GPU residency arbiter** (§23) | `cd backend && uv run pytest tests/test_gpu_arbiter.py` plus `tests/test_doctor.py -k Media`. Covers the computed policy (a small card resolves to `exclusive`, a bigger one to `shared` **on its own**, an unknown estimate or unknown budget falls back to exclusive and names why), eviction on acquire *and* self-eviction on release, residency re-read from the services on every acquire, the `nvidia-smi` tiebreak that evicts when VRAM is held while no tenant claims it, serialization of two concurrent generations, the honest timeout instead of an unbounded queue, and the doctor row for VRAM held while idle. **Silent when broken:** Ollama's unload must stay a **per-request** `keep_alive: 0` — writing it globally reintroduces the subagent cold starts `ollama.keep_alive` exists to prevent; a cloud tenant must remain not-resident rather than gaining a branch of its own; and dropping the release-time self-eviction leaves the diffusion weights on the card, which does not fail, it just makes the next chat turn several times slower. Manual: with a local lead configured, generate twice in a row and confirm `nvidia-smi` shows an empty card between generations. |
 | **Refine loop and local video** (§23) | `cd backend && uv run pytest tests/test_refine_session.py tests/test_comfyui_video.py` covers the frozen rubric (3–6 checkable criteria, a verdict that may not judge anything outside them, every criterion judged each round), the **server-held** counter and wall-clock budget refusing iteration N+1 with a reportable message — asserted at the tool boundary, not just in the model layer — the one-named-change rule on a retry, the session JSON audit trail, evenly spaced still selection with both endpoints included, the contact sheet, and the video tool's own timeout. **Silent when broken:** the video budget must stay a separate config value (sharing the image timeout abandons working clips; inheriting `sandbox.bash_command_timeout` abandons them sooner); a contact-sheet failure must never lose the clip that took minutes to render; and the skill's instruction text is asserted too — the seed discipline, "only view the newest result each round", the `view_image` vision constraint, and the refusal to open a second session to get around the cap are load-bearing sentences, not prose. Manual: ask for a deliberately vague image and confirm it converges within the cap; ask for an impossible one and confirm it abandons instead of spinning. |
+| **ComfyUI on by default, models, and the generation button** (§26) | `cd backend && uv run pytest tests/test_detect_comfyui.py tests/test_comfyui_models.py tests/test_comfyui_tools.py tests/test_doctor.py -k "Media or comfyui or Autostart or CLI"` plus `python3 scripts/pnpm.py rstest run image-generation`. Covers the provisioning gate (Docker **and** a GPU start it; no GPU holds and names the override; no Docker holds even when forced; `DEER_FLOW_COMFYUI_AUTOSTART=0` is honoured on a machine that could run it; a detector that raises is "no GPU" rather than a crash), the exact CLI words the launch scripts branch on (`bundled start` / `bundled hold` / `external <url>`), the models-directory resolution for both integrations (bundled bind mount, `DEER_FLOW_COMFYUI_EXTERNAL_MODELS`, the host side of a container's own `…/models` mount, well-known paths, and the **refusal** when none of them answers), the install contract (no partial file survives a failed download or a checksum mismatch, an existing model is not silently replaced, a name that is a path is refused), and the button's handoff (stash consumed exactly once, malformed stash discarded, the seeded text carrying the pixel size and the fallback sentence). **Silent when broken:** the active tool entries and the launch-time provisioning must move together — the detector reads `config.yaml` to decide whether to bother, so commenting the entries out switches the feature off and active entries with nothing provisioning them fail at chat time; the tools must stay **bound** on a machine with no ComfyUI (that is what makes the agent fall back to the cloud skill instead of insisting), and `make doctor` must **skip** rather than warn there; the bundled container must stay out of the main compose project, or `up --remove-orphans` deletes it during an unrelated restart; and `comfyui_models.py` must never fall back to the bundled directory for an external instance — that download succeeds and the model never loads. Manual: `make comfy-models` against a running instance, `make comfy-model-add SOURCE=<url> TYPE=checkpoints`, then the sidebar's third entry → a prompt → confirm the composer is seeded (not sent) and the run produces a PNG. |
 | **Tiered voice input** (§24) | `cd backend && uv run pytest tests/test_voice_stt.py` plus `python3 scripts/pnpm.py rstest run voice-input`. The asserts that are silent when broken: `voice.allow_cloud_fallback` and `voice.stt.enabled` both default **false** and `resolveVoiceInputTier` returns `null` rather than `"cloud"` when neither local tier is available; `DEFAULT_VOICE_SERVER_CONFIG` keeps cloud off when `/api/voice/config` errors or is unreachable (fail closed, not open); `is_local_endpoint` treats Tailscale CGNAT `100.64.0.0/10` as local, so a tailnet STT service is not mislabelled as off-machine; the upload size cap refuses **before** the STT service is called; error text never echoes the service body (a transcript is speech); and `recorder.test.ts` proves the microphone track is stopped on all four exits — success, recorder error, failed construction, and abandonment. A regression in the first two reads as "voice still works" while audio goes back to the vendor. |
 
 **Integration points that tend to need a hand** (where upstream refactors collide with fork additions — check these first when tests fail): the AIO sandbox provider (upstream's cross-instance ownership store adds instance attributes that minimal test fixtures built via `__new__` must seed), the skills tool-policy path (upstream's dynamic `SkillToolPolicyMiddleware` vs. any fork static filtering — reconcile onto the middleware and drop dead build-time filters), `scripts/check.py`'s Docker diagnostics (any upstream test that mocks `run_command` with a strict dict must tolerate the extra `docker` calls), and the `task_tool.py` / `input-box.tsx` model-override plumbing.
@@ -2117,11 +2118,13 @@ read and write files on the machine holding the GPU), `make comfy-up` /
 documented in `.env.example` — named without `KEY`/`TOKEN`/`SECRET` so
 `env_policy.build_sandbox_env` does not scrub it from skill subprocesses.
 
-`scripts/detect_comfyui.py` differs from its SearXNG sibling in one deliberate way:
-it **resolves but never starts**. An instance you already run is found and exported
-(the point: two ComfyUIs on one card is how a GPU ends up thrashing), but nothing
-is auto-started, because a multi-gigabyte GPU container appearing as a side effect
-of `make dev` would be a surprise. `make comfy-up` is the explicit door.
+`scripts/detect_comfyui.py` reuses first and provisions second, exactly like its
+SearXNG sibling — an instance you already run is found and exported (the point:
+two ComfyUIs on one card is how a GPU ends up thrashing), and only when nothing
+answers is the bundled container started. It carries one gate SearXNG does not
+need, because the surprise it used to avoid is real: a multi-gigabyte GPU
+container has preconditions a metasearch container does not. See §26 for that
+gate and why the two halves of "on by default" are one decision.
 
 **Not vendored: the image.** ComfyUI publishes no official container image, so the
 compose file names a community build behind `DEER_FLOW_COMFYUI_IMAGE` and the
@@ -2147,10 +2150,12 @@ change makes every `uv run` fail to resolve. Pillow arrives transitively via
 | Agent tools | `community/comfyui/tools.py` (`generate_image`, `generate_video`, `list_media_models`, `refine_start`, `refine_verdict`) |
 | The loop itself | `skills/public/image-refine/SKILL.md` |
 | Config | `config.example.yaml` → `media:` (`config_version` 44), `deploy/helm/deer-flow/{values.yaml,README.md}` |
-| Service | `docker/docker-compose.comfyui.yml`, `scripts/detect_comfyui.py`, `Makefile` (`comfy-up`/`comfy-down`/`comfy-logs`), launch wiring in `scripts/{serve,docker,deploy}.sh` |
+| Service | `docker/docker-compose.comfyui.yml`, `scripts/detect_comfyui.py`, `scripts/comfyui.sh`, `Makefile` (`comfy-up`/`comfy-down`/`comfy-logs`), launch wiring in `scripts/{serve,docker,deploy}.sh` |
+| Model files | `scripts/comfyui_models.py`, `Makefile` (`comfy-models`/`comfy-model-add`) — see §26 |
+| The button | `frontend/src/core/threads/image-generation.ts`, `components/workspace/image-generation-setup.tsx`, `app/workspace/image/new/page.tsx`, `components/workspace/chats/use-image-launch.ts`, the sidebar entry in `components/workspace/workspace-header.tsx` — see §26 |
 | Doctor | `scripts/doctor.py::check_media_generation` (service reachable + VRAM held while idle) |
 | Invariants for agents | `backend/packages/harness/deerflow/community/comfyui/AGENTS.md` |
-| Tests | `backend/tests/test_comfyui_tools.py`, `test_gpu_arbiter.py`, `test_refine_session.py`, `test_comfyui_video.py`, `test_detect_comfyui.py`, `test_doctor.py::TestCheckMediaGeneration` |
+| Tests | `backend/tests/test_comfyui_tools.py`, `test_gpu_arbiter.py`, `test_refine_session.py`, `test_comfyui_video.py`, `test_detect_comfyui.py`, `test_comfyui_models.py`, `test_doctor.py::TestCheckMediaGeneration`, `frontend/tests/unit/core/threads/image-generation{,.dom}.test.ts`, `frontend/tests/unit/components/workspace/image-generation-setup.dom.test.tsx` |
 
 ### 24. Tiered voice input — on-device, then your own server, then nobody
 
@@ -2299,6 +2304,112 @@ is exactly the trade `config.example.yaml` says it refuses to make.
 
 Depth for agents editing this lives in
 [`backend/packages/harness/deerflow/documents/AGENTS.md`](backend/packages/harness/deerflow/documents/AGENTS.md).
+
+### 26. Image generation that is already on — provisioned, stocked, and one click away
+
+§23 built the local media tier and then left three things between a fresh
+checkout and a picture: five commented-out tool entries, a `make comfy-up`
+nobody runs unprompted, and a models directory the user has to find. Each was
+defensible on its own; together they meant the feature existed and almost nobody
+had it. This closes all three.
+
+**"On by default" is one decision with two halves, not two features.** The tool
+entries in `config.example.yaml` are active *because* every launch path now
+resolves-or-provisions the service; provisioning is worth doing *because* the
+entries are active. Break either half and the other becomes wrong in a way
+nothing reports: `scripts/detect_comfyui.py` reads `config.yaml` to decide
+whether to bother, so re-commenting the entries silently switches the whole
+feature off, and active entries with nothing behind them fail at chat time on a
+fresh machine. `test_config_example_ships_the_tools_enabled` and the detector's
+own `config_uses_comfyui` tests pin the pair.
+
+**Provisioning is gated, because the gate is what makes "on by default" safe.**
+The bundled image is gigabytes and its compose service *reserves an NVIDIA
+device*, so starting it on a laptop with no GPU does not degrade — it fails at
+`compose up`, in the middle of an unrelated `make dev`. `autostart_decision()`
+therefore answers a different question from `resolve()`: not "which endpoint"
+(a pure function of the probes) but "may we provision one here", which depends
+on Docker **and** a detected GPU (reusing `detect_vram_gb`, the same detector the
+arbiter uses for `budget_gb: auto` — there is still only one). Both wrong answers
+are quiet, so every branch carries a reason and the reason is printed:
+provisioning where it cannot work produces a confusing compose error, and
+declining where it *would* work leaves the user with tool errors and no hint that
+one command fixes them. `DEER_FLOW_COMFYUI_AUTOSTART` overrides in both
+directions — `0` never starts one, `1` starts it where the detector cannot see
+the passthrough (WSL, a rented box).
+
+On a machine that fails the gate the tools stay **bound**, and that is
+deliberate: they answer with a message naming the unreachable endpoint, which is
+what lets the agent fall back to the cloud `image-generation` skill. Unbinding
+them would have made the fallback a config edit instead of a sentence. `make
+doctor` follows the same rule — it *skips* with the reason rather than warning,
+because a warning on every GPU-less laptop is how a real warning stops being
+read.
+
+**The bundled container stays out of the stack's compose project.** It is
+started by `scripts/comfyui.sh` under its own project (`deer-flow-comfyui`) and,
+in the Docker paths, attached to the stack network afterwards, so the gateway
+resolves it as `http://deer-flow-comfyui:8188`. Making it a service of the main
+project would have been less code and one silent hazard: `deploy.sh` runs
+`up --remove-orphans`, which deletes containers the compose files do not
+mention — so a ComfyUI started by any other path would be torn down, GPU and all,
+by an unrelated restart. `up` is also idempotent by inspection rather than by
+compose (`docker inspect` first): a container that is already running is left
+alone, because recreating it evicts the weights it is holding.
+
+**Weights are never provisioned — models directories are found.** A checkpoint
+is gigabytes and its licence is the user's to accept, so `make comfy-model-add`
+installs one *you* name, into whichever ComfyUI is in use. That last part is the
+whole difficulty: for the bundled container the directory is a bind mount we
+own, but for an instance you already run it is wherever you installed it, and a
+perfectly successful 6 GB download into the *other* ComfyUI looks exactly like
+success. Resolution is therefore explicit and reported — `--models-dir`, then
+`DEER_FLOW_COMFYUI_EXTERNAL_MODELS`, then the host side of that container's own
+`…/models` mount (read from `docker inspect`, the only place the mapping is
+written down), then well-known install paths — and it **refuses** rather than
+falling back to the bundled directory. Downloads land on a `.part` file and are
+renamed only once complete and checksum-verified, because ComfyUI lists whatever
+is in the folder: a truncated checkpoint fails *inside* a generation, where it
+reads as a broken template rather than a broken file. The model name reaches the
+filesystem and its usual source is a URL, so a name carrying a separator or a
+parent reference is refused outright rather than sanitized. Afterwards the
+loader's own enum is re-read, because a file in the wrong folder installs fine
+and never loads.
+
+**A button, for the same reason Democracy has one.** Generating is the start of a
+conversation, and a few decisions belong before the first model call rather than
+in it: image or clip, what shape, which checkpoint, whether to iterate. So it is
+a sidebar entry and a page (`/workspace/image/new`), not a modal and not a hidden
+mode flag. The page **seeds the composer instead of sending** — a clip is minutes
+per attempt, and the request is worth one last look — and it seeds an ordinary
+instruction rather than calling a tool, which is what keeps every path reachable
+from one button: the local tools, the cloud skill when no instance is reachable,
+and the refine loop when the box is ticked. The pixel size is written into the
+seed because a model asked for "landscape" picks its own numbers, and the ones it
+picks for a clip are the ones that run out of VRAM several minutes in. The
+handoff itself is the Democracy handoff, including its trap: the setup page has
+no thread id to write to, so the launch is stashed and claimed on mount *and* on
+the launch event — navigating to `/workspace/chats/new` from a chat already on
+`/new` does not remount, and a mount-only claim would silently do nothing.
+
+**Delivery to configs that already exist.** `config_version` moves to 47, and
+`config_upgrade.py::backfill_missing_default_tools` appends tool entries missing
+by name — so an existing `config.yaml` gains the five media tools on the next
+`make config-upgrade` rather than staying quietly without them. This is the same
+question §17 raises about prices, and it has the same answer: a change to
+`config.example.yaml` reaches a fresh install for free and an existing one only
+through the upgrade path.
+
+| Piece | Where |
+| --- | --- |
+| Provisioning decision | `scripts/detect_comfyui.py` (`autostart_decision`, `gpu_present`, `bundled start` / `bundled hold`) |
+| Service control | `scripts/comfyui.sh` (`up`/`stop`/`down`/`logs`/`attach`), launch wiring in `scripts/{serve,docker,deploy}.sh` |
+| Model install | `scripts/comfyui_models.py`, `Makefile` (`comfy-models`, `comfy-model-add`) |
+| Config | `config.example.yaml` (active `media` tool entries, `config_version: 47`), `deploy/helm/deer-flow/values.yaml` |
+| Env | `.env.example` (`DEER_FLOW_COMFYUI_AUTOSTART`, `DEER_FLOW_COMFYUI_EXTERNAL_MODELS`) |
+| Button | `frontend/src/core/threads/image-generation.ts`, `components/workspace/image-generation-setup.tsx`, `components/workspace/chats/use-image-launch.ts`, `app/workspace/image/new/page.tsx`, `components/workspace/workspace-header.tsx`, `core/i18n/locales/*` |
+| Doctor | `scripts/doctor.py::check_media_generation` (skips with a reason where nothing would be provisioned) |
+| Tests | `backend/tests/test_detect_comfyui.py`, `test_comfyui_models.py`, `test_comfyui_tools.py::TestServiceWiring`, `test_doctor.py::TestCheckMediaGeneration`, `frontend/tests/unit/core/threads/image-generation{,.dom}.test.ts`, `frontend/tests/unit/components/workspace/image-generation-setup.dom.test.tsx` |
 
 ## Why mix local and cloud
 

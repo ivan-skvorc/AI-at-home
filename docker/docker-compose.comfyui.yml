@@ -2,16 +2,27 @@
 #
 # This is a LONG-LIVED SERVICE, not a sandbox tenant: it holds model weights on
 # the GPU between requests, so it is started once and left running, the same
-# way the bundled SearXNG container is. Manage it with:
+# way the bundled SearXNG container is. Every launch path starts it for you when
+# nothing answers on :8188 and this machine has Docker and a GPU; these are the
+# manual door, and they share one implementation (scripts/comfyui.sh):
 #
 #   make comfy-up      # start (this file)
 #   make comfy-logs    # follow logs
 #   make comfy-down    # stop and remove
 #
+# ALWAYS RUN THROUGH scripts/comfyui.sh, which pins the compose project to
+# `deer-flow-comfyui`. It is intentionally NOT part of the main stack's project:
+# `deploy.sh` runs `up --remove-orphans`, which deletes containers the compose
+# files it was given do not mention — that would take the GPU service down as a
+# side effect of an unrelated restart. In the Docker paths the container is
+# attached to the stack network afterwards, so the gateway resolves it by
+# container name at http://deer-flow-comfyui:8188.
+#
 # The Gateway reaches it at http://localhost:8188 by default; set
 # DEER_FLOW_COMFYUI_BASE_URL (or media.comfyui.base_url in config.yaml) to
 # point at an instance you already run. `scripts/detect_comfyui.py` prefers an
-# existing instance precisely so two ComfyUIs never fight over one card.
+# existing instance precisely so two ComfyUIs never fight over one card, and
+# DEER_FLOW_COMFYUI_AUTOSTART=0 switches the automatic start off entirely.
 #
 # THE IMAGE IS NOT VENDORED BY THIS PROJECT. ComfyUI publishes no official
 # container image, so the default below names a community build and it is
@@ -23,6 +34,8 @@
 # Models are NOT baked into any of these images. Point DEER_FLOW_COMFYUI_MODELS
 # at the directory holding your checkpoints/unet/vae/clip subdirectories; it is
 # bind-mounted read-write so ComfyUI can also write its own cache.
+# `make comfy-model-add SOURCE=<url|path> TYPE=checkpoints` writes into that same
+# directory (and into an external instance's own directory when one is in use).
 
 services:
   comfyui:

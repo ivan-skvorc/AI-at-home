@@ -30,6 +30,7 @@ A single `make dev` / Docker stack runs these cooperating services:
 | **Gateway API** | `8001` | FastAPI REST API + embedded LangGraph-compatible agent runtime      |
 | **Frontend**    | `3000` | Next.js web interface                                               |
 | **SearXNG**     | `8088` | Self-hosted metasearch backing the default `web_search` tool. All launch scripts resolve it at startup via `scripts/detect_searxng.py`: an existing instance on the machine is reused when reachable (Docker stacks verify container reachability), otherwise the bundled container is started automatically. In the Docker stacks the Gateway uses the in-network `http://searxng:8080` (via `DEER_FLOW_SEARXNG_BASE_URL`); the host port is loopback-only. `make searxng` / `make searxng-stop` give manual control |
+| **ComfyUI**     | `8188` | Local image/video generation behind the `media` tools (on by default). Every launch script resolves it via `scripts/detect_comfyui.py`: an instance already running on the machine is reused, otherwise the bundled container (`docker/docker-compose.comfyui.yml`) is started — but only where Docker **and** a GPU are detected, because the image reserves an NVIDIA device. `DEER_FLOW_COMFYUI_AUTOSTART` overrides in both directions; `make comfy-up` / `comfy-down` / `comfy-logs` are the manual door, and `make comfy-models` / `comfy-model-add` install the model files (you supply those). It stays in its own compose project on purpose — the stack's `up --remove-orphans` would delete it. The host port is loopback-only |
 | **Provisioner** | `8002` | Optional — only when sandbox is configured for provisioner/K8s mode |
 
 Nginx is the single public entry: it serves the frontend and proxies `/api/langgraph/*`
@@ -134,6 +135,9 @@ make stop        # Stop all running services
 make up / down   # Build/stop the production Docker stack (browser at localhost:2026)
 make up-start    # Restart the prod stack from pre-built images — applies config-only .env/config.yaml changes (e.g. BIND_HOST) with no rebuild
 make docker-start / docker-stop / docker-logs   # Docker development environment
+make comfy-up / comfy-down / comfy-logs         # Manage the ComfyUI service backing local image/video generation (127.0.0.1:8188; launch paths start it for you when the machine can run it)
+make comfy-models                               # List the model files the ComfyUI in use has installed
+make comfy-model-add SOURCE=<url|path> TYPE=checkpoints  # Install a model into whichever ComfyUI is in use (bundled or one you run)
 make sandbox-enable / sandbox-disable           # Switch config.yaml between the containerized AIO sandbox and the local sandbox
 make sandbox-up / sandbox-down / sandbox-logs   # Manage the standalone AIO sandbox container (docker/docker-compose.sandbox.yml, 127.0.0.1:8091)
 make fetch-browser                              # Manually pre-download the Camoufox browser (also auto-installed on every launch path when the camoufox web_fetch backend is selected)

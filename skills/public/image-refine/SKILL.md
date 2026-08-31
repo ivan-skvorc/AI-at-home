@@ -21,8 +21,11 @@ loop.
 
 The local media tools must be enabled (`generate_image`, `refine_start`,
 `refine_verdict`, and `generate_video` for clips) and a ComfyUI must be
-running. If `generate_image` is not available, say so and use the cloud
-`image-generation` skill instead — do not try to emulate this loop with it.
+running. The tools ship enabled, so the usual failure is not a missing tool but
+an unreachable service: if `generate_image` is not available, **or** it answers
+that ComfyUI is unreachable or has no checkpoint installed, say so and use the
+cloud `image-generation` skill instead — do not try to emulate this loop with
+it, and do not retry the local tool hoping for a different answer.
 
 **`view_image` is required for the judging step.** It is only bound when the
 lead model reports vision support, so a text-only local model cannot run this

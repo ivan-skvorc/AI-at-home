@@ -332,6 +332,44 @@ export const enUS: Translations = {
     agentsDisabledTooltip: "Feature not enabled",
   },
 
+  imageGeneration: {
+    launch: "Image",
+    title: "Generate an image or a clip",
+    description:
+      "Rendered on your own GPU when a local ComfyUI is reachable, with no API key and nothing leaving the house; otherwise the cloud generation skill takes over.",
+    kind: "What to make",
+    kindImage: "Image",
+    kindVideo: "Video clip",
+    videoHint:
+      "A clip is minutes per attempt, not seconds. Keep it short and iterate on the prompt rather than asking for length.",
+    prompt: "What to generate",
+    promptPlaceholder:
+      "A rain-slick Tokyo street at night, neon reflections, shot on 35mm film",
+    promptHint:
+      "Be specific about subject, composition, lighting and style — diffusion models reward detail.",
+    aspect: "Shape",
+    aspectOption: (option: string) =>
+      option === "square"
+        ? "Square"
+        : option === "portrait"
+          ? "Portrait"
+          : option === "wide"
+            ? "Wide"
+            : "Landscape",
+    size: (width: number, height: number) =>
+      `${width}x${height} pixels — sized for what a consumer GPU actually runs.`,
+    checkpoint: "Checkpoint (optional)",
+    checkpointPlaceholder: "Leave empty to use the configured default",
+    checkpointHint:
+      "Only the models installed in the ComfyUI you are running can be loaded. Ask in chat, or run `make comfy-models`, to see them.",
+    refine: "Iterate until it is right",
+    refineHint:
+      "Runs the refine loop: criteria frozen before the first attempt, one named change per round, stopped by a counter the server holds.",
+    promptWarning: "Describe what to generate to continue.",
+    start: "Generate",
+    cancel: "Cancel",
+  },
+
   democracy: {
     grading: "Grade panelists",
     gradingHint:

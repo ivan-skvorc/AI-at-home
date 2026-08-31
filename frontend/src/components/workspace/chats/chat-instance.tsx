@@ -63,6 +63,7 @@ import { ChatProviders } from "./chat-providers";
 import { useSpecificChatMode } from "./use-chat-mode";
 import { useDemocracyLaunch } from "./use-democracy-launch";
 import { useEditVersions, usePendingEditSend } from "./use-edit-versions";
+import { useImageLaunch } from "./use-image-launch";
 
 export type ChatInstanceProps = {
   // Stable identity of the mounted slot. The owner sets this as the React key,
@@ -153,6 +154,13 @@ function ChatInstanceContent({
         democracy_grading:
           launch.grading === "off" ? undefined : launch.grading,
       }),
+  });
+  // A generation launch (sidebar → image setup page) lands the same way, and
+  // only seeds the composer: no thread context to set, because which tool can
+  // serve the request is a runtime fact the agent resolves.
+  const { seededPrompt: imagePrompt } = useImageLaunch({
+    enabled: isActive,
+    isNewThread,
   });
   // Route-affecting side effects (URL rewrite on new→real, "thread gone"
   // redirect) must run only for the visible slot, read through a ref so the
@@ -504,7 +512,7 @@ function ChatInstanceContent({
                             : "ready"
                       }
                       context={settings.context}
-                      initialValue={democracyTask}
+                      initialValue={democracyTask ?? imagePrompt}
                       extraHeader={
                         isWelcomeMode &&
                         !hasGoal &&

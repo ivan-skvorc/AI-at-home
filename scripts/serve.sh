@@ -565,20 +565,28 @@ case "$_searxng_resolution" in
 esac
 
 # ── ComfyUI (local image/video generation) ───────────────────────────────────
-# Only resolves an endpoint; it deliberately does NOT start anything. A ComfyUI
-# container pulls gigabytes and takes the GPU, so starting one as a side effect
-# of `make dev` would be a surprise — `make comfy-up` is the explicit door. What
-# this does buy is reuse: an instance you already run is found and exported, so
-# the stack never points at a second one.
+# Reuse first, provision second — the same shape as SearXNG above, with one
+# extra gate. An instance you already run is found and exported (two ComfyUIs on
+# one card is how a GPU ends up thrashing). Otherwise the bundled container is
+# started for you, but ONLY when this machine can actually run it: the image is
+# gigabytes and reserves an NVIDIA device, so detect_comfyui.py answers
+# `bundled hold` on a Docker-less or GPU-less host and says why instead of
+# failing at `compose up`. DEER_FLOW_COMFYUI_AUTOSTART=0 opts out entirely.
 if [ -n "$DETECT_PYTHON" ]; then
-    _comfyui_resolution="$("$DETECT_PYTHON" "$REPO_ROOT/scripts/detect_comfyui.py" --context host --config "$_searxng_config" 2>/dev/null || echo skip)"
+    _comfyui_resolution="$("$DETECT_PYTHON" "$REPO_ROOT/scripts/detect_comfyui.py" --context host --config "$_searxng_config" || echo "bundled hold")"
     case "$_comfyui_resolution" in
         external\ *)
             export DEER_FLOW_COMFYUI_BASE_URL="${_comfyui_resolution#external }"
             echo "✓ ComfyUI: using existing instance at $DEER_FLOW_COMFYUI_BASE_URL"
             ;;
-        bundled)
-            echo "⚠ ComfyUI: the media tools are enabled but no instance answered on :8188 — run 'make comfy-up' (image/video generation will fail until one is reachable)." >&2
+        "bundled start")
+            echo "Starting the bundled ComfyUI container (local image/video generation)..."
+            bash "$REPO_ROOT/scripts/comfyui.sh" up \
+                || echo "⚠ Could not start the bundled ComfyUI container — image/video generation will fail until one is reachable (try 'make comfy-up')." >&2
+            ;;
+        "bundled hold")
+            echo "⚠ ComfyUI: no instance answered on :8188 and none was started (reason above, if any) — 'make comfy-up' starts one." >&2
+            echo "  Local image/video generation stays unavailable until one is reachable; the cloud image-generation skill still works." >&2
             ;;
     esac
 fi

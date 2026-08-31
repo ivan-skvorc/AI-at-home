@@ -1,6 +1,6 @@
 # DeerFlow - Unified Development Environment
 
-.PHONY: help config config-upgrade check check-agent-guidance install extension-install extension-list extension-enable extension-disable extension-remove setup doctor support-bundle detect-thread-boundaries detect-blocking-io backup restore dev dev-daemon start start-daemon nginx stop up up-start down clean docker-init docker-start docker-stop docker-logs docker-logs-frontend docker-logs-gateway docker-logs-redis searxng searxng-stop comfy-up comfy-down comfy-logs sandbox-up sandbox-down sandbox-logs sandbox-enable sandbox-disable setup-sandbox fetch-browser auto-update auto-update-install auto-update-uninstall
+.PHONY: help config config-upgrade check check-agent-guidance install extension-install extension-list extension-enable extension-disable extension-remove setup doctor support-bundle detect-thread-boundaries detect-blocking-io backup restore dev dev-daemon start start-daemon nginx stop up up-start down clean docker-init docker-start docker-stop docker-logs docker-logs-frontend docker-logs-gateway docker-logs-redis searxng searxng-stop comfy-up comfy-down comfy-logs comfy-models comfy-model-add sandbox-up sandbox-down sandbox-logs sandbox-enable sandbox-disable setup-sandbox fetch-browser auto-update auto-update-install auto-update-uninstall
 
 # docker compose shim: prefer the v2 plugin, fall back to legacy docker-compose.
 DOCKER_COMPOSE ?= docker compose
@@ -61,6 +61,8 @@ help:
 	@echo "  make comfy-up        - Start the ComfyUI service backing local image/video generation (localhost:8188)"
 	@echo "  make comfy-down      - Stop and remove the ComfyUI container"
 	@echo "  make comfy-logs      - Follow the ComfyUI container logs"
+	@echo "  make comfy-models    - List the models the ComfyUI in use has installed"
+	@echo "  make comfy-model-add SOURCE=<url|path> TYPE=checkpoints - Install a model into it"
 	@echo "  make dev-daemon      - Start dev services in background (daemon mode)"
 	@echo "  make start           - Start all services in production mode (optimized, no hot-reloading)"
 	@echo "  make start-daemon    - Start prod services in background (daemon mode)"
@@ -317,13 +319,28 @@ searxng-stop:
 # A LONG-LIVED service, not a sandbox tenant: it keeps model weights on the GPU
 # between requests, so it is started once and left running. Publishes
 # 127.0.0.1:8188 to match media.comfyui.base_url's default.
-# `scripts/detect_comfyui.py` prefers a ComfyUI you already run over starting
-# this one — two instances on one card is how a GPU ends up thrashing.
+# Every launch path already runs this for you when nothing answers on :8188
+# (scripts/detect_comfyui.py, gated by DEER_FLOW_COMFYUI_AUTOSTART); these
+# targets are the manual door and share one implementation with it. A ComfyUI
+# you already run is always preferred — two instances on one card is how a GPU
+# ends up thrashing.
 comfy-up:
-	$(DOCKER_COMPOSE) -f $(COMFYUI_COMPOSE_FILE) up -d
+	@$(RUN_SHELL_SCRIPT) ./scripts/comfyui.sh up
 
 comfy-down:
-	$(DOCKER_COMPOSE) -f $(COMFYUI_COMPOSE_FILE) down
+	@$(RUN_SHELL_SCRIPT) ./scripts/comfyui.sh down
 
 comfy-logs:
-	$(DOCKER_COMPOSE) -f $(COMFYUI_COMPOSE_FILE) logs --tail=100 -f
+	@$(RUN_SHELL_SCRIPT) ./scripts/comfyui.sh logs
+
+# Model files are yours to supply — nothing is bundled or downloaded for you.
+# These work against WHICHEVER ComfyUI is in use: the bundled container or an
+# instance you already run (scripts/comfyui_models.py resolves the target's
+# models directory the same way the Gateway resolves its endpoint).
+#   make comfy-models
+#   make comfy-model-add SOURCE=https://host/model.safetensors TYPE=checkpoints
+comfy-models:
+	@$(PYTHON) scripts/comfyui_models.py list
+
+comfy-model-add:
+	@$(PYTHON) scripts/comfyui_models.py add "$(SOURCE)" --type "$(TYPE)" $(if $(NAME),--name "$(NAME)",) $(if $(TARGET),--target "$(TARGET)",) $(if $(SHA256),--sha256 "$(SHA256)",)

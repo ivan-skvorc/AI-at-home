@@ -485,15 +485,19 @@ case "$searxng_resolution" in
 esac
 
 # ── ComfyUI (local image/video generation) ───────────────────────────────────
-# Resolve only, never start: the ComfyUI container is gigabytes and claims the
-# GPU, so `make comfy-up` stays the explicit door. Reuse is the point — an
-# instance already running on this host is found and exported so the stack
-# never points at a second one.
+# Reuse first, provision second. An instance already running on this host is
+# found and exported so the stack never points at a second one; otherwise the
+# bundled container is started AFTER the stack is up (it is not a service of
+# this compose project — `up --remove-orphans` would delete a container it does
+# not know about) and attached to the stack network, which is what makes
+# `http://deer-flow-comfyui:8188` resolve from inside the gateway.
+# detect_comfyui.py answers `bundled hold` when this machine cannot run it.
 comfyui_resolution="skip"
+comfyui_start=false
 if [ -n "$_detect_python" ]; then
     _comfyui_args=(--context docker --config "$DEER_FLOW_CONFIG_PATH")
     [ -f "$ENV_FILE" ] && _comfyui_args+=(--env-file "$ENV_FILE")
-    comfyui_resolution="$("$_detect_python" "$REPO_ROOT/scripts/detect_comfyui.py" "${_comfyui_args[@]}" || echo skip)"
+    comfyui_resolution="$("$_detect_python" "$REPO_ROOT/scripts/detect_comfyui.py" "${_comfyui_args[@]}" || echo "bundled hold")"
 fi
 
 case "$comfyui_resolution" in
@@ -501,8 +505,15 @@ case "$comfyui_resolution" in
         export DEER_FLOW_COMFYUI_BASE_URL="${comfyui_resolution#external }"
         echo -e "${GREEN}✓ ComfyUI: using existing instance at $DEER_FLOW_COMFYUI_BASE_URL${NC}"
         ;;
-    bundled)
-        echo -e "${BLUE}ComfyUI: media tools are enabled but nothing answered on :8188 — run 'make comfy-up'${NC}"
+    "bundled start")
+        comfyui_start=true
+        # Exported before the gateway starts so it carries the right endpoint;
+        # the name only has to resolve at chat time, not at boot.
+        export DEER_FLOW_COMFYUI_BASE_URL="http://deer-flow-comfyui:8188"
+        echo -e "${BLUE}ComfyUI: no existing instance found — starting the bundled container${NC}"
+        ;;
+    "bundled hold")
+        echo -e "${BLUE}ComfyUI: nothing answered on :8188 and none was started (reason above, if any) — run 'make comfy-up' to start one; local image/video generation stays unavailable until then${NC}"
         ;;
 esac
 
@@ -586,6 +597,15 @@ else
     if ! "${COMPOSE_CMD[@]}" up --build -d --remove-orphans --wait --wait-timeout 180 $services; then
         report_startup_failure
         exit 1
+    fi
+fi
+
+# ── ComfyUI: start and attach once the stack network exists ──────────────────
+if [ "$comfyui_start" = true ]; then
+    if bash "$REPO_ROOT/scripts/comfyui.sh" up; then
+        bash "$REPO_ROOT/scripts/comfyui.sh" attach deer-flow_deer-flow || true
+    else
+        echo -e "${YELLOW}⚠ Could not start the bundled ComfyUI container — local image/video generation will fail until one is reachable (try 'make comfy-up').${NC}" >&2
     fi
 fi
 

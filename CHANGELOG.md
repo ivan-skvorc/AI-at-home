@@ -9,6 +9,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **media:** **Local image and video generation is on by default, and there is a
+  button for it.** The `media` tool entries ship active in `config.example.yaml`
+  (`config_version` 47; existing configs pick them up on the next
+  `make config-upgrade`), and every launch path now resolves *or provisions* the
+  service: a ComfyUI already running on the machine is reused, and when none
+  answers the bundled container is started for you — but only where Docker **and**
+  a GPU are detected, because the image reserves an NVIDIA device and starting it
+  elsewhere fails at `compose up` rather than degrading.
+  `DEER_FLOW_COMFYUI_AUTOSTART` overrides in both directions, and on a machine
+  that cannot run one the tools stay bound and say so, which is what makes the
+  agent fall back to the cloud generation skill instead of insisting (`make
+  doctor` skips with the reason there rather than warning). Model files are still
+  yours to supply, and now have a command for **both** shapes of the integration:
+  `make comfy-models` lists what the running instance has, and `make
+  comfy-model-add SOURCE=<url|path> TYPE=checkpoints` installs one into whichever
+  ComfyUI is in use — the bundled container's bind mount, or the models directory
+  of the instance you run yourself (resolved from `--models-dir`,
+  `DEER_FLOW_COMFYUI_EXTERNAL_MODELS`, that container's own `models` mount, or a
+  well-known install path, and refused rather than guessed at, because a
+  successful download into the wrong ComfyUI looks exactly like success).
+  Downloads are checksum-verified and renamed into place only once complete, so a
+  truncated checkpoint never lists as installed. The workspace sidebar gains an
+  **Image** entry beside *New chat* and *Democracy*: a setup page for what to
+  generate, image or clip, shape, checkpoint and whether to run the refine loop,
+  which seeds the composer rather than sending — a clip is minutes per attempt.
+
 - **documents:** **Large documents and scanned PDFs no longer defeat small
   models.** A 300-page PDF does not fit a 32K-token local model, and the fallback
   — let the agent navigate it with `grep`/`read_file` — is a multi-step tool loop,

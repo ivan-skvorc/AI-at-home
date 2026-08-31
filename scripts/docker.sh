@@ -274,9 +274,11 @@ resolve_comfyui() {
     if [ -n "$detect_python" ]; then
         local args=(--context docker --config "$PROJECT_ROOT/config.yaml")
         [ -f "$PROJECT_ROOT/.env" ] && args+=(--env-file "$PROJECT_ROOT/.env")
-        "$detect_python" "$SCRIPT_DIR/detect_comfyui.py" "${args[@]}" || echo "skip"
+        "$detect_python" "$SCRIPT_DIR/detect_comfyui.py" "${args[@]}" || echo "bundled hold"
     else
-        echo "skip"
+        # No interpreter to detect with: change nothing rather than provision a
+        # GPU container on a guess.
+        echo "bundled hold"
     fi
 }
 
@@ -545,18 +547,26 @@ start() {
             ;;
     esac
 
-    # ComfyUI (local image/video generation): resolve only, never start. The
-    # container is gigabytes and takes the GPU, so `make comfy-up` is the door;
-    # what this buys is reuse of an instance already running on the host.
+    # ComfyUI (local image/video generation): reuse an instance already running
+    # on the host, otherwise start the bundled container after the stack is up
+    # and attach it to the dev network. It stays out of this compose project on
+    # purpose — `up --remove-orphans` would delete a container it does not know
+    # about, taking the GPU service down with an unrelated restart.
     local comfyui_resolution
+    local comfyui_start=false
     comfyui_resolution="$(resolve_comfyui)"
     case "$comfyui_resolution" in
         external\ *)
             export DEER_FLOW_COMFYUI_BASE_URL="${comfyui_resolution#external }"
             echo -e "${GREEN}✓ ComfyUI: using existing instance at $DEER_FLOW_COMFYUI_BASE_URL${NC}"
             ;;
-        bundled)
-            echo -e "${BLUE}ComfyUI: media tools are enabled but nothing answered on :8188 — run 'make comfy-up'${NC}"
+        "bundled start")
+            comfyui_start=true
+            export DEER_FLOW_COMFYUI_BASE_URL="http://deer-flow-comfyui:8188"
+            echo -e "${BLUE}ComfyUI: no existing instance found — starting the bundled container${NC}"
+            ;;
+        "bundled hold")
+            echo -e "${BLUE}ComfyUI: nothing answered on :8188 and none was started (reason above, if any) — run 'make comfy-up' to start one; local image/video generation stays unavailable until then${NC}"
             ;;
     esac
 
@@ -590,6 +600,14 @@ start() {
 
     echo "Building and starting containers..."
     cd "$DOCKER_DIR" && $COMPOSE_CMD up --build -d --remove-orphans $services
+
+    if [ "$comfyui_start" = true ]; then
+        if bash "$PROJECT_ROOT/scripts/comfyui.sh" up; then
+            bash "$PROJECT_ROOT/scripts/comfyui.sh" attach deer-flow-dev_deer-flow-dev || true
+        else
+            echo -e "${YELLOW}⚠ Could not start the bundled ComfyUI container — local image/video generation will fail until one is reachable (try 'make comfy-up').${NC}" >&2
+        fi
+    fi
     echo ""
     echo "=========================================="
     echo "  DeerFlow Docker is starting!"
