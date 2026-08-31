@@ -9,6 +9,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **documents:** **Large documents and scanned PDFs no longer defeat small
+  models.** A 300-page PDF does not fit a 32K-token local model, and the fallback
+  — let the agent navigate it with `grep`/`read_file` — is a multi-step tool loop,
+  which is the first capability a quantized model loses on long input. The new
+  `analyze_document` tool reads a document in parts sized for whichever model is
+  serving the run (a chapter at a time on a 200K cloud model, a few pages on a
+  32K local one) and combines the notes in a separate, hierarchical pass, so no
+  model call ever holds more than one part. A **scanned** PDF — one whose text
+  layer is empty, which previously converted "successfully" into a file with
+  nothing in it — is now detected, flagged in the upload list, and transcribed
+  page by page by a vision model before anything is summarised; transcription and
+  summarisation stay separate passes. The same window resolution lowers the
+  `read_file`/`bash`/`ls` truncation caps and the `tool_output` thresholds, which
+  were fixed character counts calibrated for a 200K cloud model. A configured
+  limit is only ever a ceiling: an unknown window changes nothing, and an
+  explicit `0` ("no limit") is never turned back on. Converted PDFs now carry
+  `<!-- page: N -->` anchors so an answer can cite a page. Configured under
+  `documents:` (`config_version` 46), on by default; OCR runs only on a document
+  whose text layer is actually missing. `max_chunk_chars` bounds the derived part
+  size however large the window is, so a 128K-window model is not handed ~55K
+  tokens per call. See README → *Large Documents and Scanned PDFs* and FORK.md §25.
+- **models:** `scripts/sync-ollama-models.py` now writes `context_window`
+  alongside `num_ctx`. Only Ollama reads `num_ctx`; `context_window` is what the
+  UI's context indicator and the cost-aware routing guard read, and without it
+  that guard short-circuited on `None` for every local model — so a
+  large-prompt subagent could be routed to a model whose window could not hold
+  it.
+
 - **voice:** **Dictation no longer sends your audio to Google.** The composer's
   microphone wrapped the browser `SpeechRecognition` API, whose implementation
   streams audio from the browser straight to Google (Chrome) or Apple (Safari) —

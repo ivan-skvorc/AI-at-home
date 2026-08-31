@@ -197,6 +197,7 @@ Then confirm each fork feature end-to-end:
 | **SearXNG default `web_search`** | active `web_search` tool uses `deerflow.community.searxng.tools:web_search_tool`; `scripts/detect_searxng.py` still resolves it (resolution pinned by `backend/tests/test_detect_searxng.py`). |
 | **Camoufox + SearXNG auto-update** (see *Automatic updates*) | `scripts/update_camoufox_searxng.py` refreshes both; `scripts/searxng.sh` has an `update` subcommand (pull + recreate-if-running); `scripts/serve.sh` runs the updater `--if-stale 24` in the background (opt out `DEER_FLOW_AUTO_UPDATE=0`); `scripts/install_auto_update.py` + `make auto-update{,-install,-uninstall}` manage the daily `systemd --user` timer. Pinned by `backend/tests/test_update_camoufox_searxng.py`, `test_install_auto_update.py`, `test_searxng_update_script.py`. If upstream restructures `scripts/serve.sh`, re-add the throttled background `--if-stale` hook after the SearXNG block. |
 | **PDF/Office conversion** | `pymupdf` extra (`pymupdf4llm`) present in `backend/packages/harness/pyproject.toml`. The feature stays off by default, and the converted-Markdown companion write (distinct names for multiple convertibles, never clobbering a same-request user `.md`) is pinned by `backend/tests/test_uploads_router.py` (`test_upload_files_does_not_auto_convert_documents_by_default`, `test_upload_files_two_convertibles_get_distinct_markdown_companions`, `test_upload_files_converted_markdown_does_not_overwrite_user_markdown`). |
+| **Large documents + scanned-PDF OCR** (§25) | `cd backend && uv run pytest tests/test_context_budget.py tests/test_context_aware_tool_output.py tests/test_document_extraction.py tests/test_document_chunking.py tests/test_document_ocr.py tests/test_document_analysis.py tests/test_analyze_document_tool.py` — the asserts that are silent when broken: `test_cloud_window_keeps_every_configured_value` and `test_unknown_budget_is_a_no_op` (a configured limit is a ceiling the window may lower, never a floor it raises — break this and every existing install silently changes behaviour); `test_an_explicit_disable_is_never_turned_back_on` (`0` means no limit, in both the sandbox and `tool_output` configs); `test_the_published_budget_does_not_leak_past_the_tool_call` (the ContextVar is scoped to one tool call, so a budget cannot outlive the model that produced it); `test_summarising_happens_after_transcription_not_during_it` and `test_the_instruction_forbids_summarising` (the two passes stay separate — folding them is the cheaper implementation and the one that loses content); `test_anchors_do_not_count_towards_the_character_total` (else a 200-page blank scan reads as 4KB of content and never trips the sparse check); `test_a_fully_failed_document_is_not_cached` (caching an all-failed transcript makes the failure permanent); `test_notes_that_overflow_are_merged_in_rounds` (the reduce is hierarchical, or a long document just moves the overflow downstream); `test_the_ceiling_bounds_a_large_window` (`max_chunk_chars` reaches the chunker — it was documented and unread once, and a dead ceiling hands a 128K-window model ~55K tokens per map call); `test_context_window_mirrors_num_ctx` in `test_sync_ollama_models.py` (without it the routing guard short-circuits on `None` for every local model). Wiring: `documents:` in `config.example.yaml` (`config_version` 46) + the chart's copy; `analyze_document` registered in `tools/tools.py` behind `documents.enabled`; `_context_clamped` at the three `sandbox/tools.py` truncation sites; `_extraction_warning` in `uploads_middleware.py`. Manual: upload a scanned PDF with `uploads.auto_convert_documents: true` and confirm `<current_uploads>` flags it as image-based instead of showing an empty outline. |
 | **Reduce animations (default on)** | `core/appearance` (`useReducedMotion`) + `components/reduce-motion-effect.tsx`; default pinned by `local.test.ts`. |
 | **Full sandbox runs** | `skills/public/repo-runner/`; `sandbox.expose_ports` / `extra_capabilities` in `config.example.yaml` and honored by `LocalContainerBackend`. The container-sandbox default (chosen when a Docker/Apple Container runtime is present, even non-interactively) and per-thread container mode are pinned by `backend/tests/test_configure_script.py` + `test_docker_sandbox_mode_detection.py`; the enable/disable toggle by `test_sandbox_toggle.py`; the forwarded `bash_command_timeout` by `test_local_sandbox_command_timeout.py`. |
 | **First-run config seeding** | `scripts/serve.sh::seed_missing_config` (and the equivalents in `deploy.sh` / `docker.sh`). Pinned by `backend/tests/test_serve_config_seed.py` (seeds `config.yaml` + companion config files on first run). |
@@ -2217,6 +2218,87 @@ service rather than an in-process dependency (§23).
 
 Depth for agents editing this lives in
 [`backend/packages/harness/deerflow/community/speech/AGENTS.md`](backend/packages/harness/deerflow/community/speech/AGENTS.md).
+
+### 25. Documents bigger than the window, and PDFs with nothing in them
+
+Two failures sit behind "the local model is bad at PDFs", and they are not the
+same failure. Separating them is most of the design.
+
+**The window.** A 300-page filing is well past a 32K-token model. Upstream's
+shape was already right — the agent gets a heading outline and is told to
+`read_file` ranges and `grep`, never the document body — but the sizes around it
+were fixed character constants calibrated for a 200K cloud model:
+`read_file_output_max_chars: 50000` is ~12.5K tokens in **one** tool result, about
+40% of a 32K window and larger than an 8K window outright, and
+`summarization.trigger: 32000` equals the entire window of a synced Ollama entry,
+so compaction fires only after the window has already overflowed. Worse, the
+navigation itself is a multi-step tool loop, and instruction-following on long
+input is the first thing 4-bit quantization costs you (arXiv 2505.20276: up to
+59% on long-context tasks, >10% on IFEval, against ~0.8% for 8-bit). The
+documents that most need help are the ones where the loop breaks down first.
+
+**The text layer.** `pymupdf4llm` extracts a PDF's *text layer*. A scan has none,
+so conversion returns success and a near-empty file, and the MarkItDown fallback
+does not OCR either. Nothing downstream could tell that apart from a genuinely
+short document, so the agent summarised an empty file with total confidence. This
+is the worse of the two failures precisely because it is indistinguishable from a
+bad answer.
+
+**What the fix is shaped like.** One resolver
+(`deerflow/utils/context_budget.py`) reads the serving model's usable window —
+Ollama's `num_ctx`, a config entry's `context_window`, or the provider profile —
+and subtracts the output reservation, because `num_ctx` covers prompt *and*
+generation: `num_ctx: 32768` with `num_predict: 8192` is 24576 tokens of prompt
+space, not 32768. Everything else is derived from that: the sandbox truncation
+caps, the `tool_output` thresholds, and the chunk size for
+`analyze_document`. `ToolOutputBudgetMiddleware` is where it lives, because it is
+the only place in the loop holding both the serving model and the tool results;
+it publishes the resolved budget in a ContextVar for the duration of each tool
+call, which is how the sandbox tools — which have no model reference and take no
+new argument — participate.
+
+Four properties are load-bearing, and each is the one a refactor would remove:
+
+- **A configured limit is a ceiling, never a floor.** `clamp_to_context` only
+  lowers. An unknown window is a no-op, so a provider that declares nothing
+  behaves byte-for-byte as before, and an explicit `0` ("no limit") is never
+  turned back on. Without this the feature is a behaviour change for every
+  existing install rather than a fix for small models.
+- **Transcribe and summarise are separate passes.** The vision model is told to
+  transcribe and nothing else (`TRANSCRIBE_PROMPT`), and the map-reduce runs over
+  the transcript afterwards. Folding them together is the cheaper implementation
+  and the one that silently loses content: a model asked to summarise while
+  reading chooses what to drop before anyone has seen the document.
+- **Coverage is reported, not implied.** `AnalysisResult.coverage_line()` states
+  how many parts were read, how many contributed, how many could not be read, and
+  whether `max_chunks` stopped it early — and that line goes into the string the
+  agent gets back. A partial read that reads as complete is worse than a refusal.
+- **The reduce is hierarchical.** Notes that outgrow the window are merged in
+  rounds. Without it a long document just moves the overflow from the map stage
+  to the reduce stage, which is the failure this feature exists to remove.
+
+Two smaller decisions worth not re-litigating. Page anchors (`<!-- page: 12 -->`,
+from pymupdf4llm's `page_chunks=True`) are HTML comments so they survive every
+Markdown consumer while rendering as nothing, and `assess_extraction` excludes
+them from its character count — otherwise a scan of 200 blank pages looks like
+4KB of content and never trips the sparse check. And an all-failed OCR run is
+deliberately **not** cached: caching it would make the failure permanent.
+
+One upstream-shape rule to keep: `_do_convert(file_path, pdf_converter) -> str`
+stays the single string-returning conversion seam. It is what the existing tests
+patch and what a sync will touch; the quality report is computed by the caller
+from the converted text instead, which is why `ExtractionQuality` takes a page
+count rather than a converter handle.
+
+This also closes a gap the audit turned up on the way past:
+`scripts/sync-ollama-models.py` wrote `num_ctx` but never `context_window`, so
+`subagents/routing.py`'s guard (`if context_window and estimated > context_window`)
+short-circuited on `None` for every local model — cost-aware routing could send a
+large-document subagent to a model whose window could not hold the prompt, which
+is exactly the trade `config.example.yaml` says it refuses to make.
+
+Depth for agents editing this lives in
+[`backend/packages/harness/deerflow/documents/AGENTS.md`](backend/packages/harness/deerflow/documents/AGENTS.md).
 
 ## Why mix local and cloud
 

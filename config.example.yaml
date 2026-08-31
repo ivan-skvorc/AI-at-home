@@ -15,7 +15,7 @@
 # ============================================================================
 # Bump this number when the config schema changes.
 # Run `make config-upgrade` to merge new fields into your local config.yaml.
-config_version: 45
+config_version: 46
 
 # ============================================================================
 # Logging
@@ -2532,6 +2532,53 @@ tool_output:
   # tool_overrides:
   #   web_search: 8000
   #   bash: 20000
+
+# ============================================================================
+# Long-Document Analysis + Scanned-PDF OCR (fork feature)
+# ============================================================================
+# A document larger than the model's context window cannot be read in one go,
+# and the usual fallback — let the agent navigate it with grep/read_file — is a
+# multi-step tool loop, which is the first capability a small quantized model
+# loses under long input. So the documents that most need help are exactly the
+# ones where the navigation breaks down.
+#
+# `analyze_document` inverts that: the document is split into parts sized for
+# the model that will read them, each part is read on its own against the
+# question, and the notes are combined in a separate pass (hierarchically, when
+# the notes themselves outgrow the window). No model call ever holds more than
+# one part, which turns "can this model hold 200 pages?" into "can it handle a
+# few pages at a time?".
+#
+# The chunk size is derived from the serving model's context window, not
+# configured per model: a 200K cloud model reads a chapter per step and a 32K
+# local model reads a few pages, from the same code path. The same resolution
+# lowers the sandbox truncation caps and the `tool_output` thresholds above —
+# a configured limit is a ceiling the window may lower, never a floor it raises,
+# and an explicit 0 ("no limit") is always left alone.
+documents:
+  enabled: true                   # Exposes the `analyze_document` tool
+  model_name: null                # null = the default chat model
+  max_chunks: 60                  # Ceiling on parts read per call; the answer says when it applied
+  max_chunk_chars: 60000          # Ceiling on the derived chunk size, however large the window is
+  concurrency: 2                  # Parallel map calls
+  answer_max_chars: 8000          # Cap on the answer returned into context; full notes always go to a file
+
+  # Scanned PDFs. pymupdf4llm extracts a PDF's *text layer*; a scan has none, so
+  # conversion "succeeds" and produces a near-empty file that an agent will
+  # summarise into fiction. This renders each page to an image and transcribes
+  # it with a vision model, then runs the normal summarisation pass over the
+  # transcript — transcribe and summarise stay separate steps, so no model
+  # decides what to drop before the whole document has been read.
+  #
+  # It never runs on its own: only when a document's text layer is missing AND
+  # the agent was asked to analyse that document. The transcript is cached next
+  # to the upload as `<name>.ocr.md`, so the expensive pass happens once.
+  ocr:
+    enabled: true
+    model_name: null              # null = the first model with `supports_vision: true`
+    dpi: 150                      # Legible for printed text; higher multiplies the image payload for little gain
+    max_pages: 100                # Bound on cost per call, not on document size
+    concurrency: 2                # The target is one local GPU, where extra parallelism only queues
 
 # ============================================================================
 # Suggestions Configuration

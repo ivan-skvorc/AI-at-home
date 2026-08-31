@@ -19,6 +19,7 @@ from deerflow.config.checkpointer_config import CheckpointerConfig, load_checkpo
 from deerflow.config.config_lint import lint_unknown_config_keys
 from deerflow.config.database_config import DatabaseConfig
 from deerflow.config.dedupe_storage_config import DedupeStorageConfig
+from deerflow.config.documents_config import DocumentsConfig
 from deerflow.config.extensions_config import ExtensionsConfig
 from deerflow.config.file_signature import ConfigSignature as _ConfigSignature
 from deerflow.config.file_signature import get_config_signature as _get_config_signature
@@ -254,6 +255,7 @@ class AppConfig(BaseModel):
     skill_evolution: SkillEvolutionConfig = Field(default_factory=SkillEvolutionConfig, description="Agent-managed skill evolution configuration")
     extensions: ExtensionsConfig = Field(default_factory=ExtensionsConfig, description="Extensions configuration (MCP servers and skills state)")
     tool_output: ToolOutputConfig = Field(default_factory=ToolOutputConfig, description="Tool output budget protection configuration")
+    documents: DocumentsConfig = Field(default_factory=DocumentsConfig, description="Long-document analysis and scanned-PDF OCR configuration (fork feature)")
     tool_search: ToolSearchConfig = Field(default_factory=ToolSearchConfig, description="Tool search / deferred loading configuration")
     title: TitleConfig = Field(default_factory=TitleConfig, description="Automatic title generation configuration")
     summarization: SummarizationConfig = Field(default_factory=SummarizationConfig, description="Conversation summarization configuration")

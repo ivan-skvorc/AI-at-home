@@ -40,22 +40,17 @@ It compresses HTML and configured textual assets, while deliberately leaving SSE
 fonts, images, audio, and video uncompressed at the proxy layer.
 
 Both compose files publish that entry as `"${BIND_HOST:-127.0.0.1}:${PORT:-2026}:2026"`
-— **loopback by default**, matching the README's documented deployment model. A bare
-`"${PORT}:2026"` binds `0.0.0.0`, which does not.
-The root `PORT` value is Docker ingress configuration only; local orchestration pins
-Next.js to `3000` so loading `.env` cannot make `make dev` wait on the wrong port.
-Nginx listens `default_server` on IPv4+IPv6 and the
-Gateway binds `0.0.0.0:8001` inside the container on purpose — both are container-
-internal; the published nginx port is the entire external surface, and the Gateway's
-`8001` is deliberately not published. Any new published port needs an explicit bind
-address; `backend/tests/test_compose_default_bind_host.py` pins this for every service
-in both compose files.
-`BIND_HOST` is a single interface, not an allowlist: setting one non-loopback,
-non-wildcard interface publishes only that one and refuses the host's own `localhost`. Both Docker scripts detect that (`should_cobind_loopback`) and append
-`docker/docker-compose.loopback.yaml` to *also* publish on `127.0.0.1` (host-only, so the
-external surface is unchanged); wildcards and loopback binds skip it, since a second
-`127.0.0.1` mapping would collide on the port. Pinned by
-`backend/tests/test_deploy_loopback_cobind.py`.
+— **loopback by default**; a bare `"${PORT}:2026"` binds `0.0.0.0`, which is not. Any
+new published port needs an explicit bind address (`test_compose_default_bind_host.py`
+pins every service in both files). Nginx's `default_server` and the Gateway's
+`0.0.0.0:8001` are container-internal: the published nginx port is the whole external
+surface. `BIND_HOST` is one interface, not an allowlist, so naming a non-loopback one
+would refuse the host's own `localhost` — both Docker scripts detect that
+(`should_cobind_loopback`) and append `docker/docker-compose.loopback.yaml` to *also*
+publish on `127.0.0.1`, host-only, leaving the external surface unchanged
+(`test_deploy_loopback_cobind.py`). The root `PORT` is Docker ingress config only; local
+orchestration pins Next.js to `3000`. Full reasoning: FORK.md, *Reaching the stack over
+Tailscale*.
 
 Two rules ride along, pinned by `test_docker_dev_tailnet.py`: a Docker script runs Compose
 after `cd docker/`, so it must pass an absolute `--env-file <repo-root>/.env` or `ports:`

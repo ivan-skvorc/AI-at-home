@@ -258,15 +258,16 @@ When using `make dev` from root, the frontend automatically connects through ngi
 
 Multi-file upload with automatic document conversion:
 - Endpoint: `POST /api/threads/{thread_id}/uploads`
-- Supports: PDF, PPT, Excel, Word documents (converted via `markitdown`)
+- Supports: PDF, PPT, Excel, Word (converted via `pymupdf4llm`/`markitdown`)
 - Rejects directory inputs before copying so uploads stay all-or-nothing
-- Reuses one conversion worker per request when called from an active event loop
+- Reuses one conversion worker per request when called from a live event loop
 - Files stored in thread-isolated directories under the resolving user's bucket (`users/{user_id}/threads/{thread_id}/user-data/uploads`). For IM channels the owner is threaded explicitly via the `user_id=` kwarg (see IM Channels → Owner-scoped file storage); HTTP/embedded callers resolve it from `get_effective_user_id()`
 - Duplicate filenames in a single upload request are auto-renamed with `_N` suffixes so later files do not truncate earlier files
 - Gateway HTTP uploads stage bytes as `.upload-*.part` files and atomically replace the destination only after size validation. These staging files are hidden from upload listings, agent upload context, and sandbox listing/search tools, and swept on Gateway startup if a hard crash leaves one behind.
 - Gateway HTTP upload/list/delete handlers offload filesystem work through `deerflow.utils.file_io.run_file_io`, a dedicated ContextVar-preserving file IO executor. Non-mounted sandbox uploads acquire sandboxes with `SandboxProvider.acquire_async()` and offload `read_bytes()` plus `sandbox.update_file()` together.
 - Mounted upload paths skip both sandbox acquisition and per-file synchronization. For AIO remote/provisioner deployments this requires an explicit, accurate `sandbox.thread_data_mounts: true`; omission preserves backend auto-detection.
 - Agent receives uploaded file list via `UploadsMiddleware`
+- Long docs, scanned PDFs: [documents/AGENTS.md](packages/harness/deerflow/documents/AGENTS.md)
 
 See [docs/FILE_UPLOAD.md](docs/FILE_UPLOAD.md) for details.
 
