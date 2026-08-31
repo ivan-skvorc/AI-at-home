@@ -416,6 +416,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **sandbox:** A debug port opened with `sandbox.expose_ports` no longer lands on
+  **every** host interface when the sandbox host is non-loopback (the
+  Docker-outside-of-Docker case, `DEER_FLOW_SANDBOX_HOST=host.docker.internal`).
+  That path used to publish `0.0.0.0:<port>`, which put the program under test —
+  and, on the API port, an **unauthenticated shell endpoint** — in front of
+  anything that could reach the machine. Both now bind the address the sandbox
+  host actually resolves to, so the port is still reachable exactly where the
+  sandbox itself is, and nowhere else. Loopback runs are unaffected (they already
+  bound `127.0.0.1`). Operators who genuinely need the old behavior — a remote
+  client talking to the sandbox API directly — restore it with
+  `DEER_FLOW_SANDBOX_BIND_HOST=0.0.0.0`, which should be paired with an external
+  firewall.
+
 - **docs:** The model-and-pricing audit now states **where a price may come
   from**, as three ordered tiers instead of one absolute rule. *Verified* (the
   provider's own page) stays the standard; when that page cannot be reached, a
@@ -677,6 +690,14 @@ This section accumulates work toward the **2.1.0** milestone
   `BIND_HOST` to expose the stack on other interfaces. ([#4618])
 
 ### Added
+
+#### Authentication
+- **auth:** Personal access tokens (PAT) for programmatic API access:
+  `POST/GET/DELETE /api/v1/auth/pats` manage tokens (shown once, stored as
+  SHA-256 digests); a default-deny route policy admits only the thread/run
+  lifecycle routes, narrowed further by the token's `threads`/`runs` scopes,
+  and any request dimension that carries cancel capability (`?action=`,
+  `multitask_strategy`) additionally requires `runs:cancel`.
 
 #### Agents & runtime
 

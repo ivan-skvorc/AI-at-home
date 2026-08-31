@@ -947,7 +947,7 @@ function SidecarModelSelector({
     <ModelSelector open={open} onOpenChange={onOpenChange}>
       <ModelSelectorTrigger asChild>
         <PromptInputButton className={cn("min-w-0 px-2!", className)}>
-          <div className="flex min-w-0 flex-col items-start text-left">
+          <div className="flex min-w-0 flex-col text-left">
             <ModelSelectorName className="w-full text-xs font-normal">
               <ModelDisplayName
                 displayName={selectedModel.display_name}

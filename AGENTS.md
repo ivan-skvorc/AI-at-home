@@ -44,15 +44,14 @@ Both compose files publish that entry as `"${BIND_HOST:-127.0.0.1}:${PORT:-2026}
 `"${PORT}:2026"` binds `0.0.0.0`, which does not.
 The root `PORT` value is Docker ingress configuration only; local orchestration pins
 Next.js to `3000` so loading `.env` cannot make `make dev` wait on the wrong port.
-Nginx itself listens `default_server` on IPv4+IPv6 and the
+Nginx listens `default_server` on IPv4+IPv6 and the
 Gateway binds `0.0.0.0:8001` inside the container on purpose — both are container-
 internal; the published nginx port is the entire external surface, and the Gateway's
 `8001` is deliberately not published. Any new published port needs an explicit bind
 address; `backend/tests/test_compose_default_bind_host.py` pins this for every service
 in both compose files.
-Because `BIND_HOST` is a single bind interface (not an allowlist), setting it to one
-non-loopback, non-wildcard interface publishes only that interface and refuses the host's
-own `localhost`. Both Docker scripts detect that (`should_cobind_loopback`) and append
+`BIND_HOST` is a single interface, not an allowlist: setting one non-loopback,
+non-wildcard interface publishes only that one and refuses the host's own `localhost`. Both Docker scripts detect that (`should_cobind_loopback`) and append
 `docker/docker-compose.loopback.yaml` to *also* publish on `127.0.0.1` (host-only, so the
 external surface is unchanged); wildcards and loopback binds skip it, since a second
 `127.0.0.1` mapping would collide on the port. Pinned by
@@ -135,7 +134,7 @@ make extension-enable NAME=...     # Enable an installed extension (restart requ
 make extension-disable NAME=...    # Disable without uninstalling (restart required)
 make extension-remove NAME=...     # Remove package and config entry (restart required)
 make dev         # Start all services with hot-reload (Gateway + Frontend + Nginx)
-make start       # Start all services in production mode (local, optimized)
+make start       # Production mode, local and optimized (SKIP_FRONTEND_BUILD=1 reuses the last frontend build)
 make stop        # Stop all running services
 make up / down   # Build/stop the production Docker stack (browser at localhost:2026)
 make up-start    # Restart the prod stack from pre-built images — applies config-only .env/config.yaml changes (e.g. BIND_HOST) with no rebuild

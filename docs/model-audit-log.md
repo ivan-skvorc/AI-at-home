@@ -11,6 +11,85 @@ Newest first. Append a pass; never rewrite one. A dated line is what tells the
 next person whether the roster was checked last week or last year, and *which*
 providers that pass could actually reach.
 
+- **2026-08-30 (upstream sync) — Anthropic re-verified at tier 1; DeepSeek's peak/off-peak split
+  settled enough to explain the shipped figure, and the "make the two halves agree" instruction
+  retired as wrong; no price or roster change.** Run because it was asked for, alongside the
+  upstream merge of 32 commits (which touched `config.example.yaml`'s model section, so the bundle
+  was in scope either way).
+
+  **Reachability: unchanged from the last pass.** `platform.claude.com` answers, so all six Claude
+  entries were read straight off Anthropic's own pricing page. Every other provider host is refused
+  at the egress proxy — `openrouter.ai` (403 at CONNECT, which `audit_models.py` correctly reports
+  as *skipped* rather than as drift), plus `www.anthropic.com`, `platform.openai.com`,
+  `ai.google.dev`, `api-docs.deepseek.com`, `docs.z.ai`, `docs.x.ai` and `platform.moonshot.ai`.
+  General web **search** was available and carried the tier-2 work below; fetching the pages it
+  surfaced was itself blocked, so those rest on search results, not on the pages.
+
+  **Mechanical half: clean.** `scripts/audit_models.py` reports **no drift**; the stale-fixture
+  self-test (`--catalog scripts/fixtures/model_audit_stale_catalog.json`) still surfaces all four
+  drift kinds; the `price_in_display_name` grep over both sources prints nothing;
+  `sync-api-key-models.py` enables the `anthropic` block on a dry run against a copy and leaves the
+  file byte-identical on an empty env. The regression gate (`test_sync_api_key_models.py`,
+  `test_setup_wizard.py`, `test_config_integrity.py`, `test_audit_models.py`,
+  `test_model_price_fields.py`, `test_pricing.py`) is green at **275 passed**.
+
+  **Anthropic: verified, no change.** All six bundled Claudes match the provider's table exactly —
+  Fable 5 `$10/50`, Opus 5 `$5/25`, Opus 4.8 `$5/25`, Sonnet 5 `$2/10`, Sonnet 4.6 `$3/15`, Haiku 4.5
+  `$1/5` — as do all six 0.1x cache-read rates. Sonnet 5's `$2/10` is still stated as the standard
+  price with the September 1 increase cancelled, which is what the entry's comment already says. The
+  roster shape is correct as-is: the page now lists Opus 4.8/4.7/4.6/4.5 and Sonnet 4.6/4.5, and the
+  last-4.x rule keeps exactly Opus 4.8 and Sonnet 4.6; Haiku and Fable keep only their latest, and
+  Mythos 5 stays out (still limited-availability). Two page changes worth noting and *not* acting on:
+  **fast mode** now prices Opus 5 / 4.8 at `$10/50`, and Claude 4.7-and-later use a tokenizer that
+  produces ~30% more tokens for the same text. Neither is a per-token rate change — fast mode is an
+  opt-in premium the bundle does not request, and a tokenizer shifts token *counts*, which the
+  cost totals already measure — so no `price:` block moves.
+
+  **DeepSeek: the open item from 2026-08-29 is half-settled, and no figure changed.** Several
+  independent search-tier sources now agree exactly on the structure and both numbers: since
+  **2026-08-16 16:00 UTC**, V4-Pro bills `$1.32/3.96` during peak hours (01:00–04:00 and 06:00–10:00
+  UTC, weekdays) and `$0.66/1.98` off-peak, with off-peak described everywhere as *half of peak* — so
+  peak is the reference rate and off-peak the automatic discount. The home block already ships
+  `$1.32/3.96`, i.e. the reference rate, which is what the Grok 4.6 precedent asks for (one `price:`
+  field carries the standard rate, never the special band) and what tier 2 permits (a discount is
+  never shipped from secondary sources). **So the home block is right as shipped, and now has a
+  recorded reason rather than a coincidence.**
+
+  **The instruction the last pass left — "make the two halves of the doubled model agree" — was
+  itself wrong, and is retired here.** The OpenRouter twin ships `$0.44/0.87` against the home
+  block's `$1.32/3.96`, and the last pass read that as one model with two prices. It is not: the two
+  entries bill through two different channels, and FORK.md's own rule is that an OpenRouter entry's
+  authoritative page *is* its OpenRouter page, "because OpenRouter's rate is what the entry bills
+  at". Two halves of a doubled model are required to name the same *model*, never the same *price*.
+  What is genuinely owed is narrower: confirm what OpenRouter bills for `deepseek/deepseek-v4-pro`
+  today. Search suggests it still lists the pre-August-16 `$0.435/0.87`, but that is a single
+  unverifiable claim about a page tier 1 owns, so **nothing was changed**.
+
+  **No roll-forward due.** A release sweep found nothing newer than the bundle's flagships: the most
+  recent releases are GLM-5.3 Flash (2026-08-26, a cheaper sibling, not a flagship — and the same
+  model upstream added a *commented* example profile for in this merge), Gemini 3.7 Flash
+  (2026-08-13) and DeepSeek's multimodal V4 (2026-08-21). Grok 4.6, Qwen3.8 Max, GLM-5.3 and Mistral
+  Medium 3.5 remain current, and remain **corroborated rather than verified** — still owed to the
+  next unrestricted pass.
+
+  **All four prose copies no test reads were read by eye and are correct this pass**
+  (`providers.py`'s nine home `description=` strings, `config.example.yaml`'s QUICK START, the sync
+  script's QUICK START docstring, and the README §2 bullet), as are `.env.example`'s eleven provider
+  key lines. Every one matches its block's actual lineup.
+
+  **Structure, unchanged:** 41 bundled paid models, every one carrying a `price:` block; 11 marker
+  blocks in the prescribed order (Anthropic → OpenRouter → the nine home blocks); the doubling holds
+  for all nine home flagships; all 13 OpenRouter entries carry `(p)` and no direct, home or Ollama
+  entry does. The one live discount (`openrouter-minimax-m3`, `$0.24/0.96`) still has no `until` and
+  MiniMax's promotions page is unreachable, so it stays as shipped.
+
+  **Still owed to the next unrestricted pass**, in priority order: what OpenRouter actually bills for
+  `deepseek/deepseek-v4-pro`; the four corroborated figures (Grok 4.6, Qwen3.8 Max, GLM-5.3, Mistral
+  Medium 3.5); the Gemini 3.7 Flash roster decision; MiniMax M3's promo status; and Google's shape
+  problem — its OpenRouter double is still Gemini 3.6 Flash, a cheaper sibling, so the "every
+  flagship doubled home + OpenRouter" rule does not hold for the one lab whose flagship
+  (Gemini 3.1 Pro) is home-only.
+
 - **2026-08-29 — Anthropic re-verified at tier 1; the four corroborated roll-forwards re-checked and
   unchanged; one stale prose copy fixed; no price or roster change.** Run because it was asked for,
   alongside a README edit — not a sync, and not a drift report from the weekly job.

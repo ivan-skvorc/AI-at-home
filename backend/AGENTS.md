@@ -71,6 +71,7 @@ deer-flow/
 │   │   │   ├── app.py         # FastAPI application
 │   │   │   └── routers/       # FastAPI route modules (models, mcp, memory, skills, system_prompt, uploads, threads, artifacts, agents, agent_generation, suggestions, channels)
 │   │   └── channels/          # IM platform integrations
+│   ├── scripts/benchmark/       # Standalone reproducible backend benchmarks
 │   ├── tests/                 # Test suite
 │   └── docs/                  # Documentation
 ├── frontend/                   # Next.js frontend application
@@ -89,6 +90,13 @@ When making code changes, you MUST update the relevant documentation:
 - Update `AGENTS.md` for development changes (architecture, commands, workflows, internal systems). `CLAUDE.md` imports it via `@AGENTS.md`, so editing `AGENTS.md` updates both.
 - Keep documentation synchronized with the codebase at all times
 - Ensure accuracy and timeliness of all documentation
+
+### Backend Benchmarks
+
+`scripts/benchmark/` holds standalone, reproducible measurements of production
+backend behavior. The dataset-pinning, secret-handling, determinism and
+result-publishing rules — and the DeerMem eviction evaluation's commands — live
+beside the code in [scripts/benchmark/AGENTS.md](scripts/benchmark/AGENTS.md).
 
 ## Commands
 
