@@ -306,11 +306,20 @@ class TestServiceWiring:
         ports = compose["services"]["comfyui"]["ports"]
         assert ports == ["${BIND_HOST:-127.0.0.1}:${DEER_FLOW_COMFYUI_PORT:-8188}:8188"], ports
 
-    def test_config_example_ships_the_tools_disabled(self):
-        """ComfyUI is not running on a fresh machine; an active entry would fail at chat time."""
-        text = (REPO_ROOT / "config.example.yaml").read_text(encoding="utf-8")
-        active = [line for line in text.splitlines() if "deerflow.community.comfyui" in line and not line.strip().startswith("#")]
-        assert active == [], active
+    def test_config_example_ships_the_tools_enabled(self):
+        """The tools ship ON: a launch provisions ComfyUI, so an entry is not a dead end.
+
+        This inverted (they used to ship commented out) when the launch scripts
+        started resolving-or-starting ComfyUI. The pairing is the point and it
+        is what must not drift: an active entry is only safe *because* something
+        provisions the service, and provisioning is only useful *because* the
+        entry is active. `scripts/detect_comfyui.py` also reads this file to
+        decide whether to bother — commenting the entries out again silently
+        switches the whole feature off.
+        """
+        config = yaml.safe_load((REPO_ROOT / "config.example.yaml").read_text(encoding="utf-8"))
+        active = {tool["name"] for tool in config["tools"] if "deerflow.community.comfyui" in str(tool.get("use", ""))}
+        assert active == {"list_media_models", "generate_image", "generate_video", "refine_start", "refine_verdict"}, active
 
     def test_config_example_documents_the_media_section(self):
         config = yaml.safe_load((REPO_ROOT / "config.example.yaml").read_text(encoding="utf-8"))
@@ -389,13 +398,11 @@ class TestConfigWiring:
     """
 
     def _config_with_media_tools(self):
-        import re
-
         from deerflow.config.app_config import AppConfig
 
-        text = (REPO_ROOT / "config.example.yaml").read_text(encoding="utf-8")
-        entries = re.findall(r"^\s*#\s*-\s*name:\s*(\S+)\n\s*#\s*group:\s*media\n\s*#\s*use:\s*(\S+)\s*$", text, re.MULTILINE)
-        assert entries, "config.example.yaml no longer documents the media tool entries"
+        raw = yaml.safe_load((REPO_ROOT / "config.example.yaml").read_text(encoding="utf-8"))
+        entries = [(tool["name"], tool["use"]) for tool in raw["tools"] if str(tool.get("group")) == "media"]
+        assert entries, "config.example.yaml no longer ships the media tool entries"
         return (
             AppConfig.model_validate(
                 {

@@ -5,10 +5,33 @@ diffusion model on the operator's own GPU, through a long-lived ComfyUI
 service. No API key, no network egress, free at the margin. Read this before
 changing anything here — several properties below are **silent when broken**.
 
-Tools (config `group: media`, all commented out in `config.example.yaml`
-because a fresh machine has neither ComfyUI nor a checkpoint):
+Tools (config `group: media`, **active** in `config.example.yaml`):
 `list_media_models`, `generate_image`, `generate_video`, `refine_start`,
 `refine_verdict`.
+
+**On by default, and the two halves of that are one decision.** The entries are
+active *because* every launch path resolves-or-provisions the service
+(`scripts/detect_comfyui.py` → `bundled start` → `scripts/comfyui.sh up`), and
+provisioning is worth doing *because* the entries are active. Change one half
+and the other becomes wrong: commented-out entries make the detector skip
+(`config_uses_comfyui` reads this file), and a detector that never starts
+anything leaves an active entry failing at chat time on a fresh machine.
+Provisioning is gated on Docker **and** a detected GPU
+(`autostart_decision`, override `DEER_FLOW_COMFYUI_AUTOSTART`) because the image
+reserves an NVIDIA device — on a machine that fails that gate the tools stay
+bound and answer with a message, which is what makes the agent fall back to the
+cloud `image-generation` skill instead of insisting.
+
+**Weights are never provisioned, only models directories are found.**
+`scripts/comfyui_models.py` (`make comfy-models` / `make comfy-model-add`)
+installs a file into whichever instance is in use, resolving the *external*
+case in a fixed order — `--models-dir`, `DEER_FLOW_COMFYUI_EXTERNAL_MODELS`, the
+host side of that container's own `…/models` mount, then well-known install
+paths — and refusing rather than falling back to the bundled directory: a 6 GB
+download into the ComfyUI the Gateway is *not* talking to looks exactly like
+success. Downloads land on `.part` and are renamed only once complete and
+checksum-verified, because ComfyUI lists whatever is in the folder and a
+truncated checkpoint fails inside a generation, reading as a broken template.
 
 Module map: `client.py` (HTTP transport only) · `templates.py` (typed params →
 API-format graph, plus validation) · `templates/*.json` (the graphs) ·
@@ -96,7 +119,7 @@ every time never stops.
 
 `tests/test_comfyui_tools.py`, `tests/test_gpu_arbiter.py`,
 `tests/test_refine_session.py`, `tests/test_comfyui_video.py`,
-`tests/test_detect_comfyui.py`, plus `TestCheckMediaGeneration` in
-`tests/test_doctor.py`. Fakes live in `tests/_comfyui_helpers.py`, and the
+`tests/test_detect_comfyui.py`, `tests/test_comfyui_models.py`, plus
+`TestCheckMediaGeneration` in `tests/test_doctor.py`. Fakes live in `tests/_comfyui_helpers.py`, and the
 `/object_info` fixture is derived from the template under test so a template
 edit cannot silently invalidate its own validation tests.

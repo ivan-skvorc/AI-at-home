@@ -11,6 +11,32 @@ Newest first. Append a pass; never rewrite one. A dated line is what tells the
 next person whether the roster was checked last week or last year, and *which*
 providers that pass could actually reach.
 
+- **2026-08-31 (ComfyUI-on-by-default change) — mechanical half only; no model config touched, no
+  figure changed.** Run because the accompanying change set was asked to "run the tests from FORK.md
+  including the model audit". The change itself is media/tooling (`config.example.yaml`'s `media`
+  tool entries, launch provisioning, a models CLI, a frontend button); it touches **no** `models:`
+  entry, `price:` or `discount:` block, so the roster was not in scope on its own merits.
+
+  **Reachability: unchanged and still limited.** `openrouter.ai` is refused at the egress proxy
+  (403 at CONNECT), which is the only machine-readable catalog in the bundle — `audit_models.py`
+  correctly reports it as *skipped* rather than as drift, so **its "no drift detected" is not
+  evidence the OpenRouter roster is current**. Every other provider is documented as having no
+  machine-readable catalog and is covered by the manual pass.
+
+  **Mechanical half: clean.** `scripts/audit_models.py` reports no drift (with the skip above); the
+  stale-fixture self-test (`--catalog scripts/fixtures/model_audit_stale_catalog.json`) still
+  surfaces all four drift kinds; the `price_in_display_name` grep over both sources prints nothing;
+  `sync-api-key-models.py --dry-run` leaves the file byte-identical on an empty env. The regression
+  gate (`test_audit_models.py`, `test_sync_api_key_models.py`, `test_setup_wizard.py`,
+  `test_config_integrity.py`) is green at **192 passed**, and the full backend suite at **14684
+  passed, 87 skipped**.
+
+  **No tier-1 pass was re-run.** The 2026-08-30 entry below is one day old, covered the same
+  reachability, and read all six Claude entries off Anthropic's own page; re-deriving an unchanged
+  roster a day later is exactly the cost FORK.md says not to pay. The next pass that has a reason to
+  run (drift reported by the weekly job, or a change that touches the bundle) should still start from
+  that entry's open items, not from this one.
+
 - **2026-08-30 (upstream sync) — Anthropic re-verified at tier 1; DeepSeek's peak/off-peak split
   settled enough to explain the shipped figure, and the "make the two halves agree" instruction
   retired as wrong; no price or roster change.** Run because it was asked for, alongside the

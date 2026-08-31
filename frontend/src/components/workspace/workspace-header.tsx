@@ -1,6 +1,6 @@
 "use client";
 
-import { MessageSquarePlus, UsersRoundIcon } from "lucide-react";
+import { ImageIcon, MessageSquarePlus, UsersRoundIcon } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
@@ -76,6 +76,21 @@ export function WorkspaceHeader({ className }: { className?: string }) {
             >
               <UsersRoundIcon size={16} />
               <span>{t.democracy.launch}</span>
+            </Link>
+          </SidebarMenuButton>
+        </SidebarMenuItem>
+        {/* Image generation is the third entry for the same reason Democracy is
+            the second: it starts a conversation, and the shape of that first
+            turn (image or clip, size, whether to iterate) is decided on a page
+            before any GPU time is spent — a clip is minutes per attempt. */}
+        <SidebarMenuItem>
+          <SidebarMenuButton
+            isActive={pathname.startsWith("/workspace/image")}
+            asChild
+          >
+            <Link className="text-muted-foreground" href="/workspace/image/new">
+              <ImageIcon size={16} />
+              <span>{t.imageGeneration.launch}</span>
             </Link>
           </SidebarMenuButton>
         </SidebarMenuItem>

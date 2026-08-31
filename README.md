@@ -13,7 +13,7 @@
 > - 🚦 **Concurrent chats** — ask one conversation something slow, leave it, and prompt another one; both keep going. Leaving a chat used to **cancel** its run (the Gateway cancels a run when the browser disconnects unless told otherwise), so walking away from a long answer to write the next prompt killed the answer you walked away to wait for. Now a chat you leave *while it is still answering* is kept as a keep-alive tab and goes on streaming in the background, with a pulsing dot on its tab and a notification when it lands. With a **local Ollama model** the queue moves into the daemon: it answers `OLLAMA_NUM_PARALLEL` requests per model at a time (**1** by default), so raise it and set `ollama.num_parallel` to match — `make doctor` tells you where you stand.
 > - 🗂️ **Browser-style keep-alive chat tabs** — drag conversations up into a tab strip and they stay **mounted and running in the background**: a tab you switch away from keeps streaming and keeps its scroll position, artifacts, and browser panel, instead of upstream's single pane that tears the previous chat down on every switch. The tab set is saved server-side per user, so it survives a browser restart — and even reopening the app on a different address (`localhost` vs. your LAN / Tailscale name).
 > - 🏛️ **Democracy — several models answer, then decide together** — a setup page under *New chat* where you pick an organizer model, how many panelists, which model fills each seat, and whether the organizer grades them (out of 5, or yes/no) on what they actually contributed. Attach files to the task, not just text. The organizer researches **once** and hands every panelist the identical brief, they answer independently and then review each other **anonymously**, and the organizer synthesizes — reporting the split and naming dissenters rather than averaging them away. Facts are gathered once and deliberately **not** re-verified by the panel, because that is the cost this design refuses to pay. Ask a follow-up and the whole panel runs again, each panelist re-briefed with its own previous answers and the discussion — you always get one answer, the organizer's, never a fan-out to reconcile. It is **extremely token-heavy** (up to N x 2 full model runs for N panelists, *per question*) and the setup page estimates the multiple against a single answer before you commit. No config keys: it works as soon as two models are configured.
-> - 🖼️ **Local image and video generation, on your own GPU** — ask for a picture and get a PNG in the artifact panel with **no API key and nothing leaving the house**; the bundled media skills call MiniMax or Gemini over HTTPS, this renders on a ComfyUI service you start with `make comfy-up`. The agent can then **look at what it made and try again**: a refine loop judges each attempt against three to six criteria frozen before the first one, changes exactly one thing per round, and is stopped by a counter the *server* holds rather than by the model remembering to stop. Clips work too — and because no model can watch an MP4, each one also produces a contact sheet of evenly spaced frames, which is what gets critiqued. A GPU arbiter swaps your chat model out and back inside the tool call, so a 24 GB card runs both without the silent slowdown of Ollama quietly offloading to RAM. Costs a `make comfy-up`, your own checkpoints, and uncommenting five tool entries.
+> - 🖼️ **Local image and video generation, on your own GPU** — ask for a picture and get a PNG in the artifact panel with **no API key and nothing leaving the house**; the bundled media skills call MiniMax or Gemini over HTTPS, this renders on a ComfyUI service the stack finds or starts for you. The agent can then **look at what it made and try again**: a refine loop judges each attempt against three to six criteria frozen before the first one, changes exactly one thing per round, and is stopped by a counter the *server* holds rather than by the model remembering to stop. Clips work too — and because no model can watch an MP4, each one also produces a contact sheet of evenly spaced frames, which is what gets critiqued. A GPU arbiter swaps your chat model out and back inside the tool call, so a 24 GB card runs both without the silent slowdown of Ollama quietly offloading to RAM. On by default: every launch reuses a ComfyUI you already run, or starts the bundled container when this machine has Docker and a GPU. It costs your own checkpoints — `make comfy-model-add` installs one into whichever instance is in use — and there is a sidebar button for it, next to *New chat* and *Democracy*.
 > - 🤖 **Generate a custom agent from your history** — instead of hand-writing a persona, point a model at past conversations or scheduled tasks and let it decide whether a *new* agent is even worth adding. It is allowed to say **no** — naming the existing agent that already covers the work — so your roster doesn't fill up with near-duplicates. When it does propose one you get an editable **SOUL.md** draft, and nothing is saved until you press **Create**; the analysis itself never writes an agent. An optional *what should this agent do?* box steers it toward a goal, and a **Refine** box adjusts the draft in place without regenerating it. On by default alongside the custom-agent API (**Agents → Generate from history**).
 > - 🕯️ **Gaslight mode** — edit **either half of a turn** and the conversation carries on as if those had always been the words. Edit your own message and it replays from there with the new wording; edit **the assistant's answer** and your text simply *becomes* what it said — nothing is re-generated, and whatever you send next is answered with those words standing in the history. The version you were reading is kept either way, and a `‹ 2/2 ›` switcher appears **on the edited message** to move between them. Upstream's **Branch** button forked each attempt into a *separate* chat, so trying three phrasings of one question left four entries in the sidebar with no clue which was which; here the alternatives are hidden threads and **one conversation stays one sidebar entry**, however many times you edit it — and the entry follows whichever version you are actually reading. Editing the very first message has nothing to fork from, so it simply starts a fresh version.
 > - 💵 **Live cost overview in the conversation header** — the token counter next to a chat now shows an estimated **dollar (or other currency) cost**, priced from each model's `pricing:` block in `config.yaml`. It's **model-aware**: each run's per-model token split is billed at that model's own rate, so subagents on a cheaper or local model are costed correctly — hover the **?** for the note that models without a configured price (like local Ollama) count as $0, ignoring electricity. **Anything the conversation spends is counted, not just its answers**: the four LLM calls that never become a run of their own — background **memory** extraction, follow-up **suggestions**, the composer's **prompt polish** rewrite, and the per-turn **goal check** — each get their own separate, separately-priced counter in the dropdown, so you can see what each is quietly costing. Prompt polish is the one to look at first: it is **on by default**, so it is the only one you pay for without having turned anything on. All of those counters are **persisted** (a small `aux_usage.sqlite3` beside your other DeerFlow state), so they survive restarting the stack — or the whole machine — instead of resetting to zero. No pricing configured → the cost line simply hides.
@@ -1946,9 +1946,9 @@ and every prompt leaves your network. This is the local tier for the same
 modality, the same move this fork already made for chat with Ollama: a
 long-lived [ComfyUI](https://github.com/comfyanonymous/ComfyUI) service on your
 machine, driven by Gateway-side tools (`generate_image`, `generate_video`,
-`list_media_models`) rather than by a skill script. Start the service with
-`make comfy-up`; results appear in the chat's artifact panel on their own, and
-video clips play there too.
+`list_media_models`) rather than by a skill script. The service is found or
+started for you at launch (see below); results appear in the chat's artifact
+panel on their own, and video clips play there too.
 
 **The agent can look at what it made and try again.** The `image-refine` skill
 runs a generate → view → judge → change-one-thing loop against three to six
@@ -1991,34 +1991,51 @@ Limits worth knowing before you turn it on:
   `<name>.workflow.json`, in ComfyUI's API format — open it in ComfyUI and you
   get the same image by hand.
 
-**Off by default.** The `media:` section ships configured in
-`config.example.yaml`, but the tools themselves are commented out, because a
-fresh machine has neither ComfyUI nor a checkpoint. To turn it on, start the
-service and uncomment the tool entries:
+**On by default, with the service found or started for you.** The tools ship
+active in `config.example.yaml`, and every launch path (`make dev`, `make start`,
+`make docker-start`, `make up`) resolves ComfyUI before the Gateway comes up:
+
+1. **Already running one?** It is detected and used —
+   `scripts/detect_comfyui.py` probes `:8188`, and `DEER_FLOW_COMFYUI_BASE_URL`
+   names a specific instance, including one on another machine on your tailnet.
+   Two ComfyUIs on one card is how a GPU ends up thrashing, so reuse always wins.
+2. **Nothing running?** The bundled container is started for you
+   (`docker/docker-compose.comfyui.yml`, publishing `127.0.0.1:8188`) — but only
+   when this machine can actually run it: Docker **and** a GPU
+   (`nvidia-smi` / `rocm-smi` / Apple). The image reserves an NVIDIA device, so
+   provisioning it on a GPU-less laptop would fail at `compose up` rather than
+   produce a picture.
+3. **Neither?** Nothing is started and the reason is printed. The tools stay
+   bound and answer with a message, so the agent falls back to the cloud
+   `image-generation` skill instead of insisting.
+
+Override the second step with `DEER_FLOW_COMFYUI_AUTOSTART` — `0` never starts
+one, `1` starts it even when no GPU is visible here (a passthrough the detector
+cannot see: WSL, a rented box). `make comfy-up` / `comfy-down` / `comfy-logs`
+remain the manual door and share one implementation with the automatic one.
+
+**You still supply the models**, and there is a command for both shapes of the
+integration:
 
 ```bash
-make comfy-up   # docker/docker-compose.comfyui.yml, publishes 127.0.0.1:8188
+make comfy-models                                             # what is installed
+make comfy-model-add SOURCE=https://…/sdxl.safetensors TYPE=checkpoints
+make comfy-model-add SOURCE=./my-lora.safetensors TYPE=loras SHA256=<hex>
 ```
+
+It writes into whichever ComfyUI is in use. For the bundled container that is
+its bind-mounted models directory; for one you run yourself it is resolved from
+`--models-dir`, then `DEER_FLOW_COMFYUI_EXTERNAL_MODELS`, then that container's
+own `models` mount, then the well-known install paths — and it **refuses rather
+than guessing**, because a perfectly successful 6 GB download into the ComfyUI
+the Gateway is *not* talking to looks exactly like success. Downloads are
+verified and renamed into place only once complete, so a truncated checkpoint
+never shows up as installed.
+
+Everything else is configuration you rarely touch:
 
 ```yaml
 # config.yaml
-tools:
-  - name: list_media_models
-    group: media
-    use: deerflow.community.comfyui.tools:list_media_models_tool
-  - name: generate_image
-    group: media
-    use: deerflow.community.comfyui.tools:generate_image_tool
-  - name: generate_video
-    group: media
-    use: deerflow.community.comfyui.tools:generate_video_tool
-  - name: refine_start
-    group: media
-    use: deerflow.community.comfyui.tools:refine_start_tool
-  - name: refine_verdict
-    group: media
-    use: deerflow.community.comfyui.tools:refine_verdict_tool
-
 media:
   default_checkpoint: null # null = use the first checkpoint ComfyUI reports
   comfyui:
@@ -2034,13 +2051,16 @@ media:
     policy: auto # computed: exclusive on a small card, shared on a big one
 ```
 
-Already running a ComfyUI? Leave it running — every launch path detects it
-(`scripts/detect_comfyui.py`) and points the Gateway at it instead of starting a
-second one, because two ComfyUIs on one card is how a GPU ends up thrashing. Set
-`DEER_FLOW_COMFYUI_BASE_URL` to name a specific instance, including one on
-another machine on your tailnet. `make doctor` reports whether the service is
-reachable and — the check that matters day to day — whether VRAM is being held
-while nothing is generating.
+`make doctor` reports whether the service is reachable and — the check that
+matters day to day — whether VRAM is being held while nothing is generating. On
+a machine where nothing would be auto-started it says so and skips, rather than
+warning about a service you never asked for.
+
+**There is a button for it.** The sidebar's third entry, under *New chat* and
+*Democracy*, opens a setup page: what to generate, image or clip, what shape,
+which checkpoint, and whether to run the refine loop. It seeds the composer with
+the request rather than sending it, so a run that costs GPU minutes — several,
+for a clip — gets one last look first.
 
 ## Large Documents and Scanned PDFs
 

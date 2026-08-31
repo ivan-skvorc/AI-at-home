@@ -345,3 +345,15 @@ class TestSkillContract:
 
     def test_video_is_judged_from_the_contact_sheet(self):
         assert "view the contact sheet, not the clip" in self._prose()
+
+    def test_an_unreachable_service_sends_the_agent_to_the_cloud_skill(self):
+        """The tools now ship enabled, so "missing tool" is no longer the signal.
+
+        On a machine with no GPU nothing is provisioned and the tools stay bound,
+        answering with an error. Without this sentence the agent retries a local
+        service that will never come up instead of falling back — which is the
+        whole reason the tools are left bound rather than unbound.
+        """
+        prose = self._prose()
+        assert "unreachable" in prose
+        assert "cloud `image-generation` skill instead" in prose

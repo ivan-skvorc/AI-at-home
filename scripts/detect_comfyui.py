@@ -5,18 +5,33 @@ Called by the launch scripts before starting services, exactly like
 ``scripts/detect_searxng.py``. Prints one resolution line on stdout:
 
     skip              config.yaml does not use the ComfyUI media tools
-    bundled           no usable existing instance found — start the bundled
-                      docker service and use the loopback / in-network default
+    bundled start     no usable existing instance found and this machine can
+                      run one — start the bundled docker service and use the
+                      loopback / in-network default
+    bundled hold      no usable existing instance found and starting one here
+                      would not work (or was opted out of); the caller warns
+                      instead of starting anything
     external <url>    a reachable ComfyUI already exists — do not start a
                       second one; point the gateway at <url>
 
 Human-readable diagnostics go to stderr. Callers should treat any non-zero exit
-or unparseable output as `bundled`.
+or unparseable output as `bundled hold` — the branch that changes nothing.
 
 Why reuse matters more here than for SearXNG: a second ComfyUI is not a second
 lightweight web service, it is a second process that will try to put model
 weights on the same GPU. Starting one next to an instance you already run is
 how a card ends up thrashing.
+
+**Resolution and provisioning are two questions, not one.** ``resolve()`` only
+answers "which endpoint", and stays a pure function of the probes. Whether the
+bundled service may be *started* is ``autostart_decision()``, because the answer
+depends on facts about the machine rather than on the endpoint: the image is
+gigabytes and the compose service reserves an NVIDIA device, so starting it on a
+Docker-less or GPU-less host fails at ``compose up`` instead of producing a
+picture. The gate is therefore Docker **and** a detected GPU, with
+``DEER_FLOW_COMFYUI_AUTOSTART`` as the explicit override in both directions
+(``0`` never starts it, ``1`` starts it even when no GPU is detected — a
+passthrough this script cannot see is a real case, e.g. WSL or a rented box).
 
 Detection rules:
   1. DEER_FLOW_COMFYUI_BASE_URL (env or --env-file) wins when set to anything
@@ -60,7 +75,11 @@ from detect_searxng import (  # noqa: E402 - path bootstrap above
 )
 
 ENV_VAR = "DEER_FLOW_COMFYUI_BASE_URL"
-IN_NETWORK_URL = "http://comfyui:8188"
+AUTOSTART_ENV = "DEER_FLOW_COMFYUI_AUTOSTART"
+# The bundled ComfyUI runs in its own compose project (scripts/comfyui.sh) and is
+# attached to the stack network by container name, so THIS is the name the
+# gateway container resolves — not a compose service alias.
+IN_NETWORK_URL = "http://deer-flow-comfyui:8188"
 BUNDLED_CONTAINER = "deer-flow-comfyui"
 CANDIDATE_PORTS = (8188,)
 # Any active line naming the tool package means the media tools are enabled.
@@ -194,6 +213,73 @@ def resolve(
     return ("bundled", None)
 
 
+# Values that switch the auto-start off / on regardless of what is detected.
+AUTOSTART_NEVER = {"0", "false", "no", "never", "off"}
+AUTOSTART_ALWAYS = {"1", "true", "yes", "always", "force", "on"}
+
+
+def docker_available(docker: Callable[[list[str]], str | None]) -> bool:
+    """True when a docker daemon answers. `docker info` fails when it does not."""
+    return bool(docker(["info", "--format", "{{.ServerVersion}}"]))
+
+
+def gpu_present(detect_vram: Callable[[], tuple[float, str] | None] | None = None) -> bool:
+    """True when a GPU this machine can generate on is detectable.
+
+    Reuses the setup wizard's ``detect_vram_gb`` (nvidia-smi / rocm-smi / Apple
+    unified memory) rather than growing a second detector — the same rule the
+    GPU arbiter follows for ``media.gpu.budget_gb: auto``.
+    """
+    if detect_vram is None:
+        try:
+            from wizard.steps.ollama import detect_vram_gb  # noqa: PLC0415 - optional, resolved at call time
+
+            detect_vram = detect_vram_gb
+        except Exception:  # pragma: no cover - a broken wizard import must not break launch
+            return False
+    try:
+        return detect_vram() is not None
+    except Exception:  # pragma: no cover - a detector that raises is "no GPU", never a crash
+        return False
+
+
+def autostart_decision(
+    *,
+    env: Mapping[str, str],
+    docker: Callable[[list[str]], str | None] | None = None,
+    gpu: Callable[[], bool] | None = None,
+) -> tuple[bool, str]:
+    """Return (start_the_bundled_service, reason).
+
+    Separate from :func:`resolve` on purpose: resolve answers "which endpoint",
+    this answers "may we provision one here". The reason is always populated so
+    the caller can print *why* nothing was started — a silent no-op is how a
+    user ends up staring at a tool error with no idea what to do about it.
+    """
+    if docker is None:
+        docker = run_docker
+    if gpu is None:
+        gpu = gpu_present
+
+    raw = env.get(AUTOSTART_ENV, "").strip().lower()
+    if raw in AUTOSTART_NEVER:
+        return (False, f"{AUTOSTART_ENV}={raw}: auto-start is switched off")
+    forced = raw in AUTOSTART_ALWAYS
+
+    if not docker_available(docker):
+        # Forced or not: without a daemon there is nothing to start. Saying so
+        # beats a compose error the launch script would have to interpret.
+        return (False, "Docker is not available, so the bundled ComfyUI cannot be started (run your own and it will be detected)")
+    if forced:
+        return (True, f"{AUTOSTART_ENV}={raw}")
+    if not gpu():
+        return (
+            False,
+            f"no GPU detected (nvidia-smi / rocm-smi / Apple), and the bundled image reserves one; set {AUTOSTART_ENV}=1 to start it anyway",
+        )
+    return (True, "Docker and a GPU are available")
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--context", choices=("docker", "host"), required=True, help="docker: the gateway runs in a container; host: the gateway runs on this machine")
@@ -206,6 +292,8 @@ def main(argv: list[str] | None = None) -> int:
         env.update(parse_env_file(args.env_file))
     if os.environ.get(ENV_VAR, "").strip():
         env[ENV_VAR] = os.environ[ENV_VAR]
+    if os.environ.get(AUTOSTART_ENV, "").strip():
+        env[AUTOSTART_ENV] = os.environ[AUTOSTART_ENV]
 
     config_text: str | None = None
     if args.config is not None:
@@ -215,7 +303,18 @@ def main(argv: list[str] | None = None) -> int:
             config_text = None
 
     mode, url = resolve(context=args.context, env=env, config_text=config_text)
-    print(f"{mode} {url}" if url else mode)
+    if mode == "external" and url:
+        print(f"external {url}")
+        return 0
+    if mode == "bundled":
+        # The auto-start env var is read from the same two sources as the URL:
+        # a value in .env is how an operator switches provisioning off for the
+        # whole machine, and the process env still wins.
+        start, reason = autostart_decision(env=env)
+        log(f"bundled ComfyUI: {'starting' if start else 'not starting'} — {reason}")
+        print("bundled start" if start else "bundled hold")
+        return 0
+    print(mode)
     return 0
 
 

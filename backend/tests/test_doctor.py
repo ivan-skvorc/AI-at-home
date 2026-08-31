@@ -902,9 +902,21 @@ class TestCheckMediaGeneration:
 
     def test_an_unreachable_service_warns_with_the_fix(self, tmp_path):
         cfg = self._config(tmp_path, self._ENABLED)
-        results = doctor.check_media_generation(cfg, probe=lambda _url: None)
+        results = doctor.check_media_generation(cfg, probe=lambda _url: None, autostart=lambda: (True, "Docker and a GPU are available"))
         assert results[0].status == "warn"
         assert "make comfy-up" in results[0].fix
+
+    def test_a_machine_that_never_auto_starts_one_is_skipped_rather_than_warned(self, tmp_path):
+        """The tools ship enabled, so 'unreachable' must not cry wolf.
+
+        On a GPU-less laptop nothing is wrong: no launch would have started a
+        ComfyUI there, and the cloud generation skill still works. Warning on
+        every `make doctor` run is how a real warning stops being read.
+        """
+        cfg = self._config(tmp_path, self._ENABLED)
+        results = doctor.check_media_generation(cfg, probe=lambda _url: None, autostart=lambda: (False, "no GPU detected"))
+        assert [r.status for r in results] == ["skip"]
+        assert "no GPU detected" in results[0].detail
 
     def test_a_free_card_is_ok(self, tmp_path):
         cfg = self._config(tmp_path, self._ENABLED)

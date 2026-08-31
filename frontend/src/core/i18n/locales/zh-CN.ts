@@ -315,6 +315,43 @@ export const zhCN: Translations = {
     agentsDisabledTooltip: "功能未启用",
   },
 
+  imageGeneration: {
+    launch: "图像",
+    title: "生成图像或视频片段",
+    description:
+      "当本地 ComfyUI 可用时，直接在你自己的 GPU 上渲染：无需 API key，数据不出本机；否则回退到云端生成技能。",
+    kind: "生成类型",
+    kindImage: "图像",
+    kindVideo: "视频片段",
+    videoHint:
+      "一个片段需要几分钟而不是几秒。先生成短片并迭代提示词，而不是一味加长。",
+    prompt: "生成内容",
+    promptPlaceholder: "雨后的东京夜街，霓虹倒影，35mm 胶片质感",
+    promptHint:
+      "尽量具体地描述主体、构图、光线与风格——扩散模型对细节非常敏感。",
+    aspect: "画幅",
+    aspectOption: (option: string) =>
+      option === "square"
+        ? "正方形"
+        : option === "portrait"
+          ? "竖版"
+          : option === "wide"
+            ? "超宽"
+            : "横版",
+    size: (width: number, height: number) =>
+      `${width}x${height} 像素——按消费级显卡实际能跑的尺寸设置。`,
+    checkpoint: "模型文件（可选）",
+    checkpointPlaceholder: "留空则使用配置中的默认模型",
+    checkpointHint:
+      "只能加载所用 ComfyUI 中已安装的模型。可以在对话中询问，或运行 `make comfy-models` 查看。",
+    refine: "反复迭代直到满意",
+    refineHint:
+      "启用精修循环：在第一次生成前冻结评判标准，每轮只改一处，迭代次数由服务端计数器限制。",
+    promptWarning: "请先描述要生成的内容。",
+    start: "生成",
+    cancel: "取消",
+  },
+
   democracy: {
     grading: "为参与模型评分",
     gradingHint:

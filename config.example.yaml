@@ -15,7 +15,7 @@
 # ============================================================================
 # Bump this number when the config schema changes.
 # Run `make config-upgrade` to merge new fields into your local config.yaml.
-config_version: 46
+config_version: 47
 
 # ============================================================================
 # Logging
@@ -2417,41 +2417,49 @@ tools:
 
   # ── Local image + video generation (ComfyUI, fork feature) ────────────────
   # Rendered on your own GPU: no API key, no network egress, free at the
-  # margin. Requires a running ComfyUI (`make comfy-up`, or set
-  # media.comfyui.base_url / DEER_FLOW_COMFYUI_BASE_URL to one you already
-  # run) and at least one checkpoint installed in its models directory.
-  # Commented out by default because neither is true on a fresh machine.
+  # margin. ON BY DEFAULT: every launch path resolves ComfyUI before starting
+  # the Gateway (scripts/detect_comfyui.py) — an instance you already run is
+  # reused, and when none answers the bundled container is started for you
+  # (docker/docker-compose.comfyui.yml). Opt out of the auto-start with
+  # DEER_FLOW_COMFYUI_AUTOSTART=0; `make comfy-up` is still the manual door.
   # Settings live in the `media:` section above, not here.
+  #
+  # You still supply the model files. `make comfy-models` lists what the
+  # running instance has; `make comfy-model-add SOURCE=<url> TYPE=checkpoints`
+  # installs one into whichever instance is in use — bundled or external.
+  # With no checkpoint installed the tools return a message naming that, and
+  # the agent falls back to the cloud image-generation / video-generation
+  # skills, so an active entry on a machine with no models is not a dead end.
   #
   # generate_image writes the PNG straight into the thread's outputs directory
   # (it opens in the artifact panel with no present_files call) and saves the
   # exact submitted graph beside it as <name>.workflow.json, so any result can
   # be reproduced by hand in ComfyUI's own editor.
-  # - name: list_media_models
-  #   group: media
-  #   use: deerflow.community.comfyui.tools:list_media_models_tool
-  #
-  # - name: generate_image
-  #   group: media
-  #   use: deerflow.community.comfyui.tools:generate_image_tool
-  #
+  - name: list_media_models
+    group: media
+    use: deerflow.community.comfyui.tools:list_media_models_tool
+
+  - name: generate_image
+    group: media
+    use: deerflow.community.comfyui.tools:generate_image_tool
+
   # generate_video also writes evenly spaced stills and one contact-sheet PNG,
   # because view_image cannot read an MP4 — the sheet is what the critic looks
   # at. Minutes per clip; media.comfyui.video_timeout is its own budget.
-  # - name: generate_video
-  #   group: media
-  #   use: deerflow.community.comfyui.tools:generate_video_tool
-  #
+  - name: generate_video
+    group: media
+    use: deerflow.community.comfyui.tools:generate_video_tool
+
   # The self-critiquing loop (skills/public/image-refine). The rubric is frozen
   # before the first attempt and the iteration counter lives on the server, so
   # a model that loses count is refused rather than trusted.
-  # - name: refine_start
-  #   group: media
-  #   use: deerflow.community.comfyui.tools:refine_start_tool
-  #
-  # - name: refine_verdict
-  #   group: media
-  #   use: deerflow.community.comfyui.tools:refine_verdict_tool
+  - name: refine_start
+    group: media
+    use: deerflow.community.comfyui.tools:refine_start_tool
+
+  - name: refine_verdict
+    group: media
+    use: deerflow.community.comfyui.tools:refine_verdict_tool
 
   # File operations tools
   - name: ls

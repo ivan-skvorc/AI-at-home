@@ -1154,7 +1154,17 @@ def _comfyui_probe(base_url: str) -> dict | None:
         return None
 
 
-def check_media_generation(config_path: Path, probe=_comfyui_probe, nvidia_used=None) -> list[CheckResult]:
+def _comfyui_autostart_decision() -> tuple[bool, str]:
+    """Would a launch start the bundled ComfyUI here? Reuses the detector."""
+    try:
+        from detect_comfyui import autostart_decision  # noqa: PLC0415 - sibling script, resolved at call time
+
+        return autostart_decision(env=os.environ)
+    except Exception as exc:  # pragma: no cover - a broken import must not break doctor
+        return (True, f"could not read the auto-start decision ({exc})")
+
+
+def check_media_generation(config_path: Path, probe=_comfyui_probe, nvidia_used=None, autostart=None) -> list[CheckResult]:
     """Is local image/video generation ready, and is the GPU actually free?
 
     The second half is the one that matters day to day. A Gateway that died
@@ -1162,8 +1172,10 @@ def check_media_generation(config_path: Path, probe=_comfyui_probe, nvidia_used=
     next local chat turn just runs several times slower because Ollama silently
     offloaded layers to system RAM. This surfaces that as a row instead.
 
-    Warn-only: an idle card is not a broken install, and the media tools are
-    off by default.
+    Warn-only. The tools ship **on**, so "unreachable" has to distinguish two
+    cases or it cries wolf on every GPU-less laptop: a machine a launch would
+    have provisioned (something is wrong — warn) versus one where auto-start is
+    off or impossible (nothing is wrong — skip, and say what would change it).
     """
     if not config_path.exists():
         return [CheckResult("local media generation", "skip")]
@@ -1181,6 +1193,15 @@ def check_media_generation(config_path: Path, probe=_comfyui_probe, nvidia_used=
 
     stats = probe(base_url)
     if stats is None:
+        would_start, reason = (autostart or _comfyui_autostart_decision)()
+        if not would_start:
+            return [
+                CheckResult(
+                    "local media generation",
+                    "skip",
+                    f"{base_url} unreachable and no instance is auto-started here ({reason}) — the cloud image-generation skill still works",
+                )
+            ]
         return [
             CheckResult(
                 "ComfyUI service",
