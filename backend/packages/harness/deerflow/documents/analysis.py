@@ -197,11 +197,18 @@ async def analyze_document_text(
     *,
     budget: ContextBudget | None = None,
     chunk_chars: int | None = None,
+    max_chunk_chars: int | None = None,
     max_chunks: int | None = None,
     concurrency: int = 2,
 ) -> AnalysisResult:
-    """Answer *question* about *text* without ever holding all of it in context."""
-    size = chunk_chars if chunk_chars is not None else chunk_chars_for(budget)
+    """Answer *question* about *text* without ever holding all of it in context.
+
+    ``max_chunk_chars`` caps the derived size however large the window is: a
+    128K-window model would otherwise be handed ~55K tokens per map call, which
+    is well past where long-input accuracy starts degrading regardless of what
+    the window advertises.
+    """
+    size = chunk_chars if chunk_chars is not None else chunk_chars_for(budget, maximum=max_chunk_chars)
     chunks = chunk_document(text, chunk_chars=size)
     if not chunks:
         return AnalysisResult(answer="The document is empty — there is nothing to analyse.")

@@ -201,3 +201,35 @@ class TestAnalysisResultReporting:
         line = result.coverage_line()
         assert "read 4 of 4 parts" in line
         assert "could not be read" not in line
+
+
+class TestChunkCeiling:
+    """`documents.max_chunk_chars` must actually bind.
+
+    A 128K-window model derives ~55K tokens per map call from its window alone,
+    which is well past where long-input accuracy degrades whatever the window
+    advertises — so the ceiling is the setting that keeps a large window from
+    recreating the problem this feature exists to solve. It was documented and
+    unread once; this pins the wiring, not just the helper.
+    """
+
+    @staticmethod
+    def _map_calls(model) -> int:
+        return sum(1 for prompt in model.prompts if "BEGIN PART" in prompt)
+
+    @pytest.mark.anyio
+    async def test_the_ceiling_bounds_a_large_window(self):
+        # ~128K characters against a 128K-token window: unbounded, that is one
+        # map call holding the whole document — the exact failure this feature
+        # exists to remove. The ceiling must break it into many.
+        model = _Model()
+        big = ContextBudget(context_window=131_072, reserved_output=8_192)
+        await analyze_document_text(_document(sections=200), "q", model, budget=big, max_chunk_chars=8_000)
+        assert self._map_calls(model) >= 12, f"the ceiling did not bind: {self._map_calls(model)} map call(s)"
+
+    @pytest.mark.anyio
+    async def test_no_ceiling_leaves_the_window_in_charge(self):
+        model = _Model()
+        big = ContextBudget(context_window=131_072, reserved_output=8_192)
+        await analyze_document_text(_document(sections=200), "q", model, budget=big)
+        assert self._map_calls(model) == 1

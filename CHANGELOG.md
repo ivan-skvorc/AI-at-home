@@ -27,8 +27,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   explicit `0` ("no limit") is never turned back on. Converted PDFs now carry
   `<!-- page: N -->` anchors so an answer can cite a page. Configured under
   `documents:` (`config_version` 46), on by default; OCR runs only on a document
-  whose text layer is actually missing. See README → *Large Documents and Scanned
-  PDFs* and FORK.md §25.
+  whose text layer is actually missing. `max_chunk_chars` bounds the derived part
+  size however large the window is, so a 128K-window model is not handed ~55K
+  tokens per call. See README → *Large Documents and Scanned PDFs* and FORK.md §25.
 - **models:** `scripts/sync-ollama-models.py` now writes `context_window`
   alongside `num_ctx`. Only Ollama reads `num_ctx`; `context_window` is what the
   UI's context indicator and the cost-aware routing guard read, and without it

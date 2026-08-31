@@ -180,6 +180,7 @@ async def _analyze_document_impl(
         question,
         model,
         budget=resolve_context_budget(model, app_config),
+        max_chunk_chars=settings.max_chunk_chars,
         max_chunks=settings.max_chunks,
         concurrency=settings.concurrency,
     )
