@@ -236,6 +236,18 @@ class TestRenderEntryNumCtx:
         entry = sync_ollama.render_entry("qwen3:8b", ["tools"], num_ctx=32768)
         assert "num_ctx: 32768" in entry
 
+    def test_context_window_mirrors_num_ctx(self):
+        # num_ctx is the provider kwarg; context_window is what the UI indicator
+        # and the cost-aware routing guard read. Without it the guard sees None
+        # and short-circuits, so a prompt too large for the model is routed to
+        # it anyway.
+        entry = sync_ollama.render_entry("qwen3:8b", ["tools"], num_ctx=32768)
+        assert "context_window: 32768" in entry
+
+    def test_no_context_window_line_when_the_window_is_unknown(self):
+        entry = sync_ollama.render_entry("mystery:7b", ["tools"])
+        assert "context_window" not in entry
+
     def test_num_predict_never_exceeds_context(self):
         # A small context window shrinks the output budget so the prompt still fits.
         entry = sync_ollama.render_entry("old:7b", ["tools"], num_ctx=4096)

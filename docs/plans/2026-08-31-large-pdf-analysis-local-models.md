@@ -1,6 +1,10 @@
 # Analysing large PDFs with local and small cloud models
 
-**Status:** research note + proposed solution stack. Nothing here is implemented.
+**Status:** research note. The solution stack below is now **partly implemented** —
+see FORK.md §25 and README → *Large Documents and Scanned PDFs*. Items 7, 8, 9, 11
+and 13-lite (the detection half) shipped; items 2, 12, 13 (a real OCR/layout parser
+tier), 14 and 15 have not. The diagnosis is kept as written, because it is what the
+implementation was aimed at.
 **Date:** 2026-08-31
 
 A large PDF that a frontier cloud model handles fine degrades badly — or fails outright —
@@ -239,6 +243,37 @@ text-layer PDFs. Item 7 makes that fix permanent and portable. Items 8–9 stop 
 failures. Item 11 (map-reduce skill) is the structural fix and delivers the most per unit
 of work; item 12 (local retrieval) is the natural follow-on; item 13 (OCR) is only urgent
 if scanned documents are actually in scope.
+
+### What shipped, and what did not
+
+Implemented (FORK.md §25):
+
+- **7** — budgets derive from the serving model's window, resolved once in
+  `deerflow/utils/context_budget.py` and applied to the sandbox truncation caps and the
+  `tool_output` thresholds. A configured limit is a ceiling the window may lower, never a
+  floor it raises.
+- **8** — page anchors (`<!-- page: N -->`) from pymupdf4llm's `page_chunks=True`.
+- **9** — extraction quality is computed and surfaced, in the upload list and in the tool.
+- **11** — `analyze_document`: chunking (`documents/chunking.py`) plus a map stage and a
+  hierarchical reduce (`documents/analysis.py`).
+- **13, the detection half plus a VLM path** — `documents/ocr.py` renders pages and
+  transcribes them with a vision model. This is *not* item 13 as written: no Docling or
+  Marker layout parser was added, so table structure recovery on a scan is only as good
+  as the vision model's own output.
+
+Not implemented, and still worth doing:
+
+- **2** — the Tier 0 config retuning is now unnecessary for the caps the code derives, but
+  `summarization.trigger` is still a fixed 32000 tokens and does not follow the window.
+  That is the largest remaining instance of the same bug.
+- **12** — local embedding retrieval over uploads. `grep` is still the only search, so a
+  question phrased differently from the document finds nothing; the map stage compensates
+  by reading everything, which costs more than retrieval would.
+- **13 proper** — a Docling/Marker converter tier behind `uploads.pdf_converter`.
+- **14** — page-image fallback for a vision model *outside* the OCR path.
+- **15** — the fixture set and eval. The unit tests pin the mechanism; nothing yet measures
+  answer quality on real documents, which is the only way to know whether the chunk-size
+  heuristics are right.
 
 ---
 

@@ -19,6 +19,7 @@ from deerflow.agents.middlewares.input_sanitization_middleware import neutralize
 from deerflow.config.paths import Paths, get_paths
 from deerflow.runtime.user_context import resolve_runtime_user_id
 from deerflow.uploads.manager import is_upload_staging_file
+from deerflow.utils.file_conversion import assess_converted_markdown
 from deerflow.utils.file_outline import extract_outline_for_file
 from deerflow.utils.messages import ORIGINAL_USER_CONTENT_KEY, message_content_to_text
 
@@ -30,6 +31,20 @@ _MAX_FILES_PER_CONTEXT_SECTION = 10
 def _extension_label(file: dict) -> str:
     extension = str(file.get("extension") or Path(str(file.get("filename") or "")).suffix).lower()
     return neutralize_untrusted_tags(extension) or "(no extension)"
+
+
+def _extraction_warning(source: Path) -> str | None:
+    """Return a warning when a document's text layer came back empty.
+
+    Without this the agent sees a converted file with no headings and no
+    preview, which is indistinguishable from a short document — so it answers
+    from an empty file rather than saying the PDF is a scan and needs OCR.
+    """
+    for candidate in (source.with_name(source.name + ".md"), source.with_suffix(".md")):
+        if candidate.is_file():
+            quality = assess_converted_markdown(candidate, source)
+            return quality.describe() if quality is not None and quality.is_sparse else None
+    return None
 
 
 def _format_omitted_file_types(files: list[dict]) -> str:
@@ -90,6 +105,10 @@ class UploadsMiddleware(AgentMiddleware[UploadsMiddlewareState]):
         lines.append(f"  Path: {neutralize_untrusted_tags(file['path'])}")
         if file.get("selection_reason") == "query_match":
             lines.append("  Selected because: matched the current query.")
+        warning = file.get("extraction_warning")
+        if warning:
+            lines.append(f"  ⚠ {neutralize_untrusted_tags(warning)}")
+            lines.append("    Use `analyze_document` on this file — it reads the pages as images and then summarises the transcript.")
         outline = file.get("outline") or []
         if outline:
             truncated = outline[-1].get("truncated", False)
@@ -250,6 +269,7 @@ class UploadsMiddleware(AgentMiddleware[UploadsMiddlewareState]):
                 outline, preview = extract_outline_for_file(phys_path)
                 file["outline"] = outline
                 file["outline_preview"] = preview
+                file["extraction_warning"] = _extraction_warning(phys_path)
 
         logger.debug(f"Current uploads: {[f['filename'] for f in new_files]}")
 

@@ -38,6 +38,12 @@ from deerflow.sandbox.sandbox_provider import get_sandbox_provider
 from deerflow.sandbox.search import GrepMatch
 from deerflow.sandbox.security import LOCAL_HOST_BASH_DISABLED_MESSAGE, is_host_bash_allowed
 from deerflow.tools.types import Runtime
+from deerflow.utils.context_budget import (
+    COMMAND_OUTPUT_SHARE,
+    READ_FILE_SHARE,
+    active_context_budget,
+    clamp_to_context,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -652,6 +658,21 @@ def _sanitize_error(error: Exception, runtime: Runtime | None = None) -> str:
         thread_data = get_thread_data(runtime)
         msg = mask_local_paths_in_output(msg, thread_data)
     return msg
+
+
+def _context_clamped(max_chars: int, share: float) -> int:
+    """Lower a configured truncation cap to fit the model serving this run.
+
+    The sandbox tools have no model reference; the tool-output budget
+    middleware publishes the resolved window for the duration of a tool call
+    (``deerflow.utils.context_budget``). With nothing published — a direct unit
+    test, an extension calling a tool outside the agent loop — the configured
+    value stands, so this is a no-op wherever the window is unknown.
+    """
+    try:
+        return clamp_to_context(max_chars, active_context_budget(), share=share)
+    except Exception:  # pragma: no cover - a budget failure must never fail a tool call
+        return max_chars
 
 
 def _truncate_write_file_error_detail(detail: str, max_chars: int) -> str:
@@ -1889,7 +1910,7 @@ def bash_tool(runtime: Runtime, description: str, command: str) -> str:
             output = sandbox.execute_command(command, env=injected_env, timeout=command_timeout)
             return _truncate_bash_output(
                 mask_secret_values(mask_local_paths_in_output(output, thread_data), injected_env),
-                max_chars,
+                _context_clamped(max_chars, COMMAND_OUTPUT_SHARE),
             )
         ensure_thread_directories_exist(runtime)
         command = f"cd {VIRTUAL_PATH_PREFIX}/workspace; {command}"
@@ -1904,7 +1925,10 @@ def bash_tool(runtime: Runtime, description: str, command: str) -> str:
         except Exception:
             max_chars = 20000
             command_timeout = None
-        return _truncate_bash_output(mask_secret_values(sandbox.execute_command(command, env=injected_env, timeout=command_timeout), injected_env), max_chars)
+        return _truncate_bash_output(
+            mask_secret_values(sandbox.execute_command(command, env=injected_env, timeout=command_timeout), injected_env),
+            _context_clamped(max_chars, COMMAND_OUTPUT_SHARE),
+        )
     except SandboxError as e:
         return f"Error: {e}"
     except PermissionError as e:
@@ -1970,7 +1994,7 @@ def ls_tool(runtime: Runtime, description: str, path: str) -> str:
             max_chars = sandbox_cfg.ls_output_max_chars if sandbox_cfg else 20000
         except Exception:
             max_chars = 20000
-        return _truncate_ls_output(output, max_chars)
+        return _truncate_ls_output(output, _context_clamped(max_chars, COMMAND_OUTPUT_SHARE))
     except SandboxError as e:
         return f"Error: {e}"
     except FileNotFoundError:
@@ -2247,7 +2271,7 @@ def read_file_tool(
             max_chars = sandbox_cfg.read_file_output_max_chars if sandbox_cfg else 50000
         except Exception:
             max_chars = 50000
-        return _truncate_read_file_output(content, max_chars)
+        return _truncate_read_file_output(content, _context_clamped(max_chars, READ_FILE_SHARE))
     except SandboxError as e:
         return f"Error: {e}"
     except FileNotFoundError:

@@ -590,6 +590,14 @@ def render_entry(name: str, caps: list, base_url: str = DEFAULT_HOST, num_ctx: i
     When ``num_ctx`` is known, the entry pins the context window and keeps the
     ``num_predict`` output budget below it (reserving at least half the window
     for the prompt) so the two options stay consistent.
+
+    The same number is also written as ``context_window``. ``num_ctx`` is a
+    provider kwarg — only Ollama reads it — while ``context_window`` is the
+    field the rest of the app looks at: the UI's "% context used" indicator and
+    the cost-aware routing guard, which skips a model whose window cannot hold
+    the prompt. Without it that guard sees ``None`` and short-circuits, so a
+    large-document subagent could be routed to a model that cannot hold it —
+    exactly the trade the routing config says it refuses to make.
     """
     num_predict = DEFAULT_NUM_PREDICT
     if num_ctx is not None:
@@ -603,6 +611,7 @@ def render_entry(name: str, caps: list, base_url: str = DEFAULT_HOST, num_ctx: i
     ]
     if num_ctx is not None:
         lines.append(f"{INDENT}  num_ctx: {num_ctx}")
+        lines.append(f"{INDENT}  context_window: {num_ctx}")
     if keep_alive:
         # ChatOllama forwards keep_alive to the daemon, so the model stays
         # resident between turns instead of paying a cold start per subagent call.

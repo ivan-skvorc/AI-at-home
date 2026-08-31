@@ -112,6 +112,12 @@ def get_available_tools(
         builtin_tools.extend((list_background_tasks, cancel_background_task))
     if include_upload_tool:
         builtin_tools.append(list_uploaded_files)
+    # Long-document analysis: only worth exposing where uploads exist, since
+    # every path it can read lives under the thread's uploads directory.
+    if include_upload_tool and getattr(getattr(config, "documents", None), "enabled", False):
+        from deerflow.tools.builtins import analyze_document
+
+        builtin_tools.append(analyze_document)
     skill_evolution_config = getattr(config, "skill_evolution", None)
     if getattr(skill_evolution_config, "enabled", False):
         from deerflow.tools.skill_manage_tool import skill_manage_tool

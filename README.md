@@ -36,6 +36,7 @@
 > - 👥 **Multi-user mode toggle (Settings → Account)** — on by default (each login only sees its own conversations). Turn it off — after a confirmation — to combine every conversation into one shared workspace, so all histories are visible no matter which login or device created them (handy after going passwordless, when old per-account chats are stranded under different ids). Server-wide, admin-only, and reversible; while off, anyone who can reach the server sees all conversations, so keep it to a trusted machine.
 > - 🛡️ **Deployment exposure check** — passwordless auth, multi-user-mode-off, and a non-loopback `BIND_HOST` are each defensible alone but together decide who can reach your instance and as whom. `make doctor` (and the end of `make up` / `make dev`) computes and prints that combined posture, so you learn you've exposed a passwordless instance from your own tooling rather than from a stranger. Diagnosis only — it changes no default.
 > - 📄 **PDF / Office uploads that just work** — `pymupdf4llm` is bundled and converted files are written under both name conventions, so PDF / DOCX / PPTX / XLSX uploads are reliably readable by the agent (enable with `uploads.auto_convert_documents: true`).
+> - 📚 **Big documents on small models** — a 300-page PDF does not fit in a 32K local model, and asking the model to navigate it with `grep`/`read_file` is the first thing an 8B loses on long input. `analyze_document` reads the document in parts sized for whichever model is serving — a chapter at a time on a cloud model, a few pages on a local one — and combines the notes in a separate pass, so no single call ever holds the whole thing. **A scanned PDF is no longer summarised into fiction**: an empty text layer is detected, said out loud, and the pages are transcribed as images by a vision model before anything is summarised. The same window-aware sizing quietly lowers the tool-output and `read_file` truncation caps, which were all calibrated for a 200K cloud model. On by default; OCR only ever runs on a document that needs it.
 > - 🔄 **Self-updating browser & search** — the two things the repo installs for itself, the Camoufox browser and the bundled SearXNG image, refresh themselves instead of silently rotting after first install: throttled once-a-day on launch (opt out with `DEER_FLOW_AUTO_UPDATE=0`), or via a `systemd --user` timer (`make auto-update-install`) that also fires on boot so a machine that was off at the daily slot catches up. `make auto-update` runs it on demand; every path is idempotent and best-effort.
 > - 🎬 **Reduced motion by default** — decorative and continuous animations are disabled by default (and honor the OS `prefers-reduced-motion` setting); it's a per-browser preference you can flip back on.
 > - 🎙️ **Dictation that stops shipping your voice to Google** — the microphone button used to wrap the browser's `SpeechRecognition` API, which streams audio from your browser straight to Google (or Apple), bypassing the Gateway entirely — so nothing about self-hosting or Tailscale protected it. It now runs in tiers: Chrome's on-device recognition first (no audio leaves the phone), then transcription by a Whisper-compatible service on **your own machine**, and the vendor cloud only if you set `voice.allow_cloud_fallback: true` — **off by default, so an install with neither tier says voice is unavailable rather than quietly reaching for Google**. Costs nothing to turn on for the on-device tier; the server tier wants `voice.stt.enabled` and a local STT endpoint.
@@ -134,6 +135,7 @@ DeerFlow has newly integrated the intelligent search and crawling toolset indepe
   - [Scheduled Tasks](#scheduled-tasks)
   - [Local Image and Video Generation](#local-image-and-video-generation)
   - [Voice Input](#voice-input)
+  - [Large Documents and Scanned PDFs](#large-documents-and-scanned-pdfs)
   - [Terminal Workbench (TUI)](#terminal-workbench-tui)
   - [Documentation](#documentation)
   - [⚠️ Security Notice](#️-security-notice)
@@ -2039,6 +2041,81 @@ second one, because two ComfyUIs on one card is how a GPU ends up thrashing. Set
 another machine on your tailnet. `make doctor` reports whether the service is
 reachable and — the check that matters day to day — whether VRAM is being held
 while nothing is generating.
+
+## Large Documents and Scanned PDFs
+
+A long PDF is the case where a local model stops being a smaller version of a
+cloud model and starts being a different thing. A 300-page filing is well past
+what a 32K-token window can hold, and the usual answer — let the agent navigate
+the document itself with `grep` and `read_file` — is a multi-step tool loop,
+which is the first capability a small quantized model loses as its input grows.
+So the documents that most need help are the ones where the navigation breaks
+down first.
+
+The **`analyze_document`** tool does the navigating instead. Point it at an
+upload and ask a question:
+
+> analyze_document(path="/mnt/user-data/uploads/annual-report.pdf", question="What did they say about supply chain risk?")
+
+The document is split into parts, every part is read on its own against your
+question, and the notes are combined in a separate pass — so no model call ever
+holds more than one part. **The part size follows whichever model is serving the
+run**: a 200K-token cloud model reads a chapter at a time, a 32K local model
+reads a few pages, from the same code path and with nothing to configure per
+model. When the notes themselves grow past the window they are merged in rounds
+rather than overflowing it.
+
+**A scanned PDF is no longer summarised into fiction.** `pymupdf4llm` extracts a
+PDF's *text layer*; a scan has none, so conversion "succeeds" and produces a file
+with nothing in it — which an agent will summarise with total confidence. Empty
+extraction is now detected and named, both in the upload list ("this document is
+probably image-based (scanned) and needs OCR") and by the tool, which renders
+each page to an image and has a vision model transcribe it. Transcription and
+summarisation stay separate steps: the vision pass is told to transcribe and
+nothing else, because a model asked to summarise while reading is choosing what
+to drop before anyone has seen the document. The transcript is cached next to the
+upload as `<name>.ocr.md`, so the expensive pass happens once.
+
+The same window-awareness runs underneath the whole agent loop. The truncation
+caps on `read_file`, `bash` and `ls`, and the `tool_output` externalization
+thresholds, were fixed character counts sized for a 200K cloud model — a single
+50,000-character `read_file` result is about 40% of a 32K window, and larger than
+an 8K window outright. They are now lowered to fit the serving model. A
+configured limit is only ever a **ceiling**: a large window keeps every default
+it has today, an unknown window changes nothing at all, and an explicit `0`
+("no limit") is never turned back on.
+
+**Limits worth knowing.** Answers are capped at `answer_max_chars` before they
+re-enter the conversation, and the full per-part notes are always written to
+`/mnt/user-data/outputs/document-analysis/` so nothing is lost. A very long
+document stops at `max_chunks` parts, and the answer says so rather than
+implying it read everything — as it does for any part that could not be read.
+OCR needs a model with `supports_vision: true`; without one it says so instead
+of returning an empty answer.
+
+Both halves are on by default, and OCR only ever runs on a document whose text
+layer is actually missing:
+
+```yaml
+documents:
+  enabled: true                   # exposes the `analyze_document` tool
+  model_name: null                # null = the default chat model
+  max_chunks: 60                  # ceiling on parts read per call
+  max_chunk_chars: 60000          # ceiling on the derived part size
+  concurrency: 2
+  answer_max_chars: 8000
+  ocr:
+    enabled: true
+    model_name: null              # null = the first model with supports_vision: true
+    dpi: 150
+    max_pages: 100
+    concurrency: 2
+```
+
+PDF uploads must be converted for any of this to see them, which is
+`uploads.auto_convert_documents: true` (see the PDF/Office note above) — the
+tool converts on demand too, but the upload list only shows an outline for files
+that were converted at upload time.
 
 ## Voice Input
 

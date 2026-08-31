@@ -24,10 +24,19 @@ from langchain_core.messages import ToolMessage
 from langgraph.prebuilt.tool_node import ToolCallRequest
 from langgraph.types import Command
 
+from deerflow.agents.middlewares._bounded_dict import BoundedDict
 from deerflow.agents.middlewares.tool_output_synopsis import render_tool_output_preview
 from deerflow.agents.middlewares.tool_transform_meta import append_tool_transform
 from deerflow.config.tool_output_config import ToolOutputConfig
 from deerflow.sandbox.sandbox_provider import get_sandbox_provider
+from deerflow.utils.context_budget import (
+    EXTERNALIZE_SHARE,
+    TOOL_RESULT_SHARE,
+    ContextBudget,
+    clamp_to_context,
+    resolve_context_budget,
+    use_context_budget,
+)
 
 if TYPE_CHECKING:
     from deerflow.sandbox.sandbox import Sandbox
@@ -40,9 +49,30 @@ logger = logging.getLogger(__name__)
 # ``read_file`` tool can read it back (issue #3416).
 _VIRTUAL_OUTPUTS_BASE = "/mnt/user-data/outputs"
 
+# Key used when a run id cannot be resolved (a direct tool invocation, a unit
+# test). One shared slot, never mixed with real runs.
+_UNSCOPED_RUN_KEY = "__unscoped__"
+# Bounded like the other per-run guard state: an abandoned run must not leak.
+_BUDGET_CACHE_SIZE = 256
+
 
 def _default_config() -> ToolOutputConfig:
     return ToolOutputConfig()
+
+
+def _app_config_or_none() -> Any | None:
+    """Return the app config, or ``None`` when it cannot be resolved.
+
+    Only used to look up a model's ``context_window``, which the model factory
+    strips from provider kwargs — so the config entry is the only place a cloud
+    model's window exists.
+    """
+    try:
+        from deerflow.config.app_config import get_app_config
+
+        return get_app_config()
+    except Exception:
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -579,6 +609,45 @@ def _patch_model_messages(messages: list[Any], config: ToolOutputConfig) -> list
 
 
 # ---------------------------------------------------------------------------
+# Context-window scaling
+# ---------------------------------------------------------------------------
+
+
+def _scale_config_to_context(config: ToolOutputConfig, budget: ContextBudget | None) -> ToolOutputConfig:
+    """Lower the character thresholds to fit the serving model's window.
+
+    The shipped thresholds are sized for a 200K-token cloud model. Against a
+    32K local model a 30,000-character fallback result is ~23% of the window in
+    one tool return, so the thresholds move with the model instead of the model
+    having to survive the thresholds. Only lowering happens here: a model with a
+    large (or unknown) window keeps every configured value, and an explicit 0
+    ("disabled") is never turned back on.
+    """
+    if budget is None:
+        return config
+    externalize = clamp_to_context(config.externalize_min_chars, budget, share=EXTERNALIZE_SHARE)
+    fallback_max = clamp_to_context(config.fallback_max_chars, budget, share=TOOL_RESULT_SHARE)
+    overrides = {name: clamp_to_context(value, budget, share=EXTERNALIZE_SHARE) for name, value in config.tool_overrides.items()}
+    if externalize == config.externalize_min_chars and fallback_max == config.fallback_max_chars and overrides == config.tool_overrides:
+        return config
+
+    updates: dict[str, Any] = {
+        "externalize_min_chars": externalize,
+        "fallback_max_chars": fallback_max,
+        "tool_overrides": overrides,
+    }
+    # head+tail must still fit inside a shrunken fallback window, or the
+    # "truncation" would be longer than the budget it enforces.
+    head, tail = config.fallback_head_chars, config.fallback_tail_chars
+    if fallback_max > 0 and head + tail >= fallback_max:
+        total = head + tail
+        head_ratio = head / total if total else 0.7
+        updates["fallback_head_chars"] = max(1, int(fallback_max * head_ratio * 0.9))
+        updates["fallback_tail_chars"] = max(1, fallback_max - updates["fallback_head_chars"] - 1)
+    return config.model_copy(update=updates)
+
+
+# ---------------------------------------------------------------------------
 # Middleware class
 # ---------------------------------------------------------------------------
 
@@ -589,9 +658,50 @@ class ToolOutputBudgetMiddleware(AgentMiddleware[AgentState]):
     def __init__(self, config: ToolOutputConfig | None = None) -> None:
         super().__init__()
         self._config = config if config is not None else _default_config()
+        # Per-run, because one middleware instance serves concurrent runs on the
+        # lead agent: keying by run_id keeps a 200K cloud run from budgeting a
+        # 32K local run's tool results (the pattern TokenBudgetMiddleware uses,
+        # and bounded for the same reason — abandoned runs must not leak).
+        self._budgets: BoundedDict = BoundedDict(maxsize=_BUDGET_CACHE_SIZE)
+
+    @staticmethod
+    def _run_key(runtime: Any) -> str:
+        context = getattr(runtime, "context", None)
+        if isinstance(context, dict) and context.get("run_id"):
+            return str(context["run_id"])
+        return _UNSCOPED_RUN_KEY
+
+    def _observe_model(self, request: ModelRequest) -> None:
+        """Record the serving model's context budget for the tool calls it makes.
+
+        Read from the request rather than from construction, so a fallback chain
+        or a routed subagent is budgeted against the model that actually serves
+        the call rather than the one originally configured.
+        """
+        model = getattr(request, "model", None)
+        if model is None:
+            return
+        key = self._run_key(getattr(request, "runtime", None))
+        self._budgets[key] = resolve_context_budget(model, _app_config_or_none())
+
+    def _budget_for(self, request: Any) -> ContextBudget | None:
+        key = self._run_key(getattr(request, "runtime", None))
+        budget = self._budgets.get(key)
+        if budget is None and key != _UNSCOPED_RUN_KEY:
+            # A tool call whose run never went through wrap_model_call here (a
+            # direct invocation, a test) falls back to the unscoped entry.
+            budget = self._budgets.get(_UNSCOPED_RUN_KEY)
+        return budget
+
+    def _effective_config(self, budget: ContextBudget | None) -> ToolOutputConfig:
+        return _scale_config_to_context(self._config, budget)
 
     def release_policy_parameters(self) -> dict[str, object]:
-        return {"config": self._config.model_dump(mode="python")}
+        # `context_scaling` is a behaviour fact, not a config value: with it on,
+        # the declared thresholds are ceilings that the serving model's window
+        # can lower, so the same config behaves differently on a 32K local model
+        # than on a 200K cloud one.
+        return {"config": self._config.model_dump(mode="python"), "context_scaling": True}
 
     @classmethod
     def from_app_config(cls, app_config: Any) -> ToolOutputBudgetMiddleware:
@@ -608,14 +718,17 @@ class ToolOutputBudgetMiddleware(AgentMiddleware[AgentState]):
         request: ToolCallRequest,
         handler: Callable[[ToolCallRequest], ToolMessage | Command],
     ) -> ToolMessage | Command:
-        result = handler(request)
-        if not self._config.enabled:
+        budget = self._budget_for(request)
+        config = self._effective_config(budget)
+        with use_context_budget(budget):
+            result = handler(request)
+        if not config.enabled:
             return result
-        if not _needs_budget(result, self._config):
+        if not _needs_budget(result, config):
             return result
         outputs_path = _resolve_outputs_path(request)
         sandbox = _resolve_sandbox(request)
-        return _patch_result(result, self._config, outputs_path, sandbox)
+        return _patch_result(result, config, outputs_path, sandbox)
 
     @override
     async def awrap_tool_call(
@@ -623,10 +736,13 @@ class ToolOutputBudgetMiddleware(AgentMiddleware[AgentState]):
         request: ToolCallRequest,
         handler: Callable[[ToolCallRequest], Awaitable[ToolMessage | Command]],
     ) -> ToolMessage | Command:
-        result = await handler(request)
-        if not self._config.enabled:
+        budget = self._budget_for(request)
+        config = self._effective_config(budget)
+        with use_context_budget(budget):
+            result = await handler(request)
+        if not config.enabled:
             return result
-        if not _needs_budget(result, self._config):
+        if not _needs_budget(result, config):
             return result
         outputs_path = _resolve_outputs_path(request)
         # _resolve_sandbox only touches runtime.state and the provider's
@@ -634,7 +750,7 @@ class ToolOutputBudgetMiddleware(AgentMiddleware[AgentState]):
         # loop. The actual sandbox I/O (mkdir/write/test) happens inside
         # _patch_result, which is offloaded to a worker thread below.
         sandbox = _resolve_sandbox(request)
-        return await asyncio.to_thread(_patch_result, result, self._config, outputs_path, sandbox)
+        return await asyncio.to_thread(_patch_result, result, config, outputs_path, sandbox)
 
     # -- model call hooks (historical message truncation) ------------------
 
@@ -644,10 +760,12 @@ class ToolOutputBudgetMiddleware(AgentMiddleware[AgentState]):
         request: ModelRequest,
         handler: Callable[[ModelRequest], ModelResponse],
     ) -> ModelCallResult:
-        if self._config.enabled:
+        self._observe_model(request)
+        config = self._effective_config(self._budget_for(request))
+        if config.enabled:
             messages = getattr(request, "messages", None)
             if isinstance(messages, list):
-                patched = _patch_model_messages(messages, self._config)
+                patched = _patch_model_messages(messages, config)
                 if patched is not None:
                     request = request.override(messages=patched)
         return handler(request)
@@ -658,10 +776,12 @@ class ToolOutputBudgetMiddleware(AgentMiddleware[AgentState]):
         request: ModelRequest,
         handler: Callable[[ModelRequest], Awaitable[ModelResponse]],
     ) -> ModelCallResult:
-        if self._config.enabled:
+        self._observe_model(request)
+        config = self._effective_config(self._budget_for(request))
+        if config.enabled:
             messages = getattr(request, "messages", None)
             if isinstance(messages, list):
-                patched = _patch_model_messages(messages, self._config)
+                patched = _patch_model_messages(messages, config)
                 if patched is not None:
                     request = request.override(messages=patched)
         return await handler(request)
