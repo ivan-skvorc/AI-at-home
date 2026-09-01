@@ -6,7 +6,7 @@
   "scripts": {
     "demo:save": "node scripts/save-demo.js",
     "build": "next build",
-    "check": "eslint . --ext .ts,.tsx && tsc --noEmit",
+    "check": "prettier --check . && eslint . --ext .ts,.tsx && tsc --noEmit",
     "dev": "node scripts/dev.mjs",
     "format": "prettier --check .",
     "format:write": "prettier --write .",

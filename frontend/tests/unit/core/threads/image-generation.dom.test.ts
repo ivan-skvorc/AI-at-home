@@ -17,19 +17,47 @@ describe("image launch handoff", () => {
   test("a stashed launch is consumed exactly once", () => {
     stashImageLaunch({
       kind: "image",
+      promptMode: "direct",
       prompt: "a red bicycle",
+      negativePrompt: "blurry",
       aspect: "square",
+      width: 1024,
+      height: 1024,
       refine: true,
     });
 
     expect(consumeImageLaunch()).toEqual({
       kind: "image",
+      promptMode: "direct",
       prompt: "a red bicycle",
+      negativePrompt: "blurry",
       aspect: "square",
+      width: 1024,
+      height: 1024,
       checkpoint: undefined,
       refine: true,
     });
     expect(consumeImageLaunch()).toBeNull();
+  });
+
+  test("the entered resolution survives the handoff", () => {
+    // The numbers are the whole reason the field exists; a round trip that
+    // quietly restores the preset would look identical on screen.
+    stashImageLaunch({
+      kind: "image",
+      promptMode: "assisted",
+      prompt: "a red bicycle",
+      aspect: "landscape",
+      width: 1600,
+      height: 904,
+      refine: false,
+    });
+
+    expect(consumeImageLaunch()).toMatchObject({
+      promptMode: "assisted",
+      width: 1600,
+      height: 904,
+    });
   });
 
   test("nothing stashed is not a launch", () => {

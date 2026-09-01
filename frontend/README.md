@@ -139,7 +139,7 @@ src/
 | `pnpm lint`         | Run ESLint                                                         |
 | `pnpm lint:fix`     | Fix ESLint issues                                                  |
 | `pnpm typecheck`    | Run TypeScript type checking                                       |
-| `pnpm check`        | Run both lint and typecheck                                        |
+| `pnpm check`        | Run the format check, lint and typecheck (what CI gates)           |
 
 ## Development Notes
 

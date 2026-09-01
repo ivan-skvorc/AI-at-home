@@ -32,8 +32,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Downloads are checksum-verified and renamed into place only once complete, so a
   truncated checkpoint never lists as installed. The workspace sidebar gains an
   **Image** entry beside *New chat* and *Democracy*: a setup page for what to
-  generate, image or clip, shape, checkpoint and whether to run the refine loop,
-  which seeds the composer rather than sending — a clip is minutes per attempt.
+  generate, image or clip, resolution, checkpoint and whether to run the refine
+  loop, which seeds the composer rather than sending — a clip is minutes per
+  attempt. A toggle decides **who writes the prompt**: hand over a prompt to be
+  submitted exactly as written (with your own negative prompt beside it), or
+  describe the picture and have the assistant write the positive prompt — and a
+  negative prompt where the chosen model uses one — and show you both before it
+  generates. Checkpoints that sample at CFG 1 (Flux, turbo, lightning, LCM,
+  Hyper) ignore a negative prompt, so the page says so instead of offering a box
+  the sampler will never read. Resolution is two numbers rather than a shape
+  name, with the aspect presets filling them in: values are snapped to ComfyUI's
+  latent grid and the snapped size is the one shown, and the ceiling is lower for
+  a clip, where an oversized run fails after minutes rather than seconds.
 
 - **documents:** **Large documents and scanned PDFs no longer defeat small
   models.** A 300-page PDF does not fit a 32K-token local model, and the fallback

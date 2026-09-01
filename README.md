@@ -2057,10 +2057,22 @@ a machine where nothing would be auto-started it says so and skips, rather than
 warning about a service you never asked for.
 
 **There is a button for it.** The sidebar's third entry, under *New chat* and
-*Democracy*, opens a setup page: what to generate, image or clip, what shape,
-which checkpoint, and whether to run the refine loop. It seeds the composer with
-the request rather than sending it, so a run that costs GPU minutes — several,
-for a clip — gets one last look first.
+*Democracy*, opens a setup page: what to generate, image or clip, at what
+resolution, which checkpoint, and whether to run the refine loop. It seeds the
+composer with the request rather than sending it, so a run that costs GPU
+minutes — several, for a clip — gets one last look first.
+
+A toggle on that page decides **who writes the prompt**. Hand over a prompt you
+already have and it is submitted *exactly as written* — no rewriting, no helpful
+expansion — with your own negative prompt beside it. Or describe the picture in
+ordinary words and the assistant writes the prompt: a detailed positive one, and
+a negative one where the chosen model actually uses it, both shown to you before
+anything is generated. Checkpoints that sample at CFG 1 (Flux, turbo, lightning,
+LCM, Hyper) never evaluate the negative branch, so the page says so rather than
+offering a box the sampler will ignore. The resolution is two numbers rather than
+a shape name — the aspect presets fill them in, and you can overwrite either —
+snapped to ComfyUI's latent grid and shown snapped, so the size on screen is the
+size that runs.
 
 ## Large Documents and Scanned PDFs
 
