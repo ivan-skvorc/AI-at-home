@@ -130,6 +130,11 @@ it is silent when reintroduced — a flat list in `config.yaml` order with a gre
 price is not an error, it just makes a model impossible to find on that one
 screen while every other screen sorts, groups, searches and colours. All the
 pickers share the single `modelPicker` entry in `core/settings/local.ts`, so a
-sort chosen in a conversation is already applied in Settings. Pinned by
-`tests/unit/components/workspace/model-select.dom.test.tsx` and
-`tests/unit/core/models/sorting.test.ts`.
+sort chosen in a conversation is already applied in Settings. Rows are
+`ModelPickerRow` from the same file — provider, name, price pinned to the right
+edge, and a local model's weights and context window under it, from
+`modelRowParts` in `core/models/sorting.ts`. Hand-rolling that markup on one
+screen is the same silent drift as a flat list: the row still renders, it just
+lines up with nothing. Pinned by
+`tests/unit/components/workspace/model-select.dom.test.tsx`,
+`model-picker-sites.test.ts` and `tests/unit/core/models/sorting.test.ts`.

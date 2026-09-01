@@ -53,6 +53,8 @@ class ModelResponse(BaseModel):
     supports_reasoning_effort: bool = Field(default=False, description="Whether model supports reasoning effort")
     supports_tools: bool | None = Field(default=None, description="Whether model supports tool calling (None if unknown)")
     price: ModelPriceResponse | None = Field(default=None, description="Effective price with any active discount; null when this model has no configured price")
+    context_window: int | None = Field(default=None, description="Fork feature. Configured total context window in tokens; null when unknown")
+    size_bytes: int | None = Field(default=None, description="Fork feature. On-disk weight size in bytes for a local model; null for hosted models")
 
 
 def _price_response(pricing: dict, model: Any) -> ModelPriceResponse | None:
@@ -176,6 +178,12 @@ async def list_models(
             supports_reasoning_effort=model.supports_reasoning_effort,
             supports_tools=getattr(model, "supports_tools", None),
             price=_price_response(pricing, model),
+            # Fork feature: how much room a model has, and how much of the GPU it
+            # already occupies. Both are config metadata rather than anything the
+            # provider returns, and the picker shows them together because the
+            # weights are what decides whether the window is actually affordable.
+            context_window=getattr(model, "context_window", None),
+            size_bytes=getattr(model, "size_bytes", None),
         )
         for model in visible_models
     ]
@@ -260,4 +268,6 @@ async def get_model(
         supports_reasoning_effort=model.supports_reasoning_effort,
         supports_tools=getattr(model, "supports_tools", None),
         price=_price_response(build_pricing_map(config.models, logger=logger), model),
+        context_window=getattr(model, "context_window", None),
+        size_bytes=getattr(model, "size_bytes", None),
     )

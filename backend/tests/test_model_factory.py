@@ -155,6 +155,25 @@ def test_context_window_never_reaches_the_provider_client(monkeypatch):
     assert "context_window" not in FakeChatModel.captured_kwargs
 
 
+def test_weight_size_never_reaches_the_provider_client(monkeypatch):
+    """`size_bytes` is picker metadata, on exactly the same terms as the two above.
+
+    It is written into every synced Ollama entry, so an un-excluded key would
+    break every local model's calls at once with
+    ``got an unexpected keyword argument 'size_bytes'`` — and only local ones,
+    which reads as "Ollama is broken" rather than as a config bug.
+    """
+    model = _make_model("local-weights")
+    model.size_bytes = 5_200_000_000
+    cfg = _make_app_config([model])
+    _patch_factory(monkeypatch, cfg)
+
+    FakeChatModel.captured_kwargs = {}
+    factory_module.create_chat_model(name="local-weights")
+
+    assert "size_bytes" not in FakeChatModel.captured_kwargs
+
+
 def test_appends_all_tracing_callbacks(monkeypatch):
     cfg = _make_app_config([_make_model("alpha")])
     _patch_factory(monkeypatch, cfg)
