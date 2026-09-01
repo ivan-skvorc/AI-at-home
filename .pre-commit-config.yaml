@@ -48,9 +48,19 @@ repos:
         types_or: [javascript, tsx, ts]
         files: ^frontend/
 
+      # No type allowlist on purpose. CI runs `prettier --check .` over the WHOLE
+      # of frontend/, so anything prettier has a parser for is checked there —
+      # Markdown included, and `frontend/src/AGENTS.md` is the file most likely to
+      # be edited by someone who only thinks of prettier as a code formatter. A
+      # hand-maintained `types_or` is a second, narrower list that has to be kept
+      # equal to "whatever prettier supports" by memory; it drifted once already
+      # and the drift is invisible locally (the hook passes, CI fails on a file it
+      # never looked at). `--ignore-unknown` makes the list unnecessary: prettier
+      # skips what it cannot parse, and `.prettierignore` still applies to the
+      # explicit paths pre-commit hands it, so the hook and the CI job cover
+      # exactly the same set.
       - id: frontend-prettier
         name: prettier (frontend)
-        entry: bash -c 'cd frontend && npx prettier --write "${@/#frontend\//}"' --
+        entry: bash -c 'cd frontend && npx prettier --write --ignore-unknown "${@/#frontend\//}"' --
         language: system
         files: ^frontend/
-        types_or: [javascript, tsx, ts, json, css]

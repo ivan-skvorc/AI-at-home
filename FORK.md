@@ -97,7 +97,7 @@ First, the mechanical gates:
 
 - [ ] No leftover conflict markers: `git grep -nE '^(<{7}|={7}|>{7})( |$)'` returns nothing.
 - [ ] Backend: `make lint && make test` (CI enforces `ruff format --check`). **One failure is environmental, not yours:** `test_browser_automation.py::test_real_playwright_navigate_click_type` launches a real headless Chromium, and its only guard is `pytest.importorskip("playwright.async_api")` — which checks the *Python package*, not the *browser binary*. So on any machine whose pre-baked Playwright browsers are older than the pinned `playwright` (1.60.0 wants build `1223`; a sandbox image shipping `chromium_headless_shell-1194` is the common case), it fails with `Executable doesn't exist at …/chromium_headless_shell-<build>/…` while the other 49 tests in that file pass. It is deterministic, not a flake, and it is not a regression — confirm with `git diff HEAD@{1} HEAD -- backend/tests/test_browser_automation.py backend/packages/harness/deerflow/community/browser_automation/`, which is empty on a sync that did not touch them. Don't skip or quarantine the test, and don't run `playwright install` in an agent sandbox that pre-bakes its browsers; just note it and read the rest of the suite.
-- [ ] Frontend: `pnpm format && pnpm check && pnpm test`. **Watch the formatting gate:** `pnpm check` is only `eslint` + `tsc --noEmit` — it does **not** run Prettier, but CI's `lint-frontend` job (`.github/workflows/lint-check.yml`) runs `pnpm format` (`prettier --check .`) as its own step. So a change that is eslint/type-clean can still fail CI on formatting alone; always run `pnpm format` (or fix with `pnpm format:write`) before pushing. `eslint --fix` normalizes imports/optional-chains but not Prettier whitespace.
+- [ ] Frontend: `pnpm check && pnpm test`. **`pnpm check` now includes the formatting gate** (`prettier --check .`, then eslint, then `tsc --noEmit`) — it used to be eslint + tsc only, which meant the command every guide tells you to run before committing was not the command CI gates on, and an eslint/type-clean change could still fail `lint-frontend` on formatting alone. That discrepancy was documented right here and was still walked into twice, so it was removed instead of re-warned about (see the Prettier row below). `pnpm format:write` fixes what the check reports; `eslint --fix` normalizes imports and optional-chains but not Prettier whitespace.
 - [ ] **Changed a shared UI control? Run the whole e2e suite, not the one spec you thought of.** `pnpm test:e2e` with no filter. A control's *specs* are not the specs in the file you edited: they are every spec that clicks that control anywhere in the app, and nothing in `pnpm check` or `pnpm test` knows the difference. Observed live on the model-picker unification — the composer's picker was swapped into five screens, the Democracy spec was found and fixed by hand, and `suggestions-settings.spec.ts` was missed entirely because it drives the *same control* from a different page. It failed only in CI. Two rules fell out of it, both now pinned by `frontend/tests/unit/components/workspace/model-picker-sites.test.ts`: a spec must locate a shared control by that control's **own** `data-slot`, never by the ARIA role of the primitive underneath (swap the primitive and the locator silently matches nothing), and a fast unit test should assert the contract so a six-minute e2e job is not the thing that tells you.
 
   ```bash
@@ -153,6 +153,36 @@ First, the mechanical gates:
   2026-08-30 sync went green locally and red in CI. Keep the standalone command in
   the loop anyway: it is the job verbatim, and it prints the warnings pytest
   deliberately does not fail on.
+- [ ] **Prettier checks `frontend/`'s Markdown too — `frontend/src/AGENTS.md` included.** The
+  `lint-frontend` job runs `cd frontend && pnpm format`, which is `prettier --check .` over the
+  **whole directory**: every file type prettier has a parser for, minus `.prettierignore`. That
+  takes in `frontend/AGENTS.md`, `frontend/CLAUDE.md` and `frontend/src/AGENTS.md` — the module
+  guide the documentation-update policy sends you to on nearly every frontend change. Prettier's
+  Markdown normalisation is invisible to read past: it rewrites `*emphasis*` to `_emphasis_`,
+  which is what failed CI on 2026-08-31 (the image-generation prompt-mode change) — one italic,
+  in a file its author did not think of as code.
+
+  What makes this row worth reading is that **the warning already existed** (it was the second
+  half of the frontend sync row above) and was walked into anyway, for the same reason as the
+  `AGENTS.md` budget trap: `pnpm format` was run, and *then* the prose was written. A third
+  warning would have been the third thing to not read, so both halves were closed mechanically
+  instead:
+
+  - **`pnpm check` runs the format check first.** Every guide already said to run `pnpm check`
+    before committing (`AGENTS.md`, `frontend/AGENTS.md`, `frontend/README.md`); it just was not
+    true that this covered what CI gates. Now it is, and the instruction people already follow is
+    the sufficient one.
+  - **The pre-commit hook covers what prettier covers.** `frontend-prettier` carried
+    `types_or: [javascript, tsx, ts, json, css]` — a second, hand-maintained definition of "what
+    prettier formats" that had drifted from the job's, so a Markdown edit passed locally and
+    failed in CI on a file the hook never opened. It now runs `--ignore-unknown` with **no type
+    list at all**, letting prettier decide what it can parse (the one definition that cannot
+    drift) while `.prettierignore` still applies to the paths pre-commit hands it.
+
+  Both are pinned by `backend/tests/test_precommit_frontend_format.py`: if `check` loses the
+  format step or the hook regains an extension allowlist, the gap is a test failure rather than a
+  surprise in CI.
+
 - [ ] `backend/uv.lock` reconciled: `cd backend && uv lock` (must include every fork extra — `camoufox`, `ollama`, `pymupdf` — alongside upstream's).
 - [ ] Config schema in step: if the merge (or your own change) touched `config.example.yaml`'s **shape**, `config_version` is bumped, **the chart's copy is bumped with it** (`deploy/helm/deer-flow/values.yaml` *and* that chart's `README.md` — `scripts/check_config_version.sh` fails the `validate-chart` job otherwise, and it is easy to miss because nothing outside CI reads it), and `make config-upgrade` merges the new keys into an existing `config.yaml` without clobbering hand edits. An existing install never gets a new section otherwise — the same delivery trap the pricing blocks hit (see the cost-overview row below). Verify on a copy: `python3 scripts/config_upgrade.py <copy-of-an-older-config> config.example.yaml` must report the new field and leave the rest alone.
 - [ ] **Upstream added a config section — bump `config_version` yourself.** This is not a rare case, it is the *expected* one on any sync that touches `config.example.yaml`, and it fails silently. Upstream's `config_version` sits **behind** the fork's (the fork bumps for its own sections, upstream never sees them), so upstream adding a top-level key does **not** move a version number the fork compares against. `config_upgrade.py` gates delivery on that version, so at equal versions an existing install keeps a config permanently missing the new upstream section. Observed live: the `bytedance/deer-flow@main` sync of 2026-08-12 added `mcp_tasks:` while leaving upstream's `config_version` at 33; the fork was at 36, so the upgrade was a no-op until the fork bumped to 37.

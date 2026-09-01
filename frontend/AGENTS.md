@@ -21,7 +21,7 @@ DeerFlow Frontend is a Next.js 16 web interface for an AI agent system. It commu
 | ---------------- | ------------------------------------------------------------------- |
 | `pnpm dev`       | Platform-aware dev server (Webpack on Windows, Turbopack elsewhere) |
 | `pnpm build`     | Production build                                                    |
-| `pnpm check`     | Lint + type check (run before committing)                           |
+| `pnpm check`     | Format + lint + type check — the gates CI runs (before committing)  |
 | `pnpm lint`      | ESLint only                                                         |
 | `pnpm lint:fix`  | ESLint with auto-fix                                                |
 | `pnpm format`    | Prettier check (`pnpm format:write` to apply)                       |
@@ -102,7 +102,7 @@ When adding features:
 1. Follow the established `src/` structure
 2. Add TypeScript types and proper error handling
 3. Write unit tests under `tests/unit/` (`pnpm test`) and E2E tests under `tests/e2e/` (`pnpm test:e2e`)
-4. Run `pnpm check` before committing
+4. Run `pnpm check` before committing (it runs `prettier --check .` too, which covers Markdown under `frontend/` — `src/AGENTS.md` included)
 5. Update this `AGENTS.md` when architecture, commands, or conventions change
 
 Route asset budgets are enforced with `pnpm perf:check`. The command measures
