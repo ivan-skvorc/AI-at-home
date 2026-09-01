@@ -5,6 +5,8 @@ import { useQueryClient } from "@tanstack/react-query";
 import type { ChatStatus } from "ai";
 import {
   CheckIcon,
+  GlobeIcon,
+  GlobeLockIcon,
   GraduationCapIcon,
   LightbulbIcon,
   Loader2Icon,
@@ -901,6 +903,17 @@ export function InputBox({
     () => models.find((m) => m.name === context.subagent_model_name),
     [context.subagent_model_name, models],
   );
+
+  // Fork: the per-conversation internet switch (FORK.md §27). `undefined` means
+  // the user never touched it, which is ON — the switch is an opt-out, so a
+  // conversation that predates the feature keeps its web tools.
+  const internetEnabled = context.internet_enabled !== false;
+  const handleInternetToggle = useCallback(() => {
+    onContextChange?.({
+      ...context,
+      internet_enabled: !internetEnabled,
+    });
+  }, [context, internetEnabled, onContextChange]);
 
   const handleModeSelect = useCallback(
     (mode: InputMode) => {
@@ -2517,6 +2530,11 @@ export function InputBox({
               transcribing={voiceTranscribing}
               onToggle={toggleVoiceInput}
             />
+            <InternetToggleButton
+              disabled={composerLocked}
+              enabled={internetEnabled}
+              onToggle={handleInternetToggle}
+            />
             <Tooltip
               content={
                 polishingInput
@@ -3092,6 +3110,58 @@ export function InputBox({
         </DialogContent>
       </Dialog>
     </div>
+  );
+}
+
+/**
+ * The conversation's internet switch (fork feature, FORK.md §27).
+ *
+ * Off sends `internet_enabled: false` in the run context, and the backend
+ * assembles the run — lead agent *and* subagents — with no internet-reaching
+ * tool in it. The state is per conversation, so one chat can work offline while
+ * another keeps browsing.
+ *
+ * It publishes its own `data-slot="internet-toggle"`: e2e specs must find this
+ * control by that contract rather than by the ARIA role of the button primitive
+ * underneath, which a refactor of `PromptInputButton` would silently change out
+ * from under every spec that clicks it.
+ */
+function InternetToggleButton({
+  disabled,
+  enabled,
+  onToggle,
+}: {
+  disabled?: boolean;
+  enabled: boolean;
+  onToggle: () => void;
+}) {
+  const { t } = useI18n();
+  const label = enabled ? t.inputBox.internetOn : t.inputBox.internetOff;
+  return (
+    <Tooltip
+      content={
+        <span className="block max-w-72">
+          {enabled ? t.inputBox.internetOnHint : t.inputBox.internetOffHint}
+        </span>
+      }
+    >
+      <PromptInputButton
+        aria-label={label}
+        aria-pressed={enabled}
+        className={cn("px-2!", !enabled && "text-destructive")}
+        data-slot="internet-toggle"
+        data-state={enabled ? "on" : "off"}
+        data-testid="internet-toggle-button"
+        disabled={disabled}
+        onClick={onToggle}
+      >
+        {enabled ? (
+          <GlobeIcon className="size-3" />
+        ) : (
+          <GlobeLockIcon className="size-3" />
+        )}
+      </PromptInputButton>
+    </Tooltip>
   );
 }
 

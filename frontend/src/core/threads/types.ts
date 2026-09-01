@@ -56,6 +56,13 @@ export interface AgentThreadContext extends Record<string, unknown> {
   // injection/extraction/tools for this run; when omitted the backend falls back
   // to the operator config default. Gated on top by config.yaml memory.enabled.
   memory_enabled?: boolean;
+  // Per-conversation internet switch (fork feature, FORK.md §27). The composer's
+  // globe toggle; scoped to the thread, so one chat can go offline while another
+  // keeps browsing. When false the backend assembles the run — lead agent and
+  // subagents — without any internet-reaching tool (the `web` and `browser`
+  // groups, MCP servers, external ACP agents). Omitted means "no opinion" and
+  // leaves the operator's configured tool list alone.
+  internet_enabled?: boolean;
 }
 
 export interface AgentThread extends Thread<AgentThreadState> {

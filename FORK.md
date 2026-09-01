@@ -263,6 +263,7 @@ Then confirm each fork feature end-to-end:
 | **GPU residency arbiter** (§23) | `cd backend && uv run pytest tests/test_gpu_arbiter.py` plus `tests/test_doctor.py -k Media`. Covers the computed policy (a small card resolves to `exclusive`, a bigger one to `shared` **on its own**, an unknown estimate or unknown budget falls back to exclusive and names why), eviction on acquire *and* self-eviction on release, residency re-read from the services on every acquire, the `nvidia-smi` tiebreak that evicts when VRAM is held while no tenant claims it, serialization of two concurrent generations, the honest timeout instead of an unbounded queue, and the doctor row for VRAM held while idle. **Silent when broken:** Ollama's unload must stay a **per-request** `keep_alive: 0` — writing it globally reintroduces the subagent cold starts `ollama.keep_alive` exists to prevent; a cloud tenant must remain not-resident rather than gaining a branch of its own; and dropping the release-time self-eviction leaves the diffusion weights on the card, which does not fail, it just makes the next chat turn several times slower. Manual: with a local lead configured, generate twice in a row and confirm `nvidia-smi` shows an empty card between generations. |
 | **Refine loop and local video** (§23) | `cd backend && uv run pytest tests/test_refine_session.py tests/test_comfyui_video.py` covers the frozen rubric (3–6 checkable criteria, a verdict that may not judge anything outside them, every criterion judged each round), the **server-held** counter and wall-clock budget refusing iteration N+1 with a reportable message — asserted at the tool boundary, not just in the model layer — the one-named-change rule on a retry, the session JSON audit trail, evenly spaced still selection with both endpoints included, the contact sheet, and the video tool's own timeout. **Silent when broken:** the video budget must stay a separate config value (sharing the image timeout abandons working clips; inheriting `sandbox.bash_command_timeout` abandons them sooner); a contact-sheet failure must never lose the clip that took minutes to render; and the skill's instruction text is asserted too — the seed discipline, "only view the newest result each round", the `view_image` vision constraint, and the refusal to open a second session to get around the cap are load-bearing sentences, not prose. Manual: ask for a deliberately vague image and confirm it converges within the cap; ask for an impossible one and confirm it abandons instead of spinning. |
 | **ComfyUI on by default, models, and the generation button** (§26) | `cd backend && uv run pytest tests/test_detect_comfyui.py tests/test_comfyui_models.py tests/test_comfyui_tools.py tests/test_doctor.py -k "Media or comfyui or Autostart or CLI"` plus `python3 scripts/pnpm.py rstest run image-generation`. Covers the provisioning gate (Docker **and** a GPU start it; no GPU holds and names the override; no Docker holds even when forced; `DEER_FLOW_COMFYUI_AUTOSTART=0` is honoured on a machine that could run it; a detector that raises is "no GPU" rather than a crash), the exact CLI words the launch scripts branch on (`bundled start` / `bundled hold` / `external <url>`), the models-directory resolution for both integrations (bundled bind mount, `DEER_FLOW_COMFYUI_EXTERNAL_MODELS`, the host side of a container's own `…/models` mount, well-known paths, and the **refusal** when none of them answers), the install contract (no partial file survives a failed download or a checksum mismatch, an existing model is not silently replaced, a name that is a path is refused), and the button's handoff (stash consumed exactly once, malformed stash discarded, the seeded text carrying the pixel size and the fallback sentence, the prompt mode reaching the seed as either a verbatim-prompt instruction or a write-both-halves brief, the negative prompt dropped for a checkpoint that samples at CFG 1, and an entered resolution snapped to the latent grid, capped per kind and refused rather than replaced when it is cleared). **Silent when broken:** the active tool entries and the launch-time provisioning must move together — the detector reads `config.yaml` to decide whether to bother, so commenting the entries out switches the feature off and active entries with nothing provisioning them fail at chat time; the tools must stay **bound** on a machine with no ComfyUI (that is what makes the agent fall back to the cloud skill instead of insisting), and `make doctor` must **skip** rather than warn there; the bundled container must stay out of the main compose project, or `up --remove-orphans` deletes it during an unrelated restart; `comfyui_models.py` must never fall back to the bundled directory for an external instance — that download succeeds and the model never loads; a `direct` prompt must reach the seed **verbatim** rather than paraphrased (a seed that describes it invites exactly the rewrite the mode exists to forbid); and the size the preview states must be the snapped size that runs, or the resolution field is only a suggestion. Manual: `make comfy-models` against a running instance, `make comfy-model-add SOURCE=<url> TYPE=checkpoints`, then the sidebar's third entry → a prompt → confirm the composer is seeded (not sent) and the run produces a PNG. |
+| **Internet switch on the conversation** (§27) | `cd backend && uv run pytest tests/test_internet_toggle.py` plus `python3 scripts/pnpm.py rstest run internet-toggle`. The asserts that are silent when broken: **absent is not off** (only an explicit `False` opts out, so IM/TUI/scheduler callers keep their tools), the group classification is an **allowlist** (an unclassified group is dropped — a blocklist of `web`/`browser` passes everything else and ships the next provider group), **MCP and ACP tools go too**, a **subagent inherits** the switch from the parent run context, and the offline notice is appended to the *rendered* prompt rather than a template placeholder an operator's saved `SYSTEM_PROMPT.md` would not have. UI wiring: `pnpm test:e2e internet-toggle` drives the composer control by its own `data-slot="internet-toggle"`. |
 | **Tiered voice input** (§24) | `cd backend && uv run pytest tests/test_voice_stt.py` plus `python3 scripts/pnpm.py rstest run voice-input`. The asserts that are silent when broken: `voice.allow_cloud_fallback` and `voice.stt.enabled` both default **false** and `resolveVoiceInputTier` returns `null` rather than `"cloud"` when neither local tier is available; `DEFAULT_VOICE_SERVER_CONFIG` keeps cloud off when `/api/voice/config` errors or is unreachable (fail closed, not open); `is_local_endpoint` treats Tailscale CGNAT `100.64.0.0/10` as local, so a tailnet STT service is not mislabelled as off-machine; the upload size cap refuses **before** the STT service is called; error text never echoes the service body (a transcript is speech); and `recorder.test.ts` proves the microphone track is stopped on all four exits — success, recorder error, failed construction, and abandonment. A regression in the first two reads as "voice still works" while audio goes back to the vendor. |
 
 **Integration points that tend to need a hand** (where upstream refactors collide with fork additions — check these first when tests fail): the AIO sandbox provider (upstream's cross-instance ownership store adds instance attributes that minimal test fixtures built via `__new__` must seed), the skills tool-policy path (upstream's dynamic `SkillToolPolicyMiddleware` vs. any fork static filtering — reconcile onto the middleware and drop dead build-time filters), `scripts/check.py`'s Docker diagnostics (any upstream test that mocks `run_command` with a strict dict must tolerate the extra `docker` calls), and the `task_tool.py` / `input-box.tsx` model-override plumbing.
@@ -2485,6 +2486,79 @@ through the upgrade path.
 | Button | `frontend/src/core/threads/image-generation.ts` (prompt mode, negative-prompt rule, resolution), `components/workspace/image-generation-setup.tsx`, `components/workspace/chats/use-image-launch.ts`, `app/workspace/image/new/page.tsx`, `components/workspace/workspace-header.tsx`, `core/i18n/locales/*` |
 | Doctor | `scripts/doctor.py::check_media_generation` (skips with a reason where nothing would be provisioned) |
 | Tests | `backend/tests/test_detect_comfyui.py`, `test_comfyui_models.py`, `test_comfyui_tools.py::TestServiceWiring`, `test_doctor.py::TestCheckMediaGeneration`, `frontend/tests/unit/core/threads/image-generation{,.dom}.test.ts`, `frontend/tests/unit/components/workspace/image-generation-setup.dom.test.tsx` |
+
+### 27. An internet switch on the conversation
+
+The globe in the composer, between the microphone and the prompt-polish button.
+Off means this conversation's runs are assembled with **no internet-reaching tool
+in them**: the `web` and `browser` tool groups, every MCP tool, and the ACP agent
+tool are left out of the catalog before the agent is built. Lead agent and
+subagents alike. It is per conversation, needs no config key, and is an opt-out —
+absent means on.
+
+Four properties are load-bearing. Each one is **silent** when broken: the chat
+keeps answering, it has just quietly got its web tools back.
+
+**1. It is a capability filter, not a request-time veto.** The filtering happens
+inside `get_available_tools`, before anything downstream sees a catalog — so
+deferred tool search cannot promote a dropped tool back, a skill's
+`allowed-tools` cannot re-admit one, and the model is never shown a schema for a
+tool it may not call. Enforcement in a middleware would have been easier to write
+and one exemption away from being bypassed; the authorization layer already
+learned that lesson (its Layer 1 capability filter exists for the same reason).
+Do not "simplify" this into a `GuardrailProvider` that denies at call time.
+
+**2. Absent is not "off".** Only an explicit boolean `False` opts out
+(`internet_access_enabled`). IM channels, the TUI, the scheduler and the embedded
+client have no composer and send no key; reading a missing key as "offline" would
+take web search away from every non-web caller on the day this ships. `"false"`
+and `0` are *not* opt-outs either — the frontend normalizes to a real boolean
+before sending (`resolveInternetEnabled`), so anything else is a caller with no
+opinion.
+
+**3. The classification fails closed.** `OFFLINE_ALLOWED_TOOL_GROUPS` is an
+allowlist of groups that cannot reach the internet (`file:read`, `file:write`,
+`bash`, `media`, `knowledge`); a group that is not on it is dropped. Rewriting
+this as a blocklist of `{"web", "browser"}` passes every test that names a
+shipped group and silently ships the next provider group anyone adds — which, in
+a repo that merges upstream weekly, is a matter of time.
+
+**4. Delegation is not an escape hatch.** `task_tool` reads the switch from the
+*parent's* run context and passes it into the subagent's tool assembly, and the
+lead-agent factory writes the value it resolved back into both `context` and
+`configurable` so there is one authoritative answer. Without this the feature is
+one `task` call away from meaningless.
+
+**Why the offline notice is appended rather than templated.** The system prompt
+is operator-editable (§19). A `{internet_section}` placeholder would simply not
+exist in a saved `SYSTEM_PROMPT.md`, so the notice would vanish for exactly the
+people who customized their prompt — the same trap the Democracy section avoids
+by riding `{subagent_section}` (§22). Here there is no suitable existing
+placeholder, so `append_offline_notice` appends to the *rendered* prompt instead,
+which works for any template. It is also why the switch does not fragment the
+prompt prefix cache for online runs: nothing is added at all when the switch is
+on.
+
+**The two limits, stated in the README as well as here.** The switch governs the
+model's *tools*. It does not sever the sandbox's own network — `bash` stays,
+because it is how the agent runs your code and because the shell's network is a
+property of the operator's container, not of a per-chat button; the offline
+notice tells the model not to use it as a workaround, which is an instruction and
+not a wall (the hard fix is running the sandbox container on an internal Docker
+network). And it does not stop the chat model call itself: a cloud model is still
+a network request, so a conversation that reaches nothing is this switch *plus* a
+local model. Both limits are in the README section on purpose — a switch a user
+cannot trust is worse than no switch.
+
+| Piece | Where |
+| --- | --- |
+| Decision + classification | `backend/packages/harness/deerflow/tools/internet_access.py` |
+| Catalog filter | `tools/tools.py::get_available_tools(internet_enabled=...)` |
+| Lead agent | `agents/lead_agent/agent.py` (resolve, write back, append the notice, publish in `effective_policies`) |
+| Subagents | `tools/builtins/task_tool.py` (inherits from the parent run context) |
+| Gateway | `app/gateway/services.py` (`internet_enabled` in `_CONTEXT_CONFIGURABLE_KEYS`) |
+| Composer | `frontend/src/components/workspace/input-box.tsx` (`InternetToggleButton`, `data-slot="internet-toggle"`), `core/threads/run-context.ts::resolveInternetEnabled`, `core/settings/local.ts` (`THREAD_SCOPED_CONTEXT_KEYS`), `core/i18n/locales/*` |
+| Tests | `backend/tests/test_internet_toggle.py`, `frontend/tests/unit/core/threads/internet-toggle.test.ts`, `frontend/tests/unit/core/settings/internet-toggle-persistence.dom.test.ts`, `frontend/tests/e2e/internet-toggle.spec.ts` |
 
 ## Why mix local and cloud
 

@@ -21,6 +21,7 @@ from deerflow.tools.builtins import (
     task_tool,
     view_image_tool,
 )
+from deerflow.tools.internet_access import is_offline_safe_group
 from deerflow.tools.mcp_metadata import tag_mcp_tool
 from deerflow.tools.sync import make_sync_tool_wrapper
 
@@ -64,6 +65,7 @@ def get_available_tools(
     *,
     include_upload_tool: bool = True,
     app_config: AppConfig | None = None,
+    internet_enabled: bool = True,
 ) -> list[BaseTool]:
     """Get all available tools from config.
 
@@ -78,12 +80,27 @@ def get_available_tools(
         include_upload_tool: Whether to include ``list_uploaded_files`` (default: True).
             Set to False for subagent tool assembly — subagents have independent
             ThreadState and cannot exclude current-run files.
+        internet_enabled: Fork (FORK.md §27) — the per-conversation internet
+            switch. When False, every tool that reaches the internet on the
+            model's behalf is left out of the returned catalog: config tools
+            whose group is not offline-safe, all MCP tools, and the ACP agent
+            tool. Filtering here rather than at a request-time gate is what
+            keeps a removed tool out of deferred tool search, skill policy, and
+            the model's tool schemas alike.
 
     Returns:
         List of available tools.
     """
     config = app_config or get_app_config()
     tool_configs = [tool for tool in config.tools if groups is None or tool.group in groups]
+
+    # Fork: the per-conversation internet switch. Fails closed — a group that is
+    # not on the offline allowlist is treated as internet-reaching and dropped.
+    if not internet_enabled:
+        offline_dropped = [tool.name for tool in tool_configs if not is_offline_safe_group(tool.group)]
+        if offline_dropped:
+            logger.info("Internet access is off for this run; excluding %d tool(s): %s", len(offline_dropped), ", ".join(sorted(offline_dropped)))
+        tool_configs = [tool for tool in tool_configs if is_offline_safe_group(tool.group)]
 
     # Do not expose host bash by default when LocalSandboxProvider is active.
     if not is_host_bash_allowed(config):
@@ -147,7 +164,11 @@ def get_available_tools(
     # made through the Gateway API (which runs in a separate process) are immediately
     # reflected when loading MCP tools.
     mcp_tools = []
-    if include_mcp:
+    # An MCP server is a network endpoint by construction, and a local one still
+    # proxies to remote APIs, so the offline run gets none of them.
+    if include_mcp and not internet_enabled:
+        logger.info("Internet access is off for this run; skipping MCP tools")
+    elif include_mcp:
         try:
             from deerflow.config.extensions_config import ExtensionsConfig
             from deerflow.mcp.cache import get_cached_mcp_tools
@@ -172,20 +193,25 @@ def get_available_tools(
 
     # Add invoke_acp_agent tool if any ACP agents are configured
     acp_tools: list[BaseTool] = []
-    try:
-        from deerflow.tools.builtins.invoke_acp_agent_tool import build_invoke_acp_agent_tool
+    # An ACP agent is an external agent process with its own, uncontrolled
+    # network access — delegating to one is an internet call by proxy.
+    if not internet_enabled:
+        logger.info("Internet access is off for this run; skipping the ACP agent tool")
+    else:
+        try:
+            from deerflow.tools.builtins.invoke_acp_agent_tool import build_invoke_acp_agent_tool
 
-        if app_config is None:
-            from deerflow.config.acp_config import get_acp_agents
+            if app_config is None:
+                from deerflow.config.acp_config import get_acp_agents
 
-            acp_agents = get_acp_agents()
-        else:
-            acp_agents = getattr(config, "acp_agents", {}) or {}
-        if acp_agents:
-            acp_tools.append(build_invoke_acp_agent_tool(acp_agents))
-            logger.info(f"Including invoke_acp_agent tool ({len(acp_agents)} agent(s): {list(acp_agents.keys())})")
-    except Exception as e:
-        logger.warning(f"Failed to load ACP tool: {e}")
+                acp_agents = get_acp_agents()
+            else:
+                acp_agents = getattr(config, "acp_agents", {}) or {}
+            if acp_agents:
+                acp_tools.append(build_invoke_acp_agent_tool(acp_agents))
+                logger.info(f"Including invoke_acp_agent tool ({len(acp_agents)} agent(s): {list(acp_agents.keys())})")
+        except Exception as e:
+            logger.warning(f"Failed to load ACP tool: {e}")
 
     logger.info(f"Total tools loaded: {len(loaded_tools)}, built-in tools: {len(builtin_tools)}, MCP tools: {len(mcp_tools)}, ACP tools: {len(acp_tools)}")
 

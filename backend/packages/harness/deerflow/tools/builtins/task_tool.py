@@ -35,6 +35,7 @@ from deerflow.subagents.status_contract import (
     format_subagent_result_message,
     make_subagent_additional_kwargs,
 )
+from deerflow.tools.internet_access import internet_access_enabled
 from deerflow.tools.types import Runtime
 from deerflow.trace_context import DEERFLOW_TRACE_METADATA_KEY, get_current_trace_id, normalize_trace_id
 from deerflow.utils.custom_events import aemit_custom_event
@@ -574,11 +575,17 @@ async def task_tool(
     # Subagents also must not get list_uploaded_files — they have an independent
     # ThreadState where runtime.state["uploaded_files"] is absent, so the
     # current-run file exclusion would not work.
+    # Fork: the per-conversation internet switch (FORK.md §27) is inherited from
+    # the dispatching run's context, which the lead-agent factory already
+    # resolved and wrote back. Delegation must not be the way around a switch the
+    # user turned off: a subagent that kept `web_search` would put the whole
+    # feature one `task` call away from meaningless.
     available_tools_kwargs = {
         "model_name": effective_model,
         "groups": parent_tool_groups,
         "subagent_enabled": False,
         "include_upload_tool": False,
+        "internet_enabled": internet_access_enabled(parent_context),
     }
     if resolved_app_config is not None:
         available_tools_kwargs["app_config"] = resolved_app_config

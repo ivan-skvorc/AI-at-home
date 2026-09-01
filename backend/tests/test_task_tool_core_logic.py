@@ -729,7 +729,7 @@ def test_task_tool_emits_running_and_completed_events(monkeypatch):
     # by SubagentExecutor and injected as conversation items (Codex pattern).
     assert captured["executor_kwargs"]["config"].system_prompt == "Base system prompt"
 
-    get_available_tools.assert_called_once_with(model_name="ark-model", groups=None, subagent_enabled=False, include_upload_tool=False)
+    get_available_tools.assert_called_once_with(model_name="ark-model", groups=None, subagent_enabled=False, include_upload_tool=False, internet_enabled=True)
 
     event_types = [e["type"] for e in events]
     assert event_types == ["task_started", "task_running", "task_running", "task_completed"]
@@ -843,7 +843,7 @@ def test_task_tool_propagates_tool_groups_to_subagent(monkeypatch):
 
     assert _task_tool_message(output).content == "Task Succeeded. Result: done"
     # The key assertion: groups should be propagated from parent metadata
-    get_available_tools.assert_called_once_with(model_name="ark-model", groups=parent_tool_groups, subagent_enabled=False, include_upload_tool=False)
+    get_available_tools.assert_called_once_with(model_name="ark-model", groups=parent_tool_groups, subagent_enabled=False, include_upload_tool=False, internet_enabled=True)
 
 
 def test_task_tool_uses_subagent_model_override_for_tool_loading(monkeypatch):
@@ -894,6 +894,7 @@ def test_task_tool_uses_subagent_model_override_for_tool_loading(monkeypatch):
         groups=None,
         subagent_enabled=False,
         include_upload_tool=False,
+        internet_enabled=True,
     )
 
 
@@ -1018,7 +1019,7 @@ def test_task_tool_no_tool_groups_passes_none(monkeypatch):
 
     assert _task_tool_message(output).content == "Task Succeeded. Result: ok"
     # No tool_groups in metadata → groups=None (default behavior preserved)
-    get_available_tools.assert_called_once_with(model_name="ark-model", groups=None, subagent_enabled=False, include_upload_tool=False)
+    get_available_tools.assert_called_once_with(model_name="ark-model", groups=None, subagent_enabled=False, include_upload_tool=False, internet_enabled=True)
 
 
 def test_task_tool_runtime_none_passes_groups_none(monkeypatch):
@@ -1063,6 +1064,7 @@ def test_task_tool_runtime_none_passes_groups_none(monkeypatch):
         groups=None,
         subagent_enabled=False,
         include_upload_tool=False,
+        internet_enabled=True,
         app_config=fallback_app_config,
     )
 

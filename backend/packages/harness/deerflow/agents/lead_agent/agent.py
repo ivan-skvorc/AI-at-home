@@ -72,6 +72,7 @@ from deerflow.runtime.checkpoint_mode import (
 )
 from deerflow.skills.types import Skill
 from deerflow.subagents.capacity import configured_subagent_max_running
+from deerflow.tools.internet_access import INTERNET_ENABLED_CONTEXT_KEY, append_offline_notice, internet_access_enabled
 from deerflow.tracing import build_tracing_callbacks
 
 logger = logging.getLogger(__name__)
@@ -948,6 +949,14 @@ def _assemble_lead_agent(config: RunnableConfig, *, app_config: AppConfig) -> Le
     democracy_grading = normalize_democracy_grading(cfg.get("democracy_grading"))
     is_bootstrap = cfg.get("is_bootstrap", False)
     non_interactive = bool(cfg.get("non_interactive", False))
+    # Fork: the per-conversation internet switch (FORK.md §27). Resolved once
+    # here and written back into both context and configurable, so the `task`
+    # tool reads the same answer the lead agent was built with — a subagent must
+    # not be the way around a switch the user turned off.
+    internet_enabled = internet_access_enabled(cfg)
+    config.setdefault("configurable", {})[INTERNET_ENABLED_CONTEXT_KEY] = internet_enabled
+    if isinstance(config.get("context"), dict):
+        config["context"][INTERNET_ENABLED_CONTEXT_KEY] = internet_enabled
     agent_name = validate_agent_name(cfg.get("agent_name"))
 
     agent_config = load_agent_config(agent_name, user_id=resolved_user_id) if not is_bootstrap else None
@@ -1054,7 +1063,7 @@ def _assemble_lead_agent(config: RunnableConfig, *, app_config: AppConfig) -> Le
             enabled=skill_search_enabled,
             container_base_path=container_base_path,
         )
-        raw_tools = get_available_tools(model_name=model_name, subagent_enabled=subagent_enabled, app_config=resolved_app_config) + [setup_agent]
+        raw_tools = get_available_tools(model_name=model_name, subagent_enabled=subagent_enabled, app_config=resolved_app_config, internet_enabled=internet_enabled) + [setup_agent]
         configured_tools = raw_tools
         if non_interactive:
             configured_tools = [tool for tool in configured_tools if tool.name not in _NON_INTERACTIVE_DISABLED_TOOL_NAMES]
@@ -1102,6 +1111,12 @@ def _assemble_lead_agent(config: RunnableConfig, *, app_config: AppConfig) -> Le
             allowed_subagents=allowed_subagents,
             subagent_execution_capacity=subagent_execution_capacity,
         )
+        # Fork: the offline notice is appended to the *rendered* prompt rather than
+        # rendered through a template placeholder — the template is operator-editable
+        # (FORK.md §19), and a placeholder a saved SYSTEM_PROMPT.md does not contain
+        # would silently drop the notice for exactly the people who customized it.
+        if not internet_enabled:
+            system_prompt = append_offline_notice(system_prompt)
         graph = create_agent(
             model=create_chat_model(name=model_name, thinking_enabled=thinking_enabled, app_config=resolved_app_config, attach_tracing=False),
             tools=final_tools,
@@ -1169,7 +1184,7 @@ def _assemble_lead_agent(config: RunnableConfig, *, app_config: AppConfig) -> Le
     is_webhook_channel = channel_name in _WEBHOOK_CHANNELS
     extra_tools = [update_agent] if agent_name and not is_webhook_channel else []
     # Default lead agent (unchanged behavior)
-    raw_tools = get_available_tools(model_name=model_name, groups=agent_config.tool_groups if agent_config else None, subagent_enabled=subagent_enabled, app_config=resolved_app_config)
+    raw_tools = get_available_tools(model_name=model_name, groups=agent_config.tool_groups if agent_config else None, subagent_enabled=subagent_enabled, app_config=resolved_app_config, internet_enabled=internet_enabled)
     configured_tools = raw_tools + extra_tools
     if non_interactive:
         configured_tools = [tool for tool in configured_tools if tool.name not in _NON_INTERACTIVE_DISABLED_TOOL_NAMES]
@@ -1222,6 +1237,12 @@ def _assemble_lead_agent(config: RunnableConfig, *, app_config: AppConfig) -> Le
         democracy_participants=democracy_participants,
         democracy_grading=democracy_grading,
     )
+    # Fork: the offline notice is appended to the *rendered* prompt rather than
+    # rendered through a template placeholder — the template is operator-editable
+    # (FORK.md §19), and a placeholder a saved SYSTEM_PROMPT.md does not contain
+    # would silently drop the notice for exactly the people who customized it.
+    if not internet_enabled:
+        system_prompt = append_offline_notice(system_prompt)
     graph = create_agent(
         model=create_chat_model(name=model_name, thinking_enabled=thinking_enabled, reasoning_effort=reasoning_effort, app_config=resolved_app_config, attach_tracing=False, model_overrides=agent_model_overrides),
         tools=final_tools,
@@ -1249,6 +1270,8 @@ def _assemble_lead_agent(config: RunnableConfig, *, app_config: AppConfig) -> Le
             "bootstrap": False,
             "non_interactive": non_interactive,
             "plan_mode": is_plan_mode,
+            # Fork: what the internet switch resolved to for this run.
+            "internet_enabled": internet_enabled,
             "subagents": _subagent_release_policy(
                 resolved_app_config,
                 enabled=subagent_enabled,
