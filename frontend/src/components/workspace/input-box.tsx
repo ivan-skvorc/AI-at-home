@@ -180,6 +180,7 @@ import {
   ModelDisplayName,
   ModelPickerControls,
   ModelPickerList,
+  ModelPickerRow,
 } from "./model-picker-controls";
 import { ReferenceAttachmentSummary, useMaybeSidecar } from "./sidecar";
 import { SlashSkillChip } from "./slash-skill-chip";
@@ -2914,22 +2915,19 @@ export function InputBox({
                         disabled={unusable}
                         onSelect={() => handleModelSelect(m.name)}
                       >
-                        <div className="flex min-w-0 flex-1 flex-col">
-                          <ModelSelectorName>
-                            <ModelDisplayName
-                              displayName={m.display_name}
-                              price={m.price}
-                            />
-                            {unusable && (
-                              <span className="text-muted-foreground ml-1 text-[10px]">
+                        <ModelPickerRow
+                          model={m}
+                          showProvider={
+                            !localSettings.modelPicker.groupByProvider
+                          }
+                          annotation={
+                            unusable && (
+                              <span className="text-muted-foreground shrink-0 text-[10px]">
                                 {t.inputBox.noToolSupport}
                               </span>
-                            )}
-                          </ModelSelectorName>
-                          <span className="text-muted-foreground truncate text-[10px]">
-                            {m.model}
-                          </span>
-                        </div>
+                            )
+                          }
+                        />
                         {m.name === context.model_name ? (
                           <CheckIcon className="ml-auto size-4" />
                         ) : (
@@ -3006,22 +3004,19 @@ export function InputBox({
                         disabled={lacksToolSupport(m)}
                         onSelect={() => handleSubagentModelSelect(m.name)}
                       >
-                        <div className="flex min-w-0 flex-1 flex-col">
-                          <ModelSelectorName>
-                            <ModelDisplayName
-                              displayName={m.display_name}
-                              price={m.price}
-                            />
-                            {lacksToolSupport(m) && (
-                              <span className="text-muted-foreground ml-1 text-[10px]">
+                        <ModelPickerRow
+                          model={m}
+                          showProvider={
+                            !localSettings.modelPicker.groupByProvider
+                          }
+                          annotation={
+                            lacksToolSupport(m) && (
+                              <span className="text-muted-foreground shrink-0 text-[10px]">
                                 {t.inputBox.noToolSupport}
                               </span>
-                            )}
-                          </ModelSelectorName>
-                          <span className="text-muted-foreground truncate text-[10px]">
-                            {m.model}
-                          </span>
-                        </div>
+                            )
+                          }
+                        />
                         {m.name === context.subagent_model_name ? (
                           <CheckIcon className="ml-auto size-4" />
                         ) : (

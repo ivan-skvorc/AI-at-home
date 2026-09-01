@@ -21,6 +21,7 @@ import {
   ModelDisplayName,
   ModelPickerControls,
   ModelPickerList,
+  ModelPickerRow,
 } from "./model-picker-controls";
 
 /**
@@ -187,18 +188,11 @@ export function ModelSelect({
               value={model.name}
               onSelect={() => select(model.name)}
             >
-              <div className="flex min-w-0 flex-1 flex-col">
-                <ModelSelectorName>
-                  <ModelDisplayName
-                    displayName={model.display_name}
-                    price={model.price}
-                  />
-                  {annotate?.(model)}
-                </ModelSelectorName>
-                <span className="text-muted-foreground truncate text-[10px]">
-                  {model.model}
-                </span>
-              </div>
+              <ModelPickerRow
+                model={model}
+                showProvider={!localSettings.modelPicker.groupByProvider}
+                annotation={annotate?.(model)}
+              />
               {model.name === value ? (
                 <CheckIcon className="ml-auto size-4" />
               ) : (

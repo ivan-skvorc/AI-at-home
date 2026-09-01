@@ -265,6 +265,66 @@ class TestRenderEntryNumCtx:
         assert f"num_predict: {sync_ollama.DEFAULT_NUM_PREDICT}" in entry
 
 
+class TestWeightSizeReachesTheEntry:
+    """The `/api/tags` size must actually travel into the written entry.
+
+    `render_entry` accepting a size proves nothing on its own: the field is
+    silent when broken — every entry stays valid, the sync stays idempotent, and
+    the picker simply shows no size for any model, which looks exactly like a
+    daemon that did not report one. This drives `main()` end to end so the drop
+    is a failure rather than a blank chip.
+    """
+
+    def _run(self, monkeypatch, capsys, tmp_path, tags):
+        config = tmp_path / "config.yaml"
+        config.write_text(CLEAN_CONFIG)
+        monkeypatch.setattr(sync_ollama, "fetch_tags", lambda host, timeout=2.0: tags)
+        monkeypatch.setattr(
+            sync_ollama,
+            "fetch_show",
+            lambda host, name, timeout=5.0: {"capabilities": ["tools"], "model_info": {"general.architecture": "qwen3", "qwen3.context_length": 40960}},
+        )
+        monkeypatch.setattr(sync_ollama.sys, "argv", ["sync-ollama-models.py", "--config", str(config), "--dry-run"])
+        assert sync_ollama.main() == 0
+        return capsys.readouterr().out
+
+    def test_the_size_from_api_tags_lands_in_the_entry(self, monkeypatch, capsys, tmp_path):
+        out = self._run(monkeypatch, capsys, tmp_path, [{"name": "qwen3:8b", "size": 5_200_000_000}])
+        assert "- name: qwen3:8b" in out
+        assert "size_bytes: 5200000000" in out
+
+    def test_a_daemon_that_reports_no_size_still_writes_the_entry(self, monkeypatch, capsys, tmp_path):
+        out = self._run(monkeypatch, capsys, tmp_path, [{"name": "qwen3:8b"}])
+        assert "- name: qwen3:8b" in out
+        assert "size_bytes" not in out
+
+
+class TestRenderEntryWeightSize:
+    """The weights a local model puts on the GPU, written for the model picker.
+
+    The picker shows it next to the context window because those are the two
+    halves of one question: a 20 GiB model and a 32K window do not both fit on a
+    24 GiB card, and until the number was on the row the only way to find that
+    out was to select the model and watch the daemon offload to CPU.
+    """
+
+    def test_size_written_when_the_daemon_reports_it(self):
+        entry = sync_ollama.render_entry("qwen3:8b", ["tools"], size_bytes=5_200_000_000)
+        assert "size_bytes: 5200000000" in entry
+
+    def test_no_size_line_when_the_daemon_does_not_report_one(self):
+        # /api/tags is the only source; an entry written without it must stay
+        # valid rather than carrying a zero the UI would render as "0 B".
+        assert "size_bytes" not in sync_ollama.render_entry("mystery:7b", ["tools"])
+        assert "size_bytes" not in sync_ollama.render_entry("mystery:7b", ["tools"], size_bytes=0)
+
+    def test_size_is_written_as_an_integer(self):
+        # /api/tags returns a JSON number; a float would land in config.yaml as
+        # `5200000000.0`, which ModelConfig's `int | None` rejects at load.
+        entry = sync_ollama.render_entry("qwen3:8b", ["tools"], size_bytes=5_200_000_000.0)
+        assert "size_bytes: 5200000000" in entry
+
+
 class TestSyncNumCtxIdempotence:
     def test_three_tuple_entries_write_num_ctx_and_stay_idempotent(self):
         models = [("qwen3:8b", ["tools"], 32768), ("llava:13b", ["vision"], 8192)]
@@ -279,6 +339,22 @@ class TestSyncNumCtxIdempotence:
         # Pre-existing (name, caps) callers keep working — no num_ctx emitted.
         once = sync_ollama.sync(CLEAN_CONFIG, [("qwen3:8b", ["tools"])])
         assert "num_ctx" not in once
+
+    def test_five_tuple_entries_write_the_weight_size_and_stay_idempotent(self):
+        models = [("qwen3:8b", ["tools"], 32768, "30m", 5_200_000_000)]
+        once = sync_ollama.sync(CLEAN_CONFIG, models)
+        twice = sync_ollama.sync(once, models)
+        assert once == twice
+        assert "size_bytes: 5200000000" in once
+        assert "keep_alive: 30m" in once
+
+    def test_shorter_tuples_still_omit_the_weight_size(self):
+        # The tail is read positionally so a caller that has not been taught
+        # about the new field keeps working — the same back-compatibility
+        # `keep_alive` relies on (FORK.md §1's checklist row).
+        once = sync_ollama.sync(CLEAN_CONFIG, [("qwen3:8b", ["tools"], 32768, "30m")])
+        assert "size_bytes" not in once
+        assert "num_ctx: 32768" in once
 
 
 # ── VRAM-aware context sizing ────────────────────────────────────────────────
