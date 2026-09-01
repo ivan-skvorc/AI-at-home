@@ -56,7 +56,7 @@ import {
   getSessionPendingEditSendStorage,
   writePendingEditSend,
 } from "./pending-edit-send";
-import { deriveModeContext } from "./run-context";
+import { deriveModeContext, resolveInternetEnabled } from "./run-context";
 import {
   buildThreadsSearchQueryOptions,
   DEFAULT_THREAD_SEARCH_PARAMS,
@@ -2247,6 +2247,11 @@ export function useThreadStream({
               ...context,
               ...deriveModeContext(context),
               memory_enabled: getLocalSettings().memory.enabled,
+              // Sent explicitly rather than left to the `...context` spread: the
+              // switch is the whole feature, and a key that reaches the wire only
+              // as a side effect of a spread is one refactor away from silently
+              // not being sent at all.
+              internet_enabled: resolveInternetEnabled(context),
               thread_id: threadId,
             },
           },
@@ -2360,6 +2365,8 @@ export function useThreadStream({
             ...context,
             ...deriveModeContext(context),
             memory_enabled: getLocalSettings().memory.enabled,
+            // Regenerating a turn must run under the same switch as sending one.
+            internet_enabled: resolveInternetEnabled(context),
             thread_id: threadId,
           },
         });

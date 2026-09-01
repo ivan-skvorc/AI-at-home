@@ -46,6 +46,11 @@ export const DEFAULT_LOCAL_SETTINGS: LocalSettings = {
     model_name: undefined,
     mode: undefined,
     reasoning_effort: undefined,
+    // The internet is ON by default — this is an opt-out, not an opt-in, so a
+    // fresh install behaves exactly as it did before the switch existed. It is
+    // stored per conversation (see THREAD_SCOPED_CONTEXT_KEYS): taking one chat
+    // offline must not silently unplug every other open chat.
+    internet_enabled: true,
   },
 };
 
@@ -75,6 +80,10 @@ export const THREAD_SCOPED_CONTEXT_KEYS = [
   "democracy_grading",
   "mode",
   "reasoning_effort",
+  // The internet switch is per conversation for the same reason the model is:
+  // an offline chat and a browsing chat are two different workflows the user is
+  // running side by side.
+  "internet_enabled",
 ] as const;
 
 export type ThreadContextOverride = Partial<
@@ -170,6 +179,10 @@ export interface LocalSettings {
     subagent_model_name?: string | undefined;
     mode: "flash" | "thinking" | "pro" | "ultra" | "democracy" | undefined;
     reasoning_effort?: "minimal" | "low" | "medium" | "high";
+    // Per-conversation internet switch (fork feature, FORK.md §27). Sent to the
+    // backend in the run context; `false` strips every internet-reaching tool
+    // from the run.
+    internet_enabled?: boolean;
   };
 }
 

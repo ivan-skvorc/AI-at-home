@@ -402,6 +402,12 @@ _CONTEXT_CONFIGURABLE_KEYS: frozenset[str] = frozenset(
         # absent falls back to the operator config default. Combined (AND) with
         # the operator master switch ``memory.enabled`` in config.yaml.
         "memory_enabled",
+        # Fork: the composer's per-conversation internet switch (FORK.md §27).
+        # Explicitly ``false`` drops every internet-reaching tool (the `web` and
+        # `browser` groups, MCP, ACP) from the run's catalog, lead agent and
+        # subagents alike; absent leaves the configured tool list alone, so
+        # non-web callers (IM channels, TUI, scheduler) are unaffected.
+        "internet_enabled",
     }
 )
 

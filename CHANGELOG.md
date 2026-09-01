@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **chat:** **An internet switch on the conversation.** The composer gains a globe
+  button that takes *this chat* offline: the run is assembled with no
+  internet-reaching tool in it at all — `web_search`, `web_fetch`, browser
+  control, every MCP tool and the external-agent tool are left out of the
+  catalog, so the model is never even shown a schema for them — and the agent
+  answers from the conversation, the thread's files and its own knowledge.
+  **Subagents inherit it**, so delegating a `task` is not a way around a switch
+  you turned off. The state belongs to the conversation rather than the app, so
+  one chat can work offline while another keeps browsing, and it survives a
+  reload. There is no config key and no restart: internet is **on** until you
+  click the globe, and callers with no composer (IM channels, the TUI, scheduled
+  tasks, the embedded client) are unaffected. Two limits are deliberate and
+  documented: the switch governs the model's tools, not a sandbox shell's own
+  network (the offline run is told not to use it as a workaround), and it does
+  not stop the chat model call itself — a conversation that reaches nothing is
+  this switch plus a local model.
 - **models:** **The model dropdown lines its prices up, and says how big a local
   model is.** Rows now read *provider, name, price* — with the price pinned to
   the right edge of the row, so with a couple of dozen models the rates form a
@@ -24,7 +40,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   model, simply shows nothing there. No configuration: re-running any launch
   path refreshes the synced block, and grouping by provider drops the per-row
   provider the section heading already carries.
-
 - **media:** **Local image and video generation is on by default, and there is a
   button for it.** The `media` tool entries ship active in `config.example.yaml`
   (`config_version` 47; existing configs pick them up on the next

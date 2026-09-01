@@ -30,6 +30,7 @@
 > - 🐳 **Full clone-and-debug sandbox runs** — one-command per-thread containers, host-reachable ports, native debuggers (`gdb` / `strace`), longer command timeouts, and a `repo-runner` skill that encodes clone → install → run → debug.
 > - 💾 **Whole-instance backup & restore** — `make backup` snapshots all of `.deer-flow` as one timestamped archive (memory, threads, chat tabs, settings, uploads, databases, custom skills) and `make restore` puts it back (refusing while the stack is running). Credentials are excluded unless you pass `INCLUDE_SECRETS=1`. A personal AI accumulates months of state on one machine with no redundancy — this is the redundancy.
 > - 🔃 **Sortable, grouped model picker — on every screen that picks a model** — with a couple of dozen bundled models across premium-cloud, cheap-cloud, and local tiers, the flat list is hard to scan, so the dropdown can **sort by name or price** and **group by provider** in one click, with a search box and each row's price coloured (a discounted model shows list vs. promo). Rows read **provider first, then the name, with the price pinned to the right edge** so the prices line up as one column instead of trailing whatever length each name happened to be; underneath, a local model shows **its weights and its context window** (`5.2 GiB · 32K ctx`) next to the model id. The same picker is now used **everywhere** a model is chosen — the chat composer, the Ultra-mode subagent, the sidecar, Democracy panelists and organizer, the follow-up-suggestions model, the subagent default in Settings, the agent generator, and a custom agent's own model — so the roster never behaves differently depending on which screen you opened it from. Remembered per browser and **shared across all of them**, so a sort you pick in the chat is already applied in Settings; the default stays config order so nothing moves until you opt in.
+> - 🌐 **An internet switch on the composer** — a globe next to the microphone takes **this conversation** offline: web search, page fetching, browser control, MCP servers and external agents are all left out of the run, and the agent answers from your files, the conversation, and its own knowledge instead. It is **per chat, not a global setting** — one conversation can work offline on a private document while another keeps browsing — and **subagents inherit it**, so delegating is not a way around it. The switch is an opt-out: internet stays on until you click it, and the state sticks to that conversation across a reload. Nothing to configure. Two honest limits: it governs the *tools*, so a sandbox shell that your container gives network access still has it (the agent is told not to use it that way), and a model that memorized something is still answering from memory.
 > - 🧠 **Long-term memory off by default** — the agent no longer learns from or injects your saved memory until you opt in. Turn it on per-browser under **Settings → Memory** (the operator can still hard-disable it with `memory.enabled: false` in `config.yaml`, which greys out the toggle). When off, each run sends `memory_enabled: false` and the backend skips memory injection, extraction, and memory tools.
 > - 💡 **Follow-up suggestions off by default** — the clickable follow-up-question chips make an extra model call after every answer, so they now default **off** to save cost. Turn them back on per-browser under **Settings → Suggestions**, where a dropdown also lets you pick which model generates them ("Follow workflow selection" by default, or any configured model — pick a cheap one to keep it cheap).
 > - 🧩 **Per-thread subagent model dropdown** — in **Ultra mode**, a second model picker lets you route `task` subagents to a cheaper or local model instead of the lead model (defaults to "Follow lead").
@@ -129,6 +130,7 @@ DeerFlow has newly integrated the intelligent search and crawling toolset indepe
     - [Context Engineering](#context-engineering)
     - [System Prompt](#system-prompt)
     - [Long-Term Memory](#long-term-memory)
+    - [Internet Access Switch](#internet-access-switch)
     - [Concurrent Chats](#concurrent-chats)
   - [Recommended Models](#recommended-models)
   - [Embedded Python Client](#embedded-python-client)
@@ -1746,6 +1748,57 @@ PYTHONPATH=. python scripts/migrate_memory_markdown.py --storage-path /path/to/d
 The v1-to-v2 storage migration is one-way for a running application: pre-PR code does not read Markdown facts. Before upgrading a persistent deployment, stop DeerFlow and take a filesystem snapshot or full backup of the configured memory storage root. The migration also durably retains each destructive JSON source beside the original path as `{manifest_filename}.v1.bak` before writing v2 data; an existing mismatched backup or a backup-write failure stops migration without modifying the v1 source. This local backup preserves pre-migration data but is not a substitute for a full snapshot and does not contain facts created after the upgrade.
 
 `--user-id` may be repeated. `--all-users` discovers the existing directory-safe buckets below the selected storage root; standalone integrations that passed raw IDs containing characters such as `@` should use the original value with `--user-id`. A failed user's migration is reported without hiding the rest of the audit, and the command exits non-zero when any user fails. The automatic first-read path remains enabled, so running this CLI is not required for startup.
+
+### Internet Access Switch
+
+Every conversation has its own internet switch: the globe button in the composer,
+between the microphone and the prompt-polish button. Click it and the globe
+closes; from the next message on, that conversation runs with **no
+internet-reaching tool in it at all** — no `web_search`, no `web_fetch`, no
+browser control, no MCP server, no external ACP agent. The agent answers from the
+conversation, the files in the thread, and what the model already knows. Click it
+again and the tools come back on the next message. It needs no configuration and
+no restart.
+
+**The switch belongs to the conversation, not to the app.** Two chats open side
+by side can be on opposite settings — one working offline through a private
+document while the other researches — for the same reason each chat has its own
+model. The choice is remembered per conversation and survives a reload, and a
+chat that predates the feature (or that you never touched) simply stays online:
+this is an opt-out, so nothing changes until you click.
+
+**Subagents inherit it.** A delegated `task` builds its toolset from the
+conversation that dispatched it, so an offline chat cannot get its browsing done
+by asking a subagent to do it. This is the property most worth knowing, because
+without it the feature would look like it works while being one delegation away
+from meaningless.
+
+**What it does not do**, stated plainly, because a switch you cannot trust is
+worse than no switch:
+
+- **It governs tools, not the sandbox's network.** The `bash` tool stays — it is
+  how the agent runs your code, and whether the shell can reach the internet is a
+  property of the container your operator runs, not of this button. The offline
+  run is explicitly told not to use the shell as a network workaround, but that
+  is an instruction, not a wall. If you need a hard boundary, run the sandbox
+  container on an internal Docker network.
+- **It cannot unlearn.** A model that memorized a fact will still recite it; what
+  changes is that it can no longer *look anything up*, and it is told to say so
+  rather than to present recalled facts as freshly verified.
+- **It does not stop the chat model call itself.** The conversation still goes to
+  whichever model you selected — a cloud model is still a network request. Pair
+  the switch with a local Ollama model for a conversation that reaches nothing.
+
+Local tools are deliberately left alone while the switch is off: reading and
+writing files, the shell, local ComfyUI image and video generation, and a
+self-hosted knowledge base all keep working, so "offline" means *offline*, not
+*idle*. The classification is fail-closed — a tool group DeerFlow does not
+recognize as local is treated as internet-reaching and dropped — so a provider
+someone adds later is excluded until it is explicitly known to be local.
+
+Non-web callers (IM channels, the TUI, scheduled tasks, the embedded client) have
+no composer and send no switch, so they are unaffected and keep whatever
+`config.yaml` configured.
 
 ### Concurrent Chats
 

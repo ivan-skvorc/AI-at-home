@@ -144,6 +144,10 @@ export interface Translations {
     createSkillPrompt: string;
     addAttachments: string;
     inputPolish: string;
+    internetOn: string;
+    internetOff: string;
+    internetOnHint: string;
+    internetOffHint: string;
     inputPolishing: string;
     inputPolishNoChanges: string;
     inputPolishFailed: string;

@@ -166,6 +166,12 @@ export const zhCN: Translations = {
       "我们一起用 skill-creator 技能来创建一个技能吧。先问问我希望这个技能能做什么。",
     addAttachments: "添加附件",
     inputPolish: "优化输入",
+    internetOn: "已联网",
+    internetOff: "已断网",
+    internetOnHint:
+      "本会话已联网。关闭后将移除网页搜索、网页抓取、浏览器控制、MCP 服务器和外部智能体——仅影响当前会话，其他会话不受影响。",
+    internetOffHint:
+      "本会话已断网。智能体只能依据你的文件、当前对话和自身知识作答，无法联网，也无法访问 MCP 服务器。点击可重新联网。",
     inputPolishing: "正在优化输入...",
     inputPolishNoChanges: "当前输入已经足够清晰。",
     inputPolishFailed: "优化输入失败。",

@@ -170,6 +170,12 @@ export const enUS: Translations = {
       "We're going to build a new skill step by step with `skill-creator`. To start, what do you want this skill to do?",
     addAttachments: "Add attachments",
     inputPolish: "Polish input",
+    internetOn: "Internet on",
+    internetOff: "Internet off",
+    internetOnHint:
+      "Internet is on for this conversation. Turn it off to take away web search, page fetching, browser control, MCP servers and external agents — this chat only; your other chats are unaffected.",
+    internetOffHint:
+      "Internet is off for this conversation. The agent answers from your files, this conversation and its own knowledge, and cannot browse or reach an MCP server. Click to turn it back on.",
     inputPolishing: "Polishing input...",
     inputPolishNoChanges: "This input is already clear.",
     inputPolishFailed: "Failed to polish input.",

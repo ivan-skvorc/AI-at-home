@@ -100,3 +100,20 @@ export function deriveModeContext(
 
   return derived;
 }
+
+/**
+ * Resolve the per-conversation internet switch for the run context
+ * (fork feature, FORK.md §27).
+ *
+ * The backend treats **only an explicit `false`** as "go offline" — absent means
+ * "no opinion" so non-web callers (IM channels, TUI, scheduler) keep the
+ * operator's configured tools. This normalizes whatever localStorage holds into
+ * that strict boolean, so a corrupted or hand-edited settings blob can never put
+ * a string like `"false"` on the wire, where the backend would read it as
+ * *enabled* and quietly hand an offline conversation its web tools back.
+ */
+export function resolveInternetEnabled(context: {
+  internet_enabled?: unknown;
+}): boolean {
+  return context.internet_enabled !== false;
+}
