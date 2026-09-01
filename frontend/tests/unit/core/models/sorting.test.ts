@@ -2,12 +2,16 @@ import { describe, expect, it } from "@rstest/core";
 
 import {
   DEFAULT_MODEL_PICKER_PREFS,
+  formatContextWindow,
+  formatModelSize,
   groupModelsByProvider,
   modelNameSegments,
   modelPriceSortValue,
+  modelRowParts,
   compactModelDisplayName,
   parseModelPrice,
   parseModelProvider,
+  parseModelProviderLabel,
   resolveModelPrice,
   sortModels,
   splitModelNamePriceSegments,
@@ -505,5 +509,203 @@ describe("compactModelDisplayName", () => {
       expect(segments.map((s) => s.kind)).toContain("listPrice");
       expect(segments.map((s) => s.kind)).toContain("promoPrice");
     }
+  });
+});
+
+describe("parseModelProviderLabel", () => {
+  // `parseModelProvider` buckets a model for sorting; this names it for the eye.
+  // The two are deliberately different: nine first-party labs share the "Other"
+  // bucket, and a row that called Grok "Other" would be worse than no label.
+  it("reads the literal suffix, not the four-way sort bucket", () => {
+    expect(parseModelProviderLabel("Claude Opus 5 (Anthropic)")).toBe(
+      "Anthropic",
+    );
+    expect(parseModelProviderLabel("Grok 5 (xAI)")).toBe("xAI");
+    expect(parseModelProviderLabel("qwen3:8b (Ollama)")).toBe("Ollama");
+    // ...where the sort bucket for the same name is "Other".
+    expect(parseModelProvider("Grok 5 (xAI)")).toBe("Other");
+  });
+
+  it("skips the privacy marker rather than reporting `p` as a provider", () => {
+    // `(p)` rides *after* the provider suffix, so a naive last-group read finds
+    // the marker on exactly the models that most need their provider shown.
+    expect(parseModelProviderLabel("MiniMax M3 (OpenRouter) (p)")).toBe(
+      "OpenRouter",
+    );
+    expect(parseModelProviderLabel("Local Thing (p)")).toBe(null);
+  });
+
+  it("stops at a price group instead of reading it as a provider", () => {
+    expect(parseModelProviderLabel("Claude Opus 4.8 ($5/25)")).toBe(null);
+    expect(parseModelProviderLabel("Claude Opus 4.8 ($5/25) (Anthropic)")).toBe(
+      "Anthropic",
+    );
+  });
+
+  it("has no provider for a bare name, an empty name, or a name in brackets", () => {
+    expect(parseModelProviderLabel("Doubao-Seed-1.8")).toBe(null);
+    expect(parseModelProviderLabel("")).toBe(null);
+    expect(parseModelProviderLabel(null)).toBe(null);
+    // A hand-added model called only "(local)" is its own name, not a provider.
+    expect(parseModelProviderLabel("(local)")).toBe(null);
+  });
+});
+
+describe("formatModelSize", () => {
+  it("reports weights in binary units, matching the VRAM budget they compete with", () => {
+    // `ollama.vram_gb` is read as GiB (FORK.md §1). Quoting weights in GB would
+    // put the two figures ~7% apart in the one comparison the number is for.
+    expect(formatModelSize(5 * 1024 ** 3)).toBe("5 GiB");
+    expect(formatModelSize(9.3 * 1024 ** 3)).toBe("9.3 GiB");
+    expect(formatModelSize(300 * 1024 ** 2)).toBe("300 MiB");
+  });
+
+  it("has nothing to show for a hosted model", () => {
+    // Every cloud model takes this path; a "0 B" chip on all of them would be
+    // noise on the rows the size cannot apply to.
+    expect(formatModelSize(null)).toBe(null);
+    expect(formatModelSize(undefined)).toBe(null);
+    expect(formatModelSize(0)).toBe(null);
+    expect(formatModelSize(Number.NaN)).toBe(null);
+    expect(formatModelSize(-1)).toBe(null);
+  });
+});
+
+describe("formatContextWindow", () => {
+  it("abbreviates with whichever convention the number is exact in", () => {
+    // A window is advertised in both: 32768 is "32K" everywhere, 200000 is
+    // "200K". One fixed divisor renders one of the two ~5% off its own name.
+    expect(formatContextWindow(32768)).toBe("32K");
+    expect(formatContextWindow(131072)).toBe("128K");
+    expect(formatContextWindow(200000)).toBe("200K");
+    expect(formatContextWindow(1000000)).toBe("1M");
+    expect(formatContextWindow(1048576)).toBe("1M");
+    expect(formatContextWindow(900)).toBe("900");
+  });
+
+  it("shows nothing when the deployment configured no window", () => {
+    expect(formatContextWindow(null)).toBe(null);
+    expect(formatContextWindow(undefined)).toBe(null);
+    expect(formatContextWindow(0)).toBe(null);
+  });
+});
+
+describe("modelRowParts", () => {
+  const rowModel = (
+    display_name: string,
+    extra: Partial<Model> = {},
+  ): Model => ({ id: "m", name: "m", model: "m", display_name, ...extra });
+
+  it("splits a bundled model into provider, bare name, and a pinned price", () => {
+    // The row positions these three independently — provider first, price at
+    // the far edge — which a single rendered string cannot express.
+    expect(
+      modelRowParts(
+        rowModel("Claude Sonnet 5 (Anthropic)", {
+          price: { currency: "USD", input: 3, output: 15 },
+        }),
+      ),
+    ).toEqual({
+      provider: "Anthropic",
+      name: "Claude Sonnet 5",
+      price: [{ text: "($3/15)", kind: "price" }],
+      size: null,
+      contextWindow: null,
+    });
+  });
+
+  it("keeps the discounted pair's colours: list price red, promo green", () => {
+    const parts = modelRowParts(
+      rowModel("MiniMax M3 (OpenRouter) (p)", {
+        price: {
+          currency: "USD",
+          input: 0.6,
+          output: 2.4,
+          discount_input: 0.24,
+          discount_output: 0.96,
+        },
+      }),
+    );
+    // The privacy marker belongs to the name and must survive; the provider is
+    // lifted out from behind it.
+    expect(parts.name).toBe("MiniMax M3 (p)");
+    expect(parts.provider).toBe("OpenRouter");
+    expect(parts.price).toEqual([
+      { text: "($0.6/2.4", kind: "listPrice" },
+      { text: " → $0.24/0.96*)", kind: "promoPrice" },
+    ]);
+  });
+
+  it("prices a legacy name from the name, without leaving a half-stripped bracket", () => {
+    // A config written before §17 carries the pair inside `display_name`. The
+    // group is removed whole, so the name never comes back as "GLM-5.2 ( → )".
+    const parts = modelRowParts(
+      rowModel("GLM-5.2 ($1.15/3.6 → $0.28/0.87*) (OpenRouter) (p)"),
+    );
+    expect(parts.name).toBe("GLM-5.2 (p)");
+    expect(parts.price).toEqual([
+      { text: "($1.15/3.6", kind: "listPrice" },
+      { text: " → $0.28/0.87*)", kind: "promoPrice" },
+    ]);
+    expect(
+      modelRowParts(rowModel("Claude Opus 4.8 ($5/25) (Anthropic)")),
+    ).toMatchObject({
+      name: "Claude Opus 4.8",
+      price: [{ text: "($5/25)", kind: "price" }],
+    });
+  });
+
+  it("prefers the structured price and does not render the name's copy twice", () => {
+    const parts = modelRowParts(
+      rowModel("Claude Opus 4.8 ($5/25) (Anthropic)", {
+        price: { currency: "USD", input: 4, output: 20 },
+      }),
+    );
+    expect(parts.name).toBe("Claude Opus 4.8");
+    expect(parts.price).toEqual([{ text: "($4/20)", kind: "price" }]);
+  });
+
+  it("surfaces a local model's weights and window, and nothing for a hosted one", () => {
+    // The reason the fields exist: how much of the GPU the weights take decides
+    // how much room is left for the window the entry asks for.
+    expect(
+      modelRowParts(
+        rowModel("qwen3:8b (Ollama)", {
+          size_bytes: 5.2 * 1024 ** 3,
+          context_window: 32768,
+        }),
+      ),
+    ).toEqual({
+      provider: "Ollama",
+      name: "qwen3:8b",
+      price: [],
+      size: "5.2 GiB",
+      contextWindow: "32K",
+    });
+    expect(modelRowParts(rowModel("Claude Opus 5 (Anthropic)"))).toMatchObject({
+      size: null,
+      contextWindow: null,
+    });
+  });
+
+  it("renders an unrecognized name verbatim rather than swallowing half of it", () => {
+    // Total, like every other parser here: nothing the row cannot classify is
+    // dropped — it stays in the name, where the user can still read it.
+    expect(modelRowParts(rowModel("Doubao-Seed-1.8"))).toEqual({
+      provider: null,
+      name: "Doubao-Seed-1.8",
+      price: [],
+      size: null,
+      contextWindow: null,
+    });
+    // A `$` pair the group regex does not recognize is left in the name rather
+    // than being lifted out and rendered twice.
+    const odd = modelRowParts(rowModel("Odd $1/2 model (Anthropic)"));
+    expect(odd.price).toEqual([]);
+    expect(odd.name).toBe("Odd $1/2 model");
+    expect(modelRowParts(rowModel(""))).toMatchObject({
+      provider: null,
+      name: "",
+    });
   });
 });

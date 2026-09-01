@@ -29,6 +29,19 @@ export interface Model {
   supports_tools?: boolean;
   /** Null when this model has no configured price. */
   price?: ModelPrice | null;
+  /**
+   * Total context window in tokens (fork feature), when the deployment
+   * configured one. For an Ollama model this is the `num_ctx` the sync sized
+   * for the local GPU, which is the window the model actually runs with — not
+   * its native maximum. Null when unknown.
+   */
+  context_window?: number | null;
+  /**
+   * On-disk size of a local model's weights in bytes (fork feature), written by
+   * `scripts/sync-ollama-models.py` from Ollama's `/api/tags`. Null for hosted
+   * models, where the number is neither known nor meaningful.
+   */
+  size_bytes?: number | null;
 }
 
 export interface TokenUsageSettings {

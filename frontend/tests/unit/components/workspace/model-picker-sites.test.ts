@@ -85,6 +85,22 @@ describe("every model-selection site goes through the shared picker", () => {
     expect(read(file)).toContain("ModelSelect");
   });
 
+  it("every picker renders its rows through the shared row component", () => {
+    // The row layout — provider first, price pinned to the right edge, weights
+    // and window on the second line — is the same silent-drift risk as the flat
+    // list above: a site that hand-rolls the markup still renders a perfectly
+    // good row, just one that lines up with nothing and drops the local
+    // model's size. Anything that drives `ModelPickerList` uses `ModelPickerRow`.
+    const components = walk(path.join(FRONTEND_ROOT, "src/components"));
+    const offenders = components.filter((file) => {
+      const source = readFileSync(file, "utf8");
+      return (
+        /<ModelPickerList\b/.test(source) && !source.includes("ModelPickerRow")
+      );
+    });
+    expect(offenders.map((f) => path.relative(FRONTEND_ROOT, f))).toEqual([]);
+  });
+
   it("no component builds its own flat list of models", () => {
     const components = walk(path.join(FRONTEND_ROOT, "src/components"));
     const offenders = components.filter((file) => {

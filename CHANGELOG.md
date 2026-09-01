@@ -25,6 +25,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   network (the offline run is told not to use it as a workaround), and it does
   not stop the chat model call itself — a conversation that reaches nothing is
   this switch plus a local model.
+- **models:** **The model dropdown lines its prices up, and says how big a local
+  model is.** Rows now read *provider, name, price* — with the price pinned to
+  the right edge of the row, so with a couple of dozen models the rates form a
+  column you can compare down instead of trailing wherever each name happened to
+  end. Under the name, next to the model id, a local model shows **its weights
+  and the context window it was sized for** (`qwen3:8b · 5.2 GiB · 32K ctx`):
+  those are the two numbers that decide whether a model actually fits on your
+  card, and until now the only way to find out was to pick it and watch Ollama
+  offload to CPU. The size is recorded per entry by
+  `scripts/sync-ollama-models.py` (new `size_bytes:` key, read from the daemon's
+  own `/api/tags`) and served, with the existing `context_window`, from
+  `GET /api/models`; a model the daemon reports no size for, and every hosted
+  model, simply shows nothing there. No configuration: re-running any launch
+  path refreshes the synced block, and grouping by provider drops the per-row
+  provider the section heading already carries.
 - **media:** **Local image and video generation is on by default, and there is a
   button for it.** The `media` tool entries ship active in `config.example.yaml`
   (`config_version` 47; existing configs pick them up on the next

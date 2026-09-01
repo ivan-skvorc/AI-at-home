@@ -44,6 +44,17 @@ class ModelConfig(BaseModel):
             "percentage."
         ),
     )
+    size_bytes: int | None = Field(
+        default=None,
+        gt=0,
+        description=(
+            "Fork feature. On-disk size of the model's weights in bytes, written by "
+            "`scripts/sync-ollama-models.py` from Ollama's `/api/tags`. Presentation-only "
+            "metadata: the model picker renders it beside the context window so a local "
+            "model's GPU footprint is visible before it is selected. Never reaches the "
+            "provider client. Meaningless for hosted models, which is why it is unset there."
+        ),
+    )
     fallback: list[str] | None = Field(
         default=None,
         description=(

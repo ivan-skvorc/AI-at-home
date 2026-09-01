@@ -43,6 +43,8 @@ rs.mock("@/core/i18n/hooks", () => ({
         sortDescending: "Descending",
         groupByProvider: "Group by provider",
         modelProviderOther: "Other",
+        modelContextSuffix: "ctx",
+        modelMetaTitle: "Model id · weights on disk · context window",
       },
     },
     changeLocale: rs.fn(),
@@ -84,7 +86,14 @@ const MODELS: Model[] = [
     display_name: "Alpha ($1/4) (OpenRouter)",
     price: { currency: "USD", input: 1, output: 4 },
   }),
-  model({ name: "mid", display_name: "Mid (Ollama)" }),
+  model({
+    name: "mid",
+    display_name: "Mid (Ollama)",
+    // A local model: no price, but a GPU footprint and the window the sync
+    // sized for it — the two figures a cloud model has no answer for.
+    size_bytes: 5.2 * 1024 ** 3,
+    context_window: 32768,
+  }),
 ];
 
 function open(extra: Record<string, unknown> = {}) {
@@ -195,6 +204,48 @@ test("picking a model reports its name and closes the dropdown", () => {
   const onChange = rs.fn();
   render(<ModelSelect models={MODELS} value="zeta" onChange={onChange} />);
   fireEvent.click(screen.getByRole("button"));
-  fireEvent.click(screen.getByText("Alpha ", { exact: false }));
+  // The name is its own node now that the row lays the provider, name and
+  // price out as separate columns.
+  fireEvent.click(screen.getByText("Alpha"));
   expect(onChange).toHaveBeenCalledWith("alpha");
+});
+
+function row(name: string): HTMLElement {
+  const found = screen
+    .getAllByRole("option")
+    .find((el) => el.getAttribute("data-value") === name);
+  if (!found) {
+    throw new Error(`no row for ${name}`);
+  }
+  return found;
+}
+
+test("a row leads with the provider and pins the price to its far edge", () => {
+  open();
+  const zeta = row("zeta");
+  // Provider first: with a couple of dozen models the source is what you scan
+  // for before the name.
+  expect(zeta.textContent?.startsWith("Anthropic")).toBe(true);
+  // And the price at the edge rather than trailing whatever length the name
+  // happened to be — that is what makes the column comparable down the list.
+  const pinned = zeta.querySelector("span.ml-auto");
+  expect(pinned?.textContent).toBe("($5/25)");
+});
+
+test("grouping by provider drops the per-row copy the heading already carries", () => {
+  prefs = { ...DEFAULT_MODEL_PICKER_PREFS, groupByProvider: true };
+  open();
+  // The section heading says "Anthropic"; repeating it on every row under it is
+  // noise, so the row starts at the name.
+  expect(row("zeta").textContent?.startsWith("Zeta")).toBe(true);
+});
+
+test("a local model shows its weights and context window beside the model id", () => {
+  open();
+  // The point of the two fields: how much of the GPU the weights already
+  // occupy is what decides how much room the window has left.
+  expect(row("mid").textContent).toContain("mid · 5.2 GiB · 32K ctx");
+  // A hosted model has neither, and shows the id alone rather than empty slots.
+  expect(row("zeta").textContent).toContain("zeta");
+  expect(row("zeta").textContent).not.toContain("GiB");
 });

@@ -224,6 +224,10 @@ def create_chat_model(
             # Runtime/UI metadata used to size the context indicator. Provider
             # clients do not accept this as a model-constructor argument.
             "context_window",
+            # Fork feature: the local model's weight size on disk, shown in the
+            # picker. Same rule as `context_window` — display metadata, and a
+            # provider client would forward it into the request payload.
+            "size_bytes",
             # Presentation-only metadata (consumed by the console's cost
             # display) — must never reach the provider client, which would
             # forward unknown kwargs into the completion request payload.

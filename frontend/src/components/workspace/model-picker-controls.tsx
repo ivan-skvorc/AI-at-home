@@ -6,6 +6,7 @@ import { type ReactNode, useMemo } from "react";
 import {
   ModelSelectorGroup,
   ModelSelectorList,
+  ModelSelectorName,
 } from "@/components/ai-elements/model-selector";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
@@ -13,10 +14,12 @@ import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { useI18n } from "@/core/i18n/hooks";
 import {
   groupModelsByProvider,
+  type ModelNameSegmentKind,
   type ModelPickerPrefs,
   type ModelProvider,
   type ModelSortKey,
   compactModelDisplayName,
+  modelRowParts,
   sortModels,
   modelNameSegments,
 } from "@/core/models/sorting";
@@ -110,12 +113,27 @@ export function ModelPickerControls({
 }
 
 /**
- * Render a model's `display_name` with its price picked out in colour.
+ * The colour a price run is painted in.
  *
  * Green is what you pay: the only price on an ordinary model, or the starred
  * promo on a discounted one. Red is the standard list price *beside* a live
  * promo — it is what the model reverts to, so it reads as the more expensive of
- * the pair rather than as an error. A name with no parseable price renders
+ * the pair rather than as an error. Kept in one place so the trigger label and
+ * the row cannot drift into two colour conventions for the same number.
+ */
+function priceClassName(kind: ModelNameSegmentKind): string | undefined {
+  if (kind === "price" || kind === "promoPrice") {
+    return "text-emerald-500";
+  }
+  return kind === "listPrice" ? "text-red-500" : undefined;
+}
+
+/**
+ * Render a model's `display_name` with its price picked out in colour.
+ *
+ * This is the **collapsed trigger's** label, where the name and price are one
+ * flowing string. The open list's rows use `ModelPickerRow` below, which lays
+ * the same pieces out as columns. A name with no parseable price renders
  * verbatim (see `splitModelNamePriceSegments`), so nothing is ever hidden by a
  * format the parser does not recognize.
  */
@@ -168,11 +186,7 @@ export function ModelDisplayName({
         <span
           key={index}
           className={cn(
-            segment.kind === "price" || segment.kind === "promoPrice"
-              ? "text-emerald-500"
-              : segment.kind === "listPrice"
-                ? "text-red-500"
-                : undefined,
+            priceClassName(segment.kind),
             // Everything after the leading text is pinned; the model name is
             // the only part that may be sacrificed to a narrow button.
             compact &&
@@ -188,14 +202,91 @@ export function ModelDisplayName({
   );
 }
 
+/**
+ * One model's row in the open picker: **provider, then name, then the price
+ * pinned to the right edge**, with the model id, its weights, and its context
+ * window on a second line.
+ *
+ * The row used to be a single flowing string — `Claude Sonnet 5 (Anthropic)
+ * ($3/15)` — so the one number worth comparing across a couple of dozen models
+ * landed wherever each name happened to end, and no two rows lined up. Pinning
+ * it with `ml-auto` needs the price as its own node, which is why
+ * `modelRowParts` splits what `modelNameSegments` joins; the width-capped
+ * trigger button still uses the joined form, where one string is correct.
+ *
+ * Two details are load-bearing. The provider is the **literal** suffix
+ * (`xAI`, `DeepSeek`), not the four-way sort bucket, so a first-party lab is
+ * named rather than collapsed into "Other"; and only the name may ellipsize —
+ * the provider and the price are `shrink-0`, the same rule the compact trigger
+ * follows, because a truncated price is worse than a truncated name.
+ *
+ * Used by every picker (composer lead, composer subagent, sidecar, and the
+ * shared `ModelSelect`). A site that hand-rolls this markup instead is how the
+ * rows drift apart again — see `model-picker-sites.test.ts`.
+ */
+export function ModelPickerRow({
+  model,
+  showProvider = true,
+  annotation,
+}: {
+  model: Model;
+  /**
+   * Grouped mode already names the provider in the section heading, so the
+   * per-row copy is redundant there and is dropped.
+   */
+  showProvider?: boolean;
+  /** Rendered after the name, e.g. `(no tool support)`. */
+  annotation?: ReactNode;
+}) {
+  const { t } = useI18n();
+  const parts = useMemo(() => modelRowParts(model), [model]);
+  const meta = [
+    model.model,
+    parts.size,
+    parts.contextWindow &&
+      `${parts.contextWindow} ${t.inputBox.modelContextSuffix}`,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+  return (
+    <div className="flex min-w-0 flex-1 flex-col">
+      <ModelSelectorName className="flex w-full min-w-0 items-baseline gap-1.5">
+        {showProvider && parts.provider && (
+          <span className="text-muted-foreground shrink-0 text-[10px] tracking-wide uppercase">
+            {parts.provider}
+          </span>
+        )}
+        <span className="min-w-0 truncate">{parts.name}</span>
+        {annotation}
+        {parts.price.length > 0 && (
+          <span className="ml-auto shrink-0 pl-2 tabular-nums">
+            {parts.price.map((segment, index) => (
+              <span key={index} className={priceClassName(segment.kind)}>
+                {segment.text}
+              </span>
+            ))}
+          </span>
+        )}
+      </ModelSelectorName>
+      <span
+        className="text-muted-foreground truncate text-[10px]"
+        title={t.inputBox.modelMetaTitle}
+      >
+        {meta}
+      </span>
+    </div>
+  );
+}
+
 function providerHeading(provider: ModelProvider, otherLabel: string): string {
   return provider === "Other" ? otherLabel : provider;
 }
 
 /**
  * Render `models` inside a `ModelSelectorList`, ordered/grouped by `prefs`.
- * `renderItem` supplies each row (it owns its own `key`), so the lead, subagent,
- * and sidecar pickers keep their own item markup while sharing the ordering.
+ * `renderItem` supplies each row (it owns its own `key` and its own selection
+ * behaviour — which model is checked, whether it is disabled), while the row's
+ * *contents* come from `ModelPickerRow` so every picker looks the same.
  * `leading` is rendered before every model (e.g. the subagent "Follow lead"
  * pseudo-item) and stays pinned regardless of sort/group.
  */

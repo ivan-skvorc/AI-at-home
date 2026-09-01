@@ -232,6 +232,8 @@ export const zhCN: Translations = {
     sortDescending: "降序排列",
     groupByProvider: "按提供方分组",
     modelProviderOther: "其他",
+    modelContextSuffix: "上下文",
+    modelMetaTitle: "模型 ID · 权重占用磁盘 · 上下文窗口",
     surpriseMe: "小惊喜",
     surpriseMePrompt: "给我一个小惊喜吧",
     followupLoading: "正在生成可能的后续问题...",

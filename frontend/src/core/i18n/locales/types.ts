@@ -201,6 +201,8 @@ export interface Translations {
     sortDescending: string;
     groupByProvider: string;
     modelProviderOther: string;
+    modelContextSuffix: string;
+    modelMetaTitle: string;
     surpriseMe: string;
     surpriseMePrompt: string;
     followupLoading: string;

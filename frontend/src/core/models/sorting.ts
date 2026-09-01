@@ -290,29 +290,196 @@ export function modelNameSegments(
   displayNameOverride?: string | null,
 ): ModelNameSegment[] {
   const name = displayNameOverride ?? model.display_name;
-  const price = model.price;
+  const price = structuredPriceSegments(model.price);
+  if (price.length === 0) {
+    return splitModelNamePriceSegments(name);
+  }
+  const bare = (name ?? "").replace(PRICE_PAIR_IN_NAME, "").trimEnd();
+  return [{ text: `${bare} `, kind: "text" }, ...price];
+}
+
+/**
+ * The parenthesised price runs for a model's structured `price:` field, or `[]`
+ * when it has none.
+ *
+ * Shared by `modelNameSegments` (which appends them to the name) and
+ * `modelRowParts` (which pins them to the right edge of a row), so the two
+ * renderings cannot disagree about what a discount looks like — one green pair,
+ * or a red list price followed by the green promo.
+ */
+function structuredPriceSegments(price: Model["price"]): ModelNameSegment[] {
   if (
     !price ||
     !Number.isFinite(price.input) ||
     !Number.isFinite(price.output)
   ) {
-    return splitModelNamePriceSegments(name);
+    return [];
   }
-  const bare = (name ?? "").replace(PRICE_PAIR_IN_NAME, "").trimEnd();
-  const discounted =
-    price.discount_input != null && price.discount_output != null;
   const list = `($${formatRate(price.input)}/${formatRate(price.output)}`;
-  const segments: ModelNameSegment[] = [{ text: `${bare} `, kind: "text" }];
-  if (discounted) {
-    segments.push({ text: list, kind: "listPrice" });
-    segments.push({
-      text: ` → $${formatRate(price.discount_input!)}/${formatRate(price.discount_output!)}*)`,
-      kind: "promoPrice",
-    });
-  } else {
-    segments.push({ text: `${list})`, kind: "price" });
+  if (price.discount_input == null || price.discount_output == null) {
+    return [{ text: `${list})`, kind: "price" }];
   }
-  return segments;
+  return [
+    { text: list, kind: "listPrice" },
+    {
+      text: ` → $${formatRate(price.discount_input)}/${formatRate(price.discount_output)}*)`,
+      kind: "promoPrice",
+    },
+  ];
+}
+
+/**
+ * The same runs, recovered from a legacy `display_name` that embeds the pair.
+ *
+ * Only called once the whole `($…)` group has been located in the name, so the
+ * text handed to the row is the name with exactly that group removed — a price
+ * can never end up rendered twice, or half-stripped into a dangling bracket.
+ */
+function legacyPriceSegments(name: string): ModelNameSegment[] {
+  const matches = [...name.matchAll(PRICE_PAIR_ONCE)].slice(0, 2);
+  if (matches.length === 0) {
+    return [];
+  }
+  if (matches.length === 1) {
+    return [{ text: `(${matches[0]![0]})`, kind: "price" }];
+  }
+  return [
+    { text: `(${matches[0]![0]}`, kind: "listPrice" },
+    { text: ` → ${matches[1]![0]}*)`, kind: "promoPrice" },
+  ];
+}
+
+/** A whole trailing `(...)` group with its contents captured. */
+const TRAILING_GROUP_CAPTURE = /\s*\(([^()$]*)\)\s*$/;
+
+/**
+ * The literal provider suffix on a `display_name` — `Anthropic`, `OpenRouter`,
+ * `Ollama`, and each lab's own home suffix (`xAI`, `DeepSeek`, `Z.ai`, …).
+ *
+ * Distinct from `parseModelProvider`, which buckets a model into one of four
+ * *groups* for sorting and headings. This is what the row **shows**, so it must
+ * name the actual provider rather than collapsing nine first-party labs into
+ * "Other". Walks trailing groups from the right so the `(p)` privacy marker,
+ * which rides after the provider, is skipped rather than reported as one; a
+ * price group stops the walk (the `$` is excluded from the character class),
+ * and a name that is nothing but a bracketed group has no provider at all.
+ */
+export function parseModelProviderLabel(
+  displayName: string | null | undefined,
+): string | null {
+  let rest = (displayName ?? "").trim();
+  for (;;) {
+    const match = TRAILING_GROUP_CAPTURE.exec(rest);
+    if (!match) {
+      return null;
+    }
+    const label = (match[1] ?? "").trim();
+    rest = rest.slice(0, match.index).trim();
+    if (!rest) {
+      return null;
+    }
+    if (label && label.toLowerCase() !== "p") {
+      return label;
+    }
+  }
+}
+
+/**
+ * A model's weight size, for display. Binary units on purpose: the number is
+ * only interesting next to a VRAM budget, and `ollama.vram_gb` is read as GiB
+ * (FORK.md §1), so quoting the weights in GB would put the two figures ~7%
+ * apart in the one comparison the number exists to support.
+ */
+export function formatModelSize(
+  bytes: number | null | undefined,
+): string | null {
+  if (bytes == null || !Number.isFinite(bytes) || bytes <= 0) {
+    return null;
+  }
+  const gib = bytes / 1024 ** 3;
+  if (gib < 1) {
+    return `${Math.max(1, Math.round(bytes / 1024 ** 2))} MiB`;
+  }
+  return `${Number(gib.toFixed(1))} GiB`;
+}
+
+/**
+ * A context window, abbreviated for a row.
+ *
+ * Windows are quoted in both conventions — 32768 is universally "32K", 200000
+ * is "200K" — so the divisor is whichever one lands on a whole number, rather
+ * than rendering one of the two 5% off its own advertised size.
+ */
+export function formatContextWindow(
+  tokens: number | null | undefined,
+): string | null {
+  if (tokens == null || !Number.isFinite(tokens) || tokens <= 0) {
+    return null;
+  }
+  if (tokens < 1000) {
+    return String(Math.round(tokens));
+  }
+  const binary = tokens / 1024;
+  const inK =
+    Math.abs(binary - Math.round(binary)) < 0.02
+      ? Math.round(binary)
+      : Math.round(tokens / 1000);
+  return inK >= 1000 ? `${Number((inK / 1000).toFixed(1))}M` : `${inK}K`;
+}
+
+/** A model's picker row, split into the parts the row lays out itself. */
+export interface ModelRowParts {
+  /** Rendered first, so the eye lands on the source before the name. */
+  provider: string | null;
+  /** The name with its provider suffix and price removed; `(p)` kept. */
+  name: string;
+  /** Price runs, pinned to the right edge of the row. `[]` when unpriced. */
+  price: ModelNameSegment[];
+  /** Weights on disk, e.g. `9.3 GiB`. Null for a hosted model. */
+  size: string | null;
+  /** Context window, e.g. `32K`. Null when the deployment configured none. */
+  contextWindow: string | null;
+}
+
+export type RowModel = Pick<
+  Model,
+  "display_name" | "price" | "size_bytes" | "context_window"
+>;
+
+/**
+ * Split a model into the pieces a picker row positions independently: provider
+ * at the start of the line, name after it, price pinned to the far edge, and
+ * the size/window pair on the second line.
+ *
+ * The old row rendered one string — `Claude Sonnet 5 (Anthropic) ($3/15)` — so
+ * the price landed wherever the name happened to end and no two rows lined up.
+ * Pinning it needs the price as its own node, which is the whole reason this
+ * exists beside `modelNameSegments` (which is still what the width-capped
+ * trigger uses, where one flowing string is the right answer).
+ *
+ * Total, like every other parser here: `name` is the display name minus exactly
+ * the provider group and exactly the price group that was recognized, so an
+ * unrecognized format is rendered verbatim rather than partially swallowed.
+ */
+export function modelRowParts(model: RowModel): ModelRowParts {
+  const raw = model.display_name ?? "";
+  // `compactModelDisplayName` already means "the name without its trailing
+  // non-price groups, keeping `(p)`" — exactly the name with the provider
+  // suffix lifted off.
+  const withoutProvider = compactModelDisplayName(raw);
+  const bare = withoutProvider.replace(PRICE_PAIR_IN_NAME, "").trim();
+  const structured = structuredPriceSegments(model.price);
+  const legacy =
+    structured.length === 0 && bare !== withoutProvider.trim()
+      ? legacyPriceSegments(withoutProvider)
+      : [];
+  return {
+    provider: parseModelProviderLabel(raw),
+    name: bare,
+    price: structured.length > 0 ? structured : legacy,
+    size: formatModelSize(model.size_bytes),
+    contextWindow: formatContextWindow(model.context_window),
+  };
 }
 
 export function modelPriceSortValue(model: NamedModel): number | null {

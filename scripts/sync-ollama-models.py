@@ -584,7 +584,7 @@ def preload_model(host: str, name: str, keep_alive: str | None = None, timeout: 
     return post(f"{normalize_host(host)}/api/generate", payload, timeout)
 
 
-def render_entry(name: str, caps: list, base_url: str = DEFAULT_HOST, num_ctx: int | None = None, keep_alive: str | None = None) -> str:
+def render_entry(name: str, caps: list, base_url: str = DEFAULT_HOST, num_ctx: int | None = None, keep_alive: str | None = None, size_bytes: int | None = None) -> str:
     """Render a single Ollama model entry as YAML at 2-space indent.
 
     When ``num_ctx`` is known, the entry pins the context window and keeps the
@@ -598,6 +598,13 @@ def render_entry(name: str, caps: list, base_url: str = DEFAULT_HOST, num_ctx: i
     the prompt. Without it that guard sees ``None`` and short-circuits, so a
     large-document subagent could be routed to a model that cannot hold it —
     exactly the trade the routing config says it refuses to make.
+
+    ``size_bytes`` is the model's on-disk weight size from ``/api/tags`` — the
+    same figure this script already costs the KV cache against. It is written so
+    the model picker can show how much of the GPU a model occupies before its
+    context is allocated, which is what actually decides whether the window the
+    entry asks for is affordable next to a second resident model. Presentation
+    metadata only: it never reaches the provider client.
     """
     num_predict = DEFAULT_NUM_PREDICT
     if num_ctx is not None:
@@ -612,6 +619,8 @@ def render_entry(name: str, caps: list, base_url: str = DEFAULT_HOST, num_ctx: i
     if num_ctx is not None:
         lines.append(f"{INDENT}  num_ctx: {num_ctx}")
         lines.append(f"{INDENT}  context_window: {num_ctx}")
+    if size_bytes:
+        lines.append(f"{INDENT}  size_bytes: {int(size_bytes)}")
     if keep_alive:
         # ChatOllama forwards keep_alive to the daemon, so the model stays
         # resident between turns instead of paying a cold start per subagent call.
@@ -712,13 +721,15 @@ def sync(text: str, models: list, base_url: str = DEFAULT_HOST) -> str:
         new_section.append("")
         new_section.append(f"{INDENT}{BEGIN_MARKER}")
         for entry in models:
-            # Entries are (name, caps), (name, caps, num_ctx), or
-            # (name, caps, num_ctx, keep_alive); the tail fields are optional so
-            # pre-existing shorter-tuple callers keep working.
+            # Entries are (name, caps), (name, caps, num_ctx),
+            # (name, caps, num_ctx, keep_alive), or
+            # (name, caps, num_ctx, keep_alive, size_bytes); the tail fields are
+            # read positionally so pre-existing shorter-tuple callers keep working.
             name, caps = entry[0], entry[1]
             num_ctx = entry[2] if len(entry) > 2 else None
             keep_alive = entry[3] if len(entry) > 3 else None
-            new_section.append(render_entry(name, caps, base_url, num_ctx=num_ctx, keep_alive=keep_alive))
+            size_bytes = entry[4] if len(entry) > 4 else None
+            new_section.append(render_entry(name, caps, base_url, num_ctx=num_ctx, keep_alive=keep_alive, size_bytes=size_bytes))
         new_section.append(f"{INDENT}{END_MARKER}")
 
     new_section.append("")  # blank separator before next top-level key
@@ -823,7 +834,7 @@ def main() -> int:
         vram_limit = vram_num_ctx_limit(show, installed_model.get("size"), vram_bytes, kv_cache_type, num_parallel) if vram_bytes else None
         num_ctx = resolve_num_ctx(parse_context_length(show), cap=effective_num_ctx_cap(args.num_ctx_cap, vram_limit), vram_limit=vram_limit)
         keep_alive = resolve_keep_alive(name, settings, args.keep_alive)
-        models.append((name, caps, num_ctx, keep_alive))
+        models.append((name, caps, num_ctx, keep_alive, installed_model.get("size")))
         resident.append((name, show, installed_model.get("size")))
         if args.verbose:
             ctx_note = num_ctx if num_ctx is not None else "unknown (Ollama default)"

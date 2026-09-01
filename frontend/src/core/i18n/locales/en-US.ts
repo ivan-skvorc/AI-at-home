@@ -245,6 +245,8 @@ export const enUS: Translations = {
     sortDescending: "Sort descending",
     groupByProvider: "Group by provider",
     modelProviderOther: "Other",
+    modelContextSuffix: "ctx",
+    modelMetaTitle: "Model id · weights on disk · context window",
     surpriseMe: "Surprise",
     surpriseMePrompt: "Surprise me",
     followupLoading: "Generating follow-up questions...",
