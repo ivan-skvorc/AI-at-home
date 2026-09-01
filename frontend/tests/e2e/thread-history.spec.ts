@@ -1,4 +1,4 @@
-import { expect, test, type Route } from "@playwright/test";
+import { expect, test, type Locator, type Route } from "@playwright/test";
 
 import {
   mockLangGraphAPI,
@@ -22,6 +22,30 @@ const DEMO_THREAD_ID = "7cfa5f8f-a2f8-47ad-acbd-da7137baf990";
 const SVG_PROMPT_THREAD_ID = "00000000-0000-0000-0000-000000000777";
 const SVG_PROMPT_MARKER = "LEAK-STRICT-SVG-PROMPT-SHOULD-DISAPPEAR";
 const OPTIMISTIC_PROMPT_MARKER = "LEAK-OPTIMISTIC-SVG-PROMPT-SHOULD-DISAPPEAR";
+
+/**
+ * Assert a message is in the conversation, at the bottom, tolerating the
+ * virtualized list's render window.
+ *
+ * `virtual-message-list.tsx` renders a window around the current scroll
+ * position, so a message that exists in state is only in the DOM while it is
+ * inside that window. Immediately after a submit the list is *also* re-rendering
+ * around a freshly fetched history page, and whether stick-to-bottom wins that
+ * race decides whether the new message is inside the window at that instant.
+ * Asserting once, right then, was therefore flaky — roughly half of local runs,
+ * and on 2026-09-01 it lost all three CI attempts. Re-scrolling to the bottom
+ * and retrying keeps what the assertion is for (the message survived the history
+ * page advancing) and drops the dependency on winning that race.
+ */
+async function expectMessageAtBottom(scroller: Locator, message: Locator) {
+  await expect(async () => {
+    await scroller.evaluate((element) => {
+      element.scrollTop = element.scrollHeight;
+      element.dispatchEvent(new Event("scroll"));
+    });
+    await expect(message).toBeVisible({ timeout: 1_000 });
+  }).toPass({ timeout: 15_000 });
+}
 
 test.describe("Thread history", () => {
   test("sidebar shows existing threads", async ({ page }) => {
@@ -371,7 +395,7 @@ test.describe("Thread history", () => {
     await expect
       .poll(() => latestPageRequestCount, { timeout: 15_000 })
       .toBeGreaterThan(latestPageRequestsBeforeSubmit);
-    await expect(page.getByText(followUpPrompt)).toBeVisible();
+    await expectMessageAtBottom(scroller, page.getByText(followUpPrompt));
 
     let preservedDurationFound = false;
     for (let step = 0; step <= 12; step += 1) {
@@ -392,11 +416,7 @@ test.describe("Thread history", () => {
       element.dispatchEvent(new Event("scroll"));
     });
     await expect(page.getByText(originalPrompt)).toBeVisible();
-    await scroller.evaluate((element) => {
-      element.scrollTop = element.scrollHeight;
-      element.dispatchEvent(new Event("scroll"));
-    });
-    await expect(page.getByText(followUpPrompt)).toBeVisible();
+    await expectMessageAtBottom(scroller, page.getByText(followUpPrompt));
   });
 
   test("shows a completed run duration once after multi-step history", async ({
