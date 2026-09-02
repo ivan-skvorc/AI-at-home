@@ -4,6 +4,7 @@ import os
 
 from langchain.tools import tool
 
+from deerflow.community.search_time_range import SearchTimeRange
 from deerflow.config import get_app_config
 
 from .searxng_client import SearxngClient
@@ -40,11 +41,12 @@ def _get_searxng_client() -> SearxngClient:
 
 
 @tool("web_search", parse_docstring=True)
-async def web_search_tool(query: str) -> str:
+async def web_search_tool(query: str, time_range: SearchTimeRange | None = None) -> str:
     """Search the web using SearXNG.
 
     Args:
         query: The query to search for.
+        time_range: Optional relative publication/update window. Use only when the request requires recent results.
     """
     try:
         cfg = _get_tool_config("web_search")
@@ -54,7 +56,10 @@ async def web_search_tool(query: str) -> str:
             max_results = int(raw) if not isinstance(raw, int) else raw
 
         client = _get_searxng_client()
-        results = await client.search(query, max_results=max_results)
+        search_kwargs: dict[str, object] = {"max_results": max_results}
+        if time_range is not None:
+            search_kwargs["time_range"] = time_range
+        results = await client.search(query, **search_kwargs)
 
         normalized = [
             {

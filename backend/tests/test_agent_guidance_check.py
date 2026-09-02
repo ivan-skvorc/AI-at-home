@@ -38,6 +38,7 @@ EXPECTED_GUIDANCE_PATHS = {
     "frontend/src/AGENTS.md",
     "scripts/AGENTS.md",
     "backend/scripts/benchmark/AGENTS.md",
+    "frontend/src/components/workspace/chats/AGENTS.md",
 }
 
 
@@ -196,6 +197,7 @@ def test_local_guidance_files_contain_the_split_original_sections() -> None:
         "backend/packages/harness/deerflow/tracing/AGENTS.md": "### Tracing System",
         "backend/packages/harness/deerflow/tui/AGENTS.md": "### Terminal Workbench / TUI",
         "frontend/src/AGENTS.md": "### Data Flow",
+        "frontend/src/components/workspace/chats/AGENTS.md": "### Fork-specific frontend notes",
     }
 
     for relative_text, heading in expected_headings.items():
