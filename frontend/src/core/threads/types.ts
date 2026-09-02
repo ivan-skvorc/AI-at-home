@@ -135,6 +135,15 @@ export interface ThreadTokenUsageResponse {
   // run, i.e. per user message and the answer to it. Powers the per-step chart
   // in the cost dropdown. Empty when the thread has no completed runs.
   steps?: ThreadTokenUsageStepResponse[];
+  // Spend on runs the transcript no longer shows: turns an edited message
+  // replaced, an answer a regeneration superseded, failed edit attempts. It
+  // stays inside `total_cost` — the money was spent — but it is not a step of
+  // the visible conversation, so `steps` excludes it and it is reported here.
+  // The relation the header states: sum(steps) + superseded_cost = total_cost.
+  superseded_cost?: number | null;
+  superseded_promo_cost?: number | null;
+  superseded_tokens?: number;
+  superseded_runs?: number;
   aux?: Record<string, ThreadTokenUsageAuxBreakdown>;
   // Real-time context window usage (upstream #3125/#3183).
   context_usage?: ThreadContextUsage | null;

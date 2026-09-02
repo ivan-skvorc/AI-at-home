@@ -1067,6 +1067,9 @@ export const enUS: Translations = {
       `Excludes ${models} — no price configured, so the real cost is higher.`,
     promoRate: "promo rate now",
     standardRate: "standard rate",
+    replacedTurns: "Replaced turns",
+    replacedTurnsHint:
+      "Turns you replaced by editing a message or regenerating an answer. They already cost money, so they stay in the total — but they are not part of the conversation any more, so the chart leaves them out.",
     budgetLeft: "Budget left",
     budgetPeriod: (period: string) =>
       period === "daily"

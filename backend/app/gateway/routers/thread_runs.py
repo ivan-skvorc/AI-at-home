@@ -298,6 +298,23 @@ class ThreadTokenUsageResponse(BaseModel):
     # conversation cost instead of only the running total. Empty when the store
     # predates the per-run aggregation or the thread has no completed runs.
     steps: list[ThreadTokenUsageStep] = Field(default_factory=list)
+    # Spend on runs the conversation no longer shows: the turns an edited
+    # message replaced, a regenerated answer's earlier attempt, and edit
+    # attempts that failed. That money left the account, so it stays inside
+    # ``total_cost``; it is broken out here because it is *not* a step of the
+    # conversation on screen, and reporting it as one would make the chart show
+    # more steps than the thread has turns. The relation the header states in
+    # words: sum(steps) + superseded_cost == total_cost.
+    superseded_cost: float | None = Field(
+        default=None,
+        description="Standard-rate spend on runs hidden from the transcript (replaced or failed edits, superseded regenerations). Null when the thread has none, so the UI can drop the row rather than print a zero.",
+    )
+    superseded_promo_cost: float | None = Field(
+        default=None,
+        description="The same replaced spend at live promotional rates; null when nothing in it is discounted.",
+    )
+    superseded_tokens: int = Field(default=0, description="Tokens burned by those hidden runs")
+    superseded_runs: int = Field(default=0, description="How many runs the transcript no longer shows")
     aux: dict[str, ThreadTokenUsageAuxBreakdown] = Field(default_factory=dict)
     # Real-time context window usage (upstream #3125/#3183).
     context_usage: ThreadContextUsage | None = None
@@ -1590,6 +1607,28 @@ async def get_run_workspace_changes(
     )
 
 
+async def _superseded_run_ids(request: Request, thread_id: str) -> set[str]:
+    """Runs whose spend happened but whose turns the transcript no longer shows.
+
+    Exactly the set the message history hides — the source turns an edit
+    replaced, answers a successful regeneration superseded, and edit attempts
+    that failed — so the cost chart's steps line up one-for-one with the turns
+    on screen instead of drifting by one for every edit.
+
+    Never raises: a failure here means the chart shows one extra step, whereas
+    propagating it would take the whole token counter down with it. A run
+    manager may also simply be absent (a router-only test app), which is the
+    same "assume nothing is hidden" answer.
+    """
+    try:
+        run_mgr = get_run_manager(request)
+        user_id = await get_current_user(request)
+        return await _default_history_hidden_run_ids(run_mgr, thread_id, user_id=user_id)
+    except Exception:
+        logger.warning("thread token-usage: failed to resolve superseded runs; charting every run as a step", exc_info=True)
+        return set()
+
+
 def _thread_pricing_map() -> dict:
     """Per-model prices from ``models[*].pricing``; ``{}`` disables cost display."""
     try:
@@ -1663,8 +1702,21 @@ async def thread_token_usage(
     # above, so a step's figure and the running total can never disagree about
     # what a model costs. ``by_run`` is absent on a store that predates the
     # per-run aggregation, which degrades to an empty chart rather than an error.
+    #
+    # Runs the transcript hides — the turns an edited message replaced, the
+    # answer a regeneration superseded, a failed edit attempt — are *not* steps
+    # of the conversation on screen, so they are pulled out of the series and
+    # reported as one ``superseded_*`` figure instead. They stay inside
+    # ``total_cost``: the money was spent, and a total that shrank when a
+    # message was edited would be a lie about the bill.
+    hidden_run_ids = await _superseded_run_ids(request, thread_id)
     steps: list[ThreadTokenUsageStep] = []
-    for index, run_entry in enumerate(agg.get("by_run") or [], start=1):
+    superseded_cost: float | None = None
+    superseded_promo_cost: float | None = None
+    superseded_has_promo = False
+    superseded_tokens = 0
+    superseded_runs = 0
+    for run_entry in agg.get("by_run") or []:
         step_cost: float | None = None
         step_promo_cost: float | None = None
         step_has_promo = False
@@ -1681,10 +1733,21 @@ async def thread_token_usage(
             step_has_promo = step_has_promo or promo_price is not None
             promo_model_cost = token_cost(step_input, step_output, promo_price, step_cache_read) if promo_price is not None else model_cost
             step_promo_cost = round((step_promo_cost or 0.0) + promo_model_cost, 6)
+        run_id = str(run_entry.get("run_id") or "")
+        if run_id and run_id in hidden_run_ids:
+            superseded_runs += 1
+            superseded_tokens += int(run_entry.get("tokens") or 0)
+            if step_cost is not None:
+                superseded_cost = round((superseded_cost or 0.0) + step_cost, 6)
+                superseded_has_promo = superseded_has_promo or step_has_promo
+                superseded_promo_cost = round((superseded_promo_cost or 0.0) + (step_promo_cost if step_has_promo else step_cost), 6)
+            continue
         steps.append(
             ThreadTokenUsageStep(
-                index=index,
-                run_id=str(run_entry.get("run_id") or ""),
+                # Numbered over the *visible* turns, so "step 3" is the third
+                # thing the user can still see themselves asking.
+                index=len(steps) + 1,
+                run_id=run_id,
                 created_at=run_entry.get("created_at"),
                 tokens=int(run_entry.get("tokens") or 0),
                 cost=step_cost,
@@ -1744,6 +1807,10 @@ async def thread_token_usage(
         currency=currency,
         unpriced_models=sorted(unpriced_models),
         steps=steps,
+        superseded_cost=superseded_cost,
+        superseded_promo_cost=superseded_promo_cost if superseded_has_promo else None,
+        superseded_tokens=superseded_tokens,
+        superseded_runs=superseded_runs,
         aux=aux,
         context_usage=context_usage,
         spend_budget=await _thread_spend_budget(request),
