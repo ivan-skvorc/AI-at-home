@@ -58,8 +58,15 @@ def make_agent_store(config: AppConfig) -> AgentStore:
     return _file_store()
 
 
-def get_agent_store() -> AgentStore:
+def get_agent_store(app_config: AppConfig | None = None) -> AgentStore:
     """Return the store for the current process's configuration.
+
+    ``app_config`` short-circuits the resolution for a caller that already holds
+    a config. It is the same object ``get_app_config()`` would return, so the
+    backend choice is unchanged; what it avoids is a *second* trip to disk in a
+    path that promises not to take one (``apply_prompt_template``, whose
+    disk-free contract is pinned by ``TestConfigIndependence`` because
+    ``config.yaml`` is gitignored and absent in CI).
 
     Defaults to the file backend only when search mode cannot find the main app
     config — the free functions in ``agents_config`` must keep working in
@@ -81,6 +88,9 @@ def get_agent_store() -> AgentStore:
     ``test_get_agent_store_resolves_db_backend_from_on_disk_config``.
     """
     from deerflow.config.app_config import AppConfig, get_app_config
+
+    if app_config is not None:
+        return make_agent_store(app_config)
 
     try:
         config = get_app_config()

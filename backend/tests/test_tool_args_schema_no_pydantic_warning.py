@@ -239,7 +239,10 @@ def test_task_tool_description_is_optional_but_discoverable() -> None:
     parameters = convert_to_openai_tool(task_tool)["function"]["parameters"]
 
     assert parameters["required"] == ["prompt", "subagent_type"]
-    assert list(parameters["properties"]) == ["prompt", "subagent_type", "acceptance_criteria", "description"]
+    # `model` is the fork's per-call subagent override (FORK.md §22); it sits
+    # between the required pair and the optional tail, and is listed here rather
+    # than tolerated so an upstream change that drops it fails loudly.
+    assert list(parameters["properties"]) == ["prompt", "subagent_type", "model", "acceptance_criteria", "description"]
     assert parameters["properties"]["description"]["description"]
 
     validated = task_tool.tool_call_schema.model_validate({"prompt": "go", "subagent_type": "general-purpose"})
