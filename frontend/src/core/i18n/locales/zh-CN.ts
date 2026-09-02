@@ -1025,6 +1025,9 @@ export const zhCN: Translations = {
       `未包含 ${models}（未配置价格），实际费用更高。`,
     promoRate: "当前优惠价",
     standardRate: "标准价",
+    replacedTurns: "已替换的轮次",
+    replacedTurnsHint:
+      "通过编辑消息或重新生成回答而被替换掉的轮次。这些花费已经产生，因此仍计入总额；但它们已不属于当前对话，所以图表中不再显示。",
     budgetLeft: "预算余额",
     budgetPeriod: (period: string) =>
       period === "daily"

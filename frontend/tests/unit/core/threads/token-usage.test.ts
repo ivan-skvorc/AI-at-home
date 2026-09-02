@@ -496,3 +496,62 @@ test("a cost summary without a budget keeps the field null", () => {
   });
   expect(summary!.spendBudget).toBeNull();
 });
+
+// --- Replaced turns (editing an earlier message) ---------------------------
+//
+// Editing a message replaces the turns that followed it. That spend already
+// happened, so it stays inside the total; the replaced runs are no longer turns
+// of the conversation, so they are not steps in the chart. The summary has to
+// carry both halves for the header to reconcile them.
+
+test("replaced spend is carried alongside the total, not folded into the steps", () => {
+  const summary = threadTokenUsageToCostSummary({
+    ...BUDGET_BASE,
+    currency: "USD",
+    total_cost: 9,
+    superseded_cost: 7.5,
+    superseded_tokens: 1_100_000,
+    superseded_runs: 1,
+    steps: [{ index: 1, run_id: "replacement", tokens: 10, cost: 1.5 }],
+  });
+
+  expect(summary!.totalCost).toBe(9);
+  expect(summary!.supersededCost).toBe(7.5);
+  expect(summary!.supersededRuns).toBe(1);
+  expect(summary!.supersededTokens).toBe(1_100_000);
+  // The chart's last cumulative point plus the replaced spend is the headline.
+  const charted = summary!.steps.at(-1)!.cumulativeCost;
+  expect(charted + summary!.supersededCost!).toBeCloseTo(summary!.totalCost!);
+});
+
+test("an unedited thread reports no replaced spend, so the row can be dropped", () => {
+  const summary = threadTokenUsageToCostSummary({
+    ...BUDGET_BASE,
+    currency: "USD",
+    total_cost: 1.5,
+  });
+  expect(summary!.supersededCost).toBeNull();
+  expect(summary!.supersededRuns).toBe(0);
+});
+
+test("a replaced-spend promo equal to the standard rate is not a discount", () => {
+  const summary = threadTokenUsageToCostSummary({
+    ...BUDGET_BASE,
+    currency: "USD",
+    total_cost: 9,
+    superseded_cost: 7.5,
+    superseded_promo_cost: 7.5,
+  });
+  expect(summary!.supersededPromoCost).toBeNull();
+});
+
+test("a genuinely discounted replaced turn keeps both figures", () => {
+  const summary = threadTokenUsageToCostSummary({
+    ...BUDGET_BASE,
+    currency: "USD",
+    total_cost: 9,
+    superseded_cost: 7.5,
+    superseded_promo_cost: 2,
+  });
+  expect(summary!.supersededPromoCost).toBe(2);
+});

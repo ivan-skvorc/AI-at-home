@@ -9,7 +9,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from deerflow.model_ids import normalize_reported_model_name
-from deerflow.runtime.runs.store.base import LeaseRenewal, RunIdempotencyConflict, RunStore, StatusFinalization, add_per_run_model_usage, new_by_model_usage_entry, new_per_run_usage_entry
+from deerflow.runtime.runs.store.base import LeaseRenewal, RunIdempotencyConflict, RunStore, StatusFinalization, add_per_run_model_usage, counted_run_statuses, new_by_model_usage_entry, new_per_run_usage_entry
 
 
 class MemoryRunStore(RunStore):
@@ -204,7 +204,7 @@ class MemoryRunStore(RunStore):
         return results
 
     async def aggregate_tokens_by_thread(self, thread_id: str, *, include_active: bool = False) -> dict[str, Any]:
-        statuses = ("success", "error", "running") if include_active else ("success", "error")
+        statuses = counted_run_statuses(include_active=include_active)
         # Use the thread index for an O(runs-in-thread) lookup instead of
         # scanning every run in the process (mirrors ``list_by_thread``).
         run_ids = self._runs_by_thread.get(thread_id) or ()

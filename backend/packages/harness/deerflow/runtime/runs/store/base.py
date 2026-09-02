@@ -50,6 +50,34 @@ def add_per_run_model_usage(entry: dict[str, Any], model: str, usage: dict[str, 
     entry["tokens"] += usage.get("total_tokens", 0) or 0
 
 
+# Statuses whose runs really spent money, and therefore belong in a thread's
+# token and cost totals.
+#
+# ``interrupted`` and ``timeout`` are here because *the tokens were already
+# sent*. A run the user stopped mid-answer, or that a Gateway restart drained
+# (``RunManager.shutdown`` marks every in-flight run ``interrupted``), has had
+# its per-model usage flushed by the journal's progress snapshot and written
+# again by the worker's final ``update_run_completion`` — the data is on disk
+# and the provider has already billed for it. Counting only ``success`` and
+# ``error`` therefore made a restart *delete money* from the header, while
+# ``resolve_spend_budget_status`` and the spend console — neither of which
+# filters on status — kept charging for those same rows. A header that
+# contradicts the spend cap displayed beside it is the worst of the three
+# possible numbers.
+#
+# ``pending`` is deliberately absent: a queued run that never reached a model
+# has no tokens to count and no step to draw. ``running`` is opt-in through
+# ``include_active`` so the header can show an in-flight turn's progress
+# without an idle thread's totals drifting between polls.
+COUNTED_RUN_STATUSES: tuple[str, ...] = ("success", "error", "timeout", "interrupted")
+ACTIVE_RUN_STATUS = "running"
+
+
+def counted_run_statuses(*, include_active: bool) -> tuple[str, ...]:
+    """Run statuses a thread's token aggregation should sum over."""
+    return (*COUNTED_RUN_STATUSES, ACTIVE_RUN_STATUS) if include_active else COUNTED_RUN_STATUSES
+
+
 @dataclass(frozen=True)
 class EditReplayVisibility:
     hidden_source_run_ids: set[str] = field(default_factory=set)

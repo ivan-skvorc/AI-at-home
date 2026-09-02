@@ -264,6 +264,38 @@ export function TokenUsageIndicator({
                       )}
                 </div>
               )}
+              {cost.supersededCost != null && cost.currency && (
+                // Editing a message does not refund the turns it replaced. The
+                // figure is inside the total above and outside the chart below,
+                // which is a confusing pair of facts unless it is named — so
+                // name it, between the two numbers it reconciles.
+                <div
+                  data-testid="token-usage-superseded"
+                  className="mt-1 flex items-center justify-between gap-4"
+                >
+                  <span className="text-muted-foreground flex items-center gap-1">
+                    {t.tokenUsage.replacedTurns}
+                    <Tooltip
+                      content={
+                        <span className="block max-w-72 text-xs leading-relaxed">
+                          {t.tokenUsage.replacedTurnsHint}
+                        </span>
+                      }
+                    >
+                      <CircleHelpIcon
+                        className="text-muted-foreground size-3 cursor-help"
+                        aria-label={t.tokenUsage.replacedTurnsHint}
+                      />
+                    </Tooltip>
+                  </span>
+                  <span className="font-mono">
+                    {formatCost(
+                      cost.supersededPromoCost ?? cost.supersededCost,
+                      cost.currency,
+                    )}
+                  </span>
+                </div>
+              )}
               {cost.steps.length > 0 && cost.currency && (
                 // The totals above say what the conversation cost; this says
                 // which turn cost it. Only rendered once there is a step to

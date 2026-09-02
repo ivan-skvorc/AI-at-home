@@ -73,6 +73,12 @@ def test_thread_token_usage_returns_stable_shape(monkeypatch: pytest.MonkeyPatch
         # ``by_run``, which is exactly the pre-per-run-aggregation store shape:
         # an empty chart, not an error.
         "steps": [],
+        # Nothing has been edited away, so the replaced-spend row is absent
+        # rather than a "$0.00 replaced" line on every conversation.
+        "superseded_cost": None,
+        "superseded_promo_cost": None,
+        "superseded_tokens": 0,
+        "superseded_runs": 0,
         "context_usage": None,
         # The spend cap is off by default, so the header gets no budget line.
         "spend_budget": None,

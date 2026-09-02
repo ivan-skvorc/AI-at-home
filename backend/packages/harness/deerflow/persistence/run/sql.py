@@ -24,6 +24,7 @@ from deerflow.runtime.runs.store.base import (
     RunStore,
     StatusFinalization,
     add_per_run_model_usage,
+    counted_run_statuses,
     new_by_model_usage_entry,
     new_per_run_usage_entry,
 )
@@ -443,8 +444,12 @@ class RunRepository(RunStore):
         ``total_output_tokens``) and the ``by_caller`` bucket are summed from
         their own columns and are therefore unaffected by the JSON column being
         empty.
+
+        Which runs count is ``counted_run_statuses`` — every terminal status
+        that spent tokens, cancelled and timed-out runs included, so a Gateway
+        restart cannot erase spend the provider already billed for.
         """
-        statuses = ("success", "error", "running") if include_active else ("success", "error")
+        statuses = counted_run_statuses(include_active=include_active)
         _completed = RunRow.status.in_(statuses)
         _thread = RunRow.thread_id == thread_id
         _run_operation = RunRow.operation_kind == "run"

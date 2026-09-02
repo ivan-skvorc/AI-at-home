@@ -882,6 +882,10 @@ export interface Translations {
     promoRate: string;
     /** Legend for the red figure — what the thread costs once the promo ends. */
     standardRate: string;
+    /** Row label for spend on turns an edit or regeneration replaced. */
+    replacedTurns: string;
+    /** Tooltip explaining why replaced spend is in the total but not the chart. */
+    replacedTurnsHint: string;
     /** Remaining currency spend cap (fork feature, roadmap item 2). */
     budgetLeft: string;
     /** Human label for a cap window: "today" / "this week" / "this month". */
