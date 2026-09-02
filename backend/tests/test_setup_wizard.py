@@ -172,7 +172,7 @@ class TestBundleProviders:
         assert provider.default_model == "claude-opus-5"
         assert provider.default_model in provider.models
         assert [m["model"] for m in provider.bundle_models] == [
-            "claude-fable-5",
+            "claude-fable-5-1",
             "claude-opus-5",
             "claude-opus-4-8",
             "claude-sonnet-5",
@@ -180,8 +180,8 @@ class TestBundleProviders:
             "claude-haiku-4-5",
         ]
         by_model = {m["model"]: m for m in provider.bundle_models}
-        # Fable 5 / Opus 5 / Opus 4.8 / Sonnet 5 / Sonnet 4.6 must use adaptive thinking (budget_tokens 400s).
-        assert by_model["claude-fable-5"]["when_thinking_enabled"]["thinking"]["type"] == "adaptive"
+        # Fable 5.1 / Opus 5 / Opus 4.8 / Sonnet 5 / Sonnet 4.6 must use adaptive thinking (budget_tokens 400s).
+        assert by_model["claude-fable-5-1"]["when_thinking_enabled"]["thinking"]["type"] == "adaptive"
         assert by_model["claude-opus-5"]["when_thinking_enabled"]["thinking"]["type"] == "adaptive"
         assert by_model["claude-opus-4-8"]["when_thinking_enabled"]["thinking"]["type"] == "adaptive"
         assert by_model["claude-sonnet-5"]["when_thinking_enabled"]["thinking"]["type"] == "adaptive"
@@ -202,7 +202,7 @@ class TestBundleProviders:
         # Claude Fable (flagship, OpenRouter-only users) + the xAI / OpenAI / Google
         # flagships. Every other Claude lives on the direct Anthropic bundle, so
         # Opus 5 is intentionally NOT routed through OpenRouter.
-        assert "anthropic/claude-fable-5" in bundle_ids
+        assert "anthropic/claude-fable-5-1" in bundle_ids
         assert "anthropic/claude-opus-5" not in bundle_ids
         assert any(m.startswith("x-ai/") for m in bundle_ids)
         assert any(m.startswith("openai/") for m in bundle_ids)
@@ -524,7 +524,7 @@ class TestBuildMinimalConfig:
         )
         data = yaml.safe_load(content)
         assert [m["model"] for m in data["models"]] == [
-            "claude-fable-5",
+            "claude-fable-5-1",
             "claude-opus-5",
             "claude-opus-4-8",
             "claude-sonnet-5",

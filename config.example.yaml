@@ -248,9 +248,9 @@ models:
   # This happens automatically. On every launch `scripts/sync-api-key-models.py`
   # (the API-key auto-config, a companion to the Ollama sync) reads your `.env`
   # and uncomments the matching block below:
-  #   ANTHROPIC_API_KEY  -> Claude Fable 5 / Opus 5 / Opus 4.8 / Sonnet 5 /
+  #   ANTHROPIC_API_KEY  -> Claude Fable 5.1 / Opus 5 / Opus 4.8 / Sonnet 5 /
   #                         Sonnet 4.6 / Haiku 4.5 (direct Anthropic API)
-  #   OPENROUTER_API_KEY -> Claude Fable 5 / Grok 4.6 /
+  #   OPENROUTER_API_KEY -> Claude Fable 5.1 / Grok 4.6 /
   #                         GPT-5.6 Sol / GPT-5.3 Codex / Gemini 3.6 Flash /
   #                         Llama 4 Maverick / MiniMax M3 / Qwen3.8 Max /
   #                         Kimi K3 / Mistral Large 3 / DeepSeek V4 Pro /
@@ -264,7 +264,7 @@ models:
   #   XAI_API_KEY        -> Grok 4.6 / Grok 4.3 (xAI)
   #   GEMINI_API_KEY     -> Gemini 3.6 Flash / 3.5 Flash-Lite / 3.1 Pro (Google)
   #   DEEPSEEK_API_KEY   -> DeepSeek V4 Pro / V4 Flash (DeepSeek)
-  #   MISTRAL_API_KEY    -> Mistral Large 3 / Medium 3.5 / Small 3 (Mistral)
+  #   MISTRAL_API_KEY    -> Mistral Large 3 / Medium 3.5 / Small 4 (Mistral)
   #   MOONSHOT_API_KEY   -> Kimi K3 / Kimi K2.6 (Moonshot)
   #   DASHSCOPE_API_KEY  -> Qwen3.8 Max / Qwen3.7 Plus (Qwen)
   #   MINIMAX_API_KEY    -> MiniMax M3 / MiniMax M2.7 (MiniMax)
@@ -306,10 +306,10 @@ models:
   # Latest Claude models via the direct Anthropic API — their display names carry
   # an (Anthropic) suffix, mirroring the (OpenRouter) suffix on the routed copies
   # below. Opus and Sonnet each ship their last 4.x alongside 5 (Opus 4.8 + Opus 5,
-  # Sonnet 4.6 + Sonnet 5); Haiku and Fable ship only the latest. Fable 5, Opus 5,
+  # Sonnet 4.6 + Sonnet 5); Haiku and Fable ship only the latest. Fable 5.1, Opus 5,
   # Opus 4.8, Sonnet 5 and Sonnet 4.6 use adaptive thinking (the `budget_tokens`
   # form is rejected/deprecated on these models); Haiku 4.5 still takes an explicit
-  # thinking budget. Fable 5's thinking is always on: it rejects an explicit
+  # thinking budget. Fable 5.1's thinking is always on: it rejects an explicit
   # `thinking: {type: disabled}` with a 400, so its disabled state stays on
   # adaptive+summarized, while Opus 5 / Opus 4.8 / Sonnet 5 / Sonnet 4.6 accept
   # `type: disabled`. `supports_thinking: true` is required or DeerFlow silently
@@ -323,10 +323,10 @@ models:
   # between the markers below when it finds a real ANTHROPIC_API_KEY in your .env;
   # you can also uncomment them by hand.
   # === BEGIN auto-model-config: anthropic (uncommented at startup when ANTHROPIC_API_KEY is set) ===
-  # - name: claude-fable-5
-  #   display_name: Claude Fable 5 (Anthropic)
+  # - name: claude-fable-5-1
+  #   display_name: Claude Fable 5.1 (Anthropic)
   #   use: langchain_anthropic:ChatAnthropic
-  #   model: claude-fable-5
+  #   model: claude-fable-5-1
   #   api_key: $ANTHROPIC_API_KEY
   #   default_request_timeout: 600.0
   #   max_retries: 2
@@ -337,7 +337,7 @@ models:
   #     currency: USD
   #     input: 10.0
   #     output: 50.0
-  #     cache_hit: 1.0        # prompt-cache reads
+  #     cache_hit: 0.25      # prompt-cache reads (Fable 5.1 caches at 0.025x, not the usual 0.1x)
   #   when_thinking_enabled:
   #     thinking:
   #       type: adaptive
@@ -496,10 +496,10 @@ models:
   # between the markers below when it finds a real OPENROUTER_API_KEY in your .env.
   # Delete any you don't want after they are enabled.
   # === BEGIN auto-model-config: openrouter (uncommented at startup when OPENROUTER_API_KEY is set) ===
-  # - name: openrouter-fable-5
-  #   display_name: Claude Fable 5 (OpenRouter) (p)
+  # - name: openrouter-fable-5-1
+  #   display_name: Claude Fable 5.1 (OpenRouter) (p)
   #   use: langchain_openai:ChatOpenAI
-  #   model: anthropic/claude-fable-5
+  #   model: anthropic/claude-fable-5-1
   #   api_key: $OPENROUTER_API_KEY
   #   base_url: https://openrouter.ai/api/v1
   #   request_timeout: 600.0
@@ -882,7 +882,7 @@ models:
   #   price:                          # per 1M tokens; the single source of truth for cost display and budgets
   #     currency: USD
   #     input: 0.3
-  #     output: 1.2
+  #     output: 2.5
   #
   # - name: google-gemini-3.1-pro
   #   display_name: Gemini 3.1 Pro (Google)
@@ -1000,10 +1000,10 @@ models:
   #     input: 1.5
   #     output: 7.5
   #
-  # - name: mistral-small-3
-  #   display_name: Mistral Small 3 (Mistral)
+  # - name: mistral-small-4
+  #   display_name: Mistral Small 4 (Mistral)
   #   use: langchain_openai:ChatOpenAI
-  #   model: mistral-small-latest
+  #   model: mistral-small-2603      # pinned, not `mistral-small-latest`: the alias moved to Small 4 under a name and price that still said Small 3
   #   api_key: $MISTRAL_API_KEY
   #   base_url: https://api.mistral.ai/v1
   #   request_timeout: 600.0
@@ -1013,8 +1013,8 @@ models:
   
   #   price:                          # per 1M tokens; the single source of truth for cost display and budgets
   #     currency: USD
-  #     input: 0.1
-  #     output: 0.3
+  #     input: 0.15
+  #     output: 0.6
 # === END auto-model-config: mistral ===
 
   # ── Moonshot (Kimi) — auto-enabled when MOONSHOT_API_KEY is set ───────────
@@ -1106,7 +1106,7 @@ models:
   #   price:                          # per 1M tokens; the single source of truth for cost display and budgets
   #     currency: USD
   #     input: 0.4
-  #     output: 1.2
+  #     output: 1.6
   # === END auto-model-config: qwen ===
 
   # ── MiniMax — auto-enabled when MINIMAX_API_KEY is set ────────────────────

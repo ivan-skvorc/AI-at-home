@@ -350,6 +350,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **models:** **Model audit, 2026-09-02 — Anthropic verified against its own
+  pages, and four bundled entries were wrong.** Anthropic's docs were reachable
+  for the first time in three passes, so the Claude block was checked at tier 1
+  rather than left alone: **Claude Fable 5 rolls forward to Fable 5.1**
+  (`claude-fable-5-1`, direct and routed) under the *Fable keeps only the latest*
+  rule, and its **cache-read rate is corrected from $1.00 to $0.25** — Fable 5.1
+  caches at 0.025x base input, not the 0.1x every other Claude uses, so the old
+  figure was well-formed and 4x too high. Three prices were corrected from
+  corroborating sources: **Mistral Small** was still bundled as the
+  `mistral-small-latest` **alias**, labelled "Small 3" at $0.10/$0.30 while
+  serving **Small 4** — now pinned to `mistral-small-2603` at $0.15/$0.60, which
+  doubles its output rate; **Qwen3.7 Plus** output $1.20 → **$1.60**; and
+  **Gemini 3.5 Flash-Lite** output $1.20 → **$2.50**. Each understated real spend
+  in every cost total. FORK.md gains the rule the first two of these share: a
+  `*-latest` alias must never be bundled, because it moves while the entry's name
+  and price stay put. All seven roster copies (marker blocks, `HOME_API_BUNDLES`,
+  `PROVIDERS`, and the four prose ones no test reads) were updated together, and
+  the pass — including what could *not* be verified and is owed to the next one —
+  is recorded in `docs/model-audit-log.md`.
 - **docs:** The setup wizard's Mistral provider description still listed an
   unversioned "Small" — the last of the seven places that describe the bundled
   roster to carry it, after the 2026-08-26 pass corrected the other six.
