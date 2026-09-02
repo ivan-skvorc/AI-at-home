@@ -348,6 +348,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   coalesced and flushed on teardown, and the local cache can no longer be
   blanked by an empty set the user did not produce.
 
+### Changed
+
+- **models:** **The model audit can now grow the roster, not just correct it.** Every
+  automated check asked only about models already bundled, so a lab shipping a new
+  flagship raised nothing — one pass found four labs a generation behind at once, all
+  caught by eye. The weekly audit issue now also lists **newer models from labs the
+  bundle already carries**: any non-variant OpenRouter slug published after the newest
+  entry that lab has, three per lab, newest first. It proposes and never instructs —
+  whether a model belongs is a judgement, and the audit now says how to make it:
+  *critically acclaimed* means climbing OpenRouter's own rankings and trending boards,
+  named and dated in the audit log, not a launch post and not a benchmark table. A
+  candidate stops being reported 60 days after its release, so one you looked at and
+  declined ages out instead of becoming a weekly issue nobody can close. A cloaked
+  codename that tops the trending board (the `ox-alpha` shape) is a pointer to watch
+  rather than an entry to add — bundling an alias breaks the same rule as `*-latest`.
+  The rule that keeps an outgoing flagship beside its successor now applies to every
+  lab rather than only to Claude.
+
 ### Fixed
 
 - **models:** **Model audit, 2026-09-02 — Anthropic verified against its own
