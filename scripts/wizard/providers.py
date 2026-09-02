@@ -125,7 +125,7 @@ ANTHROPIC_ADAPTIVE_THINKING_CONFIG = {
     },
 }
 
-# Claude Fable 5 has thinking permanently on: an explicit
+# Claude Fable 5.1 has thinking permanently on: an explicit
 # `thinking: {type: disabled}` is rejected with a 400, so neither toggle state can
 # turn thinking off. Both states therefore send adaptive thinking with
 # `display: summarized` — `summarized` for the same multi-turn-replay reason as the
@@ -170,16 +170,16 @@ ANTHROPIC_THINKING_CONFIG = ANTHROPIC_BUDGET_THINKING_CONFIG
 
 # Latest Claude models, enabled together when the user has an ANTHROPIC_API_KEY.
 # Opus and Sonnet each ship their last 4.x alongside 5 (Opus 4.8 + Opus 5,
-# Sonnet 4.6 + Sonnet 5); Haiku and Fable ship only the latest. Fable 5 / Opus 5 /
+# Sonnet 4.6 + Sonnet 5); Haiku and Fable ship only the latest. Fable 5.1 / Opus 5 /
 # Opus 4.8 / Sonnet 5 / Sonnet 4.6 use adaptive thinking; Haiku 4.5 takes a
 # budget. Ordered most- to least-capable; the last-4.x models are kept alongside
 # their 5 successors so existing threads can stay pinned to them.
 ANTHROPIC_BUNDLE_MODELS: list[dict] = [
     {
-        "name": "claude-fable-5",
-        "display_name": "Claude Fable 5 (Anthropic)",
+        "name": "claude-fable-5-1",
+        "display_name": "Claude Fable 5.1 (Anthropic)",
         "use": "langchain_anthropic:ChatAnthropic",
-        "model": "claude-fable-5",
+        "model": "claude-fable-5-1",
         "api_key": "$ANTHROPIC_API_KEY",
         "default_request_timeout": 600.0,
         "max_retries": 2,
@@ -307,7 +307,7 @@ def _openrouter_model(
 # read and the number they were billed against were two copies that could drift
 # — and a discount could only "end" by someone editing a string.
 OPENROUTER_BUNDLE_MODELS: list[dict] = [
-    _openrouter_model("openrouter-fable-5", "Claude Fable 5 (OpenRouter) (p)", "anthropic/claude-fable-5", supports_vision=True),
+    _openrouter_model("openrouter-fable-5-1", "Claude Fable 5.1 (OpenRouter) (p)", "anthropic/claude-fable-5-1", supports_vision=True),
     _openrouter_model("openrouter-grok-4.6", "Grok 4.6 (OpenRouter) (p)", "x-ai/grok-4.6", supports_vision=True),
     _openrouter_model("openrouter-gpt-5.6-sol", "GPT-5.6 Sol (OpenRouter) (p)", "openai/gpt-5.6-sol", supports_vision=True),
     _openrouter_model("openrouter-gpt-5.3-codex", "GPT-5.3 Codex (OpenRouter) (p)", "openai/gpt-5.3-codex", supports_vision=True),
@@ -488,7 +488,7 @@ MISTRAL_HOME_BUNDLE_MODELS: list[dict] = [
     _home_openai_compat_model("mistral-large-3", "Mistral Large 3 (Mistral)", "mistral-large-2512", api_key_env="MISTRAL_API_KEY", base_url="https://api.mistral.ai/v1", supports_vision=True, supports_thinking=False),
     _home_openai_compat_model("mistral-medium-3.5", "Mistral Medium 3.5 (Mistral)", "mistral-medium-3-5", api_key_env="MISTRAL_API_KEY", base_url="https://api.mistral.ai/v1", supports_vision=True, supports_thinking=False),
     _home_openai_compat_model(
-        "mistral-small-3", "Mistral Small 3 (Mistral)", "mistral-small-latest", api_key_env="MISTRAL_API_KEY", base_url="https://api.mistral.ai/v1", supports_vision=True, supports_thinking=False, max_tokens=16000
+        "mistral-small-4", "Mistral Small 4 (Mistral)", "mistral-small-2603", api_key_env="MISTRAL_API_KEY", base_url="https://api.mistral.ai/v1", supports_vision=True, supports_thinking=False, max_tokens=16000
     ),
 ]
 
@@ -535,7 +535,7 @@ ZAI_HOME_BUNDLE_MODELS: list[dict] = [
 # Keep this table, the `config.example.yaml` marker blocks, and FORK.md in sync;
 # `tests/test_config_integrity.py` and `tests/test_setup_wizard.py` pin it.
 MODEL_PRICES: dict[str, dict] = {
-    "claude-fable-5": {"price": {"currency": "USD", "input": 10.0, "output": 50.0, "cache_hit": 1.0}},
+    "claude-fable-5-1": {"price": {"currency": "USD", "input": 10.0, "output": 50.0, "cache_hit": 0.25}},  # 0.025x, not the usual 0.1x
     "claude-opus-5": {"price": {"currency": "USD", "input": 5.0, "output": 25.0, "cache_hit": 0.5}},
     "claude-opus-4-8": {"price": {"currency": "USD", "input": 5.0, "output": 25.0, "cache_hit": 0.5}},
     "claude-sonnet-5": {"price": {"currency": "USD", "input": 2.0, "output": 10.0, "cache_hit": 0.2}},
@@ -546,20 +546,20 @@ MODEL_PRICES: dict[str, dict] = {
     "deepseek-v4-pro": {"price": {"currency": "USD", "input": 1.32, "output": 3.96}},
     "deepseek-v4-flash": {"price": {"currency": "USD", "input": 0.44, "output": 1.32}},
     "google-gemini-3.6-flash": {"price": {"currency": "USD", "input": 1.5, "output": 7.5}},
-    "google-gemini-3.5-flash-lite": {"price": {"currency": "USD", "input": 0.3, "output": 1.2}},
+    "google-gemini-3.5-flash-lite": {"price": {"currency": "USD", "input": 0.3, "output": 2.5}},
     "google-gemini-3.1-pro": {"price": {"currency": "USD", "input": 2.0, "output": 12.0}},
     "minimax-m3": {"price": {"currency": "USD", "input": 0.6, "output": 2.4}},
     "minimax-m2.7": {"price": {"currency": "USD", "input": 0.3, "output": 1.2}},
     "mistral-large-3": {"price": {"currency": "USD", "input": 0.5, "output": 1.5}},
     "mistral-medium-3.5": {"price": {"currency": "USD", "input": 1.5, "output": 7.5}},
-    "mistral-small-3": {"price": {"currency": "USD", "input": 0.1, "output": 0.3}},
+    "mistral-small-4": {"price": {"currency": "USD", "input": 0.15, "output": 0.6}},
     "moonshot-kimi-k3": {"price": {"currency": "USD", "input": 3.0, "output": 15.0}},
     "moonshot-kimi-k2.6": {"price": {"currency": "USD", "input": 0.95, "output": 4.0}},
     "openai-gpt-5.6-sol": {"price": {"currency": "USD", "input": 5.0, "output": 30.0}},
     "openai-gpt-5.3-codex": {"price": {"currency": "USD", "input": 1.75, "output": 14.0}},
     "openai-gpt-5.6-terra": {"price": {"currency": "USD", "input": 2.0, "output": 12.0}},
     "openai-gpt-5.6-luna": {"price": {"currency": "USD", "input": 0.2, "output": 1.2}},
-    "openrouter-fable-5": {"price": {"currency": "USD", "input": 10.0, "output": 50.0}},
+    "openrouter-fable-5-1": {"price": {"currency": "USD", "input": 10.0, "output": 50.0}},
     "openrouter-grok-4.6": {"price": {"currency": "USD", "input": 2.0, "output": 6.0}},
     "openrouter-gpt-5.6-sol": {"price": {"currency": "USD", "input": 5.0, "output": 30.0}},
     "openrouter-gpt-5.3-codex": {"price": {"currency": "USD", "input": 1.75, "output": 14.0}},
@@ -573,7 +573,7 @@ MODEL_PRICES: dict[str, dict] = {
     "openrouter-glm-5.3": {"price": {"currency": "USD", "input": 1.4, "output": 4.4}},
     "openrouter-nemotron-3-ultra": {"price": {"currency": "USD", "input": 0.5, "output": 2.2}},
     "qwen-3.8-max": {"price": {"currency": "USD", "input": 2.0, "output": 6.0}},
-    "qwen-3.7-plus": {"price": {"currency": "USD", "input": 0.4, "output": 1.2}},
+    "qwen-3.7-plus": {"price": {"currency": "USD", "input": 0.4, "output": 1.6}},
     "xai-grok-4.6": {"price": {"currency": "USD", "input": 2.0, "output": 6.0}},
     "xai-grok-4.3": {"price": {"currency": "USD", "input": 1.25, "output": 2.5}},
     "zai-glm-5.3": {"price": {"currency": "USD", "input": 1.4, "output": 4.4}},
@@ -783,9 +783,9 @@ LLM_PROVIDERS: list[LLMProvider] = [
     LLMProvider(
         name="anthropic",
         display_name="Anthropic",
-        description="Latest Claude Fable 5, Opus 5, Opus 4.8, Sonnet 5, Sonnet 4.6 and Haiku 4.5",
+        description="Latest Claude Fable 5.1, Opus 5, Opus 4.8, Sonnet 5, Sonnet 4.6 and Haiku 4.5",
         use="langchain_anthropic:ChatAnthropic",
-        models=["claude-fable-5", "claude-opus-5", "claude-opus-4-8", "claude-sonnet-5", "claude-sonnet-4-6", "claude-haiku-4-5"],
+        models=["claude-fable-5-1", "claude-opus-5", "claude-opus-4-8", "claude-sonnet-5", "claude-sonnet-4-6", "claude-haiku-4-5"],
         default_model="claude-opus-5",
         env_var="ANTHROPIC_API_KEY",
         package="langchain-anthropic",
@@ -997,7 +997,7 @@ LLM_PROVIDERS: list[LLMProvider] = [
     LLMProvider(
         name="openrouter",
         display_name="OpenRouter",
-        description="One key: Claude Fable 5 + xAI/OpenAI/Google flagships & open alternatives",
+        description="One key: Claude Fable 5.1 + xAI/OpenAI/Google flagships & open alternatives",
         use="langchain_openai:ChatOpenAI",
         models=[entry["model"] for entry in OPENROUTER_BUNDLE_MODELS],
         default_model=OPENROUTER_BUNDLE_MODELS[0]["model"],
@@ -1033,7 +1033,7 @@ LLM_PROVIDERS: list[LLMProvider] = [
     LLMProvider(
         name="mistral",
         display_name="Mistral",
-        description="Mistral Large 3 + Medium 3.5 + Small 3 (direct Mistral API)",
+        description="Mistral Large 3 + Medium 3.5 + Small 4 (direct Mistral API)",
         use="langchain_openai:ChatOpenAI",
         models=[entry["model"] for entry in MISTRAL_HOME_BUNDLE_MODELS],
         default_model=MISTRAL_HOME_BUNDLE_MODELS[0]["model"],

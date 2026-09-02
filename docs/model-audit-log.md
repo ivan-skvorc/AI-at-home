@@ -11,6 +11,148 @@ Newest first. Append a pass; never rewrite one. A dated line is what tells the
 next person whether the roster was checked last week or last year, and _which_
 providers that pass could actually reach.
 
+- **2026-09-02 — requested pass. Anthropic verified at tier 1 and it had moved; three tier-2
+  corrections elsewhere.** Run because the user asked for an audit. This is the first pass since
+  2026-08-20 with **any** authoritative page reachable, and the first ever with a working
+  secondary-source channel, so tier 1 and tier 2 were both open — unlike the two previous passes,
+  which were tier 3 throughout.
+
+  **Reachability.** `docs.claude.com` / `platform.claude.com` answer (200), so Anthropic's own
+  pricing and model-overview pages were read directly — tier 1. Everything else is still refused
+  at the egress proxy: `openrouter.ai` (403 at CONNECT, and `EGRESS_BLOCKED` through WebFetch),
+  `api.x.ai`, `platform.openai.com`, `www.anthropic.com`, `docs.mistral.ai`, `ai.google.dev`,
+  `docs.z.ai`, `platform.deepseek.com`, `platform.moonshot.cn`, `www.alibabacloud.com`, and the
+  trackers `artificialanalysis.ai` / `llmpricecheck.com` all return 000. Web **search** was
+  available, so figures for the blocked labs could be corroborated across independent sites —
+  tier 2 — rather than left untouched.
+
+  **Mechanical half: clean.** `scripts/audit_models.py` reports no drift (openrouter correctly
+  _skipped_, so its silence is again **not** evidence the OpenRouter roster is current); the
+  stale-fixture self-test still surfaces all four drift kinds; no entry carries a price in its
+  `display_name`; `sync-api-key-models.py --dry-run` leaves `config.example.yaml` byte-identical
+  (md5 unchanged). The gate (`test_sync_api_key_models.py`, `test_setup_wizard.py`,
+  `test_config_integrity.py`, `test_audit_models.py`) is green at **192 passed**, plus
+  **185 passed** across `test_model_price_fields.py`, `test_pricing.py`, `test_model_ids.py`
+  and `test_model_factory.py`. The bundle is still **41** paid models, every one priced.
+
+  **Tier 1 — Anthropic, read off the provider's own page, and the roster moved.**
+  Opus 5 / Opus 4.8 ($5/$25, cache $0.50), Sonnet 5 ($2/$10, cache $0.20), Sonnet 4.6 ($3/$15,
+  cache $0.30) and Haiku 4.5 ($1/$5, cache $0.10) all match what is shipped, slugs included, and
+  the Opus/Sonnet "last 4.x + current 5" shape still holds (Opus 4.7 exists but is the
+  third-oldest, so it stays out). Two things changed:
+
+  - **Claude Fable 5 → Claude Fable 5.1** (`claude-fable-5` → `claude-fable-5-1`, direct **and**
+    its OpenRouter twin). The _Fable keeps only the latest_ rule fires mechanically: 5.1 is the
+    current model, 5 is listed under "Legacy models (still available)". Price is unchanged at
+    $10/$50, thinking is still **adaptive, always on** (so the `when_thinking_disabled` branch
+    must stay on adaptive — an explicit `type: disabled` still 400s), and max output is 128K, so
+    `max_tokens: 32000` is unaffected.
+  - **Fable's cache-read rate is no longer 0.1x.** Anthropic's pricing page states cache hits and
+    refreshes on Fable 5.1 and Mythos 5.1 are priced at **0.025x** the base input price — $0.25/MTok,
+    not the $1.00 the 0.1x multiplier every other Claude uses would give. `cache_hit` was corrected
+    from `1.0` to `0.25` in both synced sources. This is the kind of drift no test can see: the old
+    value was well-formed and 4x too high.
+
+  **Sonnet 5's introductory window closed by becoming permanent**, which is the second of the two
+  endings FORK.md step 5 warns about. The page's own note now reads that the $2/$10 rate announced
+  as introductory through 2026-08-31 *is* the standard price and the scheduled increase to $3/$15
+  will not occur. The bundle already carried $2/$10 with no `discount:` block, so nothing changed —
+  recording it so the next pass does not go looking for an expiry that no longer exists.
+
+  **`anthropic/claude-fable-5-1` is the one slug in this change set that could not be verified.**
+  OpenRouter is unreachable, so the routed twin's id was derived by the documented rule
+  (`provider/` + the tier-1-verified Claude API id), the same mapping `anthropic/claude-fable-5`
+  already followed. The home block is the verified half; **re-check the routed half first on the
+  next unrestricted pass.** Leaving the twin on Fable 5 was the alternative and was rejected: it
+  breaks the doubling rule and `TestFirstPartyKeyCoverage` with it, and would ship the flagship a
+  generation behind to exactly the users who hold only an `OPENROUTER_API_KEY`.
+
+  **Tier 2 — three corrections, corroborated across independent sources.** Each was read from
+  several sites that had to look separately and that agree exactly on both numbers; none was read
+  off the lab's own page, so all three are named here for the next pass to verify.
+
+  | Entry                   | Was                             | Now                              | What agreed                                                                 |
+  | ----------------------- | ------------------------------- | -------------------------------- | --------------------------------------------------------------------------- |
+  | `mistral-small-latest`  | "Mistral Small 3", $0.10/$0.30  | `mistral-small-2603`, "Mistral Small 4", $0.15/$0.60 | Artificial Analysis, Gate.AI, TokenCost, Design for Online, AI Pricing Guru, CloudZero |
+  | `qwen3.7-plus`          | $0.40/**$1.20**                 | $0.40/**$1.60**                  | VentureBeat's launch figure, genbuzz, MLQ, Alibaba Model Studio doc listings   |
+  | `gemini-3.5-flash-lite` | $0.30/**$1.20**                 | $0.30/**$2.50**                  | Artificial Analysis, eesel, BenchLM, costgoat — agreeing across two separate searches |
+
+  **The Mistral Small entry was the alias trap firing a second time**, in the same file, on the
+  same lab. `mistral-small-latest` had moved on to **Mistral Small 4** (shipped 2026-03-16) while
+  the entry's name still said "Small 3" and its price still said $0.10/$0.30 — the name, the slug
+  and the price describing three different things, which is precisely why the 2026-08-20 pass
+  pinned `mistral-medium-latest` to `mistral-medium-3-5`. It is now pinned to `mistral-small-2603`
+  (the OpenRouter slug minus its prefix, matching the `mistral-large-2512` convention already in
+  the bundle) and priced at Small 4's rate, which is 1.5x the old input and **2x** the old output.
+  **No `*-latest` alias remains in the bundle.** Any future entry that reaches for one is
+  re-introducing a drift this fork has now had to fix twice.
+
+  **The four labs rolled forward on 2026-08-20 from corroborated sources are still not verified,
+  but all four re-corroborated cleanly** against a different set of sources this pass: Grok 4.6
+  $2/$6, Qwen3.8 Max $2/$6, GLM-5.3 $1.40/$4.40, Mistral Medium 3.5 $1.50/$7.50 — every figure
+  matching what is shipped. Also re-corroborated and unchanged: GPT-5.6 Sol $5/$30, Terra $2/$12,
+  Luna $0.20/$1.20, GPT-5.3 Codex $1.75/$14, Kimi K3 $3/$15, Kimi K2.6 $0.95/$4.00, Grok 4.3
+  $1.25/$2.50, Mistral Large 3 $0.50/$1.50, Gemini 3.1 Pro $2/$12, MiniMax M3 list $0.60/$2.40,
+  MiniMax M2.7 $0.30/$1.20, Nemotron 3 Ultra $0.50/$2.20. No lab had shipped a new flagship since
+  the last roster edit — GPT-5.6 Sol, Grok 4.6, Kimi K3 and DeepSeek V4 Pro are all current.
+
+  **DeepSeek's home prices are right, and the reason is worth writing down.** DeepSeek introduced
+  peak/off-peak pricing at 16:00 UTC on 2026-08-16, off-peak being half of peak. The bundle's
+  `deepseek-v4-pro` $1.32/$3.96 and `deepseek-v4-flash` $0.44/$1.32 are the **peak** rates — the
+  conservative upper bound FORK.md step 5 asks for — with off-peak at $0.66/$1.98 and $0.22/$0.66.
+  A pass that finds the lower pair quoted somewhere should not "correct" the entry down.
+
+  **Tier 3 — left exactly as shipped, and why.** Each of these is a suspicion, not a figure:
+  no authoritative page, and no two independent sources agreeing exactly.
+
+  - **`deepseek/deepseek-v4-pro` on OpenRouter ($0.44/$0.87) is the likeliest stale price in the
+    bundle, and it is the top item owed.** That pair is DeepSeek's *pre-2026-08-16* rate
+    ($0.435/$0.87) to the cent, and the lab has since raised list by roughly 1.5x–2.3x. But an
+    OpenRouter entry bills at **OpenRouter's** rate, OpenRouter sets its own margins, and its page
+    is exactly what cannot be reached — so the figure is unknown rather than wrong, and guessing it
+    would be the wrong-with-confidence failure the rule exists to prevent.
+  - **MiniMax M3's OpenRouter discount** still ships at $0.24/$0.96. Search results describe the
+    live promo as $0.30/$1.20 ("permanent 50% off" the $0.60/$2.40 list, which does match the
+    configured `price:`). A **discount never qualifies for tier 2**, so it was not touched — but if
+    that reading is right, the header is advertising a promo price nobody gets, which is the exact
+    symptom FORK.md calls out. Re-read OpenRouter's promotions page first thing next pass and
+    either correct it or delete the block.
+  - **Llama 4 Maverick** output: shipped $0.80, one source reported $0.696. Single source, and
+    OpenRouter's routed output price varies by upstream provider. Left alone.
+  - **GLM-4.5 Air**: shipped $0.20/$1.10, one aggregator reported "from $0.13"/$0.85 — a
+    cheapest-provider figure, not a list price. Left alone.
+
+  **Roster judgements deferred again, deliberately.** Both were deferred on 2026-09-01 for reasons
+  that still hold, and neither is a price question:
+
+  - **Gemini 3.7 Flash still supersedes the bundled Gemini 3.6 Flash.** The roll-forward rule moves
+    a lab's *flagship*; Google's flagship is Gemini 3.1 Pro (still current), and 3.6 Flash is a
+    cheaper sibling, so the rule does not fire. And 3.6 Flash's shipped $1.50/$7.50 is confirmed as
+    the correct **standard** rate — the $0.75/$3.75 both Flash models bill at today is an
+    introductory window through 2026-12-31, and an intro rate is a discount, so it cannot be
+    shipped from secondary sources. A pass that can read Google's own page should decide whether to
+    roll 3.6 → 3.7 and add the `until: 2026-12-31` discount block that would then expire itself.
+  - **Google is still the one lab whose OpenRouter double is a cheaper sibling** (Gemini 3.6 Flash)
+    rather than its flagship, so "every flagship doubled home + OpenRouter" does not hold for it.
+    `TestFirstPartyKeyCoverage` passes because it only requires *some* home model to be doubled.
+  - **`glm-4.5-air` is two generations behind its own block's flagship** (GLM-5.3), and z.ai now
+    ships a **GLM-5.3-Flash** at roughly $0.15/$0.50 that would be the better cheap pick. Not
+    changed: the sibling slug could not be enumerated off z.ai's own model list, and FORK.md is
+    explicit that a sibling id must be read off the lab's list rather than derived — which is how
+    `glm-5.2-air` got invented in the first place.
+
+  **Step 2's seven copies were read by eye and all seven now agree.** The three machine-checked
+  ones (`config.example.yaml` marker blocks, `HOME_API_BUNDLES`, `PROVIDERS`) and the four no test
+  parses (`providers.py`'s `description=` strings, `config.example.yaml`'s `QUICK START` comment,
+  `sync-api-key-models.py`'s `QUICK START` docstring, the README §2 bullet) were each updated for
+  Fable 5.1 and Mistral Small 4. Every key is still documented in `.env.example`, no home block is
+  a lone flagship, and Meta Llama + NVIDIA Nemotron remain the only routed-only labs.
+
+  **Still owed to the next unrestricted pass**, in priority order: the OpenRouter slug
+  `anthropic/claude-fable-5-1`; `deepseek/deepseek-v4-pro`'s routed price; MiniMax M3's promo; the
+  three tier-2 corrections above; the four labs carried since 2026-08-20; and the two Google
+  roster judgements.
+
 - **2026-09-01 (conversation scroll-back change) — mechanical half green; tier-1 verification
   impossible this pass, so no figure was touched.** Run because the user asked for a full audit
   alongside a frontend-only change set (message-list scroll ownership, and carrying a

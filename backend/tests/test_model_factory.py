@@ -332,7 +332,7 @@ def test_thinking_disabled_langchain_anthropic_format(monkeypatch):
 
 
 def test_thinking_disabled_empty_when_thinking_disabled_omits_thinking_param(monkeypatch):
-    """Always-on thinking models (e.g. Claude Fable 5) reject an explicit
+    """Always-on thinking models (e.g. Claude Fable 5.1) reject an explicit
     thinking={"type": "disabled"} with a 400, so their config sets a present-but-empty
     when_thinking_disabled to OMIT the parameter. The empty disable block must take
     precedence over the native-Anthropic fallback so no `thinking` kwarg is sent —

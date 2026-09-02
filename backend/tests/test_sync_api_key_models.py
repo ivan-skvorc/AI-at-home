@@ -49,10 +49,10 @@ models:
   # === END auto-model-config: anthropic ===
 
   # === BEGIN auto-model-config: openrouter (uncommented at startup when OPENROUTER_API_KEY is set) ===
-  # - name: openrouter-fable-5
-  #   display_name: Claude Fable 5 (OpenRouter)
+  # - name: openrouter-fable-5-1
+  #   display_name: Claude Fable 5.1 (OpenRouter)
   #   use: langchain_openai:ChatOpenAI
-  #   model: anthropic/claude-fable-5
+  #   model: anthropic/claude-fable-5-1
   #   api_key: $OPENROUTER_API_KEY
   #   base_url: https://openrouter.ai/api/v1
   #   max_tokens: 32000
@@ -97,18 +97,18 @@ class TestUncomment:
         out = sync_api.sync(SAMPLE_CONFIG, {"anthropic"})
         assert _model_names(out) == ["claude-opus-4-8"]
         # OpenRouter block stayed commented.
-        assert "  # - name: openrouter-fable-5" in out
+        assert "  # - name: openrouter-fable-5-1" in out
         # Markers themselves stay commented.
         assert "# === BEGIN auto-model-config: anthropic" in out
 
     def test_openrouter_only(self):
         out = sync_api.sync(SAMPLE_CONFIG, {"openrouter"})
-        assert _model_names(out) == ["openrouter-fable-5"]
+        assert _model_names(out) == ["openrouter-fable-5-1"]
         assert "  # - name: claude-opus-4-8" in out
 
     def test_both_keys(self):
         out = sync_api.sync(SAMPLE_CONFIG, {"anthropic", "openrouter"})
-        assert _model_names(out) == ["claude-opus-4-8", "openrouter-fable-5"]
+        assert _model_names(out) == ["claude-opus-4-8", "openrouter-fable-5-1"]
 
     def test_no_keys_is_noop(self):
         out = sync_api.sync(SAMPLE_CONFIG, set())
@@ -177,11 +177,11 @@ class TestRealExampleConfig:
         out = sync_api.sync(self.text, {"anthropic"})
         data = yaml.safe_load(out)
         names = {m["model"] for m in data["models"]}
-        assert {"claude-fable-5", "claude-opus-5", "claude-opus-4-8", "claude-sonnet-5", "claude-sonnet-4-6", "claude-haiku-4-5"}.issubset(names)
+        assert {"claude-fable-5-1", "claude-opus-5", "claude-opus-4-8", "claude-sonnet-5", "claude-sonnet-4-6", "claude-haiku-4-5"}.issubset(names)
         assert all(m["api_key"] == "$ANTHROPIC_API_KEY" for m in data["models"])
 
     def test_anthropic_adaptive_models_request_summarized_thinking(self):
-        """The adaptive Claude models (Fable 5, Opus 5, Opus 4.8, Sonnet 5,
+        """The adaptive Claude models (Fable 5.1, Opus 5, Opus 4.8, Sonnet 5,
         Sonnet 4.6) must request `display: summarized` when thinking is enabled.
         Their default (`omitted`) returns thinking blocks with empty text, which
         langchain-anthropic drops on multi-turn tool-use replay, producing a 400
@@ -192,7 +192,7 @@ class TestRealExampleConfig:
         data = yaml.safe_load(out)
         by_model = {m["model"]: m for m in data["models"]}
 
-        for slug in ("claude-fable-5", "claude-opus-5", "claude-opus-4-8", "claude-sonnet-5", "claude-sonnet-4-6"):
+        for slug in ("claude-fable-5-1", "claude-opus-5", "claude-opus-4-8", "claude-sonnet-5", "claude-sonnet-4-6"):
             enabled = by_model[slug]["when_thinking_enabled"]["thinking"]
             assert enabled.get("type") == "adaptive", slug
             assert enabled.get("display") == "summarized", slug
@@ -203,7 +203,7 @@ class TestRealExampleConfig:
         assert "display" not in haiku_enabled
 
     def test_fable_never_sends_disabled_thinking_but_opus_sonnet_do(self):
-        """Fable 5 rejects `thinking: {type: disabled}` with a 400, so it must never
+        """Fable 5.1 rejects `thinking: {type: disabled}` with a 400, so it must never
         send it on either toggle state: when thinking is "disabled" Fable keeps
         adaptive+summarized (it cannot turn thinking off, and summarized keeps the
         multi-turn replay legal). Opus 5 / Opus 4.8 / Sonnet 5 / Sonnet 4.6 accept
@@ -218,7 +218,7 @@ class TestRealExampleConfig:
         data = yaml.safe_load(out)
         by_model = {m["model"]: m for m in data["models"]}
 
-        fable_disabled = by_model["claude-fable-5"]["when_thinking_disabled"]["thinking"]
+        fable_disabled = by_model["claude-fable-5-1"]["when_thinking_disabled"]["thinking"]
         assert fable_disabled.get("type") == "adaptive", fable_disabled
         assert fable_disabled.get("type") != "disabled"
         assert fable_disabled.get("display") == "summarized", fable_disabled
@@ -232,7 +232,7 @@ class TestRealExampleConfig:
         data = yaml.safe_load(out)
         ids = {m["model"] for m in data["models"]}
         expected = {
-            "anthropic/claude-fable-5",
+            "anthropic/claude-fable-5-1",
             "x-ai/grok-4.6",
             "openai/gpt-5.6-sol",
             "openai/gpt-5.3-codex",
@@ -346,7 +346,7 @@ class TestFirstPartyKeyCoverage:
     gated by that lab's own `.env` key, carrying more than just the flagship, and
     that flagship *also* on OpenRouter for users who hold only an
     `OPENROUTER_API_KEY` — the Anthropic shape (six Claudes on the direct key,
-    Fable 5 additionally routed) generalised to Grok, GPT, Gemini, Qwen, Kimi,
+    Fable 5.1 additionally routed) generalised to Grok, GPT, Gemini, Qwen, Kimi,
     DeepSeek and the rest. Everything mechanical about that rule is pinned here,
     so the audit step needs no network.
     """
@@ -391,9 +391,9 @@ class TestFirstPartyKeyCoverage:
         for slug, (_env, bundle) in self.bundles.items():
             bare = {m["model"].lower() for m in bundle}
             assert bare & routed, f"{slug}: no home model is doubled on OpenRouter"
-        # The template case this generalises: Anthropic's Fable 5 is direct *and* routed.
-        assert "claude-fable-5" in direct_ids
-        assert "claude-fable-5" in routed
+        # The template case this generalises: Anthropic's Fable 5.1 is direct *and* routed.
+        assert "claude-fable-5-1" in direct_ids
+        assert "claude-fable-5-1" in routed
 
     def test_only_meta_and_nvidia_stay_openrouter_only(self):
         """Every other routed lab must own a direct block; when an OpenRouter-only
