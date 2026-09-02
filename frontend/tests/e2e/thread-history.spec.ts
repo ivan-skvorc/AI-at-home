@@ -419,6 +419,128 @@ test.describe("Thread history", () => {
     await expectMessageAtBottom(scroller, page.getByText(followUpPrompt));
   });
 
+  test("keeps the reader's place when an older history page loads", async ({
+    page,
+  }) => {
+    // Every row here is its own message group, so the thread is comfortably
+    // past VIRTUALIZATION_THRESHOLD and the virtualized path is the one under
+    // test — the static list never had this problem.
+    const buildRows = (label: string, firstSeq: number, count: number) =>
+      Array.from({ length: count }, (_, index) => {
+        const seq = firstSeq + index;
+        return {
+          run_id: `run-${label}`,
+          seq,
+          content: {
+            type: "ai",
+            id: `${label}-step-${seq}`,
+            content: `${label} step ${seq}`,
+          },
+          metadata: { caller: "lead_agent" },
+          created_at: "2025-06-03T12:00:00Z",
+        };
+      });
+    const olderRows = buildRows("Older", 1, 60);
+    const latestRows = buildRows("Latest", 61, 60);
+    const oldestLatestSeq = 61;
+    let olderPageRequested = false;
+    // The load-more sentinel sits above the list, so opening the thread already
+    // asks for the next page. Holding that response until the reader has
+    // scrolled back is what makes this a test of a prepend *into* a scrolled-up
+    // viewport, rather than one that lands before the reader is anywhere.
+    let releaseOlderPage!: () => void;
+    const olderPageGate = new Promise<void>((resolve) => {
+      releaseOlderPage = resolve;
+    });
+
+    mockLangGraphAPI(page, {
+      threads: [
+        {
+          thread_id: MOCK_THREAD_ID,
+          title: "Scrolling back",
+          updated_at: "2025-06-03T12:00:00Z",
+          messages: [],
+        },
+      ],
+    });
+    await page.route(
+      new RegExp(`/api/threads/${MOCK_THREAD_ID}/messages/page(?:\\?.*)?$`),
+      async (route) => {
+        if (route.request().method() !== "GET") {
+          return route.fallback();
+        }
+        const beforeSeq = new URL(route.request().url()).searchParams.get(
+          "before_seq",
+        );
+        const isLatestPage = beforeSeq === null;
+        if (!isLatestPage) {
+          olderPageRequested = true;
+          await olderPageGate;
+        }
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({
+            data: isLatestPage ? latestRows : olderRows,
+            has_more: isLatestPage,
+            next_before_seq: isLatestPage ? oldestLatestSeq : null,
+          }),
+        });
+      },
+    );
+
+    await page.goto(`/workspace/chats/${MOCK_THREAD_ID}`);
+    const conversation = page.getByRole("log");
+    const scroller = conversation.locator(":scope > div").first();
+    await expect(page.getByText("Latest step 120")).toBeVisible({
+      timeout: 15_000,
+    });
+
+    // Scroll back the way a reader does. The wheel event is what tells
+    // stick-to-bottom the reader left the bottom deliberately; setting
+    // scrollTop alone would not exercise the lock this test is about.
+    await scroller.dispatchEvent("wheel", { deltaY: -2_000 });
+    await scroller.evaluate((element) => {
+      element.scrollTop = 0;
+      element.dispatchEvent(new Event("scroll"));
+    });
+    const anchorRow = page.getByText(`Latest step ${oldestLatestSeq}`, {
+      exact: true,
+    });
+    await expect(anchorRow).toBeVisible({ timeout: 15_000 });
+    // Reaching the top asks for the next page; the gate holds it there so the
+    // prepend lands while the reader is parked, which is the case under test.
+    await expect.poll(() => olderPageRequested, { timeout: 15_000 }).toBe(true);
+
+    // 60 older turns land above everything on screen. Wait on the *newest* of
+    // them — the row directly above where the reader is parked, and so inside
+    // the render window. The oldest is 60 rows up and deliberately not
+    // rendered, which is the point of virtualizing.
+    releaseOlderPage();
+    await expect(page.getByText("Older step 60", { exact: true })).toBeAttached(
+      { timeout: 15_000 },
+    );
+
+    // The invariant, asserted against a real layout engine: the row the reader
+    // was looking at is still the row on screen, and the list did not travel to
+    // the newest turn.
+    //
+    // This does not *reproduce* the stick-to-bottom lock race — that one turns
+    // on whether a 1ms deferral wins, so a clean run passes with or without the
+    // fix (the same reason the flake documented in FORK.md showed up only under
+    // load). It guards the property that race breaks, so a future change that
+    // breaks it deterministically is caught here.
+    await expect(anchorRow).toBeVisible();
+    await expect(
+      page.getByText("Latest step 120", { exact: true }),
+    ).toBeHidden();
+    const distanceFromBottom = await scroller.evaluate(
+      (element) =>
+        element.scrollHeight - element.scrollTop - element.clientHeight,
+    );
+    expect(distanceFromBottom).toBeGreaterThan(100);
+  });
+
   test("shows a completed run duration once after multi-step history", async ({
     page,
   }) => {

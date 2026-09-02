@@ -290,6 +290,36 @@ export function saveThreadContextOverride(
   safeLocalStorage.setItem(key, JSON.stringify(persisted));
 }
 
+/**
+ * Carry a conversation's per-thread workflow selection onto a thread forked
+ * from it.
+ *
+ * Editing a message branches the conversation into a *new thread id*, and every
+ * per-conversation key — the model above all — is stored under that id. Without
+ * this the fork reads no override and falls back to the app defaults, so
+ * editing a message silently moves the conversation onto a different model
+ * (and mode, reasoning effort, internet switch, and Democracy panel) than the
+ * turn it is replacing.
+ *
+ * Copying rather than sharing keeps the two threads independent afterwards:
+ * changing the model in the version must not reach back into its parent.
+ */
+export function copyThreadContextOverride(
+  sourceThreadId: string,
+  targetThreadId: string,
+) {
+  if (!isBrowser() || !sourceThreadId || !targetThreadId) {
+    return;
+  }
+  if (sourceThreadId === targetThreadId) {
+    return;
+  }
+  saveThreadContextOverride(
+    targetThreadId,
+    getThreadContextOverride(sourceThreadId),
+  );
+}
+
 export function applyThreadContextOverride(
   settings: LocalSettings,
   override: ThreadContextOverride,

@@ -3,6 +3,7 @@ import { beforeEach, expect, test } from "@rstest/core";
 import {
   LOCAL_SETTINGS_KEY,
   THREAD_CONTEXT_KEY_PREFIX,
+  copyThreadContextOverride,
   getThreadContextOverride,
   saveThreadContextOverride,
 } from "@/core/settings/local";
@@ -86,5 +87,58 @@ test("migrates a legacy model-only per-thread key", () => {
   window.localStorage.setItem("deerflow.thread-model.thread-legacy", "gpt-5");
   expect(getThreadContextOverride("thread-legacy")).toEqual({
     model_name: "gpt-5",
+  });
+});
+
+test("a forked thread inherits the conversation's workflow selection", () => {
+  // Editing a message branches into a new thread id. Every per-conversation
+  // key is stored under the thread id, so without the carry-over the edit
+  // would replay the turn on the app's default model.
+  saveThreadContextOverride("thread-a", {
+    model_name: "ollama:llama3",
+    mode: "ultra",
+    reasoning_effort: "high",
+    internet_enabled: false,
+  });
+
+  copyThreadContextOverride("thread-a", "thread-a-v2");
+
+  expect(getThreadContextOverride("thread-a-v2")).toEqual({
+    model_name: "ollama:llama3",
+    mode: "ultra",
+    reasoning_effort: "high",
+    internet_enabled: false,
+  });
+});
+
+test("a forked thread's selection is a copy, not a shared reference", () => {
+  saveThreadContextOverride("thread-a", { model_name: "ollama:llama3" });
+  copyThreadContextOverride("thread-a", "thread-a-v2");
+
+  // Changing the model in the version must not reach back into its parent.
+  saveThreadContextOverride("thread-a-v2", { model_name: "gpt-5" });
+
+  expect(getThreadContextOverride("thread-a")).toEqual({
+    model_name: "ollama:llama3",
+  });
+  expect(getThreadContextOverride("thread-a-v2")).toEqual({
+    model_name: "gpt-5",
+  });
+});
+
+test("forking a conversation with no selection leaves the fork on defaults", () => {
+  copyThreadContextOverride("thread-untouched", "thread-untouched-v2");
+  expect(
+    window.localStorage.getItem(
+      `${THREAD_CONTEXT_KEY_PREFIX}thread-untouched-v2`,
+    ),
+  ).toBeNull();
+});
+
+test("copying onto the same thread id is a no-op", () => {
+  saveThreadContextOverride("thread-a", { model_name: "ollama:llama3" });
+  copyThreadContextOverride("thread-a", "thread-a");
+  expect(getThreadContextOverride("thread-a")).toEqual({
+    model_name: "ollama:llama3",
   });
 });

@@ -26,7 +26,7 @@ import {
 } from "../messages/utils";
 import type { FileInMessage } from "../messages/utils";
 import type { LocalSettings } from "../settings";
-import { getLocalSettings } from "../settings/local";
+import { copyThreadContextOverride, getLocalSettings } from "../settings/local";
 import { isSidecarThread, SIDECAR_METADATA_KEY } from "../sidecar/thread";
 import { useSubtaskContext, useUpdateSubtask } from "../tasks/context";
 import { taskEventToSubtaskUpdate } from "../tasks/lifecycle";
@@ -3019,7 +3019,18 @@ export function useBranchThread() {
       messageId: string;
       messageIds?: string[];
       title?: string;
-    }) => branchThreadFromTurn(threadId, { messageId, messageIds, title }),
+    }) => {
+      const response = await branchThreadFromTurn(threadId, {
+        messageId,
+        messageIds,
+        title,
+      });
+      // Same reason as the edit-version path below: a branch is a new thread
+      // id, and the per-conversation model/mode selection is stored under that
+      // id, so without this the branch starts on the app default model.
+      copyThreadContextOverride(threadId, response.thread_id);
+      return response;
+    },
     onSuccess(response, { threadId }) {
       void queryClient.invalidateQueries({
         queryKey: ["thread", "metadata", response.thread_id],
@@ -3109,6 +3120,13 @@ export function useCreateEditVersion() {
             })
           ).thread_id
         : (await createThread()).thread_id;
+
+      // The version is a new thread id, and the model / mode / reasoning
+      // effort / internet switch are all stored per thread id. Carry them over
+      // before anything routes to the version, or the edit quietly replays the
+      // turn on the app's default model instead of the one the conversation
+      // was using.
+      copyThreadContextOverride(threadId, versionThreadId);
 
       await patchThreadMetadata(
         versionThreadId,
