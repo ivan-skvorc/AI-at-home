@@ -193,6 +193,109 @@ class TestDiff:
         assert [f.kind for f in findings] == ["retired_slug"]
 
 
+# ---------------------------------------------------------------------------
+# Discovery: the only check that can grow the roster
+# ---------------------------------------------------------------------------
+
+DAY = 86400.0
+# A fixed "today" so the window tests never depend on the wall clock.
+NOW = 1_800_000_000.0
+
+# The two slugs CONFIG_BLOCK bundles, dated well outside the candidate window so
+# they act only as the lab's baseline and never as candidates themselves.
+BASELINE = {"vendor/alpha": {"created": NOW - 400 * DAY}, "vendor/beta": {"created": NOW - 300 * DAY}}
+
+
+def candidates(*, now=NOW, **slugs):
+    entries = audit.parse_marker_blocks(CONFIG_BLOCK)
+    return audit.find_new_candidates(entries, catalog(**slugs), now=now)
+
+
+class TestNewCandidates:
+    """FORK.md's discovery step, the half a machine can do.
+
+    Every other check in this audit asks about models the bundle already
+    carries, so a lab shipping a new flagship is invisible to all of them: the
+    2026-08-20 pass found *four* labs a generation behind at once, caught by eye
+    rather than by any gate. This reports "something newer exists under a lab you
+    already bundle" and stops there — whether it belongs is the acclaim
+    judgement FORK.md reserves for a human reading OpenRouter's rankings.
+    """
+
+    def test_a_newer_model_from_a_bundled_lab_is_reported(self):
+        findings = candidates(**BASELINE, **{"vendor/gamma": {"created": NOW - 5 * DAY}})
+        assert [f.kind for f in findings] == ["new_candidate"]
+        assert findings[0].slug == "vendor/gamma"
+
+    def test_it_proposes_and_never_instructs(self):
+        # The finding is evidence of existence, not of merit. If it ever starts
+        # reading as "add this", the roster grows on a catalog's say-so.
+        finding = candidates(**BASELINE, **{"vendor/gamma": {"created": NOW - 5 * DAY}})[0]
+        text = (finding.detail + " " + finding.suggestion).lower()
+        assert "acclaim" in text
+        assert "model-audit-log" in text
+
+    def test_a_model_older_than_the_lab_baseline_is_not_a_candidate(self):
+        # Every lab has a back catalogue. Reporting it would bury the one entry
+        # that actually shipped this month.
+        assert candidates(**BASELINE, **{"vendor/ancient": {"created": NOW - 500 * DAY}}) == []
+
+    def test_a_candidate_ages_out_of_the_window(self):
+        """A declined candidate must stop being reported on its own.
+
+        This is the property that keeps the weekly job closable: without it, a
+        model the maintainer looked at and rejected reappears in the issue every
+        Monday forever, which is precisely how a job becomes one people mute.
+        """
+        recent = candidates(**BASELINE, **{"vendor/gamma": {"created": NOW - 59 * DAY}})
+        assert [f.slug for f in recent] == ["vendor/gamma"]
+        assert candidates(**BASELINE, **{"vendor/gamma": {"created": NOW - 61 * DAY}}) == []
+
+    def test_a_variant_slug_is_never_a_candidate(self):
+        # `:free`/`:nitro` are routing variants of a model, not a new model.
+        assert candidates(**BASELINE, **{"vendor/alpha:free": {"created": NOW - 2 * DAY}, "vendor/gamma:nitro": {"created": NOW - 2 * DAY}}) == []
+
+    def test_an_already_bundled_slug_is_not_a_candidate(self):
+        fresh_baseline = {"vendor/alpha": {"created": NOW - 400 * DAY}, "vendor/beta": {"created": NOW - 2 * DAY}}
+        assert candidates(**fresh_baseline) == []
+
+    def test_a_lab_the_bundle_does_not_carry_is_ignored(self):
+        # Discovering a whole new lab is step 2's third question and a human
+        # judgement; the catalog has hundreds, so reporting them is noise.
+        assert candidates(**BASELINE, **{"otherlab/flagship": {"created": NOW - 2 * DAY}}) == []
+
+    def test_a_lab_with_no_dated_baseline_is_skipped(self):
+        # Nothing to compare against. Silence beats treating every slug in the
+        # lab as newer than the bundle.
+        assert candidates(**{"vendor/alpha": {}, "vendor/beta": {}, "vendor/gamma": {"created": NOW - 2 * DAY}}) == []
+
+    def test_an_unreachable_catalog_produces_no_candidates(self):
+        entries = audit.parse_marker_blocks(CONFIG_BLOCK)
+        assert audit.find_new_candidates(entries, {"openrouter": {"models": {"vendor/gamma": {"created": NOW}}, "reachable": False}}, now=NOW) == []
+
+    def test_candidates_are_newest_first_and_capped_per_lab(self):
+        flood = {f"vendor/new-{n}": {"created": NOW - n * DAY} for n in range(1, 8)}
+        findings = candidates(**BASELINE, **flood)
+        assert [f.slug for f in findings] == ["vendor/new-1", "vendor/new-2", "vendor/new-3"]
+
+    def test_the_catalog_name_is_used_when_the_catalog_has_one(self):
+        findings = candidates(**BASELINE, **{"vendor/gamma": {"created": NOW - 2 * DAY, "name": "Vendor Gamma"}})
+        assert findings[0].name == "Vendor Gamma"
+
+    def test_the_live_parse_keeps_the_release_date(self):
+        # Without `created` surviving the parse, discovery has nothing to sort
+        # on and silently reports nothing.
+        payload = {"data": [{"id": "vendor/alpha", "name": "Vendor Alpha", "created": 1700000000, "pricing": {"prompt": "0.000002", "completion": "0.000006"}}]}
+        models = audit.parse_openrouter_catalog(payload)
+        assert models["vendor/alpha"]["created"] == 1700000000.0
+        assert models["vendor/alpha"]["name"] == "Vendor Alpha"
+
+    def test_a_candidate_reaches_the_report_under_its_own_heading(self):
+        body = audit.render_report(candidates(**BASELINE, **{"vendor/gamma": {"created": NOW - 2 * DAY}}), skipped=[])
+        assert "vendor/gamma" in body
+        assert audit._KIND_TITLE["new_candidate"] in body
+
+
 class TestInternalConsistency:
     def test_a_price_in_a_display_name_is_a_finding(self):
         """The regression guard for the change that moved prices out of names.
