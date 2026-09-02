@@ -29,7 +29,7 @@ A single `make dev` / Docker stack runs these cooperating services:
 | **Nginx**       | `2026` | Unified reverse-proxy entry point — open this in the browser        |
 | **Gateway API** | `8001` | FastAPI REST API + embedded LangGraph-compatible agent runtime      |
 | **Frontend**    | `3000` | Next.js web interface                                               |
-| **SearXNG**     | `8088` | Self-hosted metasearch backing the default `web_search` tool. All launch scripts resolve it at startup via `scripts/detect_searxng.py`: an existing instance on the machine is reused when reachable (Docker stacks verify container reachability), otherwise the bundled container is started automatically. In the Docker stacks the Gateway uses the in-network `http://searxng:8080` (via `DEER_FLOW_SEARXNG_BASE_URL`); the host port is loopback-only. `make searxng` / `make searxng-stop` give manual control |
+| **SearXNG**     | `8088` | Self-hosted metasearch backing the default `web_search` tool. Every launch script resolves it at startup via `scripts/detect_searxng.py` — a reachable existing instance is reused, otherwise the bundled container starts. Docker stacks use the in-network `http://searxng:8080` (`DEER_FLOW_SEARXNG_BASE_URL`); the host port is loopback-only. `make searxng` / `make searxng-stop` for manual control |
 | **ComfyUI**     | `8188` | Local image/video generation (`media` tools, on by default). `scripts/detect_comfyui.py` reuses a running instance, else starts the bundled container where Docker and a GPU allow. Loopback-only. Depth: FORK.md §26 |
 | **Provisioner** | `8002` | Optional — only when sandbox is configured for provisioner/K8s mode |
 
@@ -41,22 +41,15 @@ It compresses HTML and configured textual assets, while deliberately leaving SSE
 fonts, images, audio, and video uncompressed at the proxy layer.
 
 Both compose files publish that entry as `"${BIND_HOST:-127.0.0.1}:${PORT:-2026}:2026"`
-— **loopback by default**; a bare `"${PORT}:2026"` binds `0.0.0.0`, which is not. Any
-new published port needs an explicit bind address (`test_compose_default_bind_host.py`
-pins every service in both files). Nginx's `default_server` and the Gateway's
-`0.0.0.0:8001` are container-internal: the published nginx port is the whole external
-surface. `BIND_HOST` is one interface, not an allowlist, so naming a non-loopback one
-would refuse the host's own `localhost` — both Docker scripts detect that
-(`should_cobind_loopback`) and append `docker/docker-compose.loopback.yaml` to *also*
-publish on `127.0.0.1`, host-only, leaving the external surface unchanged
-(`test_deploy_loopback_cobind.py`). The root `PORT` is Docker ingress config only; local
-orchestration pins Next.js to `3000`. Full reasoning: FORK.md, *Reaching the stack over
-Tailscale*.
+— **loopback by default**. Any new published port needs an explicit bind address, or it
+binds `0.0.0.0` (`test_compose_default_bind_host.py` pins every service in both files).
+The published nginx port is the whole external surface; naming a non-loopback `BIND_HOST`
+makes the Docker scripts co-bind `127.0.0.1` as well (`test_deploy_loopback_cobind.py`).
+Full reasoning: FORK.md, *Reaching the stack over Tailscale*.
 
 Two rules ride along, pinned by `test_docker_dev_tailnet.py`: a Docker script runs Compose
-after `cd docker/`, so it must pass an absolute `--env-file <repo-root>/.env` or `ports:`
-interpolation silently ignores the root `.env`; and tailnet reach is *detected*, not
-configured — see FORK.md, *Reaching the stack over Tailscale*.
+after `cd docker/`, so it must pass an absolute `--env-file <repo-root>/.env`; and tailnet
+reach is *detected*, not configured. Both: FORK.md, *Reaching the stack over Tailscale*.
 
 ## Repository Map
 
@@ -83,17 +76,15 @@ deer-flow/
 └── docs/                           # Cross-cutting docs, plans, and design notes
 ```
 
-Third-party extensions are loaded from a top-level `plugins:` list in `config.yaml`
-(operator-controlled on purpose — that list causes code to be imported, so it is deliberately
-kept out of the API-writable `extensions_config.json`). Packaged extensions can contribute
-middleware, task lifecycle, system-model observers, Gateway services, and FastAPI HTTP
-routers; the [reference extension](examples/deerflow-extension-example/) demonstrates all
-five. Manage them with `deerflow extensions install/list/enable/disable/remove` or the root
-`make extension-*` wrappers. Every mutation requires a Gateway restart, and both build
-hooks and extension code execute with Gateway privileges, so only trusted operator sources
-belong in this path. The manager transaction, accepted source forms, lock discipline, and
-contribution contract live in
-[the extensions guide](backend/packages/harness/deerflow/extensions/AGENTS.md).
+Third-party extensions are loaded from a top-level `plugins:` list in `config.yaml`, kept
+out of the API-writable `extensions_config.json` on purpose: that list causes code to be
+imported, and both build hooks and extension code run with Gateway privileges, so only
+trusted operator sources belong there. Manage them with `deerflow extensions
+install/list/enable/disable/remove` or the root `make extension-*` wrappers; every mutation
+needs a Gateway restart. The five contribution kinds, the manager transaction, the accepted
+source forms and the lock discipline are in
+[the extensions guide](backend/packages/harness/deerflow/extensions/AGENTS.md), with a
+[reference extension](examples/deerflow-extension-example/) demonstrating all five.
 
 Runtime config lives at the **repo root**: copy `config.example.yaml` → `config.yaml`
 (main app config) and `extensions_config.example.json` → `extensions_config.json` (MCP
@@ -101,15 +92,16 @@ servers + skills). Both real files are gitignored and may be edited at runtime v
 Gateway API. Config schema and resolution order are documented in
 [backend/AGENTS.md](backend/AGENTS.md).
 
-Skill quality review note: `skills/public/skill-reviewer/` is the built-in
-read-only reviewer, and `scripts/review_changed_public_skills.py` is its CI gate
-(with digest-pinned acknowledgments in `skills/public/.review-acknowledgments.json`).
-See [the skills guide](backend/packages/harness/deerflow/skills/AGENTS.md) for the
-ownership boundaries and the acknowledgment rules.
+Skill quality review note: `skills/public/skill-reviewer/` is the built-in read-only
+reviewer, `scripts/review_changed_public_skills.py` is its CI gate, and CI waivers live in
+`.github/skill-review-waivers.v1.json`. Ownership boundaries, the waiver rules, and the
+two-step manifest dance are in
+[the skills guide](backend/packages/harness/deerflow/skills/AGENTS.md).
 
-Scheduled-task note:
-- The scheduled-task MVP adds a workspace page at `/workspace/scheduled-tasks` plus a background scheduler service gated by `config.yaml -> scheduler.enabled`.
-- Scheduled background runs are intentionally non-interactive and execute through the normal run lifecycle. The occurrence states, the durable queue, the non-interactive rule, and the dispatch-time `scheduler.recursion_limit` are detailed in [backend/AGENTS.md](backend/AGENTS.md).
+Scheduled-task note: the MVP adds `/workspace/scheduled-tasks` plus a background scheduler
+gated by `config.yaml -> scheduler.enabled`. Scheduled runs are deliberately
+non-interactive; the occurrence states, the durable queue and the dispatch-time
+`scheduler.recursion_limit` are in [backend/AGENTS.md](backend/AGENTS.md).
 
 ## Commands: Root vs. Module
 
@@ -118,39 +110,22 @@ Scheduled-task note:
 ```bash
 make setup       # Interactive setup wizard (recommended for new users)
 make doctor      # Check configuration and system requirements
-make support-bundle  # Generate redacted troubleshooting summary, AI issue draft, and optional zip
-make backup      # Snapshot the whole instance (credentials excluded unless INCLUDE_SECRETS=1)
-make restore ARCHIVE=<file>  # Restore a snapshot (refuses while the stack is running)
 make config      # Generate local config files from the examples
 make check       # Check that required tools are installed
 make install     # Install all dependencies (frontend + backend + pre-commit hooks)
-make extension-install SOURCE=...  # Install and enable a trusted Python extension
-make extension-list                # List configured Python extensions
-make extension-enable NAME=...     # Enable an installed extension (restart required)
-make extension-disable NAME=...    # Disable without uninstalling (restart required)
-make extension-remove NAME=...     # Remove package and config entry (restart required)
 make dev         # Start all services with hot-reload (Gateway + Frontend + Nginx)
-make start       # Production mode, local and optimized (SKIP_FRONTEND_BUILD=1 reuses the last frontend build)
+make start       # Production mode, local and optimized (SKIP_FRONTEND_BUILD=1 reuses the last build)
 make stop        # Stop all running services
 make up / down   # Build/stop the production Docker stack (browser at localhost:2026)
 make up-start    # Restart the prod stack from pre-built images — applies config-only .env/config.yaml changes (e.g. BIND_HOST) with no rebuild
 make docker-start / docker-stop / docker-logs   # Docker development environment
-make comfy-up / comfy-down / comfy-logs / comfy-models / comfy-model-add  # Local ComfyUI + its model files
-make sandbox-enable / sandbox-disable           # Switch config.yaml between the containerized AIO sandbox and the local sandbox
-make sandbox-up / sandbox-down / sandbox-logs   # Manage the standalone AIO sandbox container (docker/docker-compose.sandbox.yml, 127.0.0.1:8091)
-make fetch-browser                              # Manually pre-download the Camoufox browser (also auto-installed on every launch path when the camoufox web_fetch backend is selected)
-make auto-update                                # Update the Camoufox browser + bundled SearXNG image now (fork feature; also runs daily and on boot via a systemd --user timer / throttled on launch — see FORK.md "Automatic updates")
-make auto-update-install / auto-update-uninstall # Install/remove the systemd --user timer for the update above (fires daily + on boot)
 ```
 
-Production startup uses the image's pre-built Python environment with `uv run
---no-sync`, gives the Gateway a real `/health` probe, and makes `make up` wait
-for that probe before printing its success banner. A readiness failure must
-surface Compose status and recent Gateway logs instead of claiming the stack is
-running.
-
-Docker log and restart commands resolve `DEER_FLOW_ROOT` from the current
-checkout before invoking Compose, matching the start and stop commands.
+Fork-specific target families, each documented in the FORK.md section named beside it:
+`make support-bundle` / `backup` / `restore ARCHIVE=` (§13), `extension-*` (the extensions
+guide), `comfy-*` (§26), `sandbox-enable/disable/up/down/logs`, `fetch-browser` and
+`auto-update*` (*Automatic updates*). `make searxng` / `searxng-stop` control the bundled
+metasearch.
 
 Run `make help` for the full list.
 
@@ -159,13 +134,14 @@ Run `make help` for the full list.
 ```bash
 # Backend (see backend/AGENTS.md for the full set)
 cd backend && make dev        # Gateway API with reload (port 8001)
-cd backend && make test       # Backend test suite
+cd backend && make test       # Default backend suite; excludes live and blocking-I/O tests
+cd backend && make test-blocking-io  # Strict blocking-I/O suite
 cd backend && make lint       # ruff check
 cd backend && make format     # ruff format
 
 # Frontend (see frontend/AGENTS.md for the full set)
-cd frontend && pnpm dev       # Dev server: Webpack on Windows, Turbopack elsewhere (override with DEER_FLOW_DEV_BUNDLER)
-cd frontend && pnpm check     # Format + lint + types (before committing)
+cd frontend && pnpm dev       # Dev server: Webpack by default (override with DEER_FLOW_DEV_BUNDLER=turbo)
+cd frontend && pnpm check     # Format + lint + types — the gates CI runs (before committing)
 cd frontend && pnpm test      # Unit tests
 ```
 
@@ -230,6 +206,9 @@ These apply repo-wide; module guides own the module-specific detail.
   frontend tests live in `frontend/tests/`.
 - **Format before pushing** — run `make format` (backend) / `pnpm check` (frontend). Backend
   CI enforces `ruff format --check`, so formatting must be clean before a push.
+- **Skill text encoding** — treat `SKILL.md` and other textual skill resources as UTF-8;
+  Python utilities that read or write them must pass `encoding="utf-8"` rather than
+  relying on the platform locale.
 - **Version sources must stay in lockstep** — a release version must match identically in
   `backend/pyproject.toml`, `frontend/package.json`, and `deploy/helm/deer-flow/Chart.yaml`
   (`version` + `appVersion`). Pushing a `v*` git tag triggers CI that runs

@@ -36,10 +36,12 @@ import argparse
 import json
 import re
 import sys
+import time
 import urllib.error
 import urllib.request
 from collections.abc import Callable, Iterable
 from dataclasses import asdict, dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -59,6 +61,15 @@ DISPLAY_PRICE_RE = re.compile(r"\(\s*\$\s*([\d.]+)\s*/\s*([\d.]+)\s*(?:→\s*\$\
 # Prices are floats parsed from two different sources; compare with a tolerance
 # that is well below a cent per million tokens but above float noise.
 PRICE_EPSILON = 1e-4
+
+# How long a newly released model stays reportable as a candidate, and how many
+# the report will carry per lab. The window is what keeps this job *closable*: a
+# candidate the maintainer looked at and declined ages out on its own, instead of
+# reappearing every Monday as a finding nobody can resolve — the same reasoning
+# that keeps an open-ended discount from being a finding.
+NEW_CANDIDATE_WINDOW_DAYS = 60
+NEW_CANDIDATE_PER_LAB = 3
+SECONDS_PER_DAY = 86400.0
 
 
 @dataclass(frozen=True)
@@ -258,6 +269,11 @@ def parse_openrouter_catalog(payload: dict) -> dict[str, dict]:
     OpenRouter quotes USD **per token** as strings. Free and routing variants
     (``:free``, ``:nitro``) are separate slugs and are kept separate: folding a
     ``:free`` entry into its paid slug would read as a 100% promo every week.
+
+    ``created`` and ``name`` are carried through for :func:`find_new_candidates`:
+    the release date is the only field that can answer "has this lab shipped
+    something newer than what we bundle", and without it discovery silently
+    reports nothing.
     """
     models: dict[str, dict] = {}
     for item in payload.get("data") or []:
@@ -277,6 +293,15 @@ def parse_openrouter_catalog(payload: dict) -> dict[str, dict]:
             continue
         if pricing and not entry:
             continue
+        created = item.get("created")
+        if created is not None:
+            try:
+                entry["created"] = float(created)
+            except (TypeError, ValueError):
+                pass
+        name = item.get("name")
+        if isinstance(name, str) and name:
+            entry["name"] = name
         models[slug] = entry
     return models
 
@@ -392,6 +417,104 @@ def diff_against_catalog(entries: Iterable[BundledModel], catalogs: dict[str, di
     return findings
 
 
+def _lab_of(slug: str) -> str | None:
+    """The ``vendor`` half of a ``vendor/model`` routed slug, or None."""
+    lab, separator, rest = (slug or "").partition("/")
+    return lab if separator and rest else None
+
+
+def _created_at(live: dict | None) -> float | None:
+    value = (live or {}).get("created")
+    return value if isinstance(value, (int, float)) else None
+
+
+def find_new_candidates(
+    entries: Iterable[BundledModel],
+    catalogs: dict[str, dict],
+    now: float | None = None,
+    window_days: float = NEW_CANDIDATE_WINDOW_DAYS,
+    limit_per_lab: int = NEW_CANDIDATE_PER_LAB,
+) -> list[Finding]:
+    """Has a lab the bundle already carries shipped something newer?
+
+    Every other check here asks about entries the config already lists, which
+    means a lab going a generation stale is invisible to all of them — FORK.md's
+    2026-08-20 pass found four labs behind at once, caught by eye. This is the
+    half a machine can do honestly: *this exists, and it is newer than anything
+    you carry from that lab*. Whether it belongs is the acclaim judgement, which
+    stays with a human reading OpenRouter's rankings.
+
+    Deliberately narrow, because a discovery check that floods is a discovery
+    check people mute:
+
+    * only labs the bundle **already** carries — the catalog has hundreds, and
+      adopting a whole new lab is a judgement, not a diff;
+    * only slugs newer than that lab's newest bundled entry, so a back catalogue
+      never buries the model that actually shipped this month;
+    * no ``:variant`` slugs — those are routing flavours of a model, not models;
+    * nothing older than ``window_days``, so a declined candidate expires
+      instead of nagging forever;
+    * at most ``limit_per_lab``, newest first.
+    """
+    now = time.time() if now is None else now
+    cutoff = now - window_days * SECONDS_PER_DAY
+
+    bundled: dict[tuple[str, str], set[str]] = {}
+    for entry in entries:
+        lab = _lab_of(entry.slug)
+        catalog = catalogs.get(entry.provider)
+        # Same rule as the diff: an unreachable or absent catalog says nothing.
+        # "Every lab has a newer model" would be the discovery-shaped version of
+        # "every slug retired".
+        if lab is None or not catalog or not catalog.get("reachable"):
+            continue
+        bundled.setdefault((entry.provider, lab), set()).add(entry.slug)
+
+    findings: list[Finding] = []
+    for (provider, lab), slugs in sorted(bundled.items()):
+        models = catalogs[provider].get("models") or {}
+        dates = [date for date in (_created_at(models.get(slug)) for slug in slugs) if date is not None]
+        if not dates:
+            # Nothing dated to compare against — the catalog does not publish a
+            # release date, or every bundled slug is gone (already a
+            # `retired_slug`). Silence beats calling the whole lab new.
+            continue
+        baseline = max(dates)
+
+        found: list[tuple[float, str, dict]] = []
+        for slug, live in models.items():
+            if _lab_of(slug) != lab or slug in slugs or ":" in slug:
+                continue
+            created = _created_at(live)
+            if created is None or created <= baseline or created < cutoff:
+                continue
+            found.append((created, slug, live))
+
+        found.sort(key=lambda item: (-item[0], item[1]))
+        for created, slug, live in found[:limit_per_lab]:
+            released = datetime.fromtimestamp(created, tz=UTC).date().isoformat()
+            findings.append(
+                Finding(
+                    kind="new_candidate",
+                    provider=provider,
+                    name=live.get("name") or slug,
+                    slug=slug,
+                    detail=(
+                        f"`{slug}` was published on {released}, newer than every `{lab}/` model the bundle carries. "
+                        "This is the only drift no other check can see: the rest all ask about models the config "
+                        "already lists, so a lab going a generation stale raises nothing."
+                    ),
+                    suggestion=(
+                        'Decide it, do not merge it. Judge against FORK.md *What "critically acclaimed" means here* '
+                        "— OpenRouter's own rankings and trending boards, dated, not a launch post — then either roll "
+                        "the lab forward in **both** synced sources or record the decline in `docs/model-audit-log.md`. "
+                        f"Reported for {int(window_days)} days from release, then it stops on its own."
+                    ),
+                )
+            )
+    return findings
+
+
 def check_internal_consistency(entries: Iterable[BundledModel]) -> list[Finding]:
     """Does each entry's display name agree with its own ``pricing:`` block?
 
@@ -477,6 +600,7 @@ _KIND_TITLE = {
     "promo_started": "Promotions that started",
     "name_price_mismatch": "Display name disagrees with its own pricing block",
     "source_disagreement": "The two synced sources disagree",
+    "new_candidate": "Newer models from labs already bundled (candidates — acclaim is a human call)",
 }
 
 
@@ -503,6 +627,17 @@ def render_report(findings: list[Finding], skipped: list[str]) -> str:
 
     if skipped:
         lines += ["### Skipped", "", *[f"- {entry}" for entry in skipped], ""]
+
+    if any(finding.kind == "new_candidate" for finding in findings):
+        lines += [
+            "A **candidate is not a proposal to merge.** It reports one machine-checkable fact — a lab",
+            "you already bundle has published something newer than anything you carry from it. Whether it",
+            'belongs is the acclaim judgement in FORK.md (*What "critically acclaimed" means here*):',
+            "OpenRouter's own rankings and trending boards, named and dated in `docs/model-audit-log.md`,",
+            f"never a launch post. A candidate stops being reported {NEW_CANDIDATE_WINDOW_DAYS} days after release, so declining",
+            "one costs nothing later.",
+            "",
+        ]
 
     lines += [
         "---",
@@ -555,6 +690,7 @@ def run_audit(catalogs: dict[str, dict]) -> tuple[list[Finding], list[str]]:
     findings += check_internal_consistency(config_entries)
     findings += check_source_parity(config_entries, wizard_entries)
     findings += diff_against_catalog(config_entries, catalogs)
+    findings += find_new_candidates(config_entries, catalogs)
 
     skipped: list[str] = []
     providers_seen = {entry.provider for entry in config_entries}

@@ -947,9 +947,11 @@ def get_skills_prompt_section(
     return _get_cached_skills_prompt_section(skill_signature, disabled_skill_signature, available_key, container_base_path, skill_evolution_section)
 
 
-def get_agent_soul(agent_name: str | None, *, user_id: str | None = None) -> str:
-    # Append SOUL.md (agent personality) if present
-    soul = load_agent_soul(agent_name, user_id=user_id)
+def get_agent_soul(agent_name: str | None, *, user_id: str | None = None, app_config: AppConfig | None = None) -> str:
+    # Append SOUL.md (agent personality) if present. `app_config` is forwarded so
+    # a caller that already resolved one does not send the agent store back to
+    # disk for it -- see `get_agent_store`.
+    soul = load_agent_soul(agent_name, user_id=user_id, app_config=app_config)
     if soul:
         # SOUL.md is agent-editable (setup_agent / update_agent persist it) and is
         # rendered into the <soul> block of the lead-agent system prompt. Escape it
@@ -1175,7 +1177,7 @@ def apply_prompt_template(
     # identical across users and sessions for maximum prefix-cache reuse.
     fields = dict(
         agent_name=agent_name or "DeerFlow 2.0",
-        soul=get_agent_soul(agent_name, user_id=user_id),
+        soul=get_agent_soul(agent_name, user_id=user_id, app_config=app_config),
         self_update_section=_build_self_update_section(agent_name),
         skills_section=skills_section,
         deferred_tools_section=deferred_tools_section,

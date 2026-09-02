@@ -1,7 +1,0 @@
-{
-  "skills/public/skill-creator": {
-    "digest": "sha256:17b5feec6cea7d1342c64091138cae72e3a49fc48e28685ba15f37d93f5c7b17",
-    "acknowledged_at": "2026-07-11",
-    "reason": "Upstream package that predates the skill-review gate (upstream never ran the gate against it). Findings reviewed: 3x python-subprocess are intrinsic to the skill's purpose (its eval scripts run `claude -p` and `lsof` via subprocess with fixed argument lists, shell=False); 1x secret-env-assignment is a false positive on `tokens = [r.get(\"tokens\", 0) ...]` in scripts/aggregate_benchmark.py, which counts LLM tokens and assigns no credential. Any change to the package invalidates this digest and re-arms the gate."
-  }
-}

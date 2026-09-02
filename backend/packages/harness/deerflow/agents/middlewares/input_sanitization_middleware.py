@@ -77,7 +77,6 @@ _BLOCKED_TAG_NAMES: frozenset[str] = frozenset(
         "critical_reminders",
         "response_style",
         "citations",
-        "uploaded_files",  # old uploads tag — still processed by deermem for backward-compat
         "current_uploads",
         "subagent_system",
         # Fork: the Democracy organizer brief. It tells the lead which models the

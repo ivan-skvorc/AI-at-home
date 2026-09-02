@@ -11,6 +11,24 @@ Newest first. Append a pass; never rewrite one. A dated line is what tells the
 next person whether the roster was checked last week or last year, and _which_
 providers that pass could actually reach.
 
+- **2026-09-02 — process change, not a roster pass. No model, price or slug was touched.**
+  The audit gained a **discovery** step (FORK.md, *Auditing the model list*, step 2) and a
+  definition of *critically acclaimed* (OpenRouter's own rankings and trending surfaces, named
+  and dated here; a cloaked codename like `ox-alpha` is a pointer to watch, never an entry).
+  `scripts/audit_models.py` gained the matching `new_candidate` finding: newer than the lab's
+  newest bundled entry, non-variant, three per lab, expiring 60 days after release so a declined
+  candidate cannot become an un-closable weekly issue.
+
+  **The discovery half could not be exercised live.** This environment's proxy refuses
+  `openrouter.ai` (403 on CONNECT), so the audit reported openrouter as _skipped_ — correctly —
+  and no candidate could be raised. Discovery is therefore covered only by `TestNewCandidates`,
+  which injects its own clock. **Owed to the next unrestricted pass:** run
+  `python3 scripts/audit_models.py` with the catalog reachable and work whatever `new_candidate`
+  findings it raises; that is the first real test of the check, and the first chance to see
+  whether the three-per-lab cap and the 60-day window are the right numbers. The offline half was
+  clean (no price in any display name, the two synced sources agree), and the stale fixture still
+  produces all four drift kinds.
+
 - **2026-09-02 — requested pass. Anthropic verified at tier 1 and it had moved; three tier-2
   corrections elsewhere.** Run because the user asked for an audit. This is the first pass since
   2026-08-20 with **any** authoritative page reachable, and the first ever with a working

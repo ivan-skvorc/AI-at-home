@@ -23,7 +23,8 @@ import mimetypes
 import os
 import shutil
 import uuid
-from collections.abc import Generator, Mapping, Sequence
+from collections.abc import Generator, Iterator, Mapping, Sequence
+from contextlib import closing
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
@@ -38,7 +39,7 @@ from deerflow.agents.lead_agent.prompt import apply_prompt_template, get_enabled
 from deerflow.agents.thread_state import get_thread_state_schema, normalize_middleware_state_schemas
 from deerflow.authz.principal import build_principal_from_context
 from deerflow.config.agents_config import AGENT_NAME_PATTERN
-from deerflow.config.app_config import get_app_config, is_trace_correlation_enabled, reload_app_config
+from deerflow.config.app_config import get_app_config, reload_app_config
 from deerflow.config.extensions_config import (
     ExtensionsConfig,
     SkillStateConfig,
@@ -64,7 +65,7 @@ from deerflow.skills.describe import build_skill_search_setup
 from deerflow.skills.storage import get_or_new_user_skill_storage
 from deerflow.subagents.capacity import configure_subagent_execution_capacity
 from deerflow.tools.builtins.tool_search import assemble_deferred_tools, build_mcp_routing_middleware, get_mcp_routing_hints_prompt_section
-from deerflow.trace_context import DEERFLOW_TRACE_METADATA_KEY, generate_trace_id, get_current_trace_id, reset_current_trace_id, set_current_trace_id
+from deerflow.trace_context import DEERFLOW_TRACE_METADATA_KEY, bind_trace_id, ensure_trace_id, generate_trace_id, get_current_trace_id, reset_trace_id
 from deerflow.tracing import build_tracing_callbacks, inject_langfuse_metadata
 from deerflow.uploads.manager import (
     claim_unique_filename,
@@ -91,6 +92,19 @@ _EMBEDDED_AUTHORIZATION_CONTEXT_KEYS = frozenset(
         "authz_attributes",
     }
 )
+
+
+def _stream_with_sandbox_lease_cleanup(items: Iterator[Any], context: dict[str, Any]) -> Iterator[Any]:
+    """Fence an embedded graph iterator with execution-lease cleanup."""
+    try:
+        yield from items
+    finally:
+        try:
+            from deerflow.sandbox.lease import release_sandbox_execution_lease
+
+            release_sandbox_execution_lease(context)
+        except Exception:
+            logger.warning("Failed to release embedded sandbox execution lease", exc_info=True)
 
 
 def _run_async_from_sync(coro):
@@ -719,23 +733,12 @@ class DeerFlowClient:
     ) -> Generator[StreamEvent, None, None]:
         """Stream a conversation turn with a DeerFlow request trace context.
 
-        Mirrors the Gateway ``TraceMiddleware`` gate: when
-        ``logging.enhance.enabled`` is off the embedded client does **not**
-        create a fresh request-level trace id, so Langfuse traces from
-        embedded / TUI / CLI callers keep their pre-enhancement schema and
-        do not gain a ``metadata.deerflow_trace_id`` key by default. A
-        caller that explicitly binds its own trace via
-        :func:`deerflow.trace_context.request_trace_context` still opts in:
-        the inner ``get_current_trace_id()`` read propagates that value
-        into Langfuse metadata regardless of the flag.
+        The embedded entry point, and like every other one it binds a trace id
+        for the turn so logs, Langfuse metadata, and delegated work correlate.
+        A caller that opened its own scope with ``request_trace_context`` keeps
+        that id; otherwise the turn gets a fresh one.
         """
-        if not is_trace_correlation_enabled(self._app_config):
-            yield from self._stream_without_trace_context(message, thread_id=thread_id, **kwargs)
-            return
-
-        # Resolve the trace id once, without mutating the caller's context.
-        # Inherits an ambient id if the caller opted in via
-        # ``request_trace_context``; otherwise mints a fresh one.
+        # Resolve the id once, without mutating the caller's context.
         trace_id = get_current_trace_id() or generate_trace_id()
 
         # Bind the trace id only around each ``next()`` step, never across a
@@ -747,25 +750,35 @@ class DeerFlowClient:
         # Per-step set/reset keeps LangGraph node execution and its log
         # records inside the binding while returning control to the caller
         # with the ContextVar restored.
-        inner = self._stream_without_trace_context(message, thread_id=thread_id, **kwargs)
+        inner = self._stream_turn(message, thread_id=thread_id, **kwargs)
         _EXHAUSTED = object()
         try:
             while True:
-                token = set_current_trace_id(trace_id)
+                token = bind_trace_id(trace_id)
                 try:
                     try:
                         event = next(inner)
                     except StopIteration:
                         event = _EXHAUSTED
                 finally:
-                    reset_current_trace_id(token)
+                    reset_trace_id(token)
                 if event is _EXHAUSTED:
                     break
                 yield event
         finally:
-            inner.close()
+            # close() drives the inner generator's finally path (GeneratorExit
+            # on an abandoned stream), which still logs and fires callbacks --
+            # bind the turn's id around it so that cleanup correlates with the
+            # turn it belongs to. Set and reset in this same frame, never
+            # across a yield, so the per-step cross-context safety holds even
+            # when GC closes the generator from another Context.
+            token = bind_trace_id(trace_id)
+            try:
+                inner.close()
+            finally:
+                reset_trace_id(token)
 
-    def _stream_without_trace_context(
+    def _stream_turn(
         self,
         message: str,
         *,
@@ -889,7 +902,7 @@ class DeerFlowClient:
                 context[key] = kwargs[key]
 
         configurable = config.get("configurable") or {}
-        deerflow_trace_id = get_current_trace_id()
+        deerflow_trace_id = ensure_trace_id()
         effective_user_id = context.get("user_id") or get_effective_user_id()
         if self._app_config.authorization.enabled:
             # Match the existing user-scoped storage/tracing identity when an
@@ -910,8 +923,7 @@ class DeerFlowClient:
         self._ensure_agent(config, context=context)
 
         state: dict[str, Any] = {"messages": [HumanMessage(content=message, additional_kwargs={"run_id": run_id})]}
-        if deerflow_trace_id:
-            context[DEERFLOW_TRACE_METADATA_KEY] = deerflow_trace_id
+        context[DEERFLOW_TRACE_METADATA_KEY] = deerflow_trace_id
         if self._agent_name:
             context["agent_name"] = self._agent_name
 
@@ -967,132 +979,144 @@ class DeerFlowClient:
             sent.update(delta)
             return delta
 
-        for item in self._agent.stream(
+        agent_items = self._agent.stream(
             state,
             config=config,
             context=context,
             stream_mode=["values", "messages", "custom"],
-        ):
-            if isinstance(item, tuple) and len(item) == 2:
-                mode, chunk = item
-                mode = str(mode)
-            else:
-                mode, chunk = "values", item
-
-            if mode == "custom":
-                yield StreamEvent(type="custom", data=chunk)
-                continue
-
-            if mode == "messages":
-                # LangGraph ``messages`` mode emits ``(message_chunk, metadata)``.
-                if isinstance(chunk, tuple) and len(chunk) == 2:
-                    msg_chunk, _metadata = chunk
+        )
+        # `closing` is load-bearing, not tidiness. Left as the `for` loop's
+        # anonymous iterator, this wrapper is finalized by refcount when this
+        # generator's frame is torn down -- which happens *after*
+        # `stream()`'s `finally` has already run `reset_trace_id`, and later
+        # still (at GC) for a caller that abandons the stream without closing
+        # it. Two things ride on the timing: the sandbox execution lease is
+        # released here, and the agent's own cleanup logs and callbacks must
+        # correlate with the turn that produced them. Closing it by name
+        # inside this frame runs both while GeneratorExit is still
+        # propagating, i.e. inside the caller's trace binding.
+        with closing(_stream_with_sandbox_lease_cleanup(agent_items, context)) as agent_stream:
+            for item in agent_stream:
+                if isinstance(item, tuple) and len(item) == 2:
+                    mode, chunk = item
+                    mode = str(mode)
                 else:
-                    msg_chunk = chunk
+                    mode, chunk = "values", item
 
-                msg_id = getattr(msg_chunk, "id", None)
+                if mode == "custom":
+                    yield StreamEvent(type="custom", data=chunk)
+                    continue
 
-                if isinstance(msg_chunk, AIMessage):
-                    text = self._extract_text(msg_chunk.content)
-                    additional_kwargs = self._serialize_additional_kwargs(msg_chunk)
-                    counted_usage = _account_usage(msg_id, msg_chunk.usage_metadata)
-                    sent_additional_kwargs = False
+                if mode == "messages":
+                    # LangGraph ``messages`` mode emits ``(message_chunk, metadata)``.
+                    if isinstance(chunk, tuple) and len(chunk) == 2:
+                        msg_chunk, _metadata = chunk
+                    else:
+                        msg_chunk = chunk
 
-                    if text:
+                    msg_id = getattr(msg_chunk, "id", None)
+
+                    if isinstance(msg_chunk, AIMessage):
+                        text = self._extract_text(msg_chunk.content)
+                        additional_kwargs = self._serialize_additional_kwargs(msg_chunk)
+                        counted_usage = _account_usage(msg_id, msg_chunk.usage_metadata)
+                        sent_additional_kwargs = False
+
+                        if text:
+                            if msg_id:
+                                streamed_ids.add(msg_id)
+                            additional_kwargs_delta = _unsent_additional_kwargs(msg_id, additional_kwargs)
+                            yield self._ai_text_event(
+                                msg_id,
+                                text,
+                                counted_usage,
+                                additional_kwargs_delta,
+                            )
+                            sent_additional_kwargs = bool(additional_kwargs_delta)
+
+                        if msg_chunk.tool_calls:
+                            if msg_id:
+                                streamed_ids.add(msg_id)
+                            additional_kwargs_delta = None if sent_additional_kwargs else _unsent_additional_kwargs(msg_id, additional_kwargs)
+                            yield self._ai_tool_calls_event(
+                                msg_id,
+                                msg_chunk.tool_calls,
+                                additional_kwargs_delta,
+                            )
+
+                    elif isinstance(msg_chunk, ToolMessage):
                         if msg_id:
                             streamed_ids.add(msg_id)
-                        additional_kwargs_delta = _unsent_additional_kwargs(msg_id, additional_kwargs)
-                        yield self._ai_text_event(
-                            msg_id,
-                            text,
-                            counted_usage,
-                            additional_kwargs_delta,
-                        )
-                        sent_additional_kwargs = bool(additional_kwargs_delta)
+                        yield self._tool_message_event(msg_chunk)
+                    continue
 
-                    if msg_chunk.tool_calls:
-                        if msg_id:
-                            streamed_ids.add(msg_id)
-                        additional_kwargs_delta = None if sent_additional_kwargs else _unsent_additional_kwargs(msg_id, additional_kwargs)
-                        yield self._ai_tool_calls_event(
-                            msg_id,
-                            msg_chunk.tool_calls,
-                            additional_kwargs_delta,
-                        )
+                # mode == "values"
+                messages = chunk.get("messages", [])
 
-                elif isinstance(msg_chunk, ToolMessage):
+                for msg in messages:
+                    msg_id = getattr(msg, "id", None)
+                    if msg_id and msg_id in seen_ids:
+                        continue
                     if msg_id:
-                        streamed_ids.add(msg_id)
-                    yield self._tool_message_event(msg_chunk)
-                continue
+                        seen_ids.add(msg_id)
 
-            # mode == "values"
-            messages = chunk.get("messages", [])
+                    # Already streamed via ``messages`` mode; only (defensively)
+                    # capture usage here and skip re-synthesizing the event.
+                    if msg_id and msg_id in streamed_ids:
+                        if isinstance(msg, AIMessage):
+                            _account_usage(msg_id, getattr(msg, "usage_metadata", None))
+                            additional_kwargs = self._serialize_additional_kwargs(msg)
+                            additional_kwargs_delta = _unsent_additional_kwargs(msg_id, additional_kwargs)
+                            if additional_kwargs_delta:
+                                # Metadata-only follow-up: ``messages-tuple`` has no
+                                # dedicated attribution event, so clients should
+                                # merge this empty-content AI event by message id
+                                # and ignore it for text rendering.
+                                yield self._ai_text_event(msg_id, "", None, additional_kwargs_delta)
+                        continue
 
-            for msg in messages:
-                msg_id = getattr(msg, "id", None)
-                if msg_id and msg_id in seen_ids:
-                    continue
-                if msg_id:
-                    seen_ids.add(msg_id)
-
-                # Already streamed via ``messages`` mode; only (defensively)
-                # capture usage here and skip re-synthesizing the event.
-                if msg_id and msg_id in streamed_ids:
                     if isinstance(msg, AIMessage):
-                        _account_usage(msg_id, getattr(msg, "usage_metadata", None))
+                        counted_usage = _account_usage(msg_id, msg.usage_metadata)
                         additional_kwargs = self._serialize_additional_kwargs(msg)
-                        additional_kwargs_delta = _unsent_additional_kwargs(msg_id, additional_kwargs)
-                        if additional_kwargs_delta:
-                            # Metadata-only follow-up: ``messages-tuple`` has no
-                            # dedicated attribution event, so clients should
-                            # merge this empty-content AI event by message id
-                            # and ignore it for text rendering.
+                        sent_additional_kwargs = False
+
+                        if msg.tool_calls:
+                            additional_kwargs_delta = _unsent_additional_kwargs(msg_id, additional_kwargs)
+                            yield self._ai_tool_calls_event(
+                                msg_id,
+                                msg.tool_calls,
+                                additional_kwargs_delta,
+                            )
+                            sent_additional_kwargs = bool(additional_kwargs_delta)
+
+                        text = self._extract_text(msg.content)
+                        if text:
+                            additional_kwargs_delta = None if sent_additional_kwargs else _unsent_additional_kwargs(msg_id, additional_kwargs)
+                            yield self._ai_text_event(
+                                msg_id,
+                                text,
+                                counted_usage,
+                                additional_kwargs_delta,
+                            )
+                        elif msg_id:
+                            additional_kwargs_delta = None if sent_additional_kwargs else _unsent_additional_kwargs(msg_id, additional_kwargs)
+                            if not additional_kwargs_delta:
+                                continue
+                            # See the metadata-only follow-up convention above.
                             yield self._ai_text_event(msg_id, "", None, additional_kwargs_delta)
-                    continue
 
-                if isinstance(msg, AIMessage):
-                    counted_usage = _account_usage(msg_id, msg.usage_metadata)
-                    additional_kwargs = self._serialize_additional_kwargs(msg)
-                    sent_additional_kwargs = False
+                    elif isinstance(msg, ToolMessage):
+                        yield self._tool_message_event(msg)
 
-                    if msg.tool_calls:
-                        additional_kwargs_delta = _unsent_additional_kwargs(msg_id, additional_kwargs)
-                        yield self._ai_tool_calls_event(
-                            msg_id,
-                            msg.tool_calls,
-                            additional_kwargs_delta,
-                        )
-                        sent_additional_kwargs = bool(additional_kwargs_delta)
-
-                    text = self._extract_text(msg.content)
-                    if text:
-                        additional_kwargs_delta = None if sent_additional_kwargs else _unsent_additional_kwargs(msg_id, additional_kwargs)
-                        yield self._ai_text_event(
-                            msg_id,
-                            text,
-                            counted_usage,
-                            additional_kwargs_delta,
-                        )
-                    elif msg_id:
-                        additional_kwargs_delta = None if sent_additional_kwargs else _unsent_additional_kwargs(msg_id, additional_kwargs)
-                        if not additional_kwargs_delta:
-                            continue
-                        # See the metadata-only follow-up convention above.
-                        yield self._ai_text_event(msg_id, "", None, additional_kwargs_delta)
-
-                elif isinstance(msg, ToolMessage):
-                    yield self._tool_message_event(msg)
-
-            # Emit a values event for each state snapshot
-            yield StreamEvent(
-                type="values",
-                data={
-                    "title": chunk.get("title"),
-                    "messages": [self._serialize_message(m) for m in messages],
-                    "artifacts": chunk.get("artifacts", []),
-                },
-            )
+                # Emit a values event for each state snapshot
+                yield StreamEvent(
+                    type="values",
+                    data={
+                        "title": chunk.get("title"),
+                        "messages": [self._serialize_message(m) for m in messages],
+                        "artifacts": chunk.get("artifacts", []),
+                    },
+                )
 
         yield StreamEvent(type="end", data={"usage": cumulative_usage})
 

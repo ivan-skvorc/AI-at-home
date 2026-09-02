@@ -376,7 +376,11 @@ function ChatInstanceContent({
             >
               {!isMock && <SidebarTrigger className="md:hidden" />}
               <div className="flex min-w-0 flex-1 items-center text-sm font-medium">
-                <ThreadTitle threadId={threadId} thread={thread} />
+                <ThreadTitle
+                  threadId={threadId}
+                  thread={thread}
+                  canonicalTitle={threadMetadata.data?.values?.title}
+                />
               </div>
               <div className="flex shrink-0 items-center gap-2">
                 {!isNewThread &&
@@ -418,6 +422,9 @@ function ChatInstanceContent({
             <main className="flex min-h-0 max-w-full grow flex-col">
               <div className="flex min-h-0 flex-1 justify-center">
                 <MessageList
+                  archiveDownloadsEnabled={
+                    isNewThread || isMock || threadMetadata.data != null
+                  }
                   className={cn("size-full", !isWelcomeMode && "pt-10")}
                   testId="main-message-list"
                   threadId={threadId}

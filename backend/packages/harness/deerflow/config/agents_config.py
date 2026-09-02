@@ -10,12 +10,15 @@ per-user layout.
 import logging
 import re
 from pathlib import Path
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from deerflow.config.paths import get_paths
 from deerflow.runtime.user_context import get_effective_user_id
+
+if TYPE_CHECKING:
+    from deerflow.config.app_config import AppConfig
 
 logger = logging.getLogger(__name__)
 
@@ -322,7 +325,7 @@ def load_agent_config(name: str | None, *, user_id: str | None = None) -> AgentC
     return get_agent_store().get(name, user_id=user_id)
 
 
-def load_agent_soul(agent_name: str | None, *, user_id: str | None = None) -> str | None:
+def load_agent_soul(agent_name: str | None, *, user_id: str | None = None, app_config: "AppConfig | None" = None) -> str | None:
     """Read the SOUL.md content for an agent, if any.
 
     SOUL.md defines the agent's personality, values, and behavioral guardrails.
@@ -347,7 +350,7 @@ def load_agent_soul(agent_name: str | None, *, user_id: str | None = None) -> st
         return content or None
     from deerflow.persistence.agents import get_agent_store
 
-    return get_agent_store().get_soul(agent_name, user_id=user_id)
+    return get_agent_store(app_config).get_soul(agent_name, user_id=user_id)
 
 
 def list_custom_agents(*, user_id: str | None = None) -> list[AgentConfig]:
