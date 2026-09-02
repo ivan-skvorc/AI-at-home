@@ -24,6 +24,7 @@ import os
 import shutil
 import uuid
 from collections.abc import Generator, Iterator, Mapping, Sequence
+from contextlib import closing
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
@@ -984,127 +985,138 @@ class DeerFlowClient:
             context=context,
             stream_mode=["values", "messages", "custom"],
         )
-        for item in _stream_with_sandbox_lease_cleanup(agent_items, context):
-            if isinstance(item, tuple) and len(item) == 2:
-                mode, chunk = item
-                mode = str(mode)
-            else:
-                mode, chunk = "values", item
-
-            if mode == "custom":
-                yield StreamEvent(type="custom", data=chunk)
-                continue
-
-            if mode == "messages":
-                # LangGraph ``messages`` mode emits ``(message_chunk, metadata)``.
-                if isinstance(chunk, tuple) and len(chunk) == 2:
-                    msg_chunk, _metadata = chunk
+        # `closing` is load-bearing, not tidiness. Left as the `for` loop's
+        # anonymous iterator, this wrapper is finalized by refcount when this
+        # generator's frame is torn down -- which happens *after*
+        # `stream()`'s `finally` has already run `reset_trace_id`, and later
+        # still (at GC) for a caller that abandons the stream without closing
+        # it. Two things ride on the timing: the sandbox execution lease is
+        # released here, and the agent's own cleanup logs and callbacks must
+        # correlate with the turn that produced them. Closing it by name
+        # inside this frame runs both while GeneratorExit is still
+        # propagating, i.e. inside the caller's trace binding.
+        with closing(_stream_with_sandbox_lease_cleanup(agent_items, context)) as agent_stream:
+            for item in agent_stream:
+                if isinstance(item, tuple) and len(item) == 2:
+                    mode, chunk = item
+                    mode = str(mode)
                 else:
-                    msg_chunk = chunk
+                    mode, chunk = "values", item
 
-                msg_id = getattr(msg_chunk, "id", None)
+                if mode == "custom":
+                    yield StreamEvent(type="custom", data=chunk)
+                    continue
 
-                if isinstance(msg_chunk, AIMessage):
-                    text = self._extract_text(msg_chunk.content)
-                    additional_kwargs = self._serialize_additional_kwargs(msg_chunk)
-                    counted_usage = _account_usage(msg_id, msg_chunk.usage_metadata)
-                    sent_additional_kwargs = False
+                if mode == "messages":
+                    # LangGraph ``messages`` mode emits ``(message_chunk, metadata)``.
+                    if isinstance(chunk, tuple) and len(chunk) == 2:
+                        msg_chunk, _metadata = chunk
+                    else:
+                        msg_chunk = chunk
 
-                    if text:
+                    msg_id = getattr(msg_chunk, "id", None)
+
+                    if isinstance(msg_chunk, AIMessage):
+                        text = self._extract_text(msg_chunk.content)
+                        additional_kwargs = self._serialize_additional_kwargs(msg_chunk)
+                        counted_usage = _account_usage(msg_id, msg_chunk.usage_metadata)
+                        sent_additional_kwargs = False
+
+                        if text:
+                            if msg_id:
+                                streamed_ids.add(msg_id)
+                            additional_kwargs_delta = _unsent_additional_kwargs(msg_id, additional_kwargs)
+                            yield self._ai_text_event(
+                                msg_id,
+                                text,
+                                counted_usage,
+                                additional_kwargs_delta,
+                            )
+                            sent_additional_kwargs = bool(additional_kwargs_delta)
+
+                        if msg_chunk.tool_calls:
+                            if msg_id:
+                                streamed_ids.add(msg_id)
+                            additional_kwargs_delta = None if sent_additional_kwargs else _unsent_additional_kwargs(msg_id, additional_kwargs)
+                            yield self._ai_tool_calls_event(
+                                msg_id,
+                                msg_chunk.tool_calls,
+                                additional_kwargs_delta,
+                            )
+
+                    elif isinstance(msg_chunk, ToolMessage):
                         if msg_id:
                             streamed_ids.add(msg_id)
-                        additional_kwargs_delta = _unsent_additional_kwargs(msg_id, additional_kwargs)
-                        yield self._ai_text_event(
-                            msg_id,
-                            text,
-                            counted_usage,
-                            additional_kwargs_delta,
-                        )
-                        sent_additional_kwargs = bool(additional_kwargs_delta)
+                        yield self._tool_message_event(msg_chunk)
+                    continue
 
-                    if msg_chunk.tool_calls:
-                        if msg_id:
-                            streamed_ids.add(msg_id)
-                        additional_kwargs_delta = None if sent_additional_kwargs else _unsent_additional_kwargs(msg_id, additional_kwargs)
-                        yield self._ai_tool_calls_event(
-                            msg_id,
-                            msg_chunk.tool_calls,
-                            additional_kwargs_delta,
-                        )
+                # mode == "values"
+                messages = chunk.get("messages", [])
 
-                elif isinstance(msg_chunk, ToolMessage):
+                for msg in messages:
+                    msg_id = getattr(msg, "id", None)
+                    if msg_id and msg_id in seen_ids:
+                        continue
                     if msg_id:
-                        streamed_ids.add(msg_id)
-                    yield self._tool_message_event(msg_chunk)
-                continue
+                        seen_ids.add(msg_id)
 
-            # mode == "values"
-            messages = chunk.get("messages", [])
+                    # Already streamed via ``messages`` mode; only (defensively)
+                    # capture usage here and skip re-synthesizing the event.
+                    if msg_id and msg_id in streamed_ids:
+                        if isinstance(msg, AIMessage):
+                            _account_usage(msg_id, getattr(msg, "usage_metadata", None))
+                            additional_kwargs = self._serialize_additional_kwargs(msg)
+                            additional_kwargs_delta = _unsent_additional_kwargs(msg_id, additional_kwargs)
+                            if additional_kwargs_delta:
+                                # Metadata-only follow-up: ``messages-tuple`` has no
+                                # dedicated attribution event, so clients should
+                                # merge this empty-content AI event by message id
+                                # and ignore it for text rendering.
+                                yield self._ai_text_event(msg_id, "", None, additional_kwargs_delta)
+                        continue
 
-            for msg in messages:
-                msg_id = getattr(msg, "id", None)
-                if msg_id and msg_id in seen_ids:
-                    continue
-                if msg_id:
-                    seen_ids.add(msg_id)
-
-                # Already streamed via ``messages`` mode; only (defensively)
-                # capture usage here and skip re-synthesizing the event.
-                if msg_id and msg_id in streamed_ids:
                     if isinstance(msg, AIMessage):
-                        _account_usage(msg_id, getattr(msg, "usage_metadata", None))
+                        counted_usage = _account_usage(msg_id, msg.usage_metadata)
                         additional_kwargs = self._serialize_additional_kwargs(msg)
-                        additional_kwargs_delta = _unsent_additional_kwargs(msg_id, additional_kwargs)
-                        if additional_kwargs_delta:
-                            # Metadata-only follow-up: ``messages-tuple`` has no
-                            # dedicated attribution event, so clients should
-                            # merge this empty-content AI event by message id
-                            # and ignore it for text rendering.
+                        sent_additional_kwargs = False
+
+                        if msg.tool_calls:
+                            additional_kwargs_delta = _unsent_additional_kwargs(msg_id, additional_kwargs)
+                            yield self._ai_tool_calls_event(
+                                msg_id,
+                                msg.tool_calls,
+                                additional_kwargs_delta,
+                            )
+                            sent_additional_kwargs = bool(additional_kwargs_delta)
+
+                        text = self._extract_text(msg.content)
+                        if text:
+                            additional_kwargs_delta = None if sent_additional_kwargs else _unsent_additional_kwargs(msg_id, additional_kwargs)
+                            yield self._ai_text_event(
+                                msg_id,
+                                text,
+                                counted_usage,
+                                additional_kwargs_delta,
+                            )
+                        elif msg_id:
+                            additional_kwargs_delta = None if sent_additional_kwargs else _unsent_additional_kwargs(msg_id, additional_kwargs)
+                            if not additional_kwargs_delta:
+                                continue
+                            # See the metadata-only follow-up convention above.
                             yield self._ai_text_event(msg_id, "", None, additional_kwargs_delta)
-                    continue
 
-                if isinstance(msg, AIMessage):
-                    counted_usage = _account_usage(msg_id, msg.usage_metadata)
-                    additional_kwargs = self._serialize_additional_kwargs(msg)
-                    sent_additional_kwargs = False
+                    elif isinstance(msg, ToolMessage):
+                        yield self._tool_message_event(msg)
 
-                    if msg.tool_calls:
-                        additional_kwargs_delta = _unsent_additional_kwargs(msg_id, additional_kwargs)
-                        yield self._ai_tool_calls_event(
-                            msg_id,
-                            msg.tool_calls,
-                            additional_kwargs_delta,
-                        )
-                        sent_additional_kwargs = bool(additional_kwargs_delta)
-
-                    text = self._extract_text(msg.content)
-                    if text:
-                        additional_kwargs_delta = None if sent_additional_kwargs else _unsent_additional_kwargs(msg_id, additional_kwargs)
-                        yield self._ai_text_event(
-                            msg_id,
-                            text,
-                            counted_usage,
-                            additional_kwargs_delta,
-                        )
-                    elif msg_id:
-                        additional_kwargs_delta = None if sent_additional_kwargs else _unsent_additional_kwargs(msg_id, additional_kwargs)
-                        if not additional_kwargs_delta:
-                            continue
-                        # See the metadata-only follow-up convention above.
-                        yield self._ai_text_event(msg_id, "", None, additional_kwargs_delta)
-
-                elif isinstance(msg, ToolMessage):
-                    yield self._tool_message_event(msg)
-
-            # Emit a values event for each state snapshot
-            yield StreamEvent(
-                type="values",
-                data={
-                    "title": chunk.get("title"),
-                    "messages": [self._serialize_message(m) for m in messages],
-                    "artifacts": chunk.get("artifacts", []),
-                },
-            )
+                # Emit a values event for each state snapshot
+                yield StreamEvent(
+                    type="values",
+                    data={
+                        "title": chunk.get("title"),
+                        "messages": [self._serialize_message(m) for m in messages],
+                        "artifacts": chunk.get("artifacts", []),
+                    },
+                )
 
         yield StreamEvent(type="end", data={"usage": cumulative_usage})
 

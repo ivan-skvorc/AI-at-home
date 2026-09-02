@@ -368,6 +368,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **embedded client:** **An abandoned `DeerFlowClient.stream()` now cleans up when it
+  ends, not when the garbage collector gets round to it.** The wrapper that releases a
+  turn's sandbox execution lease was left as a `for` loop's anonymous iterator, so it was
+  finalized during frame teardown — after the turn's trace binding had already been torn
+  down, and only at GC for a caller that drops the generator without closing it. A
+  cancelled or abandoned turn therefore kept a sandbox reserved past the end of the
+  stream, and the agent's own cleanup logs and callbacks correlated with no trace id at
+  all. Neither raised. Holding the wrapper by name and closing it in the same frame runs
+  both while the stream is still unwinding.
+
 - **models:** **Model audit, 2026-09-02 — Anthropic verified against its own
   pages, and four bundled entries were wrong.** Anthropic's docs were reachable
   for the first time in three passes, so the Claude block was checked at tier 1
