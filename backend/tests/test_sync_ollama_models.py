@@ -530,3 +530,185 @@ class TestResolveSizingSettings:
         vram_bytes, kv = sync_ollama.resolve_sizing_settings(None, None, CLEAN_CONFIG)
         assert vram_bytes is None
         assert kv == "f16"
+
+
+# ── MoE expert offload ────────────────────────────────────────────────────────
+# A sparse-MoE model's routed experts live in system RAM (llama.cpp's
+# --n-cpu-moe, which Ollama drives underneath); attention, the router, shared
+# experts, norms and the KV cache stay on the GPU. Sizing such a model against
+# its *total* weight therefore reports "does not fit" for the exact class of
+# model a 24GB card runs best.
+GPT_OSS_120B_SHOW = {
+    "capabilities": ["tools", "thinking"],
+    "model_info": {
+        "general.architecture": "gptoss",
+        "general.parameter_count": 116_800_000_000,
+        "gptoss.block_count": 36,
+        "gptoss.context_length": 131072,
+        "gptoss.embedding_length": 2880,
+        "gptoss.attention.head_count": 64,
+        "gptoss.attention.head_count_kv": 8,
+        "gptoss.attention.key_length": 64,
+        "gptoss.attention.value_length": 64,
+        "gptoss.expert_count": 128,
+        "gptoss.expert_used_count": 4,
+        "gptoss.expert_feed_forward_length": 2880,
+    },
+}
+GPT_OSS_120B_WEIGHTS = int(60.8 * GIB)  # native MXFP4 on disk
+
+
+class TestParseExpertWeightFraction:
+    """What share of a model's parameters are routed-expert FFN weights.
+
+    Routed-expert params = layers x experts x 3 (gate/up/down) x d_model x d_ff.
+    The fraction is what CPU offload can move out of VRAM.
+    """
+
+    def test_sparse_moe_is_almost_all_expert_weight(self):
+        fraction = sync_ollama.parse_expert_weight_fraction(GPT_OSS_120B_SHOW)
+        # 36 x 128 x 3 x 2880 x 2880 = 114.7e9 of 116.8e9 params
+        assert fraction is not None
+        assert 0.95 < fraction < 0.995
+
+    def test_dense_model_has_no_expert_weight(self):
+        assert sync_ollama.parse_expert_weight_fraction(QWEN3_SHOW) is None
+
+    def test_missing_parameter_count_returns_none(self):
+        info = dict(GPT_OSS_120B_SHOW["model_info"])
+        del info["general.parameter_count"]
+        assert sync_ollama.parse_expert_weight_fraction({"model_info": info}) is None
+
+    def test_expert_count_of_zero_is_dense(self):
+        info = dict(GPT_OSS_120B_SHOW["model_info"], **{"gptoss.expert_count": 0})
+        assert sync_ollama.parse_expert_weight_fraction({"model_info": info}) is None
+
+    def test_expert_ffn_length_falls_back_to_feed_forward_length(self):
+        info = dict(GPT_OSS_120B_SHOW["model_info"])
+        del info["gptoss.expert_feed_forward_length"]
+        info["gptoss.feed_forward_length"] = 2880
+        assert sync_ollama.parse_expert_weight_fraction({"model_info": info}) == pytest.approx(sync_ollama.parse_expert_weight_fraction(GPT_OSS_120B_SHOW))
+
+    def test_implausible_fraction_is_rejected(self):
+        # Geometry that claims more expert weight than the model has parameters
+        # is a metadata bug; refuse it rather than sizing against a negative.
+        info = dict(GPT_OSS_120B_SHOW["model_info"], **{"general.parameter_count": 1_000_000})
+        assert sync_ollama.parse_expert_weight_fraction({"model_info": info}) is None
+
+    def test_missing_model_info_returns_none(self):
+        assert sync_ollama.parse_expert_weight_fraction({"capabilities": ["tools"]}) is None
+
+
+class TestResidentWeightsBytes:
+    """VRAM-resident share of the weights once routed experts are offloaded."""
+
+    def test_dense_model_is_fully_resident(self):
+        assert sync_ollama.resident_weights_bytes(QWEN3_SHOW, QWEN3_WEIGHTS) == QWEN3_WEIGHTS
+
+    def test_moe_keeps_only_the_non_expert_share(self):
+        resident = sync_ollama.resident_weights_bytes(GPT_OSS_120B_SHOW, GPT_OSS_120B_WEIGHTS)
+        assert resident < GPT_OSS_120B_WEIGHTS * 0.05
+        assert resident > 0
+
+    def test_unknown_weights_stay_unknown(self):
+        assert sync_ollama.resident_weights_bytes(GPT_OSS_120B_SHOW, None) is None
+
+
+class TestVramNumCtxLimitWithMoeOffload:
+    """The regression this whole change exists for."""
+
+    def test_moe_larger_than_vram_still_gets_a_real_window(self):
+        # 60.8 GiB of weights on a 24 GiB card: sizing against the total floors
+        # at MIN_VRAM_NUM_CTX, which does not fit the agent's system prompt.
+        limit = sync_ollama.vram_num_ctx_limit(GPT_OSS_120B_SHOW, GPT_OSS_120B_WEIGHTS, 24 * GIB)
+        assert limit > 100_000
+
+    def test_dense_sizing_is_unchanged(self):
+        # Every pre-existing expectation in TestVramNumCtxLimit must still hold.
+        assert sync_ollama.vram_num_ctx_limit(QWEN3_SHOW, QWEN3_WEIGHTS, 8 * GIB) == 10240
+        assert sync_ollama.vram_num_ctx_limit(QWEN3_SHOW, QWEN3_WEIGHTS, 6 * GIB) == sync_ollama.MIN_VRAM_NUM_CTX
+
+    def test_a_moe_too_big_for_the_card_still_floors(self):
+        # Resident share alone exceeding VRAM is a genuine "does not fit".
+        limit = sync_ollama.vram_num_ctx_limit(GPT_OSS_120B_SHOW, GPT_OSS_120B_WEIGHTS, 2 * GIB)
+        assert limit == sync_ollama.MIN_VRAM_NUM_CTX
+
+
+class TestSystemRamSetting:
+    """`ollama.system_ram_gb` is the second memory pool offload spills into."""
+
+    def test_reads_system_ram_gb(self):
+        text = "ollama:\n  vram_gb: 24\n  system_ram_gb: 64\n"
+        assert sync_ollama.parse_ollama_settings(text) == {"vram_gb": 24.0, "system_ram_gb": 64.0}
+
+    def test_invalid_system_ram_is_dropped(self):
+        text = "ollama:\n  vram_gb: 24\n  system_ram_gb: plenty\n"
+        assert sync_ollama.parse_ollama_settings(text) == {"vram_gb": 24.0}
+
+    def test_non_positive_system_ram_is_dropped(self):
+        text = "ollama:\n  vram_gb: 24\n  system_ram_gb: 0\n"
+        assert sync_ollama.parse_ollama_settings(text) == {"vram_gb": 24.0}
+
+
+class TestOffloadCapacityWarning:
+    """Weights that exceed VRAM + system RAM page from disk — tokens/sec collapses."""
+
+    def test_warns_when_weights_exceed_both_pools(self):
+        warning = sync_ollama.offload_capacity_warning(
+            [("deepseek-v4-flash:q4", GPT_OSS_120B_SHOW, int(156 * GIB))],
+            vram_bytes=24 * GIB,
+            system_ram_bytes=64 * GIB,
+        )
+        assert warning is not None
+        assert "deepseek-v4-flash:q4" in warning
+        assert "156" in warning
+
+    def test_silent_when_the_model_fits_the_two_pools(self):
+        warning = sync_ollama.offload_capacity_warning(
+            [("gpt-oss:120b", GPT_OSS_120B_SHOW, GPT_OSS_120B_WEIGHTS)],
+            vram_bytes=24 * GIB,
+            system_ram_bytes=64 * GIB,
+        )
+        assert warning is None
+
+    def test_silent_without_a_system_ram_budget(self):
+        # Nothing configured means nothing to compare against; stay quiet
+        # rather than guessing the machine's RAM.
+        warning = sync_ollama.offload_capacity_warning(
+            [("huge:model", GPT_OSS_120B_SHOW, int(900 * GIB))],
+            vram_bytes=24 * GIB,
+            system_ram_bytes=None,
+        )
+        assert warning is None
+
+    def test_names_every_oversized_model(self):
+        warning = sync_ollama.offload_capacity_warning(
+            [
+                ("a:big", GPT_OSS_120B_SHOW, int(200 * GIB)),
+                ("b:ok", GPT_OSS_120B_SHOW, GPT_OSS_120B_WEIGHTS),
+                ("c:big", GPT_OSS_120B_SHOW, int(300 * GIB)),
+            ],
+            vram_bytes=24 * GIB,
+            system_ram_bytes=64 * GIB,
+        )
+        assert "a:big" in warning
+        assert "c:big" in warning
+        assert "b:ok" not in warning
+
+
+class TestVramContentionWithMoe:
+    """Two resident MoE models contend for the resident share, not the total."""
+
+    def test_two_offloaded_moe_models_do_not_falsely_contend(self):
+        loaded = [
+            ("gpt-oss:120b", GPT_OSS_120B_SHOW, GPT_OSS_120B_WEIGHTS),
+            ("gpt-oss:120b-b", GPT_OSS_120B_SHOW, GPT_OSS_120B_WEIGHTS),
+        ]
+        assert sync_ollama.vram_contention_warning(loaded, 24 * GIB) is None
+
+    def test_two_dense_models_still_contend(self):
+        loaded = [
+            ("qwen3:8b", QWEN3_SHOW, QWEN3_WEIGHTS),
+            ("qwen3:8b-b", QWEN3_SHOW, QWEN3_WEIGHTS),
+        ]
+        assert sync_ollama.vram_contention_warning(loaded, 8 * GIB) is not None

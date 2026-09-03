@@ -44,6 +44,15 @@ the per-token cost versus the default ``f16``, roughly doubling the affordable
 window. An explicit ``--num-ctx-cap`` still applies as a hard ceiling; models
 whose geometry can't be read fall back to the flat-cap behavior.
 
+Mixture-of-experts models: CPU offload moves a MoE model's *routed experts* to
+system RAM and leaves attention, the router, shared experts and the KV cache on
+the GPU, so only a small share of the weight is VRAM-resident. The sizing reads
+that share from the model's GGUF metadata and charges a 120B MoE about a
+gigabyte rather than sixty — without it such a model lands on the
+``MIN_VRAM_NUM_CTX`` floor despite a 128K native window. ``ollama.system_ram_gb``
+/ ``--system-ram-gb`` names the pool offload spills into; it is used only to warn
+when a model's weights exceed VRAM + RAM and would be paged from disk.
+
 Concurrent chats: Ollama answers ``OLLAMA_NUM_PARALLEL`` requests per model at a
 time and queues the rest, so on the default of 1 a second chat cannot start
 generating until the first one finishes. Tell the sizing how many slots the
@@ -114,6 +123,23 @@ DEFAULT_NUM_PARALLEL = 1
 # doesn't fit, and odd sizes buy nothing.
 MIN_VRAM_NUM_CTX = 4096
 NUM_CTX_STEP = 2048
+
+# ── MoE expert offload ────────────────────────────────────────────────────────
+# A sparse-MoE model's routed experts are the bulk of its weight and the part
+# CPU offload moves out of VRAM (llama.cpp's --n-cpu-moe, which Ollama drives
+# underneath): attention, the router, shared experts, norms and the KV cache all
+# stay on the GPU. Sizing such a model against its *total* weight reports "does
+# not fit" for exactly the class of model a 24 GiB card runs best — a 120B MoE
+# with a 128K native window would be written with a 4096-token one.
+#
+# Routed-expert parameters = layers x experts x 3 x d_model x d_ff. The 3 is the
+# gate/up/down matrices of a gated (SwiGLU/GEGLU) FFN, which every MoE
+# architecture Ollama currently serves uses.
+EXPERT_FFN_MATRICES = 3
+# An expert share at or above this is metadata that cannot be right (the experts
+# would be the entire model and then some), so the estimate is refused rather
+# than used to size against a near-zero resident weight.
+MAX_EXPERT_WEIGHT_FRACTION = 0.995
 
 
 def normalize_host(host: str) -> str:
@@ -298,6 +324,58 @@ def parse_kv_bytes_per_token(show: dict, kv_cache_type: str = DEFAULT_KV_CACHE_T
     return block_count * kv_heads * (key_dim + value_dim) * bytes_per_element
 
 
+def parse_expert_weight_fraction(show: dict) -> float | None:
+    """Share of a model's parameters that are routed-expert FFN weights.
+
+    ``layers x experts x 3 x d_model x d_ff / parameter_count``, read from the
+    GGUF metadata Ollama returns in ``/api/show`` -> ``model_info``. This is the
+    portion CPU offload can move to system RAM, so ``1 - fraction`` is what
+    stays resident in VRAM beside the KV cache.
+
+    Returns None for a dense model (no ``expert_count``), when any of the
+    geometry or ``general.parameter_count`` is missing, or when the result is
+    implausible — callers then treat the whole weight as resident, which is the
+    pre-existing conservative behaviour.
+    """
+    info = show.get("model_info")
+    if not isinstance(info, dict):
+        return None
+    arch = info.get("general.architecture")
+    if not isinstance(arch, str):
+        return None
+    expert_count = _positive_number(info, f"{arch}.expert_count")
+    if not expert_count:
+        return None  # dense
+    total_params = _positive_number(info, "general.parameter_count")
+    block_count = _positive_number(info, f"{arch}.block_count")
+    embedding = _positive_number(info, f"{arch}.embedding_length")
+    # Ollama reports the per-expert FFN width separately on most MoE
+    # architectures; where it doesn't, the dense feed_forward_length is it.
+    expert_ffn = _positive_number(info, f"{arch}.expert_feed_forward_length") or _positive_number(info, f"{arch}.feed_forward_length")
+    if not (total_params and block_count and embedding and expert_ffn):
+        return None
+    expert_params = block_count * expert_count * EXPERT_FFN_MATRICES * embedding * expert_ffn
+    fraction = expert_params / total_params
+    if not 0.0 < fraction < MAX_EXPERT_WEIGHT_FRACTION:
+        return None
+    return fraction
+
+
+def resident_weights_bytes(show: dict, weights_bytes) -> int | None:
+    """Bytes of a model's weights that stay in VRAM once experts are offloaded.
+
+    Dense models — and any MoE whose geometry can't be read — are fully
+    resident, which reproduces the previous sizing exactly. Returns None when
+    the on-disk size is unknown, so callers keep their existing fallbacks.
+    """
+    if not weights_bytes or weights_bytes <= 0:
+        return None
+    fraction = parse_expert_weight_fraction(show)
+    if fraction is None:
+        return int(weights_bytes)
+    return max(1, int(weights_bytes * (1.0 - fraction)))
+
+
 def vram_num_ctx_limit(
     show: dict,
     weights_bytes,
@@ -307,20 +385,28 @@ def vram_num_ctx_limit(
 ) -> int | None:
     """Largest context window whose KV cache fits VRAM next to the weights.
 
-    ``(vram - weights - VRAM_OVERHEAD_BYTES) / (kv_bytes_per_token × slots)``,
-    floored to ``NUM_CTX_STEP`` and never below ``MIN_VRAM_NUM_CTX`` (a model
-    that doesn't fit at all still gets a usable window — Ollama offloads layers
-    to CPU rather than failing). ``num_parallel`` is the daemon's
-    ``OLLAMA_NUM_PARALLEL``: Ollama allocates the KV cache for every slot up
-    front, so serving two chats at once halves the window each one can have.
+    ``(vram - resident weights - VRAM_OVERHEAD_BYTES) / (kv_bytes_per_token ×
+    slots)``, floored to ``NUM_CTX_STEP`` and never below ``MIN_VRAM_NUM_CTX``
+    (a model that doesn't fit at all still gets a usable window — Ollama
+    offloads layers to CPU rather than failing). ``num_parallel`` is the
+    daemon's ``OLLAMA_NUM_PARALLEL``: Ollama allocates the KV cache for every
+    slot up front, so serving two chats at once halves the window each one can
+    have.
+
+    "Resident" is the whole weight for a dense model and the non-expert share
+    for a sparse MoE (see :func:`resident_weights_bytes`) — a 120B MoE on a
+    24 GiB card keeps ~1 GiB of attention and router weights there, not 60 GiB,
+    so it earns its full native window instead of the 4096-token floor.
+
     Returns None when the geometry or weights size is unknown, so callers can
     fall back to the flat cap.
     """
     per_token = parse_kv_bytes_per_token(show, kv_cache_type)
-    if per_token is None or not weights_bytes or weights_bytes <= 0 or not vram_bytes or vram_bytes <= 0:
+    resident = resident_weights_bytes(show, weights_bytes)
+    if per_token is None or not resident or not vram_bytes or vram_bytes <= 0:
         return None
     per_token *= max(1, num_parallel)
-    available = vram_bytes - weights_bytes - VRAM_OVERHEAD_BYTES
+    available = vram_bytes - resident - VRAM_OVERHEAD_BYTES
     if available <= 0:
         return MIN_VRAM_NUM_CTX
     tokens = int(available // per_token)
@@ -330,7 +416,8 @@ def vram_num_ctx_limit(
 def parse_ollama_settings(text: str) -> dict:
     """Parse the top-level ``ollama:`` section of config.yaml.
 
-    Recognized keys: ``vram_gb`` (positive number), ``kv_cache_type`` (one of
+    Recognized keys: ``vram_gb`` and ``system_ram_gb`` (positive numbers),
+    ``kv_cache_type`` (one of
     KV_CACHE_BYTES_PER_ELEMENT), ``num_parallel`` (positive integer),
     ``keep_alive`` (opaque Ollama duration string), ``preload`` (bool), and the
     nested ``keep_alive_overrides`` map of model name -> duration. Malformed
@@ -377,6 +464,12 @@ def parse_ollama_settings(text: str) -> dict:
         vram_gb = float(raw["vram_gb"])
         if vram_gb > 0:
             settings["vram_gb"] = vram_gb
+    except (KeyError, ValueError):
+        pass
+    try:
+        system_ram_gb = float(raw["system_ram_gb"])
+        if system_ram_gb > 0:
+            settings["system_ram_gb"] = system_ram_gb
     except (KeyError, ValueError):
         pass
     if raw.get("kv_cache_type") in KV_CACHE_BYTES_PER_ELEMENT:
@@ -496,11 +589,16 @@ def vram_contention_warning(
     slots = max(1, num_parallel)
 
     def _cost(show: dict, weights: int) -> tuple[int, int]:
-        """(weights, kv bytes for a modest shared window) for one resident model."""
+        """(resident weights, kv bytes for a modest shared window) for one model.
+
+        Only the VRAM-resident share contends: two offloaded MoE models keep
+        their experts in system RAM and genuinely do co-reside on a card that
+        could not hold either one whole.
+        """
         per_token = parse_kv_bytes_per_token(show, kv_cache_type)
         # Geometry may be unreadable; weights alone still prove non-coexistence.
         kv = int(per_token * MIN_VRAM_NUM_CTX * slots) if per_token else 0
-        return weights or 0, kv
+        return resident_weights_bytes(show, weights) or 0, kv
 
     ranked = sorted(loaded, key=lambda item: item[2] or 0, reverse=True)[:2]
     (name_a, show_a, weights_a), (name_b, show_b, weights_b) = ranked
@@ -512,12 +610,45 @@ def vram_contention_warning(
 
     gib = 1024**3
     return (
-        f"VRAM contention: {name_a} ({wa / gib:.1f} GiB) + {name_b} ({wb / gib:.1f} GiB) "
+        f"VRAM contention: {name_a} ({wa / gib:.1f} GiB resident) + {name_b} ({wb / gib:.1f} GiB resident) "
         f"need ~{needed / gib:.1f} GiB resident together (weights + a {MIN_VRAM_NUM_CTX}-token KV cache each"
         f"{f' × {slots} parallel slots' if slots > 1 else ''} "
         f"+ {VRAM_OVERHEAD_BYTES / gib:.1f} GiB overhead), but the configured budget is {vram_bytes / gib:g} GiB. "
         f"Running both at once (a local lead with a local subagent) makes Ollama evict and reload between calls. "
         f"Pair a local lead with a smaller local subagent, raise ollama.vram_gb if it understates your GPU, or use q8_0 KV cache."
+    )
+
+
+def offload_capacity_warning(
+    loaded: list,
+    vram_bytes: int | None,
+    system_ram_bytes: int | None,
+) -> str | None:
+    """Warn when a model's weights exceed VRAM *and* system RAM together.
+
+    Expert offload spills into system RAM; past that there is only the page
+    cache, and generation drops from tokens per second to seconds per token as
+    weights are read from disk for every token. Ollama does not refuse such a
+    model, so nothing else says this out loud.
+
+    Silent unless ``ollama.system_ram_gb`` is configured — the script does not
+    guess how much RAM the machine has, and a wrong guess here would either cry
+    wolf or miss the case entirely.
+    """
+    if not vram_bytes or vram_bytes <= 0 or not system_ram_bytes or system_ram_bytes <= 0:
+        return None
+    budget = vram_bytes + system_ram_bytes
+    oversized = [(name, weights) for name, _show, weights in loaded if weights and weights > budget]
+    if not oversized:
+        return None
+
+    gib = 1024**3
+    listed = ", ".join(f"{name} ({weights / gib:.0f} GiB)" for name, weights in oversized)
+    return (
+        f"Weights exceed memory: {listed} cannot be held in VRAM + system RAM "
+        f"({vram_bytes / gib:g} + {system_ram_bytes / gib:g} = {budget / gib:g} GiB). "
+        f"Ollama will page the remainder from disk, which costs roughly a hundredfold in tokens/sec. "
+        f"Use a smaller quantization of the same model, add system RAM, or run this one as a hosted model instead."
     )
 
 
@@ -751,6 +882,12 @@ def main() -> int:
     ap.add_argument("--num-ctx-cap", type=int, default=None, help=f"Hard cap for the written num_ctx (default: {DEFAULT_NUM_CTX_CAP}, or the VRAM-based estimate when a VRAM budget is configured; 0 = uncapped)")
     ap.add_argument("--vram-gb", type=float, default=None, help="GPU memory budget in GiB for per-model context sizing (default: `ollama.vram_gb` in config.yaml; unset = flat cap only)")
     ap.add_argument(
+        "--system-ram-gb",
+        type=float,
+        default=None,
+        help="System RAM in GiB that MoE expert offload can spill into (default: `ollama.system_ram_gb` in config.yaml). Only used to warn when a model's weights exceed VRAM + RAM and would page from disk.",
+    )
+    ap.add_argument(
         "--kv-cache-type",
         choices=sorted(KV_CACHE_BYTES_PER_ELEMENT),
         default=None,
@@ -847,6 +984,14 @@ def main() -> int:
     contention = vram_contention_warning(resident, vram_bytes, kv_cache_type, num_parallel)
     if contention:
         print(f"[ollama-sync] {contention}", file=sys.stderr)
+
+    # Offload spills into system RAM; past that it spills onto disk, which is
+    # the difference between a slow model and an unusable one.
+    system_ram_gb = args.system_ram_gb if args.system_ram_gb is not None else settings.get("system_ram_gb")
+    system_ram_bytes = int(system_ram_gb * 1024**3) if system_ram_gb and system_ram_gb > 0 else None
+    capacity = offload_capacity_warning(resident, vram_bytes, system_ram_bytes)
+    if capacity:
+        print(f"[ollama-sync] {capacity}", file=sys.stderr)
 
     # Tool-capable first, then alphabetical (matches dropdown order in UI)
     models.sort(key=lambda m: (0 if "tools" in m[1] else 1, m[0]))

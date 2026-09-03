@@ -15,7 +15,7 @@
 # ============================================================================
 # Bump this number when the config schema changes.
 # Run `make config-upgrade` to merge new fields into your local config.yaml.
-config_version: 47
+config_version: 48
 
 # ============================================================================
 # Logging
@@ -1827,6 +1827,16 @@ models:
 # concurrent: separate chats run as separate LangGraph runs, and the Gateway
 # only serializes runs within one chat.
 #
+# system_ram_gb is the second memory pool. A sparse-MoE model (gpt-oss:120b,
+# Qwen3 *-A*B, GLM/DeepSeek MoE) keeps its routed experts in system RAM and only
+# its attention, router and shared experts on the GPU, so the sizing charges a
+# 120B MoE about a gigabyte of VRAM rather than sixty — that is what earns it a
+# full native context window on a 24 GiB card instead of the 4096-token floor.
+# Weights bigger than VRAM + system RAM combined have nowhere left to go and are
+# paged from disk, which costs roughly a hundredfold in tokens/sec; set this and
+# the launch-time sync names any installed model in that state. `make setup`
+# detects and fills it in. Unset simply disables that one warning.
+#
 # Note on running two local models at once: a local lead with a local subagent
 # means two sets of weights resident simultaneously. When vram_gb is set, the
 # sync warns at launch — with the actual numbers — if the two largest installed
@@ -1839,6 +1849,7 @@ models:
 #   keep_alive: 30m        # how long each model stays resident (-1 = never unload)
 #   preload: true          # warm models[0] at launch so turn 1 isn't a cold start
 #   num_parallel: 2        # concurrent chats per model — must match the daemon's OLLAMA_NUM_PARALLEL
+#   system_ram_gb: 64      # RAM that MoE expert offload spills into; warns when weights exceed VRAM + RAM
 #   keep_alive_overrides:  # optional, per model — wins over keep_alive above
 #     qwen3:8b: 1h
 

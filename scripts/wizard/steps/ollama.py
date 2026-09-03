@@ -14,6 +14,7 @@ import platform
 import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
 
 from wizard.ui import ask_text, ask_yes_no, cyan, print_header, print_info, print_success
 
@@ -26,6 +27,7 @@ APPLE_METAL_FRACTION = 0.75
 class OllamaStepResult:
     vram_gb: float | None
     kv_cache_type: str | None  # None = leave unset (sync assumes f16)
+    system_ram_gb: float | None = None  # None = leave unset (no offload warning)
 
 
 def _run_command(args: list[str], timeout: float = 5.0) -> str | None:
@@ -99,6 +101,50 @@ def detect_vram_gb(run: Callable[[list[str]], str | None] = _run_command, system
     return None
 
 
+def parse_meminfo_gib(output: str) -> float | None:
+    """Read ``MemTotal`` (kB) out of /proc/meminfo into GiB."""
+    for line in output.splitlines():
+        if not line.startswith("MemTotal:"):
+            continue
+        parts = line.split()
+        if len(parts) < 2:
+            return None
+        try:
+            return float(parts[1]) * 1024 / 1024**3
+        except ValueError:
+            return None
+    return None
+
+
+def _read_proc_meminfo() -> str | None:
+    try:
+        return Path("/proc/meminfo").read_text(encoding="utf-8")
+    except OSError:
+        return None
+
+
+def detect_system_ram_gb(
+    read_meminfo: Callable[[], str | None] = _read_proc_meminfo,
+    run: Callable[[list[str]], str | None] = _run_command,
+) -> float | None:
+    """Best-effort total system RAM in GiB, or None.
+
+    This is the pool MoE expert offload spills into; the sync only uses it to
+    warn when a model's weights exceed VRAM + RAM and would page from disk.
+    """
+    output = read_meminfo()
+    if output:
+        gib = parse_meminfo_gib(output)
+        if gib:
+            return gib
+    output = run(["sysctl", "-n", "hw.memsize"])
+    try:
+        total = float((output or "").strip())
+    except ValueError:
+        return None
+    return total / 1024**3 if total > 0 else None
+
+
 def run_ollama_step(step_label: str) -> OllamaStepResult:
     print_header(f"{step_label} · Local Ollama context sizing (optional)")
     print_info("With a GPU memory budget, every launch sizes each Ollama model's context window (num_ctx) to what actually fits next to its weights.")
@@ -121,6 +167,12 @@ def run_ollama_step(step_label: str) -> OllamaStepResult:
         print_info("Skipping VRAM sizing.")
         return OllamaStepResult(vram_gb=None, kv_cache_type=None)
 
+    # Recorded, not asked: it only powers a warning, and a wrong guess here is
+    # worse than silence. Detection failing simply leaves the setting unwritten.
+    system_ram_gb = detect_system_ram_gb()
+    if system_ram_gb:
+        print_success(f"Detected {system_ram_gb:.0f} GiB system RAM — large MoE models offload their experts into it.")
+
     print()
     print_info("Ollama can quantize the KV cache to q8_0 — near-lossless, roughly half the per-token memory, so roughly double the affordable context window.")
     print_info("This is a server-side Ollama setting; DeerFlow can only assume it when sizing. Only answer yes if you set it on the daemon:")
@@ -133,5 +185,5 @@ def run_ollama_step(step_label: str) -> OllamaStepResult:
     else:
         print_success(f"Sizing for f16 (Ollama's default) across {vram_gb:g} GB.")
     if not use_q8:
-        return OllamaStepResult(vram_gb=vram_gb, kv_cache_type=None)
-    return OllamaStepResult(vram_gb=vram_gb, kv_cache_type="q8_0")
+        return OllamaStepResult(vram_gb=vram_gb, kv_cache_type=None, system_ram_gb=system_ram_gb)
+    return OllamaStepResult(vram_gb=vram_gb, kv_cache_type="q8_0", system_ram_gb=system_ram_gb)

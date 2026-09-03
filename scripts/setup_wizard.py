@@ -109,6 +109,7 @@ def main() -> int:
             channel_connection_providers=channels.enabled_providers,
             ollama_vram_gb=ollama_sizing.vram_gb if ollama_sizing else None,
             ollama_kv_cache_type=ollama_sizing.kv_cache_type if ollama_sizing else None,
+            ollama_system_ram_gb=ollama_sizing.system_ram_gb if ollama_sizing else None,
         )
         print_success(f"Config written to: {config_path.relative_to(project_root)}")
 

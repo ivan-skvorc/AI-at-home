@@ -98,6 +98,7 @@ First, the mechanical gates:
 - [ ] No leftover conflict markers: `git grep -nE '^(<{7}|={7}|>{7})( |$)'` returns nothing.
 - [ ] Backend: `make lint && make test` (CI enforces `ruff format --check`). **One failure is environmental, not yours:** `test_browser_automation.py::test_real_playwright_navigate_click_type` launches a real headless Chromium, and its only guard is `pytest.importorskip("playwright.async_api")` — which checks the _Python package_, not the _browser binary_. So on any machine whose pre-baked Playwright browsers are older than the pinned `playwright` (1.60.0 wants build `1223`; a sandbox image shipping `chromium_headless_shell-1194` is the common case), it fails with `Executable doesn't exist at …/chromium_headless_shell-<build>/…` while the other 49 tests in that file pass. It is deterministic, not a flake, and it is not a regression — confirm with `git diff HEAD@{1} HEAD -- backend/tests/test_browser_automation.py backend/packages/harness/deerflow/community/browser_automation/`, which is empty on a sync that did not touch them. Don't skip or quarantine the test, and don't run `playwright install` in an agent sandbox that pre-bakes its browsers; just note it and read the rest of the suite.
 - [ ] **Upstream pinned a list the fork extends, or read from disk in a path the fork keeps disk-free.** Two shapes of the same collision, both seen on the 2026-09-02 sync, and both invisible until the suite runs. (1) An upstream test asserting an _exact_ schema — `test_task_tool_description_is_optional_but_discoverable` pins `task`'s full property list, which the fork's per-call `model=` (§22) legitimately extends; re-assert the fork's list rather than loosening the check to a subset, so a future upstream change that drops the parameter still fails loudly. (2) An upstream feature adding a config read inside a path the fork guarantees is config-free — upstream's custom-agent store put `get_app_config()` under `apply_prompt_template`, which §19's `TestConfigIndependence` requires to touch no disk because `config.yaml` is gitignored and absent in CI. The fix is to thread the already-resolved `app_config` down (`get_agent_soul` → `load_agent_soul` → `get_agent_store`), never to relax the guard: it was written strict precisely because "does it work without the file" passes while the fallback is still there, silently reading a developer's own `config.yaml`.
+- [ ] **MoE context sizing** (§30): `cd backend && uv run pytest tests/test_sync_ollama_models.py tests/test_setup_wizard.py -q`. The asserts that are silent when broken: `TestVramNumCtxLimitWithMoeOffload::test_moe_larger_than_vram_still_gets_a_real_window` (a 120B MoE on a 24 GiB card must get >100K tokens, not the 4096 floor) and its sibling `test_dense_sizing_is_unchanged` (the dense numbers must not move — an over-large window there OOMs at load). Both directions matter: sizing a MoE against total weight and sizing a dense model against a fraction of it are the same bug with opposite symptoms. `TestParseExpertWeightFraction::test_implausible_fraction_is_rejected` pins the refuse-don't-clamp rule. Prove the pair fails without the change by reverting `resident_weights_bytes` to return `weights_bytes` unconditionally.
 - [ ] Frontend: `pnpm check && pnpm test`. **`pnpm check` now includes the formatting gate** (`prettier --check .`, then eslint, then `tsc --noEmit`) — it used to be eslint + tsc only, which meant the command every guide tells you to run before committing was not the command CI gates on, and an eslint/type-clean change could still fail `lint-frontend` on formatting alone. That discrepancy was documented right here and was still walked into twice, so it was removed instead of re-warned about (see the Prettier row below). `pnpm format:write` fixes what the check reports; `eslint --fix` normalizes imports and optional-chains but not Prettier whitespace.
 - [ ] **Changed a shared UI control? Run the whole e2e suite, not the one spec you thought of.** `pnpm test:e2e` with no filter. A control's _specs_ are not the specs in the file you edited: they are every spec that clicks that control anywhere in the app, and nothing in `pnpm check` or `pnpm test` knows the difference. Observed live on the model-picker unification — the composer's picker was swapped into five screens, the Democracy spec was found and fixed by hand, and `suggestions-settings.spec.ts` was missed entirely because it drives the _same control_ from a different page. It failed only in CI. Two rules fell out of it, both now pinned by `frontend/tests/unit/components/workspace/model-picker-sites.test.ts`: a spec must locate a shared control by that control's **own** `data-slot`, never by the ARIA role of the primitive underneath (swap the primitive and the locator silently matches nothing), and a fast unit test should assert the contract so a six-minute e2e job is not the thing that tells you.
 
@@ -2899,6 +2900,59 @@ thread id before anything routes to it, on both fork paths — the edit version
 and `useBranchThread`. It is a copy, not a share: changing the model in the
 version must not reach back into its parent. Pinned by
 `tests/unit/core/settings/thread-context-isolation.dom.test.ts`.
+
+### 30. Sizing a MoE model against what it actually keeps in VRAM
+
+`vram_num_ctx_limit` sized every model against its **total** on-disk weight:
+`available = vram - weights - overhead`. For a dense model that is right. For a
+sparse-MoE model it is the wrong number by an order of magnitude, and the way it
+was wrong was silent — `available` went negative and the function returned
+`MIN_VRAM_NUM_CTX`, so a 120B MoE advertising a 128K native window was written
+into `config.yaml` with `num_ctx: 4096`. That is below the floor the constant
+exists to defend: the agent's system prompt, tool schemas, skills and memory do
+not fit in 4096 tokens, so the one class of model a 24 GiB card runs *best* was
+the one class the sync quietly crippled.
+
+The physical fact the old math missed is that CPU offload does not move layers
+uniformly — it moves **routed experts**. llama.cpp's `--n-cpu-moe` (which Ollama
+drives underneath) relocates the expert FFN tensors to system RAM and leaves
+attention, the router, shared experts, norms and the KV cache on the GPU. On
+gpt-oss-120b that is 98% of the weight leaving VRAM: 1.1 GiB resident, not
+60.8 GiB. Sized correctly, the same model on the same 24 GiB card earns its full
+131072-token window.
+
+`parse_expert_weight_fraction` derives that share from GGUF metadata Ollama
+already returns in `/api/show` — `layers × experts × 3 × d_model × d_ff` over
+`general.parameter_count`. **The 3 is the gate/up/down matrices of a gated FFN**,
+which every MoE architecture Ollama currently serves uses; an architecture that
+ever ships an ungated expert FFN would need that constant to become per-arch,
+and the fraction would be over-estimated (a too-large window) until it did.
+
+Three properties are load-bearing and a refactor must not "simplify" them away:
+
+- **Dense models must keep returning the whole weight.** `resident_weights_bytes`
+  falls back to the full figure for anything without an `expert_count`, and for
+  any MoE whose geometry or `parameter_count` is unreadable. Every pre-existing
+  sizing expectation is a regression test for exactly this
+  (`test_dense_sizing_is_unchanged`), because the failure mode of getting it
+  wrong — an over-large window on a dense model — is an OOM at load time, not a
+  warning.
+- **An implausible fraction is refused, not clamped.** `MAX_EXPERT_WEIGHT_FRACTION`
+  rejects metadata claiming the experts outweigh the model, because clamping it
+  to something near 1.0 would size against a near-zero resident weight and hand
+  out a window the card cannot hold. Refusing falls back to the conservative
+  total-weight math.
+- **`system_ram_gb` stays optional and warn-only.** Expert offload spills into
+  RAM; past that there is only the page cache, and generation drops to seconds
+  per token. `offload_capacity_warning` says so with the numbers, and says
+  nothing at all when the setting is absent — the script does not guess a
+  machine's RAM, because a wrong guess either cries wolf on every launch or
+  misses the case entirely. It never reassigns a model choice, the same rule
+  `vram_contention_warning` already follows.
+
+`vram_contention_warning` shares the residency math: two offloaded MoE models
+genuinely co-reside on a card that could not hold either one whole, so costing
+them at total weight produced a warning that was not true.
 
 ## Credits
 
