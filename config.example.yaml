@@ -2336,7 +2336,7 @@ tools:
     use: deerflow.community.web_fetch.tools:web_fetch_tool
     backend: camoufox
     # backend: jina            # cloud reader API (key-less, lower rate limit)
-    # fallback: jina           # try this backend if the primary one errors
+    fallback: jina             # if the local browser errors, retry via the key-less cloud reader so a fetch degrades instead of failing hard. Comment out to keep every fetch strictly local.
     timeout: 10                # camoufox: page-load timeout; jina: request timeout (s)
     # max_content_length: 4096 # cap on returned characters (default 4096)
     # Optional proxy for restricted networks / Docker / WSL (jina backend).
