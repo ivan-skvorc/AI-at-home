@@ -124,6 +124,28 @@ function ChatInstanceContent({
     enabled: !isNewThread && !isMock,
     isMock,
   });
+  // Keep-alive tabs (fork feature) keep this instance — and its metadata query —
+  // mounted while the thread sits in a background tab, so React Query never
+  // refetches on navigation the way a classic remount would. Without this, a
+  // kept-alive thread's title/goal freeze at first-load and only a full reload
+  // picks up a change made elsewhere (e.g. a rename in another tab or client).
+  // Refetch metadata each time the slot returns to the foreground; it is a
+  // background revalidation, so the cached value stays visible while it runs.
+  const refetchMetadataRef = useRef(threadMetadata.refetch);
+  refetchMetadataRef.current = threadMetadata.refetch;
+  const wasActiveRef = useRef(isActive);
+  useEffect(() => {
+    const wasActive = wasActiveRef.current;
+    wasActiveRef.current = isActive;
+    if (isNewThread || isMock) {
+      return;
+    }
+    // Only on a background→foreground transition: the first-mount fetch is
+    // already issued by the query itself, so re-fetching here too would double it.
+    if (isActive && !wasActive) {
+      void refetchMetadataRef.current();
+    }
+  }, [isActive, isNewThread, isMock]);
   const backendTokenUsage = threadTokenUsageToTokenUsage(threadTokenUsage.data);
   const backendCostSummary = threadTokenUsageToCostSummary(
     threadTokenUsage.data,
