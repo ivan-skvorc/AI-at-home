@@ -134,6 +134,24 @@ WORKDIR /app
 # Copy backend with pre-built virtualenv from builder
 COPY --from=builder /app/backend ./backend
 
+# Camoufox's shared libraries. The browser is a full Firefox: it dlopen()s the
+# GTK/X11 stack at startup, and this runtime stage is python:3.12-slim-bookworm,
+# which has none of it. Without these the binary below is present and unable to
+# execute ("libgtk-3.so.0: cannot open shared object file" -> "Couldn't load
+# XPCOM"), which every presence-based check passes and only agent runtime
+# catches — on every clean build, since camoufox is the default web_fetch
+# backend. This is the headless subset; `playwright install-deps firefox` pulls
+# ~130 packages / 406 MB, most of it fonts and xvfb that headless never uses.
+# Keep this install in the SAME stage as the COPY below: a browser copied into a
+# stage that cannot run it is precisely the bug.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libgtk-3-0 \
+    libasound2 \
+    libdbus-glib-1-2 \
+    libx11-xcb1 \
+    libxtst6 \
+    && rm -rf /var/lib/apt/lists/*
+
 # Camoufox browser binaries baked in the builder (an empty dir when the camoufox
 # extra was not selected). INSTALL_DIR = /root/.cache/camoufox at runtime (root),
 # so the camoufox web_fetch backend works without a runtime download.

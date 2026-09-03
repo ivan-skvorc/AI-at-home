@@ -24,9 +24,30 @@ launch-time check and the runtime check agree.
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from pathlib import Path
+
+# Camoufox resolves its browser release through the GitHub releases API.
+# Anonymous calls work (200, or 403 when rate-limited); a *stale* credential
+# gets 401, which camoufox treats as fatal instead of retrying anonymously —
+# "Synced 0 versions from 0 repos", and then every web_fetch fails. The gateway
+# container loads the whole repo-root .env, where GITHUB_TOKEN lives for the
+# sandbox, so handing it to this subprocess is the default Docker path.
+_GITHUB_CREDENTIAL_VARS = ("GITHUB_TOKEN", "GH_TOKEN")
+
+
+def fetch_environment(environ) -> dict:
+    """Copy ``environ`` without GitHub credentials, for the fetch subprocess.
+
+    A copy, not a mutation: the caller's environment is left alone so nothing
+    else in the process loses the token.
+    """
+    env = dict(environ)
+    for name in _GITHUB_CREDENTIAL_VARS:
+        env.pop(name, None)
+    return env
 
 
 def browser_install_dir() -> Path | None:
@@ -65,7 +86,7 @@ def main() -> int:
 
     print("[camoufox] downloading browser binaries (first run; large download)...", file=sys.stderr)
     try:
-        rc = subprocess.call([sys.executable, "-m", "camoufox", "fetch"])
+        rc = subprocess.call([sys.executable, "-m", "camoufox", "fetch"], env=fetch_environment(os.environ))
     except Exception as exc:  # noqa: BLE001 - best-effort; do not block startup
         print(f"[camoufox] fetch failed to launch: {exc}", file=sys.stderr)
         return 0

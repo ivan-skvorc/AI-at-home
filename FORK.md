@@ -98,6 +98,7 @@ First, the mechanical gates:
 - [ ] No leftover conflict markers: `git grep -nE '^(<{7}|={7}|>{7})( |$)'` returns nothing.
 - [ ] Backend: `make lint && make test` (CI enforces `ruff format --check`). **One failure is environmental, not yours:** `test_browser_automation.py::test_real_playwright_navigate_click_type` launches a real headless Chromium, and its only guard is `pytest.importorskip("playwright.async_api")` — which checks the _Python package_, not the _browser binary_. So on any machine whose pre-baked Playwright browsers are older than the pinned `playwright` (1.60.0 wants build `1223`; a sandbox image shipping `chromium_headless_shell-1194` is the common case), it fails with `Executable doesn't exist at …/chromium_headless_shell-<build>/…` while the other 49 tests in that file pass. It is deterministic, not a flake, and it is not a regression — confirm with `git diff HEAD@{1} HEAD -- backend/tests/test_browser_automation.py backend/packages/harness/deerflow/community/browser_automation/`, which is empty on a sync that did not touch them. Don't skip or quarantine the test, and don't run `playwright install` in an agent sandbox that pre-bakes its browsers; just note it and read the rest of the suite.
 - [ ] **Upstream pinned a list the fork extends, or read from disk in a path the fork keeps disk-free.** Two shapes of the same collision, both seen on the 2026-09-02 sync, and both invisible until the suite runs. (1) An upstream test asserting an _exact_ schema — `test_task_tool_description_is_optional_but_discoverable` pins `task`'s full property list, which the fork's per-call `model=` (§22) legitimately extends; re-assert the fork's list rather than loosening the check to a subset, so a future upstream change that drops the parameter still fails loudly. (2) An upstream feature adding a config read inside a path the fork guarantees is config-free — upstream's custom-agent store put `get_app_config()` under `apply_prompt_template`, which §19's `TestConfigIndependence` requires to touch no disk because `config.yaml` is gitignored and absent in CI. The fix is to thread the already-resolved `app_config` down (`get_agent_soul` → `load_agent_soul` → `get_agent_store`), never to relax the guard: it was written strict precisely because "does it work without the file" passes while the fallback is still there, silently reading a developer's own `config.yaml`.
+- [ ] **VPN-hostile defaults** (§31): `cd backend && uv run pytest tests/test_searxng_client.py tests/test_ensure_camoufox.py tests/test_camoufox_runtime_deps.py tests/test_search_fetch_defaults.py -q`. Four independent regressions, each silent: `TestCamoufoxRuntimeLibraries::test_the_libraries_are_installed_beside_the_browser_copy` (a browser copied into a runtime stage that cannot run it — every presence check still passes); `TestFetchEnvironment::test_the_fetch_call_site_actually_uses_the_scrubbed_environment` (the *call site*, not the helper — the helper tests pass against a module that cannot resolve `os`); `TestUnresponsiveEngines::test_all_engines_blocked_raises_rather_than_returning_empty` **together with** `test_a_genuinely_empty_result_set_is_still_a_success` (both directions — collapsing them into "empty means error" breaks a legitimate no-match search in silence); and `TestSearxngEngineMix` (the VPN-tolerant engines, and that the json/limiter deltas survived the edit). A sync that drops the apt block from `backend/Dockerfile`, or restores `data.get("results", [])` without the `unresponsive_engines` branch, is green everywhere else.
 - [ ] **MoE context sizing** (§30): `cd backend && uv run pytest tests/test_sync_ollama_models.py tests/test_setup_wizard.py -q`. The asserts that are silent when broken: `TestVramNumCtxLimitWithMoeOffload::test_moe_larger_than_vram_still_gets_a_real_window` (a 120B MoE on a 24 GiB card must get >100K tokens, not the 4096 floor) and its sibling `test_dense_sizing_is_unchanged` (the dense numbers must not move — an over-large window there OOMs at load). Both directions matter: sizing a MoE against total weight and sizing a dense model against a fraction of it are the same bug with opposite symptoms. `TestParseExpertWeightFraction::test_implausible_fraction_is_rejected` pins the refuse-don't-clamp rule. Prove the pair fails without the change by reverting `resident_weights_bytes` to return `weights_bytes` unconditionally.
 - [ ] Frontend: `pnpm check && pnpm test`. **`pnpm check` now includes the formatting gate** (`prettier --check .`, then eslint, then `tsc --noEmit`) — it used to be eslint + tsc only, which meant the command every guide tells you to run before committing was not the command CI gates on, and an eslint/type-clean change could still fail `lint-frontend` on formatting alone. That discrepancy was documented right here and was still walked into twice, so it was removed instead of re-warned about (see the Prettier row below). `pnpm format:write` fixes what the check reports; `eslint --fix` normalizes imports and optional-chains but not Prettier whitespace.
 - [ ] **Changed a shared UI control? Run the whole e2e suite, not the one spec you thought of.** `pnpm test:e2e` with no filter. A control's _specs_ are not the specs in the file you edited: they are every spec that clicks that control anywhere in the app, and nothing in `pnpm check` or `pnpm test` knows the difference. Observed live on the model-picker unification — the composer's picker was swapped into five screens, the Democracy spec was found and fixed by hand, and `suggestions-settings.spec.ts` was missed entirely because it drives the _same control_ from a different page. It failed only in CI. Two rules fell out of it, both now pinned by `frontend/tests/unit/components/workspace/model-picker-sites.test.ts`: a spec must locate a shared control by that control's **own** `data-slot`, never by the ARIA role of the primitive underneath (swap the primitive and the locator silently matches nothing), and a fast unit test should assert the contract so a six-minute e2e job is not the thing that tells you.
@@ -2953,6 +2954,76 @@ Three properties are load-bearing and a refactor must not "simplify" them away:
 `vram_contention_warning` shares the residency math: two offloaded MoE models
 genuinely co-reside on a card that could not hold either one whole, so costing
 them at total weight produced a warning that was not true.
+
+### 31. The three defaults that made a fresh install fail on a VPN
+
+Found by debugging a clean Docker dev stack on Arch behind NordVPN, where
+`web_fetch` failed for an entire agent run and `web_search` went dead partway
+through. Three independent defects, none of which surfaces as an error at
+install time; the first two are the ones that made the stack look broken.
+
+**Camoufox was installed without the libraries it loads.** The runtime stage is
+`python:3.12-slim-bookworm` and it copied `/root/.cache/camoufox` in without any
+GTK/X11 stack, so the browser was on disk and could not execute
+(`libgtk-3.so.0: cannot open shared object file` → `Couldn't load XPCOM`). This
+is worse than a missing browser: **every presence check passes**, because the
+binary really is there. `browser_present()` looks for `version.json`,
+`ensure_camoufox` calls an existing install a no-op, and `make doctor` reports
+nothing — the failure appears only at agent runtime, on every clean build, for
+the *default* `web_fetch` backend. The install is now in the same stage as the
+`COPY`, and `test_camoufox_runtime_deps.py` asserts that adjacency, because the
+bug is precisely a browser copied into a stage that cannot run it. The list is
+the headless subset by hand; `playwright install-deps firefox` pulls ~130
+packages / 406 MB, mostly fonts and xvfb that headless never touches.
+
+**A stale `GITHUB_TOKEN` turned a working anonymous path into a hard failure.**
+Camoufox resolves its release through the GitHub API. Anonymous calls return 200
+(or 403 when rate-limited) — a **401 proves a credential was sent and rejected**,
+and camoufox treats that as fatal rather than retrying anonymously ("Synced 0
+versions from 0 repos"). The gateway loads the whole repo-root `.env` via
+`env_file`, and that is where `GITHUB_TOKEN` lives for the sandbox, so the
+default Docker path hands the fetch a token it never needed.
+`fetch_environment()` strips it for that subprocess only — a copy, so nothing
+else in the process loses the token. Scoping the variable out of the gateway
+entirely would mean abandoning `env_file` and enumerating every key, which trades
+one failure for a maintenance burden; the surgical fix is at the one call site
+that is harmed by it. **`test_the_fetch_call_site_actually_uses_the_scrubbed_environment`
+is the load-bearing test, not the helper tests beside it**: the first version of
+this fix passed every `fetch_environment` unit test and would have raised
+`NameError` on the real path, because the module never imported `os`.
+
+**SearXNG's engine failures were discarded.** The client read `data["results"]`
+and ignored `unresponsive_engines`. When every engine is blocked SearXNG answers
+**HTTP 200 with an empty array** and names the failures in that field, then
+benches each blocked engine for ~180 seconds. Reported as a successful empty
+search, the agent re-queries immediately, which re-triggers the block and
+extends the suspension — a search tool that works for the first few calls of a
+run and then returns nothing for the rest. The tell is timing: a suspended query
+answers in ~50 ms because nothing is being contacted.
+
+The distinction the fix rests on is that **an empty result set is ambiguous** and
+only `unresponsive_engines` disambiguates it. Nothing matched → still an empty
+success. Every engine blocked → `SearxngEnginesUnavailableError`, naming the
+engines and the suspension window so the agent can back off instead of
+amplifying. Partial failure with some results → not an error at all; degraded
+beats failed. Those three cases are three tests, and collapsing them into "empty
+means error" would break the first one silently. `_format_unresponsive` tolerates
+any shape upstream sends, because failing to parse a diagnostic must never become
+the failure being diagnosed.
+
+Two shipped defaults were set for a fast unfiltered connection and changed with
+them: `web_fetch` had `timeout: 10` for a **full Firefox render** (raised to 30,
+matching every other timeout in the file), and the bundled SearXNG ran the stock
+engine mix — Google CSE, DuckDuckGo, Brave, Startpage, all four of which block
+datacenter and VPN exits. `mojeek`, `qwant` and `bing` are now enabled by name so
+a blocked consumer engine costs some results rather than all of them. **Do not
+"fix" that list by adding the four blockers back**; they are the failure, not the
+fallback. `fallback: jina` stays commented out on purpose: it routes every
+fetched URL through a third party, which is the one thing the local-first default
+exists to prevent, so it is an informed choice rather than a silent default.
+
+Note that a suspension is time-based and survives an IP change — the SearXNG
+container must be restarted to clear it.
 
 ## Credits
 
