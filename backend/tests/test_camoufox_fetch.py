@@ -71,6 +71,47 @@ class TestBrowserReuse:
         launch.assert_awaited_once()
 
     @pytest.mark.anyio
+    async def test_live_browser_is_not_relaunched(self, fresh_manager, monkeypatch):
+        # A browser that reports connected must be reused, not relaunched.
+        browser, _ = _make_fake_browser()
+        browser.is_connected = MagicMock(return_value=True)
+        launch = AsyncMock(return_value=browser)
+        monkeypatch.setattr(fresh_manager, "_launch", launch)
+
+        await browser_mod.get_shared_browser()
+        await browser_mod.get_shared_browser()
+        launch.assert_awaited_once()
+
+    @pytest.mark.anyio
+    async def test_dead_browser_is_torn_down_and_relaunched(self, fresh_manager, monkeypatch):
+        # A cached browser whose subprocess has died (is_connected() -> False)
+        # must be discarded and relaunched, not reused into failing fetches.
+        dead_browser, _ = _make_fake_browser()
+        dead_browser.is_connected = MagicMock(return_value=False)
+        dead_cm = MagicMock()
+        dead_cm.__aexit__ = AsyncMock()
+
+        live_browser, _ = _make_fake_browser()
+        live_browser.is_connected = MagicMock(return_value=True)
+
+        to_launch = [(dead_browser, dead_cm), (live_browser, MagicMock(__aexit__=AsyncMock()))]
+
+        async def _fake_launch():
+            browser, cm = to_launch.pop(0)
+            fresh_manager._cm = cm
+            return browser
+
+        monkeypatch.setattr(fresh_manager, "_launch", _fake_launch)
+
+        first = await browser_mod.get_shared_browser()
+        assert first is dead_browser
+
+        second = await browser_mod.get_shared_browser()
+        assert second is live_browser  # relaunched, not the dead handle
+        dead_cm.__aexit__.assert_awaited_once()  # dead browser's cm was closed
+        assert not to_launch  # exactly two launches happened
+
+    @pytest.mark.anyio
     async def test_shutdown_closes_browser(self, fresh_manager):
         cm = MagicMock()
         cm.__aexit__ = AsyncMock()
