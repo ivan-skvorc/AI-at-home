@@ -28,20 +28,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   engine costs some results instead of all of them. `fallback: jina` stays off by
   default on purpose — it would send every fetched URL to a third party.
 
-- **models:** **Big mixture-of-experts models get a real context window on a small
-  card.** A sparse-MoE model keeps its routed experts in system RAM and only its
-  attention, router and shared experts on the GPU, but the launch-time Ollama
-  sync sized every model against its *total* on-disk weight — so a 120B MoE
-  advertising a 128K window was written into `config.yaml` with `num_ctx: 4096`,
-  which does not fit the agent's own system prompt. The sizing now charges a MoE
-  only what it actually keeps in VRAM (about 1 GiB for a 120B model, not 60), so
-  the same model on the same 24 GB card gets its full native window. Dense models
-  are unchanged. The "two local models can't co-reside" warning uses the same
-  figure, so two offloaded MoE models no longer trigger it falsely. New optional
-  key `ollama.system_ram_gb` (**unset by default**, and detected by `make setup`)
-  adds one launch-time warning naming any installed model whose weights exceed
-  VRAM and RAM together — the state where Ollama pages from disk and generation
-  collapses to seconds per token. It never changes a model choice.
+- **models:** **A local model too big for your card gets a context window it can
+  actually run in.** The launch-time Ollama sync sized every model as
+  `vram - weights - overhead` and fell back to a 4096-token window when that went
+  negative — smaller than the agent's own system prompt, so a 128K-native model
+  was configured into uselessness. Such a model now gets a usable window, and a
+  deliberately **bounded** one: Ollama splits whole layers between GPU and CPU and,
+  when weights and KV cache do not both fit, keeps the cache and pushes layers to
+  the CPU — so an unlimited window would trade a model that cannot run for one
+  that merely crawls. Models that fit in VRAM are sized exactly as before. New
+  optional key `ollama.system_ram_gb` (**unset by default**, detected by
+  `make setup`) adds one launch-time warning naming any installed model whose
+  weights exceed VRAM and RAM together, the state where Ollama pages from disk.
+  It never changes a model choice.
 
 - **chat:** **An internet switch on the conversation.** The composer gains a globe
   button that takes *this chat* offline: the run is assembled with no

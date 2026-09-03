@@ -446,11 +446,15 @@ class TestVramNumCtxLimit:
         limit = sync_ollama.vram_num_ctx_limit(QWEN3_SHOW, QWEN3_WEIGHTS, 16 * GIB)
         assert limit == 69632
 
-    def test_no_room_floors_at_minimum(self):
-        # Weights + overhead already exceed 6 GiB: still write a usable floor
-        # (Ollama degrades by offloading layers to CPU, not by crashing).
+    def test_no_room_takes_the_offload_floor_not_the_old_4096(self):
+        # Weights + overhead exceed 6 GiB, so this is the partial-offload path.
+        # It used to return MIN_VRAM_NUM_CTX (4096), which is smaller than the
+        # agent's own system prompt — a window that "fits" but cannot be used.
+        # Ollama degrades by moving layers to CPU rather than crashing, so the
+        # right answer is a usable window, bounded (see
+        # TestVramNumCtxLimitUnderOffload) so it does not evict the weights.
         limit = sync_ollama.vram_num_ctx_limit(QWEN3_SHOW, QWEN3_WEIGHTS, 6 * GIB)
-        assert limit == sync_ollama.MIN_VRAM_NUM_CTX
+        assert limit == sync_ollama.MIN_OFFLOAD_NUM_CTX
 
     def test_unknown_geometry_returns_none(self):
         assert sync_ollama.vram_num_ctx_limit({"model_info": {}}, QWEN3_WEIGHTS, 8 * GIB) is None
@@ -532,12 +536,13 @@ class TestResolveSizingSettings:
         assert kv == "f16"
 
 
-# ── MoE expert offload ────────────────────────────────────────────────────────
-# A sparse-MoE model's routed experts live in system RAM (llama.cpp's
-# --n-cpu-moe, which Ollama drives underneath); attention, the router, shared
-# experts, norms and the KV cache stay on the GPU. Sizing such a model against
-# its *total* weight therefore reports "does not fit" for the exact class of
-# model a 24GB card runs best.
+# ── Models bigger than VRAM ───────────────────────────────────────────────────
+# Ollama splits whole layers between GPU and CPU (num_gpu); it does not offload
+# MoE experts the way llama.cpp's --n-cpu-moe does (ollama/ollama#11772 is open),
+# and when weights and KV cache do not both fit it keeps the cache and drops GPU
+# layers (ollama/ollama#9750). So context is bought with layers, and the sizing
+# has to be bounded in both directions: 4096 leaves the agent unable to run, and
+# "whatever fits" evicts the weights it needs.
 GPT_OSS_120B_SHOW = {
     "capabilities": ["tools", "thinking"],
     "model_info": {
@@ -558,80 +563,38 @@ GPT_OSS_120B_SHOW = {
 GPT_OSS_120B_WEIGHTS = int(60.8 * GIB)  # native MXFP4 on disk
 
 
-class TestParseExpertWeightFraction:
-    """What share of a model's parameters are routed-expert FFN weights.
+class TestVramNumCtxLimitUnderOffload:
+    """The regression this change exists for, bounded on both sides."""
 
-    Routed-expert params = layers x experts x 3 (gate/up/down) x d_model x d_ff.
-    The fraction is what CPU offload can move out of VRAM.
-    """
-
-    def test_sparse_moe_is_almost_all_expert_weight(self):
-        fraction = sync_ollama.parse_expert_weight_fraction(GPT_OSS_120B_SHOW)
-        # 36 x 128 x 3 x 2880 x 2880 = 114.7e9 of 116.8e9 params
-        assert fraction is not None
-        assert 0.95 < fraction < 0.995
-
-    def test_dense_model_has_no_expert_weight(self):
-        assert sync_ollama.parse_expert_weight_fraction(QWEN3_SHOW) is None
-
-    def test_missing_parameter_count_returns_none(self):
-        info = dict(GPT_OSS_120B_SHOW["model_info"])
-        del info["general.parameter_count"]
-        assert sync_ollama.parse_expert_weight_fraction({"model_info": info}) is None
-
-    def test_expert_count_of_zero_is_dense(self):
-        info = dict(GPT_OSS_120B_SHOW["model_info"], **{"gptoss.expert_count": 0})
-        assert sync_ollama.parse_expert_weight_fraction({"model_info": info}) is None
-
-    def test_expert_ffn_length_falls_back_to_feed_forward_length(self):
-        info = dict(GPT_OSS_120B_SHOW["model_info"])
-        del info["gptoss.expert_feed_forward_length"]
-        info["gptoss.feed_forward_length"] = 2880
-        assert sync_ollama.parse_expert_weight_fraction({"model_info": info}) == pytest.approx(sync_ollama.parse_expert_weight_fraction(GPT_OSS_120B_SHOW))
-
-    def test_implausible_fraction_is_rejected(self):
-        # Geometry that claims more expert weight than the model has parameters
-        # is a metadata bug; refuse it rather than sizing against a negative.
-        info = dict(GPT_OSS_120B_SHOW["model_info"], **{"general.parameter_count": 1_000_000})
-        assert sync_ollama.parse_expert_weight_fraction({"model_info": info}) is None
-
-    def test_missing_model_info_returns_none(self):
-        assert sync_ollama.parse_expert_weight_fraction({"capabilities": ["tools"]}) is None
-
-
-class TestResidentWeightsBytes:
-    """VRAM-resident share of the weights once routed experts are offloaded."""
-
-    def test_dense_model_is_fully_resident(self):
-        assert sync_ollama.resident_weights_bytes(QWEN3_SHOW, QWEN3_WEIGHTS) == QWEN3_WEIGHTS
-
-    def test_moe_keeps_only_the_non_expert_share(self):
-        resident = sync_ollama.resident_weights_bytes(GPT_OSS_120B_SHOW, GPT_OSS_120B_WEIGHTS)
-        assert resident < GPT_OSS_120B_WEIGHTS * 0.05
-        assert resident > 0
-
-    def test_unknown_weights_stay_unknown(self):
-        assert sync_ollama.resident_weights_bytes(GPT_OSS_120B_SHOW, None) is None
-
-
-class TestVramNumCtxLimitWithMoeOffload:
-    """The regression this whole change exists for."""
-
-    def test_moe_larger_than_vram_still_gets_a_real_window(self):
-        # 60.8 GiB of weights on a 24 GiB card: sizing against the total floors
-        # at MIN_VRAM_NUM_CTX, which does not fit the agent's system prompt.
+    def test_a_model_bigger_than_vram_gets_a_window_the_agent_can_run_in(self):
+        # Was MIN_VRAM_NUM_CTX (4096) — below the agent's own system prompt,
+        # tool schemas, skills and memory, so the model was unusable.
         limit = sync_ollama.vram_num_ctx_limit(GPT_OSS_120B_SHOW, GPT_OSS_120B_WEIGHTS, 24 * GIB)
-        assert limit > 100_000
+        assert limit >= sync_ollama.MIN_OFFLOAD_NUM_CTX
 
-    def test_dense_sizing_is_unchanged(self):
-        # Every pre-existing expectation in TestVramNumCtxLimit must still hold.
+    def test_it_does_not_hand_the_whole_card_to_the_kv_cache(self):
+        # Ollama pays for context in GPU layers, so an unbounded window would
+        # push the weights onto the CPU and make generation crawl. Cap the KV
+        # cache's share of VRAM.
+        limit = sync_ollama.vram_num_ctx_limit(GPT_OSS_120B_SHOW, GPT_OSS_120B_WEIGHTS, 24 * GIB)
+        per_token = sync_ollama.parse_kv_bytes_per_token(GPT_OSS_120B_SHOW)
+        assert limit * per_token <= 24 * GIB * sync_ollama.OFFLOAD_KV_VRAM_SHARE
+
+    def test_a_model_that_fits_still_takes_all_the_spare_vram(self):
+        # Every pre-existing expectation: the fits-in-VRAM path is untouched.
         assert sync_ollama.vram_num_ctx_limit(QWEN3_SHOW, QWEN3_WEIGHTS, 8 * GIB) == 10240
-        assert sync_ollama.vram_num_ctx_limit(QWEN3_SHOW, QWEN3_WEIGHTS, 6 * GIB) == sync_ollama.MIN_VRAM_NUM_CTX
+        assert sync_ollama.vram_num_ctx_limit(QWEN3_SHOW, QWEN3_WEIGHTS, 16 * GIB) == 69632
 
-    def test_a_moe_too_big_for_the_card_still_floors(self):
-        # Resident share alone exceeding VRAM is a genuine "does not fit".
-        limit = sync_ollama.vram_num_ctx_limit(GPT_OSS_120B_SHOW, GPT_OSS_120B_WEIGHTS, 2 * GIB)
-        assert limit == sync_ollama.MIN_VRAM_NUM_CTX
+    def test_parallel_slots_still_divide_the_offloaded_window(self):
+        one = sync_ollama.vram_num_ctx_limit(GPT_OSS_120B_SHOW, GPT_OSS_120B_WEIGHTS, 24 * GIB, "f16", 1)
+        two = sync_ollama.vram_num_ctx_limit(GPT_OSS_120B_SHOW, GPT_OSS_120B_WEIGHTS, 24 * GIB, "f16", 2)
+        assert two < one
+
+    def test_unknown_geometry_returns_none(self):
+        assert sync_ollama.vram_num_ctx_limit({"model_info": {}}, GPT_OSS_120B_WEIGHTS, 24 * GIB) is None
+
+    def test_unknown_weights_returns_none(self):
+        assert sync_ollama.vram_num_ctx_limit(GPT_OSS_120B_SHOW, None, 24 * GIB) is None
 
 
 class TestSystemRamSetting:
@@ -696,19 +659,19 @@ class TestOffloadCapacityWarning:
         assert "b:ok" not in warning
 
 
-class TestVramContentionWithMoe:
-    """Two resident MoE models contend for the resident share, not the total."""
+class TestVramContentionForBigModels:
+    """Two models bigger than the card still evict each other."""
 
-    def test_two_offloaded_moe_models_do_not_falsely_contend(self):
+    def test_two_oversized_models_contend(self):
         loaded = [
             ("gpt-oss:120b", GPT_OSS_120B_SHOW, GPT_OSS_120B_WEIGHTS),
             ("gpt-oss:120b-b", GPT_OSS_120B_SHOW, GPT_OSS_120B_WEIGHTS),
         ]
-        assert sync_ollama.vram_contention_warning(loaded, 24 * GIB) is None
+        assert sync_ollama.vram_contention_warning(loaded, 24 * GIB) is not None
 
-    def test_two_dense_models_still_contend(self):
+    def test_two_dense_models_that_fit_do_not(self):
         loaded = [
             ("qwen3:8b", QWEN3_SHOW, QWEN3_WEIGHTS),
             ("qwen3:8b-b", QWEN3_SHOW, QWEN3_WEIGHTS),
         ]
-        assert sync_ollama.vram_contention_warning(loaded, 8 * GIB) is not None
+        assert sync_ollama.vram_contention_warning(loaded, 24 * GIB) is None
