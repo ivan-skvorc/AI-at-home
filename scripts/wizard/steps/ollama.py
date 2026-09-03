@@ -129,8 +129,8 @@ def detect_system_ram_gb(
 ) -> float | None:
     """Best-effort total system RAM in GiB, or None.
 
-    This is the pool MoE expert offload spills into; the sync only uses it to
-    warn when a model's weights exceed VRAM + RAM and would page from disk.
+    This is the pool Ollama's offloaded layers spill into; the sync only uses
+    it to warn when a model's weights exceed VRAM + RAM and would page from disk.
     """
     output = read_meminfo()
     if output:
@@ -171,7 +171,7 @@ def run_ollama_step(step_label: str) -> OllamaStepResult:
     # worse than silence. Detection failing simply leaves the setting unwritten.
     system_ram_gb = detect_system_ram_gb()
     if system_ram_gb:
-        print_success(f"Detected {system_ram_gb:.0f} GiB system RAM — large MoE models offload their experts into it.")
+        print_success(f"Detected {system_ram_gb:.0f} GiB system RAM — models too big for the GPU offload layers into it.")
 
     print()
     print_info("Ollama can quantize the KV cache to q8_0 — near-lossless, roughly half the per-token memory, so roughly double the affordable context window.")

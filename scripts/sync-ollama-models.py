@@ -838,7 +838,7 @@ def main() -> int:
         "--system-ram-gb",
         type=float,
         default=None,
-        help="System RAM in GiB that MoE expert offload can spill into (default: `ollama.system_ram_gb` in config.yaml). Only used to warn when a model's weights exceed VRAM + RAM and would page from disk.",
+        help="System RAM in GiB that Ollama's offloaded layers can spill into (default: `ollama.system_ram_gb` in config.yaml). Only used to warn when a model's weights exceed VRAM + RAM and would page from disk.",
     )
     ap.add_argument(
         "--kv-cache-type",

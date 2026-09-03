@@ -51,17 +51,43 @@ class _BrowserManager:
     async def get_browser(self):
         """Return the shared browser, launching it on first use.
 
+        The launched browser is reused across requests, but a long-lived
+        headless browser can die mid-session — an OOM kill, a crash, a wedged
+        navigation, the subprocess reaped by the OS. A cached-but-dead handle
+        would make *every* subsequent fetch fail identically until the Gateway
+        restarts (the "web_fetch worked, then stopped" symptom). So the cached
+        browser is liveness-checked on every call and relaunched when it has
+        gone away, rather than trusted forever after the first launch.
+
         Raises:
             CamoufoxNotInstalledError: the package is not imported.
             CamoufoxBrowserMissingError: the browser binaries are absent.
         """
-        if self._browser is not None:
-            return self._browser
+        browser = self._browser
+        if browser is not None and _browser_is_alive(browser):
+            return browser
         async with self._lock:
+            browser = self._browser
+            if browser is not None and _browser_is_alive(browser):
+                return browser
             if self._browser is not None:
-                return self._browser
+                # Cached browser died since the last call. Tear the dead handle
+                # and its context manager down before relaunching so we don't
+                # leak the old subprocess or reuse a closed Playwright object.
+                await self._discard_dead_locked()
             self._browser = await self._launch()
             return self._browser
+
+    async def _discard_dead_locked(self) -> None:
+        """Drop the current (dead) browser + cm. Caller must hold ``self._lock``."""
+        cm = self._cm
+        self._cm = None
+        self._browser = None
+        if cm is not None:
+            try:
+                await cm.__aexit__(None, None, None)
+            except Exception as exc:  # noqa: BLE001 - dead-browser cleanup is best-effort
+                logger.debug(f"Camoufox dead-browser cleanup error (ignored): {exc}")
 
     async def _launch(self):
         try:
@@ -121,6 +147,24 @@ def _camoufox_browser_present() -> bool:
         return (Path(install_dir) / "version.json").exists()
     except Exception:  # noqa: BLE001 - never let the probe block a launch
         return True
+
+
+def _browser_is_alive(browser) -> bool:
+    """Best-effort liveness check for the shared browser.
+
+    Playwright's ``Browser`` exposes a synchronous ``is_connected()`` that goes
+    False once the underlying subprocess is gone. When the object exposes no
+    such method we assume alive — the fork treats an unresolvable probe as
+    "launch anyway and classify on failure" (same philosophy as
+    ``_camoufox_browser_present``), never as a reason to block a fetch.
+    """
+    is_connected = getattr(browser, "is_connected", None)
+    if not callable(is_connected):
+        return True
+    try:
+        return bool(is_connected())
+    except Exception:  # noqa: BLE001 - a throwing probe means the handle is unusable
+        return False
 
 
 def _looks_like_missing_browser(exc: Exception) -> bool:

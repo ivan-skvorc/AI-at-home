@@ -195,8 +195,12 @@ max_recursion_limit: 1000
 # Two token fields look similar but mean different things:
 # - `max_tokens` is the per-call OUTPUT cap passed to the provider.
 # - `context_window` is a positive integer for the total context capacity
-#   (prompt + completion) and drives the real-time "% context used" indicator
-#   in the chat UI.
+#   (prompt + completion). It drives the real-time "% context used" indicator
+#   in the chat UI and feeds the model's langchain profile, which fraction-based
+#   summarization triggers (`summarization.trigger: [{type: fraction, ...}]`)
+#   resolve their thresholds from. Third-party OpenAI-compatible models carry no
+#   built-in profile, so without `context_window` a fraction trigger degrades
+#   (dropped with a warning) instead of crashing the agent build.
 # Leave `context_window` unset if the provider limit is unknown; the percentage
 # will not render. Verify configured values against the provider's model docs.
 #
@@ -1827,15 +1831,18 @@ models:
 # concurrent: separate chats run as separate LangGraph runs, and the Gateway
 # only serializes runs within one chat.
 #
-# system_ram_gb is the second memory pool. A sparse-MoE model (gpt-oss:120b,
-# Qwen3 *-A*B, GLM/DeepSeek MoE) keeps its routed experts in system RAM and only
-# its attention, router and shared experts on the GPU, so the sizing charges a
-# 120B MoE about a gigabyte of VRAM rather than sixty — that is what earns it a
-# full native context window on a 24 GiB card instead of the 4096-token floor.
-# Weights bigger than VRAM + system RAM combined have nowhere left to go and are
-# paged from disk, which costs roughly a hundredfold in tokens/sec; set this and
-# the launch-time sync names any installed model in that state. `make setup`
-# detects and fills it in. Unset simply disables that one warning.
+# system_ram_gb is the second memory pool. A model too big for VRAM is not
+# refused: Ollama splits whole layers between GPU and CPU (num_gpu), and the
+# layers it cannot fit land in system RAM. Note it splits *layers*, not MoE
+# experts — it has no equivalent of llama.cpp's --n-cpu-moe (ollama/ollama#11772
+# is open) — and when the weights and KV cache do not both fit it keeps the
+# cache and drops GPU layers to make room (ollama/ollama#9750). So context on
+# such a model is paid for in layers, and the sizing deliberately gives it a
+# bounded share of VRAM: enough to run the agent, not so much that the weights
+# get pushed onto the CPU. Weights bigger than VRAM + system RAM combined have
+# nowhere left to go and are paged from disk, which costs roughly a hundredfold
+# in tokens/sec; set this and the launch-time sync names any installed model in
+# that state. `make setup` detects and fills it in. Unset disables that warning.
 #
 # Note on running two local models at once: a local lead with a local subagent
 # means two sets of weights resident simultaneously. When vram_gb is set, the
@@ -1849,7 +1856,7 @@ models:
 #   keep_alive: 30m        # how long each model stays resident (-1 = never unload)
 #   preload: true          # warm models[0] at launch so turn 1 isn't a cold start
 #   num_parallel: 2        # concurrent chats per model — must match the daemon's OLLAMA_NUM_PARALLEL
-#   system_ram_gb: 64      # RAM that MoE expert offload spills into; warns when weights exceed VRAM + RAM
+#   system_ram_gb: 64      # RAM that offloaded layers spill into; warns when weights exceed VRAM + RAM
 #   keep_alive_overrides:  # optional, per model — wins over keep_alive above
 #     qwen3:8b: 1h
 
@@ -2343,17 +2350,13 @@ tools:
     use: deerflow.community.web_fetch.tools:web_fetch_tool
     backend: camoufox
     # backend: jina            # cloud reader API (key-less, lower rate limit)
-    # fallback: jina           # try this backend if the primary one errors.
-    #                          # Deliberately left off: jina is a third party, so
-    #                          # every fetched URL (and the page it returns) leaves
-    #                          # your machine, which is the one thing this fork's
-    #                          # local-first default is protecting. Turn it on if
-    #                          # you would rather have a working fetch than a
-    #                          # private one — an informed trade, not a default.
+    fallback: jina             # if the local browser errors, retry via the key-less cloud reader so a fetch degrades instead of failing hard. Comment out to keep every fetch strictly local — jina is a third party, so a fetched URL and the page it returns leave your machine.
     timeout: 30                # camoufox: page-load timeout; jina: request timeout (s).
                                # Camoufox is a full Firefox render, not an HTTP GET:
-                               # the old 10s failed on most JS-heavy sites even on a
-                               # fast connection, and far more often over a VPN.
+                               # 10s failed on most JS-heavy sites even on a fast
+                               # connection, and far more often over a VPN — which
+                               # spent the fallback above on slow renders rather
+                               # than on real failures.
     # max_content_length: 4096 # cap on returned characters (default 4096)
     # Optional proxy for restricted networks / Docker / WSL (jina backend).
     # Use host.docker.internal instead of 127.0.0.1 when the proxy runs on the host.
@@ -3284,7 +3287,14 @@ summarization:
     # Uncomment to also trigger when message count reaches 50
     # - type: messages
     #   value: 50
-    # Uncomment to trigger when 80% of model's max input tokens is reached
+    # Uncomment to trigger when 80% of model's max input tokens is reached.
+    # The percentage resolves from the SUMMARY model's declared `context_window`
+    # (summarization.model_name when set, else the run's own model): declare it
+    # on that models entry — third-party OpenAI-compatible models carry no
+    # built-in profile. Without it the fraction clause is dropped with a warning
+    # and any remaining absolute clauses keep working. If a separate summary
+    # model with a larger window is configured, prefer absolute `tokens`
+    # thresholds sized for the run model instead.
     # - type: fraction
     #   value: 0.8
 

@@ -11,6 +11,50 @@ Newest first. Append a pass; never rewrite one. A dated line is what tells the
 next person whether the roster was checked last week or last year, and _which_
 providers that pass could actually reach.
 
+- **2026-09-03 (upstream sync) — Anthropic re-verified at tier 1; no drift, no roster change.**
+  Run as the model-audit step of an upstream sync (53 upstream commits merged). The merge
+  itself touched no model config — `config.example.yaml`'s only change was prose comments on
+  `context_window` and the summarization fraction trigger — so this pass is evidence about the
+  roster only through what the network could reach today, not through the sync.
+
+  **Reachability.** `platform.claude.com` answers (200; `docs.claude.com` 301→it), so Anthropic's
+  own pricing page was read directly — **tier 1**. Everything else is still refused at the egress
+  proxy: `openrouter.ai` (403 at CONNECT, `EGRESS_BLOCKED` through WebFetch), and `api.x.ai`,
+  `platform.openai.com`, `www.anthropic.com`, `docs.anthropic.com`, `mistral.ai`, `ai.google.dev`,
+  `z.ai`, `deepseek.com` all return 000. Web **search** is available but was used only for the
+  discovery sweep below; no blocked lab's price was changed on it this pass.
+
+  **Mechanical half: clean.** `scripts/audit_models.py` reports **no drift** (openrouter correctly
+  _skipped_ as unreachable, so its silence is again **not** evidence the OpenRouter roster is
+  current); the stale-fixture self-test (`--catalog scripts/fixtures/model_audit_stale_catalog.json`)
+  still surfaces all four drift kinds (retired slug, moved price, ended promo, started promo);
+  no entry carries a price in its `display_name`; the two synced sources still agree;
+  `sync-api-key-models.py --dry-run` is a clean no-op. Bundle is still **41** paid models, each
+  priced.
+
+  **Tier 1 — Anthropic, read off `platform.claude.com`, and it had not moved.** All six bundled
+  entries match the provider's own table exactly, slugs and cache rates included: Fable 5.1
+  ($10/$50, cache $0.25), Opus 5 and Opus 4.8 ($5/$25, cache $0.50), Sonnet 5 ($2/$10, cache
+  $0.20), Sonnet 4.6 ($3/$15, cache $0.30), Haiku 4.5 ($1/$5, cache $0.10). The page confirms
+  Sonnet 5's $2/$10 launch-introductory rate is now the **standard** price (the scheduled
+  1 Sep rise to $3/$15 will not happen) — the config already ships it as standard with the
+  "introductory rate is now the standard price" note, so nothing to change. The Opus/Sonnet
+  "last 4.x + current 5" shape still holds (Opus 4.7/4.6/4.5 exist but stay out; Sonnet 4.5/4
+  retired). Mythos 5.1 is limited-availability (glasswing) and Fable 5 is the older sibling —
+  neither belongs in a general bundle.
+
+  **Discovery — noted, not added.** Web search flagged two Sept-2026 releases from labs the
+  bundle already carries: **Gemini 3.8 Flash** (2026-09-02, newer than the bundled
+  `gemini-3.6-flash`) and a **Qwen3.8** refresh. Both are candidates a proper discovery diff
+  would raise, but adding either needs a verified slug (step 4) and a tier-1/tier-2 price, and
+  Google's and Qwen's own pages plus the OpenRouter catalog are all egress-blocked this pass.
+  Left out deliberately; owed to the next unrestricted pass.
+
+  **Still owed to the next unrestricted pass**, in priority order: the OpenRouter roster and every
+  promo/discount on it (catalog unreachable all pass), the Gemini 3.8 Flash / Qwen3.8 discovery
+  decisions above, and the corroborated non-Anthropic figures from prior passes that no tier-1
+  page has confirmed since.
+
 - **2026-09-02 — process change, not a roster pass. No model, price or slug was touched.**
   The audit gained a **discovery** step (FORK.md, *Auditing the model list*, step 2) and a
   definition of *critically acclaimed* (OpenRouter's own rankings and trending surfaces, named
