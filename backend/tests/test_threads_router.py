@@ -17,7 +17,7 @@ from langgraph.types import Overwrite
 from app.gateway import services as gateway_services
 from app.gateway.routers import thread_runs, threads
 from deerflow.config.paths import Paths
-from deerflow.persistence.thread_meta import THREAD_PINNED_METADATA_KEY, InvalidMetadataFilterError
+from deerflow.persistence.thread_meta import THREAD_FOLDER_METADATA_KEY, THREAD_PINNED_METADATA_KEY, InvalidMetadataFilterError
 from deerflow.persistence.thread_meta.memory import THREADS_NS, MemoryThreadMetaStore
 from deerflow.runtime import ConflictError, ThreadOperationKind
 from deerflow.runtime.checkpoint_state import CheckpointStateAccessor
@@ -1183,6 +1183,119 @@ def test_patch_thread_pin_returns_iso_and_preserves_updated_at() -> None:
     # derive from the same legacy value, so they coerce to the same ISO string.
     assert body["updated_at"] == body["created_at"]
     assert body["metadata"] == {"k": "v0", THREAD_PINNED_METADATA_KEY: True}
+
+
+def _seed_legacy_thread(store, thread_id: str, metadata: dict) -> None:
+    """Seed one thread whose created_at == updated_at, so a touch is visible."""
+    import asyncio
+
+    legacy = "1777000000.000000"
+
+    async def _seed() -> None:
+        await store.aput(
+            THREADS_NS,
+            thread_id,
+            {
+                "thread_id": thread_id,
+                "status": "idle",
+                "created_at": legacy,
+                "updated_at": legacy,
+                "metadata": metadata,
+            },
+        )
+
+    asyncio.run(_seed())
+
+
+def test_patch_thread_folder_move_preserves_updated_at() -> None:
+    """Filing a chat into a sidebar folder must not bump ``updated_at``.
+
+    The sidebar is recency-ordered, so a touch here would shove the chat the
+    user just dragged to the top of the list and reshuffle everything under
+    their cursor. Same reasoning as pin/unpin: this is placement, not activity.
+    """
+    app, store, _checkpointer = _build_thread_app()
+    _seed_legacy_thread(store, "patch-target", {"k": "v0"})
+
+    with TestClient(app) as client:
+        response = client.patch(
+            "/api/threads/patch-target",
+            json={"metadata": {THREAD_FOLDER_METADATA_KEY: "folder-1"}},
+        )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["updated_at"] == body["created_at"]
+    assert body["metadata"] == {"k": "v0", THREAD_FOLDER_METADATA_KEY: "folder-1"}
+
+
+def test_patch_thread_folder_clear_preserves_updated_at() -> None:
+    """Dragging a chat back out of a folder is the same no-touch move."""
+    app, store, _checkpointer = _build_thread_app()
+    _seed_legacy_thread(store, "patch-target", {THREAD_FOLDER_METADATA_KEY: "folder-1"})
+
+    with TestClient(app) as client:
+        response = client.patch(
+            "/api/threads/patch-target",
+            json={"metadata": {THREAD_FOLDER_METADATA_KEY: None}},
+        )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["updated_at"] == body["created_at"]
+    assert body["metadata"][THREAD_FOLDER_METADATA_KEY] is None
+
+
+def test_patch_thread_pin_and_folder_together_preserve_updated_at() -> None:
+    """Both placement keys in one patch still qualify for the exemption."""
+    app, store, _checkpointer = _build_thread_app()
+    _seed_legacy_thread(store, "patch-target", {})
+
+    with TestClient(app) as client:
+        response = client.patch(
+            "/api/threads/patch-target",
+            json={"metadata": {THREAD_PINNED_METADATA_KEY: True, THREAD_FOLDER_METADATA_KEY: "folder-1"}},
+        )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["updated_at"] == body["created_at"]
+
+
+def test_patch_thread_folder_with_a_wrong_typed_value_still_bumps_updated_at() -> None:
+    """The exemption is shape-guarded, never granted on the key name alone.
+
+    A patch smuggling a non-string folder value is not the narrow placement
+    move, so it falls back to the endpoint's ordinary recency contract.
+    """
+    app, store, _checkpointer = _build_thread_app()
+    _seed_legacy_thread(store, "patch-target", {})
+
+    with TestClient(app) as client:
+        response = client.patch(
+            "/api/threads/patch-target",
+            json={"metadata": {THREAD_FOLDER_METADATA_KEY: {"id": "folder-1"}}},
+        )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["updated_at"] != body["created_at"]
+
+
+def test_patch_thread_folder_alongside_other_metadata_bumps_updated_at() -> None:
+    """A placement key mixed with ordinary metadata is an ordinary patch."""
+    app, store, _checkpointer = _build_thread_app()
+    _seed_legacy_thread(store, "patch-target", {})
+
+    with TestClient(app) as client:
+        response = client.patch(
+            "/api/threads/patch-target",
+            json={"metadata": {THREAD_FOLDER_METADATA_KEY: "folder-1", "k": "v1"}},
+        )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["updated_at"] != body["created_at"]
 
 
 def test_patch_thread_non_pin_metadata_bumps_updated_at() -> None:

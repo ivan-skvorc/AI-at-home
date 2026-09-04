@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **sidebar:** **Folders in the conversation list.** The sidebar's chat list is a
+  tree now: press **+** in the *Recent chats* header to create a folder, drag
+  conversations onto it (or use **Move to folder** in a chat's menu), and open or
+  close it with the arrow beside its name. A conversation you file is **inside
+  the folder and no longer listed outside it**, the way a file manager works, so
+  a collapsed folder genuinely takes its chats off the list rather than showing
+  them twice. **Rename** and **Delete** live in the folder's own **⋯** menu,
+  beside the menu each conversation already has; deleting a folder never deletes
+  the conversations in it — they return to the main list. Folder names, order and
+  membership are stored per user on the server (the same `ui_state.json` store as
+  the keep-alive chat tabs, via `GET`/`PUT /api/settings/chat-folders`), so they
+  follow you across browsers and devices; only which folders are *expanded* is
+  per browser. Filing a conversation does not count as activity, so it keeps its
+  place in the recency order instead of jumping to the top. Ceiling of 50
+  folders, one level deep. No configuration — on by default.
+
 - **search/fetch:** **Three defaults that made a fresh install fail behind a VPN.**
   (1) The gateway image shipped Camoufox without the GTK/X11 libraries it loads,
   so the *default* `web_fetch` backend was present on disk and unable to start on

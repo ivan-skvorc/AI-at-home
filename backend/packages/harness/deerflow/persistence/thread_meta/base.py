@@ -24,6 +24,14 @@ from deerflow.runtime.user_context import AUTO, _AutoSentinel
 # ``frontend/tests/e2e/utils/mock-api.ts``.
 THREAD_PINNED_METADATA_KEY = "deerflow_pinned"
 
+# Sidebar folder placement (fork feature). Holds the id of the user's chat
+# folder the conversation was filed into, or ``None``/absent for the root list.
+# The folder *registry* (id -> name, display order) lives in the per-user
+# ``ui_state.json`` bag, not here: renaming a folder must not rewrite every
+# thread in it. Keep in sync with ``frontend/src/core/threads/chat-folders.ts``
+# and ``frontend/tests/e2e/utils/mock-api.ts``.
+THREAD_FOLDER_METADATA_KEY = "deerflow_folder"
+
 
 class InvalidMetadataFilterError(ValueError):
     """Raised when all client-supplied metadata filter keys are rejected."""

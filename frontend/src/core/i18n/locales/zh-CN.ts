@@ -852,6 +852,20 @@ export const zhCN: Translations = {
     pinChat: "置顶对话",
     unpinChat: "取消置顶",
     pinChatFailed: "更新对话置顶状态失败",
+    folders: {
+      new: "新建文件夹",
+      rename: "重命名文件夹",
+      namePlaceholder: "文件夹名称",
+      moveTo: "移动到文件夹",
+      none: "不放入文件夹",
+      empty: "此文件夹中暂无对话",
+      expand: "展开此文件夹中的对话",
+      collapse: "收起此文件夹中的对话",
+      rootDropHint: "将对话拖到此处即可移出文件夹",
+      deleted: (name) => `已删除文件夹“${name}”，其中的对话已回到列表中。`,
+      limitReached: (max) => `最多只能创建 ${max} 个文件夹。`,
+      moveFailed: "移动对话失败",
+    },
   },
 
   // Sidecar

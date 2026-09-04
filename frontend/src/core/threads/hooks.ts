@@ -42,6 +42,7 @@ import {
   patchThreadMetadata,
   type ThreadMetadataPatch,
 } from "./api";
+import { THREAD_FOLDER_METADATA_KEY } from "./chat-folders";
 import {
   addEditVersionToGroups,
   buildEditVersionThreadMetadata,
@@ -3320,6 +3321,43 @@ export function usePinThread() {
       setThreadMetadataInCaches(queryClient, threadId, {
         ...(response.metadata ?? {}),
         [THREAD_PINNED_METADATA_KEY]: pinned,
+      });
+    },
+    onSettled() {
+      void queryClient.invalidateQueries({ queryKey: ["threads", "search"] });
+      void queryClient.invalidateQueries({
+        queryKey: INFINITE_THREADS_QUERY_KEY_PREFIX,
+      });
+    },
+  });
+}
+
+/**
+ * File a conversation into a sidebar folder, or back out to the root list
+ * (`folderId: null`).
+ *
+ * Like pinning, this is placement rather than conversation activity: the
+ * Gateway's PATCH handler recognizes the narrow folder-only shape and leaves
+ * `updated_at` alone, so dragging a chat into a folder does not shove it to the
+ * top of the recency-ordered sidebar.
+ */
+export function useMoveThreadToFolder() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      threadId,
+      folderId,
+    }: {
+      threadId: string;
+      folderId: string | null;
+    }) =>
+      patchThreadMetadata(threadId, {
+        [THREAD_FOLDER_METADATA_KEY]: folderId,
+      }),
+    onSuccess(response, { threadId, folderId }) {
+      setThreadMetadataInCaches(queryClient, threadId, {
+        ...(response.metadata ?? {}),
+        [THREAD_FOLDER_METADATA_KEY]: folderId,
       });
     },
     onSettled() {

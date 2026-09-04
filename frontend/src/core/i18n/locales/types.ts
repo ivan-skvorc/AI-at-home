@@ -719,6 +719,20 @@ export interface Translations {
     pinChat: string;
     unpinChat: string;
     pinChatFailed: string;
+    folders: {
+      new: string;
+      rename: string;
+      namePlaceholder: string;
+      moveTo: string;
+      none: string;
+      empty: string;
+      expand: string;
+      collapse: string;
+      rootDropHint: string;
+      deleted: (name: string) => string;
+      limitReached: (max: number) => string;
+      moveFailed: string;
+    };
   };
 
   // Sidecar

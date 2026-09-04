@@ -32,6 +32,7 @@ logger = logging.getLogger(__name__)
 
 UI_STATE_FILENAME = "ui_state.json"
 CHAT_TABS_KEY = "chat_tabs"
+CHAT_FOLDERS_KEY = "chat_folders"
 PUSH_SUBSCRIPTIONS_KEY = "push_subscriptions"
 
 # Mirrors ``MAX_CHAT_TABS`` in ``frontend/src/core/threads/chat-tabs.ts``: every
@@ -41,6 +42,14 @@ MAX_CHAT_TABS = 8
 # A cached display hint only — the live title is resolved from the thread list.
 MAX_TITLE_CHARS = 200
 MAX_ID_CHARS = 128
+
+# Sidebar chat folders (fork feature). The registry is only the folder list —
+# id, display name, order. Which conversation is in which folder lives in that
+# thread's own metadata (``deerflow_folder``), so renaming a folder is one small
+# write here rather than a rewrite of every thread inside it. Bounded because
+# the API is untrusted input and the sidebar has to stay a sidebar.
+MAX_CHAT_FOLDERS = 50
+MAX_FOLDER_NAME_CHARS = 80
 
 # Web Push subscriptions (fork feature). One per browser/device the user opted
 # in from, so the same account can be pushed on a phone and a laptop. Bounded
@@ -187,6 +196,59 @@ def reset_cache_for_tests() -> None:
     """Drop the in-process cache so a test's fresh state file is re-read."""
     with _lock:
         _cache.clear()
+
+
+# ---------------------------------------------------------------------------
+# Sidebar chat folders (fork feature)
+# ---------------------------------------------------------------------------
+
+
+def normalize_chat_folders(raw: Any) -> list[dict[str, str]]:
+    """Validate and bound an incoming folder list.
+
+    Mirrors ``deserializeChatFolders`` in the frontend model: malformed entries
+    are dropped rather than rejected (a tampered or partially-written store must
+    degrade to "fewer folders", never to a sidebar that will not render),
+    duplicate ids collapse first-wins, and the result is capped at
+    :data:`MAX_CHAT_FOLDERS`. List order is display order and is preserved.
+
+    A dropped folder is not a lost conversation: a thread whose
+    ``deerflow_folder`` names an unknown folder falls back to the root list.
+    """
+    if not isinstance(raw, list):
+        return []
+    folders: list[dict[str, str]] = []
+    seen_ids: set[str] = set()
+    for entry in raw:
+        if not isinstance(entry, dict):
+            continue
+        folder_id = _clean_text(entry.get("id"), MAX_ID_CHARS)
+        name = _clean_text(entry.get("name"), MAX_FOLDER_NAME_CHARS)
+        if folder_id is None or name is None:
+            continue
+        if folder_id in seen_ids:
+            continue
+        seen_ids.add(folder_id)
+        folders.append({"id": folder_id, "name": name})
+        if len(folders) >= MAX_CHAT_FOLDERS:
+            break
+    return folders
+
+
+def get_chat_folders(user_id: str) -> list[dict[str, str]]:
+    """The user's sidebar folders in display order (empty when never set)."""
+    return normalize_chat_folders(_read_state(user_id).get(CHAT_FOLDERS_KEY))
+
+
+def set_chat_folders(user_id: str, folders: Any) -> list[dict[str, str]]:
+    """Persist the user's folders atomically; returns the stored value.
+
+    An empty list is a legitimate value (the user deleted their last folder), so
+    it is written rather than treated as a no-op.
+    """
+    normalized = normalize_chat_folders(folders)
+    _write_state(user_id, {CHAT_FOLDERS_KEY: normalized})
+    return normalized
 
 
 # ---------------------------------------------------------------------------
