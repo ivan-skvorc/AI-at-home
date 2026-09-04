@@ -57,6 +57,19 @@ class ModelConfig(BaseModel):
             "provider client. Meaningless for hosted models, which is why it is unset there."
         ),
     )
+    kv_bytes_per_token: float | None = Field(
+        default=None,
+        gt=0,
+        description=(
+            "Fork feature. KV-cache bytes one context token costs on this model, written by "
+            "`scripts/sync-ollama-models.py` from the geometry in Ollama's `/api/show` and the "
+            "configured `ollama.kv_cache_type`. Together with `size_bytes` and `num_ctx` it is "
+            "what lets the subagent residency gate cost a local model's real GPU footprint "
+            "(weights + cache) instead of its weights alone. A model property, not a plan: it "
+            "does not go stale when `ollama.num_parallel` changes. Never reaches the provider "
+            "client, and is unset for hosted models, which have no cache on this machine."
+        ),
+    )
     fallback: list[str] | None = Field(
         default=None,
         description=(

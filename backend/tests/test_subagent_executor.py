@@ -1137,6 +1137,74 @@ class TestAsyncExecutionPath:
         assert "capacity is full" in result.error
 
     @pytest.mark.anyio
+    async def test_aexecute_holds_gpu_residency_for_a_local_model_for_the_whole_run(self, classes, base_config, mock_agent, msg):
+        """Fork: the GPU gate is acquired for the resolved model, not skipped.
+
+        Inside the process capacity slot and around ``_aexecute_admitted``, so a
+        subagent that is waiting for the card is one that already owns a process
+        slot — and so the reservation covers the actual model call rather than
+        being released before it.
+        """
+        SubagentExecutor = classes["SubagentExecutor"]
+        from deerflow.subagents.local_residency import GIB, LocalModelProfile, LocalModelResidencyGate, LocalResidencyPlan
+
+        gate = LocalModelResidencyGate(
+            LocalResidencyPlan(
+                vram_bytes=int(22 * GIB),
+                profiles={"qwen3:32b": LocalModelProfile(config_name="qwen3:32b", daemon_model="qwen3:32b", footprint_bytes=int(20 * GIB), parallel_slots=1)},
+            )
+        )
+        mock_agent.astream = lambda *args, **kwargs: async_iterator([{"messages": [msg.human("Do something"), msg.ai("done", "msg-1")]}])
+        held: list[dict] = []
+
+        executor = SubagentExecutor(
+            config=base_config,
+            tools=[],
+            thread_id="test-thread",
+            parent_model="qwen3:32b",
+            local_residency_gate=gate,
+        )
+
+        original = executor._aexecute_admitted
+
+        async def recording(task, result_holder=None):
+            held.append(dict(gate.snapshot().running))
+            return await original(task, result_holder)
+
+        with patch.object(executor, "_create_agent", return_value=mock_agent), patch.object(executor, "_aexecute_admitted", recording):
+            await executor._aexecute("Do something")
+
+        assert held == [{"qwen3:32b": 1}]
+        assert gate.snapshot().running == {}
+
+    @pytest.mark.anyio
+    async def test_aexecute_does_not_gate_a_model_the_plan_does_not_know(self, classes, base_config, mock_agent, msg):
+        """An unconfigured or hosted model dispatches exactly as it did before."""
+        SubagentExecutor = classes["SubagentExecutor"]
+        from deerflow.subagents.local_residency import GIB, LocalModelProfile, LocalModelResidencyGate, LocalResidencyPlan
+
+        gate = LocalModelResidencyGate(
+            LocalResidencyPlan(
+                vram_bytes=int(22 * GIB),
+                profiles={"qwen3:32b": LocalModelProfile(config_name="qwen3:32b", daemon_model="qwen3:32b", footprint_bytes=int(20 * GIB), parallel_slots=1)},
+            )
+        )
+        mock_agent.astream = lambda *args, **kwargs: async_iterator([{"messages": [msg.human("Do something"), msg.ai("done", "msg-1")]}])
+        executor = SubagentExecutor(
+            config=base_config,
+            tools=[],
+            thread_id="test-thread",
+            parent_model="claude-opus-5",
+            local_residency_gate=gate,
+        )
+
+        with patch.object(executor, "_create_agent", return_value=mock_agent):
+            result = await executor._aexecute("Do something")
+
+        assert result.status == classes["SubagentStatus"].COMPLETED
+        assert gate.snapshot().running == {}
+
+    @pytest.mark.anyio
     async def test_aexecute_marks_structured_llm_error_fallback_as_failed(self, classes, base_config, mock_agent, msg):
         """A handled provider error is still a failed delegated task.
 

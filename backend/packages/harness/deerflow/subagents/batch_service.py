@@ -20,6 +20,7 @@ from deerflow.subagents.executor import (
     get_background_task_result,
     request_cancel_background_task,
 )
+from deerflow.subagents.local_residency import LocalModelResidencyGate
 
 logger = logging.getLogger(__name__)
 
@@ -45,12 +46,17 @@ class SubagentBatchService:
         runtime_config: SubagentRuntimeConfig,
         app_config: AppConfig | None = None,
         execution_capacity: SubagentExecutionCapacity | None = None,
+        local_residency_gate: LocalModelResidencyGate | None = None,
     ) -> None:
         self._repository = repository
         self._config = config
         self._runtime_config = runtime_config
         self._app_config = app_config
         self._execution_capacity = execution_capacity
+        # Fork: a durable batch is the likeliest place to dispatch many items at
+        # one local model, so it shares the runtime's GPU gate rather than
+        # relying on the process singleton an explicit SDK runtime never sets.
+        self._local_residency_gate = local_residency_gate
         self._lease_owner = f"{socket.gethostname()}:{uuid.uuid4().hex}"
         self._stop = asyncio.Event()
         self._poller: asyncio.Task[None] | None = None
@@ -216,6 +222,7 @@ class SubagentBatchService:
                 is_internal=spec.get("is_internal") is True,
                 authz_attributes=spec.get("authz_attributes"),
                 execution_capacity=self._execution_capacity,
+                local_residency_gate=self._local_residency_gate,
             )
             prompt = f"Durable batch item key: {item['item_key']}\nThis item may be retried after a worker crash. Keep side effects idempotent and use the item key as the idempotency identity.\n\n{item['prompt']}"
             execution_id = executor.execute_async(prompt, task_id=item_id)

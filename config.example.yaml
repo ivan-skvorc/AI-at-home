@@ -15,7 +15,7 @@
 # ============================================================================
 # Bump this number when the config schema changes.
 # Run `make config-upgrade` to merge new fields into your local config.yaml.
-config_version: 48
+config_version: 49
 
 # ============================================================================
 # Logging
@@ -1850,6 +1850,12 @@ models:
 # models cannot co-reside; `make doctor` reports the same. It never reassigns
 # your model choice.
 #
+# vram_gb and num_parallel are also read at runtime, by the subagent
+# GPU-residency gate (`subagent_runtime.local_model_capacity` above). num_parallel
+# is the ceiling on how many subagents share one resident model, so a value that
+# does not match the daemon's OLLAMA_NUM_PARALLEL makes both the sized num_ctx
+# and that ceiling wrong.
+#
 # ollama:
 #   vram_gb: 16            # GPU memory budget in GiB (sum across GPUs)
 #   kv_cache_type: q8_0    # f16 (default) | q8_0 | q4_0 — must match the daemon
@@ -3059,6 +3065,20 @@ subagent_runtime:
   max_queued: 64
   admission_policy: queue       # queue or reject when all slots are occupied
   queue_timeout_seconds: 300
+  # Fork feature: when a subagent runs on a local Ollama model, `max_running`
+  # above is the wrong ceiling — the GPU is. This gate admits a local dispatch
+  # only when the card can actually hold it: several at once when the model
+  # co-resides that many times, strictly one after another when it does not.
+  # It engages only when `ollama.vram_gb` (below) is set AND the model carries
+  # the sizing metadata `scripts/sync-ollama-models.py` writes; anything else
+  # — every hosted model included — dispatches exactly as before.
+  local_model_capacity:
+    enabled: true
+    # Far longer than queue_timeout_seconds above on purpose: that one bounds a
+    # wait for a process slot, this one bounds a wait for work that is
+    # deliberately serialized, so the fifth of five sequential subagents must
+    # not fail admission just for being fifth.
+    queue_timeout_seconds: 1800
 
 # subagents:
 #   # Default timeout (seconds) for built-in subagents (default: 1800 = 30 min).

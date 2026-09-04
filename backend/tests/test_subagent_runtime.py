@@ -72,6 +72,49 @@ async def test_runtime_owns_batch_worker_lifecycle_and_shared_capacity() -> None
         runtime_config=runtime.config,
         app_config=app_config,
         execution_capacity=runtime.execution_capacity,
+        local_residency_gate=runtime.local_residency_gate,
     )
     service.start.assert_awaited_once_with()
     service.stop.assert_awaited_once_with()
+
+
+@pytest.mark.asyncio
+async def test_runtime_shares_one_gpu_residency_gate_with_its_batch_worker() -> None:
+    """Fork: a durable batch is where over-dispatch onto one local model lands.
+
+    The batch worker builds its own executors, so a gate the runtime kept to
+    itself would leave batch items ungated — and a batch is precisely the shape
+    of work that fans out onto a single local model.
+    """
+    from deerflow.config.model_config import ModelConfig
+    from deerflow.config.ollama_config import OllamaConfig
+
+    service = MagicMock()
+    service.start = AsyncMock()
+    service.stop = AsyncMock()
+    app_config = SimpleNamespace(
+        models=[ModelConfig(name="qwen3:32b", use="langchain_ollama:ChatOllama", model="qwen3:32b", size_bytes=20 * 1024**3, kv_bytes_per_token=100_000.0, num_ctx=16384)],
+        ollama=OllamaConfig(vram_gb=24),
+        subagent_runtime=SubagentRuntimeConfig(),
+        subagents=SimpleNamespace(max_total_per_run=6),
+        subagent_batches=SubagentBatchesConfig(enabled=True),
+    )
+
+    with patch("deerflow.subagents.batch_service.SubagentBatchService", return_value=service) as service_type:
+        runtime = SubagentRuntime(
+            SubagentRuntimeConfig(),
+            batch_repository=MagicMock(),
+            batch_config=SubagentBatchesConfig(enabled=True),
+            app_config=app_config,
+        )
+
+    assert runtime.local_residency_gate is not None
+    assert runtime.local_residency_gate.plan.profile_for("qwen3:32b") is not None
+    assert service_type.call_args.kwargs["local_residency_gate"] is runtime.local_residency_gate
+
+
+def test_runtime_without_a_config_snapshot_has_no_gpu_gate() -> None:
+    # No snapshot means no model catalog and no `ollama:` block. Inventing a
+    # plan from the global YAML here would give an SDK caller a limit it never
+    # configured, on a machine the runtime knows nothing about.
+    assert SubagentRuntime(SubagentRuntimeConfig()).local_residency_gate is None

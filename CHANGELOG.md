@@ -9,6 +9,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **subagents:** **Local sub-agents now run as many at a time as the GPU can
+  actually hold — no more, and no fewer.** Sub-agent concurrency used to be one
+  startup number (`subagent_runtime.max_running`, default 3) applied to every
+  model. Dispatching three of them onto a local model that fits your card once
+  did not fail — Ollama queues the extras inside the daemon, invisible to the
+  app, while each sub-agent's own timeout counts down; two different local
+  models that do not co-reside are worse, because the daemon evicts one to load
+  the other on every alternation. Local dispatch now asks the card instead: five
+  sub-agents on a model that fits once run one at a time, on a model your card
+  holds twice they run two at a time, and models small enough to co-reside still
+  all run at once. A model too big for the card gets the card to itself rather
+  than being refused. New keys `subagent_runtime.local_model_capacity.enabled`
+  (default `true`) and `.queue_timeout_seconds` (default `1800`); the gate
+  engages only when `ollama.vram_gb` is set and the model carries the sizing
+  metadata `scripts/sync-ollama-models.py` writes, so hosted models and unsized
+  local models dispatch exactly as before. `ollama.num_parallel` is the ceiling
+  on how many sub-agents share one resident model and must match the daemon's
+  `OLLAMA_NUM_PARALLEL`. The sync now also records each local model's
+  `kv_bytes_per_token`, so the footprint is costed as weights plus the cache for
+  the window the entry asks for rather than weights alone.
+
 - **chat:** **Automatic conversation renaming is now a setting, with its own
   model picker.** A new **Settings → Conversation titles** page turns the
   rename-from-the-first-exchange behaviour off, and picks which model writes the
