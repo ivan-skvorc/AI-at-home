@@ -14,6 +14,7 @@ from deerflow.config.subagents_config import (
 )
 from deerflow.subagents.batch_runtime import SubagentBatchSubmitter
 from deerflow.subagents.capacity import SubagentExecutionCapacity
+from deerflow.subagents.local_residency import LocalModelResidencyGate, build_local_residency_plan
 
 if TYPE_CHECKING:
     from deerflow.config.app_config import AppConfig
@@ -59,6 +60,12 @@ class SubagentRuntime:
         self.max_total_per_run = max_total_per_run
         self.app_config = app_config
         self.execution_capacity = SubagentExecutionCapacity(self.config)
+        # Fork: GPU residency for local Ollama subagents, from the same explicit
+        # snapshot. None without an ``app_config`` — there is then no model
+        # catalog and no `ollama:` block to plan against, and inventing one is
+        # exactly what this gate refuses to do.
+        plan = build_local_residency_plan(app_config) if app_config is not None else None
+        self.local_residency_gate = LocalModelResidencyGate(plan) if plan is not None else None
         self.batch_config = batch_config.model_copy(deep=True) if batch_config is not None else None
         self._external_batch_submitter = batch_submitter
         self._owned_batch_service = None
@@ -74,6 +81,7 @@ class SubagentRuntime:
                 runtime_config=self.config,
                 app_config=app_config,
                 execution_capacity=self.execution_capacity,
+                local_residency_gate=self.local_residency_gate,
             )
 
     @classmethod

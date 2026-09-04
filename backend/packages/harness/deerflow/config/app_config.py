@@ -32,6 +32,7 @@ from deerflow.config.memory_config import MemoryConfig, load_memory_config_from_
 from deerflow.config.model_config import ModelConfig
 from deerflow.config.model_fallback_config import ModelFallbackConfig
 from deerflow.config.model_routing_config import ModelRoutingConfig
+from deerflow.config.ollama_config import OllamaConfig
 from deerflow.config.read_before_write_config import ReadBeforeWriteConfig
 from deerflow.config.reload_boundary import format_field_description
 from deerflow.config.run_events_config import RunEventsConfig
@@ -213,6 +214,10 @@ class AppConfig(BaseModel):
     model_fallback: ModelFallbackConfig = Field(default_factory=ModelFallbackConfig, description="Default fallback chain for models that declare no per-model `fallback:` (fork feature).")
     model_routing: ModelRoutingConfig = Field(default_factory=ModelRoutingConfig, description="Cost-aware subagent routing policy; off by default and always overridden by an explicit per-thread subagent selection (fork feature).")
     media: MediaConfig = Field(default_factory=MediaConfig, description="Local image/video generation through a ComfyUI service, its generation defaults, the refine-loop caps, and the GPU residency arbiter (fork feature).")
+    ollama: OllamaConfig = Field(
+        default_factory=OllamaConfig,
+        description="Fork feature. The local Ollama daemon's own settings — GPU budget, KV-cache type, parallel slots — written by `make setup` and read back at dispatch time by the subagent GPU-residency gate.",
+    )
     voice: VoiceConfig = Field(
         default_factory=VoiceConfig, description="Voice input tiers: browser on-device recognition, server-side transcription through a local STT service, and whether the browser's cloud recognition is permitted at all (fork feature)."
     )

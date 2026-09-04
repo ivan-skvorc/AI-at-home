@@ -352,6 +352,7 @@ def _assemble_from_features(
                 bind_task_tool(
                     subagent_runtime.execution_capacity,
                     app_config=subagent_runtime.app_config,
+                    local_residency_gate=subagent_runtime.local_residency_gate,
                 )
             )
 

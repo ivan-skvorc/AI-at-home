@@ -668,7 +668,7 @@ def preload_model(host: str, name: str, keep_alive: str | None = None, timeout: 
     return post(f"{normalize_host(host)}/api/generate", payload, timeout)
 
 
-def render_entry(name: str, caps: list, base_url: str = DEFAULT_HOST, num_ctx: int | None = None, keep_alive: str | None = None, size_bytes: int | None = None) -> str:
+def render_entry(name: str, caps: list, base_url: str = DEFAULT_HOST, num_ctx: int | None = None, keep_alive: str | None = None, size_bytes: int | None = None, kv_bytes_per_token: float | None = None) -> str:
     """Render a single Ollama model entry as YAML at 2-space indent.
 
     When ``num_ctx`` is known, the entry pins the context window and keeps the
@@ -689,6 +689,15 @@ def render_entry(name: str, caps: list, base_url: str = DEFAULT_HOST, num_ctx: i
     context is allocated, which is what actually decides whether the window the
     entry asks for is affordable next to a second resident model. Presentation
     metadata only: it never reaches the provider client.
+
+    ``kv_bytes_per_token`` is the other half of that footprint — what one context
+    token costs in cache — and it is written because the sizing above is the only
+    place it is ever computed. With it the Gateway can price a model's *resident*
+    size (weights + the cache for the window this entry asks for) at dispatch
+    time, which is what the subagent GPU-residency gate admits against; without
+    it the runtime sees weights alone and under-counts. A model property rather
+    than a plan: it does not go stale when ``num_parallel`` changes. Also never
+    reaches the provider client.
     """
     num_predict = DEFAULT_NUM_PREDICT
     if num_ctx is not None:
@@ -705,6 +714,10 @@ def render_entry(name: str, caps: list, base_url: str = DEFAULT_HOST, num_ctx: i
         lines.append(f"{INDENT}  context_window: {num_ctx}")
     if size_bytes:
         lines.append(f"{INDENT}  size_bytes: {int(size_bytes)}")
+    if kv_bytes_per_token and kv_bytes_per_token > 0:
+        # Rounded to the byte: the geometry that produces it is exact, and a
+        # bare float would write a 17-digit repr into a hand-edited file.
+        lines.append(f"{INDENT}  kv_bytes_per_token: {round(float(kv_bytes_per_token), 3):g}")
     if keep_alive:
         # ChatOllama forwards keep_alive to the daemon, so the model stays
         # resident between turns instead of paying a cold start per subagent call.
@@ -806,14 +819,16 @@ def sync(text: str, models: list, base_url: str = DEFAULT_HOST) -> str:
         new_section.append(f"{INDENT}{BEGIN_MARKER}")
         for entry in models:
             # Entries are (name, caps), (name, caps, num_ctx),
-            # (name, caps, num_ctx, keep_alive), or
-            # (name, caps, num_ctx, keep_alive, size_bytes); the tail fields are
-            # read positionally so pre-existing shorter-tuple callers keep working.
+            # (name, caps, num_ctx, keep_alive), (name, caps, num_ctx,
+            # keep_alive, size_bytes), or that plus kv_bytes_per_token; the tail
+            # fields are read positionally so pre-existing shorter-tuple callers
+            # keep working.
             name, caps = entry[0], entry[1]
             num_ctx = entry[2] if len(entry) > 2 else None
             keep_alive = entry[3] if len(entry) > 3 else None
             size_bytes = entry[4] if len(entry) > 4 else None
-            new_section.append(render_entry(name, caps, base_url, num_ctx=num_ctx, keep_alive=keep_alive, size_bytes=size_bytes))
+            kv_bytes_per_token = entry[5] if len(entry) > 5 else None
+            new_section.append(render_entry(name, caps, base_url, num_ctx=num_ctx, keep_alive=keep_alive, size_bytes=size_bytes, kv_bytes_per_token=kv_bytes_per_token))
         new_section.append(f"{INDENT}{END_MARKER}")
 
     new_section.append("")  # blank separator before next top-level key
@@ -924,7 +939,11 @@ def main() -> int:
         vram_limit = vram_num_ctx_limit(show, installed_model.get("size"), vram_bytes, kv_cache_type, num_parallel) if vram_bytes else None
         num_ctx = resolve_num_ctx(parse_context_length(show), cap=effective_num_ctx_cap(args.num_ctx_cap, vram_limit), vram_limit=vram_limit)
         keep_alive = resolve_keep_alive(name, settings, args.keep_alive)
-        models.append((name, caps, num_ctx, keep_alive, installed_model.get("size")))
+        # Written whether or not a VRAM budget is configured: the Gateway needs
+        # it to cost residency, and a card whose size is unknown today may be
+        # declared tomorrow without another /api/show round trip.
+        kv_per_token = parse_kv_bytes_per_token(show, kv_cache_type)
+        models.append((name, caps, num_ctx, keep_alive, installed_model.get("size"), kv_per_token))
         resident.append((name, show, installed_model.get("size")))
         if args.verbose:
             ctx_note = num_ctx if num_ctx is not None else "unknown (Ollama default)"

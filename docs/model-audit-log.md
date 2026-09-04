@@ -11,6 +11,45 @@ Newest first. Append a pass; never rewrite one. A dated line is what tells the
 next person whether the roster was checked last week or last year, and _which_
 providers that pass could actually reach.
 
+- **2026-09-04 (requested with the local-subagent-parallelism change) — Anthropic re-verified at tier 1; no drift, no roster change.**
+  Run because it was asked for, not because anything moved: the change shipped alongside it
+  (FORK.md §34, GPU-residency admission for local subagents) touches `subagent_runtime` and the
+  Ollama sync and **adds no model entry and no price**, so it is not itself evidence about the
+  roster. The previous pass was the day before; this one exists to say so with a date rather than
+  to re-derive it.
+
+  **Reachability — unchanged from 2026-09-03.** `platform.claude.com` answers (200), so Anthropic's
+  own pricing and model-overview pages were read directly — **tier 1**. Everything else is still
+  refused at the egress proxy: `openrouter.ai` (403 at CONNECT, and the audit job's catalog fetch
+  fails the same way), `platform.openai.com`, `api.x.ai`, `mistral.ai`, `ai.google.dev`, `z.ai`,
+  `api.deepseek.com` and `www.anthropic.com` all return 000. No blocked lab's price was touched.
+
+  **Mechanical half: clean.** `scripts/audit_models.py` reports **no drift**, with `openrouter`
+  listed as *skipped* (catalog unreachable) — so, again, its silence is **not** evidence the
+  OpenRouter roster is current. The stale-fixture self-test
+  (`--catalog scripts/fixtures/model_audit_stale_catalog.json`) still surfaces all four drift kinds
+  (retired slug, moved list price, ended promo, started promo), so the audit itself is still
+  working. `sync-api-key-models.py --dry-run` is a clean no-op.
+
+  **Tier 1 — Anthropic, read off `platform.claude.com`, and it had not moved.** All six bundled
+  entries match the provider's own table exactly: Fable 5.1 ($10/$50, cache $0.25), Opus 5 and
+  Opus 4.8 ($5/$25, cache $0.50), Sonnet 5 ($2/$10, cache $0.20), Sonnet 4.6 ($3/$15, cache $0.30),
+  Haiku 4.5 ($1/$5, cache $0.10). All six slugs (`claude-fable-5-1`, `claude-opus-5`,
+  `claude-opus-4-8`, `claude-sonnet-5`, `claude-sonnet-4-6`, `claude-haiku-4-5`) are present on the
+  models-overview page. The roster shape also still holds: Opus and Sonnet each carry their last
+  4.x beside the current 5, Haiku and Fable carry only the latest, and the page shows nothing newer
+  than what is bundled (Opus 4.7/4.6/4.5 and Fable 5 are all *older* than what is carried).
+
+  **Discovery (step 2) — one pointer, deliberately not acted on.** OpenRouter's trending and
+  ranking boards are the required source and are blocked, so this half was a web-search sweep only.
+  It surfaced nothing new for a bundled lab — GPT-5.6 Sol, MiniMax-M3 and GLM-5.3-Flash are all
+  already carried (the last as `glm-5.3-flash` in the Coding Plan block) — and one lab the bundle
+  does not carry at all: **Poolside**, whose *Laguna XS 2.1* (33B-A3B coding agent, 256K context)
+  appeared in a cost-efficiency collection. A collection listing is not the trending board and a
+  search summary is not sustained third-party usage, so per *What "critically acclaimed" means
+  here* this is **a pointer, not an entry**. Re-check it against the ranking surfaces on the first
+  pass that can reach `openrouter.ai`.
+
 - **2026-09-03 (upstream sync) — Anthropic re-verified at tier 1; no drift, no roster change.**
   Run as the model-audit step of an upstream sync (53 upstream commits merged). The merge
   itself touched no model config — `config.example.yaml`'s only change was prose comments on

@@ -211,6 +211,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         from deerflow.config.subagent_batches_config import SubagentBatchesConfig
         from deerflow.config.subagent_runtime_config import SubagentRuntimeConfig
         from deerflow.subagents.capacity import configure_subagent_execution_capacity
+        from deerflow.subagents.local_residency import build_local_residency_plan, configure_subagent_local_residency
 
         subagent_runtime_config = getattr(startup_config, "subagent_runtime", None)
         if not isinstance(subagent_runtime_config, SubagentRuntimeConfig):
@@ -219,6 +220,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         if not isinstance(subagent_batches_config, SubagentBatchesConfig):
             subagent_batches_config = SubagentBatchesConfig()
         configure_subagent_execution_capacity(subagent_runtime_config)
+        # Fork: the GPU-residency plan for local Ollama subagents. Built from the
+        # same startup snapshot, and None whenever the machine gave no VRAM
+        # budget to plan against — which leaves dispatch exactly as it was.
+        configure_subagent_local_residency(build_local_residency_plan(startup_config))
         configure_logging(startup_config)
         ensure_browser_runtime_available(startup_config)
         logger.info("Configuration loaded successfully")

@@ -8,9 +8,10 @@ import os
 import re
 import threading
 import uuid
-from collections.abc import Callable, Coroutine, Mapping
+from collections.abc import AsyncIterator, Callable, Coroutine, Mapping
 from concurrent.futures import Future
 from concurrent.futures import TimeoutError as FuturesTimeoutError
+from contextlib import asynccontextmanager
 from contextvars import Context, copy_context
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -39,6 +40,10 @@ from deerflow.subagents.capacity import (
     get_subagent_execution_capacity,
 )
 from deerflow.subagents.config import SubagentConfig, resolve_subagent_model_name
+from deerflow.subagents.local_residency import (
+    LocalModelResidencyGate,
+    get_subagent_local_residency_gate,
+)
 from deerflow.subagents.report_contract import (
     build_acceptance_criteria_system_note,
     build_report_contract_section,
@@ -786,6 +791,7 @@ class SubagentExecutor:
         deerflow_trace_id: str | None = None,
         extensions: Any | None = None,
         execution_capacity: SubagentExecutionCapacity | None = None,
+        local_residency_gate: LocalModelResidencyGate | None = None,
         acceptance_criteria: list[str] | None = None,
         loop_detection_recorder: Any | None = None,
     ):
@@ -828,6 +834,11 @@ class SubagentExecutor:
                 Direct ``create_deerflow_agent`` callers pass one through their
                 ``SubagentRuntime``; application factories fall back to the
                 startup-configured process singleton.
+            local_residency_gate: Fork feature. Optional explicitly shared GPU
+                admission controller for local Ollama models. Falls back to the
+                startup-configured process singleton, and to no gating at all
+                when nothing configured one — an unconfigured process must
+                dispatch exactly as it did before the gate existed.
             acceptance_criteria: Optional lead-supplied completion requirements
                 (RFC #4651 PR3). Criterion values are model-supplied untrusted
                 data, so ``_build_initial_state`` appends them to the task
@@ -887,6 +898,7 @@ class SubagentExecutor:
         # generation underneath the delegated work.
         self.extensions = extensions
         self.execution_capacity = execution_capacity
+        self.local_residency_gate = local_residency_gate
         # Raw lead-supplied criteria; stripping/capping happens at render time
         # in report_contract.render_acceptance_criteria_block.
         self.acceptance_criteria = acceptance_criteria
@@ -1296,7 +1308,7 @@ class SubagentExecutor:
         with ensure_trace_context(self.deerflow_trace_id):
             try:
                 capacity = self.execution_capacity or get_subagent_execution_capacity()
-                async with capacity.slot():
+                async with capacity.slot(), self._local_residency_slot():
                     with result._state_lock:
                         if not result.status.is_terminal:
                             result.status = SubagentStatus.RUNNING
@@ -1309,6 +1321,30 @@ class SubagentExecutor:
                     admission_failure=True,
                 )
                 return result
+
+    @asynccontextmanager
+    async def _local_residency_slot(self) -> AsyncIterator[None]:
+        """Fork feature. Wait for GPU residency when this runs on a local model.
+
+        Nested *inside* the process capacity slot rather than beside it, so a
+        subagent waiting for the card is one that already owns a process slot:
+        every holder of a GPU reservation is running, so a release is always
+        pending and the wait always ends. Ordering them the other way round
+        would let queued-for-GPU work occupy the process pool.
+
+        The gate is looked up before the model name is resolved on purpose. An
+        unconfigured process (SDK embedding, most unit tests) must not acquire a
+        new reason to load `config.yaml`.
+        """
+        gate = self.local_residency_gate or get_subagent_local_residency_gate()
+        if gate is None:
+            yield
+            return
+        model_name = self.model_name
+        if model_name is None:
+            model_name = resolve_subagent_model_name(self.config, self.parent_model, app_config=self._get_resolved_app_config())
+        async with gate.slot(model_name):
+            yield
 
     async def _aexecute_admitted(self, task: str, result_holder: SubagentResult | None = None) -> SubagentResult:
         """Execute a task asynchronously.

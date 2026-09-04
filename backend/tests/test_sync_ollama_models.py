@@ -325,6 +325,51 @@ class TestRenderEntryWeightSize:
         assert "size_bytes: 5200000000" in entry
 
 
+class TestRenderEntryKvBytesPerToken:
+    """The cache half of a local model's GPU footprint, written for the Gateway.
+
+    ``size_bytes`` alone answers "will the weights fit"; the subagent
+    GPU-residency gate has to answer "will the weights *and the window this
+    entry asks for* fit, twice", and the per-token cache cost is the only
+    missing term. It is computed here already — the num_ctx sizing is built on
+    it — and nowhere else in the stack, so not writing it means the runtime
+    silently costs a local model at its weights and over-admits.
+    """
+
+    def test_the_per_token_cache_cost_is_written(self):
+        entry = sync_ollama.render_entry("qwen3:8b", ["tools"], size_bytes=5_200_000_000, kv_bytes_per_token=131072.0)
+        assert "kv_bytes_per_token: 131072" in entry
+
+    def test_no_line_when_the_geometry_did_not_yield_one(self):
+        # `parse_kv_bytes_per_token` returns None for a payload that does not
+        # expose the geometry. A zero written into config.yaml would be read as
+        # "this model has no cache", which is worse than an absent field: absent
+        # means "unknown" and leaves the dispatch ungated.
+        assert "kv_bytes_per_token" not in sync_ollama.render_entry("mystery:7b", ["tools"], size_bytes=1)
+        assert "kv_bytes_per_token" not in sync_ollama.render_entry("mystery:7b", ["tools"], size_bytes=1, kv_bytes_per_token=0)
+
+    def test_the_value_is_rounded_rather_than_written_as_a_float_repr(self):
+        # q8_0 and q4_0 make this a non-terminating fraction; `%g` on the raw
+        # float would put a 17-digit number in a file people hand-edit.
+        entry = sync_ollama.render_entry("qwen3:8b", ["tools"], size_bytes=1, kv_bytes_per_token=64 * 8 * (128 + 128) * (34 / 32))
+        assert "kv_bytes_per_token: 139264" in entry
+
+    def test_the_sync_writes_it_from_the_same_show_payload_the_sizing_uses(self, monkeypatch, capsys, tmp_path):
+        config = tmp_path / "config.yaml"
+        config.write_text(CLEAN_CONFIG)
+        monkeypatch.setattr(sync_ollama, "fetch_tags", lambda host, timeout=2.0: [{"name": "qwen3:8b", "size": 5_200_000_000}])
+        monkeypatch.setattr(sync_ollama, "fetch_show", lambda host, name, timeout=5.0: QWEN3_SHOW)
+        monkeypatch.setattr(sync_ollama.sys, "argv", ["sync-ollama-models.py", "--config", str(config), "--dry-run"])
+        assert sync_ollama.main() == 0
+        out = capsys.readouterr().out
+        expected = sync_ollama.parse_kv_bytes_per_token(QWEN3_SHOW)
+        assert expected is not None
+        # Written even with no `ollama.vram_gb` configured: it is a property of
+        # the model, not of this machine's card, so declaring a budget later
+        # must not require another /api/show round trip.
+        assert f"kv_bytes_per_token: {round(expected, 3):g}" in out
+
+
 class TestSyncNumCtxIdempotence:
     def test_three_tuple_entries_write_num_ctx_and_stay_idempotent(self):
         models = [("qwen3:8b", ["tools"], 32768), ("llava:13b", ["vision"], 8192)]

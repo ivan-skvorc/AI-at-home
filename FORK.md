@@ -100,6 +100,7 @@ First, the mechanical gates:
 - [ ] **Upstream pinned a list the fork extends, or read from disk in a path the fork keeps disk-free.** Two shapes of the same collision, both seen on the 2026-09-02 sync, and both invisible until the suite runs. (1) An upstream test asserting an _exact_ schema — `test_task_tool_description_is_optional_but_discoverable` pins `task`'s full property list, which the fork's per-call `model=` (§22) legitimately extends; re-assert the fork's list rather than loosening the check to a subset, so a future upstream change that drops the parameter still fails loudly. (2) An upstream feature adding a config read inside a path the fork guarantees is config-free — upstream's custom-agent store put `get_app_config()` under `apply_prompt_template`, which §19's `TestConfigIndependence` requires to touch no disk because `config.yaml` is gitignored and absent in CI. The fix is to thread the already-resolved `app_config` down (`get_agent_soul` → `load_agent_soul` → `get_agent_store`), never to relax the guard: it was written strict precisely because "does it work without the file" passes while the fallback is still there, silently reading a developer's own `config.yaml`.
 - [ ] **VPN-hostile defaults** (§31): `cd backend && uv run pytest tests/test_searxng_client.py tests/test_ensure_camoufox.py tests/test_camoufox_runtime_deps.py tests/test_search_fetch_defaults.py -q`. Four independent regressions, each silent: `TestCamoufoxRuntimeLibraries::test_the_libraries_are_installed_beside_the_browser_copy` (a browser copied into a runtime stage that cannot run it — every presence check still passes); `TestFetchEnvironment::test_the_fetch_call_site_actually_uses_the_scrubbed_environment` (the *call site*, not the helper — the helper tests pass against a module that cannot resolve `os`); `TestUnresponsiveEngines::test_all_engines_blocked_raises_rather_than_returning_empty` **together with** `test_a_genuinely_empty_result_set_is_still_a_success` (both directions — collapsing them into "empty means error" breaks a legitimate no-match search in silence); and `TestSearxngEngineMix` (the VPN-tolerant engines, and that the json/limiter deltas survived the edit). A sync that drops the apt block from `backend/Dockerfile`, or restores `data.get("results", [])` without the `unresponsive_engines` branch, is green everywhere else.
 - [ ] **Offloaded-model context sizing** (§30): `cd backend && uv run pytest tests/test_sync_ollama_models.py tests/test_setup_wizard.py -q`. Bounded on **both** sides, and each side is a different silent failure. `TestVramNumCtxLimitUnderOffload::test_a_model_bigger_than_vram_gets_a_window_the_agent_can_run_in` catches the 4096-token floor that makes a 128K model unusable; `test_it_does_not_hand_the_whole_card_to_the_kv_cache` catches the opposite — Ollama pays for context in GPU layers ([#9750](https://github.com/ollama/ollama/issues/9750)), so an unbounded window evicts the weights and the model merely crawls instead of failing. `test_a_model_that_fits_still_takes_all_the_spare_vram` pins that the fits-in-VRAM path did not move. Do not "simplify" the two branches into one: they are opposite policies for opposite regimes.
+- [ ] **Local-model subagent parallelism** (§34): `cd backend && uv run pytest tests/test_subagent_local_residency.py tests/test_subagent_executor.py -k "residency or capacity" -q`. Everything this defends is silent: Ollama answers an over-dispatch by queueing inside the daemon or evicting a model, never by failing. `TestGate::test_a_model_that_fits_the_card_once_runs_one_subagent_at_a_time` and `test_a_model_the_card_holds_twice_runs_two_at_a_time` are the feature; `test_models_that_co_reside_run_in_parallel` is the half a "just serialize local models" simplification would delete. `test_a_small_model_does_not_jump_the_queue_ahead_of_a_waiting_large_one` pins strict FIFO (throughput here is bought with starvation), `test_a_model_bigger_than_the_card_runs_alone_rather_than_never` pins that an offloaded model is slow, not barred, and `test_an_unknown_model_is_not_gated_at_all` pins that a hosted model or an unsized entry dispatches exactly as before. `test_aexecute_holds_gpu_residency_for_a_local_model_for_the_whole_run` is the wiring: the gate is nested inside the process capacity slot and wraps the model call, and it goes red if either is undone.
 - [ ] **Sidebar chat folders** (§32): `cd frontend && pnpm test chat-folders` and `cd backend && uv run pytest tests/test_user_ui_state.py tests/test_chat_folders_settings_router.py tests/test_threads_router.py -k "folder or pin or ui_state or chat_folders" -q`. Three independent silent failures. `groupThreadsByFolder > lists a filed chat inside its folder and NOT at the root` **together with** `falls back to the root for a folder that no longer exists` — both directions of the same partition: a merge that "helpfully" keeps filed chats in the root list duplicates every conversation, and one that drops threads pointing at a deleted folder makes them vanish with no error anywhere. `test_patch_thread_folder_move_preserves_updated_at` **together with** `test_patch_thread_folder_with_a_wrong_typed_value_still_bumps_updated_at` — the no-touch exemption is shape-guarded per key; collapsing it to "the key is present" is green everywhere else and hands any client a way to edit metadata without touching recency. And `test_folders_and_tabs_do_not_clobber_each_other`, because both keys share one `ui_state.json` and a writer that replaces instead of merging silently eats the other feature's state. Also run `cd frontend && pnpm test:e2e sidebar-chat-folders` when the sidebar itself was touched.
 - [ ] **Automatic conversation renaming** (§33): `cd backend && uv run pytest tests/test_auto_title_preference.py tests/test_title_middleware_core_logic.py -q` and `cd frontend && pnpm test auto-title`. Three silent failures, and none of them makes a title stop appearing. `test_the_title_is_written_from_after_agent_not_after_model` compares the bound hooks against `AgentMiddleware`'s own — the same predicate LangChain's factory uses to place the node — because a merge that restores the `after_model` spelling still produces titles, just back inside the run window where the Gateway refuses the user's own rename with a 409. `test_a_client_cannot_switch_renaming_on_when_the_operator_disabled_it` **together with** `test_an_unconfigured_model_is_dropped_rather_than_dialled`: both are the boundary direction, and both are green if you drop the check and simply honor whatever the browser sent. And `distinguishes 'server default' from 'no model call'` — the absent key and the empty string are opposite instructions to the backend, so collapsing them either starts spending a model call the user declined or ignores the model the operator configured. Also confirm `_ensure_interrupted_title` in `runtime/runs/worker.py` still runs on **every** terminal status: narrowed back to `interrupted`, a first turn that ends in `ask_clarification` is never named, and never can be. Run `cd frontend && pnpm test:e2e auto-title-settings` too when the settings dialog itself was touched — a merge that reorders or renames the nav rows breaks the page's only click-through coverage without failing a unit test.
 - [ ] Frontend: `pnpm check && pnpm test`. **`pnpm check` now includes the formatting gate** (`prettier --check .`, then eslint, then `tsc --noEmit`) — it used to be eslint + tsc only, which meant the command every guide tells you to run before committing was not the command CI gates on, and an eslint/type-clean change could still fail `lint-frontend` on formatting alone. That discrepancy was documented right here and was still walked into twice, so it was removed instead of re-warned about (see the Prettier row below). `pnpm format:write` fixes what the check reports; `eslint --fix` normalizes imports and optional-chains but not Prettier whitespace.
@@ -3206,6 +3207,96 @@ finishes** (and that **Rename** in the chat's ⋯ menu works at that same moment
 Pick a model in the dropdown and start another chat — the new title should read
 like a summary rather than a truncation. Turn the switch off, start a third chat,
 and confirm it stays *New Conversation*.
+
+### 34. Local models get as much parallelism as the GPU actually has
+
+Enable subagents, pick a local model, ask for five things at once, and the fork
+dispatched three of them concurrently — because `subagent_runtime.max_running`
+is 3. That number is chosen once, at startup, with no idea which model the work
+will land on. For a hosted model it is the right shape. For a 20 GiB model on a
+24 GiB card it is a number about the wrong resource.
+
+**Nothing failed, which is why nobody noticed.** Ollama does not reject an
+over-dispatch. One model, more concurrent requests than `OLLAMA_NUM_PARALLEL`
+slots: the extras queue *inside the daemon*, invisible to the Gateway, while
+each subagent's own `timeout_seconds` runs down against a request that has not
+started. Two different local models that do not co-reside — an Ultra-mode lead
+on one and subagents on another (§3), or a cost-routing rule that picked a
+second one (§15) — and the daemon evicts one to load the other, on every
+alternation. Both look identical from outside: local subagents are slow, and no
+log says why. That is the same class of silent failure the ComfyUI GPU arbiter
+was built for (§23), one layer down.
+
+So the gate asks the question per dispatch instead of once per process, against
+numbers the sync already measured. Five subagents on a model that fits once run
+one at a time; on a model the card holds twice, two at a time; on models that
+co-reside, all of them at once. Four properties are load-bearing:
+
+- **"Fits twice" is two different questions, and answering both with one number
+  gets one of them wrong.** Ollama never loads a second copy of a model it
+  already has resident — concurrency there is `OLLAMA_NUM_PARALLEL` slots
+  against the one copy, whose KV cache `scripts/sync-ollama-models.py` already
+  sized for exactly that many slots (§30). Distinct models each need their own
+  residency, so those are bounded by a VRAM ledger instead. A single
+  "max concurrent local subagents" knob cannot express both.
+- **Strict FIFO, deliberately at some cost to throughput.** Admitting a small
+  model past a queued large one is free throughput and unbounded starvation for
+  the large one, which is the failure the gate exists to prevent rather than a
+  tuning opportunity. A model whose footprint exceeds the whole card is charged
+  the whole card, so it runs *alone* rather than *never* — it is not
+  un-runnable, it is offloaded and slow (§30).
+- **The wait is bounded by its own timeout, not by the process one.**
+  `subagent_runtime.queue_timeout_seconds` is 300s and bounds a wait for a
+  process slot. Reusing it here would fail the fifth of five deliberately
+  serialized subagents for being fifth, turning a slow answer into a failed one
+  — the fix causing a worse symptom than the bug.
+  `local_model_capacity.queue_timeout_seconds` is 1800s for that reason. When it
+  does expire the subagent fails as an *admission* failure
+  (`LocalModelResidencyTimeout` subclasses `SubagentCapacityError`), so it never
+  reads as the delegated work having failed. The wait it bounds is not *new*
+  wall-clock time — three sub-agents on a card that holds one take the same
+  three slots of time whether the daemon serializes them or this does; what
+  changes is that the waiting is visible, bounded, and tunable instead of
+  happening inside Ollama. One consequence is worth knowing: the parent's poll
+  window is derived from `subagents.timeout_seconds` (1800s → ~1860s) and it
+  starts at dispatch, so a serialized batch whose *total* time exceeds that
+  window loses its last item to the parent's timeout. That ceiling is unchanged
+  by this feature — it applied to the invisible daemon queue too — but it is now
+  a number you can reason about.
+- **Unknown means ungated, never guessed.** No `ollama.vram_gb`, a hosted
+  model, an entry with no `size_bytes`: every one of those dispatches exactly as
+  it did before this feature existed. Inventing a footprint would serialize work
+  on precisely the deployments that gave the gate the least information.
+
+**Where the numbers come from, and the one new field.** `size_bytes` and
+`num_ctx` were already written per entry; the missing term was the KV cache's
+per-token cost, which the sync computes for its own sizing and threw away. It is
+now written as `kv_bytes_per_token`, so the Gateway can price a model's resident
+footprint as *weights + the cache for the window this entry asks for* rather
+than weights alone. It is a property of the model, not of this machine, so it
+does not go stale when `num_parallel` changes. A config synced before this
+change carries no such field; that model is costed at its weights and flagged as
+an estimate — it under-counts, which still bounds dispatch better than not
+bounding it, and `make dev` re-runs the sync anyway.
+
+**What it deliberately does not do.** It does not consult the daemon. The
+ComfyUI arbiter re-reads residency from the services on every acquire because
+another process owns that state; this gate arbitrates *this* process's own
+dispatches against measurements the sync already took, so bookkeeping is
+authoritative and no HTTP round trip sits in front of a subagent. It also does
+not stop a local lead and a local subagent from evicting each other — that is
+inherent to choosing two models, is already warned about at sync time by
+`vram_contention_warning`, and no admission policy can fix it. And it assumes
+one Ollama host: a `models:` list split across two machines' daemons would be
+costed against one budget.
+
+| Piece            | Where                                                                                  |
+| ---------------- | -------------------------------------------------------------------------------------- |
+| Plan and gate    | `deerflow/subagents/local_residency.py`                                                |
+| Config           | `subagent_runtime.local_model_capacity`, top-level `ollama:` (`deerflow/config/ollama_config.py`) |
+| Acquisition      | `SubagentExecutor._aexecute` — inside the process capacity slot, around the whole run   |
+| Footprint metadata | `scripts/sync-ollama-models.py::render_entry`, `ModelConfig.kv_bytes_per_token`       |
+| Tests            | `backend/tests/test_subagent_local_residency.py`, `test_subagent_executor.py`, `test_sync_ollama_models.py` |
 
 ## Credits
 

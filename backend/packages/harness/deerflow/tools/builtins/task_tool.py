@@ -48,6 +48,7 @@ from deerflow.utils.custom_events import aemit_custom_event
 
 if TYPE_CHECKING:
     from deerflow.config.app_config import AppConfig
+    from deerflow.subagents.local_residency import LocalModelResidencyGate
 
 logger = logging.getLogger(__name__)
 
@@ -70,6 +71,13 @@ _STATUS_UNREADABLE = object()
 
 _explicit_execution_capacity: ContextVar[SubagentExecutionCapacity | None] = ContextVar(
     "deerflow_explicit_subagent_execution_capacity",
+    default=None,
+)
+# Fork: GPU-residency gate for local Ollama subagents, when an explicit
+# SubagentRuntime owns one. Same lifetime and isolation rules as the capacity
+# above; an unset value means the process singleton (or no gating) decides.
+_explicit_local_residency_gate: ContextVar[Any | None] = ContextVar(
+    "deerflow_explicit_subagent_local_residency_gate",
     default=None,
 )
 _explicit_app_config: ContextVar[Any | None] = ContextVar(
@@ -410,6 +418,7 @@ def bind_task_tool(
     execution_capacity: SubagentExecutionCapacity,
     *,
     app_config: "AppConfig | None" = None,
+    local_residency_gate: "LocalModelResidencyGate | None" = None,
 ):
     """Return a task tool bound to one explicit SDK runtime capacity.
 
@@ -426,9 +435,11 @@ def bind_task_tool(
     async def bound_coroutine(**kwargs):
         capacity_token = _explicit_execution_capacity.set(execution_capacity)
         config_token = _explicit_app_config.set(app_config)
+        residency_token = _explicit_local_residency_gate.set(local_residency_gate)
         try:
             return await original_coroutine(**kwargs)
         finally:
+            _explicit_local_residency_gate.reset(residency_token)
             _explicit_app_config.reset(config_token)
             _explicit_execution_capacity.reset(capacity_token)
 
@@ -1020,6 +1031,9 @@ async def task_tool(
     explicit_capacity = _explicit_execution_capacity.get()
     if explicit_capacity is not None:
         executor_kwargs["execution_capacity"] = explicit_capacity
+    explicit_residency_gate = _explicit_local_residency_gate.get()
+    if explicit_residency_gate is not None:
+        executor_kwargs["local_residency_gate"] = explicit_residency_gate
     executor = SubagentExecutor(**executor_kwargs)
 
     # Keep the provider tool-call ID for stream/message correlation, but use a
