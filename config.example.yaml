@@ -3253,6 +3253,13 @@ skill_scan:
 # Title Generation Configuration
 # ============================================================================
 # Automatic conversation title generation settings
+#
+# Both keys below are the *operator* side of the switch. Each user also has a
+# per-browser preference under Settings -> Conversation titles: a toggle that can
+# turn renaming off for their own runs (it can never turn it back on when
+# `enabled: false` here), and a model picker that overrides `model_name` for
+# their runs with any model configured in `models:` below, or with "no model
+# call" at all. See FORK.md §33.
 
 title:
   enabled: true

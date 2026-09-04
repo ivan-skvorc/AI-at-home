@@ -3,6 +3,9 @@ import { getBackendBaseURL } from "@/core/config";
 
 export interface FeaturesResponse {
   agents_api: { enabled: boolean };
+  // Fork: the operator master switch for automatic conversation renaming
+  // (config.yaml -> title). Optional so an older Gateway degrades to "on".
+  auto_title?: { enabled: boolean; model_name?: string | null };
   browser_control?: { enabled: boolean };
   mcp_tasks?: { enabled: boolean };
   subagent_batches?: {
@@ -29,6 +32,23 @@ export async function fetchFeatures(): Promise<FeaturesResponse> {
 
 export async function fetchAgentsApiEnabled(): Promise<boolean> {
   return (await fetchFeatures()).agents_api.enabled;
+}
+
+export interface AutoTitleCapability {
+  /** config.yaml -> title.enabled. */
+  enabled: boolean;
+  /** config.yaml -> title.model_name; null means the local fallback title. */
+  modelName: string | null;
+}
+
+export async function fetchAutoTitleCapability(): Promise<AutoTitleCapability> {
+  const feature = (await fetchFeatures()).auto_title;
+  return {
+    // Fail open: a Gateway that predates the field still renames conversations,
+    // so reporting "disabled" would grey out a toggle that in fact works.
+    enabled: feature?.enabled ?? true,
+    modelName: feature?.model_name ?? null,
+  };
 }
 
 export async function fetchBrowserControlEnabled(): Promise<boolean> {

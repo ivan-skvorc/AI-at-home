@@ -9,6 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **chat:** **Automatic conversation renaming is now a setting, with its own
+  model picker.** A new **Settings → Conversation titles** page turns the
+  rename-from-the-first-exchange behaviour off, and picks which model writes the
+  name: *No model call* (the title is your first message, shortened — free and
+  instant), any configured model, or *Server default*, which follows
+  `config.yaml -> title.model_name` and ships as `null`, i.e. no model call. The
+  operator master switch is unchanged (`title.enabled` / `title.model_name`, no
+  new config keys); turning it off there greys out the toggle with an
+  explanation. **The rename now happens once the answer has finished** rather
+  than partway through it — the same moment the Gateway lets you rename a
+  conversation by hand again, since it refuses a rename while a run is in flight.
+  Two consequences: the title describes the answer as well as the question, and a
+  first turn that ends by asking *you* a clarifying question is finally named at
+  all (it leaves the run through a path that skipped the rename, and only the
+  first turn is ever titled, so those conversations stayed *New Conversation*
+  permanently).
+
 - **sidebar:** **Folders in the conversation list.** The sidebar's chat list is a
   tree now: press **+** in the *Recent chats* header to create a folder, drag
   conversations onto it (or use **Move to folder** in a chat's menu), and open or

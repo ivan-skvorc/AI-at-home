@@ -101,6 +101,10 @@ export type MockAPIOptions = {
     agentsApiEnabled?: boolean;
     browserControlEnabled?: boolean;
     mcpTasksEnabled?: boolean;
+    /** Fork: config.yaml -> title.enabled, the automatic-rename master switch. */
+    autoTitleEnabled?: boolean;
+    /** Fork: config.yaml -> title.model_name; null means no model call. */
+    autoTitleModelName?: string | null;
   };
   /** Sidebar chat folders the per-user store already holds. */
   chatFolders?: Array<{ id: string; name: string }>;
@@ -371,6 +375,8 @@ export function mockLangGraphAPI(page: Page, options?: MockAPIOptions) {
     agentsApiEnabled: options?.features?.agentsApiEnabled ?? true,
     browserControlEnabled: options?.features?.browserControlEnabled ?? true,
     mcpTasksEnabled: options?.features?.mcpTasksEnabled ?? true,
+    autoTitleEnabled: options?.features?.autoTitleEnabled ?? true,
+    autoTitleModelName: options?.features?.autoTitleModelName ?? null,
   };
 
   const upsertThread = (thread: MockThread) => {
@@ -1322,6 +1328,10 @@ export function mockLangGraphAPI(page: Page, options?: MockAPIOptions) {
           agents_api: { enabled: featureFlags.agentsApiEnabled },
           browser_control: { enabled: featureFlags.browserControlEnabled },
           mcp_tasks: { enabled: featureFlags.mcpTasksEnabled },
+          auto_title: {
+            enabled: featureFlags.autoTitleEnabled,
+            model_name: featureFlags.autoTitleModelName,
+          },
         }),
       });
     }

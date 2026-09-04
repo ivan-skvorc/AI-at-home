@@ -1108,6 +1108,7 @@ export const zhCN: Translations = {
       skills: "技能",
       notification: "通知",
       suggestions: "建议",
+      autoTitle: "会话标题",
       systemPrompt: "系统提示词",
       about: "关于",
     },
@@ -1545,6 +1546,23 @@ export const zhCN: Translations = {
       followWorkflow: "跟随工作流选择",
       serverDisabledHint:
         "后续建议已被服务器配置禁用（config.yaml 中的 suggestions.enabled）。请在那里启用后再使用此开关。",
+    },
+    autoTitle: {
+      title: "自动生成会话标题",
+      description:
+        "根据首轮对话自动重命名会话，让侧边栏显示它的主题而不是“新会话”。关闭后，会话将保留你自己起的名字。",
+      modelLabel: "标题模型",
+      modelHint:
+        "用于生成标题的模型。便宜的模型就足够了——它只会看到第一个问题和回答。",
+      followServer: "服务器默认",
+      followServerModel: (model: string) => `当前为 ${model}`,
+      followServerFallback: "当前未设置模型——标题取自首条消息的截断内容",
+      noModel: "不调用模型",
+      noModelHint: "使用首条消息的截断内容。免费且即时。",
+      timingHint:
+        "重命名在回答结束后进行，而不是在生成过程中——正是你重新可以手动重命名的那一刻。",
+      serverDisabledHint:
+        "自动标题已被服务器配置禁用（config.yaml 中的 title.enabled）。请在那里启用后再使用此开关。",
     },
     systemPrompt: {
       title: "系统提示词",

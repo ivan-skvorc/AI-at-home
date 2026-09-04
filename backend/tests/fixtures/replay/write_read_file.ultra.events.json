@@ -74,20 +74,6 @@
         "messages",
         "skill_context",
         "thread_data",
-        "title",
-        "uploaded_files",
-        "viewed_images"
-      ]
-    },
-    {
-      "event": "values",
-      "keys": [
-        "artifacts",
-        "delegations",
-        "messages",
-        "skill_context",
-        "thread_data",
-        "title",
         "uploaded_files",
         "viewed_images"
       ]
@@ -101,7 +87,6 @@
         "sandbox",
         "skill_context",
         "thread_data",
-        "title",
         "uploaded_files",
         "viewed_images"
       ]
@@ -115,7 +100,6 @@
         "sandbox",
         "skill_context",
         "thread_data",
-        "title",
         "uploaded_files",
         "viewed_images"
       ]
@@ -129,7 +113,6 @@
         "sandbox",
         "skill_context",
         "thread_data",
-        "title",
         "uploaded_files",
         "viewed_images"
       ]
@@ -143,7 +126,6 @@
         "sandbox",
         "skill_context",
         "thread_data",
-        "title",
         "uploaded_files",
         "viewed_images"
       ]
@@ -157,7 +139,19 @@
         "sandbox",
         "skill_context",
         "thread_data",
-        "title",
+        "uploaded_files",
+        "viewed_images"
+      ]
+    },
+    {
+      "event": "values",
+      "keys": [
+        "artifacts",
+        "delegations",
+        "messages",
+        "sandbox",
+        "skill_context",
+        "thread_data",
         "uploaded_files",
         "viewed_images"
       ]

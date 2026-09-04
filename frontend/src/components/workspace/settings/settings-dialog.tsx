@@ -8,6 +8,7 @@ import {
   LightbulbIcon,
   PaletteIcon,
   PlugZapIcon,
+  PencilLineIcon,
   ScrollTextIcon,
   SparklesIcon,
   UsersRoundIcon,
@@ -39,6 +40,15 @@ const AccountSettingsPage = dynamic(
   () =>
     import("./account-settings-page").then(
       (module) => module.AccountSettingsPage,
+    ),
+  { loading: SettingsPageLoading },
+);
+// Fork-only automatic-conversation-rename settings page (not present upstream);
+// lazy-loaded like the other settings pages.
+const AutoTitleSettingsPage = dynamic(
+  () =>
+    import("./auto-title-settings-page").then(
+      (module) => module.AutoTitleSettingsPage,
     ),
   { loading: SettingsPageLoading },
 );
@@ -121,6 +131,7 @@ const AboutSettingsPage = dynamic(
 export type SettingsSection =
   | "account"
   | "appearance"
+  | "autoTitle"
   | "channels"
   | "integrations"
   | "memory"
@@ -173,6 +184,11 @@ export function SettingsDialog(props: SettingsDialogProps) {
         icon: LightbulbIcon,
       },
       {
+        id: "autoTitle",
+        label: t.settings.sections.autoTitle,
+        icon: PencilLineIcon,
+      },
+      {
         id: "channels",
         label: t.settings.sections.channels,
         icon: CableIcon,
@@ -204,6 +220,7 @@ export function SettingsDialog(props: SettingsDialogProps) {
     [
       t.settings.sections.account,
       t.settings.sections.appearance,
+      t.settings.sections.autoTitle,
       t.settings.sections.channels,
       t.settings.sections.integrations,
       t.settings.sections.memory,
@@ -270,6 +287,7 @@ export function SettingsDialog(props: SettingsDialogProps) {
               )}
               {activeSection === "notification" && <NotificationSettingsPage />}
               {activeSection === "suggestions" && <SuggestionsSettingsPage />}
+              {activeSection === "autoTitle" && <AutoTitleSettingsPage />}
               {activeSection === "channels" && <ChannelsSettingsPage />}
               {activeSection === "integrations" && <IntegrationsSettingsPage />}
               {activeSection === "systemPrompt" && <SystemPromptSettingsPage />}

@@ -1155,6 +1155,7 @@ export const enUS: Translations = {
       skills: "Skills",
       notification: "Notification",
       suggestions: "Suggestions",
+      autoTitle: "Conversation titles",
       systemPrompt: "System prompt",
       about: "About",
     },
@@ -1620,6 +1621,24 @@ export const enUS: Translations = {
       followWorkflow: "Follow workflow selection",
       serverDisabledHint:
         "Follow-up suggestions are disabled by the server configuration (suggestions.enabled in config.yaml). Enable it there to use this toggle.",
+    },
+    autoTitle: {
+      title: "Automatic conversation titles",
+      description:
+        "Rename a conversation from its first exchange, so the sidebar shows what it is about instead of “New Conversation”. Turn it off to keep whatever name you give it yourself.",
+      modelLabel: "Title model",
+      modelHint:
+        "Which model writes the title. A cheap one is plenty — it sees only the first question and answer.",
+      followServer: "Server default",
+      followServerModel: (model: string) => `Currently ${model}`,
+      followServerFallback:
+        "Currently no model — the title is the first message, shortened",
+      noModel: "No model call",
+      noModelHint: "Use the first message, shortened. Free and instant.",
+      timingHint:
+        "The rename happens once the answer is finished, not while it is being written — the same moment you get manual renaming back.",
+      serverDisabledHint:
+        "Automatic titles are disabled by the server configuration (title.enabled in config.yaml). Enable it there to use this toggle.",
     },
     systemPrompt: {
       title: "System prompt",
