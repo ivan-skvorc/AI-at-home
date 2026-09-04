@@ -23,10 +23,10 @@ describe("interaction-only bundle boundaries", () => {
     const dialog = read(
       "src/components/workspace/settings/settings-dialog.tsx",
     );
-    // Upstream ships 10 settings pages; this fork adds two more (the follow-up
-    // Suggestions page and the System Prompt editor). Every one must still be
-    // a dynamic import.
-    expect(dialog.match(/dynamic\(/g)).toHaveLength(12);
+    // Upstream ships 10 settings pages; this fork adds three more (the
+    // follow-up Suggestions page, the System Prompt editor, and the automatic
+    // Conversation Titles page). Every one must still be a dynamic import.
+    expect(dialog.match(/dynamic\(/g)).toHaveLength(13);
     expect(dialog).not.toMatch(
       /import \{ \w+SettingsPage \} from "@\/components\/workspace\/settings\//,
     );

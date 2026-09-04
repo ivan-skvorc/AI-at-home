@@ -62,6 +62,7 @@ from deerflow.config.subagents_config import (
     DEFAULT_MAX_TOTAL_SUBAGENTS_PER_RUN,
     effective_subagent_concurrency,
 )
+from deerflow.config.title_config import apply_auto_title_preference
 from deerflow.models import create_chat_model
 from deerflow.runtime.checkpoint_mode import (
     INTERNAL_CHECKPOINT_MODE_KEY,
@@ -918,6 +919,11 @@ def _assemble_lead_agent(config: RunnableConfig, *, app_config: AppConfig) -> Le
     # the config, so injection, extraction, and memory tools are all disabled for
     # this run from a single chokepoint. The operator master switch still wins.
     resolved_app_config = _apply_memory_preference(app_config, cfg.get("memory_enabled"))
+    # Fork: the per-user automatic-rename preference (Settings -> Conversation
+    # titles, FORK.md §33). Applied to the same resolved config the middleware
+    # chain is built from, so TitleMiddleware reads one already-resolved
+    # ``title`` block instead of consulting the run context itself.
+    resolved_app_config = apply_auto_title_preference(resolved_app_config, cfg)
     mode = (config.get("configurable", {}) or {}).get(
         INTERNAL_CHECKPOINT_MODE_KEY,
         resolved_app_config.database.checkpoint_channel_mode,

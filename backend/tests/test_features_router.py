@@ -16,6 +16,8 @@ def _app_with_config(
     mcp_tasks_available: bool = False,
     subagent_batches_available: bool = False,
     subagent_batch_repo_available: bool | None = None,
+    auto_title_enabled: bool = True,
+    auto_title_model_name: str | None = None,
 ) -> FastAPI:
     app = FastAPI()
     app.state.mcp_tasks_available = mcp_tasks_available
@@ -35,6 +37,7 @@ def _app_with_config(
         agents_api=SimpleNamespace(enabled=agents_api_enabled),
         tools=tools,
         subagent_runtime=SimpleNamespace(max_running=3),
+        title=SimpleNamespace(enabled=auto_title_enabled, model_name=auto_title_model_name),
     )
     app.dependency_overrides[get_config] = lambda: fake_config
     return app
@@ -46,6 +49,7 @@ def test_features_reports_agents_api_enabled() -> None:
     assert response.status_code == 200
     assert response.json() == {
         "agents_api": {"enabled": True},
+        "auto_title": {"enabled": True, "model_name": None},
         "browser_control": {"enabled": False},
         "mcp_tasks": {"enabled": False},
         "subagent_batches": {
@@ -63,6 +67,7 @@ def test_features_reports_agents_api_disabled() -> None:
     assert response.status_code == 200
     assert response.json() == {
         "agents_api": {"enabled": False},
+        "auto_title": {"enabled": True, "model_name": None},
         "browser_control": {"enabled": False},
         "mcp_tasks": {"enabled": False},
         "subagent_batches": {

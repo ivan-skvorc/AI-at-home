@@ -101,6 +101,7 @@ First, the mechanical gates:
 - [ ] **VPN-hostile defaults** (§31): `cd backend && uv run pytest tests/test_searxng_client.py tests/test_ensure_camoufox.py tests/test_camoufox_runtime_deps.py tests/test_search_fetch_defaults.py -q`. Four independent regressions, each silent: `TestCamoufoxRuntimeLibraries::test_the_libraries_are_installed_beside_the_browser_copy` (a browser copied into a runtime stage that cannot run it — every presence check still passes); `TestFetchEnvironment::test_the_fetch_call_site_actually_uses_the_scrubbed_environment` (the *call site*, not the helper — the helper tests pass against a module that cannot resolve `os`); `TestUnresponsiveEngines::test_all_engines_blocked_raises_rather_than_returning_empty` **together with** `test_a_genuinely_empty_result_set_is_still_a_success` (both directions — collapsing them into "empty means error" breaks a legitimate no-match search in silence); and `TestSearxngEngineMix` (the VPN-tolerant engines, and that the json/limiter deltas survived the edit). A sync that drops the apt block from `backend/Dockerfile`, or restores `data.get("results", [])` without the `unresponsive_engines` branch, is green everywhere else.
 - [ ] **Offloaded-model context sizing** (§30): `cd backend && uv run pytest tests/test_sync_ollama_models.py tests/test_setup_wizard.py -q`. Bounded on **both** sides, and each side is a different silent failure. `TestVramNumCtxLimitUnderOffload::test_a_model_bigger_than_vram_gets_a_window_the_agent_can_run_in` catches the 4096-token floor that makes a 128K model unusable; `test_it_does_not_hand_the_whole_card_to_the_kv_cache` catches the opposite — Ollama pays for context in GPU layers ([#9750](https://github.com/ollama/ollama/issues/9750)), so an unbounded window evicts the weights and the model merely crawls instead of failing. `test_a_model_that_fits_still_takes_all_the_spare_vram` pins that the fits-in-VRAM path did not move. Do not "simplify" the two branches into one: they are opposite policies for opposite regimes.
 - [ ] **Sidebar chat folders** (§32): `cd frontend && pnpm test chat-folders` and `cd backend && uv run pytest tests/test_user_ui_state.py tests/test_chat_folders_settings_router.py tests/test_threads_router.py -k "folder or pin or ui_state or chat_folders" -q`. Three independent silent failures. `groupThreadsByFolder > lists a filed chat inside its folder and NOT at the root` **together with** `falls back to the root for a folder that no longer exists` — both directions of the same partition: a merge that "helpfully" keeps filed chats in the root list duplicates every conversation, and one that drops threads pointing at a deleted folder makes them vanish with no error anywhere. `test_patch_thread_folder_move_preserves_updated_at` **together with** `test_patch_thread_folder_with_a_wrong_typed_value_still_bumps_updated_at` — the no-touch exemption is shape-guarded per key; collapsing it to "the key is present" is green everywhere else and hands any client a way to edit metadata without touching recency. And `test_folders_and_tabs_do_not_clobber_each_other`, because both keys share one `ui_state.json` and a writer that replaces instead of merging silently eats the other feature's state. Also run `cd frontend && pnpm test:e2e sidebar-chat-folders` when the sidebar itself was touched.
+- [ ] **Automatic conversation renaming** (§33): `cd backend && uv run pytest tests/test_auto_title_preference.py tests/test_title_middleware_core_logic.py -q` and `cd frontend && pnpm test auto-title`. Three silent failures, and none of them makes a title stop appearing. `test_the_title_is_written_from_after_agent_not_after_model` compares the bound hooks against `AgentMiddleware`'s own — the same predicate LangChain's factory uses to place the node — because a merge that restores the `after_model` spelling still produces titles, just back inside the run window where the Gateway refuses the user's own rename with a 409. `test_a_client_cannot_switch_renaming_on_when_the_operator_disabled_it` **together with** `test_an_unconfigured_model_is_dropped_rather_than_dialled`: both are the boundary direction, and both are green if you drop the check and simply honor whatever the browser sent. And `distinguishes 'server default' from 'no model call'` — the absent key and the empty string are opposite instructions to the backend, so collapsing them either starts spending a model call the user declined or ignores the model the operator configured. Also confirm `_ensure_interrupted_title` in `runtime/runs/worker.py` still runs on **every** terminal status: narrowed back to `interrupted`, a first turn that ends in `ask_clarification` is never named, and never can be. Run `cd frontend && pnpm test:e2e auto-title-settings` too when the settings dialog itself was touched — a merge that reorders or renames the nav rows breaks the page's only click-through coverage without failing a unit test.
 - [ ] Frontend: `pnpm check && pnpm test`. **`pnpm check` now includes the formatting gate** (`prettier --check .`, then eslint, then `tsc --noEmit`) — it used to be eslint + tsc only, which meant the command every guide tells you to run before committing was not the command CI gates on, and an eslint/type-clean change could still fail `lint-frontend` on formatting alone. That discrepancy was documented right here and was still walked into twice, so it was removed instead of re-warned about (see the Prettier row below). `pnpm format:write` fixes what the check reports; `eslint --fix` normalizes imports and optional-chains but not Prettier whitespace.
 - [ ] **Changed a shared UI control? Run the whole e2e suite, not the one spec you thought of.** `pnpm test:e2e` with no filter. A control's _specs_ are not the specs in the file you edited: they are every spec that clicks that control anywhere in the app, and nothing in `pnpm check` or `pnpm test` knows the difference. Observed live on the model-picker unification — the composer's picker was swapped into five screens, the Democracy spec was found and fixed by hand, and `suggestions-settings.spec.ts` was missed entirely because it drives the _same control_ from a different page. It failed only in CI. Two rules fell out of it, both now pinned by `frontend/tests/unit/components/workspace/model-picker-sites.test.ts`: a spec must locate a shared control by that control's **own** `data-slot`, never by the ARIA role of the primitive underneath (swap the primitive and the locator silently matches nothing), and a fast unit test should assert the contract so a six-minute e2e job is not the thing that tells you.
 
@@ -3075,6 +3076,136 @@ cd backend && uv run pytest tests/test_threads_router.py -k "folder or pin" -q
 ```
 
 Then end-to-end (`make dev`): click **+** in the sidebar's "Recent chats" header, name a folder, drag a conversation onto it → it disappears from the list and appears under the folder; click the arrow to collapse and expand; drag it back onto the list below → it leaves the folder; rename and delete the folder from its **⋯** menu and confirm the conversations come back rather than going with it; reload and confirm the folder and its contents are still there.
+
+### 33. Renaming a conversation is a setting, and it waits for the answer
+
+Upstream renames a thread from its first exchange and gives you no say in it: the
+behaviour is `config.yaml -> title`, which a *user* never sees. Two things were
+wrong with that on a personal deployment. It is an LLM call you did not ask for
+(off by default upstream only in the sense that `model_name` is `null`, which
+silently degrades to truncating your first message), and it fired from
+`after_model` — inside the agent loop, right after the first model call — which
+is the one window in which the user is *forbidden* to rename the conversation
+themselves.
+
+**Why the timing matters, and is not cosmetic.** A manual rename is
+`POST /api/threads/{id}/state`, and that route holds `reserve_checkpoint_write`,
+which raises `ConflictError` → **409 "Thread has a run in flight. Update state
+after the run finishes."** while a run is live. So the automatic rename used to
+land during the exact stretch in which the user's own rename is refused: you
+watch the sidebar entry change under you and cannot correct it until the answer
+finishes. Moving the hook to `after_agent` puts the automatic rename in the same
+window the user gets their manual one back. That is the whole design goal of the
+move, and a refactor that pushes it back into the loop for latency reasons is
+undoing the feature, not optimizing it.
+
+- **`after_agent`, not `after_model` — pinned by identity, not by name.**
+  LangChain's agent factory decides where a middleware's node goes by comparing
+  the bound method against `AgentMiddleware`'s base implementation:
+  `after_agent`/`aafter_agent` become the graph's **exit node**, `after_model`
+  runs once per model call *inside* the loop. `test_auto_title_preference.py`
+  asserts on exactly those four comparisons, so the test pins the graph position
+  rather than a method name — renaming the hook back is red, and so is adding an
+  `after_model` override "as well".
+- **The golden replay is the proof, and it moved on purpose.**
+  `tests/fixtures/replay/write_read_file.ultra.events.json` records the SSE
+  key-sequence of a real recorded turn. Before the move, `title` appeared in the
+  `values` frames from **index 6 onward** — mid-run, while the user's own rename
+  was still being refused with a 409. It now appears only in the **last** frame
+  before `end`. A merge that puts the hook back in the loop shows up there as a
+  golden diff, which is the most direct evidence this feature works that the
+  suite has. Regenerate it with `DEERFLOW_WRITE_GOLDEN=1 uv run pytest
+  tests/test_replay_golden.py` only when you mean to change the timing.
+- **The prompt now describes the answer, not the tool scaffolding.** At
+  `after_model` on a tool-using turn the only assistant message is the
+  tool-call message, whose text content is usually empty, so the title was
+  written from the request alone. `_get_title_assistant_message` takes the
+  **last** assistant message that carries text — which at `after_agent` is the
+  final answer — and falls back to the first. This is a consequence of the move,
+  not a separate feature: revert it and titles quietly get worse on every turn
+  that used a tool, with nothing failing.
+- **The clarification exit had to be covered, or a whole class of conversation
+  is never named.** `ask_clarification` ends the run with `Command(goto=END)`,
+  which LangGraph honors directly and which therefore **bypasses the
+  `after_agent` node**. That is fine for most middleware and fatal here, because
+  `_should_generate_title` requires *exactly one* user message: miss the first
+  turn and the second turn has two, so the conversation stays *New Conversation*
+  **permanently**. The worker's existing `_ensure_interrupted_title` — written
+  for cancelled runs — now runs on every terminal status instead of only
+  `interrupted`. Its cost on the ordinary success path is **one**
+  `aget_tuple`, and the ordering matters: `_checkpoint_title` is read *before*
+  `wait_for_prior_finalizing`, because that wait is an unbounded poll loop that
+  used to be reached only by cancelled runs. Widening the guard without moving
+  the read first would let one stuck older run hold up the finalization of every
+  completed run on the thread. Do not narrow the guard back to `interrupted` to
+  save the read either: the failure it prevents is silent and permanent.
+- **The per-run preference is a one-way opt-out, and the model name is
+  validated.** `apply_auto_title_preference` (in `config/title_config.py`, so
+  both the lead-agent factory and the run worker resolve it the same way) layers
+  two context keys on the operator's block. `auto_title_enabled: false` disables
+  renaming for the run; an explicit `true` deliberately changes nothing, so a
+  browser can never switch on a feature the operator turned off — the same
+  contract as `memory_enabled` (§ *Long-term memory off by default*).
+  `auto_title_model_name` is checked against `app_config.models` and **dropped**
+  when it names a model the operator has not configured; that string arrives
+  from a client, and honoring it unchecked is how a client picks the run's
+  model. A config object with no `models` attribute at all means "no catalog to
+  check against" and accepts the name — not the same as a configured-but-empty
+  catalog, which rejects everything.
+- **Three states for the model, and two of them look alike.** The key being
+  **absent** means "keep `config.yaml -> title.model_name`"; the **empty string**
+  means "clear it — rename without a model call". Collapsing them is the silent
+  regression: send `""` for both and a user who configured a title model server
+  side quietly stops getting it; omit for both and a user who asked for no model
+  call quietly starts paying for one. The frontend keeps the same three states
+  (`undefined` / `""` / a name) in `localStorage`, and `autoTitleRunContext()`
+  omits the key rather than sending `undefined`.
+
+**Where it's wired.**
+
+| Piece                                                     | Location                                                                                                       |
+| --------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| The hook, and the assistant-message selection             | `backend/packages/harness/deerflow/agents/middlewares/title_middleware.py`                                      |
+| The per-run resolver (pure, shared by both call sites)    | `backend/packages/harness/deerflow/config/title_config.py` (`apply_auto_title_preference`)                      |
+| Applied to the config the middleware chain is built from  | `backend/packages/harness/deerflow/agents/lead_agent/agent.py` (`_assemble_lead_agent`)                         |
+| Clarification / cancellation fallback                     | `backend/packages/harness/deerflow/runtime/runs/worker.py` (`_ensure_interrupted_title`, now on every status)   |
+| Context allowlist (without it the toggle is a no-op)      | `backend/app/gateway/services.py` (`_CONTEXT_CONFIGURABLE_KEYS`)                                                |
+| Operator master switch, for the greyed-out toggle          | `backend/app/gateway/routers/features.py` (`auto_title` in `GET /api/features`)                                |
+| Stored preference and the run-context keys                | `frontend/src/core/settings/local.ts`, `frontend/src/core/threads/run-context.ts` (`autoTitleRunContext`)       |
+| Settings page                                              | `frontend/src/components/workspace/settings/auto-title-settings-page.tsx`                                       |
+| i18n                                                       | `core/i18n/locales/{en-US,zh-CN}.ts` + `types.ts` (`settings.autoTitle.*`)                                      |
+
+**No new config keys.** The page reads `title.enabled` and `title.model_name`,
+which already existed, so `config_version` is deliberately **not** bumped and the
+Helm chart copies are untouched. Adding a key here later does need the full
+`scripts/check_config_version.sh` dance described at the top of this section.
+
+Pinned by `backend/tests/test_auto_title_preference.py` (the hook identity, the
+final-answer prompt, the opt-out direction, the dropped model name, the three
+model states, and the context allowlist) and
+`frontend/tests/unit/core/threads/auto-title.test.ts` (the wire shape of the
+three states, both call sites, the default, and the merge for settings written
+before the toggle existed), plus
+`frontend/tests/e2e/auto-title-settings.spec.ts` for the page itself: the
+default-on toggle, the picker starting on *Server default*, a model pick and
+*No model call* landing in `localStorage` as a name and as `""`, the picker
+disappearing when the switch is off, and the greyed-out toggle explaining the
+operator's `title.enabled`.
+
+**Verify it works.**
+
+```bash
+cd backend && uv run pytest tests/test_auto_title_preference.py tests/test_title_middleware_core_logic.py tests/test_title_generation.py tests/test_features_router.py -q
+cd frontend && corepack pnpm test auto-title lazy-panels
+cd frontend && corepack pnpm test:e2e auto-title-settings
+```
+
+Then end-to-end (`make dev`): open **Settings → Conversation titles**, leave it
+on, start a chat and confirm the sidebar entry changes **only after the answer
+finishes** (and that **Rename** in the chat's ⋯ menu works at that same moment).
+Pick a model in the dropdown and start another chat — the new title should read
+like a summary rather than a truncation. Turn the switch off, start a third chat,
+and confirm it stays *New Conversation*.
 
 ## Credits
 

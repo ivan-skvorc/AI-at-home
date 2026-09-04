@@ -276,18 +276,18 @@ class TestTitleMiddlewareCoreLogic:
         assert title.endswith("...")
         assert title.startswith("这是一个非常长的问题描述")
 
-    def test_aafter_model_delegates_to_async_helper(self, monkeypatch):
+    def test_aafter_agent_delegates_to_async_helper(self, monkeypatch):
         _set_test_title_config(model_name="title-model")
         middleware = TitleMiddleware()
 
         monkeypatch.setattr(middleware, "_agenerate_title_result", AsyncMock(return_value={"title": "异步标题"}))
-        result = asyncio.run(middleware.aafter_model({"messages": []}, runtime=MagicMock()))
+        result = asyncio.run(middleware.aafter_agent({"messages": []}, runtime=MagicMock()))
         assert result == {"title": "异步标题"}
 
         monkeypatch.setattr(middleware, "_agenerate_title_result", AsyncMock(return_value=None))
-        assert asyncio.run(middleware.aafter_model({"messages": []}, runtime=MagicMock())) is None
+        assert asyncio.run(middleware.aafter_agent({"messages": []}, runtime=MagicMock())) is None
 
-    def test_aafter_model_uses_local_fallback_when_no_title_model_is_configured(self, monkeypatch):
+    def test_aafter_agent_uses_local_fallback_when_no_title_model_is_configured(self, monkeypatch):
         """Default async path must not block stream completion on a second LLM call."""
         _set_test_title_config(max_chars=20, model_name=None)
         middleware = TitleMiddleware()
@@ -300,7 +300,7 @@ class TestTitleMiddlewareCoreLogic:
                 AIMessage(content="好的"),
             ]
         }
-        result = asyncio.run(middleware.aafter_model(state, runtime=MagicMock()))
+        result = asyncio.run(middleware.aafter_agent(state, runtime=MagicMock()))
 
         assert result == {"title": "请帮我写测试"}
         create_chat_model.assert_not_called()
@@ -359,15 +359,15 @@ class TestTitleMiddlewareCoreLogic:
         assert result == {"title": "请帮我写测试"}
         create_chat_model.assert_not_called()
 
-    def test_after_model_sync_delegates_to_sync_helper(self, monkeypatch):
+    def test_after_agent_sync_delegates_to_sync_helper(self, monkeypatch):
         middleware = TitleMiddleware()
 
         monkeypatch.setattr(middleware, "_generate_title_result", MagicMock(return_value={"title": "同步标题"}))
-        result = middleware.after_model({"messages": []}, runtime=MagicMock())
+        result = middleware.after_agent({"messages": []}, runtime=MagicMock())
         assert result == {"title": "同步标题"}
 
         monkeypatch.setattr(middleware, "_generate_title_result", MagicMock(return_value=None))
-        assert middleware.after_model({"messages": []}, runtime=MagicMock()) is None
+        assert middleware.after_agent({"messages": []}, runtime=MagicMock()) is None
 
     def test_sync_generate_title_uses_fallback_without_model(self):
         """Sync path avoids LLM calls and derives a local fallback title."""

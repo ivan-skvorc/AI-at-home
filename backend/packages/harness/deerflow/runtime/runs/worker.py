@@ -40,6 +40,7 @@ from deerflow.agents.goal_state import GoalEvaluation, GoalState
 from deerflow.agents.middlewares.input_sanitization_middleware import neutralize_untrusted_tags
 from deerflow.config.app_config import AppConfig
 from deerflow.config.database_config import CheckpointChannelMode
+from deerflow.config.title_config import apply_auto_title_preference
 from deerflow.constants import TOOL_RESULTS_DIRNAME
 from deerflow.runtime.checkpoint_mode import (
     aensure_checkpoint_mode_compatible,
@@ -1513,13 +1514,39 @@ async def run_agent(
                 except Exception:
                     logger.warning("Failed to persist run completion for %s (non-fatal)", run_id, exc_info=True)
 
-            if started and not record.ownership_lost and checkpointer is not None and record.status == RunStatus.interrupted and not _is_edit_replay_run(record):
+            # A first turn that reaches the end of the run with no title is the
+            # one the middleware could not write. Two ways that happens, and
+            # both leave the conversation named "New Conversation" *forever*,
+            # because the next turn has two user messages and the middleware
+            # only ever titles the first: the run was cancelled before the
+            # graph finished, or it exited through a terminal ``Command(goto=END)``
+            # (``ask_clarification``) which bypasses the ``after_agent`` hook the
+            # title is written from. So this runs on every terminal status, not
+            # only ``interrupted``. It is idempotent — a checkpoint that already
+            # carries a title short-circuits without writing.
+            if started and not record.ownership_lost and checkpointer is not None and not _is_edit_replay_run(record):
                 try:
-                    await run_manager.wait_for_prior_finalizing(thread_id, run_id)
-                    if not await run_manager.has_later_started_run(thread_id, run_id):
-                        await _ensure_interrupted_title(checkpointer=checkpointer, thread_id=thread_id, app_config=ctx.app_config, graph_input=graph_input)
+                    # Check for an existing title *before* waiting on older
+                    # same-thread finalization. On the ordinary success path the
+                    # middleware already wrote one, and ``wait_for_prior_finalizing``
+                    # is an unbounded poll loop — it used to be reached only by
+                    # cancelled runs, and a stuck older run must not become a way
+                    # to hold up every completed run on the thread.
+                    if not await _checkpoint_title(checkpointer, thread_id):
+                        await run_manager.wait_for_prior_finalizing(thread_id, run_id)
+                        if not await run_manager.has_later_started_run(thread_id, run_id):
+                            await _ensure_interrupted_title(
+                                checkpointer=checkpointer,
+                                thread_id=thread_id,
+                                # The per-user auto-rename preference (FORK.md §33)
+                                # must gate this fallback too, or opting out would
+                                # still get you a title whenever the middleware did
+                                # not run.
+                                app_config=apply_auto_title_preference(ctx.app_config, _run_context_values(config)) if ctx.app_config is not None else None,
+                                graph_input=graph_input,
+                            )
                 except Exception:
-                    logger.debug("Failed to generate interrupted title for thread %s (non-fatal)", thread_id)
+                    logger.debug("Failed to generate fallback title for thread %s (non-fatal)", thread_id)
 
             # Sync title from checkpoint to threads_meta.display_name
             if started and not record.ownership_lost and checkpointer is not None and thread_store is not None:
@@ -2366,6 +2393,22 @@ def _graph_input_messages(graph_input: Any | None) -> list[Any]:
     return []
 
 
+def _run_context_values(config: Any) -> dict[str, Any]:
+    """Flatten a RunnableConfig's ``configurable`` and ``context`` into one mapping.
+
+    Mirrors the lead agent's ``_get_runtime_config``: the Gateway writes
+    per-run client keys into both, and either one alone can be the only copy
+    depending on which runtime assembled the config.
+    """
+    if not isinstance(config, dict):
+        return {}
+    values = dict(config.get("configurable") or {})
+    context = config.get("context")
+    if isinstance(context, dict):
+        values.update(context)
+    return values
+
+
 def _title_generation_state(channel_values: dict[str, Any], graph_input: Any | None) -> dict[str, Any]:
     state = dict(channel_values)
     messages = state.get("messages")
@@ -2503,6 +2546,17 @@ async def _persist_run_duration(
         thread_id=thread_id,
         durations={run_id: duration_seconds},
     )
+
+
+async def _checkpoint_title(checkpointer: Any, thread_id: str) -> str | None:
+    """The title already persisted for *thread_id*, or ``None``."""
+    ckpt_config = {"configurable": {"thread_id": thread_id, "checkpoint_ns": ""}}
+    ckpt_tuple = await _call_checkpointer_method(checkpointer, "aget_tuple", "get_tuple", ckpt_config)
+    if ckpt_tuple is None:
+        return None
+    checkpoint = getattr(ckpt_tuple, "checkpoint", {}) or {}
+    title = (checkpoint.get("channel_values") or {}).get("title")
+    return title if isinstance(title, str) and title else None
 
 
 async def _ensure_interrupted_title(*, checkpointer: Any, thread_id: str, app_config: AppConfig | None, graph_input: Any | None = None) -> str | None:

@@ -418,6 +418,15 @@ _CONTEXT_CONFIGURABLE_KEYS: frozenset[str] = frozenset(
         # absent falls back to the operator config default. Combined (AND) with
         # the operator master switch ``memory.enabled`` in config.yaml.
         "memory_enabled",
+        # Fork: the per-user automatic-rename preference (FORK.md §33).
+        # ``auto_title_enabled`` explicitly ``false`` stops the run from writing
+        # a title at all; ``auto_title_model_name`` picks which model writes it
+        # ("" = no model call, the local fallback title). Both are one-way
+        # layers on top of ``config.yaml -> title``: a client can never switch
+        # renaming on when the operator disabled it, and a model name outside
+        # the configured catalog is dropped rather than honored.
+        "auto_title_enabled",
+        "auto_title_model_name",
         # Fork: the composer's per-conversation internet switch (FORK.md §27).
         # Explicitly ``false`` drops every internet-reaching tool (the `web` and
         # `browser` groups, MCP, ACP) from the run's catalog, lead agent and

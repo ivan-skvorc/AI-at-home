@@ -44,3 +44,7 @@ yarn-error.log*
 
 # idea files
 .idea
+# local Playwright override (e.g. pointing `executablePath` at the Chromium build
+# an agent sandbox actually ships — see FORK.md's post-sync checklist). Local
+# only; never committed.
+playwright.local.config.ts

@@ -56,6 +56,14 @@ export interface AgentThreadContext extends Record<string, unknown> {
   // injection/extraction/tools for this run; when omitted the backend falls back
   // to the operator config default. Gated on top by config.yaml memory.enabled.
   memory_enabled?: boolean;
+  // Fork: the per-user automatic-rename preference (FORK.md §33). `false` stops
+  // this run from renaming the conversation; omitted falls back to the operator
+  // config. Gated on top by config.yaml title.enabled.
+  auto_title_enabled?: boolean;
+  // Which model writes the title: a configured model name, or `""` for "rename
+  // without a model call". Omitted follows config.yaml title.model_name. A name
+  // the server has not configured is dropped server-side.
+  auto_title_model_name?: string;
   // Per-conversation internet switch (fork feature, FORK.md §27). The composer's
   // globe toggle; scoped to the thread, so one chat can go offline while another
   // keeps browsing. When false the backend assembles the run — lead agent and

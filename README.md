@@ -37,6 +37,7 @@
 > - 🌐 **An internet switch on the composer** — a globe next to the microphone takes **this conversation** offline: web search, page fetching, browser control, MCP servers and external agents are all left out of the run, and the agent answers from your files, the conversation, and its own knowledge instead. It is **per chat, not a global setting** — one conversation can work offline on a private document while another keeps browsing — and **subagents inherit it**, so delegating is not a way around it. The switch is an opt-out: internet stays on until you click it, and the state sticks to that conversation across a reload. Nothing to configure. Two honest limits: it governs the *tools*, so a sandbox shell that your container gives network access still has it (the agent is told not to use it that way), and a model that memorized something is still answering from memory.
 > - 🧠 **Long-term memory off by default** — the agent no longer learns from or injects your saved memory until you opt in. Turn it on per-browser under **Settings → Memory** (the operator can still hard-disable it with `memory.enabled: false` in `config.yaml`, which greys out the toggle). When off, each run sends `memory_enabled: false` and the backend skips memory injection, extraction, and memory tools.
 > - 💡 **Follow-up suggestions off by default** — the clickable follow-up-question chips make an extra model call after every answer, so they now default **off** to save cost. Turn them back on per-browser under **Settings → Suggestions**, where a dropdown also lets you pick which model generates them ("Follow workflow selection" by default, or any configured model — pick a cheap one to keep it cheap).
+> - ✏️ **Conversation renaming you can switch off — and point at a model** — a first message still names the chat, but it is now a setting rather than a fixed behaviour. **Settings → Conversation titles** has the on/off switch and a dropdown for *which* model writes the name: the shipped default spends **no model call at all** (the title is your first message, shortened), and picking a cheap configured model gets you a real summary for a fraction of a cent. Turn it off and a conversation keeps whatever you called it, forever. The rename also **waits for the answer to finish** instead of landing halfway through it — the same moment you get manual renaming back, since the server refuses a rename while a run is in flight. A conversation that ends its first turn by asking *you* a question gets named too, which it previously never did.
 > - 🧩 **Per-thread subagent model dropdown** — in **Ultra mode**, a second model picker lets you route `task` subagents to a cheaper or local model instead of the lead model (defaults to "Follow lead").
 > - 👥 **Multi-user mode toggle (Settings → Account)** — on by default (each login only sees its own conversations). Turn it off — after a confirmation — to combine every conversation into one shared workspace, so all histories are visible no matter which login or device created them (handy after going passwordless, when old per-account chats are stranded under different ids). Server-wide, admin-only, and reversible; while off, anyone who can reach the server sees all conversations, so keep it to a trusted machine.
 > - 🛡️ **Deployment exposure check** — passwordless auth, multi-user-mode-off, and a non-loopback `BIND_HOST` are each defensible alone but together decide who can reach your instance and as whom. `make doctor` (and the end of `make up` / `make dev`) computes and prints that combined posture, so you learn you've exposed a passwordless instance from your own tooling rather than from a stranger. Diagnosis only — it changes no default.
@@ -137,6 +138,7 @@ DeerFlow has newly integrated the intelligent search and crawling toolset indepe
     - [Internet Access Switch](#internet-access-switch)
     - [Concurrent Chats](#concurrent-chats)
     - [Folders in the Sidebar](#folders-in-the-sidebar)
+    - [Automatic Conversation Titles](#automatic-conversation-titles)
   - [Recommended Models](#recommended-models)
   - [Embedded Python Client](#embedded-python-client)
   - [Scheduled Tasks](#scheduled-tasks)
@@ -1944,6 +1946,55 @@ its place in the recency order instead of jumping to the top of the list the
 moment you drag it.
 
 Nothing to configure; it is on as soon as you have a conversation to file.
+
+### Automatic Conversation Titles
+
+A new conversation is called *New Conversation* until something renames it.
+DeerFlow renames it from the first exchange, and **Settings → Conversation
+titles** is where you decide whether it does that at all and what it costs. The
+switch beside the page heading turns automatic renaming off; a conversation then
+keeps whatever you call it yourself, indefinitely.
+
+Under the switch is a **Title model** dropdown with three kinds of answer:
+
+- **No model call** — the title is your first message, shortened. Free,
+  instant, and surprisingly good, because a first message is usually a question
+  about one thing.
+- **A configured model** — that model reads the first question and the answer to
+  it and writes a short title. It sees at most 500 characters of each, so even a
+  premium model costs a fraction of a cent per conversation; a cheap or local one
+  costs nothing worth measuring.
+- **Server default** — follow whatever the operator set in `config.yaml`, which
+  is what a fresh install does. **The shipped default is no model call**, so
+  DeerFlow does not quietly bill you for titles.
+
+**The rename waits for the answer to finish.** This is the part worth knowing:
+the Gateway refuses to rename a conversation while a run is in flight (that is
+why the **Rename** menu item does nothing mid-answer), so the automatic rename is
+deliberately scheduled for the end of the turn — the same moment your own rename
+becomes possible again. A side effect is that the title now describes the
+*answer* as well as the question, because the answer exists by the time it is
+written. A first turn that ends by **asking you** a clarifying question is
+renamed too, which it previously never was: it exits the run through a different
+path, and the conversation used to stay called *New Conversation* forever, since
+only the first turn is ever titled.
+
+The preference lives in your browser (per browser, like the other client
+settings). The operator's master switch is `config.yaml`, and turning it off
+there greys out the toggle with an explanation rather than silently ignoring it:
+
+```yaml
+title:
+  enabled: true # false disables automatic renaming for everyone
+  max_words: 6
+  max_chars: 60
+  model_name: null # null = no model call (shortened first message)
+```
+
+`max_words` and `max_chars` bound the model's output; the shortened-first-message
+path honours `max_chars` too. No new configuration keys — the settings page reads
+the block that was already there, and the per-user choice is layered on top of it
+at run time.
 
 ## Recommended Models
 

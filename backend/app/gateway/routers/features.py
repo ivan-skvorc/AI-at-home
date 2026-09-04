@@ -36,6 +36,18 @@ class McpTasksFeature(BaseModel):
     enabled: bool = Field(..., description="Whether durable MCP task APIs and UI are available")
 
 
+class AutoTitleFeature(BaseModel):
+    """Operator master switch for automatic conversation renaming (fork feature).
+
+    The Web UI layers a per-user preference on top of this; reporting the
+    operator value lets Settings grey the toggle out with an explanation
+    instead of offering a switch that the server will ignore.
+    """
+
+    enabled: bool = Field(..., description="Whether config.yaml -> title.enabled allows automatic renaming")
+    model_name: str | None = Field(default=None, description="Model the operator configured for titles; null means the local fallback title")
+
+
 class SubagentBatchesFeature(BaseModel):
     """Persistence, worker, and process capacity for native-subagent batches."""
 
@@ -49,6 +61,7 @@ class FeaturesResponse(BaseModel):
     """Frontend-facing feature availability flags."""
 
     agents_api: AgentsApiFeature
+    auto_title: AutoTitleFeature
     browser_control: BrowserControlFeature
     mcp_tasks: McpTasksFeature
     subagent_batches: SubagentBatchesFeature
@@ -66,6 +79,10 @@ async def list_features(request: Request, config: AppConfig = Depends(get_config
     subagent_batch_worker_running = bool(getattr(request.app.state, "subagent_batches_available", False))
     return FeaturesResponse(
         agents_api=AgentsApiFeature(enabled=config.agents_api.enabled),
+        # Config-only, so it is read through ``get_config`` on every request:
+        # flipping ``title.enabled`` in config.yaml reaches the Settings page
+        # without a Gateway restart.
+        auto_title=AutoTitleFeature(enabled=config.title.enabled, model_name=config.title.model_name),
         browser_control=BrowserControlFeature(enabled=browser.available),
         # MCP task bindings and the submitter are startup-scoped. Report the
         # capability that actually started rather than a hot-reloaded config

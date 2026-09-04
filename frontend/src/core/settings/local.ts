@@ -29,6 +29,14 @@ export const DEFAULT_LOCAL_SETTINGS: LocalSettings = {
     enabled: false,
     modelName: undefined,
   },
+  // Automatic conversation renaming after the first exchange. ON by default, so
+  // a fresh install behaves as it did before the switch existed; `modelName`
+  // undefined means "whatever config.yaml -> title.model_name says" (null there
+  // = the free local fallback title, which is the shipped default).
+  autoTitle: {
+    enabled: true,
+    modelName: undefined,
+  },
   // Long-term memory defaults OFF on a fresh install so the agent does not learn
   // from / inject conversation context until the user explicitly opts in from
   // Settings → Memory. When off, the per-run `memory_enabled` flag is sent to the
@@ -154,6 +162,18 @@ export interface LocalSettings {
     // selected model (the thread's current lead model).
     modelName?: string | undefined;
   };
+  autoTitle: {
+    // Whether a conversation is renamed automatically after its first exchange.
+    // Sent to the backend as the per-run `auto_title_enabled` flag; `false`
+    // stops the run from writing a title. Combined (logical AND) with the
+    // operator master switch `title.enabled` in config.yaml.
+    enabled: boolean;
+    // Which model writes the title. `undefined` = follow the operator's
+    // `title.model_name`; `""` = rename without a model call (truncate the
+    // first message); a name = that model. The three states are distinct on
+    // purpose — see FORK.md §33.
+    modelName?: string | undefined;
+  };
   memory: {
     // Whether long-term memory is used for this user. Sent to the backend as the
     // per-run `memory_enabled` flag; when false the backend skips memory
@@ -202,6 +222,10 @@ export function mergeLocalSettings(
     suggestions: {
       ...DEFAULT_LOCAL_SETTINGS.suggestions,
       ...settings?.suggestions,
+    },
+    autoTitle: {
+      ...DEFAULT_LOCAL_SETTINGS.autoTitle,
+      ...settings?.autoTitle,
     },
     memory: {
       ...DEFAULT_LOCAL_SETTINGS.memory,

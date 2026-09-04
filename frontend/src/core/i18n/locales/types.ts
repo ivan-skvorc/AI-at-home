@@ -965,6 +965,7 @@ export interface Translations {
       skills: string;
       notification: string;
       suggestions: string;
+      autoTitle: string;
       systemPrompt: string;
       about: string;
     };
@@ -1285,6 +1286,19 @@ export interface Translations {
       modelLabel: string;
       modelHint: string;
       followWorkflow: string;
+      serverDisabledHint: string;
+    };
+    autoTitle: {
+      title: string;
+      description: string;
+      modelLabel: string;
+      modelHint: string;
+      followServer: string;
+      followServerModel: (model: string) => string;
+      followServerFallback: string;
+      noModel: string;
+      noModelHint: string;
+      timingHint: string;
       serverDisabledHint: string;
     };
     systemPrompt: {

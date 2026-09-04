@@ -30,7 +30,21 @@ class TitleMiddlewareState(AgentState):
 
 
 class TitleMiddleware(AgentMiddleware[TitleMiddlewareState]):
-    """Automatically generate a title for the thread after the first user message."""
+    """Automatically generate a title for the thread after the first user message.
+
+    The title is written from the ``after_agent`` hook, i.e. once the whole turn
+    has finished, not from ``after_model`` after the first model call. Two
+    reasons, and both are load-bearing (fork feature, FORK.md §33):
+
+    * A manual rename is a checkpoint write, and the Gateway refuses one while a
+      run is in flight (``409 Thread has a run in flight``). Renaming at the end
+      of the turn puts the automatic rename in the same window the user gets
+      their own rename back, instead of landing mid-answer.
+    * At ``after_model`` on a tool-using turn the only assistant message is the
+      tool-call scaffolding, whose text content is usually empty. At
+      ``after_agent`` the final answer exists, so the prompt describes the turn
+      the user actually saw.
+    """
 
     state_schema = TitleMiddlewareState
 
@@ -122,6 +136,25 @@ class TitleMiddleware(AgentMiddleware[TitleMiddlewareState]):
             user_msg_content = self._message_content(user_message)
         return self._normalize_content(user_msg_content)
 
+    def _get_title_assistant_message(self, state: TitleMiddlewareState) -> str:
+        """The assistant text the title should describe.
+
+        Running at ``after_agent`` means the turn is complete, so prefer the
+        *last* assistant message that actually carries text: on a tool-using
+        turn the earlier ones are tool-call scaffolding with empty content, and
+        titling from those is what made pre-fork titles read like the request
+        rather than the answer. Falls back to the first assistant message so a
+        turn whose only text lives there still gets a prompt.
+        """
+        messages = state.get("messages") or []
+        assistant_contents = [self._message_content(m) for m in messages if self._message_type(m) == "ai"]
+        for content in reversed(assistant_contents):
+            text = self._strip_think_tags(self._normalize_content(content))
+            if text:
+                return text
+        first = assistant_contents[0] if assistant_contents else ""
+        return self._strip_think_tags(self._normalize_content(first))
+
     def _should_generate_title(self, state: TitleMiddlewareState, *, allow_partial_exchange: bool = False) -> bool:
         """Check if we should generate a title for this thread."""
         config = self._get_title_config()
@@ -156,12 +189,9 @@ class TitleMiddleware(AgentMiddleware[TitleMiddlewareState]):
         Returns (prompt_string, user_msg) so callers can use user_msg as fallback.
         """
         config = self._get_title_config()
-        messages = state.get("messages") or []
-
-        assistant_msg_content = next((self._message_content(m) for m in messages if self._message_type(m) == "ai"), "")
 
         user_msg = self._get_title_user_message(state)
-        assistant_msg = self._strip_think_tags(self._normalize_content(assistant_msg_content))
+        assistant_msg = self._get_title_assistant_message(state)
 
         prompt = config.prompt_template.format(
             max_words=config.max_words,
@@ -276,11 +306,11 @@ class TitleMiddleware(AgentMiddleware[TitleMiddlewareState]):
         return {"title": self._fallback_title(user_msg)}
 
     @override
-    def after_model(self, state: TitleMiddlewareState, runtime: Runtime) -> dict | None:
+    def after_agent(self, state: TitleMiddlewareState, runtime: Runtime) -> dict | None:
         return self._generate_title_result(state)
 
     @override
-    async def aafter_model(self, state: TitleMiddlewareState, runtime: Runtime) -> dict | None:
+    async def aafter_agent(self, state: TitleMiddlewareState, runtime: Runtime) -> dict | None:
         from deerflow_extension_api import task_store_from_runtime
 
         return await self._agenerate_title_result(

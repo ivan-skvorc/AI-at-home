@@ -1,4 +1,5 @@
 import type { InputMode } from "../models/capabilities";
+import { getLocalSettings } from "../settings/local";
 
 import {
   type DemocracyGrading,
@@ -116,4 +117,36 @@ export function resolveInternetEnabled(context: {
   internet_enabled?: unknown;
 }): boolean {
   return context.internet_enabled !== false;
+}
+
+/**
+ * The automatic-rename keys for the run context (fork feature, FORK.md §33).
+ *
+ * Read at submit time rather than at hook-render time so a preference changed
+ * in Settings applies to the very next message, with no remount.
+ *
+ * Three states, and the difference between the last two is the whole point of
+ * the model picker:
+ *   - renaming off        -> `auto_title_enabled: false`, and no model key at
+ *                            all (there is nothing to pick a model for).
+ *   - "server default"    -> the model key is **omitted**, so the backend keeps
+ *                            whatever `config.yaml -> title.model_name` says.
+ *   - an explicit choice  -> the model name, or `""` for "rename without a
+ *                            model call".
+ * Sending `undefined` instead of omitting would be the same on the wire but is
+ * left to the object spread deliberately: an omitted key is what the backend
+ * reads as "no opinion".
+ */
+export function autoTitleRunContext(): {
+  auto_title_enabled: boolean;
+  auto_title_model_name?: string;
+} {
+  const { enabled, modelName } = getLocalSettings().autoTitle;
+  if (!enabled) {
+    return { auto_title_enabled: false };
+  }
+  return {
+    auto_title_enabled: true,
+    ...(modelName === undefined ? {} : { auto_title_model_name: modelName }),
+  };
 }
