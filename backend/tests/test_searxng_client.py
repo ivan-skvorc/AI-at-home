@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from deerflow.community.searxng import tools
-from deerflow.community.searxng.searxng_client import SearxngClient
+from deerflow.community.searxng.searxng_client import SearxngClient, SearxngEnginesUnavailableError
 
 
 class AsyncMock(MagicMock):
@@ -247,3 +247,98 @@ class TestSearxngTools:
             await tools.web_search_tool.ainvoke({"query": "latest release", "time_range": "week"})
 
         mock_client.search.assert_called_once_with("latest release", max_results=5, time_range="week")
+
+
+@pytest.mark.asyncio
+class TestUnresponsiveEngines:
+    """SearXNG answers 200 with an empty `results` when its engines are blocked.
+
+    It names the failures in `unresponsive_engines` and benches each blocked
+    engine for ~180s. Discarding that field turns a total engine outage into a
+    successful empty search, so the agent immediately re-queries — which
+    re-triggers the block and extends the suspension. The observable symptom is
+    a search tool that works for the first few calls of a run and then returns
+    nothing for the rest.
+    """
+
+    @staticmethod
+    def _patched(payload):
+        patcher = patch("deerflow.community.searxng.searxng_client.httpx.AsyncClient")
+        mock_cls = patcher.start()
+        mock_ctx = MagicMock()
+        mock_cls.return_value.__aenter__.return_value = mock_ctx
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = payload
+        mock_resp.raise_for_status.return_value = None
+        mock_ctx.get = AsyncMock(return_value=mock_resp)
+        return patcher
+
+    async def test_all_engines_blocked_raises_rather_than_returning_empty(self):
+        patcher = self._patched(
+            {
+                "results": [],
+                "unresponsive_engines": [
+                    ["brave", "too many requests"],
+                    ["duckduckgo", "access denied"],
+                    ["startpage", "CAPTCHA"],
+                ],
+            }
+        )
+        try:
+            client = SearxngClient(base_url="http://searxng:8080")
+            with pytest.raises(SearxngEnginesUnavailableError) as excinfo:
+                await client.search("blocked query")
+            message = str(excinfo.value)
+            assert "brave" in message
+            assert "duckduckgo" in message
+            assert "too many requests" in message
+        finally:
+            patcher.stop()
+
+    async def test_a_genuinely_empty_result_set_is_still_a_success(self):
+        # No engine failed; the query simply matched nothing. This must stay an
+        # empty success, not an error.
+        patcher = self._patched({"results": [], "unresponsive_engines": []})
+        try:
+            client = SearxngClient(base_url="http://searxng:8080")
+            assert await client.search("nothing matches this") == []
+        finally:
+            patcher.stop()
+
+    async def test_partial_engine_failure_with_results_is_not_an_error(self):
+        # Degraded but usable: some engines answered. Returning what we have
+        # beats failing the whole call.
+        patcher = self._patched(
+            {
+                "results": [{"title": "Page", "url": "https://example.com", "content": "Snippet"}],
+                "unresponsive_engines": [["wikipedia", "timeout"]],
+            }
+        )
+        try:
+            client = SearxngClient(base_url="http://searxng:8080")
+            results = await client.search("partial")
+            assert len(results) == 1
+        finally:
+            patcher.stop()
+
+    async def test_malformed_unresponsive_engines_does_not_crash_the_client(self):
+        # The field is upstream-shaped; never let parsing it become the failure.
+        patcher = self._patched({"results": [], "unresponsive_engines": "brave"})
+        try:
+            client = SearxngClient(base_url="http://searxng:8080")
+            with pytest.raises(SearxngEnginesUnavailableError):
+                await client.search("odd payload")
+        finally:
+            patcher.stop()
+
+    async def test_the_tool_reports_the_engine_failure_as_an_error(self):
+        # tools.web_search_tool serializes exceptions into {"error": ...}, which
+        # is what actually reaches the agent.
+        with patch.object(tools, "_get_tool_config", return_value=None), patch.object(tools, "_get_searxng_client") as get_client:
+            client = MagicMock()
+            client.search = AsyncMock(side_effect=SearxngEnginesUnavailableError("every engine is suspended: brave (too many requests)"))
+            get_client.return_value = client
+            payload = json.loads(await tools.web_search_tool.ainvoke({"query": "blocked"}))
+        assert "error" in payload
+        assert "brave" in payload["error"]

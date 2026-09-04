@@ -2344,8 +2344,16 @@ class TestThreadSafety:
         asyncio.run(schedule_from_caller())
 
         assert completed.wait(timeout=10), "work pinned to the persistent subagent loop must run after caller-loop teardown"
-        assert handles[0].done()
+        # `completed.set()` is the coroutine's last statement, but the Future
+        # from `asyncio.run_coroutine_threadsafe` is only marked done by a
+        # loop callback that fires *after* the coroutine returns. Asserting
+        # `done()` straight off the event therefore races the loop and fails
+        # whenever this thread wins — intermittently, and only under the load
+        # of a full run. `result()` blocks until that callback has run, so it
+        # is both the stronger assertion and the ordered one; `done()` is
+        # checked after it, where it is guaranteed rather than hoped for.
         assert handles[0].result(timeout=10) is None
+        assert handles[0].done()
 
     def test_multiple_executors_in_parallel(self, classes, base_config, msg):
         """Test multiple executors running in parallel via thread pool."""

@@ -23,3 +23,32 @@ search:
   formats:
     - html
     - json
+
+# 3. A blocked engine must degrade the search, not zero it out.
+#
+# SearXNG's stock default mix leans on Google CSE, DuckDuckGo, Brave and
+# Startpage. All four CAPTCHA or block shared and datacenter IP ranges
+# aggressively — which is every commercial VPN exit, and a VPN is the normal
+# shape for a privacy-motivated self-hosted stack. When they all fail at once
+# SearXNG still answers HTTP 200, with an empty `results` array, and benches
+# each blocked engine for ~180 seconds; the agent re-queries into the
+# suspension and extends it. (The client now raises on that state instead of
+# reporting an empty success — see SearxngEnginesUnavailableError.)
+#
+# Enabling engines that tolerate datacenter exits means a blocked consumer
+# engine costs some results rather than all of them. These are on by name so
+# the mix is explicit and reviewable; `use_default_settings: true` above keeps
+# everything else SearXNG ships.
+#
+# Verified against SearXNG's own searx/settings.yml: all three carry
+# `disabled: true` upstream (so this genuinely turns them on), while
+# duckduckgo, brave and startpage are enabled by default (so they are the mix
+# that fails on a VPN). Engine names must exist in that file or SearXNG
+# refuses to start, which is why they are checked rather than guessed.
+engines:
+  - name: mojeek
+    disabled: false
+  - name: qwant
+    disabled: false
+  - name: bing
+    disabled: false

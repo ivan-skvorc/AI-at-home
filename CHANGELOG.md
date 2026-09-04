@@ -9,6 +9,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **search/fetch:** **Three defaults that made a fresh install fail behind a VPN.**
+  (1) The gateway image shipped Camoufox without the GTK/X11 libraries it loads,
+  so the *default* `web_fetch` backend was present on disk and unable to start on
+  every clean build — and every presence check passed, so it surfaced only as a
+  fetch tool that errored on each call. (2) A stale `GITHUB_TOKEN` (loaded into
+  the gateway with the rest of `.env`, where it exists for the sandbox) made
+  Camoufox's release lookup fail with 401 instead of falling back to the
+  anonymous path that works; the token is now stripped for that one subprocess.
+  (3) When SearXNG's engines are blocked it answers HTTP 200 with an empty result
+  list and names the failures in `unresponsive_engines` — which was discarded, so
+  a total engine outage looked like a successful empty search and the agent
+  re-queried straight into the 180-second suspension, extending it. That state is
+  now an error naming the engines; a genuinely empty result set is still a
+  success, and a partial failure still returns what it has. `web_fetch`'s timeout
+  goes 10s → 30s (it drives a full Firefox render, not an HTTP GET), and the
+  bundled SearXNG enables `mojeek`, `qwant` and `bing` so a blocked consumer
+  engine costs some results instead of all of them. `fallback: jina` stays off by
+  default on purpose — it would send every fetched URL to a third party.
+
+- **models:** **A local model too big for your card gets a context window it can
+  actually run in.** The launch-time Ollama sync sized every model as
+  `vram - weights - overhead` and fell back to a 4096-token window when that went
+  negative — smaller than the agent's own system prompt, so a 128K-native model
+  was configured into uselessness. Such a model now gets a usable window, and a
+  deliberately **bounded** one: Ollama splits whole layers between GPU and CPU and,
+  when weights and KV cache do not both fit, keeps the cache and pushes layers to
+  the CPU — so an unlimited window would trade a model that cannot run for one
+  that merely crawls. Models that fit in VRAM are sized exactly as before. New
+  optional key `ollama.system_ram_gb` (**unset by default**, detected by
+  `make setup`) adds one launch-time warning naming any installed model whose
+  weights exceed VRAM and RAM together, the state where Ollama pages from disk.
+  It never changes a model choice.
+
 - **chat:** **An internet switch on the conversation.** The composer gains a globe
   button that takes *this chat* offline: the run is assembled with no
   internet-reaching tool in it at all — `web_search`, `web_fetch`, browser

@@ -1147,6 +1147,64 @@ class TestOllamaSectionInConfig:
         assert "ollama" not in data
 
 
+class TestSystemRamDetection:
+    """MoE expert offload spills into system RAM, so the sizing needs to know it."""
+
+    def test_reads_meminfo_on_linux(self):
+        meminfo = "MemTotal:       65780132 kB\nMemFree:         1234 kB\n"
+        assert abs(ollama_step.parse_meminfo_gib(meminfo) - 62.73) < 0.05
+
+    def test_meminfo_without_memtotal_is_none(self):
+        assert ollama_step.parse_meminfo_gib("MemFree: 1234 kB\n") is None
+
+    def test_malformed_meminfo_is_none(self):
+        assert ollama_step.parse_meminfo_gib("MemTotal:  not-a-number kB\n") is None
+
+    def test_detect_prefers_meminfo_then_sysctl(self):
+        detected = ollama_step.detect_system_ram_gb(
+            read_meminfo=lambda: "MemTotal:       65780132 kB\n",
+            run=lambda *_a, **_k: None,
+        )
+        assert abs(detected - 62.73) < 0.05
+
+    def test_detect_falls_back_to_sysctl(self):
+        detected = ollama_step.detect_system_ram_gb(
+            read_meminfo=lambda: None,
+            run=lambda args, **_k: str(64 * 1024**3) if "hw.memsize" in args else None,
+        )
+        assert abs(detected - 64.0) < 0.01
+
+    def test_detect_returns_none_when_nothing_reports(self):
+        assert ollama_step.detect_system_ram_gb(read_meminfo=lambda: None, run=lambda *_a, **_k: None) is None
+
+
+class TestSystemRamInConfig:
+    def test_system_ram_written_when_provided(self):
+        content = build_minimal_config(
+            provider_use="langchain_ollama:ChatOllama",
+            model_name="qwen3:32b",
+            display_name="Ollama / qwen3:32b",
+            api_key_field="api_key",
+            env_var=None,
+            ollama_vram_gb=24.0,
+            ollama_system_ram_gb=64.0,
+        )
+        data = yaml.safe_load(content)
+        assert data["ollama"] == {"vram_gb": 24.0, "system_ram_gb": 64.0}
+
+    def test_system_ram_omitted_when_unset(self):
+        content = build_minimal_config(
+            provider_use="langchain_ollama:ChatOllama",
+            model_name="qwen3:32b",
+            display_name="Ollama / qwen3:32b",
+            api_key_field="api_key",
+            env_var=None,
+            ollama_vram_gb=24.0,
+        )
+        data = yaml.safe_load(content)
+        assert "system_ram_gb" not in data["ollama"]
+
+
 class TestCamoufoxDefaultFetchProvider:
     """The wizard's default web_fetch must match DeerFlow's repo-wide default:
     the web_fetch dispatcher with the local Camoufox browser backend."""

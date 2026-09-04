@@ -446,11 +446,15 @@ class TestVramNumCtxLimit:
         limit = sync_ollama.vram_num_ctx_limit(QWEN3_SHOW, QWEN3_WEIGHTS, 16 * GIB)
         assert limit == 69632
 
-    def test_no_room_floors_at_minimum(self):
-        # Weights + overhead already exceed 6 GiB: still write a usable floor
-        # (Ollama degrades by offloading layers to CPU, not by crashing).
+    def test_no_room_takes_the_offload_floor_not_the_old_4096(self):
+        # Weights + overhead exceed 6 GiB, so this is the partial-offload path.
+        # It used to return MIN_VRAM_NUM_CTX (4096), which is smaller than the
+        # agent's own system prompt — a window that "fits" but cannot be used.
+        # Ollama degrades by moving layers to CPU rather than crashing, so the
+        # right answer is a usable window, bounded (see
+        # TestVramNumCtxLimitUnderOffload) so it does not evict the weights.
         limit = sync_ollama.vram_num_ctx_limit(QWEN3_SHOW, QWEN3_WEIGHTS, 6 * GIB)
-        assert limit == sync_ollama.MIN_VRAM_NUM_CTX
+        assert limit == sync_ollama.MIN_OFFLOAD_NUM_CTX
 
     def test_unknown_geometry_returns_none(self):
         assert sync_ollama.vram_num_ctx_limit({"model_info": {}}, QWEN3_WEIGHTS, 8 * GIB) is None
@@ -530,3 +534,144 @@ class TestResolveSizingSettings:
         vram_bytes, kv = sync_ollama.resolve_sizing_settings(None, None, CLEAN_CONFIG)
         assert vram_bytes is None
         assert kv == "f16"
+
+
+# ── Models bigger than VRAM ───────────────────────────────────────────────────
+# Ollama splits whole layers between GPU and CPU (num_gpu); it does not offload
+# MoE experts the way llama.cpp's --n-cpu-moe does (ollama/ollama#11772 is open),
+# and when weights and KV cache do not both fit it keeps the cache and drops GPU
+# layers (ollama/ollama#9750). So context is bought with layers, and the sizing
+# has to be bounded in both directions: 4096 leaves the agent unable to run, and
+# "whatever fits" evicts the weights it needs.
+GPT_OSS_120B_SHOW = {
+    "capabilities": ["tools", "thinking"],
+    "model_info": {
+        "general.architecture": "gptoss",
+        "general.parameter_count": 116_800_000_000,
+        "gptoss.block_count": 36,
+        "gptoss.context_length": 131072,
+        "gptoss.embedding_length": 2880,
+        "gptoss.attention.head_count": 64,
+        "gptoss.attention.head_count_kv": 8,
+        "gptoss.attention.key_length": 64,
+        "gptoss.attention.value_length": 64,
+        "gptoss.expert_count": 128,
+        "gptoss.expert_used_count": 4,
+        "gptoss.expert_feed_forward_length": 2880,
+    },
+}
+GPT_OSS_120B_WEIGHTS = int(60.8 * GIB)  # native MXFP4 on disk
+
+
+class TestVramNumCtxLimitUnderOffload:
+    """The regression this change exists for, bounded on both sides."""
+
+    def test_a_model_bigger_than_vram_gets_a_window_the_agent_can_run_in(self):
+        # Was MIN_VRAM_NUM_CTX (4096) — below the agent's own system prompt,
+        # tool schemas, skills and memory, so the model was unusable.
+        limit = sync_ollama.vram_num_ctx_limit(GPT_OSS_120B_SHOW, GPT_OSS_120B_WEIGHTS, 24 * GIB)
+        assert limit >= sync_ollama.MIN_OFFLOAD_NUM_CTX
+
+    def test_it_does_not_hand_the_whole_card_to_the_kv_cache(self):
+        # Ollama pays for context in GPU layers, so an unbounded window would
+        # push the weights onto the CPU and make generation crawl. Cap the KV
+        # cache's share of VRAM.
+        limit = sync_ollama.vram_num_ctx_limit(GPT_OSS_120B_SHOW, GPT_OSS_120B_WEIGHTS, 24 * GIB)
+        per_token = sync_ollama.parse_kv_bytes_per_token(GPT_OSS_120B_SHOW)
+        assert limit * per_token <= 24 * GIB * sync_ollama.OFFLOAD_KV_VRAM_SHARE
+
+    def test_a_model_that_fits_still_takes_all_the_spare_vram(self):
+        # Every pre-existing expectation: the fits-in-VRAM path is untouched.
+        assert sync_ollama.vram_num_ctx_limit(QWEN3_SHOW, QWEN3_WEIGHTS, 8 * GIB) == 10240
+        assert sync_ollama.vram_num_ctx_limit(QWEN3_SHOW, QWEN3_WEIGHTS, 16 * GIB) == 69632
+
+    def test_parallel_slots_still_divide_the_offloaded_window(self):
+        one = sync_ollama.vram_num_ctx_limit(GPT_OSS_120B_SHOW, GPT_OSS_120B_WEIGHTS, 24 * GIB, "f16", 1)
+        two = sync_ollama.vram_num_ctx_limit(GPT_OSS_120B_SHOW, GPT_OSS_120B_WEIGHTS, 24 * GIB, "f16", 2)
+        assert two < one
+
+    def test_unknown_geometry_returns_none(self):
+        assert sync_ollama.vram_num_ctx_limit({"model_info": {}}, GPT_OSS_120B_WEIGHTS, 24 * GIB) is None
+
+    def test_unknown_weights_returns_none(self):
+        assert sync_ollama.vram_num_ctx_limit(GPT_OSS_120B_SHOW, None, 24 * GIB) is None
+
+
+class TestSystemRamSetting:
+    """`ollama.system_ram_gb` is the second memory pool offload spills into."""
+
+    def test_reads_system_ram_gb(self):
+        text = "ollama:\n  vram_gb: 24\n  system_ram_gb: 64\n"
+        assert sync_ollama.parse_ollama_settings(text) == {"vram_gb": 24.0, "system_ram_gb": 64.0}
+
+    def test_invalid_system_ram_is_dropped(self):
+        text = "ollama:\n  vram_gb: 24\n  system_ram_gb: plenty\n"
+        assert sync_ollama.parse_ollama_settings(text) == {"vram_gb": 24.0}
+
+    def test_non_positive_system_ram_is_dropped(self):
+        text = "ollama:\n  vram_gb: 24\n  system_ram_gb: 0\n"
+        assert sync_ollama.parse_ollama_settings(text) == {"vram_gb": 24.0}
+
+
+class TestOffloadCapacityWarning:
+    """Weights that exceed VRAM + system RAM page from disk — tokens/sec collapses."""
+
+    def test_warns_when_weights_exceed_both_pools(self):
+        warning = sync_ollama.offload_capacity_warning(
+            [("deepseek-v4-flash:q4", GPT_OSS_120B_SHOW, int(156 * GIB))],
+            vram_bytes=24 * GIB,
+            system_ram_bytes=64 * GIB,
+        )
+        assert warning is not None
+        assert "deepseek-v4-flash:q4" in warning
+        assert "156" in warning
+
+    def test_silent_when_the_model_fits_the_two_pools(self):
+        warning = sync_ollama.offload_capacity_warning(
+            [("gpt-oss:120b", GPT_OSS_120B_SHOW, GPT_OSS_120B_WEIGHTS)],
+            vram_bytes=24 * GIB,
+            system_ram_bytes=64 * GIB,
+        )
+        assert warning is None
+
+    def test_silent_without_a_system_ram_budget(self):
+        # Nothing configured means nothing to compare against; stay quiet
+        # rather than guessing the machine's RAM.
+        warning = sync_ollama.offload_capacity_warning(
+            [("huge:model", GPT_OSS_120B_SHOW, int(900 * GIB))],
+            vram_bytes=24 * GIB,
+            system_ram_bytes=None,
+        )
+        assert warning is None
+
+    def test_names_every_oversized_model(self):
+        warning = sync_ollama.offload_capacity_warning(
+            [
+                ("a:big", GPT_OSS_120B_SHOW, int(200 * GIB)),
+                ("b:ok", GPT_OSS_120B_SHOW, GPT_OSS_120B_WEIGHTS),
+                ("c:big", GPT_OSS_120B_SHOW, int(300 * GIB)),
+            ],
+            vram_bytes=24 * GIB,
+            system_ram_bytes=64 * GIB,
+        )
+        assert "a:big" in warning
+        assert "c:big" in warning
+        assert "b:ok" not in warning
+
+
+class TestVramContentionForBigModels:
+    """Two models bigger than the card still evict each other."""
+
+    def test_two_oversized_models_contend(self):
+        loaded = [
+            ("gpt-oss:120b", GPT_OSS_120B_SHOW, GPT_OSS_120B_WEIGHTS),
+            ("gpt-oss:120b-b", GPT_OSS_120B_SHOW, GPT_OSS_120B_WEIGHTS),
+        ]
+        assert sync_ollama.vram_contention_warning(loaded, 24 * GIB) is not None
+
+    def test_two_dense_models_that_fit_do_not(self):
+        loaded = [
+            ("qwen3:8b", QWEN3_SHOW, QWEN3_WEIGHTS),
+            ("qwen3:8b-b", QWEN3_SHOW, QWEN3_WEIGHTS),
+        ]
+        assert sync_ollama.vram_contention_warning(loaded, 24 * GIB) is None

@@ -44,6 +44,17 @@ the per-token cost versus the default ``f16``, roughly doubling the affordable
 window. An explicit ``--num-ctx-cap`` still applies as a hard ceiling; models
 whose geometry can't be read fall back to the flat-cap behavior.
 
+Models bigger than VRAM: Ollama splits whole layers between GPU and CPU rather
+than offloading MoE experts the way llama.cpp's ``--n-cpu-moe`` does, and when
+the weights and KV cache do not both fit it keeps the cache and drops GPU
+layers. A larger window is therefore paid for in layers, so such a model gets a
+bounded share of VRAM for context (``OFFLOAD_KV_VRAM_SHARE``) with a floor the
+agent can actually run in (``MIN_OFFLOAD_NUM_CTX``) — not the 4096-token floor
+that made a 128K-native model unusable, and not the whole card either.
+``ollama.system_ram_gb`` / ``--system-ram-gb`` names the pool those offloaded
+layers land in; it is used to warn when a model's weights exceed VRAM + RAM and
+would be paged from disk.
+
 Concurrent chats: Ollama answers ``OLLAMA_NUM_PARALLEL`` requests per model at a
 time and queues the rest, so on the default of 1 a second chat cannot start
 generating until the first one finishes. Tell the sizing how many slots the
@@ -114,6 +125,23 @@ DEFAULT_NUM_PARALLEL = 1
 # doesn't fit, and odd sizes buy nothing.
 MIN_VRAM_NUM_CTX = 4096
 NUM_CTX_STEP = 2048
+
+# ── Models too big for VRAM ───────────────────────────────────────────────────
+# Ollama does NOT offload MoE experts the way llama.cpp's --n-cpu-moe does
+# (ollama/ollama#11772 is still open). It splits *whole layers* between GPU and
+# CPU via num_gpu, and when a model plus its KV cache do not both fit it
+# prioritises the KV cache and drops GPU layers to make room (ollama/ollama#9750).
+#
+# That inverts the naive intuition: for a model bigger than VRAM, a larger
+# context window is not free, it is *paid for in layers*. Every GiB of KV cache
+# is a GiB that stops holding weights, and layers pushed to CPU are the slow
+# ones. So the window for an offloaded model is deliberately a bounded share of
+# VRAM rather than "whatever fits" — the rest must stay available for layers.
+OFFLOAD_KV_VRAM_SHARE = 0.25
+# ...but never so small that the agent cannot run. Its system prompt, tool
+# schemas, skills and memory do not fit in MIN_VRAM_NUM_CTX, which is a floor
+# for "this barely fits", not a usable window for an offloaded model.
+MIN_OFFLOAD_NUM_CTX = 16384
 
 
 def normalize_host(host: str) -> str:
@@ -305,14 +333,26 @@ def vram_num_ctx_limit(
     kv_cache_type: str = DEFAULT_KV_CACHE_TYPE,
     num_parallel: int = DEFAULT_NUM_PARALLEL,
 ) -> int | None:
-    """Largest context window whose KV cache fits VRAM next to the weights.
+    """Largest context window worth asking Ollama for, given the GPU budget.
 
-    ``(vram - weights - VRAM_OVERHEAD_BYTES) / (kv_bytes_per_token × slots)``,
-    floored to ``NUM_CTX_STEP`` and never below ``MIN_VRAM_NUM_CTX`` (a model
-    that doesn't fit at all still gets a usable window — Ollama offloads layers
-    to CPU rather than failing). ``num_parallel`` is the daemon's
-    ``OLLAMA_NUM_PARALLEL``: Ollama allocates the KV cache for every slot up
-    front, so serving two chats at once halves the window each one can have.
+    Two regimes, because Ollama behaves differently either side of the line.
+
+    **The model fits in VRAM.** ``(vram - weights - VRAM_OVERHEAD_BYTES) /
+    (kv_bytes_per_token × slots)``, floored to ``NUM_CTX_STEP``. Spare VRAM has
+    no better use than KV cache, so take it all.
+
+    **The model does not fit.** Ollama splits whole layers across GPU and CPU
+    (``num_gpu``), and when the weights and the KV cache do not both fit it
+    keeps the KV cache and drops GPU layers to make room. A bigger window is
+    therefore bought with layers, and layers on the CPU are the slow ones — so
+    the window gets ``OFFLOAD_KV_VRAM_SHARE`` of VRAM and no more, leaving the
+    rest to hold weights. The floor is ``MIN_OFFLOAD_NUM_CTX``: below that the
+    agent's own prompt does not fit, which is not a trade worth making however
+    slow the alternative.
+
+    ``num_parallel`` is the daemon's ``OLLAMA_NUM_PARALLEL``: Ollama allocates a
+    KV cache per slot up front, so N slots divide the affordable window by N.
+
     Returns None when the geometry or weights size is unknown, so callers can
     fall back to the flat cap.
     """
@@ -320,17 +360,22 @@ def vram_num_ctx_limit(
     if per_token is None or not weights_bytes or weights_bytes <= 0 or not vram_bytes or vram_bytes <= 0:
         return None
     per_token *= max(1, num_parallel)
+
     available = vram_bytes - weights_bytes - VRAM_OVERHEAD_BYTES
-    if available <= 0:
-        return MIN_VRAM_NUM_CTX
-    tokens = int(available // per_token)
-    return max(MIN_VRAM_NUM_CTX, (tokens // NUM_CTX_STEP) * NUM_CTX_STEP)
+    if available > 0:
+        tokens = int(available // per_token)
+        return max(MIN_VRAM_NUM_CTX, (tokens // NUM_CTX_STEP) * NUM_CTX_STEP)
+
+    # Partial offload: buy a usable window, not the largest one.
+    tokens = int((vram_bytes * OFFLOAD_KV_VRAM_SHARE) // per_token)
+    return max(MIN_OFFLOAD_NUM_CTX, (tokens // NUM_CTX_STEP) * NUM_CTX_STEP)
 
 
 def parse_ollama_settings(text: str) -> dict:
     """Parse the top-level ``ollama:`` section of config.yaml.
 
-    Recognized keys: ``vram_gb`` (positive number), ``kv_cache_type`` (one of
+    Recognized keys: ``vram_gb`` and ``system_ram_gb`` (positive numbers),
+    ``kv_cache_type`` (one of
     KV_CACHE_BYTES_PER_ELEMENT), ``num_parallel`` (positive integer),
     ``keep_alive`` (opaque Ollama duration string), ``preload`` (bool), and the
     nested ``keep_alive_overrides`` map of model name -> duration. Malformed
@@ -377,6 +422,12 @@ def parse_ollama_settings(text: str) -> dict:
         vram_gb = float(raw["vram_gb"])
         if vram_gb > 0:
             settings["vram_gb"] = vram_gb
+    except (KeyError, ValueError):
+        pass
+    try:
+        system_ram_gb = float(raw["system_ram_gb"])
+        if system_ram_gb > 0:
+            settings["system_ram_gb"] = system_ram_gb
     except (KeyError, ValueError):
         pass
     if raw.get("kv_cache_type") in KV_CACHE_BYTES_PER_ELEMENT:
@@ -518,6 +569,39 @@ def vram_contention_warning(
         f"+ {VRAM_OVERHEAD_BYTES / gib:.1f} GiB overhead), but the configured budget is {vram_bytes / gib:g} GiB. "
         f"Running both at once (a local lead with a local subagent) makes Ollama evict and reload between calls. "
         f"Pair a local lead with a smaller local subagent, raise ollama.vram_gb if it understates your GPU, or use q8_0 KV cache."
+    )
+
+
+def offload_capacity_warning(
+    loaded: list,
+    vram_bytes: int | None,
+    system_ram_bytes: int | None,
+) -> str | None:
+    """Warn when a model's weights exceed VRAM *and* system RAM together.
+
+    Expert offload spills into system RAM; past that there is only the page
+    cache, and generation drops from tokens per second to seconds per token as
+    weights are read from disk for every token. Ollama does not refuse such a
+    model, so nothing else says this out loud.
+
+    Silent unless ``ollama.system_ram_gb`` is configured — the script does not
+    guess how much RAM the machine has, and a wrong guess here would either cry
+    wolf or miss the case entirely.
+    """
+    if not vram_bytes or vram_bytes <= 0 or not system_ram_bytes or system_ram_bytes <= 0:
+        return None
+    budget = vram_bytes + system_ram_bytes
+    oversized = [(name, weights) for name, _show, weights in loaded if weights and weights > budget]
+    if not oversized:
+        return None
+
+    gib = 1024**3
+    listed = ", ".join(f"{name} ({weights / gib:.0f} GiB)" for name, weights in oversized)
+    return (
+        f"Weights exceed memory: {listed} cannot be held in VRAM + system RAM "
+        f"({vram_bytes / gib:g} + {system_ram_bytes / gib:g} = {budget / gib:g} GiB). "
+        f"Ollama will page the remainder from disk, which costs roughly a hundredfold in tokens/sec. "
+        f"Use a smaller quantization of the same model, add system RAM, or run this one as a hosted model instead."
     )
 
 
@@ -751,6 +835,12 @@ def main() -> int:
     ap.add_argument("--num-ctx-cap", type=int, default=None, help=f"Hard cap for the written num_ctx (default: {DEFAULT_NUM_CTX_CAP}, or the VRAM-based estimate when a VRAM budget is configured; 0 = uncapped)")
     ap.add_argument("--vram-gb", type=float, default=None, help="GPU memory budget in GiB for per-model context sizing (default: `ollama.vram_gb` in config.yaml; unset = flat cap only)")
     ap.add_argument(
+        "--system-ram-gb",
+        type=float,
+        default=None,
+        help="System RAM in GiB that Ollama's offloaded layers can spill into (default: `ollama.system_ram_gb` in config.yaml). Only used to warn when a model's weights exceed VRAM + RAM and would page from disk.",
+    )
+    ap.add_argument(
         "--kv-cache-type",
         choices=sorted(KV_CACHE_BYTES_PER_ELEMENT),
         default=None,
@@ -847,6 +937,14 @@ def main() -> int:
     contention = vram_contention_warning(resident, vram_bytes, kv_cache_type, num_parallel)
     if contention:
         print(f"[ollama-sync] {contention}", file=sys.stderr)
+
+    # Offload spills into system RAM; past that it spills onto disk, which is
+    # the difference between a slow model and an unusable one.
+    system_ram_gb = args.system_ram_gb if args.system_ram_gb is not None else settings.get("system_ram_gb")
+    system_ram_bytes = int(system_ram_gb * 1024**3) if system_ram_gb and system_ram_gb > 0 else None
+    capacity = offload_capacity_warning(resident, vram_bytes, system_ram_bytes)
+    if capacity:
+        print(f"[ollama-sync] {capacity}", file=sys.stderr)
 
     # Tool-capable first, then alphabetical (matches dropdown order in UI)
     models.sort(key=lambda m: (0 if "tools" in m[1] else 1, m[0]))

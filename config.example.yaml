@@ -15,7 +15,7 @@
 # ============================================================================
 # Bump this number when the config schema changes.
 # Run `make config-upgrade` to merge new fields into your local config.yaml.
-config_version: 47
+config_version: 48
 
 # ============================================================================
 # Logging
@@ -1831,6 +1831,19 @@ models:
 # concurrent: separate chats run as separate LangGraph runs, and the Gateway
 # only serializes runs within one chat.
 #
+# system_ram_gb is the second memory pool. A model too big for VRAM is not
+# refused: Ollama splits whole layers between GPU and CPU (num_gpu), and the
+# layers it cannot fit land in system RAM. Note it splits *layers*, not MoE
+# experts — it has no equivalent of llama.cpp's --n-cpu-moe (ollama/ollama#11772
+# is open) — and when the weights and KV cache do not both fit it keeps the
+# cache and drops GPU layers to make room (ollama/ollama#9750). So context on
+# such a model is paid for in layers, and the sizing deliberately gives it a
+# bounded share of VRAM: enough to run the agent, not so much that the weights
+# get pushed onto the CPU. Weights bigger than VRAM + system RAM combined have
+# nowhere left to go and are paged from disk, which costs roughly a hundredfold
+# in tokens/sec; set this and the launch-time sync names any installed model in
+# that state. `make setup` detects and fills it in. Unset disables that warning.
+#
 # Note on running two local models at once: a local lead with a local subagent
 # means two sets of weights resident simultaneously. When vram_gb is set, the
 # sync warns at launch — with the actual numbers — if the two largest installed
@@ -1843,6 +1856,7 @@ models:
 #   keep_alive: 30m        # how long each model stays resident (-1 = never unload)
 #   preload: true          # warm models[0] at launch so turn 1 isn't a cold start
 #   num_parallel: 2        # concurrent chats per model — must match the daemon's OLLAMA_NUM_PARALLEL
+#   system_ram_gb: 64      # RAM that offloaded layers spill into; warns when weights exceed VRAM + RAM
 #   keep_alive_overrides:  # optional, per model — wins over keep_alive above
 #     qwen3:8b: 1h
 
@@ -2336,8 +2350,13 @@ tools:
     use: deerflow.community.web_fetch.tools:web_fetch_tool
     backend: camoufox
     # backend: jina            # cloud reader API (key-less, lower rate limit)
-    fallback: jina             # if the local browser errors, retry via the key-less cloud reader so a fetch degrades instead of failing hard. Comment out to keep every fetch strictly local.
-    timeout: 10                # camoufox: page-load timeout; jina: request timeout (s)
+    fallback: jina             # if the local browser errors, retry via the key-less cloud reader so a fetch degrades instead of failing hard. Comment out to keep every fetch strictly local — jina is a third party, so a fetched URL and the page it returns leave your machine.
+    timeout: 30                # camoufox: page-load timeout; jina: request timeout (s).
+                               # Camoufox is a full Firefox render, not an HTTP GET:
+                               # 10s failed on most JS-heavy sites even on a fast
+                               # connection, and far more often over a VPN — which
+                               # spent the fallback above on slow renders rather
+                               # than on real failures.
     # max_content_length: 4096 # cap on returned characters (default 4096)
     # Optional proxy for restricted networks / Docker / WSL (jina backend).
     # Use host.docker.internal instead of 127.0.0.1 when the proxy runs on the host.
