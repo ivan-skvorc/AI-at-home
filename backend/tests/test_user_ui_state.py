@@ -148,3 +148,86 @@ def test_out_of_band_edit_is_picked_up():
     stat = path.stat()
     os.utime(path, (stat.st_atime, stat.st_mtime + 10))
     assert user_ui_state.get_chat_tabs("default") == [_tab("k2", "t2")]
+
+
+# ---------------------------------------------------------------------------
+# Sidebar chat folders (fork feature)
+# ---------------------------------------------------------------------------
+
+
+def _folder(folder_id: str, name: str) -> dict:
+    return {"id": folder_id, "name": name}
+
+
+def test_unset_user_has_no_folders():
+    assert user_ui_state.get_chat_folders("default") == []
+
+
+def test_folders_round_trip_in_display_order_across_a_cache_reset():
+    """List order *is* the sidebar order, so it must survive a restart intact."""
+    user_ui_state.set_chat_folders("default", [_folder("f1", "Work"), _folder("f2", "Personal")])
+    user_ui_state.reset_cache_for_tests()
+    assert user_ui_state.get_chat_folders("default") == [_folder("f1", "Work"), _folder("f2", "Personal")]
+
+
+def test_folders_are_isolated_per_user():
+    user_ui_state.set_chat_folders("alice", [_folder("fa", "Alice")])
+    assert user_ui_state.get_chat_folders("bob") == []
+
+
+def test_explicit_empty_folder_list_is_persisted():
+    """Deleting the last folder is a real value, not a no-op."""
+    user_ui_state.set_chat_folders("default", [_folder("f1", "Work")])
+    user_ui_state.set_chat_folders("default", [])
+    user_ui_state.reset_cache_for_tests()
+    assert user_ui_state.get_chat_folders("default") == []
+
+
+def test_malformed_folders_are_dropped_not_raised():
+    stored = user_ui_state.set_chat_folders(
+        "default",
+        [
+            "not-a-dict",
+            {"id": "f1"},  # no name
+            {"name": "Nameless id"},  # no id
+            {"id": "  ", "name": "blank id"},
+            {"id": "f2", "name": "   "},  # blank name
+            _folder("  f3  ", "  Work  "),  # trimmed, kept
+        ],
+    )
+    assert stored == [_folder("f3", "Work")]
+
+
+def test_duplicate_folder_ids_collapse_first_wins():
+    stored = user_ui_state.set_chat_folders("default", [_folder("f1", "First"), _folder("f1", "Second")])
+    assert stored == [_folder("f1", "First")]
+
+
+def test_folder_count_is_capped():
+    stored = user_ui_state.set_chat_folders(
+        "default",
+        [_folder(f"f{i}", f"Folder {i}") for i in range(user_ui_state.MAX_CHAT_FOLDERS * 3)],
+    )
+    assert len(stored) == user_ui_state.MAX_CHAT_FOLDERS
+
+
+def test_folder_name_is_length_capped():
+    stored = user_ui_state.set_chat_folders("default", [_folder("f1", "n" * 500)])
+    assert len(stored[0]["name"]) == user_ui_state.MAX_FOLDER_NAME_CHARS
+
+
+def test_non_list_folder_value_degrades_to_empty():
+    path = get_paths().user_dir("default") / user_ui_state.UI_STATE_FILENAME
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"chat_folders": {"f1": "Work"}}), encoding="utf-8")
+    user_ui_state.reset_cache_for_tests()
+    assert user_ui_state.get_chat_folders("default") == []
+
+
+def test_folders_and_tabs_do_not_clobber_each_other():
+    """Both keys share one file; each writer must merge, never replace."""
+    user_ui_state.set_chat_tabs("default", [_tab("k1", "t1")])
+    user_ui_state.set_chat_folders("default", [_folder("f1", "Work")])
+    user_ui_state.reset_cache_for_tests()
+    assert user_ui_state.get_chat_tabs("default") == [_tab("k1", "t1")]
+    assert user_ui_state.get_chat_folders("default") == [_folder("f1", "Work")]

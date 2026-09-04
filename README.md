@@ -15,6 +15,7 @@
 > - 🔀 **Independent model per conversation** — every chat remembers its **own** model (and subagent model, mode, and reasoning effort), stored per-thread instead of in one shared setting. Run a free local Ollama model in one conversation and a cloud model in another, side by side — switching the model in one no longer flips the model in the others. Previously every chat that hadn't been explicitly pinned followed the last model picked *anywhere* (even across browser tabs, via the shared settings sync), which made running local and cloud models simultaneously impossible; now each conversation is isolated and new chats simply start from the configured default model.
 > - 🚦 **Concurrent chats** — ask one conversation something slow, leave it, and prompt another one; both keep going. Leaving a chat used to **cancel** its run (the Gateway cancels a run when the browser disconnects unless told otherwise), so walking away from a long answer to write the next prompt killed the answer you walked away to wait for. Now a chat you leave *while it is still answering* is kept as a keep-alive tab and goes on streaming in the background, with a pulsing dot on its tab and a notification when it lands. With a **local Ollama model** the queue moves into the daemon: it answers `OLLAMA_NUM_PARALLEL` requests per model at a time (**1** by default), so raise it and set `ollama.num_parallel` to match — `make doctor` tells you where you stand.
 > - 🗂️ **Browser-style keep-alive chat tabs** — drag conversations up into a tab strip and they stay **mounted and running in the background**: a tab you switch away from keeps streaming and keeps its scroll position, artifacts, and browser panel, instead of upstream's single pane that tears the previous chat down on every switch. The tab set is saved server-side per user, so it survives a browser restart — and even reopening the app on a different address (`localhost` vs. your LAN / Tailscale name).
+> - 🗃️ **Folders in the sidebar** — the chat list is a tree now, not one endless column. Press **+** in the *Recent chats* header to make a folder, then drag conversations into it — and a conversation you file is **inside the folder and gone from the list outside it**, the way a file manager works, so a folder is one collapsed row instead of a second copy of everything. The arrow beside the name opens and closes it; rename and delete live in the folder's own **⋯** menu, next to the same menu each conversation already has. Deleting a folder never deletes the chats in it — they come straight back to the list. Folder names and what is in them are stored **per user on the server**, so they follow you to another browser or device (only which folders are *open* is per browser). No config, nothing to turn on.
 > - 🏛️ **Democracy — several models answer, then decide together** — a setup page under *New chat* where you pick an organizer model, how many panelists, which model fills each seat, and whether the organizer grades them (out of 5, or yes/no) on what they actually contributed. Attach files to the task, not just text. The organizer researches **once** and hands every panelist the identical brief, they answer independently and then review each other **anonymously**, and the organizer synthesizes — reporting the split and naming dissenters rather than averaging them away. Facts are gathered once and deliberately **not** re-verified by the panel, because that is the cost this design refuses to pay. Ask a follow-up and the whole panel runs again, each panelist re-briefed with its own previous answers and the discussion — you always get one answer, the organizer's, never a fan-out to reconcile. It is **extremely token-heavy** (up to N x 2 full model runs for N panelists, *per question*) and the setup page estimates the multiple against a single answer before you commit. No config keys: it works as soon as two models are configured.
 > - 🖼️ **Local image and video generation, on your own GPU** — ask for a picture and get a PNG in the artifact panel with **no API key and nothing leaving the house**; the bundled media skills call MiniMax or Gemini over HTTPS, this renders on a ComfyUI service the stack finds or starts for you. The agent can then **look at what it made and try again**: a refine loop judges each attempt against three to six criteria frozen before the first one, changes exactly one thing per round, and is stopped by a counter the *server* holds rather than by the model remembering to stop. Clips work too — and because no model can watch an MP4, each one also produces a contact sheet of evenly spaced frames, which is what gets critiqued. A GPU arbiter swaps your chat model out and back inside the tool call, so a 24 GB card runs both without the silent slowdown of Ollama quietly offloading to RAM. On by default: every launch reuses a ComfyUI you already run, or starts the bundled container when this machine has Docker and a GPU. It costs your own checkpoints — `make comfy-model-add` installs one into whichever instance is in use — and there is a sidebar button for it, next to *New chat* and *Democracy*.
 > - 🤖 **Generate a custom agent from your history** — instead of hand-writing a persona, point a model at past conversations or scheduled tasks and let it decide whether a *new* agent is even worth adding. It is allowed to say **no** — naming the existing agent that already covers the work — so your roster doesn't fill up with near-duplicates. When it does propose one you get an editable **SOUL.md** draft, and nothing is saved until you press **Create**; the analysis itself never writes an agent. An optional *what should this agent do?* box steers it toward a goal, and a **Refine** box adjusts the draft in place without regenerating it. On by default alongside the custom-agent API (**Agents → Generate from history**).
@@ -135,6 +136,7 @@ DeerFlow has newly integrated the intelligent search and crawling toolset indepe
     - [Long-Term Memory](#long-term-memory)
     - [Internet Access Switch](#internet-access-switch)
     - [Concurrent Chats](#concurrent-chats)
+    - [Folders in the Sidebar](#folders-in-the-sidebar)
   - [Recommended Models](#recommended-models)
   - [Embedded Python Client](#embedded-python-client)
   - [Scheduled Tasks](#scheduled-tasks)
@@ -1908,6 +1910,40 @@ slot**: two slots halve the context window each chat can afford, so the
 VRAM-aware sizing above). Leave it unset and everything is sized exactly as
 before. `make doctor` reports how many chats can generate at once under **Local
 Models**, with the fix if the answer is one.
+
+### Folders in the Sidebar
+
+The conversation list in the sidebar is a tree. Press the **+** in the *Recent
+chats* header, give the folder a name, and drag conversations onto it — or use
+**Move to folder** in a conversation's **⋯** menu if you would rather not drag.
+The arrow beside a folder's name opens and closes it, and its own **⋯** menu
+holds **Rename** and **Delete**, in the same place as the menu each conversation
+already has.
+
+**A conversation you file is inside the folder and no longer in the list outside
+it.** That is the point of the feature and the thing that makes a folder worth
+having: collapse it and those chats are genuinely out of the way, rather than
+listed twice. The number beside a folder's name says how many are in there while
+it is closed.
+
+**Deleting a folder never deletes the conversations in it.** They return to the
+main list immediately — the folder is a label, not a container the chats live
+inside. The same is true if a folder disappears for any other reason (deleted
+from another browser, say): a conversation pointing at a folder that no longer
+exists is shown in the main list, never hidden.
+
+Folder names, their order, and which conversation is in which folder are stored
+**per user on the server**, so they follow you to another browser or another
+device — the same store the keep-alive chat tabs use. Only which folders are
+*expanded* is per browser, since that is genuinely a per-screen preference.
+
+Two limits worth knowing. There is a ceiling of **50 folders** (a sidebar is
+still a sidebar), and folders do not nest — one level, like a bookmarks bar.
+Filing a conversation deliberately does **not** count as activity, so it keeps
+its place in the recency order instead of jumping to the top of the list the
+moment you drag it.
+
+Nothing to configure; it is on as soon as you have a conversation to file.
 
 ## Recommended Models
 

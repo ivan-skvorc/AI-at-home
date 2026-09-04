@@ -9,6 +9,8 @@ here:
   is admin).
 * **chat tabs** — the per-user keep-alive tab strip. Per-user UI state, so it is
   scoped to the caller and needs no admin gate.
+* **chat folders** — the sidebar's folder registry (id, name, display order).
+  Also per-user UI state, and ungated for the same reason.
 """
 
 from __future__ import annotations
@@ -20,7 +22,14 @@ from pydantic import BaseModel, Field
 
 from app.gateway.deps import require_admin_user
 from deerflow.config.runtime_settings import is_multi_user_mode_enabled, set_multi_user_mode
-from deerflow.config.user_ui_state import MAX_CHAT_TABS, get_chat_tabs, set_chat_tabs
+from deerflow.config.user_ui_state import (
+    MAX_CHAT_FOLDERS,
+    MAX_CHAT_TABS,
+    get_chat_folders,
+    get_chat_tabs,
+    set_chat_folders,
+    set_chat_tabs,
+)
 from deerflow.runtime.user_context import get_effective_user_id
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
@@ -107,3 +116,51 @@ async def update_chat_tabs_setting(body: ChatTabsUpdate) -> ChatTabsResponse:
     payload = [tab.model_dump(exclude_none=True) for tab in body.chat_tabs[: MAX_CHAT_TABS * 4]]
     tabs = await asyncio.to_thread(set_chat_tabs, get_effective_user_id(), payload)
     return ChatTabsResponse(chat_tabs=[ChatTab(**tab) for tab in tabs])
+
+
+class ChatFolder(BaseModel):
+    """One sidebar folder: a stable id and the name the user typed.
+
+    Membership is deliberately *not* here — a conversation records its folder in
+    its own ``deerflow_folder`` thread metadata. That split is what makes a
+    rename one write instead of one per conversation in the folder.
+    """
+
+    id: str
+    name: str
+
+
+class ChatFoldersResponse(BaseModel):
+    """The caller's sidebar folders, in display order."""
+
+    chat_folders: list[ChatFolder]
+
+
+class ChatFoldersUpdate(BaseModel):
+    """Replacement folder list. Over-long lists are truncated, not rejected."""
+
+    chat_folders: list[ChatFolder] = Field(default_factory=list)
+
+
+@router.get("/chat-folders", response_model=ChatFoldersResponse)
+async def get_chat_folders_setting() -> ChatFoldersResponse:
+    """Return the caller's sidebar folders (durable across browsers/devices)."""
+    folders = await asyncio.to_thread(get_chat_folders, get_effective_user_id())
+    return ChatFoldersResponse(chat_folders=[ChatFolder(**folder) for folder in folders])
+
+
+@router.put("/chat-folders", response_model=ChatFoldersResponse)
+async def update_chat_folders_setting(body: ChatFoldersUpdate) -> ChatFoldersResponse:
+    """Replace the caller's sidebar folders; returns the persisted value.
+
+    An empty list is a real value (the user deleted their last folder), so it is
+    stored rather than ignored. The store caps the list at ``MAX_CHAT_FOLDERS``
+    and drops malformed entries, so the response is the authoritative post-write
+    state the client should adopt.
+
+    Deleting a folder here never deletes a conversation: a thread still pointing
+    at a folder that no longer exists falls back to the sidebar's root list.
+    """
+    payload = [folder.model_dump() for folder in body.chat_folders[: MAX_CHAT_FOLDERS * 4]]
+    folders = await asyncio.to_thread(set_chat_folders, get_effective_user_id(), payload)
+    return ChatFoldersResponse(chat_folders=[ChatFolder(**folder) for folder in folders])

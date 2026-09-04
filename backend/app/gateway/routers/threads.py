@@ -46,7 +46,7 @@ from app.gateway.utils import sanitize_log_param
 from deerflow.agents.thread_state import THREAD_STATE_REDUCER_FIELDS
 from deerflow.config.paths import Paths, get_paths
 from deerflow.config.summarization_config import ContextSize
-from deerflow.persistence.thread_meta import THREAD_PINNED_METADATA_KEY
+from deerflow.persistence.thread_meta import THREAD_FOLDER_METADATA_KEY, THREAD_PINNED_METADATA_KEY
 from deerflow.runtime import ThreadOperationKind, serialize_channel_values_for_api
 from deerflow.runtime.checkpoint_mode import CheckpointModeMismatchError, CheckpointModeReconfigurationError
 from deerflow.runtime.checkpoint_state import graph_reducer_channels, graph_state_schema, graph_writable_channels
@@ -137,9 +137,25 @@ def _strip_reserved_metadata(metadata: dict[str, Any] | None) -> dict[str, Any]:
     return {k: v for k, v in metadata.items() if k not in _SERVER_RESERVED_METADATA_KEYS}
 
 
-def _is_pin_metadata_patch(metadata: dict[str, Any]) -> bool:
-    """Return True for the narrow pin/unpin PATCH shape."""
-    return set(metadata) == {THREAD_PINNED_METADATA_KEY} and isinstance(metadata.get(THREAD_PINNED_METADATA_KEY), bool)
+# Metadata keys that record where a conversation *sits* in the sidebar, not
+# what happened inside it: the pin flag, and the id of the folder it was filed
+# into (``None`` = back to the root list). A PATCH touching only these must not
+# bump ``updated_at`` — the list is recency-ordered, so pinning a chat or
+# dragging it into a folder would otherwise shove it to the top and reshuffle
+# the sidebar under the user's cursor. Each key carries its own value guard so a
+# patch that smuggles a different shape falls back to the ordinary
+# touch-the-timestamp path rather than silently getting the exemption.
+_UI_PLACEMENT_METADATA_GUARDS: dict[str, Any] = {
+    THREAD_PINNED_METADATA_KEY: lambda value: isinstance(value, bool),
+    THREAD_FOLDER_METADATA_KEY: lambda value: value is None or isinstance(value, str),
+}
+
+
+def _is_ui_placement_metadata_patch(metadata: dict[str, Any]) -> bool:
+    """Return True for the narrow pin/unpin and folder-move PATCH shapes."""
+    if not metadata:
+        return False
+    return all(key in _UI_PLACEMENT_METADATA_GUARDS and _UI_PLACEMENT_METADATA_GUARDS[key](value) for key, value in metadata.items())
 
 
 def _message_id(message: Any) -> str | None:
@@ -1192,10 +1208,11 @@ async def patch_thread(thread_id: ThreadId, body: ThreadPatchRequest, request: R
         raise HTTPException(status_code=404, detail=f"Thread {thread_id} not found")
 
     # ``body.metadata`` already stripped by ``ThreadPatchRequest._strip_reserved``.
-    # Pin/unpin is not conversation activity, so it must not bump ``updated_at``.
-    # Other metadata PATCH callers keep the public endpoint's existing recency
-    # contract unless they get their own explicit no-touch API surface.
-    touch = not _is_pin_metadata_patch(body.metadata)
+    # Pin/unpin and a folder move are filing, not conversation activity, so they
+    # must not bump ``updated_at``. Other metadata PATCH callers keep the public
+    # endpoint's existing recency contract unless they get their own explicit
+    # no-touch API surface.
+    touch = not _is_ui_placement_metadata_patch(body.metadata)
     try:
         await thread_store.update_metadata(thread_id, body.metadata, touch=touch)
     except Exception:

@@ -892,6 +892,21 @@ export const enUS: Translations = {
     pinChat: "Pin chat",
     unpinChat: "Unpin chat",
     pinChatFailed: "Failed to update pinned chat",
+    folders: {
+      new: "New folder",
+      rename: "Rename folder",
+      namePlaceholder: "Folder name",
+      moveTo: "Move to folder",
+      none: "No folder",
+      empty: "No chats in here yet",
+      expand: "Show the chats in this folder",
+      collapse: "Hide the chats in this folder",
+      rootDropHint: "Drop a chat here to take it out of its folder",
+      deleted: (name) =>
+        `Folder "${name}" deleted. The chats in it are back in the list.`,
+      limitReached: (max) => `You can have at most ${max} folders.`,
+      moveFailed: "Failed to move the chat",
+    },
   },
 
   // Sidecar

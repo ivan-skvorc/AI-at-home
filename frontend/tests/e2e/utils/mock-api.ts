@@ -20,6 +20,10 @@ export const MOCK_RUN_ID = "00000000-0000-0000-0000-000000000099";
 // Keep in sync with frontend runtime thread utils and the backend thread_meta
 // constant; the mock must mirror the same metadata contract for pin ordering.
 export const THREAD_PINNED_METADATA_KEY = "deerflow_pinned";
+// Sidebar folder placement. Same contract as the pinned key: the folder
+// *registry* is served from /api/settings/chat-folders below, membership
+// rides on each thread's own metadata.
+export const THREAD_FOLDER_METADATA_KEY = "deerflow_folder";
 
 const MOCK_AUTH_USER = {
   id: "default",
@@ -98,6 +102,8 @@ export type MockAPIOptions = {
     browserControlEnabled?: boolean;
     mcpTasksEnabled?: boolean;
   };
+  /** Sidebar chat folders the per-user store already holds. */
+  chatFolders?: Array<{ id: string; name: string }>;
   runStreamHandler?: (route: Route) => Promise<void>;
   /**
    * Keep the thread's existing messages in front of the ones a run produces.
@@ -1513,6 +1519,35 @@ export function mockLangGraphAPI(page: Page, options?: MockAPIOptions) {
   });
 
   // Follow-up suggestions — input box auto-suggest after AI response
+  // Sidebar chat folders — the per-user registry the folder tree renders from.
+  // Kept in page-scoped memory so a test can create a folder, reload, and still
+  // see it, exactly like the real per-user ui_state.json store.
+  let chatFolders: { id: string; name: string }[] = [
+    ...(options?.chatFolders ?? []),
+  ];
+  void page.route("**/api/settings/chat-folders", (route) => {
+    const method = route.request().method();
+    if (method === "GET") {
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ chat_folders: chatFolders }),
+      });
+    }
+    if (method === "PUT") {
+      const body = route.request().postDataJSON() as {
+        chat_folders?: { id: string; name: string }[];
+      };
+      chatFolders = body.chat_folders ?? [];
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ chat_folders: chatFolders }),
+      });
+    }
+    return route.fallback();
+  });
+
   void page.route("**/api/threads/*/suggestions", (route) => {
     if (route.request().method() === "POST") {
       return route.fulfill({
