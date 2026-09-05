@@ -15,7 +15,7 @@
 # ============================================================================
 # Bump this number when the config schema changes.
 # Run `make config-upgrade` to merge new fields into your local config.yaml.
-config_version: 49
+config_version: 50
 
 # ============================================================================
 # Logging
@@ -3787,16 +3787,30 @@ database:
 # ============================================================================
 # Storage backend for run events (messages + execution traces).
 #
-# backend: memory  -- No persistence, data lost on restart (default)
-# backend: db      -- SQL database via ORM, full query capability (production)
+# backend: db      -- (default) SQL database via ORM, full query capability.
+#                     Writes into the same file/database `database:` above
+#                     already uses, so this costs no extra setup.
+# backend: memory  -- No persistence, data lost on restart
 # backend: jsonl   -- Append-only JSONL files (lightweight single-node persistence)
 #
+# Keep this durable unless you genuinely want throwaway runs. Scrolling back
+# through a long conversation is served by GET /api/threads/{id}/messages/page,
+# which reads this store and nothing else -- so under `memory` a Gateway restart
+# empties the thread's scroll-back history while the LangGraph checkpoint (durable
+# under `database.backend: sqlite`) keeps rendering the most recent turns. The
+# conversation then looks intact and simply stops loading older messages when you
+# scroll up, with no error anywhere.
+#
+# `db` requires database.backend to be sqlite or postgres; on
+# `database.backend: memory` there is no session factory to write through and the
+# Gateway falls back to the in-memory event store automatically.
+#
 # run_events:
-#   backend: memory
+#   backend: db
 #   max_trace_content: 10240    # Truncation threshold for trace content (db backend, bytes)
 #   track_token_usage: true     # Accumulate token counts to RunRow
 run_events:
-  backend: memory
+  backend: db
   max_trace_content: 10240
   track_token_usage: true
 

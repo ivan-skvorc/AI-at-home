@@ -447,6 +447,18 @@ For persistent deployments, configure `database.backend` as `sqlite` or
 LangGraph Store, and DeerFlow application data. The deprecated `checkpointer`
 section, when present, overrides the first two for backward compatibility.
 
+`run_events.backend` defaults to `db` and should stay durable alongside it.
+Scrolling back through a long conversation is served by
+`GET /api/threads/{thread_id}/messages/page`, which reads the run-event store
+and nothing else, so on `run_events.backend: memory` a Gateway restart drops
+that history: the conversation still opens and still renders its recent turns
+from the checkpoint, then stops loading older messages when you scroll up, with
+nothing logged. `db` writes into the database configured above, so it needs no
+extra setup; on `database.backend: memory` the Gateway falls back to the
+in-memory event store automatically. Existing installs pick the durable value up
+through `make config-upgrade`, and `make doctor` reports the combination
+directly.
+
 The unified nginx endpoint is same-origin by default and does not emit browser CORS headers. If you run a split-origin or port-forwarded browser client, set `GATEWAY_CORS_ORIGINS` to comma-separated exact origins such as `http://localhost:3000`; the Gateway then applies the CORS allowlist and matching CSRF origin checks.
 
 Browser login uses `HttpOnly` session cookies. The login page offers a "keep me signed in" option that extends the browser session when the request is HTTPS (including trusted `X-Forwarded-Proto: https`) or localhost HTTP. The localhost exception uses the direct request `Host` and ignores forwarded host headers. Public HTTP deployments, including many temporary sandbox URLs, fall back to session cookies by default. DeerFlow never stores the password in browser storage; the UI may remember only the email address.

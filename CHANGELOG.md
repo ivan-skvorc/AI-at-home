@@ -455,6 +455,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **chat history:** **A long conversation no longer stops loading older messages
+  after the server restarts.** Scrolling back is served by
+  `GET /api/threads/{thread_id}/messages/page`, which reads the run-event store
+  and nothing else. That store defaulted to `run_events.backend: memory` —
+  process state — while the LangGraph checkpoint stayed durable on the default
+  `database.backend: sqlite`. Restarting the Gateway therefore emptied the
+  history feed but not the checkpoint: the conversation still opened and still
+  rendered its most recent turns, then returned `has_more: false` and refused to
+  page backwards, so the load-more sentinel never fired. Nothing was logged on
+  either side, and on a chat long enough to have been compacted every turn before
+  the compaction point simply disappeared from the UI. `run_events.backend` now
+  defaults to `db`, which writes into the database `database:` already
+  configures, so durability needs no extra setup; `database.backend: memory`
+  still falls back to the in-memory store. `config.example.yaml` ships the new
+  value (`config_version: 50`) and `make config-upgrade` migrates an existing
+  `config.yaml` off `memory` — the one value the upgrade rewrites deliberately,
+  anchored to the `run_events:` section so `database:` is untouched. `make doctor`
+  reports the combination for installs that never run the upgrade. History
+  already lost to earlier restarts cannot be recovered; the rows were never
+  written.
+
 - **embedded client:** **An abandoned `DeerFlowClient.stream()` now cleans up when it
   ends, not when the garbage collector gets round to it.** The wrapper that releases a
   turn's sandbox execution lease was left as a `for` loop's anonymous iterator, so it was

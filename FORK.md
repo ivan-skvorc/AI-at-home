@@ -104,6 +104,7 @@ First, the mechanical gates:
 - [ ] **Sidebar chat folders** (§32): `cd frontend && pnpm test chat-folders` and `cd backend && uv run pytest tests/test_user_ui_state.py tests/test_chat_folders_settings_router.py tests/test_threads_router.py -k "folder or pin or ui_state or chat_folders" -q`. Three independent silent failures. `groupThreadsByFolder > lists a filed chat inside its folder and NOT at the root` **together with** `falls back to the root for a folder that no longer exists` — both directions of the same partition: a merge that "helpfully" keeps filed chats in the root list duplicates every conversation, and one that drops threads pointing at a deleted folder makes them vanish with no error anywhere. `test_patch_thread_folder_move_preserves_updated_at` **together with** `test_patch_thread_folder_with_a_wrong_typed_value_still_bumps_updated_at` — the no-touch exemption is shape-guarded per key; collapsing it to "the key is present" is green everywhere else and hands any client a way to edit metadata without touching recency. And `test_folders_and_tabs_do_not_clobber_each_other`, because both keys share one `ui_state.json` and a writer that replaces instead of merging silently eats the other feature's state. Also run `cd frontend && pnpm test:e2e sidebar-chat-folders` when the sidebar itself was touched.
 - [ ] **Sidebar list scroll margin** (§35): `cd frontend && pnpm test thread-list-scroll-margin thread-list-virtualizer`. The sidebar's chat lists virtualize inside a scroll container they do not own, so each one carries its own offset into it, and a stale offset selects the wrong rows while positioning them correctly — the reader gets an empty band and no error anywhere. Three signals keep it honest and **each covers a hole the others do not**: `re-measures on a re-render, which is how an expanding folder reports` (the layout effect deliberately has no dependency list — restoring one is green against every other test here), `re-measures when a section above the list grows` **together with** `re-measures and re-observes when a section mounts after the list` (the ResizeObserver/MutationObserver pair; a sibling growing never re-renders this component, and the sidebar's sections are conditional, so watching a fixed set at mount is not enough), and `still corrects itself on scroll when nothing else reported` (the backstop — dropping it is invisible until a layout change resizes no box). `keeps the offset scroll-invariant` pins the property that makes re-measuring during a scroll safe at all. Also run `cd frontend && pnpm test:e2e sidebar-long-chat-list sidebar-chat-folders` when the sidebar or the virtualizer was touched — a real layout engine is the only thing that can say the rows the reader is looking at are the rows that are there.
 - [ ] **Automatic conversation renaming** (§33): `cd backend && uv run pytest tests/test_auto_title_preference.py tests/test_title_middleware_core_logic.py -q` and `cd frontend && pnpm test auto-title`. Three silent failures, and none of them makes a title stop appearing. `test_the_title_is_written_from_after_agent_not_after_model` compares the bound hooks against `AgentMiddleware`'s own — the same predicate LangChain's factory uses to place the node — because a merge that restores the `after_model` spelling still produces titles, just back inside the run window where the Gateway refuses the user's own rename with a 409. `test_a_client_cannot_switch_renaming_on_when_the_operator_disabled_it` **together with** `test_an_unconfigured_model_is_dropped_rather_than_dialled`: both are the boundary direction, and both are green if you drop the check and simply honor whatever the browser sent. And `distinguishes 'server default' from 'no model call'` — the absent key and the empty string are opposite instructions to the backend, so collapsing them either starts spending a model call the user declined or ignores the model the operator configured. Also confirm `_ensure_interrupted_title` in `runtime/runs/worker.py` still runs on **every** terminal status: narrowed back to `interrupted`, a first turn that ends in `ask_clarification` is never named, and never can be. Run `cd frontend && pnpm test:e2e auto-title-settings` too when the settings dialog itself was touched — a merge that reorders or renames the nav rows breaks the page's only click-through coverage without failing a unit test.
+- [ ] **Scroll-back history survives a restart** (§28): `cd backend && uv run pytest tests/test_run_history_durability.py tests/test_config_upgrade_script.py tests/test_doctor.py -q`. The failure this defends is silent in every log: with `run_events.backend: memory` the page endpoint's store is process state, so after a Gateway restart a long conversation still opens and still renders its recent turns from the checkpoint, and merely stops loading older messages when the reader scrolls up. `test_older_messages_still_page_backwards_after_a_restart` is the claim, across a real engine teardown and rebuild; `test_the_memory_store_is_what_loses_it` is the other direction, so the file goes red if durability gets "fixed" in the memory store instead of the default. **All three default sources must survive a sync independently** — `test_the_schema_default_persists_run_events` (a `config.yaml` with no `run_events:` section, and the Helm chart), `test_the_shipped_example_persists_run_events` (fresh installs copy the example verbatim, so upstream restoring `memory` there overrides the schema default), and migration 50 in `test_run_events_memory_is_migrated_but_other_memory_backends_are_not` (existing installs, which keep whatever value they were created with). An upstream merge that reverts any one of them re-breaks a different population and nothing else notices. `TestCheckRunEventsDurable` keeps `make doctor` reporting the combination for installs that never run `make config-upgrade`.
 - [ ] Frontend: `pnpm check && pnpm test`. **`pnpm check` now includes the formatting gate** (`prettier --check .`, then eslint, then `tsc --noEmit`) — it used to be eslint + tsc only, which meant the command every guide tells you to run before committing was not the command CI gates on, and an eslint/type-clean change could still fail `lint-frontend` on formatting alone. That discrepancy was documented right here and was still walked into twice, so it was removed instead of re-warned about (see the Prettier row below). `pnpm format:write` fixes what the check reports; `eslint --fix` normalizes imports and optional-chains but not Prettier whitespace.
 - [ ] **Changed a shared UI control? Run the whole e2e suite, not the one spec you thought of.** `pnpm test:e2e` with no filter. A control's _specs_ are not the specs in the file you edited: they are every spec that clicks that control anywhere in the app, and nothing in `pnpm check` or `pnpm test` knows the difference. Observed live on the model-picker unification — the composer's picker was swapped into five screens, the Democracy spec was found and fixed by hand, and `suggestions-settings.spec.ts` was missed entirely because it drives the _same control_ from a different page. It failed only in CI. Two rules fell out of it, both now pinned by `frontend/tests/unit/components/workspace/model-picker-sites.test.ts`: a spec must locate a shared control by that control's **own** `data-slot`, never by the ARIA role of the primitive underneath (swap the primitive and the locator silently matches nothing), and a fast unit test should assert the contract so a six-minute e2e job is not the thing that tells you.
 
@@ -2888,6 +2889,65 @@ place when an older history page loads" asserts the invariant against a real
 layout engine, holding the older-page response until the reader has scrolled
 back so the prepend lands into a parked viewport. Do not rewrite that last one
 to assert it goes red on the old code; it does not, and the comment says why.
+
+**The page endpoint is the only source, so its store has to be durable.**
+Everything above is about holding the reader's place while a page lands. A
+separate failure stops the page from existing at all, and it looks nothing like
+a scroll bug: after restarting the machine the Gateway runs on, a long
+conversation opens normally, shows its most recent turns, and then simply stops
+loading older ones when the reader scrolls up.
+
+`GET /api/threads/{id}/messages/page` reads the **run-event store** and nothing
+else. Upstream ships `run_events.backend: memory`, which makes that store
+process state — so a Gateway restart empties it, while the LangGraph checkpoint
+(durable on the default `database.backend: sqlite`) keeps supplying the recent
+window through thread state. The two sources disagreeing is what produces the
+symptom: `mergeMessages` still renders a populated thread, the page endpoint
+returns `has_more: false`, the IntersectionObserver sentinel therefore never
+fires, and **no error is logged on either side**. On a chat long enough to have
+been compacted, every turn before the compaction point is simply gone from the
+UI.
+
+The fork's default is `run_events.backend: db`. It writes into the same
+`deerflow.db` the checkpointer already uses, so durability costs no extra setup,
+and `make_run_event_store()` still falls back to the memory store when
+`database.backend: memory` leaves no session factory — an install that wants
+ephemeral runs is unaffected. Three things had to move together, because any one
+alone reaches only some installs:
+
+- **`RunEventsConfig.backend` defaults to `db`** — covers a `config.yaml` with no
+  `run_events:` section, and the Helm chart, which embeds no such section.
+- **`config.example.yaml` ships `db`** (`config_version: 50`) — covers fresh
+  installs, which copy the example verbatim rather than falling back to the
+  schema default.
+- **`config_upgrade.py` migration 50 rewrites `run_events:\n  backend: memory`**
+  — covers existing installs, whose `config.yaml` would otherwise keep the value
+  it was created with forever. This is the one place the upgrade rewrites a
+  value the user may have set on purpose; it is anchored on the section header
+  so `backend: memory` under `database:` is untouched, and it is justified by
+  `memory` being a data-loss setting whose only symptom is silent.
+
+For an install that never runs `make config-upgrade`, `make doctor` reports the
+combination directly (`run history survives a restart`). History already lost to
+earlier restarts is not recoverable — the rows were never written.
+
+`make_run_event_store(None)` resolves `RunEventsConfig()`'s defaults rather than
+hardcoding a backend of its own. That looked like tidying and is not: the two
+paths silently diverging is exactly how a caller ends up with less durability
+than its configuration asked for.
+
+**On testing this.** The durability claim is provable in a way the lock race
+above is not, so it is pinned end to end rather than by layers.
+`test_run_history_durability.py` writes messages through a real SQLite-backed
+store, tears the engine down, rebuilds it — a restart, as far as the store is
+concerned — and asserts the backward `before_seq` page still returns the older
+turns and that `seq` continues from the persisted maximum instead of restarting
+at 1 (a reset would interleave new turns underneath old ones). Its
+`test_the_memory_store_is_what_loses_it` asserts the other direction, so the
+file fails if someone "fixes" durability by making the memory store persist
+instead of changing the default. `test_no_config_resolves_the_same_store_as_default_config`
+is the divergence guard, and both default sources — schema and example — are
+asserted separately because either one alone still reaches real installs.
 
 **Not addressed here.** Every run finish invalidates the whole history query,
 so TanStack refetches _every_ loaded page in sequence — twenty pages loaded

@@ -294,6 +294,56 @@ def check_config_unknown_keys(config_path: Path) -> list[CheckResult]:
     ]
 
 
+def check_run_events_durable(config_path: Path) -> CheckResult:
+    """Warn when a durable database is paired with an in-memory run-event store.
+
+    Scroll-back through a long conversation is served by
+    ``GET /api/threads/{id}/messages/page``, which reads the run-event store and
+    nothing else. Under ``run_events.backend: memory`` that store is process
+    state, so restarting the Gateway empties it — while the LangGraph checkpoint,
+    durable on sqlite/postgres, keeps rendering the most recent turns. The
+    conversation therefore looks intact and simply stops loading older messages
+    when the reader scrolls up, with no error in any log. Nothing else in the
+    stack reports this combination, which is why it gets its own check.
+
+    ``database.backend: memory`` is not flagged: there is no session factory to
+    write events through, so the in-memory event store is the only option and
+    the whole install is already non-durable by choice.
+    """
+    label = "run history survives a restart"
+    if not config_path.exists():
+        return CheckResult(label, "skip")
+    try:
+        data = _load_yaml_file(config_path)
+    except Exception:
+        return CheckResult(label, "skip", "config.yaml is not parseable (see 'config.yaml loadable')")
+
+    database = data.get("database") or {}
+    run_events = data.get("run_events") or {}
+    if not isinstance(database, dict) or not isinstance(run_events, dict):
+        return CheckResult(label, "skip", "unexpected config shape")
+
+    db_backend = database.get("backend", "sqlite")
+    # Mirror RunEventsConfig's default rather than assuming a key is present:
+    # a config.yaml with no run_events section gets the durable default.
+    events_backend = run_events.get("backend", "db")
+
+    if db_backend == "memory":
+        return CheckResult(label, "skip", "database.backend: memory (nothing is persisted by design)")
+    if events_backend != "memory":
+        return CheckResult(label, "ok", f"run_events.backend: {events_backend}")
+    return CheckResult(
+        label,
+        "warn",
+        f"run_events.backend: memory with database.backend: {db_backend}",
+        fix=(
+            "Older messages stop loading when you scroll back after a Gateway restart.\n"
+            "Set run_events.backend: db in config.yaml, then restart the Gateway.\n"
+            "History already lost to earlier restarts cannot be recovered."
+        ),
+    )
+
+
 def check_config_version(config_path: Path, project_root: Path) -> CheckResult:
     if not config_path.exists():
         return CheckResult("config.yaml version", "skip")
@@ -1341,6 +1391,7 @@ def main() -> int:
         check_config_duplicate_keys(config_path),
         check_config_version(config_path, project_root),
         check_config_loadable(config_path),
+        check_run_events_durable(config_path),
         check_models_configured(config_path),
         check_model_pricing(config_path),
         check_spend_budget(config_path),
