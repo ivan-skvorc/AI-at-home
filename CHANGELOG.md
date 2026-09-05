@@ -455,6 +455,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **ci:** **A hiccup downloading pnpm no longer fails a frontend job.** Every
+  frontend workflow starts by having corepack fetch the pinned pnpm from the npm
+  registry, unretried. A transient abort mid-download does not surface as a
+  network error — it crashes Node's bundled undici parser with an opaque
+  `AssertionError: assert(!this.paused)` — so the job died before running a
+  single test and the red tick read like a broken branch rather than a hiccup.
+  The download is now retried with a backoff in all four workflows, and the
+  pinned pnpm version is asserted to match `frontend/package.json` so the five
+  copies of it cannot drift apart.
+
 - **cost:** **What a reply cost is now recorded when it runs, instead of being
   recomputed from today's config.** Every cost figure — the chat header, the
   per-step chart, the spend page, the console — was priced by looking each run's
