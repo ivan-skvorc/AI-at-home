@@ -286,6 +286,11 @@ Nginx (port 2026) ← Unified entry point
 
 ## Development Workflow
 
+> **Fork note.** This fork formalizes the loop below — including which tests a
+> change owes, keeping [FORK.md's post-sync checklist](FORK.md#post-sync-feature-checklist)
+> in sync with the code, and when the model audit is due — in
+> [`CHANGE_CYCLE.md`](CHANGE_CYCLE.md). Coding agents should follow that file.
+
 1. **Create a feature branch**:
    ```bash
    git checkout -b feature/your-feature-name

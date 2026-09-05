@@ -4,6 +4,13 @@
 
 ## How to use this file
 
+**Making a change? Run the procedure in [`CHANGE_CYCLE.md`](CHANGE_CYCLE.md).**
+That file is the *order of operations* — implement, decide whether a new test is
+owed, add or retire the checklist rows below, run the list, decide on the audit,
+open the PR — and it reads this file's two lists rather than copying them.
+"Run the code change cycle from CHANGE_CYCLE.md" is the whole instruction. This
+file stays the *material*: the checks themselves, and why each one exists.
+
 **This file is the fork's checklist, not its brochure.** Two things are asked of
 anyone — human or coding agent — who adds a feature, changes one, or merges
 upstream into this fork, and both live in the two sections directly below. The

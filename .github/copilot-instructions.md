@@ -169,6 +169,11 @@ Skills and assets:
 
 ## 6) Pre-Checkin / Validation Expectations
 
+This fork's full procedure — which tests a change owes, keeping
+[FORK.md's post-sync checklist](../FORK.md#post-sync-feature-checklist) in sync
+with the code, and when the model audit is due — is
+[`CHANGE_CYCLE.md`](../CHANGE_CYCLE.md). Follow it for any non-trivial change.
+
 Before submitting changes, run at minimum:
 
 - Backend: `cd backend && make lint && make test`
