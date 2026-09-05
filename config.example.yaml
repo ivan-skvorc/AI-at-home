@@ -7,6 +7,11 @@
 #   `DEER_FLOW_CONFIG_PATH` to point at a specific config file.
 # - Runtime state defaults to `.deer-flow` under the project root. Override it
 #   with `DEER_FLOW_HOME` when you need a different writable data directory.
+# - Set `DEER_FLOW_DATE_TIMEZONE` to an IANA timezone name (e.g. `Asia/Shanghai`)
+#   when the conversation date injected into agents should follow a zone other
+#   than the server's local timezone. It is read at runtime by the date-context
+#   middlewares (not a config-schema field), so it can be set on a container
+#   without mounting a `config.yaml`.
 # - Environment variables are available for all field values. Example: `api_key: $OPENAI_API_KEY`
 # - The `use` path is a string that looks like "package_name.sub_package_name.module_name:class_name/variable_name".
 
@@ -281,7 +286,8 @@ models:
   # `make setup` enables the same sets interactively; if you copied this file by
   # hand (`make config`) with a key already in `.env`, the next launch enables it.
   #
-  # Model ids and thinking formats below are current as of 2026-07. Adjust
+  # Model ids and thinking formats below are current as of 2026-09; see
+  # docs/model-audit-log.md for what each pass actually verified. Adjust
   # max_tokens / supports_vision to taste and delete the models you don't want.
   #
   # Prices are NOT in the display name. Each model carries a `price:` block (and
@@ -482,14 +488,13 @@ models:
   #          OpenRouter to a third-party provider that may log/retain prompts,
   #          unlike the direct Anthropic entries above. Treat these as non-private
   #          and keep sensitive work on the direct Anthropic or local Ollama models.
-  #   ($A/B → $C/D*) — $A/B is OpenRouter's standard list price (USD in/out per 1M
-  #          tokens); the starred $C/D* is the current *discounted* price from
-  #          OpenRouter's promotions page (the * flags a temporary promo that can
-  #          end at any time). Only models currently on a promo carry the second
-  #          pair: MiniMax M3 ($0.6/2.4 → $0.24/0.96*, 60% off) and GLM-5.2
-  #          ($1.15/3.6 → $0.28/0.87*, 76% off) as of 2026-08. Re-check the promo
-  #          page when refreshing — an ended promo means dropping the starred pair
-  #          back to the list price.
+  # Prices are NOT markers on these names — see the note above. Each entry carries
+  # a structured `price:` block, and a `discount:` block only while the provider
+  # is actually running a promotion. One promo is live in this bundle: MiniMax M3
+  # ($0.6/2.4 standard, $0.24/0.96 discounted, 60% off), and it carries no `until:`
+  # because OpenRouter has not announced an end date — add one the day they do, so
+  # it expires without an edit. Re-check the promotions page when refreshing: an
+  # ended promo means deleting the `discount:` block, not editing a name.
   # Two slugs were corrected in the 2026-07 refresh — both named models that never
   # shipped, so picking them failed at request time: `openai/gpt-5.5-codex` (no
   # 5.5/5.6 Codex exists; 5.3-Codex is still the newest agentic-coding variant)
@@ -2809,7 +2814,8 @@ sandbox:
 #     Run `make sandbox-enable MODE=container` to write this block for you.
 #   - External mode (base_url set): connect to one shared, externally-managed
 #     container started via `make sandbox-up`. `mounts:` are ignored.
-# On macOS: Automatically prefers Apple Container if available, falls back to Docker
+# On macOS: Prefers Apple Container when available, but keeps Docker while this
+# sandbox prefix still has managed Docker containers to reconcile after a mode change
 # On other platforms: Uses Docker
 # Uncomment to use:
 # sandbox:
@@ -2879,6 +2885,23 @@ sandbox:
 #
 #   # Optional: Prefix for container names (default: deer-flow-sandbox)
 #   # container_prefix: deer-flow-sandbox
+#
+#   # Optional: outbound network policy for locally managed Docker sandboxes.
+#   # open keeps the current behavior. isolated denies all outbound traffic.
+#   # allowlist permits the listed HTTP/HTTPS domains; denied public domains can
+#   # optionally be approved from the Human Input card. Restricted modes require
+#   # Docker Engine 28+ and are not supported by Apple Container or provisioner mode.
+#   # Private, loopback, link-local, multicast, and cloud metadata addresses are always denied.
+#   network:
+#     mode: allowlist                    # open | isolated | allowlist (default: open)
+#     allow_domains:
+#       - pypi.org
+#       - files.pythonhosted.org
+#       - registry.npmjs.org
+#       - github.com
+#     approval: prompt                  # deny | prompt
+#     temporary_grant_ttl: 300          # 30-3600 seconds
+#     proxy_image: ghcr.io/bytedance/deer-flow-sandbox-network-proxy:latest
 #
 #   # Optional: Override whether the sandbox already sees the gateway's
 #   # thread workspace/uploads/outputs through shared mounts.

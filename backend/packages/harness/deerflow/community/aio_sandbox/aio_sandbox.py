@@ -62,7 +62,14 @@ class AioSandbox(Sandbox):
     #: the next — recorded bash evidence cannot prove a clean environment.
     persistent_shell_sessions = True
 
-    def __init__(self, id: str, base_url: str, home_dir: str | None = None, request_timeout: float | None = None):
+    def __init__(
+        self,
+        id: str,
+        base_url: str,
+        home_dir: str | None = None,
+        request_timeout: float | None = None,
+        request_headers: dict[str, str] | None = None,
+    ):
         """Initialize the AIO sandbox.
 
         Args:
@@ -72,19 +79,23 @@ class AioSandbox(Sandbox):
             request_timeout: HTTP client timeout in seconds for sandbox API
                 requests (``sandbox.request_timeout`` in config.yaml). Defaults
                 to 600 when unset.
+            request_headers: Trusted control-plane headers required by a local
+                relay. These are never injected into sandbox commands.
         """
         super().__init__(id)
         self._base_url = base_url
         self._request_timeout = float(request_timeout) if request_timeout is not None else float(self.DEFAULT_REQUEST_TIMEOUT)
+        client_kwargs = {
+            "base_url": base_url,
+            "timeout": self._request_timeout,
+        }
+        if request_headers:
+            client_kwargs["headers"] = dict(request_headers)
         if sandbox_http_trust_env(base_url):
-            self._client = AioSandboxClient(base_url=base_url, timeout=self._request_timeout)
+            self._client = AioSandboxClient(**client_kwargs)
         else:
             direct_client = httpx.Client(timeout=self._request_timeout, follow_redirects=True, trust_env=False)
-            self._client = AioSandboxClient(
-                base_url=base_url,
-                timeout=self._request_timeout,
-                httpx_client=direct_client,
-            )
+            self._client = AioSandboxClient(**client_kwargs, httpx_client=direct_client)
         self._home_dir = home_dir
         self._lock = threading.Lock()
         self._scope_registry_lock = threading.Lock()

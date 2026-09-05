@@ -11,6 +11,122 @@ Newest first. Append a pass; never rewrite one. A dated line is what tells the
 next person whether the roster was checked last week or last year, and _which_
 providers that pass could actually reach.
 
+- **2026-09-05 (third pass, requested on its own) — Anthropic re-verified at tier 1; no roster
+  or price change, but three documentation drifts found and fixed, one of them a real one.**
+  Run because it was asked for. The two earlier passes today both concentrated on prices; this
+  one worked the *offline* steps properly — roster and order (step 1), first-party key coverage
+  (step 3), slugs (step 4) and the privacy marker (step 7) — which is where the findings were,
+  because those steps need no network and had been the ones deferred whenever the egress proxy
+  blocked a pass.
+
+  **Reachability unchanged.** `docs.claude.com` serves; `openrouter.ai`, `platform.openai.com`,
+  `api.x.ai`, `ai.google.dev`, `api-docs.deepseek.com`, `mistral.ai`, `platform.moonshot.ai`,
+  `platform.minimaxi.com`, `docs.z.ai` and `www.alibabacloud.com` are all refused at the proxy.
+  Anthropic verified at tier 1, every other lab **tier 3: left alone, logged unreachable**. No
+  tier-2 corroboration was possible either — that needs two independent reachable sources and
+  there were none.
+
+  **Anthropic — all six entries still match, re-read today.** Fable 5.1 `$10/$50` (cache read
+  `$0.25`), Opus 5 `$5/$25` (`$0.50`), Opus 4.8 `$5/$25` (`$0.50`), Sonnet 5 `$2/$10` (`$0.20`),
+  Sonnet 4.6 `$3/$15` (`$0.30`), Haiku 4.5 `$1/$5` (`$0.10`), parsed from the provider's own
+  table and compared field by field against both synced sources. Fable 5.1's `0.025x` cache-read
+  exception and Sonnet 5's now-permanent `$2/10` both still hold.
+
+  **Structural steps, all clean.** Provider order is Anthropic → OpenRouter → OpenAI, xAI,
+  Google, DeepSeek, Mistral, Moonshot, Qwen, MiniMax, z-ai, exactly as step 1 requires. Every
+  home flagship is doubled on OpenRouter (`minimax/minimax-m3` ↔ `MiniMax-M3` modulo case, as
+  allowed). All 13 OpenRouter entries carry `(p)` and no direct or home entry does. The machine
+  half reports no drift and no price in any `display_name`.
+
+  **Three drifts in the prose, found by reading the seven coverage places against the roster.**
+
+  1. **`.env.example` advertised a model the fork does not carry.** Its `MISTRAL_API_KEY` line
+     read *Large 3 / Medium 3.5 / **Small 3***, while the bundle carries `mistral-small-2603`
+     as **Mistral Small 4** — and `config.example.yaml`, `providers.py`, the sync script's
+     docstring and the README all say Small 4. The 2026-08-20 roll-forward updated four places
+     and missed the fifth. Nothing failed: the key worked, the block uncommented, and the only
+     symptom was a user reading a name that does not exist here. **Now pinned** —
+     `TestFirstPartyKeyCoverage::test_env_example_names_the_models_each_home_key_actually_enables`
+     compares every home key's comment against the display names that key enables, allowing only
+     a lab prefix every model in the block repeats to be abbreviated away.
+  2. **The OpenRouter legend documented a display-name price marker that §17 deleted.** It
+     described `($A/B → $C/D*)` as a marker on these names and told the reader the starred pair
+     is the discounted price — but prices left display names entirely, which is what the machine
+     audit's `price_in_display_name` check now enforces. A reader following that legend goes
+     looking for a number that is not there. Replaced with a pointer to the `price:` /
+     `discount:` blocks that actually carry it.
+  3. **The same legend advertised a 76%-off promotion on a model that is no longer bundled.** It
+     named *GLM-5.2 ($1.15/3.6 → $0.28/0.87\*, 76% off) as of 2026-08* — but the 2026-08-20 pass
+     rolled GLM-5.2 out for GLM-5.3 and deliberately did **not** carry the discount across, since
+     a promotion is quoted for a specific model. So the file promised a discount on a model it
+     does not ship. The legend now names the one live promo in the bundle, MiniMax M3
+     (`$0.6/2.4` standard, `$0.24/0.96` discounted), and says an ended promo means deleting the
+     `discount:` block rather than editing a name.
+
+  A fourth was noted and **left alone**: the Volcengine Coding Plan *example* block still shows
+  `glm-5.2`. It is an illustration of configuring a third-party gateway rather than a bundled
+  entry, and whether that plan now serves GLM-5.3 cannot be checked from here — changing it
+  would be inventing a fact, which is the one thing this pass is not allowed to do.
+
+  **Still outstanding for the next unrestricted pass**, unchanged from this morning: tier-1
+  verification for the four labs rolled forward on 2026-08-20 from corroborated sources (xAI
+  Grok 4.6, Qwen3.8 Max, GLM-5.3, Mistral Medium 3.5), discovery for every non-Anthropic lab,
+  and — newly — **whether MiniMax M3's OpenRouter promotion is still running**. It carries no
+  `until:` because none was announced, so nothing expires it on its own; if it has ended, the
+  bundle is advertising a price nobody is being offered, which is the exact failure the other
+  two legend drifts were.
+
+  **Regression gate green.** `python3 scripts/sync-api-key-models.py --dry-run` uncomments
+  cleanly and `tests/test_sync_api_key_models.py tests/test_setup_wizard.py
+  tests/test_config_integrity.py tests/test_audit_models.py` pass. The bundle is unchanged at
+  **40** paid models; no price, slug, or roster entry moved.
+
+- **2026-09-05 (second pass, requested with the upstream sync of 14 commits) — Anthropic re-verified at tier 1; no drift, no roster change.**
+  Run because it was asked for, not because anything reported drift. The sync it rides with
+  touches no model block, no `price:`, and no `discount:`, so it is not itself evidence about
+  the roster; this pass exists to answer the request, and it re-read the one provider the
+  network can reach rather than quoting the earlier line of the same day.
+
+  **Machine half clean.** `python3 scripts/audit_models.py` reports **no drift**: every bundled
+  slug still resolves, the two synced sources agree with each other, and no price has crept back
+  into a `display_name`. Ten providers are listed as *skipped, no machine-readable catalog*
+  (covered by the manual steps), and `openrouter` as *catalog unreachable* — reported as skipped,
+  not as drift, exactly as the job is meant to.
+
+  **Reachability — one authoritative page, everything else refused.** `docs.claude.com` resolves
+  and serves; every other host tested is refused at the egress proxy with `CONNECT tunnel failed,
+  response 403` (`openrouter.ai`, `www.anthropic.com`, `api.openai.com`, `platform.openai.com`,
+  `ai.google.dev`, `api-docs.deepseek.com`, `api.x.ai`, `mistral.ai`, `qwen.ai`, `z.ai`,
+  `www.deepseek.com`, plus `huggingface.co` and `api.together.xyz` as would-be secondary
+  sources). So **tier 2 was not available either** — corroboration needs two independent
+  reachable sources and there were none — and every lab but Anthropic is **tier 3: left alone,
+  logged unreachable**. No price was carried from memory.
+
+  **Anthropic — all six bundled entries match the provider's own table, in both synced sources.**
+  Read from <https://docs.claude.com/en/docs/about-claude/pricing> on 2026-09-05: Fable 5.1
+  `$10/$50` (cache read `$0.25`), Opus 5 `$5/$25` (`$0.50`), Opus 4.8 `$5/$25` (`$0.50`),
+  Sonnet 5 `$2/$10` (`$0.20`), Sonnet 4.6 `$3/$15` (`$0.30`), Haiku 4.5 `$1/$5` (`$0.10`).
+  `config.example.yaml` and `scripts/wizard/providers.py::MODEL_PRICES` agree with the page and
+  with each other on all six pairs and all six cache rates, including Fable 5.1's documented
+  `0.025x` cache-read exception. Sonnet 5 still carries a plain `$2/10` with no `discount:`
+  block, which is right: the page shows the introductory rate as the standing price.
+
+  **Discovery (step 2) — nothing to add, and one deliberate omission re-confirmed.** The page's
+  Claude line-up is Fable 5.1 / Mythos 5.1 / Fable 5 / Opus 5 / Opus 4.8 / 4.7 / 4.6 / 4.5 /
+  Sonnet 5 / 4.6 / 4.5 / Haiku 4.5 / 3.5. The bundle already carries the newest of each family
+  plus the last 4.x of Opus and Sonnet, which is the roster shape the rule asks for. **Mythos 5.1
+  stays out** for the same reason Mythos 5 did — the page marks it *limited availability*, so an
+  ordinary `ANTHROPIC_API_KEY` cannot reach it, and bundling a model a user's key is refused for
+  is worse than omitting it. No other lab could be checked for new flagships, so **discovery is
+  outstanding for every non-Anthropic lab** and is what the next unrestricted pass should start
+  from — including the four labs rolled forward from corroborated sources on 2026-08-20
+  (xAI Grok 4.6, Qwen3.8 Max, GLM-5.3, Mistral Medium 3.5), which remain un-verified at tier 1.
+
+  **Regression gate green.** `python3 scripts/sync-api-key-models.py --dry-run` uncomments
+  cleanly, and `tests/test_sync_api_key_models.py tests/test_setup_wizard.py
+  tests/test_config_integrity.py tests/test_audit_models.py` pass (213 tests). The bundle is
+  unchanged at **40** paid models.
+
 - **2026-09-05 (requested with the run-pricing-snapshot change) — Anthropic re-verified at tier 1; no drift, no roster change.**
   Run because it was asked for. The change shipped alongside it persists each run's prices
   (FORK.md §17) and **adds no model entry and changes no price**, so it is not itself evidence

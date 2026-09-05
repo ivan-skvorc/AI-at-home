@@ -9,6 +9,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **models:** **Model audit, 2026-09-05 — no price or roster change, three
+  documentation drifts fixed.** Anthropic re-verified against its own pricing
+  page (all six entries, both synced sources, including Fable 5.1's `0.025x`
+  cache-read exception); every other provider host is unreachable from this
+  environment and was left alone. The findings were all in prose that describes
+  the roster, which is what an audit run offline can actually check.
+  (1) **`.env.example` advertised Mistral Small 3**, a model this fork does not
+  carry — the 2026-08-20 roll-forward to Small 4 updated `config.example.yaml`,
+  `providers.py`, the sync script's docstring and the README, and missed the
+  fifth place. Nothing failed; the only symptom was a user reading a name that
+  does not exist here, so it is now pinned by
+  `test_env_example_names_the_models_each_home_key_actually_enables`, which
+  compares every home key's comment against the models that key enables.
+  (2) **The OpenRouter legend still documented `($A/B → $C/D*)` as a
+  display-name price marker**, a convention removed when prices moved into
+  structured `price:` blocks — a reader following it goes looking for a number
+  that is not there. (3) **The same legend advertised a 76%-off promotion on
+  GLM-5.2**, which stopped being bundled when GLM-5.3 replaced it and whose
+  discount was deliberately not carried across. Both now point at the
+  `price:` / `discount:` blocks and name the one live promo, MiniMax M3.
+
+- **docs:** **The change cycle ends by opening the pull request, and the model
+  audit no longer runs unasked.** [`CHANGE_CYCLE.md`](CHANGE_CYCLE.md) gains an
+  end-to-end summary of its own shape at the top — change, write the tests a
+  future reader needs, add and retire the matching FORK.md rows, run the whole
+  list including the tests just added, optionally audit the models, open the PR —
+  so the procedure can be followed without reading all ten steps first. Two rules
+  changed rather than being restated. **Step 9 is mandatory and self-starting:**
+  the cycle is finished when the PR is open, not when the tests pass, and the
+  template's every section is filled in from the run rather than from the diff.
+  **Step 6 is opt-in:** the audit runs only when the request asks for one in
+  words; a bundle-touching change or a drift report now earns a line in the
+  report *recommending* one instead of triggering a pass nobody asked for,
+  because an audit run as a reflex at the end of an unrelated change is the one
+  most likely to be hurried, and a hurried price is wrong with confidence.
+  FORK.md's audit section and its checklist gate say the same thing, so the two
+  files cannot drift into disagreeing about when a pass is owed, and
+  `test_change_cycle_doc.py` fails if the numbered PR step is ever deleted — the
+  one step whose absence is otherwise silent, since a pushed branch with no PR
+  reports green and simply sits there.
+
 - **docs:** **One sentence now runs the whole change procedure.**
   [`CHANGE_CYCLE.md`](CHANGE_CYCLE.md) formalizes what was previously spread
   across FORK.md's preamble and a maintainer's habit: implement, decide whether
@@ -447,6 +488,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   blanked by an empty set the user did not produce.
 
 ### Changed
+
+- **sync:** **Merged 14 upstream commits.** User-visible pickups: an
+  approval-gated **controlled egress** mode for the AIO sandbox (an
+  egress-controlled internal network plus a relay proxy, `sandbox.network`),
+  sub-agents can now discover **uploads from earlier turns** rather than only the
+  current run's, a `/health/ready` readiness probe backed by the database,
+  configurable Volcengine podcast voices, a configurable timezone for the
+  injected current date, and fixes for MindIE tool-mode streaming usage, MCP
+  cache re-initialization across event loops, and `make dev` starting the
+  frontend on Windows. Every fork feature that met one of these kept both sides:
+  the sandbox `request_timeout`, `expose_ports` / `extra_capabilities`, the
+  external-container session re-init on discovery, and the per-conversation
+  internet switch all survive alongside the new upstream behaviour. One fork-side
+  decision came out of the merge: **`expose_ports` now publishes nothing when the
+  sandbox API port itself is unpublished** — restricted network mode reaches the
+  container only through the relay, so a debug port published to the host there
+  would be a silent hole in the isolation the mode exists to provide.
+  `config_version` stays at `50`: `sandbox.network` ships commented out with a
+  working default, so there is no key for `make config-upgrade` to deliver and a
+  bump would only warn every existing install into a no-op.
 
 - **models:** **The model audit can now grow the roster, not just correct it.** Every
   automated check asked only about models already bundled, so a lab shipping a new

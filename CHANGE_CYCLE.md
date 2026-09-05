@@ -8,6 +8,14 @@ That sentence means: do everything below, in this order, without asking for the
 steps one at a time. Stop and ask only when a step cannot be decided from the
 repository — never to confirm that the next step should happen.
 
+**The shape, end to end:** make the change → decide which tests a *future* reader
+needs to catch it breaking, and write them → add the matching rows to FORK.md's
+checklist and delete the rows that no longer prove anything → run the whole list,
+including the tests you just added → run the model audit **only if you were told
+to** → land the docs → commit, push, and **open the pull request**. The cycle is
+not finished when the tests pass; it is finished when the PR is open. Nobody has
+to ask for that PR separately — it is step 9, not a follow-up request.
+
 **Two files, one procedure.** This file is the **procedure**: the order, the
 decisions, and the gates. It owns no test commands of its own. The material it
 runs on lives in [`FORK.md`](FORK.md):
@@ -135,7 +143,10 @@ cd frontend && pnpm check && pnpm test
 cd frontend && pnpm test:e2e            # no filter — a shared control's specs are not in the file you edited
 ```
 
-Then the per-row commands from the table.
+Then the per-row commands from the table — **and the tests you added in step 3**,
+if the run above did not already cover them. A test written and never executed in
+its final form is the most common way this cycle ships red: it passed while you
+were iterating, then a rename, a fixture edit, or a formatter pass moved under it.
 
 **Environmental failures are reported, never patched away.** FORK.md names the
 known ones — chiefly a sandbox whose pre-baked Playwright browsers are older
@@ -145,26 +156,40 @@ it environmental, then say so in the report with that evidence. Do **not** run
 `playwright install`, and never skip, disable, or quarantine a test to reach
 green.
 
-## 6. Model audit — decide, don't default
+## 6. Model audit — optional, and only on instruction
 
-Run the [audit pass](FORK.md#auditing-the-model-list-settings--pricing) **only**
-when one of these is true:
+**Do not run it unless you were told to.** This is the one step of the cycle
+that is opt-in: the trigger sentence alone does not ask for it. Run the
+[audit pass](FORK.md#auditing-the-model-list-settings--pricing) when the request
+asks for one in words — "and run the model audit", "audit the models", or the
+same thing said any other way — and not otherwise.
+
+The reason it is opt-in rather than conditional: a full pass is a dozen provider
+page reads for a roster that usually has not moved, and a *wrong* price read in a
+hurry is worse than a stale one, because it is wrong with confidence and silences
+the next pass. When you were not asked, quote the last dated line of
+[`docs/model-audit-log.md`](docs/model-audit-log.md), say the audit was not run,
+and move on.
+
+**Two cases still get a sentence in the report, without running anything.** They
+are recommendations, not triggers — the decision stays with whoever asked for the
+change:
 
 - the change touched the bundle — `config.example.yaml` model blocks,
   `scripts/wizard/providers.py`, `scripts/sync-api-key-models.py`, or any
   `price:` / `discount:` block;
-- the weekly `model-audit` issue reports real drift;
-- the user asked for one.
+- the weekly `model-audit` issue reports real drift.
 
-Otherwise quote the last dated line of
-[`docs/model-audit-log.md`](docs/model-audit-log.md), say the audit was not due,
-and move on. Re-deriving an unchanged roster costs a dozen provider page reads
-for the answer the last pass already gave.
+Say which one applies and that an audit is worth asking for. Editing a price is
+not the same as auditing the roster, so a change that edits one entry still owes
+the reader that note.
 
 When you do run it: follow FORK.md's eight steps, read every price off the
 provider's own page (or several independent sources that agree, recorded as
-corroborated), and **write the pass into `docs/model-audit-log.md`**. The cheap
-machine half is `python3 scripts/audit_models.py`; it never confirms a price.
+corroborated), and **write the pass into `docs/model-audit-log.md`** — a pass
+that is not logged did not happen, since the log is what the next reader checks
+before deciding whether to run one. The cheap machine half is
+`python3 scripts/audit_models.py`; it never confirms a price.
 
 ## 7. Land the documentation in the same change set
 
@@ -187,9 +212,28 @@ git push -u origin <branch>
 
 ## 9. Open the pull request
 
+**This step is not optional and does not wait to be asked for.** The change is
+delivered when a reviewer can see it, and a pushed branch nobody opened a PR
+against is work that has not been handed over. Open it yourself, as the last
+action of the cycle, against the default branch.
+
 Fill in [`.github/pull_request_template.md`](.github/pull_request_template.md) —
-every section, including **Validation** with what you actually ran and any
-failure you classified as environmental.
+**every** section, in its own words rather than a restatement of the diff:
+
+- **Why** — the observable problem from step 1, not the implementation.
+- **What changed** — what a user or caller sees differently now.
+- **Surface area** — what the change can reach that the diff does not name.
+- **Bug fix verification** — for a fix, how the bug was reproduced before it.
+- **Validation** — the commands you actually ran and their outcome, plus any
+  failure classified as environmental **with the evidence from step 5**. This is
+  the section reviewers read first and the one most often filled in with
+  intentions instead of results; "the suite passes" without the numbers is not
+  validation.
+
+Then post the link. One PR per cycle: if the branch already carries earlier
+commits from this session, say so in **What changed** rather than opening a
+second PR against the same branch — a branch has one PR, and a second one is
+either a duplicate or a mistake.
 
 ## 10. Report
 
@@ -201,10 +245,11 @@ Tests added:      <paths, or "none — <reason>">
 Rows added:       <FORK.md rows>
 Rows removed:     <rows, and why they went obsolete>
 Full list:        <pass | pass except <check> (environmental, evidence: …)>
-Model audit:      <run — logged <date> | not due — last pass <date>>
+Model audit:      <run — logged <date> | not run (not asked) — last pass <date>
+                  [; recommended because <bundle touched | drift reported>]>
 PR:               <url>
 ```
 
 **Done means:** the list ran, the checklist matches the code, the docs landed in
-the same commit, and the PR is open. A green diff with a stale checklist is not
-done.
+the same commit, and **the PR is open with its URL in the report**. A green diff
+with a stale checklist is not done, and neither is a pushed branch with no PR.

@@ -29,27 +29,23 @@ A single `make dev` / Docker stack runs these cooperating services:
 | **Nginx**       | `2026` | Unified reverse-proxy entry point — open this in the browser        |
 | **Gateway API** | `8001` | FastAPI REST API + embedded LangGraph-compatible agent runtime      |
 | **Frontend**    | `3000` | Next.js web interface                                               |
-| **SearXNG**     | `8088` | Self-hosted metasearch backing the default `web_search` tool. Every launch script resolves it at startup via `scripts/detect_searxng.py` — a reachable existing instance is reused, otherwise the bundled container starts. Docker stacks use the in-network `http://searxng:8080` (`DEER_FLOW_SEARXNG_BASE_URL`); the host port is loopback-only. `make searxng` / `make searxng-stop` for manual control |
+| **SearXNG**     | `8088` | Self-hosted metasearch behind the default `web_search`. `scripts/detect_searxng.py` reuses a reachable instance at startup, else starts the bundled container; Docker stacks use in-network `http://searxng:8080` (`DEER_FLOW_SEARXNG_BASE_URL`). Loopback-only. `make searxng` / `searxng-stop` |
 | **ComfyUI**     | `8188` | Local image/video generation (`media` tools, on by default). `scripts/detect_comfyui.py` reuses a running instance, else starts the bundled container where Docker and a GPU allow. Loopback-only. Depth: FORK.md §26 |
 | **Provisioner** | `8002` | Optional — only when sandbox is configured for provisioner/K8s mode |
 
 Nginx is the single public entry: it serves the frontend and proxies `/api/langgraph/*`
-to the Gateway's LangGraph runtime, rewriting it to Gateway's native `/api/*` routes; all
-other `/api/*` go straight to the Gateway REST routers. See
-[backend/AGENTS.md](backend/AGENTS.md) for the runtime and router detail.
-It compresses HTML and configured textual assets, while deliberately leaving SSE,
-fonts, images, audio, and video uncompressed at the proxy layer.
+to the Gateway's LangGraph runtime, rewriting it to Gateway's native `/api/*` routes;
+all other `/api/*` go straight to the Gateway REST routers (detail:
+[backend/AGENTS.md](backend/AGENTS.md)). It compresses HTML and configured textual
+assets, leaving SSE, fonts, images, audio, and video uncompressed at the proxy layer.
 
-Both compose files publish that entry as `"${BIND_HOST:-127.0.0.1}:${PORT:-2026}:2026"`
-— **loopback by default**. Any new published port needs an explicit bind address, or it
-binds `0.0.0.0` (`test_compose_default_bind_host.py` pins every service in both files).
-The published nginx port is the whole external surface; naming a non-loopback `BIND_HOST`
-makes the Docker scripts co-bind `127.0.0.1` as well (`test_deploy_loopback_cobind.py`).
-Full reasoning: FORK.md, *Reaching the stack over Tailscale*.
-
-Two rules ride along, pinned by `test_docker_dev_tailnet.py`: a Docker script runs Compose
-after `cd docker/`, so it must pass an absolute `--env-file <repo-root>/.env`; and tailnet
-reach is *detected*, not configured. Both: FORK.md, *Reaching the stack over Tailscale*.
+The published nginx port is the whole external surface, and it is **loopback by
+default**: any new published port needs an explicit bind address or it binds
+`0.0.0.0`. That rule and three that ride with it — the non-loopback `BIND_HOST`
+co-bind, Compose's absolute `--env-file`, and tailnet reach being *detected*
+rather than configured — are in FORK.md, *Reaching the stack over Tailscale*,
+pinned by `test_compose_default_bind_host.py`, `test_deploy_loopback_cobind.py`
+and `test_docker_dev_tailnet.py`.
 
 ## Repository Map
 
@@ -76,32 +72,30 @@ deer-flow/
 └── docs/                           # Cross-cutting docs, plans, and design notes
 ```
 
-Third-party extensions are loaded from a top-level `plugins:` list in `config.yaml`, kept
-out of the API-writable `extensions_config.json` on purpose: that list causes code to be
-imported, and both build hooks and extension code run with Gateway privileges, so only
-trusted operator sources belong there. Manage them with `deerflow extensions
-install/list/enable/disable/remove` or the root `make extension-*` wrappers; every mutation
-needs a Gateway restart. The five contribution kinds, the manager transaction, the accepted
-source forms and the lock discipline are in
+Third-party extensions load from a top-level `plugins:` list in `config.yaml`, kept out
+of the API-writable `extensions_config.json` on purpose: that list causes code to be
+imported, and build hooks and extension code run with Gateway privileges, so only trusted
+operator sources belong there. Manage with `deerflow extensions
+install/list/enable/disable/remove` or `make extension-*`; every mutation needs a Gateway
+restart. Contribution kinds, the manager transaction, source forms and lock discipline:
 [the extensions guide](backend/packages/harness/deerflow/extensions/AGENTS.md), with a
 [reference extension](examples/deerflow-extension-example/) demonstrating all five.
 
-Runtime config lives at the **repo root**: copy `config.example.yaml` → `config.yaml`
-(main app config) and `extensions_config.example.json` → `extensions_config.json` (MCP
-servers + skills). Both real files are gitignored and may be edited at runtime via the
-Gateway API. Config schema and resolution order are documented in
+Runtime config lives at the **repo root** — `config.yaml` (main) and
+`extensions_config.json` (MCP servers + skills), both copied from their examples by
+`make config` below, both gitignored, both editable at runtime via the Gateway API.
+Schema and resolution order: [backend/AGENTS.md](backend/AGENTS.md).
+
+Skill quality review: `skills/public/skill-reviewer/` is the built-in read-only reviewer,
+`scripts/review_changed_public_skills.py` its CI gate, waivers in
+`.github/skill-review-waivers.v1.json`. Ownership boundaries, waiver rules and the
+two-step manifest dance: [the skills
+guide](backend/packages/harness/deerflow/skills/AGENTS.md).
+
+Scheduled tasks: `/workspace/scheduled-tasks` plus a background scheduler gated by
+`config.yaml -> scheduler.enabled`. Scheduled runs are deliberately non-interactive; the
+occurrence states, durable queue and dispatch-time `scheduler.recursion_limit` are in
 [backend/AGENTS.md](backend/AGENTS.md).
-
-Skill quality review note: `skills/public/skill-reviewer/` is the built-in read-only
-reviewer, `scripts/review_changed_public_skills.py` is its CI gate, and CI waivers live in
-`.github/skill-review-waivers.v1.json`. Ownership boundaries, the waiver rules, and the
-two-step manifest dance are in
-[the skills guide](backend/packages/harness/deerflow/skills/AGENTS.md).
-
-Scheduled-task note: the MVP adds `/workspace/scheduled-tasks` plus a background scheduler
-gated by `config.yaml -> scheduler.enabled`. Scheduled runs are deliberately
-non-interactive; the occurrence states, the durable queue and the dispatch-time
-`scheduler.recursion_limit` are in [backend/AGENTS.md](backend/AGENTS.md).
 
 ## Commands: Root vs. Module
 
@@ -112,22 +106,20 @@ make setup       # Interactive setup wizard (recommended for new users)
 make doctor      # Check configuration and system requirements
 make config      # Generate local config files from the examples
 make check       # Check that required tools are installed
-make install     # Install all dependencies (frontend + backend + pre-commit hooks)
-make dev         # Start all services with hot-reload (Gateway + Frontend + Nginx)
-make start       # Production mode, local and optimized (SKIP_FRONTEND_BUILD=1 reuses the last build)
+make install     # All dependencies (frontend + backend + pre-commit hooks)
+make dev         # All services with hot-reload (Gateway + Frontend + Nginx)
+make start       # Production mode, local (SKIP_FRONTEND_BUILD=1 reuses the last build)
 make stop        # Stop all running services
 make up / down   # Build/stop the production Docker stack (browser at localhost:2026)
-make up-start    # Restart the prod stack from pre-built images — applies config-only .env/config.yaml changes (e.g. BIND_HOST) with no rebuild
+make up-start    # Restart the prod stack from pre-built images — applies config-only
+                 # .env/config.yaml changes (e.g. BIND_HOST) with no rebuild
 make docker-start / docker-stop / docker-logs   # Docker development environment
 ```
 
-Fork-specific target families, each documented in the FORK.md section named beside it:
-`make support-bundle` / `backup` / `restore ARCHIVE=` (§13), `extension-*` (the extensions
-guide), `comfy-*` (§26), `sandbox-enable/disable/up/down/logs`, `fetch-browser` and
-`auto-update*` (*Automatic updates*). `make searxng` / `searxng-stop` control the bundled
-metasearch.
-
-Run `make help` for the full list.
+Fork-specific families, each documented in the FORK.md section named beside it:
+`support-bundle` / `backup` / `restore ARCHIVE=` (§13), `extension-*` (the extensions
+guide), `comfy-*` (§26), `sandbox-enable/disable/up/down/logs`, `fetch-browser`,
+`auto-update*` (*Automatic updates*), `searxng` / `searxng-stop`. `make help` lists all.
 
 **Per-module commands drive a single module** (run inside that module):
 
@@ -155,13 +147,13 @@ Host-side pnpm consumers, including the root/frontend Makefiles and local diagno
 `make dev` does **not** generate config files. First-time setup order:
 
 ```bash
-make config      # copy config.example.yaml -> config.yaml and extensions_config.example.json -> extensions_config.json (both gitignored)
+make config      # copy both examples to config.yaml / extensions_config.json (gitignored)
 make install     # install frontend + backend deps and pre-commit hooks
 make dev         # then start everything
 ```
 
-Without `config.yaml` present, services fail to boot. `config.yaml` / `extensions_config.json`
-may be edited at runtime via the Gateway API but are gitignored, so never commit them.
+Without `config.yaml` present, services fail to boot, and neither real file is ever
+committed.
 
 ### Run a single test
 
@@ -205,24 +197,23 @@ These apply repo-wide; module guides own the module-specific detail.
   owed and write it, add/edit/retire the matching row in
   [FORK.md's post-sync checklist](FORK.md#post-sync-feature-checklist), run that
   full list, run the [model audit](FORK.md#the-model-bundle-and-its-audit) only
-  when it is due, then open the PR. Ending a request with "run the code change
+  when the request asks for one, then open the PR. Ending a request with "run the code change
   cycle from CHANGE_CYCLE.md" asks for exactly that, end to end.
 - **Documentation update policy** — keep docs in sync with code: update `README.md` for
   user-facing changes and the relevant `AGENTS.md` for development/architecture changes in
   the same change set.
-- **Test-driven development** — features and bug fixes ship with tests. Backend tests live
-  in `backend/tests/` (TDD is mandatory there; see [backend/AGENTS.md](backend/AGENTS.md));
-  frontend tests live in `frontend/tests/`.
-- **Format before pushing** — run `make format` (backend) / `pnpm check` (frontend). Backend
-  CI enforces `ruff format --check`, so formatting must be clean before a push.
+- **Test-driven development** — features and bug fixes ship with tests: `backend/tests/`
+  (TDD mandatory there, see [backend/AGENTS.md](backend/AGENTS.md)) and `frontend/tests/`.
+- **Format before pushing** — `make format` (backend) / `pnpm check` (frontend); backend CI
+  enforces `ruff format --check`.
 - **Skill text encoding** — treat `SKILL.md` and other textual skill resources as UTF-8;
-  Python utilities that read or write them must pass `encoding="utf-8"` rather than
+  Python utilities reading or writing them must pass `encoding="utf-8"` rather than
   relying on the platform locale.
 - **Version sources must stay in lockstep** — a release version must match identically in
   `backend/pyproject.toml`, `frontend/package.json`, and `deploy/helm/deer-flow/Chart.yaml`
-  (`version` + `appVersion`). Pushing a `v*` git tag triggers CI that runs
-  `scripts/verify_versions.sh` and **blocks all publishing** if any source drifts. Before
-  bumping a version, run `scripts/bump_version.sh <ver>` (aligns all four at once) and
-  `scripts/verify_versions.sh <ver>` to catch drift early. See [RELEASING.md](RELEASING.md).
+  (`version` + `appVersion`); a `v*` tag runs `scripts/verify_versions.sh` in CI and
+  **blocks all publishing** on any drift. Bump with `scripts/bump_version.sh <ver>` (aligns
+  all four) and check with `scripts/verify_versions.sh <ver>`. See
+  [RELEASING.md](RELEASING.md).
 - **Don't edit `CLAUDE.md`** — it only contains `@AGENTS.md`. All agent guidance changes
   belong here in `AGENTS.md`; `CLAUDE.md` is a thin import shim.
