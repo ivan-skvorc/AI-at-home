@@ -197,7 +197,7 @@ These apply repo-wide; module guides own the module-specific detail.
   owed and write it, add/edit/retire the matching row in
   [FORK.md's post-sync checklist](FORK.md#post-sync-feature-checklist), run that
   full list, run the [model audit](FORK.md#the-model-bundle-and-its-audit) only
-  when it is due, then open the PR. Ending a request with "run the code change
+  when the request asks for one, then open the PR. Ending a request with "run the code change
   cycle from CHANGE_CYCLE.md" asks for exactly that, end to end.
 - **Documentation update policy** — keep docs in sync with code: update `README.md` for
   user-facing changes and the relevant `AGENTS.md` for development/architecture changes in

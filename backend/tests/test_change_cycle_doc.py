@@ -86,6 +86,22 @@ def test_the_checklist_heading_is_the_one_the_sync_script_parses() -> None:
     assert r"^###\s+Post-sync feature checklist\s*$" in script, "scripts/upstream_sync.py stopped parsing the checklist by that heading; update CHANGE_CYCLE.md's links in the same change"
 
 
+def test_the_cycle_still_ends_by_opening_a_pull_request() -> None:
+    """The step most likely to be dropped, and the one whose loss is silent.
+
+    Every other step of the cycle announces itself when it goes missing: a
+    skipped test run shows up as red CI, a stale checklist row shows up in the
+    next sync PR. A missing PR step shows up as nothing at all — the branch is
+    pushed, the report reads green, and the work simply sits there until someone
+    thinks to look for it. So the numbered step is pinned structurally rather
+    than by its prose: rename it freely, delete it and this fails.
+    """
+    text = CHANGE_CYCLE.read_text(encoding="utf-8")
+
+    assert re.search(r"^##\s+\d+\.\s+Open the pull request\s*$", text, re.MULTILINE), "CHANGE_CYCLE.md no longer has a numbered step that opens the pull request; the cycle ends at a pushed branch nobody reviews"
+    assert "PR:" in text, "the report shape stopped asking for the PR url, which is how a reader tells an opened PR from an intended one"
+
+
 def test_the_entry_point_is_reachable_from_the_guidance_an_agent_reads_first() -> None:
     """A procedure nobody is pointed at is a procedure nobody runs.
 

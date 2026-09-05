@@ -9,6 +9,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **docs:** **The change cycle ends by opening the pull request, and the model
+  audit no longer runs unasked.** [`CHANGE_CYCLE.md`](CHANGE_CYCLE.md) gains an
+  end-to-end summary of its own shape at the top — change, write the tests a
+  future reader needs, add and retire the matching FORK.md rows, run the whole
+  list including the tests just added, optionally audit the models, open the PR —
+  so the procedure can be followed without reading all ten steps first. Two rules
+  changed rather than being restated. **Step 9 is mandatory and self-starting:**
+  the cycle is finished when the PR is open, not when the tests pass, and the
+  template's every section is filled in from the run rather than from the diff.
+  **Step 6 is opt-in:** the audit runs only when the request asks for one in
+  words; a bundle-touching change or a drift report now earns a line in the
+  report *recommending* one instead of triggering a pass nobody asked for,
+  because an audit run as a reflex at the end of an unrelated change is the one
+  most likely to be hurried, and a hurried price is wrong with confidence.
+  FORK.md's audit section and its checklist gate say the same thing, so the two
+  files cannot drift into disagreeing about when a pass is owed, and
+  `test_change_cycle_doc.py` fails if the numbered PR step is ever deleted — the
+  one step whose absence is otherwise silent, since a pushed branch with no PR
+  reports green and simply sits there.
+
 - **docs:** **One sentence now runs the whole change procedure.**
   [`CHANGE_CYCLE.md`](CHANGE_CYCLE.md) formalizes what was previously spread
   across FORK.md's preamble and a maintainer's habit: implement, decide whether
