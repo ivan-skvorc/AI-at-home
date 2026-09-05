@@ -455,6 +455,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **chat:** **The sidebar chat list can be scrolled to the end again, and no
+  longer stops loading at 200 conversations.** Two bugs, one complaint. Past 60
+  conversations the list is virtualized inside the sidebar's own scroll
+  container, and the offset it renders against was measured only when the number
+  of rows changed — so anything else that moved the list (a folder opening above
+  it, the channels group finishing its fetch, the sidebar being resized) left
+  that offset stale and the list mounted rows for a part of the history you were
+  not looking at: blank space where conversations should be. It was worst right
+  after a machine restart, because a cold load is exactly when the late layout
+  happens — which folders are open is restored from the browser *after* the first
+  paint. The offset is now re-measured whenever the sidebar's content, size or
+  scroll position changes. Separately, the list capped itself at 200
+  conversations and stopped paging there, counting conversations filed into
+  folders against that cap: filing 200 away left the visible list stuck with a
+  handful of rows and no way to load more, and at the cap the **Load older
+  chats** button disappeared along with the automatic loading. The cap now
+  applies to the rows actually listed outside folders and only stops the
+  *automatic* loading — the button stays for as long as the backend has more, so
+  a long history is never a dead end. The automatic loading also gives up after
+  looking at 500 conversations, so a history filed away almost entirely is not
+  paged through end to end every time the app opens.
+
 - **embedded client:** **An abandoned `DeerFlowClient.stream()` now cleans up when it
   ends, not when the garbage collector gets round to it.** The wrapper that releases a
   turn's sandbox execution lease was left as a `for` loop's anonymous iterator, so it was

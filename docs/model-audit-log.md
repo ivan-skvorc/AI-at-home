@@ -11,6 +11,46 @@ Newest first. Append a pass; never rewrite one. A dated line is what tells the
 next person whether the roster was checked last week or last year, and _which_
 providers that pass could actually reach.
 
+- **2026-09-05 (requested with the sidebar-scroll fix) — Anthropic re-verified at tier 1; no drift, no roster change. Mythos 5.1 looked at and declined.**
+  Run because it was asked for. The change it ships beside (FORK.md §35, the sidebar chat list's
+  scroll margin and auto-load budget) is frontend-only and **adds no model entry and no price**, so
+  it is not itself evidence about the roster; this pass exists to put a date on the answer rather
+  than to infer one.
+
+  **Reachability — unchanged from 2026-09-04.** `platform.claude.com` answers (200), so Anthropic's
+  own pricing table and models-overview page were read directly — **tier 1**. Everything else is
+  still refused at the egress proxy: `openrouter.ai/api/v1/models` (403 at CONNECT, which is also
+  why the audit job lists `openrouter` as *skipped*), `platform.openai.com`, `api.x.ai`,
+  `mistral.ai`, `ai.google.dev`, `z.ai`, `api.deepseek.com` and `www.anthropic.com` all return 000.
+  **No blocked lab's price was touched**, and the OpenRouter block's silence is again *not* evidence
+  it is current.
+
+  **Mechanical half: clean.** `scripts/audit_models.py` reports **no drift**. The stale-fixture
+  self-test (`--catalog scripts/fixtures/model_audit_stale_catalog.json`) still raises all four
+  drift kinds — retired slug, moved list price, ended promo, started promo — so the audit itself is
+  working rather than quietly finding nothing. `python3 scripts/sync-api-key-models.py --dry-run` is
+  a clean no-op, and `uv run pytest tests/test_sync_api_key_models.py tests/test_setup_wizard.py
+  tests/test_config_integrity.py tests/test_audit_models.py` is green (213 passed).
+
+  **Tier 1 — Anthropic, read off `platform.claude.com/docs/en/about-claude/pricing`, and it had not
+  moved.** All six bundled entries match the provider's own table exactly: Fable 5.1 $10/$50
+  (cache hit $0.25), Opus 5 $5/$25 ($0.50), Opus 4.8 $5/$25 ($0.50), Sonnet 5 $2/$10 ($0.20),
+  Sonnet 4.6 $3/$15 ($0.30), Haiku 4.5 $1/$5 ($0.10). The page still carries the Sonnet 5 note
+  explicitly: the $2/$10 launch rate **is** the standard price and the scheduled 2026-09-01 rise to
+  $3/$15 will not happen — which is what the entry's own comment says. All six slugs
+  (`claude-fable-5-1`, `claude-opus-5`, `claude-opus-4-8`, `claude-sonnet-5`, `claude-sonnet-4-6`,
+  `claude-haiku-4-5`) are present on `/docs/en/models/overview`, and the roster shape still holds:
+  Opus and Sonnet each keep their last 4.x beside the current 5, Haiku and Fable keep only the
+  latest.
+
+  **Considered and declined: Claude Mythos 5.1.** It sits on the pricing table at Fable 5.1's exact
+  rates and in the docs nav — but under **Specialized models**, and every row marks it *limited
+  availability*, linking to `anthropic.com/glasswing`. A bundled entry has to work for anyone
+  holding an `ANTHROPIC_API_KEY`; a gated model would fail at request time for almost everyone who
+  picked it, which is the failure mode step 4 of the audit exists to prevent. Not bundled, and the
+  decline is written here so the next pass does not re-litigate it. Revisit if it goes generally
+  available.
+
 - **2026-09-04 (requested with the local-subagent-parallelism change) — Anthropic re-verified at tier 1; no drift, no roster change.**
   Run because it was asked for, not because anything moved: the change shipped alongside it
   (FORK.md §34, GPU-residency admission for local subagents) touches `subagent_runtime` and the

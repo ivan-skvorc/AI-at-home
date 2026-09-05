@@ -102,6 +102,7 @@ First, the mechanical gates:
 - [ ] **Offloaded-model context sizing** (§30): `cd backend && uv run pytest tests/test_sync_ollama_models.py tests/test_setup_wizard.py -q`. Bounded on **both** sides, and each side is a different silent failure. `TestVramNumCtxLimitUnderOffload::test_a_model_bigger_than_vram_gets_a_window_the_agent_can_run_in` catches the 4096-token floor that makes a 128K model unusable; `test_it_does_not_hand_the_whole_card_to_the_kv_cache` catches the opposite — Ollama pays for context in GPU layers ([#9750](https://github.com/ollama/ollama/issues/9750)), so an unbounded window evicts the weights and the model merely crawls instead of failing. `test_a_model_that_fits_still_takes_all_the_spare_vram` pins that the fits-in-VRAM path did not move. Do not "simplify" the two branches into one: they are opposite policies for opposite regimes.
 - [ ] **Local-model subagent parallelism** (§34): `cd backend && uv run pytest tests/test_subagent_local_residency.py tests/test_subagent_executor.py -k "residency or capacity" -q`. Everything this defends is silent: Ollama answers an over-dispatch by queueing inside the daemon or evicting a model, never by failing. `TestGate::test_a_model_that_fits_the_card_once_runs_one_subagent_at_a_time` and `test_a_model_the_card_holds_twice_runs_two_at_a_time` are the feature; `test_models_that_co_reside_run_in_parallel` is the half a "just serialize local models" simplification would delete. `test_a_small_model_does_not_jump_the_queue_ahead_of_a_waiting_large_one` pins strict FIFO (throughput here is bought with starvation), `test_a_model_bigger_than_the_card_runs_alone_rather_than_never` pins that an offloaded model is slow, not barred, and `test_an_unknown_model_is_not_gated_at_all` pins that a hosted model or an unsized entry dispatches exactly as before. `test_aexecute_holds_gpu_residency_for_a_local_model_for_the_whole_run` is the wiring: the gate is nested inside the process capacity slot and wraps the model call, and it goes red if either is undone.
 - [ ] **Sidebar chat folders** (§32): `cd frontend && pnpm test chat-folders` and `cd backend && uv run pytest tests/test_user_ui_state.py tests/test_chat_folders_settings_router.py tests/test_threads_router.py -k "folder or pin or ui_state or chat_folders" -q`. Three independent silent failures. `groupThreadsByFolder > lists a filed chat inside its folder and NOT at the root` **together with** `falls back to the root for a folder that no longer exists` — both directions of the same partition: a merge that "helpfully" keeps filed chats in the root list duplicates every conversation, and one that drops threads pointing at a deleted folder makes them vanish with no error anywhere. `test_patch_thread_folder_move_preserves_updated_at` **together with** `test_patch_thread_folder_with_a_wrong_typed_value_still_bumps_updated_at` — the no-touch exemption is shape-guarded per key; collapsing it to "the key is present" is green everywhere else and hands any client a way to edit metadata without touching recency. And `test_folders_and_tabs_do_not_clobber_each_other`, because both keys share one `ui_state.json` and a writer that replaces instead of merging silently eats the other feature's state. Also run `cd frontend && pnpm test:e2e sidebar-chat-folders` when the sidebar itself was touched.
+- [ ] **Sidebar list you can scroll to the end of** (§35): `cd frontend && pnpm test thread-list` and `cd frontend && pnpm test:e2e sidebar-long-list-scroll`. Everything here fails silently — the list renders, it just stops holding conversations. `keeps rendering conversations after a folder above the list opens` is the virtualized list's scroll margin: it must be re-measured when anything *else* moves the list, not only when its row count changes, or the rows mount for a part of the history the reader is not looking at (worst on a cold load, where the expanded-folder set hydrates after the first paint). The other two are the same complaint from the paging end and are opposite directions of one budget: `filing a history away does not starve the list that is still shown` (the budget counts **root** rows, so filed conversations never stop pagination) **together with** `older conversations stay one click away past the auto-load budget` (the budget gates the *sentinel* only — collapsing it back onto the "Load older chats" button makes a long history a dead end again). `stops digging once it has scanned deep enough for root rows` is the ceiling that keeps the first of those from being unbounded — without it a fully filed-away history is paged end to end on every load. A DOM unit test cannot replace these: happy-dom has no layout engine.
 - [ ] **Automatic conversation renaming** (§33): `cd backend && uv run pytest tests/test_auto_title_preference.py tests/test_title_middleware_core_logic.py -q` and `cd frontend && pnpm test auto-title`. Three silent failures, and none of them makes a title stop appearing. `test_the_title_is_written_from_after_agent_not_after_model` compares the bound hooks against `AgentMiddleware`'s own — the same predicate LangChain's factory uses to place the node — because a merge that restores the `after_model` spelling still produces titles, just back inside the run window where the Gateway refuses the user's own rename with a 409. `test_a_client_cannot_switch_renaming_on_when_the_operator_disabled_it` **together with** `test_an_unconfigured_model_is_dropped_rather_than_dialled`: both are the boundary direction, and both are green if you drop the check and simply honor whatever the browser sent. And `distinguishes 'server default' from 'no model call'` — the absent key and the empty string are opposite instructions to the backend, so collapsing them either starts spending a model call the user declined or ignores the model the operator configured. Also confirm `_ensure_interrupted_title` in `runtime/runs/worker.py` still runs on **every** terminal status: narrowed back to `interrupted`, a first turn that ends in `ask_clarification` is never named, and never can be. Run `cd frontend && pnpm test:e2e auto-title-settings` too when the settings dialog itself was touched — a merge that reorders or renames the nav rows breaks the page's only click-through coverage without failing a unit test.
 - [ ] Frontend: `pnpm check && pnpm test`. **`pnpm check` now includes the formatting gate** (`prettier --check .`, then eslint, then `tsc --noEmit`) — it used to be eslint + tsc only, which meant the command every guide tells you to run before committing was not the command CI gates on, and an eslint/type-clean change could still fail `lint-frontend` on formatting alone. That discrepancy was documented right here and was still walked into twice, so it was removed instead of re-warned about (see the Prettier row below). `pnpm format:write` fixes what the check reports; `eslint --fix` normalizes imports and optional-chains but not Prettier whitespace.
 - [ ] **Changed a shared UI control? Run the whole e2e suite, not the one spec you thought of.** `pnpm test:e2e` with no filter. A control's _specs_ are not the specs in the file you edited: they are every spec that clicks that control anywhere in the app, and nothing in `pnpm check` or `pnpm test` knows the difference. Observed live on the model-picker unification — the composer's picker was swapped into five screens, the Democracy spec was found and fixed by hand, and `suggestions-settings.spec.ts` was missed entirely because it drives the _same control_ from a different page. It failed only in CI. Two rules fell out of it, both now pinned by `frontend/tests/unit/components/workspace/model-picker-sites.test.ts`: a spec must locate a shared control by that control's **own** `data-slot`, never by the ARIA role of the primitive underneath (swap the primitive and the locator silently matches nothing), and a fast unit test should assert the contract so a six-minute e2e job is not the thing that tells you.
@@ -3297,6 +3298,119 @@ costed against one budget.
 | Acquisition      | `SubagentExecutor._aexecute` — inside the process capacity slot, around the whole run   |
 | Footprint metadata | `scripts/sync-ollama-models.py::render_entry`, `ModelConfig.kv_bytes_per_token`       |
 | Tests            | `backend/tests/test_subagent_local_residency.py`, `test_subagent_executor.py`, `test_sync_ollama_models.py` |
+
+### 35. The sidebar list you can scroll to the end of
+
+Two different bugs produced the same complaint — *past a certain number of
+conversations the old ones cannot be reached* — and they hit at two different
+lengths: **60**, where the side list starts virtualizing, and **200**, where it
+used to stop loading.
+
+**Blank space where conversations should be (60+).** Past
+`VIRTUALIZATION_THRESHOLD` rows the list mounts only the rows around the
+viewport, and it does that inside a scroll container it does not own: the whole
+sidebar scrolls, the list is one block inside it. `@tanstack/react-virtual`
+bridges that with the **scroll margin** — how far the list's top sits below the
+top of the container's content. Row offsets are measured from it and
+`calculateRange` compares them against the container's raw `scrollTop`, so a
+margin that is wrong by *N* pixels does not shift the rows on screen (the
+container's own geometry is still right) — it mounts the rows for a point *N*
+pixels away from where the reader is looking. Past a screenful of drift the
+viewport is simply empty, which is what "the old conversations cannot be
+scrolled to" looks like from the outside.
+
+That margin was measured once per change in the list's **row count**, and almost
+nothing that moves the list changes its row count: a folder above it opening,
+the channels group above that finishing its fetch, the sidebar being resized, a
+web font swapping in. **Which is why a machine restart made it worse rather than
+being a coincidence.** A cold load is exactly when the late layout happens — the
+folders' expanded set is per browser and hydrates from `localStorage` in an
+effect *after* the first paint (§32), so every folder the user left open pushes
+the list down one commit later, and the channels group fills in from its own
+request a moment after that. A warm client-side navigation has all of it cached
+and lays out in one pass.
+
+`watchListLayoutChanges` asks the DOM instead of guessing: a `MutationObserver`
+on the container subtree, a `ResizeObserver` on the container and on the list
+root, and the container's `scroll` event, all coalesced into one animation
+frame. The scroll listener is not redundant — the margin is deliberately
+**scroll-invariant** (`calculateScrollMargin` adds `scrollTop` back to a pair of
+viewport rects), so a scroll is a free chance to repair drift no observer could
+see, during the very interaction that would otherwise expose it. A re-measure
+also runs on every commit, and the measurement writes state only when the number
+actually changed, so re-rendering cannot feed itself.
+
+**A list that stopped loading (200+).** `buildThreadListModel` capped the
+sidebar at 200 non-pinned rows and stopped paging there. The cap ran **before**
+the folder partition, so it had two failure modes. Conversations filed into a
+folder spent the root list's budget: file 200 away and the sidebar stopped
+fetching with five rows on screen and the rest of the history — including the
+older members of the folders themselves — unreachable. And at 200 root rows the
+list dead-ended in silence, because the "Load older chats" button was rendered
+under the same condition as the auto-load sentinel and disappeared with it.
+
+So the window is gone and the budget changed jobs. The model no longer truncates
+— the list virtualizes, so a truncation bought no rendering work and only hid
+loaded conversations. `canAutoLoadMoreThreads` is asked about the **root
+partition** (`grouped.ungrouped`), so filing conversations away never starves
+the list still on screen, and it now gates only the *automatic* sentinel. The
+explicit button follows the backend (`hasNextPage`): past the budget the sidebar
+stops chasing pages on its own, and older conversations are one click away
+instead of gone.
+
+**The budget has two halves, and the second one is not optional.** Filed
+conversations do not bring the row target any closer, so a root-rows-only
+condition is unbounded in exactly the case it was written for: a history filed
+away almost entirely would be paged end to end on every load, one request per 50
+conversations, hunting for root rows that are not there — trading a sidebar that
+stopped too early for one that hammers the gateway on boot.
+`MAX_AUTO_SCANNED_THREADS` (500, ten pages) is the depth at which the sidebar
+gives up looking and waits to be asked. Neither half traps anything: the button
+is still there.
+
+Four things a refactor must not "simplify" back:
+
+- **Re-measuring on row count alone.** It is the original bug. The row count is
+  the one thing that changes when the list *does not* move.
+- **Counting filed conversations against the root budget.** A folder's members
+  are not rows in the list outside it — that is the whole of §32 — so they must
+  not consume the list's budget either.
+- **Dropping the scan ceiling** because the row target "already bounds it". It
+  does not, for the reason above.
+- **Rendering the load-more button under the auto-load condition.** They answer
+  different questions: "may the sidebar fetch by itself?" and "is there anything
+  left to fetch?". Collapsing them is what made a long history a dead end.
+
+| Piece                                    | Location                                                             |
+| ---------------------------------------- | -------------------------------------------------------------------- |
+| Scroll-margin measurement and its watcher | `frontend/src/components/workspace/thread-list-virtualizer.tsx`      |
+| Loaded-list model and the auto-load budget | `frontend/src/core/threads/thread-list-model.ts`                     |
+| Sidebar wiring (partition, sentinel, button) | `frontend/src/components/workspace/recent-chat-list.tsx`           |
+
+Pinned by `frontend/tests/unit/components/workspace/thread-list-virtualizer.test.ts`
+(the scroll-invariance of the measurement), `thread-list-virtualizer.dom.test.ts`
+(the watcher's wiring — that it subscribes to all three triggers, coalesces a
+burst into one measurement, and detaches), `frontend/tests/unit/core/threads/thread-list-model.test.ts`
+(nothing loaded is dropped; the budget counts root, unpinned rows only) and
+`frontend/tests/e2e/sidebar-long-list-scroll.spec.ts`, which is where the
+invariants actually live: happy-dom has no layout engine and reports every rect
+as zero, so only a real browser can assert that **wherever the sidebar is
+scrolled, there are conversations under the reader's eyes**. All three E2E cases
+were confirmed red against the code they fix.
+
+**Verify it works.**
+
+```bash
+cd frontend && corepack pnpm test thread-list
+cd frontend && corepack pnpm test:e2e sidebar-long-list-scroll
+```
+
+Then end-to-end (`make dev`) with a history longer than 60 conversations: put
+some in a folder, reload the page with that folder left open, scroll the sidebar
+to the middle and to the bottom — rows all the way down, no blank stretches.
+With more than 200 outside folders, scrolling to the bottom leaves **Load older
+chats** in place; clicking it reaches further back.
+
 
 ## Credits
 

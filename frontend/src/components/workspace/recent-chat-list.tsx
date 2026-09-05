@@ -72,7 +72,10 @@ import {
   flattenThreadBranches,
   type ThreadBranchEntry,
 } from "@/core/threads/thread-branch-tree";
-import { buildThreadListModel } from "@/core/threads/thread-list-model";
+import {
+  buildThreadListModel,
+  canAutoLoadMoreThreads,
+} from "@/core/threads/thread-list-model";
 import type { AgentThread, AgentThreadState } from "@/core/threads/types";
 import { useChatFolders } from "@/core/threads/use-chat-folders";
 import {
@@ -137,20 +140,6 @@ export function RecentChatList() {
     [infiniteThreads?.pages],
   );
   const { threads } = threadListModel;
-  const displayedThreads = useMemo(() => {
-    if (
-      !threadIdFromPath ||
-      threadListModel.displayedThreads.some(
-        (thread) => thread.thread_id === threadIdFromPath,
-      )
-    ) {
-      return threadListModel.displayedThreads;
-    }
-    const activeThread = threadListModel.byId.get(threadIdFromPath);
-    return activeThread
-      ? [...threadListModel.displayedThreads, activeThread]
-      : threadListModel.displayedThreads;
-  }, [threadIdFromPath, threadListModel]);
 
   const {
     folders,
@@ -167,8 +156,17 @@ export function RecentChatList() {
   // folder that no longer exists falls back to the root list rather than
   // disappearing (see `groupThreadsByFolder`).
   const grouped = useMemo(
-    () => groupThreadsByFolder(displayedThreads, folders),
-    [displayedThreads, folders],
+    () => groupThreadsByFolder(threads, folders),
+    [folders, threads],
+  );
+  // The scroll sentinel pages against the *root* list, not the whole loaded set:
+  // conversations filed into a folder are not rows here, and counting them used
+  // to stop pagination while this list was still nearly empty. The loaded count
+  // is the other half of the budget — it stops the search for root rows that a
+  // fully filed-away history does not have.
+  const canAutoLoadMore = useMemo(
+    () => canAutoLoadMoreThreads(grouped.ungrouped, threads.length),
+    [grouped.ungrouped, threads.length],
   );
   const rootList = useMemo(
     () => buildBranchList(grouped.ungrouped),
@@ -186,7 +184,7 @@ export function RecentChatList() {
   const sentinelRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     const element = sentinelRef.current;
-    if (!element || !hasNextPage || !threadListModel.canLoadMore) {
+    if (!element || !hasNextPage || !canAutoLoadMore) {
       return;
     }
     const observer = new IntersectionObserver(
@@ -199,12 +197,7 @@ export function RecentChatList() {
     );
     observer.observe(element);
     return () => observer.disconnect();
-  }, [
-    fetchNextPage,
-    hasNextPage,
-    isFetchingNextPage,
-    threadListModel.canLoadMore,
-  ]);
+  }, [canAutoLoadMore, fetchNextPage, hasNextPage, isFetchingNextPage]);
 
   const { mutate: deleteThread } = useDeleteThread();
   const { mutate: renameThread } = useRenameThread();
@@ -373,7 +366,7 @@ export function RecentChatList() {
       // the ones currently loaded so their metadata does not keep naming a
       // folder that is gone; anything not loaded is covered by the grouping
       // fallback, which lists an unknown folder id at the root.
-      const members = displayedThreads.filter(
+      const members = threads.filter(
         (thread) => folderIdOfThread(thread) === folder.id,
       );
       removeFolder(folder.id);
@@ -382,7 +375,7 @@ export function RecentChatList() {
       }
       toast.success(t.chats.folders.deleted(folder.name));
     },
-    [displayedThreads, moveThreadToFolder, removeFolder, t.chats.folders],
+    [moveThreadToFolder, removeFolder, t.chats.folders, threads],
   );
 
   const handleShare = useCallback(
@@ -794,7 +787,11 @@ export function RecentChatList() {
                   {t.chats.folders.rootDropHint}
                 </p>
               )}
-              {hasNextPage && threadListModel.canLoadMore && (
+              {/* The button follows the backend, the sentinel follows the
+                  budget: past it the list stops chasing pages on its own, but
+                  older conversations stay one click away rather than becoming
+                  unreachable. */}
+              {hasNextPage && (
                 <>
                   <Button
                     variant="ghost"
@@ -808,12 +805,14 @@ export function RecentChatList() {
                       ? t.chats.loadingMore
                       : t.chats.loadOlderChats}
                   </Button>
-                  <div
-                    ref={sentinelRef}
-                    aria-hidden="true"
-                    className="h-px w-full"
-                    data-testid="recent-chat-list-sentinel"
-                  />
+                  {canAutoLoadMore && (
+                    <div
+                      ref={sentinelRef}
+                      aria-hidden="true"
+                      className="h-px w-full"
+                      data-testid="recent-chat-list-sentinel"
+                    />
+                  )}
                 </>
               )}
             </div>
