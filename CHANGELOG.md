@@ -455,6 +455,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **cost:** **What a reply cost is now recorded when it runs, instead of being
+  recomputed from today's config.** Every cost figure — the chat header, the
+  per-step chart, the spend page, the console — was priced by looking each run's
+  model up in the live `config.yaml` at read time, which made a historical number
+  a statement about today's roster rather than about what the run cost. Editing a
+  price rewrote every total that model ever appeared in, and a model that left
+  the roster stopped resolving altogether: its runs contributed **nothing**, the
+  conversation got *cheaper*, and the model was reported as unpriced as though
+  the operator had forgotten to price it. Rolling entries forward is a routine
+  outcome of the model audit, so that second case was expected to happen rather
+  than unlikely. Runs now persist the per-model rates they were billed at
+  (`runs.pricing_snapshot`, migration `0019`), taken from the config the run
+  actually executed under, and the read path prefers them per model. Existing
+  runs are not backfilled — they price from the live config exactly as before,
+  so nothing about an existing install changes until its next turn. A snapshot
+  never re-expires its own discount, a deployment that switched currency
+  re-prices rather than summing two currencies into one total, and a snapshot
+  cannot switch cost reporting back on where the operator has turned it off.
+  Thread totals are now summed from the per-run buckets, which also makes the
+  cost dropdown's stated relation (`sum(steps) + superseded turns = total`) an
+  identity rather than two calculations that agree.
+
 - **chat history:** **A long conversation no longer stops loading older messages
   after the server restarts.** Scrolling back is served by
   `GET /api/threads/{thread_id}/messages/page`, which reads the run-event store

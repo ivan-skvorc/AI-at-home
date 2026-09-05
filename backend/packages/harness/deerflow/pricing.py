@@ -366,6 +366,154 @@ def build_pricing_map(models: Any, *, logger: logging.Logger | None = None, now:
     return pricing
 
 
+def snapshot_pricing(models: Any, token_usage_by_model: Any, *, logger: logging.Logger | None = None, now: datetime | None = _NOW_UNSET) -> dict[str, dict]:
+    """The effective prices for exactly the models a run used, as plain JSON.
+
+    Persisted on the run so its cost stays a statement about what that run cost
+    rather than about the roster as it stands today. Reading the price back off
+    the live config was wrong in two directions, and both were silent: editing a
+    price rewrote every historical total, and a model the audit rolled the
+    roster past stopped resolving in ``lookup_pricing`` and took its spend to
+    zero — a conversation getting *cheaper* because an unrelated entry was
+    renamed.
+
+    Keyed by the same model ids as ``token_usage_by_model``, so the read path is
+    a direct lookup. A model with no configured price is simply absent, which is
+    the same thing an empty snapshot says: fall back to the live config.
+    """
+    log = logger or _module_logger
+    usage = token_usage_by_model if isinstance(token_usage_by_model, dict) else {}
+    if not usage:
+        return {}
+    try:
+        pricing = build_pricing_map(models, logger=log, now=now)
+    except Exception:  # pragma: no cover - defensive: a run must not fail over cost bookkeeping
+        log.warning("pricing: failed to snapshot model prices for a completed run", exc_info=True)
+        return {}
+    snapshot: dict[str, dict] = {}
+    for model in usage:
+        if not isinstance(model, str) or not model:
+            continue
+        price = lookup_pricing(pricing, model)
+        if price is not None:
+            # Keyed the way the aggregations key their buckets, so a reader can
+            # look the price up directly. A legacy doubled id (see
+            # ``deerflow.model_ids``) normalizes to the same key both sides.
+            snapshot[normalize_reported_model_name(model) or model] = _price_to_snapshot_entry(price)
+    return snapshot
+
+
+def _price_to_snapshot_entry(price: ModelPricing) -> dict:
+    """One ``ModelPricing`` as a JSON-safe dict, dropping unset optionals."""
+    entry: dict = {
+        "currency": price.currency,
+        "input_per_million": price.input_per_million,
+        "output_per_million": price.output_per_million,
+    }
+    if price.input_cache_hit_per_million is not None:
+        entry["input_cache_hit_per_million"] = price.input_cache_hit_per_million
+    if price.promo_input_per_million is not None and price.promo_output_per_million is not None:
+        entry["promo_input_per_million"] = price.promo_input_per_million
+        entry["promo_output_per_million"] = price.promo_output_per_million
+        if price.promo_input_cache_hit_per_million is not None:
+            entry["promo_input_cache_hit_per_million"] = price.promo_input_cache_hit_per_million
+        if price.discount_until is not None:
+            entry["discount_until"] = price.discount_until.isoformat()
+    return entry
+
+
+def pricing_map_from_snapshot(snapshot: Any, *, logger: logging.Logger | None = None) -> dict[str, ModelPricing]:
+    """A ``lookup_pricing``-compatible map rebuilt from a persisted snapshot.
+
+    Deliberately does **not** re-apply the discount window. ``build_pricing_map``
+    drops an expired discount so a live config never advertises a promotion the
+    provider has stopped offering; a snapshot is the opposite kind of statement —
+    a record of what was in effect when the run finished — and re-expiring it
+    would reintroduce exactly the retroactive rewriting this column exists to
+    stop. ``discount_until`` is carried for display only.
+
+    A malformed entry is skipped rather than raising: the read path falls back to
+    the live config for that model, which is the pre-snapshot behaviour.
+    """
+    log = logger or _module_logger
+    if not isinstance(snapshot, dict) or not snapshot:
+        return {}
+    pricing: dict[str, ModelPricing] = {}
+    for model, raw in snapshot.items():
+        if not isinstance(model, str) or not model or not isinstance(raw, dict):
+            continue
+        try:
+            input_price = float(raw["input_per_million"])
+            output_price = float(raw["output_per_million"])
+            hit_raw = raw.get("input_cache_hit_per_million")
+            cache_hit = float(hit_raw) if hit_raw is not None else None
+            promo_input_raw = raw.get("promo_input_per_million")
+            promo_output_raw = raw.get("promo_output_per_million")
+            promo_input = float(promo_input_raw) if promo_input_raw is not None else None
+            promo_output = float(promo_output_raw) if promo_output_raw is not None else None
+            promo_hit_raw = raw.get("promo_input_cache_hit_per_million")
+            promo_hit = float(promo_hit_raw) if promo_hit_raw is not None else None
+        except (KeyError, TypeError, ValueError):
+            log.warning("pricing: ignoring a malformed persisted price for model %s", model)
+            continue
+        if promo_input is None or promo_output is None:
+            promo_input = promo_output = promo_hit = None
+        expiry, _ = parse_discount_expiry(raw.get("discount_until"))
+        entry = ModelPricing(
+            input_price,
+            output_price,
+            str(raw.get("currency") or "USD").strip().upper() or "USD",
+            cache_hit,
+            promo_input,
+            promo_output,
+            promo_hit,
+            expiry if promo_input is not None else None,
+        )
+        pricing.setdefault(model, entry)
+        pricing.setdefault(model.lower(), entry)
+    return pricing
+
+
+def resolve_run_pricing(live: dict[str, ModelPricing], snapshot: Any, *, currency: str | None = None, logger: logging.Logger | None = None) -> dict[str, ModelPricing]:
+    """Prices to bill one run with: its own snapshot, then the live config.
+
+    The snapshot wins per model, so a run keeps the rate it was priced at even
+    after the entry is re-priced or dropped from the roster. Models the snapshot
+    does not cover fall through to *live*, which is what prices runs written
+    before the column existed.
+
+    ``currency`` guards the one case where preferring the snapshot would be
+    worse than the bug it fixes: an operator who re-denominated the whole config
+    would otherwise have historical figures in the old currency silently summed
+    into a total labelled with the new one. A snapshot entry that disagrees with
+    the display currency is dropped, which puts that model back on today's price
+    — visibly re-priced, rather than invisibly mis-added.
+
+    An empty *live* map means cost reporting is switched off for this deployment
+    (no model is priced, or the config mixes currencies). A snapshot must not
+    switch it back on: there would be no display currency to render the figure
+    in, and "cost is hidden" is the operator's current answer, not a gap to fill
+    from history.
+    """
+    if not live:
+        return live
+    restored = pricing_map_from_snapshot(snapshot, logger=logger)
+    if not restored:
+        return live
+    if currency is not None:
+        mismatched = {model for model, price in restored.items() if price.currency != currency}
+        if mismatched:
+            (logger or _module_logger).warning(
+                "pricing: ignoring persisted prices in a different currency than the current one (%s); re-pricing %s at today's rates",
+                currency,
+                ", ".join(sorted(mismatched)),
+            )
+            restored = {model: price for model, price in restored.items() if model not in mismatched}
+            if not restored:
+                return live
+    return {**live, **restored}
+
+
 def pricing_currency(pricing: dict[str, ModelPricing]) -> str | None:
     """Display currency: the first configured entry's (one currency per deployment)."""
     return next(iter(pricing.values())).currency if pricing else None
@@ -457,6 +605,7 @@ def run_cost(
     total_input_tokens: int | None,
     total_output_tokens: int | None,
     token_usage_by_model: dict | None,
+    pricing_snapshot: Any = None,
 ) -> float | None:
     """Estimate one run's spend, or None when none of its models are priced.
 
@@ -464,7 +613,13 @@ def run_cost(
     subagents on a different model); falls back to run-level totals priced at
     ``model_name`` for legacy rows. Buckets without an input/output split are
     skipped rather than guessed.
+
+    ``pricing_snapshot`` is the run's own record of what it was billed at and
+    wins over *pricing* per model, so a re-priced or retired entry cannot
+    rewrite what an old run cost. Absent (legacy rows) it prices from *pricing*
+    exactly as before.
     """
+    pricing = resolve_run_pricing(pricing, pricing_snapshot, currency=pricing_currency(pricing), logger=_module_logger)
     cost = 0.0
     priced = False
     if isinstance(token_usage_by_model, dict):

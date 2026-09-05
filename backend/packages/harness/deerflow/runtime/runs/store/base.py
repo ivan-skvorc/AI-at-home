@@ -35,9 +35,14 @@ def new_per_run_usage_entry(run_id: str, created_at: str | None) -> dict[str, An
     and an Ultra-mode step whose subagent ran on a cheaper model would otherwise
     be billed at the lead's rate.
 
+    ``pricing_snapshot`` carries the prices the run was billed at, so a caller
+    prices a historical step from what it cost rather than from today's roster.
+    Empty means "no price recorded" — rows written before the column existed —
+    and the caller falls back to the live config for those.
+
     Shared by the memory and SQL stores so the two aggregations cannot drift.
     """
-    return {"run_id": run_id, "created_at": created_at, "tokens": 0, "by_model": {}}
+    return {"run_id": run_id, "created_at": created_at, "tokens": 0, "by_model": {}, "pricing_snapshot": {}}
 
 
 def add_per_run_model_usage(entry: dict[str, Any], model: str, usage: dict[str, Any]) -> None:
@@ -247,6 +252,7 @@ class RunStore(abc.ABC):
         subagent_tokens: int = 0,
         middleware_tokens: int = 0,
         token_usage_by_model: dict[str, dict[str, int]] | None = None,
+        pricing_snapshot: dict[str, dict] | None = None,
         message_count: int = 0,
         last_ai_message: str | None = None,
         first_human_message: str | None = None,
@@ -272,6 +278,7 @@ class RunStore(abc.ABC):
         subagent_tokens: int | None = None,
         middleware_tokens: int | None = None,
         token_usage_by_model: dict[str, dict[str, int]] | None = None,
+        pricing_snapshot: dict[str, dict] | None = None,
         message_count: int | None = None,
         last_ai_message: str | None = None,
         first_human_message: str | None = None,

@@ -258,17 +258,19 @@ async def console_stats(request: Request) -> ConsoleStatsResponse:
                         RunRow.total_input_tokens,
                         RunRow.total_output_tokens,
                         RunRow.token_usage_by_model,
+                        RunRow.pricing_snapshot,
                     ).where(*run_where)
                 )
             ).all()
             cost_sum = 0.0
-            for model_name, input_tokens, output_tokens, usage_map in cost_rows:
+            for model_name, input_tokens, output_tokens, usage_map, snapshot in cost_rows:
                 cost = _run_cost(
                     pricing,
                     model_name=model_name,
                     total_input_tokens=input_tokens,
                     total_output_tokens=output_tokens,
                     token_usage_by_model=usage_map,
+                    pricing_snapshot=snapshot,
                 )
                 if cost is not None:
                     cost_sum += cost
@@ -345,6 +347,9 @@ async def console_runs(
             total_input_tokens=row.total_input_tokens,
             total_output_tokens=row.total_output_tokens,
             token_usage_by_model=row.token_usage_by_model,
+            # The rates this run was billed at, so a re-priced or retired model
+            # cannot rewrite what an old run cost.
+            pricing_snapshot=row.pricing_snapshot,
         )
         items.append(
             ConsoleRunItem(
@@ -427,6 +432,9 @@ async def console_usage(
             total_input_tokens=row.total_input_tokens,
             total_output_tokens=row.total_output_tokens,
             token_usage_by_model=row.token_usage_by_model,
+            # The rates this run was billed at, so a re-priced or retired model
+            # cannot rewrite what an old run cost.
+            pricing_snapshot=row.pricing_snapshot,
         )
         if run_cost is not None and total_cost is not None:
             bucket.cost = round(bucket.cost + run_cost, 6)
@@ -539,6 +547,9 @@ async def console_spend(
             total_input_tokens=row.total_input_tokens,
             total_output_tokens=row.total_output_tokens,
             token_usage_by_model=row.token_usage_by_model,
+            # The rates this run was billed at, so a re-priced or retired model
+            # cannot rewrite what an old run cost.
+            pricing_snapshot=row.pricing_snapshot,
         )
         if cost is not None:
             conversation_cost = round((conversation_cost or 0.0) + cost, 6)

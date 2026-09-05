@@ -218,6 +218,7 @@ class MemoryRunStore(RunStore):
         by_run: list[dict] = []
         for r in completed:
             run_entry = new_per_run_usage_entry(r.get("run_id") or "", r.get("created_at"))
+            run_entry["pricing_snapshot"] = r.get("pricing_snapshot") or {}
             by_run.append(run_entry)
             usage_by_model = r.get("token_usage_by_model") or {}
             if usage_by_model:

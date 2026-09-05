@@ -185,6 +185,8 @@ class RunRecord:
     middleware_tokens: int = 0
     # Per-model token breakdown
     token_usage_by_model: dict[str, dict[str, int]] = field(default_factory=dict)
+    # The prices those models carried when this run finished; see RunRow.
+    pricing_snapshot: dict[str, dict] = field(default_factory=dict)
     message_count: int = 0
     last_ai_message: str | None = None
     first_human_message: str | None = None
@@ -465,6 +467,7 @@ class RunManager:
             subagent_tokens=row.get("subagent_tokens") or 0,
             middleware_tokens=row.get("middleware_tokens") or 0,
             token_usage_by_model=row.get("token_usage_by_model") or {},
+            pricing_snapshot=row.get("pricing_snapshot") or {},
             message_count=row.get("message_count") or 0,
             last_ai_message=row.get("last_ai_message"),
             first_human_message=row.get("first_human_message"),

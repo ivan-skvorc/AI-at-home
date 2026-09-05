@@ -344,6 +344,7 @@ class RunRepository(RunStore):
         subagent_tokens: int = 0,
         middleware_tokens: int = 0,
         token_usage_by_model: dict[str, dict[str, int]] | None = None,
+        pricing_snapshot: dict[str, dict] | None = None,
         message_count: int = 0,
         last_ai_message: str | None = None,
         first_human_message: str | None = None,
@@ -364,6 +365,10 @@ class RunRepository(RunStore):
             "subagent_tokens": subagent_tokens,
             "middleware_tokens": middleware_tokens,
             "token_usage_by_model": self._safe_json(token_usage_by_model) or {},
+            # Absent (never written, or a snapshot that failed to build) leaves
+            # the stored value alone rather than blanking it: a retry of the
+            # completion write must not discard prices the first attempt saved.
+            **({"pricing_snapshot": self._safe_json(pricing_snapshot) or {}} if pricing_snapshot is not None else {}),
             "message_count": message_count,
             "updated_at": datetime.now(UTC),
         }
@@ -402,6 +407,7 @@ class RunRepository(RunStore):
         subagent_tokens: int | None = None,
         middleware_tokens: int | None = None,
         token_usage_by_model: dict[str, dict[str, int]] | None = None,
+        pricing_snapshot: dict[str, dict] | None = None,
         message_count: int | None = None,
         last_ai_message: str | None = None,
         first_human_message: str | None = None,
@@ -423,6 +429,8 @@ class RunRepository(RunStore):
                 values[key] = value
         if token_usage_by_model is not None:
             values["token_usage_by_model"] = self._safe_json(token_usage_by_model) or {}
+        if pricing_snapshot is not None:
+            values["pricing_snapshot"] = self._safe_json(pricing_snapshot) or {}
         if last_ai_message is not None:
             values["last_ai_message"] = last_ai_message[:2000]
         if first_human_message is not None:
@@ -466,6 +474,7 @@ class RunRepository(RunStore):
                 RunRow.subagent_tokens,
                 RunRow.middleware_tokens,
                 RunRow.token_usage_by_model,
+                RunRow.pricing_snapshot,
             )
             .where(_thread, _run_operation, _completed)
             # Oldest first, so ``by_run`` reads as "step 1, step 2, …" the way
@@ -483,6 +492,10 @@ class RunRepository(RunStore):
         for r in rows:
             total_runs += 1
             run_entry = new_per_run_usage_entry(r.run_id, coerce_iso(r.created_at) if isinstance(r.created_at, datetime) else r.created_at)
+            # The prices this run was actually billed at. Empty for rows written
+            # before the column existed; the endpoint then prices them from the
+            # live config, which is what it always did.
+            run_entry["pricing_snapshot"] = r.pricing_snapshot or {}
             by_run.append(run_entry)
             total_tokens += r.total_tokens
             total_input += r.total_input_tokens

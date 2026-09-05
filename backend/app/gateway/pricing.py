@@ -19,6 +19,7 @@ from deerflow.pricing import (
     derive_pricing_from_display_name,
     lookup_pricing,
     pricing_currency,
+    resolve_run_pricing,
     run_cost,
     token_cost,
 )
@@ -29,6 +30,7 @@ __all__ = [
     "derive_pricing_from_display_name",
     "lookup_pricing",
     "pricing_currency",
+    "resolve_run_pricing",
     "run_cost",
     "token_cost",
 ]
