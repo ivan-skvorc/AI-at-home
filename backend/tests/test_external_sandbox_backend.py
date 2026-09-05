@@ -112,6 +112,10 @@ def _make_provider_config(**overrides):
         "provisioner_url": "",
         "base_url": "",
         "request_timeout": None,
+        # Upstream's controlled-egress mode reads this in _create_backend; the
+        # open default is what SandboxNetworkConfig ships and what every test
+        # here is about (local container selection, mounts warnings).
+        "network": {"mode": "open"},
     }
     base.update(overrides)
     return base

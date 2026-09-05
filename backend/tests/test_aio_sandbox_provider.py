@@ -1384,6 +1384,7 @@ def test_load_config_reads_expose_ports_and_capabilities():
         provisioner_url=None,
         base_url=None,
         request_timeout=None,
+        network=SimpleNamespace(model_dump=lambda: {"mode": "open"}),
         expose_ports=[8000, 3000],
         extra_capabilities=["SYS_PTRACE"],
     )
@@ -1404,6 +1405,7 @@ def test_load_config_defaults_ports_and_capabilities_to_empty():
         provisioner_url=None,
         base_url=None,
         request_timeout=None,
+        network=SimpleNamespace(model_dump=lambda: {"mode": "open"}),
     )
     config = _load_config_for(sandbox_cfg)
     assert config["expose_ports"] == []
@@ -1423,6 +1425,7 @@ def test_create_backend_forwards_ports_and_capabilities_to_local_backend(monkeyp
         "base_url": "",
         "expose_ports": [8000],
         "extra_capabilities": ["SYS_PTRACE"],
+        "network": {"mode": "open"},
     }
     captured = {}
 

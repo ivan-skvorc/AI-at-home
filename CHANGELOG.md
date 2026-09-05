@@ -448,6 +448,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **sync:** **Merged 14 upstream commits.** User-visible pickups: an
+  approval-gated **controlled egress** mode for the AIO sandbox (an
+  egress-controlled internal network plus a relay proxy, `sandbox.network`),
+  sub-agents can now discover **uploads from earlier turns** rather than only the
+  current run's, a `/health/ready` readiness probe backed by the database,
+  configurable Volcengine podcast voices, a configurable timezone for the
+  injected current date, and fixes for MindIE tool-mode streaming usage, MCP
+  cache re-initialization across event loops, and `make dev` starting the
+  frontend on Windows. Every fork feature that met one of these kept both sides:
+  the sandbox `request_timeout`, `expose_ports` / `extra_capabilities`, the
+  external-container session re-init on discovery, and the per-conversation
+  internet switch all survive alongside the new upstream behaviour. One fork-side
+  decision came out of the merge: **`expose_ports` now publishes nothing when the
+  sandbox API port itself is unpublished** — restricted network mode reaches the
+  container only through the relay, so a debug port published to the host there
+  would be a silent hole in the isolation the mode exists to provide.
+  `config_version` stays at `50`: `sandbox.network` ships commented out with a
+  working default, so there is no key for `make config-upgrade` to deliver and a
+  bump would only warn every existing install into a no-op.
+
 - **models:** **The model audit can now grow the roster, not just correct it.** Every
   automated check asked only about models already bundled, so a lab shipping a new
   flagship raised nothing — one pass found four labs a generation behind at once, all

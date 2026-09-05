@@ -1801,6 +1801,42 @@ def test_start_container_expose_ports_honor_the_broad_bind_opt_in(monkeypatch):
     assert "0.0.0.0:8000:8000" in port_args
 
 
+def test_start_container_skips_expose_ports_when_the_api_port_is_not_published(monkeypatch):
+    """Restricted network mode publishes nothing to the host — debug ports included.
+
+    Upstream's egress-controlled mode starts the sandbox on an internal
+    network with ``publish_port=False`` and reaches it only through the
+    relay proxy. ``expose_ports`` is a fork feature (FORK.md §21) that
+    predates that mode, and the two meet here: publishing a debug port
+    while the API port is deliberately unpublished would put a hole in the
+    isolation the mode exists to provide, and does so **silently** — the
+    container starts either way and nothing in a log says a port went to
+    the host. The gate has to hold on the command, which is why this
+    asserts on ``-p`` rather than on a warning.
+    """
+    backend = LocalContainerBackend(
+        image="sandbox:latest",
+        base_port=8080,
+        container_prefix="sandbox",
+        config_mounts=[],
+        environment={},
+        expose_ports=[8000, 3000],
+    )
+    monkeypatch.delenv("DEER_FLOW_SANDBOX_HOST", raising=False)
+    monkeypatch.delenv("DEER_FLOW_SANDBOX_BIND_HOST", raising=False)
+    monkeypatch.setattr(backend, "_runtime", "docker")
+    captured_cmd: list[str] = []
+
+    def fake_run(cmd, **kwargs):
+        captured_cmd.extend(cmd)
+        return SimpleNamespace(stdout="container-id\n", stderr="", returncode=0)
+
+    monkeypatch.setattr("subprocess.run", fake_run)
+    backend._start_container("sandbox-test", 18080, publish_port=False)
+
+    assert _pairs(captured_cmd, "-p") == []
+
+
 def test_start_container_adds_extra_capabilities_on_docker(monkeypatch):
     backend = LocalContainerBackend(
         image="sandbox:latest",

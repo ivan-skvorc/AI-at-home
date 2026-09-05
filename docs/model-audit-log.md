@@ -11,6 +11,52 @@ Newest first. Append a pass; never rewrite one. A dated line is what tells the
 next person whether the roster was checked last week or last year, and _which_
 providers that pass could actually reach.
 
+- **2026-09-05 (second pass, requested with the upstream sync of 14 commits) — Anthropic re-verified at tier 1; no drift, no roster change.**
+  Run because it was asked for, not because anything reported drift. The sync it rides with
+  touches no model block, no `price:`, and no `discount:`, so it is not itself evidence about
+  the roster; this pass exists to answer the request, and it re-read the one provider the
+  network can reach rather than quoting the earlier line of the same day.
+
+  **Machine half clean.** `python3 scripts/audit_models.py` reports **no drift**: every bundled
+  slug still resolves, the two synced sources agree with each other, and no price has crept back
+  into a `display_name`. Ten providers are listed as *skipped, no machine-readable catalog*
+  (covered by the manual steps), and `openrouter` as *catalog unreachable* — reported as skipped,
+  not as drift, exactly as the job is meant to.
+
+  **Reachability — one authoritative page, everything else refused.** `docs.claude.com` resolves
+  and serves; every other host tested is refused at the egress proxy with `CONNECT tunnel failed,
+  response 403` (`openrouter.ai`, `www.anthropic.com`, `api.openai.com`, `platform.openai.com`,
+  `ai.google.dev`, `api-docs.deepseek.com`, `api.x.ai`, `mistral.ai`, `qwen.ai`, `z.ai`,
+  `www.deepseek.com`, plus `huggingface.co` and `api.together.xyz` as would-be secondary
+  sources). So **tier 2 was not available either** — corroboration needs two independent
+  reachable sources and there were none — and every lab but Anthropic is **tier 3: left alone,
+  logged unreachable**. No price was carried from memory.
+
+  **Anthropic — all six bundled entries match the provider's own table, in both synced sources.**
+  Read from <https://docs.claude.com/en/docs/about-claude/pricing> on 2026-09-05: Fable 5.1
+  `$10/$50` (cache read `$0.25`), Opus 5 `$5/$25` (`$0.50`), Opus 4.8 `$5/$25` (`$0.50`),
+  Sonnet 5 `$2/$10` (`$0.20`), Sonnet 4.6 `$3/$15` (`$0.30`), Haiku 4.5 `$1/$5` (`$0.10`).
+  `config.example.yaml` and `scripts/wizard/providers.py::MODEL_PRICES` agree with the page and
+  with each other on all six pairs and all six cache rates, including Fable 5.1's documented
+  `0.025x` cache-read exception. Sonnet 5 still carries a plain `$2/10` with no `discount:`
+  block, which is right: the page shows the introductory rate as the standing price.
+
+  **Discovery (step 2) — nothing to add, and one deliberate omission re-confirmed.** The page's
+  Claude line-up is Fable 5.1 / Mythos 5.1 / Fable 5 / Opus 5 / Opus 4.8 / 4.7 / 4.6 / 4.5 /
+  Sonnet 5 / 4.6 / 4.5 / Haiku 4.5 / 3.5. The bundle already carries the newest of each family
+  plus the last 4.x of Opus and Sonnet, which is the roster shape the rule asks for. **Mythos 5.1
+  stays out** for the same reason Mythos 5 did — the page marks it *limited availability*, so an
+  ordinary `ANTHROPIC_API_KEY` cannot reach it, and bundling a model a user's key is refused for
+  is worse than omitting it. No other lab could be checked for new flagships, so **discovery is
+  outstanding for every non-Anthropic lab** and is what the next unrestricted pass should start
+  from — including the four labs rolled forward from corroborated sources on 2026-08-20
+  (xAI Grok 4.6, Qwen3.8 Max, GLM-5.3, Mistral Medium 3.5), which remain un-verified at tier 1.
+
+  **Regression gate green.** `python3 scripts/sync-api-key-models.py --dry-run` uncomments
+  cleanly, and `tests/test_sync_api_key_models.py tests/test_setup_wizard.py
+  tests/test_config_integrity.py tests/test_audit_models.py` pass (213 tests). The bundle is
+  unchanged at **40** paid models.
+
 - **2026-09-05 (requested with the run-pricing-snapshot change) — Anthropic re-verified at tier 1; no drift, no roster change.**
   Run because it was asked for. The change shipped alongside it persists each run's prices
   (FORK.md §17) and **adds no model entry and changes no price**, so it is not itself evidence
