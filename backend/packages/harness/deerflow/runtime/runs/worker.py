@@ -42,6 +42,7 @@ from deerflow.config.app_config import AppConfig
 from deerflow.config.database_config import CheckpointChannelMode
 from deerflow.config.title_config import apply_auto_title_preference
 from deerflow.constants import TOOL_RESULTS_DIRNAME
+from deerflow.pricing import snapshot_pricing
 from deerflow.runtime.checkpoint_mode import (
     aensure_checkpoint_mode_compatible,
     inject_checkpoint_mode,
@@ -641,6 +642,26 @@ def _agent_factory_supports_app_config(agent_factory: Any) -> bool:
     except TypeError:
         # Some callable instances are unhashable; fall back to a direct check.
         return _compute_agent_factory_supports_app_config(agent_factory)
+
+
+def _with_pricing_snapshot(completion_data: dict, app_config: AppConfig | None) -> dict:
+    """``completion_data`` plus the prices its models carried on this run.
+
+    Taken from the config the run actually executed under (``ctx.app_config``),
+    not from whatever ``config.yaml`` says at read time — that is the whole
+    point of persisting it. Never raises: cost bookkeeping must not be able to
+    fail a run that has already produced its answer, and an absent snapshot
+    degrades to the previous behaviour (price from the live config).
+    """
+    try:
+        completion_data["pricing_snapshot"] = snapshot_pricing(
+            getattr(app_config, "models", None),
+            completion_data.get("token_usage_by_model"),
+            logger=logger,
+        )
+    except Exception:  # pragma: no cover - defensive
+        logger.warning("Failed to snapshot model pricing for a completed run (non-fatal)", exc_info=True)
+    return completion_data
 
 
 def _agent_graph(agent_result: Any) -> Any:
@@ -1459,7 +1480,7 @@ async def run_agent(
                     # Advance the final completion fields and timestamp without
                     # terminalizing the durable row. That active row continues to
                     # fence peer checkpoint writers through the duration write.
-                    completion_data = journal.get_completion_data()
+                    completion_data = _with_pricing_snapshot(journal.get_completion_data(), ctx.app_config)
                     await run_manager.update_finalizing_progress(run_id, **completion_data)
                 except Exception:
                     logger.warning("Failed to persist finalizing run progress for %s (non-fatal)", run_id, exc_info=True)
@@ -1509,7 +1530,7 @@ async def run_agent(
             if not record.ownership_lost and journal is not None and persist_completion:
                 try:
                     # Persist token usage + convenience fields to RunStore
-                    completion_data = completion_data or journal.get_completion_data()
+                    completion_data = completion_data or _with_pricing_snapshot(journal.get_completion_data(), ctx.app_config)
                     await run_manager.update_run_completion(run_id, status=record.status.value, **completion_data)
                 except Exception:
                     logger.warning("Failed to persist run completion for %s (non-fatal)", run_id, exc_info=True)

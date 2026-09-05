@@ -40,7 +40,7 @@ from app.gateway.context_usage import build_context_usage
 from app.gateway.deps import get_current_user, get_feedback_repo, get_run_event_store, get_run_manager, get_run_store, get_stream_bridge
 from app.gateway.internal_auth import get_trusted_internal_owner_user_id
 from app.gateway.pagination import trim_run_message_page
-from app.gateway.pricing import build_pricing_map, lookup_pricing, pricing_currency, token_cost
+from app.gateway.pricing import build_pricing_map, lookup_pricing, pricing_currency, resolve_run_pricing, token_cost
 from app.gateway.run_models import RunCreateRequest
 from app.gateway.services import build_checkpoint_state_accessor, build_thread_checkpoint_state_accessor, sse_consumer, start_run, wait_for_run_completion
 from app.gateway.spend_budget import resolve_run_spend_budget
@@ -1856,31 +1856,89 @@ async def thread_token_usage(
     currency = pricing_currency(pricing)
     context_usage = await build_context_usage(request, thread_id, run_store)
 
+    # Every figure below is summed from the per-run buckets rather than from the
+    # thread-level ``by_model`` aggregate, because each run is priced by *its
+    # own* recorded rates (``pricing_snapshot``). Two runs on one model at two
+    # different prices cannot be represented by a single per-model rate, so a
+    # thread-level rate would have to pick one of them and be wrong about the
+    # other. Token counts still come from the aggregate; only cost is per-run.
+    model_costs: dict[str, float] = {}
+    model_promo_costs: dict[str, float] = {}
+    models_with_promo: set[str] = set()
+    priced_models: set[str] = set()
+    run_costs: dict[str, tuple[float | None, float | None, bool]] = {}
+    for run_entry in agg.get("by_run") or []:
+        run_pricing = resolve_run_pricing(pricing, run_entry.get("pricing_snapshot"), currency=currency, logger=logger)
+        step_cost: float | None = None
+        step_promo_cost: float | None = None
+        step_has_promo = False
+        for model, usage in (run_entry.get("by_model") or {}).items():
+            run_input = int(usage.get("input_tokens") or 0)
+            run_output = int(usage.get("output_tokens") or 0)
+            run_cache_read = int(usage.get("cache_read_tokens") or 0)
+            price = lookup_pricing(run_pricing, model)
+            if price is None or not (run_input or run_output):
+                continue
+            priced_models.add(model)
+            model_cost = token_cost(run_input, run_output, price, run_cache_read)
+            model_costs[model] = model_costs.get(model, 0.0) + model_cost
+            step_cost = (step_cost or 0.0) + model_cost
+            # The promo total covers the whole thread, so an undiscounted model
+            # contributes its ordinary cost here too — otherwise the two numbers
+            # would not be comparable.
+            promo_price = price.promo()
+            if promo_price is not None:
+                models_with_promo.add(model)
+                step_has_promo = True
+            promo_model_cost = token_cost(run_input, run_output, promo_price, run_cache_read) if promo_price is not None else model_cost
+            model_promo_costs[model] = model_promo_costs.get(model, 0.0) + promo_model_cost
+            step_promo_cost = (step_promo_cost or 0.0) + promo_model_cost
+        run_costs[str(run_entry.get("run_id") or "")] = (
+            round(step_cost, 6) if step_cost is not None else None,
+            round(step_promo_cost, 6) if step_promo_cost is not None else None,
+            step_has_promo,
+        )
+
+    # A store that predates the per-run aggregation reports only ``by_model``.
+    # It has no snapshots to honour either, so pricing that aggregate at today's
+    # rates is both the old behaviour and the only one available — the chart
+    # degrades to empty, as it always did, rather than the totals going null.
+    if not agg.get("by_run"):
+        for model, entry in (agg.get("by_model") or {}).items():
+            legacy_input = int(entry.get("input_tokens") or 0)
+            legacy_output = int(entry.get("output_tokens") or 0)
+            legacy_cache_read = int(entry.get("cache_read_tokens") or 0)
+            price = lookup_pricing(pricing, model)
+            if price is None or not (legacy_input or legacy_output):
+                continue
+            priced_models.add(model)
+            model_cost = token_cost(legacy_input, legacy_output, price, legacy_cache_read)
+            model_costs[model] = model_costs.get(model, 0.0) + model_cost
+            promo_price = price.promo()
+            if promo_price is not None:
+                models_with_promo.add(model)
+            model_promo_costs[model] = model_promo_costs.get(model, 0.0) + (token_cost(legacy_input, legacy_output, promo_price, legacy_cache_read) if promo_price is not None else model_cost)
+
     total_cost: float | None = None
     promo_total_cost: float | None = None
-    thread_has_promo = False
+    thread_has_promo = bool(models_with_promo)
     unpriced_models: list[str] = []
     by_model: dict[str, ThreadTokenUsageModelBreakdown] = {}
     for model, entry in (agg.get("by_model") or {}).items():
         input_tokens = int(entry.get("input_tokens") or 0)
         output_tokens = int(entry.get("output_tokens") or 0)
         cache_read = int(entry.get("cache_read_tokens") or 0)
-        price = lookup_pricing(pricing, model)
         model_cost: float | None = None
-        if price is not None and (input_tokens or output_tokens):
-            model_cost = round(token_cost(input_tokens, output_tokens, price, cache_read), 6)
+        if model in priced_models:
+            model_cost = round(model_costs.get(model, 0.0), 6)
             total_cost = round((total_cost or 0.0) + model_cost, 6)
-            # The promo total covers the whole thread, so an undiscounted model
-            # contributes its ordinary cost here too — otherwise the two numbers
-            # would not be comparable.
-            promo_price = price.promo()
-            thread_has_promo = thread_has_promo or promo_price is not None
-            promo_model_cost = round(token_cost(input_tokens, output_tokens, promo_price, cache_read), 6) if promo_price is not None else model_cost
-            promo_total_cost = round((promo_total_cost or 0.0) + promo_model_cost, 6)
-        elif price is None and (input_tokens or output_tokens):
+            promo_total_cost = round((promo_total_cost or 0.0) + model_promo_costs.get(model, model_costs.get(model, 0.0)), 6)
+        elif input_tokens or output_tokens:
             # Burned tokens but no price: name it so the operator can act. Only
             # reported when pricing is configured at all — with an empty pricing
             # map every model is trivially "unpriced" and the cost UI is hidden.
+            # A model dropped from the roster is *not* listed here any more: its
+            # runs carry their own recorded price, so it stays priced.
             if pricing:
                 unpriced_models.append(model)
         by_model[model] = ThreadTokenUsageModelBreakdown(
@@ -1911,23 +1969,12 @@ async def thread_token_usage(
     superseded_tokens = 0
     superseded_runs = 0
     for run_entry in agg.get("by_run") or []:
-        step_cost: float | None = None
-        step_promo_cost: float | None = None
-        step_has_promo = False
-        for model, usage in (run_entry.get("by_model") or {}).items():
-            step_input = int(usage.get("input_tokens") or 0)
-            step_output = int(usage.get("output_tokens") or 0)
-            step_cache_read = int(usage.get("cache_read_tokens") or 0)
-            price = lookup_pricing(pricing, model)
-            if price is None or not (step_input or step_output):
-                continue
-            model_cost = token_cost(step_input, step_output, price, step_cache_read)
-            step_cost = round((step_cost or 0.0) + model_cost, 6)
-            promo_price = price.promo()
-            step_has_promo = step_has_promo or promo_price is not None
-            promo_model_cost = token_cost(step_input, step_output, promo_price, step_cache_read) if promo_price is not None else model_cost
-            step_promo_cost = round((step_promo_cost or 0.0) + promo_model_cost, 6)
+        # Priced in the loop above, from that run's own recorded rates. Reusing
+        # the figure rather than recomputing it is what makes the header's
+        # stated relation — sum(steps) + superseded_cost == total_cost — an
+        # identity instead of two calculations that happen to agree.
         run_id = str(run_entry.get("run_id") or "")
+        step_cost, step_promo_cost, step_has_promo = run_costs.get(run_id, (None, None, False))
         if run_id and run_id in hidden_run_ids:
             superseded_runs += 1
             superseded_tokens += int(run_entry.get("tokens") or 0)

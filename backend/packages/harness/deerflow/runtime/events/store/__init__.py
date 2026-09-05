@@ -3,8 +3,18 @@ from deerflow.runtime.events.store.memory import MemoryRunEventStore
 
 
 def make_run_event_store(config=None) -> RunEventStore:
-    """Create a RunEventStore based on run_events.backend configuration."""
-    if config is None or config.backend == "memory":
+    """Create a RunEventStore based on run_events.backend configuration.
+
+    ``config=None`` resolves the same defaults a missing ``run_events:`` section
+    gets, rather than a separate hardcoded backend: the two must not diverge,
+    or a caller without an explicit section silently loses thread history that
+    a caller with the default section keeps.
+    """
+    if config is None:
+        from deerflow.config.run_events_config import RunEventsConfig
+
+        config = RunEventsConfig()
+    if config.backend == "memory":
         return MemoryRunEventStore()
     if config.backend == "db":
         from deerflow.persistence.engine import get_session_factory

@@ -81,7 +81,24 @@ jobs:
         run: corepack enable
 
       - name: Use pinned pnpm version
-        run: corepack prepare pnpm@10.26.2 --activate
+        # corepack downloads the pinned pnpm from the npm registry here. A
+        # transient abort mid-download does not surface as a network error: it
+        # crashes Node's bundled undici parser with an opaque
+        # `AssertionError: assert(!this.paused)`, the job dies before a single
+        # test runs, and the log reads like a Node bug rather than a hiccup.
+        # Seen on PR #106, where a sibling job downloaded the same tarball
+        # successfully in the same run. Retry rather than re-running the job by
+        # hand — nothing else in this step can fail, so a retry can only be
+        # recovering the download.
+        run: |
+          for attempt in 1 2 3; do
+            if corepack prepare pnpm@10.26.2 --activate; then
+              exit 0
+            fi
+            echo "::warning::corepack prepare failed (attempt ${attempt}/3); retrying" >&2
+            sleep $((attempt * 5))
+          done
+          exit 1
 
       - name: Install frontend dependencies
         run: |

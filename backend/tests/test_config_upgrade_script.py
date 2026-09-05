@@ -15,6 +15,8 @@ import importlib.util
 import textwrap
 from pathlib import Path
 
+import yaml
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT_PATH = REPO_ROOT / "scripts" / "config_upgrade.py"
 
@@ -175,6 +177,45 @@ class TestMigrations:
         text = config.read_text(encoding="utf-8")
         assert "deerflow.sandbox.local:LocalSandboxProvider" in text
         assert "src.sandbox" not in text
+
+    def test_run_events_memory_is_migrated_but_other_memory_backends_are_not(self, tmp_path):
+        """Migration 50 flips run_events only, never a neighbouring section.
+
+        The replacement is raw text, so the anchor matters: `backend: memory`
+        also appears under `database:`, where flipping it would silently move a
+        deliberately ephemeral install onto disk. Existing configs are the whole
+        point of the migration — a fresh install gets the durable default from
+        config.example.yaml, and an existing config.yaml keeps `memory` forever
+        without it, which is a long chat that stops loading older messages after
+        every Gateway restart.
+        """
+        example = _write_example(tmp_path, version=50)
+        config = tmp_path / "config.yaml"
+        config.write_text(
+            "config_version: 49\nsandbox:\n  use: custom\nmodels: []\nnew_section:\n  enabled: true\ndatabase:\n  backend: memory\nrun_events:\n  backend: memory\n  track_token_usage: true\n",
+            encoding="utf-8",
+        )
+
+        rc = config_upgrade.upgrade(config, example, REPO_ROOT)
+
+        assert rc == 0
+        upgraded = yaml.safe_load(config.read_text(encoding="utf-8"))
+        assert upgraded["run_events"]["backend"] == "db"
+        assert upgraded["database"]["backend"] == "memory"
+        assert upgraded["run_events"]["track_token_usage"] is True
+
+    def test_an_explicit_non_memory_run_events_backend_is_left_alone(self, tmp_path):
+        example = _write_example(tmp_path, version=50)
+        config = tmp_path / "config.yaml"
+        config.write_text(
+            "config_version: 49\nsandbox:\n  use: custom\nmodels: []\nnew_section:\n  enabled: true\nrun_events:\n  backend: jsonl\n",
+            encoding="utf-8",
+        )
+
+        rc = config_upgrade.upgrade(config, example, REPO_ROOT)
+
+        assert rc == 0
+        assert yaml.safe_load(config.read_text(encoding="utf-8"))["run_events"]["backend"] == "jsonl"
 
 
 def _write_example_with_tools(tmp_path: Path, version: int = 3) -> Path:

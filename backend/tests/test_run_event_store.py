@@ -980,9 +980,19 @@ class TestMakeRunEventStore:
     """Tests for the make_run_event_store factory function."""
 
     @pytest.mark.anyio
-    async def test_memory_backend_default(self):
+    async def test_no_config_resolves_the_configured_default(self):
+        """``None`` means "no section supplied", not "no persistence".
+
+        It resolves RunEventsConfig()'s defaults, so it cannot drift from what
+        a config.yaml without a ``run_events:`` section gets. With no engine
+        initialized the db default falls back to the memory store, which is
+        what makes this assertion stable without a database fixture; the
+        durability contract itself lives in tests/test_run_history_durability.py.
+        """
+        from deerflow.persistence.engine import get_session_factory
         from deerflow.runtime.events.store import make_run_event_store
 
+        assert get_session_factory() is None
         store = make_run_event_store(None)
         assert type(store).__name__ == "MemoryRunEventStore"
 

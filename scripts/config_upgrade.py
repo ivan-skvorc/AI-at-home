@@ -46,8 +46,24 @@ MIGRATIONS = {
             ("src.tools.", "deerflow.tools."),
         ],
     },
+    50: {
+        "description": "Persist run events by default so scroll-back history survives a restart",
+        # Anchored on the section header, so `backend: memory` under `database:`
+        # (or any other section) is untouched. Both upgrade paths run this: the
+        # text migration is applied to the raw file before it is re-parsed, so
+        # the merge path re-dumps the migrated value rather than the old one.
+        #
+        # This rewrites a value the user may have set deliberately, which the
+        # merge normally never does. It is the intended exception: `memory` is
+        # a data-loss setting whose only symptom is a long conversation that
+        # silently stops loading older messages after a Gateway restart, and
+        # an install on `database.backend: memory` is unaffected either way
+        # because make_run_event_store() falls back to the in-memory store when
+        # there is no session factory to write through.
+        "replacements": [("run_events:\n  backend: memory", "run_events:\n  backend: db")],
+    },
     # Future migrations go here:
-    # 2: {
+    # 51: {
     #     'description': '...',
     #     'replacements': [('old', 'new')],
     # },

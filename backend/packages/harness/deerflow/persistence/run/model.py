@@ -43,6 +43,15 @@ class RunRow(Base):
     subagent_tokens: Mapped[int] = mapped_column(default=0)
     middleware_tokens: Mapped[int] = mapped_column(default=0)
     token_usage_by_model: Mapped[dict] = mapped_column(JSON, default=dict, server_default=text("'{}'"))
+    # The per-model prices actually in effect when this run finished, keyed the
+    # same way as ``token_usage_by_model``. Cost used to be recomputed from the
+    # live ``config.yaml`` on every read, which made a historical figure a
+    # statement about today's config rather than about what the run cost: a
+    # later price edit silently rewrote old totals, and a model the roster
+    # rolled forward past (the audit does this routinely) dropped out of
+    # ``lookup_pricing`` entirely and took its spend to zero. Empty on rows
+    # written before this column existed, which fall back to the live config.
+    pricing_snapshot: Mapped[dict] = mapped_column(JSON, default=dict, server_default=text("'{}'"))
 
     # Follow-up association
     follow_up_to_run_id: Mapped[str | None] = mapped_column(String(64))

@@ -11,6 +11,47 @@ Newest first. Append a pass; never rewrite one. A dated line is what tells the
 next person whether the roster was checked last week or last year, and _which_
 providers that pass could actually reach.
 
+- **2026-09-05 (requested with the run-pricing-snapshot change) — Anthropic re-verified at tier 1; no drift, no roster change.**
+  Run because it was asked for. The change shipped alongside it persists each run's prices
+  (FORK.md §17) and **adds no model entry and changes no price**, so it is not itself evidence
+  about the roster — but it does raise the cost of a *wrong* bundled price, since a price is now
+  captured onto every run that uses it and stops being correctable by editing `config.yaml`
+  after the fact. That is the reason this pass verified rather than deferring to the day's
+  earlier line.
+
+  **Reachability — one authoritative provider, the rest blocked.** `docs.claude.com` is
+  reachable, so **Anthropic was verified at tier 1** off its own pricing page. Everything else
+  is refused at the egress proxy (`openrouter.ai`, `www.anthropic.com`, `api.openai.com`,
+  `platform.openai.com`, `api.deepseek.com`, `api.x.ai` all fail to connect), so every other
+  lab is **tier 3: left alone, logged unreachable**. No price was carried from memory and no
+  corroborated (tier 2) figure was accepted this pass.
+
+  **Anthropic — all six bundled entries match the provider's own table, in both synced sources.**
+  Read from <https://docs.claude.com/en/docs/about-claude/pricing> on 2026-09-05:
+  Fable 5.1 `$10/$50` (cache read `$0.25`), Opus 5 `$5/$25` (`$0.50`), Opus 4.8 `$5/$25`
+  (`$0.50`), Sonnet 5 `$2/$10` (`$0.20`), Sonnet 4.6 `$3/$15` (`$0.30`), Haiku 4.5 `$1/$5`
+  (`$0.10`). `config.example.yaml` and `scripts/wizard/providers.py::MODEL_PRICES` agree with
+  each of those and with each other. Two things specifically re-checked because they are the
+  ones that rot: **Fable 5.1's cache-read rate is `0.025x` its input price, not the usual
+  `0.1x`** — the page carries a footnote saying so, and the bundle's `cache_hit: 0.25` is
+  correct with a comment naming the exception; and the **Sonnet 5 introductory window**, which
+  the page confirms was made permanent (the scheduled 2026-09-01 rise to `$3/$15` "will not
+  occur"), matching the bundle's plain `$2/10` with no `discount:` block.
+
+  **Slugs verified at tier 1 too.** All six bundled ids appear as **Active** on
+  <https://docs.claude.com/en/docs/about-claude/model-deprecations>: `claude-fable-5-1`,
+  `claude-opus-5`, `claude-opus-4-8`, `claude-sonnet-5`, `claude-sonnet-4-6`,
+  `claude-haiku-4-5`. Note that `claude-opus-4-8` and `claude-sonnet-4-6` are **not** on the
+  models-overview page — that page lists the current generation only — so the deprecations
+  table is the right surface to check a retained previous-generation pin against; reading the
+  overview alone would look like two retired slugs.
+
+  **Mechanical half: clean.** `python3 scripts/audit_models.py` reports **no drift**, with the
+  ten catalog-less labs and `openrouter` listed as skipped. `openrouter` is skipped because its
+  catalog is unreachable (`Tunnel connection failed: 403 Forbidden`), so its silence is **not**
+  evidence that the routed roster is current — unchanged from the earlier pass, and the reason
+  no OpenRouter entry was touched.
+
 - **2026-09-05 (requested with the sidebar scroll fix) — mechanical half only; no model config touched, no roster change.**
   Run because it was asked for. The change shipped alongside it (FORK.md §35, the sidebar chat
   list's `scrollMargin`, plus the folder create-and-file path) is entirely frontend and **adds no

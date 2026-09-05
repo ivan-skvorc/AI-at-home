@@ -140,6 +140,51 @@ class TestCheckConfigVersion:
 
 
 # ---------------------------------------------------------------------------
+# check_run_events_durable
+# ---------------------------------------------------------------------------
+
+
+class TestCheckRunEventsDurable:
+    """The one place that reports a Gateway whose scroll-back history is ephemeral.
+
+    Nothing else surfaces the combination: the conversation opens, recent turns
+    render from the checkpoint, and older messages just never load when the
+    reader scrolls up. `make config-upgrade` fixes configs that run it; doctor
+    is what tells everyone else.
+    """
+
+    def test_durable_database_with_memory_events_warns_with_a_fix(self, tmp_path):
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text("database:\n  backend: sqlite\nrun_events:\n  backend: memory\n")
+        result = doctor.check_run_events_durable(cfg)
+        assert result.status == "warn"
+        assert result.fix is not None
+        assert "run_events.backend: db" in result.fix
+
+    def test_db_events_pass(self, tmp_path):
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text("database:\n  backend: sqlite\nrun_events:\n  backend: db\n")
+        assert doctor.check_run_events_durable(cfg).status == "ok"
+
+    def test_an_absent_run_events_section_takes_the_durable_default(self, tmp_path):
+        # Mirrors RunEventsConfig's default. Reading the missing key as
+        # "memory" would warn at every install that never wrote the section.
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text("database:\n  backend: sqlite\n")
+        assert doctor.check_run_events_durable(cfg).status == "ok"
+
+    def test_memory_database_is_skipped_not_warned(self, tmp_path):
+        # There is no session factory to write events through, so the memory
+        # event store is the only option and the install is ephemeral by choice.
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text("database:\n  backend: memory\nrun_events:\n  backend: memory\n")
+        assert doctor.check_run_events_durable(cfg).status == "skip"
+
+    def test_missing_config_skipped(self, tmp_path):
+        assert doctor.check_run_events_durable(tmp_path / "config.yaml").status == "skip"
+
+
+# ---------------------------------------------------------------------------
 # check_config_loadable
 # ---------------------------------------------------------------------------
 
