@@ -246,6 +246,46 @@ test.describe("Sidebar chat folders", () => {
     ).toHaveCount(0);
   });
 
+  test("the row menu's New folder files the chat it was opened from", async ({
+    page,
+  }) => {
+    // **Move to folder ▸ New folder** reads as one action. Creating the folder
+    // and leaving the conversation where it was is the silent half-failure this
+    // covers: the folder appears, so nothing looks broken.
+    mockLangGraphAPI(page, { threads: THREADS });
+    await page.goto("/workspace/chats/new");
+    await expect(chatRow(page, FIRST_THREAD_ID)).toBeVisible({
+      timeout: 15_000,
+    });
+
+    const row = chatRow(page, FIRST_THREAD_ID).locator("xpath=..");
+    await row.hover();
+    await row.getByRole("button", { name: "More" }).click();
+    await page.getByRole("menuitem", { name: "Move to folder" }).click();
+    await page.getByRole("menuitem", { name: "New folder" }).click();
+    await page.getByTestId("chat-folder-name-input").fill("Work");
+    await page.getByRole("button", { name: "Save" }).click();
+
+    await expect(folderRow(page, "Work")).toBeVisible();
+    await expect(
+      page
+        .getByTestId("chat-folder-children")
+        .locator(`a[href$='${FIRST_THREAD_ID}']`),
+    ).toBeVisible();
+    await expect(
+      page
+        .getByTestId("chat-root-list")
+        .locator(`a[href$='${FIRST_THREAD_ID}']`),
+    ).toHaveCount(0);
+    await expect(page.getByTestId("chat-folder-count")).toHaveText("1");
+    // The chat that was not filed stays in the list.
+    await expect(
+      page
+        .getByTestId("chat-root-list")
+        .locator(`a[href$='${SECOND_THREAD_ID}']`),
+    ).toBeVisible();
+  });
+
   test("the row menu files a chat without a drag", async ({ page }) => {
     mockLangGraphAPI(page, {
       threads: THREADS,

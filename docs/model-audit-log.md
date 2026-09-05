@@ -11,6 +11,29 @@ Newest first. Append a pass; never rewrite one. A dated line is what tells the
 next person whether the roster was checked last week or last year, and _which_
 providers that pass could actually reach.
 
+- **2026-09-05 (requested with the sidebar scroll fix) — mechanical half only; no model config touched, no roster change.**
+  Run because it was asked for. The change shipped alongside it (FORK.md §35, the sidebar chat
+  list's `scrollMargin`, plus the folder create-and-file path) is entirely frontend and **adds no
+  model entry and no price**, so it is no evidence at all about the roster. Nothing here supersedes
+  the 2026-09-04 tier-1 pass below; this line exists so the next reader has a date rather than an
+  inference.
+
+  **Reachability — worse than 2026-09-04.** `openrouter.ai` is refused at the egress proxy
+  (`Tunnel connection failed: 403 Forbidden`), so the audit lists it as *skipped* rather than
+  reporting every routed slug retired — the property `TestUnreachableProvider` exists to protect.
+  No tier-1 verification was attempted for any lab: with no model or price touched, re-deriving an
+  unchanged roster through a blocked proxy buys nothing the previous day's pass does not already
+  say.
+
+  **Mechanical half: clean.** `python3 scripts/audit_models.py` reports **no drift** — every
+  bundled slug still in its provider's catalog and every configured price matching, with the ten
+  catalog-less labs and `openrouter` listed as skipped. Because `openrouter` is skipped, its
+  silence is **not** evidence that the OpenRouter roster is current. The audit's own regression
+  test still works: `--catalog scripts/fixtures/model_audit_stale_catalog.json` surfaces all four
+  drift kinds (retired slug, moved list price, ended promo, started promo) with a suggested diff
+  for each, and `cd backend && uv run pytest tests/test_audit_models.py` is green (67 passed with
+  the guidance checker alongside it).
+
 - **2026-09-04 (requested with the local-subagent-parallelism change) — Anthropic re-verified at tier 1; no drift, no roster change.**
   Run because it was asked for, not because anything moved: the change shipped alongside it
   (FORK.md §34, GPU-residency admission for local subagents) touches `subagent_runtime` and the

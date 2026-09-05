@@ -102,6 +102,7 @@ First, the mechanical gates:
 - [ ] **Offloaded-model context sizing** (§30): `cd backend && uv run pytest tests/test_sync_ollama_models.py tests/test_setup_wizard.py -q`. Bounded on **both** sides, and each side is a different silent failure. `TestVramNumCtxLimitUnderOffload::test_a_model_bigger_than_vram_gets_a_window_the_agent_can_run_in` catches the 4096-token floor that makes a 128K model unusable; `test_it_does_not_hand_the_whole_card_to_the_kv_cache` catches the opposite — Ollama pays for context in GPU layers ([#9750](https://github.com/ollama/ollama/issues/9750)), so an unbounded window evicts the weights and the model merely crawls instead of failing. `test_a_model_that_fits_still_takes_all_the_spare_vram` pins that the fits-in-VRAM path did not move. Do not "simplify" the two branches into one: they are opposite policies for opposite regimes.
 - [ ] **Local-model subagent parallelism** (§34): `cd backend && uv run pytest tests/test_subagent_local_residency.py tests/test_subagent_executor.py -k "residency or capacity" -q`. Everything this defends is silent: Ollama answers an over-dispatch by queueing inside the daemon or evicting a model, never by failing. `TestGate::test_a_model_that_fits_the_card_once_runs_one_subagent_at_a_time` and `test_a_model_the_card_holds_twice_runs_two_at_a_time` are the feature; `test_models_that_co_reside_run_in_parallel` is the half a "just serialize local models" simplification would delete. `test_a_small_model_does_not_jump_the_queue_ahead_of_a_waiting_large_one` pins strict FIFO (throughput here is bought with starvation), `test_a_model_bigger_than_the_card_runs_alone_rather_than_never` pins that an offloaded model is slow, not barred, and `test_an_unknown_model_is_not_gated_at_all` pins that a hosted model or an unsized entry dispatches exactly as before. `test_aexecute_holds_gpu_residency_for_a_local_model_for_the_whole_run` is the wiring: the gate is nested inside the process capacity slot and wraps the model call, and it goes red if either is undone.
 - [ ] **Sidebar chat folders** (§32): `cd frontend && pnpm test chat-folders` and `cd backend && uv run pytest tests/test_user_ui_state.py tests/test_chat_folders_settings_router.py tests/test_threads_router.py -k "folder or pin or ui_state or chat_folders" -q`. Three independent silent failures. `groupThreadsByFolder > lists a filed chat inside its folder and NOT at the root` **together with** `falls back to the root for a folder that no longer exists` — both directions of the same partition: a merge that "helpfully" keeps filed chats in the root list duplicates every conversation, and one that drops threads pointing at a deleted folder makes them vanish with no error anywhere. `test_patch_thread_folder_move_preserves_updated_at` **together with** `test_patch_thread_folder_with_a_wrong_typed_value_still_bumps_updated_at` — the no-touch exemption is shape-guarded per key; collapsing it to "the key is present" is green everywhere else and hands any client a way to edit metadata without touching recency. And `test_folders_and_tabs_do_not_clobber_each_other`, because both keys share one `ui_state.json` and a writer that replaces instead of merging silently eats the other feature's state. Also run `cd frontend && pnpm test:e2e sidebar-chat-folders` when the sidebar itself was touched.
+- [ ] **Sidebar list scroll margin** (§35): `cd frontend && pnpm test thread-list-scroll-margin thread-list-virtualizer`. The sidebar's chat lists virtualize inside a scroll container they do not own, so each one carries its own offset into it, and a stale offset selects the wrong rows while positioning them correctly — the reader gets an empty band and no error anywhere. Three signals keep it honest and **each covers a hole the others do not**: `re-measures on a re-render, which is how an expanding folder reports` (the layout effect deliberately has no dependency list — restoring one is green against every other test here), `re-measures when a section above the list grows` **together with** `re-measures and re-observes when a section mounts after the list` (the ResizeObserver/MutationObserver pair; a sibling growing never re-renders this component, and the sidebar's sections are conditional, so watching a fixed set at mount is not enough), and `still corrects itself on scroll when nothing else reported` (the backstop — dropping it is invisible until a layout change resizes no box). `keeps the offset scroll-invariant` pins the property that makes re-measuring during a scroll safe at all. Also run `cd frontend && pnpm test:e2e sidebar-long-chat-list sidebar-chat-folders` when the sidebar or the virtualizer was touched — a real layout engine is the only thing that can say the rows the reader is looking at are the rows that are there.
 - [ ] **Automatic conversation renaming** (§33): `cd backend && uv run pytest tests/test_auto_title_preference.py tests/test_title_middleware_core_logic.py -q` and `cd frontend && pnpm test auto-title`. Three silent failures, and none of them makes a title stop appearing. `test_the_title_is_written_from_after_agent_not_after_model` compares the bound hooks against `AgentMiddleware`'s own — the same predicate LangChain's factory uses to place the node — because a merge that restores the `after_model` spelling still produces titles, just back inside the run window where the Gateway refuses the user's own rename with a 409. `test_a_client_cannot_switch_renaming_on_when_the_operator_disabled_it` **together with** `test_an_unconfigured_model_is_dropped_rather_than_dialled`: both are the boundary direction, and both are green if you drop the check and simply honor whatever the browser sent. And `distinguishes 'server default' from 'no model call'` — the absent key and the empty string are opposite instructions to the backend, so collapsing them either starts spending a model call the user declined or ignores the model the operator configured. Also confirm `_ensure_interrupted_title` in `runtime/runs/worker.py` still runs on **every** terminal status: narrowed back to `interrupted`, a first turn that ends in `ask_clarification` is never named, and never can be. Run `cd frontend && pnpm test:e2e auto-title-settings` too when the settings dialog itself was touched — a merge that reorders or renames the nav rows breaks the page's only click-through coverage without failing a unit test.
 - [ ] Frontend: `pnpm check && pnpm test`. **`pnpm check` now includes the formatting gate** (`prettier --check .`, then eslint, then `tsc --noEmit`) — it used to be eslint + tsc only, which meant the command every guide tells you to run before committing was not the command CI gates on, and an eslint/type-clean change could still fail `lint-frontend` on formatting alone. That discrepancy was documented right here and was still walked into twice, so it was removed instead of re-warned about (see the Prettier row below). `pnpm format:write` fixes what the check reports; `eslint --fix` normalizes imports and optional-chains but not Prettier whitespace.
 - [ ] **Changed a shared UI control? Run the whole e2e suite, not the one spec you thought of.** `pnpm test:e2e` with no filter. A control's _specs_ are not the specs in the file you edited: they are every spec that clicks that control anywhere in the app, and nothing in `pnpm check` or `pnpm test` knows the difference. Observed live on the model-picker unification — the composer's picker was swapped into five screens, the Democracy spec was found and fixed by hand, and `suggestions-settings.spec.ts` was missed entirely because it drives the _same control_ from a different page. It failed only in CI. Two rules fell out of it, both now pinned by `frontend/tests/unit/components/workspace/model-picker-sites.test.ts`: a spec must locate a shared control by that control's **own** `data-slot`, never by the ARIA role of the primitive underneath (swap the primitive and the locator silently matches nothing), and a fast unit test should assert the contract so a six-minute e2e job is not the thing that tells you.
@@ -3297,6 +3298,100 @@ costed against one budget.
 | Acquisition      | `SubagentExecutor._aexecute` — inside the process capacity slot, around the whole run   |
 | Footprint metadata | `scripts/sync-ollama-models.py::render_entry`, `ModelConfig.kv_bytes_per_token`       |
 | Tests            | `backend/tests/test_subagent_local_residency.py`, `test_subagent_executor.py`, `test_sync_ollama_models.py` |
+
+### 35. The sidebar list that scrolled to nowhere
+
+Past 60 rows (`VIRTUALIZATION_THRESHOLD`) the sidebar's chat lists virtualize,
+and virtualization here is unusual in one way: the lists do **not** own a scroll
+container. Folders (§32) mean there are several lists — one per open folder plus
+the root list — and they all scroll inside the sidebar's single
+`[data-sidebar="content"]`. So each list has to tell `@tanstack/react-virtual`
+its own offset inside that shared container, as `scrollMargin`. That number is
+what maps a scroll position onto a row index.
+
+**It was measured once, in a layout effect keyed on the list's own item count.**
+Everything that moves a list sits *above* it and moves without that count
+changing:
+
+- a folder expands one render after mount, when the per-browser expanded set
+  hydrates from `localStorage` (§32) — several hundred pixels, on the very first
+  paint the user sees;
+- the channels list swaps its skeletons for rows, and the nav list grows an
+  "Agents" row, when their queries resolve;
+- the window resizes, or a font lands and reflows a section above.
+
+**A stale margin does not misplace a row — it selects the wrong rows.** The
+virtualizer picks which items to mount from `scrollOffset` against the margin,
+then the component positions each mounted row *relative to its own container*.
+The choosing is wrong and the positioning is right, so the mounted rows are drawn
+a fixed distance below the band the reader is looking at, and that band is empty.
+Conversations in it cannot be scrolled to: they are not in the DOM while their
+region is on screen, and scrolling further only slides the hole along. At the
+very bottom the range clamps to the last index, so the newest and the oldest
+handful still render — which is exactly why this reads as "the middle of my
+history is gone" rather than "the sidebar is broken".
+
+**And it is worst after a restart**, which is the part that made it look
+haunted. A warm client-side navigation already has the sections above the list
+cached at their final heights, and any later page of chats changed the item
+count and silently re-measured. A cold load is the one case where every section
+settles *after* the single measurement and nothing changes the count again.
+
+The fix is in `frontend/src/components/workspace/thread-list-virtualizer.tsx`:
+`useThreadListScrollMargin` keeps the number honest for as long as the list is
+mounted, from three signals, because no one of them covers the others.
+
+- **Every render, in a layout effect with no dependency list.** A re-render is
+  the cheapest signal that this subtree moved — an opening folder is exactly
+  this — and a layout effect lands the correction before the browser paints the
+  wrong window. The write is guarded by an equality check, so a no-op
+  measurement costs two `getBoundingClientRect` calls and no render.
+- **A `ResizeObserver` over the scroll container, the list, and the container's
+  own sections**, with a `MutationObserver` keeping that set current as sections
+  mount and unmount. A sibling section growing re-renders *it*, not this
+  component, so React alone never reports it — this is the cold-load case, and
+  the sidebar renders several of its sections conditionally, so the set of boxes
+  to watch is not fixed at mount.
+- **A passive `scroll` listener as the backstop.** The margin is
+  scroll-invariant (`rootTop - parentTop + scrollTop`), so re-reading it during
+  a scroll is free of side effects and self-heals anything the observers missed
+  before the reader can reach a row a stale margin would have hidden.
+
+**Do not collapse the three into one.** They fail in different directions: the
+render pass cannot see a sibling grow, the observers cannot see a change that
+resizes no box, and the scroll backstop only fires once the reader has already
+started moving. Each on its own leaves a real path to the same silent hole.
+
+**Not addressed here, deliberately.** `MAX_VISIBLE_THREADS` in
+`thread-list-model.ts` still bounds the sidebar at 200 non-pinned conversations
+and turns pagination off at that point — filed and unfiled alike, since folders
+partition the same loaded window. That is a deliberate performance bound with
+its own tests, not the bug above; conversations past it are reached from the
+chats page, and raising it is a separate change with its own measurements.
+
+While in the same file: **Move to folder ▸ New folder** created the folder and
+left the conversation where it was. The entry reads as one action, and the
+folder appearing made it look like the action had happened, so the chat quietly
+stayed in the list. The create dialog now carries the thread it was opened from
+and files it as soon as the folder is named; opened from the `+` in the group
+header there is no thread and nothing moves.
+
+| Piece                          | Where                                                                                     |
+| ------------------------------ | ----------------------------------------------------------------------------------------- |
+| Margin measurement + observers | `frontend/src/components/workspace/thread-list-virtualizer.tsx` (`useThreadListScrollMargin`) |
+| Sidebar tree that moves it     | `frontend/src/components/workspace/recent-chat-list.tsx`                                    |
+| Unit tests                     | `frontend/tests/unit/components/workspace/thread-list-scroll-margin.dom.test.tsx`, `thread-list-virtualizer.test.ts` |
+| E2E                            | `frontend/tests/e2e/sidebar-long-chat-list.spec.ts`, `sidebar-chat-folders.spec.ts`         |
+
+**On testing this.** The unit tests drive each signal directly — happy-dom has
+no layout engine, so the rects are stated by the test and the observers are
+fired by hand — and five of the eight go red against the single-measurement
+version. What they cannot prove is that a real browser agrees, so
+`sidebar-long-chat-list.spec.ts` seeds 80 root conversations and 30 in a folder,
+loads every page first (so no later fetch can re-measure for it), opens the
+folder, and asserts that the sidebar's visible band actually contains
+conversation rows. Zero rows in the band *is* the bug, stated the way the user
+meets it.
 
 ## Credits
 
