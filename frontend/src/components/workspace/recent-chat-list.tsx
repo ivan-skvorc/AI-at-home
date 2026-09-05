@@ -112,9 +112,16 @@ function buildBranchList(threads: readonly AgentThread[]): BranchList {
   };
 }
 
-/** State for the create/rename folder dialog; `null` while it is closed. */
+/**
+ * State for the create/rename folder dialog; `null` while it is closed.
+ *
+ * A create carries the conversation it was opened for, when it was opened from
+ * a chat's **Move to folder ▸ New folder**: that entry reads as one action, so
+ * the chat has to land in the folder the user just named. Opened from the `+`
+ * in the group header there is no chat to file, and `threadId` is absent.
+ */
 type FolderDialogState =
-  | { mode: "create" }
+  | { mode: "create"; threadId?: string }
   | { mode: "rename"; folder: ChatFolder };
 
 export function RecentChatList() {
@@ -350,9 +357,13 @@ export function RecentChatList() {
       return;
     }
     if (folderDialog.mode === "create") {
-      if (createFolder(name) === null) {
+      const folderId = createFolder(name);
+      if (folderId === null) {
         toast.error(t.chats.folders.limitReached(MAX_CHAT_FOLDERS));
         return;
+      }
+      if (folderDialog.threadId) {
+        handleMoveToFolder(folderDialog.threadId, folderId);
       }
     } else {
       renameChatFolder(folderDialog.folder.id, name);
@@ -363,6 +374,7 @@ export function RecentChatList() {
     createFolder,
     folderDialog,
     folderNameValue,
+    handleMoveToFolder,
     renameChatFolder,
     t.chats.folders,
   ]);
@@ -581,7 +593,12 @@ export function RecentChatList() {
                     <DropdownMenuItem
                       onSelect={() => {
                         setFolderNameValue("");
-                        setFolderDialog({ mode: "create" });
+                        // Opened from this chat's menu, so the chat moves into
+                        // the folder as soon as it is named.
+                        setFolderDialog({
+                          mode: "create",
+                          threadId: thread.thread_id,
+                        });
                       }}
                     >
                       <FolderPlus className="text-muted-foreground" />
