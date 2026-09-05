@@ -183,6 +183,8 @@ cd frontend && pnpm rstest run <pattern>     # e.g. pnpm rstest run my-component
 
 ## Where to Go Next
 
+- Making a change → **[CHANGE_CYCLE.md](CHANGE_CYCLE.md)** (the procedure; the
+  test list and model audit it runs live in [FORK.md](FORK.md))
 - Backend work → **[backend/AGENTS.md](backend/AGENTS.md)**
 - Frontend work → **[frontend/AGENTS.md](frontend/AGENTS.md)**
 - Setup & install → **[Install.md](Install.md)**, **[CONTRIBUTING.md](CONTRIBUTING.md)**
@@ -198,6 +200,13 @@ cd frontend && pnpm rstest run <pattern>     # e.g. pnpm rstest run my-component
 
 These apply repo-wide; module guides own the module-specific detail.
 
+- **The change cycle** — every change follows
+  **[CHANGE_CYCLE.md](CHANGE_CYCLE.md)**: implement, decide whether a new test is
+  owed and write it, add/edit/retire the matching row in
+  [FORK.md's post-sync checklist](FORK.md#post-sync-feature-checklist), run that
+  full list, run the [model audit](FORK.md#the-model-bundle-and-its-audit) only
+  when it is due, then open the PR. Ending a request with "run the code change
+  cycle from CHANGE_CYCLE.md" asks for exactly that, end to end.
 - **Documentation update policy** — keep docs in sync with code: update `README.md` for
   user-facing changes and the relevant `AGENTS.md` for development/architecture changes in
   the same change set.

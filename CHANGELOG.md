@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **docs:** **One sentence now runs the whole change procedure.**
+  [`CHANGE_CYCLE.md`](CHANGE_CYCLE.md) formalizes what was previously spread
+  across FORK.md's preamble and a maintainer's habit: implement, decide whether
+  the change owes a new test and write it, add or retire the matching row in
+  FORK.md's post-sync checklist, run that full list, run the model audit only
+  when it is actually due, then open the PR. Ending a request with "run the code
+  change cycle from CHANGE_CYCLE.md" asks for all of it. The test list and the
+  model audit stay in FORK.md and are linked, not copied, so there is still one
+  checklist to maintain — and `backend/tests/test_change_cycle_doc.py` fails if
+  a renamed heading leaves those links pointing at nothing.
+
 - **subagents:** **Local sub-agents now run as many at a time as the GPU can
   actually hold — no more, and no fewer.** Sub-agent concurrency used to be one
   startup number (`subagent_runtime.max_running`, default 3) applied to every
