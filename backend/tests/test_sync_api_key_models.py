@@ -377,6 +377,43 @@ class TestFirstPartyKeyCoverage:
         for _slug, env_var in sync_api.PROVIDERS:
             assert f"# {env_var}=" in section, f"{env_var} missing from .env.example's model-provider key section"
 
+    def test_env_example_names_the_models_each_home_key_actually_enables(self):
+        """The comment beside a key is where a user decides whether to go get it.
+
+        FORK.md's audit calls out that several places describing the roster are
+        prose no test reads, and this was one of them: the 2026-08-20
+        roll-forward moved Mistral Small 3 to Small 4 in `config.example.yaml`,
+        `providers.py`, the sync script's docstring and the README, and left
+        `.env.example` advertising Small 3. Nothing failed — the key worked, the
+        block uncommented, and the only symptom was a user reading the name of a
+        model this fork does not carry.
+        `test_every_provider_key_is_documented_in_env_example` above checks the
+        key is *present*; this checks the comment is not *lying*.
+
+        The comment abbreviates the way a human does — it drops the lab name
+        when every model in the block repeats it ("Large 3 / Medium 3.5 / Small
+        4", "MiniMax M3 / M2.7") — so only a leading token shared by *every*
+        display name in that bundle is allowed to go missing. Everything that
+        distinguishes one model from another, the version above all, must be
+        there.
+        """
+        section = self._env_key_section()
+        stale = []
+        for slug, (env_var, bundle) in self.bundles.items():
+            line = next((ln for ln in section.splitlines() if f"# {env_var}=" in ln), None)
+            assert line, f"{env_var} has no line in .env.example's model-provider key section"
+
+            names = [m["display_name"].split(" (")[0].strip() for m in bundle]
+            heads = {n.split()[0] for n in names}
+            shared_prefix = heads.pop() if len(heads) == 1 else None
+
+            for name in names:
+                tokens = name.split()
+                distinguishing = " ".join(tokens[1:]) if shared_prefix and len(tokens) > 1 else name
+                if distinguishing not in line and name not in line:
+                    stale.append(f"{env_var} ({slug}): comment names neither {name!r} nor {distinguishing!r}")
+        assert not stale, ".env.example describes models the home block does not enable:\n  " + "\n  ".join(stale)
+
     def test_no_home_block_is_trimmed_to_a_lone_flagship(self):
         """The fuller lineup is the whole reason to hold a lab's own key; the
         routed flagship already covers the one-model case."""

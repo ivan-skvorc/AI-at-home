@@ -9,6 +9,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **models:** **Model audit, 2026-09-05 — no price or roster change, three
+  documentation drifts fixed.** Anthropic re-verified against its own pricing
+  page (all six entries, both synced sources, including Fable 5.1's `0.025x`
+  cache-read exception); every other provider host is unreachable from this
+  environment and was left alone. The findings were all in prose that describes
+  the roster, which is what an audit run offline can actually check.
+  (1) **`.env.example` advertised Mistral Small 3**, a model this fork does not
+  carry — the 2026-08-20 roll-forward to Small 4 updated `config.example.yaml`,
+  `providers.py`, the sync script's docstring and the README, and missed the
+  fifth place. Nothing failed; the only symptom was a user reading a name that
+  does not exist here, so it is now pinned by
+  `test_env_example_names_the_models_each_home_key_actually_enables`, which
+  compares every home key's comment against the models that key enables.
+  (2) **The OpenRouter legend still documented `($A/B → $C/D*)` as a
+  display-name price marker**, a convention removed when prices moved into
+  structured `price:` blocks — a reader following it goes looking for a number
+  that is not there. (3) **The same legend advertised a 76%-off promotion on
+  GLM-5.2**, which stopped being bundled when GLM-5.3 replaced it and whose
+  discount was deliberately not carried across. Both now point at the
+  `price:` / `discount:` blocks and name the one live promo, MiniMax M3.
+
 - **docs:** **The change cycle ends by opening the pull request, and the model
   audit no longer runs unasked.** [`CHANGE_CYCLE.md`](CHANGE_CYCLE.md) gains an
   end-to-end summary of its own shape at the top — change, write the tests a

@@ -286,7 +286,8 @@ models:
   # `make setup` enables the same sets interactively; if you copied this file by
   # hand (`make config`) with a key already in `.env`, the next launch enables it.
   #
-  # Model ids and thinking formats below are current as of 2026-07. Adjust
+  # Model ids and thinking formats below are current as of 2026-09; see
+  # docs/model-audit-log.md for what each pass actually verified. Adjust
   # max_tokens / supports_vision to taste and delete the models you don't want.
   #
   # Prices are NOT in the display name. Each model carries a `price:` block (and
@@ -487,14 +488,13 @@ models:
   #          OpenRouter to a third-party provider that may log/retain prompts,
   #          unlike the direct Anthropic entries above. Treat these as non-private
   #          and keep sensitive work on the direct Anthropic or local Ollama models.
-  #   ($A/B → $C/D*) — $A/B is OpenRouter's standard list price (USD in/out per 1M
-  #          tokens); the starred $C/D* is the current *discounted* price from
-  #          OpenRouter's promotions page (the * flags a temporary promo that can
-  #          end at any time). Only models currently on a promo carry the second
-  #          pair: MiniMax M3 ($0.6/2.4 → $0.24/0.96*, 60% off) and GLM-5.2
-  #          ($1.15/3.6 → $0.28/0.87*, 76% off) as of 2026-08. Re-check the promo
-  #          page when refreshing — an ended promo means dropping the starred pair
-  #          back to the list price.
+  # Prices are NOT markers on these names — see the note above. Each entry carries
+  # a structured `price:` block, and a `discount:` block only while the provider
+  # is actually running a promotion. One promo is live in this bundle: MiniMax M3
+  # ($0.6/2.4 standard, $0.24/0.96 discounted, 60% off), and it carries no `until:`
+  # because OpenRouter has not announced an end date — add one the day they do, so
+  # it expires without an edit. Re-check the promotions page when refreshing: an
+  # ended promo means deleting the `discount:` block, not editing a name.
   # Two slugs were corrected in the 2026-07 refresh — both named models that never
   # shipped, so picking them failed at request time: `openai/gpt-5.5-codex` (no
   # 5.5/5.6 Codex exists; 5.3-Codex is still the newest agentic-coding variant)
