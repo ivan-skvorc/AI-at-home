@@ -358,6 +358,7 @@ export interface Translations {
       memory: string;
       suggestions: string;
       input_polish: string;
+      title: string;
       goal: string;
       agent_generation: string;
     };
@@ -371,6 +372,19 @@ export interface Translations {
   };
 
   // Thread-scoped MCP background tasks
+  // Fork: the chat header's on-demand "Auto rename" (FORK.md §38).
+  autoRename: {
+    label: string;
+    title: string;
+    description: string;
+    modelLabel: string;
+    serverDefault: string;
+    serverDefaultHint: string;
+    run: string;
+    running: string;
+    success: (title: string) => string;
+    failed: string;
+  };
   backgroundTasks: {
     label: string;
     title: string;
@@ -923,6 +937,7 @@ export interface Translations {
     suggestions: string;
     inputPolish: string;
     goal: string;
+    autoRenameCost: string;
     auxCallCount: (count: number) => string;
     /** Heading for the per-step cost chart in the cost dropdown. */
     chartTitle: string;

@@ -24,6 +24,7 @@ import {
   SidecarTrigger,
 } from "@/components/workspace/sidecar";
 import { ThreadArchiveStatus } from "@/components/workspace/thread-archive-status";
+import { ThreadAutoRename } from "@/components/workspace/thread-auto-rename";
 import { ThreadBackgroundTasks } from "@/components/workspace/thread-background-tasks";
 import { ThreadScheduledTasksLink } from "@/components/workspace/thread-scheduled-tasks-link";
 import { ThreadSubagentBatches } from "@/components/workspace/thread-subagent-batches";
@@ -454,6 +455,14 @@ function ChatInstanceContent({
                   )}
               </div>
               <div className="flex shrink-0 items-center gap-2">
+                {!isNewThread &&
+                  !isMock &&
+                  env.NEXT_PUBLIC_STATIC_WEBSITE_ONLY !== "true" && (
+                    <ThreadAutoRename
+                      threadId={threadId}
+                      disabled={thread.isLoading}
+                    />
+                  )}
                 {!isNewThread &&
                   !isMock &&
                   env.NEXT_PUBLIC_STATIC_WEBSITE_ONLY !== "true" && (

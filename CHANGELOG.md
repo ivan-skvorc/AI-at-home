@@ -8,6 +8,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **frontend/backend:** **Auto rename in the chat header.** A conversation can now
+  be renamed on demand, on a model picked per press, instead of only once at the
+  end of its first turn. `POST /api/threads/{id}/title/suggest` writes a title
+  from the first two exchanges and returns it; the client applies it through the
+  ordinary rename, so the "409 while a run is in flight" rule stays in the one
+  place that enforces it. Only what the user actually saw is described: tool
+  results (which on an Ultra or Democracy turn carry the whole subagent
+  deliberation), `hide_from_ui` messages and empty tool-call scaffolding are
+  dropped, and the answer for a turn is the last AI message carrying text. A
+  model the operator has not configured is refused with a 400 rather than
+  silently swapped, the route is gated on `runs:create` plus thread ownership,
+  the call is billed to the conversation as a new `title` auxiliary sink, and the
+  operator's `title.enabled` master switch hides the button and refuses the route.
+  The dialog shares the existing `autoTitle.modelName` preference with
+  **Settings → Conversation titles**. No new configuration keys.
 - **frontend/backend:** **A conversation remembers which model it was on.** The
   per-chat model, subagent model, mode and reasoning effort are now recorded on
   the conversation itself (`deerflow_workflow` thread metadata) rather than only

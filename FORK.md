@@ -110,7 +110,8 @@ First, the mechanical gates:
 - [ ] **Local-model subagent parallelism** (§34): `cd backend && uv run pytest tests/test_subagent_local_residency.py tests/test_subagent_executor.py -k "residency or capacity" -q`. Everything this defends is silent: Ollama answers an over-dispatch by queueing inside the daemon or evicting a model, never by failing. `TestGate::test_a_model_that_fits_the_card_once_runs_one_subagent_at_a_time` and `test_a_model_the_card_holds_twice_runs_two_at_a_time` are the feature; `test_models_that_co_reside_run_in_parallel` is the half a "just serialize local models" simplification would delete. `test_a_small_model_does_not_jump_the_queue_ahead_of_a_waiting_large_one` pins strict FIFO (throughput here is bought with starvation), `test_a_model_bigger_than_the_card_runs_alone_rather_than_never` pins that an offloaded model is slow, not barred, and `test_an_unknown_model_is_not_gated_at_all` pins that a hosted model or an unsized entry dispatches exactly as before. `test_aexecute_holds_gpu_residency_for_a_local_model_for_the_whole_run` is the wiring: the gate is nested inside the process capacity slot and wraps the model call, and it goes red if either is undone.
 - [ ] **Sidebar chat folders** (§32): `cd frontend && pnpm test chat-folders` and `cd backend && uv run pytest tests/test_user_ui_state.py tests/test_chat_folders_settings_router.py tests/test_threads_router.py -k "folder or pin or ui_state or chat_folders" -q`. Four silent failures. `groupThreadsByFolder > lists a filed chat inside its folder and NOT at the root` **with** `falls back to the root for a folder that no longer exists` — both directions of one partition: filed chats left in the root duplicate every conversation, threads naming a deleted folder vanish. `breaks a parent cycle instead of hanging or hiding the branch` **with** `promotes a folder whose parent is unknown rather than dropping it`, both sides of the wire: a parent link taken on trust leaves a branch unreachable from every root, so its folders and their chats stop rendering. `test_patch_thread_folder_move_preserves_updated_at` **with** `test_patch_thread_folder_with_a_wrong_typed_value_still_bumps_updated_at` — the exemption is shape-guarded per key; collapsed to "the key is present" it stays green and hands any client a way to edit metadata without touching recency. And `test_folders_and_tabs_do_not_clobber_each_other`: both keys share one `ui_state.json`, so a writer that replaces rather than merges eats the other's state. Also `cd frontend && pnpm test:e2e sidebar-chat-folders` when the sidebar was touched: `is labelled, not a bare icon` and `created before there are any conversations` pin the only entry point, unfindable when it loses its label or its group renders nothing; `a subfolder lives inside its parent` pins nesting, which renders identically as a sibling.
 - [ ] **Sidebar list scroll margin** (§35): `cd frontend && pnpm test thread-list-scroll-margin thread-list-virtualizer`. The sidebar's chat lists virtualize inside a scroll container they do not own, so each carries its own offset into it; a stale offset selects the wrong rows and positions them correctly — an empty band, no error. Three signals keep it honest and **each covers a hole the others do not**: `re-measures on a re-render, which is how an expanding folder reports` (the layout effect has no dependency list on purpose — restoring one is green against every other test here), `re-measures when a section above the list grows` **with** `re-measures and re-observes when a section mounts after the list` (the ResizeObserver/MutationObserver pair; a sibling growing never re-renders this component, and the sidebar's sections are conditional, so a fixed set watched at mount is not enough), and `still corrects itself on scroll when nothing else reported` (the backstop — dropping it is invisible until a layout change resizes no box). `keeps the offset scroll-invariant` pins what makes re-measuring during a scroll safe at all. Also run `cd frontend && pnpm test:e2e sidebar-long-chat-list sidebar-chat-folders` when the sidebar or the virtualizer was touched — only a real layout engine can say the rows the reader looks at are the rows that are there.
-- [ ] **Automatic conversation renaming** (§33): `cd backend && uv run pytest tests/test_auto_title_preference.py tests/test_title_middleware_core_logic.py -q` and `cd frontend && pnpm test auto-title`. Three silent failures, and none of them makes a title stop appearing. `test_the_title_is_written_from_after_agent_not_after_model` compares the bound hooks against `AgentMiddleware`'s own — the same predicate LangChain's factory uses to place the node — because a merge that restores the `after_model` spelling still produces titles, just back inside the run window where the Gateway refuses the user's own rename with a 409. `test_a_client_cannot_switch_renaming_on_when_the_operator_disabled_it` **together with** `test_an_unconfigured_model_is_dropped_rather_than_dialled`: both are the boundary direction, and both are green if you drop the check and simply honor whatever the browser sent. And `distinguishes 'server default' from 'no model call'` — the absent key and the empty string are opposite instructions to the backend, so collapsing them either starts spending a model call the user declined or ignores the model the operator configured. Also confirm `_ensure_interrupted_title` in `runtime/runs/worker.py` still runs on **every** terminal status: narrowed back to `interrupted`, a first turn that ends in `ask_clarification` is never named, and never can be. Run `cd frontend && pnpm test:e2e auto-title-settings` too when the settings dialog itself was touched — a merge that reorders or renames the nav rows breaks the page's only click-through coverage without failing a unit test.
+- [ ] **Automatic conversation renaming** (§33): `cd backend && uv run pytest tests/test_auto_title_preference.py tests/test_title_middleware_core_logic.py -q` and `cd frontend && pnpm test auto-title`. Three silent failures, none of which stops titles appearing. `test_the_title_is_written_from_after_agent_not_after_model` compares the bound hooks against `AgentMiddleware`'s own — LangChain's node-placement predicate — because the `after_model` spelling still titles, just back inside the window where the Gateway refuses the user's own rename with a 409. The opt-out pair (`..._cannot_switch_renaming_on_when_the_operator_disabled_it`, `..._unconfigured_model_is_dropped_rather_than_dialled`) is green either way if you honor whatever the browser sent; `distinguishes 'server default' from 'no model call'` pins absent-key vs empty-string as opposite instructions; `_ensure_interrupted_title` must run on **every** terminal status, or a turn ending in `ask_clarification` is never named. Add `pnpm test:e2e auto-title-settings` when the settings dialog was touched.
+- [ ] **Auto rename from the chat header** (§38): `cd backend && uv run pytest tests/test_thread_title_suggest.py -q` and `cd frontend && pnpm test auto-rename`. Silent: `..._ultra_turns_subagent_transcript_never_reaches_the_prompt`, whose **second half** bites — a `task` result is a `ToolMessage` carrying the panel's whole deliberation, so relaxing the filter still titles, after the models arguing rather than the answer. Also `..._refused_rather_than_quietly_swapped` and `applies the title through useRenameThread`. Add `pnpm test:e2e auto-rename`.
 - [ ] **Scroll-back history survives a restart** (§28): `cd backend && uv run pytest tests/test_run_history_durability.py tests/test_config_upgrade_script.py tests/test_doctor.py -q`. The failure this defends is silent in every log: with `run_events.backend: memory` the page endpoint's store is process state, so after a Gateway restart a long conversation still opens and still renders its recent turns from the checkpoint, and merely stops loading older messages when the reader scrolls up. `test_older_messages_still_page_backwards_after_a_restart` is the claim, across a real engine teardown and rebuild; `test_the_memory_store_is_what_loses_it` is the other direction, so the file goes red if durability gets "fixed" in the memory store instead of the default. **All three default sources must survive a sync independently** — `test_the_schema_default_persists_run_events` (a `config.yaml` with no `run_events:` section, and the Helm chart), `test_the_shipped_example_persists_run_events` (fresh installs copy the example verbatim, so upstream restoring `memory` there overrides the schema default), and migration 50 in `test_run_events_memory_is_migrated_but_other_memory_backends_are_not` (existing installs, which keep whatever value they were created with). An upstream merge that reverts any one of them re-breaks a different population and nothing else notices. `TestCheckRunEventsDurable` keeps `make doctor` reporting the combination for installs that never run `make config-upgrade`.
 - [ ] **A reply keeps the price it was billed at** (§17): `cd backend && uv run pytest tests/test_run_pricing_snapshot.py tests/test_thread_token_usage.py tests/test_run_repository.py -q`. Cost is read from `runs.pricing_snapshot`, not recomputed from the live config, and every way that can regress is silent. `test_a_model_dropped_from_the_roster_keeps_its_cost` is the motivating case and asserts **both** directions in one test — with the snapshot the spend survives, without it the run prices to `None` — so deleting the snapshot path fails loudly instead of just making conversations cheaper. `test_a_later_price_change_does_not_rewrite_an_old_run` is the other half. Three guards exist because each is a way the fix could be worse than the bug: `test_a_currency_switch_re_prices_rather_than_summing_two_currencies`, `test_a_snapshot_cannot_switch_cost_reporting_back_on`, `test_a_discount_is_not_re_expired_on_replay`. `TestSnapshotPersistence` is the plumbing: it round-trips the SQL store, the memory store and `_with_pricing_snapshot`, and pins that a completion **retry** without a snapshot does not erase the stored value. Keep `test_the_headers_stated_relation_still_holds_across_an_edit` too: `sum(steps) + superseded_cost == total_cost` is what the cost dropdown tells the reader, and per-run pricing is what makes it an identity. A store with no `by_run` must still price its `by_model` aggregate (`tests/test_thread_token_usage.py` covers it).
 - [ ] **CI's pnpm bootstrap stays retried and pinned**: `cd backend && uv run pytest tests/test_ci_pnpm_bootstrap.py -q`. Every frontend job begins by having corepack fetch the pinned pnpm from the npm registry, and a transient abort there does **not** look like a network error — it crashes Node's bundled undici parser with `AssertionError: assert(!this.paused)`, kills the job before a single test runs, and reads like a Node bug or a broken branch. Observed on PR #106: `frontend-unit-tests` died that way while `lint-frontend` downloaded the same tarball successfully **in the same run**, and the previous commit on the same branch had passed. The cost of that is not the re-run, it is the twenty minutes spent reading a diff that had nothing to do with it. `test_the_pnpm_download_is_retried` asserts the retry on the step's *shape*, so it can be rewritten but not removed, across every workflow that prepares pnpm (four today); `test_there_is_a_pnpm_bootstrap_to_check` exists because a renamed step would otherwise leave that parametrized test iterating an empty list and passing green. `test_every_workflow_prepares_the_version_the_repo_pins` is the drift guard: the version lives in five places (`frontend/package.json`'s `packageManager` plus one `corepack prepare` per workflow) and moves out of one at a time, and a mismatch means CI silently exercises a different pnpm than contributors run. Bumping pnpm is one change that touches all five.
@@ -3584,6 +3585,114 @@ cd backend && uv run pytest tests/test_dependency_update.py -q
 ```
 
 Then end-to-end: **Settings → Maintenance → Update now**, and confirm the button goes to "Updating…", the per-component outcome appears when it finishes, and a machine without Docker reports the SearXNG half as skipped rather than failed.
+
+### 38. Renaming a conversation on demand, on a model you pick
+
+§33 made the automatic rename a setting; it still fires exactly **once**, at the
+end of the first turn, on whichever model `config.yaml -> title` names. That is
+the wrong moment often enough to matter. A conversation that opened with "quick
+question about the build" and turned into a three-hour refactor is still filed
+under the quick question, and the only fix was the ⋯ menu's **Rename** and a
+name typed by hand.
+
+**Auto rename** is the same machinery behind a button in the chat header. Press
+it, pick a model, press **Run**, and the conversation is renamed from what is
+actually in it now. The model is chosen per press rather than per install,
+because the choice is a different one here: the automatic rename runs on every
+new conversation and wants a cheap model, while a deliberate rename of a
+conversation that mattered can afford a good one.
+
+**What the model is shown is the narrow part, and it is the whole feature.** The
+automatic rename runs *inside* the graph, with the turn's messages in hand. This
+one reads a persisted checkpoint back, where a turn looks nothing like what the
+user saw: tool-call scaffolding with empty content, `hide_from_ui` reminders,
+and — on an **Ultra** or Democracy turn — the entire subagent deliberation,
+because a `task` result is a `ToolMessage` and carries every word the panel
+exchanged. That transcript is routinely an order of magnitude longer than the
+answer, so feeding it to a title model does not merely waste tokens: it
+*dominates* the prompt, and the conversation ends up named after the models
+arguing with each other rather than after the reply on screen.
+`extract_visible_exchanges` therefore drops `ToolMessage`s outright, drops
+anything the UI hides, and takes as the answer for a turn the **last** AI
+message that carries text — the final answer, not the scaffolding that preceded
+it. The user's own words win over the model-facing rewrite
+(`original_user_content`), so a turn with an attachment is titled from the
+question rather than from `<uploaded_files>`.
+
+- **Two calls, and merging them is the regression.** `POST
+  /api/threads/{id}/title/suggest` only *reads*: it returns a title and the
+  client applies it through the ordinary rename. A rename is a checkpoint write
+  and the Gateway refuses one with **409** while a run is in flight, which only
+  `POST /{id}/state` enforces (it holds `reserve_checkpoint_write`). Writing the
+  title on the suggest route too would put that rule in a second place that
+  cannot honour it. On the client the same reasoning runs the other way:
+  `useAutoRenameThread` *delegates* to `useRenameThread` rather than
+  re-implementing its cache dance — cancel pending snapshot reads **before**
+  writing the title into the caches, or a list response that started earlier
+  restores the old name a moment later.
+- **An unconfigured model is refused, not swapped.** This is a deliberate
+  divergence from §33. `apply_auto_title_preference` *drops* a model name the
+  operator has not configured, because the run must still finish; here the user
+  pressed a button naming a model, so going ahead on a different one spends
+  their money on a choice they did not make. It is a **400**, and the dialog
+  shows the Gateway's own words. The name arrives from a browser and selects
+  what spends money, so it is checked against `app_config.models` either way.
+- **`runs:create`, not `threads:read`.** The route reads no more than `GET
+  /{id}/state` already hands the same caller, but it spends a model call doing
+  it, so a read-only role must not be able to press it. `owner_check` scopes it
+  to the caller's own conversation, and it is deliberately read-style (no
+  `require_existing`) so a thread predating `threads_meta` can still be renamed.
+- **The operator's master switch covers the button too.** `title.enabled: false`
+  is how an operator stops DeerFlow spending model calls on names, and a manual
+  rename spends the same kind of call — honouring the switch only on the
+  automatic path would leave a button that quietly bills them for the thing they
+  turned off. The route answers 404 and the header hides the button on the same
+  `GET /api/features` flag the Settings page greys its toggle on. Nothing else in
+  the suite notices if this is dropped, because the button still works.
+- **It is billed to the conversation.** A new `title` auxiliary sink, alongside
+  memory / suggestions / input_polish / goal. A user-triggered paid call that
+  nothing counts makes the chat header understate the thread by exactly the
+  amount the user chose to spend on naming it.
+- **One preference, two entry points.** The dialog reads and writes the same
+  `autoTitle.modelName` in `localStorage` that **Settings → Conversation titles**
+  does, so a model chosen here is already chosen there. A stored name that has
+  since left `config.yaml` falls back to *Server default* rather than
+  preselecting a value the Gateway would refuse. The dialog's picker is the
+  shared `ModelSelect` (§8) — its "no model call" row is deliberately **absent**,
+  because a rename with no model call just truncates the first message, which is
+  not worth a dialog and a button press.
+
+**Where it's wired.**
+
+| Piece                                                | Location                                                                          |
+| ---------------------------------------------------- | --------------------------------------------------------------------------------- |
+| Visible-exchange extraction (pure, the Ultra rule)   | `backend/packages/harness/deerflow/utils/title_transcript.py`                      |
+| The route                                            | `POST /{thread_id}/title/suggest` in `backend/app/gateway/routers/threads.py`      |
+| Cost accounting                                      | `AUX_CATEGORY_TITLE` in `backend/packages/harness/deerflow/runtime/aux_usage.py`   |
+| API client                                           | `frontend/src/core/threads/api.ts` (`suggestThreadTitle`)                          |
+| suggest → rename                                     | `frontend/src/core/threads/auto-rename.ts` (`useAutoRenameThread`)                 |
+| Header button and dialog                             | `frontend/src/components/workspace/thread-auto-rename.tsx`                         |
+| Mounted in both chat headers                         | `components/workspace/chats/chat-instance.tsx`, `app/workspace/agents/[agent_name]/chats/[thread_id]/page.tsx` |
+| i18n                                                 | `core/i18n/locales/{en-US,zh-CN}.ts` + `types.ts` (`autoRename.*`, `tokenUsage.autoRenameCost`) |
+
+**No new config keys.** The route reads `title.max_words` / `title.max_chars` /
+`title.model_name`, which already existed, so `config_version` is deliberately
+**not** bumped and the Helm chart copies are untouched.
+
+**Verify it works.**
+
+```bash
+cd backend && uv run pytest tests/test_thread_title_suggest.py tests/test_aux_usage_wiring.py -q
+cd frontend && corepack pnpm test auto-rename
+cd frontend && corepack pnpm test:e2e auto-rename
+```
+
+Then end-to-end (`make dev`): open a conversation with at least two turns, press
+**Auto rename**, pick a model, press **Run**, and confirm the header *and* the
+sidebar entry both change. Run one Ultra/Democracy turn first and confirm the
+name describes the answer rather than the panel's deliberation. Press it while a
+run is in flight and confirm the failure is the rename's own 409 message, not a
+silent no-op.
 
 ## Credits
 

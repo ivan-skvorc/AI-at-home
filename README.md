@@ -36,6 +36,7 @@
 > - 🧠 **Long-term memory off by default** — the agent no longer learns from or injects your saved memory until you opt in per browser under **Settings → Memory**. When off, the backend skips memory injection, extraction and memory tools entirely.
 > - 💡 **Follow-up suggestions off by default** — the follow-up chips cost an extra model call after every answer, so they are opt-in under **Settings → Suggestions**, where you can also pick a cheap model to generate them.
 > - ✏️ **Conversation renaming you can switch off** — the shipped default spends **no** model call (the title is your first message, shortened); point it at a cheap model for a real summary, or turn it off entirely.
+> - 🪄 **Rename a conversation on demand, on a model you pick** — an **Auto rename** button in the chat header: pick a model, press **Run**, and the chat is named from what is actually in it now rather than from the line it opened with. Deliberation between models in an Ultra or Democracy turn is left out, so a panel is named after its conclusion rather than after the argument. One call on the model you chose, counted in the header's total.
 >
 > **Going further**
 >
@@ -156,6 +157,7 @@ DeerFlow has newly integrated the intelligent search and crawling toolset indepe
     - [Folders in the Sidebar](#folders-in-the-sidebar)
     - [A Conversation Remembers Its Model](#a-conversation-remembers-its-model)
     - [Automatic Conversation Titles](#automatic-conversation-titles)
+    - [Renaming a Conversation on Demand](#renaming-a-conversation-on-demand)
   - [Recommended Models](#recommended-models)
   - [Embedded Python Client](#embedded-python-client)
   - [Scheduled Tasks](#scheduled-tasks)
@@ -2109,6 +2111,44 @@ title:
 path honours `max_chars` too. No new configuration keys — the settings page reads
 the block that was already there, and the per-user choice is layered on top of it
 at run time.
+
+### Renaming a Conversation on Demand
+
+The automatic rename above happens **once**, at the end of the first turn. That
+is the wrong moment often enough to matter: a chat that opened with "quick
+question about the build" and turned into a three-hour refactor is still filed
+under the quick question.
+
+**Auto rename** in the chat header is the same thing on demand. Press it, pick a
+model, press **Run**, and the conversation is renamed from what is in it now.
+Because you choose the model per press, the choice can be a different one from
+the automatic rename's: that one runs on every new chat and wants something
+cheap, while renaming a conversation that turned out to matter can afford a good
+model. Leaving the picker on **Server default** uses whatever `config.yaml`
+names. A model you pick is remembered, and it is the same preference **Settings →
+Conversation titles** reads, so the two screens never disagree about which model
+will run.
+
+It reads the first two exchanges — and only what you actually saw. On an Ultra or
+Democracy turn the panelists' deliberation is stored with the turn, and it is
+routinely far longer than the reply on screen; feeding that to a title model
+names the conversation after the models arguing with each other. So tool results,
+scaffolding and anything the interface hides are dropped, and the answer for a
+turn is the final reply you read.
+
+Two things are worth knowing. The button spends one model call, and it is counted
+in the conversation's cost in the header, under **Chat rename** — nothing is
+billed to you invisibly. And like every rename, it is refused while a run is in
+flight; press it mid-answer and you get that refusal in so many words, not a
+silent no-op. A model the operator has removed from `config.yaml` is refused too,
+rather than quietly swapped for another one.
+
+The operator's switch covers it: with `title.enabled: false` in `config.yaml`
+the button is not shown at all, because a manual rename spends the same kind of
+call the switch exists to stop.
+
+No new configuration keys: it reads the same `title:` block as the automatic
+rename.
 
 ## Recommended Models
 

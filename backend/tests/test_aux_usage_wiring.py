@@ -241,7 +241,7 @@ def test_goal_evaluator_collapses_a_stream_duplicated_model_id():
 
 
 def test_every_chat_aux_sink_survives_a_gateway_restart():
-    """All four per-conversation sinks, through one simulated restart.
+    """Every per-conversation sink, through one simulated restart.
 
     The registry's durability is what makes the header's figure survive closing
     the laptop; a sink that is recorded but not durable resets to zero on the
@@ -265,6 +265,14 @@ def test_every_chat_aux_sink_survives_a_gateway_restart():
             aux_usage.AUX_CATEGORY_GOAL,
             model_name="goal-model",
             usage={"input_tokens": 900, "output_tokens": 40, "total_tokens": 940},
+        )
+    )
+    asyncio.run(
+        aux_usage.arecord_aux_usage_metadata(
+            "t-all",
+            aux_usage.AUX_CATEGORY_TITLE,
+            model_name="title-model",
+            usage={"input_tokens": 90, "output_tokens": 5, "total_tokens": 95},
         )
     )
     before = aux_usage.get_thread_aux_usage("t-all")

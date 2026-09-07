@@ -245,3 +245,56 @@ export async function searchThreadsByArchive({
   }
   return (await response.json()) as AgentThread[];
 }
+
+export type SuggestThreadTitleResponse = {
+  title: string;
+  model_name?: string | null;
+  exchange_count: number;
+};
+
+/**
+ * Ask the Gateway to write a title for a conversation from its opening
+ * exchanges (fork feature, FORK.md §38).
+ *
+ * Read-only on purpose: the suggestion comes back and the caller applies it
+ * through the ordinary rename (`POST /{id}/state`). That keeps the "409 while
+ * a run is in flight" rule in one place instead of two.
+ *
+ * `modelName` is omitted rather than sent as `null` when the user has not
+ * picked one, so the Gateway falls back to `config.yaml -> title.model_name`.
+ * A name the operator has not configured is refused with a 400 — unlike the
+ * automatic rename, which drops it silently, because this one was chosen by a
+ * person pressing a button.
+ */
+export async function suggestThreadTitle({
+  threadId,
+  modelName,
+  exchanges,
+  signal,
+}: {
+  threadId: string;
+  modelName?: string | null;
+  exchanges?: number;
+  signal?: AbortSignal;
+}): Promise<SuggestThreadTitleResponse> {
+  const response = await fetchWithAuth(
+    `${getBackendBaseURL()}/api/threads/${encodeURIComponent(threadId)}/title/suggest`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        ...(modelName ? { model_name: modelName } : {}),
+        ...(exchanges ? { exchanges } : {}),
+      }),
+      signal,
+    },
+  );
+
+  if (!response.ok) {
+    throw new Error(
+      await readThreadAPIError(response, "Failed to generate a title."),
+    );
+  }
+
+  return (await response.json()) as SuggestThreadTitleResponse;
+}

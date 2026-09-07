@@ -24,6 +24,7 @@ from langgraph.types import Overwrite
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.exc import IntegrityError
 
+import deerflow.utils.llm_text as llm_text
 from app.gateway.authz import require_permission
 from app.gateway.checkpoint_lineage import (
     CheckpointLineageError,
@@ -44,10 +45,12 @@ from app.gateway.services import (
 )
 from app.gateway.utils import sanitize_log_param
 from deerflow.agents.thread_state import THREAD_STATE_REDUCER_FIELDS
+from deerflow.config.app_config import AppConfig, get_app_config
 from deerflow.config.paths import Paths, get_paths
 from deerflow.config.summarization_config import ContextSize
 from deerflow.persistence.thread_meta import THREAD_ARCHIVED_METADATA_KEY, THREAD_FOLDER_METADATA_KEY, THREAD_PINNED_METADATA_KEY, THREAD_WORKFLOW_METADATA_KEY, is_valid_thread_workflow
 from deerflow.runtime import ThreadOperationKind, serialize_channel_values_for_api
+from deerflow.runtime.aux_usage import AUX_CATEGORY_TITLE, arecord_aux_usage_metadata
 from deerflow.runtime.checkpoint_mode import CheckpointModeMismatchError, CheckpointModeReconfigurationError
 from deerflow.runtime.checkpoint_state import graph_reducer_channels, graph_state_schema, graph_writable_channels
 from deerflow.runtime.context_compaction import (
@@ -71,8 +74,10 @@ from deerflow.runtime.runs.worker import RUN_MESSAGE_IDS_METADATA_KEY, valid_dur
 from deerflow.runtime.secret_context import redact_metadata_secrets
 from deerflow.runtime.user_context import get_effective_user_id
 from deerflow.utils.file_io import run_file_io
+from deerflow.utils.oneshot_llm import run_oneshot_llm_with_usage
 from deerflow.utils.thread_id import ThreadId, resolve_thread_id, validate_thread_id
 from deerflow.utils.time import coerce_iso, now_iso
+from deerflow.utils.title_transcript import DEFAULT_EXCHANGE_LIMIT, VisibleExchange, extract_visible_exchanges, render_exchanges
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/threads", tags=["threads"])
@@ -1409,6 +1414,130 @@ async def compact_thread(thread_id: ThreadId, body: ThreadCompactRequest, reques
         logger.exception("Failed to compact thread %s", sanitize_log_param(thread_id))
         raise HTTPException(status_code=500, detail="Failed to compact thread context.") from None
     return _thread_compact_response(result)
+
+
+# ---------------------------------------------------------------------------
+# Manual "Auto rename" (fork feature, FORK.md §38)
+# ---------------------------------------------------------------------------
+#
+# The automatic rename (§33) fires once, at the end of the first turn, on
+# whichever model ``config.yaml -> title`` names. This endpoint is the button
+# that lets a user redo that at any point, on a model they pick per press --
+# after the conversation has actually gone somewhere, or when the first title
+# turned out to describe the wrong half of it.
+#
+# It reads and never writes: the title comes back to the client, which applies
+# it through the ordinary ``POST /{thread_id}/state`` rename. That keeps the
+# 409-while-a-run-is-in-flight rule in exactly one place instead of two.
+
+
+class ThreadTitleSuggestRequest(BaseModel):
+    # Bounded because the name is echoed back in the 400 below; an unbounded
+    # string would let a client choose the size of its own error response.
+    model_name: str | None = Field(default=None, max_length=200, description="Model that writes the title. None uses config.yaml -> title.model_name, falling back to the default model.")
+    exchanges: int = Field(default=DEFAULT_EXCHANGE_LIMIT, ge=1, le=6, description="How many opening prompt/answer pairs to describe.")
+
+
+class ThreadTitleSuggestResponse(BaseModel):
+    title: str = Field(..., description="Suggested conversation title. The caller applies it; this endpoint does not write.")
+    model_name: str | None = Field(default=None, description="Model that served the call, as reported by the provider.")
+    exchange_count: int = Field(..., description="How many visible exchanges the title was written from.")
+
+
+def _title_suggest_prompt(config: AppConfig, exchanges: list[VisibleExchange]) -> str:
+    return f"Generate a concise title (max {config.title.max_words} words) for this conversation.\n\n{render_exchanges(exchanges)}\n\nReturn ONLY the title, no quotes, no explanation."
+
+
+def _clean_suggested_title(text: str, *, max_chars: int) -> str:
+    # Same normalization as TitleMiddleware._parse_title: a model asked for a
+    # bare title still returns one fenced, quoted, or preceded by its reasoning
+    # often enough that skipping any of these steps shows up as a thread named
+    # `"Fix the flaky test"` -- quotes included.
+    candidate = llm_text.strip_think_blocks(text, truncate_unclosed=True)
+    candidate = llm_text.strip_markdown_code_fence(candidate)
+    candidate = candidate.strip().strip('"').strip("'").strip()
+    # A chatty model can answer with several lines; the title is the first
+    # non-empty one, not the essay under it.
+    first_line = next((line.strip() for line in candidate.splitlines() if line.strip()), "")
+    return first_line[:max_chars]
+
+
+@router.post("/{thread_id}/title/suggest", response_model=ThreadTitleSuggestResponse)
+# ``runs:create`` rather than ``threads:read``: the route reads no more than
+# ``GET /{thread_id}/state`` already hands the same caller, but it spends a
+# model call doing it, so a read-only role must not be able to press it.
+# ``owner_check`` is what scopes it to the caller's own conversation, and it is
+# deliberately read-style (no ``require_existing``) so a thread predating
+# ``threads_meta`` can still be renamed.
+@require_permission("runs", "create", owner_check=True)
+async def suggest_thread_title(thread_id: ThreadId, body: ThreadTitleSuggestRequest, request: Request) -> ThreadTitleSuggestResponse:
+    """Write a title for a thread from its opening exchanges, without saving it."""
+    config = get_app_config()
+
+    # The operator's master switch covers this button too. ``title.enabled:
+    # false`` is how an operator stops DeerFlow spending model calls on names,
+    # and a manual rename spends exactly the same kind of call — honouring the
+    # switch only for the automatic path would leave a button that quietly
+    # bills them for the thing they turned off. The frontend hides the button
+    # on the same flag (``GET /api/features``), so this is the backstop.
+    if not config.title.enabled:
+        raise HTTPException(status_code=404, detail="Conversation renaming is disabled")
+
+    requested_model = body.model_name.strip() if isinstance(body.model_name, str) else None
+    if requested_model:
+        # The name arrives from a browser and selects which model spends money,
+        # so it is checked against the operator's catalog rather than passed
+        # through. Unlike the per-run auto-title preference -- which silently
+        # drops an unknown name because the run must still finish -- this is an
+        # explicit press of a button, and answering it on a model the user did
+        # not choose is worse than refusing.
+        configured = {name for name in (getattr(model, "name", "") for model in (getattr(config, "models", None) or [])) if name}
+        if configured and requested_model not in configured:
+            raise HTTPException(status_code=400, detail=f"Model {requested_model} is not configured")
+    model_name = requested_model or config.title.model_name
+
+    try:
+        accessor, state_config = await build_thread_checkpoint_state_accessor(request, thread_id=thread_id)
+        snapshot = await accessor.aget(state_config)
+    except _CHECKPOINT_MODE_ERRORS as exc:
+        raise _checkpoint_mode_http_error(exc, thread_id) from exc
+    except Exception:
+        logger.exception("Failed to read state for thread %s", sanitize_log_param(thread_id))
+        raise HTTPException(status_code=500, detail="Failed to read thread state") from None
+
+    if snapshot is None or not (snapshot.config or {}).get("configurable", {}).get("checkpoint_id"):
+        raise HTTPException(status_code=404, detail=f"Thread {thread_id} not found")
+
+    exchanges = extract_visible_exchanges((snapshot.values or {}).get("messages"), limit=body.exchanges)
+    # ``any``, not ``exchanges[0]``: a first turn that is only an attachment has
+    # no user-authored text, and refusing on that alone would make the button
+    # useless on a conversation whose *second* message asks the actual question.
+    if not any(exchange.user_text for exchange in exchanges):
+        raise HTTPException(status_code=409, detail="This conversation has nothing to name yet. Send a message first.")
+
+    try:
+        result = await run_oneshot_llm_with_usage(
+            system_instruction="You name conversations. You reply with a title and nothing else.",
+            user_content=_title_suggest_prompt(config, exchanges),
+            run_name="title_suggest",
+            app_config=config,
+            model_name=model_name,
+            thread_id=thread_id,
+        )
+    except Exception as exc:
+        logger.exception("Failed to suggest a title for thread %s", sanitize_log_param(thread_id))
+        raise HTTPException(status_code=503, detail="Failed to generate a title") from exc
+
+    # Bill it to the conversation it renamed. This is a button a user presses
+    # deliberately, so an uncounted call makes the chat header understate what
+    # the conversation cost by exactly the amount the user chose to spend.
+    await arecord_aux_usage_metadata(thread_id, AUX_CATEGORY_TITLE, model_name=result.model_name, usage=result.usage)
+
+    title = _clean_suggested_title(result.text, max_chars=config.title.max_chars)
+    if not title:
+        raise HTTPException(status_code=503, detail="Failed to generate a title")
+
+    return ThreadTitleSuggestResponse(title=title, model_name=result.model_name, exchange_count=len(exchanges))
 
 
 # ---------------------------------------------------------------------------

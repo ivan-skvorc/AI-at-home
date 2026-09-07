@@ -481,6 +481,7 @@ export const enUS: Translations = {
       memory: "Memory",
       suggestions: "Suggestions",
       input_polish: "Prompt polish",
+      title: "Chat rename",
       goal: "Goal check",
       agent_generation: "Agent generation",
     },
@@ -493,6 +494,19 @@ export const enUS: Translations = {
     loadFailed: "Could not load the spend report.",
   },
 
+  autoRename: {
+    label: "Auto rename",
+    title: "Rename this conversation",
+    description:
+      "A model reads the first couple of exchanges and names the conversation from them. Subagent deliberation is left out — only the answers you saw are used.",
+    modelLabel: "Model",
+    serverDefault: "Server default",
+    serverDefaultHint: "The model configured for automatic renaming.",
+    run: "Run",
+    running: "Renaming…",
+    success: (title) => `Renamed to "${title}"`,
+    failed: "Failed to rename the conversation.",
+  },
   backgroundTasks: {
     label: "Background tasks",
     title: "Background tasks",
@@ -1120,6 +1134,7 @@ export const enUS: Translations = {
     suggestions: "Suggestions",
     inputPolish: "Prompt polish",
     goal: "Goal check",
+    autoRenameCost: "Chat rename",
     auxCallCount: (count: number) =>
       count === 1 ? "1 call" : `${count} calls`,
     chartTitle: "Cost per step",

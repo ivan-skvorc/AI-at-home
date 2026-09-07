@@ -233,6 +233,8 @@ AUX_CATEGORY_SUGGESTIONS = "suggestions"
 AUX_CATEGORY_INPUT_POLISH = "input_polish"
 #: The goal evaluator's per-run completion check, while a goal is active.
 AUX_CATEGORY_GOAL = "goal"
+#: The chat header's "Auto rename" button, one call per press (fork, FORK.md §38).
+AUX_CATEGORY_TITLE = "title"
 
 #: Every auxiliary sink attributable to one conversation, i.e. everything the
 #: chat header must price on top of the thread's runs. ``agent_generation`` is
@@ -243,6 +245,7 @@ CHAT_AUX_CATEGORIES: tuple[str, ...] = (
     AUX_CATEGORY_SUGGESTIONS,
     AUX_CATEGORY_INPUT_POLISH,
     AUX_CATEGORY_GOAL,
+    AUX_CATEGORY_TITLE,
 )
 
 
