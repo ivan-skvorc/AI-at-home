@@ -5,7 +5,7 @@
  * and devices — a conversation's `deerflow_folder` metadata is already durable
  * on the server, so keeping the folder *names* only in `localStorage` would
  * leave every filed chat pointing at a folder the next browser has never heard
- * of. Same store as the keep-alive tab strip: `ui_state.json`, per user.
+ * of. Stored in the per-user `ui_state.json` bag on the server.
  *
  * Every call degrades rather than throws: an unreachable gateway must leave the
  * sidebar rendering, not blank it.

@@ -13,7 +13,7 @@ import { ModelLoadErrorBanner } from "@/components/workspace/model-load-error-ba
 import { SettingsDialogHost } from "@/components/workspace/settings";
 import { WorkspaceSettingsDeepLink } from "@/components/workspace/workspace-settings-deep-link";
 import { WorkspaceSidebar } from "@/components/workspace/workspace-sidebar";
-import { ChatTabsProvider } from "@/core/threads/chat-tabs-context";
+import { LiveChatSlotsProvider } from "@/core/threads/live-chat-slots-context";
 
 function parseSidebarOpenCookie(
   value: string | undefined,
@@ -38,7 +38,7 @@ export async function WorkspaceContent({
   return (
     <QueryClientProvider>
       <SidebarProvider className="h-screen" defaultOpen={initialSidebarOpen}>
-        <ChatTabsProvider>
+        <LiveChatSlotsProvider>
           <WorkspaceSidebar />
           <SidebarInset className="min-w-0">
             <GatewayOfflineBanner gatewayUnavailable={gatewayUnavailable} />
@@ -49,7 +49,7 @@ export async function WorkspaceContent({
             <KeepAliveChatViewport />
             {children}
           </SidebarInset>
-        </ChatTabsProvider>
+        </LiveChatSlotsProvider>
       </SidebarProvider>
       <CommandPalette />
       <SettingsDialogHost />

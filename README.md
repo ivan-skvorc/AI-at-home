@@ -1,6 +1,6 @@
-> **This is a fork of [bytedance/deer-flow](https://github.com/bytedance/deer-flow).** It is a **personal AI you host at home** — close to the Claude Code / Claude.ai experience, running on hardware you own.
+> # AI too expensive? Doesn't matter because you can have AI at home!
 >
-> On top of upstream, it adds — out of the box:
+> On top of [upstream](https://github.com/bytedance/deer-flow), it adds — out of the box:
 >
 > **Getting it running**
 >
@@ -14,9 +14,8 @@
 >
 > **Using it every day**
 >
-> - 🔀 **Independent model per conversation** — every chat remembers its own model, subagent model, mode and reasoning effort. Run a free local model in one chat and a cloud model in another; switching one no longer flips the others.
-> - 🚦 **Concurrent chats** — leaving a chat used to cancel its run. Now a chat you leave mid-answer keeps streaming in the background, with a pulsing dot and a notification when it lands.
-> - 🗂️ **Keep-alive chat tabs** — drag conversations into a tab strip and they stay mounted: scroll position, artifacts and browser panel survive a switch. The tab set is saved server-side per user.
+> - 🔀 **Independent model per conversation, remembered by the conversation** — every chat keeps its own model, subagent model, mode and reasoning effort, recorded on the chat itself rather than in one browser. Switching conversations switches the picker to *that* chat's model instead of leaving the last one selected — on your phone and after a site-data clear too — and a brand-new chat no longer forgets its model the moment it is created.
+> - 🚦 **Concurrent chats** — leaving a chat used to cancel its run. Now a chat you leave mid-answer keeps streaming in the background and notifies you when it lands; come back and the answer is already there.
 > - 🗃️ **Folders in the sidebar, with subfolders** — the chat list is a tree. A conversation you file is **inside its folder and gone from the list outside it**, the way a file manager works, and folders nest up to five levels. Drag chats and folders around, or use the **⋯** menus. Deleting a folder never deletes the chats in it. Stored per user on the server; nothing to configure.
 > - 🕯️ **Gaslight mode** — edit **either half of a turn**. Edit your own message and it replays from there; edit the assistant's answer and your text simply *becomes* what it said. Both versions are kept behind a `‹ 2/2 ›` switcher, and one conversation stays **one** sidebar entry however many times you edit it.
 > - 🌐 **An internet switch on the composer** — a globe takes *this* conversation offline: search, fetching, browser control, MCP and external agents are left out of the run, and subagents inherit it. Per chat, not a global setting.
@@ -32,7 +31,7 @@
 > - 🧾 **Spend page** — where the money went this month, broken down by model, conversation and feature over 7, 30 or 90 days.
 > - 📈 **Price graph** — the cost of every step of a conversation, as columns or a running total. A turn on an unpriced local model draws **no** column rather than a zero-height one.
 > - 🧾 **A reply keeps the price it was billed at** — costs used to be recomputed from today's `config.yaml`, so re-pricing a model rewrote what last month's conversation cost and a retired model made it *cheaper*. Rates are now stamped on each run.
-> - 🧮 **A cost estimate that survives a restart and an edit** — interrupted runs count (they spent the tokens), and turns replaced by an edit stay in the total as a **Replaced turns** row instead of quietly vanishing.
+> - 🧮 **A cost estimate that survives a restart and an edit** — interrupted runs count (they spent the tokens), and turns replaced by an edit stay in the total as a **Replaced turns** row instead of quietly vanishing. Editing a message branches the conversation into a second thread, so the total now covers **every** thread of it while the graph shows only the turns you can still see: the number stops dropping when you edit, and the chart stops losing the turns you kept.
 > - 🧭 **Cost-aware subagent routing** — a policy that sends delegated subtasks to the cheapest model that can actually do them, never one that lacks the tools, vision or context window. Off until you write a policy.
 > - 🧠 **Long-term memory off by default** — the agent no longer learns from or injects your saved memory until you opt in per browser under **Settings → Memory**. When off, the backend skips memory injection, extraction and memory tools entirely.
 > - 💡 **Follow-up suggestions off by default** — the follow-up chips cost an extra model call after every answer, so they are opt-in under **Settings → Suggestions**, where you can also pick a cheap model to generate them.
@@ -55,9 +54,12 @@
 > - 🛡️ **Deployment exposure check** — passwordless auth, multi-user-mode-off and a non-loopback `BIND_HOST` are each defensible alone but together decide who can reach your instance and as whom. `make doctor` prints that combined posture. Diagnosis only.
 > - 👥 **Multi-user mode toggle** — on by default (each login sees only its own chats). Turn it off to merge every conversation into one shared workspace — handy after going passwordless, when old chats are stranded under different ids.
 > - 🔄 **Self-updating browser & search** — Camoufox and the SearXNG image refresh themselves, throttled daily on launch or via a `systemd --user` timer. Opt out with `DEER_FLOW_AUTO_UPDATE=0`.
+> - 🧰 **An Update dependencies button** — **Settings → Maintenance** pulls a newer Camoufox and SearXNG image on demand, for when a page fetch or a search just broke and tomorrow's automatic refresh is too late. Reports each component's outcome (including "skipped, no Docker"), refuses a second run while one is in flight, and is admin-only because it runs commands on the host.
 > - 🚧 **Search that says when it is blocked** — SearXNG answers `HTTP 200` with an empty list when its engines are rate-limited, which used to read as a successful empty search and got the agent to re-query into the suspension. It is now an error naming the engines and the wait.
 > - 📦 **A browser that is actually installed, not just present** — the gateway image shipped Camoufox without the system libraries it loads, so every presence check passed until the first fetch failed. The libraries now ship with it.
 > - 🎬 **Reduced motion by default** — decorative animations are off by default and honor the OS setting; flip it back per browser.
+>
+> **What this is:** a fork of [bytedance/deer-flow](https://github.com/bytedance/deer-flow) — a **personal AI you host at home**, close to the Claude Code / Claude.ai experience, running on hardware you own. Point it at a local Ollama model and it costs you electricity; point it at a cloud key and it tells you what each answer cost.
 >
 > **What this fork is for:** a private, self-hosted assistant you reach over your own network, cheap to run, and yours. The defaults follow from that — passwordless on LAN, Tailscale-ready dev origins, local-first search and fetch, per-conversation model choice, memory and suggestions off, and a live cost readout — so nothing about it is a surprise on your own bill or your own hardware.
 >
@@ -152,6 +154,7 @@ DeerFlow has newly integrated the intelligent search and crawling toolset indepe
     - [Internet Access Switch](#internet-access-switch)
     - [Concurrent Chats](#concurrent-chats)
     - [Folders in the Sidebar](#folders-in-the-sidebar)
+    - [A Conversation Remembers Its Model](#a-conversation-remembers-its-model)
     - [Automatic Conversation Titles](#automatic-conversation-titles)
   - [Recommended Models](#recommended-models)
   - [Embedded Python Client](#embedded-python-client)
@@ -159,6 +162,7 @@ DeerFlow has newly integrated the intelligent search and crawling toolset indepe
   - [Voice Input](#voice-input)
   - [Large Documents and Scanned PDFs](#large-documents-and-scanned-pdfs)
   - [Terminal Workbench (TUI)](#terminal-workbench-tui)
+  - [Updating Camoufox and SearXNG](#updating-camoufox-and-searxng)
   - [Documentation](#documentation)
   - [⚠️ Security Notice](#️-security-notice)
     - [Improper Deployment May Introduce Security Risks](#improper-deployment-may-introduce-security-risks)
@@ -1951,13 +1955,12 @@ you walked away from is still there, still streaming, when you come back.
 to get in the way. A run is cancelled when its browser stream disconnects
 (`on_disconnect` defaults to `cancel` on the Gateway's run API), which is exactly
 what leaving a chat does — so the answer you walked away to wait for was killed
-on the way out. And even a surviving run went dark, because only chats you have
-explicitly pinned to the tab strip stay mounted. Now every run is submitted as
-"keep going if my stream drops", and a chat you leave **while it is still
-answering** is automatically kept as a keep-alive tab: it keeps streaming in the
-background with a pulsing dot on its tab chip, and the dot disappearing is how
-you know it finished. The desktop notification fires for a chat that is merely
-off-screen too, not just when the whole window is hidden. Nothing to configure.
+on the way out. And even a surviving run went dark, because leaving a chat
+unmounted it. Now every run is submitted as "keep going if my stream drops", and
+a chat you leave **while it is still answering** stays mounted in the background
+until that answer lands. The desktop notification fires for a chat that is
+merely off-screen too, not just when the whole window is hidden. Nothing to
+configure.
 
 This also means **closing the browser no longer cancels a run** — it finishes on
 the server, which is what the "notify me when it's done" push notification
@@ -1966,9 +1969,11 @@ answer. The **Stop** button is unaffected: it cancels the run outright, and a
 runaway run is still bounded by your spend cap.
 
 Two deliberate limits: a brand-new chat whose thread the backend has not created
-yet is not kept as a tab (a tab is addressed by thread id), and a full tab strip
-declines rather than evicting a tab you chose. In both cases the run itself still
-survives on the server and you rejoin it when you open the chat again.
+yet is not kept alive (a background chat is addressed by thread id, which it does
+not have yet), and there is a ceiling of eight background chats, past which the
+newest one is not kept. In both cases the run itself still survives on the server
+and you rejoin it when you open the chat again. A background chat is released as
+soon as its run lands — it is kept alive for the answer, not indefinitely.
 
 Within a **single** conversation, turns still take one at a time — two runs in one
 chat would fight over the same conversation state. Concurrency is across chats.
@@ -2031,7 +2036,7 @@ can take the chats inside it out of sight.
 
 Folder names, their order, and which conversation is in which folder are stored
 **per user on the server**, so they follow you to another browser or another
-device — the same store the keep-alive chat tabs use. Only which folders are
+device. Only which folders are
 *expanded* is per browser, since that is genuinely a per-screen preference.
 
 Two limits worth knowing: a ceiling of **50 folders** in total, and **five
@@ -2041,6 +2046,20 @@ keeps its place in the recency order instead of jumping to the top of the list
 the moment you drag it.
 
 Nothing to configure; it is on as soon as you have a conversation to file.
+
+### A Conversation Remembers Its Model
+
+Each chat has its own model, subagent model, mode and reasoning effort — selecting one in an open conversation never changes another. What is new is that the conversation **remembers** it: the selection is recorded on the chat itself, not only in the browser you happened to pick it in.
+
+That matters in three ordinary situations, all of which used to look like the app forgetting:
+
+- **Switching conversations.** Opening a chat now moves the picker to *that* chat's model instead of leaving whatever was selected last. Previously any conversation this browser had not touched had nothing recorded, so it fell back to the app default.
+- **A different browser or device.** Your phone reads the same record your laptop wrote, so a chat that has been talking to a local model does not silently switch to a cloud one when you pick it up elsewhere. Same after clearing site data.
+- **A brand-new chat.** A new chat is addressed by a placeholder id until you send the first message, at which point the server assigns a real one. The selection used to be stranded under the placeholder, so the chat forgot its model on the very turn it had just answered with it. It now carries across.
+
+In Ultra mode the **subagent** model is remembered alongside the lead model, so a conversation that delegates to a cheap local model keeps doing so.
+
+Nothing to configure, and changing a model never reorders your sidebar — the recency-ordered list treats a model change as what it is, not as activity in the conversation.
 
 ### Automatic Conversation Titles
 
@@ -2196,7 +2215,7 @@ python3 scripts/backup.py inspect <archive>   # what's in it, without extracting
 ```
 
 The archive carries `config.yaml`, `extensions_config.json`, your DeerFlow home
-directory (memory, threads, uploads, chat tabs, runtime settings, the SQLite
+directory (memory, threads, uploads, folders, runtime settings, the SQLite
 database) and `skills/custom`. Public skills and rebuildable caches are left out.
 On `database.backend: postgres` a `pg_dump` is written into the archive instead,
 and a failed dump aborts the backup rather than handing you a snapshot with no
@@ -2354,6 +2373,14 @@ only the on-device tier works with no configuration at all. If you point
 `100.64.0.0/10` counts as private), the Gateway logs a warning at startup and the
 composer labels the tier — the endpoint is not refused, but you are told your
 audio is leaving the house.
+
+## Updating Camoufox and SearXNG
+
+DeerFlow installs two components for itself that do not otherwise self-update: the [Camoufox](https://camoufox.com/) browser behind `web_fetch`, and the bundled SearXNG search image. `camoufox fetch` only re-downloads when the installed browser differs from the one the package expects, and Docker only pulls `searxng:latest` when the image is missing — so a long-running stack keeps whatever it started with.
+
+Both are refreshed automatically, throttled to once a day on launch or via a `systemd --user` timer (`make auto-update-install`; opt out with `DEER_FLOW_AUTO_UPDATE=0`). **Settings → Maintenance → Update now** is the on-demand path for when that throttle is in the way — page fetches started failing, or search stopped returning results, and waiting until tomorrow is not an option. It is the same work `make auto-update` does, without an SSH session on the host.
+
+The refresh takes a few minutes, so the button starts it and the page polls: each component reports its own outcome when it finishes — up to date, skipped (not in use, or you point at your own SearXNG), no Docker available, failed, or timed out. A second run is refused while one is in flight, because two concurrent pulls fight over the same files. The action is **admin-only**: it runs commands on your host.
 
 ## Terminal Workbench (TUI)
 

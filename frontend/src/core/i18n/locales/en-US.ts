@@ -493,16 +493,6 @@ export const enUS: Translations = {
     loadFailed: "Could not load the spend report.",
   },
 
-  chatTabs: {
-    ariaLabel: "Open chat tabs",
-    closeTab: "Close tab",
-    pinTab: "Pin as tab",
-    openInTab: "Open in tab",
-    untitled: "New chat",
-    dropHint: "Drag a chat here to keep it open as a tab",
-    running: "Still answering",
-  },
-
   backgroundTasks: {
     label: "Background tasks",
     title: "Background tasks",
@@ -1177,7 +1167,31 @@ export const enUS: Translations = {
       suggestions: "Suggestions",
       autoTitle: "Conversation titles",
       systemPrompt: "System prompt",
+      maintenance: "Maintenance",
       about: "About",
+    },
+    maintenance: {
+      title: "Update dependencies",
+      description:
+        "Refresh the two components DeerFlow installs for itself: the Camoufox browser behind web_fetch, and the bundled SearXNG search image.",
+      updateNow: "Update now",
+      updating: "Updating…",
+      started: "Update started. This takes a few minutes.",
+      startFailed: "Could not start the update.",
+      adminOnly: "Only an admin can update dependencies.",
+      failed: "Update failed",
+      hint: "Both already refresh themselves once a day. Use this when you need the newer build now — after a failed page fetch, or when search stops returning results.",
+      components: {
+        camoufox: "Camoufox browser",
+        searxng: "SearXNG image",
+      },
+      outcomes: {
+        ok: "Up to date",
+        skipped: "Not in use — skipped",
+        noDocker: "Docker not available — skipped",
+        timeout: "Timed out",
+        failed: "Failed",
+      },
     },
     memory: {
       title: "Memory",

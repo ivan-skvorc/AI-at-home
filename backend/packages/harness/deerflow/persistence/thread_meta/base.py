@@ -33,6 +33,36 @@ THREAD_ARCHIVED_METADATA_KEY = "deerflow_archived"
 # and ``frontend/tests/e2e/utils/mock-api.ts``.
 THREAD_FOLDER_METADATA_KEY = "deerflow_folder"
 
+# The conversation's own workflow selection (fork feature): the model that
+# answered it, the subagent model its Ultra runs delegate to, the mode, and the
+# reasoning effort. Recorded on the thread so the selection is a property of the
+# *conversation* rather than of one browser's ``localStorage`` — which is what
+# made an old chat open on whatever model happened to be selected last. Values
+# are display-level identifiers, so the store only ever validates their shape.
+# Keep in sync with ``frontend/src/core/threads/thread-workflow.ts``.
+THREAD_WORKFLOW_METADATA_KEY = "deerflow_workflow"
+THREAD_WORKFLOW_FIELDS: frozenset[str] = frozenset({"model_name", "subagent_model_name", "mode", "reasoning_effort"})
+# Bounded because the API is untrusted input and this is echoed back on every
+# thread read; a model id is far shorter than this in every real roster.
+MAX_WORKFLOW_VALUE_CHARS = 200
+
+
+def is_valid_thread_workflow(value: object) -> bool:
+    """Whether *value* is the narrow workflow shape the PATCH exemption allows.
+
+    Deliberately strict: an unrecognized key or a non-string value falls through
+    to the ordinary metadata path (which bumps ``updated_at``) rather than
+    quietly inheriting the "do not reorder the sidebar" exemption.
+    """
+    if not isinstance(value, dict):
+        return False
+    for key, entry in value.items():
+        if key not in THREAD_WORKFLOW_FIELDS:
+            return False
+        if not isinstance(entry, str) or len(entry) > MAX_WORKFLOW_VALUE_CHARS:
+            return False
+    return True
+
 
 class InvalidMetadataFilterError(ValueError):
     """Raised when all client-supplied metadata filter keys are rejected."""

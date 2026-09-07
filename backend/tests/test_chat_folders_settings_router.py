@@ -1,11 +1,11 @@
 """Gateway routes for the sidebar's chat-folder registry (fork feature).
 
 ``GET``/``PUT /api/settings/chat-folders`` store the folder list — id, name,
-parent, display order — per user, beside the keep-alive tab strip in the same
-``ui_state.json`` bag. Membership is *not* here: a conversation records its
-folder in its own ``deerflow_folder`` thread metadata, so a rename stays one
-write. Like the sibling chat-tabs routes these are per-user UI state and carry
-no admin gate.
+parent, display order — per user, in the shared ``ui_state.json`` bag.
+Membership is *not* here: a conversation records its folder in its own
+``deerflow_folder`` thread metadata, so a rename stays one write. These are
+per-user UI state and carry no admin gate, unlike the multi-user-mode routes in
+the same router.
 """
 
 from __future__ import annotations
@@ -126,16 +126,22 @@ async def test_identity_outside_the_directory_charset_is_accepted():
 
 
 @pytest.mark.anyio
-async def test_folders_and_tabs_share_one_file_without_clobbering_each_other():
-    """Both live in ``ui_state.json``; a writer that knows one must keep the other."""
-    from app.gateway.routers.settings import ChatTab, ChatTabsUpdate, get_chat_tabs_setting, update_chat_tabs_setting
+async def test_folders_share_the_file_with_other_keys_without_clobbering_them():
+    """Several writers share ``ui_state.json``; each must merge, not replace.
 
-    await update_chat_tabs_setting(ChatTabsUpdate(chat_tabs=[ChatTab(key="k1", threadId="t1")]))
+    Includes the inert ``chat_tabs`` entry an install written before the
+    keep-alive tab strip was removed still carries: nothing reads it any more,
+    and a folder write must leave it alone rather than rewriting the document.
+    """
+    user_ui_state.set_push_subscriptions("default", [{"endpoint": "https://push.example/1", "keys": {"p256dh": "a", "auth": "b"}}])
+    user_ui_state._write_state("default", {"chat_tabs": [{"key": "k1", "threadId": "t1"}]})
+
     await update_chat_folders_setting(ChatFoldersUpdate(chat_folders=[ChatFolder(id="f1", name="Work")]))
 
     user_ui_state.reset_cache_for_tests()
-    assert [t.threadId for t in (await get_chat_tabs_setting()).chat_tabs] == ["t1"]
     assert [f.id for f in (await get_chat_folders_setting()).chat_folders] == ["f1"]
+    assert [entry["endpoint"] for entry in user_ui_state.get_push_subscriptions("default")] == ["https://push.example/1"]
+    assert user_ui_state._read_state("default")["chat_tabs"] == [{"key": "k1", "threadId": "t1"}]
 
 
 @pytest.mark.anyio

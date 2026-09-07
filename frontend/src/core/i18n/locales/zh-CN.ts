@@ -470,16 +470,6 @@ export const zhCN: Translations = {
     loadFailed: "无法加载支出报表。",
   },
 
-  chatTabs: {
-    ariaLabel: "打开的对话标签页",
-    closeTab: "关闭标签页",
-    pinTab: "固定为标签页",
-    openInTab: "在标签页中打开",
-    untitled: "新对话",
-    dropHint: "将对话拖到这里，即可固定为标签页",
-    running: "正在回答",
-  },
-
   backgroundTasks: {
     label: "后台任务",
     title: "后台任务",
@@ -1129,7 +1119,31 @@ export const zhCN: Translations = {
       suggestions: "建议",
       autoTitle: "会话标题",
       systemPrompt: "系统提示词",
+      maintenance: "维护",
       about: "关于",
+    },
+    maintenance: {
+      title: "更新依赖",
+      description:
+        "刷新 DeerFlow 自行安装的两个组件：web_fetch 使用的 Camoufox 浏览器，以及内置的 SearXNG 搜索镜像。",
+      updateNow: "立即更新",
+      updating: "更新中…",
+      started: "更新已开始，需要几分钟。",
+      startFailed: "无法开始更新。",
+      adminOnly: "只有管理员才能更新依赖。",
+      failed: "更新失败",
+      hint: "两者每天都会自动刷新一次。当你现在就需要新版本时使用它——例如网页抓取失败，或搜索不再返回结果。",
+      components: {
+        camoufox: "Camoufox 浏览器",
+        searxng: "SearXNG 镜像",
+      },
+      outcomes: {
+        ok: "已是最新",
+        skipped: "未使用——已跳过",
+        noDocker: "Docker 不可用——已跳过",
+        timeout: "超时",
+        failed: "失败",
+      },
     },
     memory: {
       title: "记忆",

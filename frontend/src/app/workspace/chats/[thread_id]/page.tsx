@@ -3,18 +3,18 @@
 import { useCallback, useEffect } from "react";
 
 import { ChatInstance, useThreadChat } from "@/components/workspace/chats";
-import { useChatTabs } from "@/core/threads/chat-tabs-context";
+import { useLiveChatSlots } from "@/core/threads/live-chat-slots-context";
 import { env } from "@/env";
 
 /**
  * Chat route entry point. Two rendering modes:
  *
  * - **Static-demo** builds pre-render specific chat pages and enforce route
- *   asset budgets, and the keep-alive tab viewport is client-only — so the demo
+ *   asset budgets, and the keep-alive viewport is client-only — so the demo
  *   keeps the classic inline single-chat rendering.
  * - **App** builds render the live chat inside a persistent, workspace-level
  *   keep-alive viewport (see `KeepAliveChatViewport`). Here the route page is a
- *   thin registrar: it reports the current chat route to the tab strip and
+ *   thin registrar: it reports the current chat route to the slot provider and
  *   renders nothing itself, so navigating between chats never remounts them.
  *
  * The registrar path is workspace-only — it depends on `useChatTabs` and the
@@ -53,7 +53,7 @@ export function ClassicChatPage() {
 
 function ChatRouteRegistrar() {
   const { threadId, isNewThread } = useThreadChat();
-  const { syncRoute } = useChatTabs();
+  const { syncRoute } = useLiveChatSlots();
   useEffect(() => {
     syncRoute({ threadId, isNew: isNewThread });
   }, [threadId, isNewThread, syncRoute]);

@@ -17,9 +17,9 @@ import {
  * 1. The run request carries `on_disconnect: "continue"`, so the Gateway does
  *    not cancel the first chat's run when leaving the chat tears its SSE
  *    stream down (the Gateway's own default is `"cancel"`).
- * 2. Leaving a chat that is still answering pins it as a keep-alive tab rather
- *    than dropping its slot, so the answer keeps streaming into a live,
- *    visibly-running background tab instead of a torn-down one.
+ * 2. Leaving a chat that is still answering keeps its slot mounted rather than
+ *    dropping it, so the answer keeps streaming into a live instance instead of
+ *    a torn-down one — and the slot is released once that run lands.
  */
 
 type Answer = { type: "ai"; id: string; content: string };
@@ -128,13 +128,8 @@ test("a second chat answers while the first one is still working", async ({
       .click();
     await expect(page).toHaveURL(new RegExp(MOCK_THREAD_ID_2));
 
-    // The first chat was not torn down: it is a keep-alive tab now, both
-    // instances are mounted, and the tab shows that it is still answering.
-    const runningTab = page
-      .getByTestId("chat-tab")
-      .filter({ hasText: "First conversation" });
-    await expect(runningTab).toHaveCount(1);
-    await expect(runningTab.getByTestId("chat-tab-busy")).toBeVisible();
+    // The first chat was not torn down: it is a background slot now, so both
+    // instances are mounted at once (the second is the one on screen).
     await expect(page.locator("[data-slot-key]")).toHaveCount(2);
 
     // 3. The whole point: a prompt in the second chat is accepted and answered
@@ -159,14 +154,16 @@ test("a second chat answers while the first one is still working", async ({
     releaseFirstAnswer();
   }
 
-  // 4. The first chat's answer still lands, in its background tab.
-  const finishedTab = page
-    .getByTestId("chat-tab")
-    .filter({ hasText: "First conversation" });
-  await expect(finishedTab.getByTestId("chat-tab-busy")).toHaveCount(0, {
+  // 4. The first chat's answer still lands in its background instance, and the
+  //    slot is then released — a background chat is kept alive for the run it
+  //    is finishing, not indefinitely.
+  await expect(page.locator("[data-slot-key]")).toHaveCount(1, {
     timeout: 15_000,
   });
-  await finishedTab.click();
+  await page
+    .locator("[data-sidebar='sidebar']")
+    .locator(`a[href*='${MOCK_THREAD_ID}']`)
+    .click();
   await expect(page.getByText("Answer from the first chat")).toBeVisible({
     timeout: 15_000,
   });

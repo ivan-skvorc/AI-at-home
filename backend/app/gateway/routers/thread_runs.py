@@ -38,6 +38,7 @@ from app.gateway.checkpoint_lineage import (
 )
 from app.gateway.context_usage import build_context_usage
 from app.gateway.deps import get_current_user, get_feedback_repo, get_run_event_store, get_run_manager, get_run_store, get_stream_bridge
+from app.gateway.edit_version_family import EditVersionFamily, resolve_edit_version_family
 from app.gateway.internal_auth import get_trusted_internal_owner_user_id
 from app.gateway.pagination import trim_run_message_page
 from app.gateway.pricing import build_pricing_map, lookup_pricing, pricing_currency, resolve_run_pricing, token_cost
@@ -1823,6 +1824,105 @@ async def _superseded_run_ids(request: Request, thread_id: str) -> set[str]:
         return set()
 
 
+async def _family_aux_usage(family: EditVersionFamily) -> dict[str, dict[str, dict]]:
+    """Merge the non-graph LLM sinks across every thread of one conversation.
+
+    Memory extraction, follow-up suggestions, prompt polish and goal checks are
+    recorded per thread id, so an edited conversation has them spread over the
+    family exactly like its runs. They are never turns, so they are never steps
+    — they only ever land in the total, which is precisely why they have to
+    follow the family: leaving them on the open thread makes an edited
+    conversation look cheaper than the unedited one it came from.
+    """
+    merged: dict[str, dict[str, dict]] = {}
+    for member_id in family.member_thread_ids:
+        for category, models in (await aget_thread_aux_usage(member_id)).items():
+            bucket = merged.setdefault(category, {})
+            for model, totals in models.items():
+                target = bucket.setdefault(model, {})
+                for field, value in totals.items():
+                    if isinstance(value, (int, float)) and not isinstance(value, bool):
+                        target[field] = target.get(field, 0) + value
+    return merged
+
+
+async def _family_aggregate(
+    request: Request,
+    run_store: Any,
+    family: EditVersionFamily,
+    thread_id: str,
+    *,
+    include_active: bool,
+) -> tuple[dict, set[str]]:
+    """Aggregate every thread of one conversation, and say which runs it shows.
+
+    Returns the merged aggregate (as if the family had always been one thread)
+    plus the run ids whose turns the conversation no longer shows. Both halves
+    matter and they answer different questions: the aggregate is *what was
+    spent*, the hidden set is *what is still on screen*. Keeping them apart is
+    what lets an edited conversation report a total that did not shrink while
+    charting only the turns the reader can point at.
+
+    Hidden here means any of three things: a run in a sibling version the reader
+    is not looking at, a run of an ancestor past the point the edit branched
+    from it, or a run that thread's own history hides anyway (a replaced source
+    turn, a superseded regeneration, a failed edit attempt).
+    """
+    merged_by_run: list[dict] = []
+    merged_by_model: dict[str, dict] = {}
+    merged_by_caller: dict[str, int] = {}
+    totals = {"total_tokens": 0, "total_input_tokens": 0, "total_output_tokens": 0, "total_runs": 0}
+    hidden_run_ids: set[str] = set()
+
+    inherited_turns = {ancestor.thread_id: ancestor.inherited_turns for ancestor in family.visible_ancestors}
+
+    for member_id in family.member_thread_ids:
+        agg = await run_store.aggregate_tokens_by_thread(member_id, include_active=include_active)
+        member_hidden = await _superseded_run_ids(request, member_id)
+
+        member_runs = list(agg.get("by_run") or [])
+        # Runs this member contributes to the conversation on screen. The open
+        # thread contributes all of its own; an ancestor contributes only the
+        # turns that survived the branch; a sibling version contributes none.
+        if member_id == thread_id:
+            visible_here = {str(run.get("run_id") or "") for run in member_runs}
+        elif member_id in inherited_turns:
+            surviving = [run for run in member_runs if str(run.get("run_id") or "") not in member_hidden]
+            visible_here = {str(run.get("run_id") or "") for run in surviving[: inherited_turns[member_id]]}
+        else:
+            visible_here = set()
+
+        for run in member_runs:
+            run_id = str(run.get("run_id") or "")
+            merged_by_run.append(run)
+            if run_id not in visible_here or run_id in member_hidden:
+                hidden_run_ids.add(run_id)
+
+        for key in totals:
+            totals[key] += int(agg.get(key) or 0)
+        for model, entry in (agg.get("by_model") or {}).items():
+            bucket = merged_by_model.setdefault(model, {"tokens": 0, "runs": 0, "input_tokens": 0, "output_tokens": 0, "cache_read_tokens": 0})
+            for field in bucket:
+                bucket[field] += int(entry.get(field) or 0)
+        for caller, value in (agg.get("by_caller") or {}).items():
+            merged_by_caller[caller] = merged_by_caller.get(caller, 0) + int(value or 0)
+
+    # Oldest first across the whole family, so the chart reads as "step 1, step
+    # 2, …" the way the conversation was lived: an ancestor's inherited turns
+    # come before the edited one that replaced the rest.
+    merged_by_run.sort(key=lambda run: (str(run.get("created_at") or ""), str(run.get("run_id") or "")))
+
+    return (
+        {
+            **totals,
+            "by_model": merged_by_model,
+            "by_caller": merged_by_caller,
+            "by_run": merged_by_run,
+        },
+        hidden_run_ids,
+    )
+
+
 def _thread_pricing_map() -> dict:
     """Per-model prices from ``models[*].pricing``; ``{}`` disables cost display."""
     try:
@@ -1848,9 +1948,26 @@ async def thread_token_usage(
     Ollama) contribute nothing — assumed free despite real electricity cost. The
     memory-extraction and follow-up-suggestion LLM calls are tracked separately
     (they are never graph runs) and reported under ``aux``.
+
+    **A conversation is not always one thread.** Editing a message branches it
+    into a version thread, so what the reader calls "this conversation" can be
+    several thread ids. Costs are therefore aggregated over the whole family:
+    the total covers every thread in it (the money was spent), while ``steps``
+    covers only the turns still on screen and the rest is reported once as
+    ``superseded_*``. An unedited conversation is a family of one and takes
+    exactly the same path it always did.
     """
     run_store = get_run_store(request)
-    agg = await run_store.aggregate_tokens_by_thread(thread_id, include_active=include_active)
+    family = await resolve_edit_version_family(
+        getattr(request.app.state, "thread_store", None),
+        thread_id,
+        user_id=await get_current_user(request),
+    )
+    if family.is_single_thread:
+        agg = await run_store.aggregate_tokens_by_thread(thread_id, include_active=include_active)
+        hidden_run_ids = await _superseded_run_ids(request, thread_id)
+    else:
+        agg, hidden_run_ids = await _family_aggregate(request, run_store, family, thread_id, include_active=include_active)
 
     pricing = _thread_pricing_map()
     currency = pricing_currency(pricing)
@@ -1961,7 +2078,6 @@ async def thread_token_usage(
     # reported as one ``superseded_*`` figure instead. They stay inside
     # ``total_cost``: the money was spent, and a total that shrank when a
     # message was edited would be a lie about the bill.
-    hidden_run_ids = await _superseded_run_ids(request, thread_id)
     steps: list[ThreadTokenUsageStep] = []
     superseded_cost: float | None = None
     superseded_promo_cost: float | None = None
@@ -2001,7 +2117,7 @@ async def thread_token_usage(
     aux: dict[str, ThreadTokenUsageAuxBreakdown] = {}
     # Read off the event loop: the aux registry is write-through to a durable
     # SQLite store and hydrates from it on a thread's first touch in this process.
-    for category, models in (await aget_thread_aux_usage(thread_id)).items():
+    for category, models in (await _family_aux_usage(family)).items():
         tokens = input_tokens = output_tokens = calls = 0
         cat_cost: float | None = None
         cat_promo_cost: float | None = None

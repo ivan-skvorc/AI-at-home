@@ -44,12 +44,17 @@ import { isHiddenFromUIMessage } from "@/core/messages/utils";
 import { useModels } from "@/core/models/hooks";
 import { useNotification } from "@/core/notification/hooks";
 import { useLocalSettings, useThreadSettings } from "@/core/settings";
-import { useMaybeChatTabs } from "@/core/threads/chat-tabs-context";
+import {
+  copyThreadContextOverride,
+  getThreadContextOverride,
+} from "@/core/settings/local";
 import {
   useThreadMetadata,
   useThreadStream,
   useThreadTokenUsage,
 } from "@/core/threads/hooks";
+import { useMaybeLiveChatSlots } from "@/core/threads/live-chat-slots-context";
+import type { ThreadWorkflow } from "@/core/threads/thread-workflow";
 import {
   selectContextUsage,
   threadTokenUsageToCostSummary,
@@ -65,13 +70,14 @@ import { useSpecificChatMode } from "./use-chat-mode";
 import { useDemocracyLaunch } from "./use-democracy-launch";
 import { useEditVersions, usePendingEditSend } from "./use-edit-versions";
 import { useImageLaunch } from "./use-image-launch";
+import { useThreadWorkflowMemory } from "./use-thread-workflow-memory";
 
 export type ChatInstanceProps = {
   // Stable identity of the mounted slot. The owner sets this as the React key,
   // so it never changes for the instance's lifetime — including across a
   // new→real promotion, which is what keeps the instance mounted (keep-alive).
   slotKey: string;
-  // Controlled by the owner. For a keep-alive tab this is the pinned thread id;
+  // Controlled by the owner. For a background slot this is that chat's thread id;
   // for the transient/new slot it is the route thread. On promotion the owner
   // updates it (via onThreadStarted) rather than the instance owning it.
   threadId: string;
@@ -158,6 +164,33 @@ function ChatInstanceContent({
   // change (and re-claiming nothing, since the stash is already consumed).
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
+  // A conversation remembers what it was running with (model, subagent model,
+  // mode, reasoning effort). The local per-thread store only knows the chats
+  // this browser has touched, so without this an older conversation opened
+  // anywhere else fell back to the app default rather than its own model.
+  const { recordOnPromotion } = useThreadWorkflowMemory({
+    threadId,
+    isNewThread,
+    isMock,
+    metadata: threadMetadata.data?.metadata,
+    context: settings.context,
+    applyWorkflow: useCallback(
+      (workflow: ThreadWorkflow) => {
+        // A selection this browser already holds for the thread wins: it is
+        // what the user is looking at. The record is the fallback for a chat
+        // this browser has not seen before.
+        if (Object.keys(getThreadContextOverride(threadId)).length > 0) {
+          return;
+        }
+        setSettings("context", {
+          ...settingsRef.current.context,
+          ...workflow,
+        } as typeof settingsRef.current.context);
+      },
+      [setSettings, threadId],
+    ),
+  });
+
   // Only the visible slot seeds the composer from ?mode=skill; background
   // instances share the same route params and must not fight over it.
   useSpecificChatMode(isActive);
@@ -205,7 +238,7 @@ function ChatInstanceContent({
   const { showNotification } = useNotification();
   // Null outside the keep-alive viewport (static-demo / showcase render a bare
   // instance), so every use below stays optional.
-  const reportBusy = useMaybeChatTabs()?.reportBusy;
+  const reportBusy = useMaybeLiveChatSlots()?.reportBusy;
 
   const {
     thread,
@@ -235,6 +268,13 @@ function ChatInstanceContent({
       if (isActiveRef.current) {
         history.replaceState(null, "", `/workspace/chats/${createdThreadId}`);
       }
+      // The backend has just assigned this conversation a *different* id from
+      // the client-side placeholder it was drafted under, and every
+      // per-conversation key is stored under the thread id. Carry the selection
+      // across before anything reads it, or the chat forgets — on its very
+      // first turn — which model it just answered with.
+      copyThreadContextOverride(threadId, createdThreadId);
+      recordOnPromotion(createdThreadId, settingsRef.current.context);
       onThreadStarted?.(slotKey, createdThreadId);
     },
     onFinish: (state) => {
@@ -257,7 +297,7 @@ function ChatInstanceContent({
     },
   });
 
-  // Report the run state to the tab strip: it decides whether leaving this
+  // Report the run state to the slot provider: it decides whether leaving this
   // chat should pin it (so it keeps streaming in the background) and renders
   // the running indicator on the chip.
   const isStreaming = thread.isLoading;
