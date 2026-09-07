@@ -124,12 +124,12 @@ class TestSubscriptionStore:
         user_ui_state.remove_push_subscription("default", SUBSCRIPTION["endpoint"])
         assert user_ui_state.get_push_subscriptions("default") == []
 
-    def test_push_state_and_chat_tabs_share_the_file_without_clobbering(self):
+    def test_push_state_and_chat_folders_share_the_file_without_clobbering(self):
         # Both live in one JSON bag; a writer that knows only one must not
         # delete the other.
-        user_ui_state.set_chat_tabs("default", [{"key": "k", "threadId": "t"}])
+        user_ui_state.set_chat_folders("default", [{"id": "f1", "name": "Work"}])
         user_ui_state.add_push_subscription("default", SUBSCRIPTION)
-        assert len(user_ui_state.get_chat_tabs("default")) == 1
+        assert len(user_ui_state.get_chat_folders("default")) == 1
         assert len(user_ui_state.get_push_subscriptions("default")) == 1
 
 

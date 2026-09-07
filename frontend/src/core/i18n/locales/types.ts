@@ -370,17 +370,6 @@ export interface Translations {
     loadFailed: string;
   };
 
-  // Browser-style keep-alive chat tabs (fork feature).
-  chatTabs: {
-    ariaLabel: string;
-    closeTab: string;
-    pinTab: string;
-    openInTab: string;
-    untitled: string;
-    dropHint: string;
-    running: string;
-  };
-
   // Thread-scoped MCP background tasks
   backgroundTasks: {
     label: string;
@@ -985,7 +974,31 @@ export interface Translations {
       suggestions: string;
       autoTitle: string;
       systemPrompt: string;
+      maintenance: string;
       about: string;
+    };
+    // On-demand Camoufox + SearXNG refresh (fork feature).
+    maintenance: {
+      title: string;
+      description: string;
+      updateNow: string;
+      updating: string;
+      started: string;
+      startFailed: string;
+      adminOnly: string;
+      failed: string;
+      hint: string;
+      components: {
+        camoufox: string;
+        searxng: string;
+      };
+      outcomes: {
+        ok: string;
+        skipped: string;
+        noDocker: string;
+        timeout: string;
+        failed: string;
+      };
     };
     memory: {
       title: string;

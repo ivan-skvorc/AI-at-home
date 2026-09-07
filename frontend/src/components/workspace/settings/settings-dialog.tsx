@@ -3,6 +3,7 @@
 import {
   BellIcon,
   CableIcon,
+  DownloadCloudIcon,
   InfoIcon,
   BrainIcon,
   LightbulbIcon,
@@ -122,6 +123,13 @@ const SubagentSettingsPage = dynamic(
     ),
   { loading: SettingsPageLoading },
 );
+const MaintenanceSettingsPage = dynamic(
+  () =>
+    import("./maintenance-settings-page").then(
+      (module) => module.MaintenanceSettingsPage,
+    ),
+  { loading: SettingsPageLoading },
+);
 const AboutSettingsPage = dynamic(
   () =>
     import("./about-settings-page").then((module) => module.AboutSettingsPage),
@@ -141,6 +149,7 @@ export type SettingsSection =
   | "notification"
   | "suggestions"
   | "systemPrompt"
+  | "maintenance"
   | "about";
 
 type SettingsDialogProps = React.ComponentProps<typeof Dialog> & {
@@ -215,6 +224,11 @@ export function SettingsDialog(props: SettingsDialogProps) {
         label: t.settings.sections.systemPrompt,
         icon: ScrollTextIcon,
       },
+      {
+        id: "maintenance",
+        label: t.settings.sections.maintenance,
+        icon: DownloadCloudIcon,
+      },
       { id: "about", label: t.settings.sections.about, icon: InfoIcon },
     ],
     [
@@ -228,6 +242,7 @@ export function SettingsDialog(props: SettingsDialogProps) {
       t.settings.sections.subagents,
       t.settings.sections.skills,
       t.settings.sections.notification,
+      t.settings.sections.maintenance,
       t.settings.sections.suggestions,
       t.settings.sections.systemPrompt,
       t.settings.sections.about,
@@ -291,6 +306,7 @@ export function SettingsDialog(props: SettingsDialogProps) {
               {activeSection === "channels" && <ChannelsSettingsPage />}
               {activeSection === "integrations" && <IntegrationsSettingsPage />}
               {activeSection === "systemPrompt" && <SystemPromptSettingsPage />}
+              {activeSection === "maintenance" && <MaintenanceSettingsPage />}
               {activeSection === "about" && <AboutSettingsPage />}
             </div>
           </ScrollArea>

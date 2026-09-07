@@ -46,7 +46,7 @@ from app.gateway.utils import sanitize_log_param
 from deerflow.agents.thread_state import THREAD_STATE_REDUCER_FIELDS
 from deerflow.config.paths import Paths, get_paths
 from deerflow.config.summarization_config import ContextSize
-from deerflow.persistence.thread_meta import THREAD_ARCHIVED_METADATA_KEY, THREAD_FOLDER_METADATA_KEY, THREAD_PINNED_METADATA_KEY
+from deerflow.persistence.thread_meta import THREAD_ARCHIVED_METADATA_KEY, THREAD_FOLDER_METADATA_KEY, THREAD_PINNED_METADATA_KEY, THREAD_WORKFLOW_METADATA_KEY, is_valid_thread_workflow
 from deerflow.runtime import ThreadOperationKind, serialize_channel_values_for_api
 from deerflow.runtime.checkpoint_mode import CheckpointModeMismatchError, CheckpointModeReconfigurationError
 from deerflow.runtime.checkpoint_state import graph_reducer_channels, graph_state_schema, graph_writable_channels
@@ -137,24 +137,25 @@ def _strip_reserved_metadata(metadata: dict[str, Any] | None) -> dict[str, Any]:
     return {k: v for k, v in metadata.items() if k not in _SERVER_RESERVED_METADATA_KEYS}
 
 
-# Metadata keys that record where a conversation *sits* in the sidebar, not
-# what happened inside it: the pin flag, the archive flag, and the id of the
-# folder it was filed into (``None`` = back to the root list). A PATCH touching
-# only these must not bump ``updated_at`` — the list is recency-ordered, so
-# pinning a chat, archiving it, or dragging it into a folder would otherwise
-# shove it to the top and reshuffle the sidebar under the user's cursor. Each
-# key carries its own value guard so a patch that smuggles a different shape
-# falls back to the ordinary touch-the-timestamp path rather than silently
-# getting the exemption.
+# Metadata keys that record something *about* a conversation rather than
+# something that happened inside it: where it sits in the sidebar (the pin flag,
+# the archive flag, the id of the folder it was filed into — ``None`` = back to
+# the root list) and which model/mode it is set to run on. A PATCH touching only
+# these must not bump ``updated_at`` — the list is recency-ordered, so pinning a
+# chat, filing it, or changing its model would otherwise shove it to the top and
+# reshuffle the sidebar under the user's cursor. Each key carries its own value
+# guard so a patch that smuggles a different shape falls back to the ordinary
+# touch-the-timestamp path rather than silently getting the exemption.
 _UI_PLACEMENT_METADATA_GUARDS: dict[str, Any] = {
     THREAD_PINNED_METADATA_KEY: lambda value: isinstance(value, bool),
     THREAD_ARCHIVED_METADATA_KEY: lambda value: isinstance(value, bool),
     THREAD_FOLDER_METADATA_KEY: lambda value: value is None or isinstance(value, str),
+    THREAD_WORKFLOW_METADATA_KEY: is_valid_thread_workflow,
 }
 
 
 def _is_ui_placement_metadata_patch(metadata: dict[str, Any]) -> bool:
-    """Return True for the narrow pin, archive and folder-move PATCH shapes."""
+    """Return True for the narrow pin, archive, folder-move and workflow shapes."""
     if not metadata:
         return False
     return all(key in _UI_PLACEMENT_METADATA_GUARDS and _UI_PLACEMENT_METADATA_GUARDS[key](value) for key, value in metadata.items())

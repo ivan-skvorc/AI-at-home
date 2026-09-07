@@ -11,6 +11,70 @@ Newest first. Append a pass; never rewrite one. A dated line is what tells the
 next person whether the roster was checked last week or last year, and _which_
 providers that pass could actually reach.
 
+- **2026-09-07 — partial. Anthropic fully verified against the provider's own page;
+  every other provider unreachable. No roster or price edits.**
+  Requested in words alongside a code change cycle.
+
+  **Machine half clean.** `python3 scripts/audit_models.py` reports **no drift** — every
+  bundled slug is still in the catalogs it can read, and the configured prices agree with
+  themselves across the two synced sources. `python3 scripts/sync-api-key-models.py --dry-run`
+  uncomments the blocks cleanly (exit 0), and the four regression suites
+  (`test_sync_api_key_models.py`, `test_setup_wizard.py`, `test_config_integrity.py`,
+  `test_audit_models.py`) are green — 216 tests.
+
+  **Anthropic block verified, price by price, against `docs.claude.com/en/docs/about-claude/pricing`
+  (tier 1: the provider's own page).** All six bundled entries match exactly, base *and* cache:
+
+  | Model | Config | Provider page |
+  | ----- | ------ | ------------- |
+  | Claude Fable 5.1 | $10 / $50, cache hit $0.25 | $10 / $50, cache hit $0.25 |
+  | Claude Opus 5 | $5 / $25, cache hit $0.50 | $5 / $25, cache hit $0.50 |
+  | Claude Opus 4.8 | $5 / $25, cache hit $0.50 | $5 / $25, cache hit $0.50 |
+  | Claude Sonnet 5 | $2 / $10, cache hit $0.20 | $2 / $10, cache hit $0.20 |
+  | Claude Sonnet 4.6 | $3 / $15, cache hit $0.30 | $3 / $15, cache hit $0.30 |
+  | Claude Haiku 4.5 | $1 / $5, cache hit $0.10 | $1 / $5, cache hit $0.10 |
+
+  Three things worth recording rather than just ticking:
+
+  - **Sonnet 5's intro window is settled, and the config already says so.** The page now states
+    that the $2/$10 launch rate "is now the standard price" and that "the previously scheduled
+    increase to $3/$15 per million input/output tokens on September 1, 2026 will not occur."
+    The bundle carries $2/$10 with no `discount:` block, which is the correct shape for a rate
+    that became permanent — the 2026-08-10 pass made that edit and this pass confirms the
+    provider followed through. **Nothing to do**, and specifically no discount to expire.
+  - **Fable 5.1's cache-read multiplier is genuinely non-standard and is carried correctly.**
+    The page footnotes it: Fable 5.1 and Mythos 5.1 cache at **0.025x** base input, "all other
+    models use the standard 0.1x multiplier". The config's `cache_hit: 0.25` matches, and its
+    inline comment already names the exception. This is the kind of entry a derived-from-the-rule
+    edit would silently break by "correcting" it to $1.00.
+  - **Mythos 5.1 has shipped and still stays out**, for the same reason Mythos 5 did: the page
+    marks it *limited availability*, so an ordinary `ANTHROPIC_API_KEY` cannot reach it. Bundling
+    it would put an entry in every install's picker that 404s for almost everyone.
+
+  **Every other provider unverified — the network, not a judgement call.** Outbound HTTPS in this
+  environment goes through an agent proxy that returns `403 Forbidden` on `CONNECT` for all of
+  them: `openrouter.ai` (so `audit_models.py` reports its catalog unreachable, and it is *not*
+  treated as drift), `api.openai.com`, `api.x.ai`, `api.deepseek.com`, `api.mistral.ai`,
+  `api.moonshot.cn`, `dashscope.aliyuncs.com`, `api.minimax.chat` and `open.bigmodel.cn`.
+  `api.anthropic.com` and `generativelanguage.googleapis.com` answer, but only with an
+  authentication error — no key was used, and none should be.
+
+  **Nothing was changed on the strength of a guess.** No provider figure could be read at tier 1,
+  and a corroborating pass at tier 2 needs several independent sources this environment also
+  cannot reach — so every non-Anthropic entry was **left alone**, per *Where a price may come
+  from*, tier 3. A price that is wrong with confidence silences the next audit; a stale one does
+  not.
+
+  **Still owed to the next unrestricted pass**, carried forward from 2026-08-20 and unchanged by
+  this one:
+  - **Discovery (step 2) did not run at all.** It starts from the OpenRouter catalog, which was
+    unreachable, so this pass cannot say whether any lab has shipped a new flagship since
+    2026-09-06. That is the step no automated gate can substitute for — the 2026-08-20 pass found
+    four labs a generation behind at once, by eye.
+  - The four labs rolled forward on 2026-08-20 from corroborated sources (Grok 4.6, Qwen3.8 Max,
+    GLM-5.3, Mistral Medium 3.5) remain **un-verified against a provider page**, with GLM-5.3's
+    price still the most provisional of them.
+
 - **2026-09-06 (second pass, same change-cycle run) — the doubling rule gains two named
   exceptions, and the roster grows by three: Opus 5 routed, GPT-6 Astra routed and direct.**
   Requested in words by the maintainer after reading the earlier pass. This one **changes both

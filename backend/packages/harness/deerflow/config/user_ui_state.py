@@ -4,15 +4,19 @@ Sibling of :mod:`deerflow.config.runtime_settings`: that module owns *server-wid
 runtime settings, this one owns state that belongs to a single user's workspace
 and must outlive the browser that produced it.
 
-**Chat tabs** (fork feature). The keep-alive chat tab strip is a curated set of
-pinned conversations. It was originally persisted only in ``localStorage``, which
-is per-browser *and* per-origin — so the set was silently lost whenever the
-browser cleared site data on exit, evicted storage for an insecure-origin site
-(a plain-HTTP LAN deployment, the fork's documented setup), or the app was
-reopened on a different origin than the one that pinned them (``localhost`` vs a
+**Chat folders** (fork feature). The sidebar's folder tree is a curated set the
+user built by hand. It was originally persisted only in ``localStorage``, which
+is per-browser *and* per-origin — so it was silently lost whenever the browser
+cleared site data on exit, evicted storage for an insecure-origin site (a
+plain-HTTP LAN deployment, the fork's documented setup), or the app was reopened
+on a different origin than the one that created it (``localhost`` vs a
 LAN/Tailscale address both reach the same server). Persisting server-side makes
-the set survive a machine restart and follow the user across browsers and
+the tree survive a machine restart and follow the user across browsers and
 devices, with ``localStorage`` demoted to a first-paint cache.
+
+A ``chat_tabs`` key left by the removed keep-alive tab strip is simply never
+read: writes merge into the existing document, so an old install keeps an inert
+entry rather than needing a migration.
 
 The file is a small JSON bag at ``{base_dir}/users/{user_id}/ui_state.json`` so
 later per-user UI state can join it without another store; writes merge into the
@@ -31,16 +35,9 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 UI_STATE_FILENAME = "ui_state.json"
-CHAT_TABS_KEY = "chat_tabs"
 CHAT_FOLDERS_KEY = "chat_folders"
 PUSH_SUBSCRIPTIONS_KEY = "push_subscriptions"
 
-# Mirrors ``MAX_CHAT_TABS`` in ``frontend/src/core/threads/chat-tabs.ts``: every
-# pinned tab holds a live chat instance, so the ceiling is a resource guard.
-# Enforced here too because the API is untrusted input.
-MAX_CHAT_TABS = 8
-# A cached display hint only — the live title is resolved from the thread list.
-MAX_TITLE_CHARS = 200
 MAX_ID_CHARS = 128
 
 # Sidebar chat folders (fork feature). The registry is only the folder list —
@@ -64,6 +61,8 @@ MAX_FOLDER_DEPTH = 5
 MAX_PUSH_SUBSCRIPTIONS = 10
 MAX_ENDPOINT_CHARS = 1024
 MAX_KEY_CHARS = 256
+# A device label the user typed; a display hint only.
+MAX_TITLE_CHARS = 200
 
 # Per-user cache keyed by the file's (mtime, size) so a sibling worker's write or
 # an out-of-band edit is picked up without a restart, matching how
@@ -123,56 +122,6 @@ def _clean_text(value: Any, limit: int) -> str | None:
     if not trimmed:
         return None
     return trimmed[:limit]
-
-
-def normalize_chat_tabs(raw: Any) -> list[dict[str, str]]:
-    """Validate and bound an incoming tab list.
-
-    Mirrors ``deserializeChatTabs`` in the frontend model: malformed entries are
-    dropped rather than rejected (a tampered or partially-written store must
-    degrade, not break the strip), duplicate keys/thread ids collapse first-wins,
-    and the result is capped at :data:`MAX_CHAT_TABS`.
-    """
-    if not isinstance(raw, list):
-        return []
-    tabs: list[dict[str, str]] = []
-    seen_keys: set[str] = set()
-    seen_threads: set[str] = set()
-    for entry in raw:
-        if not isinstance(entry, dict):
-            continue
-        key = _clean_text(entry.get("key"), MAX_ID_CHARS)
-        thread_id = _clean_text(entry.get("threadId"), MAX_ID_CHARS)
-        if key is None or thread_id is None:
-            continue
-        if key in seen_keys or thread_id in seen_threads:
-            continue
-        seen_keys.add(key)
-        seen_threads.add(thread_id)
-        tab: dict[str, str] = {"key": key, "threadId": thread_id}
-        title = _clean_text(entry.get("title"), MAX_TITLE_CHARS)
-        if title is not None:
-            tab["title"] = title
-        tabs.append(tab)
-        if len(tabs) >= MAX_CHAT_TABS:
-            break
-    return tabs
-
-
-def get_chat_tabs(user_id: str) -> list[dict[str, str]]:
-    """The user's persisted pinned tabs (empty when never set)."""
-    return normalize_chat_tabs(_read_state(user_id).get(CHAT_TABS_KEY))
-
-
-def set_chat_tabs(user_id: str, tabs: Any) -> list[dict[str, str]]:
-    """Persist the user's pinned tabs atomically; returns the stored value.
-
-    An empty list is a legitimate value (the user closed their last tab), so it
-    is written rather than treated as a no-op.
-    """
-    normalized = normalize_chat_tabs(tabs)
-    _write_state(user_id, {CHAT_TABS_KEY: normalized})
-    return normalized
 
 
 def _write_state(user_id: str, updates: dict[str, Any]) -> None:
@@ -329,7 +278,7 @@ def set_chat_folders(user_id: str, folders: Any) -> list[dict[str, Any]]:
 def normalize_push_subscriptions(raw: Any) -> list[dict[str, Any]]:
     """Validate and bound a stored/incoming subscription list.
 
-    Same posture as :func:`normalize_chat_tabs`: malformed entries are dropped
+    Same posture as :func:`normalize_chat_folders`: malformed entries are dropped
     rather than rejected, because a partially-written store must degrade to
     "fewer devices notified" and never to a failed settings load. Deduped by
     endpoint, which is the browser's own identity for a subscription — a

@@ -29,7 +29,7 @@ README = REPO_ROOT / "README.md"
 TRIGGER = "run the code change cycle from CHANGE_CYCLE.md"
 # The sentence that introduces README.md's leading bullet list — the fork's shop
 # window, and the thing CHANGE_CYCLE.md step 7 sends every new feature to.
-SHOP_WINDOW_LEAD = "On top of upstream, it adds"
+SHOP_WINDOW_LEAD = "it adds — out of the box:"
 
 MARKDOWN_LINK_RE = re.compile(r"\[[^\]]+\]\(([^)\s]+)\)")
 HEADING_RE = re.compile(r"^#{1,6}\s+(.*?)\s*$", re.MULTILINE)
@@ -139,14 +139,29 @@ def test_the_readme_still_has_the_shape_the_cycle_sends_a_feature_to() -> None:
     The instruction is worth exactly as much as the list it points at. Rewrite
     README.md's opening blockquote — drop the fork description, re-title the
     bullet list, flatten it out of the quote — and the step still renders,
-    still reads sensibly, and lands the next feature nowhere. Pinned by the two
+    still reads sensibly, and lands the next feature nowhere. Pinned by the
     landmarks the step actually names, not by the prose between them, so the
     copy stays free to change.
+
+    The order those landmarks appear in is deliberate and is asserted:
+    **hook, then bullets, then description.** The bullet list is the fork's shop
+    window, so it comes before the prose about what the repo is — a reader who
+    stops after one screen should have seen what they get, not a paragraph
+    explaining what they are looking at.
     """
     readme = README.read_text(encoding="utf-8")
 
     assert SHOP_WINDOW_LEAD in readme, f"README.md no longer introduces its leading bullet list with {SHOP_WINDOW_LEAD!r}; CHANGE_CYCLE.md step 7 points at a list that is gone"
 
     lead = readme.index(SHOP_WINDOW_LEAD)
-    assert "fork of [bytedance/deer-flow]" in readme[:lead], "the short description of the repo that opens README.md above the bullet list is gone"
     assert readme.count("\n> - ", lead) >= 10, "README.md's leading list is no longer a blockquote bullet list of what the fork adds over upstream"
+
+    # The opening hook comes first: it is the one line a reader who bounces will
+    # have read, and it is above the bullets on purpose.
+    assert "AI too expensive?" in readme[:lead], "README.md lost the opening line that leads the shop window"
+
+    # ...and the short description of the repo follows the bullets, so the
+    # window comes before the explanation rather than after it.
+    description = readme.find("fork of [bytedance/deer-flow]", lead)
+    assert description != -1, "the short description of the repo that follows the bullet list is gone"
+    assert "What this fork is for" in readme[description:], "README.md lost the statement of what the fork is for, which is what tells a reader whether a change belongs here"

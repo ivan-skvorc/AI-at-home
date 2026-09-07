@@ -52,7 +52,7 @@ def instance(tmp_path: Path) -> Path:
     (root / "skills" / "public" / "builtin" / "SKILL.md").write_text("---\nname: builtin\n---\n", encoding="utf-8")
 
     (home / "users" / "default" / "memory.json").write_text('{"version": 2}', encoding="utf-8")
-    (home / "users" / "default" / "ui_state.json").write_text('{"chat_tabs": []}', encoding="utf-8")
+    (home / "users" / "default" / "ui_state.json").write_text('{"chat_folders": []}', encoding="utf-8")
     (home / "runtime_settings.json").write_text('{"multi_user_mode": false}', encoding="utf-8")
     (home / "aux_usage.sqlite3").write_bytes(b"SQLite format 3\x00")
     (home / "deerflow.sqlite3").write_bytes(b"SQLite format 3\x00")

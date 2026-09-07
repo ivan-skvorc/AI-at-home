@@ -8,6 +8,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **frontend/backend:** **A conversation remembers which model it was on.** The
+  per-chat model, subagent model, mode and reasoning effort are now recorded on
+  the conversation itself (`deerflow_workflow` thread metadata) rather than only
+  in one browser's `localStorage`. Switching conversations moves the picker to
+  *that* chat's model instead of leaving the last one selected; a chat opened on
+  another browser or device, or after a site-data clear, shows its own model
+  instead of the app default; and a brand-new chat no longer loses its selection
+  when the backend assigns it a real thread id (the draft's override is carried
+  across in `onStart`). Changing a model never reorders the sidebar: the
+  workflow key joins the pin/archive/folder `updated_at` exemption behind its own
+  strict value guard.
+- **backend/frontend:** **An Update dependencies button** under
+  **Settings → Maintenance**, forcing a Camoufox + bundled SearXNG refresh
+  on demand (`GET`/`POST /api/settings/update-dependencies`) rather than waiting
+  for the daily throttle. Single-flight, admin-gated, takes no caller input, and
+  returns immediately while the page polls — each component reports its own
+  outcome, including "skipped, no Docker".
 
 - **frontend:** **Folders in the sidebar nest.** A folder can now go inside a
   folder, up to five levels: drag one folder onto another, or use **New
@@ -645,7 +662,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   The rule that keeps an outgoing flagship beside its successor now applies to every
   lab rather than only to Claude.
 
+### Removed
+
+- **frontend/backend:** **The keep-alive chat tab strip.** Dragging conversations
+  onto a tab strip to keep them mounted is gone, along with its server-side
+  per-user store (`GET`/`PUT /api/settings/chat-tabs`) — sidebar folders now do
+  the job of keeping a conversation to hand, and a pinned strip was a second,
+  competing place to do it. **Concurrent chats are unaffected:** a chat you leave
+  while it is still answering is still kept mounted in the background until its
+  answer lands, and is then released. An install written before this keeps an
+  inert `chat_tabs` key in its `ui_state.json`, which is never read.
+
 ### Fixed
+
+- **backend:** **A conversation's cost no longer drops when you edit a message.**
+  Editing branches the conversation into a second thread id, and the cost
+  endpoint aggregated only the open thread — so after an edit the total lost the
+  spend billed to the parent thread and the graph lost the turns inherited from
+  it (a two-turn conversation charted one column). The endpoint now resolves the
+  whole edit-version family: the total covers every thread in it, the graph
+  covers only the turns still on screen, and the difference is reported as
+  **Replaced turns**, keeping `sum(steps) + superseded_cost == total_cost` true
+  across the branch. Reading the original wording through the `‹ 1/2 ›` switcher
+  reports the same total. An unedited conversation is unchanged, and a missing
+  thread store or a looping parent link degrades to costing the open thread
+  rather than failing the request.
 
 - **sidebar:** **The button that creates a chat folder says "New folder" now,
   instead of being a bare `+`.** Moving it next to the "Recent chats" heading

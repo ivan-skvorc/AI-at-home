@@ -128,7 +128,7 @@ lists from the server instead of inserting those snapshots into either view.
 
 ## Fork-specific frontend features
 
-This fork adds the keep-alive chat tab strip, the spend page, the PWA shell and
+This fork adds workspace-level live chat slots, the spend page, the PWA shell and
 Web Push, the model-picker sort/group controls, and the cost overview in the
 chat header. They are documented in **[FORK.md](../FORK.md)**, which also names
 the tests pinning each; `src/AGENTS.md` carries the code-adjacent notes.

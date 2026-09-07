@@ -19,7 +19,7 @@ import {
  *   `/workspace/chats/new` from a chat that is already `/new` does not remount.
  * * **Only a new chat claims**, so a launch never lands in whatever
  *   conversation happened to be open.
- * * **Only the active instance claims**, so keep-alive tabs do not race.
+ * * **Only the active instance claims**, so background chats do not race.
  *
  * The request is returned as `seededPrompt` rather than pushed in with
  * `setInput`: the composer's textarea is uncontrolled and hydrates its draft

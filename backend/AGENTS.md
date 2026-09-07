@@ -367,7 +367,7 @@ This fork adds backend behaviour upstream does not have: durable auxiliary token
 counters, currency spend caps (`SpendBudgetMiddleware`, HTTP 402 at admission),
 the spend attribution endpoint, cost-aware subagent routing, model fallback
 chains, explicit `price:`/`discount:` model fields with a self-expiring
-discount, Web Push delivery, multi-user mode, the chat-tab store, and an
+discount, Web Push delivery, multi-user mode, the per-user UI-state store, and an
 editable lead-agent system prompt (`lead_agent/system_prompt_store.py`; the
 invariants live in `packages/harness/deerflow/agents/AGENTS.md`).
 

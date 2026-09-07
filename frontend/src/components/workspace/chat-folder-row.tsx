@@ -32,7 +32,7 @@ import {
   CHAT_FOLDER_DND_MIME,
   type ChatFolder,
 } from "@/core/threads/chat-folders";
-import { CHAT_TAB_DND_THREAD_MIME } from "@/core/threads/chat-tabs";
+import { CHAT_DND_THREAD_MIME } from "@/core/threads/dnd";
 import { cn } from "@/lib/utils";
 
 /** One entry of the folder row's **Move folder to ▸** submenu. */
@@ -52,7 +52,7 @@ export type FolderMoveTarget = {
  * It is also a drop target *and* a drag source. As a target it accepts a chat
  * (filed into this folder) and another folder (nested inside this one); a
  * sidebar chat row advertises its thread id under
- * {@link CHAT_TAB_DND_THREAD_MIME} — the same payload the keep-alive tab strip
+ * {@link CHAT_DND_THREAD_MIME} — the payload a sidebar chat row
  * accepts, so one drag serves both targets — and a folder row advertises its
  * own id under {@link CHAT_FOLDER_DND_MIME}. The two MIMEs are separate so a
  * target can accept one and refuse the other, which is what stops a folder from
@@ -107,7 +107,7 @@ export function ChatFolderRow({
       // does not accept the drag, rather than accepting it and dropping it.
       const types = event.dataTransfer.types;
       const accepts =
-        types.includes(CHAT_TAB_DND_THREAD_MIME) ||
+        types.includes(CHAT_DND_THREAD_MIME) ||
         (canNest && types.includes(CHAT_FOLDER_DND_MIME));
       if (!accepts) {
         return;
@@ -125,7 +125,7 @@ export function ChatFolderRow({
 
   const handleDrop = useCallback(
     (event: React.DragEvent) => {
-      const threadId = event.dataTransfer.getData(CHAT_TAB_DND_THREAD_MIME);
+      const threadId = event.dataTransfer.getData(CHAT_DND_THREAD_MIME);
       const draggedFolderId = event.dataTransfer.getData(CHAT_FOLDER_DND_MIME);
       setIsDropTarget(false);
       if (threadId) {

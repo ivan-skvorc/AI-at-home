@@ -8,7 +8,6 @@ import {
   FolderInput,
   FolderPlus,
   MoreHorizontal,
-  PanelTop,
   Pencil,
   Pin,
   PinOff,
@@ -64,8 +63,7 @@ import {
   type ChatFolder,
   type ChatFolderNode,
 } from "@/core/threads/chat-folders";
-import { CHAT_TAB_DND_THREAD_MIME } from "@/core/threads/chat-tabs";
-import { useMaybeChatTabs } from "@/core/threads/chat-tabs-context";
+import { CHAT_DND_THREAD_MIME } from "@/core/threads/dnd";
 import { exportThread, type ThreadExportFormat } from "@/core/threads/export";
 import {
   useDeleteThread,
@@ -289,7 +287,6 @@ export function RecentChatList() {
   const { mutate: renameThread } = useRenameThread();
   const { mutate: updatePinnedThread } = usePinThread();
   const { mutate: moveThreadToFolder } = useMoveThreadToFolder();
-  const chatTabs = useMaybeChatTabs();
 
   // Rename dialog state
   const [renameDialogOpen, setRenameDialogOpen] = useState(false);
@@ -565,11 +562,11 @@ export function RecentChatList() {
               href={pathOfThread(thread)}
               // Always draggable: the same payload files the chat into a
               // sidebar folder and (when the feature is on) pins it as a
-              // keep-alive tab, so one drag serves both drop targets.
+              // folder's expanded area, so one drag serves every drop target.
               draggable
               onDragStart={(event) => {
                 event.dataTransfer.setData(
-                  CHAT_TAB_DND_THREAD_MIME,
+                  CHAT_DND_THREAD_MIME,
                   thread.thread_id,
                 );
                 event.dataTransfer.setData("text/plain", titleOfThread(thread));
@@ -623,26 +620,6 @@ export function RecentChatList() {
                 side={"right"}
                 align={"start"}
               >
-                {chatTabs?.enabled && (
-                  <DropdownMenuItem
-                    onSelect={() => {
-                      chatTabs.pinThread(
-                        thread.thread_id,
-                        titleOfThread(thread),
-                      );
-                      // Sync the URL to the pinned tab without a
-                      // Next navigation (keep-alive: no remount).
-                      window.history.replaceState(
-                        null,
-                        "",
-                        pathOfThread(thread),
-                      );
-                    }}
-                  >
-                    <PanelTop className="text-muted-foreground" />
-                    <span>{t.chatTabs.openInTab}</span>
-                  </DropdownMenuItem>
-                )}
                 <DropdownMenuItem onSelect={() => handleTogglePin(thread)}>
                   {pinned ? (
                     <PinOff className="text-muted-foreground" />
@@ -760,7 +737,6 @@ export function RecentChatList() {
     },
     [
       archiveAction,
-      chatTabs,
       flatFolderNodes,
       folderDepths,
       handleDelete,
@@ -820,18 +796,15 @@ export function RecentChatList() {
               data-folder-id={folder.id}
               data-testid="chat-folder-children"
               onDragOver={(event) => {
-                if (
-                  !event.dataTransfer.types.includes(CHAT_TAB_DND_THREAD_MIME)
-                ) {
+                if (!event.dataTransfer.types.includes(CHAT_DND_THREAD_MIME)) {
                   return;
                 }
                 event.preventDefault();
                 event.dataTransfer.dropEffect = "move";
               }}
               onDrop={(event) => {
-                const threadId = event.dataTransfer.getData(
-                  CHAT_TAB_DND_THREAD_MIME,
-                );
+                const threadId =
+                  event.dataTransfer.getData(CHAT_DND_THREAD_MIME);
                 if (!threadId) {
                   return;
                 }
@@ -887,7 +860,7 @@ export function RecentChatList() {
   const handleRootDragOver = useCallback((event: React.DragEvent) => {
     const types = event.dataTransfer.types;
     if (
-      !types.includes(CHAT_TAB_DND_THREAD_MIME) &&
+      !types.includes(CHAT_DND_THREAD_MIME) &&
       !types.includes(CHAT_FOLDER_DND_MIME)
     ) {
       return;
@@ -899,7 +872,7 @@ export function RecentChatList() {
 
   const handleRootDrop = useCallback(
     (event: React.DragEvent) => {
-      const threadId = event.dataTransfer.getData(CHAT_TAB_DND_THREAD_MIME);
+      const threadId = event.dataTransfer.getData(CHAT_DND_THREAD_MIME);
       const folderId = event.dataTransfer.getData(CHAT_FOLDER_DND_MIME);
       setIsRootDropTarget(false);
       if (threadId) {

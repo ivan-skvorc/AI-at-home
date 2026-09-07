@@ -6,7 +6,7 @@ tabs, in the same per-user `ui_state.json` bag) and uses it to deliver a
 notification when a long-running turn finishes.
 
 Every route is caller-scoped and carries no admin gate — a push subscription is
-personal UI state, like the chat tab strip, not a server-wide setting.
+personal UI state, like the sidebar's folders, not a server-wide setting.
 """
 
 from __future__ import annotations

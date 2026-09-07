@@ -165,11 +165,10 @@ for (const customAgent of [false, true]) {
       exact: true,
     });
     await expect(restore).toBeVisible({ timeout: 15000 });
-    // Scoped to the header on purpose. This fork's keep-alive chat tabs (§9)
-    // put the same title in `chat-tab-current` above the thread, so a
-    // page-wide locator matches twice and the measurement below cannot say
-    // which box it measured. The assertion — the *header's* title stays one
-    // line on a 390px viewport — is unchanged.
+    // Scoped to the header on purpose: a page-wide locator can match the title
+    // more than once (the sidebar row carries it too) and the measurement below
+    // could not say which box it measured. The assertion — the *header's* title
+    // stays one line on a 390px viewport — is unchanged.
     await expect
       .poll(() =>
         page
