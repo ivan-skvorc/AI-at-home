@@ -9,6 +9,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **frontend:** **Folders in the sidebar nest.** A folder can now go inside a
+  folder, up to five levels: drag one folder onto another, or use **New
+  subfolder** and **Move folder to ▸** in a folder's own **⋯** menu (with a
+  **Top level** entry, and the root list accepting a folder drop, so a nested
+  folder can always be promoted again). A chat filed two levels down is listed
+  there and nowhere else — the exactly-once rule now holds at every level — and
+  the count beside a folder covers its whole subtree, so a collapsed parent
+  never reads as empty while holding twenty conversations. Collapsing a folder
+  collapses its branch; deleting one deletes its subfolders but never the
+  conversations, which return to the main list. Nesting is one optional
+  `parentId` per folder rather than a nested document, so a rename, a delete and
+  a reorder all stay one pass over one flat array — and both
+  `normalizeChatFolders` and its Python mirror repair the parent links on every
+  read and write, **promoting** a folder whose parent is unknown, whose chain
+  loops, or which sits past the depth limit rather than dropping it. That is the
+  same never-hide rule the thread fallback already had, applied one level up: a
+  dropped folder takes the conversations inside it out of their folder with no
+  way back, and a cycle is unreachable from every root, so a renderer that walks
+  down from the roots loses the whole branch and every chat in it without an
+  error anywhere. `canMoveFolderUnder` refuses the three moves that would
+  destroy the tree (a folder into itself, into its own descendant, or a move
+  pushing a descendant past the limit), and refuses them *before* the gesture —
+  an over-full folder does not accept the drag at all, and an invalid menu
+  target is greyed rather than hidden. Pinned by
+  `frontend/tests/unit/core/threads/chat-folders.test.ts`,
+  `frontend/tests/e2e/sidebar-chat-folders.spec.ts`,
+  `backend/tests/test_user_ui_state.py` and
+  `backend/tests/test_chat_folders_settings_router.py`; rationale in
+  [FORK.md](FORK.md) §32.
+
+- **docs:** **`README.md` leads with the bullet list.** The opening blockquote
+  used to open with a nine-line paragraph before the first bullet, and each of
+  the 42 bullets ran to a paragraph of its own — 5,000 words of shop window that
+  a reader has to finish before learning what the fork does. The list now comes
+  first and is grouped by what a new reader needs in order: getting it running,
+  using it every day, knowing what it costs, going further, keeping it healthy.
+  Every bullet is one or two sentences (the longest is 393 characters, down from
+  1,692), the list stays exhaustive at 42, and the prose that framed it is three
+  sentences at the end rather than nine lines at the top.
+
 - **docs:** **A new feature now owes `README.md` a bullet, and the change cycle
   says so.** [`CHANGE_CYCLE.md`](CHANGE_CYCLE.md) step 7 gains an explicit gate
   next to step 3's "does this need a test": decide whether the change adds (or

@@ -53,10 +53,16 @@ import { getAPIClient } from "@/core/api";
 import { writeTextToClipboard } from "@/core/clipboard";
 import { useI18n } from "@/core/i18n/hooks";
 import {
+  canMoveFolderUnder,
+  canNestUnder,
+  CHAT_FOLDER_DND_MIME,
+  flattenFolderTree,
   folderIdOfThread,
   groupThreadsByFolder,
   MAX_CHAT_FOLDERS,
+  MAX_FOLDER_DEPTH,
   type ChatFolder,
+  type ChatFolderNode,
 } from "@/core/threads/chat-folders";
 import { CHAT_TAB_DND_THREAD_MIME } from "@/core/threads/chat-tabs";
 import { useMaybeChatTabs } from "@/core/threads/chat-tabs-context";
@@ -85,7 +91,7 @@ import { env } from "@/env";
 import { isIMEComposing } from "@/lib/ime";
 import { cn } from "@/lib/utils";
 
-import { ChatFolderRow } from "./chat-folder-row";
+import { ChatFolderRow, type FolderMoveTarget } from "./chat-folder-row";
 import { ThreadChannelIcon } from "./thread-channel-source";
 import { VirtualThreadList } from "./thread-list-virtualizer";
 import { useThreadArchiveAction } from "./use-thread-archive-action";
@@ -113,6 +119,12 @@ function buildBranchList(threads: readonly AgentThread[]): BranchList {
   };
 }
 
+/** Stable empty list, so a lookup miss never remounts the virtualizer. */
+const EMPTY_BRANCH_LIST: BranchList = {
+  entriesById: new Map(),
+  threads: [],
+};
+
 /**
  * State for the create/rename folder dialog; `null` while it is closed.
  *
@@ -121,9 +133,14 @@ function buildBranchList(threads: readonly AgentThread[]): BranchList {
  * the chat has to land in the folder the user just named. Opened from the
  * **New folder** button in the group header there is no chat to file, and
  * `threadId` is absent.
+ *
+ * It also carries the folder it is being created *inside* — set by a folder
+ * row's **New subfolder**, absent for a top-level folder — for the same reason:
+ * naming a subfolder and getting a sibling would be the same silent
+ * half-failure.
  */
 type FolderDialogState =
-  | { mode: "create"; threadId?: string }
+  | { mode: "create"; threadId?: string; parentId?: string }
   | { mode: "rename"; folder: ChatFolder };
 
 export function RecentChatList() {
@@ -171,6 +188,7 @@ export function RecentChatList() {
     createFolder,
     renameFolder: renameChatFolder,
     removeFolder,
+    moveFolder,
     toggleFolderExpanded,
     expandFolder,
   } = useChatFolders();
@@ -187,14 +205,62 @@ export function RecentChatList() {
     () => buildBranchList(grouped.ungrouped),
     [grouped.ungrouped],
   );
-  const folderLists = useMemo(
-    () =>
-      grouped.groups.map((group) => ({
-        folder: group.folder,
-        list: buildBranchList(group.threads),
-      })),
-    [grouped.groups],
+  const folderTree = grouped.tree;
+  // Every folder in the tree, parents first — for the flat things a tree still
+  // needs: the "Move to folder" menus, and knowing whether any folder exists.
+  const flatFolderNodes = useMemo(
+    () => flattenFolderTree(folderTree),
+    [folderTree],
   );
+  // Branches are flattened per folder, *after* the partition — a branch whose
+  // parent sits in a different folder renders top-level in its own folder. A
+  // subfolder's chats are its own, never rolled into the parent's list.
+  const folderBranchLists = useMemo(
+    () =>
+      new Map(
+        flatFolderNodes.map((node) => [
+          node.folder.id,
+          buildBranchList(node.threads),
+        ]),
+      ),
+    [flatFolderNodes],
+  );
+  const folderDepths = useMemo(() => {
+    const depths = new Map<string, number>();
+    const walk = (nodes: readonly ChatFolderNode[], depth: number) => {
+      for (const node of nodes) {
+        depths.set(node.folder.id, depth);
+        walk(node.children, depth + 1);
+      }
+    };
+    walk(folderTree, 1);
+    return depths;
+  }, [folderTree]);
+  // Every folder row's **Move folder to ▸** list, built once for the whole tree
+  // rather than once per rendered row. `canMoveFolderUnder` walks the list to
+  // answer each pair, so asking it inside each row's render is cubic in the
+  // folder count — at the 50-folder ceiling that is milliseconds of work on
+  // every sidebar re-render, and the sidebar re-renders while a chat streams.
+  const moveTargetsByFolder = useMemo(() => {
+    const targets = new Map<string, FolderMoveTarget[]>();
+    for (const node of flatFolderNodes) {
+      targets.set(
+        node.folder.id,
+        flatFolderNodes
+          .filter((candidate) => candidate.folder.id !== node.folder.id)
+          .map((candidate) => ({
+            folder: candidate.folder,
+            depth: folderDepths.get(candidate.folder.id) ?? 1,
+            disabled: !canMoveFolderUnder(
+              folders,
+              node.folder.id,
+              candidate.folder.id,
+            ),
+          })),
+      );
+    }
+    return targets;
+  }, [flatFolderNodes, folderDepths, folders]);
 
   const sentinelRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
@@ -363,7 +429,7 @@ export function RecentChatList() {
       return;
     }
     if (folderDialog.mode === "create") {
-      const folderId = createFolder(name);
+      const folderId = createFolder(name, folderDialog.parentId ?? null);
       if (folderId === null) {
         toast.error(t.chats.folders.limitReached(MAX_CHAT_FOLDERS));
         return;
@@ -387,20 +453,38 @@ export function RecentChatList() {
 
   const handleDeleteFolder = useCallback(
     (folder: ChatFolder) => {
-      // Conversations are never deleted with their folder. Clear the pointer on
-      // the ones currently loaded so their metadata does not keep naming a
-      // folder that is gone; anything not loaded is covered by the grouping
+      // Deleting a folder takes its subfolders with it, the way a file manager
+      // works — but never the conversations. Clear the pointer on every loaded
+      // chat filed anywhere in the subtree so its metadata does not keep naming
+      // a folder that is gone; anything not loaded is covered by the grouping
       // fallback, which lists an unknown folder id at the root.
-      const members = displayedThreads.filter(
-        (thread) => folderIdOfThread(thread) === folder.id,
-      );
-      removeFolder(folder.id);
+      const removedIds = new Set(removeFolder(folder.id));
+      const members = displayedThreads.filter((thread) => {
+        const folderId = folderIdOfThread(thread);
+        return folderId !== null && removedIds.has(folderId);
+      });
       for (const thread of members) {
         moveThreadToFolder({ threadId: thread.thread_id, folderId: null });
       }
       toast.success(t.chats.folders.deleted(folder.name));
     },
     [displayedThreads, moveThreadToFolder, removeFolder, t.chats.folders],
+  );
+
+  const handleMoveFolder = useCallback(
+    (folderId: string, parentId: string | null) => {
+      if (moveFolder(folderId, parentId)) {
+        return;
+      }
+      // The model refused it. The only refusal a user can provoke deliberately
+      // is nesting too deep (dropping a folder into its own descendant is
+      // already refused by the drop target and disabled in the menu), so say
+      // which limit stopped it rather than doing nothing at all.
+      if (!canMoveFolderUnder(folders, folderId, parentId)) {
+        toast.error(t.chats.folders.depthLimitReached(MAX_FOLDER_DEPTH));
+      }
+    },
+    [folders, moveFolder, t.chats.folders],
   );
 
   const handleShare = useCallback(
@@ -575,7 +659,10 @@ export function RecentChatList() {
                     <span>{t.chats.folders.moveTo}</span>
                   </DropdownMenuSubTrigger>
                   <DropdownMenuSubContent>
-                    {folders.map((folder) => (
+                    {/* Parents before children, indented one step per level, so
+                        the menu reads as the tree the sidebar is showing rather
+                        than a flat list of names that repeat across branches. */}
+                    {flatFolderNodes.map(({ folder }) => (
                       <DropdownMenuItem
                         key={folder.id}
                         disabled={folder.id === currentFolderId}
@@ -583,10 +670,17 @@ export function RecentChatList() {
                           handleMoveToFolder(thread.thread_id, folder.id)
                         }
                       >
-                        <span className="truncate">{folder.name}</span>
+                        <span
+                          className="truncate"
+                          style={{
+                            paddingLeft: `${((folderDepths.get(folder.id) ?? 1) - 1) * 12}px`,
+                          }}
+                        >
+                          {folder.name}
+                        </span>
                       </DropdownMenuItem>
                     ))}
-                    {folders.length > 0 && <DropdownMenuSeparator />}
+                    {flatFolderNodes.length > 0 && <DropdownMenuSeparator />}
                     <DropdownMenuItem
                       disabled={currentFolderId === null}
                       onSelect={() =>
@@ -667,7 +761,8 @@ export function RecentChatList() {
     [
       archiveAction,
       chatTabs,
-      folders,
+      flatFolderNodes,
+      folderDepths,
       handleDelete,
       handleExport,
       handleMoveToFolder,
@@ -679,8 +774,122 @@ export function RecentChatList() {
     ],
   );
 
+  /**
+   * One folder and everything under it, recursively.
+   *
+   * A subfolder is rendered *inside* its parent's expanded child area, above
+   * the conversations, so the indentation and the collapse behaviour come out
+   * of the same nesting the data has — collapsing a parent hides its whole
+   * branch because the branch lives inside the element that stops rendering.
+   */
+  const renderFolderNode = useCallback(
+    (node: ChatFolderNode, depth: number): React.ReactNode => {
+      const { folder } = node;
+      const isExpanded = expandedFolderIds.has(folder.id);
+      // A folder cannot be moved into itself or into its own descendants, and
+      // an over-deep target is refused too. Those entries are shown *disabled*
+      // rather than hidden: a target that silently disappears reads as a bug, a
+      // greyed one reads as a rule.
+      const moveTargets = moveTargetsByFolder.get(folder.id) ?? [];
+      return (
+        <div key={folder.id} className="flex w-full flex-col gap-1">
+          <ChatFolderRow
+            canNest={canNestUnder(folders, folder.id)}
+            count={node.totalThreadCount}
+            depth={depth}
+            folder={folder}
+            isExpanded={isExpanded}
+            moveTargets={moveTargets}
+            onDelete={() => handleDeleteFolder(folder)}
+            onDropFolder={(draggedId) => handleMoveFolder(draggedId, folder.id)}
+            onDropThread={(threadId) => handleMoveToFolder(threadId, folder.id)}
+            onMoveFolder={(parentId) => handleMoveFolder(folder.id, parentId)}
+            onNewSubfolder={() => {
+              setFolderNameValue("");
+              setFolderDialog({ mode: "create", parentId: folder.id });
+            }}
+            onRename={() => {
+              setFolderNameValue(folder.name);
+              setFolderDialog({ mode: "rename", folder });
+            }}
+            onToggle={() => toggleFolderExpanded(folder.id)}
+          />
+          {isExpanded && (
+            <div
+              className="border-sidebar-border ml-3 flex w-[calc(100%-0.75rem)] flex-col gap-1 border-l pl-1"
+              data-folder-id={folder.id}
+              data-testid="chat-folder-children"
+              onDragOver={(event) => {
+                if (
+                  !event.dataTransfer.types.includes(CHAT_TAB_DND_THREAD_MIME)
+                ) {
+                  return;
+                }
+                event.preventDefault();
+                event.dataTransfer.dropEffect = "move";
+              }}
+              onDrop={(event) => {
+                const threadId = event.dataTransfer.getData(
+                  CHAT_TAB_DND_THREAD_MIME,
+                );
+                if (!threadId) {
+                  return;
+                }
+                event.preventDefault();
+                handleMoveToFolder(threadId, folder.id);
+              }}
+            >
+              {node.children.map((child) => renderFolderNode(child, depth + 1))}
+              {node.threads.length === 0 ? (
+                // Only when the folder holds nothing at all: a folder with
+                // subfolders and no chats of its own is not empty.
+                node.children.length === 0 && (
+                  <p className="text-muted-foreground/70 px-2 py-1 text-xs">
+                    {t.chats.folders.empty}
+                  </p>
+                )
+              ) : (
+                <VirtualThreadList
+                  estimateSize={36}
+                  gap={4}
+                  items={folderBranchLists.get(folder.id)?.threads ?? []}
+                  scrollParentSelector='[data-sidebar="content"]'
+                  renderItem={(thread) =>
+                    renderThreadRow(
+                      thread,
+                      folderBranchLists.get(folder.id) ?? EMPTY_BRANCH_LIST,
+                    )
+                  }
+                />
+              )}
+            </div>
+          )}
+        </div>
+      );
+    },
+    [
+      expandedFolderIds,
+      folderBranchLists,
+      folders,
+      handleDeleteFolder,
+      handleMoveFolder,
+      handleMoveToFolder,
+      moveTargetsByFolder,
+      renderThreadRow,
+      t.chats.folders.empty,
+      toggleFolderExpanded,
+    ],
+  );
+
+  // The root list is how you get *out* of a folder, for a chat and for a folder
+  // alike: without a folder target here, a nested folder could only ever be
+  // promoted through its own menu.
   const handleRootDragOver = useCallback((event: React.DragEvent) => {
-    if (!event.dataTransfer.types.includes(CHAT_TAB_DND_THREAD_MIME)) {
+    const types = event.dataTransfer.types;
+    if (
+      !types.includes(CHAT_TAB_DND_THREAD_MIME) &&
+      !types.includes(CHAT_FOLDER_DND_MIME)
+    ) {
       return;
     }
     event.preventDefault();
@@ -691,14 +900,20 @@ export function RecentChatList() {
   const handleRootDrop = useCallback(
     (event: React.DragEvent) => {
       const threadId = event.dataTransfer.getData(CHAT_TAB_DND_THREAD_MIME);
+      const folderId = event.dataTransfer.getData(CHAT_FOLDER_DND_MIME);
       setIsRootDropTarget(false);
-      if (!threadId) {
+      if (threadId) {
+        event.preventDefault();
+        handleMoveToFolder(threadId, null);
+        return;
+      }
+      if (!folderId) {
         return;
       }
       event.preventDefault();
-      handleMoveToFolder(threadId, null);
+      handleMoveFolder(folderId, null);
     },
-    [handleMoveToFolder],
+    [handleMoveFolder, handleMoveToFolder],
   );
 
   // The group renders even with nothing under it. It is the only way into the
@@ -742,76 +957,12 @@ export function RecentChatList() {
         </SidebarGroupLabel>
         <SidebarGroupContent className="group-data-[collapsible=icon]:pointer-events-none group-data-[collapsible=icon]:-mt-8 group-data-[collapsible=icon]:opacity-0">
           <SidebarMenu>
-            {folderLists.length > 0 && (
+            {folderTree.length > 0 && (
               <div
                 className="flex w-full flex-col gap-1 pb-1"
                 data-testid="chat-folder-list"
               >
-                {folderLists.map(({ folder, list }) => {
-                  const isExpanded = expandedFolderIds.has(folder.id);
-                  return (
-                    <div key={folder.id} className="flex w-full flex-col gap-1">
-                      <ChatFolderRow
-                        count={list.threads.length}
-                        folder={folder}
-                        isExpanded={isExpanded}
-                        onDelete={() => handleDeleteFolder(folder)}
-                        onDropThread={(threadId) =>
-                          handleMoveToFolder(threadId, folder.id)
-                        }
-                        onRename={() => {
-                          setFolderNameValue(folder.name);
-                          setFolderDialog({ mode: "rename", folder });
-                        }}
-                        onToggle={() => toggleFolderExpanded(folder.id)}
-                      />
-                      {isExpanded && (
-                        <div
-                          className="border-sidebar-border ml-3 flex w-[calc(100%-0.75rem)] flex-col gap-1 border-l pl-1"
-                          data-folder-id={folder.id}
-                          data-testid="chat-folder-children"
-                          onDragOver={(event) => {
-                            if (
-                              !event.dataTransfer.types.includes(
-                                CHAT_TAB_DND_THREAD_MIME,
-                              )
-                            ) {
-                              return;
-                            }
-                            event.preventDefault();
-                            event.dataTransfer.dropEffect = "move";
-                          }}
-                          onDrop={(event) => {
-                            const threadId = event.dataTransfer.getData(
-                              CHAT_TAB_DND_THREAD_MIME,
-                            );
-                            if (!threadId) {
-                              return;
-                            }
-                            event.preventDefault();
-                            handleMoveToFolder(threadId, folder.id);
-                          }}
-                        >
-                          {list.threads.length === 0 ? (
-                            <p className="text-muted-foreground/70 px-2 py-1 text-xs">
-                              {t.chats.folders.empty}
-                            </p>
-                          ) : (
-                            <VirtualThreadList
-                              estimateSize={36}
-                              gap={4}
-                              items={list.threads}
-                              scrollParentSelector='[data-sidebar="content"]'
-                              renderItem={(thread) =>
-                                renderThreadRow(thread, list)
-                              }
-                            />
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
+                {folderTree.map((node) => renderFolderNode(node, 1))}
               </div>
             )}
             {/* Keep pagination at the old list boundary when this switches to virtual rows. */}
@@ -833,7 +984,7 @@ export function RecentChatList() {
                 scrollParentSelector='[data-sidebar="content"]'
                 renderItem={(thread) => renderThreadRow(thread, rootList)}
               />
-              {rootList.threads.length === 0 && folderLists.length > 0 && (
+              {rootList.threads.length === 0 && folderTree.length > 0 && (
                 <p
                   className="text-muted-foreground/70 border-sidebar-border mx-2 my-1 rounded-md border border-dashed px-2 py-3 text-center text-xs"
                   data-testid="chat-root-list-empty-hint"

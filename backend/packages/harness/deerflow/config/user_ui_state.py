@@ -44,12 +44,18 @@ MAX_TITLE_CHARS = 200
 MAX_ID_CHARS = 128
 
 # Sidebar chat folders (fork feature). The registry is only the folder list —
-# id, display name, order. Which conversation is in which folder lives in that
-# thread's own metadata (``deerflow_folder``), so renaming a folder is one small
-# write here rather than a rewrite of every thread inside it. Bounded because
-# the API is untrusted input and the sidebar has to stay a sidebar.
+# id, display name, order, and the optional parent that makes it a tree. Which
+# conversation is in which folder lives in that thread's own metadata
+# (``deerflow_folder``), so renaming a folder is one small write here rather
+# than a rewrite of every thread inside it. Bounded because the API is untrusted
+# input and the sidebar has to stay a sidebar.
 MAX_CHAT_FOLDERS = 50
 MAX_FOLDER_NAME_CHARS = 80
+# Nesting depth, counting the top level as 1. Mirrors ``MAX_FOLDER_DEPTH`` in
+# ``frontend/src/core/threads/chat-folders.ts``: the sidebar indents one step
+# per level inside a fixed-width column, so this is a legibility bound as much
+# as a data one.
+MAX_FOLDER_DEPTH = 5
 
 # Web Push subscriptions (fork feature). One per browser/device the user opted
 # in from, so the same account can be pushed on a phone and a laptop. Bounded
@@ -203,21 +209,72 @@ def reset_cache_for_tests() -> None:
 # ---------------------------------------------------------------------------
 
 
-def normalize_chat_folders(raw: Any) -> list[dict[str, str]]:
+def _repair_folder_tree(entries: list[dict[str, Any]]) -> None:
+    """Force ``parentId`` links into a real forest, in place.
+
+    Every parent must name an existing folder, no chain may loop, and nothing
+    may sit deeper than :data:`MAX_FOLDER_DEPTH`. A violation is repaired by
+    **moving the offending folder to the top level**, never by dropping it: a
+    folder that disappears takes the chats inside it out of their folder with no
+    way back, while a folder that surfaces at the top is visible, named, and one
+    drag from where it belongs.
+
+    One repair per pass, re-deriving depths in between, because a single fix can
+    resolve several violations at once — orphaning the middle of an over-deep
+    chain brings everything below it back into range.
+    """
+    by_id = {entry["id"]: entry for entry in entries}
+    for entry in entries:
+        parent_id = entry["parentId"]
+        if parent_id is not None and (parent_id not in by_id or parent_id == entry["id"]):
+            entry["parentId"] = None
+
+    # Bounded by the folder count: each pass orphans exactly one folder, and an
+    # all-root list has no violations left to find.
+    for _ in range(len(entries) + 1):
+        depths: dict[str, int] = {}
+        frontier = [entry for entry in entries if entry["parentId"] is None]
+        depth = 1
+        while frontier:
+            for entry in frontier:
+                depths[entry["id"]] = depth
+            depth += 1
+            parents = {entry["id"] for entry in frontier}
+            frontier = [entry for entry in entries if entry["id"] not in depths and entry["parentId"] in parents]
+        # Too deep first, shallowest of those: orphaning the highest offender is
+        # what pulls a whole over-long chain back into range in one move. A
+        # folder no walk reached is in a cycle.
+        too_deep = sorted(
+            (entry for entry in entries if depths.get(entry["id"], 0) > MAX_FOLDER_DEPTH),
+            key=lambda entry: depths.get(entry["id"], 0),
+        )
+        violator = next(
+            iter(too_deep),
+            next((entry for entry in entries if entry["id"] not in depths), None),
+        )
+        if violator is None:
+            return
+        violator["parentId"] = None
+
+
+def normalize_chat_folders(raw: Any) -> list[dict[str, Any]]:
     """Validate and bound an incoming folder list.
 
-    Mirrors ``deserializeChatFolders`` in the frontend model: malformed entries
+    Mirrors ``normalizeChatFolders`` in the frontend model: malformed entries
     are dropped rather than rejected (a tampered or partially-written store must
     degrade to "fewer folders", never to a sidebar that will not render),
-    duplicate ids collapse first-wins, and the result is capped at
-    :data:`MAX_CHAT_FOLDERS`. List order is display order and is preserved.
+    duplicate ids collapse first-wins, the result is capped at
+    :data:`MAX_CHAT_FOLDERS`, and the ``parentId`` links are repaired into a
+    real forest by :func:`_repair_folder_tree`. List order is display order and
+    is preserved. A top-level folder carries **no** ``parentId`` key at all, so
+    a flat list round-trips through the tree feature byte-for-byte.
 
     A dropped folder is not a lost conversation: a thread whose
     ``deerflow_folder`` names an unknown folder falls back to the root list.
     """
     if not isinstance(raw, list):
         return []
-    folders: list[dict[str, str]] = []
+    entries: list[dict[str, Any]] = []
     seen_ids: set[str] = set()
     for entry in raw:
         if not isinstance(entry, dict):
@@ -229,18 +286,31 @@ def normalize_chat_folders(raw: Any) -> list[dict[str, str]]:
         if folder_id in seen_ids:
             continue
         seen_ids.add(folder_id)
-        folders.append({"id": folder_id, "name": name})
-        if len(folders) >= MAX_CHAT_FOLDERS:
+        entries.append(
+            {
+                "id": folder_id,
+                "name": name,
+                "parentId": _clean_text(entry.get("parentId"), MAX_ID_CHARS),
+            }
+        )
+        if len(entries) >= MAX_CHAT_FOLDERS:
             break
+    _repair_folder_tree(entries)
+    folders: list[dict[str, Any]] = []
+    for entry in entries:
+        folder: dict[str, Any] = {"id": entry["id"], "name": entry["name"]}
+        if entry["parentId"] is not None:
+            folder["parentId"] = entry["parentId"]
+        folders.append(folder)
     return folders
 
 
-def get_chat_folders(user_id: str) -> list[dict[str, str]]:
+def get_chat_folders(user_id: str) -> list[dict[str, Any]]:
     """The user's sidebar folders in display order (empty when never set)."""
     return normalize_chat_folders(_read_state(user_id).get(CHAT_FOLDERS_KEY))
 
 
-def set_chat_folders(user_id: str, folders: Any) -> list[dict[str, str]]:
+def set_chat_folders(user_id: str, folders: Any) -> list[dict[str, Any]]:
     """Persist the user's folders atomically; returns the stored value.
 
     An empty list is a legitimate value (the user deleted their last folder), so

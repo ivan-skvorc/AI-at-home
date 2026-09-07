@@ -1,7 +1,7 @@
 """Gateway routes for the sidebar's chat-folder registry (fork feature).
 
 ``GET``/``PUT /api/settings/chat-folders`` store the folder list — id, name,
-display order — per user, beside the keep-alive tab strip in the same
+parent, display order — per user, beside the keep-alive tab strip in the same
 ``ui_state.json`` bag. Membership is *not* here: a conversation records its
 folder in its own ``deerflow_folder`` thread metadata, so a rename stays one
 write. Like the sibling chat-tabs routes these are per-user UI state and carry
@@ -136,3 +136,42 @@ async def test_folders_and_tabs_share_one_file_without_clobbering_each_other():
     user_ui_state.reset_cache_for_tests()
     assert [t.threadId for t in (await get_chat_tabs_setting()).chat_tabs] == ["t1"]
     assert [f.id for f in (await get_chat_folders_setting()).chat_folders] == ["f1"]
+
+
+@pytest.mark.anyio
+async def test_a_nested_folder_round_trips_with_its_parent():
+    """``parentId`` is what makes the sidebar list a tree; a route that drops it
+    on the way through flattens every subfolder on the next reload, silently."""
+    await update_chat_folders_setting(
+        ChatFoldersUpdate(
+            chat_folders=[
+                ChatFolder(id="f1", name="Work"),
+                ChatFolder(id="f2", name="Invoices", parentId="f1"),
+            ]
+        ),
+    )
+
+    user_ui_state.reset_cache_for_tests()
+    folders = (await get_chat_folders_setting()).chat_folders
+    assert [(f.id, f.parentId) for f in folders] == [("f1", None), ("f2", "f1")]
+
+
+@pytest.mark.anyio
+async def test_a_broken_parent_link_is_repaired_in_the_authoritative_response():
+    """The response is what the client adopts, so the repair has to be visible
+    in it — a cycle left in the client's copy hides the branch in the sidebar
+    even though the stored list is fine."""
+    resp = await update_chat_folders_setting(
+        ChatFoldersUpdate(
+            chat_folders=[
+                ChatFolder(id="f1", name="One", parentId="f2"),
+                ChatFolder(id="f2", name="Two", parentId="f1"),
+                ChatFolder(id="f3", name="Orphan", parentId="gone"),
+            ]
+        ),
+    )
+    parents = {f.id: f.parentId for f in resp.chat_folders}
+    assert set(parents) == {"f1", "f2", "f3"}
+    assert parents["f3"] is None
+    # The cycle is broken by promoting exactly one of its members.
+    assert None in (parents["f1"], parents["f2"])

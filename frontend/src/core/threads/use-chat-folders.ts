@@ -1,7 +1,8 @@
 "use client";
 
 /**
- * React state for the sidebar's chat folders (fork feature).
+ * React state for the sidebar's chat folders (fork feature: a folder *tree* —
+ * folders nest, see `chat-folders.ts` for the rules that keep it a forest).
  *
  * The server list is the source of truth (see `chat-folders-api.ts`); this hook
  * owns the optimistic edit, the write-back, and the per-browser expanded set.
@@ -17,6 +18,8 @@ import {
   addFolder,
   CHAT_FOLDERS_EXPANDED_STORAGE_KEY,
   deserializeExpandedFolderIds,
+  folderSubtreeIds,
+  moveFolder,
   removeFolder,
   renameFolder,
   type ChatFolder,
@@ -130,16 +133,22 @@ export function useChatFolders() {
   );
 
   const createFolder = useCallback(
-    (name: string) => {
+    (name: string, parentId: string | null = null) => {
       const id = newFolderId();
-      const next = addFolder(folders, { id, name });
+      const next = addFolder(folders, { id, name, parentId });
       if (next === folders) {
         return null;
       }
       commit(next);
       // A brand-new folder opens, so the drop the user is about to make has a
-      // visible target.
-      writeExpanded(new Set(expandedFolderIds).add(id));
+      // visible target — and so does the folder it was created inside, or the
+      // new subfolder would be created into a collapsed row and look like
+      // nothing happened.
+      const expanded = new Set(expandedFolderIds).add(id);
+      if (parentId) {
+        expanded.add(parentId);
+      }
+      writeExpanded(expanded);
       return id;
     },
     [commit, expandedFolderIds, folders, writeExpanded],
@@ -152,11 +161,36 @@ export function useChatFolders() {
     [commit, folders],
   );
 
+  /**
+   * Delete a folder and the folders inside it, answering with every id that
+   * went — the caller clears `deerflow_folder` on the conversations that named
+   * any of them, so a chat two levels down comes back to the root list rather
+   * than pointing at a folder nobody can see.
+   */
   const remove = useCallback(
     (folderId: string) => {
+      const removedIds = folderSubtreeIds(folders, folderId);
       commit(removeFolder(folders, folderId));
+      return removedIds;
     },
     [commit, folders],
+  );
+
+  const move = useCallback(
+    (folderId: string, parentId: string | null) => {
+      const next = moveFolder(folders, folderId, parentId);
+      if (next === folders) {
+        return false;
+      }
+      commit(next);
+      if (parentId) {
+        // Same reason a new subfolder opens its parent: a folder dragged into a
+        // collapsed row would simply vanish from the tree.
+        writeExpanded(new Set(expandedFolderIds).add(parentId));
+      }
+      return true;
+    },
+    [commit, expandedFolderIds, folders, writeExpanded],
   );
 
   return {
@@ -165,6 +199,7 @@ export function useChatFolders() {
     createFolder,
     renameFolder: rename,
     removeFolder: remove,
+    moveFolder: move,
     toggleFolderExpanded,
     expandFolder,
   };

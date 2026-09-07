@@ -735,16 +735,20 @@ export interface Translations {
     pinChatFailed: string;
     folders: {
       new: string;
+      newSubfolder: string;
       rename: string;
       namePlaceholder: string;
       moveTo: string;
+      moveFolderTo: string;
       none: string;
+      topLevel: string;
       empty: string;
       expand: string;
       collapse: string;
       rootDropHint: string;
       deleted: (name: string) => string;
       limitReached: (max: number) => string;
+      depthLimitReached: (max: number) => string;
       moveFailed: string;
     };
   };

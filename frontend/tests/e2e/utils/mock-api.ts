@@ -107,7 +107,7 @@ export type MockAPIOptions = {
     autoTitleModelName?: string | null;
   };
   /** Sidebar chat folders the per-user store already holds. */
-  chatFolders?: Array<{ id: string; name: string }>;
+  chatFolders?: Array<{ id: string; name: string; parentId?: string }>;
   runStreamHandler?: (route: Route) => Promise<void>;
   /**
    * Keep the thread's existing messages in front of the ones a run produces.
@@ -1540,7 +1540,7 @@ export function mockLangGraphAPI(page: Page, options?: MockAPIOptions) {
   // Sidebar chat folders — the per-user registry the folder tree renders from.
   // Kept in page-scoped memory so a test can create a folder, reload, and still
   // see it, exactly like the real per-user ui_state.json store.
-  let chatFolders: { id: string; name: string }[] = [
+  let chatFolders: { id: string; name: string; parentId?: string }[] = [
     ...(options?.chatFolders ?? []),
   ];
   void page.route("**/api/settings/chat-folders", (route) => {
@@ -1554,7 +1554,10 @@ export function mockLangGraphAPI(page: Page, options?: MockAPIOptions) {
     }
     if (method === "PUT") {
       const body = route.request().postDataJSON() as {
-        chat_folders?: { id: string; name: string }[];
+        // `parentId` rides through untouched — the real store repairs the tree,
+        // and a mock that dropped the key would make every subfolder test pass
+        // for the wrong reason (a flattened list still renders).
+        chat_folders?: { id: string; name: string; parentId?: string }[];
       };
       chatFolders = body.chat_folders ?? [];
       return route.fulfill({

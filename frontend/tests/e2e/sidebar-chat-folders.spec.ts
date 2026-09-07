@@ -58,6 +58,12 @@ const chatRow = (page: Page, threadId: string) =>
   sidebar(page).locator(`a[href$='${threadId}']`);
 const folderRow = (page: Page, name: string) =>
   page.getByTestId("chat-folder-row").filter({ hasText: name });
+// The expanded child area *of a named folder*, which is where a subfolder and
+// the chats filed directly into that folder both render.
+const folderChildren = (page: Page, folderId: string) =>
+  page.locator(
+    `[data-testid='chat-folder-children'][data-folder-id='${folderId}']`,
+  );
 
 async function createFolder(page: Page, name: string) {
   await page.getByTestId("chat-folder-create").click();
@@ -70,6 +76,14 @@ async function openFolderMenu(page: Page, name: string) {
   const row = folderRow(page, name);
   await row.hover();
   await row.getByRole("button", { name: "More" }).click();
+}
+
+async function createSubfolder(page: Page, parent: string, name: string) {
+  await openFolderMenu(page, parent);
+  await page.getByRole("menuitem", { name: "New subfolder" }).click();
+  await page.getByTestId("chat-folder-name-input").fill(name);
+  await page.getByRole("button", { name: "Save" }).click();
+  await expect(folderRow(page, name)).toBeVisible();
 }
 
 test.describe("Sidebar chat folders", () => {
@@ -383,5 +397,153 @@ test.describe("Sidebar chat folders", () => {
         .getByTestId("chat-root-list")
         .locator(`a[href$='${FIRST_THREAD_ID}']`),
     ).toHaveCount(0);
+  });
+
+  // Nesting. A subfolder that renders as a *sibling* is the silent half-failure
+  // here: both folders exist, both are named, and only the indentation says the
+  // create did the wrong thing — so this asserts on containment (the row is
+  // inside the parent's own child area), never on a class or a pixel offset.
+  test("a subfolder lives inside its parent and collapses with it", async ({
+    page,
+  }) => {
+    mockLangGraphAPI(page, { threads: THREADS });
+    await page.goto("/workspace/chats/new");
+    await expect(chatRow(page, FIRST_THREAD_ID)).toBeVisible({
+      timeout: 15_000,
+    });
+
+    await createFolder(page, "Work");
+    const parentId = await folderRow(page, "Work").getAttribute(
+      "data-folder-id",
+    );
+    expect(parentId).toBeTruthy();
+    await createSubfolder(page, "Work", "Invoices");
+
+    // The subfolder is rendered inside the parent's child area, not beside it.
+    await expect(
+      folderChildren(page, parentId!).getByTestId("chat-folder-row"),
+    ).toHaveText(/Invoices/);
+    await expect(folderRow(page, "Invoices")).toHaveAttribute(
+      "data-folder-depth",
+      "2",
+    );
+
+    // A chat filed into the subfolder is in the subfolder, and in neither the
+    // parent's own list nor the root list.
+    const childId = await folderRow(page, "Invoices").getAttribute(
+      "data-folder-id",
+    );
+    await html5DragAndDrop(
+      page,
+      chatRow(page, FIRST_THREAD_ID),
+      folderRow(page, "Invoices"),
+    );
+    await expect(
+      folderChildren(page, childId!).locator(`a[href$='${FIRST_THREAD_ID}']`),
+    ).toBeVisible();
+    await expect(
+      page
+        .getByTestId("chat-root-list")
+        .locator(`a[href$='${FIRST_THREAD_ID}']`),
+    ).toHaveCount(0);
+
+    // The parent counts what is under it, or a collapsed folder reads as empty
+    // while holding everything.
+    await expect(
+      folderRow(page, "Work").getByTestId("chat-folder-count"),
+    ).toHaveText("1");
+
+    // Collapsing the parent takes the whole branch with it — the subfolder
+    // lives inside the element that stops rendering.
+    await folderRow(page, "Work").getByRole("button").first().click();
+    await expect(folderRow(page, "Invoices")).toHaveCount(0);
+    await expect(
+      page
+        .getByTestId("chat-root-list")
+        .locator(`a[href$='${FIRST_THREAD_ID}']`),
+    ).toHaveCount(0);
+  });
+
+  test("deleting a parent folder returns the chats in its subfolders to the list", async ({
+    page,
+  }) => {
+    // The subfolders go with the parent, the way a file manager works. The
+    // conversations never do — and a chat two levels down is the one the
+    // clean-up is most likely to miss.
+    mockLangGraphAPI(page, {
+      threads: [
+        {
+          ...THREADS[0]!,
+          metadata: { [THREAD_FOLDER_METADATA_KEY]: "child-seed" },
+        },
+        THREADS[1]!,
+      ],
+      chatFolders: [
+        { id: "parent-seed", name: "Work" },
+        { id: "child-seed", name: "Invoices", parentId: "parent-seed" },
+      ],
+    });
+    await page.goto("/workspace/chats/new");
+    await expect(folderRow(page, "Work")).toBeVisible({ timeout: 15_000 });
+    // The seeded parent starts collapsed (the expanded set is per browser), so
+    // the subfolder is not rendered until it is opened — which is itself the
+    // containment property, seeded rather than created.
+    await expect(folderRow(page, "Invoices")).toHaveCount(0);
+    await folderRow(page, "Work").getByRole("button").first().click();
+    await expect(folderRow(page, "Invoices")).toBeVisible();
+
+    await openFolderMenu(page, "Work");
+    await page.getByRole("menuitem", { name: "Delete" }).click();
+
+    await expect(page.getByTestId("chat-folder-row")).toHaveCount(0);
+    await expect(
+      page
+        .getByTestId("chat-root-list")
+        .locator(`a[href$='${FIRST_THREAD_ID}']`),
+    ).toBeVisible();
+  });
+
+  test("a folder dragged onto another folder nests inside it", async ({
+    page,
+  }) => {
+    mockLangGraphAPI(page, {
+      threads: THREADS,
+      chatFolders: [
+        { id: "work-seed", name: "Work" },
+        { id: "invoices-seed", name: "Invoices" },
+      ],
+    });
+    await page.goto("/workspace/chats/new");
+    await expect(folderRow(page, "Work")).toBeVisible({ timeout: 15_000 });
+    await expect(folderRow(page, "Invoices")).toHaveAttribute(
+      "data-folder-depth",
+      "1",
+    );
+
+    await html5DragAndDrop(
+      page,
+      folderRow(page, "Invoices"),
+      folderRow(page, "Work"),
+    );
+
+    await expect(
+      folderChildren(page, "work-seed").getByTestId("chat-folder-row"),
+    ).toHaveText(/Invoices/);
+    await expect(folderRow(page, "Invoices")).toHaveAttribute(
+      "data-folder-depth",
+      "2",
+    );
+
+    // And back out again, through the root list — the only drop target that
+    // promotes a folder.
+    await html5DragAndDrop(
+      page,
+      folderRow(page, "Invoices"),
+      page.getByTestId("chat-root-list"),
+    );
+    await expect(folderRow(page, "Invoices")).toHaveAttribute(
+      "data-folder-depth",
+      "1",
+    );
   });
 });

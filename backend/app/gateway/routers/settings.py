@@ -119,15 +119,21 @@ async def update_chat_tabs_setting(body: ChatTabsUpdate) -> ChatTabsResponse:
 
 
 class ChatFolder(BaseModel):
-    """One sidebar folder: a stable id and the name the user typed.
+    """One sidebar folder: a stable id, the name the user typed, and its parent.
 
     Membership is deliberately *not* here — a conversation records its folder in
     its own ``deerflow_folder`` thread metadata. That split is what makes a
     rename one write instead of one per conversation in the folder.
+
+    ``parentId`` is what makes the list a tree; ``None`` is a top-level folder.
+    The store repairs a dangling parent, a loop, or an over-deep chain by moving
+    the offending folder to the top level rather than dropping it, so a bad
+    parent link can never hide the conversations filed under it.
     """
 
     id: str
     name: str
+    parentId: str | None = None
 
 
 class ChatFoldersResponse(BaseModel):
@@ -154,9 +160,10 @@ async def update_chat_folders_setting(body: ChatFoldersUpdate) -> ChatFoldersRes
     """Replace the caller's sidebar folders; returns the persisted value.
 
     An empty list is a real value (the user deleted their last folder), so it is
-    stored rather than ignored. The store caps the list at ``MAX_CHAT_FOLDERS``
-    and drops malformed entries, so the response is the authoritative post-write
-    state the client should adopt.
+    stored rather than ignored. The store caps the list at ``MAX_CHAT_FOLDERS``,
+    drops malformed entries and repairs the ``parentId`` links into a real
+    forest, so the response is the authoritative post-write state the client
+    should adopt.
 
     Deleting a folder here never deletes a conversation: a thread still pointing
     at a folder that no longer exists falls back to the sidebar's root list.
