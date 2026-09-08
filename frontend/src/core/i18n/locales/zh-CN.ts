@@ -458,6 +458,7 @@ export const zhCN: Translations = {
       memory: "记忆",
       suggestions: "建议",
       input_polish: "提示词润色",
+      title: "对话重命名",
       goal: "目标检查",
       agent_generation: "智能体生成",
     },
@@ -470,6 +471,19 @@ export const zhCN: Translations = {
     loadFailed: "无法加载支出报表。",
   },
 
+  autoRename: {
+    label: "自动重命名",
+    title: "重命名此对话",
+    description:
+      "由模型阅读最初的一两轮对话并据此命名。子智能体之间的讨论不会计入，只使用你看到的回复。",
+    modelLabel: "模型",
+    serverDefault: "服务器默认",
+    serverDefaultHint: "为自动重命名配置的模型。",
+    run: "开始",
+    running: "重命名中…",
+    success: (title) => `已重命名为“${title}”`,
+    failed: "重命名对话失败。",
+  },
   backgroundTasks: {
     label: "后台任务",
     title: "后台任务",
@@ -1074,6 +1088,7 @@ export const zhCN: Translations = {
     suggestions: "建议",
     inputPolish: "提示词润色",
     goal: "目标检查",
+    autoRenameCost: "对话重命名",
     auxCallCount: (count: number) => `${count} 次调用`,
     chartTitle: "每步费用",
     chartPerStep: "单步",

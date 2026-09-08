@@ -60,6 +60,8 @@ function auxCategoryLabel(
       return t.tokenUsage.inputPolish;
     case "goal":
       return t.tokenUsage.goal;
+    case "title":
+      return t.tokenUsage.autoRenameCost;
     default:
       return category;
   }
