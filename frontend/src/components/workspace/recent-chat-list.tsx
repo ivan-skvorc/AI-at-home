@@ -16,7 +16,14 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { useParams, usePathname, useRouter } from "next/navigation";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -51,6 +58,9 @@ import { resetThreadChatAfterDelete } from "@/components/workspace/chats/use-thr
 import { getAPIClient } from "@/core/api";
 import { writeTextToClipboard } from "@/core/clipboard";
 import { useI18n } from "@/core/i18n/hooks";
+import { useProjects } from "@/core/projects";
+import { useLocalSettings } from "@/core/settings";
+import { isStaticWebsiteOnly } from "@/core/static-mode";
 import {
   canMoveFolderUnder,
   canNestUnder,
@@ -69,6 +79,7 @@ import {
   useDeleteThread,
   useInfiniteThreads,
   useMoveThreadToFolder,
+  useMoveThreadToProject,
   usePinThread,
   useRenameThread,
 } from "@/core/threads/hooks";
@@ -83,6 +94,7 @@ import {
   channelSourceOfThread,
   isThreadPinned,
   pathOfThread,
+  projectIdOfThread,
   titleOfThread,
 } from "@/core/threads/utils";
 import { env } from "@/env";
@@ -90,6 +102,7 @@ import { isIMEComposing } from "@/lib/ime";
 import { cn } from "@/lib/utils";
 
 import { ChatFolderRow, type FolderMoveTarget } from "./chat-folder-row";
+import { MoveToProjectMenu, NewProjectDialog } from "./move-to-project-menu";
 import { ThreadChannelIcon } from "./thread-channel-source";
 import { VirtualThreadList } from "./thread-list-virtualizer";
 import { useThreadArchiveAction } from "./use-thread-archive-action";
@@ -141,9 +154,34 @@ type FolderDialogState =
   | { mode: "create"; threadId?: string; parentId?: string }
   | { mode: "rename"; folder: ChatFolder };
 
-export function RecentChatList() {
+/**
+ * A single thread row: link + hover action menu (pin, rename, share, export,
+ * archive, move to project, delete) + its own rename dialog.
+ *
+ * One component for every place a chat row appears — the fork's folder-aware
+ * root list and `ProjectsSection`'s per-project groups — because two copies of
+ * this menu drift silently: a row that is missing one entry still renders, so
+ * nothing fails, the action is simply unreachable from that one list.
+ *
+ * The folder affordances (FORK.md §32) ride in as an optional `folderMenu`
+ * node rather than being rebuilt here: a project group has no folder drop
+ * targets, so it passes nothing and the submenu does not render.
+ */
+export function ThreadSidebarItem({
+  thread,
+  isActive,
+  branchEntry,
+  recentThreadId,
+  folderMenu,
+}: {
+  thread: AgentThread;
+  isActive: boolean;
+  branchEntry?: ThreadBranchEntry | undefined;
+  recentThreadId?: string | undefined;
+  /** The fork's **Move to folder ▸** submenu, when this list has folders. */
+  folderMenu?: ReactNode;
+}) {
   const { t } = useI18n();
-  const archiveAction = useThreadArchiveAction();
   const router = useRouter();
   const pathname = usePathname();
   const { thread_id: threadIdFromPath, agent_name: agentNameFromPath } =
@@ -151,6 +189,342 @@ export function RecentChatList() {
       thread_id: string;
       agent_name?: string;
     }>();
+  const { mutate: deleteThread } = useDeleteThread();
+  const { mutate: renameThread } = useRenameThread();
+  const { mutate: updatePinnedThread } = usePinThread();
+  // The move mutation is owned here (not inside `MoveToProjectMenu`) because
+  // selecting a project closes the dropdown and unmounts the menu — a
+  // per-mutate `onError` registered there would be dropped before a failed
+  // request settles, failing silently. This row persists, so a hook-level
+  // `onError` always fires. Same ownership-hoisting precedent as the
+  // `NewProjectDialog` below.
+  const { mutate: moveThreadToProject } = useMoveThreadToProject({
+    onError: (error) => {
+      toast.error(
+        error instanceof Error && error.message
+          ? error.message
+          : t.projects.moveFailed,
+      );
+    },
+  });
+
+  const handleMoveProject = useCallback(
+    (projectId: string | null) => {
+      moveThreadToProject({ threadId: thread.thread_id, projectId });
+    },
+    [moveThreadToProject, thread.thread_id],
+  );
+  const archiveAction = useThreadArchiveAction();
+
+  const [renameDialogOpen, setRenameDialogOpen] = useState(false);
+  const [renameValue, setRenameValue] = useState("");
+  const [newProjectDialogOpen, setNewProjectDialogOpen] = useState(false);
+
+  const handleDelete = useCallback(() => {
+    const currentPathname =
+      typeof window === "undefined" ? pathname : window.location.pathname;
+    const threadPath = pathOfThread(thread);
+    const nextThreadPath = pathOfThread("new", {
+      agent_name: agentNameFromPath,
+    });
+    const isNewThreadPath = currentPathname === nextThreadPath;
+    const isCurrentThread =
+      thread.thread_id === threadIdFromPath ||
+      threadPath === currentPathname ||
+      (isNewThreadPath && recentThreadId === thread.thread_id);
+
+    deleteThread({
+      threadId: thread.thread_id,
+      onRemoteDeleted: isCurrentThread
+        ? () => {
+            resetThreadChatAfterDelete({
+              deletedThreadId: thread.thread_id,
+              nextPath: nextThreadPath,
+              force: true,
+            });
+            void router.replace(nextThreadPath);
+          }
+        : undefined,
+    });
+  }, [
+    agentNameFromPath,
+    deleteThread,
+    pathname,
+    recentThreadId,
+    router,
+    thread,
+    threadIdFromPath,
+  ]);
+
+  const handleRenameSubmit = useCallback(() => {
+    if (renameValue.trim()) {
+      renameThread(
+        { threadId: thread.thread_id, title: renameValue.trim() },
+        {
+          onSuccess: () => {
+            setRenameDialogOpen(false);
+            setRenameValue("");
+          },
+          onError: (error) => {
+            toast.error(
+              error instanceof Error && error.message
+                ? error.message
+                : t.common.renameFailed,
+            );
+          },
+        },
+      );
+    }
+  }, [renameThread, thread.thread_id, renameValue, t.common.renameFailed]);
+
+  const handleTogglePin = useCallback(() => {
+    updatePinnedThread(
+      {
+        threadId: thread.thread_id,
+        pinned: !isThreadPinned(thread),
+      },
+      {
+        onError: (err) => {
+          toast.error(
+            err instanceof Error ? err.message : t.chats.pinChatFailed,
+          );
+        },
+      },
+    );
+  }, [t.chats.pinChatFailed, thread, updatePinnedThread]);
+
+  const handleShare = useCallback(async () => {
+    // Always use Vercel URL for sharing so others can access
+    const VERCEL_URL = "https://deer-flow-v2.vercel.app";
+    const isLocalhost =
+      window.location.hostname === "localhost" ||
+      window.location.hostname === "127.0.0.1";
+    // On localhost: use Vercel URL; On production: use current origin
+    const baseUrl = isLocalhost ? VERCEL_URL : window.location.origin;
+    const shareUrl = `${baseUrl}${pathOfThread(thread)}`;
+    try {
+      const didCopy = await writeTextToClipboard(shareUrl);
+      if (!didCopy) {
+        toast.error(t.clipboard.failedToCopyToClipboard);
+        return;
+      }
+
+      toast.success(t.clipboard.linkCopied);
+    } catch {
+      toast.error(t.clipboard.failedToCopyToClipboard);
+    }
+  }, [t, thread]);
+
+  const handleExport = useCallback(
+    async (format: ThreadExportFormat) => {
+      try {
+        const apiClient = getAPIClient();
+        const state = await apiClient.threads.getState<AgentThreadState>(
+          thread.thread_id,
+        );
+        const messages = state.values?.messages ?? [];
+        if (messages.length === 0) {
+          toast.error(t.conversation.noMessages);
+          return;
+        }
+        exportThread(thread, messages, format);
+        toast.success(t.common.exportSuccess);
+      } catch {
+        toast.error(t.common.exportFailed);
+      }
+    },
+    [t, thread],
+  );
+
+  const channelSource = channelSourceOfThread(thread);
+  const pinned = isThreadPinned(thread);
+  const parentTitle = branchEntry?.parentThread
+    ? titleOfThread(branchEntry.parentThread)
+    : null;
+  const title = titleOfThread(thread);
+  const branchLabel = parentTitle
+    ? t.chats.branchLabel(title, parentTitle)
+    : undefined;
+
+  return (
+    <SidebarMenuItem className="group/side-menu-item">
+      <SidebarMenuButton isActive={isActive} asChild>
+        <Link
+          aria-label={branchLabel}
+          className="text-muted-foreground min-w-0 whitespace-nowrap group-hover/side-menu-item:overflow-hidden"
+          data-branch-depth={
+            branchEntry && branchEntry.depth > 0 ? branchEntry.depth : undefined
+          }
+          data-branch-parent-id={branchEntry?.parentThread?.thread_id}
+          href={pathOfThread(thread)}
+          // Always draggable: the same payload files the chat into a sidebar
+          // folder and pins it as a folder's expanded area, so one drag serves
+          // every drop target (FORK.md §32).
+          draggable
+          onDragStart={(event) => {
+            event.dataTransfer.setData(CHAT_DND_THREAD_MIME, thread.thread_id);
+            event.dataTransfer.setData("text/plain", title);
+            event.dataTransfer.effectAllowed = "copyMove";
+          }}
+          title={branchLabel}
+        >
+          {branchEntry && branchEntry.depth > 0 && (
+            <span
+              aria-hidden="true"
+              className="text-muted-foreground/70 shrink-0 font-mono text-[10px] leading-none"
+              data-testid="thread-branch-stem"
+              style={{
+                marginLeft: `${Math.min(branchEntry.depth - 1, 1) * 8}px`,
+              }}
+            >
+              {branchEntry.isLastSibling ? "└─" : "├─"}
+            </span>
+          )}
+          <ThreadChannelIcon source={channelSource} />
+          {pinned && (
+            <Pin
+              aria-hidden="true"
+              className="text-muted-foreground size-3.5 shrink-0"
+            />
+          )}
+          <span className="min-w-0 truncate">{title}</span>
+          {channelSource && (
+            <span
+              className="bg-muted text-muted-foreground ml-auto inline-flex h-5 max-w-14 shrink-0 items-center rounded-md px-1.5 text-[10px] font-medium"
+              title={`${channelSource.label} channel`}
+            >
+              <span className="truncate">{channelSource.label}</span>
+            </span>
+          )}
+        </Link>
+      </SidebarMenuButton>
+      {env.NEXT_PUBLIC_STATIC_WEBSITE_ONLY !== "true" && (
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <SidebarMenuAction
+              showOnHover
+              className="bg-background/50 hover:bg-background after:left-0!"
+            >
+              <MoreHorizontal />
+              <span className="sr-only">{t.common.more}</span>
+            </SidebarMenuAction>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent
+            className="w-48 rounded-lg"
+            side={"right"}
+            align={"start"}
+          >
+            <DropdownMenuItem onSelect={handleTogglePin}>
+              {pinned ? (
+                <PinOff className="text-muted-foreground" />
+              ) : (
+                <Pin className="text-muted-foreground" />
+              )}
+              <span>{pinned ? t.chats.unpinChat : t.chats.pinChat}</span>
+            </DropdownMenuItem>
+            {/* Keyboard-reachable equivalent of the drag: drag-and-drop is the
+                fast path, not the only path. */}
+            {folderMenu}
+            <DropdownMenuItem
+              onSelect={() => {
+                setRenameValue(titleOfThread(thread));
+                setRenameDialogOpen(true);
+              }}
+            >
+              <Pencil className="text-muted-foreground" />
+              <span>{t.common.rename}</span>
+            </DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => void handleShare()}>
+              <Share2 className="text-muted-foreground" />
+              <span>{t.common.share}</span>
+            </DropdownMenuItem>
+            <DropdownMenuSub>
+              <DropdownMenuSubTrigger>
+                <Download className="text-muted-foreground" />
+                <span>{t.common.export}</span>
+              </DropdownMenuSubTrigger>
+              <DropdownMenuSubContent>
+                <DropdownMenuItem
+                  onSelect={() => void handleExport("markdown")}
+                >
+                  <FileText className="text-muted-foreground" />
+                  <span>{t.common.exportAsMarkdown}</span>
+                </DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => void handleExport("json")}>
+                  <FileJson className="text-muted-foreground" />
+                  <span>{t.common.exportAsJSON}</span>
+                </DropdownMenuItem>
+              </DropdownMenuSubContent>
+            </DropdownMenuSub>
+            <DropdownMenuItem
+              disabled={archiveAction.isPending}
+              onSelect={() => archiveAction.setArchived(thread.thread_id, true)}
+            >
+              <Archive className="text-muted-foreground" />
+              <span>{t.chats.archiveChat}</span>
+            </DropdownMenuItem>
+            <MoveToProjectMenu
+              thread={thread}
+              onNewProject={() => setNewProjectDialogOpen(true)}
+              onMoveProject={handleMoveProject}
+            />
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onSelect={handleDelete}>
+              <Trash2 className="text-muted-foreground" />
+              <span>{t.common.delete}</span>
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      )}
+
+      {/* Rename Dialog */}
+      <Dialog open={renameDialogOpen} onOpenChange={setRenameDialogOpen}>
+        <DialogContent className="sm:max-w-[425px]">
+          <DialogHeader>
+            <DialogTitle>{t.common.rename}</DialogTitle>
+          </DialogHeader>
+          <div className="py-4">
+            <Input
+              value={renameValue}
+              onChange={(e) => setRenameValue(e.target.value)}
+              placeholder={t.common.rename}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !isIMEComposing(e)) {
+                  e.preventDefault();
+                  handleRenameSubmit();
+                }
+              }}
+            />
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setRenameDialogOpen(false)}
+            >
+              {t.common.cancel}
+            </Button>
+            <Button onClick={handleRenameSubmit}>{t.common.save}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      {/* New Project Dialog (mounted outside the DropdownMenu so it survives
+          the menu closing when "New project…" is selected) */}
+      <NewProjectDialog
+        thread={thread}
+        open={newProjectDialogOpen}
+        onOpenChange={setNewProjectDialogOpen}
+      />
+    </SidebarMenuItem>
+  );
+}
+
+export function RecentChatList() {
+  const { t } = useI18n();
+  const pathname = usePathname();
+  const { thread_id: threadIdFromPath } = useParams<{
+    thread_id: string;
+    agent_name?: string;
+  }>();
   const {
     data: infiniteThreads,
     fetchNextPage,
@@ -180,6 +554,62 @@ export function RecentChatList() {
       : threadListModel.displayedThreads;
   }, [threadIdFromPath, threadListModel]);
 
+  const [localSettings] = useLocalSettings();
+  // Static-demo mode never renders project groups (`ProjectsSection` is hidden
+  // and project queries stay off), so a persisted "grouped" preference must
+  // behave as flat — otherwise assigned threads would vanish from this list.
+  const projectGrouped =
+    localSettings.projectsDisplayMode === "grouped" && !isStaticWebsiteOnly();
+  // Project discovery doubles as the exclusion oracle for grouped mode: an
+  // assigned thread may leave this list ONLY when its project group can
+  // actually render in `ProjectsSection`. Any query error (or not-yet-loaded
+  // data) yields `null` → exclude nothing (fail-visible), and a thread whose
+  // project id is unknown to both lists stays here too. TanStack dedupes these
+  // shared queries with `GroupedProjectList`.
+  const activeProjectsQuery = useProjects("active", {
+    enabled: projectGrouped,
+  });
+  const archivedProjectsQuery = useProjects("archived", {
+    enabled: projectGrouped,
+  });
+  const knownProjectIds = useMemo(() => {
+    const activeProjects = activeProjectsQuery.data;
+    const archivedProjects = archivedProjectsQuery.data;
+    if (
+      activeProjectsQuery.isError ||
+      archivedProjectsQuery.isError ||
+      !activeProjects ||
+      !archivedProjects
+    ) {
+      return null;
+    }
+    return new Set(
+      [...activeProjects, ...archivedProjects].map((project) => project.id),
+    );
+  }, [
+    activeProjectsQuery.data,
+    activeProjectsQuery.isError,
+    archivedProjectsQuery.data,
+    archivedProjectsQuery.isError,
+  ]);
+  // In grouped mode, project-assigned threads render under their project header
+  // in `ProjectsSection`; this list keeps only unassigned threads — plus any
+  // assigned thread whose project cannot render a group (unknown id, or project
+  // discovery failed/loading), so no chat silently vanishes. The folder
+  // partition below runs on what survives: a chat filed in a folder *and*
+  // assigned to a project belongs to the project group, and the folder tree
+  // here would otherwise show it a second time.
+  const visibleThreads = useMemo(
+    () =>
+      projectGrouped && knownProjectIds
+        ? displayedThreads.filter((thread) => {
+            const projectId = projectIdOfThread(thread);
+            return projectId === null || !knownProjectIds.has(projectId);
+          })
+        : displayedThreads,
+    [projectGrouped, displayedThreads, knownProjectIds],
+  );
+
   const {
     folders,
     expandedFolderIds,
@@ -196,8 +626,8 @@ export function RecentChatList() {
   // folder that no longer exists falls back to the root list rather than
   // disappearing (see `groupThreadsByFolder`).
   const grouped = useMemo(
-    () => groupThreadsByFolder(displayedThreads, folders),
-    [displayedThreads, folders],
+    () => groupThreadsByFolder(visibleThreads, folders),
+    [visibleThreads, folders],
   );
   const rootList = useMemo(
     () => buildBranchList(grouped.ungrouped),
@@ -283,15 +713,7 @@ export function RecentChatList() {
     threadListModel.canLoadMore,
   ]);
 
-  const { mutate: deleteThread } = useDeleteThread();
-  const { mutate: renameThread } = useRenameThread();
-  const { mutate: updatePinnedThread } = usePinThread();
   const { mutate: moveThreadToFolder } = useMoveThreadToFolder();
-
-  // Rename dialog state
-  const [renameDialogOpen, setRenameDialogOpen] = useState(false);
-  const [renameThreadId, setRenameThreadId] = useState<string | null>(null);
-  const [renameValue, setRenameValue] = useState("");
 
   // Create/rename folder dialog state
   const [folderDialog, setFolderDialog] = useState<FolderDialogState | null>(
@@ -299,94 +721,6 @@ export function RecentChatList() {
   );
   const [folderNameValue, setFolderNameValue] = useState("");
   const [isRootDropTarget, setIsRootDropTarget] = useState(false);
-
-  const handleDelete = useCallback(
-    (thread: AgentThread) => {
-      const currentPathname =
-        typeof window === "undefined" ? pathname : window.location.pathname;
-      const threadPath = pathOfThread(thread);
-      const nextThreadPath = pathOfThread("new", {
-        agent_name: agentNameFromPath,
-      });
-      const isNewThreadPath = currentPathname === nextThreadPath;
-      const isCurrentThread =
-        thread.thread_id === threadIdFromPath ||
-        threadPath === currentPathname ||
-        (isNewThreadPath && threads[0]?.thread_id === thread.thread_id);
-
-      deleteThread({
-        threadId: thread.thread_id,
-        onRemoteDeleted: isCurrentThread
-          ? () => {
-              resetThreadChatAfterDelete({
-                deletedThreadId: thread.thread_id,
-                nextPath: nextThreadPath,
-                force: true,
-              });
-              void router.replace(nextThreadPath);
-            }
-          : undefined,
-      });
-    },
-    [
-      agentNameFromPath,
-      deleteThread,
-      pathname,
-      router,
-      threadIdFromPath,
-      threads,
-    ],
-  );
-
-  const handleRenameClick = useCallback(
-    (threadId: string, currentTitle: string) => {
-      setRenameThreadId(threadId);
-      setRenameValue(currentTitle);
-      setRenameDialogOpen(true);
-    },
-    [],
-  );
-
-  const handleRenameSubmit = useCallback(() => {
-    if (renameThreadId && renameValue.trim()) {
-      renameThread(
-        { threadId: renameThreadId, title: renameValue.trim() },
-        {
-          onSuccess: () => {
-            setRenameDialogOpen(false);
-            setRenameThreadId(null);
-            setRenameValue("");
-          },
-          onError: (error) => {
-            toast.error(
-              error instanceof Error && error.message
-                ? error.message
-                : t.common.renameFailed,
-            );
-          },
-        },
-      );
-    }
-  }, [renameThread, renameThreadId, renameValue, t.common.renameFailed]);
-
-  const handleTogglePin = useCallback(
-    (thread: AgentThread) => {
-      updatePinnedThread(
-        {
-          threadId: thread.thread_id,
-          pinned: !isThreadPinned(thread),
-        },
-        {
-          onError: (err) => {
-            toast.error(
-              err instanceof Error ? err.message : t.chats.pinChatFailed,
-            );
-          },
-        },
-      );
-    },
-    [t.chats.pinChatFailed, updatePinnedThread],
-  );
 
   const handleMoveToFolder = useCallback(
     (threadId: string, folderId: string | null) => {
@@ -484,270 +818,70 @@ export function RecentChatList() {
     [folders, moveFolder, t.chats.folders],
   );
 
-  const handleShare = useCallback(
-    async (thread: AgentThread) => {
-      // Always use Vercel URL for sharing so others can access
-      const VERCEL_URL = "https://deer-flow-v2.vercel.app";
-      const isLocalhost =
-        window.location.hostname === "localhost" ||
-        window.location.hostname === "127.0.0.1";
-      // On localhost: use Vercel URL; On production: use current origin
-      const baseUrl = isLocalhost ? VERCEL_URL : window.location.origin;
-      const shareUrl = `${baseUrl}${pathOfThread(thread)}`;
-      try {
-        const didCopy = await writeTextToClipboard(shareUrl);
-        if (!didCopy) {
-          toast.error(t.clipboard.failedToCopyToClipboard);
-          return;
-        }
-
-        toast.success(t.clipboard.linkCopied);
-      } catch {
-        toast.error(t.clipboard.failedToCopyToClipboard);
-      }
-    },
-    [t],
-  );
-
-  const handleExport = useCallback(
-    async (thread: AgentThread, format: ThreadExportFormat) => {
-      try {
-        const apiClient = getAPIClient();
-        const state = await apiClient.threads.getState<AgentThreadState>(
-          thread.thread_id,
-        );
-        const messages = state.values?.messages ?? [];
-        if (messages.length === 0) {
-          toast.error(t.conversation.noMessages);
-          return;
-        }
-        exportThread(thread, messages, format);
-        toast.success(t.common.exportSuccess);
-      } catch {
-        toast.error(t.common.exportFailed);
-      }
-    },
-    [t],
-  );
-
   const renderThreadRow = useCallback(
-    (thread: AgentThread, branchList: BranchList) => {
-      const isActive = pathOfThread(thread) === pathname;
-      const channelSource = channelSourceOfThread(thread);
-      const pinned = isThreadPinned(thread);
-      const branchEntry = branchList.entriesById.get(thread.thread_id);
-      const parentTitle = branchEntry?.parentThread
-        ? titleOfThread(branchEntry.parentThread)
-        : null;
-      const title = titleOfThread(thread);
-      const branchLabel = parentTitle
-        ? t.chats.branchLabel(title, parentTitle)
-        : undefined;
-      const currentFolderId = folderIdOfThread(thread);
-      return (
-        <SidebarMenuItem
-          key={thread.thread_id}
-          className="group/side-menu-item"
-        >
-          <SidebarMenuButton isActive={isActive} asChild>
-            <Link
-              aria-label={branchLabel}
-              className="text-muted-foreground min-w-0 whitespace-nowrap group-hover/side-menu-item:overflow-hidden"
-              data-branch-depth={
-                branchEntry && branchEntry.depth > 0
-                  ? branchEntry.depth
-                  : undefined
-              }
-              data-branch-parent-id={branchEntry?.parentThread?.thread_id}
-              href={pathOfThread(thread)}
-              // Always draggable: the same payload files the chat into a
-              // sidebar folder and (when the feature is on) pins it as a
-              // folder's expanded area, so one drag serves every drop target.
-              draggable
-              onDragStart={(event) => {
-                event.dataTransfer.setData(
-                  CHAT_DND_THREAD_MIME,
-                  thread.thread_id,
-                );
-                event.dataTransfer.setData("text/plain", titleOfThread(thread));
-                event.dataTransfer.effectAllowed = "copyMove";
-              }}
-              title={branchLabel}
-            >
-              {branchEntry && branchEntry.depth > 0 && (
-                <span
-                  aria-hidden="true"
-                  className="text-muted-foreground/70 shrink-0 font-mono text-[10px] leading-none"
-                  data-testid="thread-branch-stem"
-                  style={{
-                    marginLeft: `${Math.min(branchEntry.depth - 1, 1) * 8}px`,
-                  }}
+    (thread: AgentThread, branchList: BranchList) => (
+      <ThreadSidebarItem
+        key={thread.thread_id}
+        thread={thread}
+        isActive={pathOfThread(thread) === pathname}
+        branchEntry={branchList.entriesById.get(thread.thread_id)}
+        recentThreadId={threads[0]?.thread_id}
+        folderMenu={
+          <DropdownMenuSub>
+            <DropdownMenuSubTrigger>
+              <FolderInput className="text-muted-foreground" />
+              <span>{t.chats.folders.moveTo}</span>
+            </DropdownMenuSubTrigger>
+            <DropdownMenuSubContent>
+              {/* Parents before children, indented one step per level, so the
+                  menu reads as the tree the sidebar is showing rather than a
+                  flat list of names that repeat across branches. */}
+              {flatFolderNodes.map(({ folder }) => (
+                <DropdownMenuItem
+                  key={folder.id}
+                  disabled={folder.id === folderIdOfThread(thread)}
+                  onSelect={() =>
+                    handleMoveToFolder(thread.thread_id, folder.id)
+                  }
                 >
-                  {branchEntry.isLastSibling ? "└─" : "├─"}
-                </span>
-              )}
-              <ThreadChannelIcon source={channelSource} />
-              {pinned && (
-                <Pin
-                  aria-hidden="true"
-                  className="text-muted-foreground size-3.5 shrink-0"
-                />
-              )}
-              <span className="min-w-0 truncate">{title}</span>
-              {channelSource && (
-                <span
-                  className="bg-muted text-muted-foreground ml-auto inline-flex h-5 max-w-14 shrink-0 items-center rounded-md px-1.5 text-[10px] font-medium"
-                  title={`${channelSource.label} channel`}
-                >
-                  <span className="truncate">{channelSource.label}</span>
-                </span>
-              )}
-            </Link>
-          </SidebarMenuButton>
-          {env.NEXT_PUBLIC_STATIC_WEBSITE_ONLY !== "true" && (
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <SidebarMenuAction
-                  showOnHover
-                  className="bg-background/50 hover:bg-background after:left-0!"
-                >
-                  <MoreHorizontal />
-                  <span className="sr-only">{t.common.more}</span>
-                </SidebarMenuAction>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent
-                className="w-48 rounded-lg"
-                side={"right"}
-                align={"start"}
+                  <span
+                    className="truncate"
+                    style={{
+                      paddingLeft: `${((folderDepths.get(folder.id) ?? 1) - 1) * 12}px`,
+                    }}
+                  >
+                    {folder.name}
+                  </span>
+                </DropdownMenuItem>
+              ))}
+              {flatFolderNodes.length > 0 && <DropdownMenuSeparator />}
+              <DropdownMenuItem
+                disabled={folderIdOfThread(thread) === null}
+                onSelect={() => handleMoveToFolder(thread.thread_id, null)}
               >
-                <DropdownMenuItem onSelect={() => handleTogglePin(thread)}>
-                  {pinned ? (
-                    <PinOff className="text-muted-foreground" />
-                  ) : (
-                    <Pin className="text-muted-foreground" />
-                  )}
-                  <span>{pinned ? t.chats.unpinChat : t.chats.pinChat}</span>
-                </DropdownMenuItem>
-                {/* Keyboard-reachable equivalent of the drag: drag-and-drop is
-                    the fast path, not the only path. */}
-                <DropdownMenuSub>
-                  <DropdownMenuSubTrigger>
-                    <FolderInput className="text-muted-foreground" />
-                    <span>{t.chats.folders.moveTo}</span>
-                  </DropdownMenuSubTrigger>
-                  <DropdownMenuSubContent>
-                    {/* Parents before children, indented one step per level, so
-                        the menu reads as the tree the sidebar is showing rather
-                        than a flat list of names that repeat across branches. */}
-                    {flatFolderNodes.map(({ folder }) => (
-                      <DropdownMenuItem
-                        key={folder.id}
-                        disabled={folder.id === currentFolderId}
-                        onSelect={() =>
-                          handleMoveToFolder(thread.thread_id, folder.id)
-                        }
-                      >
-                        <span
-                          className="truncate"
-                          style={{
-                            paddingLeft: `${((folderDepths.get(folder.id) ?? 1) - 1) * 12}px`,
-                          }}
-                        >
-                          {folder.name}
-                        </span>
-                      </DropdownMenuItem>
-                    ))}
-                    {flatFolderNodes.length > 0 && <DropdownMenuSeparator />}
-                    <DropdownMenuItem
-                      disabled={currentFolderId === null}
-                      onSelect={() =>
-                        handleMoveToFolder(thread.thread_id, null)
-                      }
-                    >
-                      <span>{t.chats.folders.none}</span>
-                    </DropdownMenuItem>
-                    <DropdownMenuSeparator />
-                    <DropdownMenuItem
-                      onSelect={() => {
-                        setFolderNameValue("");
-                        // Opened from this chat's menu, so the chat moves into
-                        // the folder as soon as it is named.
-                        setFolderDialog({
-                          mode: "create",
-                          threadId: thread.thread_id,
-                        });
-                      }}
-                    >
-                      <FolderPlus className="text-muted-foreground" />
-                      <span>{t.chats.folders.new}</span>
-                    </DropdownMenuItem>
-                  </DropdownMenuSubContent>
-                </DropdownMenuSub>
-                <DropdownMenuItem
-                  onSelect={() =>
-                    handleRenameClick(thread.thread_id, titleOfThread(thread))
-                  }
-                >
-                  <Pencil className="text-muted-foreground" />
-                  <span>{t.common.rename}</span>
-                </DropdownMenuItem>
-                <DropdownMenuItem onSelect={() => handleShare(thread)}>
-                  <Share2 className="text-muted-foreground" />
-                  <span>{t.common.share}</span>
-                </DropdownMenuItem>
-                <DropdownMenuSub>
-                  <DropdownMenuSubTrigger>
-                    <Download className="text-muted-foreground" />
-                    <span>{t.common.export}</span>
-                  </DropdownMenuSubTrigger>
-                  <DropdownMenuSubContent>
-                    <DropdownMenuItem
-                      onSelect={() => handleExport(thread, "markdown")}
-                    >
-                      <FileText className="text-muted-foreground" />
-                      <span>{t.common.exportAsMarkdown}</span>
-                    </DropdownMenuItem>
-                    <DropdownMenuItem
-                      onSelect={() => handleExport(thread, "json")}
-                    >
-                      <FileJson className="text-muted-foreground" />
-                      <span>{t.common.exportAsJSON}</span>
-                    </DropdownMenuItem>
-                  </DropdownMenuSubContent>
-                </DropdownMenuSub>
-                <DropdownMenuItem
-                  disabled={archiveAction.isPending}
-                  onSelect={() =>
-                    archiveAction.setArchived(thread.thread_id, true)
-                  }
-                >
-                  <Archive className="text-muted-foreground" />
-                  <span>{t.chats.archiveChat}</span>
-                </DropdownMenuItem>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem onSelect={() => handleDelete(thread)}>
-                  <Trash2 className="text-muted-foreground" />
-                  <span>{t.common.delete}</span>
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          )}
-        </SidebarMenuItem>
-      );
-    },
-    [
-      archiveAction,
-      flatFolderNodes,
-      folderDepths,
-      handleDelete,
-      handleExport,
-      handleMoveToFolder,
-      handleRenameClick,
-      handleShare,
-      handleTogglePin,
-      pathname,
-      t,
-    ],
+                <span>{t.chats.folders.none}</span>
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem
+                onSelect={() => {
+                  setFolderNameValue("");
+                  // Opened from this chat's menu, so the chat moves into the
+                  // folder as soon as it is named.
+                  setFolderDialog({
+                    mode: "create",
+                    threadId: thread.thread_id,
+                  });
+                }}
+              >
+                <FolderPlus className="text-muted-foreground" />
+                <span>{t.chats.folders.new}</span>
+              </DropdownMenuItem>
+            </DropdownMenuSubContent>
+          </DropdownMenuSub>
+        }
+      />
+    ),
+    [flatFolderNodes, folderDepths, handleMoveToFolder, pathname, t, threads],
   );
 
   /**
@@ -991,37 +1125,6 @@ export function RecentChatList() {
           </SidebarMenu>
         </SidebarGroupContent>
       </SidebarGroup>
-
-      {/* Rename Dialog */}
-      <Dialog open={renameDialogOpen} onOpenChange={setRenameDialogOpen}>
-        <DialogContent className="sm:max-w-[425px]">
-          <DialogHeader>
-            <DialogTitle>{t.common.rename}</DialogTitle>
-          </DialogHeader>
-          <div className="py-4">
-            <Input
-              value={renameValue}
-              onChange={(e) => setRenameValue(e.target.value)}
-              placeholder={t.common.rename}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !isIMEComposing(e)) {
-                  e.preventDefault();
-                  handleRenameSubmit();
-                }
-              }}
-            />
-          </div>
-          <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => setRenameDialogOpen(false)}
-            >
-              {t.common.cancel}
-            </Button>
-            <Button onClick={handleRenameSubmit}>{t.common.save}</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
 
       {/* Create / rename folder dialog */}
       <Dialog

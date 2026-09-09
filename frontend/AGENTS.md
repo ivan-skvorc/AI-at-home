@@ -50,7 +50,7 @@ The frontend is a stateful chat application. Users create **threads** (conversat
 
 ### Source Layout (`src/`)
 
-- **`app/`** — Next.js App Router. Routes include `/` (landing), `/showcase/[thread_id]` (allowlisted public read-only demos), `/workspace/chats/[thread_id]` (authenticated chat), `/workspace/agents/[agent_name]`, `/workspace/agents/new`, and `/workspace/agents/generate` (custom agents), `/artifacts/view` (chrome-free window that renders one markdown artifact with the panel's own renderer), `/blog/…`, the `(auth)/{login,setup,auth/callback}` flow, `/[lang]/docs/…`, and `/api/…` route handlers (e.g. `/api/memory`).
+- **`app/`** — Next.js App Router. Routes include `/` (landing), `/showcase/[thread_id]` (allowlisted public read-only demos), `/workspace/chats/[thread_id]` (authenticated chat), `/workspace/agents/[agent_name]`, `/workspace/agents/new`, and `/workspace/agents/generate` (custom agents), `/artifacts/view` (chrome-free window that renders Markdown or CSV/TSV artifacts with the panel's own renderer), `/blog/…`, the `(auth)/{login,setup,auth/callback}` flow, `/[lang]/docs/…`, and `/api/…` route handlers (e.g. `/api/memory`).
 - **`components/`** — React components:
   - `ui/` — Shadcn UI primitives (auto-generated, ESLint-ignored)
   - `ai-elements/` — Vercel AI SDK elements (auto-generated, ESLint-ignored)
@@ -85,6 +85,16 @@ NEXT_PUBLIC_LANGGRAPH_BASE_URL=http://localhost:8001/api
 ```
 
 Leave these unset for the standard `make dev` / Docker flow, where nginx serves the public `/api/langgraph/*` prefix and rewrites it to Gateway's native `/api/*` routes.
+
+`make build-static` creates a standalone read-only demo and copies `.next/static`
+and `public` into the output. In static mode, `core/api/static-response.ts`
+resolves Gateway REST reads with empty capability/catalog responses or existing
+same-origin `/mock/api` fixtures; writes and unknown API routes fail locally.
+The homepage client counter calls `/github-stars`, outside the Gateway proxy.
+That dynamic route reads the server-only `GITHUB_OAUTH_TOKEN` at runtime, caches
+GitHub data for one hour, and returns 204 when the count is unavailable. Start
+the standalone server from `frontend/` with `node --env-file=.env
+.next/standalone/server.js` to load the current credentials.
 
 To reach a dev server on anything other than localhost — a LAN address, or a proxied hostname — list the host in `DEER_FLOW_DEV_ALLOWED_ORIGINS` (comma-separated; a full URL is reduced to its host). It feeds Next's `allowedDevOrigins`, which gates `/_next/*`, fonts, and HMR. Without it those requests get a 403 and the page renders server-side but never hydrates, so nothing on it — including the login form — responds. Development only; production builds ignore it.
 
@@ -126,6 +136,10 @@ organization requests can otherwise roll back each other's confirmed state.
 Run-created optimistic snapshots have no archive flag: refresh archive-filtered
 lists from the server instead of inserting those snapshots into either view.
 
+### Delimited artifact preview
+
+CSV/TSV previews share `artifact-table-preview.tsx` between the panel and standalone viewer. Papa Parse runs only inside `delimited-preview.worker.ts`; `use-delimited-preview.ts` bounds input before transfer, cancels stale work, and enforces a five-second timeout. The parser detects the first record separator outside quoted fields and passes it explicitly to Papa Parse, so embedded newlines in an incomplete quoted field cannot corrupt newline detection. It retains at most 202 logical records and 50 columns, discarding an incomplete final record from truncated input. UI pagination displays at most 200 data rows in pages of 50. Keep the table mounted but inactive when switching to source so header/pagination state survives; changing file identity resets it. Pending `write_file` content stays in source mode until success.
+
 ## Fork-specific frontend features
 
 This fork adds workspace-level live chat slots, the spend page, the PWA shell and
@@ -144,6 +158,18 @@ renders perfectly, so the only thing standing between that and a silent revert
 is `tests/unit/components/workspace/workspace-header.dom.test.tsx`, which
 asserts on the link's **route** rather than its label. If you need the entry
 back, change the test in the same commit so the decision is visible.
+
+**One sidebar chat row, everywhere.** `ThreadSidebarItem` in
+`components/workspace/recent-chat-list.tsx` renders every chat row the sidebar shows —
+the fork's folder-aware root list _and_ upstream's per-project groups in
+`projects-section.tsx`, which imports it. Do **not** grow a second copy for one of those
+lists: the row's action menu (pin, move to folder, move to project, rename, share,
+export, archive, delete) is the whole feature, and a copy that is missing an entry still
+renders perfectly — the action is simply unreachable from that one list, with nothing
+failing. The folder half (FORK.md §32) rides in as an optional `folderMenu` node the
+caller builds, so a project group passes nothing and the submenu does not render, rather
+than the row having to know which list it is in. The link is **always** `draggable`
+(§32's one-drag-one-payload rule), because the same payload serves every drop target.
 
 **One model picker, everywhere.** Selecting a model is
 `components/workspace/model-select.tsx` (`ModelSelect`) — or, inside the

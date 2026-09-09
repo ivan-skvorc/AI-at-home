@@ -238,3 +238,68 @@ test("compactThreadContext surfaces an active-run conflict", async () => {
     "Thread has a run in flight. Compact after the run finishes.",
   );
 });
+
+// The upstream merge that brought project workspaces in arrived with a second
+// `createThread` beside the fork's own — same name, different signature, one
+// returning `{thread_id}` and the other an `AgentThread`. TypeScript caught the
+// duplicate, but the shape a single unified function has to send is exactly the
+// kind of thing a later "tidy-up" drops one field from in silence: the request
+// still succeeds, the thread is still created, it is just no longer in the
+// project (or no longer carries the edit-version metadata) and nothing says so.
+// These three pin each caller's field reaching the wire, and the omissions.
+test("createThread sends the pre-chosen id and project for a project-scoped new chat", async () => {
+  fetchWithAuth.mockResolvedValue({
+    ok: true,
+    json: async () => ({ thread_id: "thread-9" }),
+  });
+
+  const { createThread } = await import("@/core/threads/api");
+
+  await expect(
+    createThread({ threadId: "thread-9", projectId: "project-1" }),
+  ).resolves.toMatchObject({ thread_id: "thread-9" });
+
+  const [, init] = fetchWithAuth.mock.calls[0] as [string, RequestInit];
+  expect(init.method).toBe("POST");
+  expect(JSON.parse(init.body as string)).toEqual({
+    thread_id: "thread-9",
+    project_id: "project-1",
+  });
+});
+
+test("createThread sends metadata and assistant id for an edited first message", async () => {
+  fetchWithAuth.mockResolvedValue({
+    ok: true,
+    json: async () => ({ thread_id: "thread-10" }),
+  });
+
+  const { createThread } = await import("@/core/threads/api");
+
+  await createThread({
+    metadata: { deerflow_edit_version_of: "thread-1" },
+    assistantId: "agent-a",
+  });
+
+  const [, init] = fetchWithAuth.mock.calls[0] as [string, RequestInit];
+  expect(JSON.parse(init.body as string)).toEqual({
+    metadata: { deerflow_edit_version_of: "thread-1" },
+    assistant_id: "agent-a",
+  });
+});
+
+test("createThread omits every field the caller did not set", async () => {
+  fetchWithAuth.mockResolvedValue({
+    ok: true,
+    json: async () => ({ thread_id: "thread-11" }),
+  });
+
+  const { createThread } = await import("@/core/threads/api");
+
+  await createThread();
+
+  const [, init] = fetchWithAuth.mock.calls[0] as [string, RequestInit];
+  // An empty body, not `{"thread_id":null,"project_id":null,…}` — the Gateway
+  // mints the id, and a null project id is a *move to unassigned* rather than
+  // "no opinion".
+  expect(JSON.parse(init.body as string)).toEqual({});
+});

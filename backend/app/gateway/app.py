@@ -33,6 +33,7 @@ from app.gateway.routers import (
     mcp_tasks,
     memory,
     models,
+    projects,
     push,
     runs,
     scheduled_tasks,
@@ -841,6 +842,8 @@ This gateway provides runtime endpoints for agent runs plus custom endpoints for
 
     # Agents API is mounted at /api/agents
     app.include_router(agents.router)
+    # Projects API is mounted at /api/projects
+    app.include_router(projects.router)
 
     # Agent generation API is mounted at /api/agent-generation
     app.include_router(agent_generation.router)

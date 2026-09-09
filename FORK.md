@@ -74,6 +74,34 @@ The fork's added files (`scripts/sync-ollama-models.py`, `scripts/sync-api-key-m
 
 **Merge, not rebase.** This is a long-lived, published fork whose `main` carries its own merge commits and merged PRs, so a sync is a `git merge upstream/main` — never a rebase, which would rewrite that public history, orphan the merged-PR refs, and force every overlapping-file conflict to be re-resolved commit-by-commit. Merge resolves each conflict once and keeps a clean "fork vs. upstream" audit trail.
 
+**Three collision shapes a merge produces that no gate names for you.** They are
+recorded here rather than as checklist rows because the table is over budget (see
+[CHANGE_CYCLE.md](CHANGE_CYCLE.md) step 4) and because two of the three fail loudly
+once you know to look. The 2026-09-09 sync hit all three at once:
+
+- **Two Alembic revisions claiming the same parent.** The fork's
+  `0019_runs_pricing_snapshot` (§17) and upstream's `0019_projects` both descend from
+  `0018_oauth_identity_pg_partial`, so the merged tree had **two heads** and
+  `alembic upgrade head` refuses to run against more than one — the Gateway's schema
+  bootstrap fails before a request is served. The fix is a **no-op merge revision**
+  (`0022_merge_pricing_projects`) naming both as parents, never a re-parenting of either
+  branch: a database already stamped at one branch's tip would then read as being *at
+  head* with the other branch's tables never created, and that is a wrong schema that
+  fails silently until a query hits it. Expect this on every sync where both sides ship a
+  migration; the depth is in
+  [`persistence/migrations/AGENTS.md`](backend/packages/harness/deerflow/persistence/migrations/AGENTS.md).
+- **Both sides adding a function of the same name to the same module.** Git merges two
+  non-overlapping additions cleanly, so `frontend/src/core/threads/api.ts` came out of
+  this sync with two exported `createThread`s of different signatures. TypeScript catches
+  it — but only the *duplicate*, not the resolution: unifying them is where a field
+  quietly stops reaching the wire, which is why the unified shape is pinned by
+  `frontend/tests/unit/core/threads/api.test.ts`.
+- **Upstream adding a `config.example.yaml` field without bumping `config_version`.**
+  Upstream adds sections without bumping it, so the new keys never reach an existing
+  `config.yaml` and the feature is simply absent for everyone who already installed.
+  `make config-upgrade` says so in words; bump `config_version` in the example **and both
+  chart copies**, then re-run it.
+
 **It also runs itself weekly.** `.github/workflows/upstream-sync.yml` fetches
 upstream every Monday, merges (never rebases) onto a dated
 `upstream-sync/<date>` branch, runs the mechanical gates below, and opens a PR

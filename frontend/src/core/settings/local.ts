@@ -18,6 +18,7 @@ export const DEFAULT_LOCAL_SETTINGS: LocalSettings = {
   appearance: {
     reduceAnimations: true,
   },
+  projectsDisplayMode: "flat",
   tokenUsage: {
     headerTotal: true,
     inlineMode: "per_turn",
@@ -151,6 +152,7 @@ export interface LocalSettings {
     // system `prefers-reduced-motion` media query at read time.
     reduceAnimations: boolean;
   };
+  projectsDisplayMode: "flat" | "grouped";
   tokenUsage: {
     headerTotal: boolean;
     inlineMode: TokenUsageInlineMode;
@@ -243,6 +245,9 @@ export function mergeLocalSettings(
       ...DEFAULT_LOCAL_SETTINGS.appearance,
       ...settings?.appearance,
     },
+    projectsDisplayMode:
+      settings?.projectsDisplayMode ??
+      DEFAULT_LOCAL_SETTINGS.projectsDisplayMode,
   };
 }
 

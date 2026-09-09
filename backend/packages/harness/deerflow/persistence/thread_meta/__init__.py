@@ -5,9 +5,11 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from deerflow.persistence.thread_meta.base import (
+    PROJECT_FILTER_UNSET,
     THREAD_ARCHIVED_METADATA_KEY,
     THREAD_FOLDER_METADATA_KEY,
     THREAD_PINNED_METADATA_KEY,
+    THREAD_PROJECT_METADATA_KEY,
     THREAD_WORKFLOW_METADATA_KEY,
     InvalidMetadataFilterError,
     ThreadMetaStore,
@@ -24,9 +26,11 @@ if TYPE_CHECKING:
 __all__ = [
     "InvalidMetadataFilterError",
     "MemoryThreadMetaStore",
+    "PROJECT_FILTER_UNSET",
     "THREAD_FOLDER_METADATA_KEY",
     "THREAD_PINNED_METADATA_KEY",
     "THREAD_ARCHIVED_METADATA_KEY",
+    "THREAD_PROJECT_METADATA_KEY",
     "THREAD_WORKFLOW_METADATA_KEY",
     "ThreadMetaRepository",
     "ThreadMetaRow",

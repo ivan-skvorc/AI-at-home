@@ -8,11 +8,12 @@ in ``config.yaml`` so the models light up on first start with no manual editing.
 
     ANTHROPIC_API_KEY  -> direct Claude Fable 5.1 / Opus 5 / Opus 4.8 / Sonnet 5 /
                           Sonnet 4.6 / Haiku 4.5
-    OPENROUTER_API_KEY -> Claude Fable 5.1 / Grok 4.6 /
-                          GPT-5.6 Sol / GPT-5.3 Codex / MiniMax M3 /
-                          Qwen3.8 Max / Kimi K3 / Mistral Large 3 /
-                          Gemini 3.6 Flash / DeepSeek V4 Pro / GLM-5.3 /
-                          Llama 4 Maverick / Nemotron 3 Ultra (all via OpenRouter)
+    OPENROUTER_API_KEY -> Claude Fable 5.1 / Claude Opus 5 / Grok 4.6 /
+                          GPT-6 Astra / GPT-5.6 Sol / GPT-5.3 Codex /
+                          MiniMax M3 / Qwen3.8 Max / Kimi K3 /
+                          Mistral Large 3 / Gemini 3.6 Flash /
+                          DeepSeek V4 Pro / GLM-5.3 / Llama 4 Maverick /
+                          Nemotron 3 Ultra (all via OpenRouter)
 
 Every big-name lab that ships a first-party API also gets a "home" block enabled
 by that lab's own key, mirroring how Anthropic is handled — the lab's full lineup
