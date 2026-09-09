@@ -11,6 +11,92 @@ Newest first. Append a pass; never rewrite one. A dated line is what tells the
 next person whether the roster was checked last week or last year, and _which_
 providers that pass could actually reach.
 
+- **2026-09-09 — partial. Anthropic fully verified against the provider's own page;
+  every other provider unreachable and left exactly as shipped. Two prose fixes, no
+  price or roster edits.** Requested in words alongside the upstream-sync change cycle.
+
+  **Machine half clean.** `python3 scripts/audit_models.py` reports **no drift**: every
+  bundled slug it can check is still in its catalog and the two synced sources agree with
+  each other. The stale-fixture self-test
+  (`--catalog scripts/fixtures/model_audit_stale_catalog.json`) still surfaces all four
+  drift kinds plus the `new_candidate` shape — 6 findings. `python3
+  scripts/sync-api-key-models.py --dry-run` uncomments the blocks cleanly, and
+  `test_sync_api_key_models.py`, `test_setup_wizard.py`, `test_config_integrity.py`,
+  `test_audit_models.py`, `test_model_price_fields.py` and `test_pricing.py` are green —
+  **299 tests**.
+
+  **Anthropic block verified price by price (tier 1)** against
+  `platform.claude.com/docs/en/about-claude/pricing` (the docs.claude.com URL now 302s
+  there). All six bundled entries match exactly, base *and* cache-read:
+
+  | Model | Config | Provider page |
+  | ----- | ------ | ------------- |
+  | Claude Fable 5.1 | $10 / $50, cache hit $0.25 | $10 / $50, cache hit $0.25 |
+  | Claude Opus 5 | $5 / $25, cache hit $0.50 | $5 / $25, cache hit $0.50 |
+  | Claude Opus 4.8 | $5 / $25, cache hit $0.50 | $5 / $25, cache hit $0.50 |
+  | Claude Sonnet 5 | $2 / $10, cache hit $0.20 | $2 / $10, cache hit $0.20 |
+  | Claude Sonnet 4.6 | $3 / $15, cache hit $0.30 | $3 / $15, cache hit $0.30 |
+  | Claude Haiku 4.5 | $1 / $5, cache hit $0.10 | $1 / $5, cache hit $0.10 |
+
+  All six slugs are current and none is on the deprecation list. Fable 5.1's 0.025x
+  cache-read multiplier (the one model that does not use the standard 0.1x) is still the
+  page's own footnote, and the config still carries the literal $0.25 rather than a derived
+  one. Sonnet 5's window is settled, as recorded on 2026-09-07 — the page states the $2/$10
+  launch rate "is now the standard price" and the September increase "will not occur".
+
+  **Two roster decisions, both to change nothing.** The page now lists **Claude Opus 4.7**
+  between the bundled 4.6-era and 4.8 entries; the bundle rule is *last 4.x + current 5*,
+  which 4.8 already satisfies, so 4.7 stays out. **Claude Mythos 5.1** has appeared beside
+  Mythos 5; both are marked limited availability (invitation-only via Glasswing), so a plain
+  `ANTHROPIC_API_KEY` cannot reach either — the same reason Mythos 5 was declined on
+  2026-08-20, recorded again here so the next pass does not re-litigate it.
+
+  **Every other provider is tier 3: unreachable, so left exactly as shipped.** This
+  environment's egress proxy refuses `openrouter.ai` (403 on CONNECT) and every first-party
+  pricing page tried — x.ai, platform.openai.com, ai.google.dev, api-docs.deepseek.com,
+  mistral.ai, platform.moonshot.ai, alibabacloud.com model-studio, platform.minimaxi.com,
+  docs.z.ai. The audit correctly listed openrouter as *skipped* rather than as drift.
+
+  **Tier 2 was unavailable, and that is the finding worth recording.** Exactly **one**
+  secondary source was reachable (LiteLLM's `model_prices_and_context_window.json` on
+  raw.githubusercontent.com), and tier 2 requires **two or more independent sources agreeing
+  exactly**. One source cannot authorise a price, so nothing was changed from it. It is
+  recorded here because a single source still **directs** the next pass: diffing the whole
+  bundle against it flags **seven** entries, and these are where an unrestricted pass should
+  start. Two have a plausible innocent explanation; the rest do not, and none was acted on.
+
+  | Entry | Slug | Config | That one source | Note |
+  | ----- | ---- | ------ | --------------- | ---- |
+  | `openrouter-deepseek-v4-pro` | `deepseek/deepseek-v4-pro` | $0.44 / $0.87 | $1.32 / $3.96 | **Largest gap (~3x/4.5x).** Check first — if the source is right, this entry under-reports its spend badly. |
+  | `openai-gpt-5.6-sol` | `gpt-5.6-sol` | $5.0 / $30.0 | $4.0 / $20.0 | Home block. Note the stale-catalog fixture deliberately drifts this same entry, so do not read the fixture as evidence either way. |
+  | `openrouter-nemotron-3-ultra` | `nvidia/nemotron-3-ultra-550b-a55b` | $0.5 / $2.2 | $0.625 / $3.125 | |
+  | `openrouter-llama-4-maverick` | `meta-llama/llama-4-maverick` | $0.2 / $0.8 | $0.2 / $0.696 | Output only; input agrees. |
+  | `openrouter-minimax-m3` | `minimax/minimax-m3` | $0.6 / $2.4 | $0.3 / $1.2 | Probably the live promo rather than the list price — the config carries the standard rate with a separate `discount:` block, which is the correct shape. Confirm the promo is still running on OpenRouter's promotions page. |
+  | `openrouter-gemini-3.6-flash` | `google/gemini-3.6-flash` | $1.5 / $7.5 | $0.75 / $3.75 | Same ratio as the Gemini intro window described in the 2026-09-02 entry; the config deliberately carries the post-window standard rate. |
+  | `google-gemini-3.6-flash` | `gemini-3.6-flash` | $1.5 / $7.5 | $0.75 / $3.75 | The home half of the row above. |
+
+  **Roster discovery (step 2) could not run for any lab but Anthropic** — it starts from the
+  OpenRouter catalog, which is blocked. Nothing here is evidence that the non-Anthropic
+  roster is current, only that it is self-consistent.
+
+  **Two prose copies fixed — both in the set no test reads.**
+
+  - `scripts/sync-api-key-models.py`'s `OPENROUTER_API_KEY` docstring line listed 13 of the
+    15 routed models, missing **Claude Opus 5** and **GPT-6 Astra** — precisely the second
+    half of each paired lab. `config.example.yaml`'s QUICK START comment had both, so the
+    two prose copies had drifted apart, and the one that was wrong is the one a user reads
+    while wondering what a key buys them. `TestFirstPartyKeyCoverage::test_the_paired_labs_route_both_halves`
+    pins the *config*, which is why this stayed green while being wrong.
+  - `README.md`'s §2 bullet still described OpenRouter as "a one-flagship-per-lab set",
+    which has not been true since the paired-lab rule was written down. It now names both
+    pairs.
+
+  **Still owed to the next unrestricted pass**, in priority order: the seven rows in the
+  table above, starting with DeepSeek V4 Pro; MiniMax M3's promo status; and the four labs
+  rolled forward from corroborated sources on 2026-08-20 (Grok 4.6, Qwen3.8 Max, GLM-5.3,
+  Mistral Medium 3.5), which remain un-verified against a provider page — GLM-5.3's price
+  is still the most provisional of them.
+
 - **2026-09-07 — partial. Anthropic fully verified against the provider's own page;
   every other provider unreachable. No roster or price edits.**
   Requested in words alongside a code change cycle.

@@ -25,6 +25,11 @@ export const THREAD_PINNED_METADATA_KEY = "deerflow_pinned";
 // rides on each thread's own metadata.
 export const THREAD_FOLDER_METADATA_KEY = "deerflow_folder";
 
+// Keep in sync with frontend runtime thread utils and the backend thread_meta
+// constant; the mock must mirror the same metadata contract for project
+// membership.
+export const THREAD_PROJECT_METADATA_KEY = "deerflow_project_id";
+
 const MOCK_AUTH_USER = {
   id: "default",
   email: "default@test.local",
@@ -870,6 +875,7 @@ export function mockLangGraphAPI(page: Page, options?: MockAPIOptions) {
       const body = route.request().postDataJSON() as {
         thread_id?: string;
         metadata?: Record<string, unknown>;
+        project_id?: string;
       };
       // Two callers create a thread up front: the sidecar, and an edit of the
       // very first user message (which has no assistant turn to branch from).
@@ -878,11 +884,37 @@ export function mockLangGraphAPI(page: Page, options?: MockAPIOptions) {
       const threadId =
         body.thread_id ??
         (isSidecar ? MOCK_SIDECAR_THREAD_ID : MOCK_THREAD_ID_3);
+      // The backend stamps `metadata.deerflow_project_id` from the assigned
+      // project_id column; mirror that so project membership is readable.
+      const metadata = {
+        ...body.metadata,
+        ...(body.project_id
+          ? { [THREAD_PROJECT_METADATA_KEY]: body.project_id }
+          : {}),
+      };
+      // Mirror the backend idempotency contract: a repeat POST for an
+      // existing thread_id returns the record unchanged (goal and other
+      // state intact) instead of resetting it.
+      const existing = threads.find((thread) => thread.thread_id === threadId);
+      if (existing) {
+        return route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({
+            thread_id: threadId,
+            created_at: existing.updated_at ?? new Date().toISOString(),
+            updated_at: existing.updated_at ?? new Date().toISOString(),
+            metadata: existing.metadata ?? {},
+            status: "idle",
+            values: {},
+          }),
+        });
+      }
       upsertThread({
         thread_id: threadId,
         title: isSidecar ? "Side chat" : "New Chat",
         updated_at: new Date().toISOString(),
-        metadata: body.metadata ?? {},
+        metadata: metadata,
         messages: [],
       });
       return route.fulfill({
@@ -892,7 +924,7 @@ export function mockLangGraphAPI(page: Page, options?: MockAPIOptions) {
           thread_id: threadId,
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
-          metadata: body.metadata ?? {},
+          metadata: metadata,
           status: "idle",
           values: {},
         }),
@@ -947,6 +979,46 @@ export function mockLangGraphAPI(page: Page, options?: MockAPIOptions) {
       threads = threads.filter((thread) => thread.thread_id !== threadId);
       return route.fulfill({
         status: 204,
+      });
+    }
+    return route.fallback();
+  });
+
+  // Projects API — Phase 1 default-empty mocks so existing specs are
+  // unaffected; project-aware specs register their own routes on top.
+  void page.route(/\/api\/projects(\?|$)/, (route) => {
+    if (route.request().method() === "GET") {
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ projects: [] }),
+      });
+    }
+    return route.fallback();
+  });
+
+  void page.route(/\/api\/threads\/[^/]+\/move$/, (route) => {
+    if (route.request().method() === "POST") {
+      const threadId = decodeURIComponent(
+        new URL(route.request().url()).pathname.split("/").at(-2) ?? "",
+      );
+      const body = route.request().postDataJSON() as {
+        project_id?: string | null;
+      };
+      const updated = patchThreadMetadata(threadId, {
+        [THREAD_PROJECT_METADATA_KEY]: body.project_id ?? null,
+      });
+      if (!updated) {
+        return route.fulfill({
+          status: 404,
+          contentType: "application/json",
+          body: JSON.stringify({ detail: `Thread ${threadId} not found` }),
+        });
+      }
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify(threadSearchResult(updated)),
       });
     }
     return route.fallback();

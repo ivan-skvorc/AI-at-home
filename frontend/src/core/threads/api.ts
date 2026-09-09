@@ -127,6 +127,10 @@ export async function branchThreadFromTurn(
 }
 
 export type CreateThreadInput = {
+  /** Pre-chosen id. Omit to let the Gateway mint one. */
+  threadId?: string;
+  /** Project to assign the thread to at creation time. */
+  projectId?: string | null;
   metadata?: Record<string, unknown>;
   assistantId?: string | null;
 };
@@ -134,21 +138,26 @@ export type CreateThreadInput = {
 /**
  * Create an empty thread up front.
  *
- * Editing the *first* user message has no assistant turn to branch from, so the
- * version it produces starts from a genuinely empty conversation. Going through
- * the REST endpoint rather than the "new chat" route keeps the flow identical to
- * every other turn: the id exists before the edit navigates, so the version
- * metadata and the replayed message can both be addressed to it.
+ * Two callers need this, and one function serves both because they differ only
+ * in which fields they send. Editing the *first* user message has no assistant
+ * turn to branch from, so the version it produces starts from a genuinely empty
+ * conversation; going through the REST endpoint rather than the "new chat" route
+ * keeps the flow identical to every other turn, since the id exists before the
+ * edit navigates. A project-scoped new chat pre-creates with its `projectId` so
+ * membership is on the record before the first run, rather than racing the
+ * sidebar through run metadata.
  */
 export async function createThread(
   input: CreateThreadInput = {},
-): Promise<{ thread_id: string }> {
+): Promise<AgentThread> {
   const response = await fetchWithAuth(`${getBackendBaseURL()}/api/threads`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
+      ...(input.threadId ? { thread_id: input.threadId } : {}),
+      ...(input.projectId ? { project_id: input.projectId } : {}),
       ...(input.metadata ? { metadata: input.metadata } : {}),
       ...(input.assistantId ? { assistant_id: input.assistantId } : {}),
     }),
@@ -160,7 +169,7 @@ export async function createThread(
     );
   }
 
-  return (await response.json()) as { thread_id: string };
+  return (await response.json()) as AgentThread;
 }
 
 export async function patchThreadMetadata(
@@ -181,6 +190,30 @@ export async function patchThreadMetadata(
   if (!response.ok) {
     throw new Error(
       await readThreadAPIError(response, "Failed to update conversation."),
+    );
+  }
+
+  return (await response.json()) as ThreadMetadataPatchResponse;
+}
+
+export async function moveThreadToProject(
+  threadId: string,
+  projectId: string | null,
+): Promise<ThreadMetadataPatchResponse> {
+  const response = await fetchWithAuth(
+    `${getBackendBaseURL()}/api/threads/${encodeURIComponent(threadId)}/move`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ project_id: projectId }),
+    },
+  );
+
+  if (!response.ok) {
+    throw new Error(
+      await readThreadAPIError(response, "Failed to move conversation."),
     );
   }
 
