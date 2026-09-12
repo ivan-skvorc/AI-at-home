@@ -1734,7 +1734,6 @@ export function useThreadStream({
     hasMore: hasMoreHistory,
     loadMore: loadMoreHistory,
     loading: isHistoryLoading,
-    settled: isHistorySettled,
   } = useThreadHistory(onStreamThreadId ?? "", {
     enabled: !isMock,
     pendingSupersededRunIds,
@@ -2863,7 +2862,6 @@ export function useThreadStream({
     editAndRegenerateMessage,
     isUploading,
     isHistoryLoading,
-    isHistorySettled,
     hasMoreHistory,
     loadMoreHistory,
   } as const;
@@ -2975,13 +2973,6 @@ export function useThreadHistory(
   return {
     messages,
     loading: historyQuery.isLoading || historyQuery.isFetchingNextPage,
-    // `loading` is `isLoading`, which is false for the render between mount and
-    // the fetch actually starting — fine for a spinner, wrong as a "history is
-    // in hand" gate. `settled` is true only once the first page has resolved
-    // (or failed), which is what a caller that must not submit before the
-    // thread's own history exists has to wait for. See the fork's edit replay
-    // in `use-edit-versions.ts`.
-    settled: enabled && Boolean(threadId) ? !historyQuery.isPending : true,
     hasMore: Boolean(historyQuery.hasNextPage),
     loadMore: historyQuery.fetchNextPage,
   };

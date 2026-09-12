@@ -38,11 +38,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     form and the `use_previous_response_id` example without bumping it, so
     `make config-upgrade` would never have delivered them to an existing install.
     Both chart copies are bumped with it.
-- **frontend:** The fork's edit replay waits for the branched thread's history to
-  have **settled**, not merely to be "not loading". `!isHistoryLoading` is false
-  for the render between mount and the fetch starting, so the replay could submit
-  into a thread whose inherited turns had not arrived. `useThreadHistory` now also
-  reports `settled`, and both edit-replay call sites gate on it.
 - **repo:** **Merged `bytedance/deer-flow@a3848ef`** (27 commits) into the fork.
   Upstream brings project workspaces with scoped chats and thread membership, a
   bounded CSV/TSV artifact table preview, idempotent thread runs, effective route
@@ -73,20 +68,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   one flagship per lab and omitted Claude Opus 5 and GPT-6 Astra — the second half of
   each paired lab — which no test reads. Recorded in the 2026-09-09 model-audit pass.
 
-### Known issue
-- **frontend:** **Gaslight mode's prompt-edit replay (§18) renders its turns out of
-  order after this merge**, and the version switcher does not appear:
-  `frontend/tests/e2e/edit-message-versions.spec.ts:34` fails. The cause is
-  upstream's new trusted-position ordering (`core/threads/message-order.ts`,
-  upstream #5293 / #4892): the replay submits into the freshly branched thread
-  before its REST history lands, so `LocalTurnAnchor.preSubmitMaxSeq` is
-  `undefined`, `getConfirmedPreSubmitHistoryIdentities` admits nothing, and
-  `restoreLocalTurnMessageOrder` leaves the inherited turns *after* the new human
-  instead of before it. The `settled` gate above narrows that window but does not
-  close it. The fix belongs in the anchor/confirmation logic and is deliberately
-  left out of this merge rather than guessed at in upstream's ordering core; the
-  checklist row for §18 stays, failing, until it lands. Verified against
-  `origin/main` on the same commit and browser build, where the spec passes 4/4.
+- **tests(e2e):** **The mocked message feed stamps one `run_id` per turn, not per
+  thread.** `run_id` on a feed row is a *turn* identity to its consumers — the
+  gateway seeds a branch's inherited history as `branch-seed-{thread}-{n}`, one id
+  per turn, and abandoned a single shared id precisely because consumers read it
+  that way (#4458). The e2e mock stamped `run-{thread}` on every row, so every
+  message in a mocked thread looked like output of one run. Nothing noticed until
+  upstream's new ordering repair began using `run_id` to tell the current turn's
+  steps from earlier ones: a branched thread's inherited answer then read as
+  output of the turn being replayed into it and was reordered *below* that turn's
+  human message, which silently removed Gaslight mode's version switcher (§18).
+  The fixture now mirrors the backend's contract, and
+  `edit-message-versions.spec.ts` asserts the rendered order directly instead of
+  inferring it from the missing switcher, so a regression names itself.
 
 ### Added
 - **frontend/backend:** **Auto rename in the chat header.** A conversation can now

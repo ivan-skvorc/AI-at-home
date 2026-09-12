@@ -118,7 +118,6 @@ export default function AgentChatPage() {
     regenerateMessage,
     isUploading,
     isHistoryLoading,
-    isHistorySettled,
     hasMoreHistory,
     loadMoreHistory,
   } = useThreadStream({
@@ -252,8 +251,7 @@ export default function AgentChatPage() {
   });
   usePendingEditSend({
     threadId,
-    // Settled, not merely "not loading": see the same gate in `chat-instance.tsx`.
-    enabled: editVersionsEnabled && isHistorySettled,
+    enabled: editVersionsEnabled && !isHistoryLoading,
     sendMessage,
   });
 

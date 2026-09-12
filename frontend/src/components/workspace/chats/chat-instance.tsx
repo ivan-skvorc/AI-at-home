@@ -270,7 +270,6 @@ function ChatInstanceContent({
     regenerateMessage,
     isUploading,
     isHistoryLoading,
-    isHistorySettled,
     hasMoreHistory,
     loadMoreHistory,
   } = useThreadStream({
@@ -477,11 +476,7 @@ function ChatInstanceContent({
     threadId,
     // Only the visible slot replays: a background tab must not start a run the
     // user cannot see, and the "new" slot has no version thread to replay into.
-    // `isHistorySettled`, not `!isHistoryLoading`: the branched thread's own
-    // history must be *in hand* before the replay submits, or the merged view
-    // orders the new human ahead of the turns it was branched from and the
-    // version switcher never finds its anchor (FORK.md §18).
-    enabled: editVersionsEnabled && isActive && isHistorySettled,
+    enabled: editVersionsEnabled && isActive && !isHistoryLoading,
     sendMessage,
   });
 

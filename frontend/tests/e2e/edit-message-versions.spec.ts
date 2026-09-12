@@ -68,6 +68,22 @@ test.describe("Edit a message into a hidden version", () => {
     await expect(page.getByText("Second question, rephrased")).toBeVisible();
     await expect(page.getByText("Second answer")).toHaveCount(0);
 
+    // The inherited turn keeps its place ABOVE the replayed one. This is the
+    // half that fails silently: the switcher below simply stops rendering,
+    // because its anchor is the edited turn's preceding assistant message and
+    // an answer that has been reordered below the human is no longer that.
+    // Asserted on the rendered order rather than inferred from the missing
+    // switcher, so a regression here names itself.
+    await expect(
+      page.locator("[data-message-id]").filter({ hasText: /First answer/ }),
+    ).toHaveCount(1);
+    const renderedOrder = await page
+      .locator("[data-message-id]")
+      .filter({ hasText: /First answer|Second question, rephrased/ })
+      .allInnerTexts();
+    expect(renderedOrder[0]).toContain("First answer");
+    expect(renderedOrder[1]).toContain("Second question, rephrased");
+
     // One conversation, one sidebar entry — and it now opens the edited version.
     await expect(
       page.locator(`a[href="/workspace/chats/${MOCK_THREAD_ID_2}"]`),

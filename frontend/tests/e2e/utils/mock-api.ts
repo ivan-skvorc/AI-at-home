@@ -200,6 +200,44 @@ function mockMessageRunId(message: unknown, fallback: string) {
   return fallback;
 }
 
+function messageTypeOf(message: unknown): string | undefined {
+  if (typeof message !== "object" || message === null) {
+    return undefined;
+  }
+  const type = Reflect.get(message, "type");
+  return typeof type === "string" ? type : undefined;
+}
+
+/**
+ * Assign one fallback run id per *turn*, the way the real feed does.
+ *
+ * `run_id` on a feed row is a turn identity to its consumers, not a provenance
+ * tag: the gateway seeds a branch's inherited history as
+ * `branch-seed-{thread}-{n}`, one id per turn (a turn starting at every
+ * persisted human message), and gave up on a single shared id precisely
+ * because consumers read it that way — see `_build_history_seed_events` in
+ * `backend/packages/harness/deerflow/runtime/journal.py`.
+ *
+ * Stamping one id for a whole thread made every message in a mocked thread
+ * look like output of the same run, which no real feed produces. The frontend
+ * uses run_id to tell this turn's steps from earlier ones when repairing
+ * message order (`restoreLocalTurnMessageOrder`), so the flat id made a
+ * branched thread's inherited answer read as output of the turn being
+ * replayed into it, and it was reordered below that turn's human message.
+ * A message that carries its own `run_id` still keeps it.
+ */
+function mockFeedRunIds(messages: readonly unknown[], threadId: string) {
+  let turnIndex = -1;
+  let sawMessage = false;
+  return messages.map((message) => {
+    if (messageTypeOf(message) === "human" || !sawMessage) {
+      turnIndex += 1;
+    }
+    sawMessage = true;
+    return mockMessageRunId(message, `run-${threadId}-${turnIndex}`);
+  });
+}
+
 function visibleRunInputMessages(route: Route) {
   try {
     const body = route.request().postDataJSON() as {
@@ -1401,15 +1439,17 @@ export function mockLangGraphAPI(page: Page, options?: MockAPIOptions) {
       const matchingThread = threads.find((t) =>
         url.includes(`/api/threads/${t.thread_id}/messages/page`),
       );
+      const feedMessages = matchingThread?.messages ?? [];
+      const feedRunIds = mockFeedRunIds(
+        feedMessages,
+        matchingThread?.thread_id ?? "unknown",
+      );
       return route.fulfill({
         status: 200,
         contentType: "application/json",
         body: JSON.stringify({
-          data: (matchingThread?.messages ?? []).map((message, index) => ({
-            run_id: mockMessageRunId(
-              message,
-              `run-${matchingThread?.thread_id ?? "unknown"}`,
-            ),
+          data: feedMessages.map((message, index) => ({
+            run_id: feedRunIds[index],
             seq: index + 1,
             content: message,
             metadata: { caller: "lead_agent" },
