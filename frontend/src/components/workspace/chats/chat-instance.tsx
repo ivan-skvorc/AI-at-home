@@ -37,6 +37,8 @@ import { TodoList } from "@/components/workspace/todo-list";
 import { TokenUsageIndicator } from "@/components/workspace/token-usage-indicator";
 import { useActiveGoal } from "@/components/workspace/use-active-goal";
 import { Welcome } from "@/components/workspace/welcome";
+import { useAuth } from "@/core/auth/AuthProvider";
+import { hasPermission, PERMISSIONS } from "@/core/auth/permissions";
 import { useBrowserControlEnabled } from "@/core/features";
 import { useI18n } from "@/core/i18n/hooks";
 import {
@@ -120,6 +122,8 @@ function ChatInstanceContent({
   onThreadStarted,
 }: ChatInstanceProps) {
   const { t } = useI18n();
+  const { user } = useAuth();
+  const canStopStreaming = hasPermission(user, PERMISSIONS.RUNS_CANCEL);
   const router = useRouter();
   const searchParams = useSearchParams();
   // Project-scoped new chat: `/workspace/chats/new?project={id}` assigns the
@@ -266,6 +270,7 @@ function ChatInstanceContent({
     regenerateMessage,
     isUploading,
     isHistoryLoading,
+    isHistorySettled,
     hasMoreHistory,
     loadMoreHistory,
   } = useThreadStream({
@@ -472,7 +477,11 @@ function ChatInstanceContent({
     threadId,
     // Only the visible slot replays: a background tab must not start a run the
     // user cannot see, and the "new" slot has no version thread to replay into.
-    enabled: editVersionsEnabled && isActive && !isHistoryLoading,
+    // `isHistorySettled`, not `!isHistoryLoading`: the branched thread's own
+    // history must be *in hand* before the replay submits, or the merged view
+    // orders the new human ahead of the turns it was branched from and the
+    // version switcher never finds its anchor (FORK.md §18).
+    enabled: editVersionsEnabled && isActive && isHistorySettled,
     sendMessage,
   });
 
@@ -702,6 +711,7 @@ function ChatInstanceContent({
                       onPrepareThread={ensureProjectThread}
                       onSubmit={handleSubmit}
                       onStop={handleStop}
+                      canStopStreaming={canStopStreaming}
                     />
                   ) : (
                     <div

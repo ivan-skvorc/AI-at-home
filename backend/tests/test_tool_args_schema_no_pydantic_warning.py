@@ -242,7 +242,7 @@ def test_task_tool_description_is_optional_but_discoverable() -> None:
     # `model` is the fork's per-call subagent override (FORK.md §22); it sits
     # between the required pair and the optional tail, and is listed here rather
     # than tolerated so an upstream change that drops it fails loudly.
-    assert list(parameters["properties"]) == ["prompt", "subagent_type", "model", "acceptance_criteria", "description"]
+    assert list(parameters["properties"]) == ["prompt", "subagent_type", "model", "acceptance_criteria", "description", "context_mode"]
     assert parameters["properties"]["description"]["description"]
 
     validated = task_tool.tool_call_schema.model_validate({"prompt": "go", "subagent_type": "general-purpose"})
@@ -253,7 +253,7 @@ def test_list_uploaded_files_model_schema_excludes_injected_runtime() -> None:
     """The model-facing schema must not expose ToolRuntime internals."""
     parameters = convert_to_openai_tool(list_uploaded_files)["function"]["parameters"]
 
-    assert set(parameters["properties"]) == {"include_outline", "max_results"}
+    assert set(parameters["properties"]) == {"include_outline", "max_results", "query", "extensions"}
 
 
 @pytest.mark.parametrize("tool_obj", [case[0] for case in _TOOL_CASES], ids=[case[0].name for case in _TOOL_CASES])

@@ -11,6 +11,91 @@ Newest first. Append a pass; never rewrite one. A dated line is what tells the
 next person whether the roster was checked last week or last year, and _which_
 providers that pass could actually reach.
 
+- **2026-09-12 — partial. Anthropic re-verified against the provider's own page;
+  every other provider's page unreachable, ten labs' standard rates corroborated
+  unchanged, no price or roster edits.** Requested in words alongside the
+  upstream-sync change cycle.
+
+  **Machine half clean.** `python3 scripts/audit_models.py` reports **no drift**: every
+  bundled slug it can check is still in its catalog and the two synced sources agree.
+  The stale-fixture self-test
+  (`--catalog scripts/fixtures/model_audit_stale_catalog.json`) still surfaces all four
+  drift kinds plus `new_candidate` — 6 findings. `python3
+  scripts/sync-api-key-models.py --dry-run` uncomments the blocks cleanly, and
+  `test_sync_api_key_models.py`, `test_setup_wizard.py`, `test_config_integrity.py`,
+  `test_audit_models.py`, `test_model_price_fields.py` and `test_pricing.py` are green —
+  **299 tests**. No price sits in a `display_name`
+  (`grep -nE 'display_name:.*\(\$[0-9]'` is empty on both synced sources).
+
+  **Anthropic verified price by price (tier 1)** against
+  `platform.claude.com/docs/en/about-claude/pricing`. All six bundled entries still match
+  exactly, base *and* cache-read: Fable 5.1 $10/$50 (hit $0.25), Opus 5 $5/$25 (hit
+  $0.50), Opus 4.8 $5/$25 (hit $0.50), Sonnet 5 $2/$10 (hit $0.20), Sonnet 4.6 $3/$15
+  (hit $0.30), Haiku 4.5 $1/$5 (hit $0.10). The page also now states in its own words
+  that Sonnet 5's $2/$10 introductory rate **is** the standard price and the September
+  increase will not happen — which is what `config.example.yaml`'s inline comment
+  already says.
+
+  **Every other provider's own page is unreachable from this environment** — the egress
+  proxy answers 403 on CONNECT for `openrouter.ai`, `openai.com`,
+  `platform.openai.com`, `ai.google.dev`, `x.ai`, `docs.x.ai`, `api-docs.deepseek.com`,
+  `mistral.ai`, `platform.moonshot.ai`, `alibabacloud.com`, `platform.minimaxi.com` and
+  `docs.z.ai`. `audit_models.py` therefore lists openrouter as *skipped*, correctly and
+  not as drift. Tier 2 **was** available this time (web search reaches price trackers
+  even where the provider host does not), and every standard rate it returned matches
+  what is already shipped, so **nothing was edited**:
+
+  | Entry | Shipped | Corroborated |
+  | ----- | ------- | ------------ |
+  | GPT-6 Astra | $10 / $50 | $10 / $50 |
+  | GPT-5.6 Sol | $5 / $30 | $5 / $30 standard |
+  | Grok 4.6 | $2 / $6 | $2 / $6 base tier |
+  | Gemini 3.6 Flash | $1.5 / $7.5 | $1.5 / $7.5 standard |
+  | DeepSeek V4 Pro | $1.32 / $3.96 | $1.32 / $3.96 peak |
+  | Kimi K3 | $3 / $15 | $3 / $15 |
+  | Qwen3.8 Max | $2 / $6 | $2 / $6 |
+  | GLM-5.3 | $1.4 / $4.4 | $1.4 / $4.4 |
+  | Mistral Large 3 | $0.5 / $1.5 | $0.5 / $1.5 |
+  | MiniMax M3 | $0.6 / $2.4 | $0.6 / $2.4 standard |
+  | Nemotron 3 Ultra (OR) | $0.5 / $2.2 | $0.5 / $2.2 |
+
+  That closes the debt the 2026-08-22 pass left open: **Grok 4.6, Qwen3.8 Max, GLM-5.3
+  and Mistral Medium 3.5 were all rolled forward on 2026-08-20 from corroborated
+  sources and are now corroborated a second time, independently, at the same figures.**
+  They are still not tier-1 verified; the labs' own pages remain unreachable.
+
+  **Three live promotions were found and deliberately not shipped.** A discount never
+  qualifies for tier 2 (*Where a price may come from*, condition 3), and spend bills at
+  the standard rate either way (§17), so each is recorded here instead so the next
+  unrestricted pass can read it off the provider's own promotions page:
+  - **Gemini 3.6 Flash** — $0.75/$3.75 through 2026-12-31, reverting to the shipped
+    $1.5/$7.5 on 2027-01-01. This one has an announced end date, so it is the strongest
+    candidate for a `discount:` block **with** an `until:` once verified.
+  - **GPT-5.6 Sol** — $4/$20, described as running at least through 2026-11-21.
+  - **MiniMax M3** — a "permanent 50% off" taking $0.6/$2.4 to $0.3/$1.2 on MiniMax's
+    own platform. Note this is *not* the OpenRouter promotion the bundle already carries
+    on `openrouter-minimax-m3` ($0.24/$0.96, no `until:`); one tracker quoted
+    OpenRouter's rate as $0.23/$0.96 rather than $0.24. A single disagreeing source is a
+    stop, not an edit — the block was left exactly as shipped and this is the first
+    thing to check next pass.
+
+  **Discovery (step 2) found four candidates and shipped none**, for the same reason:
+  a new entry needs a *verified* slug, and no provider catalog is reachable to confirm
+  one. Shipping a model id that 404s at runtime is worse than a roster that is two weeks
+  behind. Owed to the next unrestricted pass, in priority order:
+  - **Gemini 3.8 Flash** (GA 2026-09-02) — a straight roll-forward of the bundled
+    Gemini 3.6 Flash, home block *and* the routed OpenRouter twin.
+  - **DeepSeek V4.1 Flash** (2026-09-10) — rolls forward `deepseek-v4-flash`.
+  - **GLM 5.3 Flash** (z-ai) — reported as the **second** most-used model on
+    OpenRouter by weekly tokens; by the *acclaimed smaller sibling* rule this is a
+    candidate beside GLM-5.3, not a replacement for it.
+  - **Xiaomi MiMo-V2.5 and Tencent Hy3** — two labs the bundle does not carry at all,
+    both reported in OpenRouter's weekly top five. That is the trigger for an
+    OpenRouter entry, and a home block if either ships a public API.
+
+  Nothing here is evidence that the roster is current — only that every figure it
+  already ships is still the standard rate at least two independent sources state.
+
 - **2026-09-09 — partial. Anthropic fully verified against the provider's own page;
   every other provider unreachable and left exactly as shipped. Two prose fixes, no
   price or roster edits.** Requested in words alongside the upstream-sync change cycle.

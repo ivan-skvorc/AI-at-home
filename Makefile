@@ -1,6 +1,6 @@
 # DeerFlow - Unified Development Environment
 
-.PHONY: help config config-upgrade check check-agent-guidance install extension-install extension-list extension-enable extension-disable extension-remove setup doctor support-bundle detect-thread-boundaries detect-blocking-io backup restore dev dev-daemon start start-daemon nginx stop up up-start down clean docker-init docker-start docker-stop docker-logs docker-logs-frontend docker-logs-gateway docker-logs-redis searxng searxng-stop comfy-up comfy-down comfy-logs comfy-models comfy-model-add sandbox-up sandbox-down sandbox-logs sandbox-enable sandbox-disable setup-sandbox fetch-browser auto-update auto-update-install auto-update-uninstall
+.PHONY: help config config-upgrade check check-agent-guidance install extension-install extension-upgrade extension-list extension-enable extension-disable extension-remove setup doctor support-bundle detect-thread-boundaries detect-blocking-io backup restore dev dev-daemon start start-daemon nginx stop up up-start down clean docker-init docker-start docker-stop docker-logs docker-logs-frontend docker-logs-gateway docker-logs-redis searxng searxng-stop comfy-up comfy-down comfy-logs comfy-models comfy-model-add sandbox-up sandbox-down sandbox-logs sandbox-enable sandbox-disable setup-sandbox fetch-browser auto-update auto-update-install auto-update-uninstall
 
 # docker compose shim: prefer the v2 plugin, fall back to legacy docker-compose.
 DOCKER_COMPOSE ?= docker compose
@@ -41,6 +41,7 @@ help:
 	@echo "  make detect-blocking-io        - Inventory blocking IO that may block the backend event loop"
 	@echo "  make install         - Install all dependencies (frontend + backend + pre-commit hooks)"
 	@echo "  make extension-install SOURCE=... - Install and enable a trusted Python extension"
+	@echo "  make extension-upgrade SOURCE=... - Replace an installed extension and keep its config"
 	@echo "  make extension-list              - List configured Python extensions"
 	@echo "  make extension-enable NAME=...   - Enable an installed extension"
 	@echo "  make extension-disable NAME=...  - Disable an extension without uninstalling it"
@@ -148,6 +149,11 @@ extension-install: export DEER_FLOW_EXTENSION_SOURCE := $(value SOURCE)
 extension-install:
 	$(if $(and $(filter command line,$(origin SOURCE)),$(strip $(value SOURCE))),,$(error usage: make extension-install SOURCE=<package|git-url|dir>))
 	@cd backend && uv run --frozen --no-group extensions deerflow extensions install --source-env __deerflow_extension_source__
+
+extension-upgrade: export DEER_FLOW_EXTENSION_SOURCE := $(value SOURCE)
+extension-upgrade:
+	$(if $(and $(filter command line,$(origin SOURCE)),$(strip $(value SOURCE))),,$(error usage: make extension-upgrade SOURCE=<package|git-url|dir>))
+	@cd backend && uv run --frozen --no-group extensions deerflow extensions upgrade --source-env __deerflow_extension_source__
 
 extension-list:
 	@cd backend && uv run --frozen --no-group extensions deerflow extensions list
