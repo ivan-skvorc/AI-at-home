@@ -48,6 +48,8 @@ import {
   DropdownMenuGroup,
   DropdownMenuLabel,
 } from "@/components/ui/dropdown-menu";
+import { useAuth } from "@/core/auth/AuthProvider";
+import { hasPermission, PERMISSIONS } from "@/core/auth/permissions";
 import { useI18n } from "@/core/i18n/hooks";
 import {
   buildHumanInputResponseText,
@@ -154,6 +156,8 @@ function promptMessageFiles(message: PromptInputMessage) {
 
 export function SidecarPanel({ className }: { className?: string }) {
   const { t } = useI18n();
+  const { user } = useAuth();
+  const canDeleteThreads = hasPermission(user, PERMISSIONS.THREADS_DELETE);
   const sidecar = useSidecar();
   const { thread: parentThread } = useParentThread();
   const [localSettings] = useLocalSettings();
@@ -547,7 +551,7 @@ export function SidecarPanel({ className }: { className?: string }) {
                 : t.sidecar.noContext}
           </div>
         </div>
-        {hasSidecarThread && (
+        {hasSidecarThread && canDeleteThreads && (
           <Tooltip content={t.sidecar.delete}>
             <Button
               aria-label={t.sidecar.delete}

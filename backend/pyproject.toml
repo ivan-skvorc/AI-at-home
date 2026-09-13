@@ -49,6 +49,7 @@ redis = ["deerflow-harness[redis]"]
 discord = ["discord.py>=2.7.0"]
 buzz = ["coincurve>=20.0.0"]
 monocle = ["deerflow-harness[monocle]"]
+ollama = ["deerflow-harness[ollama]"]
 browser = ["deerflow-harness[browser]"]
 # Local, key-less, JS-capable web_fetch backend (camoufox). This is the shipped
 # default in config.example.yaml, so scripts/detect_uv_extras.py auto-detects it

@@ -13,6 +13,7 @@ from deerflow.persistence.thread_meta.base import (
     THREAD_WORKFLOW_METADATA_KEY,
     InvalidMetadataFilterError,
     ThreadMetaStore,
+    ThreadOwnershipConflictError,
     is_valid_thread_workflow,
 )
 from deerflow.persistence.thread_meta.memory import MemoryThreadMetaStore
@@ -35,6 +36,7 @@ __all__ = [
     "ThreadMetaRepository",
     "ThreadMetaRow",
     "ThreadMetaStore",
+    "ThreadOwnershipConflictError",
     "is_valid_thread_workflow",
     "make_thread_store",
 ]

@@ -20,6 +20,9 @@ alternative runtime implementation.
 - Use fixed clocks and deterministic ordering for offline selection. Results
   must record the config, manifest, prompt, dataset, and git revisions used.
 
+`scripts/benchmark/context_snapshot/`: explicit `run-live` needs provider env
+vars; `summarize` and pytest are offline. See its README for the protocol.
+
 `scripts/benchmark/deermem_eviction/` evaluates the production
 `select_facts_for_capacity()` implementation used by DeerMem. It compares only
 the historical `confidence` policy and PR #4789's opt-in `hybrid-v1`; do not add

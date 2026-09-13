@@ -54,9 +54,11 @@ export type MockThread = {
 
 export type MockAgent = {
   name: string;
+  display_name?: string | null;
   description?: string;
   system_prompt?: string;
   tool_groups?: string[] | null;
+  skills?: string[] | null;
 };
 
 export type MockSkill = {
@@ -76,10 +78,11 @@ export type MockAPIOptions = {
     id: string;
     thread_id: string | null;
     context_mode?: "fresh_thread_per_run" | "reuse_thread";
+    assistant_id?: string | null;
     last_thread_id?: string | null;
     title: string;
     prompt: string;
-    schedule_type: "once" | "cron";
+    schedule_type: "once" | "cron" | "interval";
     schedule_spec: Record<string, unknown>;
     timezone: string;
     status:
@@ -195,6 +198,44 @@ function mockMessageRunId(message: unknown, fallback: string) {
     }
   }
   return fallback;
+}
+
+function messageTypeOf(message: unknown): string | undefined {
+  if (typeof message !== "object" || message === null) {
+    return undefined;
+  }
+  const type = Reflect.get(message, "type");
+  return typeof type === "string" ? type : undefined;
+}
+
+/**
+ * Assign one fallback run id per *turn*, the way the real feed does.
+ *
+ * `run_id` on a feed row is a turn identity to its consumers, not a provenance
+ * tag: the gateway seeds a branch's inherited history as
+ * `branch-seed-{thread}-{n}`, one id per turn (a turn starting at every
+ * persisted human message), and gave up on a single shared id precisely
+ * because consumers read it that way — see `_build_history_seed_events` in
+ * `backend/packages/harness/deerflow/runtime/journal.py`.
+ *
+ * Stamping one id for a whole thread made every message in a mocked thread
+ * look like output of the same run, which no real feed produces. The frontend
+ * uses run_id to tell this turn's steps from earlier ones when repairing
+ * message order (`restoreLocalTurnMessageOrder`), so the flat id made a
+ * branched thread's inherited answer read as output of the turn being
+ * replayed into it, and it was reordered below that turn's human message.
+ * A message that carries its own `run_id` still keeps it.
+ */
+function mockFeedRunIds(messages: readonly unknown[], threadId: string) {
+  let turnIndex = -1;
+  let sawMessage = false;
+  return messages.map((message) => {
+    if (messageTypeOf(message) === "human" || !sawMessage) {
+      turnIndex += 1;
+    }
+    sawMessage = true;
+    return mockMessageRunId(message, `run-${threadId}-${turnIndex}`);
+  });
 }
 
 function visibleRunInputMessages(route: Route) {
@@ -545,10 +586,14 @@ export function mockLangGraphAPI(page: Page, options?: MockAPIOptions) {
         context_mode:
           (payload.context_mode as "fresh_thread_per_run" | "reuse_thread") ??
           "fresh_thread_per_run",
+        assistant_id:
+          typeof payload.assistant_id === "string"
+            ? payload.assistant_id
+            : "lead_agent",
         last_thread_id: null,
         title,
         prompt,
-        schedule_type: payload.schedule_type as "once" | "cron",
+        schedule_type: payload.schedule_type as "once" | "cron" | "interval",
         schedule_spec: (payload.schedule_spec as Record<string, unknown>) ?? {},
         timezone,
         status: "enabled" as const,
@@ -731,15 +776,18 @@ export function mockLangGraphAPI(page: Page, options?: MockAPIOptions) {
     return route.fallback();
   });
 
-  void page.route("**/api/scheduled-tasks/*/runs", (route) => {
+  void page.route(/\/api\/scheduled-tasks\/[^/]+\/runs(?:\?|$)/, (route) => {
     if (route.request().method() === "GET") {
-      const taskId = decodeURIComponent(
-        new URL(route.request().url()).pathname.split("/").at(-2) ?? "",
-      );
+      const url = new URL(route.request().url());
+      const taskId = decodeURIComponent(url.pathname.split("/").at(-2) ?? "");
+      const offset = Number(url.searchParams.get("offset") ?? 0);
+      const limit = Number(url.searchParams.get("limit") ?? 50);
       return route.fulfill({
         status: 200,
         contentType: "application/json",
-        body: JSON.stringify(mutableTaskRuns[taskId] ?? []),
+        body: JSON.stringify(
+          (mutableTaskRuns[taskId] ?? []).slice(offset, offset + limit),
+        ),
       });
     }
     return route.fallback();
@@ -1174,6 +1222,71 @@ export function mockLangGraphAPI(page: Page, options?: MockAPIOptions) {
     return route.fallback();
   });
 
+  // Token usage — the chat header polls this per thread. Without a mock the
+  // request falls through to a gateway that is not running under Playwright,
+  // and a 401 there redirects the whole page to /login mid-test.
+  void page.route("**/api/threads/*/token-usage", (route) => {
+    if (route.request().method() === "GET") {
+      const threadId = /\/api\/threads\/([^/]+)\/token-usage/.exec(
+        route.request().url(),
+      )?.[1];
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          thread_id: threadId ?? "unknown",
+          total_tokens: 0,
+          total_input_tokens: 0,
+          total_output_tokens: 0,
+          total_runs: 0,
+          by_model: {},
+          by_caller: { lead_agent: 0, subagent: 0, middleware: 0 },
+          context_usage: null,
+        }),
+      });
+    }
+    return route.fallback();
+  });
+
+  // MCP background tasks — same fallthrough-to-401 problem as token-usage.
+  void page.route("**/api/threads/*/mcp-tasks*", (route) => {
+    if (route.request().method() === "GET") {
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify([]),
+      });
+    }
+    return route.fallback();
+  });
+
+  // Workspace changes — the run-scoped badge query. Unmocked it 401s against
+  // the absent gateway and the fetcher redirects the page to /login.
+  void page.route("**/api/threads/*/runs/*/workspace-changes*", (route) => {
+    if (route.request().method() === "GET") {
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          run_id: "mock-run",
+          thread_id: "mock-thread",
+          status: "success",
+          summary: {
+            created: 0,
+            modified: 0,
+            deleted: 0,
+            symlink_created: 0,
+            additions: 0,
+            deletions: 0,
+            truncated: false,
+          },
+          changes: [],
+        }),
+      });
+    }
+    return route.fallback();
+  });
+
   // Thread history — useStream fetches state history on mount
   void page.route("**/api/langgraph/threads/*/history", (route) => {
     const url = route.request().url();
@@ -1326,15 +1439,17 @@ export function mockLangGraphAPI(page: Page, options?: MockAPIOptions) {
       const matchingThread = threads.find((t) =>
         url.includes(`/api/threads/${t.thread_id}/messages/page`),
       );
+      const feedMessages = matchingThread?.messages ?? [];
+      const feedRunIds = mockFeedRunIds(
+        feedMessages,
+        matchingThread?.thread_id ?? "unknown",
+      );
       return route.fulfill({
         status: 200,
         contentType: "application/json",
         body: JSON.stringify({
-          data: (matchingThread?.messages ?? []).map((message, index) => ({
-            run_id: mockMessageRunId(
-              message,
-              `run-${matchingThread?.thread_id ?? "unknown"}`,
-            ),
+          data: feedMessages.map((message, index) => ({
+            run_id: feedRunIds[index],
             seq: index + 1,
             content: message,
             metadata: { caller: "lead_agent" },
