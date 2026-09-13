@@ -707,8 +707,22 @@ async def test_old_gateway_restarts_against_forward_postgres_revision(
         assert engine is not None
         assert await _database_revision(engine) == LOCAL_HEAD
         # The 0020 rollback binary allowlists canonical 0019 only, so model the
-        # audited window by stepping the schema back to that exact revision.
-        await asyncio.to_thread(alembic_command.downgrade, _get_alembic_config(engine, postgres_schema=schema), CANONICAL_INCARNATION_REVISION)
+        # audited window by building the schema at exactly that revision.
+        #
+        # Upstream downgrades head to it. That works on a linear chain and not
+        # here: this fork's tree branches at 0018 and is rejoined by two merge
+        # points, so `0022_merge_pricing_projects` is a *sibling* of the
+        # incarnation revision rather than an ancestor. Downgrading to the
+        # incarnation revision therefore parks the pricing branch at its merge
+        # point and leaves `alembic_version` holding two rows — which bootstrap
+        # fails closed on, so it is not a state a fork database can be in. Build
+        # the window the way this file's sqlite tests do instead
+        # (`_seed_canonical_0019`): upgrade a clean schema straight to the
+        # revision, which walks only upstream's lineage and stamps one row.
+        async with engine.begin() as conn:
+            await conn.execute(sa.text(f'DROP SCHEMA "{schema}" CASCADE'))
+            await conn.execute(sa.text(f'CREATE SCHEMA "{schema}"'))
+        await asyncio.to_thread(_upgrade, _get_alembic_config(engine, postgres_schema=schema), CANONICAL_INCARNATION_REVISION)
         assert await _database_revision(engine) == CANONICAL_INCARNATION_REVISION
 
         await close_engine()

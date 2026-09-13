@@ -37,7 +37,12 @@ branch's tip would otherwise read as being at head with the other branch's
 tables never created, which is a wrong schema that fails silently until a query
 hits it. The incarnation revision deliberately retains the exact id audited by
 the rollback-floor binary; Alembic orders revisions by `down_revision`, not by
-the numeric prefix.
+the numeric prefix. The branch also makes
+**`downgrade` to a mid-tree revision multi-headed**: a target on one lineage
+leaves the other parked at its own tip, so `alembic_version` ends up with two
+rows and bootstrap fails closed. Build a schema at a specific past revision by
+upgrading a clean database to it, never by downgrading head — see
+`tests/test_persistence_forward_revision_compat.py`, which does exactly that.
 
 The deployed `0020_threads_meta_project_id` rollback-floor binary knows none of
 `0021_batch_acceptance`, `0019_thread_incarnations`, or

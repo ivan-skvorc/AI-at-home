@@ -68,6 +68,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   one flagship per lab and omitted Claude Opus 5 and GPT-6 Astra — the second half of
   each paired lab — which no test reads. Recorded in the 2026-09-09 model-audit pass.
 
+- **tests:** **The Postgres forward-revision test builds its audited window by
+  upgrading a clean schema, not by downgrading head.** This fork's migration tree
+  branches at `0018` and is rejoined by two merge points, so
+  `0022_merge_pricing_projects` is a *sibling* of `0019_thread_incarnations`
+  rather than an ancestor. Upstream's downgrade-from-head therefore parked the
+  pricing branch at its merge point and left `alembic_version` holding two rows —
+  a state bootstrap fails closed on, so not one a fork database can be in. The
+  test now seeds the window the way this file's sqlite tests already do
+  (`_seed_canonical_0019`), which walks only upstream's lineage and stamps one
+  row. Caught by CI, not locally: ~175 Postgres-gated tests `skipif` themselves
+  away without `TEST_POSTGRES_URI`, so the local suite reported
+  `17713 passed, 175 skipped` while this was red. FORK.md's checklist now carries
+  that gate, with a throwaway-cluster recipe.
+
 - **tests(e2e):** **The mocked message feed stamps one `run_id` per turn, not per
   thread.** `run_id` on a feed row is a *turn* identity to its consumers — the
   gateway seeds a branch's inherited history as `branch-seed-{thread}-{n}`, one id
