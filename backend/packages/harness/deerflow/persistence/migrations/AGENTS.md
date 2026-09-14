@@ -20,28 +20,30 @@ The legacy branch handles pre-alembic databases that already have at least one D
 The empty-DB path keeps using `create_all` because `Base.metadata` is the only authoritative schema source — `create_all` renders both SQLite (JSON, type affinity) and Postgres (JSONB, partial indexes) correctly without anyone having to keep a hand-written baseline in lockstep. `0001_baseline.upgrade()` is therefore almost never executed in practice; it exists as a stamp target + chain root.
 
 **Rolling forward compatibility**: the chain **branches** at
-`0018_oauth_identity_pg_partial` and is rejoined by two no-op merge points.
+`0018_oauth_identity_pg_partial` and is rejoined by three no-op merge points.
 Upstream's side runs `0019_projects` → `0020_threads_meta_project_id` →
 `0021_batch_acceptance` → `0019_thread_incarnations` →
-`0022_scheduled_occurrence_seq`; the fork's side is the single revision
-`0019_runs_pricing_snapshot` (FORK.md §17). `0022_merge_pricing_projects` joins
-the fork's revision to `0021_batch_acceptance`, and
-`0023_merge_pricing_scheduler` (current head) joins that merge to
-`0022_scheduled_occurrence_seq` — upstream extended `0021_batch_acceptance`
-after the first merge already claimed it, which put the tree back on two heads.
-`upgrade head` refuses to run against two, and the Gateway's bootstrap fails
-outright before serving a request, so expect this shape on every sync where
-upstream extends a revision the fork has already merged. Resolve it with
+`0022_scheduled_occurrence_seq` → `0023_user_preferences`; the fork's side is
+the single revision `0019_runs_pricing_snapshot` (FORK.md §17).
+`0022_merge_pricing_projects` joins the fork's revision to
+`0021_batch_acceptance`, `0023_merge_pricing_scheduler` joins that merge to
+`0022_scheduled_occurrence_seq`, and `0024_merge_preferences` (current head)
+joins *that* merge to `0023_user_preferences` — each time, upstream extended a
+revision an earlier merge had already claimed, which put the tree back on two
+heads. `upgrade head` refuses to run against two, and the Gateway's bootstrap
+fails outright before serving a request, so expect this shape on every sync
+where upstream extends a revision the fork has already merged. Resolve it with
 **another merge revision, never a re-parent**: a database already stamped at one
 branch's tip would otherwise read as being at head with the other branch's
 tables never created, which is a wrong schema that fails silently until a query
-hits it. The incarnation revision deliberately retains the exact id audited by
-the rollback-floor binary; Alembic orders revisions by `down_revision`, not by
-the numeric prefix. The branch also makes
-**`downgrade` to a mid-tree revision multi-headed**: a target on one lineage
-leaves the other parked at its own tip, so `alembic_version` ends up with two
-rows and bootstrap fails closed. Build a schema at a specific past revision by
-upgrading a clean database to it, never by downgrading head — see
+hits it. `0023_user_preferences` adds a separate owner/key table with a
+cascading users foreign key and does not alter users. The incarnation revision
+deliberately retains the exact id audited by the rollback-floor binary; Alembic
+orders revisions by `down_revision`, not by the numeric prefix. The branch also
+makes **`downgrade` to a mid-tree revision multi-headed**: a target on one
+lineage leaves the other parked at its own tip, so `alembic_version` ends up
+with two rows and bootstrap fails closed. Build a schema at a specific past
+revision by upgrading a clean database to it, never by downgrading head — see
 `tests/test_persistence_forward_revision_compat.py`, which does exactly that.
 
 The deployed `0020_threads_meta_project_id` rollback-floor binary knows none of

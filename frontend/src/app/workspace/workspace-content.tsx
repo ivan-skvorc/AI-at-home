@@ -13,6 +13,7 @@ import { ModelLoadErrorBanner } from "@/components/workspace/model-load-error-ba
 import { SettingsDialogHost } from "@/components/workspace/settings";
 import { WorkspaceSettingsDeepLink } from "@/components/workspace/workspace-settings-deep-link";
 import { WorkspaceSidebar } from "@/components/workspace/workspace-sidebar";
+import { UserPreferencesBoundary } from "@/core/settings/user-preferences-boundary";
 import { LiveChatSlotsProvider } from "@/core/threads/live-chat-slots-context";
 
 function parseSidebarOpenCookie(
@@ -37,24 +38,26 @@ export async function WorkspaceContent({
 
   return (
     <QueryClientProvider>
-      <SidebarProvider className="h-screen" defaultOpen={initialSidebarOpen}>
-        <LiveChatSlotsProvider>
-          <WorkspaceSidebar />
-          <SidebarInset className="min-w-0">
-            <GatewayOfflineBanner gatewayUnavailable={gatewayUnavailable} />
-            <ModelLoadErrorBanner gatewayUnavailable={gatewayUnavailable} />
-            {/* Persistent keep-alive host for chat tabs. Mounted above the
+      <UserPreferencesBoundary>
+        <SidebarProvider className="h-screen" defaultOpen={initialSidebarOpen}>
+          <LiveChatSlotsProvider>
+            <WorkspaceSidebar />
+            <SidebarInset className="min-w-0">
+              <GatewayOfflineBanner gatewayUnavailable={gatewayUnavailable} />
+              <ModelLoadErrorBanner gatewayUnavailable={gatewayUnavailable} />
+              {/* Persistent keep-alive host for chat tabs. Mounted above the
                 route so navigating between chats never remounts them; hidden
                 (but still mounted) on non-chat workspace routes. */}
-            <KeepAliveChatViewport />
-            {children}
-          </SidebarInset>
-        </LiveChatSlotsProvider>
-      </SidebarProvider>
-      <CommandPalette />
-      <SettingsDialogHost />
-      <WorkspaceSettingsDeepLink />
-      <Toaster position="top-center" />
+              <KeepAliveChatViewport />
+              {children}
+            </SidebarInset>
+          </LiveChatSlotsProvider>
+        </SidebarProvider>
+        <CommandPalette />
+        <SettingsDialogHost />
+        <WorkspaceSettingsDeepLink />
+        <Toaster position="top-center" />
+      </UserPreferencesBoundary>
     </QueryClientProvider>
   );
 }

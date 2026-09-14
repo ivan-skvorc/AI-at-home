@@ -1,5 +1,16 @@
 ### Tool System (`packages/harness/deerflow/tools/`)
 
+`conversation.py` supplies the optional `read_conversation` tool. Ordinary lead
+assembly opts in only with a host reader; default, bootstrap, embedded and
+subagent assembly withhold it. The tool requires the worker-owned
+`__conversation_reader` capability and rejects subagents. Hosts enforce the
+current run's explicit references and user permissions. Do not import Gateway
+routers into the harness or recover this capability from persisted messages.
+Reads use live visible history; expiry/deletion does not erase destination copies.
+The Gateway sizes pages to the `CONVERSATION_TOOL_NAME` tool-output budget so
+results stay inline. Truncated results ask the agent to request missing material;
+keep that guidance separate from permission enforcement.
+
 `get_available_tools(groups, include_mcp, model_name, subagent_enabled)` assembles:
 1. **Config-defined tools** - Resolved from `config.yaml` via `resolve_variable()`
 2. **MCP tools** - From enabled MCP servers (lazy initialized, cached with resolved-path + content-signature invalidation)
@@ -50,4 +61,3 @@ E2B output sync records remote file versions and actual host file metadata in a 
 - **Filter here, not at call time.** Removing the tool from the catalog is what keeps deferred tool search, skill `allowed-tools` policy, and the bound tool schemas consistent. A `GuardrailProvider` deny would be one exemption away from being bypassed.
 - **`task_tool` inherits it from the parent run context**, so delegation is not an escape hatch; the lead-agent factory writes the resolved value back into `context` and `configurable`.
 `bash` deliberately stays: the shell is the sandbox's local execution surface and its network belongs to the operator's container. Pinned by `backend/tests/test_internet_toggle.py`.
-- Each ACP agent uses a per-thread workspace at `{base_dir}/users/{user_id}/threads/{thread_id}/acp-workspace/`. The workspace is accessible to the lead agent via the virtual path `/mnt/acp-workspace/` (read-only). In docker sandbox mode, the directory is volume-mounted into the container at `/mnt/acp-workspace` (read-only); in local sandbox mode, path translation is handled by `tools.py`

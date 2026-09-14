@@ -32,11 +32,15 @@ ORIGINAL_PARENTS = {
     # audited, and hangs off 0021 — the revision 0022_merge_pricing_projects
     # had already claimed, which is what split the tree a second time.
     "0019_thread_incarnations": ("0021_batch_acceptance",),
+    # Upstream's account-preferences revision hangs off 0022 — the revision
+    # 0023_merge_pricing_scheduler had already claimed, splitting the tree a
+    # third time. Joined by 0024_merge_preferences, not by moving this parent.
+    "0023_user_preferences": ("0022_scheduled_occurrence_seq",),
 }
 
 # Every leaf the merge points must keep reachable: one per branch tip that
 # existed before it was merged.
-MERGED_TIPS = ("0019_runs_pricing_snapshot", "0021_batch_acceptance", "0022_scheduled_occurrence_seq")
+MERGED_TIPS = ("0019_runs_pricing_snapshot", "0021_batch_acceptance", "0022_scheduled_occurrence_seq", "0023_user_preferences")
 
 
 def _script() -> ScriptDirectory:
