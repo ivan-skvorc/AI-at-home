@@ -52,10 +52,14 @@ import { useModels } from "@/core/models/hooks";
 import { useNotification } from "@/core/notification/hooks";
 import { useProject } from "@/core/projects";
 import { useLocalSettings, useThreadSettings } from "@/core/settings";
+<<<<<<< HEAD:frontend/src/components/workspace/chats/chat-instance.tsx
 import {
   copyThreadContextOverride,
   getThreadContextOverride,
 } from "@/core/settings/local";
+=======
+import { resolveThreadContext } from "@/core/settings/store";
+>>>>>>> upstream/main:frontend/src/components/workspace/chats/chat-page.tsx
 import { createThread } from "@/core/threads/api";
 import {
   INFINITE_THREADS_QUERY_KEY_PREFIX,
@@ -699,9 +703,11 @@ function ChatInstanceContent({
                         isUploading ||
                         (!isNewThread && isHistoryLoading)
                       }
-                      onContextChange={(context) =>
-                        setSettings("context", context)
-                      }
+                      onContextChange={(context, options) => {
+                        if (options?.automatic)
+                          resolveThreadContext(threadId, context);
+                        else setSettings("context", context);
+                      }}
                       onGoalChange={setLocalGoal}
                       onPrepareThread={ensureProjectThread}
                       onSubmit={handleSubmit}

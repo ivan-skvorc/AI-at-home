@@ -12,11 +12,18 @@ import pytest
 import pytest_asyncio
 import sqlalchemy as sa
 from alembic import command
+<<<<<<< HEAD
 from alembic.config import Config as AlembicConfig
 from alembic.script import ScriptDirectory
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from deerflow.persistence.bootstrap import _MIGRATIONS_DIR, _get_alembic_config, _get_head_revision
+=======
+from alembic.script import ScriptDirectory
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+from deerflow.persistence.bootstrap import _MIGRATIONS_DIR, _get_alembic_config
+>>>>>>> upstream/main
 from deerflow.persistence.postgres_schema import build_asyncpg_connect_args
 from deerflow.persistence.scheduled_task_runs import ScheduledTaskRunRepository
 
@@ -92,6 +99,7 @@ async def _schema(engine):
         )
 
 
+<<<<<<< HEAD
 async def test_occurrence_revision_is_reachable_from_the_single_head():
     """Upstream asserts this revision *is* the head; the fork merges past it.
 
@@ -105,6 +113,12 @@ async def test_occurrence_revision_is_reachable_from_the_single_head():
     head = _get_head_revision()
     script = ScriptDirectory.from_config(_get_alembic_config_for_head())
     assert REVISION in {revision.revision for revision in script.iterate_revisions(head, "base")}
+=======
+async def test_occurrence_revision_is_in_single_head_chain():
+    script = ScriptDirectory(str(_MIGRATIONS_DIR))
+    assert len(script.get_heads()) == 1
+    assert REVISION in {revision.revision for revision in script.walk_revisions()}
+>>>>>>> upstream/main
 
 
 async def test_upgrade_preserves_legacy_rows_and_allocates_from_one(migration_database):

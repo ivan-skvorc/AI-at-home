@@ -349,6 +349,7 @@ export function InputBox({
   defaultModelName?: string | null;
   initialValue?: string;
   onContextChange?: (
+<<<<<<< HEAD
     context: Omit<
       AgentThreadContext,
       "thread_id" | "is_plan_mode" | "thinking_enabled" | "subagent_enabled"
@@ -356,6 +357,20 @@ export function InputBox({
       mode: "flash" | "thinking" | "pro" | "ultra" | "democracy" | undefined;
       reasoning_effort?: "minimal" | "low" | "medium" | "high";
     },
+=======
+    // Explicit selections contain only the fields changed by that action,
+    // never the whole thread-resolved context (which may override the account).
+    context: Partial<
+      Omit<
+        AgentThreadContext,
+        "thread_id" | "is_plan_mode" | "thinking_enabled" | "subagent_enabled"
+      > & {
+        mode: "flash" | "thinking" | "pro" | "ultra" | undefined;
+        reasoning_effort?: "minimal" | "low" | "medium" | "high";
+      }
+    >,
+    options?: { automatic: boolean },
+>>>>>>> upstream/main
   ) => void;
   onFollowupsVisibilityChange?: (visible: boolean) => void;
   onGoalChange?: (goal: GoalState | null) => void;
@@ -641,11 +656,14 @@ export function InputBox({
       return;
     }
 
-    onContextChange?.({
-      ...context,
-      model_name: nextModelName,
-      mode: nextMode,
-    });
+    onContextChange?.(
+      {
+        ...context,
+        model_name: nextModelName,
+        mode: nextMode,
+      },
+      { automatic: true },
+    );
   }, [context, models, defaultModelName, onContextChange]);
 
   const selectedModel = useMemo(() => {
@@ -898,11 +916,13 @@ export function InputBox({
       if (!model) {
         return;
       }
+      const mode = getResolvedMode(
+        context.mode,
+        model.supports_thinking ?? false,
+      );
       onContextChange?.({
-        ...context,
         model_name,
-        mode: getResolvedMode(context.mode, model.supports_thinking ?? false),
-        reasoning_effort: context.reasoning_effort,
+        ...(mode !== context.mode ? { mode } : {}),
       });
       setModelDialogOpen(false);
     },
@@ -941,7 +961,6 @@ export function InputBox({
         return;
       }
       onContextChange?.({
-        ...context,
         mode: getResolvedMode(mode, supportThinking),
         reasoning_effort:
           mode === "ultra"
@@ -953,7 +972,7 @@ export function InputBox({
                 : "minimal",
       });
     },
-    [disabled, onContextChange, context, polishingInput, supportThinking],
+    [disabled, onContextChange, polishingInput, supportThinking],
   );
 
   const handleReasoningEffortSelect = useCallback(
@@ -962,11 +981,10 @@ export function InputBox({
         return;
       }
       onContextChange?.({
-        ...context,
         reasoning_effort: effort,
       });
     },
-    [disabled, onContextChange, context, polishingInput],
+    [disabled, onContextChange, polishingInput],
   );
 
   const handleGoalCommand = useCallback(
@@ -1212,14 +1230,17 @@ export function InputBox({
       // Guard against submitting before the initial model auto-selection
       // effect has flushed thread settings to storage/state.
       if (resolvedModelName && context.model_name !== resolvedModelName) {
-        onContextChange?.({
-          ...context,
-          model_name: resolvedModelName,
-          mode: getResolvedMode(
-            context.mode,
-            selectedModel?.supports_thinking ?? false,
-          ),
-        });
+        onContextChange?.(
+          {
+            ...context,
+            model_name: resolvedModelName,
+            mode: getResolvedMode(
+              context.mode,
+              selectedModel?.supports_thinking ?? false,
+            ),
+          },
+          { automatic: true },
+        );
         return new Promise<void>((resolve, reject) => {
           setTimeout(() => {
             Promise.resolve(submit()).then(resolve).catch(reject);

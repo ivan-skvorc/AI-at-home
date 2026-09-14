@@ -173,6 +173,7 @@ or user/skill changes. `core/skills/export.ts` owns the revision-bound Blob down
 HTTP 409 requires explicit preview refresh. Keep file lists paginated and diagnostics
 localized. Browser handoff does not prove the file was saved to disk.
 
+<<<<<<< HEAD
 ## Fork-specific frontend features
 
 This fork adds workspace-level live chat slots, the spend page, the PWA shell and
@@ -221,3 +222,13 @@ screen is the same silent drift as a flat list: the row still renders, it just
 lines up with nothing. Pinned by
 `tests/unit/components/workspace/model-select.dom.test.tsx`,
 `model-picker-sites.test.ts` and `tests/unit/core/models/sorting.test.ts`.
+=======
+Sidebar rows request deletion through `ThreadDeleteDialogProvider`, hosted in
+`WorkspaceSidebar` outside the virtualized flat/project lists. Keep the selected
+thread snapshot and retry UI alive when a partial deletion removes its row.
+Focus Cancel on open and after a failed deletion has re-enabled the actions;
+block dismissal while deletion is pending. Show the error message when available,
+with a localized fallback, and log the rejection for debugging. The shared
+delete helper accepts remote 404 (not 403) before retrying local cleanup, and
+`onDeleted` runs only after both deletion steps succeed.
+>>>>>>> upstream/main

@@ -19,6 +19,7 @@ The legacy branch handles pre-alembic databases that already have at least one D
 
 The empty-DB path keeps using `create_all` because `Base.metadata` is the only authoritative schema source — `create_all` renders both SQLite (JSON, type affinity) and Postgres (JSONB, partial indexes) correctly without anyone having to keep a hand-written baseline in lockstep. `0001_baseline.upgrade()` is therefore almost never executed in practice; it exists as a stamp target + chain root.
 
+<<<<<<< HEAD
 **Rolling forward compatibility**: the chain **branches** at
 `0018_oauth_identity_pg_partial` and is rejoined by two no-op merge points.
 Upstream's side runs `0019_projects` → `0020_threads_meta_project_id` →
@@ -43,6 +44,17 @@ leaves the other parked at its own tip, so `alembic_version` ends up with two
 rows and bootstrap fails closed. Build a schema at a specific past revision by
 upgrading a clean database to it, never by downgrading head — see
 `tests/test_persistence_forward_revision_compat.py`, which does exactly that.
+=======
+**Rolling forward compatibility**: the local chain is
+`0018_oauth_identity_pg_partial` → `0019_projects` →
+`0020_threads_meta_project_id` → `0021_batch_acceptance` →
+`0019_thread_incarnations` → `0022_scheduled_occurrence_seq` →
+`0023_user_preferences` (current head). The preference revision adds a separate
+owner/key table with a cascading users foreign key and does not alter users.
+The incarnation revision deliberately retains the exact id audited by the
+rollback-floor binary; Alembic orders revisions by `down_revision`, not by the
+numeric prefix.
+>>>>>>> upstream/main
 
 The deployed `0020_threads_meta_project_id` rollback-floor binary knows none of
 `0021_batch_acceptance`, `0019_thread_incarnations`, or

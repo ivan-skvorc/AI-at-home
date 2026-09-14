@@ -1,5 +1,16 @@
 ### Tool System (`packages/harness/deerflow/tools/`)
 
+`conversation.py` supplies the optional `read_conversation` tool. Ordinary lead
+assembly opts in only with a host reader; default, bootstrap, embedded and
+subagent assembly withhold it. The tool requires the worker-owned
+`__conversation_reader` capability and rejects subagents. Hosts enforce the
+current run's explicit references and user permissions. Do not import Gateway
+routers into the harness or recover this capability from persisted messages.
+Reads use live visible history; expiry/deletion does not erase destination copies.
+The Gateway sizes pages to the `CONVERSATION_TOOL_NAME` tool-output budget so
+results stay inline. Truncated results ask the agent to request missing material;
+keep that guidance separate from permission enforcement.
+
 `get_available_tools(groups, include_mcp, model_name, subagent_enabled)` assembles:
 1. **Config-defined tools** - Resolved from `config.yaml` via `resolve_variable()`
 2. **MCP tools** - From enabled MCP servers (lazy initialized, cached with resolved-path + content-signature invalidation)
@@ -43,6 +54,7 @@ E2B output sync records remote file versions and actual host file metadata in a 
 - ACP results collect only `agent_message_chunk` text. Thought chunks remain internal and must not be concatenated into the tool result
 - Missing ACP executables now return an actionable error message instead of a raw `[Errno 2]`
 - Each ACP agent uses a per-thread workspace at `{base_dir}/users/{user_id}/threads/{thread_id}/acp-workspace/`. The workspace is accessible to the lead agent via the virtual path `/mnt/acp-workspace/` (read-only). In docker sandbox mode, the directory is volume-mounted into the container at `/mnt/acp-workspace` (read-only); in local sandbox mode, path translation is handled by `tools.py`
+<<<<<<< HEAD
 
 **Fork: the per-conversation internet switch** (`internet_access.py`, FORK.md §27). `get_available_tools(..., internet_enabled=False)` drops every tool that reaches the internet on the model's behalf, before any downstream layer sees a catalog. Four invariants, all silent when broken:
 - **Only an explicit `False` opts out** (`internet_access_enabled`). Absent means "no opinion" — IM channels, TUI, scheduler and embedded callers send no key and must keep the configured tools. `"false"` / `0` are not opt-outs; the frontend normalizes before sending.
@@ -51,3 +63,5 @@ E2B output sync records remote file versions and actual host file metadata in a 
 - **`task_tool` inherits it from the parent run context**, so delegation is not an escape hatch; the lead-agent factory writes the resolved value back into `context` and `configurable`.
 `bash` deliberately stays: the shell is the sandbox's local execution surface and its network belongs to the operator's container. Pinned by `backend/tests/test_internet_toggle.py`.
 - Each ACP agent uses a per-thread workspace at `{base_dir}/users/{user_id}/threads/{thread_id}/acp-workspace/`. The workspace is accessible to the lead agent via the virtual path `/mnt/acp-workspace/` (read-only). In docker sandbox mode, the directory is volume-mounted into the container at `/mnt/acp-workspace` (read-only); in local sandbox mode, path translation is handled by `tools.py`
+=======
+>>>>>>> upstream/main

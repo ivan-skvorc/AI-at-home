@@ -5,6 +5,7 @@ from langchain.tools import BaseTool
 
 from deerflow.config import get_app_config
 from deerflow.config.app_config import AppConfig
+from deerflow.constants import CONVERSATION_TOOL_USE
 from deerflow.mcp.tasks.runtime import is_mcp_task_runtime_available
 from deerflow.reflection import resolve_variable
 from deerflow.sandbox.security import is_host_bash_allowed
@@ -77,6 +78,7 @@ def get_available_tools(
     subagent_enabled: bool = False,
     *,
     include_upload_tool: bool = True,
+    include_conversation_reader: bool = False,
     app_config: AppConfig | None = None,
     internet_enabled: bool = True,
 ) -> list[BaseTool]:
@@ -94,6 +96,7 @@ def get_available_tools(
             Ordinary task subagents enable it only after snapshotting the
             parent's current-run upload state. Durable batch and non-standard
             subagent callers without that state keep it disabled.
+<<<<<<< HEAD
         internet_enabled: Fork (FORK.md §27) — the per-conversation internet
             switch. When False, every tool that reaches the internet on the
             model's behalf is left out of the returned catalog: config tools
@@ -101,12 +104,19 @@ def get_available_tools(
             tool. Filtering here rather than at a request-time gate is what
             keeps a removed tool out of deferred tool search, skill policy, and
             the model's tool schemas alike.
+=======
+        include_conversation_reader: Allow the configured conversation reader
+            only when the host provides its authorized runtime capability.
+            Defaults to false for embedded callers and subagents.
+>>>>>>> upstream/main
 
     Returns:
         List of available tools.
     """
     config = app_config or get_app_config()
     tool_configs = [tool for tool in config.tools if groups is None or tool.group in groups]
+    if not include_conversation_reader:
+        tool_configs = [tool for tool in tool_configs if tool.use != CONVERSATION_TOOL_USE]
 
     # Fork: the per-conversation internet switch. Fails closed — a group that is
     # not on the offline allowlist is treated as internet-reaching and dropped.

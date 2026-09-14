@@ -13,7 +13,11 @@ import { ModelLoadErrorBanner } from "@/components/workspace/model-load-error-ba
 import { SettingsDialogHost } from "@/components/workspace/settings";
 import { WorkspaceSettingsDeepLink } from "@/components/workspace/workspace-settings-deep-link";
 import { WorkspaceSidebar } from "@/components/workspace/workspace-sidebar";
+<<<<<<< HEAD
 import { LiveChatSlotsProvider } from "@/core/threads/live-chat-slots-context";
+=======
+import { UserPreferencesBoundary } from "@/core/settings/user-preferences-boundary";
+>>>>>>> upstream/main
 
 function parseSidebarOpenCookie(
   value: string | undefined,
@@ -37,12 +41,18 @@ export async function WorkspaceContent({
 
   return (
     <QueryClientProvider>
+<<<<<<< HEAD
       <SidebarProvider className="h-screen" defaultOpen={initialSidebarOpen}>
         <LiveChatSlotsProvider>
+=======
+      <UserPreferencesBoundary>
+        <SidebarProvider className="h-screen" defaultOpen={initialSidebarOpen}>
+>>>>>>> upstream/main
           <WorkspaceSidebar />
           <SidebarInset className="min-w-0">
             <GatewayOfflineBanner gatewayUnavailable={gatewayUnavailable} />
             <ModelLoadErrorBanner gatewayUnavailable={gatewayUnavailable} />
+<<<<<<< HEAD
             {/* Persistent keep-alive host for chat tabs. Mounted above the
                 route so navigating between chats never remounts them; hidden
                 (but still mounted) on non-chat workspace routes. */}
@@ -55,6 +65,16 @@ export async function WorkspaceContent({
       <SettingsDialogHost />
       <WorkspaceSettingsDeepLink />
       <Toaster position="top-center" />
+=======
+            {children}
+          </SidebarInset>
+        </SidebarProvider>
+        <CommandPalette />
+        <SettingsDialogHost />
+        <WorkspaceSettingsDeepLink />
+        <Toaster position="top-center" />
+      </UserPreferencesBoundary>
+>>>>>>> upstream/main
     </QueryClientProvider>
   );
 }
