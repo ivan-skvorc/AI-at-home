@@ -8,6 +8,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- **repo:** **Merged `bytedance/deer-flow@14c9d44`** (9 commits) into the fork.
+  Upstream brings per-model request pacing (`request_admission`, an off-by-default
+  RPM budget that can be shared across models on one provider account), persisted
+  tool-progress phase transitions, reading on from a truncated conversation message
+  by offset, and fixes for stream-reconnect input loss, browser session teardown
+  under caller cancellation, JSONL event-store cancellation ordering, token-budget
+  signals on runs with no `run_id`, and two Windows-host sandbox problems (PowerShell
+  CJK console encoding, Lark CLI runtime validation). Two resolutions a reviewer
+  cannot see in the diff:
+  - **Both sides added to the same provider-kwarg exclusion set, and git took
+    only one.** `models/factory.py` strips non-provider keys from a model config
+    before handing the rest to the client as constructor kwargs; upstream added
+    `request_admission` exactly where the fork keeps `price`, `discount` and
+    `fallback`. The resolution is the union, not a choice: whichever key had lost
+    would have been forwarded into the completion request payload, which fails at
+    request time on the provider's side and never at load.
+  - **`config_version` moved backwards on upstream's side, as it always does.**
+    Upstream bumped 43 → 44 for a commented `request_admission` example; the fork
+    sits at 53, so 53 is kept and both chart copies stay in lockstep with it
+    (`scripts/check_config_version.sh` is green). Upstream's example block is kept
+    verbatim — it documents a real new key, it just adds no field for
+    `make config-upgrade` to merge.
+
+### Fixed
+- **models:** **The model audit's offline self-test had quietly stopped testing what
+  it claims.** `scripts/fixtures/model_audit_stale_catalog.json` is the catalog the
+  audit is run against to prove it still detects drift without a network, and its own
+  `_comment` promises exactly four deliberate drifts with every other routed model
+  matching the config. Two had gone missing — `anthropic/claude-opus-5` and
+  `openai/gpt-6-astra`, the second halves of the paired-lab routing rule — so the
+  self-test reported **six** findings, three of them `retired` for models nothing had
+  retired. Nothing failed: `test_the_committed_stale_fixture_produces_a_readable_issue`
+  only asserts that *some* finding appears, which is true of a fixture arbitrarily far
+  behind the roster. The two entries are restored, and two asserts now pin the shape
+  the `_comment` describes — the only absent slug is the one retired on purpose, and
+  the run yields exactly one finding per drift kind — so the next roster
+  roll-forward that forgets the fixture fails loudly instead of adding noise a reader
+  has to re-derive as harmless.
+
+### Changed
 - **repo:** **Merged `bytedance/deer-flow@6469833`** (41 commits) into the fork.
   Upstream brings opt-in reads of explicitly referenced conversations, account
   preferences that follow a user across browsers, per-agent `memory_enabled`,

@@ -1,9 +1,17 @@
 {
- "_comment": "Deliberately stale catalog fixture. Proves the audit still detects each drift kind (retired slug, changed list price, ended promo, started promo) without needing the network. Regenerate against config.example.yaml if the bundled roster changes: build one entry per openrouter marker-block model from its configured price, then re-apply exactly four drifts - delete the xAI flagship (retired), raise openai/gpt-5.6-sol input to 6.25 (price moved), leave minimax/minimax-m3 without a promo while the config carries one (promo ended), and add a promo to qwen/qwen3.8-max that the config does not carry (promo started). Every other entry must MATCH the config, or an unrelated mismatch masks the drift it was meant to show. See backend/tests/test_audit_models.py::TestStaleFixture.",
+ "_comment": "Deliberately stale catalog fixture. Proves the audit still detects each drift kind (retired slug, changed list price, ended promo, started promo) without needing the network. Regenerate against config.example.yaml if the bundled roster changes: build one entry per openrouter marker-block model from its configured price, then re-apply exactly four drifts - delete the xAI flagship (retired), raise openai/gpt-5.6-sol input to 6.25 (price moved), leave minimax/minimax-m3 without a promo while the config carries one (promo ended), and add a promo to qwen/qwen3.8-max that the config does not carry (promo started). Every other entry must MATCH the config, or an unrelated mismatch masks the drift it was meant to show - a model the config routes but the fixture omits reads as `retired`, which is how the second half of each routed pair (anthropic/claude-opus-5, openai/gpt-6-astra) went missing unnoticed. test_audit_models.py::TestStaleFixture pins this against config.example.yaml.",
  "openrouter": {
   "reachable": true,
   "models": {
    "anthropic/claude-fable-5-1": {
+    "input_per_million": 10.0,
+    "output_per_million": 50.0
+   },
+   "anthropic/claude-opus-5": {
+    "input_per_million": 5.0,
+    "output_per_million": 25.0
+   },
+   "openai/gpt-6-astra": {
     "input_per_million": 10.0,
     "output_per_million": 50.0
    },

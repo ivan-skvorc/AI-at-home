@@ -11,6 +11,116 @@ Newest first. Append a pass; never rewrite one. A dated line is what tells the
 next person whether the roster was checked last week or last year, and _which_
 providers that pass could actually reach.
 
+- **2026-09-15 — partial. Anthropic re-verified at tier 1; every other provider's page
+  still unreachable, nine standard rates corroborated unchanged, no price or roster
+  edits. One prior log entry corrected, and the audit's own offline self-test found
+  stale and fixed.** Requested in words alongside the upstream-sync change cycle.
+
+  **Machine half clean.** `python3 scripts/audit_models.py` reports **no drift**: every
+  bundled slug it can check is still in its catalog and the two synced sources agree.
+  `python3 scripts/sync-api-key-models.py --dry-run` uncomments the blocks cleanly
+  (exit 0, no output), and `test_sync_api_key_models.py`, `test_setup_wizard.py`,
+  `test_config_integrity.py`, `test_audit_models.py`, `test_model_price_fields.py` and
+  `test_pricing.py` are green — **301 tests** (299 before, plus the two added below).
+  No price sits in a `display_name` (`grep -nE 'display_name:.*\(\$[0-9]'` is empty on
+  both synced sources), and every bundled `discount:` is a commented example only.
+
+  **The stale fixture was itself stale, and nothing could fail for it.**
+  `scripts/fixtures/model_audit_stale_catalog.json` is the whole offline proof that the
+  audit still detects drift. Its `_comment` promises exactly four deliberate drifts with
+  every other routed model matching `config.example.yaml`; in fact two routed models were
+  missing — `anthropic/claude-opus-5` and `openai/gpt-6-astra`, i.e. the second half of
+  each paired-lab routed entry — so the self-test emitted **6** findings, three of them
+  `retired` for models nothing retired. `TestStaleFixture` asserted only that *some*
+  finding appeared, so it stayed green. Both entries are restored at their configured
+  prices ($5/$25 and $10/$50), the run is back to **4 findings, one per drift kind**, and
+  two new asserts pin the shape: `test_the_fixture_drifts_from_the_config_only_where_it_means_to`
+  (the only absent slug is `x-ai/grok-4.6`) and
+  `test_the_fixture_reports_one_finding_per_deliberate_drift`. Both were confirmed red
+  against the pre-fix fixture before the fix was kept.
+
+  **Anthropic verified price by price (tier 1)** against
+  `platform.claude.com/docs/en/about-claude/pricing`. All six bundled entries still match
+  exactly, base *and* cache-read: Fable 5.1 $10/$50 (hit $0.25), Opus 5 $5/$25 (hit
+  $0.50), Opus 4.8 $5/$25 (hit $0.50), Sonnet 5 $2/$10 (hit $0.20), Sonnet 4.6 $3/$15
+  (hit $0.30), Haiku 4.5 $1/$5 (hit $0.10). The page still states in its own words that
+  Sonnet 5's $2/$10 rate is the standard price and the September increase did not happen.
+  Roster shape is unchanged and correct: Opus and Sonnet keep last-4.x + current-5 (Opus
+  4.7 exists at $5/$25 and stays out as the third-oldest), Haiku and Fable keep only the
+  latest, and **Mythos 5.1** is now on the page beside Mythos 5 — both still
+  invitation-only (limited availability), so a plain `ANTHROPIC_API_KEY` cannot reach
+  them and they stay out, same decision as 2026-08-20.
+
+  **Every other provider's own page remains unreachable from this environment.** The
+  egress proxy answers 403 on CONNECT for `openrouter.ai`, `platform.openai.com`,
+  `ai.google.dev`, `docs.x.ai`, `api-docs.deepseek.com`, `mistral.ai`,
+  `platform.moonshot.ai`, `platform.minimaxi.com` and `docs.z.ai`; `audit_models.py`
+  lists openrouter as *skipped*, correctly and not as drift. This was re-checked through
+  both available paths this pass — plain HTTPS and the fetch tool — and both are blocked
+  identically, so tier 1 is genuinely unavailable rather than untried. Tier 2 was
+  available, and **every standard rate it returned matches what is already shipped, so
+  nothing was edited**:
+
+  | Entry | Shipped | Corroborated |
+  | ----- | ------- | ------------ |
+  | GPT-6 Astra | $10 / $50 | $10 / $50 |
+  | GPT-5.6 Sol | $5 / $30 | $5 / $30 standard |
+  | Grok 4.6 | $2 / $6 | $2 / $6 base tier (2x above 200K) |
+  | Kimi K3 | $3 / $15 | $3 / $15 |
+  | Qwen3.8 Max | $2 / $6 | $2 / $6 |
+  | GLM-5.3 | $1.4 / $4.4 | $1.4 / $4.4 |
+  | Mistral Large 3 | $0.5 / $1.5 | $0.5 / $1.5 |
+  | Nemotron 3 Ultra (OR) | $0.5 / $2.2 | $0.5 / $2.2 |
+  | MiniMax M3 (list) | $0.6 / $2.4 | $0.6 / $2.4 |
+
+  **GLM-5.3 is no longer the provisional one.** It was rolled forward on 2026-08-20 from
+  trackers alone and flagged as the weakest figure in the bundle; a named trade outlet
+  reporting the API launch at $1.4/$4.4 corroborates it independently at the shipped
+  number for the second consecutive pass.
+
+  **Correction to the 2026-09-12 entry.** That pass recorded a live promotion on
+  **Gemini 3.6 Flash** — "$0.75/$3.75 through 2026-12-31, reverting to the shipped
+  $1.5/$7.5 on 2027-01-01". That window belongs to **Gemini 3.8 Flash**, not 3.6: 3.8 is
+  the model launched at an introductory $0.75/$3.75 through 2026-12-31 against a
+  $1.50/$7.50 standard rate. The bundled Gemini 3.6 Flash entry has **no** live
+  promotion, and the next unrestricted pass should not go looking for one on it. Nothing
+  was shipped either way — a discount never qualifies for tier 2 — but the next pass
+  would otherwise have spent its Google budget on the wrong model. The older entry is
+  left as written, per *never rewrite an old entry*; this is the correction of record.
+
+  **Two live promotions are still owed a tier-1 read, and one figure is still a stop.**
+  - **GPT-5.6 Sol** — a 20% cut to $4/$20, reported as running at least through
+    2026-11-21. Standard $5/$30 stays in `price:` either way (§17).
+  - **Gemini 3.8 Flash** — $0.75/$3.75 through 2026-12-31 (see the correction above);
+    it has an announced end date, so it is the strongest `discount:` + `until:`
+    candidate the moment a provider page can be read.
+  - **MiniMax M3 on OpenRouter is a stop for the second pass running.** The bundle
+    carries $0.24/$0.96 against a $0.60/$2.40 list. One source again quoted $0.23/$0.96
+    and another quoted $0.30/$1.20 ("permanent 50% off"). Three figures, no exact
+    agreement, and a discount never qualifies for tier 2 regardless — the block was left
+    exactly as shipped. This is still the first thing to check next pass.
+
+  **Discovery (step 2) found the same four candidates and shipped none.** The reason is
+  unchanged and is the reason of record from 2026-09-12: a new or rolled-forward entry
+  needs a **verified** slug, and no provider catalog is reachable to confirm one.
+  Shipping an id that 404s at runtime is worse than a roster a fortnight behind, and this
+  pass deliberately did not overturn that three-day-old decision on evidence that has not
+  improved. Owed to the next unrestricted pass, in priority order:
+  - **Gemini 3.8 Flash** — now the best-evidenced of the four: slug `google/gemini-3.8-flash`
+    (home id `gemini-3.8-flash`) appears on an OpenRouter model page, Google's own
+    developer docs and Google's launch blog, and its **standard** rate $1.50/$7.50 is
+    *identical* to the bundled Gemini 3.6 Flash's, so the roll-forward is a slug-and-label
+    change with no price movement. Home block *and* the routed OpenRouter twin.
+  - **DeepSeek V4.1 Flash** (2026-09-10) — rolls forward `deepseek-v4-flash`.
+  - **GLM 5.3 Flash** (z-ai) — reported second most-used model on OpenRouter by weekly
+    tokens; by the *acclaimed smaller sibling* rule a candidate beside GLM-5.3, not a
+    replacement for it.
+  - **Xiaomi MiMo-V2.5 and Tencent Hy3** — two labs the bundle does not carry at all.
+
+  Nothing here is evidence that the roster is current — only that every figure it already
+  ships is still the standard rate at least two independent sources state, that Anthropic
+  is exactly right, and that the audit's own drift detector is honest again.
+
 - **2026-09-12 — partial. Anthropic re-verified against the provider's own page;
   every other provider's page unreachable, ten labs' standard rates corroborated
   unchanged, no price or roster edits.** Requested in words alongside the
