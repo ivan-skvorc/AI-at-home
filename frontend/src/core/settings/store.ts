@@ -10,6 +10,7 @@ import {
   type LocalSettings,
   type ThreadContextOverride,
 } from "./local";
+import type { Preferences } from "./preferences-sync";
 
 type Listener = () => void;
 
@@ -31,11 +32,66 @@ const threadContextOverrides = new Map<string, ThreadContextOverride>();
 let baseSettings: LocalSettings = DEFAULT_LOCAL_SETTINGS;
 let baseSettingsLoaded = false;
 let storageListenerRegistered = false;
+let preferenceEdit:
+  | ((before: LocalSettings, after: LocalSettings) => void)
+  | undefined;
+
+/** Activate only after the workspace has identified the account. */
+export function activatePreferences(
+  initial: Preferences,
+  edit: (before: LocalSettings, after: LocalSettings) => void,
+) {
+  ensureBaseSettingsLoaded();
+  preferenceEdit = edit;
+  const apply = (value: Preferences) => {
+    if (preferenceEdit !== edit) return;
+    baseSettings = {
+      ...baseSettings,
+      notification: { enabled: value.notification_enabled ?? true },
+      context: {
+        ...baseSettings.context,
+        model_name: value.model_name ?? undefined,
+        mode: value.mode ?? undefined,
+        reasoning_effort: value.reasoning_effort ?? undefined,
+      },
+    };
+    emitChange();
+  };
+  apply(initial);
+  return {
+    apply,
+    stop: () => {
+      if (preferenceEdit === edit) {
+        apply({});
+        preferenceEdit = undefined;
+      }
+    },
+  };
+}
 
 function emitChange() {
   for (const listener of listeners) {
     listener();
   }
+}
+
+function persistLocalOnlySettings() {
+  if (!preferenceEdit) {
+    saveLocalSettings(baseSettings);
+    return;
+  }
+  // Account preferences never leak back into the legacy shared-origin key.
+  const legacy = getLocalSettings();
+  saveLocalSettings({
+    ...baseSettings,
+    notification: legacy.notification,
+    context: {
+      ...baseSettings.context,
+      model_name: legacy.context.model_name,
+      mode: legacy.context.mode,
+      reasoning_effort: legacy.context.reasoning_effort,
+    },
+  });
 }
 
 function ensureBaseSettingsLoaded() {
@@ -82,6 +138,23 @@ function mergeSettingsSection<K extends keyof LocalSettings>(
   };
 }
 
+function readSharedSettings(): LocalSettings {
+  const local = getLocalSettings();
+  if (!preferenceEdit) return local;
+  // Device-local fields still follow other tabs, including key removal and
+  // storage.clear(). The legacy key must never replace account preferences.
+  return {
+    ...local,
+    notification: baseSettings.notification,
+    context: {
+      ...local.context,
+      model_name: baseSettings.context.model_name,
+      mode: baseSettings.context.mode,
+      reasoning_effort: baseSettings.context.reasoning_effort,
+    },
+  };
+}
+
 function handleStorage(event: StorageEvent) {
   if (event.storageArea && event.storageArea !== localStorage) {
     return;
@@ -90,14 +163,14 @@ function handleStorage(event: StorageEvent) {
   ensureBaseSettingsLoaded();
 
   if (event.key === null) {
-    baseSettings = getLocalSettings();
+    baseSettings = readSharedSettings();
     threadContextOverrides.clear();
     emitChange();
     return;
   }
 
   if (event.key === LOCAL_SETTINGS_KEY) {
-    baseSettings = getLocalSettings();
+    baseSettings = readSharedSettings();
     emitChange();
     return;
   }
@@ -138,12 +211,19 @@ export function getThreadContextSnapshot(
   return threadContextOverrides.get(threadId) ?? EMPTY_THREAD_CONTEXT;
 }
 
+/** The model this conversation has explicitly pinned, if any. */
+export function getThreadModelSnapshot(threadId: string): string | undefined {
+  return getThreadContextSnapshot(threadId).model_name;
+}
+
 export const updateLocalSettings: LocalSettingsSetter = (key, value) => {
   ensureBaseSettingsLoaded();
   ensureStorageListenerRegistered();
 
+  const previous = baseSettings;
   baseSettings = mergeSettingsSection(baseSettings, key, value);
-  saveLocalSettings(baseSettings);
+  persistLocalOnlySettings();
+  preferenceEdit?.(previous, baseSettings);
   emitChange();
 };
 
@@ -159,7 +239,11 @@ export function updateThreadSettings<K extends keyof LocalSettings>(
     // Workflow selection is per conversation: merge the change into THIS
     // thread's own override and never touch the shared global base settings, so
     // changing the model/mode in one open chat cannot flip another open chat's
-    // selection (same tab or, via the `storage` event, another tab).
+    // selection (same tab or, via the `storage` event, another tab). That is
+    // also why it never calls `preferenceEdit`: every key in
+    // THREAD_SCOPED_CONTEXT_KEYS is a per-conversation choice, so uploading it
+    // as an account preference would make one chat's model the default for all
+    // of them — on every device.
     const previous = threadContextOverrides.has(threadId)
       ? (threadContextOverrides.get(threadId) ?? EMPTY_THREAD_CONTEXT)
       : getThreadContextOverride(threadId);
@@ -173,7 +257,42 @@ export function updateThreadSettings<K extends keyof LocalSettings>(
     return;
   }
 
+  // Anything outside `context` is a global setting that happens to have been
+  // edited from a thread page, so it follows the same account-preference path
+  // as `updateLocalSettings`.
+  const previous = baseSettings;
   baseSettings = mergeSettingsSection(baseSettings, key, value);
-  saveLocalSettings(baseSettings);
+  persistLocalOnlySettings();
+  preferenceEdit?.(previous, baseSettings);
+  emitChange();
+}
+
+/** Model availability/default resolution is not an explicit account edit. */
+export function resolveThreadContext(
+  threadId: string,
+  context: Partial<LocalSettings["context"]>,
+) {
+  if (!preferenceEdit) {
+    updateThreadSettings(threadId, "context", context);
+    return;
+  }
+  baseSettings = mergeSettingsSection(baseSettings, "context", context);
+  // Preserve explicit thread overrides, but do not create one from a temporary
+  // fallback: it would mask the account preference when a slow GET finally
+  // arrives. Only keys the thread has *already* overridden are refreshed, so an
+  // automatic resolution can never pin a field this conversation never chose.
+  const existing = getThreadContextSnapshot(threadId);
+  const resolved = pickThreadScopedContext(context);
+  const updates: Record<string, unknown> = {};
+  for (const key of Object.keys(resolved)) {
+    if (Object.prototype.hasOwnProperty.call(existing, key)) {
+      updates[key] = (resolved as Record<string, unknown>)[key];
+    }
+  }
+  if (Object.keys(updates).length > 0) {
+    const nextOverride: ThreadContextOverride = { ...existing, ...updates };
+    threadContextOverrides.set(threadId, nextOverride);
+    saveThreadContextOverride(threadId, nextOverride);
+  }
   emitChange();
 }

@@ -15,7 +15,7 @@ import {
   Trash2,
 } from "lucide-react";
 import Link from "next/link";
-import { useParams, usePathname, useRouter } from "next/navigation";
+import { useParams, usePathname } from "next/navigation";
 import {
   useCallback,
   useEffect,
@@ -54,7 +54,6 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
 } from "@/components/ui/sidebar";
-import { resetThreadChatAfterDelete } from "@/components/workspace/chats/use-thread-chat";
 import { getAPIClient } from "@/core/api";
 import { useAuth } from "@/core/auth/AuthProvider";
 import { hasPermission, PERMISSIONS } from "@/core/auth/permissions";
@@ -78,7 +77,6 @@ import {
 import { CHAT_DND_THREAD_MIME } from "@/core/threads/dnd";
 import { exportThread, type ThreadExportFormat } from "@/core/threads/export";
 import {
-  useDeleteThread,
   useInfiniteThreads,
   useMoveThreadToFolder,
   useMoveThreadToProject,
@@ -106,6 +104,7 @@ import { cn } from "@/lib/utils";
 import { ChatFolderRow, type FolderMoveTarget } from "./chat-folder-row";
 import { MoveToProjectMenu, NewProjectDialog } from "./move-to-project-menu";
 import { ThreadChannelIcon } from "./thread-channel-source";
+import { useThreadDeleteDialog } from "./thread-delete-dialog";
 import { VirtualThreadList } from "./thread-list-virtualizer";
 import { useThreadArchiveAction } from "./use-thread-archive-action";
 
@@ -186,14 +185,7 @@ export function ThreadSidebarItem({
   const { t } = useI18n();
   const { user } = useAuth();
   const canDeleteThreads = hasPermission(user, PERMISSIONS.THREADS_DELETE);
-  const router = useRouter();
-  const pathname = usePathname();
-  const { thread_id: threadIdFromPath, agent_name: agentNameFromPath } =
-    useParams<{
-      thread_id: string;
-      agent_name?: string;
-    }>();
-  const { mutate: deleteThread } = useDeleteThread();
+  const requestDelete = useThreadDeleteDialog();
   const { mutate: renameThread } = useRenameThread();
   const { mutate: updatePinnedThread } = usePinThread();
   // The move mutation is owned here (not inside `MoveToProjectMenu`) because
@@ -223,42 +215,6 @@ export function ThreadSidebarItem({
   const [renameDialogOpen, setRenameDialogOpen] = useState(false);
   const [renameValue, setRenameValue] = useState("");
   const [newProjectDialogOpen, setNewProjectDialogOpen] = useState(false);
-
-  const handleDelete = useCallback(() => {
-    const currentPathname =
-      typeof window === "undefined" ? pathname : window.location.pathname;
-    const threadPath = pathOfThread(thread);
-    const nextThreadPath = pathOfThread("new", {
-      agent_name: agentNameFromPath,
-    });
-    const isNewThreadPath = currentPathname === nextThreadPath;
-    const isCurrentThread =
-      thread.thread_id === threadIdFromPath ||
-      threadPath === currentPathname ||
-      (isNewThreadPath && recentThreadId === thread.thread_id);
-
-    deleteThread({
-      threadId: thread.thread_id,
-      onRemoteDeleted: isCurrentThread
-        ? () => {
-            resetThreadChatAfterDelete({
-              deletedThreadId: thread.thread_id,
-              nextPath: nextThreadPath,
-              force: true,
-            });
-            void router.replace(nextThreadPath);
-          }
-        : undefined,
-    });
-  }, [
-    agentNameFromPath,
-    deleteThread,
-    pathname,
-    recentThreadId,
-    router,
-    thread,
-    threadIdFromPath,
-  ]);
 
   const handleRenameSubmit = useCallback(() => {
     if (renameValue.trim()) {
@@ -475,7 +431,9 @@ export function ThreadSidebarItem({
             {canDeleteThreads && (
               <>
                 <DropdownMenuSeparator />
-                <DropdownMenuItem onSelect={handleDelete}>
+                <DropdownMenuItem
+                  onSelect={() => requestDelete({ thread, recentThreadId })}
+                >
                   <Trash2 className="text-muted-foreground" />
                   <span>{t.common.delete}</span>
                 </DropdownMenuItem>

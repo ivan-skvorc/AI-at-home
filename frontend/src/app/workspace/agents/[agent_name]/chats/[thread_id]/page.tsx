@@ -55,6 +55,7 @@ import { isHiddenFromUIMessage } from "@/core/messages/utils";
 import { useModels } from "@/core/models/hooks";
 import { useNotification } from "@/core/notification/hooks";
 import { useLocalSettings, useThreadSettings } from "@/core/settings";
+import { resolveThreadContext } from "@/core/settings/store";
 import {
   useThreadMetadata,
   useThreadStream,
@@ -491,9 +492,11 @@ export default function AgentChatPage() {
                       isUploading ||
                       (!isNewThread && isHistoryLoading)
                     }
-                    onContextChange={(context) =>
-                      setSettings("context", context)
-                    }
+                    onContextChange={(context, options) => {
+                      if (options?.automatic)
+                        resolveThreadContext(threadId, context);
+                      else setSettings("context", context);
+                    }}
                     onGoalChange={setLocalGoal}
                     onSubmit={handleSubmit}
                     onStop={handleStop}

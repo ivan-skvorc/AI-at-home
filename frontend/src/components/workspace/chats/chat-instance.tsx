@@ -56,6 +56,7 @@ import {
   copyThreadContextOverride,
   getThreadContextOverride,
 } from "@/core/settings/local";
+import { resolveThreadContext } from "@/core/settings/store";
 import { createThread } from "@/core/threads/api";
 import {
   INFINITE_THREADS_QUERY_KEY_PREFIX,
@@ -699,9 +700,11 @@ function ChatInstanceContent({
                         isUploading ||
                         (!isNewThread && isHistoryLoading)
                       }
-                      onContextChange={(context) =>
-                        setSettings("context", context)
-                      }
+                      onContextChange={(context, options) => {
+                        if (options?.automatic)
+                          resolveThreadContext(threadId, context);
+                        else setSettings("context", context);
+                      }}
                       onGoalChange={setLocalGoal}
                       onPrepareThread={ensureProjectThread}
                       onSubmit={handleSubmit}

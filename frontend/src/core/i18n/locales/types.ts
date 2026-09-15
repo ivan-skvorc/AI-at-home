@@ -792,6 +792,9 @@ export interface Translations {
 
   // Chats
   chats: {
+    deleteChat: string;
+    deleteConfirm: (title: string) => string;
+    deleteFailed: string;
     noActiveChats: string;
     activeChats: string;
     archivedChats: string;
