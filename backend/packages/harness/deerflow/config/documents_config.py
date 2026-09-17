@@ -29,4 +29,5 @@ class DocumentsConfig(BaseModel):
     max_chunk_chars: int = Field(default=60_000, ge=1_000, description="Ceiling on the derived chunk size, however large the model's window is.")
     concurrency: int = Field(default=2, ge=1, le=16, description="Parallel map calls.")
     answer_max_chars: int = Field(default=8_000, ge=500, description="Cap on the answer returned into the agent's context. The full notes are always written to a file.")
+    large_document_chars: int = Field(default=120_000, ge=1_000, description="Extracted-text size past which an upload is announced as too large to read linearly and the agent is pointed at `analyze_document`.")
     ocr: DocumentOcrConfig = Field(default_factory=DocumentOcrConfig, description="Scanned-PDF OCR fallback.")

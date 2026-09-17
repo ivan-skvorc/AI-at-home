@@ -185,3 +185,76 @@ class TestUploadsMiddlewareWarning:
         source = tmp_path / "lonely.pdf"
         source.write_bytes(b"%PDF-1.4")
         assert _extraction_warning(source) is None
+
+
+class TestUploadsMiddlewareExtent:
+    """The size next to an upload is the compressed file, not what reading costs.
+
+    A 212 KB PDF of 300 pages extracts to ~1.1 MB of Markdown — roughly 280K
+    tokens. An agent shown only "212.0 KB" has every reason to believe it can
+    read the file, and the window is gone before it notices otherwise. That is
+    the concrete path from a large PDF to a run that forgets its own task, so
+    the extracted extent is stated and the large case is routed away from a
+    linear read.
+    """
+
+    def _entry(self, tmp_path: Path, md_body: str) -> str:
+        from deerflow.agents.middlewares.uploads_middleware import (
+            UploadsMiddleware,
+            _document_quality,
+            _large_document_chars,
+        )
+
+        source = tmp_path / "report.pdf"
+        source.write_bytes(b"%PDF-1.4")
+        (tmp_path / "report.pdf.md").write_text(md_body, encoding="utf-8")
+        quality = _document_quality(source)
+        sparse = quality is not None and quality.is_sparse
+        lines: list[str] = []
+        UploadsMiddleware(base_dir=str(tmp_path))._format_file_entry(
+            {
+                "filename": "report.pdf",
+                "size": 216_605,
+                "path": "/mnt/user-data/uploads/report.pdf",
+                "extraction_warning": quality.describe() if sparse else None,
+                "document_extent": quality.describe_extent() if quality is not None and not sparse else None,
+                "document_is_large": bool(quality is not None and not sparse and quality.chars >= _large_document_chars()),
+            },
+            lines,
+        )
+        return "\n".join(lines)
+
+    def _body(self, pages: int) -> str:
+        return "\n".join(f"{page_anchor(n)}\n## Section {n}\n\n" + ("word " * 200) for n in range(1, pages + 1))
+
+    def test_the_extracted_size_is_stated_not_just_the_file_size(self, tmp_path: Path):
+        rendered = self._entry(tmp_path, self._body(4))
+        assert "Extracted text:" in rendered
+        assert "tokens" in rendered
+        assert "across 4 pages" in rendered
+
+    def test_a_document_past_the_window_is_routed_to_analyze_document(self, tmp_path: Path):
+        rendered = self._entry(tmp_path, self._body(300))
+        assert "does not fit in one context window" in rendered
+        assert "analyze_document" in rendered
+
+    def test_a_small_document_is_not_routed_away_from_a_normal_read(self, tmp_path: Path):
+        rendered = self._entry(tmp_path, self._body(4))
+        assert "does not fit in one context window" not in rendered
+        assert "analyze_document" not in rendered
+
+    def test_a_scan_keeps_the_ocr_warning_rather_than_an_extent(self, tmp_path: Path):
+        # A scan is sparse, not large: it must be sent to OCR, and reporting
+        # "1,200 characters" next to it would be a second, contradictory story.
+        rendered = self._entry(tmp_path, "\n".join(page_anchor(n) for n in range(1, 41)))
+        assert "image-based" in rendered
+        assert "Extracted text:" not in rendered
+
+    def test_the_threshold_falls_back_when_no_config_is_loaded(self):
+        from deerflow.agents.middlewares.uploads_middleware import (
+            _DEFAULT_LARGE_DOCUMENT_CHARS,
+            _large_document_chars,
+        )
+
+        assert _large_document_chars() >= 1_000
+        assert _DEFAULT_LARGE_DOCUMENT_CHARS == 120_000

@@ -22,6 +22,8 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
+from deerflow.utils.context_budget import CHARS_PER_TOKEN
+
 # ``<!-- page: N -->`` on a line of its own. Tolerant of surrounding whitespace
 # so a reformatting pass over the Markdown cannot silently break page lookup.
 PAGE_ANCHOR_RE = re.compile(r"^[ \t]*<!--\s*page:\s*(\d+)\s*-->[ \t]*$", re.MULTILINE)
@@ -55,6 +57,19 @@ def first_page_in(text: str) -> int | None:
     return int(match.group(1)) if match else None
 
 
+def last_page_in(text: str) -> int | None:
+    """Return the last page number anchored in *text*, if any.
+
+    The pair with :func:`first_page_in`: together they turn "parts 1-60 were
+    read" into "pages 1-120 were read", which is the only form of that
+    statement a reader can check against the document in front of them.
+    """
+    last = None
+    for match in PAGE_ANCHOR_RE.finditer(text):
+        last = match
+    return int(last.group(1)) if last is not None else None
+
+
 @dataclass(frozen=True)
 class ExtractionQuality:
     """What a conversion actually recovered from a document."""
@@ -74,12 +89,31 @@ class ExtractionQuality:
         return self.chars == 0
 
     @property
+    def approx_tokens(self) -> int:
+        """Roughly what reading this document end to end would cost in context."""
+        return self.chars // CHARS_PER_TOKEN
+
+    @property
     def is_sparse(self) -> bool:
         """True when the text layer looks absent rather than merely short."""
         per_page = self.chars_per_page
         if per_page is not None:
             return per_page < MIN_CHARS_PER_PAGE
         return self.chars < MIN_TOTAL_CHARS
+
+    def describe_extent(self) -> str:
+        """One line stating how much text a full read would pull into context.
+
+        The file size shown next to an upload is the *compressed* PDF on disk:
+        a 200 KB PDF routinely extracts to more than a megabyte of Markdown, so
+        the number the agent sees understates the cost of reading it by an
+        order of magnitude. This is the number that actually decides whether a
+        linear read fits.
+        """
+        size = f"{self.chars:,} characters (~{self.approx_tokens:,} tokens)"
+        if self.pages:
+            return f"{size} across {self.pages} pages"
+        return size
 
     def describe(self) -> str:
         """One line the agent can be shown, in place of a silently empty file."""

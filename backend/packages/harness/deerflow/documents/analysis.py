@@ -24,6 +24,7 @@ import logging
 from dataclasses import dataclass, field
 
 from deerflow.documents.chunking import DocumentChunk, chunk_document
+from deerflow.documents.extraction import count_page_anchors, last_page_in
 from deerflow.utils.context_budget import ContextBudget, chunk_chars_for
 
 logger = logging.getLogger(__name__)
@@ -99,16 +100,53 @@ class AnalysisResult:
     chunks_relevant: int = 0
     reduce_rounds: int = 0
     truncated: bool = False
+    # Where in the document the parts that were read actually sit. "Parts" is a
+    # coordinate only this module can see; pages are the one a reader can check
+    # against the document in front of them.
+    start_part: int = 1
+    first_page: int | None = None
+    last_page: int | None = None
+    pages_total: int | None = None
+    # The part to resume from when ``max_chunks`` stopped the read early. A cap
+    # that silently returns a prefix is the failure this field exists to make
+    # impossible: the caller is told the document continues and where.
+    next_part: int | None = None
+    # The reduce stage ran out of merge rounds and dropped notes to fit. Read
+    # content that never reached the answer is a coverage gap like any other.
+    notes_truncated: bool = False
+
+    @property
+    def parts_unread(self) -> int:
+        """Parts after the ones this call read, i.e. what a resume would cover."""
+        return max(0, self.chunks_total - (self.start_part - 1 + self.chunks_read))
+
+    def _page_span(self) -> str | None:
+        if self.first_page is None:
+            return None
+        span = f"pages {self.first_page}"
+        if self.last_page is not None and self.last_page != self.first_page:
+            span += f"-{self.last_page}"
+        if self.pages_total:
+            span += f" of {self.pages_total}"
+        return span
 
     def coverage_line(self) -> str:
         """One line stating what was actually read — never implied, always said."""
         parts = [f"read {self.chunks_read} of {self.chunks_total} parts"]
+        span = self._page_span()
+        if span:
+            parts.append(span)
         if self.chunks_relevant:
             parts.append(f"{self.chunks_relevant} contributed")
         if self.chunks_failed:
             parts.append(f"{self.chunks_failed} could not be read")
+        if self.notes_truncated:
+            parts.append("the notes did not all fit the final synthesis, so some of what was read is not in this answer")
         if self.truncated:
-            parts.append("stopped early at the configured part limit")
+            detail = "stopped early at the configured part limit"
+            if self.next_part is not None:
+                detail += f" — {self.parts_unread} part(s) are still unread; call this tool again with start_part={self.next_part} to continue"
+            parts.append(detail)
         return "; ".join(parts)
 
 
@@ -165,10 +203,14 @@ def _group_by_size(rendered: list[str], limit: int) -> list[list[str]]:
     return groups
 
 
-async def reduce_notes(model, rendered: list[str], question: str, *, limit: int, max_rounds: int = 4) -> tuple[str | None, int]:
+async def reduce_notes(model, rendered: list[str], question: str, *, limit: int, max_rounds: int = 4) -> tuple[str | None, int, bool]:
     """Combine notes into one answer, merging in rounds when they do not fit.
 
-    Returns the answer and the number of intermediate merge rounds it took.
+    Returns the answer, the number of intermediate merge rounds it took, and
+    whether notes had to be dropped to fit the window. That last flag is the
+    point: the truncation used to be marked only inside the prompt the model
+    saw, so content that was read but never reached the answer was invisible to
+    the caller — a partial read that reads as complete.
     """
     rounds = 0
     while rounds < max_rounds:
@@ -183,11 +225,12 @@ async def reduce_notes(model, rendered: list[str], question: str, *, limit: int,
         rounds += 1
 
     notes = "\n\n".join(rendered)
-    if len(notes) > limit:
+    notes_truncated = len(notes) > limit
+    if notes_truncated:
         # Every merge round is spent and it still does not fit: truncate rather
         # than send a prompt the model will reject or silently cut from the head.
         notes = notes[:limit] + "\n\n[notes truncated to fit the model's context]"
-    return await _ask(model, REDUCE_PROMPT.format(question=question, notes=notes)), rounds
+    return await _ask(model, REDUCE_PROMPT.format(question=question, notes=notes)), rounds, notes_truncated
 
 
 async def analyze_document_text(
@@ -199,6 +242,7 @@ async def analyze_document_text(
     chunk_chars: int | None = None,
     max_chunk_chars: int | None = None,
     max_chunks: int | None = None,
+    start_part: int = 1,
     concurrency: int = 2,
 ) -> AnalysisResult:
     """Answer *question* about *text* without ever holding all of it in context.
@@ -207,6 +251,13 @@ async def analyze_document_text(
     128K-window model would otherwise be handed ~55K tokens per map call, which
     is well past where long-input accuracy starts degrading regardless of what
     the window advertises.
+
+    ``start_part`` is the 1-based part to begin at. ``max_chunks`` bounds cost,
+    and on a small-window model it binds hard — a 300-page PDF chunks into 150
+    parts against an 8K window, so a cap of 60 reads the first 40% of the
+    document and nothing else. That prefix is a real answer to a different
+    question, so the result says which pages it covers and which part to resume
+    from, and this argument is how the caller resumes.
     """
     size = chunk_chars if chunk_chars is not None else chunk_chars_for(budget, maximum=max_chunk_chars)
     chunks = chunk_document(text, chunk_chars=size)
@@ -214,38 +265,53 @@ async def analyze_document_text(
         return AnalysisResult(answer="The document is empty — there is nothing to analyse.")
 
     total = len(chunks)
+    pages_total = count_page_anchors(text) or None
+    start = min(max(1, start_part), total)
+    chunks = chunks[start - 1 :]
     truncated = False
-    if max_chunks is not None and total > max_chunks:
+    if max_chunks is not None and len(chunks) > max_chunks:
         chunks = chunks[:max_chunks]
         truncated = True
+    next_part = start + len(chunks) if truncated else None
+
+    # Page coordinates of what this call actually read. Reported whether or not
+    # anything was found: "pages 1-120 of 300 say nothing about X" is a useful
+    # answer, and "nothing about X" on its own is a misleading one.
+    first_page = chunks[0].start_page if chunks else None
+    last_page = last_page_in(chunks[-1].text) if chunks else None
 
     notes = await map_chunks(model, chunks, question, concurrency=concurrency)
     relevant = [note for note in notes if note.relevant]
     failed = sum(1 for note in notes if note.failed)
 
+    common = {
+        "notes": notes,
+        "chunks_total": total,
+        "chunks_read": len(notes),
+        "chunks_failed": failed,
+        "truncated": truncated,
+        "start_part": start,
+        "first_page": first_page,
+        "last_page": last_page,
+        "pages_total": pages_total,
+        "next_part": next_part,
+    }
+
     if not relevant:
         answer = "Nothing in the parts that were read addresses this question."
         if failed:
             answer += f" {failed} of {len(notes)} parts could not be read, so the document may still contain an answer."
-        return AnalysisResult(
-            answer=answer,
-            notes=notes,
-            chunks_total=total,
-            chunks_read=len(notes),
-            chunks_failed=failed,
-            truncated=truncated,
-        )
+        if truncated:
+            answer += " The read also stopped at the configured part limit, so the rest of the document is unexamined."
+        return AnalysisResult(answer=answer, chunks_relevant=0, **common)
 
     # The reduce prompt has to hold the notes plus its own instructions, so it
     # gets the same per-call budget the map stage used.
-    answer, rounds = await reduce_notes(model, [note.render() for note in relevant], question, limit=size)
+    answer, rounds, notes_truncated = await reduce_notes(model, [note.render() for note in relevant], question, limit=size)
     return AnalysisResult(
         answer=answer if answer is not None else "The final synthesis step failed; the per-part notes are preserved below.",
-        notes=notes,
-        chunks_total=total,
-        chunks_read=len(notes),
-        chunks_failed=failed,
         chunks_relevant=len(relevant),
         reduce_rounds=rounds,
-        truncated=truncated,
+        notes_truncated=notes_truncated,
+        **common,
     )
