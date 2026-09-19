@@ -18,7 +18,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **documents:** `analyze_document` takes `start_part`, so a read stopped by
   `max_chunks` can be continued instead of silently answering about a prefix.
 - **config:** `documents.large_document_chars` (default 120000) — the extracted-text size
-  past which an upload announces itself as too large to read linearly (`config_version` 54).
+  past which an upload announces itself as too large to read linearly (`config_version` 54,
+  bumped in `config.example.yaml` and both Helm chart copies).
 
 ### Fixed
 - **documents:** a large text PDF is now routed to `analyze_document`. The uploads prompt
