@@ -1465,8 +1465,13 @@ models:
   # Example: Anthropic Claude model (with extended thinking)
   # supports_thinking: true is required — without it, DeerFlow silently falls
   # back to non-thinking mode even when the UI thinking toggle is on.
-  # budget_tokens is required by the Anthropic API when thinking.type=enabled
+  # The example below is a *pre-adaptive* model, which is the only family that
+  # still takes this form: budget_tokens is required when thinking.type=enabled
   # (no server default; min 1024; must be less than max_tokens).
+  # Every Claude in the bundle above is adaptive and **rejects it with a 400** —
+  # those take `thinking: {type: adaptive}` with no budget_tokens, which is what
+  # the auto-model-config blocks already carry. Copy this shape onto a current
+  # model and the first request fails.
   # - name: claude-sonnet-4
   #   display_name: Claude Sonnet 4
   #   use: langchain_anthropic:ChatAnthropic

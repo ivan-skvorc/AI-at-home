@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **documents:** `make drift-eval` — a mission-drift evaluation for long documents. A
+  primary model answers one narrow question about a generated PDF with facts planted at
+  known pages; a secondary model judges whether the answer still addresses that question
+  or quietly became "summarise this document". The planted facts grade the judge as well,
+  so a judge that passes a run which missed its fact is reported as the judge failing.
+  Runs offline against the `analyze_document` path, or end to end through the agent with
+  `MODE=agent`. See `backend/scripts/benchmark/drift_eval/README.md`.
+- **documents:** `analyze_document` takes `start_part`, so a read stopped by
+  `max_chunks` can be continued instead of silently answering about a prefix.
+- **config:** `documents.large_document_chars` (default 120000) — the extracted-text size
+  past which an upload announces itself as too large to read linearly (`config_version` 54).
+
+### Fixed
+- **documents:** a large text PDF is now routed to `analyze_document`. The uploads prompt
+  named that tool only for *scanned* files, so a 300-page text PDF was handed a heading
+  outline and told to `read_file` — the navigation loop the tool exists to replace.
+- **documents:** the upload prompt states the extracted size (characters, pages, approximate
+  tokens) instead of only the file size on disk. For a PDF the latter is the *compressed*
+  document and understates a linear read by roughly 5x, which is how a run exhausts its
+  window before noticing.
+- **documents:** a read stopped by `max_chunks` now reports the **pages** it covered and the
+  `start_part` to resume from. Against an 8K window a 300-page PDF is ~150 parts, so the
+  shipped cap of 60 read pages 1-121 and answered "nothing found" for anything later;
+  against a 200K window the same document is ~21 parts and the cap never fired, which is
+  why this was invisible.
+- **documents:** notes dropped at the reduce stage are reported. The truncation was marked
+  only inside the prompt the model saw, so content that was read but never reached the
+  answer was invisible to the caller.
+- **config:** the commented extended-thinking example no longer presents `budget_tokens` as
+  a blanket requirement. It applies only to pre-adaptive models; every Claude in the bundle
+  rejects that form with a 400, so copying the example onto one failed on the first request.
+
 ### Changed
 - **repo:** **Merged `bytedance/deer-flow@14c9d44`** (9 commits) into the fork.
   Upstream brings per-model request pacing (`request_admission`, an off-by-default
