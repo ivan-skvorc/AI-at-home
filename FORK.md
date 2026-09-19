@@ -3901,6 +3901,16 @@ worth remembering: **anything that identifies a provider by grepping the `use`
 string breaks when a tool becomes a dispatcher**, and the failures are quiet
 because each of these scripts has a legitimate do-nothing outcome.
 
+**Why this depth is here and not in an `AGENTS.md`.** `backend/AGENTS.md` is at
+its budget: the effective chain it feeds `deerflow/runtime/AGENTS.md` had **47
+bytes** of headroom (and `agents/middlewares/` 168) against the 98304-byte hard
+limit that `test_agent_guidance_check.py` enforces, so the 1786-byte section
+this feature first landed there broke three chains at once. Any guidance
+addition to `backend/AGENTS.md` now needs a matching deletion. `deerflow/community/`
+has no guide of its own — worth adding, since thirty-odd providers share these
+contracts — and a file there would cost the over-budget chains nothing, as they
+are siblings rather than descendants.
+
 **What this does not fix.** Page *fetching* has the same IP-reputation problem
 and keeps its own answer (`fallback: jina`, §31). And `AsyncCamoufox` is still
 launched with `headless=True` alone — its `proxy`, `geoip`, `humanize` and
