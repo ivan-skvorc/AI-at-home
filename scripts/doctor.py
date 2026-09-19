@@ -793,6 +793,11 @@ def check_web_tool(config_path: Path, *, tool_name: str, label: str) -> CheckRes
 
         free_providers = {
             "web_search": {
+                # The dispatcher entry names no provider module, so it is matched
+                # on its own path the way the web_fetch dispatcher below is. Its
+                # default backend is SearXNG and its Tavily fallback is inert
+                # without a key, so the entry needs no API key to be "configured".
+                "community.web_search.tools": "web_search dispatcher (SearXNG self-hosted default, no key needed)",
                 "searxng": "SearXNG (self-hosted, no key needed)",
                 "ddg_search": "DuckDuckGo (no key needed)",
             },

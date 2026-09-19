@@ -294,6 +294,38 @@ When using `make dev` from root, the frontend automatically connects through ngi
 
 ## Key Features
 
+### Web Search Backends (the dispatcher)
+
+`web_search` is a dispatcher, not a provider: `config.yaml` points at
+`deerflow.community.web_search.tools:web_search_tool`, which resolves `backend:`
+(default `searxng`) and an optional `fallback:`, with
+`DEER_FLOW_WEB_SEARCH_BACKEND` overriding both. It mirrors the `web_fetch`
+dispatcher deliberately — same keys, same resolution order.
+
+Three rules before you edit it (depth and reasoning: FORK.md §39):
+
+- **A backend signals failure by raising, not by returning an error string.**
+  That is what separates a real failure from an empty result set. The fallback
+  runs on an exception only; an empty list is a successful search that matched
+  nothing and must be returned as-is. Falling back on empty bills a third party
+  for every zero-match query and routes it off the machine, and only
+  `test_an_empty_result_set_does_not_trigger_the_fallback` goes red.
+- **A key-bearing fallback must be inert without its key.** `_fallback_is_available`
+  gates it; when it returns False the *primary's* error is reported verbatim.
+  That check runs outside the dispatcher's try block, so the provider's config
+  lookup must never raise (Tavily's `_web_search_extras` swallows and degrades
+  to the env var).
+- **A synchronous provider SDK goes through `asyncio.to_thread`.** Tavily's
+  client is blocking; calling it on the event loop stalls every other in-flight
+  run.
+
+Adding a backend means a branch in `_load_backend`, a plain
+`async (query, time_range) -> str` callable beside the provider's `@tool`
+wrapper, and — if it is a legitimate primary for SearXNG — a look at
+`scripts/detect_searxng.py::config_uses_searxng`, which decides whether the
+bundled container is started and must understand every config shape that
+reaches SearXNG.
+
 ### Web Search Recency
 
 DDG, Brave, Tavily, SearXNG, and Sofya `web_search` share optional

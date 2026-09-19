@@ -8,6 +8,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **search:** `web_search` is now a pluggable dispatcher
+  (`deerflow.community.web_search.tools:web_search_tool`) with `backend:` and `fallback:`
+  keys, mirroring the existing `web_fetch` dispatcher. SearXNG remains the default; an
+  optional `fallback: tavily` covers a blocked egress where every consumer engine
+  CAPTCHAs at once. The fallback is inert unless `TAVILY_API_KEY` is set, and fires only
+  when the primary *raises* — never on a successful search that matched nothing, which
+  would otherwise bill a third party for every zero-match query and route it off the
+  machine. Override per run with `DEER_FLOW_WEB_SEARCH_BACKEND` (`config_version` 55,
+  bumped in `config.example.yaml` and both Helm chart copies).
 - **documents:** `make drift-eval` — a mission-drift evaluation for long documents. A
   primary model answers one narrow question about a generated PDF with facts planted at
   known pages; a secondary model judges whether the answer still addresses that question
@@ -22,6 +31,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   bumped in `config.example.yaml` and both Helm chart copies).
 
 ### Fixed
+- **search:** `scripts/detect_searxng.py` recognizes the dispatcher config shape. It
+  matched the provider module path only, so a config reaching SearXNG through the
+  dispatcher's `backend:`/`fallback:` key read as "no SearXNG" and the bundled container
+  stopped being auto-started on every launch path — silently, because "skip" is a
+  legitimate outcome.
+- **search:** `make doctor` describes the dispatcher instead of reporting the web search
+  check as `ok` with an empty detail, and no longer implies a `TAVILY_API_KEY` is needed
+  for a `fallback: tavily` that is inert without one.
 - **documents:** a large text PDF is now routed to `analyze_document`. The uploads prompt
   named that tool only for *scanned* files, so a 300-page text PDF was handed a heading
   outline and told to `read_file` — the navigation loop the tool exists to replace.

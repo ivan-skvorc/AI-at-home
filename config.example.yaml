@@ -20,7 +20,7 @@
 # ============================================================================
 # Bump this number when the config schema changes.
 # Run `make config-upgrade` to merge new fields into your local config.yaml.
-config_version: 54
+config_version: 55
 
 # Optional per-model request pacing (inside a models[] entry):
 # request_admission:
@@ -2221,11 +2221,29 @@ tools:
   # auto-detection — docker-compose sets it in-network so this file works
   # unchanged inside the stack.
   # Self-deploy alternative: https://github.com/searxng/searxng
+  #
+  # This entry goes through the pluggable web_search dispatcher, which picks a
+  # backend and optionally chains a fallback when the primary ERRORS. SearXNG
+  # stays the default: self-hosted, key-less, and a query never leaves the box.
+  #
+  # `fallback: tavily` is the escape hatch for a blocked egress (a VPN or
+  # datacenter exit that every consumer engine CAPTCHAs). Two things keep it
+  # from running behind your back:
+  #   * it is inert until TAVILY_API_KEY exists in the repo-root .env — without
+  #     the key the stack behaves exactly as it did before, and SearXNG's own
+  #     failure is what gets reported;
+  #   * it fires only when SearXNG RAISES (every engine blocked, HTTP error),
+  #     never when SearXNG succeeds with zero results. A search that genuinely
+  #     matched nothing stays local and costs no Tavily credit.
+  # Comment `fallback` out to keep every query strictly on your own machine.
+  # Tavily is a third party: a query that falls back leaves your network.
   - name: web_search
     group: web
-    use: deerflow.community.searxng.tools:web_search_tool
+    use: deerflow.community.web_search.tools:web_search_tool
+    backend: searxng                  # searxng (default) or tavily
+    fallback: tavily                  # only on a SearXNG error, and only if TAVILY_API_KEY is set
     base_url: http://localhost:8088   # SearXNG instance URL (default: :8088; Docker stacks override via env)
-    max_results: 5                    # Maximum number of search results
+    max_results: 5                    # Maximum number of search results (shared by both backends)
 
   # Web search tool (uses DuckDuckGo, no API key and no local service required)
   # Zero-dependency fallback: if you don't run the bundled SearXNG service,

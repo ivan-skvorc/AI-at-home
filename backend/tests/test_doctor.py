@@ -330,6 +330,41 @@ class TestCheckWebSearch:
         assert result.status == "ok"
         assert "SearXNG" in result.detail
 
+    def test_web_search_dispatcher_is_recognized_as_keyless(self, tmp_path):
+        """The dispatcher names no provider module, so it needs its own entry.
+
+        doctor matches a provider by substring of `use`, and
+        `deerflow.community.web_search.tools` contains neither "searxng" nor
+        "tavily". Without an entry the check still returned ok but with an EMPTY
+        description — a diagnostic that says nothing about what is configured.
+        """
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text(
+            "config_version: 55\nmodels:\n  - name: default\n    use: langchain_openai:ChatOpenAI\n    model: gpt-4o\n    api_key: $OPENAI_API_KEY\n"
+            "tools:\n  - name: web_search\n    use: deerflow.community.web_search.tools:web_search_tool\n"
+            "    backend: searxng\n    fallback: tavily\n    base_url: http://localhost:8088\n"
+        )
+        result = doctor.check_web_search(cfg)
+        assert result.status == "ok"
+        assert result.detail, "the dispatcher must report what it is, not an empty detail"
+        assert "SearXNG" in result.detail
+
+    def test_a_tavily_fallback_does_not_demand_an_api_key(self, tmp_path, monkeypatch):
+        """`fallback: tavily` with no key is a configured stack, not a broken one.
+
+        The fallback is inert without TAVILY_API_KEY and SearXNG still answers,
+        so doctor must not warn the user into setting a key they did not ask for.
+        """
+        monkeypatch.delenv("TAVILY_API_KEY", raising=False)
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text(
+            "config_version: 55\nmodels:\n  - name: default\n    use: langchain_openai:ChatOpenAI\n    model: gpt-4o\n    api_key: $OPENAI_API_KEY\n"
+            "tools:\n  - name: web_search\n    use: deerflow.community.web_search.tools:web_search_tool\n"
+            "    backend: searxng\n    fallback: tavily\n"
+        )
+        result = doctor.check_web_search(cfg)
+        assert result.status == "ok"
+
     def test_commented_out_tools_block_warns_without_traceback(self, tmp_path):
         # config.example.yaml ships a `tools:` key whose entries can all be
         # commented out, so it parses as None rather than an empty list.

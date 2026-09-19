@@ -58,6 +58,7 @@
 > - 🔄 **Self-updating browser & search** — Camoufox and the SearXNG image refresh themselves, throttled daily on launch or via a `systemd --user` timer. Opt out with `DEER_FLOW_AUTO_UPDATE=0`.
 > - 🧰 **An Update dependencies button** — **Settings → Maintenance** pulls a newer Camoufox and SearXNG image on demand, for when a page fetch or a search just broke and tomorrow's automatic refresh is too late. Reports each component's outcome (including "skipped, no Docker"), refuses a second run while one is in flight, and is admin-only because it runs commands on the host.
 > - 🚧 **Search that says when it is blocked** — SearXNG answers `HTTP 200` with an empty list when its engines are rate-limited, which used to read as a successful empty search and got the agent to re-query into the suspension. It is now an error naming the engines and the wait.
+> - 🪃 **A search backup for when your connection is blocked** — `web_search` is now a pluggable dispatcher. Self-hosted SearXNG stays the default, and an optional Tavily fallback covers the case a VPN or datacenter exit creates: every consumer engine CAPTCHAs your IP at once and search goes dead. The backup fires **only** when SearXNG errors — never on a search that legitimately matched nothing — and stays completely inert until `TAVILY_API_KEY` exists, so no query leaves your machine until you opt in. Set `fallback: tavily` in `config.yaml`.
 > - 📦 **A browser that is actually installed, not just present** — the gateway image shipped Camoufox without the system libraries it loads, so every presence check passed until the first fetch failed. The libraries now ship with it.
 > - 🎬 **Reduced motion by default** — decorative animations are off by default and honor the OS setting; flip it back per browser.
 >
@@ -660,6 +661,31 @@ Every launch path resolves the instance automatically at startup (via `scripts/d
 - **Instance settings** live in [docker/searxng/settings.yml](docker/searxng/settings.yml): the JSON API is enabled (required by DeerFlow's client) and the bot limiter is disabled for the private in-network instance. Set `SEARXNG_SECRET` in `.env` before exposing the instance beyond localhost.
 - **Bring your own instance**: set `DEER_FLOW_SEARXNG_BASE_URL` in `.env` to skip auto-detection and point the Gateway at any reachable SearXNG (its `search.formats` must include `json`).
 - **No Docker / prefer zero dependencies?** Swap the active `web_search` entry in `config.yaml` back to the commented DuckDuckGo provider — no local service required.
+
+##### When every engine blocks you at once: the `web_search` fallback
+
+SearXNG scrapes consumer engines, so it inherits your IP's reputation. Behind a commercial VPN or from a datacenter range, Google, DuckDuckGo, Brave and Startpage can all CAPTCHA or drop you at the same time — and a blocked engine is benched for ~180 seconds, so retrying makes it worse.
+
+The `web_search` entry therefore goes through a dispatcher that can chain a second backend:
+
+```yaml
+  - name: web_search
+    group: web
+    use: deerflow.community.web_search.tools:web_search_tool
+    backend: searxng                  # searxng (default) or tavily
+    fallback: tavily                  # only on a SearXNG error, and only if TAVILY_API_KEY is set
+    base_url: http://localhost:8088
+    max_results: 5
+```
+
+Two rules keep the backup from running behind your back:
+
+- **It is inert without a key.** No `TAVILY_API_KEY` in the repo-root `.env` means the fallback is skipped entirely and SearXNG's own failure is what gets reported. A stack that never sets the key behaves exactly as it did before.
+- **It fires on an error, never on an empty result.** A search that ran fine and matched nothing stays local and costs nothing. Only a raised failure — every engine blocked, an HTTP error — reaches Tavily.
+
+Comment `fallback` out to keep every query strictly on your own machine. Tavily is a third party: a query that falls back leaves your network, which is the one thing the local-first default exists to prevent, so it is an opt-in rather than a silent default.
+
+Set the backend for one run without editing config via `DEER_FLOW_WEB_SEARCH_BACKEND=tavily`.
 
 #### Docker Production Deployment
 
