@@ -1,6 +1,6 @@
 # DeerFlow - Unified Development Environment
 
-.PHONY: help config config-upgrade check check-agent-guidance install extension-install extension-upgrade extension-list extension-enable extension-disable extension-remove setup doctor support-bundle detect-thread-boundaries detect-blocking-io backup restore dev dev-daemon start start-daemon nginx stop up up-start down clean docker-init docker-start docker-stop docker-logs docker-logs-frontend docker-logs-gateway docker-logs-redis searxng searxng-stop comfy-up comfy-down comfy-logs comfy-models comfy-model-add sandbox-up sandbox-down sandbox-logs sandbox-enable sandbox-disable setup-sandbox fetch-browser auto-update auto-update-install auto-update-uninstall
+.PHONY: help drift-eval config config-upgrade check check-agent-guidance install extension-install extension-upgrade extension-list extension-enable extension-disable extension-remove setup doctor support-bundle detect-thread-boundaries detect-blocking-io backup restore dev dev-daemon start start-daemon nginx stop up up-start down clean docker-init docker-start docker-stop docker-logs docker-logs-frontend docker-logs-gateway docker-logs-redis searxng searxng-stop comfy-up comfy-down comfy-logs comfy-models comfy-model-add sandbox-up sandbox-down sandbox-logs sandbox-enable sandbox-disable setup-sandbox fetch-browser auto-update auto-update-install auto-update-uninstall
 
 # docker compose shim: prefer the v2 plugin, fall back to legacy docker-compose.
 DOCKER_COMPOSE ?= docker compose
@@ -39,6 +39,7 @@ help:
 	@echo "  make check-agent-guidance - Validate scoped AGENTS.md file and chain budgets"
 	@echo "  make detect-thread-boundaries - Inventory backend executor/thread/event-loop boundaries"
 	@echo "  make detect-blocking-io        - Inventory blocking IO that may block the backend event loop"
+	@echo "  make drift-eval      - Measure mission drift on a large PDF (PAGES=/MODE=/PRIMARY=/JUDGE=)"
 	@echo "  make install         - Install all dependencies (frontend + backend + pre-commit hooks)"
 	@echo "  make extension-install SOURCE=... - Install and enable a trusted Python extension"
 	@echo "  make extension-upgrade SOURCE=... - Replace an installed extension and keep its config"
@@ -91,6 +92,17 @@ setup:
 
 doctor:
 	@$(BACKEND_UV_RUN) python ../scripts/doctor.py
+
+# Mission drift on a large PDF: a primary model does the work, a secondary
+# judges whether it still answered the question it was given, and facts planted
+# at known pages keep the judge honest. Defaults to the offline document path;
+# MODE=agent drives the whole loop and needs `make dev` up.
+# Depth: backend/scripts/benchmark/drift_eval/README.md
+drift-eval:
+	@cd backend && PYTHONPATH=. uv run python -m scripts.benchmark.drift_eval run \
+		--mode $(or $(MODE),pipeline) --pages $(or $(PAGES),300) \
+		$(if $(PRIMARY),--primary-model $(PRIMARY),) $(if $(JUDGE),--judge-model $(JUDGE),) \
+		$(if $(WINDOW),--context-window $(WINDOW),) $(if $(FACT),--fact $(FACT),)
 
 support-bundle:
 	@$(BACKEND_UV_RUN) python ../scripts/support_bundle.py --include-doctor

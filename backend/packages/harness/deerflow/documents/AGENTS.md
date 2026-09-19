@@ -95,7 +95,14 @@ Three failures, three modules:
 - Config lives in `config/documents_config.py` (`documents:` in
   `config.example.yaml`).
 
+Drift: a unit test cannot see the failure where the run completes but answers
+a different question than the one asked. `backend/scripts/benchmark/drift_eval/`
+measures that end to end against facts planted at known pages
+(`make drift-eval`); its `--no-follow-resumption` flag reproduces the silent
+prefix read this module used to return.
+
 Tests: `backend/tests/test_context_budget.py`,
 `test_context_aware_tool_output.py`, `test_document_extraction.py`,
 `test_document_chunking.py`, `test_document_ocr.py`,
-`test_document_analysis.py`, `test_analyze_document_tool.py`.
+`test_document_analysis.py`, `test_analyze_document_tool.py`,
+`test_bench_drift_eval.py` (the drift harness itself).
