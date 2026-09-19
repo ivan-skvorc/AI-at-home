@@ -20,7 +20,7 @@
 # ============================================================================
 # Bump this number when the config schema changes.
 # Run `make config-upgrade` to merge new fields into your local config.yaml.
-config_version: 53
+config_version: 54
 
 # Optional per-model request pacing (inside a models[] entry):
 # request_admission:
@@ -1465,8 +1465,13 @@ models:
   # Example: Anthropic Claude model (with extended thinking)
   # supports_thinking: true is required — without it, DeerFlow silently falls
   # back to non-thinking mode even when the UI thinking toggle is on.
-  # budget_tokens is required by the Anthropic API when thinking.type=enabled
+  # The example below is a *pre-adaptive* model, which is the only family that
+  # still takes this form: budget_tokens is required when thinking.type=enabled
   # (no server default; min 1024; must be less than max_tokens).
+  # Every Claude in the bundle above is adaptive and **rejects it with a 400** —
+  # those take `thinking: {type: adaptive}` with no budget_tokens, which is what
+  # the auto-model-config blocks already carry. Copy this shape onto a current
+  # model and the first request fails.
   # - name: claude-sonnet-4
   #   display_name: Claude Sonnet 4
   #   use: langchain_anthropic:ChatAnthropic
@@ -2759,6 +2764,13 @@ documents:
   max_chunk_chars: 60000          # Ceiling on the derived chunk size, however large the window is
   concurrency: 2                  # Parallel map calls
   answer_max_chars: 8000          # Cap on the answer returned into context; full notes always go to a file
+  # Extracted-text size past which an upload announces itself as too large to
+  # read linearly. The size shown next to an upload is the file on disk, and for
+  # a PDF that is the *compressed* document: 200 KB of PDF is routinely more
+  # than a megabyte of Markdown (~280K tokens for 300 pages). Past this figure
+  # the prompt states the real extent and points at `analyze_document` instead
+  # of leaving the agent to discover the cost by exhausting its window.
+  large_document_chars: 120000    # ~30K tokens; past the whole window of every local model
 
   # Scanned PDFs. pymupdf4llm extracts a PDF's *text layer*; a scan has none, so
   # conversion "succeeds" and produces a near-empty file that an agent will

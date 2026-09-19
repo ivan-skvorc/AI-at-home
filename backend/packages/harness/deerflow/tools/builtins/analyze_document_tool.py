@@ -112,11 +112,16 @@ def _vision_model_name(app_config: Any) -> str | None:
 
 
 def _write_notes(result: AnalysisResult, outputs_dir: Path, source_name: str) -> str | None:
-    """Persist the per-part notes and return the virtual path to them."""
+    """Persist the per-part notes and return the virtual path to them.
+
+    A resumed call (``start_part`` > 1) writes its own file: overwriting the
+    first pass's notes would destroy the only record of the pages it read.
+    """
     try:
         notes_dir = outputs_dir / _NOTES_DIRNAME
         notes_dir.mkdir(parents=True, exist_ok=True)
-        notes_path = notes_dir / f"{source_name}.notes.md"
+        suffix = f".from-part-{result.start_part}" if result.start_part > 1 else ""
+        notes_path = notes_dir / f"{source_name}{suffix}.notes.md"
         body = "\n\n".join(note.render() for note in result.notes)
         notes_path.write_text(f"# Notes for {source_name}\n\n{result.coverage_line()}\n\n{body}\n", encoding="utf-8")
         return f"/mnt/user-data/outputs/{_NOTES_DIRNAME}/{notes_path.name}"
@@ -129,6 +134,7 @@ async def _analyze_document_impl(
     path: str,
     question: str,
     max_pages: int | None = None,
+    start_part: int = 1,
     runtime: Runtime | None = None,
     *,
     _paths: Any | None = None,
@@ -182,6 +188,7 @@ async def _analyze_document_impl(
         budget=resolve_context_budget(model, app_config),
         max_chunk_chars=settings.max_chunk_chars,
         max_chunks=settings.max_chunks,
+        start_part=start_part,
         concurrency=settings.concurrency,
     )
 
@@ -271,12 +278,20 @@ async def analyze_document(
     path: Annotated[str, "The uploaded file to analyse, e.g. '/mnt/user-data/uploads/report.pdf' or just 'report.pdf'."],
     question: Annotated[str, "What you need to know from the document. Be specific — every part of the document is read against this question."],
     max_pages: Annotated[int | None, "For scanned PDFs only: cap how many pages are transcribed. Omit to use the configured limit."] = None,
+    start_part: Annotated[int, "Resume from this 1-based part. Use the value the previous call's coverage line gave you when it stopped at the part limit; leave at 1 to start from the beginning."] = 1,
 ) -> str:
     """Answer a question about a document that is too large to read into context.
 
     The document is split into parts sized for the model reading them; each part
     is read separately and the findings are combined. Scanned PDFs (no text
     layer) are transcribed from page images first, then summarised.
+
+    The reply ends with a coverage line naming the pages that were actually
+    read. On a long document against a small context window the read can stop
+    at the configured part limit; when it does, the coverage line gives you a
+    ``start_part`` to call again with, and the document is only fully examined
+    once you have followed it to the end. Treat an answer that stopped early as
+    covering its stated page range and nothing more.
 
     Use this tool when:
     - the document is long (tens of pages or more) and the question spans it,
@@ -290,4 +305,4 @@ async def analyze_document(
       `read_file` that range, which is one call instead of many;
     - the document is short enough to read directly.
     """
-    return await _analyze_document_impl(path=path, question=question, max_pages=max_pages, runtime=runtime)
+    return await _analyze_document_impl(path=path, question=question, max_pages=max_pages, start_part=start_part, runtime=runtime)

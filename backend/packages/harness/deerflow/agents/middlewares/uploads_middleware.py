@@ -17,6 +17,7 @@ from langgraph.runtime import Runtime
 
 from deerflow.agents.middlewares.input_sanitization_middleware import neutralize_untrusted_tags
 from deerflow.config.paths import Paths, get_paths
+from deerflow.documents.extraction import ExtractionQuality
 from deerflow.runtime.user_context import resolve_runtime_user_id
 from deerflow.uploads.manager import is_upload_staging_file
 from deerflow.utils.file_conversion import assess_converted_markdown
@@ -27,10 +28,29 @@ logger = logging.getLogger(__name__)
 
 _MAX_FILES_PER_CONTEXT_SECTION = 10
 
+# Fallback for the "too big to read linearly" threshold when the config cannot
+# be read. ~30K tokens: past the whole usable window of every local model this
+# fork targets, and a large enough share of a cloud window that spending it on
+# one document is a choice rather than an accident.
+_DEFAULT_LARGE_DOCUMENT_CHARS = 120_000
+
 
 def _extension_label(file: dict) -> str:
     extension = str(file.get("extension") or Path(str(file.get("filename") or "")).suffix).lower()
     return neutralize_untrusted_tags(extension) or "(no extension)"
+
+
+def _document_quality(source: Path) -> ExtractionQuality | None:
+    """Return what the conversion of *source* actually recovered, if converted.
+
+    One read of the companion Markdown answers both questions the agent needs
+    settled before it touches the file: was there a text layer at all, and how
+    much text is there.
+    """
+    for candidate in (source.with_name(source.name + ".md"), source.with_suffix(".md")):
+        if candidate.is_file():
+            return assess_converted_markdown(candidate, source)
+    return None
 
 
 def _extraction_warning(source: Path) -> str | None:
@@ -40,11 +60,19 @@ def _extraction_warning(source: Path) -> str | None:
     preview, which is indistinguishable from a short document — so it answers
     from an empty file rather than saying the PDF is a scan and needs OCR.
     """
-    for candidate in (source.with_name(source.name + ".md"), source.with_suffix(".md")):
-        if candidate.is_file():
-            quality = assess_converted_markdown(candidate, source)
-            return quality.describe() if quality is not None and quality.is_sparse else None
-    return None
+    quality = _document_quality(source)
+    return quality.describe() if quality is not None and quality.is_sparse else None
+
+
+def _large_document_chars() -> int:
+    """The extracted-text size past which a linear read is the wrong plan."""
+    try:
+        from deerflow.config.app_config import get_app_config
+
+        configured = int(get_app_config().documents.large_document_chars)
+    except Exception:
+        return _DEFAULT_LARGE_DOCUMENT_CHARS
+    return configured if configured > 0 else _DEFAULT_LARGE_DOCUMENT_CHARS
 
 
 def _format_omitted_file_types(files: list[dict]) -> str:
@@ -109,6 +137,20 @@ class UploadsMiddleware(AgentMiddleware[UploadsMiddlewareState]):
         if warning:
             lines.append(f"  ⚠ {neutralize_untrusted_tags(warning)}")
             lines.append("    Use `analyze_document` on this file — it reads the pages as images and then summarises the transcript.")
+        # The size above is the file on disk. For a PDF that is the *compressed*
+        # document: a 200 KB PDF routinely extracts to more than a megabyte of
+        # Markdown, so the number the agent just read understates the cost of
+        # opening it by an order of magnitude, and a linear read looks cheap
+        # right up until the window is gone.
+        extent = file.get("document_extent")
+        if extent:
+            lines.append(f"  Extracted text: {neutralize_untrusted_tags(extent)}")
+        if file.get("document_is_large"):
+            lines.append("  ⚠ This does not fit in one context window. Reading it end to end will")
+            lines.append("    exhaust the window and cost you the task you were asked to do.")
+            lines.append("    Use `analyze_document(path=..., question=...)` — it reads every page in")
+            lines.append("    bounded parts and reports which pages the answer came from. Use")
+            lines.append("    `grep`/`read_file` only for a section you have already located.")
         outline = file.get("outline") or []
         if outline:
             truncated = outline[-1].get("truncated", False)
@@ -264,12 +306,17 @@ class UploadsMiddleware(AgentMiddleware[UploadsMiddlewareState]):
 
         # Attach outlines to context files
         if uploads_dir:
+            large_document_chars = _large_document_chars()
             for file in context_files:
                 phys_path = uploads_dir / file["filename"]
                 outline, preview = extract_outline_for_file(phys_path)
                 file["outline"] = outline
                 file["outline_preview"] = preview
-                file["extraction_warning"] = _extraction_warning(phys_path)
+                quality = _document_quality(phys_path)
+                sparse = quality is not None and quality.is_sparse
+                file["extraction_warning"] = quality.describe() if sparse else None
+                file["document_extent"] = quality.describe_extent() if quality is not None and not sparse else None
+                file["document_is_large"] = bool(quality is not None and not sparse and quality.chars >= large_document_chars)
 
         logger.debug(f"Current uploads: {[f['filename'] for f in new_files]}")
 

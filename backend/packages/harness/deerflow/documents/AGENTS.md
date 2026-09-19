@@ -48,6 +48,14 @@ Three failures, three modules:
   window are merged in rounds, otherwise a long document just moves the overflow
   from the map stage to the reduce stage. `AnalysisResult.coverage_line()` states
   what was actually read — unread and unreadable parts are always said out loud.
+  It reports **pages**, not just part counts, and a read stopped by `max_chunks`
+  hands back the `start_part` to resume from. That cap binds on exactly the
+  models this module exists for: a 300-page PDF is ~150 parts against an 8K
+  window, so the shipped cap of 60 reads the first 40% — and against a cloud
+  window the same document is ~21 parts and the cap never fires, which is why
+  the prefix was invisible. `notes_truncated` carries the same honesty to the
+  reduce stage: notes dropped after the last merge round were read but are not
+  in the answer.
 
 ## Rules that are load-bearing
 
@@ -58,7 +66,16 @@ Three failures, three modules:
 - **Transcribe and summarise are separate passes.** Folding them together is the
   cheaper implementation and the one that silently loses content.
 - **Coverage is reported, not implied.** Every path that reads less than the
-  whole document says so in the string the agent gets back.
+  whole document says so in the string the agent gets back — in page numbers a
+  reader can check against the document, and with the `start_part` that
+  continues the read. A cap that silently returns a prefix answers a different
+  question than the one asked.
+- **The extent an agent is shown must be the extent it will pay for.** The
+  size beside an upload is the file on disk; for a PDF that is the compressed
+  document, understating a linear read by an order of magnitude. The uploads
+  prompt states the extracted characters, pages and approximate tokens, and
+  past `documents.large_document_chars` it routes to `analyze_document`
+  instead of leaving the agent to find out by exhausting its window.
 - **OCR never runs on its own.** Only when a text layer is missing *and* the
   agent called `analyze_document` on that file. Enabling it cannot start
   spending vision calls by itself.
@@ -70,12 +87,22 @@ Three failures, three modules:
   It resolves the upload, converts, checks quality, routes a scan through OCR,
   runs the map-reduce, writes per-part notes to
   `/mnt/user-data/outputs/document-analysis/`, and returns a bounded answer.
-- `UploadsMiddleware` calls `_extraction_warning` per file, so a scanned upload
-  announces itself in `<current_uploads>` and points at the tool.
+- `UploadsMiddleware` calls `_document_quality` once per file and derives both
+  signals from it: `_extraction_warning` for a scan, and
+  `document_extent` / `document_is_large` for a text document too big to read
+  linearly. Both announce themselves in `<current_uploads>` and point at the
+  tool — a scan at OCR, a large document at the map-reduce.
 - Config lives in `config/documents_config.py` (`documents:` in
   `config.example.yaml`).
+
+Drift: a unit test cannot see the failure where the run completes but answers
+a different question than the one asked. `backend/scripts/benchmark/drift_eval/`
+measures that end to end against facts planted at known pages
+(`make drift-eval`); its `--no-follow-resumption` flag reproduces the silent
+prefix read this module used to return.
 
 Tests: `backend/tests/test_context_budget.py`,
 `test_context_aware_tool_output.py`, `test_document_extraction.py`,
 `test_document_chunking.py`, `test_document_ocr.py`,
-`test_document_analysis.py`, `test_analyze_document_tool.py`.
+`test_document_analysis.py`, `test_analyze_document_tool.py`,
+`test_bench_drift_eval.py` (the drift harness itself).

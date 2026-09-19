@@ -27,6 +27,7 @@ from deerflow.documents.analysis import (
     reduce_notes,
 )
 from deerflow.documents.chunking import chunk_document
+from deerflow.documents.extraction import page_anchor
 from deerflow.utils.context_budget import ContextBudget
 
 
@@ -58,6 +59,11 @@ class _Model:
 
 def _document(sections: int = 30) -> str:
     return "\n\n".join(f"## Section {n}\n\n" + ("word " * 200).strip() for n in range(1, sections + 1))
+
+
+def _paged_document(pages: int = 30) -> str:
+    """A document carrying the page anchors a converted PDF would carry."""
+    return "\n\n".join(f"{page_anchor(n)}\n## Section {n}\n\n" + ("word " * 200).strip() for n in range(1, pages + 1))
 
 
 class TestMapStage:
@@ -109,7 +115,8 @@ class TestHierarchicalReduce:
     @pytest.mark.anyio
     async def test_notes_that_fit_are_reduced_in_one_call(self):
         model = _Model()
-        answer, rounds = await reduce_notes(model, ["note one", "note two"], "q", limit=10_000)
+        answer, rounds, notes_truncated = await reduce_notes(model, ["note one", "note two"], "q", limit=10_000)
+        assert not notes_truncated
         assert rounds == 0
         assert len(model.prompts) == 1
         assert answer == "a note"
@@ -118,7 +125,7 @@ class TestHierarchicalReduce:
     async def test_notes_that_overflow_are_merged_in_rounds(self):
         model = _Model(reply="merged")
         notes = ["x" * 400 for _ in range(12)]
-        answer, rounds = await reduce_notes(model, notes, "q", limit=1_000)
+        answer, rounds, _ = await reduce_notes(model, notes, "q", limit=1_000)
         assert rounds >= 1
         # More calls than a single reduce: the intermediate merges happened.
         assert len(model.prompts) > 1
@@ -136,7 +143,7 @@ class TestHierarchicalReduce:
     @pytest.mark.anyio
     async def test_a_failed_merge_falls_back_to_the_raw_notes(self):
         model = _Model(reply="ok", fail_on={1})
-        answer, _ = await reduce_notes(model, ["a" * 600 for _ in range(6)], "q", limit=1_000)
+        answer, _, _ = await reduce_notes(model, ["a" * 600 for _ in range(6)], "q", limit=1_000)
         assert answer == "ok"
 
 
@@ -233,3 +240,83 @@ class TestChunkCeiling:
         big = ContextBudget(context_window=131_072, reserved_output=8_192)
         await analyze_document_text(_document(sections=200), "q", model, budget=big)
         assert self._map_calls(model) == 1
+
+
+class TestTruncationIsResumable:
+    """A cap that returns a prefix must say which prefix, and how to continue.
+
+    ``max_chunks`` binds hardest on exactly the models this feature exists for:
+    a 300-page PDF chunks into ~150 parts against an 8K window, so the shipped
+    cap of 60 reads the first 40% of the document. Against a cloud window the
+    same document is ~21 parts and the cap never fires, which is why this is
+    invisible until someone runs it on the small model.
+    """
+
+    @pytest.mark.anyio
+    async def test_the_coverage_line_names_the_pages_that_were_read(self):
+        result = await analyze_document_text(_paged_document(pages=30), "q", _Model(), chunk_chars=2_000)
+        line = result.coverage_line()
+        assert "pages" in line
+        assert result.first_page == 1
+        assert result.pages_total == 30
+
+    @pytest.mark.anyio
+    async def test_a_capped_read_reports_the_page_range_it_actually_covered(self):
+        result = await analyze_document_text(_paged_document(pages=40), "q", _Model(), chunk_chars=2_000, max_chunks=3)
+        assert result.truncated
+        # The pages named are the ones read, not the whole document.
+        assert result.last_page is not None
+        assert result.last_page < 40
+        assert f"of {result.pages_total}" in result.coverage_line()
+
+    @pytest.mark.anyio
+    async def test_a_capped_read_hands_back_the_part_to_resume_from(self):
+        result = await analyze_document_text(_document(sections=60), "q", _Model(), chunk_chars=1_000, max_chunks=3)
+        assert result.next_part == 4
+        assert "start_part=4" in result.coverage_line()
+        assert result.parts_unread == result.chunks_total - 3
+
+    @pytest.mark.anyio
+    async def test_resuming_reads_the_next_parts_not_the_first_ones_again(self):
+        text = _document(sections=60)
+        first = await analyze_document_text(text, "q", _Model(), chunk_chars=1_000, max_chunks=3)
+        second = await analyze_document_text(text, "q", _Model(), chunk_chars=1_000, max_chunks=3, start_part=first.next_part)
+        assert second.start_part == 4
+        assert [n.chunk.index for n in second.notes] == [4, 5, 6]
+        assert second.chunks_total == first.chunks_total
+
+    @pytest.mark.anyio
+    async def test_the_last_resumed_call_is_not_marked_truncated(self):
+        text = _document(sections=10)
+        total = len(chunk_document(text, chunk_chars=2_000))
+        result = await analyze_document_text(text, "q", _Model(), chunk_chars=2_000, max_chunks=total, start_part=1)
+        assert not result.truncated
+        assert result.next_part is None
+
+    @pytest.mark.anyio
+    async def test_an_empty_capped_read_still_says_the_rest_is_unexamined(self):
+        # "Nothing relevant" over the first 40% of a document is not the same
+        # claim as "nothing relevant", and must not be returned as if it were.
+        model = _Model(reply=NOTHING_RELEVANT)
+        result = await analyze_document_text(_document(sections=60), "q", model, chunk_chars=1_000, max_chunks=3)
+        assert "unexamined" in result.answer
+        assert "start_part=" in result.coverage_line()
+
+
+class TestReduceTruncationIsReported:
+    @pytest.mark.anyio
+    async def test_notes_dropped_at_the_reduce_stage_are_admitted(self):
+        # Merging cannot shrink the notes here (the model echoes them back), so
+        # the reduce stage runs out of rounds and has to drop content. Content
+        # that was read but never reached the answer is a coverage gap.
+        model = _Model(replies={"consolidating": "z" * 4_000}, reply="final")
+        _, _, notes_truncated = await reduce_notes(model, ["z" * 4_000 for _ in range(8)], "q", limit=1_000)
+        assert notes_truncated
+
+    def test_the_coverage_line_says_so(self):
+        result = AnalysisResult(answer="x", chunks_total=4, chunks_read=4, chunks_relevant=4, notes_truncated=True)
+        assert "not in this answer" in result.coverage_line()
+
+    def test_a_reduce_that_fits_reports_nothing(self):
+        result = AnalysisResult(answer="x", chunks_total=4, chunks_read=4, chunks_relevant=4)
+        assert "not in this answer" not in result.coverage_line()

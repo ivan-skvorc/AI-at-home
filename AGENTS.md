@@ -120,7 +120,8 @@ make docker-start / docker-stop / docker-logs   # Docker development environment
 Fork-specific families, each documented in the FORK.md section named beside it:
 `support-bundle` / `backup` / `restore ARCHIVE=` (§13), `extension-*` (the extensions
 guide), `comfy-*` (§26), `sandbox-enable/disable/up/down/logs`, `fetch-browser`,
-`auto-update*` (*Automatic updates*), `searxng` / `searxng-stop`. `make help` lists all.
+`auto-update*` (*Automatic updates*), `searxng` / `searxng-stop`, `drift-eval` (§25).
+`make help` lists all.
 
 **Per-module commands drive a single module** (run inside that module):
 

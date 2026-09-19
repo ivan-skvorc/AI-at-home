@@ -11,6 +11,61 @@ Newest first. Append a pass; never rewrite one. A dated line is what tells the
 next person whether the roster was checked last week or last year, and _which_
 providers that pass could actually reach.
 
+- **2026-09-19 — partial, tier 3. No provider page reachable, so no price was verified
+  and none was edited. Machine half clean. One format finding fixed: the thinking-config
+  example taught a form that 400s on every model in the bundle.** Requested in words
+  alongside the large-PDF change cycle.
+
+  **Machine half clean.** `python3 scripts/audit_models.py` reports **no drift** — every
+  bundled slug it can check is still in its catalog and the two synced sources agree.
+  It listed `openrouter` as _skipped_ (`Tunnel connection failed: 403 Forbidden`), which
+  is the correct handling: unreachable is not drift.
+
+  **Tier 1 and tier 2 both unavailable — recorded with evidence.** Every provider host
+  is refused at the egress proxy, not merely slow: `curl -sS "$HTTPS_PROXY/__agentproxy/status"`
+  reports `connect_rejected — gateway answered 403 to CONNECT (policy denial)` for
+  `docs.anthropic.com:443`, `www.anthropic.com:443` and `openrouter.ai:443`, and the same
+  403 came back for `platform.openai.com`, `x.ai`, `api-docs.deepseek.com` and `z.ai`.
+  `WebFetch` is blocked on the same hosts (`EGRESS_BLOCKED`). The proxy's `noProxy` list
+  carries only package registries and the Anthropic API — no documentation or pricing host.
+  With no provider page **and** no secondary source reachable, tier 2 was unavailable too,
+  so this pass is **tier 3 throughout: every price and every slug left exactly as shipped.**
+  Nothing here is evidence that the roster is current — only that it is self-consistent.
+
+  **The Anthropic block was cross-checked, but that is not a verification.** The six
+  bundled entries agree exactly with a dated model table carried by the tooling in this
+  environment (cached **2026-06-24**) — `claude-fable-5-1` $10/50, `claude-opus-5` $5/25,
+  `claude-opus-4-8` $5/25, `claude-sonnet-5` $2/10, `claude-sonnet-4-6` $3/15,
+  `claude-haiku-4-5` $1/5, with Fable 5.1's cache reads at $0.25 and the rest at 0.1x.
+  The roster shape is also correct (Opus and Sonnet each keep last-4.x + current-5, Haiku
+  and Fable latest only). That table is a **single cached source and is older than the
+  tier-1 Anthropic verification already logged on 2026-08-20**, so it cannot upgrade
+  anything — it is recorded only because agreement is worth knowing and disagreement
+  would have been a finding.
+
+  **Sonnet 5's introductory window is closed, and the bundle is already correct.** The
+  2026-08-20 entry flagged the `$2/10` intro rate as running through **2026-08-31**; that
+  date has passed. The entry carries `$2/10` as its standard `price:` with the comment
+  "the launch 'introductory' rate is now the standard price" and no `until:`, so there is
+  no expired `discount:` anywhere in the bundle — the only live discount (MiniMax M3)
+  deliberately carries no end date. **No action owed**, but the next unrestricted pass
+  should confirm $2/10 is still Anthropic's standard Sonnet 5 rate rather than an intro
+  rate that quietly ended.
+
+  **One finding, fixed.** The commented "Example: Anthropic Claude model (with extended
+  thinking)" asserted that `budget_tokens` "is required by the Anthropic API when
+  thinking.type=enabled" as a flat rule. It is required only on **pre-adaptive** models
+  (the example names `claude-sonnet-4-20250514`, where it is correct); every Claude in the
+  auto-model-config block is adaptive and **rejects that form with a 400**. A user copying
+  the example onto a bundled model got a failure on the first request. The comment now
+  names the boundary and points at `thinking: {type: adaptive}`. This is a format finding,
+  which the audit owns independently of pricing — no page read was needed to establish it.
+
+  **Still owed to the next unrestricted pass**, unchanged and now a month old: the four
+  labs rolled forward on 2026-08-20 from corroborated secondary sources (Grok 4.6,
+  Qwen3.8 Max, GLM-5.3, Mistral Medium 3.5) remain un-verified, with GLM-5.3's price the
+  most provisional; and Sonnet 5's post-intro standard rate per the paragraph above.
+
 - **2026-09-15 — partial. Anthropic re-verified at tier 1; every other provider's page
   still unreachable, nine standard rates corroborated unchanged, no price or roster
   edits. One prior log entry corrected, and the audit's own offline self-test found

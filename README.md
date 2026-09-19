@@ -20,7 +20,8 @@
 > - 🕯️ **Gaslight mode** — edit **either half of a turn**. Edit your own message and it replays from there; edit the assistant's answer and your text simply *becomes* what it said. Both versions are kept behind a `‹ 2/2 ›` switcher, and one conversation stays **one** sidebar entry however many times you edit it.
 > - 🌐 **An internet switch on the composer** — a globe takes *this* conversation offline: search, fetching, browser control, MCP and external agents are left out of the run, and subagents inherit it. Per chat, not a global setting.
 > - 📄 **PDF / Office uploads that just work** — `pymupdf4llm` is bundled, so PDF / DOCX / PPTX / XLSX uploads are reliably readable by the agent (`uploads.auto_convert_documents: true`).
-> - 📚 **Big documents on small models** — `analyze_document` reads a document in parts sized for whichever model is serving, so a 300-page PDF never has to fit in a 32K local model. A **scanned** PDF is detected and transcribed by a vision model rather than summarised into fiction.
+> - 📚 **Big documents on small models** — `analyze_document` reads a document in parts sized for whichever model is serving, so a 300-page PDF never has to fit in a 32K local model. A **scanned** PDF is detected and transcribed by a vision model rather than summarised into fiction. An upload too large to read in one window now says so in the prompt — with its real extracted size, not the compressed file size — and every answer names the **pages** it came from, so a read that stopped early hands back a `start_part` to continue from instead of quietly answering about the first 40%.
+> - 🎯 **A drift check for long documents** — `make drift-eval` gives a model a large PDF with facts planted at known pages, then has a *second* model judge whether the answer still addresses the question that was asked or quietly became "summarise this document". The planted facts grade the judge too, so a judge that waves through a wrong answer is reported as the judge failing. Runs offline against the document path, or end to end through the running agent with `MODE=agent`.
 > - 🐳 **Full clone-and-debug sandbox runs** — one-command per-thread containers, host-reachable ports, native debuggers (`gdb` / `strace`), and a `repo-runner` skill that encodes clone → install → run → debug.
 > - 📜 **Scroll-back that survives a restart** — history is served by the run-event store, which now defaults to `db` rather than process memory. Older messages keep loading after the Gateway restarts.
 >
@@ -168,6 +169,7 @@ DeerFlow has newly integrated the intelligent search and crawling toolset indepe
   - [Scheduled Tasks](#scheduled-tasks)
   - [Voice Input](#voice-input)
   - [Large Documents and Scanned PDFs](#large-documents-and-scanned-pdfs)
+  - [Measuring Mission Drift on a Large Document](#measuring-mission-drift-on-a-large-document)
   - [Terminal Workbench (TUI)](#terminal-workbench-tui)
   - [Updating Camoufox and SearXNG](#updating-camoufox-and-searxng)
   - [Documentation](#documentation)
@@ -2509,13 +2511,56 @@ configured limit is only ever a **ceiling**: a large window keeps every default
 it has today, an unknown window changes nothing at all, and an explicit `0`
 ("no limit") is never turned back on.
 
+**You are told what a document will cost before you open it.** The size shown
+beside an upload is the file on disk, and for a PDF that is the *compressed*
+document — 212 KB of PDF here extracts to 1.1 MB of Markdown, around 280,000
+tokens. An agent shown "212 KB" has every reason to read it straight through,
+and the window is gone before it notices. The upload list now states the
+extracted size in characters, pages and approximate tokens, and past
+`documents.large_document_chars` (120,000 by default) it says plainly that the
+document does not fit and points at `analyze_document`.
+
 **Limits worth knowing.** Answers are capped at `answer_max_chars` before they
 re-enter the conversation, and the full per-part notes are always written to
 `/mnt/user-data/outputs/document-analysis/` so nothing is lost. A very long
-document stops at `max_chunks` parts, and the answer says so rather than
-implying it read everything — as it does for any part that could not be read.
-OCR needs a model with `supports_vision: true`; without one it says so instead
-of returning an empty answer.
+document stops at `max_chunks` parts — and when it does, the answer says which
+**pages** it covered and gives you a `start_part` to call again with, because
+"nothing in this document says that" and "nothing in the first 40% of it says
+that" are different claims. Following that to the end is what makes the first
+one true. OCR needs a model with `supports_vision: true`; without one it says so
+instead of returning an empty answer.
+
+## Measuring Mission Drift on a Large Document
+
+A long document fails in a way that looks like success. The run completes and
+the answer is fluent and on-topic — but somewhere in the middle the document
+filled the window, the original instruction aged out or was compacted away, and
+the model settled into the task its remaining context suggested. Almost always
+that task is "summarise this document", in place of the specific question you
+asked. Nothing errors, so nothing catches it.
+
+`make drift-eval` measures it. It generates a large PDF with facts planted at
+known pages, gives a **primary** model one narrow question about it, then hands
+the answer to a **secondary** model that judges whether it still addresses the
+question that was asked:
+
+```bash
+make drift-eval                                    # 300 pages, offline, the document path
+make drift-eval PRIMARY=qwen2.5:7b JUDGE=claude-sonnet-5
+make drift-eval MODE=agent                         # the whole agent loop (needs `make dev`)
+make drift-eval WINDOW=8192                        # reproduce a small-model failure on any model
+```
+
+The planted facts are the part that matters. A judge model asked "did this
+drift?" agrees with a confident, fluent answer more often than it should, so a
+judged verdict on its own is one model's opinion of another's. Because the facts
+sit at known pages, the harness checks the answer mechanically as well — and
+when the judge passes a run that missed its planted fact, it says so and blames
+the **judge**. Exit status is non-zero on drift, so it can gate a change rather
+than only inform one.
+
+The protocol, the flags and the drift categories are in
+[`backend/scripts/benchmark/drift_eval/README.md`](backend/scripts/benchmark/drift_eval/README.md).
 
 Both halves are on by default, and OCR only ever runs on a document whose text
 layer is actually missing:
