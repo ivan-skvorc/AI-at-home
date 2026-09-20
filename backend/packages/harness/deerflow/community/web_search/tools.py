@@ -6,16 +6,21 @@ Selects a search backend at call time and (optionally) chains a fallback:
       - name: web_search
         group: web
         use: deerflow.community.web_search.tools:web_search_tool
-        backend: searxng         # default; the self-hosted, local-first engine
-        fallback: tavily         # optional: used only when the primary ERRORS
+        backend: tavily          # shipped default: survives a blocked egress
+        fallback: searxng        # used when Tavily errors, is rate-limited, or has no key
         base_url: http://localhost:8088
 
 Backend resolution order: ``DEER_FLOW_WEB_SEARCH_BACKEND`` env var >
-tool-config ``backend`` key > ``"searxng"``. SearXNG stays the default
-everywhere: it is self-hosted, key-less, and keeps a query on the machine that
-asked it. The fallback is opt-in and, for key-bearing providers, **silently
-inactive until the key exists** (see ``_fallback_is_available``), so a stack
-with no ``TAVILY_API_KEY`` behaves exactly as it did before this dispatcher.
+tool-config ``backend`` key > ``"searxng"``. The *code* default stays
+``searxng`` so a config predating this dispatcher keeps working untouched; the
+shipped ``config.example.yaml`` selects ``tavily`` explicitly, because a
+scraping engine inherits the host IP's reputation and a VPN or datacenter exit
+loses every consumer engine at once.
+
+Availability is checked in **both** slots (``_backend_is_available``). A
+key-bearing primary with no key is not an error: the fallback is promoted and
+run as the only backend, so a fresh clone with no ``TAVILY_API_KEY`` searches
+through SearXNG and never reports a credentials failure.
 
 Each backend is an importable ``async (query, time_range) -> str`` callable
 returning a JSON array of ``{title, url, snippet}``. A backend signals failure
@@ -82,14 +87,22 @@ def _load_backend_or_none(name: str):
         return None
 
 
-def _fallback_is_available(name: str) -> bool:
-    """Whether a configured fallback backend can actually run.
+def _backend_is_available(name: str) -> bool:
+    """Whether a backend can actually run, in either slot.
 
-    A key-bearing provider named as the fallback without its key is treated as
-    "not configured" rather than as an error: the user asked for a backup, the
-    backup is not set up yet, and the primary's own failure is the useful thing
-    to report. Returning False here keeps that failure verbatim instead of
-    burying it under a credentials error from the backup.
+    Used for the primary and the fallback, because "not set up" means different
+    things in each and both need handling:
+
+    * as the **fallback** — the user asked for a backup and has not configured
+      it yet, so it is skipped and the *primary's* failure is reported verbatim
+      rather than buried under a credentials error from the backup;
+    * as the **primary** — the stack is configured for a provider whose key is
+      absent, so the dispatcher uses the fallback as the effective primary
+      instead of making every search fail on a missing key first. That is the
+      "Tavily by default, SearXNG when Tavily is not available" shape: a fresh
+      clone with no key searches locally and never errors.
+
+    A provider with no credential requirement is always available.
     """
     if name == "tavily":
         try:
@@ -131,6 +144,21 @@ async def dispatch_web_search(query: str, time_range: SearchTimeRange | None = N
     """
     primary_name, fallback_name = _resolve_backends()
 
+    # A primary that is configured but not set up (a key-bearing provider with
+    # no key) is not an error when a usable fallback exists: promote the
+    # fallback and run it as the only backend. Attempting the primary first
+    # would make every search pay a guaranteed failure, and reporting one would
+    # break a stack that is working exactly as configured.
+    if fallback_name and fallback_name != primary_name and not _backend_is_available(primary_name):
+        if _backend_is_available(fallback_name):
+            logger.info(f"web_search primary '{primary_name}' is not configured; using '{fallback_name}' instead.")
+            primary_name, fallback_name = fallback_name, None
+        else:
+            return _error_payload(
+                query,
+                f"neither web_search backend is configured: '{primary_name}' has no API key and fallback '{fallback_name}' is unavailable.",
+            )
+
     primary = _load_backend_or_none(primary_name)
     if primary is None:
         return _error_payload(query, f"unknown or unloadable web_search backend '{primary_name}' (expected 'searxng' or 'tavily').")
@@ -147,7 +175,7 @@ async def dispatch_web_search(query: str, time_range: SearchTimeRange | None = N
     # Availability first, then the import: a keyless backup is the common case on
     # a blocked connection, and there is no reason to pull in its SDK to learn
     # that it is not set up.
-    if not _fallback_is_available(fallback_name):
+    if not _backend_is_available(fallback_name):
         logger.info(f"web_search fallback '{fallback_name}' is configured but not usable (no API key); reporting the primary failure.")
         return _error_payload(query, primary_message)
 

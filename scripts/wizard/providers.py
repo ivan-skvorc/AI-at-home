@@ -1218,9 +1218,11 @@ SEARCH_PROVIDERS: list[SearchProvider] = [
         description="Bundled with the Docker stacks; `make searxng` for host-run dev",
         use="deerflow.community.web_search.tools:web_search_tool",
         env_var=None,
-        # Mirrors config.example.yaml: the dispatcher with SearXNG primary and a
-        # Tavily fallback that stays inert until TAVILY_API_KEY exists, so
-        # `make setup` and `make config` produce the same search behaviour.
+        # Choosing SearXNG here means local-first, so it is written as the
+        # PRIMARY with Tavily behind it — the reverse of the Tavily-first
+        # ordering config.example.yaml ships. The Tavily fallback stays inert
+        # until TAVILY_API_KEY exists, so this choice costs nothing to a user
+        # who never sets one.
         extra_config={
             "backend": "searxng",
             "fallback": "tavily",

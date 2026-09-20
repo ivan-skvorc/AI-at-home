@@ -58,7 +58,8 @@
 > - 🔄 **Self-updating browser & search** — Camoufox and the SearXNG image refresh themselves, throttled daily on launch or via a `systemd --user` timer. Opt out with `DEER_FLOW_AUTO_UPDATE=0`.
 > - 🧰 **An Update dependencies button** — **Settings → Maintenance** pulls a newer Camoufox and SearXNG image on demand, for when a page fetch or a search just broke and tomorrow's automatic refresh is too late. Reports each component's outcome (including "skipped, no Docker"), refuses a second run while one is in flight, and is admin-only because it runs commands on the host.
 > - 🚧 **Search that says when it is blocked** — SearXNG answers `HTTP 200` with an empty list when its engines are rate-limited, which used to read as a successful empty search and got the agent to re-query into the suspension. It is now an error naming the engines and the wait.
-> - 🪃 **A search backup for when your connection is blocked** — `web_search` is now a pluggable dispatcher. Self-hosted SearXNG stays the default, and an optional Tavily fallback covers the case a VPN or datacenter exit creates: every consumer engine CAPTCHAs your IP at once and search goes dead. The backup fires **only** when SearXNG errors — never on a search that legitimately matched nothing — and stays completely inert until `TAVILY_API_KEY` exists, so no query leaves your machine until you opt in. Set `fallback: tavily` in `config.yaml`.
+> - 🛟 **Search that survives a blocked connection** — `web_search` is a pluggable dispatcher. It ships Tavily-first with self-hosted SearXNG behind it, because a scraping engine inherits your IP's reputation and a VPN or datacenter exit loses every consumer engine at once. SearXNG takes over when Tavily errors, hits its plan limit, or has no key at all — so a fresh clone with no `TAVILY_API_KEY` searches locally and never reports a credentials failure. Swap the two values for local-first.
+> - 🥷 **A stealth browser with its stealth actually on** — Camoufox backs `web_fetch`, and was being launched with nothing but `headless`. It now gets `geoip`, `humanize` and `block_webrtc`, all tunable from `config.yaml`. `geoip` is the one that matters behind a VPN: without it the browser reports your timezone and locale while your connection exits in another country, and that mismatch is itself what gets you flagged. A launch that fails with these retries without them, so a rejected option costs stealth rather than the tool.
 > - 📦 **A browser that is actually installed, not just present** — the gateway image shipped Camoufox without the system libraries it loads, so every presence check passed until the first fetch failed. The libraries now ship with it.
 > - 🎬 **Reduced motion by default** — decorative animations are off by default and honor the OS setting; flip it back per browser.
 >
@@ -375,6 +376,23 @@ tools:
     fallback: jina         # optional: try this backend if the primary errors
 ```
 
+**Anti-detection options.** Camoufox is a stealth browser, and these are the switches that make it one. They default on and are tunable per install:
+
+```yaml
+  - name: web_fetch
+    backend: camoufox
+    camoufox:
+      geoip: true            # align timezone/locale/geolocation with the EXIT ip
+      humanize: true         # human-like cursor motion (or a float: max seconds)
+      block_webrtc: true     # stop WebRTC leaking the real address behind a VPN
+      # locale: en-US        # omit to let geoip choose from the exit ip
+      # proxy: socks5://127.0.0.1:1080   # browser-only; unrelated to the jina `proxy:` key
+```
+
+`geoip` is the one that matters behind a VPN. Without it the browser advertises this host's timezone and locale while the connection exits in whatever country the VPN chose, and that mismatch is a stronger bot signal than anything a fingerprint patch fixes.
+
+Set a key to `null` to hand that decision back to Camoufox. If a launch fails with these options — an unsupported key on an older build, a geoip database that was never downloaded, a proxy refusing connections — the browser is relaunched without them and the Gateway log says so ("retrying without them"). A rejected option costs stealth, never `web_fetch` itself.
+
 To switch to the Jina cloud reader instead (fish):
 
 ```fish
@@ -664,28 +682,40 @@ Every launch path resolves the instance automatically at startup (via `scripts/d
 
 ##### When every engine blocks you at once: the `web_search` fallback
 
-SearXNG scrapes consumer engines, so it inherits your IP's reputation. Behind a commercial VPN or from a datacenter range, Google, DuckDuckGo, Brave and Startpage can all CAPTCHA or drop you at the same time — and a blocked engine is benched for ~180 seconds, so retrying makes it worse.
+SearXNG scrapes consumer engines, so it inherits your IP's reputation. Behind a commercial VPN or from a datacenter range, Google, DuckDuckGo, Brave and Startpage can all CAPTCHA or drop you at the same time — and a blocked engine is benched for ~180 seconds, so retrying makes it worse. No engine mix survives that, because the block lands at the network tier before a query is ever parsed.
 
-The `web_search` entry therefore goes through a dispatcher that can chain a second backend:
+`web_search` therefore goes through a dispatcher with two backends, shipped Tavily-first:
 
 ```yaml
   - name: web_search
     group: web
     use: deerflow.community.web_search.tools:web_search_tool
-    backend: searxng                  # searxng (default) or tavily
-    fallback: tavily                  # only on a SearXNG error, and only if TAVILY_API_KEY is set
+    backend: tavily                   # tavily or searxng
+    fallback: searxng                 # covers no-key, over-limit and unreachable
     base_url: http://localhost:8088
     max_results: 5
 ```
 
-Two rules keep the backup from running behind your back:
+A keyed API is authenticated, so your exit address stops mattering. SearXNG takes over in three cases:
 
-- **It is inert without a key.** No `TAVILY_API_KEY` in the repo-root `.env` means the fallback is skipped entirely and SearXNG's own failure is what gets reported. A stack that never sets the key behaves exactly as it did before.
-- **It fires on an error, never on an empty result.** A search that ran fine and matched nothing stays local and costs nothing. Only a raised failure — every engine blocked, an HTTP error — reaches Tavily.
+- **No `TAVILY_API_KEY`.** Tavily is skipped entirely — not attempted and failed — and SearXNG runs as the only backend. A fresh clone searches locally and works out of the box, with no credentials error.
+- **Tavily over its plan limit**, or erroring for any other reason.
+- **Tavily unreachable.**
 
-Comment `fallback` out to keep every query strictly on your own machine. Tavily is a third party: a query that falls back leaves your network, which is the one thing the local-first default exists to prevent, so it is an opt-in rather than a silent default.
+The SearXNG container is still required in all three, and every launch path still starts it.
 
-Set the backend for one run without editing config via `DEER_FLOW_WEB_SEARCH_BACKEND=tavily`.
+**Want local-first instead?** Swap the two values:
+
+```yaml
+    backend: searxng
+    fallback: tavily
+```
+
+The dispatcher is symmetric, with one deliberate asymmetry: a fallback fires only when the primary *raises*, never when it succeeds with zero results. A search that genuinely matched nothing stays wherever it ran and costs no third-party credit.
+
+Set the backend for one run without editing config via `DEER_FLOW_WEB_SEARCH_BACKEND=searxng`.
+
+> **Privacy note.** With the shipped Tavily-first ordering, searches leave your machine by default. That is the trade for search that works from a blocked address. The local-first swap above reverses it.
 
 #### Docker Production Deployment
 

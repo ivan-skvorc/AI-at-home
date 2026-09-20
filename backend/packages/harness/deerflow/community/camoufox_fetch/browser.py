@@ -9,6 +9,16 @@ One ``AsyncCamoufox`` instance is launched on first use and reused across
 requests (cold-starting a browser per fetch is far too slow). Each request gets
 a fresh page that is always closed. ``shutdown()`` closes the browser cleanly at
 process exit.
+
+The browser is launched with Camoufox's anti-detection options on (see
+``_stealth_launch_options``). They were previously all left at their defaults —
+``AsyncCamoufox(headless=True)`` and nothing else — which ran a stealth browser
+with its stealth switched off. ``geoip`` is the one that matters most behind a
+VPN: without it the browser reports the host's timezone and locale while the
+connection exits in another country, and that mismatch is itself a detection
+signal. Every option is overridable from ``config.yaml`` and a launch that
+fails with them retries bare, so a bad or unsupported option degrades the
+fetch's stealth rather than removing web_fetch.
 """
 
 from __future__ import annotations
@@ -38,6 +48,70 @@ _BROWSER_MISSING_MARKERS = (
     "browserfetcherror",
     "not been downloaded",
 )
+
+
+# Anti-detection defaults. All are Camoufox launch options; see
+# `_stealth_launch_options` for why these values and how to override them.
+_STEALTH_DEFAULTS: dict[str, object] = {
+    # Align timezone/locale/geolocation with the *exit* IP. This is the option
+    # that matters behind a VPN: the mismatch it removes is a stronger signal
+    # than any fingerprint it could fix.
+    "geoip": True,
+    # Human-like cursor motion. Cheap, and defeats naive movement heuristics.
+    "humanize": True,
+    # Stop WebRTC revealing the real address behind the proxy/VPN.
+    "block_webrtc": True,
+}
+
+# Options accepted from config. `proxy` is deliberately NOT read from the
+# web_fetch entry's top-level `proxy:` key — that one is documented for the
+# jina backend, and quietly giving it a second meaning would repoint a user's
+# jina proxy at the browser.
+_STEALTH_CONFIG_KEYS = ("geoip", "humanize", "block_webrtc", "locale", "proxy", "os")
+
+
+def _stealth_launch_options() -> dict:
+    """Camoufox launch options, from the web_fetch tool config's `camoufox:` block.
+
+    Shape in config.yaml::
+
+        - name: web_fetch
+          backend: camoufox
+          camoufox:
+            geoip: true
+            humanize: true
+            block_webrtc: true
+            # locale: en-US
+            # proxy: socks5://127.0.0.1:1080
+
+    An absent block means the defaults above. A key set to null removes that
+    option entirely, so an operator can hand the decision back to Camoufox.
+    Config resolution is guarded: this runs on the launch path, and a config
+    error must not be the reason the browser will not start.
+    """
+    options = dict(_STEALTH_DEFAULTS)
+    try:
+        from deerflow.config import get_app_config
+
+        config = get_app_config().get_tool_config("web_fetch")
+        extras = (getattr(config, "model_extra", None) or {}) if config is not None else {}
+    except Exception as exc:  # noqa: BLE001 - defaults are a working browser
+        logger.debug(f"Camoufox stealth options: falling back to defaults ({exc})")
+        return options
+
+    block = extras.get("camoufox")
+    if not isinstance(block, dict):
+        return options
+
+    for key in _STEALTH_CONFIG_KEYS:
+        if key not in block:
+            continue
+        value = block[key]
+        if value is None:
+            options.pop(key, None)
+        else:
+            options[key] = value
+    return options
 
 
 class _BrowserManager:
@@ -102,17 +176,29 @@ class _BrowserManager:
         if not _camoufox_browser_present():
             raise CamoufoxBrowserMissingError("camoufox browser binaries are not installed")
 
+        options = _stealth_launch_options()
         try:
             # AsyncCamoufox is an async context manager wrapping Playwright.
             # Enter it manually so the browser outlives a single request.
-            self._cm = AsyncCamoufox(headless=True)
+            self._cm = AsyncCamoufox(headless=True, **options)
             browser = await self._cm.__aenter__()
-        except Exception as exc:  # noqa: BLE001 - classify then re-raise
+        except Exception as exc:  # noqa: BLE001 - classify, degrade, or re-raise
             self._cm = None
             if _looks_like_missing_browser(exc):
                 raise CamoufoxBrowserMissingError(str(exc)) from exc
-            raise
-        logger.info("Camoufox browser launched (shared, headless)")
+            if not options:
+                raise
+            # A stealth option Camoufox rejected (an unsupported key on an older
+            # version, a geoip database that is not installed, an unreachable
+            # proxy) must cost stealth, not the tool. Retry bare — which is
+            # exactly how this launched before these options existed — and say
+            # so loudly enough to be fixable.
+            logger.warning(f"Camoufox launch failed with stealth options {sorted(options)}; retrying without them. Cause: {exc}")
+            self._cm = AsyncCamoufox(headless=True)
+            browser = await self._cm.__aenter__()
+            logger.info("Camoufox browser launched (shared, headless, stealth options disabled)")
+            return browser
+        logger.info(f"Camoufox browser launched (shared, headless, stealth: {sorted(options) or 'none'})")
         return browser
 
     async def shutdown(self) -> None:

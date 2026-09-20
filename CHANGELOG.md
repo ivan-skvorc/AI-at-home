@@ -8,6 +8,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **search:** `web_search` ships Tavily-first with SearXNG behind it. A scraping engine
+  inherits the host IP's reputation, so a VPN or datacenter exit loses every consumer
+  engine at once; a keyed API is authenticated and unaffected. SearXNG takes over when
+  Tavily errors, exceeds its plan limit, or **has no key at all** — an unconfigured
+  primary is skipped rather than attempted, so a clone with no `TAVILY_API_KEY` searches
+  locally and never reports a credentials failure. Swap `backend:`/`fallback:` for
+  local-first; the privacy trade is documented beside the setting.
+- **fetch:** Camoufox's anti-detection options are on and configurable via a `camoufox:`
+  block on the `web_fetch` entry — `geoip` (aligns timezone/locale/geolocation with the
+  exit IP), `humanize`, `block_webrtc`, plus optional `locale`, `proxy` and `os`. The
+  browser previously launched as `AsyncCamoufox(headless=True)`, i.e. with its stealth
+  off, advertising the host's timezone while exiting in another country. A launch that
+  fails with these options retries bare, so a rejected option costs stealth rather than
+  `web_fetch` (`config_version` 56, bumped in `config.example.yaml` and both Helm chart
+  copies).
 - **search:** `web_search` is now a pluggable dispatcher
   (`deerflow.community.web_search.tools:web_search_tool`) with `backend:` and `fallback:`
   keys, mirroring the existing `web_fetch` dispatcher. SearXNG remains the default; an
@@ -31,6 +46,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   bumped in `config.example.yaml` and both Helm chart copies).
 
 ### Fixed
+- **search:** `make doctor` no longer describes the `web_search` dispatcher as
+  SearXNG-defaulted now that the shipped ordering is Tavily-first.
 - **search:** `scripts/detect_searxng.py` recognizes the dispatcher config shape. It
   matched the provider module path only, so a config reaching SearXNG through the
   dispatcher's `backend:`/`fallback:` key read as "no SearXNG" and the bundled container

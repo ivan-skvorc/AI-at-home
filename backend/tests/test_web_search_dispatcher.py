@@ -80,8 +80,20 @@ def stub_backends(monkeypatch):
 
 @pytest.fixture
 def set_fallback_available(monkeypatch):
-    def _install(available: bool):
-        monkeypatch.setattr(dispatcher, "_fallback_is_available", lambda name: available)
+    """Control per-backend availability.
+
+    Takes a bool (applies to every *key-bearing* backend, leaving searxng
+    available) or a dict of {name: bool}. Per-name matters because
+    ``_backend_is_available`` now gates the primary slot as well as the
+    fallback, so a blanket False would also declare the local engine unusable.
+    """
+
+    def _install(available):
+        if isinstance(available, dict):
+            table = available
+        else:
+            table = {"tavily": available, "searxng": True}
+        monkeypatch.setattr(dispatcher, "_backend_is_available", lambda name: table.get(name, True))
 
     return _install
 
@@ -208,7 +220,7 @@ class TestFallbackKeyGate:
         assert tavily_tools.tavily_api_key_present() is True
 
     def test_a_non_key_bearing_fallback_is_always_available(self):
-        assert dispatcher._fallback_is_available("searxng") is True
+        assert dispatcher._backend_is_available("searxng") is True
 
 
 # --------------------------------------------------------------------------
@@ -323,7 +335,7 @@ class TestAnUnloadableBackendDegrades:
         assert "searxng" in payload["error"]
 
     def test_the_key_gate_reports_unavailable_when_the_provider_cannot_import(self, monkeypatch):
-        """_fallback_is_available must not raise either — same call site, same rule."""
+        """_backend_is_available must not raise either — same call site, same rule."""
         import builtins
 
         real_import = builtins.__import__
@@ -334,4 +346,77 @@ class TestAnUnloadableBackendDegrades:
             return real_import(name, *args, **kwargs)
 
         monkeypatch.setattr(builtins, "__import__", _fake_import)
-        assert dispatcher._fallback_is_available("tavily") is False
+        assert dispatcher._backend_is_available("tavily") is False
+
+
+class TestAnUnconfiguredPrimaryPromotesTheFallback:
+    """ "Tavily by default, SearXNG when Tavily is not available."
+
+    The shipped config names Tavily primary. A clone with no TAVILY_API_KEY must
+    still search — through SearXNG, silently — rather than fail every query on a
+    missing key. Attempting the primary first would pay a guaranteed failure on
+    every search, and reporting one would break a stack working as configured.
+    """
+
+    @pytest.mark.asyncio
+    async def test_a_keyless_primary_runs_the_fallback_with_no_error(self, set_config, stub_backends, set_fallback_available):
+        set_config({"backend": "tavily", "fallback": "searxng"})
+        set_fallback_available({"tavily": False, "searxng": True})
+        calls = stub_backends({"tavily": '[{"title": "paid"}]', "searxng": '[{"title": "local"}]'})
+
+        result = await dispatcher.dispatch_web_search("q")
+
+        assert result == '[{"title": "local"}]'
+        assert calls == ["searxng"], "the unconfigured primary must not be attempted at all"
+
+    @pytest.mark.asyncio
+    async def test_the_promoted_fallback_is_not_retried_as_its_own_fallback(self, set_config, stub_backends, set_fallback_available):
+        """Promotion consumes the fallback slot; a failure is reported once."""
+        set_config({"backend": "tavily", "fallback": "searxng"})
+        set_fallback_available({"tavily": False, "searxng": True})
+        calls = stub_backends({"tavily": "[]", "searxng": RuntimeError("engines blocked")})
+
+        payload = json.loads(await dispatcher.dispatch_web_search("q"))
+
+        assert calls == ["searxng"], "a promoted fallback must run exactly once"
+        assert payload["error"] == "engines blocked"
+
+    @pytest.mark.asyncio
+    async def test_a_rate_limited_primary_falls_back(self, set_config, stub_backends, set_fallback_available):
+        """Over its quota is an ordinary raise, so the normal chain covers it."""
+        set_config({"backend": "tavily", "fallback": "searxng"})
+        set_fallback_available({"tavily": True, "searxng": True})
+        calls = stub_backends({"tavily": RuntimeError("432 usage limit exceeded"), "searxng": '[{"title": "local"}]'})
+
+        result = await dispatcher.dispatch_web_search("q")
+
+        assert result == '[{"title": "local"}]'
+        assert calls == ["tavily", "searxng"]
+
+    @pytest.mark.asyncio
+    async def test_neither_backend_configured_says_so_plainly(self, set_config, stub_backends, set_fallback_available):
+        set_config({"backend": "tavily", "fallback": "searxng"})
+        set_fallback_available({"tavily": False, "searxng": False})
+        calls = stub_backends({"tavily": "[]", "searxng": "[]"})
+
+        payload = json.loads(await dispatcher.dispatch_web_search("q"))
+
+        assert calls == [], "nothing runnable must be run"
+        assert "no API key" in payload["error"]
+        assert "tavily" in payload["error"] and "searxng" in payload["error"]
+
+    @pytest.mark.asyncio
+    async def test_a_keyless_primary_with_no_fallback_is_still_attempted(self, set_config, stub_backends, set_fallback_available):
+        """There is nothing to promote, so the primary runs and reports for itself.
+
+        Skipping it here would turn a missing key into silence instead of the
+        credentials error the user needs to see.
+        """
+        set_config({"backend": "tavily"})
+        set_fallback_available({"tavily": False})
+        calls = stub_backends({"tavily": RuntimeError("no API key")})
+
+        payload = json.loads(await dispatcher.dispatch_web_search("q"))
+
+        assert calls == ["tavily"]
+        assert "no API key" in payload["error"]
