@@ -11,6 +11,53 @@ Newest first. Append a pass; never rewrite one. A dated line is what tells the
 next person whether the roster was checked last week or last year, and _which_
 providers that pass could actually reach.
 
+- **2026-09-20 — partial, tier 3. No provider page reachable, so no price was verified and
+  none was edited. Machine half clean; roster and all four prose copies verified by eye.
+  One documentation finding fixed: an OpenRouter example that told users to send their
+  OpenAI key to OpenRouter.** Requested in words alongside the web_search/Camoufox change cycle.
+
+  **Machine half clean.** `python3 scripts/audit_models.py` reports **no drift** — every
+  bundled slug it can check is still in its catalog and the two synced sources agree. It
+  listed `openrouter` as _skipped_ (`Tunnel connection failed: 403 Forbidden`), which is the
+  correct handling: unreachable is not drift. The stale fixture still produces exactly its
+  four findings (`--catalog scripts/fixtures/model_audit_stale_catalog.json`), so the audit
+  tooling itself is still able to detect drift.
+
+  **Tier 1 and tier 2 both unavailable — same wall as the 2026-09-19 pass, re-confirmed.**
+  Every provider host is refused at the egress proxy rather than merely slow: `curl` returns
+  `http=000` for `openrouter.ai`, `www.anthropic.com`, `platform.openai.com`, `x.ai` and
+  `ai.google.dev`, and `$HTTPS_PROXY/__agentproxy/status` shows `connect_rejected — gateway
+  answered 403 to CONNECT (policy denial)`. Its `noProxy` list carries only package registries
+  and the Anthropic API — no documentation or pricing host. **Corroboration needs two
+  independent sources reachable, so tier 2 is unavailable for the same reason tier 1 is.**
+  No `price:` or `discount:` block was touched. Steps 2 (discovery), 4 (slug verification)
+  and 6 (pricing) are **not done** and are owed to the next pass that has egress.
+
+  **What was checked without network.** Step 1 roster/order and step 7 privacy markers: 16
+  OpenRouter entries, all now carrying `(p)`, no home/Anthropic/Ollama entry wrongly carrying
+  one. Step 3's machine half and the paired-lab rule (Anthropic Fable 5.1 + Opus 5, OpenAI
+  GPT-6 Astra + GPT-5.6 Sol) pass. Step 8's gates pass:
+  `python3 scripts/sync-api-key-models.py --dry-run` is clean and
+  `tests/test_sync_api_key_models.py tests/test_setup_wizard.py tests/test_config_integrity.py tests/test_audit_models.py`
+  is 218 passed.
+
+  **The four prose copies no test reads — all four in sync, no drift.** Checked line by line
+  against `HOME_API_BUNDLES`: `providers.py`'s `description=` strings, `config.example.yaml`'s
+  `QUICK START` comment, `scripts/sync-api-key-models.py`'s `QUICK START` docstring, and
+  `README.md`'s API-key auto-config bullet. All nine home lineups match
+  (OpenAI Astra/Sol/Codex/Terra/Luna, xAI 4.6/4.3, Google 3.6 Flash/3.5 Flash-Lite/3.1 Pro,
+  DeepSeek V4 Pro/Flash, Mistral Large 3/Medium 3.5/Small 4, Moonshot K3/K2.6,
+  Qwen 3.8 Max/3.7 Plus, MiniMax M3/M2.7, z-ai GLM-5.3/GLM-4.5 Air).
+
+  **One finding, fixed.** The `# Example: OpenRouter (OpenAI-compatible)` block near the
+  bottom of `config.example.yaml` — a pattern illustration, outside the synced marker blocks
+  and so invisible to every gate — carried three defects: `api_key: $OPENAI_API_KEY` against
+  `base_url: https://openrouter.ai/api/v1`, a stale `google/gemini-2.5-flash-preview` slug,
+  and no `(p)` marker. The key variable is the damaging one: a user copying the example sends
+  an OpenAI key to OpenRouter and gets a 401 with nothing explaining it. Corrected to
+  `openrouter-gemini-3.6-flash` / `$OPENROUTER_API_KEY` / `(p)`, matching the real routed
+  entry. **No price was involved**, so this needed no provider page.
+
 - **2026-09-19 — partial, tier 3. No provider page reachable, so no price was verified
   and none was edited. Machine half clean. One format finding fixed: the thinking-config
   example taught a form that 400s on every model in the bundle.** Requested in words

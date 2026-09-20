@@ -20,7 +20,7 @@
 # ============================================================================
 # Bump this number when the config schema changes.
 # Run `make config-upgrade` to merge new fields into your local config.yaml.
-config_version: 54
+config_version: 56
 
 # Optional per-model request pacing (inside a models[] entry):
 # request_admission:
@@ -1782,11 +1782,11 @@ models:
 
   # Example: OpenRouter (OpenAI-compatible)
   # OpenRouter models use the same ChatOpenAI + base_url pattern as other OpenAI-compatible gateways.
-  # - name: openrouter-gemini-2.5-flash
-  #   display_name: Gemini 2.5 Flash (OpenRouter)
+  # - name: openrouter-gemini-3.6-flash
+  #   display_name: Gemini 3.6 Flash (OpenRouter) (p)
   #   use: langchain_openai:ChatOpenAI
-  #   model: google/gemini-2.5-flash-preview
-  #   api_key: $OPENAI_API_KEY
+  #   model: google/gemini-3.6-flash
+  #   api_key: $OPENROUTER_API_KEY
   #   base_url: https://openrouter.ai/api/v1
   #   request_timeout: 600.0
   #   max_retries: 2
@@ -2221,11 +2221,38 @@ tools:
   # auto-detection — docker-compose sets it in-network so this file works
   # unchanged inside the stack.
   # Self-deploy alternative: https://github.com/searxng/searxng
+  #
+  # This entry goes through the pluggable web_search dispatcher: a primary
+  # backend, and a fallback used when the primary cannot answer.
+  #
+  # Shipped as Tavily primary with SearXNG behind it, because SearXNG scrapes
+  # consumer engines and therefore inherits this machine's IP reputation — from
+  # a VPN or datacenter exit, Google/DuckDuckGo/Brave/Startpage can block all at
+  # once and no engine mix survives it. A keyed API is authenticated, so the
+  # exit address stops mattering.
+  #
+  # SearXNG takes over in all three cases that matter:
+  #   * no TAVILY_API_KEY in the repo-root .env — Tavily is skipped entirely and
+  #     SearXNG runs as the only backend, with no credentials error. A fresh
+  #     clone searches locally and works out of the box.
+  #   * Tavily over its plan limit, or erroring for any other reason.
+  #   * Tavily unreachable.
+  # In every case the SearXNG container is still needed, and every launch path
+  # still starts it (scripts/detect_searxng.py understands this shape).
+  #
+  # PRIVACY: with this ordering a query goes to Tavily FIRST, so searches leave
+  # your machine by default. To keep search local-first, swap the two values
+  # (`backend: searxng` / `fallback: tavily`) — the dispatcher is symmetric, and
+  # a Tavily fallback then fires only when SearXNG actually errors, never on a
+  # search that succeeded with zero results.
   - name: web_search
     group: web
-    use: deerflow.community.searxng.tools:web_search_tool
+    use: deerflow.community.web_search.tools:web_search_tool
+    backend: tavily                   # tavily or searxng; swap with `fallback` for local-first
+    fallback: searxng                 # covers no-key, over-limit and unreachable
     base_url: http://localhost:8088   # SearXNG instance URL (default: :8088; Docker stacks override via env)
-    max_results: 5                    # Maximum number of search results
+    max_results: 5                    # Maximum number of search results (shared by both backends)
+    # api_key: $TAVILY_API_KEY        # optional; TAVILY_API_KEY from .env is used when omitted
 
   # Web search tool (uses DuckDuckGo, no API key and no local service required)
   # Zero-dependency fallback: if you don't run the bundled SearXNG service,
@@ -2498,6 +2525,23 @@ tools:
                                # spent the fallback above on slow renders rather
                                # than on real failures.
     # max_content_length: 4096 # cap on returned characters (default 4096)
+    #
+    # Camoufox anti-detection options. Camoufox is a stealth browser, and these
+    # are the switches that make it one — before this block it launched with
+    # nothing but `headless`, i.e. with its stealth off. Defaults shown; a key
+    # set to `null` hands that decision back to Camoufox. A launch that fails
+    # with these retries without them, so a rejected option costs stealth, not
+    # the tool (watch for "retrying without them" in the Gateway log).
+    camoufox:
+      geoip: true              # align timezone/locale/geolocation with the EXIT ip.
+                               # The big one on a VPN: otherwise the browser reports
+                               # this host's timezone while the connection leaves in
+                               # another country, and the mismatch is itself a tell.
+      humanize: true           # human-like cursor motion (or a float: max seconds)
+      block_webrtc: true       # stop WebRTC leaking the real address behind the VPN
+      # locale: en-US          # omit to let geoip choose it from the exit ip
+      # proxy: socks5://127.0.0.1:1080   # browser-only proxy; unrelated to the
+      #                        # jina `proxy:` key below, which is left alone on purpose
     # Optional proxy for restricted networks / Docker / WSL (jina backend).
     # Use host.docker.internal instead of 127.0.0.1 when the proxy runs on the host.
     # proxy: $HTTPS_PROXY

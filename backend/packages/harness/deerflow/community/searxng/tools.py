@@ -40,6 +40,38 @@ def _get_searxng_client() -> SearxngClient:
     return SearxngClient(base_url=base_url)
 
 
+async def search_via_searxng(query: str, time_range: SearchTimeRange | None = None) -> str:
+    """Search via SearXNG and return a JSON array of {title, url, snippet}.
+
+    Raises on failure rather than returning an error string — chiefly
+    ``SearxngEnginesUnavailableError`` when every engine was blocked. The
+    web_search dispatcher relies on that distinction: an exception is a real
+    failure worth falling back from, while an empty list is a successful search
+    that simply matched nothing and must NOT trigger a fallback (FORK.md §31).
+    """
+    cfg = _get_tool_config("web_search")
+    max_results = 5
+    if cfg is not None:
+        raw = cfg.get("max_results", max_results)
+        max_results = int(raw) if not isinstance(raw, int) else raw
+
+    client = _get_searxng_client()
+    search_kwargs: dict[str, object] = {"max_results": max_results}
+    if time_range is not None:
+        search_kwargs["time_range"] = time_range
+    results = await client.search(query, **search_kwargs)
+
+    normalized = [
+        {
+            "title": r.get("title", ""),
+            "url": r.get("url", ""),
+            "snippet": r.get("content", ""),
+        }
+        for r in results
+    ]
+    return json.dumps(normalized, indent=2, ensure_ascii=False)
+
+
 @tool("web_search", parse_docstring=True)
 async def web_search_tool(query: str, time_range: SearchTimeRange | None = None) -> str:
     """Search the web using SearXNG.
@@ -49,27 +81,7 @@ async def web_search_tool(query: str, time_range: SearchTimeRange | None = None)
         time_range: Optional relative publication/update window. Use only when the request requires recent results.
     """
     try:
-        cfg = _get_tool_config("web_search")
-        max_results = 5
-        if cfg is not None:
-            raw = cfg.get("max_results", max_results)
-            max_results = int(raw) if not isinstance(raw, int) else raw
-
-        client = _get_searxng_client()
-        search_kwargs: dict[str, object] = {"max_results": max_results}
-        if time_range is not None:
-            search_kwargs["time_range"] = time_range
-        results = await client.search(query, **search_kwargs)
-
-        normalized = [
-            {
-                "title": r.get("title", ""),
-                "url": r.get("url", ""),
-                "snippet": r.get("content", ""),
-            }
-            for r in results
-        ]
-        return json.dumps(normalized, indent=2, ensure_ascii=False)
+        return await search_via_searxng(query, time_range)
     except Exception as e:
         logger.error(f"Error in web_search_tool: {e}")
         return json.dumps({"error": str(e), "query": query}, ensure_ascii=False)

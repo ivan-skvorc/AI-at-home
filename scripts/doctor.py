@@ -793,6 +793,13 @@ def check_web_tool(config_path: Path, *, tool_name: str, label: str) -> CheckRes
 
         free_providers = {
             "web_search": {
+                # The dispatcher entry names no provider module, so it is matched
+                # on its own path the way the web_fetch dispatcher below is. The
+                # description deliberately does not name a primary: the shipped
+                # config is Tavily-first, but the two are swappable and this
+                # string is static. What makes the entry "configured" either way
+                # is that SearXNG needs no key, so one backend always works.
+                "community.web_search.tools": "web_search dispatcher (SearXNG backend needs no key)",
                 "searxng": "SearXNG (self-hosted, no key needed)",
                 "ddg_search": "DuckDuckGo (no key needed)",
             },

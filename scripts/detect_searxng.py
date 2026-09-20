@@ -59,6 +59,12 @@ BUNDLED_CONTAINER = "deer-flow-searxng"
 # 8088 is this repo's published host port; 8080 is the upstream SearXNG default.
 CANDIDATE_PORTS = (8088, 8080)
 PROVIDER_MARKER = "deerflow.community.searxng"
+# The pluggable web_search dispatcher reaches SearXNG through a `backend:` /
+# `fallback:` key instead of naming the provider module directly, so matching
+# PROVIDER_MARKER alone would read the shipped config as "no SearXNG" and
+# silently stop auto-starting the container on every launch path.
+DISPATCHER_MARKER = "deerflow.community.web_search"
+DISPATCHER_DEFAULT_BACKEND = "searxng"
 PROBE_TIMEOUT = 5.0
 LOOPBACK_HOSTS = {"localhost", "127.0.0.1", "0.0.0.0", "::1", "[::1]"}
 
@@ -67,15 +73,66 @@ def log(message: str) -> None:
     print(f"[detect_searxng] {message}", file=sys.stderr)
 
 
-def config_uses_searxng(config_text: str) -> bool:
-    """True when an active (uncommented) config line references the provider."""
-    for line in config_text.splitlines():
-        stripped = line.strip()
-        if stripped.startswith("#"):
+def _active_lines(config_text: str) -> list[str]:
+    """Uncommented config lines, stripped. Comments are inert config."""
+    return [line.strip() for line in config_text.splitlines() if not line.strip().startswith("#")]
+
+
+def _web_search_block(config_text: str) -> list[str]:
+    """The active lines belonging to the `- name: web_search` tool entry.
+
+    Scoped rather than file-wide because `backend:` is not unique to this entry
+    — web_fetch carries `backend: camoufox` — and a file-wide scan would read a
+    neighbouring tool's key as this one's.
+    """
+    block: list[str] = []
+    inside = False
+    for line in _active_lines(config_text):
+        if line.startswith("- name:"):
+            # A new tool entry ends the previous one.
+            inside = line.split(":", 1)[1].strip() == "web_search"
+            if inside:
+                block.append(line)
             continue
-        if PROVIDER_MARKER in stripped:
+        if inside:
+            if not line:
+                continue
+            block.append(line)
+    return block
+
+
+def _scalar(block: list[str], key: str) -> str | None:
+    """The value of `key:` within a tool block, or None when absent."""
+    prefix = f"{key}:"
+    for line in block:
+        if line.startswith(prefix):
+            return line.split(":", 1)[1].split("#", 1)[0].strip()
+    return None
+
+
+def config_uses_searxng(config_text: str) -> bool:
+    """True when the active config reaches SearXNG, directly or via the dispatcher.
+
+    Two shapes count, and both must, or a launch path stops starting the
+    container that `web_search` depends on:
+
+    * the legacy direct entry, `use: deerflow.community.searxng.tools:...`;
+    * the dispatcher entry, `use: deerflow.community.web_search.tools:...`,
+      with SearXNG as its `backend` (explicitly, or by omission — searxng is the
+      dispatcher's default) or as its `fallback`.
+    """
+    for line in _active_lines(config_text):
+        if PROVIDER_MARKER in line:
             return True
-    return False
+
+    block = _web_search_block(config_text)
+    use = _scalar(block, "use") or ""
+    if DISPATCHER_MARKER not in use:
+        return False
+
+    backend = _scalar(block, "backend") or DISPATCHER_DEFAULT_BACKEND
+    fallback = _scalar(block, "fallback")
+    return DISPATCHER_DEFAULT_BACKEND in (backend, fallback)
 
 
 def parse_env_file(path: Path) -> dict[str, str]:
