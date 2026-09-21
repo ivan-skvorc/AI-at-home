@@ -2,7 +2,7 @@
 
 import { BotIcon, PlusSquare } from "lucide-react";
 import { useParams, useRouter } from "next/navigation";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { PromptInputMessage } from "@/components/ai-elements/prompt-input";
 import { Button } from "@/components/ui/button";
@@ -22,6 +22,7 @@ import {
   InputBox,
   type InputBoxSubmitOptions,
 } from "@/components/workspace/input-box";
+import { KnowledgeScopeSelector } from "@/components/workspace/knowledge-scope-selector";
 import {
   MessageList,
   MESSAGE_LIST_DEFAULT_PADDING_BOTTOM,
@@ -43,8 +44,17 @@ import { useActiveGoal } from "@/components/workspace/use-active-goal";
 import { useAgent } from "@/core/agents";
 import { useAuth } from "@/core/auth/AuthProvider";
 import { hasPermission, PERMISSIONS } from "@/core/auth/permissions";
-import { useBrowserControlEnabled } from "@/core/features";
+import {
+  useBrowserControlEnabled,
+  useKnowledgeBaseEnabled,
+} from "@/core/features";
 import { useI18n } from "@/core/i18n/hooks";
+import {
+  knowledgeScopeToSelection,
+  buildKnowledgeScopeSnapshot,
+  KNOWLEDGE_SCOPE_KEY,
+  type KnowledgeScopeSelection,
+} from "@/core/knowledge";
 import {
   buildHumanInputResponseText,
   hasOpenHumanInputRequest,
@@ -74,13 +84,14 @@ export default function AgentChatPage() {
   const { t } = useI18n();
   const { user } = useAuth();
   const canStopStreaming = hasPermission(user, PERMISSIONS.RUNS_CANCEL);
+  const canCreateRuns = hasPermission(user, PERMISSIONS.RUNS_CREATE);
   const router = useRouter();
 
   const { agent_name } = useParams<{
     agent_name: string;
   }>();
 
-  const { agent } = useAgent(agent_name);
+  const { agent, isLoading: agentSkillsLoading } = useAgent(agent_name);
 
   const { threadId, setThreadId, isNewThread, setIsNewThread, isMock } =
     useThreadChat();
@@ -91,6 +102,7 @@ export default function AgentChatPage() {
   const [settings, setSettings] = useThreadSettings(threadId);
   const [localSettings, setLocalSettings] = useLocalSettings();
   const { enabled: browserControlEnabled } = useBrowserControlEnabled();
+  const { scopeSelectionEnabled } = useKnowledgeBaseEnabled();
   const { tokenUsageEnabled } = useModels();
   const threadTokenUsage = useThreadTokenUsage(
     isNewThread || isMock ? undefined : threadId,
@@ -107,6 +119,51 @@ export default function AgentChatPage() {
   const contextUsage = selectContextUsage(threadTokenUsage.data);
 
   const { showNotification } = useNotification();
+  const selectorVisible =
+    scopeSelectionEnabled && env.NEXT_PUBLIC_STATIC_WEBSITE_ONLY !== "true";
+  const agentKnowledgeEnabled =
+    agent !== null &&
+    (agent.tool_groups == null || agent.tool_groups.includes("knowledge"));
+  const [knowledgeScopeOverride, setKnowledgeScope] =
+    useState<KnowledgeScopeSelection | null>(null);
+  const previousConversationRef = useRef({
+    agentName: agent_name,
+    threadId,
+    isNewThread,
+  });
+
+  const knowledgeScope = useMemo(
+    () =>
+      knowledgeScopeOverride ??
+      knowledgeScopeToSelection(agent?.knowledge_scope),
+    [knowledgeScopeOverride, agent?.knowledge_scope],
+  );
+
+  useEffect(() => {
+    const previous = previousConversationRef.current;
+    if (previous.agentName !== agent_name || previous.threadId !== threadId) {
+      const isNewThreadRouteReplacement =
+        previous.agentName === agent_name &&
+        previous.isNewThread &&
+        !isNewThread;
+      if (!isNewThreadRouteReplacement) {
+        setKnowledgeScope(null);
+      }
+    }
+    previousConversationRef.current = {
+      agentName: agent_name,
+      threadId,
+      isNewThread,
+    };
+  }, [agent_name, isNewThread, selectorVisible, threadId]);
+
+  const currentKnowledgeScopeSnapshot = useMemo(
+    () =>
+      selectorVisible && agentKnowledgeEnabled && knowledgeScope
+        ? buildKnowledgeScopeSnapshot(knowledgeScope)
+        : null,
+    [agentKnowledgeEnabled, knowledgeScope, selectorVisible],
+  );
 
   useEffect(() => {
     setIsWelcomeMode(isNewThread);
@@ -124,6 +181,7 @@ export default function AgentChatPage() {
   } = useThreadStream({
     threadId: isNewThread ? undefined : threadId,
     displayThreadId: threadId,
+    assistantId: agent_name,
     context: { ...settings.context, agent_name: agent_name },
     isMock,
     onSend: () => {
@@ -187,18 +245,27 @@ export default function AgentChatPage() {
 
   const handleSubmit = useCallback(
     (message: PromptInputMessage, options?: InputBoxSubmitOptions) => {
+      const scopedOptions = currentKnowledgeScopeSnapshot
+        ? {
+            ...options,
+            additionalKwargs: {
+              ...options?.additionalKwargs,
+              [KNOWLEDGE_SCOPE_KEY]: currentKnowledgeScopeSnapshot,
+            },
+          }
+        : options;
       const sendPromise = sendMessage(
         threadId,
         message,
         { agent_name },
-        options,
+        scopedOptions,
       );
       if (message.files.length > 0) {
         return sendPromise;
       }
       void sendPromise;
     },
-    [sendMessage, threadId, agent_name],
+    [currentKnowledgeScopeSnapshot, sendMessage, threadId, agent_name],
   );
 
   const handleSubmitHumanInput = useCallback(
@@ -215,6 +282,9 @@ export default function AgentChatPage() {
           additionalKwargs: {
             hide_from_ui: true,
             human_input_response: response,
+            ...(currentKnowledgeScopeSnapshot
+              ? { [KNOWLEDGE_SCOPE_KEY]: currentKnowledgeScopeSnapshot }
+              : {}),
           },
           onSent: () => {
             sent = true;
@@ -223,7 +293,7 @@ export default function AgentChatPage() {
       );
       return sent;
     },
-    [agent_name, sendMessage, threadId],
+    [agent_name, currentKnowledgeScopeSnapshot, sendMessage, threadId],
   );
 
   const handleStop = useCallback(async () => {
@@ -234,6 +304,7 @@ export default function AgentChatPage() {
       regenerateMessage(threadId, messageId, supersededMessageIds),
     [regenerateMessage, threadId],
   );
+<<<<<<< HEAD
   const editVersionsEnabled =
     !isNewThread && !isMock && env.NEXT_PUBLIC_STATIC_WEBSITE_ONLY !== "true";
   const {
@@ -255,6 +326,20 @@ export default function AgentChatPage() {
     enabled: editVersionsEnabled && !isHistoryLoading,
     sendMessage,
   });
+=======
+  const handleEditAndRegenerate = useCallback(
+    (messageId: string, replacementText: string) =>
+      editAndRegenerateMessage(
+        threadId,
+        messageId,
+        replacementText,
+        currentKnowledgeScopeSnapshot
+          ? { [KNOWLEDGE_SCOPE_KEY]: currentKnowledgeScopeSnapshot }
+          : undefined,
+      ),
+    [currentKnowledgeScopeSnapshot, editAndRegenerateMessage, threadId],
+  );
+>>>>>>> upstream/main
 
   const tokenUsageInlineMode = tokenUsageEnabled
     ? localSettings.tokenUsage.inlineMode
@@ -470,7 +555,24 @@ export default function AgentChatPage() {
                     threadId={threadId}
                     draftThreadId={isNewThread ? "new" : threadId}
                     draftAgentName={agent_name}
+                    agentSkillNames={agent?.skills}
+                    agentSkillsLoading={agentSkillsLoading}
                     defaultModelName={agent?.model}
+                    knowledgeScopeControl={
+                      selectorVisible && knowledgeScope ? (
+                        <KnowledgeScopeSelector
+                          agentName={agent_name}
+                          disabled={thread.isLoading || isUploading}
+                          selection={knowledgeScope}
+                          unavailableReason={
+                            agentKnowledgeEnabled
+                              ? undefined
+                              : t.knowledge.scope.agentUnavailable
+                          }
+                          onChange={setKnowledgeScope}
+                        />
+                      ) : undefined
+                    }
                     autoFocus={isWelcomeMode}
                     status={
                       thread.error
@@ -490,6 +592,7 @@ export default function AgentChatPage() {
                     disabled={
                       env.NEXT_PUBLIC_STATIC_WEBSITE_ONLY === "true" ||
                       isUploading ||
+                      (selectorVisible && agent === null) ||
                       (!isNewThread && isHistoryLoading)
                     }
                     onContextChange={(context, options) => {
@@ -501,6 +604,7 @@ export default function AgentChatPage() {
                     onSubmit={handleSubmit}
                     onStop={handleStop}
                     canStopStreaming={canStopStreaming}
+                    canCreateRuns={canCreateRuns}
                   />
                   {env.NEXT_PUBLIC_STATIC_WEBSITE_ONLY === "true" && (
                     <div className="text-muted-foreground/67 w-full translate-y-12 text-center text-xs">

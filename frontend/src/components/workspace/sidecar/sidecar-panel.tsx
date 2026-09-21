@@ -80,6 +80,7 @@ import {
 import { env } from "@/env";
 import { cn } from "@/lib/utils";
 
+<<<<<<< HEAD
 import {
   ModelSelector,
   ModelSelectorContent,
@@ -88,15 +89,24 @@ import {
   ModelSelectorName,
   ModelSelectorTrigger,
 } from "../../ai-elements/model-selector";
+=======
+>>>>>>> upstream/main
 import { MessageList, MESSAGE_LIST_DEFAULT_PADDING_BOTTOM } from "../messages";
 import { useThread as useParentThread } from "../messages/context";
 import { ModeHoverGuide } from "../mode-hover-guide";
 import {
+<<<<<<< HEAD
   ModelDisplayName,
   ModelPickerControls,
   ModelPickerList,
   ModelPickerRow,
 } from "../model-picker-controls";
+=======
+  ModelPicker,
+  ModelPickerContent,
+  ModelPickerTrigger,
+} from "../model-picker-content";
+>>>>>>> upstream/main
 import { Tooltip } from "../tooltip";
 
 import { type SidecarReference, useSidecar } from "./context";
@@ -654,7 +664,6 @@ export function SidecarPanel({ className }: { className?: string }) {
               <PromptInputTools className="min-w-0 justify-end">
                 <SidecarModelSelector
                   className="max-w-40 min-w-0 sm:max-w-56 @max-[240px]:hidden"
-                  context={sidecar.context}
                   models={models}
                   open={modelDialogOpen}
                   selectedModel={selectedModel}
@@ -926,7 +935,6 @@ function SidecarModeMenu({
 
 function SidecarModelSelector({
   className,
-  context,
   models,
   open,
   selectedModel,
@@ -934,25 +942,28 @@ function SidecarModelSelector({
   onOpenChange,
 }: {
   className?: string;
-  context: ThreadStreamOptions["context"];
   models: Model[];
   open: boolean;
   selectedModel?: Model;
   onModelSelect: (modelName: string) => void;
   onOpenChange: (open: boolean) => void;
 }) {
+<<<<<<< HEAD
   const { t } = useI18n();
   const [localSettings, setLocalSettings] = useLocalSettings();
 
+=======
+>>>>>>> upstream/main
   if (!selectedModel) {
     return null;
   }
 
   return (
-    <ModelSelector open={open} onOpenChange={onOpenChange}>
-      <ModelSelectorTrigger asChild>
+    <ModelPicker open={open} onOpenChange={onOpenChange}>
+      <ModelPickerTrigger asChild>
         <PromptInputButton className={cn("min-w-0 px-2!", className)}>
           <div className="flex min-w-0 flex-col text-left">
+<<<<<<< HEAD
             <ModelSelectorName className="w-full text-xs font-normal">
               <ModelDisplayName
                 displayName={selectedModel.display_name}
@@ -992,5 +1003,20 @@ function SidecarModelSelector({
         />
       </ModelSelectorContent>
     </ModelSelector>
+=======
+            <span className="flex-1 truncate text-left text-xs font-normal">
+              {selectedModel.display_name}
+            </span>
+          </div>
+        </PromptInputButton>
+      </ModelPickerTrigger>
+      <ModelPickerContent
+        open={open}
+        models={models}
+        selectedModelName={selectedModel.name}
+        onModelSelect={onModelSelect}
+      />
+    </ModelPicker>
+>>>>>>> upstream/main
   );
 }

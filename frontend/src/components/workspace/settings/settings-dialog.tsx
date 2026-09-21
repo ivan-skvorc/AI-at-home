@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  BotIcon,
   BellIcon,
   CableIcon,
   DownloadCloudIcon,
@@ -8,13 +9,15 @@ import {
   BrainIcon,
   LightbulbIcon,
   PaletteIcon,
+<<<<<<< HEAD
   PlugZapIcon,
   PencilLineIcon,
   ScrollTextIcon,
   SparklesIcon,
+=======
+>>>>>>> upstream/main
   UsersRoundIcon,
   UserIcon,
-  WrenchIcon,
 } from "lucide-react";
 import dynamic from "next/dynamic";
 import { useEffect, useMemo, useState } from "react";
@@ -67,13 +70,6 @@ const ChannelsSettingsPage = dynamic(
     ),
   { loading: SettingsPageLoading },
 );
-const IntegrationsSettingsPage = dynamic(
-  () =>
-    import("./integrations-settings-page").then(
-      (module) => module.IntegrationsSettingsPage,
-    ),
-  { loading: SettingsPageLoading },
-);
 const MemorySettingsPage = dynamic(
   () =>
     import("./memory-settings-page").then(
@@ -88,6 +84,7 @@ const NotificationSettingsPage = dynamic(
     ),
   { loading: SettingsPageLoading },
 );
+<<<<<<< HEAD
 // Fork-only follow-up-suggestions settings page (not present upstream); lazy-loaded
 // to match upstream's bundle-splitting of the other settings pages.
 const SuggestionsSettingsPage = dynamic(
@@ -116,6 +113,8 @@ const ToolSettingsPage = dynamic(
     import("./tool-settings-page").then((module) => module.ToolSettingsPage),
   { loading: SettingsPageLoading },
 );
+=======
+>>>>>>> upstream/main
 const SubagentSettingsPage = dynamic(
   () =>
     import("./subagent-settings-page").then(
@@ -123,11 +122,17 @@ const SubagentSettingsPage = dynamic(
     ),
   { loading: SettingsPageLoading },
 );
+<<<<<<< HEAD
 const MaintenanceSettingsPage = dynamic(
   () =>
     import("./maintenance-settings-page").then(
       (module) => module.MaintenanceSettingsPage,
     ),
+=======
+const ModelSettingsPage = dynamic(
+  () =>
+    import("./model-settings-page").then((module) => module.ModelSettingsPage),
+>>>>>>> upstream/main
   { loading: SettingsPageLoading },
 );
 const AboutSettingsPage = dynamic(
@@ -137,15 +142,13 @@ const AboutSettingsPage = dynamic(
 );
 
 export type SettingsSection =
+  | "models"
   | "account"
   | "appearance"
   | "autoTitle"
   | "channels"
-  | "integrations"
   | "memory"
-  | "tools"
   | "subagents"
-  | "skills"
   | "notification"
   | "suggestions"
   | "systemPrompt"
@@ -172,6 +175,7 @@ export function SettingsDialog(props: SettingsDialogProps) {
 
   const sections = useMemo(
     () => [
+      { id: "models", label: t.settings.sections.models, icon: BotIcon },
       {
         id: "account",
         label: t.settings.sections.account,
@@ -203,21 +207,16 @@ export function SettingsDialog(props: SettingsDialogProps) {
         icon: CableIcon,
       },
       {
-        id: "integrations",
-        label: t.settings.sections.integrations,
-        icon: PlugZapIcon,
-      },
-      {
         id: "memory",
         label: t.settings.sections.memory,
         icon: BrainIcon,
       },
-      { id: "tools", label: t.settings.sections.tools, icon: WrenchIcon },
       {
         id: "subagents",
         label: t.settings.sections.subagents,
         icon: UsersRoundIcon,
       },
+<<<<<<< HEAD
       { id: "skills", label: t.settings.sections.skills, icon: SparklesIcon },
       {
         id: "systemPrompt",
@@ -229,18 +228,18 @@ export function SettingsDialog(props: SettingsDialogProps) {
         label: t.settings.sections.maintenance,
         icon: DownloadCloudIcon,
       },
+=======
+>>>>>>> upstream/main
       { id: "about", label: t.settings.sections.about, icon: InfoIcon },
     ],
     [
+      t.settings.sections.models,
       t.settings.sections.account,
       t.settings.sections.appearance,
       t.settings.sections.autoTitle,
       t.settings.sections.channels,
-      t.settings.sections.integrations,
       t.settings.sections.memory,
-      t.settings.sections.tools,
       t.settings.sections.subagents,
-      t.settings.sections.skills,
       t.settings.sections.notification,
       t.settings.sections.maintenance,
       t.settings.sections.suggestions,
@@ -290,23 +289,21 @@ export function SettingsDialog(props: SettingsDialogProps) {
           </nav>
           <ScrollArea className="h-full min-h-0 rounded-lg border">
             <div className="space-y-8 p-6">
+              {activeSection === "models" && <ModelSettingsPage />}
               {activeSection === "account" && <AccountSettingsPage />}
               {activeSection === "appearance" && <AppearanceSettingsPage />}
               {activeSection === "memory" && <MemorySettingsPage />}
-              {activeSection === "tools" && <ToolSettingsPage />}
               {activeSection === "subagents" && <SubagentSettingsPage />}
-              {activeSection === "skills" && (
-                <SkillSettingsPage
-                  onClose={() => props.onOpenChange?.(false)}
-                />
-              )}
               {activeSection === "notification" && <NotificationSettingsPage />}
               {activeSection === "suggestions" && <SuggestionsSettingsPage />}
               {activeSection === "autoTitle" && <AutoTitleSettingsPage />}
               {activeSection === "channels" && <ChannelsSettingsPage />}
+<<<<<<< HEAD
               {activeSection === "integrations" && <IntegrationsSettingsPage />}
               {activeSection === "systemPrompt" && <SystemPromptSettingsPage />}
               {activeSection === "maintenance" && <MaintenanceSettingsPage />}
+=======
+>>>>>>> upstream/main
               {activeSection === "about" && <AboutSettingsPage />}
             </div>
           </ScrollArea>

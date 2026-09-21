@@ -4,7 +4,11 @@ import {
   BotIcon,
   CalendarClock,
   MessagesSquare,
+<<<<<<< HEAD
   WalletIcon,
+=======
+  BlocksIcon,
+>>>>>>> upstream/main
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -96,12 +100,24 @@ export function WorkspaceNavChatList() {
         </SidebarMenuItem>
         <SidebarMenuItem>
           <SidebarMenuButton
+<<<<<<< HEAD
             isActive={pathname.startsWith("/workspace/spend")}
             asChild
           >
             <Link className="text-muted-foreground" href="/workspace/spend">
               <WalletIcon />
               <span>{t.sidebar.spend}</span>
+=======
+            isActive={pathname.startsWith("/workspace/capabilities")}
+            asChild
+          >
+            <Link
+              className="text-muted-foreground"
+              href="/workspace/capabilities"
+            >
+              <BlocksIcon />
+              <span>{t.capabilities.title}</span>
+>>>>>>> upstream/main
             </Link>
           </SidebarMenuButton>
         </SidebarMenuItem>

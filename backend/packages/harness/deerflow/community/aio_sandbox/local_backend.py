@@ -31,6 +31,7 @@ from .sandbox_info import SandboxInfo
 
 logger = logging.getLogger(__name__)
 
+<<<<<<< HEAD
 # Host alias for in-container code to reach services on the Docker host (e.g. a
 # host-run Ollama). Linux daemons do not provide it automatically the way Docker
 # Desktop does, so it is mapped explicitly at container start via --add-host.
@@ -39,6 +40,9 @@ DOCKER_HOST_GATEWAY_ALIAS = "host.docker.internal"
 # host daemon instead of the container's own loopback. An OLLAMA_HOST entry in
 # `sandbox.environment` wins over this default.
 SANDBOX_OLLAMA_HOST_DEFAULT = f"http://{DOCKER_HOST_GATEWAY_ALIAS}:11434"
+=======
+_AIO_DEFAULT_MAX_SHELL_SESSIONS = 10
+>>>>>>> upstream/main
 
 
 class _ExistingRestrictedSandbox(RuntimeError):
@@ -55,6 +59,7 @@ class _ContainerInspection:
     image: str
     networks: frozenset[str]
     relay_token: str | None = None
+    max_shell_sessions: int | None = None
 
 
 @dataclass(frozen=True)
@@ -282,6 +287,45 @@ def _docker_bridge_gateway_ip() -> str | None:
     return candidate
 
 
+_DOCKER_SERVER_IS_DESKTOP: bool | None = None
+
+
+def _docker_server_is_desktop() -> bool:
+    """Detect Desktop from the daemon, including a Linux DooD Gateway."""
+    global _DOCKER_SERVER_IS_DESKTOP
+    if _DOCKER_SERVER_IS_DESKTOP is not None:
+        return _DOCKER_SERVER_IS_DESKTOP
+    try:
+        result = subprocess.run(
+            ["docker", "info", "--format", "{{json .OperatingSystem}}"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError) as exc:
+        logger.warning("Could not identify the Docker server platform; assuming non-Desktop: %s", exc)
+        return False
+    if result.returncode != 0:
+        logger.warning("Could not identify the Docker server platform; assuming non-Desktop: %s", (result.stderr or "").strip())
+        return False
+    raw = (result.stdout or "").strip()
+    try:
+        operating_system = json.loads(raw)
+    except json.JSONDecodeError:
+        operating_system = raw
+    is_desktop = isinstance(operating_system, str) and "docker desktop" in operating_system.lower()
+    _DOCKER_SERVER_IS_DESKTOP = is_desktop
+    return is_desktop
+
+
+def _clear_docker_desktop_cache() -> None:
+    global _DOCKER_SERVER_IS_DESKTOP
+    _DOCKER_SERVER_IS_DESKTOP = None
+
+
+_docker_server_is_desktop.cache_clear = _clear_docker_desktop_cache  # type: ignore[attr-defined]
+
+
 def _resolve_docker_bind_host(sandbox_host: str | None = None, bind_host: str | None = None) -> str:
     """Choose the host interface for legacy Docker ``-p`` sandbox publishing.
 
@@ -296,15 +340,21 @@ def _resolve_docker_bind_host(sandbox_host: str | None = None, bind_host: str | 
     the address the sandbox host itself resolves to: ``host.docker.internal``
     follows the daemon's ``host-gateway-ip`` mapping (customizable, possibly
     IPv6), so resolving it yields exactly where the gateway will connect —
-    the published port and the advertised sandbox URL always match. Only
-    when resolution fails does the default bridge gateway serve as a
-    best-effort fallback (with a warning). Operators that genuinely need the
-    old broad bind (e.g. remote clients connecting to the sandbox API
-    directly) can restore it with ``DEER_FLOW_SANDBOX_BIND_HOST=0.0.0.0`` —
-    that re-exposes an unauthenticated shell endpoint and should be paired
-    with an external firewall. When operators choose an IPv6 loopback
-    sandbox host, bind Docker to IPv6 loopback as well so the advertised
-    sandbox URL and published socket use the same address family.
+    the published port and the advertised sandbox URL always match. On
+    Docker Desktop, resolving ``host.docker.internal`` yields an internal VM
+    gateway address that the host OS cannot bind, so Desktop daemons default
+    to host loopback (127.0.0.1) for ``host.docker.internal``; Desktop forwards
+    ``host.docker.internal`` to host loopback automatically. Custom non-loopback
+    sandbox hosts on Desktop daemons continue to bind their resolved address.
+    Only when resolution fails does the
+    default bridge gateway serve as a best-effort fallback (with a warning).
+    Operators that genuinely need the old broad bind (e.g. remote clients
+    connecting to the sandbox API directly) can restore it with
+    ``DEER_FLOW_SANDBOX_BIND_HOST=0.0.0.0`` — that re-exposes an
+    unauthenticated shell endpoint and should be paired with an external
+    firewall. When operators choose an IPv6 loopback sandbox host, bind
+    Docker to IPv6 loopback as well so the advertised sandbox URL and
+    published socket use the same address family.
     """
     explicit_bind = bind_host if bind_host is not None else os.environ.get("DEER_FLOW_SANDBOX_BIND_HOST", "").strip()
     if explicit_bind:
@@ -332,6 +382,17 @@ def _resolve_docker_bind_host(sandbox_host: str | None = None, bind_host: str | 
         return "[::1]"
     if _is_loopback_sandbox_host(host):
         logger.debug("Docker sandbox bind: 127.0.0.1 (loopback default)")
+        return "127.0.0.1"
+
+    if _docker_server_is_desktop() and host.strip().rstrip(".").lower() in (
+        "host.docker.internal",
+        "gateway.docker.internal",
+        "docker.for.mac.host.internal",
+        "docker.for.mac.localhost",
+        "docker.for.win.host.internal",
+        "docker.for.win.localhost",
+    ):
+        logger.debug("Docker sandbox bind: 127.0.0.1 (Docker Desktop host loopback)")
         return "127.0.0.1"
 
     resolved = _resolve_sandbox_host_address(host)
@@ -524,6 +585,7 @@ class LocalContainerBackend(SandboxBackend):
         expose_ports: list[int] | None = None,
         extra_capabilities: list[str] | None = None,
         network_config: dict[str, object] | None = None,
+        required_shell_sessions: int = 0,
     ):
         """Initialize the local container backend.
 
@@ -533,18 +595,26 @@ class LocalContainerBackend(SandboxBackend):
             container_prefix: Prefix for container names (e.g., "deer-flow-sandbox").
             config_mounts: Volume mount configurations from config (list of VolumeMountConfig).
             environment: Environment variables to inject into containers.
+<<<<<<< HEAD
             expose_ports: Extra container ports published 1:1 to the host loopback
                 (fixed host ports — only one concurrent container can hold each).
             extra_capabilities: Additional Linux capabilities (`--cap-add`) for the
                 container; Docker runtime only (warned and skipped on Apple Container).
+=======
+            required_shell_sessions: Minimum usable capacity, independent of image environment overrides.
+>>>>>>> upstream/main
         """
         self._image = image
         self._base_port = base_port
         self._container_prefix = container_prefix
         self._config_mounts = config_mounts
         self._environment = environment
+<<<<<<< HEAD
         self._expose_ports = list(expose_ports or [])
         self._extra_capabilities = list(extra_capabilities or [])
+=======
+        self._required_shell_sessions = required_shell_sessions
+>>>>>>> upstream/main
         self._network_config = network_config or {"mode": "open"}
         self._network_mode = str(self._network_config.get("mode", "open"))
         self._allow_synthetic_dns = False
@@ -588,6 +658,18 @@ class LocalContainerBackend(SandboxBackend):
             "deerflow.role": "sandbox",
             "deerflow.network_mode": self._network_mode,
         }
+
+    def _has_compatible_shell_capacity(self, inspection: _ContainerInspection) -> bool:
+        """Check both the runtime minimum and any explicit environment override."""
+        configured = self._environment.get("MAX_SHELL_SESSIONS")
+        required = self._required_shell_sessions
+        try:
+            if configured is not None:
+                required = max(required, int(configured))
+        except (TypeError, ValueError):
+            return False
+        actual = inspection.max_shell_sessions if inspection.max_shell_sessions is not None else _AIO_DEFAULT_MAX_SHELL_SESSIONS
+        return actual >= required
 
     def _network_policy_digest(self) -> str:
         allow_domains = self._network_config.get("allow_domains", [])
@@ -747,25 +829,7 @@ class LocalContainerBackend(SandboxBackend):
 
     def _docker_server_is_desktop(self) -> bool:
         """Detect Desktop from the daemon, including a Linux DooD Gateway."""
-        try:
-            result = subprocess.run(
-                ["docker", "info", "--format", "{{json .OperatingSystem}}"],
-                capture_output=True,
-                text=True,
-                timeout=10,
-            )
-        except (FileNotFoundError, subprocess.TimeoutExpired, OSError) as exc:
-            logger.warning("Could not identify the Docker server platform; Desktop synthetic DNS answers remain disabled: %s", exc)
-            return False
-        if result.returncode != 0:
-            logger.warning("Could not identify the Docker server platform; Desktop synthetic DNS answers remain disabled: %s", (result.stderr or "").strip())
-            return False
-        raw = (result.stdout or "").strip()
-        try:
-            operating_system = json.loads(raw)
-        except json.JSONDecodeError:
-            operating_system = raw
-        return isinstance(operating_system, str) and "docker desktop" in operating_system.lower()
+        return _docker_server_is_desktop()
 
     def _docker_has_managed_sandboxes(self) -> bool:
         """Keep using Docker while this prefix still has managed sandboxes.
@@ -1240,6 +1304,14 @@ class LocalContainerBackend(SandboxBackend):
                     created_at=created_at,
                     requires_replacement=True,
                 )
+            if not self._has_compatible_shell_capacity(sandbox_inspection):
+                return SandboxInfo(
+                    sandbox_id=sandbox_id,
+                    sandbox_url="",
+                    container_name=container_name,
+                    created_at=created_at,
+                    requires_replacement=True,
+                )
 
         if self._network_mode != "open":
             proxy_name, _ = self._resource_names(sandbox_id)
@@ -1392,7 +1464,7 @@ class LocalContainerBackend(SandboxBackend):
                 continue
             created_at, host_port = data.created_at, data.host_port
             request_headers: dict[str, str] = {}
-            requires_replacement = persisted_mode != self._network_mode
+            requires_replacement = persisted_mode != self._network_mode or not self._has_compatible_shell_capacity(data)
             if not requires_replacement and self._network_mode != "open":
                 proxy_name, _ = self._resource_names(sandbox_id)
                 proxy_data = inspections.get(proxy_name)
@@ -1572,6 +1644,17 @@ class LocalContainerBackend(SandboxBackend):
             host_port = _extract_host_port(entry, 8080)
             config = entry.get("Config") or {}
             network_settings = entry.get("NetworkSettings") or {}
+            max_shell_sessions: int | None = None
+            configured_shell_sessions = _extract_container_environment(config, "MAX_SHELL_SESSIONS")
+            if configured_shell_sessions is not None:
+                try:
+                    parsed_shell_sessions = int(configured_shell_sessions)
+                    if parsed_shell_sessions > 0:
+                        max_shell_sessions = parsed_shell_sessions
+                    else:
+                        max_shell_sessions = 0
+                except ValueError:
+                    max_shell_sessions = 0
             out[name] = _ContainerInspection(
                 created_at=created_at,
                 host_port=host_port,
@@ -1579,6 +1662,7 @@ class LocalContainerBackend(SandboxBackend):
                 image=str(config.get("Image") or ""),
                 networks=frozenset(str(value) for value in (network_settings.get("Networks") or {})),
                 relay_token=_extract_container_environment(config, RELAY_TOKEN_ENV),
+                max_shell_sessions=max_shell_sessions,
             )
         return out
 

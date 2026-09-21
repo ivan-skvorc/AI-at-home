@@ -1,11 +1,15 @@
 # DeerFlow - Unified Development Environment
 
+<<<<<<< HEAD
 .PHONY: help drift-eval config config-upgrade check check-agent-guidance install extension-install extension-upgrade extension-list extension-enable extension-disable extension-remove setup doctor support-bundle detect-thread-boundaries detect-blocking-io backup restore dev dev-daemon start start-daemon nginx stop up up-start down clean docker-init docker-start docker-stop docker-logs docker-logs-frontend docker-logs-gateway docker-logs-redis searxng searxng-stop comfy-up comfy-down comfy-logs comfy-models comfy-model-add sandbox-up sandbox-down sandbox-logs sandbox-enable sandbox-disable setup-sandbox fetch-browser auto-update auto-update-install auto-update-uninstall
 
 # docker compose shim: prefer the v2 plugin, fall back to legacy docker-compose.
 DOCKER_COMPOSE ?= docker compose
 SANDBOX_COMPOSE_FILE = docker/docker-compose.sandbox.yml
 COMFYUI_COMPOSE_FILE = docker/docker-compose.comfyui.yml
+=======
+.PHONY: help config config-upgrade check check-agent-guidance install extension-install extension-upgrade extension-list extension-enable extension-disable extension-remove setup doctor support-bundle detect-thread-boundaries detect-blocking-io dev dev-daemon start start-daemon nginx stop up down prod-logs clean docker-init docker-start docker-stop docker-logs docker-logs-frontend docker-logs-gateway docker-logs-redis setup-sandbox
+>>>>>>> upstream/main
 
 BASH ?= bash
 BACKEND_UV_RUN = cd backend && uv run
@@ -74,7 +78,11 @@ help:
 	@echo ""
 	@echo "Docker Production Commands:"
 	@echo "  make up              - Build and start production Docker services (localhost:2026)"
+<<<<<<< HEAD
 	@echo "  make up-start        - Start production services from pre-built images (apply .env/config-only changes, no rebuild)"
+=======
+	@echo "  make prod-logs       - Follow production Docker logs (stack started by 'make up')"
+>>>>>>> upstream/main
 	@echo "  make down            - Stop and remove production Docker containers"
 	@echo ""
 	@echo "Docker Development Commands:"
@@ -323,6 +331,7 @@ up-start:
 down:
 	@$(RUN_SHELL_SCRIPT) ./scripts/deploy.sh down
 
+<<<<<<< HEAD
 # Start only the SearXNG search container (backs the default web_search tool).
 # All launch paths (make up / make docker-start / make dev / make start) already
 # auto-detect or auto-start it via scripts/detect_searxng.py; this target is for
@@ -362,3 +371,8 @@ comfy-models:
 
 comfy-model-add:
 	@$(PYTHON) scripts/comfyui_models.py add "$(SOURCE)" --type "$(TYPE)" $(if $(NAME),--name "$(NAME)",) $(if $(TARGET),--target "$(TARGET)",) $(if $(SHA256),--sha256 "$(SHA256)",)
+=======
+# Follow production container logs (stack started by `make up`)
+prod-logs:
+	@$(RUN_SHELL_SCRIPT) ./scripts/docker.sh logs --prod
+>>>>>>> upstream/main

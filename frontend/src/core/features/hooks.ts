@@ -4,6 +4,8 @@ import {
   type AutoTitleCapability,
   fetchAutoTitleCapability,
   fetchBrowserControlEnabled,
+  fetchConversationReferencesCapability,
+  fetchKnowledgeBaseFeature,
   fetchMcpTasksEnabled,
   fetchSubagentBatchesCapability,
 } from "./api";
@@ -54,6 +56,7 @@ export function useSubagentBatchesCapability() {
   };
 }
 
+<<<<<<< HEAD
 /**
  * Operator master switch for automatic conversation renaming (fork feature).
  * Read through the shared `/api/features` endpoint so Settings can explain a
@@ -65,13 +68,38 @@ export function useAutoTitleCapability(): AutoTitleCapability & {
   const { data, isPending } = useQuery({
     queryKey: ["features", "auto_title"],
     queryFn: () => fetchAutoTitleCapability(),
+=======
+export function useConversationReferencesCapability() {
+  const { data, isPending } = useQuery({
+    queryKey: ["features", "conversation_references"],
+    queryFn: () => fetchConversationReferencesCapability(),
+>>>>>>> upstream/main
     staleTime: 0,
     refetchOnMount: true,
     retry: false,
   });
   return {
+<<<<<<< HEAD
     enabled: data?.enabled ?? true,
     modelName: data?.modelName ?? null,
+=======
+    enabled: data?.enabled ?? false,
+    maxReferences: data?.maxReferences ?? 0,
+    isLoading: isPending,
+  };
+}
+
+export function useKnowledgeBaseEnabled() {
+  const { data, isPending } = useQuery({
+    queryKey: ["features", "knowledge_base"],
+    queryFn: fetchKnowledgeBaseFeature,
+    staleTime: 0,
+    refetchOnMount: true,
+    retry: false,
+  });
+  return {
+    scopeSelectionEnabled: data?.scopeSelectionEnabled ?? false,
+>>>>>>> upstream/main
     isLoading: isPending,
   };
 }

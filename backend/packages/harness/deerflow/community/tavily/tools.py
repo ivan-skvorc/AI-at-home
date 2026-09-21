@@ -54,8 +54,17 @@ def tavily_api_key_present() -> bool:
     return resolve_tavily_api_key() is not None
 
 
+<<<<<<< HEAD
 def _get_tavily_client() -> TavilyClient:
     return TavilyClient(api_key=resolve_tavily_api_key())
+=======
+def _get_tavily_client(tool_name: str = "web_search") -> TavilyClient:
+    config = get_app_config().get_tool_config(tool_name)
+    api_key = None
+    if config is not None and "api_key" in config.model_extra:
+        api_key = config.model_extra.get("api_key")
+    return TavilyClient(api_key=api_key)
+>>>>>>> upstream/main
 
 
 def _search_tavily_sync(query: str, time_range: SearchTimeRange | None = None) -> str:
@@ -65,6 +74,12 @@ def _search_tavily_sync(query: str, time_range: SearchTimeRange | None = None) -
 
     client = _get_tavily_client()
     search_kwargs: dict[str, object] = {"max_results": max_results}
+    if config is not None:
+        for key in ("include_domains", "exclude_domains"):
+            if key in config.model_extra:
+                search_kwargs[key] = config.model_extra[key]
+    if search_kwargs.get("include_domains"):
+        search_kwargs["include_domains_mode"] = "filter"
     if time_range is not None:
         search_kwargs["time_range"] = time_range
     res = client.search(query, **search_kwargs)
@@ -112,7 +127,7 @@ def web_fetch_tool(url: str) -> str:
     Args:
         url: The URL to fetch the contents of.
     """
-    client = _get_tavily_client()
+    client = _get_tavily_client("web_fetch")
     res = client.extract([url])
     if "failed_results" in res and len(res["failed_results"]) > 0:
         return f"Error: {res['failed_results'][0]['error']}"

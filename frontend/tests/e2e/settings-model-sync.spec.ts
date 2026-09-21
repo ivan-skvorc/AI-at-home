@@ -238,6 +238,7 @@ test("custom agent automatic default does not become an account preference", asy
   await page.evaluate(() => window.dispatchEvent(new Event("focus")));
   await expect.poll(() => reads).toBe(2);
   expect(patches).toEqual([]);
+<<<<<<< HEAD
   // Fork: an explicit selection made *in the composer* is still a
   // per-conversation choice, so it changes this chat and uploads nothing.
   // Upstream synchronizes it; the account-wide path here is Settings.
@@ -245,6 +246,14 @@ test("custom agent automatic default does not become an account preference", asy
   await page.getByRole("option").filter({ hasText: "First Model" }).click();
   await expect(page.getByRole("button", { name: "First Model" })).toBeVisible();
   expect(patches).toEqual([]);
+=======
+  // Explicit model selections on this same page must still be synchronized.
+  await page.getByRole("button", { name: "Agent Model", exact: true }).click();
+  await page
+    .getByRole("button", { name: "First Model (first-model)", exact: true })
+    .click();
+  await expect.poll(() => patches).toEqual([{ model_name: "first-model" }]);
+>>>>>>> upstream/main
 });
 
 test("automatic model fallback cannot overwrite a slowly loaded account preference", async ({
