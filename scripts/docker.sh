@@ -687,15 +687,13 @@ logs() {
 
     compose_preflight
 
-    # Append --env-file only after compose_preflight(): its Compose detection
-    # may rebuild COMPOSE_CMD, which would drop anything appended before it.
-    if [ "$is_prod" = 1 ] && [ -f "$PROJECT_ROOT/.env" ]; then
-        # Absolute, not ../.env: every invocation runs from $DOCKER_DIR today,
-        # but a relative path silently resolves to docker/.env the moment one
-        # does not, and the root .env then stops participating in interpolation.
-        # Pinned by backend/tests/test_docker_dev_tailnet.py.
-        COMPOSE_CMD="$COMPOSE_CMD --env-file $PROJECT_ROOT/.env"
-    fi
+    # No --env-file append here. Upstream added one at this point because its
+    # COMPOSE_CMD carried none and compose_preflight() may rebuild the command;
+    # in this fork _refresh_compose_cmd() is what builds it and always includes
+    # the absolute root .env (never ../.env, which resolves to docker/.env the
+    # moment a caller is not in $DOCKER_DIR), and compose_preflight() calls that
+    # helper — so the flag is already present and appending it again passes it
+    # twice. Pinned by backend/tests/test_docker_dev_tailnet.py.
 
     if [ -n "$service" ]; then
         echo -e "${BLUE}Viewing $service logs...${NC}"

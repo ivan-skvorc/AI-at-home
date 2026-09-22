@@ -263,11 +263,15 @@ def upgrade(config_path: Path, example_path: Path, repo_root: Path) -> int:
     user = safe_load_guarded(raw_text, source=str(config_path)) or {}
 
     # Structured migrations run on the parsed config, after the text pass.
+    # Their edits live only in ``user``, so they force the structural write
+    # below: the raw-text path rewrites the original file and would drop them.
+    structural_changes: list[str] = []
     for version in range(user_version + 1, example_version + 1):
         migration = MIGRATIONS.get(version)
         transform = migration.get("data_transform") if migration else None
         if transform:
-            migrated.extend(transform(user))
+            structural_changes.extend(transform(user))
+    migrated.extend(structural_changes)
 
     if migrated:
         print(f"Applied {len(migrated)} migration(s):")
@@ -283,14 +287,19 @@ def upgrade(config_path: Path, example_path: Path, repo_root: Path) -> int:
     shutil.copy2(config_path, backup)
     print(f"Backed up to {backup.name}")
 
-    if added:
-        # New keys must be inserted structurally — full re-dump (comments in
-        # the user file are lost on this path; the backup keeps them).
+    if added or structural_changes:
+        # New keys, or a migration that moved one, must be written structurally
+        # — full re-dump (comments in the user file are lost on this path; the
+        # backup keeps them). A structured migration can add no keys at all and
+        # still have changed the file, which is why it is checked here: the
+        # raw-text branch below rewrites only the version line, so it would
+        # silently discard everything the transform did.
         with open(config_path, "w", encoding="utf-8") as f:
             yaml.dump(user, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
-        print(f"Added {len(added)} new field(s):")
-        for a in added:
-            print(f"  + {a}")
+        if added:
+            print(f"Added {len(added)} new field(s):")
+            for a in added:
+                print(f"  + {a}")
     else:
         # Version stamp (plus any text migrations) only: rewrite the raw text
         # so user comments and layout survive.

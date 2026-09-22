@@ -5,6 +5,7 @@ messages, grouping and the ordering repair — is long enough to dominate this
 file's guidance budget, so it lives beside it in
 [`DATA_FLOW.md`](DATA_FLOW.md). Read that before changing anything under
 `core/threads/` or `core/messages/`.
+
 ### Key Patterns
 
 - **Server Components by default**, `"use client"` only for interactive components

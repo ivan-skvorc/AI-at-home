@@ -58,6 +58,19 @@ def _seed_database_that_skipped_0023(db_path) -> None:
         sync_engine.dispose()
 
 
+def _stamped_versions(db_path) -> set[str]:
+    """Every row of ``alembic_version``, not just the first.
+
+    This fork carries its own migration branch (`0019_runs_pricing_snapshot`,
+    FORK.md §17), so a downgrade that lands on upstream's branch leaves the
+    fork's merge head stamped alongside the target and the table holds two rows.
+    ``fetchone()`` then returns whichever came first, which is not the revision
+    the downgrade was asked for.
+    """
+    with sqlite3.connect(db_path) as raw:
+        return {row[0] for row in raw.execute("SELECT version_num FROM alembic_version").fetchall()}
+
+
 def _table_and_column_state(db_path) -> tuple[bool, bool, set[str], str | None]:
     with sqlite3.connect(db_path) as raw:
         tables = {row[0] for row in raw.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
@@ -132,7 +145,9 @@ async def test_0025_downgrade_preserves_ancestor_owned_schema_and_data(tmp_path)
         assert has_table
         assert has_column
         assert {"ix_runs_change_seq", "ix_runs_user_change_seq"} <= run_indexes
-        assert version == PREVIOUS
+        # The downgrade target must be stamped; the fork's branch head may be
+        # stamped beside it, which is why this is a membership check.
+        assert PREVIOUS in _stamped_versions(db_path), version
         with sqlite3.connect(db_path) as raw:
             assert raw.execute("SELECT value FROM run_change_clock WHERE id = 1").fetchone()[0] == 1
 
@@ -143,7 +158,9 @@ async def test_0025_downgrade_preserves_ancestor_owned_schema_and_data(tmp_path)
         assert has_table
         assert has_column
         assert {"ix_runs_change_seq", "ix_runs_user_change_seq"} <= run_indexes
-        assert version == REVISION
+        # Membership again: the re-upgrade restores this revision on upstream's
+        # branch while the fork's merge head stays stamped on its own.
+        assert REVISION in _stamped_versions(db_path), version
         with sqlite3.connect(db_path) as raw:
             assert raw.execute("SELECT value FROM run_change_clock WHERE id = 1").fetchone()[0] == 1
     finally:

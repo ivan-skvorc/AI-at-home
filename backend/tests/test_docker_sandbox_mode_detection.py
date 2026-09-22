@@ -356,7 +356,15 @@ unset BETTER_AUTH_SECRET DEER_FLOW_INTERNAL_AUTH_TOKEN
         recorded = marker.read_text(encoding="utf-8")
         assert "-p deer-flow " in recorded, recorded
         assert "-f docker-compose.yaml" in recorded, recorded
-        assert "--env-file ../.env" in recorded, recorded
+        # Absolute, not upstream's ../.env: this fork builds COMPOSE_CMD in
+        # _refresh_compose_cmd() with the root .env by absolute path, so a
+        # caller outside $DOCKER_DIR cannot silently pick up docker/.env
+        # (backend/tests/test_docker_dev_tailnet.py owns that rule).
+        assert "--env-file " in recorded, recorded
+        assert "--env-file ../.env" not in recorded, recorded
+        # ...and exactly once: _refresh_compose_cmd() already added it, so an
+        # extra append after compose_preflight() passes the flag twice.
+        assert recorded.count("--env-file ") == 1, recorded
         assert "logs" in recorded, recorded
         # deploy.sh exports interpolation defaults before every compose call;
         # `logs --prod` must too, or the volume specs fail to parse.
