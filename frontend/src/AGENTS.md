@@ -44,6 +44,21 @@ file's guidance budget, so it lives beside it in
   favorites feature it adds is not integrated yet. Do not "fix" the imports in
   `input-box.tsx` or `sidecar-panel.tsx` to point at it: that silently trades
   search, sorting, grouping and prices for favorites.
+
+  Upstream's `tests/e2e/model-favorites.spec.ts` came with the 2026-09-22 sync
+  and was **deleted**, because it drives a picker this fork does not render: its
+  trigger locator is `getByRole("button", { name: "Alpha", exact: true })` and
+  the fork's trigger also carries a "Main agent" / "Subagent" label, so all four
+  tests fail on the first line of `openMainModelPicker` before reaching a single
+  favorites assertion. Its row locator wants upstream's
+  `"<display name> (<id>)"` button; the fork renders cmdk `option` rows through
+  `ModelPickerRow`. It was deleted rather than skipped because a skipped spec
+  reads green and checks nothing. **A future sync will re-add it** — delete it
+  again, or, better, integrate favorites into `ModelPickerList`/`ModelPickerRow`
+  (the store landed intact: `core/models/favorites-store.ts`,
+  `favorites.ts`, `use-model-favorites.ts`) and write the spec against this
+  fork's DOM.
+
 - `src/app/workspace/chats/[thread_id]/page.tsx` owns composer busy-state wiring.
 - `src/app/workspace/chats/[thread_id]/page.tsx` owns branch-from-turn submission and navigation; sidecar `MessageList` instances do not receive the branch action.
 - `core/threads/thread-branch-tree.ts` projects only loaded, same-pin branch lineage into Recent chats. Missing, malformed, cross-pin, self, or cyclic parents stay top-level; unpinned groups follow their freshest descendant while pinned root order stays stable. `recent-chat-list.tsx` caps visual indentation without changing the recursive order.
