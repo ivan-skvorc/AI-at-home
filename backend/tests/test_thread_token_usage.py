@@ -83,7 +83,7 @@ def test_thread_token_usage_returns_stable_shape(monkeypatch: pytest.MonkeyPatch
         # The spend cap is off by default, so the header gets no budget line.
         "spend_budget": None,
     }
-    run_store.aggregate_tokens_by_thread.assert_awaited_once_with("thread-1", include_active=False)
+    run_store.aggregate_tokens_by_thread.assert_awaited_once_with("thread-1", include_active=False, user_id=None)
     build_context_usage.assert_awaited_once()
 
 
@@ -97,7 +97,7 @@ def test_thread_token_usage_can_include_active_runs(monkeypatch: pytest.MonkeyPa
         response = client.get("/api/threads/thread-1/token-usage?include_active=true")
 
     assert response.status_code == 200
-    run_store.aggregate_tokens_by_thread.assert_awaited_once_with("thread-1", include_active=True)
+    run_store.aggregate_tokens_by_thread.assert_awaited_once_with("thread-1", include_active=True, user_id=None)
 
 
 def _priced_map():

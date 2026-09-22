@@ -654,7 +654,6 @@ export function SidecarPanel({ className }: { className?: string }) {
               <PromptInputTools className="min-w-0 justify-end">
                 <SidecarModelSelector
                   className="max-w-40 min-w-0 sm:max-w-56 @max-[240px]:hidden"
-                  context={sidecar.context}
                   models={models}
                   open={modelDialogOpen}
                   selectedModel={selectedModel}
@@ -926,7 +925,6 @@ function SidecarModeMenu({
 
 function SidecarModelSelector({
   className,
-  context,
   models,
   open,
   selectedModel,
@@ -934,7 +932,6 @@ function SidecarModelSelector({
   onOpenChange,
 }: {
   className?: string;
-  context: ThreadStreamOptions["context"];
   models: Model[];
   open: boolean;
   selectedModel?: Model;
@@ -982,7 +979,7 @@ function SidecarModelSelector({
                 model={model}
                 showProvider={!localSettings.modelPicker.groupByProvider}
               />
-              {model.name === context.model_name ? (
+              {model.name === selectedModel.name ? (
                 <CheckIcon className="ml-auto size-4" />
               ) : (
                 <div className="ml-auto size-4" />

@@ -54,8 +54,24 @@ def tavily_api_key_present() -> bool:
     return resolve_tavily_api_key() is not None
 
 
-def _get_tavily_client() -> TavilyClient:
-    return TavilyClient(api_key=resolve_tavily_api_key())
+def _get_tavily_client(tool_name: str = "web_search") -> TavilyClient:
+    """Tavily client for ``tool_name``: its own key, else the environment.
+
+    Each tool carries its own credential so ``web_fetch`` can be pointed at a
+    separate key from ``web_search``. The fork adds only the env-var tail, so a
+    stack that sets ``TAVILY_API_KEY`` in the repo-root ``.env`` and configures
+    no key at all still works. Deliberately *not* the shared
+    ``resolve_tavily_api_key`` chain: that reads the ``web_search`` entry, which
+    belongs to whichever provider is configured there — borrowing it here would
+    hand Serper's key to Tavily.
+    """
+    api_key = None
+    config = get_app_config().get_tool_config(tool_name)
+    if config is not None and "api_key" in config.model_extra:
+        value = config.model_extra.get("api_key")
+        if isinstance(value, str) and value.strip():
+            api_key = value.strip()
+    return TavilyClient(api_key=api_key or os.getenv(API_KEY_ENV_VAR, "").strip() or None)
 
 
 def _search_tavily_sync(query: str, time_range: SearchTimeRange | None = None) -> str:
@@ -65,6 +81,11 @@ def _search_tavily_sync(query: str, time_range: SearchTimeRange | None = None) -
 
     client = _get_tavily_client()
     search_kwargs: dict[str, object] = {"max_results": max_results}
+    for key in ("include_domains", "exclude_domains"):
+        if key in extras:
+            search_kwargs[key] = extras[key]
+    if search_kwargs.get("include_domains"):
+        search_kwargs["include_domains_mode"] = "filter"
     if time_range is not None:
         search_kwargs["time_range"] = time_range
     res = client.search(query, **search_kwargs)
@@ -112,7 +133,7 @@ def web_fetch_tool(url: str) -> str:
     Args:
         url: The URL to fetch the contents of.
     """
-    client = _get_tavily_client()
+    client = _get_tavily_client("web_fetch")
     res = client.extract([url])
     if "failed_results" in res and len(res["failed_results"]) > 0:
         return f"Error: {res['failed_results'][0]['error']}"

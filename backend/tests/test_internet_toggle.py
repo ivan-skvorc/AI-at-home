@@ -37,6 +37,7 @@ import deerflow.tools as tools_package
 from app.gateway.services import merge_run_context_overrides
 from deerflow.agents.lead_agent import agent as lead_agent_module
 from deerflow.config.app_config import AppConfig
+from deerflow.config.knowledge_base_config import KnowledgeBaseConfig
 from deerflow.config.model_config import ModelConfig
 from deerflow.config.sandbox_config import SandboxConfig
 from deerflow.config.tool_config import ToolConfig
@@ -144,6 +145,11 @@ def _app_config(tools: list[ToolConfig] | None = None) -> AppConfig:
         # A container sandbox, so the bash tool is not filtered out for an
         # unrelated reason while we are asserting what the switch drops.
         sandbox=SandboxConfig(use="deerflow.sandbox.aio:AioSandboxProvider"),
+        # Likewise the knowledge capability, which is off by default and gated
+        # independently of the internet switch: leaving it off would drop
+        # knowledge_search before the switch ever ran, and the offline-surfaces
+        # assertion below would pass for the wrong reason.
+        knowledge_base=KnowledgeBaseConfig(enabled=True),
         tools=tools if tools is not None else _tools_config(),
     )
 

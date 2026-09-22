@@ -35,6 +35,63 @@ import yaml
 # Each migration targets a specific version upgrade.
 # 'replacements': list of (old_string, new_string) applied to the raw YAML text.
 #   This handles value changes that a dict merge cannot catch.
+# 'data_transform': callable applied to the parsed config after text migrations.
+#   For moves a text replacement cannot express (a key changing owner).
+
+RAGFLOW_PROVIDER_KEYS = (
+    "base_url",
+    "api_key",
+    "timeout",
+    "page_size",
+    "similarity_threshold",
+    "vector_similarity_weight",
+    "top_k",
+    "max_chars_per_chunk",
+    "max_total_chars",
+)
+
+
+def migrate_knowledge_provider_settings(data):
+    """Move legacy RAGFlow settings to the provider tool, off the generic block."""
+    knowledge_base = data.get("knowledge_base")
+    tools = data.get("tools")
+    target = None
+    has_configured_knowledge_tool = False
+    if isinstance(tools, list):
+        has_configured_knowledge_tool = any(isinstance(tool, dict) and tool.get("group") == "knowledge" for tool in tools)
+        target = next(
+            (tool for tool in tools if isinstance(tool, dict) and tool.get("name") == "knowledge_search" and tool.get("use") == "deerflow.community.ragflow.tools:knowledge_search_tool"),
+            None,
+        )
+
+    changes = []
+    # Before the capability gate shipped, a tools-only knowledge configuration
+    # was valid and enabled by the presence of the provider tool itself. Preserve
+    # that provider-neutral behavior when the merge adds the example's
+    # ``enabled: false`` gate. Explicit operator values still win.
+    if not isinstance(knowledge_base, dict):
+        if not has_configured_knowledge_tool:
+            return changes
+        knowledge_base = data["knowledge_base"] = {"enabled": True}
+        changes.append("knowledge_base.enabled set to true (preserved configured knowledge tools)")
+
+    if "enabled" not in knowledge_base and has_configured_knowledge_tool:
+        knowledge_base["enabled"] = True
+        changes.append("knowledge_base.enabled set to true (preserved configured knowledge tools)")
+
+    for key in RAGFLOW_PROVIDER_KEYS:
+        if key not in knowledge_base:
+            continue
+        if target is None:
+            changes.append(f"knowledge_base.{key} removed (no RAGFlow knowledge_search tool configured)")
+        elif key in target:
+            changes.append(f"knowledge_base.{key} removed (tools.knowledge_search.{key} preserved)")
+        else:
+            target[key] = knowledge_base[key]
+            changes.append(f"knowledge_base.{key} -> tools.knowledge_search.{key}")
+        del knowledge_base[key]
+    return changes
+
 
 MIGRATIONS = {
     1: {
@@ -45,6 +102,10 @@ MIGRATIONS = {
             ("src.models.", "deerflow.models."),
             ("src.tools.", "deerflow.tools."),
         ],
+    },
+    46: {
+        "description": "Preserve configured knowledge providers and move RAGFlow settings to the knowledge_search tool",
+        "data_transform": migrate_knowledge_provider_settings,
     },
     50: {
         "description": "Persist run events by default so scroll-back history survives a restart",
@@ -200,6 +261,13 @@ def upgrade(config_path: Path, example_path: Path, repo_root: Path) -> int:
 
     # Re-parse after text migrations
     user = safe_load_guarded(raw_text, source=str(config_path)) or {}
+
+    # Structured migrations run on the parsed config, after the text pass.
+    for version in range(user_version + 1, example_version + 1):
+        migration = MIGRATIONS.get(version)
+        transform = migration.get("data_transform") if migration else None
+        if transform:
+            migrated.extend(transform(user))
 
     if migrated:
         print(f"Applied {len(migrated)} migration(s):")

@@ -4,6 +4,8 @@ import {
   type AutoTitleCapability,
   fetchAutoTitleCapability,
   fetchBrowserControlEnabled,
+  fetchConversationReferencesCapability,
+  fetchKnowledgeBaseFeature,
   fetchMcpTasksEnabled,
   fetchSubagentBatchesCapability,
 } from "./api";
@@ -72,6 +74,35 @@ export function useAutoTitleCapability(): AutoTitleCapability & {
   return {
     enabled: data?.enabled ?? true,
     modelName: data?.modelName ?? null,
+    isLoading: isPending,
+  };
+}
+
+export function useConversationReferencesCapability() {
+  const { data, isPending } = useQuery({
+    queryKey: ["features", "conversation_references"],
+    queryFn: () => fetchConversationReferencesCapability(),
+    staleTime: 0,
+    refetchOnMount: true,
+    retry: false,
+  });
+  return {
+    enabled: data?.enabled ?? false,
+    maxReferences: data?.maxReferences ?? 0,
+    isLoading: isPending,
+  };
+}
+
+export function useKnowledgeBaseEnabled() {
+  const { data, isPending } = useQuery({
+    queryKey: ["features", "knowledge_base"],
+    queryFn: fetchKnowledgeBaseFeature,
+    staleTime: 0,
+    refetchOnMount: true,
+    retry: false,
+  });
+  return {
+    scopeSelectionEnabled: data?.scopeSelectionEnabled ?? false,
     isLoading: isPending,
   };
 }

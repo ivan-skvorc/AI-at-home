@@ -54,6 +54,7 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
 } from "@/components/ui/sidebar";
+import { ConversationExtensionActions } from "@/components/workspace/conversation-extension-actions";
 import { getAPIClient } from "@/core/api";
 import { useAuth } from "@/core/auth/AuthProvider";
 import { hasPermission, PERMISSIONS } from "@/core/auth/permissions";
@@ -374,6 +375,10 @@ export function ThreadSidebarItem({
             side={"right"}
             align={"start"}
           >
+            <ConversationExtensionActions
+              context={{ thread }}
+              placement="menu"
+            />
             <DropdownMenuItem onSelect={handleTogglePin}>
               {pinned ? (
                 <PinOff className="text-muted-foreground" />

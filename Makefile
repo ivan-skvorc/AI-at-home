@@ -1,6 +1,6 @@
 # DeerFlow - Unified Development Environment
 
-.PHONY: help drift-eval config config-upgrade check check-agent-guidance install extension-install extension-upgrade extension-list extension-enable extension-disable extension-remove setup doctor support-bundle detect-thread-boundaries detect-blocking-io backup restore dev dev-daemon start start-daemon nginx stop up up-start down clean docker-init docker-start docker-stop docker-logs docker-logs-frontend docker-logs-gateway docker-logs-redis searxng searxng-stop comfy-up comfy-down comfy-logs comfy-models comfy-model-add sandbox-up sandbox-down sandbox-logs sandbox-enable sandbox-disable setup-sandbox fetch-browser auto-update auto-update-install auto-update-uninstall
+.PHONY: help drift-eval config config-upgrade check check-agent-guidance install extension-install extension-upgrade extension-list extension-enable extension-disable extension-remove setup doctor support-bundle detect-thread-boundaries detect-blocking-io backup restore dev dev-daemon start start-daemon nginx stop up up-start down clean docker-init docker-start docker-stop docker-logs docker-logs-frontend docker-logs-gateway docker-logs-redis searxng searxng-stop comfy-up comfy-down comfy-logs comfy-models comfy-model-add sandbox-up sandbox-down sandbox-logs sandbox-enable sandbox-disable setup-sandbox prod-logs fetch-browser auto-update auto-update-install auto-update-uninstall
 
 # docker compose shim: prefer the v2 plugin, fall back to legacy docker-compose.
 DOCKER_COMPOSE ?= docker compose
@@ -75,6 +75,7 @@ help:
 	@echo "Docker Production Commands:"
 	@echo "  make up              - Build and start production Docker services (localhost:2026)"
 	@echo "  make up-start        - Start production services from pre-built images (apply .env/config-only changes, no rebuild)"
+	@echo "  make prod-logs       - Follow production Docker logs (stack started by 'make up')"
 	@echo "  make down            - Stop and remove production Docker containers"
 	@echo ""
 	@echo "Docker Development Commands:"
@@ -362,3 +363,6 @@ comfy-models:
 
 comfy-model-add:
 	@$(PYTHON) scripts/comfyui_models.py add "$(SOURCE)" --type "$(TYPE)" $(if $(NAME),--name "$(NAME)",) $(if $(TARGET),--target "$(TARGET)",) $(if $(SHA256),--sha256 "$(SHA256)",)
+# Follow production container logs (stack started by `make up`)
+prod-logs:
+	@$(RUN_SHELL_SCRIPT) ./scripts/docker.sh logs --prod

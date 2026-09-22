@@ -30,7 +30,7 @@ describe("selected model name truncation", () => {
   it.each([
     "src/components/workspace/input-box.tsx",
     "src/components/workspace/sidecar/sidecar-panel.tsx",
-  ])("lets ModelSelectorName stretch in %s", (relativePath) => {
+  ])("lets the selected model name stretch in %s", (relativePath) => {
     const classes = selectedModelWrapperClasses(relativePath);
 
     expect(classes).toEqual(
@@ -38,4 +38,52 @@ describe("selected model name truncation", () => {
     );
     expect(classes).not.toContain("items-start");
   });
+});
+
+describe("model picker integration", () => {
+  // Upstream replaced the composer/sidecar picker with a favorites-based
+  // `ModelPickerContent` and deleted `ai-elements/model-selector`. This fork
+  // keeps its own picker — search, sort, group-by-provider and the price column
+  // (FORK.md; "One model picker, everywhere" in `src/AGENTS.md`) — and keeps
+  // that component alive. The failure this guards is silent: swapping either
+  // call site to upstream's picker still compiles, type-checks and renders, it
+  // just drops search, sorting, grouping and prices on that one screen.
+  it.each([
+    {
+      relativePath: "src/components/workspace/input-box.tsx",
+      open: "modelDialogOpen",
+      onSelect: "handleModelSelect",
+    },
+    {
+      relativePath: "src/components/workspace/sidecar/sidecar-panel.tsx",
+      open: "open",
+      onSelect: "onModelSelect",
+    },
+  ])(
+    "drives the fork's sorted, searchable picker in $relativePath",
+    ({ relativePath, open, onSelect }) => {
+      const contents = source(relativePath);
+
+      expect(contents).toMatch(/<ModelSelector\s/);
+      expect(contents).toContain("<ModelSelectorTrigger asChild>");
+      expect(contents).toMatch(new RegExp(`open=\\{${open}\\}`));
+      // The three pieces that make it the fork's picker rather than a flat list.
+      expect(contents).toContain("<ModelSelectorInput");
+      expect(contents).toContain("<ModelPickerControls");
+      expect(contents).toContain("<ModelPickerRow");
+      expect(contents).toMatch(
+        new RegExp(`onSelect=\\{\\(\\) => ${onSelect}\\(`),
+      );
+      // Prefs come from the one shared store, so a sort chosen in a
+      // conversation is already applied in Settings.
+      expect(contents).toContain("localSettings.modelPicker");
+      // Upstream's picker must not be half-wired into the same control.
+      for (const upstreamComponent of [
+        "ModelPickerContent",
+        "ModelPickerTrigger",
+      ]) {
+        expect(contents).not.toContain(`<${upstreamComponent}`);
+      }
+    },
+  );
 });
