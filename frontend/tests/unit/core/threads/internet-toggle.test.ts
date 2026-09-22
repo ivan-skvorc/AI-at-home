@@ -36,13 +36,17 @@ describe("what reaches the backend", () => {
   it("is sent on both the send and the regenerate path", () => {
     // Regenerating a turn under different rules than sending it is the kind of
     // divergence `deriveModeContext` was extracted to end; the switch must not
-    // reintroduce it. Two call sites, both explicit rather than riding the
-    // `...context` spread, which a refactor can drop without a type error.
+    // reintroduce it. Since the 2026-09-22 upstream sync both paths build their
+    // run context through one `buildRunContext`, so the property is now "the
+    // switch is set in the shared builder, and neither path bypasses it" — a
+    // refactor that re-inlines one call site is what this still catches.
     const hooks = read("src/core/threads/hooks.ts");
-    const occurrences = hooks.match(
-      /internet_enabled: resolveInternetEnabled\(context\)/g,
-    );
-    expect(occurrences).toHaveLength(2);
+    expect(
+      hooks.match(/internet_enabled: resolveInternetEnabled\(settings\)/g),
+    ).toHaveLength(1);
+    // The send path, the regenerate path, and nothing hand-rolling its own.
+    expect(hooks.match(/context: buildRunContext\(/g)).toHaveLength(2);
+    expect(hooks.match(/internet_enabled:/g)).toHaveLength(1);
   });
 });
 

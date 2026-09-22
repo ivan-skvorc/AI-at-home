@@ -4,6 +4,7 @@ import threading
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+import httpx
 import pytest
 
 
@@ -233,6 +234,187 @@ class TestErrorObservationRetry:
         sandbox.close()
         assert cleaned_ids == [created_ids[0]]
 
+    @pytest.mark.parametrize("status", ["running", "pending"])
+    def test_unknown_legacy_status_is_ambiguous_and_invalidates_default_session(self, sandbox, status):
+        executions = 0
+
+        def exec_command(command, **kwargs):
+            nonlocal executions
+            executions += 1
+            return SimpleNamespace(
+                data=SimpleNamespace(
+                    output="partial",
+                    exit_code=0,
+                    status=status,
+                )
+            )
+
+        sandbox._client.shell.exec_command = exec_command
+
+        out = sandbox.execute_command("unsafe-to-repeat")
+
+        assert executions == 1
+        assert f"unexpected status '{status}'" in out
+        assert "outcome is unknown" in out
+        assert "not retried" in out
+        assert "Exit Code:" not in out
+        assert sandbox._default_shell_corrupted is True
+        assert sandbox._recovery_session_id is None
+
+    def test_unknown_legacy_status_cleans_up_explicit_recovery_session(self, sandbox):
+        cleaned = []
+        sandbox._recovery_session_id = "recovery-session"
+        sandbox._client.shell.exec_command = MagicMock(return_value=SimpleNamespace(data=SimpleNamespace(output="partial", exit_code=0, status="weird_future_status")))
+        sandbox._client.shell.cleanup_session = lambda session_id, **kwargs: cleaned.append((session_id, kwargs))
+
+        out = sandbox.execute_command("unsafe-to-repeat")
+
+        assert "unexpected status 'weird_future_status'" in out
+        assert "Exit Code:" not in out
+        assert sandbox._recovery_session_id is None
+        assert sandbox._default_shell_corrupted is True
+        assert cleaned == [
+            (
+                "recovery-session",
+                {
+                    "request_options": {
+                        "timeout_in_seconds": sandbox._CLEANUP_REQUEST_TIMEOUT_SECONDS,
+                        "max_retries": 0,
+                    }
+                },
+            )
+        ]
+
+    def test_no_change_timeout_invalidates_default_recovery_session(self, sandbox):
+        executions = 0
+        cleaned = []
+        sandbox._recovery_session_id = "recovery-session"
+
+        def exec_command(command, **kwargs):
+            nonlocal executions
+            executions += 1
+            return SimpleNamespace(
+                data=SimpleNamespace(
+                    output="partial",
+                    exit_code=None,
+                    status="no_change_timeout",
+                )
+            )
+
+        sandbox._client.shell.exec_command = exec_command
+        sandbox._client.shell.cleanup_session = lambda session_id, **kwargs: cleaned.append((session_id, kwargs))
+
+        out = sandbox.execute_command("quiet-command")
+
+        assert executions == 1
+        assert "may still be running" in out
+        assert sandbox._recovery_session_id is None
+        assert sandbox._default_shell_corrupted is True
+        assert cleaned == [
+            (
+                "recovery-session",
+                {
+                    "request_options": {
+                        "timeout_in_seconds": sandbox._CLEANUP_REQUEST_TIMEOUT_SECONDS,
+                        "max_retries": 0,
+                    }
+                },
+            )
+        ]
+
+    def test_error_observation_retry_unknown_status_is_authoritative(self, sandbox):
+        executions = 0
+        created_ids = []
+        cleaned = []
+
+        def create_session(id, **kwargs):
+            created_ids.append(id)
+            return SimpleNamespace(data=SimpleNamespace(session_id=id))
+
+        def exec_command(command, **kwargs):
+            nonlocal executions
+            executions += 1
+            if executions == 1:
+                return SimpleNamespace(
+                    data=SimpleNamespace(
+                        output="'ErrorObservation' object has no attribute 'exit_code'",
+                        exit_code=None,
+                        status="completed",
+                    )
+                )
+            return SimpleNamespace(
+                data=SimpleNamespace(
+                    output="retry partial",
+                    exit_code=0,
+                    status="pending",
+                )
+            )
+
+        sandbox._client.shell.create_session = create_session
+        sandbox._client.shell.exec_command = exec_command
+        sandbox._client.shell.cleanup_session = lambda session_id, **kwargs: cleaned.append((session_id, kwargs))
+
+        out = sandbox.execute_command("unsafe-to-repeat")
+
+        assert executions == 2
+        assert len(created_ids) == 1
+        assert "unexpected status 'pending'" in out
+        assert "retry partial" in out
+        assert "Exit Code:" not in out
+        assert sandbox._recovery_session_id is None
+        assert sandbox._default_shell_corrupted is True
+        assert [session_id for session_id, _ in cleaned] == [created_ids[0]]
+
+    def test_error_observation_replacement_no_change_timeout_is_not_retained(self, sandbox):
+        executions = 0
+        created_ids = []
+        cleaned = []
+
+        def create_session(id, **kwargs):
+            created_ids.append(id)
+            return SimpleNamespace(data=SimpleNamespace(session_id=id))
+
+        def exec_command(command, **kwargs):
+            nonlocal executions
+            executions += 1
+            if executions == 1:
+                return SimpleNamespace(
+                    data=SimpleNamespace(
+                        output="'ErrorObservation' object has no attribute 'exit_code'",
+                        exit_code=None,
+                        status="completed",
+                    )
+                )
+            return SimpleNamespace(
+                data=SimpleNamespace(
+                    output="replacement partial",
+                    exit_code=None,
+                    status="no_change_timeout",
+                )
+            )
+
+        sandbox._client.shell.create_session = create_session
+        sandbox._client.shell.exec_command = exec_command
+        sandbox._client.shell.cleanup_session = lambda session_id, **kwargs: cleaned.append((session_id, kwargs))
+
+        out = sandbox.execute_command("unsafe-to-repeat")
+
+        assert executions == 2
+        assert "may still be running" in out
+        assert "replacement partial" in out
+        assert sandbox._recovery_session_id is None
+        assert cleaned == [
+            (
+                created_ids[0],
+                {
+                    "request_options": {
+                        "timeout_in_seconds": sandbox._CLEANUP_REQUEST_TIMEOUT_SECONDS,
+                        "max_retries": 0,
+                    }
+                },
+            )
+        ]
+
     def test_cleanup_failure_does_not_mask_successful_retry(self, sandbox):
         """A failure releasing the recovery session must not lose the retry output."""
 
@@ -294,9 +476,398 @@ class TestErrorObservationRetry:
         assert result == "all good"
         assert call_count == 1
 
+    def test_missing_recovery_session_is_recreated_once_and_reused(self, sandbox):
+        """An evicted lead recovery session must not poison every later call."""
+        from agent_sandbox.core.api_error import ApiError
+
+        created_ids: list[str] = []
+        exec_ids: list[str | None] = []
+        sandbox._default_shell_corrupted = True
+        sandbox._recovery_session_id = "evicted-lead-session"
+
+        def create_session(id, **kwargs):
+            created_ids.append(id)
+            return SimpleNamespace(data=SimpleNamespace(session_id=id))
+
+        def exec_command(command, **kwargs):
+            session_id = kwargs.get("id")
+            exec_ids.append(session_id)
+            if session_id == "evicted-lead-session":
+                raise ApiError(
+                    status_code=404,
+                    body={"message": f"Shell session not found: {session_id}"},
+                )
+            return SimpleNamespace(data=SimpleNamespace(output="healthy", exit_code=0))
+
+        sandbox._client.shell.create_session = create_session
+        sandbox._client.shell.exec_command = exec_command
+
+        assert sandbox.execute_command("first") == "healthy"
+        assert sandbox.execute_command("second") == "healthy"
+        assert len(created_ids) == 1
+        assert exec_ids == ["evicted-lead-session", created_ids[0], created_ids[0]]
+
+    def test_transport_timeout_marks_default_shell_untrusted_without_replay(self, sandbox):
+        executions = 0
+
+        def exec_command(command, **kwargs):
+            nonlocal executions
+            executions += 1
+            raise httpx.ReadTimeout("response stalled")
+
+        sandbox._client.shell.exec_command = exec_command
+
+        out = sandbox.execute_command("side-effect; sleep 30", timeout=3)
+
+        assert executions == 1
+        assert "outcome is unknown" in out
+        assert "not retried" in out
+        assert sandbox._default_shell_corrupted is True
+        assert sandbox._recovery_session_id is None
+
+        assert sandbox._lock.acquire(blocking=False) is True
+        sandbox._lock.release()
+
+    def test_transport_timeout_invalidates_default_recovery_session_without_replay(self, sandbox):
+        cleaned_ids = []
+        sandbox._default_shell_corrupted = True
+        sandbox._recovery_session_id = "recovery-session"
+        sandbox._client.shell.exec_command = MagicMock(side_effect=httpx.ReadTimeout("response stalled"))
+        sandbox._client.shell.cleanup_session = lambda session_id, **kwargs: cleaned_ids.append((session_id, kwargs))
+
+        out = sandbox.execute_command("side-effect; sleep 30", timeout=3)
+
+        assert "outcome is unknown" in out
+        assert "not retried" in out
+        assert sandbox._default_shell_corrupted is True
+        assert sandbox._recovery_session_id is None
+        assert cleaned_ids == [
+            (
+                "recovery-session",
+                {
+                    "request_options": {
+                        "timeout_in_seconds": sandbox._CLEANUP_REQUEST_TIMEOUT_SECONDS,
+                        "max_retries": 0,
+                    }
+                },
+            )
+        ]
+
+    def test_terminated_default_session_cleanup_failure_preserves_terminal_outcome(self, sandbox):
+        from deerflow.community.aio_sandbox.aio_sandbox import AioSandbox
+
+        executions = 0
+        sandbox._default_shell_corrupted = True
+        sandbox._recovery_session_id = "terminated-session"
+
+        def exec_command(command, **kwargs):
+            nonlocal executions
+            executions += 1
+            return SimpleNamespace(
+                data=SimpleNamespace(
+                    output="partial",
+                    exit_code=None,
+                    status="terminated",
+                )
+            )
+
+        sandbox._client.shell.exec_command = exec_command
+        sandbox._client.shell.cleanup_session = MagicMock(side_effect=RuntimeError("cleanup failed"))
+
+        out = sandbox.execute_command("unsafe-to-repeat", timeout=3)
+
+        assert executions == 1
+        assert "Command was terminated because its shell session ended." in out
+        assert sandbox._recovery_session_id is None
+        assert sandbox._default_shell_corrupted is True
+        sandbox._client.shell.cleanup_session.assert_called_once_with(
+            "terminated-session",
+            request_options={
+                "timeout_in_seconds": AioSandbox._CLEANUP_REQUEST_TIMEOUT_SECONDS,
+                "max_retries": 0,
+            },
+        )
+
+    def test_terminated_recovery_session_is_invalidated_without_replay(self, sandbox):
+        created_ids: list[str] = []
+        exec_ids: list[str | None] = []
+        sandbox._default_shell_corrupted = True
+        sandbox._recovery_session_id = "terminated-session"
+
+        def create_session(id, **kwargs):
+            created_ids.append(id)
+            return SimpleNamespace(data=SimpleNamespace(session_id=id))
+
+        def exec_command(command, **kwargs):
+            exec_ids.append(kwargs.get("id"))
+            if len(exec_ids) == 1:
+                return SimpleNamespace(
+                    data=SimpleNamespace(
+                        output="partial",
+                        exit_code=None,
+                        status="terminated",
+                    )
+                )
+            return SimpleNamespace(
+                data=SimpleNamespace(
+                    output="next-ok",
+                    exit_code=0,
+                    status="completed",
+                )
+            )
+
+        sandbox._client.shell.create_session = create_session
+        sandbox._client.shell.exec_command = exec_command
+
+        first = sandbox.execute_command("unsafe-to-repeat", timeout=3)
+        second = sandbox.execute_command("next-command", timeout=3)
+
+        assert "terminated" in first.lower()
+        assert second == "next-ok"
+        assert exec_ids == ["terminated-session", created_ids[0]]
+        assert len(created_ids) == 1
+
+    def test_terminated_replacement_session_is_not_reused(self, sandbox):
+        created_ids: list[str] = []
+        exec_ids: list[str | None] = []
+
+        def create_session(id, **kwargs):
+            created_ids.append(id)
+            return SimpleNamespace(data=SimpleNamespace(session_id=id))
+
+        def exec_command(command, **kwargs):
+            exec_ids.append(kwargs.get("id"))
+            if len(exec_ids) == 1:
+                return SimpleNamespace(
+                    data=SimpleNamespace(
+                        output="'ErrorObservation' object has no attribute 'exit_code'",
+                        status="completed",
+                    )
+                )
+            if len(exec_ids) == 2:
+                return SimpleNamespace(
+                    data=SimpleNamespace(
+                        output="partial",
+                        exit_code=None,
+                        status="terminated",
+                    )
+                )
+            return SimpleNamespace(
+                data=SimpleNamespace(
+                    output="next-ok",
+                    exit_code=0,
+                    status="completed",
+                )
+            )
+
+        sandbox._client.shell.create_session = create_session
+        sandbox._client.shell.exec_command = exec_command
+
+        first = sandbox.execute_command("unsafe-to-repeat", timeout=3)
+        second = sandbox.execute_command("next-command", timeout=3)
+
+        assert "terminated" in first.lower()
+        assert second == "next-ok"
+        assert exec_ids == [None, created_ids[0], created_ids[1]]
+        assert len(created_ids) == 2
+
 
 class TestScopedShellSessions:
     """Concurrent subagents use independent persistent shell sessions (#5128)."""
+
+    def test_scoped_command_forwards_same_timeout_budget(self, sandbox):
+        sandbox._client.shell.create_session = MagicMock()
+        sandbox._client.shell.exec_command = MagicMock(
+            return_value=SimpleNamespace(
+                data=SimpleNamespace(
+                    output="ok",
+                    exit_code=0,
+                    status="completed",
+                )
+            )
+        )
+
+        assert (
+            sandbox.execute_command_in_scope(
+                "echo ok",
+                timeout=3,
+                scope_id="subagent-a",
+            )
+            == "ok"
+        )
+
+        kwargs = sandbox._client.shell.exec_command.call_args.kwargs
+        assert kwargs["hard_timeout"] == 3
+        assert kwargs["request_options"] == {
+            "timeout_in_seconds": 8,
+            "max_retries": 0,
+        }
+
+    def test_transport_timeout_invalidates_scoped_session_without_replay(self, sandbox):
+        executions = 0
+        cleaned_ids = []
+
+        sandbox._client.shell.create_session = MagicMock()
+
+        def exec_command(command, **kwargs):
+            nonlocal executions
+            executions += 1
+            raise httpx.ReadTimeout("response stalled")
+
+        sandbox._client.shell.exec_command = exec_command
+        sandbox._client.shell.cleanup_session = lambda session_id, **kwargs: cleaned_ids.append((session_id, kwargs))
+
+        out = sandbox.execute_command_in_scope(
+            "side-effect; sleep 30",
+            timeout=3,
+            scope_id="subagent-a",
+        )
+
+        assert executions == 1
+        assert "outcome is unknown" in out
+        assert "not retried" in out
+        assert sandbox._scoped_shell_sessions["subagent-a"].session_id is None
+        assert len(cleaned_ids) == 1
+        assert cleaned_ids[0][1]["request_options"] == {
+            "timeout_in_seconds": sandbox._CLEANUP_REQUEST_TIMEOUT_SECONDS,
+            "max_retries": 0,
+        }
+
+    def test_terminated_scoped_session_is_invalidated_without_replay(self, sandbox):
+        executions = 0
+        created_ids = []
+
+        def create_session(id, **kwargs):
+            created_ids.append(id)
+            return SimpleNamespace(data=SimpleNamespace(session_id=id))
+
+        def exec_command(command, **kwargs):
+            nonlocal executions
+            executions += 1
+            if executions == 1:
+                return SimpleNamespace(
+                    data=SimpleNamespace(
+                        output="partial",
+                        exit_code=None,
+                        status="terminated",
+                    )
+                )
+            return SimpleNamespace(
+                data=SimpleNamespace(
+                    output="next-ok",
+                    exit_code=0,
+                    status="completed",
+                )
+            )
+
+        sandbox._client.shell.create_session = create_session
+        sandbox._client.shell.exec_command = exec_command
+
+        first = sandbox.execute_command_in_scope(
+            "unsafe-to-repeat",
+            timeout=3,
+            scope_id="subagent-a",
+        )
+        second = sandbox.execute_command_in_scope(
+            "next-command",
+            timeout=3,
+            scope_id="subagent-a",
+        )
+
+        assert "terminated" in first.lower()
+        assert second == "next-ok"
+        assert executions == 2
+        assert len(created_ids) == 2
+
+    def test_no_change_timeout_invalidates_scoped_session_without_replay(self, sandbox):
+        executions = 0
+        created_ids = []
+        cleaned = []
+
+        def create_session(id, **kwargs):
+            created_ids.append(id)
+            return SimpleNamespace(data=SimpleNamespace(session_id=id))
+
+        def exec_command(command, **kwargs):
+            nonlocal executions
+            executions += 1
+            return SimpleNamespace(
+                data=SimpleNamespace(
+                    output="partial",
+                    exit_code=None,
+                    status="no_change_timeout",
+                )
+            )
+
+        sandbox._client.shell.create_session = create_session
+        sandbox._client.shell.exec_command = exec_command
+        sandbox._client.shell.cleanup_session = lambda session_id, **kwargs: cleaned.append((session_id, kwargs))
+
+        out = sandbox.execute_command_in_scope("quiet-command", scope_id="subagent-a")
+
+        assert executions == 1
+        assert "may still be running" in out
+        assert sandbox._scoped_shell_sessions["subagent-a"].session_id is None
+        assert cleaned == [
+            (
+                created_ids[0],
+                {
+                    "request_options": {
+                        "timeout_in_seconds": sandbox._CLEANUP_REQUEST_TIMEOUT_SECONDS,
+                        "max_retries": 0,
+                    }
+                },
+            )
+        ]
+
+    def test_transport_timeout_cleanup_failure_does_not_replace_primary_outcome(self, sandbox):
+        sandbox._client.shell.create_session = MagicMock()
+        sandbox._client.shell.exec_command = MagicMock(side_effect=httpx.ReadTimeout("response stalled"))
+        sandbox._client.shell.cleanup_session = MagicMock(side_effect=RuntimeError("cleanup failed"))
+
+        out = sandbox.execute_command_in_scope(
+            "unsafe-to-repeat",
+            timeout=3,
+            scope_id="subagent-a",
+        )
+
+        assert "outcome is unknown" in out
+        assert "cleanup failed" not in out
+
+    def test_transport_timeout_during_replacement_is_ambiguous_without_replay(self, sandbox):
+        from agent_sandbox.core.api_error import ApiError
+
+        executions = 0
+        created_ids = []
+
+        def create_session(id, **kwargs):
+            created_ids.append(id)
+            return SimpleNamespace(data=SimpleNamespace(session_id=id))
+
+        def exec_command(command, **kwargs):
+            nonlocal executions
+            executions += 1
+            if executions == 1:
+                raise ApiError(
+                    status_code=404,
+                    body={"message": "session not found"},
+                )
+            raise httpx.ReadTimeout("response stalled")
+
+        sandbox._client.shell.create_session = create_session
+        sandbox._client.shell.exec_command = exec_command
+
+        out = sandbox.execute_command_in_scope(
+            "unsafe-to-repeat",
+            timeout=3,
+            scope_id="subagent-a",
+        )
+
+        assert "outcome is unknown" in out
+        assert "not retried" in out
+        assert executions == 2
+        assert len(created_ids) == 2
+        assert sandbox._scoped_shell_sessions["subagent-a"].session_id is None
 
     def test_different_scopes_execute_concurrently(self, sandbox):
         active = 0
@@ -410,6 +981,98 @@ class TestScopedShellSessions:
         sandbox.release_command_scope("subagent-a")
         assert cleaned_ids == created_ids
 
+    def test_missing_scoped_session_is_recreated_and_reused(self, sandbox):
+        """A server-side session loss must not pin the scope to a stale id."""
+        from agent_sandbox.core.api_error import ApiError
+
+        created_ids: list[str] = []
+        exec_ids: list[str] = []
+
+        def create_session(id, **kwargs):
+            created_ids.append(id)
+            return SimpleNamespace(data=SimpleNamespace(session_id=id))
+
+        def exec_command(command, **kwargs):
+            exec_ids.append(kwargs["id"])
+            if len(exec_ids) == 1:
+                raise ApiError(
+                    headers={"server": "nginx/1.18.0 (Ubuntu)"},
+                    status_code=404,
+                    body={"success": False, "message": "Session not found", "data": None, "hint": None},
+                )
+            return SimpleNamespace(data=SimpleNamespace(output="ok", exit_code=0))
+
+        sandbox._client.shell.create_session = create_session
+        sandbox._client.shell.exec_command = exec_command
+
+        assert sandbox.execute_command_in_scope("first", scope_id="subagent-a") == "ok"
+        assert len(created_ids) == 2
+        assert exec_ids == created_ids
+
+        assert sandbox.execute_command_in_scope("second", scope_id="subagent-a") == "ok"
+        assert exec_ids[-1] == created_ids[1]
+
+    def test_missing_scoped_session_recovery_is_bounded(self, sandbox):
+        """A missing replacement session is reported after one recovery attempt."""
+        from agent_sandbox.core.api_error import ApiError
+
+        created_ids: list[str] = []
+        exec_ids: list[str] = []
+        cleaned_ids: list[str] = []
+
+        def create_session(id, **kwargs):
+            created_ids.append(id)
+            return SimpleNamespace(data=SimpleNamespace(session_id=id))
+
+        def exec_command(command, **kwargs):
+            exec_ids.append(kwargs["id"])
+            raise ApiError(
+                headers={"server": "nginx/1.18.0 (Ubuntu)"},
+                status_code=404,
+                body={"success": False, "message": "Session not found", "data": None},
+            )
+
+        sandbox._client.shell.create_session = create_session
+        sandbox._client.shell.exec_command = exec_command
+        sandbox._client.shell.cleanup_session = lambda session_id, **kwargs: cleaned_ids.append(session_id)
+
+        result = sandbox.execute_command_in_scope("first", scope_id="subagent-a")
+
+        assert result.startswith("Error:")
+        assert len(created_ids) == 2
+        assert exec_ids == created_ids
+        assert cleaned_ids == [created_ids[1]]
+        assert sandbox._scoped_shell_sessions["subagent-a"].session_id is None
+
+    def test_other_scoped_404_does_not_rotate_session(self, sandbox):
+        """Only the structured missing-session response is recoverable."""
+        from agent_sandbox.core.api_error import ApiError
+
+        created_ids: list[str] = []
+        exec_ids: list[str] = []
+
+        def create_session(id, **kwargs):
+            created_ids.append(id)
+            return SimpleNamespace(data=SimpleNamespace(session_id=id))
+
+        def exec_command(command, **kwargs):
+            exec_ids.append(kwargs["id"])
+            raise ApiError(
+                headers={"server": "nginx/1.18.0 (Ubuntu)"},
+                status_code=404,
+                body={"success": False, "message": "Not Found", "data": None},
+            )
+
+        sandbox._client.shell.create_session = create_session
+        sandbox._client.shell.exec_command = exec_command
+
+        result = sandbox.execute_command_in_scope("first", scope_id="subagent-a")
+
+        assert result.startswith("Error:")
+        assert len(created_ids) == 1
+        assert exec_ids == created_ids
+        assert sandbox._scoped_shell_sessions["subagent-a"].session_id == created_ids[0]
+
     def test_queued_command_cannot_restart_session_after_scope_release(self, sandbox):
         created_ids: list[str] = []
         executed_commands: list[str] = []
@@ -486,6 +1149,55 @@ class TestScopedShellSessions:
         assert executed_commands == ["initial"]
         assert cleaned_ids == created_ids
 
+    def test_scoped_unknown_status_is_ambiguous_without_replay(self, sandbox):
+        executions = 0
+        created_ids = []
+        cleaned = []
+
+        def create_session(id, **kwargs):
+            created_ids.append(id)
+            return SimpleNamespace(data=SimpleNamespace(session_id=id))
+
+        def exec_command(command, **kwargs):
+            nonlocal executions
+            executions += 1
+            return SimpleNamespace(
+                data=SimpleNamespace(
+                    output="partial",
+                    exit_code=0,
+                    status="running",
+                )
+            )
+
+        sandbox._client.shell.create_session = create_session
+        sandbox._client.shell.exec_command = exec_command
+        sandbox._client.shell.cleanup_session = lambda session_id, **kwargs: cleaned.append((session_id, kwargs))
+
+        out = sandbox.execute_command_in_scope("unsafe-to-repeat", scope_id="subagent-a")
+
+        assert executions == 1
+        assert len(created_ids) == 1
+        assert "unexpected status 'running'" in out
+        assert "Exit Code:" not in out
+        assert sandbox._scoped_shell_sessions["subagent-a"].session_id is None
+        assert [session_id for session_id, _ in cleaned] == [created_ids[0]]
+        assert cleaned[0][1]["request_options"] == {
+            "timeout_in_seconds": sandbox._CLEANUP_REQUEST_TIMEOUT_SECONDS,
+            "max_retries": 0,
+        }
+
+    @pytest.mark.parametrize("status", ["pending", "weird_future_status"])
+    def test_env_unknown_status_is_ambiguous_without_success_rendering(self, sandbox, status):
+        sandbox._client.bash.exec = MagicMock(return_value=SimpleNamespace(data=SimpleNamespace(stdout="partial", stderr="", exit_code=0, status=status)))
+
+        out = sandbox.execute_command("unsafe-to-repeat", env={"TOKEN": "secret"})
+
+        assert sandbox._client.bash.exec.call_count == 1
+        assert f"unexpected status '{status}'" in out
+        assert "outcome is unknown" in out
+        assert "not retried" in out
+        assert "Exit Code:" not in out
+
     def test_env_command_keeps_fresh_bash_exec_semantics(self, sandbox):
         sandbox._client.bash.exec = MagicMock(return_value=SimpleNamespace(data=SimpleNamespace(stdout="ok", stderr="", exit_code=0)))
 
@@ -498,8 +1210,52 @@ class TestScopedShellSessions:
             == "ok"
         )
         sandbox._client.bash.exec.assert_called_once()
+        session_id = sandbox._client.bash.create_session.call_args.kwargs["session_id"]
+        assert sandbox._client.bash.exec.call_args.kwargs["session_id"] == session_id
+        sandbox._client.bash.close_session.assert_called_once_with(
+            session_id,
+            request_options={
+                "timeout_in_seconds": sandbox._CLEANUP_REQUEST_TIMEOUT_SECONDS,
+                "max_retries": 0,
+            },
+        )
         sandbox._client.shell.create_session.assert_not_called()
         assert sandbox._scoped_shell_sessions == {}
+
+    def test_env_session_cleanup_failure_does_not_mask_command_output(self, sandbox):
+        sandbox._client.bash.exec = MagicMock(return_value=SimpleNamespace(data=SimpleNamespace(stdout="ok", stderr="", exit_code=0)))
+        sandbox._client.bash.close_session = MagicMock(side_effect=RuntimeError("cleanup failed"))
+
+        assert sandbox.execute_command("echo $TOKEN", env={"TOKEN": "secret"}) == "ok"
+
+    def test_missing_session_with_failed_replacement_does_not_execute_third_time(self, sandbox):
+        from agent_sandbox.core.api_error import ApiError
+
+        executions = 0
+
+        def exec_command(command, **kwargs):
+            nonlocal executions
+            executions += 1
+            if executions == 1:
+                raise ApiError(
+                    status_code=404,
+                    body={"message": "session not found while executing command"},
+                )
+            return SimpleNamespace(
+                data=SimpleNamespace(
+                    output="'ErrorObservation' object has no attribute 'exit_code'",
+                    exit_code=None,
+                )
+            )
+
+        sandbox._client.shell.exec_command = exec_command
+        sandbox._client.shell.create_session = lambda id, **kwargs: SimpleNamespace(data=SimpleNamespace(session_id=id))
+
+        result = sandbox.execute_command_in_scope("unsafe-to-repeat", scope_id="subagent-a")
+
+        assert "ErrorObservation" in result
+        assert executions == 2
+        assert sandbox._scoped_shell_sessions["subagent-a"].session_id is None
 
     def test_closed_sandbox_rejects_new_scope_without_leaking_session(self, sandbox):
         client = sandbox._client
@@ -594,6 +1350,31 @@ class TestBashExecUnsupportedFailFast:
         assert second == "ok"
         assert sandbox._client.bash.exec.call_count == 2
 
+    def test_bash_exec_missing_session_retries_without_latching_unsupported(self, sandbox):
+        """A transient loss after explicit creation must retry once and keep the
+        capability enabled for subsequent env-bearing commands."""
+        from agent_sandbox.core.api_error import ApiError
+
+        missing = ApiError(status_code=404, body={"message": "Session not found: transient"})
+        sandbox._client.bash.exec = MagicMock(side_effect=[missing, SimpleNamespace(data=SimpleNamespace(stdout="ok", stderr=None))])
+
+        assert sandbox.execute_command("cmd", env={"TOK": "v"}) == "ok"
+        assert sandbox._bash_exec_unsupported is False
+        assert sandbox._client.bash.exec.call_count == 2
+        assert sandbox._client.bash.create_session.call_count == 2
+
+    def test_bash_exec_repeated_missing_session_does_not_latch_capability_gap(self, sandbox):
+        from agent_sandbox.core.api_error import ApiError
+
+        missing = ApiError(status_code=404, body={"message": "Session not found"})
+        sandbox._client.bash.exec = MagicMock(side_effect=missing)
+
+        out = sandbox.execute_command("cmd", env={"TOK": "v"})
+
+        assert out == "Error: bash.exec session disappeared after retry"
+        assert sandbox._bash_exec_unsupported is False
+        assert sandbox._client.bash.exec.call_count == 2
+
 
 class TestListDirSerialization:
     """Verify that list_dir also acquires the lock."""
@@ -620,11 +1401,13 @@ class TestListDirSerialization:
         with pytest.raises(OSError, match="Failed to list directory"):
             sandbox.list_dir("/test")
 
-    def test_list_dir_raises_when_find_returns_no_entries(self, sandbox):
-        sandbox._client.shell.exec_command = MagicMock(return_value=SimpleNamespace(data=SimpleNamespace(output="\n__DF_FIND_STATUS__:1\n", exit_code=1)))
+    @pytest.mark.parametrize("marker, error", [("missing", FileNotFoundError), ("1", OSError)])
+    def test_list_dir_classifies_empty_failure(self, sandbox, marker, error):
+        sandbox._client.shell.exec_command = MagicMock(return_value=SimpleNamespace(data=SimpleNamespace(output=f"\n__DF_FIND_STATUS__:{marker}\n", exit_code=1)))
 
-        with pytest.raises(FileNotFoundError):
+        with pytest.raises(error) as exc:
             sandbox.list_dir("/missing")
+        assert type(exc.value) is error
 
     def test_list_dir_raises_oserror_when_result_data_is_none(self, sandbox):
         sandbox._client.shell.exec_command = MagicMock(return_value=SimpleNamespace(data=None))
@@ -647,9 +1430,354 @@ class TestListDirSerialization:
         assert "find -H " in command
         assert "\\( -type f -o -type d \\)" in command
 
+    def test_list_dir_uses_recovery_session_after_ambiguous_command(self, sandbox):
+        created_ids = []
+        exec_calls = []
+
+        def create_session(id, **kwargs):
+            created_ids.append(id)
+            return SimpleNamespace(data=SimpleNamespace(session_id=id))
+
+        def exec_command(command, **kwargs):
+            exec_calls.append(kwargs)
+            if len(exec_calls) == 1:
+                return SimpleNamespace(
+                    data=SimpleNamespace(
+                        output="partial",
+                        exit_code=None,
+                        status="no_change_timeout",
+                    )
+                )
+            return SimpleNamespace(
+                data=SimpleNamespace(
+                    output="/a\n\n__DF_FIND_STATUS__:0\n",
+                    exit_code=0,
+                    status="completed",
+                )
+            )
+
+        sandbox._client.shell.create_session = create_session
+        sandbox._client.shell.exec_command = exec_command
+
+        command_result = sandbox.execute_command("quiet-command", timeout=3)
+        listing = sandbox.list_dir("/test")
+
+        assert "may still be running" in command_result
+        assert sandbox._default_shell_corrupted is True
+        assert listing == ["/a"]
+        assert len(created_ids) == 1
+        assert exec_calls[0].get("id") is None
+        assert exec_calls[1]["id"] == created_ids[0]
+        assert sandbox._recovery_session_id == created_ids[0]
+
+    def test_list_dir_reuses_existing_recovery_session(self, sandbox):
+        sandbox._default_shell_corrupted = True
+        sandbox._recovery_session_id = "recovery-session"
+        sandbox._client.shell.create_session = MagicMock()
+        sandbox._client.shell.exec_command = MagicMock(
+            return_value=SimpleNamespace(
+                data=SimpleNamespace(
+                    output="/a\n\n__DF_FIND_STATUS__:0\n",
+                    exit_code=0,
+                    status="completed",
+                )
+            )
+        )
+
+        assert sandbox.list_dir("/test") == ["/a"]
+
+        kwargs = sandbox._client.shell.exec_command.call_args.kwargs
+        assert kwargs["id"] == "recovery-session"
+        sandbox._client.shell.create_session.assert_not_called()
+
+    def test_list_dir_keeps_healthy_implicit_shell(self, sandbox):
+        sandbox._client.shell.create_session = MagicMock()
+        sandbox._client.shell.exec_command = MagicMock(
+            return_value=SimpleNamespace(
+                data=SimpleNamespace(
+                    output="/a\n\n__DF_FIND_STATUS__:0\n",
+                    exit_code=0,
+                    status="completed",
+                )
+            )
+        )
+
+        assert sandbox.list_dir("/test") == ["/a"]
+
+        kwargs = sandbox._client.shell.exec_command.call_args.kwargs
+        assert "id" not in kwargs
+        sandbox._client.shell.create_session.assert_not_called()
+
+    def test_list_dir_keeps_implicit_shell_after_hard_timeout(self, sandbox):
+        calls = []
+
+        def exec_command(command, **kwargs):
+            calls.append(kwargs)
+            if len(calls) == 1:
+                return SimpleNamespace(
+                    data=SimpleNamespace(
+                        output="partial",
+                        exit_code=None,
+                        status="hard_timeout",
+                    )
+                )
+            return SimpleNamespace(
+                data=SimpleNamespace(
+                    output="/a\n\n__DF_FIND_STATUS__:0\n",
+                    exit_code=0,
+                    status="completed",
+                )
+            )
+
+        sandbox._client.shell.exec_command = exec_command
+        sandbox._client.shell.create_session = MagicMock()
+
+        command_result = sandbox.execute_command("sleep 30", timeout=3)
+        listing = sandbox.list_dir("/test")
+
+        assert "Exit Code: 124" in command_result
+        assert listing == ["/a"]
+        assert sandbox._default_shell_corrupted is False
+        assert "id" not in calls[1]
+        sandbox._client.shell.create_session.assert_not_called()
+
+    def test_list_dir_does_not_fall_back_to_implicit_shell_when_recovery_creation_fails(
+        self,
+        sandbox,
+    ):
+        sandbox._default_shell_corrupted = True
+        sandbox._recovery_session_id = None
+        sandbox._client.shell.create_session = MagicMock(side_effect=RuntimeError("session creation failed"))
+        sandbox._client.shell.exec_command = MagicMock()
+
+        with pytest.raises(OSError, match="Failed to list directory"):
+            sandbox.list_dir("/test")
+
+        assert sandbox._default_shell_corrupted is True
+        assert sandbox._recovery_session_id is None
+        sandbox._client.shell.exec_command.assert_not_called()
+
 
 class TestNoChangeTimeout:
     """Verify that no_change_timeout is forwarded to every exec_command call."""
+
+    def test_execute_command_forwards_hard_timeout_and_bounded_request(self, sandbox):
+        calls = []
+
+        def exec_command(command, **kwargs):
+            calls.append(kwargs)
+            return SimpleNamespace(
+                data=SimpleNamespace(
+                    output="ok",
+                    exit_code=0,
+                    status="completed",
+                )
+            )
+
+        sandbox._client.shell.exec_command = exec_command
+
+        assert sandbox.execute_command("echo ok", timeout=3) == "ok"
+
+        assert calls == [
+            {
+                "no_change_timeout": 600,
+                "hard_timeout": 3,
+                "request_options": {
+                    "timeout_in_seconds": 8,
+                    "max_retries": 0,
+                },
+            }
+        ]
+
+    @pytest.mark.parametrize(
+        ("configured_timeout", "explicit_timeout", "expected_hard_timeout", "expected_request_timeout"),
+        [
+            (42, None, 42, 47),
+            (42.5, None, 42.5, 48),
+            (42, 10, 10, 15),
+        ],
+    )
+    def test_execute_command_uses_configured_default_or_explicit_timeout(
+        self,
+        configured_timeout,
+        explicit_timeout,
+        expected_hard_timeout,
+        expected_request_timeout,
+    ):
+        from deerflow.community.aio_sandbox.aio_sandbox import AioSandbox
+
+        with patch("deerflow.community.aio_sandbox.aio_sandbox.AioSandboxClient"):
+            configured_sandbox = AioSandbox(
+                id="configured-timeout-sandbox",
+                base_url="http://localhost:8080",
+                default_command_timeout=configured_timeout,
+            )
+        configured_sandbox._client.shell.exec_command = MagicMock(return_value=SimpleNamespace(data=SimpleNamespace(output="ok", exit_code=0, status="completed")))
+
+        configured_sandbox.execute_command("echo ok", timeout=explicit_timeout)
+
+        kwargs = configured_sandbox._client.shell.exec_command.call_args.kwargs
+        assert kwargs["hard_timeout"] == expected_hard_timeout
+        assert kwargs["request_options"] == {
+            "timeout_in_seconds": expected_request_timeout,
+            "max_retries": 0,
+        }
+
+    @pytest.mark.parametrize("invalid_timeout", [float("nan"), float("inf"), float("-inf"), 0, -1])
+    def test_default_command_timeout_must_be_positive_and_finite(self, invalid_timeout):
+        from deerflow.community.aio_sandbox.aio_sandbox import AioSandbox
+
+        with patch("deerflow.community.aio_sandbox.aio_sandbox.AioSandboxClient"):
+            with pytest.raises(ValueError, match="default_command_timeout must be positive"):
+                AioSandbox(
+                    id="invalid-timeout-sandbox",
+                    base_url="http://localhost:8080",
+                    default_command_timeout=invalid_timeout,
+                )
+
+    def test_execute_command_without_injected_default_preserves_default_timeout(self, sandbox):
+        sandbox._client.shell.exec_command = MagicMock(return_value=SimpleNamespace(data=SimpleNamespace(output="ok", exit_code=0, status="completed")))
+
+        sandbox.execute_command("echo ok")
+
+        kwargs = sandbox._client.shell.exec_command.call_args.kwargs
+        assert kwargs["hard_timeout"] == sandbox._DEFAULT_HARD_TIMEOUT
+        assert kwargs["request_options"] == {
+            "timeout_in_seconds": 605,
+            "max_retries": 0,
+        }
+
+    def test_execute_command_uses_default_hard_timeout_when_timeout_is_none(self, sandbox):
+        sandbox._client.shell.exec_command = MagicMock(
+            return_value=SimpleNamespace(
+                data=SimpleNamespace(
+                    output="ok",
+                    exit_code=0,
+                    status="completed",
+                )
+            )
+        )
+
+        assert sandbox.execute_command("echo ok") == "ok"
+
+        kwargs = sandbox._client.shell.exec_command.call_args.kwargs
+        assert kwargs["hard_timeout"] == sandbox._DEFAULT_HARD_TIMEOUT
+        assert kwargs["request_options"]["max_retries"] == 0
+        assert kwargs["request_options"]["timeout_in_seconds"] > kwargs["hard_timeout"]
+
+    def test_hard_timeout_is_rendered_as_timeout_without_replay(self, sandbox):
+        executions = 0
+
+        def exec_command(command, **kwargs):
+            nonlocal executions
+            executions += 1
+            return SimpleNamespace(
+                data=SimpleNamespace(
+                    output="partial",
+                    exit_code=None,
+                    status="hard_timeout",
+                )
+            )
+
+        sandbox._client.shell.exec_command = exec_command
+
+        out = sandbox.execute_command("side-effect; sleep 30", timeout=3)
+
+        assert executions == 1
+        assert "partial" in out
+        assert "Command timed out after 3 seconds and was terminated." in out
+        assert out.endswith("Exit Code: 124")
+
+    def test_hard_timeout_keeps_default_recovery_session(self, sandbox):
+        calls = []
+        sandbox._default_shell_corrupted = False
+        sandbox._recovery_session_id = "recovery-session"
+        sandbox._client.shell.exec_command = lambda command, **kwargs: (
+            calls.append(kwargs)
+            or SimpleNamespace(
+                data=SimpleNamespace(
+                    output="partial" if len(calls) == 1 else "ok",
+                    exit_code=None if len(calls) == 1 else 0,
+                    status="hard_timeout" if len(calls) == 1 else "completed",
+                )
+            )
+        )
+        sandbox._client.shell.cleanup_session = MagicMock()
+
+        first = sandbox.execute_command("sleep 30", timeout=3)
+        second = sandbox.execute_command("echo ok", timeout=3)
+
+        assert "Command timed out after 3 seconds" in first
+        assert second == "ok"
+        assert [call["id"] for call in calls] == ["recovery-session", "recovery-session"]
+        assert sandbox._recovery_session_id == "recovery-session"
+        assert sandbox._default_shell_corrupted is False
+        sandbox._client.shell.cleanup_session.assert_not_called()
+
+    def test_hard_timeout_keeps_scoped_session(self, sandbox):
+        from deerflow.community.aio_sandbox.aio_sandbox import _ScopedShellSession
+
+        calls = []
+        sandbox._scoped_shell_sessions["scope"] = _ScopedShellSession(session_id="scoped-session")
+        sandbox._client.shell.exec_command = lambda command, **kwargs: (
+            calls.append(kwargs)
+            or SimpleNamespace(
+                data=SimpleNamespace(
+                    output="partial" if len(calls) == 1 else "ok",
+                    exit_code=None if len(calls) == 1 else 0,
+                    status="hard_timeout" if len(calls) == 1 else "completed",
+                )
+            )
+        )
+        sandbox._client.shell.cleanup_session = MagicMock()
+
+        first = sandbox.execute_command_in_scope("sleep 30", scope_id="scope", timeout=3)
+        second = sandbox.execute_command_in_scope("echo ok", scope_id="scope", timeout=3)
+
+        assert "Command timed out after 3 seconds" in first
+        assert second == "ok"
+        assert [call["id"] for call in calls] == ["scoped-session", "scoped-session"]
+        assert sandbox._scoped_shell_sessions["scope"].session_id == "scoped-session"
+        assert sandbox._default_shell_corrupted is False
+        sandbox._client.shell.cleanup_session.assert_not_called()
+
+    @pytest.mark.parametrize("status", [None, "completed"])
+    def test_terminal_statuses_keep_ordinary_exit_code_rendering(self, sandbox, status):
+        out = sandbox._render_shell_output(
+            "partial",
+            7,
+            status=status,
+            timeout=3,
+        )
+
+        assert out == "partial\nExit Code: 7"
+
+    def test_no_change_timeout_is_reported_without_replay(self, sandbox):
+        executions = 0
+        calls = []
+
+        def exec_command(command, **kwargs):
+            nonlocal executions
+            executions += 1
+            calls.append(kwargs)
+            return SimpleNamespace(
+                data=SimpleNamespace(
+                    output="partial",
+                    exit_code=None,
+                    status="no_change_timeout",
+                )
+            )
+
+        sandbox._client.shell.exec_command = exec_command
+
+        out = sandbox.execute_command("quiet-command", timeout=900)
+
+        assert executions == 1
+        assert calls[0]["no_change_timeout"] == 905
+        assert "no output change" in out
+        assert "905 seconds" in out
+        assert "may still be running" in out
+        assert "Exit Code: 124" not in out
 
     def test_execute_command_passes_no_change_timeout(self, sandbox):
         """execute_command should pass no_change_timeout to exec_command."""
@@ -664,7 +1792,7 @@ class TestNoChangeTimeout:
         sandbox.execute_command("echo hello")
 
         assert len(calls) == 1
-        assert calls[0].get("no_change_timeout") == sandbox._DEFAULT_NO_CHANGE_TIMEOUT
+        assert calls[0].get("no_change_timeout") == 605
 
     def test_retry_passes_no_change_timeout(self, sandbox):
         """The ErrorObservation retry path should also pass no_change_timeout."""
@@ -681,8 +1809,8 @@ class TestNoChangeTimeout:
         sandbox.execute_command("echo hello")
 
         assert len(calls) == 2
-        assert calls[0].get("no_change_timeout") == sandbox._DEFAULT_NO_CHANGE_TIMEOUT
-        assert calls[1].get("no_change_timeout") == sandbox._DEFAULT_NO_CHANGE_TIMEOUT
+        assert calls[0].get("no_change_timeout") == 605
+        assert calls[1].get("no_change_timeout") == 605
 
     def test_list_dir_passes_no_change_timeout(self, sandbox):
         """list_dir should pass no_change_timeout to exec_command."""
@@ -935,9 +2063,18 @@ class TestClose:
 
 
 class TestPerCallTimeout:
-    """Verify that a per-call timeout overrides the 600s defaults on both paths."""
+    """The configured per-call budget reaches the wire on both paths.
 
-    def test_execute_command_forwards_custom_no_change_timeout(self, sandbox):
+    The fork forwarded `sandbox.bash_command_timeout` to the AIO sandbox as the
+    shell path's idle `no_change_timeout`. Upstream's #5634 replaced that with a
+    server-enforced wall-clock `hard_timeout` plus a bounded request option, and
+    keeps `no_change_timeout` as a floor above it. The fork's property is
+    unchanged and is what these assert: a configured budget must arrive at the
+    sandbox rather than being silently replaced by the 600s default, and a zero
+    or absent one must fall back to that default.
+    """
+
+    def test_execute_command_forwards_custom_command_budget(self, sandbox):
         calls = []
 
         def mock_exec(command, **kwargs):
@@ -948,9 +2085,12 @@ class TestPerCallTimeout:
 
         sandbox.execute_command("pip install torch", timeout=1800)
 
-        assert calls[0].get("no_change_timeout") == 1800
+        assert calls[0].get("hard_timeout") == 1800
+        # The request may not abort before the command it is waiting on.
+        assert calls[0]["request_options"]["timeout_in_seconds"] >= 1800
+        assert calls[0].get("no_change_timeout") >= 1800
 
-    def test_retry_forwards_custom_no_change_timeout(self, sandbox):
+    def test_retry_forwards_custom_command_budget(self, sandbox):
         calls = []
 
         def mock_exec(command, **kwargs):
@@ -964,8 +2104,9 @@ class TestPerCallTimeout:
         sandbox.execute_command("echo hi", timeout=900)
 
         assert len(calls) == 2
-        assert calls[0].get("no_change_timeout") == 900
-        assert calls[1].get("no_change_timeout") == 900
+        # The retry must not quietly run on the default budget.
+        assert calls[0].get("hard_timeout") == 900
+        assert calls[1].get("hard_timeout") == 900
 
     def test_zero_and_none_timeout_fall_back_to_default(self, sandbox):
         calls = []
@@ -979,8 +2120,10 @@ class TestPerCallTimeout:
         sandbox.execute_command("echo a", timeout=0)
         sandbox.execute_command("echo b", timeout=None)
 
-        assert calls[0].get("no_change_timeout") == sandbox._DEFAULT_NO_CHANGE_TIMEOUT
-        assert calls[1].get("no_change_timeout") == sandbox._DEFAULT_NO_CHANGE_TIMEOUT
+        # The wall-clock budget is the one a caller sets; the idle floor sits a
+        # grace period above it by upstream's formula, so it is not asserted here.
+        assert calls[0].get("hard_timeout") == sandbox._DEFAULT_HARD_TIMEOUT
+        assert calls[1].get("hard_timeout") == sandbox._DEFAULT_HARD_TIMEOUT
 
     def test_env_path_forwards_custom_hard_timeout(self, sandbox):
         calls = []
@@ -1008,31 +2151,15 @@ class TestPerCallTimeout:
 
         assert calls[0].get("hard_timeout") == sandbox._DEFAULT_HARD_TIMEOUT
 
-    def test_timeout_exceeding_request_timeout_warns_once(self, caplog):
-        with patch("deerflow.community.aio_sandbox.aio_sandbox.AioSandboxClient"):
-            from deerflow.community.aio_sandbox.aio_sandbox import AioSandbox
-
-            sb = AioSandbox(id="t", base_url="http://localhost:8080", request_timeout=120)
-        sb._client.shell.exec_command = MagicMock(return_value=SimpleNamespace(data=SimpleNamespace(output="ok")))
-
-        with caplog.at_level("WARNING"):
-            sb.execute_command("slow", timeout=1800)
-            sb.execute_command("slow-again", timeout=1800)
-
-        warnings = [r for r in caplog.records if "exceeds sandbox.request_timeout" in r.message]
-        assert len(warnings) == 1
-
-    def test_timeout_within_request_timeout_does_not_warn(self, caplog):
-        with patch("deerflow.community.aio_sandbox.aio_sandbox.AioSandboxClient"):
-            from deerflow.community.aio_sandbox.aio_sandbox import AioSandbox
-
-            sb = AioSandbox(id="t", base_url="http://localhost:8080", request_timeout=1800)
-        sb._client.shell.exec_command = MagicMock(return_value=SimpleNamespace(data=SimpleNamespace(output="ok")))
-
-        with caplog.at_level("WARNING"):
-            sb.execute_command("ok", timeout=600)
-
-        assert not [r for r in caplog.records if "exceeds sandbox.request_timeout" in r.message]
+    # The fork's "bash_command_timeout exceeds request_timeout" warning was
+    # retired in the 2026-09-22 upstream sync. Upstream's #5634 gives every
+    # command its own bounded `request_options` (timeout + a small grace), so
+    # the HTTP client no longer aborts a long command at the client timeout and
+    # the warning's premise ("the HTTP client will abort long commands first")
+    # became false. `sandbox.request_timeout` itself is still a fork setting and
+    # still wired — it bounds the RPCs those per-command options do not reach,
+    # session creation and the file/list calls — it simply has nothing left to
+    # warn about. See FORK.md's timeout row.
 
 
 def test_list_dir_preserves_trailing_space_in_filename(sandbox):

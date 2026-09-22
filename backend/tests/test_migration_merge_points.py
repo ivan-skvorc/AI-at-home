@@ -32,15 +32,32 @@ ORIGINAL_PARENTS = {
     # audited, and hangs off 0021 — the revision 0022_merge_pricing_projects
     # had already claimed, which is what split the tree a second time.
     "0019_thread_incarnations": ("0021_batch_acceptance",),
-    # Upstream's account-preferences revision hangs off 0022 — the revision
+    # Upstream's account-preferences revision. It hung off 0022 — the revision
     # 0023_merge_pricing_scheduler had already claimed, splitting the tree a
-    # third time. Joined by 0024_merge_preferences, not by moving this parent.
-    "0023_user_preferences": ("0022_scheduled_occurrence_seq",),
+    # third time — and was joined by 0024_merge_preferences, not by moving this
+    # parent.
+    #
+    # Upstream then moved it itself, onto 0023_run_change_seq (#5405). That is
+    # the re-parenting this file is named after, done upstream rather than here,
+    # and it is recorded rather than reverted: upstream owns that branch, ships
+    # 0025_repair_run_change_seq to repair databases whose stamp skipped
+    # 0023_run_change_seq because of it, and the fork's merge points still reach
+    # both branches (see the reachability test below). What this row keeps
+    # pinning is that *nobody re-points it again* to paper over a future
+    # collision — the next one gets another merge revision, as 0027 did.
+    "0023_user_preferences": ("0023_run_change_seq",),
 }
 
 # Every leaf the merge points must keep reachable: one per branch tip that
 # existed before it was merged.
-MERGED_TIPS = ("0019_runs_pricing_snapshot", "0021_batch_acceptance", "0022_scheduled_occurrence_seq", "0023_user_preferences")
+MERGED_TIPS = (
+    "0019_runs_pricing_snapshot",
+    "0021_batch_acceptance",
+    "0022_scheduled_occurrence_seq",
+    "0023_user_preferences",
+    # Upstream's tip at the 2026-09-22 sync, joined by 0027_merge_preferences_mcp_tasks.
+    "0026_mcp_task_lease_tokens",
+)
 
 
 def _script() -> ScriptDirectory:

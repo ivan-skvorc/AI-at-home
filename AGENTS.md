@@ -207,6 +207,13 @@ These apply repo-wide; module guides own the module-specific detail.
 - **Documentation update policy** — keep docs in sync with code: update `README.md` for
   user-facing changes and the relevant `AGENTS.md` for development/architecture changes in
   the same change set.
+- **The guidance budget** — `scripts/check_agent_guidance.py` caps each `AGENTS.md` and
+  the *effective chain* an agent inherits at that path. When a sync pushes a chain over,
+  move reference material into a sibling doc and leave a pointer: the checker counts only
+  files named `AGENTS.md` along the ancestors, so `middlewares/CHAIN.md`,
+  `backend/docs/RUNTIME.md`, `frontend/src/DATA_FLOW.md` and
+  `app/gateway/AUTHORIZATION.md` stay discoverable without being inherited. Trim the
+  nearest shared ancestor first — it pays into every chain below it.
 - **Test-driven development** — features and bug fixes ship with tests: `backend/tests/`
   (TDD mandatory there, see [backend/AGENTS.md](backend/AGENTS.md)) and `frontend/tests/`.
 - **Format before pushing** — `make format` (backend) / `pnpm check` (frontend); backend CI

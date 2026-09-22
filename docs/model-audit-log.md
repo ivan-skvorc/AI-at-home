@@ -11,6 +11,67 @@ Newest first. Append a pass; never rewrite one. A dated line is what tells the
 next person whether the roster was checked last week or last year, and _which_
 providers that pass could actually reach.
 
+- **2026-09-22 — partial, tier 2 for standard rates only. Provider pages still unreachable, so
+  no `price:` or `discount:` block was edited. Machine half clean. Nine standard rates
+  corroborated by search; three discount findings are owed to the next pass with egress.**
+  Requested in words alongside the upstream sync (136 upstream commits, merge base 2026-09-15).
+
+  **Machine half clean.** `python3 scripts/audit_models.py` reports **no drift**: every
+  bundled slug it can check is still in its catalog and the two synced sources agree. It
+  listed `openrouter` as _skipped_ (`Tunnel connection failed: 403 Forbidden`) and the ten
+  catalog-less providers as skipped, which is the correct handling — unreachable is not drift.
+
+  **Tier 1 unavailable, as on 2026-09-19 and 2026-09-20.** Every provider host is refused at
+  the egress proxy rather than being slow: `curl` returns `http=000` for `openrouter.ai`,
+  `www.anthropic.com`, `platform.openai.com`, `x.ai`, `ai.google.dev` and `api.deepseek.com`,
+  the harness fetch tool returns `EGRESS_BLOCKED`, and `$HTTPS_PROXY/__agentproxy/status`
+  shows `connect_rejected — gateway answered 403 to CONNECT (policy denial)` with a `noProxy`
+  list carrying only package registries and the Anthropic API — no pricing or documentation
+  host. **Unlike the previous two passes, web *search* was reachable**, so tier 2
+  (corroboration) was available for standard rates where independent sources agreed exactly.
+
+  **Standard rates corroborated — all nine agree with what the bundle already carries, so
+  nothing was edited.** Claude Fable 5.1 `$10/$50`; Claude Opus 5 `$5/$25`; GPT-6 Astra
+  `$10/$50`; Grok 4.6 `$2/$6` (the bundle carries the sub-200K rate, which is correct — the
+  200K+ tier doubles and is a long-context surcharge, not a list price); Kimi K3 `$3/$15`;
+  Qwen3.8 Max `$2/$6`; Gemini 3.6 Flash `$1.50/$7.50` **standard** (see the discount finding
+  below); GPT-5.6 Sol `$5/$30` **standard** (likewise). Sources agreeing per model spanned
+  independent domains (pricepertoken.com, benchlm.ai, cloudzero.com, layer3labs.io,
+  costgoat.com, openrouter.ai listings among them).
+
+  **Three findings, all owed to the next pass that has egress.** FORK.md is explicit that a
+  discount never qualifies for the tier-2 fallback — only a standard rate does — so none of
+  these was applied, and no `discount:` block was written from search results:
+
+  1. **GPT-5.6 Sol looks discounted to `$4/$20` through at least 2026-11-21** and carries no
+     `discount:` block in either synced source. If confirmed on OpenAI's own page, both the
+     `openai-gpt-5.6-sol` home entry and `openrouter-gpt-5.6-sol` need a `discount:` with
+     `until: 2026-11-21`; `price:` stays `$5/$30`, which is already correct.
+  2. **Gemini 3.6 Flash looks to be on introductory pricing of `$0.75/$3.75` through
+     2026-12-31**, reverting to the bundled `$1.50/$7.50` on 2027-01-01. Same treatment if
+     confirmed: `price:` is already the standard rate, a `discount:` with
+     `until: 2026-12-31` is what is missing.
+  3. **DeepSeek V4 Pro's two entries disagree with each other and with every source read.**
+     The home entry carries `$1.32/$3.96` and the routed entry `$0.44/$0.87`, while sources
+     describe an off-peak/peak split (`$0.66/$1.98` off-peak, `$1.32/$3.96` peak) and an
+     older flat `$0.435/$0.87`. The sources do **not** agree exactly, so tier 2 does not
+     apply and nothing was changed. Resolve against DeepSeek's own page: decide whether the
+     bundle prices peak (conservative, matches the `price:`-is-an-upper-bound rule) and make
+     both entries say the same thing.
+
+  **What was checked without network.** Step 1 roster/order: 44 priced entries, grouped
+  Anthropic → OpenRouter → first-party home blocks → Ollama, unchanged by the sync. Step 7
+  privacy markers: 16 OpenRouter entries, all carrying `(p)`; no home/Anthropic/Ollama entry
+  wrongly carrying one; no price has reappeared in any `display_name`. Step 8 gates pass —
+  `python3 scripts/sync-api-key-models.py --dry-run` is clean and
+  `uv run pytest tests/test_sync_api_key_models.py tests/test_setup_wizard.py
+  tests/test_config_integrity.py tests/test_audit_models.py` is 218 passed.
+
+  **Not done, and owed to the next pass with egress:** step 2 (discovery — the OpenRouter
+  catalog is the required starting point and it is unreachable), step 4 (slug verification
+  against provider catalogs), and step 6's *verification* half. The three findings above are
+  the concrete queue for that pass.
+
 - **2026-09-20 — partial, tier 3. No provider page reachable, so no price was verified and
   none was edited. Machine half clean; roster and all four prose copies verified by eye.
   One documentation finding fixed: an OpenRouter example that told users to send their

@@ -43,7 +43,15 @@ async function captureSubmitOptions(): Promise<SubmitCall[]> {
       isLoading: false,
     }),
     useMutation: rs.fn(),
-    useQuery: rs.fn(),
+    // Must return a query-shaped object, not undefined: `useThreadStream` reads
+    // `.data` off its `useThreadRuns` query to find the active run. A bare
+    // `rs.fn()` made that a TypeError as soon as upstream added the call.
+    useQuery: () => ({
+      data: undefined,
+      error: null,
+      isLoading: false,
+      refetch: rs.fn(),
+    }),
     useQueryClient: () => ({
       invalidateQueries: rs.fn(),
       setQueriesData: rs.fn(),

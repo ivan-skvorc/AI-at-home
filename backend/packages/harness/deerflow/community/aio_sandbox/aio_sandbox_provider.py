@@ -15,12 +15,14 @@ import atexit
 import contextlib
 import hashlib
 import logging
+import math
 import os
 import signal
 import threading
 import time
 import uuid
 from collections.abc import Callable
+from typing import Any
 
 try:
     import fcntl
@@ -72,6 +74,11 @@ DEFAULT_IMAGE = "enterprise-public-cn-beijing.cr.volces.com/vefaas-public/all-in
 DEFAULT_PORT = 8080
 DEFAULT_CONTAINER_PREFIX = "deer-flow-sandbox"
 IDLE_CHECK_INTERVAL = _SHARED_IDLE_CHECK_INTERVAL
+# The supported semver AIO images currently default to ten shell sessions.
+# Leave lower-concurrency deployments on the image default; only override it
+# when DeerFlow's configured execution capacity cannot fit.
+_AIO_DEFAULT_MAX_SHELL_SESSIONS = 10
+_SHELL_SESSION_HEADROOM = 1
 
 
 class SandboxBeingDestroyedError(RuntimeError):
@@ -165,6 +172,16 @@ class AioSandboxProvider(WarmPoolLifecycleMixin[SandboxInfo], SandboxProvider):
     # release. Keep this above both sequential five-second operation bounds so a
     # normally timing-out refresh + release still finishes synchronously.
     _TEARDOWN_JOIN_TIMEOUT_SECONDS = 12.0
+
+    @staticmethod
+    def _positive_float(name: str, value: Any, default: float) -> float:
+        try:
+            resolved = float(default if value is None else value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"sandbox.{name} must be positive") from exc
+        if not math.isfinite(resolved) or resolved <= 0:
+            raise ValueError(f"sandbox.{name} must be positive")
+        return resolved
 
     def __init__(self):
         self._lock = threading.Lock()
@@ -268,7 +285,12 @@ class AioSandboxProvider(WarmPoolLifecycleMixin[SandboxInfo], SandboxProvider):
             self._warn_ignored_mounts("provisioner/remote", "the provisioner pod spec")
             self._warn_ignored_container_options("provisioner/remote", "the provisioner pod spec")
             api_key = self._config.get("provisioner_api_key", "")
-            return RemoteSandboxBackend(provisioner_url=provisioner_url, api_key=api_key)
+            return RemoteSandboxBackend(
+                provisioner_url=provisioner_url,
+                api_key=api_key,
+                max_shell_sessions=self._config.get("max_shell_sessions"),
+                required_shell_sessions=self._config.get("required_shell_sessions", 0),
+            )
 
         base_url = self._config.get("base_url")
         if base_url:
@@ -288,6 +310,7 @@ class AioSandboxProvider(WarmPoolLifecycleMixin[SandboxInfo], SandboxProvider):
             expose_ports=self._config.get("expose_ports") or [],
             extra_capabilities=self._config.get("extra_capabilities") or [],
             network_config=self._config["network"],
+            required_shell_sessions=self._config.get("required_shell_sessions", 0),
         )
 
     def _warn_ignored_container_options(self, backend_label: str, where_to_declare: str) -> None:
@@ -370,15 +393,39 @@ class AioSandboxProvider(WarmPoolLifecycleMixin[SandboxInfo], SandboxProvider):
         if not isinstance(configured_skills_path, str):
             configured_skills_path = DEFAULT_SKILLS_CONTAINER_PATH
 
+        environment = self._resolve_env_vars(sandbox_config.environment or {})
+        command_timeout = self._positive_float(
+            "bash_command_timeout",
+            getattr(sandbox_config, "bash_command_timeout", None),
+            AioSandbox._DEFAULT_HARD_TIMEOUT,
+        )
+        max_running_subagents = int(getattr(getattr(config, "subagent_runtime", None), "max_running", 3))
+        required_shell_sessions = max_running_subagents + _SHELL_SESSION_HEADROOM
+        configured_shell_sessions = environment.get("MAX_SHELL_SESSIONS")
+        if configured_shell_sessions is None:
+            max_shell_sessions = required_shell_sessions if required_shell_sessions > _AIO_DEFAULT_MAX_SHELL_SESSIONS else None
+            if max_shell_sessions is not None:
+                environment["MAX_SHELL_SESSIONS"] = str(max_shell_sessions)
+        else:
+            try:
+                max_shell_sessions = int(configured_shell_sessions)
+            except (TypeError, ValueError) as exc:
+                raise ValueError("sandbox.environment.MAX_SHELL_SESSIONS must be a positive integer") from exc
+            if max_shell_sessions < required_shell_sessions:
+                raise ValueError(f"sandbox.environment.MAX_SHELL_SESSIONS must be at least subagent_runtime.max_running + {_SHELL_SESSION_HEADROOM} ({required_shell_sessions} for the current configuration)")
+
         return {
             "image": sandbox_config.image or DEFAULT_IMAGE,
             "port": sandbox_config.port or DEFAULT_PORT,
             "container_prefix": sandbox_config.container_prefix or DEFAULT_CONTAINER_PREFIX,
             "idle_timeout": idle_timeout if idle_timeout is not None else DEFAULT_IDLE_TIMEOUT,
+            "command_timeout": command_timeout,
             "replicas": replicas if replicas is not None else DEFAULT_REPLICAS,
             "mounts": sandbox_config.mounts or [],
             "thread_data_mounts": getattr(sandbox_config, "thread_data_mounts", None),
-            "environment": self._resolve_env_vars(sandbox_config.environment or {}),
+            "environment": environment,
+            "max_shell_sessions": max_shell_sessions,
+            "required_shell_sessions": required_shell_sessions,
             "network": sandbox_config.network.model_dump(),
             "ownership": getattr(sandbox_config, "ownership", None),
             # A redis stream bridge means the deployment is multi-instance, which
@@ -1750,7 +1797,13 @@ class AioSandboxProvider(WarmPoolLifecycleMixin[SandboxInfo], SandboxProvider):
                 return None
             self._warm_pool_identity.pop(sandbox_id, None)
             info, _ = warm_item
-            sandbox = AioSandbox(id=sandbox_id, base_url=info.sandbox_url, request_timeout=self._config.get("request_timeout"), request_headers=info.request_headers)
+            sandbox = AioSandbox(
+                id=sandbox_id,
+                base_url=info.sandbox_url,
+                request_timeout=self._config.get("request_timeout"),
+                request_headers=info.request_headers,
+                default_command_timeout=self._config.get("command_timeout", AioSandbox._DEFAULT_HARD_TIMEOUT),
+            )
             self._sandboxes[sandbox_id] = sandbox
             self._sandbox_infos[sandbox_id] = info
             self._active_sandbox_identity[sandbox_id] = key
@@ -1795,7 +1848,13 @@ class AioSandboxProvider(WarmPoolLifecycleMixin[SandboxInfo], SandboxProvider):
             self._assert_active_identity_available_locked(info.sandbox_id, key)
             self._assert_warm_identity_available_locked(info.sandbox_id, key)
 
-        sandbox = AioSandbox(id=info.sandbox_id, base_url=info.sandbox_url, request_timeout=self._config.get("request_timeout"), request_headers=info.request_headers)
+        sandbox = AioSandbox(
+            id=info.sandbox_id,
+            base_url=info.sandbox_url,
+            request_timeout=self._config.get("request_timeout"),
+            request_headers=info.request_headers,
+            default_command_timeout=self._config.get("command_timeout", AioSandbox._DEFAULT_HARD_TIMEOUT),
+        )
         # Ownership first, so a failure cannot leave a tracked-but-unowned sandbox.
         # There is no container to roll back (we did not create it), but the
         # host-side HTTP client constructed above is ours and must not leak —
@@ -1841,7 +1900,13 @@ class AioSandboxProvider(WarmPoolLifecycleMixin[SandboxInfo], SandboxProvider):
 
     def _register_created_sandbox(self, thread_id: str | None, sandbox_id: str, info: SandboxInfo, *, user_id: str | None = None) -> str:
         """Track a newly-created sandbox in the active maps."""
-        sandbox = AioSandbox(id=sandbox_id, base_url=info.sandbox_url, request_timeout=self._config.get("request_timeout"), request_headers=info.request_headers)
+        sandbox = AioSandbox(
+            id=sandbox_id,
+            base_url=info.sandbox_url,
+            request_timeout=self._config.get("request_timeout"),
+            request_headers=info.request_headers,
+            default_command_timeout=self._config.get("command_timeout", AioSandbox._DEFAULT_HARD_TIMEOUT),
+        )
         key = (
             self._thread_key(
                 thread_id,
@@ -2430,11 +2495,15 @@ class AioSandboxProvider(WarmPoolLifecycleMixin[SandboxInfo], SandboxProvider):
         created. Never raises: a failed setup (e.g. custom image without
         git) must not fail sandbox acquisition.
         """
-        sandbox = self.get(sandbox_id)
-        if not isinstance(sandbox, AioSandbox):
-            return
-        token_configured = bool(self._config.get("environment", {}).get(TOKEN_ENV_VAR))
+        # The whole body is inside the guard, including the type check: an
+        # acquisition must not fail because best-effort init raised, and
+        # `isinstance` itself raises when `AioSandbox` is not a class (a test
+        # that patches the symbol to observe construction, for one).
         try:
+            sandbox = self.get(sandbox_id)
+            if not isinstance(sandbox, AioSandbox):
+                return
+            token_configured = bool(self._config.get("environment", {}).get(TOKEN_ENV_VAR))
             setup_github_credentials(sandbox, token_configured=token_configured)
         except Exception as e:
             logger.warning(f"Sandbox {sandbox_id}: session init failed: {e}")

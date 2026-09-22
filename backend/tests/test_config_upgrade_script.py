@@ -413,3 +413,139 @@ class TestUpstreamSectionDelivery:
 
         missing = sorted(set(example_data) - set(delivered))
         assert not missing, f"config.example.yaml ships top-level keys a version bump never delivers: {missing}"
+
+
+class TestKnowledgeProviderMigration:
+    """Upstream's v46 migration, ported into this fork's extracted script.
+
+    Upstream ships this as a ``data_transform`` inside the inline heredoc that
+    ``scripts/config-upgrade.sh`` used to carry. This fork extracted that
+    heredoc into ``scripts/config_upgrade.py``, which only supported text
+    ``replacements`` — so the port had to add ``data_transform`` support too.
+
+    Both halves are silent when broken. An operator crossing v46 with a
+    tools-only knowledge setup would simply have the capability arrive switched
+    off (the example ships ``enabled: false``), and their RAGFlow connection
+    settings would be stranded on a block the provider tool no longer reads.
+    Nothing raises; knowledge search just stops answering.
+    """
+
+    @staticmethod
+    def _example(tmp_path: Path, version: int) -> Path:
+        example = tmp_path / "config.example.yaml"
+        example.write_text(
+            textwrap.dedent(
+                f"""\
+                config_version: {version}
+                sandbox:
+                  use: deerflow.sandbox.local:LocalSandboxProvider
+                models: []
+                knowledge_base:
+                  enabled: false
+                """
+            ),
+            encoding="utf-8",
+        )
+        return example
+
+    def test_a_configured_knowledge_tool_keeps_the_capability_on(self, tmp_path):
+        # Before the capability gate existed, configuring the provider tool WAS
+        # the way to enable knowledge search. The merge would otherwise hand
+        # these installs the example's `enabled: false` and switch them off.
+        example = self._example(tmp_path, version=46)
+        config = tmp_path / "config.yaml"
+        config.write_text(
+            textwrap.dedent(
+                """\
+                config_version: 45
+                sandbox:
+                  use: custom
+                models: []
+                tools:
+                  - name: knowledge_search
+                    group: knowledge
+                    use: deerflow.community.ragflow.tools:knowledge_search_tool
+                """
+            ),
+            encoding="utf-8",
+        )
+
+        assert config_upgrade.upgrade(config, example, REPO_ROOT) == 0
+
+        merged = yaml.safe_load(config.read_text(encoding="utf-8"))
+        assert merged["knowledge_base"]["enabled"] is True
+
+    def test_ragflow_settings_move_to_the_provider_tool(self, tmp_path):
+        # The generic capability block is not where provider connection settings
+        # live any more. Left behind, they read as configured while the tool
+        # that needs them sees nothing.
+        example = self._example(tmp_path, version=46)
+        config = tmp_path / "config.yaml"
+        config.write_text(
+            textwrap.dedent(
+                """\
+                config_version: 45
+                sandbox:
+                  use: custom
+                models: []
+                knowledge_base:
+                  enabled: true
+                  base_url: http://ragflow.internal
+                  api_key: rag-secret
+                  top_k: 7
+                tools:
+                  - name: knowledge_search
+                    group: knowledge
+                    use: deerflow.community.ragflow.tools:knowledge_search_tool
+                """
+            ),
+            encoding="utf-8",
+        )
+
+        assert config_upgrade.upgrade(config, example, REPO_ROOT) == 0
+
+        merged = yaml.safe_load(config.read_text(encoding="utf-8"))
+        tool = next(t for t in merged["tools"] if t["name"] == "knowledge_search")
+        assert tool["base_url"] == "http://ragflow.internal"
+        assert tool["api_key"] == "rag-secret"
+        assert tool["top_k"] == 7
+        # ...and are gone from the generic block, not duplicated across both.
+        for key in ("base_url", "api_key", "top_k"):
+            assert key not in merged["knowledge_base"]
+
+    def test_an_operators_explicit_value_is_never_overridden(self, tmp_path):
+        # Someone who deliberately turned the capability off must stay off.
+        example = self._example(tmp_path, version=46)
+        config = tmp_path / "config.yaml"
+        config.write_text(
+            textwrap.dedent(
+                """\
+                config_version: 45
+                sandbox:
+                  use: custom
+                models: []
+                knowledge_base:
+                  enabled: false
+                tools:
+                  - name: knowledge_search
+                    group: knowledge
+                    use: deerflow.community.ragflow.tools:knowledge_search_tool
+                """
+            ),
+            encoding="utf-8",
+        )
+
+        assert config_upgrade.upgrade(config, example, REPO_ROOT) == 0
+
+        assert yaml.safe_load(config.read_text(encoding="utf-8"))["knowledge_base"]["enabled"] is False
+
+    def test_no_knowledge_tool_means_no_capability_invented(self, tmp_path):
+        # The migration only preserves an existing setup; it must not switch the
+        # capability on for someone who never configured knowledge search.
+        example = self._example(tmp_path, version=46)
+        config = tmp_path / "config.yaml"
+        config.write_text("config_version: 45\nsandbox:\n  use: custom\nmodels: []\n", encoding="utf-8")
+
+        assert config_upgrade.upgrade(config, example, REPO_ROOT) == 0
+
+        assert yaml.safe_load(config.read_text(encoding="utf-8"))["knowledge_base"]["enabled"] is False

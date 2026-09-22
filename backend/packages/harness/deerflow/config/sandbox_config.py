@@ -258,7 +258,11 @@ class SandboxConfig(BaseModel):
     )
     request_timeout: float | None = Field(
         default=None,
-        description="HTTP client timeout in seconds for AIO sandbox API requests (default: 600 when unset).",
+        description=(
+            "HTTP client timeout in seconds for AIO sandbox API requests (default: 600 when unset). "
+            "Commands carry their own bounded per-request budget derived from `bash_command_timeout`, "
+            "so this governs the RPCs that budget does not reach: session creation and the file/list calls."
+        ),
     )
     provisioner_url: str | None = Field(
         default=None,
@@ -299,15 +303,19 @@ class SandboxConfig(BaseModel):
         ge=0,
         description="Maximum characters to keep from ls tool output. Output exceeding this limit is head-truncated. Set to 0 to disable truncation.",
     )
-    bash_command_timeout: int = Field(
+    bash_command_timeout: float = Field(
         default=600,
         gt=0,
+        allow_inf_nan=False,
         description=(
-            "Maximum wall-clock seconds a bash command may run before it is terminated. LocalSandboxProvider applies it to the host process group; "
-            "OpenSandboxProvider forwards it to the remote exec service when a call has no explicit timeout. Keeps a blocking foreground command "
-            "(e.g. an un-backgrounded server) from hanging the turn; background `&` processes return immediately. "
-            "Also forwarded as the AIO sandbox per-command budget: the idle (no-new-output) timeout on the persistent-shell path and the wall-clock "
-            "hard timeout on the env-bearing bash.exec path. Raise `request_timeout` alongside this value — the HTTP client must outlive the command."
+            "Provider command deadline. AIO images on the supported semver line "
+            "(1.9.3+, recommended 1.11.0) enforce it server-side through "
+            "`hard_timeout`; the frozen legacy `all-in-one-sandbox:latest` image "
+            "only gets the bounded host-side request. `bash_command_timeout` is "
+            "used by providers that explicitly wire this setting (currently "
+            "LocalSandbox, AioSandbox, and OpenSandbox). Other providers retain "
+            "their provider-specific command defaults unless a caller supplies an "
+            "explicit timeout."
         ),
     )
 

@@ -33,6 +33,22 @@ type ThreadRouteTarget =
       metadata?: Record<string, unknown> | null;
     };
 
+/**
+ * The custom agent owning a thread, from its run context first and then its
+ * stored metadata; undefined for default-agent conversations.
+ */
+export function agentNameOfThread(thread: {
+  context?: Pick<AgentThreadContext, "agent_name"> | null;
+  metadata?: Record<string, unknown> | null;
+}): string | undefined {
+  const contextAgent = thread.context?.agent_name;
+  if (contextAgent) {
+    return contextAgent;
+  }
+  const metaAgent = thread.metadata?.agent_name;
+  return typeof metaAgent === "string" && metaAgent ? metaAgent : undefined;
+}
+
 export function pathOfThread(
   thread: ThreadRouteTarget,
   context?: Pick<AgentThreadContext, "agent_name"> | null,
@@ -50,18 +66,10 @@ export function pathOfThread(
       ? thread
       : (activeVersionThreadId ?? thread.thread_id);
   const encodedThreadId = encodeURIComponent(threadId);
-  let agentName: string | undefined;
-  if (typeof thread === "string") {
-    agentName = context?.agent_name;
-  } else {
-    agentName = thread.context?.agent_name;
-    if (!agentName) {
-      const metaAgent = thread.metadata?.agent_name;
-      if (typeof metaAgent === "string") {
-        agentName = metaAgent;
-      }
-    }
-  }
+  const agentName =
+    typeof thread === "string"
+      ? context?.agent_name
+      : agentNameOfThread(thread);
 
   return agentName
     ? `/workspace/agents/${encodeURIComponent(agentName)}/chats/${encodedThreadId}`

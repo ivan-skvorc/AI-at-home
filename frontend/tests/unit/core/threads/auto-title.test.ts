@@ -77,11 +77,13 @@ describe("what reaches the backend", () => {
 
   it("is sent on both the send and the regenerate path", () => {
     // Regenerating the first turn can still be the run that names the
-    // conversation. Both call sites spread the helper explicitly rather than
-    // riding the `...context` spread, which a refactor can drop with no type
-    // error and no failing test anywhere else.
+    // conversation. Since the 2026-09-22 upstream sync both paths build their
+    // run context through one `buildRunContext`, so the helper is spread once,
+    // there — and the property is that neither path builds a context without
+    // it, which a refactor re-inlining one call site would break.
     const hooks = read("src/core/threads/hooks.ts");
-    expect(hooks.match(/\.\.\.autoTitleRunContext\(\)/g)).toHaveLength(2);
+    expect(hooks.match(/\.\.\.autoTitleRunContext\(\)/g)).toHaveLength(1);
+    expect(hooks.match(/context: buildRunContext\(/g)).toHaveLength(2);
   });
 });
 
