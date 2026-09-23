@@ -3288,6 +3288,13 @@ means error" would break the first one silently. `_format_unresponsive` tolerate
 any shape upstream sends, because failing to parse a diagnostic must never become
 the failure being diagnosed.
 
+Upstream then made the client walk `pageno` when `max_results` exceeds a page
+(#5705), so the check now lives in `_search_page` and gains a fourth case: a
+block that lands on a **later** page ends the walk and returns what earlier pages
+delivered, since raising there would turn a partial success into a total outage.
+Only a first page with nothing to show raises. Pinned by
+`test_engines_blocked_on_a_later_page_keep_the_earlier_pages`.
+
 Two shipped defaults were set for a fast unfiltered connection and changed with
 them: `web_fetch` had `timeout: 10` for a **full Firefox render** (raised to 30,
 matching every other timeout in the file), and the bundled SearXNG ran the stock
