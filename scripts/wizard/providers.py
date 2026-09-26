@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
+from datetime import date
 
 
 @dataclass
@@ -89,9 +90,9 @@ OPENAI_COMPAT_THINKING_CONFIG = {
     },
 }
 
-# Latest Claude models (Opus 5, Opus 4.8, Sonnet 5) use adaptive thinking — the
+# Latest Claude models (Opus 5, Sonnet 5, Sonnet 4.6) use adaptive thinking — the
 # fixed `budget_tokens` form is rejected by these models. Haiku 4.5 still takes an
-# explicit thinking budget. Opus 5 / Opus 4.8 / Sonnet 5 accept an explicit
+# explicit thinking budget. Opus 5 / Sonnet 5 / Sonnet 4.6 accept an explicit
 # `thinking: {type: disabled}` when the toggle is off.
 #
 # Opus 5 caveat: it accepts `thinking: {type: disabled}` only at reasoning effort
@@ -125,7 +126,7 @@ ANTHROPIC_ADAPTIVE_THINKING_CONFIG = {
     },
 }
 
-# Claude Fable 5.1 has thinking permanently on: an explicit
+# Claude Fable 5.1 and Claude Opus 5.5 have thinking permanently on: an explicit
 # `thinking: {type: disabled}` is rejected with a 400, so neither toggle state can
 # turn thinking off. Both states therefore send adaptive thinking with
 # `display: summarized` — `summarized` for the same multi-turn-replay reason as the
@@ -169,11 +170,12 @@ ANTHROPIC_BUDGET_THINKING_CONFIG = {
 ANTHROPIC_THINKING_CONFIG = ANTHROPIC_BUDGET_THINKING_CONFIG
 
 # Latest Claude models, enabled together when the user has an ANTHROPIC_API_KEY.
-# Opus and Sonnet each ship their last 4.x alongside 5 (Opus 4.8 + Opus 5,
-# Sonnet 4.6 + Sonnet 5); Haiku and Fable ship only the latest. Fable 5.1 / Opus 5 /
-# Opus 4.8 / Sonnet 5 / Sonnet 4.6 use adaptive thinking; Haiku 4.5 takes a
-# budget. Ordered most- to least-capable; the last-4.x models are kept alongside
-# their 5 successors so existing threads can stay pinned to them.
+# Opus and Sonnet each ship their previous generation alongside the current one
+# (Opus 5 + Opus 5.5, Sonnet 4.6 + Sonnet 5); Haiku and Fable ship only the
+# latest. Fable 5.1 and Opus 5.5 run adaptive thinking that cannot be disabled;
+# Opus 5 / Sonnet 5 / Sonnet 4.6 use adaptive thinking; Haiku 4.5 takes a budget.
+# Ordered most- to least-capable; the previous generation is kept alongside its
+# successor so existing threads can stay pinned to it.
 ANTHROPIC_BUNDLE_MODELS: list[dict] = [
     {
         "name": "claude-fable-5-1",
@@ -188,22 +190,22 @@ ANTHROPIC_BUNDLE_MODELS: list[dict] = [
         **ANTHROPIC_ALWAYS_ON_THINKING_CONFIG,
     },
     {
-        "name": "claude-opus-5",
-        "display_name": "Claude Opus 5 (Anthropic)",
+        "name": "claude-opus-5-5",
+        "display_name": "Claude Opus 5.5 (Anthropic)",
         "use": "langchain_anthropic:ChatAnthropic",
-        "model": "claude-opus-5",
+        "model": "claude-opus-5-5",
         "api_key": "$ANTHROPIC_API_KEY",
         "default_request_timeout": 600.0,
         "max_retries": 2,
         "max_tokens": 32000,
         "supports_vision": True,
-        **ANTHROPIC_ADAPTIVE_THINKING_CONFIG,
+        **ANTHROPIC_ALWAYS_ON_THINKING_CONFIG,
     },
     {
-        "name": "claude-opus-4-8",
-        "display_name": "Claude Opus 4.8 (Anthropic)",
+        "name": "claude-opus-5",
+        "display_name": "Claude Opus 5 (Anthropic)",
         "use": "langchain_anthropic:ChatAnthropic",
-        "model": "claude-opus-4-8",
+        "model": "claude-opus-5",
         "api_key": "$ANTHROPIC_API_KEY",
         "default_request_timeout": 600.0,
         "max_retries": 2,
@@ -314,13 +316,13 @@ def _openrouter_model(
 # read and the number they were billed against were two copies that could drift
 # — and a discount could only "end" by someone editing a string.
 OPENROUTER_BUNDLE_MODELS: list[dict] = [
-    _openrouter_model("openrouter-fable-5-1", "Claude Fable 5.1 (OpenRouter) (p)", "anthropic/claude-fable-5-1", supports_vision=True),
-    _openrouter_model("openrouter-opus-5", "Claude Opus 5 (OpenRouter) (p)", "anthropic/claude-opus-5", supports_vision=True),
+    _openrouter_model("openrouter-fable-5-1", "Claude Fable 5.1 (OpenRouter) (p)", "anthropic/claude-fable-5.1", supports_vision=True),
+    _openrouter_model("openrouter-opus-5-5", "Claude Opus 5.5 (OpenRouter) (p)", "anthropic/claude-opus-5.5", supports_vision=True),
     _openrouter_model("openrouter-grok-4.6", "Grok 4.6 (OpenRouter) (p)", "x-ai/grok-4.6", supports_vision=True),
     _openrouter_model("openrouter-gpt-6-astra", "GPT-6 Astra (OpenRouter) (p)", "openai/gpt-6-astra", supports_vision=True),
     _openrouter_model("openrouter-gpt-5.6-sol", "GPT-5.6 Sol (OpenRouter) (p)", "openai/gpt-5.6-sol", supports_vision=True),
     _openrouter_model("openrouter-gpt-5.3-codex", "GPT-5.3 Codex (OpenRouter) (p)", "openai/gpt-5.3-codex", supports_vision=True),
-    _openrouter_model("openrouter-gemini-3.6-flash", "Gemini 3.6 Flash (OpenRouter) (p)", "google/gemini-3.6-flash", supports_vision=True),
+    _openrouter_model("openrouter-gemini-3.8-flash", "Gemini 3.8 Flash (OpenRouter) (p)", "google/gemini-3.8-flash", supports_vision=True),
     _openrouter_model("openrouter-llama-4-maverick", "Llama 4 Maverick (OpenRouter) (p)", "meta-llama/llama-4-maverick", supports_vision=True, supports_thinking=False),
     _openrouter_model("openrouter-minimax-m3", "MiniMax M3 (OpenRouter) (p)", "minimax/minimax-m3", supports_vision=True, max_tokens=16000, temperature=1.0),
     _openrouter_model("openrouter-qwen3.8-max", "Qwen3.8 Max (OpenRouter) (p)", "qwen/qwen3.8-max"),
@@ -475,10 +477,10 @@ XAI_HOME_BUNDLE_MODELS: list[dict] = [
     _home_openai_compat_model("xai-grok-4.3", "Grok 4.3 (xAI)", "grok-4.3", api_key_env="XAI_API_KEY", base_url="https://api.x.ai/v1", supports_vision=True, max_tokens=16000),
 ]
 
-# Google: Gemini 3.6 Flash (flagship) + 3.5 Flash-Lite (cheaper) + the newest
+# Google: Gemini 3.8 Flash (flagship) + 3.5 Flash-Lite (cheaper) + the newest
 # shipped Pro (3.1 Pro preview — the exact set the config's OpenRouter note names).
 GOOGLE_HOME_BUNDLE_MODELS: list[dict] = [
-    _home_gemini_model("google-gemini-3.6-flash", "Gemini 3.6 Flash (Google)", "gemini-3.6-flash"),
+    _home_gemini_model("google-gemini-3.8-flash", "Gemini 3.8 Flash (Google)", "gemini-3.8-flash"),
     _home_gemini_model("google-gemini-3.5-flash-lite", "Gemini 3.5 Flash-Lite (Google)", "gemini-3.5-flash-lite"),
     _home_gemini_model("google-gemini-3.1-pro", "Gemini 3.1 Pro (Google)", "gemini-3.1-pro-preview"),
 ]
@@ -546,8 +548,8 @@ ZAI_HOME_BUNDLE_MODELS: list[dict] = [
 # `tests/test_config_integrity.py` and `tests/test_setup_wizard.py` pin it.
 MODEL_PRICES: dict[str, dict] = {
     "claude-fable-5-1": {"price": {"currency": "USD", "input": 10.0, "output": 50.0, "cache_hit": 0.25}},  # 0.025x, not the usual 0.1x
+    "claude-opus-5-5": {"price": {"currency": "USD", "input": 4.0, "output": 20.0, "cache_hit": 0.2}},  # 0.05x
     "claude-opus-5": {"price": {"currency": "USD", "input": 5.0, "output": 25.0, "cache_hit": 0.5}},
-    "claude-opus-4-8": {"price": {"currency": "USD", "input": 5.0, "output": 25.0, "cache_hit": 0.5}},
     "claude-sonnet-5": {"price": {"currency": "USD", "input": 2.0, "output": 10.0, "cache_hit": 0.2}},
     "claude-sonnet-4-6": {"price": {"currency": "USD", "input": 3.0, "output": 15.0, "cache_hit": 0.3}},
     "claude-haiku-4-5": {"price": {"currency": "USD", "input": 1.0, "output": 5.0, "cache_hit": 0.1}},
@@ -555,7 +557,8 @@ MODEL_PRICES: dict[str, dict] = {
     # rates, matching config.example.yaml. Off-peak is exactly half.
     "deepseek-v4-pro": {"price": {"currency": "USD", "input": 1.32, "output": 3.96}},
     "deepseek-v4-flash": {"price": {"currency": "USD", "input": 0.44, "output": 1.32}},
-    "google-gemini-3.6-flash": {"price": {"currency": "USD", "input": 1.5, "output": 7.5}},
+    # Google's introductory rate, read off its own pricing page 2026-09-26.
+    "google-gemini-3.8-flash": {"price": {"currency": "USD", "input": 1.5, "output": 7.5}, "discount": {"input": 0.75, "output": 3.75, "until": date(2026, 12, 31)}},
     "google-gemini-3.5-flash-lite": {"price": {"currency": "USD", "input": 0.3, "output": 2.5}},
     "google-gemini-3.1-pro": {"price": {"currency": "USD", "input": 2.0, "output": 12.0}},
     "minimax-m3": {"price": {"currency": "USD", "input": 0.6, "output": 2.4}},
@@ -571,12 +574,12 @@ MODEL_PRICES: dict[str, dict] = {
     "openai-gpt-5.6-terra": {"price": {"currency": "USD", "input": 2.0, "output": 12.0}},
     "openai-gpt-5.6-luna": {"price": {"currency": "USD", "input": 0.2, "output": 1.2}},
     "openrouter-fable-5-1": {"price": {"currency": "USD", "input": 10.0, "output": 50.0}},
-    "openrouter-opus-5": {"price": {"currency": "USD", "input": 5.0, "output": 25.0}},
+    "openrouter-opus-5-5": {"price": {"currency": "USD", "input": 4.0, "output": 20.0}},
     "openrouter-grok-4.6": {"price": {"currency": "USD", "input": 2.0, "output": 6.0}},
     "openrouter-gpt-6-astra": {"price": {"currency": "USD", "input": 10.0, "output": 50.0}},
     "openrouter-gpt-5.6-sol": {"price": {"currency": "USD", "input": 5.0, "output": 30.0}},
     "openrouter-gpt-5.3-codex": {"price": {"currency": "USD", "input": 1.75, "output": 14.0}},
-    "openrouter-gemini-3.6-flash": {"price": {"currency": "USD", "input": 1.5, "output": 7.5}},
+    "openrouter-gemini-3.8-flash": {"price": {"currency": "USD", "input": 1.5, "output": 7.5}},
     "openrouter-llama-4-maverick": {"price": {"currency": "USD", "input": 0.2, "output": 0.8}},
     "openrouter-minimax-m3": {"price": {"currency": "USD", "input": 0.6, "output": 2.4}, "discount": {"input": 0.24, "output": 0.96}},
     "openrouter-qwen3.8-max": {"price": {"currency": "USD", "input": 2.0, "output": 6.0}},
@@ -796,10 +799,10 @@ LLM_PROVIDERS: list[LLMProvider] = [
     LLMProvider(
         name="anthropic",
         display_name="Anthropic",
-        description="Latest Claude Fable 5.1, Opus 5, Opus 4.8, Sonnet 5, Sonnet 4.6 and Haiku 4.5",
+        description="Latest Claude Fable 5.1, Opus 5.5, Opus 5, Sonnet 5, Sonnet 4.6 and Haiku 4.5",
         use="langchain_anthropic:ChatAnthropic",
-        models=["claude-fable-5-1", "claude-opus-5", "claude-opus-4-8", "claude-sonnet-5", "claude-sonnet-4-6", "claude-haiku-4-5"],
-        default_model="claude-opus-5",
+        models=["claude-fable-5-1", "claude-opus-5-5", "claude-opus-5", "claude-sonnet-5", "claude-sonnet-4-6", "claude-haiku-4-5"],
+        default_model="claude-opus-5-5",
         env_var="ANTHROPIC_API_KEY",
         package="langchain-anthropic",
         extra_config={
@@ -833,7 +836,7 @@ LLM_PROVIDERS: list[LLMProvider] = [
     LLMProvider(
         name="google",
         display_name="Google Gemini",
-        description="Gemini 3.6 Flash + 3.5 Flash-Lite + 3.1 Pro (native Gemini SDK, no thinking)",
+        description="Gemini 3.8 Flash + 3.5 Flash-Lite + 3.1 Pro (native Gemini SDK, no thinking)",
         use="langchain_google_genai:ChatGoogleGenerativeAI",
         models=[entry["model"] for entry in GOOGLE_HOME_BUNDLE_MODELS],
         default_model=GOOGLE_HOME_BUNDLE_MODELS[0]["model"],

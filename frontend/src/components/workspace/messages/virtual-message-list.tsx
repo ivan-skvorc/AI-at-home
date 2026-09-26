@@ -19,6 +19,7 @@ import { useStickToBottomContext } from "use-stick-to-bottom";
 
 import {
   createRowHeightEstimator,
+  pickPrependAnchor,
   resolveListGrowth,
   type ListGrowth,
 } from "@/components/workspace/messages/virtual-message-list-helpers";
@@ -48,6 +49,9 @@ type ScrollToGroupOptions = {
   behavior?: ScrollBehavior;
   align?: GroupAlignment;
 };
+
+/** A row to hold still, and where its top sat relative to the viewport's. */
+type PrependAnchor = { key: Key; viewportOffset: number };
 
 type VirtualMessageListProps = {
   groups: readonly MessageGroup[];
@@ -133,8 +137,71 @@ export const VirtualMessageList = forwardRef<
   const listGrowthRef = useRef<ListGrowth>("none");
   /** Epoch ms until which stick-to-bottom's lock is not allowed to re-engage. */
   const stickSuppressedUntilRef = useRef(0);
-  const anchorRef = useRef<{ key: Key; viewportOffset: number } | undefined>(
-    undefined,
+  const anchorRef = useRef<PrependAnchor | undefined>(undefined);
+  const getItemKeyRef = useRef(getItemKey);
+  const anchorSettleFrameRef = useRef<number | undefined>(undefined);
+
+  /**
+   * Re-seat a restored anchor on its real, measured row.
+   *
+   * A virtualized restore is computed from estimates for every row the page
+   * just brought in. The rows around the anchor only measure once they render,
+   * which is after the restore — and virtual-core decides whether to compensate
+   * for a re-measured row from its own scroll offset, which has not caught up
+   * with the restore yet, so it does not. Left alone, the reader ends up off by
+   * however wrong those estimates were: a few hundred pixels for agent turns.
+   */
+  const settleAnchorOnRow = useCallback(
+    (anchor: PrependAnchor) => {
+      let attemptsLeft = VIRTUAL_SCROLL_SETTLE_ATTEMPTS;
+      const settle = () => {
+        anchorSettleFrameRef.current = undefined;
+        const viewport = scrollRef.current;
+        const row = Array.from(
+          listRef.current?.querySelectorAll<HTMLElement>(
+            "[data-message-group-index]",
+          ) ?? [],
+        ).find(
+          (element) =>
+            getItemKeyRef.current(Number(element.dataset.messageGroupIndex)) ===
+            anchor.key,
+        );
+        if (!viewport || !row) {
+          return;
+        }
+        const delta =
+          row.getBoundingClientRect().top -
+          viewport.getBoundingClientRect().top -
+          anchor.viewportOffset;
+        if (Math.abs(delta) < 1) {
+          return;
+        }
+        viewport.scrollTo({
+          top: viewport.scrollTop + delta,
+          behavior: "instant",
+        });
+        attemptsLeft -= 1;
+        // Scrolling brings neighbouring rows into the window, and their own
+        // measurements can move the anchor again.
+        if (attemptsLeft > 0) {
+          anchorSettleFrameRef.current = requestAnimationFrame(settle);
+        }
+      };
+      if (anchorSettleFrameRef.current !== undefined) {
+        cancelAnimationFrame(anchorSettleFrameRef.current);
+      }
+      anchorSettleFrameRef.current = requestAnimationFrame(settle);
+    },
+    [scrollRef],
+  );
+
+  useEffect(
+    () => () => {
+      if (anchorSettleFrameRef.current !== undefined) {
+        cancelAnimationFrame(anchorSettleFrameRef.current);
+      }
+    },
+    [],
   );
 
   const alignGroupToViewport = useCallback(
@@ -267,6 +334,7 @@ export const VirtualMessageList = forwardRef<
   // reader's position after a prepend has to settle before anything else is
   // allowed to decide the list should scroll.
   useLayoutEffect(() => {
+    getItemKeyRef.current = getItemKey;
     const firstKey = getItemKey(0);
     const previousFirstKey = previousFirstKeyRef.current;
     const anchor = anchorRef.current;
@@ -281,13 +349,24 @@ export const VirtualMessageList = forwardRef<
       count: groups.length,
       firstKey: groups.length > 0 ? firstKey : undefined,
     });
-    let restored = false;
+    previousFirstKeyRef.current = firstKey;
+
+    const viewport = scrollRef.current;
+    const list = listRef.current;
+    if (!viewport || !list) {
+      return;
+    }
+    // Anchors are kept in viewport terms (a row's top minus the viewport's),
+    // so one read off the static list's DOM still restores correctly after a
+    // loaded page carries the thread past VIRTUALIZATION_THRESHOLD — which a
+    // history page routinely does. The virtualizer's offsets start at the list,
+    // not at the top of the scrolled content, so they are shifted by this.
+    const viewportTop = viewport.getBoundingClientRect().top;
+    // How far the viewport's top sits below the list's top: the scroll offset
+    // in the virtualizer's list-relative terms.
+    const listScrollOffset = viewportTop - list.getBoundingClientRect().top;
+
     if (
-      // Only the virtualized list needs restoring. In the static list the rows
-      // above the viewport are real DOM with real heights, so the browser's own
-      // scroll anchoring already holds the position — and scrolling to an
-      // offset the virtualizer derived from estimates would break it.
-      shouldVirtualize &&
       previousFirstKey !== undefined &&
       firstKey !== previousFirstKey &&
       anchor
@@ -295,12 +374,27 @@ export const VirtualMessageList = forwardRef<
       const anchorIndex = groups.findIndex(
         (group, index) => groupKey(group, index) === anchor.key,
       );
-      if (anchorIndex >= 0) {
-        const anchorStart = virtualizer.getOffsetForIndex(
-          anchorIndex,
-          "start",
-        )?.[0];
-        if (anchorStart !== undefined) {
+      // Where the anchor row now starts, in the virtualizer's list-relative
+      // terms. The static list restores too: the browser's scroll anchoring
+      // holds nothing for a scroller at offset 0, and offset 0 is exactly
+      // where the load-more sentinel fires. Its rows are real DOM with real
+      // heights, so it reads the row rather than a virtualizer estimate.
+      let anchorStart: number | undefined;
+      if (anchorIndex >= 0 && shouldVirtualize) {
+        anchorStart = virtualizer.getOffsetForIndex(anchorIndex, "start")?.[0];
+      } else if (anchorIndex >= 0) {
+        const row = list.querySelector<HTMLElement>(
+          `[data-message-group-index="${anchorIndex}"]`,
+        );
+        anchorStart = row
+          ? row.getBoundingClientRect().top - viewportTop + listScrollOffset
+          : undefined;
+      }
+      if (anchorStart !== undefined) {
+        const delta = anchorStart - anchor.viewportOffset - listScrollOffset;
+        // Under a pixel means the place already held — the browser's own
+        // anchoring does that whenever the viewport is not at the top.
+        if (Math.abs(delta) >= 1) {
           // Older turns arrived above the viewport. Hold stick-to-bottom's
           // lock open across the restore, or it reads the resulting downward
           // scroll as the reader choosing to go back to the newest message.
@@ -309,68 +403,69 @@ export const VirtualMessageList = forwardRef<
               Date.now() + PREPEND_STICK_SUPPRESSION_MS;
             stopScroll();
           }
-          virtualizer.scrollToOffset(anchorStart - anchor.viewportOffset, {
-            behavior: "auto",
+          if (shouldVirtualize) {
+            virtualizer.scrollToOffset(viewport.scrollTop + delta, {
+              behavior: "auto",
+            });
+            settleAnchorOnRow(anchor);
+            // `virtualItems` was built from the pre-restore scroll offset, so
+            // an anchor derived from it here would describe a viewport that no
+            // longer exists — and the next prepend would restore to it. Leave
+            // the existing anchor alone; the next render captures a
+            // consistent one.
+            return;
+          }
+          viewport.scrollTo({
+            top: viewport.scrollTop + delta,
+            behavior: "instant",
           });
-          restored = true;
         }
       }
     }
-    previousFirstKeyRef.current = firstKey;
-
-    if (restored) {
-      // `virtualItems` was built from the pre-restore scroll offset, so the
-      // anchor derived from it here would describe a viewport that no longer
-      // exists — and the next prepend would restore to it. Leave the existing
-      // anchor alone; the next render captures a consistent one.
-      return;
-    }
 
     if (shouldVirtualize) {
-      const scrollOffset = virtualizer.scrollOffset ?? 0;
-      const firstVisible = virtualItems.find(
-        (item) => item.end >= scrollOffset,
+      const anchorItem = pickPrependAnchor(
+        virtualItems.filter((item) => item.end >= listScrollOffset),
       );
-      if (firstVisible) {
+      if (anchorItem) {
         anchorRef.current = {
-          key: firstVisible.key,
-          viewportOffset: firstVisible.start - scrollOffset,
+          key: anchorItem.key,
+          viewportOffset: anchorItem.start - listScrollOffset,
         };
       }
       return;
     }
 
     // Static list: the virtualizer's offsets are estimates nothing rendered
-    // from, so read the anchor off the DOM instead. Keeping it current here is
-    // what lets a thread cross VIRTUALIZATION_THRESHOLD — which a loaded
-    // history page routinely does — without losing the reader's place.
-    const viewport = scrollRef.current;
-    const list = listRef.current;
-    if (!viewport || !list) {
-      return;
-    }
-    const viewportTop = viewport.getBoundingClientRect().top;
+    // from, so read the anchor off the DOM instead.
+    const rows: { index: number; top: number }[] = [];
     for (const row of list.querySelectorAll<HTMLElement>(
       "[data-message-group-index]",
     )) {
       const rect = row.getBoundingClientRect();
-      if (rect.bottom < viewportTop) {
-        continue;
-      }
       const index = Number(row.dataset.messageGroupIndex);
-      if (Number.isSafeInteger(index) && index >= 0 && index < groups.length) {
-        anchorRef.current = {
-          key: getItemKey(index),
-          viewportOffset: rect.top - viewportTop,
-        };
+      if (
+        rect.bottom >= viewportTop &&
+        Number.isSafeInteger(index) &&
+        index >= 0 &&
+        index < groups.length
+      ) {
+        rows.push({ index, top: rect.top });
       }
-      break;
+    }
+    const anchorRow = pickPrependAnchor(rows);
+    if (anchorRow) {
+      anchorRef.current = {
+        key: getItemKey(anchorRow.index),
+        viewportOffset: anchorRow.top - viewportTop,
+      };
     }
   }, [
     getItemKey,
     groups,
     isAtBottom,
     scrollRef,
+    settleAnchorOnRow,
     shouldVirtualize,
     stopScroll,
     virtualItems,

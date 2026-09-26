@@ -10,7 +10,9 @@ import { parsePreferences } from "@/core/settings/preferences-sync";
 import {
   activatePreferences,
   getBaseSettingsSnapshot,
+  getThreadContextSnapshot,
   getThreadModelSnapshot,
+  resolveThreadContext,
   updateLocalSettings,
   updateThreadSettings,
 } from "@/core/settings/store";
@@ -92,6 +94,78 @@ describe("per-conversation context vs. account preferences", () => {
     } finally {
       stop();
     }
+  });
+});
+
+/**
+ * The composer resolves a fallback model/mode as soon as the model list loads.
+ * That is not a choice anyone made, and it must not become one.
+ *
+ * Passwordless is this fork's default, and there no account preference is ever
+ * active — so this used to fall through to `updateThreadSettings`, which here
+ * pins every per-conversation key as the chat's own override. On a device that
+ * had not seen the chat, that happened before the chat's recorded workflow
+ * (FORK.md §36) arrived, so the record was refused as "the browser already has
+ * a selection", and the next edit PATCHed the fallback over it.
+ */
+describe.each([
+  ["without account sync (passwordless)", false],
+  ["with account sync", true],
+])("automatic resolution %s", (_label, withSync) => {
+  const run = (body: () => void) => {
+    if (!withSync) {
+      body();
+      return;
+    }
+    const { stop } = trackedPreferences();
+    try {
+      body();
+    } finally {
+      stop();
+    }
+  };
+
+  it("does not pin a fallback as the conversation's own selection", () => {
+    run(() => {
+      const threadId = `fresh-${withSync}`;
+      resolveThreadContext(threadId, { model_name: "fallback", mode: "pro" });
+
+      expect(getThreadContextSnapshot(threadId)).toEqual({});
+      expect(
+        window.localStorage.getItem(`${THREAD_CONTEXT_KEY_PREFIX}${threadId}`),
+      ).toBeNull();
+      // The composer still shows the fallback, from the shared base.
+      expect(getBaseSettingsSnapshot().context.model_name).toBe("fallback");
+    });
+  });
+
+  it("still repairs a key the conversation did choose", () => {
+    run(() => {
+      const threadId = `chosen-${withSync}`;
+      updateThreadSettings(threadId, "context", { model_name: "removed" });
+      resolveThreadContext(threadId, { model_name: "fallback", mode: "pro" });
+
+      expect(getThreadContextSnapshot(threadId)).toEqual({
+        model_name: "fallback",
+      });
+    });
+  });
+
+  it("does not leak a conversation's own choices into every other chat", () => {
+    run(() => {
+      const threadId = `offline-${withSync}`;
+      updateThreadSettings(threadId, "context", { internet_enabled: false });
+      // The composer reports the chat's whole effective context, overrides
+      // included, alongside the keys it resolved.
+      resolveThreadContext(threadId, {
+        model_name: "fallback",
+        mode: "pro",
+        internet_enabled: false,
+      });
+
+      expect(getThreadContextSnapshot(threadId).internet_enabled).toBe(false);
+      expect(getBaseSettingsSnapshot().context.internet_enabled).toBe(true);
+    });
   });
 });
 

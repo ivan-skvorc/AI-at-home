@@ -26,16 +26,35 @@ describe("message history virtualization", () => {
   // These are the fast guards that fail in milliseconds instead of six minutes
   // when the wiring is undone.
 
-  it("restores the reader's position only where the virtualizer owns layout", () => {
-    // The static list keeps real DOM above the viewport, so the browser's own
-    // scroll anchoring holds it. Scrolling to a virtualizer offset derived
-    // from estimates would break exactly what it is meant to preserve.
+  it("restores the reader's position in the static list too", () => {
+    // The static list used to be left to the browser's own scroll anchoring,
+    // which does nothing for a scroller at offset 0 — exactly where the
+    // load-more sentinel fires — so every older page parked the reader at its
+    // top. It restores from the row itself, which there is real DOM.
     const restore = source.slice(
-      source.indexOf("let restored = false;"),
-      source.indexOf("previousFirstKeyRef.current = firstKey;"),
+      source.indexOf("let anchorStart"),
+      source.indexOf("const anchorItem = pickPrependAnchor("),
     );
-    expect(restore).toContain("shouldVirtualize &&");
+    expect(restore).not.toContain("shouldVirtualize &&");
+    expect(restore).toContain("[data-message-group-index=");
+    expect(restore).toContain("viewport.scrollTo({");
+  });
+
+  it("re-seats a virtualized restore on the measured row", () => {
+    // The virtualized restore lands where the estimates for the new rows say;
+    // only the rendered row says where the reader actually is.
+    const restore = source.slice(
+      source.indexOf("let anchorStart"),
+      source.indexOf("const anchorItem = pickPrependAnchor("),
+    );
     expect(restore).toContain("virtualizer.scrollToOffset");
+    expect(restore).toContain("settleAnchorOnRow(anchor);");
+  });
+
+  it("anchors on a group a prepend cannot re-key", () => {
+    // The older page usually completes the list's first turn, which re-keys
+    // the first group. Both anchor captures must pass over it.
+    expect(source.split("pickPrependAnchor(").length - 1).toBe(2);
   });
 
   it("holds stick-to-bottom's lock open across a prepend", () => {
@@ -59,7 +78,7 @@ describe("message history virtualization", () => {
     expect(
       source.indexOf("listGrowthRef.current = resolveListGrowth"),
     ).toBeLessThan(source.indexOf('listGrowthRef.current === "append"'));
-    expect(source.indexOf("let restored = false;")).toBeLessThan(
+    expect(source.indexOf("let anchorStart")).toBeLessThan(
       source.indexOf("const stickSuppressed ="),
     );
   });

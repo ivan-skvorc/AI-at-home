@@ -15,6 +15,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   APIs, per-user scoping on thread token usage, and a rewritten AIO-sandbox timeout model
   that enforces `sandbox.bash_command_timeout` server-side (`config_version` 57, bumped in
   `config.example.yaml` and both Helm chart copies).
+- **models:** the 2026-09-26 audit rolls the bundle forward. Claude Opus 5.5 ($4/$20, thinking
+  always on) joins the Anthropic block and replaces Opus 5 as the routed half of Anthropic's
+  OpenRouter pair. Opus 4.8 leaves under the two-generation rule, and the wizard's Anthropic
+  default is now Opus 5.5. Gemini 3.8 Flash replaces 3.6 Flash in both Google entries. The
+  Google home copy carries Google's introductory $0.75/$3.75 rate through 2026-12-31.
 - **sandbox:** `sandbox.request_timeout` no longer needs to be raised alongside
   `bash_command_timeout`. Upstream's per-command request budget means the HTTP client can no
   longer abort a long command first, so the fork's "exceeds request_timeout" warning was
@@ -22,6 +27,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reach — session creation and the file/list operations.
 
 ### Fixed
+- **models:** the OpenRouter copy of Claude Fable 5.1 can be called again. It shipped as
+  `anthropic/claude-fable-5-1`, derived from Anthropic's own id, but OpenRouter spells it
+  `anthropic/claude-fable-5.1`, so every request to it failed.
+- **chat:** scrolling back through a long conversation keeps your place as older history
+  loads. A history page is cut by row count and an agent turn is many rows, so the newest
+  page nearly always starts mid-turn; the older page then re-keyed the list's first group,
+  which was the restore anchor, and nothing was restored. The list under 60 groups was left
+  to browser scroll anchoring, which does nothing at the top where loading triggers. Each
+  page parked the reader at its top and the turns in between were skipped.
+- **chat:** a conversation opened on another device shows the model and mode it recorded
+  again. In passwordless mode the composer's automatic fallback was pinned as the chat's own
+  selection before the recorded one arrived, so the record was refused and the next edit
+  wrote the fallback over it. With account sync on, the same path merged one chat's
+  per-conversation choices (such as its internet switch) into every other chat's defaults.
 - **sandbox:** a non-positive per-call command timeout is treated as unset again. Upstream's
   `_effective_command_timeout` fell back only on `None`, so a `0` reached the sandbox as
   `hard_timeout=0` with the request bounded at the 5-second grace period alone — the command

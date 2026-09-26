@@ -42,8 +42,13 @@ material for `core/threads/` and `core/messages/`, not optional reading.
    the account-wide path. InputBox marks automatic model/mode resolution
    separately from user choices on both normal and Custom Agent chat pages;
    `resolveThreadContext` must neither enqueue account writes nor create a
-   fallback thread override that masks a later server preference, so it
-   refreshes only keys the conversation already overrides. The fork's
+   fallback thread override that masks a later server preference — or the
+   workflow the conversation recorded on another device (FORK.md §36), which
+   `applyWorkflow` adopts only while the chat has no override. That holds in
+   passwordless mode too, where no account sync is active: it refreshes only
+   keys the conversation already overrides and merges the rest into the
+   in-memory base, never the chat's own overrides (an offline switch there
+   would otherwise reach every chat). The fork's
    `democracy` mode must stay in both preference schemas (`preferences-sync.ts`
    and the Gateway's `Preferences` model): a narrowed union drops it silently on
    the way out and 422s on the way in. Pinned by

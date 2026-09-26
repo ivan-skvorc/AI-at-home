@@ -169,21 +169,23 @@ class TestBundleProviders:
 
     def test_anthropic_bundle_has_latest_models(self):
         provider = next(p for p in LLM_PROVIDERS if p.name == "anthropic")
-        assert provider.default_model == "claude-opus-5"
+        assert provider.default_model == "claude-opus-5-5"
         assert provider.default_model in provider.models
         assert [m["model"] for m in provider.bundle_models] == [
             "claude-fable-5-1",
+            "claude-opus-5-5",
             "claude-opus-5",
-            "claude-opus-4-8",
             "claude-sonnet-5",
             "claude-sonnet-4-6",
             "claude-haiku-4-5",
         ]
         by_model = {m["model"]: m for m in provider.bundle_models}
-        # Fable 5.1 / Opus 5 / Opus 4.8 / Sonnet 5 / Sonnet 4.6 must use adaptive thinking (budget_tokens 400s).
+        # Fable 5.1 / Opus 5.5 / Opus 5 / Sonnet 5 / Sonnet 4.6 must use adaptive thinking (budget_tokens 400s).
         assert by_model["claude-fable-5-1"]["when_thinking_enabled"]["thinking"]["type"] == "adaptive"
+        assert by_model["claude-opus-5-5"]["when_thinking_enabled"]["thinking"]["type"] == "adaptive"
         assert by_model["claude-opus-5"]["when_thinking_enabled"]["thinking"]["type"] == "adaptive"
-        assert by_model["claude-opus-4-8"]["when_thinking_enabled"]["thinking"]["type"] == "adaptive"
+        # Opus 5.5, like Fable 5.1, cannot disable thinking (400 on type: disabled).
+        assert by_model["claude-opus-5-5"]["when_thinking_disabled"]["thinking"]["type"] == "adaptive"
         assert by_model["claude-sonnet-5"]["when_thinking_enabled"]["thinking"]["type"] == "adaptive"
         assert by_model["claude-sonnet-4-6"]["when_thinking_enabled"]["thinking"]["type"] == "adaptive"
         # Haiku 4.5 still takes an explicit thinking budget.
@@ -205,11 +207,11 @@ class TestBundleProviders:
         # previously asserted Opus 5 was NOT routed — the old one-flagship rule.
         # Every Claude *below* the pair still lives only on the direct bundle,
         # which is what the Sonnet/Haiku exclusions below hold.
-        assert "anthropic/claude-fable-5-1" in bundle_ids
-        assert "anthropic/claude-opus-5" in bundle_ids
+        assert "anthropic/claude-fable-5.1" in bundle_ids
+        assert "anthropic/claude-opus-5.5" in bundle_ids
         assert "openai/gpt-6-astra" in bundle_ids
         assert "openai/gpt-5.6-sol" in bundle_ids
-        for below_the_pair in ("anthropic/claude-opus-4-8", "anthropic/claude-sonnet-5", "anthropic/claude-haiku-4-5"):
+        for below_the_pair in ("anthropic/claude-opus-5", "anthropic/claude-sonnet-5", "anthropic/claude-haiku-4.5"):
             assert below_the_pair not in bundle_ids, f"{below_the_pair} belongs to the direct Anthropic bundle only"
 
         assert any(m.startswith("x-ai/") for m in bundle_ids)
@@ -304,7 +306,7 @@ class TestHomeApiBundleProviders:
             # `MiniMax-M3`, OpenRouter uses `minimax/minimax-m3`).
             return any(slug.split("/", 1)[-1].lower() == bare.lower() for slug in openrouter_ids)
 
-        for flagship in ("gpt-5.6-sol", "gpt-5.3-codex", "grok-4.6", "gemini-3.6-flash", "deepseek-v4-pro", "mistral-large-2512", "kimi-k3", "qwen3.8-max", "MiniMax-M3", "glm-5.3"):
+        for flagship in ("gpt-5.6-sol", "gpt-5.3-codex", "grok-4.6", "gemini-3.8-flash", "deepseek-v4-pro", "mistral-large-2512", "kimi-k3", "qwen3.8-max", "MiniMax-M3", "glm-5.3"):
             assert flagship in home_ids, f"{flagship} missing from a home block"
             assert routed(flagship), f"{flagship} not doubled on OpenRouter"
 
@@ -524,7 +526,7 @@ class TestBuildMinimalConfig:
     def test_anthropic_bundle_writes_all_models(self):
         content = build_minimal_config(
             provider_use="langchain_anthropic:ChatAnthropic",
-            model_name="claude-opus-5",
+            model_name="claude-opus-5-5",
             display_name="Anthropic",
             api_key_field="api_key",
             env_var="ANTHROPIC_API_KEY",
@@ -533,8 +535,8 @@ class TestBuildMinimalConfig:
         data = yaml.safe_load(content)
         assert [m["model"] for m in data["models"]] == [
             "claude-fable-5-1",
+            "claude-opus-5-5",
             "claude-opus-5",
-            "claude-opus-4-8",
             "claude-sonnet-5",
             "claude-sonnet-4-6",
             "claude-haiku-4-5",

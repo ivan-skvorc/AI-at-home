@@ -45,6 +45,24 @@ export function resolveListGrowth({
     : "prepend";
 }
 
+/**
+ * The row to hold still when older history lands above it.
+ *
+ * `rows` are the rendered rows that reach the viewport or sit below it, in list
+ * order. The list's first row is passed over whenever a later one is on offer:
+ * a history page is cut by row count, not at turn boundaries, and one agent
+ * turn is many rows (every tool call and result), so the older page usually
+ * carries the front of the turn the list starts with. Those messages merge into
+ * the first group and change its key, so an anchor on it is never found again —
+ * nothing is restored and the reader lands at the top of the page that just
+ * loaded. Every later group keeps its key across a prepend.
+ */
+export function pickPrependAnchor<Row extends { index: number }>(
+  rows: readonly Row[],
+): Row | undefined {
+  return rows.find((row) => row.index > 0) ?? rows[0];
+}
+
 export type RowHeightEstimator = {
   /** Feed a measured row height. Non-positive sizes are ignored. */
   record: (size: number) => void;

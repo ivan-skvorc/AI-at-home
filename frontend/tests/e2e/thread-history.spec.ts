@@ -47,6 +47,63 @@ async function expectMessageAtBottom(scroller: Locator, message: Locator) {
   }).toPass({ timeout: 15_000 });
 }
 
+type HistoryRow = {
+  run_id: string;
+  seq: number;
+  content: Record<string, unknown> & { id: string };
+  metadata: Record<string, unknown>;
+  created_at: string;
+};
+
+/**
+ * Feed rows shaped like real agent turns: a question, `toolSteps` tool calls
+ * each followed by its result, then the answer — so one turn is
+ * `2 * toolSteps + 2` rows and a row-count page boundary falls inside a turn.
+ */
+function buildAgentTurnRows(turns: number, toolSteps: number): HistoryRow[] {
+  const rows: HistoryRow[] = [];
+  const push = (runId: string, content: HistoryRow["content"]) =>
+    rows.push({
+      run_id: runId,
+      seq: rows.length + 1,
+      content,
+      metadata: { caller: "lead_agent" },
+      created_at: "2025-06-03T12:00:00Z",
+    });
+  for (let turn = 1; turn <= turns; turn += 1) {
+    const runId = `run-${turn}`;
+    push(runId, {
+      type: "human",
+      id: `human-${turn}`,
+      content: [{ type: "text", text: `Question ${turn}` }],
+    });
+    for (let step = 1; step <= toolSteps; step += 1) {
+      const callId = `call-${turn}-${step}`;
+      push(runId, {
+        type: "ai",
+        id: `ai-${turn}-${step}`,
+        content: "",
+        tool_calls: [
+          { id: callId, name: "bash", args: { command: `echo ${step}` } },
+        ],
+      });
+      push(runId, {
+        type: "tool",
+        id: `tool-${turn}-${step}`,
+        tool_call_id: callId,
+        name: "bash",
+        content: `${step}`,
+      });
+    }
+    push(runId, {
+      type: "ai",
+      id: `answer-${turn}`,
+      content: `Answer ${turn}\n\n${"The reader is looking at this. ".repeat(30)}`,
+    });
+  }
+  return rows;
+}
+
 test.describe("Thread history", () => {
   test("sidebar shows existing threads", async ({ page }) => {
     mockLangGraphAPI(page, { threads: THREADS });
@@ -540,6 +597,121 @@ test.describe("Thread history", () => {
     );
     expect(distanceFromBottom).toBeGreaterThan(100);
   });
+
+  // A history page is cut by row count, not at turn boundaries, and an agent
+  // turn is many rows (every tool call and result is one). So the newest page
+  // almost always starts partway through a turn, and the older page completes
+  // that turn by merging into the list's first group — changing its key. The
+  // test above cannot see this: its rows are one group each, cut cleanly.
+  for (const shape of [
+    // Under VIRTUALIZATION_THRESHOLD: the static list, where the browser's own
+    // scroll anchoring was trusted to hold the place — and does nothing for a
+    // scroller at offset 0, which is exactly where the load-more sentinel fires.
+    { name: "static", turns: 6, toolSteps: 10, splitTurn: 4 },
+    // Past it from the first page: the virtualized list's own restore.
+    { name: "virtualized", turns: 30, toolSteps: 2, splitTurn: 6 },
+  ]) {
+    test(`keeps the reader's place when an older page completes the top turn (${shape.name} list)`, async ({
+      page,
+    }) => {
+      const rows = buildAgentTurnRows(shape.turns, shape.toolSteps);
+      // Two rows into the split turn's tool steps: the newest page opens on a
+      // tool result whose call — and whose question — are on the older page.
+      const splitSeq =
+        rows.find((row) => row.content.id === `human-${shape.splitTurn}`)!.seq +
+        2;
+      let olderPageRequested = false;
+      let releaseOlderPage!: () => void;
+      const olderPageGate = new Promise<void>((resolve) => {
+        releaseOlderPage = resolve;
+      });
+
+      mockLangGraphAPI(page, {
+        threads: [
+          {
+            thread_id: MOCK_THREAD_ID,
+            title: "Agent turns",
+            updated_at: "2025-06-03T12:00:00Z",
+            messages: [],
+          },
+        ],
+      });
+      await page.route(
+        new RegExp(`/api/threads/${MOCK_THREAD_ID}/messages/page(?:\\?.*)?$`),
+        async (route) => {
+          if (route.request().method() !== "GET") {
+            return route.fallback();
+          }
+          const isLatestPage =
+            new URL(route.request().url()).searchParams.get("before_seq") ===
+            null;
+          if (!isLatestPage) {
+            olderPageRequested = true;
+            await olderPageGate;
+          }
+          await route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify({
+              data: rows.filter((row) =>
+                isLatestPage ? row.seq >= splitSeq : row.seq < splitSeq,
+              ),
+              has_more: isLatestPage,
+              next_before_seq: isLatestPage ? splitSeq : null,
+            }),
+          });
+        },
+      );
+
+      await page.goto(`/workspace/chats/${MOCK_THREAD_ID}`);
+      const scroller = page.getByRole("log").locator(":scope > div").first();
+      await expect(
+        page.getByText(`Answer ${shape.turns}`, { exact: true }),
+      ).toBeVisible({ timeout: 15_000 });
+
+      await scroller.dispatchEvent("wheel", { deltaY: -2_000 });
+      await scroller.evaluate((element) => {
+        element.scrollTop = 0;
+        element.dispatchEvent(new Event("scroll"));
+      });
+      await expect
+        .poll(() => olderPageRequested, { timeout: 15_000 })
+        .toBe(true);
+
+      // The split turn's answer is the second group, right under the partial
+      // first one. It is what the reader is looking at, and where it sits
+      // relative to the viewport is the whole property.
+      const anchorRow = page.getByText(`Answer ${shape.splitTurn}`, {
+        exact: true,
+      });
+      const offsetInViewport = async () => {
+        const [row, viewport] = await Promise.all([
+          anchorRow.boundingBox(),
+          scroller.boundingBox(),
+        ]);
+        return row && viewport ? row.y - viewport.y : Number.NaN;
+      };
+      await expect(anchorRow).toBeVisible();
+      const before = await offsetInViewport();
+
+      releaseOlderPage();
+      // The question the older page brings sits directly above the anchor, so
+      // it is inside the render window of either list.
+      await expect(
+        page.getByText(`Question ${shape.splitTurn}`, { exact: true }),
+      ).toBeAttached({ timeout: 15_000 });
+
+      await expect
+        .poll(async () => Math.abs((await offsetInViewport()) - before), {
+          timeout: 5_000,
+        })
+        .toBeLessThanOrEqual(4);
+      await expect(anchorRow).toBeVisible();
+      expect(
+        await scroller.evaluate((element) => element.scrollTop),
+      ).toBeGreaterThan(0);
+    });
+  }
 
   test("shows a completed run duration once after multi-step history", async ({
     page,

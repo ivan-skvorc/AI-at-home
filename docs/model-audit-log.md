@@ -11,6 +11,92 @@ Newest first. Append a pass; never rewrite one. A dated line is what tells the
 next person whether the roster was checked last week or last year, and _which_
 providers that pass could actually reach.
 
+- **2026-09-26 — partial: tier 1 for Anthropic and Google, tier 2 for routed slugs, tier 3
+  elsewhere. One uncallable slug fixed, two roster rolls, one discount added.** Requested in
+  words alongside the scroll-back and cross-device-model change cycle.
+
+  **Machine half clean.** `python3 scripts/audit_models.py` reports **no drift**; `openrouter`
+  is _skipped_ (`Tunnel connection failed: 403 Forbidden`) and the ten catalog-less providers
+  likewise. The stale fixture, regenerated for the new routed slugs, still yields exactly its
+  four findings.
+
+  **What the network reached.** New since the last three passes: `claude.com/pricing`,
+  `platform.claude.com/docs/en/about-claude/pricing`, `…/models/overview` and
+  `…/models/opus-5-5/{overview,migration-guide}` all answer 200, as does Google Cloud's
+  `gemini-enterprise-agent-platform/generative-ai/pricing`. Still refused at the proxy
+  (`http=000`, fetch tool `EGRESS_BLOCKED`): `openrouter.ai`, `platform.openai.com`,
+  `openai.com`, `x.ai`, `docs.x.ai`, `ai.google.dev`, `api-docs.deepseek.com`, `mistral.ai`,
+  `platform.moonshot.ai`, `alibabacloud.com`, `minimax.io`, `docs.z.ai`, `docs.bigmodel.cn`.
+  Web search was available for tier 2.
+
+  **Anthropic — tier 1, all six prices verified.** Fable 5.1 `$10/$50` (cache hit `$0.25`),
+  Opus 5 `$5/$25` (`$0.50`), Opus 4.8 `$5/$25` (`$0.50`), Sonnet 5 `$2/$10` (`$0.20`),
+  Sonnet 4.6 `$3/$15` (`$0.30`), Haiku 4.5 `$1/$5` (`$0.10`) — every figure, cache hits
+  included, already matched the bundle.
+
+  **Anthropic — roster roll: Claude Opus 5.5 in, Opus 4.8 out.** Anthropic's overview now
+  leads with Opus 5.5 ("start with Claude Opus 5.5 for most workloads"): API id
+  `claude-opus-5-5`, `$4/$20`, cache hit `$0.20` (0.05x), 1M context, 128K output, retirement
+  "not sooner than September 22, 2027". Its migration guide says adaptive thinking is always
+  on and `thinking: {"type": "disabled"}` is **rejected**, so it takes Fable 5.1's
+  always-on config (adaptive + summarized in both toggle states), not Opus 5's. Per _Which
+  models to keep_ the roll is mechanical: the new Opus joins, Opus 5 stays as the
+  previous-generation pin, Opus 4.8 leaves. The wizard's Anthropic default moves to
+  `claude-opus-5-5`. The routed half of Anthropic's pair moves with it — Fable 5.1 + Opus 5.5,
+  `$10/$50` beside `$4/$20` — so the pair's reason (two tiers a factor of two or more apart)
+  still holds.
+
+  **Fixed — `anthropic/claude-fable-5-1` could not be called.** The 2026-09-02 pass flagged
+  this slug as derived, not read, and asked for it to be re-checked first. OpenRouter spells
+  Claude versions with a dot: its own `llms.txt` is titled "Anthropic: Claude Fable 5.1
+  (anthropic/claude-fable-5.1)", its model page is `openrouter.ai/anthropic/claude-fable-5.1`,
+  and the Respan gateway (`openrouter/anthropic/claude-fable-5.1`) and a public PR "read off the
+  API" agree — **tier 2, corroborated**. Every other Claude on OpenRouter follows the same
+  pattern (`claude-opus-4.8`, `claude-haiku-4.5`). Corrected to `anthropic/claude-fable-5.1`
+  in both sources; `test_routed_claude_slugs_keep_openrouters_dotted_version` now pins the
+  spelling, and the doubling checks compare `.` and `-` as equal instead of deriving one from
+  the other. The routed Opus 5.5 is `anthropic/claude-opus-5.5` on the same evidence
+  (OpenRouter's page URL, `$4/$20` there and on Anthropic's own list) — **corroborated**.
+
+  **Google — tier 1 from Google Cloud's pricing page.** Gemini 3.6 Flash `$1.50/$7.50`,
+  3.5 Flash-Lite `$0.30/$2.50`, 3.1 Pro Preview `$2/$12` (≤200K) all match. The page also
+  lists **Gemini 3.7 Flash and 3.8 Flash**, both newer than the bundled 3.6. 3.8 Flash is GA
+  since 2026-09-02, id `gemini-3.8-flash` per Google's own docs listing, OpenRouter slug
+  `google/gemini-3.8-flash` (its page URL; **slug corroborated**). Rolled forward in both the
+  Google home block and the routed slot; same `$1.50/$7.50` standard rate. The page states the
+  introductory rate verbatim — "Gemini 3.8 Flash, Gemini 3.7 Flash, Gemini 3.6 Flash … are
+  offered with introductory pricing of $0.75 / $3.75 … through December 31, 2026" — so the
+  **home** entry carries `discount: {0.75, 3.75, until: 2026-12-31}`. The routed copy does
+  **not**: a routed discount is read only off OpenRouter's promotions page, still
+  unreachable. This closes the 2026-09-22 queue's item 2 by rolling past 3.6. Caveat worth
+  one line: the page is Google Cloud's (Agent Platform), not `ai.google.dev`; global-endpoint
+  list prices are the ones used, and they are the Gemini API's too as far as any source says.
+
+  **Discovery (step 2) — search-based, logged, not rolled.** The catalog is unreachable, so
+  these came from OpenRouter-scoped searches and **need a tier-1 read before they ship**:
+  - **Grok 4.7** (`x-ai/grok-4.7`, released 2026-09-21, "succeeding Grok 4.6"). The xAI home
+    block and routed slot are a generation behind until verified.
+  - **DeepSeek V4.1 Flash** (`deepseek/deepseek-v4.1-flash`, 2026-09-10) — the home block's
+    cheaper sibling is V4 Flash.
+  - **Declined:** Qwen3.8 Max 0902 (a snapshot of the bundled model), Qwen3.8 Omni Flash and
+    Max Prime (variants, not the flagship), GLM-5.3-Prime (a speed variant), Fireworks'
+    Ember-1 (built on Kimi K3, not Moonshot's), the `*-latest` aliases (never bundled), and
+    Anthropic's Claude Mythos 5 / 5.1 (listed under "Additional models", outside the Opus /
+    Sonnet / Haiku / Fable lineup the roster rule names).
+  Nothing newer surfaced for OpenAI, MiniMax, Mistral, Meta or NVIDIA.
+
+  **Still owed to a pass with tier-1 access**, in order: Grok 4.7 and DeepSeek V4.1 Flash
+  above; GPT-5.6 Sol's apparent `$4/$20` discount through 2026-11-21 (2026-09-22 item 1);
+  DeepSeek V4 Pro's two disagreeing entries (item 3); a routed discount for Gemini 3.8 Flash
+  if OpenRouter's promotions page shows one.
+
+  **Prose copies no test reads** — `providers.py`'s `description=` strings, the `QUICK START`
+  comment in `config.example.yaml`, `sync-api-key-models.py`'s docstring, and README §2 —
+  updated for Opus 5.5 and Gemini 3.8 Flash, as is `.env.example`'s Gemini line. Step 8
+  gates: `sync-api-key-models.py --dry-run` clean; `test_sync_api_key_models.py
+  test_setup_wizard.py test_config_integrity.py test_audit_models.py test_model_price_fields.py
+  test_pricing.py` — 302 passed.
+
 - **2026-09-22 — partial, tier 2 for standard rates only. Provider pages still unreachable, so
   no `price:` or `discount:` block was edited. Machine half clean. Nine standard rates
   corroborated by search; three discount findings are owed to the next pass with egress.**
