@@ -1,5 +1,7 @@
 import type { Message, Thread } from "@langchain/langgraph-sdk";
 
+import type { ReasoningEffortValue } from "@/core/models/reasoning";
+
 import type { Todo } from "../todos";
 
 export interface GoalState {
@@ -50,7 +52,7 @@ export interface AgentThreadContext extends Record<string, unknown> {
   democracy_participants?: string[];
   // How the organizer grades each panelist per turn; absent = no grading.
   democracy_grading?: "five_point" | "boolean";
-  reasoning_effort?: "minimal" | "low" | "medium" | "high";
+  reasoning_effort?: ReasoningEffortValue;
   agent_name?: string;
   // Per-user long-term memory opt-in. When false the backend skips memory
   // injection/extraction/tools for this run; when omitted the backend falls back

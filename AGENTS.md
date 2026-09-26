@@ -66,7 +66,7 @@ deer-flow/
 │                                    # Managed integration skill packs are global at .deer-flow/integrations/skills/{provider}/
 │                                    # Integration credentials and enabled state remain per-user
 ├── contracts/                      # Cross-component JSON contracts (e.g. subagent status, skill review)
-├── examples/deerflow-extension-example/ # Standalone package demonstrating all extension contribution kinds
+├── examples/                       # Extension examples: deerflow-extension-{example,bookmarks,jev-*}
 ├── scripts/                        # Root orchestration scripts invoked by the Makefile — see scripts/AGENTS.md
 ├── tests/                          # Root-level tests (currently tests/skills/ — public skill tests)
 └── docs/                           # Cross-cutting docs, plans, and design notes
@@ -78,9 +78,11 @@ imported, and build hooks and extension code run with Gateway privileges, so onl
 operator sources belong there. Manage with `deerflow extensions
 install/upgrade/list/enable/disable/remove` or `make extension-*`; every mutation needs a
 Gateway restart (`upgrade` replaces an installed extension and keeps its config).
-Contribution kinds, the manager transaction, source forms and lock discipline:
+Contribution kinds (including experimental full-stack plugins), the manager transaction,
+source forms and lock discipline:
 [the extensions guide](backend/packages/harness/deerflow/extensions/AGENTS.md), with a
-[reference extension](examples/deerflow-extension-example/) demonstrating all five.
+[reference extension](examples/deerflow-extension-example/); the user manual is
+`frontend/src/content/{en,zh}/harness/extensions/`.
 
 Runtime config lives at the **repo root** — `config.yaml` (main) and
 `extensions_config.json` (MCP servers + skills), both copied from their examples by
@@ -223,9 +225,10 @@ These apply repo-wide; module guides own the module-specific detail.
   relying on the platform locale.
 - **Version sources must stay in lockstep** — a release version must match identically in
   `backend/pyproject.toml`, `frontend/package.json`, and `deploy/helm/deer-flow/Chart.yaml`
-  (`version` + `appVersion`); a `v*` tag runs `scripts/verify_versions.sh` in CI and
+  (`version` + `appVersion`), and `backend/uv.lock` must record the root package's PEP 440
+  form (e.g. `2.1.0rc0`); a `v*` tag runs `scripts/verify_versions.sh` in CI and
   **blocks all publishing** on any drift. Bump with `scripts/bump_version.sh <ver>` (aligns
-  all four) and check with `scripts/verify_versions.sh <ver>`. See
-  [RELEASING.md](RELEASING.md).
+  all four and refreshes `uv.lock`; needs `uv` on `PATH`) and check with
+  `scripts/verify_versions.sh <ver>`. See [RELEASING.md](RELEASING.md).
 - **Don't edit `CLAUDE.md`** — it only contains `@AGENTS.md`. All agent guidance changes
   belong here in `AGENTS.md`; `CLAUDE.md` is a thin import shim.

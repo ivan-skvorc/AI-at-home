@@ -21,7 +21,11 @@ class Preferences(BaseModel):
     # union because `extra="forbid"` + `strict=True` means an account that last
     # selected it would otherwise get a 422 on every preference PATCH.
     mode: Literal["flash", "thinking", "pro", "ultra", "democracy"] | None = None
-    reasoning_effort: Literal["minimal", "low", "medium", "high"] | None = None
+    # Provider vocabularies differ (issue #5073): accept any effort token so a
+    # model-specific default such as ``max`` can be remembered. The UI checks
+    # remembered values against the selected model; the factory enforces
+    # declared contracts while preserving legacy direct-request behavior.
+    reasoning_effort: Annotated[str, StringConstraints(max_length=32, pattern=r"^[A-Za-z0-9_.-]+$")] | None = None
 
 
 async def _owner(request: Request, expected_user: str) -> str:

@@ -187,6 +187,20 @@ export const enUS: Translations = {
     showBrowser: "Open browser panel",
   },
 
+  skillUsage: {
+    used: "Skills used",
+    title: "Skills",
+    name: "Name",
+    description: "Description",
+    builtIn: "Built-in",
+    custom: "Custom",
+    integration: "Integration",
+    legacy: "Legacy",
+    copy: "Copy skill snapshot",
+    partial:
+      "This is a partial snapshot of the skill instructions loaded during this run.",
+  },
+
   runDuration: {
     reasoning: "Reasoning",
     working: "Working…",
@@ -428,6 +442,11 @@ export const enUS: Translations = {
     modelProviderOther: "Other",
     modelContextSuffix: "ctx",
     modelMetaTitle: "Model id · weights on disk · context window",
+    reasoningEffortXhigh: "Extra High",
+    reasoningEffortXhighDescription:
+      "Extended deduction beyond High; slowest, most thorough",
+    reasoningEffortMax: "Max",
+    reasoningEffortMaxDescription: "The provider's deepest reasoning budget",
     surpriseMe: "Surprise",
     surpriseMePrompt: "Surprise me",
     followupLoading: "Generating follow-up questions...",
@@ -1758,6 +1777,7 @@ export const enUS: Translations = {
         work: "Work",
         personal: "Personal",
         topOfMind: "Top of mind",
+        cognitiveStyle: "Thinking style",
         historyBackground: "History",
         recentMonths: "Recent months",
         earlierContext: "Earlier context",
@@ -1776,6 +1796,7 @@ export const enUS: Translations = {
           },
           content: "Content",
           source: "Source",
+          unknown: "Unknown",
           createdAt: "CreatedAt",
           view: "View",
         },

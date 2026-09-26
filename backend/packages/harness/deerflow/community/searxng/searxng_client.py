@@ -44,6 +44,13 @@ def _format_unresponsive(unresponsive: Any) -> str:
 class SearxngClient:
     """Client for SearXNG meta search engine API."""
 
+    # SearXNG's search API has no ``limit`` parameter: ``/search`` answers with
+    # one page of results (the instance's ``results_per_page``, 10 by default)
+    # and ignores a limit it is handed. A ``max_results`` larger than a page
+    # therefore has to be collected by walking ``pageno``. Cap the walk so an
+    # unexpectedly large ``max_results`` cannot fan out into unbounded requests.
+    _MAX_PAGES = 5
+
     def __init__(self, base_url: str) -> None:
         self.base_url = base_url.rstrip("/")
 
@@ -58,27 +65,67 @@ class SearxngClient:
 
         Args:
             query: The search query.
-            max_results: Maximum number of results to return.
+            max_results: Maximum number of results to return. SearXNG returns
+                one page per request, so a value larger than a page is collected
+                across ``pageno`` pages. A falsy value means "no cap".
             categories: Search categories to use.
             time_range: Optional relative publication/update window.
 
         Returns:
             List of search result dictionaries.
         """
+        limit = max_results if isinstance(max_results, int) and max_results > 0 else None
+
+        collected: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for pageno in range(1, self._MAX_PAGES + 1):
+            rows = await self._search_page(query, pageno=pageno, categories=categories, time_range=time_range)
+            if not rows:
+                break
+
+            added = 0
+            for row in rows:
+                key = str(row.get("url") or row.get("title") or "")
+                if key and key in seen:
+                    continue
+                seen.add(key)
+                collected.append(row)
+                added += 1
+                if limit is not None and len(collected) >= limit:
+                    return collected
+
+            # A page that adds nothing new means the instance is repeating
+            # itself or the query is exhausted -- ask for no more.
+            if added == 0:
+                break
+
+        return collected
+
+    async def _search_page(
+        self,
+        query: str,
+        pageno: int,
+        categories: list[str] | None,
+        time_range: SearchTimeRange | None,
+    ) -> list[dict[str, Any]]:
+        """Fetch a single page of results.
+
+        ``limit`` is deliberately not sent: it is not part of the SearXNG search
+        API, so an instance ignores it and the caller cannot tell a truncated
+        response from a complete one.
+        """
         params: dict[str, Any] = {
             "q": query,
             "format": "json",
             "language": "auto",
-            "pageno": 1,
+            "pageno": pageno,
         }
-        if max_results:
-            params["limit"] = max_results
         if categories:
             params["categories"] = ",".join(categories)
         if time_range is not None:
             params["time_range"] = time_range
 
-        logger.debug(f"Searching SearXNG at {self.base_url} with query: {query}")
+        logger.debug(f"Searching SearXNG at {self.base_url} with query: {query} (page {pageno})")
         try:
             async with httpx.AsyncClient(timeout=30) as client:
                 resp = await client.get(
@@ -91,12 +138,15 @@ class SearxngClient:
                 )
                 resp.raise_for_status()
                 data = resp.json()
-                results = data.get("results", [])
+                results = data.get("results") or []
                 # An empty result set is ambiguous: either nothing matched, or
                 # every engine was blocked. Only `unresponsive_engines` tells
-                # the two apart, and only the second one is an error.
+                # the two apart, and only the second one is an error. Only on
+                # the first page, though: a later page coming back empty and
+                # blocked ends the walk, and the rows already collected are
+                # still a real answer that must not be thrown away.
                 unresponsive = data.get("unresponsive_engines")
-                if not results and unresponsive:
+                if not results and unresponsive and pageno == 1:
                     detail = _format_unresponsive(unresponsive)
                     logger.warning(f"SearXNG returned no results; every engine was unavailable: {detail}")
                     raise SearxngEnginesUnavailableError(
@@ -105,7 +155,7 @@ class SearxngClient:
                         f"immediately will keep failing and can extend the suspension — wait, rephrase for a "
                         f"different engine mix, or use another tool."
                     )
-                return results[:max_results] if max_results else results
+                return results
         except SearxngEnginesUnavailableError:
             raise
         except httpx.HTTPStatusError as e:
