@@ -153,7 +153,9 @@ test("shows one skill menu per run, switches snapshots and restores after reload
         color: getComputedStyle(button).color,
       })),
     );
-  expect(toolbarSizes).toHaveLength(4);
+  // Copy, skills, regenerate. Upstream's row also carries Branch, which this
+  // fork removed on purpose (FORK.md §18).
+  expect(toolbarSizes).toHaveLength(3);
   expect(
     toolbarSizes.every(({ button, icon }) => button === 32 && icon === 16),
   ).toBe(true);
