@@ -8,6 +8,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- **upstream:** merged `upstream/main` (135 commits since 2026-09-22, upstream 2.1.0 and the
+  start of 2.2.0). Brings upstream's declarative per-model `reasoning:` contract (effort
+  vocabularies such as `max`, required thinking), operator prompt overlays
+  (`lead_prompt_overlay`, applied on top of a user-edited system prompt too), a skill-usage
+  menu on answers, SearXNG results collected across pages, async Tavily, and llama.cpp and
+  prompt-overlay examples in `config.example.yaml` (`config_version` 58, bumped in
+  `config.example.yaml` and both Helm chart copies). Deleting an uploaded document no longer
+  deletes its converted `.md` companion (upstream #5672). The fork keeps Pro, Ultra and
+  Democracy selectable on models without thinking; upstream's new mode helper would have
+  clamped them to Flash.
+
+### Fixed
+- **config:** `make config-upgrade` generates a `pii_redaction.token_secret` for a config that
+  enabled redaction without one, now that the secret is mandatory. Upstream ships this as
+  its migration 47; the fork runs it as 58, because a fork config was already stamped past
+  47 and would otherwise have skipped it and failed startup.
+- **search:** a SearXNG search whose engines get blocked partway through its page walk keeps
+  the results the first page found instead of failing as "every engine unavailable".
+
+### Changed
 - **upstream:** merged `upstream/main` (136 commits since 2026-09-15). Brings upstream's
   Capability Center (`/workspace/capabilities` now owns Plugins and Skills, so those
   sections leave the Settings dialog), the knowledge capability (`knowledge_base`, off by

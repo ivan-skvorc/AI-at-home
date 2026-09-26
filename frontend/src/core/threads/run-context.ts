@@ -1,4 +1,4 @@
-import type { InputMode } from "../models/capabilities";
+import type { InputMode, ReasoningEffortValue } from "../models/reasoning";
 import { getLocalSettings } from "../settings/local";
 
 import {
@@ -21,7 +21,7 @@ export interface ModeDerivedContext {
   thinking_enabled: boolean;
   is_plan_mode: boolean;
   subagent_enabled: boolean;
-  reasoning_effort?: "minimal" | "low" | "medium" | "high";
+  reasoning_effort?: ReasoningEffortValue;
   democracy_participants?: string[];
   democracy_grading?: DemocracyGrading;
   max_total_subagents?: number;
@@ -30,7 +30,7 @@ export interface ModeDerivedContext {
 
 interface ModeContextInput {
   mode: InputMode | undefined;
-  reasoning_effort?: "minimal" | "low" | "medium" | "high";
+  reasoning_effort?: ReasoningEffortValue;
   model_name?: string | undefined;
   democracy_participants?: string[];
   democracy_grading?: DemocracyGrading;

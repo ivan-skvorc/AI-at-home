@@ -7,6 +7,8 @@ import sys
 from types import ModuleType
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from deerflow.utils.file_conversion import (
     _ASYNC_THRESHOLD_BYTES,
     _MIN_CHARS_PER_PAGE,
@@ -554,6 +556,51 @@ def test_cancelled_conversion_drains_write_and_removes_partial(tmp_path, monkeyp
     assert settled is True, "cancellation was delivered before the in-flight write drained"
     assert done.wait(timeout=10), "the write worker never settled"
     assert not out.exists(), "partial output left behind after a cancelled conversion"
+
+
+def test_cancel_during_the_dual_name_write_removes_both_companions(tmp_path, monkeypatch):
+    """Fork: the dual-name companion is a second write, and a second window.
+
+    The fork also writes ``<name.ext>.md`` beside the stem companion. A cancel
+    that lands while that second write runs must still remove the first one:
+    it is the hidden staging file (``output_path``) the upload flow would
+    otherwise leave behind on every cancelled conversion.
+    """
+    import threading
+    from pathlib import Path
+
+    started = threading.Event()
+    release = threading.Event()
+    real_write_text = Path.write_text
+
+    def _block_on_dual(self, data, encoding=None):
+        if self.name.endswith(".txt.md"):
+            started.set()
+            release.wait(timeout=10)
+        return real_write_text(self, data, encoding=encoding)
+
+    src = tmp_path / "doc.txt"
+    staging = tmp_path / ".doc.staging.md"
+    dual = tmp_path / "doc.txt.md"
+    src.write_text("hello")
+    monkeypatch.setattr(Path, "write_text", _block_on_dual)
+
+    async def _scenario():
+        task = asyncio.create_task(convert_file_to_markdown(src, output_path=staging))
+        await asyncio.to_thread(started.wait, 10)
+        task.cancel()
+        release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    try:
+        asyncio.run(_scenario())
+    finally:
+        release.set()
+
+    assert started.is_set(), "the dual-name write never ran"
+    assert not staging.exists(), "the staging companion survived a cancel during the dual-name write"
+    assert not dual.exists(), "the dual-name companion survived a cancelled conversion"
 
 
 def test_conversion_inside_file_io_worker_runs_nested_offload_inline(tmp_path, monkeypatch):

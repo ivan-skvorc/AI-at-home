@@ -318,7 +318,9 @@ callbacks. Static demos and non-admin users must not query the management API.
 deprecated `supports_thinking` / `supports_reasoning_effort` booleans.
 `core/models/reasoning.ts` is the only place that interprets it: it falls back to
 the booleans for older Gateways, clamps the chat mode (`getResolvedMode` never
-yields `flash` for a required-thinking model), lists the effort options the
+yields `flash` for a required-thinking model; fork rule: without thinking only
+`thinking` falls back to `flash`, Pro/Ultra/Democracy stay — pinned by
+`tests/unit/core/models/capabilities.test.ts`), lists the effort options the
 composer and the sidecar render, and maps mode presets and remembered values
 through the contract's aliases/default (`resolveReasoningEffort`). Effort values
 are open strings (`ReasoningEffortValue`), so provider-specific tokens such as

@@ -387,6 +387,31 @@ class TestUnresponsiveEngines:
         finally:
             patcher.stop()
 
+    async def test_a_blocked_later_page_keeps_the_results_already_collected(self):
+        # The client walks `pageno` to fill max_results. Engines getting benched
+        # mid-walk leave page 2 empty and blocked, but page 1 was a real answer:
+        # raising there would throw it away and fail a search that succeeded.
+        page_one = [{"title": f"r{i}", "url": f"https://example.com/{i}", "content": "c"} for i in range(3)]
+        blocked = {"results": [], "unresponsive_engines": [["brave", "too many requests"]]}
+
+        with patch("deerflow.community.searxng.searxng_client.httpx.AsyncClient") as mock_cls:
+            mock_ctx = MagicMock()
+            mock_cls.return_value.__aenter__.return_value = mock_ctx
+
+            def _get(url, params=None, headers=None):
+                mock_resp = MagicMock()
+                mock_resp.status_code = 200
+                mock_resp.json.return_value = {"results": page_one} if params["pageno"] == 1 else blocked
+                mock_resp.raise_for_status.return_value = None
+                return mock_resp
+
+            mock_ctx.get = AsyncMock(side_effect=_get)
+            client = SearxngClient(base_url="http://searxng:8080")
+            result = await client.search("partly blocked query", max_results=10)
+
+        assert result == page_one
+        assert [call.kwargs["params"]["pageno"] for call in mock_ctx.get.call_args_list] == [1, 2]
+
     async def test_a_genuinely_empty_result_set_is_still_a_success(self):
         # No engine failed; the query simply matched nothing. This must stay an
         # empty success, not an error.
