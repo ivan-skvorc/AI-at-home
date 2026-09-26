@@ -14,6 +14,7 @@ the matching API key is present in .env. These tests pin:
 from __future__ import annotations
 
 import importlib.util
+import re
 from pathlib import Path
 
 import pytest
@@ -32,6 +33,18 @@ def _load_script():
 
 
 sync_api = _load_script()
+
+
+def same_model(model_id: str) -> str:
+    """Compare a direct id with an OpenRouter slug's bare half.
+
+    Case differs per API (MiniMax-M3 ↔ minimax-m3), and so does the version
+    separator: Anthropic's API hyphenates it (claude-fable-5-1) where OpenRouter
+    dots it (anthropic/claude-fable-5.1). Only comparisons normalise — deriving
+    one spelling from the other is how an uncallable routed slug shipped.
+    """
+    return model_id.lower().replace(".", "-")
+
 
 # A miniature config carrying both marker blocks in the same commented shape the
 # real config.example.yaml uses.
@@ -52,7 +65,7 @@ models:
   # - name: openrouter-fable-5-1
   #   display_name: Claude Fable 5.1 (OpenRouter)
   #   use: langchain_openai:ChatOpenAI
-  #   model: anthropic/claude-fable-5-1
+  #   model: anthropic/claude-fable-5.1
   #   api_key: $OPENROUTER_API_KEY
   #   base_url: https://openrouter.ai/api/v1
   #   max_tokens: 32000
@@ -177,11 +190,11 @@ class TestRealExampleConfig:
         out = sync_api.sync(self.text, {"anthropic"})
         data = yaml.safe_load(out)
         names = {m["model"] for m in data["models"]}
-        assert {"claude-fable-5-1", "claude-opus-5", "claude-opus-4-8", "claude-sonnet-5", "claude-sonnet-4-6", "claude-haiku-4-5"}.issubset(names)
+        assert {"claude-fable-5-1", "claude-opus-5-5", "claude-opus-5", "claude-sonnet-5", "claude-sonnet-4-6", "claude-haiku-4-5"}.issubset(names)
         assert all(m["api_key"] == "$ANTHROPIC_API_KEY" for m in data["models"])
 
     def test_anthropic_adaptive_models_request_summarized_thinking(self):
-        """The adaptive Claude models (Fable 5.1, Opus 5, Opus 4.8, Sonnet 5,
+        """The adaptive Claude models (Fable 5.1, Opus 5.5, Opus 5, Sonnet 5,
         Sonnet 4.6) must request `display: summarized` when thinking is enabled.
         Their default (`omitted`) returns thinking blocks with empty text, which
         langchain-anthropic drops on multi-turn tool-use replay, producing a 400
@@ -192,7 +205,7 @@ class TestRealExampleConfig:
         data = yaml.safe_load(out)
         by_model = {m["model"]: m for m in data["models"]}
 
-        for slug in ("claude-fable-5-1", "claude-opus-5", "claude-opus-4-8", "claude-sonnet-5", "claude-sonnet-4-6"):
+        for slug in ("claude-fable-5-1", "claude-opus-5-5", "claude-opus-5", "claude-sonnet-5", "claude-sonnet-4-6"):
             enabled = by_model[slug]["when_thinking_enabled"]["thinking"]
             assert enabled.get("type") == "adaptive", slug
             assert enabled.get("display") == "summarized", slug
@@ -203,10 +216,10 @@ class TestRealExampleConfig:
         assert "display" not in haiku_enabled
 
     def test_fable_never_sends_disabled_thinking_but_opus_sonnet_do(self):
-        """Fable 5.1 rejects `thinking: {type: disabled}` with a 400, so it must never
-        send it on either toggle state: when thinking is "disabled" Fable keeps
-        adaptive+summarized (it cannot turn thinking off, and summarized keeps the
-        multi-turn replay legal). Opus 5 / Opus 4.8 / Sonnet 5 / Sonnet 4.6 accept
+        """Fable 5.1 and Opus 5.5 reject `thinking: {type: disabled}` with a 400, so
+        neither may send it on either toggle state: when thinking is "disabled" they
+        keep adaptive+summarized (they cannot turn thinking off, and summarized keeps
+        the multi-turn replay legal). Opus 5 / Sonnet 5 / Sonnet 4.6 accept
         and keep `type: disabled`. Regression guard against both the disable-path 400
         and the omitted-display replay 400.
 
@@ -218,12 +231,12 @@ class TestRealExampleConfig:
         data = yaml.safe_load(out)
         by_model = {m["model"]: m for m in data["models"]}
 
-        fable_disabled = by_model["claude-fable-5-1"]["when_thinking_disabled"]["thinking"]
-        assert fable_disabled.get("type") == "adaptive", fable_disabled
-        assert fable_disabled.get("type") != "disabled"
-        assert fable_disabled.get("display") == "summarized", fable_disabled
+        for always_on in ("claude-fable-5-1", "claude-opus-5-5"):
+            disabled = by_model[always_on]["when_thinking_disabled"]["thinking"]
+            assert disabled.get("type") == "adaptive", (always_on, disabled)
+            assert disabled.get("display") == "summarized", (always_on, disabled)
 
-        for slug in ("claude-opus-5", "claude-opus-4-8", "claude-sonnet-5", "claude-sonnet-4-6", "claude-haiku-4-5"):
+        for slug in ("claude-opus-5", "claude-sonnet-5", "claude-sonnet-4-6", "claude-haiku-4-5"):
             disabled = by_model[slug].get("when_thinking_disabled") or {}
             assert disabled.get("thinking", {}).get("type") == "disabled", slug
 
@@ -232,14 +245,14 @@ class TestRealExampleConfig:
         data = yaml.safe_load(out)
         ids = {m["model"] for m in data["models"]}
         expected = {
-            "anthropic/claude-fable-5-1",
+            "anthropic/claude-fable-5.1",
             # Anthropic and OpenAI each route a *pair* — FORK.md step 3.
-            "anthropic/claude-opus-5",
+            "anthropic/claude-opus-5.5",
             "x-ai/grok-4.6",
             "openai/gpt-6-astra",
             "openai/gpt-5.6-sol",
             "openai/gpt-5.3-codex",
-            "google/gemini-3.6-flash",
+            "google/gemini-3.8-flash",
             "meta-llama/llama-4-maverick",
             "minimax/minimax-m3",
             "qwen/qwen3.8-max",
@@ -426,21 +439,32 @@ class TestFirstPartyKeyCoverage:
             assert len(bundle) >= 2, f"home block {slug} carries only {len(bundle)} model(s) — a lone flagship is a finding"
 
     def test_every_lab_with_a_home_block_has_its_flagship_doubled(self):
-        """A home id is the OpenRouter slug minus its 'provider/' prefix (modulo
-        case, e.g. minimax/minimax-m3 ↔ MiniMax-M3)."""
-        direct_ids = {m["model"].lower() for m in self.models if not m["name"].startswith("openrouter-")}
-        routed = {m["model"].split("/", 1)[1].lower() for m in self.models if m["name"].startswith("openrouter-") and "/" in m["model"]}
+        """A home id names the same model as the OpenRouter slug minus its
+        'provider/' prefix, as `same_model` compares them."""
+
+        direct_ids = {same_model(m["model"]) for m in self.models if not m["name"].startswith("openrouter-")}
+        routed = {same_model(m["model"].split("/", 1)[1]) for m in self.models if m["name"].startswith("openrouter-") and "/" in m["model"]}
         for slug, (_env, bundle) in self.bundles.items():
-            bare = {m["model"].lower() for m in bundle}
+            bare = {same_model(m["model"]) for m in bundle}
             assert bare & routed, f"{slug}: no home model is doubled on OpenRouter"
         # The template case this generalises: Anthropic's Fable 5.1 is direct *and* routed.
         assert "claude-fable-5-1" in direct_ids
         assert "claude-fable-5-1" in routed
 
+    def test_routed_claude_slugs_keep_openrouters_dotted_version(self):
+        """`anthropic/claude-fable-5-1` shipped for three weeks and could not be
+        called: it was derived from the direct id by prefixing `anthropic/`, while
+        OpenRouter spells the version with a dot. Nothing fails until a request
+        does, and the weekly audit cannot see it while OpenRouter is unreachable."""
+        routed_claude = [m["model"] for m in self.models if m["name"].startswith("openrouter-") and m["model"].startswith("anthropic/")]
+        assert routed_claude
+        for slug in routed_claude:
+            assert re.fullmatch(r"anthropic/claude-[a-z]+-\d+(\.\d+)?", slug), f"{slug} is not OpenRouter's spelling (it dots the version)"
+
     # FORK.md, step 3: two labs route a *pair* rather than a single flagship,
     # because their top tier is really two models a factor of two apart in price.
     PAIRED_ROUTED_LABS = {
-        "anthropic": ("anthropic/claude-fable-5-1", "anthropic/claude-opus-5"),
+        "anthropic": ("anthropic/claude-fable-5.1", "anthropic/claude-opus-5.5"),
         "openai": ("openai/gpt-6-astra", "openai/gpt-5.6-sol"),
     }
 
@@ -475,17 +499,17 @@ class TestFirstPartyKeyCoverage:
         a user holding the lab's own key would see fewer models than a user
         holding OpenRouter's.
         """
-        direct_ids = {m["model"].lower() for m in self.models if not m["name"].startswith("openrouter-")}
+        direct_ids = {same_model(m["model"]) for m in self.models if not m["name"].startswith("openrouter-")}
         for lab, pair in self.PAIRED_ROUTED_LABS.items():
             for slug in pair:
-                bare = slug.split("/", 1)[1].lower()
+                bare = same_model(slug.split("/", 1)[1])
                 assert bare in direct_ids, f"{lab}: {slug} is routed but has no direct entry — the pair must be doubled, not routed-only"
 
     def test_only_meta_and_nvidia_stay_openrouter_only(self):
         """Every other routed lab must own a direct block; when an OpenRouter-only
         lab ships a first-party API, this fails until it gets a home block."""
-        direct_ids = {m["model"].lower() for m in self.models if not m["name"].startswith("openrouter-")}
-        uncovered = {m["model"].split("/", 1)[0] for m in self.models if m["name"].startswith("openrouter-") and "/" in m["model"] and m["model"].split("/", 1)[1].lower() not in direct_ids}
+        direct_ids = {same_model(m["model"]) for m in self.models if not m["name"].startswith("openrouter-")}
+        uncovered = {m["model"].split("/", 1)[0] for m in self.models if m["name"].startswith("openrouter-") and "/" in m["model"] and same_model(m["model"].split("/", 1)[1]) not in direct_ids}
         assert uncovered == self.ROUTED_ONLY_PREFIXES, f"routed-only labs drifted: {sorted(uncovered)}"
 
 

@@ -6,6 +6,7 @@ import {
   MAX_ESTIMATED_ROW_HEIGHT,
   MIN_ESTIMATED_ROW_HEIGHT,
   MIN_MEASURED_ROWS_FOR_ESTIMATE,
+  pickPrependAnchor,
   resolveListGrowth,
 } from "@/components/workspace/messages/virtual-message-list-helpers";
 
@@ -77,6 +78,27 @@ describe("resolveListGrowth", () => {
         firstKey: "turn-1",
       }),
     ).toBe("prepend");
+  });
+});
+
+describe("pickPrependAnchor", () => {
+  it("passes over the first group when a later one is on offer", () => {
+    // An older page usually completes the turn the list starts with, which
+    // re-keys the first group: an anchor on it is never found again.
+    expect(
+      pickPrependAnchor([{ index: 0 }, { index: 1 }, { index: 2 }]),
+    ).toEqual({ index: 1 });
+  });
+
+  it("takes the first on-screen group when it is not the list's first", () => {
+    expect(pickPrependAnchor([{ index: 7 }, { index: 8 }])).toEqual({
+      index: 7,
+    });
+  });
+
+  it("falls back to the first group when it is the only one", () => {
+    expect(pickPrependAnchor([{ index: 0 }])).toEqual({ index: 0 });
+    expect(pickPrependAnchor([])).toBeUndefined();
   });
 });
 

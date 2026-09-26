@@ -267,28 +267,43 @@ export function updateThreadSettings<K extends keyof LocalSettings>(
   emitChange();
 }
 
-/** Model availability/default resolution is not an explicit account edit. */
+/**
+ * Model availability/default resolution is not an explicit choice — not an
+ * account edit, and not this conversation's own selection either.
+ *
+ * A key the conversation already chose is repaired in its override (its model
+ * may have been removed). Every other key lands in the in-memory base, which is
+ * uploaded nowhere and persisted by nothing here, so anything better known
+ * later still wins: the account preference when a slow GET arrives, or the
+ * workflow the conversation recorded on another device (`deerflow_workflow`),
+ * which `applyWorkflow` only adopts while the chat has no override of its own.
+ * Pinning the fallback as an override — what passwordless mode, with no
+ * account sync, used to do — made that record look like a local choice, so it
+ * was refused, and the next edit PATCHed the fallback over it.
+ */
 export function resolveThreadContext(
   threadId: string,
   context: Partial<LocalSettings["context"]>,
 ) {
-  if (!preferenceEdit) {
-    updateThreadSettings(threadId, "context", context);
-    return;
-  }
-  baseSettings = mergeSettingsSection(baseSettings, "context", context);
-  // Preserve explicit thread overrides, but do not create one from a temporary
-  // fallback: it would mask the account preference when a slow GET finally
-  // arrives. Only keys the thread has *already* overridden are refreshed, so an
-  // automatic resolution can never pin a field this conversation never chose.
+  ensureBaseSettingsLoaded();
   const existing = getThreadContextSnapshot(threadId);
   const resolved = pickThreadScopedContext(context);
   const updates: Record<string, unknown> = {};
+  const baseUpdates: Record<string, unknown> = { ...context };
   for (const key of Object.keys(resolved)) {
     if (Object.prototype.hasOwnProperty.call(existing, key)) {
       updates[key] = (resolved as Record<string, unknown>)[key];
+      // The caller reports the chat's whole effective context, its overrides
+      // included; merging those into the base would hand one chat's choices
+      // (an offline switch, a Democracy roster) to every other chat.
+      delete baseUpdates[key];
     }
   }
+  baseSettings = mergeSettingsSection(
+    baseSettings,
+    "context",
+    baseUpdates as Partial<LocalSettings["context"]>,
+  );
   if (Object.keys(updates).length > 0) {
     const nextOverride: ThreadContextOverride = { ...existing, ...updates };
     threadContextOverrides.set(threadId, nextOverride);
