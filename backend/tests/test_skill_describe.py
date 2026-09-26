@@ -301,5 +301,9 @@ def test_rendered_allowed_tools_agree_with_skill_tool_policy():
     assert "Allowed tools: (all)" in _render_skill_metadata([omitted], "/mnt/skills")
 
     restricted = _make_skill("locked-down", allowed_tools=())
-    assert allowed_tool_names_for_skills([restricted]) == set()
+    # Fork: the policy has two paths (tool_policy.py). The rendered line
+    # describes a skill in use, which the dynamic path governs; the static
+    # path keeps a merely-enabled empty declaration from stripping every tool.
+    assert allowed_tool_names_for_skills([restricted], exempt_framework_only=False) == set()
+    assert allowed_tool_names_for_skills([restricted]) is None
     assert "Allowed tools: (all)" not in _render_skill_metadata([restricted], "/mnt/skills")
