@@ -217,6 +217,41 @@ class TestMigrations:
         assert rc == 0
         assert yaml.safe_load(config.read_text(encoding="utf-8"))["run_events"]["backend"] == "jsonl"
 
+    def test_a_fork_stamped_config_with_redaction_on_gets_a_token_secret(self, tmp_path):
+        """Upstream's v47 token_secret migration must reach fork-numbered configs.
+
+        token_secret became mandatory for enabled redaction, so a config
+        without one fails startup validation after upgrading. Upstream keys the
+        migration at 47, but this fork's configs were already stamped 47-57
+        when upstream got there, so under that key it would never run for a
+        fork install. It is keyed at 58; a v57 config is the case that proves it.
+        """
+        example = _write_example(tmp_path, version=58)
+        config = tmp_path / "config.yaml"
+        config.write_text(
+            "config_version: 57\nsandbox:\n  use: custom\nmodels: []\nnew_section:\n  enabled: true\npii_redaction:\n  enabled: true\n",
+            encoding="utf-8",
+        )
+
+        rc = config_upgrade.upgrade(config, example, REPO_ROOT)
+
+        assert rc == 0
+        secret = yaml.safe_load(config.read_text(encoding="utf-8"))["pii_redaction"]["token_secret"]
+        assert isinstance(secret, str) and len(secret) >= 16
+
+    def test_redaction_off_or_an_existing_secret_is_left_alone(self, tmp_path):
+        example = _write_example(tmp_path, version=58)
+        off = tmp_path / "off" / "config.yaml"
+        kept = tmp_path / "kept" / "config.yaml"
+        for path, block in ((off, "pii_redaction:\n  enabled: false\n"), (kept, "pii_redaction:\n  enabled: true\n  token_secret: mine\n")):
+            path.parent.mkdir()
+            path.write_text(f"config_version: 57\nsandbox:\n  use: custom\nmodels: []\nnew_section:\n  enabled: true\n{block}", encoding="utf-8")
+
+            assert config_upgrade.upgrade(path, example, REPO_ROOT) == 0
+
+        assert "token_secret" not in yaml.safe_load(off.read_text(encoding="utf-8"))["pii_redaction"]
+        assert yaml.safe_load(kept.read_text(encoding="utf-8"))["pii_redaction"]["token_secret"] == "mine"
+
 
 def _write_example_with_tools(tmp_path: Path, version: int = 3) -> Path:
     example = tmp_path / "config.example.yaml"

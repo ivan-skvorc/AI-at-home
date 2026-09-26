@@ -1,5 +1,5 @@
 import logging
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
@@ -7,11 +7,13 @@ from pydantic import BaseModel, Field
 from app.gateway.authz import (
     _AuthorizationUnavailable,
     _is_internal_caller,
+    authorize_model_use,
     resolve_model_authorization,
 )
 from app.gateway.deps import get_config, get_optional_user_from_request
-from deerflow.authz.provider import AuthzDecision, AuthzRequest
 from deerflow.config.app_config import AppConfig
+from deerflow.config.model_config import ModelConfig
+from deerflow.models.reasoning import reasoning_capabilities_payload, resolve_reasoning_contract
 from deerflow.pricing import build_pricing_map, lookup_pricing
 
 logger = logging.getLogger(__name__)
@@ -42,6 +44,23 @@ class ModelPriceResponse(BaseModel):
     discount_until: str | None = Field(default=None, description="ISO 8601 instant the active discount lapses; null means no expiry")
 
 
+class ReasoningEffortCapabilitiesResponse(BaseModel):
+    """Effort values a model accepts, in display order."""
+
+    values: list[str] = Field(..., description="Accepted effort values (provider vocabulary)")
+    default: str | None = Field(default=None, description="Effort applied when the caller does not choose one")
+    aliases: dict[str, str] = Field(default_factory=dict, description="Generic DeerFlow value -> provider value")
+
+
+class ReasoningCapabilitiesResponse(BaseModel):
+    """Normalized reasoning contract (issue #5073), derived for legacy profiles."""
+
+    thinking: Literal["unsupported", "optional", "required"] = Field(..., description="Whether thinking can be toggled, is always on, or is unavailable")
+    effort: ReasoningEffortCapabilitiesResponse | None = Field(default=None, description="Effort control; null when the model exposes none")
+    history: Literal["preserve", "clear"] | None = Field(default=None, description="Reasoning-history requirement, when declared")
+    source: Literal["legacy", "contract"] = Field(..., description="Whether the profile declared a contract or the booleans were projected")
+
+
 class ModelResponse(BaseModel):
     """Response model for model information."""
 
@@ -49,8 +68,9 @@ class ModelResponse(BaseModel):
     model: str = Field(..., description="Actual provider model identifier")
     display_name: str | None = Field(None, description="Human-readable name")
     description: str | None = Field(None, description="Model description")
-    supports_thinking: bool = Field(default=False, description="Whether model supports thinking mode")
-    supports_reasoning_effort: bool = Field(default=False, description="Whether model supports reasoning effort")
+    supports_thinking: bool = Field(default=False, description="Whether model supports thinking mode (deprecated: derived from `reasoning`)")
+    supports_reasoning_effort: bool = Field(default=False, description="Whether model supports reasoning effort (deprecated: derived from `reasoning`)")
+    reasoning: ReasoningCapabilitiesResponse = Field(..., description="Normalized reasoning capability contract")
     supports_tools: bool | None = Field(default=None, description="Whether model supports tool calling (None if unknown)")
     price: ModelPriceResponse | None = Field(default=None, description="Effective price with any active discount; null when this model has no configured price")
     context_window: int | None = Field(default=None, description="Fork feature. Configured total context window in tokens; null when unknown")
@@ -77,6 +97,26 @@ def _price_response(pricing: dict, model: Any) -> ModelPriceResponse | None:
         discount_output=promo.output_per_million if promo else None,
         discount_cache_hit=promo.input_cache_hit_per_million if promo else None,
         discount_until=entry.discount_until.isoformat() if (promo and entry.discount_until) else None,
+    )
+
+
+def _model_response(model: ModelConfig, pricing: dict) -> ModelResponse:
+    return ModelResponse(
+        name=model.name,
+        model=model.model,
+        display_name=model.display_name,
+        description=model.description,
+        supports_thinking=model.supports_thinking,
+        supports_reasoning_effort=model.supports_reasoning_effort,
+        reasoning=ReasoningCapabilitiesResponse(**reasoning_capabilities_payload(resolve_reasoning_contract(model))),
+        supports_tools=getattr(model, "supports_tools", None),
+        price=_price_response(pricing, model),
+        # Fork feature: how much room a model has, and how much of the GPU it
+        # already occupies. Both are config metadata rather than anything the
+        # provider returns, and the picker shows them together because the
+        # weights are what decides whether the window is actually affordable.
+        context_window=getattr(model, "context_window", None),
+        size_bytes=getattr(model, "size_bytes", None),
     )
 
 
@@ -125,7 +165,8 @@ async def list_models(
                     "display_name": "GPT-4",
                     "description": "OpenAI GPT-4 model",
                     "supports_thinking": false,
-                    "supports_reasoning_effort": false
+                    "supports_reasoning_effort": false,
+                    "reasoning": {"thinking": "unsupported", "effort": null, "history": null, "source": "legacy"}
                 },
                 {
                     "name": "claude-3-opus",
@@ -133,7 +174,8 @@ async def list_models(
                     "display_name": "Claude 3 Opus",
                     "description": "Anthropic Claude 3 Opus model",
                     "supports_thinking": true,
-                    "supports_reasoning_effort": false
+                    "supports_reasoning_effort": false,
+                    "reasoning": {"thinking": "optional", "effort": null, "history": null, "source": "legacy"}
                 }
             ],
             "token_usage": {
@@ -168,25 +210,7 @@ async def list_models(
     # one-currency rule is a property of the deployment, so an authorization
     # filter must not change whether cost reporting is enabled.
     pricing = build_pricing_map(config.models, logger=logger)
-    models = [
-        ModelResponse(
-            name=model.name,
-            model=model.model,
-            display_name=model.display_name,
-            description=model.description,
-            supports_thinking=model.supports_thinking,
-            supports_reasoning_effort=model.supports_reasoning_effort,
-            supports_tools=getattr(model, "supports_tools", None),
-            price=_price_response(pricing, model),
-            # Fork feature: how much room a model has, and how much of the GPU it
-            # already occupies. Both are config metadata rather than anything the
-            # provider returns, and the picker shows them together because the
-            # weights are what decides whether the window is actually affordable.
-            context_window=getattr(model, "context_window", None),
-            size_bytes=getattr(model, "size_bytes", None),
-        )
-        for model in visible_models
-    ]
+    models = [_model_response(model, pricing) for model in visible_models]
     return ModelsListResponse(
         models=models,
         token_usage=TokenUsageResponse(enabled=config.token_usage.enabled),
@@ -234,40 +258,8 @@ async def get_model(
 
     # Phase 3: enforce model:use authorization (deny → 403, not 404, since the
     # model exists but the role lacks permission to use it).
-    fail_closed = config.authorization.fail_closed
     user = await get_optional_user_from_request(request)
     if user is not None:
-        try:
-            provider, principal = resolve_model_authorization(user, is_internal=_is_internal_caller(request, user))
-        except _AuthorizationUnavailable:
-            if fail_closed:
-                raise HTTPException(status_code=403, detail=f"Model '{model_name}' is not available for your role")
-        else:
-            if provider is not None and principal is not None:
-                try:
-                    decision = provider.authorize(AuthzRequest(principal=principal, resource="model", action="use", target=model_name))
-                    if not isinstance(decision, AuthzDecision):
-                        raise TypeError("AuthorizationProvider.authorize must return AuthzDecision")
-                    allowed = decision.allow
-                except Exception:
-                    logger.warning(
-                        "Authorization provider failed while checking model:use for %s",
-                        model_name,
-                        exc_info=True,
-                    )
-                    allowed = not fail_closed
-                if not allowed:
-                    raise HTTPException(status_code=403, detail=f"Model '{model_name}' is not available for your role")
+        authorize_model_use(user, model_name, is_internal=_is_internal_caller(request, user), app_config=config)
 
-    return ModelResponse(
-        name=model.name,
-        model=model.model,
-        display_name=model.display_name,
-        description=model.description,
-        supports_thinking=model.supports_thinking,
-        supports_reasoning_effort=model.supports_reasoning_effort,
-        supports_tools=getattr(model, "supports_tools", None),
-        price=_price_response(build_pricing_map(config.models, logger=logger), model),
-        context_window=getattr(model, "context_window", None),
-        size_bytes=getattr(model, "size_bytes", None),
-    )
+    return _model_response(model, build_pricing_map(config.models, logger=logger))

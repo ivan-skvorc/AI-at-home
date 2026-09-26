@@ -6,7 +6,13 @@ const fields = {
   // "democracy" is this fork's multi-model mode; it must round-trip through
   // the account preference or selecting it would be silently dropped on sync.
   mode: z.enum(["flash", "thinking", "pro", "ultra", "democracy"]).nullable(),
-  reasoning_effort: z.enum(["minimal", "low", "medium", "high"]).nullable(),
+  // Provider contracts may add values such as `max`; the Gateway validates
+  // the token against the selected model (issue #5073).
+  reasoning_effort: z
+    .string()
+    .max(32)
+    .regex(/^[A-Za-z0-9_.-]+$/)
+    .nullable(),
 };
 const schema = z.object(fields).partial();
 export type Preferences = z.infer<typeof schema>;

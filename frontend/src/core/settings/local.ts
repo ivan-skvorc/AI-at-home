@@ -1,3 +1,5 @@
+import type { ReasoningEffortValue } from "@/core/models/reasoning";
+
 import type { TokenUsageInlineMode } from "../messages/usage-model";
 import {
   DEFAULT_MODEL_PICKER_PREFS,
@@ -200,7 +202,7 @@ export interface LocalSettings {
     model_name?: string | undefined;
     subagent_model_name?: string | undefined;
     mode: "flash" | "thinking" | "pro" | "ultra" | "democracy" | undefined;
-    reasoning_effort?: "minimal" | "low" | "medium" | "high";
+    reasoning_effort?: ReasoningEffortValue;
     // Per-conversation internet switch (fork feature, FORK.md §27). Sent to the
     // backend in the run context; `false` strips every internet-reaching tool
     // from the run.

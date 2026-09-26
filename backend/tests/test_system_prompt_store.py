@@ -209,6 +209,27 @@ class TestApplyPromptTemplate:
         assert "<role>" in rendered
         assert "You are Tester" in rendered
 
+    def test_the_operator_overlay_wraps_a_users_saved_prompt(self, base_dir, app_config):
+        # Two owners, one prompt: the user edits the template in Settings, the
+        # operator appends policy in config.yaml (upstream's lead_prompt_overlay).
+        # The overlay is applied to whatever rendered, so an edited prompt must
+        # not silently shed the operator's rules.
+        from deerflow.config.prompt_overlay import PromptOverlay
+
+        store.save_custom_system_prompt("CUSTOM PROMPT for {agent_name}", allowed=SYSTEM_PROMPT_PLACEHOLDERS)
+        configured = app_config.model_copy(update={"lead_prompt_overlay": PromptOverlay(prepend="OPERATOR FIRST", append="OPERATOR LAST")})
+        rendered = apply_prompt_template(agent_name="Tester", app_config=configured)
+        assert rendered == "OPERATOR FIRST\n\nCUSTOM PROMPT for Tester\n\nOPERATOR LAST"
+
+    def test_the_operator_overlay_survives_the_fallback_to_the_builtin(self, base_dir, app_config):
+        from deerflow.config.prompt_overlay import PromptOverlay
+
+        configured = app_config.model_copy(update={"lead_prompt_overlay": PromptOverlay(append="OPERATOR LAST")})
+        with patch("deerflow.agents.lead_agent.prompt.get_system_prompt_template", return_value="{agent_name} {boom}"):
+            rendered = apply_prompt_template(agent_name="Tester", app_config=configured)
+        assert "<role>" in rendered
+        assert rendered.endswith("\n\nOPERATOR LAST")
+
     def test_an_override_dropping_a_section_renders_without_it(self, base_dir, app_config):
         store.save_custom_system_prompt("Only skills:\n{skills_section}", allowed=SYSTEM_PROMPT_PLACEHOLDERS)
         rendered = apply_prompt_template(agent_name="Tester", app_config=app_config)

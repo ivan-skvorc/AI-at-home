@@ -26,6 +26,7 @@ from pathlib import Path
 
 from deerflow.config.app_config import get_app_config
 from deerflow.documents.extraction import ExtractionQuality, assess_extraction, page_anchor
+from deerflow.utils.file_io import await_drained, run_file_io
 
 # Backward-compat re-exports — outline extraction moved to file_outline.py.
 from deerflow.utils.file_outline import (  # noqa: F401
@@ -228,7 +229,10 @@ async def convert_file_to_markdown_reported(file_path: Path, output_path: Path |
     """
     try:
         pdf_converter = _get_pdf_converter()
-        file_size = file_path.stat().st_size
+        # stat and the write-back are blocking filesystem calls on the upload
+        # ingestion event loop; offload them like the large-file conversion
+        # above (run_file_io keeps the caller's context in the worker).
+        file_size = (await run_file_io(file_path.stat)).st_size
 
         if file_size > _ASYNC_THRESHOLD_BYTES:
             text = await asyncio.to_thread(_do_convert, file_path, pdf_converter)
@@ -236,14 +240,32 @@ async def convert_file_to_markdown_reported(file_path: Path, output_path: Path |
             text = _do_convert(file_path, pdf_converter)
 
         md_path = output_path if output_path is not None else file_path.with_suffix(".md")
-        md_path.write_text(text, encoding="utf-8")
         # Belt-and-suspenders: also write <original_filename_with_extension>.md
         # so agents that hallucinate either naming convention find the file.
         dual_path = file_path.with_name(file_path.name + ".md")
-        if dual_path != md_path:
-            dual_path.write_text(text, encoding="utf-8")
+        written = [md_path] if dual_path == md_path else [md_path, dual_path]
+        # Drain the write-back across caller cancellation: run_file_io awaits
+        # run_in_executor, so a plain await would unwind while the worker is
+        # still writing and leave the partial output behind for the caller's
+        # scope to trip over. await_drained delivers the cancellation only
+        # after the worker finished, so the cleanup below sees a settled file.
+        try:
+            for path in written:
+                await await_drained(run_file_io(path.write_text, text, encoding="utf-8"))
+        except asyncio.CancelledError:
+            for path in written:
+                try:
+                    await await_drained(run_file_io(path.unlink, missing_ok=True))
+                except Exception:
+                    # Cleanup must not shadow the cancellation: an unlink failure
+                    # escaping this handler used to be swallowed by the broad
+                    # handler below as an ordinary conversion failure, leaving
+                    # both the caller's cancellation and the staging file behind.
+                    logger.exception("Failed to remove partial conversion output %s after cancellation", path)
+            raise
 
-        quality = assess_extraction(text, pages=_page_count(file_path))
+        # _page_count opens the PDF, which is file IO like the write-back.
+        quality = assess_extraction(text, pages=await run_file_io(_page_count, file_path))
         if quality.is_sparse:
             logger.warning("Converted %s to %s but %s", file_path.name, md_path.name, quality.describe())
         else:

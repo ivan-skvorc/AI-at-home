@@ -1,9 +1,8 @@
-import asyncio
 import json
 import os
 
 from langchain.tools import tool
-from tavily import TavilyClient
+from tavily import AsyncTavilyClient
 
 from deerflow.community.search_time_range import SearchTimeRange
 from deerflow.config import get_app_config
@@ -54,7 +53,7 @@ def tavily_api_key_present() -> bool:
     return resolve_tavily_api_key() is not None
 
 
-def _get_tavily_client(tool_name: str = "web_search") -> TavilyClient:
+def _get_tavily_client(tool_name: str = "web_search") -> AsyncTavilyClient:
     """Tavily client for ``tool_name``: its own key, else the environment.
 
     Each tool carries its own credential so ``web_fetch`` can be pointed at a
@@ -71,15 +70,14 @@ def _get_tavily_client(tool_name: str = "web_search") -> TavilyClient:
         value = config.model_extra.get("api_key")
         if isinstance(value, str) and value.strip():
             api_key = value.strip()
-    return TavilyClient(api_key=api_key or os.getenv(API_KEY_ENV_VAR, "").strip() or None)
+    return AsyncTavilyClient(api_key=api_key or os.getenv(API_KEY_ENV_VAR, "").strip() or None)
 
 
-def _search_tavily_sync(query: str, time_range: SearchTimeRange | None = None) -> str:
-    """Blocking Tavily search returning a JSON array of {title, url, snippet}."""
+async def _search_tavily(query: str, time_range: SearchTimeRange | None = None) -> str:
+    """Tavily search returning a JSON array of {title, url, snippet}."""
     extras = _web_search_extras()
     max_results = extras.get("max_results", 5)
 
-    client = _get_tavily_client()
     search_kwargs: dict[str, object] = {"max_results": max_results}
     for key in ("include_domains", "exclude_domains"):
         if key in extras:
@@ -88,7 +86,11 @@ def _search_tavily_sync(query: str, time_range: SearchTimeRange | None = None) -
         search_kwargs["include_domains_mode"] = "filter"
     if time_range is not None:
         search_kwargs["time_range"] = time_range
-    res = client.search(query, **search_kwargs)
+    client = _get_tavily_client()
+    try:
+        res = await client.search(query, **search_kwargs)
+    finally:
+        await client.close()
     normalized_results = [
         {
             "title": result["title"],
@@ -101,29 +103,27 @@ def _search_tavily_sync(query: str, time_range: SearchTimeRange | None = None) -
 
 
 async def search_via_tavily(query: str, time_range: SearchTimeRange | None = None) -> str:
-    """Async wrapper over the blocking Tavily SDK, for the web_search dispatcher.
+    """Tavily search for the web_search dispatcher.
 
-    ``TavilyClient.search`` is synchronous HTTP, so it is moved off the event
-    loop rather than called directly — a blocking call inside the agent's loop
-    stalls every other in-flight run, and the strict blocking-I/O suite
-    (``make test-blocking-io``) exists to catch exactly this.
+    Native async since the SDK moved to ``AsyncTavilyClient``: nothing here
+    blocks the event loop, so it is awaited directly rather than offloaded.
     """
-    return await asyncio.to_thread(_search_tavily_sync, query, time_range)
+    return await _search_tavily(query, time_range)
 
 
 @tool("web_search", parse_docstring=True)
-def web_search_tool(query: str, time_range: SearchTimeRange | None = None) -> str:
+async def web_search_tool(query: str, time_range: SearchTimeRange | None = None) -> str:
     """Search the web.
 
     Args:
         query: The query to search for.
         time_range: Optional relative publication/update window. Use only when the request requires recent results.
     """
-    return _search_tavily_sync(query, time_range)
+    return await _search_tavily(query, time_range)
 
 
 @tool("web_fetch", parse_docstring=True)
-def web_fetch_tool(url: str) -> str:
+async def web_fetch_tool(url: str) -> str:
     """Fetch the contents of a web page at a given URL.
     Only fetch EXACT URLs that have been provided directly by the user or have been returned in results from the web_search and web_fetch tools.
     This tool can NOT access content that requires authentication, such as private Google Docs or pages behind login walls.
@@ -134,7 +134,10 @@ def web_fetch_tool(url: str) -> str:
         url: The URL to fetch the contents of.
     """
     client = _get_tavily_client("web_fetch")
-    res = client.extract([url])
+    try:
+        res = await client.extract([url])
+    finally:
+        await client.close()
     if "failed_results" in res and len(res["failed_results"]) > 0:
         return f"Error: {res['failed_results'][0]['error']}"
     elif "results" in res and len(res["results"]) > 0:

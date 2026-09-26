@@ -25,6 +25,7 @@ from __future__ import annotations
 import copy
 import importlib.util
 import re
+import secrets
 import shutil
 import sys
 from pathlib import Path
@@ -93,6 +94,26 @@ def migrate_knowledge_provider_settings(data):
     return changes
 
 
+def migrate_pii_token_secret(data):
+    """Persist a random token_secret for enabled redaction that has none.
+
+    token_secret became mandatory whenever ``pii_redaction`` is enabled
+    (upstream v47), so a config that enabled redaction without one fails
+    startup validation after the upgrade. The ``.bak`` taken before writing
+    covers the original file.
+    """
+    pii = data.get("pii_redaction")
+    changes = []
+    if not isinstance(pii, dict) or not pii.get("enabled"):
+        return changes
+    secret = pii.get("token_secret")
+    if isinstance(secret, str) and secret.strip():
+        return changes
+    pii["token_secret"] = secrets.token_urlsafe(32)
+    changes.append("pii_redaction.token_secret generated (required for enabled redaction; a random value was persisted to config.yaml)")
+    return changes
+
+
 MIGRATIONS = {
     1: {
         "description": "Rename src.* module paths to deerflow.*",
@@ -123,8 +144,16 @@ MIGRATIONS = {
         # there is no session factory to write through.
         "replacements": [("run_events:\n  backend: memory", "run_events:\n  backend: db")],
     },
+    58: {
+        # Upstream ships this as its v47. It is keyed at the fork's version
+        # instead because fork configs were already stamped 47-57 before
+        # upstream reached 47, so a key of 47 would never run for them and an
+        # install with redaction enabled would fail startup after upgrading.
+        "description": "Generate a token_secret for configs with pii_redaction enabled (now mandatory)",
+        "data_transform": migrate_pii_token_secret,
+    },
     # Future migrations go here:
-    # 51: {
+    # 59: {
     #     'description': '...',
     #     'replacements': [('old', 'new')],
     # },

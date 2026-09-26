@@ -197,6 +197,13 @@ class TestConfigQueries:
         assert "model" in result["models"][0]
         assert "display_name" in result["models"][0]
         assert "supports_thinking" in result["models"][0]
+        # The normalized reasoning contract is projected beside the legacy booleans.
+        assert result["models"][0]["reasoning"] == {
+            "thinking": "unsupported",
+            "effort": None,
+            "history": None,
+            "source": "legacy",
+        }
 
     def test_list_skills(self, client):
         skill = MagicMock()
@@ -429,6 +436,44 @@ class TestStream:
         assert first_run_id != second_run_id
         assert first_args[0]["messages"][0].additional_kwargs["run_id"] == first_run_id
         assert second_args[0]["messages"][0].additional_kwargs["run_id"] == second_run_id
+
+    def test_resumed_stream_does_not_reemit_history_or_count_old_usage(self, client):
+        """Only messages generated in this turn belong in the delta stream and usage."""
+        old_usage = {"input_tokens": 7, "output_tokens": 3, "total_tokens": 10}
+        new_usage = {"input_tokens": 11, "output_tokens": 4, "total_tokens": 15}
+        old_user = HumanMessage(content="first turn", id="h-old", additional_kwargs={"run_id": "old-run"})
+        old_ai = AIMessage(
+            content="",
+            id="ai-old",
+            tool_calls=[{"name": "ls", "args": {"path": "/mnt/user-data/workspace"}, "id": "call-old"}],
+            usage_metadata=old_usage,
+        )
+        old_tool = ToolMessage(content="old result", id="tool-old", name="ls", tool_call_id="call-old")
+        new_ai = AIMessage(content="new answer", id="ai-new", usage_metadata=new_usage)
+
+        def stream_turn(state, *, context, **_kwargs):
+            current_user = HumanMessage(
+                content=state["messages"][0].content,
+                id="h-current",
+                additional_kwargs={"run_id": context["run_id"]},
+            )
+            history = [old_user, old_ai, old_tool, current_user]
+            return iter(
+                [
+                    ("values", {"messages": history}),
+                    ("messages", (AIMessageChunk(content="new answer", id="ai-new", usage_metadata=new_usage), {})),
+                    ("values", {"messages": [*history, new_ai]}),
+                ]
+            )
+
+        agent = MagicMock()
+        agent.stream.side_effect = stream_turn
+        with patch.object(client, "_ensure_agent"), patch.object(client, "_agent", agent):
+            events = list(client.stream("second turn", thread_id="t-resumed"))
+
+        assert {event.data.get("id") for event in events if event.type == "messages-tuple"} == {"ai-new"}
+        assert events[-1].data["usage"] == new_usage
+        assert [message["id"] for message in next(event.data for event in events if event.type == "values")["messages"]] == ["h-old", "ai-old", "tool-old", "h-current"]
 
     def test_custom_mode_is_normalized_to_string(self, client):
         """stream() forwards custom events even when the mode is not a plain string."""
@@ -1993,6 +2038,12 @@ class TestGetModel:
             "description": "A test model",
             "supports_thinking": True,
             "supports_reasoning_effort": True,
+            "reasoning": {
+                "thinking": "optional",
+                "effort": {"values": ["minimal", "low", "medium", "high"], "default": None, "aliases": {}},
+                "history": None,
+                "source": "legacy",
+            },
         }
 
     def test_not_found(self, client):
@@ -2958,6 +3009,21 @@ class TestUploads:
             assert result["success"] is True
             assert "delete-me.txt" in result["message"]
             assert not (uploads_dir / "delete-me.txt").exists()
+
+    def test_delete_upload_keeps_the_converted_markdown(self, client):
+        """A .md sharing the document's stem may belong to another document."""
+        with tempfile.TemporaryDirectory() as tmp:
+            uploads_dir = Path(tmp)
+            (uploads_dir / "report.docx").write_bytes(b"docx-bytes")
+            (uploads_dir / "report.md").write_text("converted from the docx", encoding="utf-8")
+            (uploads_dir / "report.pdf").write_bytes(b"pdf-bytes")
+
+            with patch("deerflow.client.get_uploads_dir", return_value=uploads_dir):
+                result = client.delete_upload("thread-1", "report.pdf")
+
+            assert result["success"] is True
+            assert not (uploads_dir / "report.pdf").exists()
+            assert (uploads_dir / "report.md").read_text(encoding="utf-8") == "converted from the docx"
 
     def test_delete_upload_not_found(self, client):
         with tempfile.TemporaryDirectory() as tmp:

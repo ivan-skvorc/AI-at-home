@@ -1168,7 +1168,14 @@ def apply_prompt_template(
     # built-in template rather than propagating a formatting error.
     template = get_system_prompt_template()
     try:
-        return template.format(**fields)
+        rendered_prompt = template.format(**fields)
     except (KeyError, IndexError, ValueError) as exc:
         logger.warning("Custom system prompt could not be rendered (%s); falling back to the built-in template.", exc)
-        return SYSTEM_PROMPT_TEMPLATE.format(**fields)
+        rendered_prompt = SYSTEM_PROMPT_TEMPLATE.format(**fields)
+
+    if app_config is None:
+        from deerflow.config import get_app_config
+
+        app_config = get_app_config()
+    overlay = getattr(app_config, "lead_prompt_overlay", None)
+    return overlay.apply(rendered_prompt) if overlay is not None else rendered_prompt

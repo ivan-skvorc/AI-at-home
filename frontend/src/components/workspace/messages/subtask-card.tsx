@@ -29,6 +29,7 @@ import {
   SafeStreamdown,
   toStreamdownComponents,
 } from "@/core/streamdown/components";
+import type { Subtask } from "@/core/tasks";
 import { fetchSubtaskSteps } from "@/core/tasks/api";
 import { useSubtask, useUpdateSubtask } from "@/core/tasks/context";
 import {
@@ -36,6 +37,7 @@ import {
   resolveSubtaskModelLabel,
 } from "@/core/tasks/presentation";
 import { stepsForDisplay } from "@/core/tasks/steps";
+import { resolveRenderedSubtask } from "@/core/tasks/subtask-render";
 import { explainLastToolCall } from "@/core/tools/utils";
 import { cn } from "@/lib/utils";
 
@@ -50,17 +52,19 @@ export function SubtaskCard({
   threadId,
   runId,
   isLoading,
+  fallbackTask,
 }: {
   className?: string;
   taskId: string;
   threadId?: string;
   runId?: string;
   isLoading: boolean;
+  fallbackTask: Subtask;
 }) {
   const { t } = useI18n();
   const [collapsed, setCollapsed] = useState(true);
   const reduceMotion = useReducedMotion();
-  const task = useSubtask(taskId)!;
+  const task = resolveRenderedSubtask(useSubtask(taskId), fallbackTask)!;
   const { models, tokenUsageEnabled } = useModels();
   const updateSubtask = useUpdateSubtask();
   const modelLabel = resolveSubtaskModelLabel(task.modelName, models);

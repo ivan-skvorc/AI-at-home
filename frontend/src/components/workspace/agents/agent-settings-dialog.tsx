@@ -32,6 +32,11 @@ import {
   type KnowledgeScopeSelection,
 } from "@/core/knowledge";
 import { useModels } from "@/core/models/hooks";
+import {
+  getReasoningEffortOptions,
+  isThinkingRequired,
+  supportsThinking as modelSupportsThinking,
+} from "@/core/models/reasoning";
 import { useSubagents } from "@/core/subagents";
 
 import { KnowledgeScopeSelector } from "../knowledge-scope-selector";
@@ -132,9 +137,23 @@ export function AgentSettingsDialog({
     () => resolveEffectiveModel(models, model),
     [models, model],
   );
-  const supportsThinking = selectedModel?.supports_thinking ?? false;
-  const supportsReasoningEffort =
-    selectedModel?.supports_reasoning_effort ?? false;
+  const supportsThinking = modelSupportsThinking(selectedModel);
+  const thinkingRequired = isThinkingRequired(selectedModel);
+  // Per-agent defaults keep the generic low/medium/high schema; offer only the
+  // values the selected model's reasoning contract also accepts (issue #5073).
+  const reasoningEffortOptions = useMemo(
+    () =>
+      getReasoningEffortOptions(selectedModel).filter(
+        (effort): effort is ReasoningEffort =>
+          (REASONING_EFFORTS as string[]).includes(effort),
+      ),
+    [selectedModel],
+  );
+  const supportsReasoningEffort = reasoningEffortOptions.length > 0;
+  // A required-thinking model cannot be switched off: a stale "off" default
+  // collapses to "inherit" so the save never asks for the impossible.
+  const effectiveThinking =
+    thinkingRequired && thinking === "off" ? INHERIT_VALUE : thinking;
   const selectableSubagents = useMemo(
     () =>
       Array.from(
@@ -189,10 +208,11 @@ export function AgentSettingsDialog({
           model: model === DEFAULT_MODEL_VALUE ? null : model,
           model_settings: parsedSettings.modelSettings,
           thinking_enabled: supportsThinking
-            ? selectionToThinkingEnabled(thinking)
+            ? selectionToThinkingEnabled(effectiveThinking)
             : null,
           reasoning_effort:
-            supportsReasoningEffort && reasoningEffort !== INHERIT_VALUE
+            supportsReasoningEffort &&
+            reasoningEffortOptions.includes(reasoningEffort as ReasoningEffort)
               ? (reasoningEffort as ReasoningEffort)
               : null,
           allowed_subagents: selectionToAllowedSubagents(
@@ -352,7 +372,7 @@ export function AgentSettingsDialog({
                 {t.agents.settingsThinking}
               </span>
               <Select
-                value={thinking}
+                value={effectiveThinking}
                 onValueChange={(value) => setThinking(value as typeof thinking)}
               >
                 <SelectTrigger className="w-full">
@@ -365,9 +385,11 @@ export function AgentSettingsDialog({
                   <SelectItem value="on">
                     {t.agents.settingsThinkingOn}
                   </SelectItem>
-                  <SelectItem value="off">
-                    {t.agents.settingsThinkingOff}
-                  </SelectItem>
+                  {!thinkingRequired && (
+                    <SelectItem value="off">
+                      {t.agents.settingsThinkingOff}
+                    </SelectItem>
+                  )}
                 </SelectContent>
               </Select>
             </div>
@@ -390,7 +412,7 @@ export function AgentSettingsDialog({
                   <SelectItem value={INHERIT_VALUE}>
                     {t.agents.settingsInherit}
                   </SelectItem>
-                  {REASONING_EFFORTS.map((effort) => (
+                  {reasoningEffortOptions.map((effort) => (
                     <SelectItem key={effort} value={effort}>
                       {effort}
                     </SelectItem>
