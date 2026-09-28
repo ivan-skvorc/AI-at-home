@@ -90,9 +90,9 @@ OPENAI_COMPAT_THINKING_CONFIG = {
     },
 }
 
-# Latest Claude models (Opus 5, Sonnet 5, Sonnet 4.6) use adaptive thinking — the
+# Latest Claude models (Opus 5, Sonnet 5) use adaptive thinking — the
 # fixed `budget_tokens` form is rejected by these models. Haiku 4.5 still takes an
-# explicit thinking budget. Opus 5 / Sonnet 5 / Sonnet 4.6 accept an explicit
+# explicit thinking budget. Opus 5 / Sonnet 5 accept an explicit
 # `thinking: {type: disabled}` when the toggle is off.
 #
 # Opus 5 caveat: it accepts `thinking: {type: disabled}` only at reasoning effort
@@ -126,7 +126,7 @@ ANTHROPIC_ADAPTIVE_THINKING_CONFIG = {
     },
 }
 
-# Claude Fable 5.1 and Claude Opus 5.5 have thinking permanently on: an explicit
+# Claude Fable 5.1, Claude Opus 5.5 and Claude Sonnet 5.5 have thinking permanently on: an explicit
 # `thinking: {type: disabled}` is rejected with a 400, so neither toggle state can
 # turn thinking off. Both states therefore send adaptive thinking with
 # `display: summarized` — `summarized` for the same multi-turn-replay reason as the
@@ -171,9 +171,9 @@ ANTHROPIC_THINKING_CONFIG = ANTHROPIC_BUDGET_THINKING_CONFIG
 
 # Latest Claude models, enabled together when the user has an ANTHROPIC_API_KEY.
 # Opus and Sonnet each ship their previous generation alongside the current one
-# (Opus 5 + Opus 5.5, Sonnet 4.6 + Sonnet 5); Haiku and Fable ship only the
-# latest. Fable 5.1 and Opus 5.5 run adaptive thinking that cannot be disabled;
-# Opus 5 / Sonnet 5 / Sonnet 4.6 use adaptive thinking; Haiku 4.5 takes a budget.
+# (Opus 5 + Opus 5.5, Sonnet 5 + Sonnet 5.5); Haiku and Fable ship only the
+# latest. Fable 5.1, Opus 5.5 and Sonnet 5.5 run adaptive thinking that cannot be
+# disabled; Opus 5 / Sonnet 5 use adaptive thinking; Haiku 4.5 takes a budget.
 # Ordered most- to least-capable; the previous generation is kept alongside its
 # successor so existing threads can stay pinned to it.
 ANTHROPIC_BUNDLE_MODELS: list[dict] = [
@@ -214,22 +214,22 @@ ANTHROPIC_BUNDLE_MODELS: list[dict] = [
         **ANTHROPIC_ADAPTIVE_THINKING_CONFIG,
     },
     {
-        "name": "claude-sonnet-5",
-        "display_name": "Claude Sonnet 5 (Anthropic)",
+        "name": "claude-sonnet-5-5",
+        "display_name": "Claude Sonnet 5.5 (Anthropic)",
         "use": "langchain_anthropic:ChatAnthropic",
-        "model": "claude-sonnet-5",
+        "model": "claude-sonnet-5-5",
         "api_key": "$ANTHROPIC_API_KEY",
         "default_request_timeout": 600.0,
         "max_retries": 2,
         "max_tokens": 32000,
         "supports_vision": True,
-        **ANTHROPIC_ADAPTIVE_THINKING_CONFIG,
+        **ANTHROPIC_ALWAYS_ON_THINKING_CONFIG,
     },
     {
-        "name": "claude-sonnet-4-6",
-        "display_name": "Claude Sonnet 4.6 (Anthropic)",
+        "name": "claude-sonnet-5",
+        "display_name": "Claude Sonnet 5 (Anthropic)",
         "use": "langchain_anthropic:ChatAnthropic",
-        "model": "claude-sonnet-4-6",
+        "model": "claude-sonnet-5",
         "api_key": "$ANTHROPIC_API_KEY",
         "default_request_timeout": 600.0,
         "max_retries": 2,
@@ -550,8 +550,8 @@ MODEL_PRICES: dict[str, dict] = {
     "claude-fable-5-1": {"price": {"currency": "USD", "input": 10.0, "output": 50.0, "cache_hit": 0.25}},  # 0.025x, not the usual 0.1x
     "claude-opus-5-5": {"price": {"currency": "USD", "input": 4.0, "output": 20.0, "cache_hit": 0.2}},  # 0.05x
     "claude-opus-5": {"price": {"currency": "USD", "input": 5.0, "output": 25.0, "cache_hit": 0.5}},
+    "claude-sonnet-5-5": {"price": {"currency": "USD", "input": 2.0, "output": 10.0, "cache_hit": 0.2}},
     "claude-sonnet-5": {"price": {"currency": "USD", "input": 2.0, "output": 10.0, "cache_hit": 0.2}},
-    "claude-sonnet-4-6": {"price": {"currency": "USD", "input": 3.0, "output": 15.0, "cache_hit": 0.3}},
     "claude-haiku-4-5": {"price": {"currency": "USD", "input": 1.0, "output": 5.0, "cache_hit": 0.1}},
     # DeepSeek bills peak/off-peak since 2026-08-16; these are the peak (upper-bound)
     # rates, matching config.example.yaml. Off-peak is exactly half.
@@ -802,9 +802,9 @@ LLM_PROVIDERS: list[LLMProvider] = [
     LLMProvider(
         name="anthropic",
         display_name="Anthropic",
-        description="Latest Claude Fable 5.1, Opus 5.5, Opus 5, Sonnet 5, Sonnet 4.6 and Haiku 4.5",
+        description="Latest Claude Fable 5.1, Opus 5.5, Opus 5, Sonnet 5.5, Sonnet 5 and Haiku 4.5",
         use="langchain_anthropic:ChatAnthropic",
-        models=["claude-fable-5-1", "claude-opus-5-5", "claude-opus-5", "claude-sonnet-5", "claude-sonnet-4-6", "claude-haiku-4-5"],
+        models=["claude-fable-5-1", "claude-opus-5-5", "claude-opus-5", "claude-sonnet-5-5", "claude-sonnet-5", "claude-haiku-4-5"],
         default_model="claude-opus-5-5",
         env_var="ANTHROPIC_API_KEY",
         package="langchain-anthropic",

@@ -564,6 +564,7 @@ tailscale_merge_origins
 if tailscale_should_publish; then
     COMPOSE_CMD+=(-f "$DOCKER_DIR/docker-compose.tailscale.yaml")
     echo -e "${GREEN}✓ Tailscale detected — also publishing on ${DEER_FLOW_TAILNET_IPV4}:${DEER_FLOW_ENTRY_PORT} (tailnet only, not the LAN).${NC}"
+    tailscale_nonlocal_bind_warning
 fi
 
 # ── Loopback co-bind (fork) ──────────────────────────────────────────────────

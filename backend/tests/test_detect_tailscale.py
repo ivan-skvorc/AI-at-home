@@ -11,6 +11,8 @@ Tailscale, with a stopped daemon, or with a wedged CLI must all come back as
 from __future__ import annotations
 
 import json
+import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -163,6 +165,85 @@ class TestPublishToggle:
     @pytest.mark.parametrize("value", ["0", "false", "no", "off", "OFF"])
     def test_explicit_opt_out(self, value: str) -> None:
         assert dt.publish_enabled({dt.ENV_PUBLISH_TOGGLE: value}) is False
+
+
+class TestPublishToggleFromDotenv:
+    """FORK.md documents the opt-out as a line in `.env`, which the launch
+    scripts never source: the detector must read it there itself."""
+
+    def _env_file(self, tmp_path: Path, text: str) -> Path:
+        path = tmp_path / ".env"
+        path.write_text(text, encoding="utf-8")
+        return path
+
+    @pytest.mark.parametrize(
+        "line",
+        ["DEER_FLOW_TAILSCALE_PUBLISH=0", "export DEER_FLOW_TAILSCALE_PUBLISH=off", 'DEER_FLOW_TAILSCALE_PUBLISH="false"', "  DEER_FLOW_TAILSCALE_PUBLISH = no\r"],
+    )
+    def test_a_dotenv_only_opt_out_disables_the_publish(self, tmp_path: Path, line: str) -> None:
+        assert dt.publish_enabled({}, env_file=self._env_file(tmp_path, f"PORT=2026\n{line}\n")) is False
+
+    def test_an_exported_variable_wins_over_dotenv(self, tmp_path: Path) -> None:
+        env_file = self._env_file(tmp_path, "DEER_FLOW_TAILSCALE_PUBLISH=0\n")
+        assert dt.publish_enabled({dt.ENV_PUBLISH_TOGGLE: "1"}, env_file=env_file) is True
+
+    def test_the_last_assignment_wins_like_compose(self, tmp_path: Path) -> None:
+        env_file = self._env_file(tmp_path, "DEER_FLOW_TAILSCALE_PUBLISH=0\nDEER_FLOW_TAILSCALE_PUBLISH=1\n")
+        assert dt.publish_enabled({}, env_file=env_file) is True
+
+    def test_comments_and_a_missing_file_leave_it_on(self, tmp_path: Path) -> None:
+        assert dt.publish_enabled({}, env_file=self._env_file(tmp_path, "# DEER_FLOW_TAILSCALE_PUBLISH=0\n")) is True
+        assert dt.publish_enabled({}, env_file=tmp_path / "missing.env") is True
+
+    def test_cli_reads_the_env_file(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+        monkeypatch.delenv(dt.ENV_PUBLISH_TOGGLE, raising=False)
+        payload = tmp_path / "status.json"
+        payload.write_text(json.dumps(_status()), encoding="utf-8")
+        env_file = self._env_file(tmp_path, "DEER_FLOW_TAILSCALE_PUBLISH=0\n")
+        assert dt.main(["--status-json", str(payload), "--env-file", str(env_file)]) == 0
+        assert capsys.readouterr().out.strip() == ""
+        assert dt.main(["--status-json", str(payload), "--env-file", str(env_file), "--merge-into", "http://localhost:2026"]) == 0
+        assert capsys.readouterr().out.strip() == "http://localhost:2026"
+
+
+_BASH = shutil.which("bash")
+
+
+@pytest.mark.skipif(_BASH is None or os.name == "nt", reason="sources the launch scripts' tailnet library")
+class TestLaunchLibraryHonorsDotenv:
+    """The path `make up` / `make docker-start` actually take: tailscale_lib.sh
+    with a live tailnet and nothing but `.env` saying no."""
+
+    def _decide(self, tmp_path: Path, dotenv: str | None, exported: str | None = None) -> str:
+        bin_dir = tmp_path / "bin"
+        bin_dir.mkdir(exist_ok=True)
+        fake = bin_dir / "tailscale"
+        fake.write_text(f"#!/bin/sh\ncat <<'JSON'\n{json.dumps(_status())}\nJSON\n", encoding="utf-8")
+        fake.chmod(0o755)
+        env_file = tmp_path / ".env"
+        if dotenv is not None:
+            env_file.write_text(dotenv, encoding="utf-8")
+        env = {k: v for k, v in os.environ.items() if k != dt.ENV_PUBLISH_TOGGLE}
+        env.update({"PATH": f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}", "TAILSCALE_LIB_ENV_FILE": str(env_file), "TAILSCALE_LIB_PYTHON": sys.executable})
+        if exported is not None:
+            env[dt.ENV_PUBLISH_TOGGLE] = exported
+        snippet = f'. "{SCRIPTS / "tailscale_lib.sh"}"; tailscale_detect 2026; if tailscale_should_publish; then echo "publish $DEER_FLOW_TAILSCALE_IPV4"; else echo skip; fi'
+        result = subprocess.run([_BASH, "-c", snippet], capture_output=True, text=True, env=env, timeout=60)
+        assert result.returncode == 0, result.stderr
+        return result.stdout.strip()
+
+    def test_a_live_tailnet_publishes_by_default(self, tmp_path: Path) -> None:
+        assert self._decide(tmp_path, dotenv=None) == "publish 100.101.102.103"
+
+    def test_a_dotenv_only_opt_out_skips_the_overlay(self, tmp_path: Path) -> None:
+        assert self._decide(tmp_path, dotenv="DEER_FLOW_TAILSCALE_PUBLISH=0\n") == "skip"
+
+    def test_an_exported_value_still_wins(self, tmp_path: Path) -> None:
+        assert self._decide(tmp_path, dotenv="DEER_FLOW_TAILSCALE_PUBLISH=0\n", exported="1") == "publish 100.101.102.103"
+
+    def test_the_default_env_file_is_the_repo_roots(self) -> None:
+        lib = (SCRIPTS / "tailscale_lib.sh").read_text(encoding="utf-8")
+        assert "TAILSCALE_LIB_ENV_FILE:-$script_dir/../.env" in lib
 
 
 class TestCli:

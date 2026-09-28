@@ -720,3 +720,53 @@ class TestVramContentionForBigModels:
             ("qwen3:8b-b", QWEN3_SHOW, QWEN3_WEIGHTS),
         ]
         assert sync_ollama.vram_contention_warning(loaded, 24 * GIB) is None
+
+
+class TestConfigThatLostItsMarkers:
+    """Heals a config an older config-upgrade re-dumped: markers gone and
+    ``- name:`` flush under ``models:``. Appending a two-space block after
+    that produced invalid YAML plus duplicate names."""
+
+    DAMAGED = (
+        "config_version: 58\n"
+        "models:\n"
+        "- name: gpt-4o\n"
+        "  use: langchain_openai:ChatOpenAI\n"
+        "  model: gpt-4o\n"
+        "- name: qwen3:8b\n"
+        "  display_name: qwen3:8b (Ollama)\n"
+        "  use: langchain_ollama:ChatOllama\n"
+        "  model: qwen3:8b\n"
+        "sandbox:\n"
+        "  use: deerflow.sandbox.local:LocalSandboxProvider\n"
+    )
+    MODELS = [("qwen3:8b", ["tools"]), ("llava:13b", ["vision"])]
+
+    def test_sync_writes_valid_yaml_without_duplicate_names(self):
+        import yaml
+
+        healed = sync_ollama.sync(self.DAMAGED, self.MODELS)
+        names = [model["name"] for model in yaml.safe_load(healed)["models"]]
+        assert sorted(names) == ["gpt-4o", "llava:13b", "qwen3:8b"]
+        assert healed.count(sync_ollama.BEGIN_MARKER) == 1
+        # The hand entry is untouched; only the same-named stale entry went.
+        assert "- name: gpt-4o\n  use: langchain_openai:ChatOpenAI\n" in healed
+
+    def test_block_follows_the_lists_existing_indentation(self):
+        healed = sync_ollama.sync(self.DAMAGED, self.MODELS)
+        assert f"\n{sync_ollama.BEGIN_MARKER}\n- name: qwen3:8b\n" in healed
+
+    def test_second_sync_changes_nothing(self):
+        once = sync_ollama.sync(self.DAMAGED, self.MODELS)
+        assert sync_ollama.sync(once, self.MODELS) == once
+
+    def test_a_hand_written_entry_sharing_a_tag_is_kept(self):
+        # Only entries carrying the generator's signature are replaced; a
+        # hand-written one is the operator's, markers or not.
+        hand = CLEAN_CONFIG.replace("hand-edited", "qwen3:8b")
+        assert "- name: qwen3:8b\n    use: langchain_openai:ChatOpenAI" in sync_ollama.sync(hand, self.MODELS)
+
+    def test_entries_outside_intact_markers_are_never_dropped(self):
+        with_block = sync_ollama.sync(CLEAN_CONFIG, self.MODELS)
+        stale_copy = with_block.replace("models:\n", "models:\n" + sync_ollama.render_entry("qwen3:8b", ["tools"]) + "\n", 1)
+        assert sync_ollama.sync(stale_copy, self.MODELS).count("- name: qwen3:8b") == 2

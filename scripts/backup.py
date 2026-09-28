@@ -27,6 +27,16 @@ the choice so a restore can say what it is about to write. A restore of a
 secret-free archive leaves the target's existing credentials alone rather than
 deleting what the backup does not carry.
 
+## SQLite while the Gateway is running
+
+``create`` does not need the stack stopped. Every SQLite database is archived
+as a snapshot taken through SQLite's online backup API (a read-only connection
+to the live file), so a write landing mid-backup cannot pair a main file from
+one moment with a ``-wal`` from another. The ``-wal``/``-shm``/``-journal``
+sidecars are left out — the snapshot already holds every committed page — and
+``restore`` deletes any stale ones beside a restored snapshot, which SQLite
+would otherwise replay onto it.
+
 ## Restore against a running stack
 
 Refused. Writing underneath a live Gateway means half-restored SQLite next to a
@@ -44,6 +54,7 @@ import os
 import re
 import shutil
 import socket
+import sqlite3
 import subprocess
 import sys
 import tarfile
@@ -89,6 +100,12 @@ ALWAYS_EXCLUDED: tuple[str, ...] = (
     r"(^|/)browser-frames(/|$)",
     r"\.upload-[^/]*\.part$",
 )
+
+
+# First 16 bytes of every SQLite 3 database file, whatever its extension
+# (.db, .sqlite3, checkpoints.db ...).
+SQLITE_HEADER = b"SQLite format 3\x00"
+SQLITE_SIDECAR_SUFFIXES: tuple[str, ...] = ("-wal", "-shm", "-journal")
 
 
 class BackupError(RuntimeError):
@@ -195,6 +212,64 @@ def _collect(project_root: Path, include_secrets: bool) -> tuple[list[tuple[Path
     return files, skipped
 
 
+def _is_sqlite(path: Path) -> bool:
+    try:
+        with path.open("rb") as handle:
+            return handle.read(len(SQLITE_HEADER)) == SQLITE_HEADER
+    except OSError:
+        return False
+
+
+def _snapshot_sqlite(source: Path, destination: Path) -> None:
+    """Copy one consistent state of ``source`` via SQLite's online backup API.
+
+    The source is opened read-only, so the backup never checkpoints or
+    otherwise writes the live database; a busy writer only delays it.
+    """
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    src = sqlite3.connect(f"{source.resolve().as_uri()}?mode=ro", uri=True, timeout=30)
+    try:
+        dst = sqlite3.connect(destination)
+        try:
+            src.backup(dst)
+        finally:
+            dst.close()
+    finally:
+        src.close()
+    # Archive the snapshot under the original's mode and mtime.
+    shutil.copystat(source, destination)
+
+
+def _stage_sqlite(files: list[tuple[Path, str]], staging: Path) -> tuple[list[tuple[Path, str]], list[str], list[str]]:
+    """Swap each SQLite database for a staged snapshot and drop its sidecars.
+
+    Returns ``(files, snapshotted, copied_raw)``. A file with the SQLite header
+    that SQLite cannot read is archived as-is and named, rather than dropped
+    or allowed to abort the whole backup.
+    """
+    databases = {rel for path, rel in files if _is_sqlite(path)}
+    staged: list[tuple[Path, str]] = []
+    snapshotted: list[str] = []
+    copied_raw: list[str] = []
+    for path, rel in files:
+        if any(rel.endswith(suffix) and rel[: -len(suffix)] in databases for suffix in SQLITE_SIDECAR_SUFFIXES):
+            continue
+        if rel not in databases:
+            staged.append((path, rel))
+            continue
+        snapshot = staging / rel
+        try:
+            _snapshot_sqlite(path, snapshot)
+        except sqlite3.Error as exc:
+            print(f"warning: {rel}: SQLite could not read it ({exc}); archived the file as-is", file=sys.stderr)
+            copied_raw.append(rel)
+            staged.append((path, rel))
+            continue
+        snapshotted.append(rel)
+        staged.append((snapshot, rel))
+    return staged, sorted(snapshotted), sorted(copied_raw)
+
+
 def create_backup(
     project_root: Path,
     output_dir: Path,
@@ -219,6 +294,7 @@ def create_backup(
 
     with tempfile.TemporaryDirectory() as scratch:
         extra: list[tuple[Path, str]] = []
+        files, sqlite_snapshots, sqlite_copied_raw = _stage_sqlite(files, Path(scratch) / "sqlite")
 
         if backend.startswith("postgres"):
             if not url:
@@ -236,6 +312,8 @@ def create_backup(
             "database_backend": backend,
             "file_count": len(files) + len(extra),
             "excluded": sorted(set(skipped)),
+            "sqlite_snapshots": sqlite_snapshots,
+            "sqlite_copied_raw": sqlite_copied_raw,
         }
         manifest_path = Path(scratch) / MANIFEST_NAME
         manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
@@ -323,6 +401,15 @@ def restore_backup(
     project_root.mkdir(parents=True, exist_ok=True)
     with tarfile.open(archive, "r:gz") as tar:
         members = _safe_members(tar)
+        # A -wal left beside a restored snapshot (a crash of the old instance)
+        # would be replayed onto it by the next connection. The manifest is
+        # archive input, so only paths _safe_members already vetted qualify.
+        extracted = {member.name for member in members if member.isfile()}
+        for rel in manifest.get("sqlite_snapshots", []):
+            if rel not in extracted:
+                continue
+            for suffix in SQLITE_SIDECAR_SUFFIXES:
+                (project_root / f"{rel}{suffix}").unlink(missing_ok=True)
         # filter="tar" keeps the recorded permission bits (0700 on credential
         # dirs) while still refusing absolute paths and traversal; "data" would
         # strip exactly the modes this feature exists to preserve. Ownership is

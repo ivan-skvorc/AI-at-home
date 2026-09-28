@@ -68,6 +68,21 @@ Corepack, checking `corepack.cmd` before `corepack`. POSIX Python (including
 MSYS/Cygwin Python) keeps the generic name first for each tool; the gate is
 based on Python's `os.name`, not the invoking shell.
 
+Scripts that need only PyYAML (`config_upgrade.py`, `sandbox_toggle.py`) run
+through `scripts/backend-python.sh`, never a bare `uv run`: it uses `uv run`
+in `backend/` only when both uv and `backend/.venv` exist, else a host
+`python3`/`python` that can import yaml, else it exits naming the fix. A
+Docker-only host (`make up`) has no uv, and `uv run` without a venv would
+install the whole backend first. `make doctor` stays on uv — it imports
+`deerflow`.
+
+The dev gateway runs as the invoking user: `docker.sh` exports
+`DEER_FLOW_UID`/`DEER_FLOW_GID` (Linux only) and creates `logs/` and
+`backend/.venv` before Compose can create them as root; `dev-entrypoint.sh`
+hands root-owned paths to that uid and re-execs under `setpriv`. Do not add a
+compose `user:` to the gateway or a default for those variables (FORK.md,
+*Dev stack file ownership*).
+
 ## Public Skill Review Waivers
 
 `review_changed_public_skills.py` keeps the analyzer strict and applies narrow

@@ -11,6 +11,90 @@ Newest first. Append a pass; never rewrite one. A dated line is what tells the
 next person whether the roster was checked last week or last year, and _which_
 providers that pass could actually reach.
 
+- **2026-09-28 — partial: tier 1 for Anthropic, tier 2 for GPT-6 Astra, tier 3 elsewhere. One
+  roster roll (Sonnet 5.5 in, Sonnet 4.6 out); no price changed.** Requested in words, naming
+  Claude Opus 5.5, Claude Fable 5.1 and OpenAI's GPT-6 Astra, alongside the home-server repo
+  fixes change cycle.
+
+  **Machine half clean.** `python3 scripts/audit_models.py` reports **no drift**; `openrouter`
+  is _skipped_ (`Tunnel connection failed: 403 Forbidden`) and the ten catalog-less providers
+  likewise.
+
+  **What the network reached.** `platform.claude.com/docs/en/about-claude/pricing.md`,
+  `…/models/overview.md` and `…/models/sonnet-5-5/{overview,migration-guide}.md` answer 200, as
+  does `claude.com/pricing`. Refused at the proxy (`http=000`, fetch tool `EGRESS_BLOCKED`):
+  `openrouter.ai`, `platform.openai.com`, `openai.com`, `developers.openai.com`, and the
+  third-party pricing sites tried for corroboration (`yottalabs.ai`, `finout.io`,
+  `aipricing.guru`). Web search was available and is how tier 2 was read.
+
+  **Claude Fable 5.1 — tier 1, verified, unchanged.** Anthropic's pricing page: `$10 / $50`,
+  cache hits `$0.25` ("priced at 0.025x the base input price"). Models overview: API id
+  `claude-fable-5-1`, thinking "Adaptive (always on)", default effort `high`, 1M context, 128K
+  output. The bundle's always-on config (adaptive + summarized in both toggle states) and its
+  price block already match, in both synced sources. The routed slug
+  `anthropic/claude-fable-5.1` was not re-read (OpenRouter unreachable); it was corroborated on
+  2026-09-26.
+
+  **Claude Opus 5.5 — tier 1, verified, unchanged.** `$4 / $20`, cache hits `$0.20` ("0.05x the
+  base input price"); id `claude-opus-5-5`; thinking "Adaptive (always on)", default effort
+  `medium`. Bundle matches, including the routed `anthropic/claude-opus-5.5` at `$4 / $20`.
+
+  **GPT-6 Astra — tier 2, corroborated, unchanged.** Neither OpenAI's pages nor OpenRouter's could
+  be loaded, so the figure was read through two domain-scoped searches whose summaries quote each
+  page: `developers.openai.com` (model page `docs/models/gpt-6-astra`, pricing page) states
+  "Standard pricing is $10 per million input tokens and $50 per million output tokens", cached
+  input `$1.00`; `openrouter.ai/openai/gpt-6-astra` states `$10.00/M` input, `$50.00/M` output,
+  cache read `$1.00/M`, 1.05M context, 128K output. They agree exactly, so the bundled
+  `$10 / $50` on both `gpt-6-astra` (OpenAI home) and `openai/gpt-6-astra` (routed) stands.
+  Neither entry carries a `cache_hit`, so Astra's cache reads are costed at the miss price, the
+  documented conservative bound; adding `cache_hit: 1.0` is a candidate for a pass that can read
+  the page directly. Long prompts (>272K input) bill at 2x input / 1.5x output for the whole
+  request; the `price:` block carries the base tier, as for Grok.
+
+  **Anthropic — roster roll: Claude Sonnet 5.5 in, Sonnet 4.6 out.** Released 2026-09-28 (its
+  overview: "Latest. Released September 28, 2026"), id `claude-sonnet-5-5`, `$2 / $10`, cache
+  hits `$0.20` (the usual 0.1x), 1M context, 128K output, retirement "not sooner than September
+  28, 2027". The models overview now lists it as the current Sonnet. Per _Which models to keep_
+  the roll is mechanical: Sonnet 5.5 joins, Sonnet 5 stays as the previous-generation pin, and
+  Sonnet 4.6 leaves the bundle (it is still served; existing `config.yaml` files keep it). Its
+  migration guide lists five breaking changes against Sonnet 5, and one decides the config:
+  `thinking: {"type": "disabled"}` is **rejected** ("thinking.type.disabled is not supported for
+  this model"). So it takes Fable 5.1's and Opus 5.5's always-on config (adaptive + summarized in
+  both toggle states), not Sonnet 5's. Its new lowest setting, `thinking: {"type":
+  "between_tools"}` (no up-front thinking; accepted at `high` effort or below), would be the
+  closer match for the UI's "off" state, but nothing in this harness has been run against it —
+  a follow-up, not shipped. The other four (forced `tool_choice` 400s, thinking blocks tied to
+  the model and conversation, `computer_20251124` refused, advisor pairings) are the same
+  exposure Opus 5.5 already carries in this bundle. Sampling parameters 400 on it; the entry sets
+  none.
+
+  **Discovery (step 2) — search-based, logged, not rolled.**
+  - **GPT-6 Sol and GPT-6 Luna** (`gpt-6-sol`, `gpt-6-luna`; OpenAI post "Introducing GPT-6 Sol
+    and Luna"; OpenRouter pages `openai/gpt-6-sol:batch`, `openai/gpt-6-sol-pro`). The bundled
+    Sol is GPT-5.6. The evidence disagrees on price: one summary gives `$1.00 / $5.00`
+    (apparently the `:batch` variant's page), the same summary says the price is 50% below
+    GPT-5.6 Sol's promotional `$4 / $20`, which would be `$2 / $10`. A disagreement is a stop,
+    so no roll; **needs a tier-1 read** before it replaces GPT-5.6 Sol in the OpenAI home block
+    and the routed pair.
+  - **GPT-6 Astra Pro / Sol Pro / Luna Pro** appear on OpenRouter; variants, not the flagship —
+    declined, as `*-pro` tiers were before.
+  - **Claude Mythos 5.1** is still "limited availability" (Project Glasswing) — declined, as on
+    2026-09-26.
+
+  **Still owed to a pass with tier-1 access**, in order: GPT-6 Sol/Luna above; Grok 4.7 and
+  DeepSeek V4.1 Flash (2026-09-26); GPT-5.6 Sol's apparent `$4/$20` discount through 2026-11-21;
+  DeepSeek V4 Pro's two disagreeing entries; a routed discount for Gemini 3.8 Flash; Astra's
+  `cache_hit`; Sonnet 5.5's `between_tools` as the disabled-state mapping.
+
+  **Prose copies no test reads** — `providers.py`'s `description=` and comments, the `QUICK START`
+  comment and the Anthropic block comment in `config.example.yaml`, `sync-api-key-models.py`'s
+  docstring, README's wizard line, and FORK.md's roster prose — updated for Sonnet 5.5.
+  `.env.example`'s Anthropic line names families only and needed nothing. The stale fixture
+  carries no direct Anthropic entry and was not touched. Step 8 gates:
+  `sync-api-key-models.py --dry-run` clean (with a key: six Claudes, Sonnet 5.5 adaptive in both
+  states); `test_sync_api_key_models.py test_setup_wizard.py test_config_integrity.py
+  test_audit_models.py test_model_price_fields.py test_pricing.py` — 303 passed.
+
 - **2026-09-26 — partial: tier 1 for Anthropic and Google, tier 2 for routed slugs, tier 3
   elsewhere. One uncallable slug fixed, two roster rolls, one discount added.** Requested in
   words alongside the scroll-back and cross-device-model change cycle.

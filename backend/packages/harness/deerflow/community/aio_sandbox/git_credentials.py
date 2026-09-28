@@ -26,6 +26,7 @@ on a fine-grained PAT scoped to selected repos with Contents permission only.
 
 from __future__ import annotations
 
+import base64
 import logging
 from typing import TYPE_CHECKING
 
@@ -35,7 +36,11 @@ if TYPE_CHECKING:  # pragma: no cover - import cycle guard for type checkers
 logger = logging.getLogger(__name__)
 
 TOKEN_ENV_VAR = "GITHUB_TOKEN"
-CREDENTIAL_HELPER_PATH = "/usr/local/bin/deer-flow-git-credential"
+# Relative to the sandbox user's $HOME. The pinned image (agent-infra/sandbox
+# 1.11.0) runs unprivileged, so the former /usr/local/bin location raised
+# PermissionError, the helper was never installed, and git ignored the token.
+# The user's own home is the one place its shell can always write.
+CREDENTIAL_HELPER_HOME_PATH = ".local/bin/deer-flow-git-credential"
 _SETUP_OK_MARKER = "DEER_FLOW_GIT_CREDENTIALS_OK"
 
 # POSIX sh, no bashisms. The script deliberately contains no secret material:
@@ -61,10 +66,33 @@ printf 'username=x-access-token\\n'
 printf 'password=%s\\n' "$GITHUB_TOKEN"
 """
 
-# Single command string: install the helper and scope it to github.com over
-# https. `--replace-all` keeps re-runs (e.g. re-created containers reusing a
-# persisted home) idempotent instead of accumulating duplicate helper entries.
-_SETUP_COMMAND = f"chmod 755 {CREDENTIAL_HELPER_PATH} && git config --global --replace-all credential.https://github.com.helper {CREDENTIAL_HELPER_PATH} && echo {_SETUP_OK_MARKER}"
+
+def build_setup_command() -> str:
+    """One shell line that installs the helper and scopes it to github.com.
+
+    It runs through the shell rather than the file API so the file is created
+    by the same user whose ``~/.gitconfig`` git reads, in a directory that user
+    owns. Constraints, since it runs in the agent's persistent shell session:
+
+    - one line (the script travels base64-encoded), so it is one prompt;
+    - a subshell, so ``helper`` never leaks into the agent's later commands;
+    - the success marker is assembled at run time (``_"OK"``), so a shell that
+      echoes the command back cannot fake success;
+    - ``--replace-all`` keeps re-runs (a re-created container reusing a
+      persisted home) from accumulating duplicate helper entries.
+    """
+    encoded = base64.b64encode(CREDENTIAL_HELPER_SCRIPT.encode("utf-8")).decode("ascii")
+    marker_prefix, marker_tail = _SETUP_OK_MARKER.rsplit("_", 1)
+    steps = [
+        '[ -n "$HOME" ]',
+        f'helper="$HOME/{CREDENTIAL_HELPER_HOME_PATH}"',
+        'mkdir -p "${helper%/*}"',
+        f"printf '%s' '{encoded}' | base64 -d > \"$helper\"",
+        'chmod 755 "$helper"',
+        'git config --global --replace-all credential.https://github.com.helper "$helper"',
+        f'echo {marker_prefix}_"{marker_tail}"',
+    ]
+    return "(" + " && ".join(steps) + ")"
 
 
 def setup_github_credentials(sandbox: AioSandbox, *, token_configured: bool) -> bool:
@@ -85,16 +113,14 @@ def setup_github_credentials(sandbox: AioSandbox, *, token_configured: bool) -> 
         True when the helper was installed and git accepted the config.
     """
     try:
-        sandbox.write_file(CREDENTIAL_HELPER_PATH, CREDENTIAL_HELPER_SCRIPT)
+        output = sandbox.execute_command(build_setup_command())
     except Exception as e:
-        logger.warning(f"Sandbox {sandbox.id}: could not write git credential helper: {e}")
+        logger.warning(f"Sandbox {sandbox.id}: could not run git credential helper setup: {e}")
         return False
-
-    output = sandbox.execute_command(_SETUP_COMMAND)
     if _SETUP_OK_MARKER not in output:
         # Output of the setup command contains no secret (the command embeds
-        # none), so it is safe to include for diagnosis.
-        logger.warning(f"Sandbox {sandbox.id}: git credential helper setup did not complete (git missing in image?): {output.strip()[:500]}")
+        # none), so the shell's own error is safe to log as the cause.
+        logger.warning(f"Sandbox {sandbox.id}: git credential helper setup did not complete (unwritable $HOME, or git/base64 missing in image?): {output.strip()[:500]}")
         return False
 
     logger.info(f"Sandbox {sandbox.id}: GitHub credential helper installed (token configured: {token_configured})")

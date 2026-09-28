@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- **models:** Claude Sonnet 5.5 (`claude-sonnet-5-5`, $2/$10, released 2026-09-28) joins the
+  Anthropic bundle and Sonnet 4.6 leaves it, per the roster rule (Sonnet keeps the previous
+  generation beside the current one). Sonnet 5.5 rejects `thinking: {type: disabled}`, so it
+  ships with the same always-on thinking config as Fable 5.1 and Opus 5.5. The 2026-09-28 model
+  audit verified Fable 5.1 and Opus 5.5 against Anthropic's pricing page and corroborated GPT-6
+  Astra at $10/$50; no price changed.
 - **upstream:** merged `upstream/main` (135 commits since 2026-09-22, upstream 2.1.0 and the
   start of 2.2.0). Brings upstream's declarative per-model `reasoning:` contract (effort
   vocabularies such as `max`, required thinking), operator prompt overlays
@@ -20,6 +26,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   clamped them to Flash.
 
 ### Fixed
+- **sandbox:** git inside the AIO sandbox authenticates with `GITHUB_TOKEN` again on the pinned
+  `agent-infra/sandbox:1.11.0` image. The credential helper is written by the sandbox shell into
+  `$HOME/.local/bin` instead of through the file API into `/usr/local/bin`, which that image
+  refuses; a refused file write now raises an `OSError` naming the path instead of a pydantic
+  `ResponseFileWriteResult` error.
+- **config:** `make config-upgrade` keeps the `ollama-sync` block and its markers through the
+  re-dump and indents lists under their key, so the next launch's sync no longer writes invalid
+  YAML with duplicate model names. The sync also repairs a config an older upgrade already
+  damaged.
+- **backup:** `make backup` archives each SQLite database as an online-backup snapshot, so a
+  write landing while the Gateway runs can no longer produce an inconsistent database; restore
+  removes stale `-wal`/`-shm` files beside it.
+- **make:** `make config-upgrade` and `make sandbox-enable` / `sandbox-disable` run on a
+  Docker-only host: without uv or `backend/.venv` they use the host `python3` (with PyYAML).
+- **tailscale:** `DEER_FLOW_TAILSCALE_PUBLISH=0` in `.env` turns the tailnet publish off, as
+  documented; it was only read from the process environment. `make up` / `make docker-start`
+  warn when publishing on the tailnet IP with `net.ipv4.ip_nonlocal_bind` off, which can take
+  nginx down after a reboot.
+- **docker:** the dev stack (`make docker-start`) no longer leaves root-owned files in the
+  checkout: the gateway drops to the invoking user (and hands back what an older run left),
+  writes no `__pycache__`, and the frontend source mounts are read-only.
 - **config:** `make config-upgrade` generates a `pii_redaction.token_secret` for a config that
   enabled redaction without one, now that the secret is mandatory. Upstream ships this as
   its migration 47; the fork runs it as 58, because a fork config was already stamped past

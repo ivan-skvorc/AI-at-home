@@ -9,8 +9,10 @@
 # What it does, in one pass at start:
 #
 #   1. Asks scripts/detect_tailscale.py whether this machine is on a tailnet.
-#      No Tailscale (or a stopped daemon, or DEER_FLOW_TAILSCALE_PUBLISH=0) ⇒
-#      every function below is a no-op and the published surface is unchanged.
+#      No Tailscale (or a stopped daemon, or DEER_FLOW_TAILSCALE_PUBLISH=0 —
+#      exported, or in the repo-root .env, which these scripts never source,
+#      so the detector reads it via --env-file) ⇒ every function below is a
+#      no-op and the published surface is unchanged.
 #   2. Exports DEER_FLOW_TAILSCALE_IPV4 so docker/docker-compose.tailscale.yaml
 #      can publish nginx on the CGNAT address *in addition to* 127.0.0.1.
 #   3. Merges the tailnet origins into GATEWAY_CORS_ORIGINS,
@@ -21,6 +23,12 @@
 # Nothing here ever fails a launch: a missing python, a wedged daemon, or a
 # detector that cannot decide all degrade to "no tailnet", which is exactly the
 # pre-existing behavior.
+
+# The .env the opt-out is read from; overridable for tests.
+tailscale_env_file() {
+    local script_dir="${TAILSCALE_LIB_SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
+    printf '%s' "${TAILSCALE_LIB_ENV_FILE:-$script_dir/../.env}"
+}
 
 # Populated by tailscale_detect. Empty string = no tailnet.
 DEER_FLOW_TAILNET_IPV4=""
@@ -60,7 +68,7 @@ tailscale_detect() {
             DEER_FLOW_TAILSCALE_HOSTNAME) DEER_FLOW_TAILNET_HOSTNAME="$value" ;;
             DEER_FLOW_TAILSCALE_ORIGINS) DEER_FLOW_TAILNET_ORIGINS="$value" ;;
         esac
-    done < <("$python_bin" "$script_dir/detect_tailscale.py" --format env --port "$port" 2>/dev/null || true)
+    done < <("$python_bin" "$script_dir/detect_tailscale.py" --format env --port "$port" --env-file "$(tailscale_env_file)" 2>/dev/null || true)
 
     [ -n "$DEER_FLOW_TAILNET_IPV4" ] && export DEER_FLOW_TAILSCALE_IPV4="$DEER_FLOW_TAILNET_IPV4"
     return 0
@@ -109,13 +117,34 @@ tailscale_merge_origins() {
         if [ "${!var:-}" = "*" ]; then
             continue
         fi
-        merged="$("$python_bin" "$script_dir/detect_tailscale.py" --merge-into "${!var:-}" --port "${DEER_FLOW_TAILNET_PORT:-2026}" 2>/dev/null || true)"
+        merged="$("$python_bin" "$script_dir/detect_tailscale.py" --merge-into "${!var:-}" --port "${DEER_FLOW_TAILNET_PORT:-2026}" --env-file "$(tailscale_env_file)" 2>/dev/null || true)"
         # Only widen: an empty result means the helper failed, and clobbering a
         # user's allowlist with "" would break the very access we are fixing.
         if [ -n "$merged" ]; then
             export "$var=$merged"
         fi
     done
+    return 0
+}
+
+# Warn when the tailnet publish can race the boot. Docker restarts nginx as
+# soon as the daemon is up, which can be before tailscale0 holds its address;
+# the publish on that address then fails ("cannot assign requested address")
+# and the container — loopback port included — stays down until the next
+# launch. net.ipv4.ip_nonlocal_bind=1 lets the bind succeed early (FORK.md,
+# "Reaching the stack over Tailscale"). Warn only: a host sysctl is the
+# owner's call, and there is no /proc sysctl to read off Linux.
+tailscale_nonlocal_bind_warning() {
+    local sysctl_path="${TAILSCALE_LIB_SYSCTL_PATH:-/proc/sys/net/ipv4/ip_nonlocal_bind}"
+    local yellow="${YELLOW:-}"
+    local nc="${NC:-}"
+
+    tailscale_should_publish || return 0
+    [ -r "$sysctl_path" ] || return 0
+    [ "$(cat "$sysctl_path" 2>/dev/null)" = "0" ] || return 0
+    echo -e "${yellow}⚠ net.ipv4.ip_nonlocal_bind is 0: after a reboot Docker can start nginx before this host holds${nc}"
+    echo -e "${yellow}  ${DEER_FLOW_TAILNET_IPV4}, fail that bind, and leave http://localhost down too. Fix once:${nc}"
+    echo "    echo 'net.ipv4.ip_nonlocal_bind = 1' | sudo tee /etc/sysctl.d/99-deerflow-tailnet.conf && sudo sysctl --system"
     return 0
 }
 

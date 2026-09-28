@@ -668,8 +668,17 @@ def preload_model(host: str, name: str, keep_alive: str | None = None, timeout: 
     return post(f"{normalize_host(host)}/api/generate", payload, timeout)
 
 
-def render_entry(name: str, caps: list, base_url: str = DEFAULT_HOST, num_ctx: int | None = None, keep_alive: str | None = None, size_bytes: int | None = None, kv_bytes_per_token: float | None = None) -> str:
-    """Render a single Ollama model entry as YAML at 2-space indent.
+def render_entry(
+    name: str,
+    caps: list,
+    base_url: str = DEFAULT_HOST,
+    num_ctx: int | None = None,
+    keep_alive: str | None = None,
+    size_bytes: int | None = None,
+    kv_bytes_per_token: float | None = None,
+    indent: str = INDENT,
+) -> str:
+    """Render a single Ollama model entry as YAML at ``indent`` (2 spaces by default).
 
     When ``num_ctx`` is known, the entry pins the context window and keeps the
     ``num_predict`` output budget below it (reserving at least half the window
@@ -703,38 +712,38 @@ def render_entry(name: str, caps: list, base_url: str = DEFAULT_HOST, num_ctx: i
     if num_ctx is not None:
         num_predict = max(1, min(DEFAULT_NUM_PREDICT, num_ctx // 2))
     lines = [
-        f"{INDENT}- name: {name}",
-        f"{INDENT}  display_name: {name} (Ollama)",
-        f"{INDENT}  use: langchain_ollama:ChatOllama",
-        f"{INDENT}  model: {name}",
-        f"{INDENT}  base_url: {base_url}",
+        f"{indent}- name: {name}",
+        f"{indent}  display_name: {name} (Ollama)",
+        f"{indent}  use: langchain_ollama:ChatOllama",
+        f"{indent}  model: {name}",
+        f"{indent}  base_url: {base_url}",
     ]
     if num_ctx is not None:
-        lines.append(f"{INDENT}  num_ctx: {num_ctx}")
-        lines.append(f"{INDENT}  context_window: {num_ctx}")
+        lines.append(f"{indent}  num_ctx: {num_ctx}")
+        lines.append(f"{indent}  context_window: {num_ctx}")
     if size_bytes:
-        lines.append(f"{INDENT}  size_bytes: {int(size_bytes)}")
+        lines.append(f"{indent}  size_bytes: {int(size_bytes)}")
     if kv_bytes_per_token and kv_bytes_per_token > 0:
         # Rounded to the byte: the geometry that produces it is exact, and a
         # bare float would write a 17-digit repr into a hand-edited file.
-        lines.append(f"{INDENT}  kv_bytes_per_token: {round(float(kv_bytes_per_token), 3):g}")
+        lines.append(f"{indent}  kv_bytes_per_token: {round(float(kv_bytes_per_token), 3):g}")
     if keep_alive:
         # ChatOllama forwards keep_alive to the daemon, so the model stays
         # resident between turns instead of paying a cold start per subagent call.
-        lines.append(f"{INDENT}  keep_alive: {keep_alive}")
+        lines.append(f"{indent}  keep_alive: {keep_alive}")
     lines += [
-        f"{INDENT}  num_predict: {num_predict}",
-        f"{INDENT}  temperature: 0.7",
+        f"{indent}  num_predict: {num_predict}",
+        f"{indent}  temperature: 0.7",
     ]
     if "thinking" in caps:
         # Native Ollama API toggles reasoning via reasoning:true (think:true downstream)
-        lines.append(f"{INDENT}  reasoning: true")
-        lines.append(f"{INDENT}  supports_thinking: true")
+        lines.append(f"{indent}  reasoning: true")
+        lines.append(f"{indent}  supports_thinking: true")
     if "vision" in caps:
-        lines.append(f"{INDENT}  supports_vision: true")
+        lines.append(f"{indent}  supports_vision: true")
     if "tools" not in caps:
         # Explicit false signals the UI to grey out the entry for subagent selection.
-        lines.append(f"{INDENT}  supports_tools: false")
+        lines.append(f"{indent}  supports_tools: false")
     return "\n".join(lines)
 
 
@@ -789,6 +798,60 @@ def find_models_section(lines):
     return start, end
 
 
+_LIST_ITEM = re.compile(r"^( *)- ")
+_ITEM_NAME = re.compile(r"""^\s*(?:- )?name:\s*(['"]?)(.+?)\1\s*$""")
+
+
+def list_indent(section: list) -> str:
+    """The indentation of the models list's items, or INDENT if it has none.
+
+    A config re-dumped by an older config-upgrade has its items flush with
+    ``models:``; a block written at two spaces after them does not parse.
+    """
+    for line in section:
+        match = _LIST_ITEM.match(line)
+        if match:
+            return match.group(1)
+    return INDENT
+
+
+def drop_stale_generated_items(section: list, names: set, indent: str) -> tuple[list, list]:
+    """Remove unmarked entries this script wrote for ``names``; return (lines, dropped).
+
+    Only an item carrying render_entry's own signature is removed — its
+    ``use: langchain_ollama:ChatOllama`` and ``display_name: <name> (Ollama)``
+    — so a hand-written entry that happens to share a model tag is kept.
+
+    An item runs from its ``- `` line through the lines indented deeper than
+    it; a comment or item at its own level ends it. Blank lines after the
+    item's last line stay, so the surrounding layout does not shift.
+    """
+    kept, dropped = [], []
+    i = 0
+    while i < len(section):
+        line = section[i]
+        if not (line.startswith(f"{indent}- ") and not line.startswith(f"{indent}  ")):
+            kept.append(line)
+            i += 1
+            continue
+        j = i + 1
+        last = i
+        while j < len(section) and (not section[j].strip() or section[j].startswith(f"{indent} ")):
+            if section[j].strip():
+                last = j
+            j += 1
+        item = section[i : last + 1]
+        stripped = {entry.strip().removeprefix("- ") for entry in item}
+        name = next((m.group(2) for m in map(_ITEM_NAME.match, item) if m), None)
+        if name in names and "use: langchain_ollama:ChatOllama" in stripped and f"display_name: {name} (Ollama)" in stripped:
+            dropped.append(name)
+        else:
+            kept.extend(item)
+        kept.extend(section[last + 1 : j])
+        i = j
+    return kept, dropped
+
+
 def sync(text: str, models: list, base_url: str = DEFAULT_HOST) -> str:
     """Return updated config text with the managed block regenerated."""
     lines = text.splitlines()
@@ -796,18 +859,30 @@ def sync(text: str, models: list, base_url: str = DEFAULT_HOST) -> str:
 
     # Strip any existing managed block inside [start+1, end)
     section = lines[start + 1 : end]
+    indent = list_indent(section)
     new_section = []
     in_managed = False
+    had_markers = False
     for line in section:
         s = line.strip()
         if s == BEGIN_MARKER:
             in_managed = True
+            had_markers = True
             continue
         if in_managed:
             if s == END_MARKER:
                 in_managed = False
             continue
         new_section.append(line)
+
+    # Markers gone (a re-dump that dropped comments) means the entries they
+    # fenced are still here, unmarked. Replace the ones about to be written
+    # rather than duplicate them; with the markers intact, anything outside
+    # them is the operator's and is never touched.
+    if not had_markers and models:
+        new_section, dropped = drop_stale_generated_items(new_section, {entry[0] for entry in models}, indent)
+        if dropped:
+            print(f"[ollama-sync] ollama-sync markers were missing; replaced {len(dropped)} unmarked entr{'y' if len(dropped) == 1 else 'ies'} of the same name: {', '.join(dropped)}", file=sys.stderr)
 
     # Trim trailing blank lines from the section
     while new_section and not new_section[-1].strip():
@@ -816,7 +891,7 @@ def sync(text: str, models: list, base_url: str = DEFAULT_HOST) -> str:
     # Append the fresh managed block (only if there are models to write)
     if models:
         new_section.append("")
-        new_section.append(f"{INDENT}{BEGIN_MARKER}")
+        new_section.append(f"{indent}{BEGIN_MARKER}")
         for entry in models:
             # Entries are (name, caps), (name, caps, num_ctx),
             # (name, caps, num_ctx, keep_alive), (name, caps, num_ctx,
@@ -828,8 +903,8 @@ def sync(text: str, models: list, base_url: str = DEFAULT_HOST) -> str:
             keep_alive = entry[3] if len(entry) > 3 else None
             size_bytes = entry[4] if len(entry) > 4 else None
             kv_bytes_per_token = entry[5] if len(entry) > 5 else None
-            new_section.append(render_entry(name, caps, base_url, num_ctx=num_ctx, keep_alive=keep_alive, size_bytes=size_bytes, kv_bytes_per_token=kv_bytes_per_token))
-        new_section.append(f"{INDENT}{END_MARKER}")
+            new_section.append(render_entry(name, caps, base_url, num_ctx=num_ctx, keep_alive=keep_alive, size_bytes=size_bytes, kv_bytes_per_token=kv_bytes_per_token, indent=indent))
+        new_section.append(f"{indent}{END_MARKER}")
 
     new_section.append("")  # blank separator before next top-level key
 

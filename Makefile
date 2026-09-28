@@ -195,12 +195,13 @@ setup-sandbox:
 # MODE=external (default): one shared container managed by `make sandbox-up`.
 # MODE=container: per-thread containers with host-backed /mnt/user-data mounts —
 # the mode to use for clone-and-debug workflows (`make sandbox-enable MODE=container`).
+# Runs without uv on a Docker-only host (scripts/backend-python.sh).
 SANDBOX_MODE ?= $(or $(MODE),external)
 sandbox-enable:
-	@$(BACKEND_UV_RUN) python ../scripts/sandbox_toggle.py enable --mode $(SANDBOX_MODE)
+	@$(RUN_SHELL_SCRIPT) ./scripts/backend-python.sh scripts/sandbox_toggle.py enable --mode $(SANDBOX_MODE)
 
 sandbox-disable:
-	@$(BACKEND_UV_RUN) python ../scripts/sandbox_toggle.py disable
+	@$(RUN_SHELL_SCRIPT) ./scripts/backend-python.sh scripts/sandbox_toggle.py disable
 
 # Standalone AIO sandbox container (docker/docker-compose.sandbox.yml).
 # `make dev` auto-starts it when config selects base_url and it is unreachable;

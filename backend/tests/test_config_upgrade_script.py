@@ -584,3 +584,110 @@ class TestKnowledgeProviderMigration:
         assert config_upgrade.upgrade(config, example, REPO_ROOT) == 0
 
         assert yaml.safe_load(config.read_text(encoding="utf-8"))["knowledge_base"]["enabled"] is False
+
+
+def _load_sync_script():
+    spec = importlib.util.spec_from_file_location("sync_ollama_models_for_upgrade", REPO_ROOT / "scripts" / "sync-ollama-models.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+class TestOllamaSyncBlockSurvivesUpgrade:
+    """The structural re-dump used to drop the ollama-sync markers and write
+    ``- name:`` flush under ``models:``. The next launch's sync then kept the
+    unmarked entries and appended a two-space block after them: invalid YAML
+    plus duplicate model names, and a Gateway that cannot load its config.
+    Reproduced on the home server going from config_version 41 to 58."""
+
+    SYNCED = [("qwen3:8b", ["tools"], 32768), ("llava:13b", ["vision"])]
+
+    def _v41_config(self, sync) -> str:
+        base = textwrap.dedent(
+            """\
+            config_version: 41
+            # hand-maintained cloud models
+            models:
+              - name: gpt-4o
+                display_name: GPT-4o
+                use: langchain_openai:ChatOpenAI
+                model: gpt-4o
+            sandbox:
+              use: deerflow.sandbox.local:LocalSandboxProvider
+            """
+        )
+        return sync.sync(base, self.SYNCED)
+
+    def _example(self, tmp_path: Path) -> Path:
+        example = tmp_path / "config.example.yaml"
+        example.write_text(
+            textwrap.dedent(
+                """\
+                config_version: 58
+                models: []
+                sandbox:
+                  use: deerflow.sandbox.local:LocalSandboxProvider
+                  mounts: []
+                new_section:
+                  enabled: true
+                  items:
+                    - one
+                """
+            ),
+            encoding="utf-8",
+        )
+        return example
+
+    @staticmethod
+    def _names(text: str) -> list[str]:
+        return [model["name"] for model in yaml.safe_load(text)["models"]]
+
+    def test_upgrade_keeps_the_markers_and_indents_lists(self, tmp_path):
+        sync = _load_sync_script()
+        config = tmp_path / "config.yaml"
+        config.write_text(self._v41_config(sync), encoding="utf-8")
+
+        assert config_upgrade.upgrade(config, self._example(tmp_path), REPO_ROOT) == 0
+
+        upgraded = config.read_text(encoding="utf-8")
+        assert upgraded.count(sync.BEGIN_MARKER) == 1
+        assert upgraded.count(sync.END_MARKER) == 1
+        assert "\n- " not in upgraded  # no list flush under its parent key
+        assert self._names(upgraded) == ["gpt-4o", "qwen3:8b", "llava:13b"]
+        assert yaml.safe_load(upgraded)["new_section"] == {"enabled": True, "items": ["one"]}
+
+    def test_upgrade_then_sync_twice_stays_valid_and_stable(self, tmp_path):
+        sync = _load_sync_script()
+        config = tmp_path / "config.yaml"
+        config.write_text(self._v41_config(sync), encoding="utf-8")
+        config_upgrade.upgrade(config, self._example(tmp_path), REPO_ROOT)
+        upgraded = config.read_text(encoding="utf-8")
+
+        # Same daemon contents: the launch-time sync has nothing to change.
+        assert sync.sync(upgraded, self.SYNCED) == upgraded
+
+        # A new model pulled since: the block is regenerated in place.
+        pulled = [*self.SYNCED, ("mistral:7b", ["tools"])]
+        once = sync.sync(upgraded, pulled)
+        names = self._names(once)
+        assert sorted(names) == sorted(["gpt-4o", "qwen3:8b", "llava:13b", "mistral:7b"])
+        assert len(names) == len(set(names))
+        assert once.count(sync.BEGIN_MARKER) == 1
+        assert sync.sync(once, pulled) == once
+
+    def test_a_config_holding_only_synced_models_keeps_its_models_key(self, tmp_path):
+        sync = _load_sync_script()
+        config = tmp_path / "config.yaml"
+        base = "config_version: 41\nmodels:\nsandbox:\n  use: deerflow.sandbox.local:LocalSandboxProvider\n"
+        config.write_text(sync.sync(base, self.SYNCED), encoding="utf-8")
+
+        config_upgrade.upgrade(config, self._example(tmp_path), REPO_ROOT)
+
+        upgraded = config.read_text(encoding="utf-8")
+        assert self._names(upgraded) == ["qwen3:8b", "llava:13b"]
+        assert sync.sync(upgraded, self.SYNCED) == upgraded
+
+    def test_markers_match_the_sync_script(self):
+        sync = _load_sync_script()
+        assert config_upgrade.OLLAMA_SYNC_BEGIN == sync.BEGIN_MARKER
+        assert config_upgrade.OLLAMA_SYNC_END == sync.END_MARKER

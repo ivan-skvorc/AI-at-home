@@ -225,7 +225,7 @@ It is disabled by default; see the linked guide to enable it.
 
    This launches an interactive wizard that guides you through choosing an LLM provider, optional web search, and execution/safety preferences such as sandbox mode, bash access, and file-write tools. It generates a minimal `config.yaml` and writes your keys to `.env`. Takes about 2 minutes.
 
-   Pick **Anthropic** or **OpenRouter** and the wizard enables a whole set of latest models from that one key — Anthropic writes Fable 5.1 / Opus 5.5 / Opus 5 / Sonnet 5 / Sonnet 4.6 / Haiku 4.5, and OpenRouter writes Claude Fable 5.1 plus the xAI / OpenAI / Google flagships and a spread of open alternatives (MiniMax, Mistral, DeepSeek, Kimi, GLM, Qwen). If you configure by hand instead (`make config`), the same ready-to-uncomment blocks are at the top of `config.example.yaml` under `models:` — uncomment the one matching your key.
+   Pick **Anthropic** or **OpenRouter** and the wizard enables a whole set of latest models from that one key — Anthropic writes Fable 5.1 / Opus 5.5 / Opus 5 / Sonnet 5.5 / Sonnet 5 / Haiku 4.5, and OpenRouter writes Claude Fable 5.1 plus the xAI / OpenAI / Google flagships and a spread of open alternatives (MiniMax, Mistral, DeepSeek, Kimi, GLM, Qwen). If you configure by hand instead (`make config`), the same ready-to-uncomment blocks are at the top of `config.example.yaml` under `models:` — uncomment the one matching your key.
 
    The wizard also lets you configure an optional web search provider, or skip it for now.
 
@@ -3362,6 +3362,16 @@ DEER_FLOW_TAILSCALE_PUBLISH=0
 
 Without Tailscale running, none of this applies: nothing extra is published and
 the default remains `127.0.0.1` only.
+
+On a host that starts DeerFlow at boot, let the tailnet publish bind before
+Tailscale has brought its address up — otherwise Docker can start nginx first,
+fail that bind, and leave `http://localhost` down with it until the next
+`make up`. `make up` / `make docker-start` print this while it is missing:
+
+```bash
+echo 'net.ipv4.ip_nonlocal_bind = 1' | sudo tee /etc/sysctl.d/99-deerflow-tailnet.conf
+sudo sysctl --system
+```
 
 ### Notifications on Your Phone (PWA + Web Push)
 
