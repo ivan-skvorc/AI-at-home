@@ -141,6 +141,10 @@
 
 #### 模型与集成
 
+- **社区工具：** 新增 Unbrowse `web_fetch` provider——以 Markdown 形式返回页面
+  内容：普通 HTTP 足够时直接抓取，需要 JavaScript 的页面则在 Unbrowse 托管的
+  云端浏览器中渲染（`render: auto|never|always`）。每次抓取仅一次 JSON-RPC
+  POST，不引入新依赖。([#5981])
 - **模型：** 管理员现在可以从“设置 → 模型”管理共享模型，
   无需编辑服务器配置。新的仅管理员端点
   `GET/PUT /api/managed-models` 与
@@ -328,6 +332,76 @@
 
 ### 修复
 
+- **前端：** 文件上传完成后，乐观显示的用户消息气泡不再丢失引用与对话
+  引用标签。上传完成时的更新会用仅含已上传文件的对象替换气泡的
+  `additional_kwargs`，因此在服务端回传该消息之前这些标签会消失；随本次
+  发送一起暂存的项目附件在上传中和上传后也都不会显示在气泡中。实际提交的
+  消息始终完整。乐观副本（上传前后）与提交现在通过同一个辅助函数
+  `buildHumanMessageAdditionalKwargs` 构建 `additional_kwargs`。([#5982])
+
+- **调度器：** 修改间隔任务的标题或 prompt 不再返回 500。编辑对话框总是把 `schedule_spec` 与被修改的
+  字段一起发送；当节奏没有变化时，`PATCH /api/scheduled-tasks/{id}` 会沿用任务原有的 `next_run_at`——
+  而这个值是仓储以 ISO 字符串序列化后返回的。`ScheduledTaskRepository.update()` 原样把它赋给
+  `DateTime` 列，于是 SQLite 抛出 `StatementError`（"only accepts Python datetime"），Postgres 抛出
+  `DataError`；只有改变节奏才能成功，因为那条路径会重新计算出 datetime。现在仓储在 `update()` 中
+  会像 `update_after_launch()` 一样，把接收到的所有序列化时间戳转换回来。([#5964])
+- **网关：** `GET /api/skills`、`GET /api/skills/custom` 与 `GET /api/skills/{name}` 不再在事件循环上
+  遍历技能目录。三者此前都内联调用 `load_skills()`：它会解析调用者的存储、扫描所有公共与自定义
+  技能目录并解析每个 `SKILL.md`，工作量随已安装技能数增长。#5747 已经为自定义技能内容路由把同一
+  调用移出事件循环并注明原因，但这三条路由被遗漏了，因此严格的 Blockbuster 门禁会在它们上抛出
+  `BlockingError`；在生产环境中，技能树很大或磁盘很慢时，扫描期间该 worker 上的其他所有请求都会
+  停顿。现在三者通过一个共享辅助函数用 `asyncio.to_thread` 卸载加载过程。([#5945])
+- **网关：** `GET` 与 `PUT /api/user-profile` 不再在事件循环上执行文件系统操作。这两个处理器
+  此前在循环上直接解析按用户隔离的 `USER.md` 路径（每次调用都会构造绝对路径）、stat、读取、
+  创建用户目录并写入文件，而自定义智能体路由里的其他所有处理器都通过 `asyncio.to_thread`
+  卸载这类工作。在严格的 Blockbuster 门禁下这一对处理器会抛出 `BlockingError`；在生产环境中，
+  磁盘变慢时会让该 worker 上的其他所有请求随之停顿。现在两者都把整段
+  解析-stat-读取 / 解析-mkdir-写入 的流程卸载到线程。([#5935])
+- **Docker：** 通过统一入口上传超过 1 MB 的项目文档不再被 nginx 直接以 `413` 拒绝。
+  `POST /api/projects/{id}/documents` 是 multipart 上传，Gateway 接受至多
+  `uploads.max_file_size`（默认 50 MiB）的文件，但没有任何 nginx location 匹配它，于是请求
+  落到 `/api/` 兜底块，被 nginx 默认的 `client_max_body_size 1m` 在到达 Gateway 之前拒绝——
+  一个 2 MB 的 PDF 会被拒，而同一个文件上传到会话里却没问题。三份维护中的配置（Docker、
+  `make dev`、Helm）现在都为 `/api/projects/{id}/documents` 单独设置 location，沿用会话上传的
+  设置（100M 上限、请求体流式转发）以及兜底块原本给予的读超时；兜底块自身保持 nginx 默认值。([#5934])
+- **Docker：** 生产栈（`make up` / `scripts/deploy.sh`）现在可以在禁用 IPv6 的主机上启动。
+  `docker/nginx/nginx.conf` 同时监听 `[::]:2026`；在以 `ipv6.disable=1` 启动的内核上，这条监听会让
+  nginx 在启动时退出，容器因此反复重启，`make up` 永远无法就绪。开发用 compose 文件自 #2027 起
+  会在 `/proc/net/if_inet6` 不存在时去掉 IPv6 监听，Helm chart 也做了同样处理；生产用 compose
+  文件是唯一还没有这层保护的启动器。现在它使用相同的启动脚本，并以 `exec` 启动 nginx 使其成为
+  PID 1。([#5900])
+- **部署：** `make up` / `scripts/deploy.sh` 现在会采用写在仓库根目录 `.env` 中的
+  `BETTER_AUTH_SECRET` 与 `DEER_FLOW_INTERNAL_AUTH_TOKEN`。此前脚本只检查 shell 环境，随后
+  就重新加载已持久化的密钥或生成新密钥并 export；而 Compose 插值时 shell 变量优先于
+  `--env-file`，于是部署文档让运维写进 `.env` 的值被悄悄替换：会话用的是运维从未选择的密钥，
+  在栈外运行、持有配置 token 的 Gateway worker 则收到 `401`。现在 `.env` 提供的密钥交由
+  Compose 自行读取（优先级 shell → `.env` → 持久化文件 → 新生成）。`.env` 是否提供了值由
+  Compose 自己决定：脚本用 `docker compose config` 渲染一个只含 `${KEY}` 的桩项目并读回结果，
+  因此 `KEY: VALUE` 写法和值内的 `${VAR}` 插值在所有 Compose v2 客户端上都按 Compose 的规则
+  计算；解析结果为空的值（例如已 export 但为空的 shell 变量）仍会触发生成，因为 Compose 否则
+  会把空值直接传下去。([#5928])
+- **技能：** `skill_manage(action="remove_file")` 与 `write_file` 现在可以处理二进制支持文件，
+  并会干净地拒绝目录。`.skill` 压缩包可以包含 `assets/logo.png`（安装器只拒绝*可执行*二进制），
+  但这两个操作在改动文件之前会先把原有内容按 UTF-8 文本读出（仅用于历史记录），于是二进制
+  成员会抛出 `UnicodeDecodeError`，文件既不会被删除也不会被覆盖。像 `assets` 这样的裸支持目录
+  也能通过路径校验并抛出 `IsADirectoryError`。现在非文本内容会记录为“无原有文本”，目录路径
+  则作为校验错误返回，而不是崩溃。([#5893])
+- **模型：** 在旧路径（没有 `reasoning:` 块）上，`when_thinking_enabled` 与 `when_thinking_disabled`
+  不再整体替换模型档案的 `extra_body`。两个模板此前都用浅层 `dict.update` 套用，因此档案里与
+  `when_thinking_enabled.extra_body.thinking` / `when_thinking_disabled` 模板并列的
+  `extra_body: {tool_stream: true}`（`config.example.yaml` 里大多数基于 `extra_body` 的示例都是
+  这种写法）在开与关两个方向都会丢失 `tool_stream`，而合成的禁用载荷和契约路径早已是深度合并。
+  现在两个旧路径模板同样深度合并。合并语义为：永不删除键，模板只能新增或覆盖，嵌套映射会继承
+  档案里的其他键，冲突时以模板值为准。合并还会让模板的 vLLM 开关在两种拼写之间保持权威：当档案
+  与模板对开关的拼写不同（`chat_template_kwargs.enable_thinking: false` 并列旧别名
+  `thinking: true`）时，模板的值会镜像到档案的拼写上，因此 `VllmChatModel` 与普通的 OpenAI 兼容
+  类都会在服务端实际读取的那个键上发送模板的意图——旧路径与契约路径、开与关两个方向均如此。
+  非映射类型的模板值按原样转发。迁移提示：由于键永不删除，`when_thinking_disabled` 模板不再能
+  清除档案基础 `extra_body` 里设置的键——基础 `extra_body.thinking: {type: enabled, budget_tokens: 4096}`
+  在关闭思考时会以 `{type: disabled, budget_tokens: 4096}` 发到 provider，Anthropic 风格的 API 会拒绝。
+  `budget_tokens` 之类仅在开启时有意义的键应放在 `when_thinking_enabled` 里，而不是基础 `extra_body`；
+  合成的禁用载荷与契约路径此前已是这一行为。模板在合并时会被深拷贝，因此构造参数不会与缓存的
+  档案共享对象。([#5894])
 - **项目：** 会话文件视图不再为尚无标题的成员会话显示空标题。会话的 `display_name` 在标题
   生成运行之前（或从未运行时）在接口上为 `null`，但文件分组类型将其声明为必填字符串并原样
   渲染，因此在首次回复之前上传的文件会挂在一行空白之下。这类分组现在显示为“未命名”，与
@@ -336,6 +410,23 @@
   `custom/` 下的一级链接，但 `delete_custom_skill` 用 `shutil.rmtree` 删除包目录，而它拒绝
   符号链接：删除在写入历史记录之后以 `OSError` 失败，退出时清空了用户的技能投影视图，
   `DELETE /api/skills/custom/{name}` 返回 500。现在只移除链接本身，绝不触碰其指向的外部目录。([#5881])
+- **开发：** 当同级 worktree 的路径包含空格时，`make stop` / `make dev` 现在也能回收它占用的
+  开发端口。`serve.sh` 用 `awk '{print $2}'` 解析 `git worktree list --porcelain` 来构建
+  worktree 根目录列表，而该输出中的路径不加引号，因此 `.../deer flow two` 被记录成了
+  `.../deer`；从那个 worktree 启动的 Gateway 或前端永远不会被识别为 deer-flow 的进程，
+  启动会以“端口已被占用”中止。现在会保留整条路径。([#5856])
+- **上传：** 运行消息元数据中格式错误的 `files[*].size` 不再导致整个运行失败。
+  `UploadsMiddleware` 对客户端提供的文件条目的其他字段都做了容错校验，唯独把 `size` 直接交给
+  `int()`，因此 `"abc"` 或列表这样的值会在调用模型之前从 `before_agent` 抛出——而且由于该条目
+  会被原样带入，之后每次编辑或重新生成这条消息都会再次失败。该字段只用于 `<current_uploads>`
+  里的可读大小；现在无法使用的值会回退为 `0`，与缺失时一致，数字字符串仍然有效。([#5855])
+- **发布：** 版本升级不再把 `backend/uv.lock` 落下。`scripts/bump_version.sh` 会改写
+  `backend/pyproject.toml`、`frontend/package.json` 与 Helm chart，但 lockfile 同样记录了
+  根包自身的版本（uv 保留其 PEP 440 形式，因此 `2.1.0-rc0` 存为 `2.1.0rc0`），于是文档给出的
+  发布步骤产出的提交会被 lock 相关 CI 拦下：`uv lock --check` 判其过期，`uv sync --locked`
+  也会拒绝该工作区；装了 pre-commit 时还会更早在 `uv-lock-check` 钩子上失败。现在该脚本会用
+  `uv lock` 刷新 lockfile，并在缺少 `uv` 时于修改任何文件之前退出，而不是留下一个只改一半的
+  工作区。实际改动仅涉及根包的那一行版本号。([#5859])
 - **前端：** 子任务渲染状态不再在 `MessageList` 渲染过程中被就地修
   改。子任务同步从渲染阶段移入 effect，因此即使任务上下文尚未发布
   更新，卡片也能立即拿到纯派生自消息的快照——修复了最终流式参数与
@@ -1190,6 +1281,14 @@
   code-span token 现在以同样方式切分 fragment 并去掉尾部
   句读标点；`references/v1.0.md#notes` 这类带点的文件名会
   保留其扩展名中的点。([#5841])
+- **技能：** 技能评审的 Markdown 链接扫描在对抗性输入下保持线性。
+  提取器曾对每个候选 opener 重复扫描同一目标串，一长串未闭合的 `[`
+  或 `](` 密集的非法目标都会让评审退化为平方复杂度——#5714 在 256 KiB
+  的 `[` 下实测 19 秒，而资源图会扫描每个 text 成员，
+  `PackageLimits.max_file_bytes` 为 64 MiB，单个大 SKILL.md 完全在影响
+  范围内。扫描现在只遍历一次候选 opener，经与基准正则的差分 fuzz 验证，
+  与 `finditer` 完全一致；已匹配区间改按位置清除，不再使用
+  `str.replace`，避免误删后方相同的文本。([#5884])
 - **配置：** 配置缓存签名的应是它实际解析的字节，而不是
   第二次读取。app-config 加载器此前打开 `config.yaml` 两次
   ——先解析一次，再对一次全新的读取做哈希来记录
@@ -2128,48 +2227,6 @@
 
 ### 修复
 
-- **开发：** 当同级 worktree 的路径包含空格时，`make stop` / `make dev` 现在也能回收它占用的
-  开发端口。`serve.sh` 用 `awk '{print $2}'` 解析 `git worktree list --porcelain` 来构建
-  worktree 根目录列表，而该输出中的路径不加引号，因此 `.../deer flow two` 被记录成了
-  `.../deer`；从那个 worktree 启动的 Gateway 或前端永远不会被识别为 deer-flow 的进程，
-  启动会以“端口已被占用”中止。现在会保留整条路径。([#5856])
-- **上传：** 运行消息元数据中格式错误的 `files[*].size` 不再导致整个运行失败。
-  `UploadsMiddleware` 对客户端提供的文件条目的其他字段都做了容错校验，唯独把 `size` 直接交给
-  `int()`，因此 `"abc"` 或列表这样的值会在调用模型之前从 `before_agent` 抛出——而且由于该条目
-  会被原样带入，之后每次编辑或重新生成这条消息都会再次失败。该字段只用于 `<current_uploads>`
-  里的可读大小；现在无法使用的值会回退为 `0`，与缺失时一致，数字字符串仍然有效。([#5855])
-- **发布：** 版本升级不再把 `backend/uv.lock` 落下。`scripts/bump_version.sh` 会改写
-  `backend/pyproject.toml`、`frontend/package.json` 与 Helm chart，但 lockfile 同样记录了
-  根包自身的版本（uv 保留其 PEP 440 形式，因此 `2.1.0-rc0` 存为 `2.1.0rc0`），于是文档给出的
-  发布步骤产出的提交会被 lock 相关 CI 拦下：`uv lock --check` 判其过期，`uv sync --locked`
-  也会拒绝该工作区；装了 pre-commit 时还会更早在 `uv-lock-check` 钩子上失败。现在该脚本会用
-  `uv lock` 刷新 lockfile，并在缺少 `uv` 时于修改任何文件之前退出，而不是留下一个只改一半的
-  工作区。实际改动仅涉及根包的那一行版本号。([#5859])
-- **配置：** 在上一次编辑仍在加载时落盘的 `config.yaml` 编辑，不再要等到下一次编辑才生效。
-  `get_app_config()` 的加载器先解析文件，再重新读取一遍来计算缓存签名，因此夹在两次读取
-  之间的写入会让缓存以较新内容的签名保存较旧的内容，而签名比较永远无法发现这种状态。
-  现在加载器只读取文件一次，并对解析的那份字节计算签名；与加载竞争的写入只会在下一次
-  调用时多触发一次重载。([#5848])
-- **配置：** `request_admission.requests_per_minute` 与 `max_queue_size` 现在与其他字段一样
-  接受 `$VAR` 环境变量引用。这两个字段是严格整数，布尔值与浮点数仍会被拒绝；但 `$VAR`
-  替换得到的永远是字符串，因此即使 `RPM=60`，`requests_per_minute: $RPM` 也会让整个配置
-  加载失败并报 "Input should be a valid integer"。现在以字符串形式到达的十进制整数字面量会在
-  严格校验之前被转换；其他字符串仍会被拒绝。([#5838])
-- **调度器：** 在 SQLite 上，调度分发进行中暂停计划任务时不再丢失暂停状态。
-  `release_dispatch_lease` 依据租约持有者做校验（暂停会清除该字段），但读取任务行时没有先获取
-  SQLite 的写锁，因此过期的读取会通过校验，并把任务状态写回 `enabled` 且不改动 `next_run_at`，
-  导致接口已回复“已暂停”的任务仍被继续触发。现在该读取会像该仓储中其他写入路径一样先获取写锁。
-  PostgreSQL 不受影响。([#5777])
-- **mcp：** MCP 延迟初始化在工具发现本身抛出 `RuntimeError`（例如
-  `McpTaskConfigurationError`）时，不再把发现流程跑两遍。`get_cached_mcp_tools()` 里的
-  `asyncio.run` 兜底只为 `get_event_loop()` 失败而设，却同时捕获了发现阶段的错误，于是在
-  放弃之前会重新拉起每一个 stdio 服务器（并重新获取 OAuth 令牌）；在运行中的事件循环里，
-  它记录的还是误导性的 "asyncio.run() cannot be called from a running event loop"
-  堆栈，而不是真正的原因。
-- **上传：** 删除已上传的文档时，不再连带删除其旁边转换生成的 Markdown。转换以文档主干名
-  命名配套文件，名称被占用时回退为 `_N` 后缀，因此文档旁的 `.md` 可能属于主干名相同的另一个
-  文档，或属于用户自己：上传 `a.docx` 与 `a.pdf` 会生成 `a.md` 与 `a_1.md`，删除 `a.pdf`
-  却会销毁 `a.docx` 的配套文件。现在配套文件会保留、继续出现在列表中，可单独删除。([#5673])
 - **nginx：** 把 600 秒读取超时扩展到其余两个会等待 Gateway 的 location，它们在线程路由的修复
   之后仍沿用 nginx 默认的 60 秒。`/api/` 兜底 location 之后：无状态的 `POST /api/runs/wait`
   阻塞在同一套运行完成等待上，并在客户端断开时取消该运行，因此等待超过 60 秒的 API 调用方会
@@ -5198,3 +5255,14 @@ DeerFlow 2.0 是围绕"超级智能体"框架的彻底重写，核心包含子�
 [#5859]: https://github.com/bytedance/deer-flow/pull/5859
 [#5879]: https://github.com/bytedance/deer-flow/pull/5879
 [#5881]: https://github.com/bytedance/deer-flow/pull/5881
+[#5884]: https://github.com/bytedance/deer-flow/pull/5884
+[#5893]: https://github.com/bytedance/deer-flow/pull/5893
+[#5894]: https://github.com/bytedance/deer-flow/pull/5894
+[#5900]: https://github.com/bytedance/deer-flow/pull/5900
+[#5928]: https://github.com/bytedance/deer-flow/pull/5928
+[#5934]: https://github.com/bytedance/deer-flow/pull/5934
+[#5935]: https://github.com/bytedance/deer-flow/pull/5935
+[#5945]: https://github.com/bytedance/deer-flow/pull/5945
+[#5964]: https://github.com/bytedance/deer-flow/pull/5964
+[#5981]: https://github.com/bytedance/deer-flow/pull/5981
+[#5982]: https://github.com/bytedance/deer-flow/pull/5982

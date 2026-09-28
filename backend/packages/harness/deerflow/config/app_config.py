@@ -61,10 +61,12 @@ from deerflow.config.task_continuity_config import TaskContinuityConfig
 from deerflow.config.title_config import TitleConfig, load_title_config_from_dict
 from deerflow.config.token_budget_config import TokenBudgetConfig
 from deerflow.config.token_usage_config import TokenUsageConfig
+from deerflow.config.tool_artifact_config import ToolArtifactConfig
 from deerflow.config.tool_config import ToolConfig, ToolGroupConfig
 from deerflow.config.tool_output_config import ToolOutputConfig
 from deerflow.config.tool_progress_config import ToolProgressConfig
 from deerflow.config.tool_search_config import ToolSearchConfig, load_tool_search_config_from_dict
+from deerflow.config.typesafe_config import TypeSafeConfig, load_typesafe_config_from_dict
 from deerflow.config.verification_config import VerificationConfig
 from deerflow.config.voice_config import VoiceConfig
 from deerflow.config.yaml_guard import safe_load_guarded
@@ -272,7 +274,11 @@ class AppConfig(BaseModel):
     skill_evolution: SkillEvolutionConfig = Field(default_factory=SkillEvolutionConfig, description="Agent-managed skill evolution configuration")
     extensions: ExtensionsConfig = Field(default_factory=ExtensionsConfig, description="Extensions configuration (MCP servers and skills state)")
     tool_output: ToolOutputConfig = Field(default_factory=ToolOutputConfig, description="Tool output budget protection configuration")
+<<<<<<< HEAD
     documents: DocumentsConfig = Field(default_factory=DocumentsConfig, description="Long-document analysis and scanned-PDF OCR configuration (fork feature)")
+=======
+    tool_artifacts: ToolArtifactConfig = Field(default_factory=ToolArtifactConfig, description="Tool-artifact handle registry configuration (issue #4676)")
+>>>>>>> upstream/main
     tool_search: ToolSearchConfig = Field(default_factory=ToolSearchConfig, description="Tool search / deferred loading configuration")
     title: TitleConfig = Field(default_factory=TitleConfig, description="Automatic title generation configuration")
     summarization: SummarizationConfig = Field(default_factory=SummarizationConfig, description="Conversation summarization configuration")
@@ -288,6 +294,10 @@ class AppConfig(BaseModel):
     acp_agents: dict[str, ACPAgentConfig] = Field(default_factory=dict, description="ACP-compatible agent configuration")
     subagents: SubagentsAppConfig = Field(default_factory=SubagentsAppConfig, description="Subagent runtime configuration")
     guardrails: GuardrailsConfig = Field(default_factory=GuardrailsConfig, description="Guardrail middleware configuration")
+    typesafe: TypeSafeConfig = Field(
+        default_factory=TypeSafeConfig,
+        description="Defaults shared by every TypeSafe (Jev) consumer: connection, model and timeouts. Each consumer overrides what it needs in its own config.",
+    )
     authorization: AuthorizationConfig = Field(default_factory=AuthorizationConfig, description="Fine-grained resource authorization configuration (RBAC and beyond)")
     input_polish: InputPolishConfig = Field(default_factory=InputPolishConfig, description="Pre-send input polishing configuration.")
     suggestions: SuggestionsConfig = Field(default_factory=SuggestionsConfig, description="Follow-up suggestions configuration.")
@@ -540,6 +550,7 @@ class AppConfig(BaseModel):
         load_subagents_config_from_dict(config.subagents.model_dump())
         load_tool_search_config_from_dict(config.tool_search.model_dump())
         load_guardrails_config_from_dict(config.guardrails.model_dump())
+        load_typesafe_config_from_dict(config.typesafe.model_dump())
         load_authorization_config_from_dict(config.authorization.model_dump())
         load_checkpointer_config_from_dict(config.checkpointer.model_dump() if config.checkpointer is not None else None)
         load_stream_bridge_config_from_dict(config.stream_bridge.model_dump() if config.stream_bridge is not None else None)

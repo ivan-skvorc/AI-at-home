@@ -91,7 +91,41 @@ async def web_search_tool(query: str, time_range: SearchTimeRange | None = None)
         time_range: Optional relative publication/update window. Use only when the request requires recent results.
     """
     try:
+<<<<<<< HEAD
         return await search_via_searxng(query, time_range)
+=======
+        cfg = _get_tool_config("web_search")
+        max_results = 5
+        if cfg is not None:
+            raw = cfg.get("max_results", max_results)
+            if isinstance(raw, int):
+                max_results = raw
+            else:
+                try:
+                    max_results = int(raw)
+                except (TypeError, ValueError, OverflowError):
+                    logger.warning(
+                        "Invalid SearXNG max_results=%r; using default %s",
+                        raw,
+                        max_results,
+                    )
+
+        client = _get_searxng_client()
+        search_kwargs: dict[str, object] = {"max_results": max_results}
+        if time_range is not None:
+            search_kwargs["time_range"] = time_range
+        results = await client.search(query, **search_kwargs)
+
+        normalized = [
+            {
+                "title": r.get("title", ""),
+                "url": r.get("url", ""),
+                "snippet": r.get("content", ""),
+            }
+            for r in results
+        ]
+        return json.dumps(normalized, indent=2, ensure_ascii=False)
+>>>>>>> upstream/main
     except Exception as e:
         logger.error(f"Error in web_search_tool: {e}")
         return json.dumps({"error": str(e), "query": query}, ensure_ascii=False)

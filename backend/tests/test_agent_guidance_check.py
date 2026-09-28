@@ -18,10 +18,14 @@ EXPECTED_GUIDANCE_PATHS = {
     "backend/packages/harness/deerflow/agents/AGENTS.md",
     "backend/packages/harness/deerflow/agents/middlewares/AGENTS.md",
     "backend/packages/harness/deerflow/agents/memory/AGENTS.md",
+<<<<<<< HEAD
     "backend/packages/harness/deerflow/agents/generation/AGENTS.md",
     "backend/packages/harness/deerflow/agents/lead_agent/AGENTS.md",
     "backend/packages/harness/deerflow/community/comfyui/AGENTS.md",
     "backend/packages/harness/deerflow/community/speech/AGENTS.md",
+=======
+    "backend/packages/harness/deerflow/agents/task_continuity/AGENTS.md",
+>>>>>>> upstream/main
     "backend/packages/harness/deerflow/community/ragflow/AGENTS.md",
     "backend/packages/harness/deerflow/community/tavily/AGENTS.md",
     "backend/packages/harness/deerflow/community/e2b_sandbox/AGENTS.md",
@@ -42,6 +46,7 @@ EXPECTED_GUIDANCE_PATHS = {
     "backend/packages/harness/deerflow/tools/AGENTS.md",
     "backend/packages/harness/deerflow/tracing/AGENTS.md",
     "backend/packages/harness/deerflow/tui/AGENTS.md",
+    "backend/packages/harness/deerflow/typesafe/AGENTS.md",
     "backend/packages/harness/deerflow/utils/AGENTS.md",
     "frontend/src/AGENTS.md",
     "scripts/AGENTS.md",

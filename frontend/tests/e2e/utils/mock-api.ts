@@ -1985,7 +1985,7 @@ export function mockLangGraphAPI(page: Page, options?: MockAPIOptions) {
     return route.fallback();
   });
 
-  void page.route("**/api/mcp/config", (route) =>
+  void page.route("**/api/mcp/personal/config", (route) =>
     route.fulfill({ json: { mcp_servers: {} } }),
   );
 
@@ -2003,7 +2003,7 @@ export function mockLangGraphAPI(page: Page, options?: MockAPIOptions) {
     }),
   );
   void page.route("**/api/capabilities/installations/*", (route) => {
-    const adapter = route.request().url().split("/").pop();
+    const adapter = new URL(route.request().url()).pathname.split("/").pop();
     const items =
       adapter === "lark"
         ? [
