@@ -287,8 +287,8 @@ models:
   # This happens automatically. On every launch `scripts/sync-api-key-models.py`
   # (the API-key auto-config, a companion to the Ollama sync) reads your `.env`
   # and uncomments the matching block below:
-  #   ANTHROPIC_API_KEY  -> Claude Fable 5.1 / Opus 5.5 / Opus 5 / Sonnet 5 /
-  #                         Sonnet 4.6 / Haiku 4.5 (direct Anthropic API)
+  #   ANTHROPIC_API_KEY  -> Claude Fable 5.1 / Opus 5.5 / Opus 5 / Sonnet 5.5 /
+  #                         Sonnet 5 / Haiku 4.5 (direct Anthropic API)
   #   OPENROUTER_API_KEY -> Claude Fable 5.1 / Claude Opus 5.5 / Grok 4.6 /
   #                         GPT-6 Astra / GPT-5.6 Sol / GPT-5.3 Codex /
   #                         Gemini 3.8 Flash / Llama 4 Maverick /
@@ -347,13 +347,13 @@ models:
   # Latest Claude models via the direct Anthropic API — their display names carry
   # an (Anthropic) suffix, mirroring the (OpenRouter) suffix on the routed copies
   # below. Opus and Sonnet each ship their previous generation alongside the
-  # current one (Opus 5 + Opus 5.5, Sonnet 4.6 + Sonnet 5); Haiku and Fable ship only
-  # the latest. Fable 5.1, Opus 5.5, Opus 5, Sonnet 5 and Sonnet 4.6 use adaptive
+  # current one (Opus 5 + Opus 5.5, Sonnet 5 + Sonnet 5.5); Haiku and Fable ship only
+  # the latest. Fable 5.1, Opus 5.5, Opus 5, Sonnet 5.5 and Sonnet 5 use adaptive
   # thinking (the `budget_tokens` form is rejected/deprecated on these models);
-  # Haiku 4.5 still takes an explicit thinking budget. Fable 5.1's and Opus 5.5's
-  # thinking is always on: both reject an explicit `thinking: {type: disabled}`
-  # with a 400, so their disabled state stays on adaptive+summarized, while
-  # Opus 5 / Sonnet 5 / Sonnet 4.6 accept `type: disabled`. `supports_thinking: true` is required or DeerFlow silently
+  # Haiku 4.5 still takes an explicit thinking budget. Fable 5.1's, Opus 5.5's and
+  # Sonnet 5.5's thinking is always on: all three reject an explicit
+  # `thinking: {type: disabled}` with a 400, so their disabled state stays on
+  # adaptive+summarized, while Opus 5 / Sonnet 5 accept `type: disabled`. `supports_thinking: true` is required or DeerFlow silently
   # falls back to non-thinking mode even with the UI toggle on.
   # Opus 5 note: it accepts `thinking: {type: disabled}` only at reasoning effort
   # `high` or below (400 at `xhigh`/`max`). DeerFlow never sends an effort /
@@ -435,6 +435,30 @@ models:
   #     thinking:
   #       type: disabled
   #
+  # - name: claude-sonnet-5-5
+  #   display_name: Claude Sonnet 5.5 (Anthropic)
+  #   use: langchain_anthropic:ChatAnthropic
+  #   model: claude-sonnet-5-5
+  #   api_key: $ANTHROPIC_API_KEY
+  #   default_request_timeout: 600.0
+  #   max_retries: 2
+  #   max_tokens: 32000
+  #   supports_vision: true
+  #   supports_thinking: true
+  #   price:                          # per 1M tokens; the single source of truth for cost display and budgets
+  #     currency: USD
+  #     input: 2.0
+  #     output: 10.0
+  #     cache_hit: 0.2        # prompt-cache reads (the usual 0.1x)
+  #   when_thinking_enabled:
+  #     thinking:
+  #       type: adaptive
+  #       display: summarized       # summarized thinking text round-trips on multi-turn tool use; omitted (the default) drops the text and 400s on replay
+  #   when_thinking_disabled:       # Sonnet 5.5 can't disable thinking (400 on type: disabled); keep adaptive+summarized so the replay still works
+  #     thinking:
+  #       type: adaptive
+  #       display: summarized
+  #
   # - name: claude-sonnet-5
   #   display_name: Claude Sonnet 5 (Anthropic)
   #   use: langchain_anthropic:ChatAnthropic
@@ -450,29 +474,6 @@ models:
   #     input: 2.0                      # the launch "introductory" rate is now the standard price
   #     output: 10.0
   #     cache_hit: 0.2        # prompt-cache reads
-  #   when_thinking_enabled:
-  #     thinking:
-  #       type: adaptive
-  #       display: summarized       # summarized thinking text round-trips on multi-turn tool use; omitted (the default) drops the text and 400s on replay
-  #   when_thinking_disabled:
-  #     thinking:
-  #       type: disabled
-  #
-  # - name: claude-sonnet-4-6
-  #   display_name: Claude Sonnet 4.6 (Anthropic)
-  #   use: langchain_anthropic:ChatAnthropic
-  #   model: claude-sonnet-4-6
-  #   api_key: $ANTHROPIC_API_KEY
-  #   default_request_timeout: 600.0
-  #   max_retries: 2
-  #   max_tokens: 32000
-  #   supports_vision: true
-  #   supports_thinking: true
-  #   price:                          # per 1M tokens; the single source of truth for cost display and budgets
-  #     currency: USD
-  #     input: 3.0
-  #     output: 15.0
-  #     cache_hit: 0.3        # prompt-cache reads
   #   when_thinking_enabled:
   #     thinking:
   #       type: adaptive

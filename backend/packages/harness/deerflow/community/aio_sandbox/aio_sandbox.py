@@ -7,6 +7,7 @@ import uuid
 from dataclasses import dataclass, field
 
 import httpx
+import pydantic
 from agent_sandbox import Sandbox as AioSandboxClient
 from agent_sandbox.core.api_error import ApiError
 
@@ -35,6 +36,22 @@ _BASH_EXEC_UNSUPPORTED_ERROR = (
     "sandbox image to all-in-one-sandbox >= 1.9.3 (set `sandbox.image` in config.yaml, "
     "e.g. pin the tag `1.11.0`) and recreate the sandbox container, then try again."
 )
+
+
+def _file_write_refused(path: str, exc: pydantic.ValidationError) -> OSError:
+    """Turn the SDK's parse failure on a refused file write into the real error.
+
+    agent-infra/sandbox (1.11.0, the pinned image) answers a write it cannot
+    perform — e.g. an unprivileged API user and a root-owned directory — with
+    HTTP 200 and a ``data`` object that carries no ``file``. The SDK's strict
+    response model then raises ``1 validation error for ResponseFileWriteResult
+    ... Field required``, which names neither the path nor the cause. The SDK
+    has already discarded the response by then, so what the server sent in
+    ``data`` is all that is left to report.
+    """
+    returned = [error.get("input") for error in exc.errors() if error.get("loc", ())[:1] == ("data",)]
+    detail = repr(returned[0])[:300] if returned else "no result"
+    return OSError(f"Sandbox did not write {path}: its file API returned no written-file result (typically the sandbox user lacks permission for this path). Server returned: {detail}")
 
 
 @dataclass
@@ -1170,6 +1187,10 @@ class AioSandbox(Sandbox):
                     self._client.file.write_file(file=path, content=content, append=True)
                 else:
                     self._client.file.write_file(file=path, content=content)
+            except pydantic.ValidationError as e:
+                refused = _file_write_refused(path, e)
+                logger.error(f"Failed to write file in sandbox: {refused}")
+                raise refused from e
             except Exception as e:
                 logger.error(f"Failed to write file in sandbox: {e}")
                 raise
@@ -1279,6 +1300,10 @@ class AioSandbox(Sandbox):
             try:
                 base64_content = base64.b64encode(content).decode("utf-8")
                 self._client.file.write_file(file=path, content=base64_content, encoding="base64")
+            except pydantic.ValidationError as e:
+                refused = _file_write_refused(path, e)
+                logger.error(f"Failed to update file in sandbox: {refused}")
+                raise refused from e
             except Exception as e:
                 logger.error(f"Failed to update file in sandbox: {e}")
                 raise

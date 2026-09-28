@@ -149,11 +149,23 @@ ensure_deer_flow_root() {
     fi
 }
 
+# The dev gateway starts as root and drops to these ids
+# (docker/dev-entrypoint.sh), so what it creates in the bind-mounted checkout
+# is owned by the user who ran `make docker-start`, not by root. Linux only:
+# Docker Desktop already maps bind-mount ownership to the host user. An
+# exported value wins; DEER_FLOW_UID=0 restores the old run-as-root behavior.
+ensure_host_user_ids() {
+    [ "$(uname -s)" = "Linux" ] || return 0
+    export DEER_FLOW_UID="${DEER_FLOW_UID:-$(id -u)}"
+    export DEER_FLOW_GID="${DEER_FLOW_GID:-$(id -g)}"
+}
+
 # Read-only with respect to configuration; safe for logs/stop/restart.
 compose_preflight() {
     require_compose_file
     require_compose_version
     ensure_deer_flow_root
+    ensure_host_user_ids
 }
 
 # Only `start` may create files. Compose env_file entries fail closed on Windows
@@ -596,6 +608,7 @@ start() {
     if tailscale_should_publish; then
         COMPOSE_CMD="$COMPOSE_CMD -f $DOCKER_DIR/docker-compose.tailscale.yaml"
         echo -e "${GREEN}✓ Tailscale detected — also publishing on ${DEER_FLOW_TAILNET_IPV4}:${entry_port} (tailnet only, not the LAN).${NC}"
+        tailscale_nonlocal_bind_warning
     fi
 
     # BIND_HOST names a single interface, so pointing it at an external one
@@ -606,6 +619,12 @@ start() {
         COMPOSE_CMD="$COMPOSE_CMD -f $DOCKER_DIR/docker-compose.loopback.yaml"
         echo -e "${GREEN}✓ Co-binding 127.0.0.1 so http://localhost stays reachable (BIND_HOST=$(read_dotenv_value BIND_HOST)).${NC}"
     fi
+
+    # Created here, as the invoking user: a bind-mount source (logs/) or the
+    # mount point of the gateway-venv volume nested in backend/ (.venv) that
+    # does not exist yet is created by the Docker daemon, as root. An empty
+    # .venv is harmless to a later host `uv sync`, which builds into it.
+    mkdir -p "$PROJECT_ROOT/logs" "$PROJECT_ROOT/backend/.venv"
 
     echo "Building and starting containers..."
     cd "$DOCKER_DIR" && $COMPOSE_CMD up --build -d --remove-orphans $services

@@ -2,8 +2,10 @@
 #
 # config-upgrade.sh - Upgrade config.yaml to match config.example.yaml
 #
-# Thin wrapper: resolves the config file locations and the Python environment,
-# then delegates to scripts/config_upgrade.py (unit-testable), which:
+# Thin wrapper: resolves the config file locations, then delegates to
+# scripts/config_upgrade.py (unit-testable) through scripts/backend-python.sh
+# (the backend venv where `make install` built one, else the host python3 —
+# a Docker-only host has no uv), which:
 # 1. Refuses duplicate-keyed configs (names the key and both line numbers)
 # 2. Runs version-specific migrations (value replacements, renames, etc.)
 # 3. Merges missing fields from the example into the user config
@@ -47,4 +49,4 @@ else
     SCRIPT_WIN="$REPO_ROOT/scripts/config_upgrade.py"
 fi
 
-cd "$REPO_ROOT/backend" && uv run python "$SCRIPT_WIN" "$CONFIG_WIN" "$EXAMPLE_WIN"
+exec bash "$REPO_ROOT/scripts/backend-python.sh" "$SCRIPT_WIN" "$CONFIG_WIN" "$EXAMPLE_WIN"

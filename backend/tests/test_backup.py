@@ -8,12 +8,15 @@ The load-bearing behaviors, in rough order of how badly getting them wrong hurts
 3. Restore refuses to write underneath a running stack.
 4. Restore cannot be walked out of the target directory by a crafted archive.
 5. File modes survive the round trip (0700/0600 credential dirs stay that way).
+6. A SQLite database is archived as one consistent snapshot, even while the
+   Gateway writes to it.
 """
 
 from __future__ import annotations
 
 import importlib.util
 import json
+import sqlite3
 import stat
 import tarfile
 from pathlib import Path
@@ -54,8 +57,10 @@ def instance(tmp_path: Path) -> Path:
     (home / "users" / "default" / "memory.json").write_text('{"version": 2}', encoding="utf-8")
     (home / "users" / "default" / "ui_state.json").write_text('{"chat_folders": []}', encoding="utf-8")
     (home / "runtime_settings.json").write_text('{"multi_user_mode": false}', encoding="utf-8")
-    (home / "aux_usage.sqlite3").write_bytes(b"SQLite format 3\x00")
-    (home / "deerflow.sqlite3").write_bytes(b"SQLite format 3\x00")
+    for name in ("aux_usage.sqlite3", "deerflow.sqlite3"):
+        with sqlite3.connect(home / name) as db:
+            db.execute("CREATE TABLE t (v INTEGER)")
+        db.close()
     (home / "users" / "default" / "threads" / "t1" / "user-data" / "workspace" / "note.md").write_text("hi", encoding="utf-8")
 
     creds = home / "users" / "default" / "integrations" / "lark" / "config" / "app.json"
@@ -142,10 +147,114 @@ class TestCreate:
 # ---------------------------------------------------------------------------
 
 
+def _live_wal_db(path: Path, rows: int) -> sqlite3.Connection:
+    """A WAL database whose committed rows sit in the -wal, not the main file —
+    the state a running Gateway leaves between checkpoints."""
+    db = sqlite3.connect(path, isolation_level=None)
+    db.execute("PRAGMA journal_mode=WAL")
+    db.execute("PRAGMA wal_autocheckpoint=0")
+    db.execute("CREATE TABLE IF NOT EXISTS t (v INTEGER)")
+    db.executemany("INSERT INTO t VALUES (?)", [(i,) for i in range(rows)])
+    return db
+
+
+def _count(path: Path) -> tuple[str, int]:
+    with sqlite3.connect(path) as db:
+        return db.execute("PRAGMA integrity_check").fetchone()[0], db.execute("SELECT count(*) FROM t").fetchone()[0]
+
+
 class TestDatabaseBackend:
     def test_sqlite_file_is_copied_as_part_of_the_home_tree(self, instance, tmp_path):
         archive = backup.create_backup(instance, tmp_path / "out")
         assert any("deerflow.sqlite3" in n for n in _members(archive))
+
+    def test_a_write_landing_mid_archive_cannot_split_the_database(self, instance, tmp_path, monkeypatch):
+        # The Gateway keeps writing while `make backup` runs. Here a write and
+        # a checkpoint land right after the main file went into the tar: a
+        # file-by-file copy then pairs the pre-checkpoint main file with the
+        # emptied -wal, and the 50 rows committed before the backup started
+        # are gone from the archive.
+        db_path = instance / "backend" / ".deer-flow" / "deerflow.sqlite3"
+        live = _live_wal_db(db_path, rows=50)
+        real_add = tarfile.TarFile.add
+        # Directory order decides whether the main file or its -wal is read
+        # first; sorted puts the main file first, the order that loses data.
+        real_rglob = Path.rglob
+        monkeypatch.setattr(Path, "rglob", lambda self, pattern: sorted(real_rglob(self, pattern)))
+
+        def add_then_write(self, name, arcname=None, recursive=True, **kwargs):
+            real_add(self, name, arcname=arcname, recursive=recursive, **kwargs)
+            if arcname and arcname.endswith("/deerflow.sqlite3"):
+                live.executemany("INSERT INTO t VALUES (?)", [(i,) for i in range(7)])
+                live.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+
+        monkeypatch.setattr(tarfile.TarFile, "add", add_then_write)
+        archive = backup.create_backup(instance, tmp_path / "out")
+        live.close()
+
+        target = tmp_path / "restored"
+        backup.restore_backup(archive, target, is_running=lambda: [])
+        assert _count(target / "backend" / ".deer-flow" / "deerflow.sqlite3") == ("ok", 50)
+
+    def test_wal_sidecars_are_not_archived(self, instance, tmp_path):
+        live = _live_wal_db(instance / "backend" / ".deer-flow" / "deerflow.sqlite3", rows=3)
+        try:
+            names = _members(backup.create_backup(instance, tmp_path / "out"))
+        finally:
+            live.close()
+        assert any(n.endswith("/deerflow.sqlite3") for n in names)
+        assert not any(n.endswith(("-wal", "-shm", "-journal")) for n in names)
+
+    def test_the_snapshot_never_writes_to_the_live_database(self, instance, tmp_path):
+        db_path = instance / "backend" / ".deer-flow" / "deerflow.sqlite3"
+        live = _live_wal_db(db_path, rows=3)
+        wal = db_path.with_name(db_path.name + "-wal")
+        before = wal.read_bytes()
+        try:
+            backup.create_backup(instance, tmp_path / "out")
+            assert wal.read_bytes() == before  # no checkpoint forced by the backup
+        finally:
+            live.close()
+
+    def test_restore_drops_a_stale_wal_beside_the_restored_snapshot(self, instance, tmp_path):
+        archive = backup.create_backup(instance, tmp_path / "out")
+        target = tmp_path / "target"
+        home = target / "backend" / ".deer-flow"
+        home.mkdir(parents=True)
+        # Left behind by a crash of the old instance: SQLite would replay it
+        # onto the restored file.
+        stale = _live_wal_db(home / "deerflow.sqlite3", rows=9)
+        stale.close()
+        for suffix in ("-wal", "-shm"):
+            (home / f"deerflow.sqlite3{suffix}").write_bytes(b"stale")
+
+        backup.restore_backup(archive, target, is_running=lambda: [])
+
+        assert not (home / "deerflow.sqlite3-wal").exists()
+        assert not (home / "deerflow.sqlite3-shm").exists()
+        assert _count(home / "deerflow.sqlite3") == ("ok", 0)
+
+    def test_a_crafted_manifest_cannot_delete_outside_the_target(self, tmp_path):
+        outside = tmp_path / "victim.db-wal"
+        outside.write_text("keep me", encoding="utf-8")
+        archive = tmp_path / "crafted.tar.gz"
+        manifest = {"version": backup.MANIFEST_VERSION, "includes_secrets": False, "database_backend": "sqlite", "file_count": 0, "excluded": [], "sqlite_snapshots": ["../victim.db"]}
+        payload = tmp_path / "manifest.json"
+        payload.write_text(json.dumps(manifest), encoding="utf-8")
+        with tarfile.open(archive, "w:gz") as tar:
+            tar.add(payload, arcname=f"{backup.ARCHIVE_ROOT}/{backup.MANIFEST_NAME}")
+
+        backup.restore_backup(archive, tmp_path / "target", is_running=lambda: [])
+        assert outside.read_text(encoding="utf-8") == "keep me"
+
+    def test_an_unreadable_sqlite_file_is_still_carried_and_named(self, instance, tmp_path, capsys):
+        broken = instance / "backend" / ".deer-flow" / "broken.sqlite3"
+        broken.write_bytes(b"SQLite format 3\x00" + b"\xff" * 64)
+        archive = backup.create_backup(instance, tmp_path / "out")
+        assert any(n.endswith("/broken.sqlite3") for n in _members(archive))
+        manifest = backup.inspect_backup(archive)
+        assert manifest["sqlite_copied_raw"] == ["backend/.deer-flow/broken.sqlite3"]
+        assert "broken.sqlite3" in capsys.readouterr().err
 
     def test_postgres_is_dumped_explicitly(self, instance, tmp_path):
         (instance / "config.yaml").write_text(

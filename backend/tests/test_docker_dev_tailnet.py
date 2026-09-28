@@ -237,3 +237,40 @@ FUNCS
 
 if sys.platform == "win32":  # pragma: no cover - the launch scripts are POSIX-only
     pytestmark = pytest.mark.skip(reason="POSIX launch scripts")
+
+
+@requires_bash
+class TestNonlocalBindWarning:
+    """At boot Docker can start nginx before tailscale0 holds its address; the
+    tailnet bind then fails ("cannot assign requested address") and the
+    container's loopback port goes down with it. net.ipv4.ip_nonlocal_bind=1
+    is the fix (FORK.md); both launch paths warn while it is 0."""
+
+    def _warn(self, tmp_path: Path, sysctl: str | None, *, published: bool = True) -> str:
+        sysctl_path = tmp_path / "ip_nonlocal_bind"
+        if sysctl is not None:
+            sysctl_path.write_text(sysctl + "\n", encoding="utf-8")
+        ipv4 = "100.101.102.103" if published else ""
+        snippet = f'. scripts/tailscale_lib.sh; DEER_FLOW_TAILNET_IPV4="{ipv4}"; tailscale_nonlocal_bind_warning'
+        result = _run_shell(snippet, env={"TAILSCALE_LIB_SYSCTL_PATH": str(sysctl_path)})
+        assert result.returncode == 0, result.stderr
+        return result.stdout
+
+    def test_warns_with_the_fix_while_the_sysctl_is_off(self, tmp_path: Path) -> None:
+        out = self._warn(tmp_path, "0")
+        assert "ip_nonlocal_bind" in out
+        assert "100.101.102.103" in out
+        assert "/etc/sysctl.d/" in out
+
+    def test_silent_once_the_sysctl_is_on(self, tmp_path: Path) -> None:
+        assert self._warn(tmp_path, "1") == ""
+
+    def test_silent_without_a_tailnet_publish_or_a_linux_sysctl(self, tmp_path: Path) -> None:
+        assert self._warn(tmp_path, "0", published=False) == ""
+        no_proc = tmp_path / "no-proc"
+        no_proc.mkdir()
+        assert self._warn(no_proc, None) == ""
+
+    @pytest.mark.parametrize("script", [DOCKER_SH, DEPLOY_SH])
+    def test_both_paths_warn_when_they_publish(self, script: Path) -> None:
+        assert "tailscale_nonlocal_bind_warning" in script.read_text(encoding="utf-8")

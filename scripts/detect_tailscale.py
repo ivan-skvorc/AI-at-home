@@ -31,6 +31,7 @@ state that makes this look like a Tailscale problem rather than a config one.
 Usage:
     python3 scripts/detect_tailscale.py [--format env|json] [--port PORT]
                                         [--status-json PATH] [--serve]
+                                        [--env-file PATH]
 """
 
 from __future__ import annotations
@@ -38,11 +39,13 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import subprocess  # noqa: S404 - invoking the local `tailscale` CLI is the point
 import sys
 from dataclasses import dataclass, field
 from ipaddress import AddressValueError, IPv4Address
+from pathlib import Path
 
 # `tailscale status --json` is a local, unauthenticated read of the daemon's own
 # view. Two seconds is generous for that and keeps a wedged daemon from stalling
@@ -87,14 +90,43 @@ class Detection:
         return self.identity is not None
 
 
-def publish_enabled(env: dict[str, str] | None = None) -> bool:
+def read_env_file_value(path: str | os.PathLike[str] | None, key: str) -> str | None:
+    """``key``'s value in a ``.env`` file, read the way Compose's --env-file does.
+
+    Mirrors ``read_dotenv_value`` in scripts/deploy.sh and scripts/docker.sh:
+    the last assignment wins, an ``export`` prefix and matching quotes are
+    dropped, and a missing or unreadable file means unset.
+    """
+    if not path:
+        return None
+    try:
+        text = Path(path).read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return None
+    pattern = re.compile(rf"^\s*(?:export\s+)?{re.escape(key)}\s*=(.*)$")
+    value = None
+    for line in text.splitlines():
+        match = pattern.match(line)
+        if match:
+            value = match.group(1).strip()
+            if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+                value = value[1:-1]
+    return value
+
+
+def publish_enabled(env: dict[str, str] | None = None, *, env_file: str | os.PathLike[str] | None = None) -> bool:
     """Whether the tailnet publish is wanted at all.
 
-    Default on — but note this only ever *does* anything when detection finds a
-    live tailnet, so a host without Tailscale is unaffected either way.
+    An exported variable wins, then ``env_file`` (the repo-root ``.env``, where
+    FORK.md tells users to put the opt-out; the launch scripts never source
+    it). Default on — but note this only ever *does* anything when detection
+    finds a live tailnet, so a host without Tailscale is unaffected either way.
     """
-    raw = (env if env is not None else os.environ).get(ENV_PUBLISH_TOGGLE, "").strip().lower()
-    return raw not in _FALSEY
+    environ = env if env is not None else os.environ
+    raw = environ.get(ENV_PUBLISH_TOGGLE)
+    if raw is None:
+        raw = read_env_file_value(env_file, ENV_PUBLISH_TOGGLE) or ""
+    return raw.strip().lower() not in _FALSEY
 
 
 def _is_ipv4(value: str) -> bool:
@@ -275,13 +307,14 @@ def main(argv: list[str] | None = None) -> int:
         metavar="EXISTING",
         help="print EXISTING (a comma-separated allowlist) with the detected tailnet origins merged in, then exit. Prints EXISTING unchanged when there is no tailnet, so a caller can assign the result unconditionally.",
     )
+    parser.add_argument("--env-file", help=f"a .env file consulted for {ENV_PUBLISH_TOGGLE} when it is not exported")
     args = parser.parse_args(argv)
 
     if args.merge_into is not None:
         # Shell-facing helper: keeps the merge rules (dedupe, user-entries-first,
         # idempotence) in one tested place instead of in two shell scripts.
         detection = read_status(_read_status_file(args.status_json) if args.status_json else None)
-        if detection.identity is None or not publish_enabled():
+        if detection.identity is None or not publish_enabled(env_file=args.env_file):
             print(args.merge_into)
             return 0
         print(merge_origins(args.merge_into, tailnet_origins(detection.identity, args.port, include_serve=not args.no_serve_origin)))
@@ -289,7 +322,7 @@ def main(argv: list[str] | None = None) -> int:
 
     status_json = _read_status_file(args.status_json) if args.status_json else None
     detection = read_status(status_json)
-    if not publish_enabled():
+    if not publish_enabled(env_file=args.env_file):
         print(f"detect_tailscale: {ENV_PUBLISH_TOGGLE} is off; not publishing on the tailnet", file=sys.stderr)
         if args.format == "json":
             print(json.dumps({"present": False, "reason": "disabled"}))

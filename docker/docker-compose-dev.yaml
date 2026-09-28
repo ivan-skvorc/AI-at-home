@@ -157,8 +157,10 @@ services:
     container_name: deer-flow-frontend
     command: sh -c "cd frontend && pnpm run dev > /app/logs/frontend.log 2>&1"
     volumes:
-      - ../frontend/src:/app/frontend/src
-      - ../frontend/public:/app/frontend/public
+      # Read-only: the dev server never writes its sources, and a root
+      # container writing here would leave root-owned files in the checkout.
+      - ../frontend/src:/app/frontend/src:ro
+      - ../frontend/public:/app/frontend/public:ro
       - ../frontend/next.config.js:/app/frontend/next.config.js:ro
       - ../logs:/app/logs
       # Mount pnpm store for caching
@@ -212,7 +214,9 @@ services:
       - gateway-camoufox:/root/.cache/camoufox
       # Mount the project directory instead of its mutable config files individually.
       # Host editors commonly replace files on save; a directory bind keeps those
-      # replacements visible inside Docker Desktop/WSL containers.
+      # replacements visible inside Docker Desktop/WSL containers. It stays
+      # read-write: the Gateway writes config.yaml / extensions_config.json here
+      # (settings UI, MCP toggles, ollama-sync), by rename in the same directory.
       - ../:/app/project
       - ../skills:/app/skills
       - ../logs:/app/logs
@@ -233,6 +237,14 @@ services:
     working_dir: /app
     environment:
       - CI=true
+      # Run as the invoking host user, not root (docker/dev-entrypoint.sh step
+      # 0; scripts/docker.sh sets these on Linux). Deliberately no default: a
+      # guessed uid would hand the user's files to someone else, and empty
+      # keeps the old run-as-root behavior.
+      - DEER_FLOW_UID=${DEER_FLOW_UID:-}
+      - DEER_FLOW_GID=${DEER_FLOW_GID:-}
+      # No __pycache__ in the bind-mounted source tree.
+      - PYTHONDONTWRITEBYTECODE=1
       - DEER_FLOW_PROJECT_ROOT=/app
       - DEER_FLOW_HOME=/app/backend/.deer-flow
       - DEER_FLOW_CONFIG_PATH=/app/project/config.yaml

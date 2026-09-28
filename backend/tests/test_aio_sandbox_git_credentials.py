@@ -4,6 +4,13 @@ Covers:
 - the credential helper script never embeds a token (it reads the container
   env at git-invocation time),
 - setup never writes/executes/logs the token value,
+- the helper is installed through the shell into the sandbox user's home, not
+  through the file API into a root-owned directory (the pinned 1.11.0 image
+  refuses that write, so git silently lost GITHUB_TOKEN),
+- the install command really works: run under a local sh, git answers a
+  github.com credential request from GITHUB_TOKEN,
+- a refused file-API write surfaces as an OSError naming the path, not as the
+  SDK's "validation error for ResponseFileWriteResult",
 - setup failure paths degrade gracefully (no raise, sandbox still usable),
 - provider env resolution injects GITHUB_TOKEN from the host environment,
 - sandbox creation succeeds even when session init fails.
@@ -11,17 +18,25 @@ Covers:
 
 from __future__ import annotations
 
+import base64
 import importlib
+import os
+import re
+import shutil
+import subprocess
 import threading
 from unittest.mock import MagicMock
 
+import httpx
 import pytest
+from agent_sandbox import Sandbox as AioSandboxClient
 
 from deerflow.community.aio_sandbox.aio_sandbox import AioSandbox
 from deerflow.community.aio_sandbox.git_credentials import (
-    CREDENTIAL_HELPER_PATH,
+    CREDENTIAL_HELPER_HOME_PATH,
     CREDENTIAL_HELPER_SCRIPT,
     TOKEN_ENV_VAR,
+    build_setup_command,
     setup_github_credentials,
 )
 from deerflow.community.aio_sandbox.sandbox_info import SandboxInfo
@@ -77,17 +92,45 @@ class TestCredentialHelperScript:
 # ── setup_github_credentials ─────────────────────────────────────────────────
 
 
+def _embedded_script(command: str) -> str:
+    """Decode the helper script the setup command writes."""
+    match = re.search(r"printf '%s' '([A-Za-z0-9+/=]+)' \| base64 -d", command)
+    assert match, command
+    return base64.b64decode(match.group(1)).decode("utf-8")
+
+
 class TestSetupGithubCredentials:
-    def test_installs_helper_and_configures_git(self):
+    def test_installs_helper_through_the_shell_and_configures_git(self):
         sandbox = _make_sandbox()
 
         assert setup_github_credentials(sandbox, token_configured=True) is True
 
-        assert sandbox.written == [(CREDENTIAL_HELPER_PATH, CREDENTIAL_HELPER_SCRIPT)]
-        assert len(sandbox.commands) == 1
+        # The file API writes as the API process; in the pinned 1.11.0 image
+        # that cannot create files under /usr/local/bin, so the helper was
+        # never installed. The shell writes as the sandbox user, into its home.
+        assert sandbox.written == []
+        assert sandbox.commands == [build_setup_command()]
         command = sandbox.commands[0]
-        assert f"chmod 755 {CREDENTIAL_HELPER_PATH}" in command
-        assert "git config --global --replace-all credential.https://github.com.helper" in command
+        assert f'helper="$HOME/{CREDENTIAL_HELPER_HOME_PATH}"' in command
+        assert "/usr/local/bin" not in command
+        assert 'chmod 755 "$helper"' in command
+        assert 'git config --global --replace-all credential.https://github.com.helper "$helper"' in command
+        assert _embedded_script(command) == CREDENTIAL_HELPER_SCRIPT
+
+    def test_command_is_one_line_in_a_subshell(self):
+        # It runs in the agent's persistent shell: a newline would split it
+        # into several prompts, and a bare variable would leak into the
+        # agent's later commands.
+        command = build_setup_command()
+        assert "\n" not in command
+        assert command.startswith("(") and command.endswith(")")
+
+    def test_success_marker_is_not_in_the_command_text(self):
+        # If the shell echoes the command back, the marker check must still
+        # only pass when the command ran to the end.
+        from deerflow.community.aio_sandbox import git_credentials
+
+        assert git_credentials._SETUP_OK_MARKER not in build_setup_command()
 
     def test_token_value_never_reaches_the_sandbox_calls(self, monkeypatch):
         # The token travels exclusively via the container environment
@@ -120,10 +163,129 @@ class TestSetupGithubCredentials:
         sandbox = _make_sandbox(exec_output="Error: connection refused")
         assert setup_github_credentials(sandbox, token_configured=True) is False
 
-    def test_write_failure_returns_false_without_raising(self):
-        sandbox = _make_sandbox(write_error=RuntimeError("read-only fs"))
+    def test_shell_permission_error_returns_false_and_logs_the_cause(self, caplog):
+        # The shell's own error is the real cause; it must reach the log
+        # verbatim instead of a generic "could not write".
+        sandbox = _make_sandbox(exec_output="mkdir: cannot create directory '/home/gem/.local': Permission denied\n")
+        with caplog.at_level("WARNING"):
+            assert setup_github_credentials(sandbox, token_configured=True) is False
+        assert "Permission denied" in caplog.text
+
+    def test_execute_raising_returns_false_without_raising(self):
+        sandbox = _make_sandbox()
+
+        def boom(command: str) -> str:
+            raise RuntimeError("sandbox client is closed")
+
+        sandbox.execute_command = boom
         assert setup_github_credentials(sandbox, token_configured=True) is False
-        assert sandbox.commands == []  # no point configuring git without the helper
+
+
+# ── The install command, executed for real ───────────────────────────────────
+
+
+_GIT = shutil.which("git")
+_SH = shutil.which("sh")
+_BASE64 = shutil.which("base64")
+
+
+@pytest.mark.skipif(not (_GIT and _SH and _BASE64), reason="needs git, sh and base64 on PATH")
+class TestSetupCommandEndToEnd:
+    def _clean_env(self, home, **extra):
+        # Nothing from the host's git config may answer for the helper.
+        return {"PATH": os.environ.get("PATH", ""), "HOME": str(home), "GIT_CONFIG_NOSYSTEM": "1", "GIT_TERMINAL_PROMPT": "0", **extra}
+
+    def _fill(self, home, **extra):
+        return subprocess.run(
+            [_GIT, "credential", "fill"],
+            input="protocol=https\nhost=github.com\n\n",
+            capture_output=True,
+            text=True,
+            env=self._clean_env(home, **extra),
+            timeout=30,
+        )
+
+    def test_git_answers_github_with_the_container_token(self, tmp_path):
+        setup = subprocess.run([_SH, "-c", build_setup_command()], capture_output=True, text=True, env=self._clean_env(tmp_path), timeout=30)
+        assert "DEER_FLOW_GIT_CREDENTIALS_OK" in setup.stdout, setup.stderr
+
+        helper = tmp_path / CREDENTIAL_HELPER_HOME_PATH
+        assert helper.read_text(encoding="utf-8") == CREDENTIAL_HELPER_SCRIPT
+        assert os.access(helper, os.X_OK)
+
+        result = self._fill(tmp_path, GITHUB_TOKEN=SENTINEL_TOKEN)
+        assert result.returncode == 0, result.stderr
+        assert "username=x-access-token" in result.stdout
+        assert f"password={SENTINEL_TOKEN}" in result.stdout
+        # The token lives in the environment only, never in git's config.
+        assert SENTINEL_TOKEN not in (tmp_path / ".gitconfig").read_text(encoding="utf-8")
+
+    def test_rerun_keeps_a_single_helper_entry(self, tmp_path):
+        for _ in range(2):
+            subprocess.run([_SH, "-c", build_setup_command()], check=True, capture_output=True, env=self._clean_env(tmp_path), timeout=30)
+        config = subprocess.run(
+            [_GIT, "config", "--global", "--get-all", "credential.https://github.com.helper"],
+            capture_output=True,
+            text=True,
+            env=self._clean_env(tmp_path),
+            timeout=30,
+        )
+        assert config.stdout.strip().splitlines() == [str(tmp_path / CREDENTIAL_HELPER_HOME_PATH)]
+
+    def test_unwritable_home_fails_without_the_marker(self, tmp_path):
+        home = tmp_path / "home"
+        home.mkdir()
+        home.chmod(0o500)
+        try:
+            if os.access(home, os.W_OK):
+                pytest.skip("running as a user that ignores directory permissions (root)")
+            setup = subprocess.run([_SH, "-c", build_setup_command()], capture_output=True, text=True, env=self._clean_env(home), timeout=30)
+        finally:
+            home.chmod(0o700)
+        assert "DEER_FLOW_GIT_CREDENTIALS_OK" not in setup.stdout
+        assert "Permission denied" in setup.stdout + setup.stderr
+
+
+# ── The pinned image's file-API refusal ──────────────────────────────────────
+
+
+def _sandbox_answering_file_write(body: dict) -> AioSandbox:
+    """A real AioSandbox whose HTTP layer answers /v1/file/write with ``body``."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/v1/file/write"
+        return httpx.Response(200, json=body)
+
+    sandbox = AioSandbox(id="pinned-image", base_url="http://sandbox.test")
+    sandbox._client = AioSandboxClient(base_url="http://sandbox.test", httpx_client=httpx.Client(transport=httpx.MockTransport(handler)))
+    return sandbox
+
+
+class TestPinnedImageFileWriteRefusal:
+    """agent-infra/sandbox 1.11.0 answers a write it cannot perform with HTTP 200
+    and a ``data`` object that has no ``file`` key. The SDK's strict parse then
+    raised ``1 validation error for ResponseFileWriteResult ... Field required``,
+    which is what the Gateway logged instead of the permission problem."""
+
+    REFUSAL = {"success": False, "message": "[Errno 13] Permission denied: '/usr/local/bin/deer-flow-git-credential'", "data": {"error": "PermissionError"}}
+
+    def test_refusal_raises_oserror_naming_the_path(self):
+        sandbox = _sandbox_answering_file_write(self.REFUSAL)
+        with pytest.raises(OSError) as excinfo:
+            sandbox.write_file("/usr/local/bin/deer-flow-git-credential", "#!/bin/sh\n")
+        message = str(excinfo.value)
+        assert "/usr/local/bin/deer-flow-git-credential" in message
+        assert "PermissionError" in message
+        assert "ResponseFileWriteResult" not in message
+
+    def test_refusal_is_raised_for_binary_updates_too(self):
+        sandbox = _sandbox_answering_file_write(self.REFUSAL)
+        with pytest.raises(OSError, match="/usr/local/bin/x"):
+            sandbox.update_file("/usr/local/bin/x", b"\x00")
+
+    def test_a_successful_write_still_returns_quietly(self):
+        sandbox = _sandbox_answering_file_write({"success": True, "message": "ok", "data": {"file": "/home/gem/x", "bytes_written": 3}})
+        sandbox.write_file("/home/gem/x", "abc")
 
 
 # ── Provider env resolution ──────────────────────────────────────────────────
