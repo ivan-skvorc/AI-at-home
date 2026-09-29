@@ -67,7 +67,12 @@ class TestResolveConfigPath:
     @pytest.fixture
     def checkout(self, tmp_path, monkeypatch):
         for name in ("DEER_FLOW_CONFIG_PATH", "DEER_FLOW_PROJECT_ROOT"):
-            monkeypatch.delenv(name, raising=False)
+            # setenv first so teardown restores the prior state: the resolver
+            # writes DEER_FLOW_PROJECT_ROOT itself, and delenv of an unset
+            # name records nothing to undo, which leaked a deleted tmp root
+            # into every later test that resolves a runtime path.
+            monkeypatch.setenv(name, "")
+            monkeypatch.delenv(name)
         # What a Docker-only host's python3 sees: no harness to import.
         monkeypatch.setitem(sys.modules, "deerflow.config.app_config", None)
         repo = tmp_path / "checkout"
