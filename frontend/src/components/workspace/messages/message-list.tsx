@@ -1384,6 +1384,7 @@ export function MessageList({
                           message,
                         ])}
                         showTokenDebugSummaries={showTokenDebugSummaries}
+                        toolArtifacts={thread.values?.tool_artifacts}
                       />,
                     );
                   } else if (message.id) {
@@ -1437,6 +1438,7 @@ export function MessageList({
                       group.messages,
                     )}
                     showTokenDebugSummaries={showTokenDebugSummaries}
+                    toolArtifacts={thread.values?.tool_artifacts}
                   />
                   {renderTokenUsage({
                     messages: group.messages,

@@ -58,7 +58,7 @@ async def search_via_searxng(query: str, time_range: SearchTimeRange | None = No
         else:
             try:
                 max_results = int(raw)
-            except (TypeError, ValueError):
+            except (TypeError, ValueError, OverflowError):
                 logger.warning(
                     "Invalid SearXNG max_results=%r; using default %s",
                     raw,

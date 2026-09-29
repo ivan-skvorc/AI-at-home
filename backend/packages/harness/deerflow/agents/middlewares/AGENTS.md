@@ -14,7 +14,7 @@ ones, and treat completed work as reusable evidence rather than acceptance.
 
 On new user turns, DurableContext cancels earlier-run unanswered delegations.
 It preserves resumes, same-run continuations, and entries without `run_id`.
-Any reply prevents cancellation; legacy replies without status metadata may
+A pre-turn reply prevents cancellation; legacy replies without status metadata may
 stay `in_progress`. Never infer status from reply text.
 
 Assembly order: `tool_error_handling_middleware.py::_build_runtime_middlewares` (exposed as `build_lead_runtime_middlewares`), then `../lead_agent/agent.py::build_middlewares` appends lead-only entries. Optional entries require their config/runtime condition.
@@ -50,7 +50,7 @@ strict providers reject.
 
 **Shared runtime base** (`build_lead_runtime_middlewares`; subagents reuse most of this via `build_subagent_runtime_middlewares`):
 
-The per-middleware catalogue — all 37 entries, their order, and the invariants
+The per-middleware catalogue — all 39 entries, their order, and the invariants
 each one carries — is reference material long enough to dominate this file's
 guidance budget, so it lives beside it in [`CHAIN.md`](CHAIN.md). Read it before
 adding, reordering or removing a middleware: position in the chain *is* the

@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import copy
 import importlib.util
+import os
 import re
 import secrets
 import shutil
@@ -156,7 +157,7 @@ MIGRATIONS = {
         "data_transform": migrate_pii_token_secret,
     },
     # Future migrations go here:
-    # 59: {
+    # 60: {
     #     'description': '...',
     #     'replacements': [('old', 'new')],
     # },
@@ -418,9 +419,80 @@ def upgrade(config_path: Path, example_path: Path, repo_root: Path) -> int:
     return 0
 
 
+def resolve_config_path(repo_root: Path) -> Path | None:
+    """Return the config.yaml the Gateway loads, or None when none exists yet.
+
+    Asks the harness resolver rather than copying its order (upstream #5991):
+    with both <checkout>/config.yaml and backend/config.yaml present, `make dev`
+    reads the checkout copy, and upgrading the other one reports success on a
+    file nothing loads. The harness is importable on the uv branch of
+    scripts/backend-python.sh. A Docker-only host runs this with a bare python3
+    that has no harness (the reason this is not a `uv run` in the wrapper), so
+    there the same order is applied by hand.
+
+    Raises ValueError with the Gateway's own message when DEER_FLOW_CONFIG_PATH
+    names a missing file or DEER_FLOW_PROJECT_ROOT is invalid: the Gateway
+    would not start, so no fallback file may be upgraded in its place.
+    Relative paths resolve against the working directory, which the wrapper
+    sets to backend/ because that is where the Gateway runs.
+    """
+    try:
+        from dotenv import load_dotenv
+    except ImportError:
+        pass
+    else:
+        # The Gateway loads .env without overriding the shell. Named
+        # explicitly: python-dotenv's own search starts from the caller's
+        # file, which need not be this checkout.
+        load_dotenv(repo_root / ".env", override=False)
+    # serve.sh replaces an unset or empty runtime root with the checkout.
+    if not os.environ.get("DEER_FLOW_PROJECT_ROOT"):
+        os.environ["DEER_FLOW_PROJECT_ROOT"] = str(repo_root)
+
+    try:
+        from deerflow.config.app_config import AppConfig
+    except ImportError:
+        return _resolve_config_path_without_harness(repo_root)
+    try:
+        return AppConfig.resolve_config_path().resolve()
+    except FileNotFoundError as exc:
+        if os.environ.get("DEER_FLOW_CONFIG_PATH"):
+            raise ValueError(str(exc)) from exc
+        return None
+
+
+def _resolve_config_path_without_harness(repo_root: Path) -> Path | None:
+    """The harness resolver's order, for a host that cannot import it."""
+    if explicit := os.environ.get("DEER_FLOW_CONFIG_PATH"):
+        path = Path(explicit)
+        if not path.exists():
+            raise ValueError(f"Config file specified by environment variable `DEER_FLOW_CONFIG_PATH` not found at {path}")
+        return path.resolve()
+    env_root = os.environ["DEER_FLOW_PROJECT_ROOT"]
+    root = Path(env_root).resolve()
+    if not root.exists():
+        raise ValueError(f"DEER_FLOW_PROJECT_ROOT is set to '{env_root}', but the resolved path '{root}' does not exist.")
+    if not root.is_dir():
+        raise ValueError(f"DEER_FLOW_PROJECT_ROOT is set to '{env_root}', but the resolved path '{root}' is not a directory.")
+    for candidate in (root / "config.yaml", repo_root / "backend" / "config.yaml", repo_root / "config.yaml"):
+        if candidate.is_file():
+            return candidate.resolve()
+    return None
+
+
 def main(argv: list[str]) -> int:
+    if len(argv) == 3 and argv[1] == "--print-config-path":
+        try:
+            config_path = resolve_config_path(Path(argv[2]))
+        except ValueError as exc:
+            print(f"ERROR {exc}", file=sys.stderr)
+            return 1
+        if config_path is not None:
+            sys.stdout.write(str(config_path))
+        return 0
     if len(argv) != 3:
         print("usage: config_upgrade.py CONFIG_PATH EXAMPLE_PATH", file=sys.stderr)
+        print("       config_upgrade.py --print-config-path REPO_ROOT", file=sys.stderr)
         return 2
     config_path = Path(argv[1])
     example_path = Path(argv[2])

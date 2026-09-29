@@ -125,6 +125,23 @@ once you know to look. The 2026-09-09 sync hit all three at once:
   never runs for them. Port it under the fork's *next* version: the 2026-09-26 sync's
   `pii_redaction.token_secret` generator is upstream's 47 and the fork's 58, pinned by
   `test_config_upgrade_script.py::TestMigrations::test_a_fork_stamped_config_with_redaction_on_gets_a_token_secret`.
+- **Upstream putting `uv run` back into a script the fork keeps uv-free.** The 2026-09-29
+  sync's #5991 made `config-upgrade.sh` ask the harness resolver through `uv run python -c`.
+  It merged with no conflict, and a Docker-only host (no uv) would have failed
+  `make config-upgrade` before it started; only
+  `test_backend_python_fallback.py::test_the_make_targets_route_through_the_helper` said so.
+  Keep upstream's intent (upgrade the file the Gateway loads), not its transport: the lookup
+  is `config_upgrade.py --print-config-path` through `backend-python.sh`, with the resolver's
+  order copied by hand for a host without the harness
+  (`test_config_upgrade_script.py::TestResolveConfigPath`). Upstream's end-to-end tests copy
+  the two delegate scripts into their throwaway checkout.
+- **Upstream editing reference text the fork split into a sibling doc.** `CHAIN.md`,
+  `DATA_FLOW.md` and `AUTHORIZATION.md` hold text upstream still keeps inline in the
+  `AGENTS.md` beside them, so upstream's edits arrive as a conflict in the pointer file. Taking
+  either side loses them. Port them into the sibling with a three-way `git merge-file`
+  (sibling, base section, upstream section), then keep the pointer. The 2026-09-29 sync also
+  found a duplicate block that an earlier sync had left in `CHAIN.md`: count the numbered
+  entries against upstream's.
 
 **It also runs itself weekly.** `.github/workflows/upstream-sync.yml` fetches
 upstream every Monday, merges (never rebases) onto a dated
