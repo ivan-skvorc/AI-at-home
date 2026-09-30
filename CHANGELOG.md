@@ -8,6 +8,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- **upstream:** merged `upstream/main` (37 commits since 2026-09-29). Brings upstream's
+  skill authorization at agent assembly and slash activation, agent-scoped memory management,
+  current-task notes that keep existing notes when parallel additions overflow, a null-safe
+  per-run subagent cap (`max_total_subagents: null` now falls back to the configured cap), the
+  run duration folded into the final reasoning header, and a run of cancellation, validation
+  and scheduler fixes. No config key was added, so `config_version` stays 59.
+- **models:** GPT-6.1 Sol (`gpt-6.1-sol` / `openai/gpt-6.1-sol`, $2/$10) replaces GPT-5.6 Sol
+  as the cheaper half of OpenAI's routed Astra + Sol pair and in the OpenAI home block, and
+  GPT-6 Luna (`gpt-6-luna`, $0.10/$0.50) replaces GPT-5.6 Luna there. Both prices are
+  corroborated (OpenAI's model pages and OpenRouter agree) rather than read off OpenAI's own
+  page, which this environment cannot reach; the 2026-09-30 model audit names them for the next
+  pass to re-check. GPT-6 Astra and Claude Opus 5.5 were re-confirmed in every copy of the
+  bundle, and the `make setup` OpenRouter description, which still said Opus 5, now names
+  Opus 5.5.
 - **upstream:** merged `upstream/main` (77 commits since 2026-09-26). Brings upstream's
   tool-artifact handles (a new `tool_artifacts:` section, so `config_version` is 59 in
   `config.example.yaml` and both Helm chart copies), the Unbrowse `web_fetch` provider, async

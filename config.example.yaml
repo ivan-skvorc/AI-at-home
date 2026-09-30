@@ -290,7 +290,7 @@ models:
   #   ANTHROPIC_API_KEY  -> Claude Fable 5.1 / Opus 5.5 / Opus 5 / Sonnet 5.5 /
   #                         Sonnet 5 / Haiku 4.5 (direct Anthropic API)
   #   OPENROUTER_API_KEY -> Claude Fable 5.1 / Claude Opus 5.5 / Grok 4.6 /
-  #                         GPT-6 Astra / GPT-5.6 Sol / GPT-5.3 Codex /
+  #                         GPT-6 Astra / GPT-6.1 Sol / GPT-5.3 Codex /
   #                         Gemini 3.8 Flash / Llama 4 Maverick /
   #                         MiniMax M3 / Qwen3.8 Max /
   #                         Kimi K3 / Mistral Large 3 / DeepSeek V4 Pro /
@@ -299,8 +299,8 @@ models:
   # Each big-name lab that ships its own API also has a first-party "home" block,
   # enabled when THAT lab's key is present, carrying the lab's full lineup on its
   # direct API (see the "FIRST-PARTY HOME API BLOCKS" section after OpenRouter):
-  #   OPENAI_API_KEY     -> GPT-6 Astra / GPT-5.6 Sol / GPT-5.3 Codex /
-  #                         GPT-5.6 Terra / GPT-5.6 Luna (OpenAI)
+  #   OPENAI_API_KEY     -> GPT-6 Astra / GPT-6.1 Sol / GPT-5.3 Codex /
+  #                         GPT-5.6 Terra / GPT-6 Luna (OpenAI)
   #   XAI_API_KEY        -> Grok 4.6 / Grok 4.3 (xAI)
   #   GEMINI_API_KEY     -> Gemini 3.8 Flash / 3.5 Flash-Lite / 3.1 Pro (Google)
   #   DEEPSEEK_API_KEY   -> DeepSeek V4 Pro / V4 Flash (DeepSeek)
@@ -512,7 +512,7 @@ models:
   # The set below is one flagship per lab, routed for OpenRouter-only users, with
   # two deliberate exceptions where the lab's top tier is really two models at
   # two very different prices: Anthropic ships **Fable 5.1 and Opus 5.5** here, and
-  # OpenAI ships **GPT-6 Astra and GPT-5.6 Sol**. Routing only the dearer of each
+  # OpenAI ships **GPT-6 Astra and GPT-6.1 Sol**. Routing only the dearer of each
   # pair charged an OpenRouter-only user 2x for work the cheaper one does, and
   # routing only the cheaper one put the lab's best model out of reach on that
   # key — so both travel. Every other Claude still lives on the direct Anthropic
@@ -609,10 +609,10 @@ models:
   #     input: 10.0
   #     output: 50.0
   #
-  # - name: openrouter-gpt-5.6-sol
-  #   display_name: GPT-5.6 Sol (OpenRouter) (p)
+  # - name: openrouter-gpt-6.1-sol
+  #   display_name: GPT-6.1 Sol (OpenRouter) (p)
   #   use: langchain_openai:ChatOpenAI
-  #   model: openai/gpt-5.6-sol
+  #   model: openai/gpt-6.1-sol
   #   api_key: $OPENROUTER_API_KEY
   #   base_url: https://openrouter.ai/api/v1
   #   request_timeout: 600.0
@@ -622,8 +622,8 @@ models:
   #   supports_thinking: true
   #   price:                          # per 1M tokens; the single source of truth for cost display and budgets
   #     currency: USD
-  #     input: 5.0
-  #     output: 30.0
+  #     input: 2.0
+  #     output: 10.0
   #
   # - name: openrouter-gpt-5.3-codex
   #   display_name: GPT-5.3 Codex (OpenRouter) (p)
@@ -815,10 +815,11 @@ models:
   # ══════════════════════════════════════════════════════════════════════════
 
   # ── OpenAI — auto-enabled when OPENAI_API_KEY is set ──────────────────────
-  # The whole GPT-5.6 tier family — Sol (flagship) / Terra (balanced) / Luna
-  # (cheap, high volume) — plus the acclaimed GPT-5.3 Codex (the same double
-  # kept on OpenRouter), on the direct OpenAI API. GPT-5.6 shipped as Sol/Terra/
-  # Luna, not as a `-mini`/`-nano` pair; Terra is the tier that replaced `mini`.
+  # GPT-6 Astra (flagship) and the GPT-6 tiers below it — GPT-6.1 Sol and GPT-6
+  # Luna (cheap, high volume) — plus the acclaimed GPT-5.3 Codex (the same double
+  # kept on OpenRouter), on the direct OpenAI API. GPT-6 shipped no Terra, so the
+  # balanced tier is still GPT-5.6 Terra. None of these tiers is a `-mini`/`-nano`
+  # pair; Terra is the tier that replaced `mini`.
   # The startup auto-config (scripts/sync-api-key-models.py) uncomments the
   # entries below when it finds a real OPENAI_API_KEY in your .env.
   # === BEGIN auto-model-config: openai (uncommented at startup when OPENAI_API_KEY is set) ===
@@ -838,10 +839,10 @@ models:
   #     input: 10.0
   #     output: 50.0
   #
-  # - name: openai-gpt-5.6-sol
-  #   display_name: GPT-5.6 Sol (OpenAI)
+  # - name: openai-gpt-6.1-sol
+  #   display_name: GPT-6.1 Sol (OpenAI)
   #   use: langchain_openai:ChatOpenAI
-  #   model: gpt-5.6-sol
+  #   model: gpt-6.1-sol
   #   api_key: $OPENAI_API_KEY
   #   base_url: https://api.openai.com/v1
   #   request_timeout: 600.0
@@ -851,8 +852,8 @@ models:
   #   supports_thinking: true
   #   price:                          # per 1M tokens; the single source of truth for cost display and budgets
   #     currency: USD
-  #     input: 5.0
-  #     output: 30.0
+  #     input: 2.0
+  #     output: 10.0
   #
   # - name: openai-gpt-5.3-codex
   #   display_name: GPT-5.3 Codex (OpenAI)
@@ -886,10 +887,10 @@ models:
   #     input: 2.0
   #     output: 12.0
   #
-  # - name: openai-gpt-5.6-luna
-  #   display_name: GPT-5.6 Luna (OpenAI)
+  # - name: openai-gpt-6-luna
+  #   display_name: GPT-6 Luna (OpenAI)
   #   use: langchain_openai:ChatOpenAI
-  #   model: gpt-5.6-luna
+  #   model: gpt-6-luna
   #   api_key: $OPENAI_API_KEY
   #   base_url: https://api.openai.com/v1
   #   request_timeout: 600.0
@@ -899,8 +900,8 @@ models:
   #   supports_thinking: true
   #   price:                          # per 1M tokens; the single source of truth for cost display and budgets
   #     currency: USD
-  #     input: 0.2
-  #     output: 1.2
+  #     input: 0.1
+  #     output: 0.5
   # === END auto-model-config: openai ===
 
   # ── xAI Grok — auto-enabled when XAI_API_KEY is set ───────────────────────

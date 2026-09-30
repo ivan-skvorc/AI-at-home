@@ -248,7 +248,7 @@ class TestBundleProviders:
         assert "anthropic/claude-fable-5.1" in bundle_ids
         assert "anthropic/claude-opus-5.5" in bundle_ids
         assert "openai/gpt-6-astra" in bundle_ids
-        assert "openai/gpt-5.6-sol" in bundle_ids
+        assert "openai/gpt-6.1-sol" in bundle_ids
         for below_the_pair in ("anthropic/claude-opus-5", "anthropic/claude-sonnet-5", "anthropic/claude-haiku-4.5"):
             assert below_the_pair not in bundle_ids, f"{below_the_pair} belongs to the direct Anthropic bundle only"
 
@@ -339,12 +339,12 @@ class TestHomeApiBundleProviders:
         home_ids = {m["model"] for _, (_e, b) in HOME_API_BUNDLES.items() for m in b}
 
         def routed(bare: str) -> bool:
-            # `gpt-5.6-sol` is doubled as some `<provider>/gpt-5.6-sol` OpenRouter
+            # `gpt-6.1-sol` is doubled as some `<provider>/gpt-6.1-sol` OpenRouter
             # slug; the id casing can differ per API (MiniMax's own API uses
             # `MiniMax-M3`, OpenRouter uses `minimax/minimax-m3`).
             return any(slug.split("/", 1)[-1].lower() == bare.lower() for slug in openrouter_ids)
 
-        for flagship in ("gpt-5.6-sol", "gpt-5.3-codex", "grok-4.6", "gemini-3.8-flash", "deepseek-v4-pro", "mistral-large-2512", "kimi-k3", "qwen3.8-max", "MiniMax-M3", "glm-5.3"):
+        for flagship in ("gpt-6.1-sol", "gpt-5.3-codex", "grok-4.6", "gemini-3.8-flash", "deepseek-v4-pro", "mistral-large-2512", "kimi-k3", "qwen3.8-max", "MiniMax-M3", "glm-5.3"):
             assert flagship in home_ids, f"{flagship} missing from a home block"
             assert routed(flagship), f"{flagship} not doubled on OpenRouter"
 
