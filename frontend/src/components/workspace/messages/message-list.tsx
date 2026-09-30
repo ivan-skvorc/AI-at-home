@@ -44,7 +44,11 @@ import {
   type HumanInputRequest,
   type HumanInputResponse,
 } from "@/core/messages/human-input";
-import { getRunDurationDisplaysByGroupIndex } from "@/core/messages/run-duration";
+import {
+  getMessageRunId,
+  getRunDurationDisplaysByGroupIndex,
+  type RunDurationDisplay,
+} from "@/core/messages/run-duration";
 import {
   buildTokenDebugSteps,
   type TokenDebugStep,
@@ -54,6 +58,7 @@ import {
   areStreamMetadataSnapshotsEqual,
   extractContentFromMessage,
   extractPresentFilesFromMessage,
+  extractReasoningContentFromMessage,
   getAssistantTurnCopyData,
   getAssistantTurnEditPoints,
   getHumanTurnEditPoints,
@@ -100,7 +105,7 @@ import {
   type HumanInputSubmitResult,
 } from "./human-input-card";
 import { MarkdownContent } from "./markdown-content";
-import { MessageGroup } from "./message-group";
+import { MessageGroup, getMessageGroupReasoningMessage } from "./message-group";
 import { MessageListItem } from "./message-list-item";
 import {
   MessageTokenUsageDebugList,
@@ -164,6 +169,26 @@ function useStableMessageGroups(
 }
 
 export const MESSAGE_LIST_DEFAULT_PADDING_BOTTOM = 24;
+
+function getRenderedReasoningMessages(group: ThreadMessageGroup): Message[] {
+  if (group.type === "assistant") {
+    return group.messages.filter((message) =>
+      extractReasoningContentFromMessage(message),
+    );
+  }
+  if (group.type === "assistant:subagent") {
+    return group.messages.filter(
+      (message) =>
+        hasReasoning(message) &&
+        getMessageGroupReasoningMessage([message]) === message,
+    );
+  }
+  if (group.type === "assistant:processing") {
+    const message = getMessageGroupReasoningMessage(group.messages);
+    return message ? [message] : [];
+  }
+  return [];
+}
 
 const LOAD_MORE_HISTORY_THROTTLE_MS = 1200;
 
@@ -357,6 +382,11 @@ export function MessageList({
     useState<SelectionToolbarState | null>(null);
   const messages = thread.messages;
   const groupedMessages = useStableMessageGroups(messages, thread.isLoading);
+  // Stable historical groups survive streaming updates. Weak keys also release
+  // cached targets when pagination or a thread change removes those groups.
+  const reasoningTargetsCache = useRef(
+    new WeakMap<ThreadMessageGroup, Message[]>(),
+  );
   const chapters = useMemo(
     () =>
       buildConversationChapters(
@@ -1031,28 +1061,36 @@ export function MessageList({
     return <MessageListSkeleton />;
   }
 
-  const withRunDuration = (
+  const getGroupRunDurations = (
     group: (typeof groupedMessages)[number],
     groupIndex: number,
-    content: ReactNode,
-  ) => {
+  ): RunDurationDisplay[] => {
     const persistedDisplays = runDurationDisplaysByGroupIndex[groupIndex] ?? [];
     const clientDuration =
       !thread.error && group.id
         ? clientDurationsByGroupId.get(`${threadId}:${group.id}`)
         : undefined;
-    const displays =
-      persistedDisplays.length > 0
-        ? persistedDisplays
-        : clientDuration !== undefined
-          ? [
-              {
-                runId: `client:${group.id}`,
-                durationSeconds: clientDuration,
-              },
-            ]
-          : [];
+    return persistedDisplays.length > 0
+      ? persistedDisplays
+      : clientDuration !== undefined
+        ? [
+            {
+              runId: `client:${group.id}`,
+              durationSeconds: clientDuration,
+            },
+          ]
+        : [];
+  };
 
+  const withRunDuration = (
+    group: (typeof groupedMessages)[number],
+    groupIndex: number,
+    content: ReactNode,
+    inlineDurationRunIds: string[] = [],
+  ) => {
+    const displays = getGroupRunDurations(group, groupIndex).filter(
+      (display) => !inlineDurationRunIds.includes(display.runId),
+    );
     if (!content && displays.length === 0) {
       return null;
     }
@@ -1062,13 +1100,13 @@ export function MessageList({
         key={`duration-group:${group.id ?? groupIndex}`}
         className="flex w-full flex-col gap-2"
       >
-        {content}
         {displays.map((display) => (
           <RunDuration
             key={display.runId}
             durationSeconds={display.durationSeconds}
           />
         ))}
+        {content}
       </div>
     );
   };
@@ -1098,6 +1136,29 @@ export function MessageList({
                 turnUsageMessagesByGroupIndex[groupIndex];
               const groupIsLoading =
                 thread.isLoading && groupIndex === lastGroupIndex;
+
+              const reasoningDurations = new Map<Message, RunDurationDisplay>();
+              const displays = groupIsLoading
+                ? []
+                : getGroupRunDurations(group, groupIndex);
+              if (displays.length > 0) {
+                let reasoningTargets = reasoningTargetsCache.current.get(group);
+                if (!reasoningTargets) {
+                  reasoningTargets = getRenderedReasoningMessages(group);
+                  reasoningTargetsCache.current.set(group, reasoningTargets);
+                }
+                for (const display of displays) {
+                  const target = reasoningTargets.find(
+                    (message) =>
+                      getMessageRunId(message) === display.runId ||
+                      display.runId === `client:${group.id}`,
+                  );
+                  if (target) reasoningDurations.set(target, display);
+                }
+              }
+              const inlineDurationRunIds = [...reasoningDurations.values()].map(
+                (display) => display.runId,
+              );
 
               if (group.type === "human" || group.type === "assistant") {
                 return withRunDuration(
@@ -1144,6 +1205,9 @@ export function MessageList({
                             group.type === "assistant"
                               ? (msg as { run_id?: string }).run_id
                               : undefined
+                          }
+                          durationSeconds={
+                            reasoningDurations.get(msg)?.durationSeconds
                           }
                           showCopyButton={group.type !== "assistant"}
                           showWorkspaceChanges={workspaceChangeAnchorGroupIndices.has(
@@ -1238,6 +1302,7 @@ export function MessageList({
                           : skillUsageByGroupIndex.get(groupIndex),
                       )}
                   </div>,
+                  inlineDurationRunIds,
                 );
               } else if (group.type === "assistant:clarification") {
                 const message = group.messages[0];
@@ -1378,6 +1443,9 @@ export function MessageList({
                       <MessageGroup
                         key={"thinking-group-" + message.id}
                         messages={[message]}
+                        durationSeconds={
+                          reasoningDurations.get(message)?.durationSeconds
+                        }
                         isLoading={groupIsLoading}
                         deferBrowserPreviews={thread.isLoading}
                         tokenDebugSteps={getTokenDebugStepsForMessages([
@@ -1423,6 +1491,7 @@ export function MessageList({
                       debugMessageIds: subagentDebugMessageIds,
                     })}
                   </div>,
+                  inlineDurationRunIds,
                 );
               }
               return withRunDuration(
@@ -1431,6 +1500,9 @@ export function MessageList({
                 <div className="w-full">
                   <MessageGroup
                     messages={group.messages}
+                    durationSeconds={
+                      reasoningDurations.values().next().value?.durationSeconds
+                    }
                     isLoading={groupIsLoading}
                     deferBrowserPreviews={thread.isLoading}
                     threadId={threadId}
@@ -1446,6 +1518,7 @@ export function MessageList({
                     inlineDebug: false,
                   })}
                 </div>,
+                inlineDurationRunIds,
               );
             }}
           />
