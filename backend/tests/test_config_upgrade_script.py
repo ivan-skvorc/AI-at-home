@@ -12,9 +12,11 @@ Pins the config-regeneration integrity guarantees:
 from __future__ import annotations
 
 import importlib.util
+import sys
 import textwrap
 from pathlib import Path
 
+import pytest
 import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -47,6 +49,81 @@ def _write_example(tmp_path: Path, version: int = 3) -> Path:
         encoding="utf-8",
     )
     return example
+
+
+class TestResolveConfigPath:
+    """Which config.yaml `make config-upgrade` touches, on a host without the harness.
+
+    Upstream #5991 made the wrapper ask the harness resolver through
+    ``uv run``; this fork cannot, because a Docker-only host has no uv and the
+    wrapper must stay runnable there (``test_backend_python_fallback.py``). So
+    the lookup lives in ``config_upgrade.py``, and on a bare ``python3`` it
+    applies the resolver's order by hand. That hand-copied order is the part
+    upstream's end-to-end tests never reach — they run with the harness
+    importable — and getting it wrong is silent: the upgrade reports success
+    on a file the Gateway does not load.
+    """
+
+    @pytest.fixture
+    def checkout(self, tmp_path, monkeypatch):
+        for name in ("DEER_FLOW_CONFIG_PATH", "DEER_FLOW_PROJECT_ROOT"):
+            # setenv first so teardown restores the prior state: the resolver
+            # writes DEER_FLOW_PROJECT_ROOT itself, and delenv of an unset
+            # name records nothing to undo, which leaked a deleted tmp root
+            # into every later test that resolves a runtime path.
+            monkeypatch.setenv(name, "")
+            monkeypatch.delenv(name)
+        # What a Docker-only host's python3 sees: no harness to import.
+        monkeypatch.setitem(sys.modules, "deerflow.config.app_config", None)
+        repo = tmp_path / "checkout"
+        (repo / "backend").mkdir(parents=True)
+        monkeypatch.chdir(repo / "backend")
+        return repo
+
+    def test_the_checkout_copy_wins_over_a_legacy_backend_copy(self, checkout):
+        (checkout / "config.yaml").write_text("config_version: 1\n", encoding="utf-8")
+        (checkout / "backend" / "config.yaml").write_text("config_version: 1\n", encoding="utf-8")
+
+        assert config_upgrade.resolve_config_path(checkout) == (checkout / "config.yaml").resolve()
+
+    def test_the_legacy_backend_copy_is_still_found_on_its_own(self, checkout):
+        (checkout / "backend" / "config.yaml").write_text("config_version: 1\n", encoding="utf-8")
+
+        assert config_upgrade.resolve_config_path(checkout) == (checkout / "backend" / "config.yaml").resolve()
+
+    def test_a_missing_explicit_config_path_is_an_error_not_a_fallback(self, checkout, monkeypatch):
+        (checkout / "config.yaml").write_text("config_version: 1\n", encoding="utf-8")
+        monkeypatch.setenv("DEER_FLOW_CONFIG_PATH", str(checkout / "missing.yaml"))
+
+        with pytest.raises(ValueError, match="DEER_FLOW_CONFIG_PATH"):
+            config_upgrade.resolve_config_path(checkout)
+
+    def test_a_relative_explicit_config_path_resolves_from_backend(self, checkout, monkeypatch):
+        (checkout / "backend" / "custom.yaml").write_text("config_version: 1\n", encoding="utf-8")
+        monkeypatch.setenv("DEER_FLOW_CONFIG_PATH", "custom.yaml")
+
+        assert config_upgrade.resolve_config_path(checkout) == (checkout / "backend" / "custom.yaml").resolve()
+
+    def test_an_invalid_project_root_is_an_error(self, checkout, monkeypatch):
+        (checkout / "config.yaml").write_text("config_version: 1\n", encoding="utf-8")
+        monkeypatch.setenv("DEER_FLOW_PROJECT_ROOT", str(checkout / "missing"))
+
+        with pytest.raises(ValueError, match="DEER_FLOW_PROJECT_ROOT is set to"):
+            config_upgrade.resolve_config_path(checkout)
+
+    def test_no_config_anywhere_is_none(self, checkout):
+        assert config_upgrade.resolve_config_path(checkout) is None
+
+    def test_the_cli_prints_the_path_or_fails_with_the_reason(self, checkout, monkeypatch, capsys):
+        (checkout / "config.yaml").write_text("config_version: 1\n", encoding="utf-8")
+        assert config_upgrade.main(["config_upgrade.py", "--print-config-path", str(checkout)]) == 0
+        assert capsys.readouterr().out == str((checkout / "config.yaml").resolve())
+
+        monkeypatch.setenv("DEER_FLOW_CONFIG_PATH", str(checkout / "missing.yaml"))
+        assert config_upgrade.main(["config_upgrade.py", "--print-config-path", str(checkout)]) == 1
+        captured = capsys.readouterr()
+        assert captured.out == ""
+        assert captured.err.startswith("ERROR ") and "DEER_FLOW_CONFIG_PATH" in captured.err
 
 
 class TestUpToDateConfig:

@@ -2,10 +2,10 @@
 #
 # config-upgrade.sh - Upgrade config.yaml to match config.example.yaml
 #
-# Thin wrapper: resolves the config file locations, then delegates to
-# scripts/config_upgrade.py (unit-testable) through scripts/backend-python.sh
-# (the backend venv where `make install` built one, else the host python3 —
-# a Docker-only host has no uv), which:
+# Thin wrapper: delegates to scripts/config_upgrade.py (unit-testable) through
+# scripts/backend-python.sh (the backend venv where `make install` built one,
+# else the host python3 — a Docker-only host has no uv), which:
+# 0. Resolves the config.yaml the Gateway loads (--print-config-path)
 # 1. Refuses duplicate-keyed configs (names the key and both line numbers)
 # 2. Runs version-specific migrations (value replacements, renames, etc.)
 # 3. Merges missing fields from the example into the user config
@@ -16,16 +16,23 @@ set -e
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 EXAMPLE="$REPO_ROOT/config.example.yaml"
 
-# Resolve config.yaml location: env var > backend/ > repo root
-if [ -n "$DEER_FLOW_CONFIG_PATH" ] && [ -f "$DEER_FLOW_CONFIG_PATH" ]; then
-    CONFIG="$DEER_FLOW_CONFIG_PATH"
-elif [ -f "$REPO_ROOT/backend/config.yaml" ]; then
-    CONFIG="$REPO_ROOT/backend/config.yaml"
-elif [ -f "$REPO_ROOT/config.yaml" ]; then
-    CONFIG="$REPO_ROOT/config.yaml"
+if command -v cygpath >/dev/null 2>&1; then
+    REPO_ROOT_WIN="$(cygpath -w "$REPO_ROOT")"
+    EXAMPLE_WIN="$(cygpath -w "$EXAMPLE")"
+    SCRIPT_WIN="$(cygpath -w "$REPO_ROOT/scripts/config_upgrade.py")"
 else
-    CONFIG=""
+    REPO_ROOT_WIN="$REPO_ROOT"
+    EXAMPLE_WIN="$EXAMPLE"
+    SCRIPT_WIN="$REPO_ROOT/scripts/config_upgrade.py"
 fi
+
+# Upgrade the config.yaml the Gateway loads: config_upgrade.py asks the harness
+# resolver where it can import it, so with both <checkout>/config.yaml and
+# backend/config.yaml present the checkout copy `make dev` reads is the one
+# upgraded. Run from backend/, where the Gateway resolves a relative
+# DEER_FLOW_CONFIG_PATH. Prints nothing when no config exists yet; a missing
+# DEER_FLOW_CONFIG_PATH or invalid DEER_FLOW_PROJECT_ROOT stops here.
+CONFIG="$(cd "$REPO_ROOT/backend" && bash "$REPO_ROOT/scripts/backend-python.sh" "$SCRIPT_WIN" --print-config-path "$REPO_ROOT_WIN")"
 
 if [ ! -f "$EXAMPLE" ]; then
     echo "✗ config.example.yaml not found at $EXAMPLE"
@@ -39,14 +46,4 @@ if [ -z "$CONFIG" ]; then
     exit 0
 fi
 
-if command -v cygpath >/dev/null 2>&1; then
-    CONFIG_WIN="$(cygpath -w "$CONFIG")"
-    EXAMPLE_WIN="$(cygpath -w "$EXAMPLE")"
-    SCRIPT_WIN="$(cygpath -w "$REPO_ROOT/scripts/config_upgrade.py")"
-else
-    CONFIG_WIN="$CONFIG"
-    EXAMPLE_WIN="$EXAMPLE"
-    SCRIPT_WIN="$REPO_ROOT/scripts/config_upgrade.py"
-fi
-
-exec bash "$REPO_ROOT/scripts/backend-python.sh" "$SCRIPT_WIN" "$CONFIG_WIN" "$EXAMPLE_WIN"
+exec bash "$REPO_ROOT/scripts/backend-python.sh" "$SCRIPT_WIN" "$CONFIG" "$EXAMPLE_WIN"
