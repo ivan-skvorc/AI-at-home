@@ -1,11 +1,20 @@
 ### Data Flow
 
+Scope local-turn ordering to `displayThreadId ?? threadId`, the displayed
+conversation identity. Confirming a new chat changes the SDK `threadId` from
+undefined to its existing display ID; preserve the human anchor across that
+transition and clear it only on a displayed-conversation switch or the existing
+failure/replay-gap paths. Draft and confirmation regressions live in
+`tests/unit/core/threads/local-turn-order.dom.test.tsx`.
+
 Answer details use `workspace/message-details` descriptors; skill run scoping
 is documented in `docs/skill-usage-ui.md`.
 
 Artifact URLs encode raw filesystem paths, preserving literal percent sequences.
 Only Markdown destinations decode once; relative images match decoded names
 against raw artifact paths before encoding.
+File-type detection uses the basename so extensionless `Dockerfile` and
+`Makefile` artifacts remain recognizable under nested or dotted directories.
 
 The thread/streaming data flow — run lifecycle, SSE frames, optimistic
 messages, grouping and the ordering repair — is long enough to dominate this
@@ -121,4 +130,4 @@ binding; explicit page-local overrides survive new-thread route replacement and
 reset on conversation changes. Gateway supplies defaults for clients without a
 selector; frontend visibility must not become a runtime enforcement boundary.
 
-MCP editor requests use the personal configuration API. Query keys for personal MCP config and capability installations include the authenticated user ID; remount the editor when that ID changes. Deployment installations remain read-only under Platform provided, alongside deployment setup guides. My plugins contains personal configuration templates, Lark account authorization and the personal MCP editor; a deployment installation must not mark a personal template configured.
+MCP hooks and the editor default to personal scope. Mutation-option builders require an explicit scope. MCP control accessible names include the localized ownership section, so same-named shared and personal connections remain distinct without region context. Query keys include scope and authenticated user ID; remount each editor when that ID changes. Platform provided uses the deployment editor only for administrators outside static mode, restoring add, edit, toggle and delete through the existing admin-only MCP API. Ordinary users see shared entries read-only. My plugins contains personal configuration templates, Lark account authorization and the personal MCP editor; a deployment installation must not mark a personal template configured.

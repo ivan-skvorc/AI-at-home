@@ -11,6 +11,99 @@ Newest first. Append a pass; never rewrite one. A dated line is what tells the
 next person whether the roster was checked last week or last year, and _which_
 providers that pass could actually reach.
 
+- **2026-09-30 — partial: tier 1 for Anthropic, tier 2 for OpenAI, tier 3 elsewhere. Two
+  roster rolls (GPT-6.1 Sol in for GPT-5.6 Sol, GPT-6 Luna in for GPT-5.6 Luna); no Anthropic
+  price changed.** Requested in words with the upstream sync of 37 commits, naming GPT-6 Astra
+  and Claude Opus 5.5 ("make sure to add" them).
+
+  **Machine half clean.** `python3 scripts/audit_models.py` reports **no drift**; `openrouter`
+  is _skipped_ (`Tunnel connection failed: 403 Forbidden`) and the ten catalog-less providers
+  likewise. The stale fixture, with its price drift moved onto `openai/gpt-6.1-sol`, still
+  yields exactly its four findings.
+
+  **What the network reached.** `platform.claude.com/docs/en/about-claude/pricing.md`,
+  `…/models/overview.md` and `…/models/sonnet-5-5/migration-guide.md` answer 200. Refused at
+  the proxy (`http=000`): `openrouter.ai`, `developers.openai.com`, `platform.openai.com`,
+  `openai.com`, `docs.x.ai`, `ai.google.dev`, `api-docs.deepseek.com`, `mistral.ai`,
+  `docs.z.ai`. Web search was available and is how tier 2 was read.
+
+  **GPT-6 Astra and Claude Opus 5.5 — present everywhere, as asked.** Both were already in
+  every machine-read copy: the Anthropic block (`claude-opus-5-5`), the routed pairs
+  (`anthropic/claude-opus-5.5`, `openai/gpt-6-astra`), the OpenAI home block (`gpt-6-astra`),
+  `MODEL_PRICES`, `HOME_API_BUNDLES` and the stale fixture. Two prose copies no test reads were
+  stale and are fixed: `providers.py`'s OpenRouter `description=` (what `make setup` prints)
+  and its routed-pair comment both still said the Anthropic pair was "Fable 5.1 + **Opus 5**".
+  FORK.md's roster prose had the same drift in three places ("Fable 5.1 is the one Claude that
+  also gets an OpenRouter entry", "only Fable 5.1 is _also_ routed", the OpenRouter bullet
+  omitting Opus 5.5 and Astra) and README's wizard line named neither half of either pair.
+
+  **Anthropic — tier 1, all six verified, unchanged.** Fable 5.1 `$10/$50` (cache `$0.25`),
+  Opus 5.5 `$4/$20` (`$0.20`, 0.05x), Opus 5 `$5/$25` (`$0.50`), Sonnet 5.5 `$2/$10`
+  (`$0.20`), Sonnet 5 `$2/$10` (`$0.20`, footnote: the intro rate is now standard), Haiku 4.5
+  `$1/$5` (`$0.10`). Ids match the overview. The overview labels Sonnet 5.5's thinking
+  "Adaptive" rather than "Adaptive (always on)"; its migration guide still says
+  `thinking.type.disabled` 400s and names `between_tools` as the lowest setting, so the
+  bundle's always-on config stays correct. The routed `anthropic/claude-opus-5.5` is `$4/$20`
+  on OpenRouter's page (search summary) — **corroborated**, unchanged.
+  **Worth watching:** the overview gives Haiku 4.5's retirement as "not sooner than October 15,
+  2026" and lists no successor. The bundle's only cheap Claude may go within weeks; the next
+  pass should check the deprecations page before anything else.
+
+  **GPT-6 Astra — tier 2, corroborated again, unchanged.** OpenAI's model and pricing pages
+  (domain-scoped search) and `openrouter.ai/openai/gpt-6-astra` both state `$10 / $50`, cached
+  input `$1.00`. `cache_hit: 1.0` is still not shipped, for the reason 2026-09-28 gave.
+
+  **OpenAI — roster roll: GPT-6.1 Sol in, GPT-5.6 Sol out (home block and the routed pair).**
+  `openai.com/index/introducing-gpt-6-1-sol` and `developers.openai.com/api/docs/models/gpt-6.1-sol`
+  give the id `gpt-6.1-sol` at `$2 / $10` (cached `$0.10`); `openrouter.ai/openai/gpt-6.1-sol`
+  gives `$2 / $10`, 1.05M context, 128K output. They agree exactly — **tier 2, corroborated**,
+  slug included. This settles the 2026-09-28 queue's first item: GPT-6 Sol's disagreeing
+  figures no longer matter, because 6.1 supersedes it. The roll is the mechanical one (new Sol
+  in, previous Sol out); GPT-5.6 Sol's apparent `$4/$20` promotion leaves with it. The pair's
+  reason is stronger, not weaker: Astra `$10/$50` beside Sol `$2/$10` is 5x apart.
+  `TestFirstPartyKeyCoverage::test_the_paired_labs_route_both_halves` and the two wizard tests
+  that name the doubled flagship now name `gpt-6.1-sol`.
+
+  **OpenAI — roster roll: GPT-6 Luna in, GPT-5.6 Luna out (home block only).**
+  `developers.openai.com/api/docs/models/gpt-6-luna` and `openrouter.ai/openai/gpt-6-luna` both
+  state `$0.10 / $0.50` (cached `$0.01`) — **corroborated**. The cheap tier keeps only its
+  latest, so this is mechanical. `max_tokens` stays at the bundle's 16000.
+  **GPT-5.6 Terra stays** — there is no GPT-6 Terra (OpenAI's own community forum has a thread
+  asking why). It is now dominated inside its own block: `$2 / $12` against GPT-6.1 Sol's
+  `$2 / $10`, a generation older. Dropping it is a trim decision, not a roll, so it is left for
+  the user; the recommendation is to drop it.
+
+  **Discovery (step 2) — found, logged, not rolled.**
+  - **Grok 4.7** (`x-ai/grok-4.7`, 2026-09-21): xAI's docs give `$2.20 / $6.60` (<200K), the
+    OpenRouter summary `$2.00 / $6.00`. A disagreement is a stop. Still owed, third pass running.
+  - **DeepSeek V4.1 Flash** (2026-09-10; #2 trending for coding on OpenRouter this week):
+    DeepSeek's docs give `$0.14 / $0.28`, the OpenRouter summary `$0.02 / $0.60`. Stop. Note
+    what DeepSeek's docs also say: the legacy id `deepseek-v4-flash` — the bundled home entry —
+    is now **served by V4.1 Flash** and billed at the Flash price, which is the bundled
+    `$0.14/$0.28`. The entry has become an alias in effect; its price is still right, its name
+    is a version behind.
+  - **Declined:** GPT-6.1 Sol Pro, GPT-6 Luna Pro, GPT-6 Astra Pro (reasoning-mode variants of
+    bundled models); the `*-latest` aliases OpenRouter now lists for every OpenAI tier; Claude
+    Mythos 5.1 (still limited availability); Solar Decide and Kev 4B (niche decision models).
+  - **Pointers to watch:** Space Bunny Alpha tops OpenRouter's free and coding-trending boards —
+    a cloaked codename, so note and wait. GLM 5.3 Flash trends for coding; a candidate cheaper
+    z.ai sibling once it can be priced.
+
+  **Still owed to a pass with tier-1 access**, in order: Haiku 4.5's retirement; GPT-6.1 Sol
+  and GPT-6 Luna (read them off OpenAI's page); Grok 4.7; DeepSeek V4.1 Flash and the
+  `deepseek-v4-flash` alias; DeepSeek V4 Pro's disagreeing entries; a routed discount for
+  Gemini 3.8 Flash; Astra's `cache_hit`; Sonnet 5.5's `between_tools` as the disabled-state
+  mapping; Terra's place in the OpenAI block.
+
+  **Prose copies no test reads** — the `QUICK START` comment and OpenAI block comment in
+  `config.example.yaml`, `sync-api-key-models.py`'s docstring, `providers.py`'s
+  `description=` strings and comments, README (§2 bullet and wizard line) and FORK.md's roster
+  prose — updated for both rolls and the Opus 5.5 drift. `.env.example`'s OpenAI line is
+  pinned and was updated. Step 8 gates: `sync-api-key-models.py --dry-run` clean (with
+  `OPENAI_API_KEY` + `OPENROUTER_API_KEY`: the rolled entries uncomment under their new names);
+  `test_sync_api_key_models.py test_setup_wizard.py test_config_integrity.py
+  test_audit_models.py test_model_price_fields.py test_pricing.py` — 303 passed.
+
 - **2026-09-28 — partial: tier 1 for Anthropic, tier 2 for GPT-6 Astra, tier 3 elsewhere. One
   roster roll (Sonnet 5.5 in, Sonnet 4.6 out); no price changed.** Requested in words, naming
   Claude Opus 5.5, Claude Fable 5.1 and OpenAI's GPT-6 Astra, alongside the home-server repo

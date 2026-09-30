@@ -8,6 +8,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- **upstream:** merged `upstream/main` (37 commits since 2026-09-29). Brings upstream's
+  skill authorization at agent assembly and slash activation, agent-scoped memory management,
+  current-task notes that keep existing notes when parallel additions overflow, a null-safe
+  per-run subagent cap (`max_total_subagents: null` now falls back to the configured cap), the
+  run duration folded into the final reasoning header, and a run of cancellation, validation
+  and scheduler fixes. No config key was added, so `config_version` stays 59.
+- **models:** GPT-6.1 Sol (`gpt-6.1-sol` / `openai/gpt-6.1-sol`, $2/$10) replaces GPT-5.6 Sol
+  as the cheaper half of OpenAI's routed Astra + Sol pair and in the OpenAI home block, and
+  GPT-6 Luna (`gpt-6-luna`, $0.10/$0.50) replaces GPT-5.6 Luna there. Both prices are
+  corroborated (OpenAI's model pages and OpenRouter agree) rather than read off OpenAI's own
+  page, which this environment cannot reach; the 2026-09-30 model audit names them for the next
+  pass to re-check. GPT-6 Astra and Claude Opus 5.5 were re-confirmed in every copy of the
+  bundle, and the `make setup` OpenRouter description, which still said Opus 5, now names
+  Opus 5.5.
 - **upstream:** merged `upstream/main` (77 commits since 2026-09-26). Brings upstream's
   tool-artifact handles (a new `tool_artifacts:` section, so `config_version` is 59 in
   `config.example.yaml` and both Helm chart copies), the Unbrowse `web_fetch` provider, async
@@ -1823,6 +1837,57 @@ This release closes that milestone with **181 merged pull requests**.
   workflows are preserved and nothing is enabled automatically. ([#5497])
 
 ### Fixed
+
+- **gateway:** A non-ASCII CSRF token, GitHub webhook signature, internal auth
+  token, OIDC `state`, or provisioner `X-API-Key` is now rejected with the
+  usual 403/401 instead of a 500. `hmac.compare_digest` raises `TypeError` for
+  `str` operands with non-ASCII characters, and Starlette decodes header bytes
+  as latin-1, so a single `0xE9` byte crashed the comparison. The Gateway now
+  compares the UTF-8 bytes through one helper,
+  `app.gateway.utils.constant_time_equals`, and the standalone provisioner
+  encodes inline. No bypass was possible; the request was already failing, just
+  with the wrong status. ([#6076])
+- **agents:** Context-compaction fraction triggers and fraction-based retention
+  now use the active run model's context profile; a separate
+  `summarization.model_name` remains generation-only. This prevents mismatched
+  run and summary windows from compacting too late or too early. The middleware
+  release identity now records `profile_model` separately from `summary_model`,
+  intentionally refreshing the identity when either owner changes. ([#5566])
+- **events:** Run-scoped reads no longer return 500 on the JSONL backend for a
+  run ID it cannot use as a filename. `GET
+  /api/threads/{thread_id}/runs/{run_id}/events`, `.../messages`, and
+  `.../workspace-changes` pass the URL's run ID to the event store unchecked;
+  with `run_events.backend: jsonl` an ID such as `run.1` raised `ValueError`,
+  while the memory and database stores return an empty result. JSONL reads and
+  deletes now treat such an ID as an unknown run; writes still reject it.
+  ([#6070])
+- **agents:** A run started with `"max_total_subagents": null` in its context
+  now uses the configured `subagents.max_total_per_run` instead of failing with
+  a `TypeError`. The key was present, so `dict.get(key, default)` returned
+  `None`, and building `SubagentLimitMiddleware` crashed that run with an
+  internal error (the web UI never sends the key; API and embedded-client
+  callers could). The Gateway lead agent, `DeerFlowClient`, and the system
+  prompt now resolve the cap through one helper that treats `null` as unset and
+  clamps to 1-50, so the extension-facing host policy and the release policy
+  also report the enforced cap rather than an out-of-range request. ([#6088])
+- **scheduler:** Fixed-hour cron tasks no longer fire twice on the daylight-saving
+  fall-back day. `croniter` returns both occurrences of an ambiguous wall-clock
+  hour (the first with `fold=0`, the second with `fold=1`). For tasks where
+  neither minute nor hour contains a wildcard, the second occurrence is skipped
+  to preserve once-per-day semantics (Vixie cron contract), while wildcard
+  schedules (such as `0 * * * *`) still run in both occurrences of the repeated
+  hour. (issue #6052, [#6066])
+- **persistence:** A SQLite `checkpointer.connection_string` written as a
+  `file:` URI now fails at startup instead of silently writing somewhere else.
+  LangGraph's SQLite checkpointer and Store open connection strings without
+  `uri=True`, so SQLite treated the URI as a literal filename:
+  `file:checkpoints.db?mode=rwc` created a file with that exact name in the
+  working directory, `file::memory:?cache=shared` persisted to disk, and a
+  `file:///...` URI failed to open. The readiness probe did parse URIs, so it
+  checked a different file than the runtime used and reported in-memory URIs as
+  `not_configured`. All four SQLite checkpointer/Store factories now reject
+  `file:` URIs with an error that names the setting, and `/health/ready` reports
+  them unreachable. Use a filesystem path or `:memory:` instead. ([#6069])
 
 - **config:** `make config-upgrade` (also run by `make dev` / `make start`)
   upgrades the `config.yaml` the Gateway loads. With both
@@ -7595,6 +7660,7 @@ with **180 merged pull requests** since the first 2.0 milestone tag.
 [#5562]: https://github.com/bytedance/deer-flow/pull/5562
 [#5563]: https://github.com/bytedance/deer-flow/pull/5563
 [#5564]: https://github.com/bytedance/deer-flow/pull/5564
+[#5566]: https://github.com/bytedance/deer-flow/pull/5566
 [#5567]: https://github.com/bytedance/deer-flow/pull/5567
 [#5569]: https://github.com/bytedance/deer-flow/pull/5569
 [#5570]: https://github.com/bytedance/deer-flow/pull/5570
@@ -7744,4 +7810,9 @@ with **180 merged pull requests** since the first 2.0 milestone tag.
 [#5987]: https://github.com/bytedance/deer-flow/pull/5987
 [#5991]: https://github.com/bytedance/deer-flow/pull/5991
 [#6015]: https://github.com/bytedance/deer-flow/pull/6015
+[#6066]: https://github.com/bytedance/deer-flow/pull/6066
+[#6069]: https://github.com/bytedance/deer-flow/pull/6069
+[#6070]: https://github.com/bytedance/deer-flow/pull/6070
+[#6076]: https://github.com/bytedance/deer-flow/pull/6076
+[#6088]: https://github.com/bytedance/deer-flow/pull/6088
 

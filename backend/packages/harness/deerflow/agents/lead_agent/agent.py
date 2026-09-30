@@ -36,7 +36,7 @@ from langchain_core.runnables import RunnableConfig
 
 from deerflow.agents.interaction_policy import resolve_run_interaction_policy
 from deerflow.agents.lead_agent.democracy import normalize_democracy_grading, normalize_democracy_participants
-from deerflow.agents.lead_agent.prompt import apply_prompt_template
+from deerflow.agents.lead_agent.prompt import apply_prompt_template, has_bash_tool
 from deerflow.agents.middlewares.clarification_middleware import ClarificationMiddleware
 from deerflow.agents.middlewares.configured_extensions import load_configured_extension_middlewares
 from deerflow.agents.middlewares.loop_detection_middleware import LoopDetectionMiddleware
@@ -61,8 +61,8 @@ from deerflow.config.agents_config import load_agent_config, validate_agent_name
 from deerflow.config.app_config import AppConfig, get_app_config
 from deerflow.config.memory_config import should_use_memory_tools
 from deerflow.config.subagents_config import (
-    DEFAULT_MAX_TOTAL_SUBAGENTS_PER_RUN,
     effective_subagent_concurrency,
+    effective_total_subagents_per_run,
 )
 from deerflow.config.title_config import apply_auto_title_preference
 from deerflow.models import create_chat_model
@@ -121,11 +121,6 @@ def unwrap_agent_graph(agent_result: Any) -> Any:
     unchanged.
     """
     return agent_result.graph if isinstance(agent_result, LeadAgentAssembly) else agent_result
-
-
-def _default_max_total_subagents(app_config: object) -> int:
-    subagents_config = getattr(app_config, "subagents", None)
-    return getattr(subagents_config, "max_total_per_run", DEFAULT_MAX_TOTAL_SUBAGENTS_PER_RUN)
 
 
 def _subagent_release_policy(
@@ -521,6 +516,7 @@ def build_middlewares(
     mcp_routing_middleware: AgentMiddleware | None = None,
     user_id: str | None = None,
     authorization_provider=None,
+    skill_authorization=None,
     extensions=None,
     subagent_execution_capacity: int | None = None,
 ):
@@ -550,6 +546,11 @@ def build_middlewares(
             to ``SkillActivationMiddleware`` so it can resolve per-user custom skills.
         authorization_provider: Provider already resolved for assembly-time
             filtering. Reused by the execution-time authorization middleware.
+        skill_authorization: Provider + principal already resolved for the
+            skill visibility filter. Passed through to
+            ``SkillActivationMiddleware`` so explicit slash activation also
+            enforces the action-scoped ``skill:activate`` decision (custom
+            providers may distinguish visibility from activation).
         subagent_execution_capacity: Startup-frozen process capacity used to
             keep advertised and enforced task concurrency aligned after reloads.
         extensions: Loaded extensions whose middleware contributions are merged
@@ -572,6 +573,15 @@ def build_middlewares(
         runtime_middleware_kwargs["owns_agent_skill_projection"] = False
     if authorization_provider is not None:
         runtime_middleware_kwargs["authorization_provider"] = authorization_provider
+    if skill_authorization is not None:
+        # Shared with the runtime chain (ToolErrorHandlingMiddleware gates the
+        # skill-file-load stamp on the same skill:activate decision the
+        # activation middleware enforces for slash commands).
+        runtime_middleware_kwargs["skill_authorization"] = skill_authorization
+    if user_id is not None:
+        # ToolErrorHandlingMiddleware canonicalizes skill-read paths through
+        # the same user-scoped registry the activation/policy middlewares use.
+        runtime_middleware_kwargs["user_id"] = user_id
     if authorization_provider is not None and deferred_setup is not None:
         runtime_middleware_kwargs["deferred_setup"] = deferred_setup
     middlewares = build_lead_runtime_middlewares(**runtime_middleware_kwargs)
@@ -600,6 +610,7 @@ def build_middlewares(
             app_config=resolved_app_config,
             user_id=user_id,
             slash_source_owner_token=slash_source_owner_token,
+            skill_authorization=skill_authorization,
         )
     )
 
@@ -621,6 +632,10 @@ def build_middlewares(
             app_config=resolved_app_config,
             user_id=user_id,
             slash_source_owner_token=slash_source_owner_token,
+            # Persisted skill_context entries are re-authorized against the
+            # skill:activate decision before their allowed-tools apply (the
+            # policy may have changed since the entry was stamped).
+            skill_authorization=skill_authorization,
         )
     )
 
@@ -636,6 +651,11 @@ def build_middlewares(
             inject_tool_artifacts=resolved_app_config.tool_artifacts.enabled and resolved_app_config.tool_artifacts.inject_model_context,
             task_continuity_enabled=getattr(getattr(resolved_app_config, "task_continuity", None), "enabled", False) is True,
             pii_redaction_config=getattr(resolved_app_config, "pii_redaction", None),
+            # The rendered "Active skills" reminder hides entries the provider
+            # denies; decisions are published per step by the activation
+            # middleware under the shared chain token.
+            skill_authorization=skill_authorization,
+            entry_decisions_owner_token=slash_source_owner_token,
         )
     )
 
@@ -732,7 +752,7 @@ def build_middlewares(
             resolved_app_config,
             execution_capacity=subagent_execution_capacity,
         )
-        max_total_subagents = cfg.get("max_total_subagents", _default_max_total_subagents(resolved_app_config))
+        max_total_subagents = effective_total_subagents_per_run(cfg.get("max_total_subagents"), resolved_app_config)
         effective_max_subagents_per_run = max_total_subagents
         middlewares.append(SubagentLimitMiddleware(max_concurrent=max_concurrent_subagents, max_total=max_total_subagents))
 
@@ -1009,7 +1029,7 @@ def _assemble_lead_agent(config: RunnableConfig, *, app_config: AppConfig) -> Le
         resolved_app_config,
         execution_capacity=subagent_execution_capacity,
     )
-    max_total_subagents = cfg.get("max_total_subagents", _default_max_total_subagents(resolved_app_config))
+    max_total_subagents = effective_total_subagents_per_run(cfg.get("max_total_subagents"), resolved_app_config)
     # Fork: the Democracy panel roster for this run. Filtered against the model
     # catalog here (not at the UI), so a thread whose config.yaml changed under
     # it degrades to an ordinary Ultra run rather than dispatching panelists on
@@ -1050,6 +1070,46 @@ def _assemble_lead_agent(config: RunnableConfig, *, app_config: AppConfig) -> Le
     if isinstance(config.get("context"), dict):
         config["context"]["subagent_enabled"] = subagent_enabled
     available_skills = _available_skill_names(agent_config, is_bootstrap)
+
+    # Phase 3: enforce skill authorization (Layer 1). Filter the skill
+    # allowlist by the provider's "skill" policy so denied skills never
+    # appear in <skill_index>, can never be describe_skill'd, and cannot be
+    # slash-activated (SkillActivationMiddleware checks this set). When
+    # authorization is disabled, this is a no-op. ``available_skills=None``
+    # means "no agent-level allowlist" (all enabled skills); authorization
+    # still constrains via filter_resources in that case. The resolved
+    # provider/principal are threaded into ``SkillActivationMiddleware`` so
+    # explicit activation additionally enforces the action-scoped
+    # ``skill:activate`` decision (visibility != activation for custom
+    # providers).
+    from deerflow.authz.skill_filter import filter_available_skills_by_authorization, resolve_skill_authorization
+
+    skill_authorization = resolve_skill_authorization(cfg, resolved_app_config)
+    # Resolve the filter's candidate names through the cached catalog loader
+    # instead of letting the filter rescan storage: the enabled-skills load
+    # below (``_load_enabled_available_skills``) uses the same
+    # config-identity cache, so a build pays one skill-tree walk when the
+    # cache is cold and none when warm — the filter's own uncached fallback
+    # double-pays it on every build (notably costly on NFS/CSI roots).
+    candidate_skill_names = None
+    if available_skills is None and skill_authorization is not None:
+        try:
+            from deerflow.agents.lead_agent.prompt import get_enabled_skills_for_config
+
+            candidate_skill_names = [s.name for s in get_enabled_skills_for_config(resolved_app_config, user_id=resolved_user_id)]
+        except Exception:
+            logger.warning("Failed to pre-load enabled skills for authorization candidates", exc_info=True)
+            # Leave None: the filter resolves candidates itself and applies
+            # its fail-closed semantics when that resolution also fails.
+
+    available_skills = filter_available_skills_by_authorization(
+        available_skills,
+        context=cfg,
+        app_config=resolved_app_config,
+        user_id=resolved_user_id,
+        candidate_skill_names=candidate_skill_names,
+        authorization=skill_authorization,
+    )
     # Custom agent model from agent config (if any), or None to let _resolve_model_name pick the default
     agent_model_name = agent_config.model if agent_config and agent_config.model else None
 
@@ -1158,6 +1218,7 @@ def _assemble_lead_agent(config: RunnableConfig, *, app_config: AppConfig) -> Le
             bootstrap_skills,
             enabled=skill_search_enabled,
             container_base_path=container_base_path,
+            skill_authorization=skill_authorization,
         )
         chat_model = create_chat_model(name=model_name, thinking_enabled=thinking_enabled, app_config=resolved_app_config, attach_tracing=False)
         raw_tools = get_available_tools(model_name=model_name, subagent_enabled=subagent_enabled, app_config=resolved_app_config, chat_model=chat_model, internet_enabled=internet_enabled) + [setup_agent]
@@ -1189,7 +1250,12 @@ def _assemble_lead_agent(config: RunnableConfig, *, app_config: AppConfig) -> Le
             config,
             model_name=model_name,
             agent_name=agent_name,
-            available_skills=set(_BOOTSTRAP_SKILL_NAMES),
+            # The authorization-filtered bootstrap set, not the raw
+            # _BOOTSTRAP_SKILL_NAMES: when policy denies "bootstrap" this is an
+            # empty set, which the activation middleware's membership gate
+            # treats as "no skills activatable" (a raw {"bootstrap"} would
+            # re-admit the denied skill to slash activation).
+            available_skills=available_skills,
             memory_enabled=memory_enabled,
             owns_agent_skill_projection=False,
             app_config=resolved_app_config,
@@ -1197,21 +1263,33 @@ def _assemble_lead_agent(config: RunnableConfig, *, app_config: AppConfig) -> Le
             mcp_routing_middleware=mcp_routing_middleware,
             user_id=resolved_user_id,
             authorization_provider=_authz_provider,
+            skill_authorization=skill_authorization,
             subagent_execution_capacity=subagent_execution_capacity,
         )
         system_prompt = apply_prompt_template(
             subagent_enabled=subagent_enabled,
             max_concurrent_subagents=max_concurrent_subagents,
             max_total_subagents=max_total_subagents,
-            available_skills=set(_BOOTSTRAP_SKILL_NAMES),
+            # Same filtered set as build_middlewares above; the legacy prompt
+            # path also consults it, and an unfiltered {"bootstrap"} would let
+            # the full-metadata rendering advertise a policy-denied skill.
+            available_skills=available_skills,
             app_config=resolved_app_config,
             deferred_names=setup.deferred_names,
             user_id=resolved_user_id,
-            skill_names=skill_setup.skill_names or None,
+            # Preserve the (possibly empty) index when deferred discovery is
+            # on: converting an empty set back to None would fall through to
+            # the legacy full-metadata prompt, which reloads every enabled
+            # skill from storage and re-advertises the denied one. When
+            # deferred discovery is off, None keeps the legacy rendering and
+            # the filtered available_skills above already blanks it for a
+            # denial.
+            skill_names=skill_setup.skill_names if skill_search_enabled else None,
             allowed_subagents=allowed_subagents,
             subagent_execution_capacity=subagent_execution_capacity,
             interaction_policy=interaction_policy,
             memory_enabled=memory_enabled,
+            bash_available=has_bash_tool(authorized_tools),
         )
         # Fork: the offline notice is appended to the *rendered* prompt rather than
         # rendered through a template placeholder — the template is operator-editable
@@ -1270,6 +1348,7 @@ def _assemble_lead_agent(config: RunnableConfig, *, app_config: AppConfig) -> Le
         enabled_skills,
         enabled=skill_search_enabled,
         container_base_path=container_base_path,
+        skill_authorization=skill_authorization,
     )
     #
     # Withhold ``update_agent`` from runs triggered by webhook channels
@@ -1335,6 +1414,7 @@ def _assemble_lead_agent(config: RunnableConfig, *, app_config: AppConfig) -> Le
         mcp_routing_middleware=mcp_routing_middleware,
         user_id=resolved_user_id,
         authorization_provider=_authz_provider,
+        skill_authorization=skill_authorization,
         subagent_execution_capacity=subagent_execution_capacity,
     )
     system_prompt = apply_prompt_template(
@@ -1354,6 +1434,7 @@ def _assemble_lead_agent(config: RunnableConfig, *, app_config: AppConfig) -> Le
         democracy_grading=democracy_grading,
         interaction_policy=interaction_policy,
         memory_enabled=memory_enabled,
+        bash_available=has_bash_tool(authorized_tools),
     )
     # Fork: the offline notice is appended to the *rendered* prompt rather than
     # rendered through a template placeholder — the template is operator-editable
