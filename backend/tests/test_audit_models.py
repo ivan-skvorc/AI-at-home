@@ -507,8 +507,8 @@ class TestStaleFixture:
         catalogued = set(fixture["openrouter"]["models"])
 
         assert catalogued <= routed, f"the fixture carries slugs the config does not route: {sorted(catalogued - routed)}. Regenerate it from config.example.yaml."
-        assert routed - catalogued == {"x-ai/grok-4.6"}, (
-            f"the fixture's only missing slug must be the one it retires on purpose; these are missing too and will read as spurious `retired` findings: {sorted(routed - catalogued - {'x-ai/grok-4.6'})}"
+        assert routed - catalogued == {"x-ai/grok-4.7"}, (
+            f"the fixture's only missing slug must be the one it retires on purpose; these are missing too and will read as spurious `retired` findings: {sorted(routed - catalogued - {'x-ai/grok-4.7'})}"
         )
 
     def test_the_fixture_reports_one_finding_per_deliberate_drift(self, capsys):

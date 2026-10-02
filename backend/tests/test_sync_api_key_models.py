@@ -249,7 +249,7 @@ class TestRealExampleConfig:
             "anthropic/claude-fable-5.1",
             # Anthropic and OpenAI each route a *pair* — FORK.md step 3.
             "anthropic/claude-opus-5.5",
-            "x-ai/grok-4.6",
+            "x-ai/grok-4.7",
             "openai/gpt-6-astra",
             "openai/gpt-6.1-sol",
             "openai/gpt-5.3-codex",

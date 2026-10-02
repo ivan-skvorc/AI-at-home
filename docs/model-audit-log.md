@@ -11,6 +11,117 @@ Newest first. Append a pass; never rewrite one. A dated line is what tells the
 next person whether the roster was checked last week or last year, and _which_
 providers that pass could actually reach.
 
+- **2026-10-02 — partial: tier 1 for Anthropic, tier 2 for xAI, DeepSeek, z.ai, MiniMax and
+  Qwen, tier 3 elsewhere. Three roster rolls (Grok 4.7, DeepSeek V4.1 Flash, GLM-5.3 Flash);
+  no Anthropic price changed.** Requested in words as a standalone audit ("run just the model
+  audit … add new models to the config"), with no other change in the cycle.
+
+  **Machine half clean.** `python3 scripts/audit_models.py` reports **no drift**; `openrouter`
+  is _skipped_ (`Tunnel connection failed: 403 Forbidden`) and the ten catalog-less providers
+  likewise. **Step 8 was not run**: the request said not to run any tests, so neither
+  `sync-api-key-models.py --dry-run` nor the regression suites ran in this session — CI on the
+  PR is the first execution of the edited blocks. The round-trip pairs (`config.example.yaml` ↔
+  `HOME_API_BUNDLES` / `MODEL_PRICES`) were compared by eye, field by field.
+
+  **What the network reached.** `platform.claude.com/docs/en/about-claude/{pricing,models/overview,model-deprecations}.md`
+  answer 200. Refused at the proxy (`http=000`; fetch tool `EGRESS_BLOCKED`): `openrouter.ai`,
+  `developers.openai.com`, `platform.openai.com`, `docs.x.ai`, `ai.google.dev`,
+  `api-docs.deepseek.com`, `mistral.ai`, `docs.z.ai`, `platform.moonshot.ai`,
+  `alibabacloud.com`, `platform.minimax.io`. Web search was available; tier 2 below is
+  domain-scoped searches whose summaries quote the lab's own page, paired with an independent
+  tracker or OpenRouter's page.
+
+  **Anthropic — tier 1, all six verified, unchanged.** Ids, prices and cache rates match the
+  overview and pricing pages exactly as on 2026-09-30. **Haiku 4.5** (the item this pass was
+  told to check first) is still _Active_, "not sooner than October 15, 2026", with **no
+  deprecation notice** on the deprecations page; the newest notice (2026-09-30) is Sonnet 4.5,
+  which the bundle does not carry. Re-check on the next pass — Anthropic gives at least 60 days'
+  notice, so nothing can retire it before December.
+
+  **xAI — roll: Grok 4.7 in, Grok 4.6 out (home block and routed flagship).** The 2026-09-30
+  disagreement is resolved: xAI's pricing page (`docs.x.ai/developers/pricing`, domain-scoped
+  search) gives `grok-4.7` at **`$2 / $6`** (<200K; `$4 / $12` above, cached `$0.50`), and the
+  `$2.20 / $6.60` the last pass read is xAI's **US regional endpoint**, not the default.
+  `openrouter.ai/x-ai/grok-4.7` states the same `$2 / $6` list — **corroborated**, slug
+  included (`docs.x.ai/developers/grok-4-7`: model name `grok-4.7`, 500K context, text + image
+  in). OpenRouter's summary also shows `$1.60 / $4.80`, 20% under list — a discount, which tier
+  2 may not ship, so the routed entry bills at list, the conservative bound. Price is unchanged
+  from 4.6, so this is a slug-and-label roll. Declined: Grok 4.7 Fast (same model, 2x price) and
+  `~x-ai/grok-latest` (alias).
+
+  **DeepSeek — roll: V4.1 Flash in, V4 Flash out (home block only).** DeepSeek's docs (pricing
+  page and the 2026-09-10 release note, domain-scoped) say V4 Flash is **retired**, its id
+  `deepseek-v4-flash` is only "temporarily routed" to V4.1 Flash, and V4.1 Flash's id is
+  **`deepseek-flash`**. Its peak price is **`$0.30 / $1.20`** (off-peak `$0.15 / $0.60`),
+  matched by independent trackers in a separate search (computeprices, benchlm) — **corroborated**. The bundled
+  `$0.44 / $1.32` was therefore over-reporting what the old id is now billed at. Judgement call:
+  `deepseek-flash` is unversioned, which FORK.md step 4 normally forbids, but DeepSeek publishes
+  no pinned V4.1 id and the versioned one is the one being retired; the entry's comment tells the
+  next pass to re-read what it serves. `supports_vision` stays `false` although V4.1 Flash is
+  natively multimodal: nothing here has sent it an image. **V4 Pro re-corroborated** at
+  `$1.32 / $3.96` peak; DeepSeek's plan to route `deepseek-v4-pro` to Flash from 2026-09-14 was
+  **cancelled on 2026-09-11**, so the flagship entry is still V4 Pro.
+
+  **z.ai — roll: GLM-5.3 Flash in, GLM-4.5 Air out (home block only).** Both blockers earlier
+  passes recorded are gone. The slug is read off z.ai's own docs (`docs.z.ai/guides/vlm/glm-5.3-flash`,
+  "GLM-5.3-Flash/FlashX") rather than derived; and the `$0.075 / $0.25` launch promo ended on
+  2026-09-09, so the standard **`$0.15 / $0.50`** (cached `$0.03`) is what z.ai's pricing page
+  states, matched by mercatus-ai and neomanex (which also dates the promo's end) — **corroborated**. Acclaim, per
+  _What "critically acclaimed" means here_: OpenRouter's rankings this week put GLM 5.3 Flash
+  **#3 by token share** (10.6T), the same surface 2026-09-30 noted it trending on. The cheap
+  tier keeps only its latest, and GLM-4.5 Air was two generations behind its own block's
+  flagship, so this is a replacement, not an addition. The entry carries the declarative
+  reasoning contract (thinking required; effort low/high/max with minimal→low and
+  medium→high; `clear_thinking`) copied from the repo's existing GLM-5.3-Flash example and the
+  wizard's standalone `zai` provider, because the model rejects disabled thinking and the
+  plain OpenAI-compatible shape GLM-5.3 uses would not say so. OpenRouter's own routed price for
+  it reads `$0.02 / $0.30` — a different provider's rate, irrelevant to a home entry.
+
+  **Re-checked, unchanged.** MiniMax M3 `$0.60 / $2.40` (MiniMax's pricing overview,
+  domain-scoped; ≤512K tier) — the `$0.30 / $1.20` one tracker quoted is OpenRouter's
+  **batch** variant. The routed promo summary reads `$0.23 / $0.96` against the shipped
+  `$0.24 / $0.96` discount; a discount cannot be edited from tier 2, so it is left and owed.
+  Qwen3.8 Max `$2 / $6` (tracker search; the `qwen3.8-max-0902` snapshot is the same model).
+  GLM-5.3 `$1.40 / $4.40`.
+
+  **Discovery (step 2) — found, logged, not rolled.**
+  - **Xiaomi MiMo-V2.6-Flash** (`xiaomi/mimo-v2.6-flash`, 2026-09-21, MIT weights) is **#4 by
+    weekly token share** on OpenRouter (9.1T). Xiaomi is a lab the bundle does not carry, so
+    step 2 makes it the trigger for a new OpenRouter entry **and** a home block — a new key
+    across the seven copies of step 3, and `test_only_meta_and_nvidia_stay_openrouter_only`
+    would fail on a routed-only Xiaomi. That is a provider integration, not a roster roll, so it
+    is recommended as its own change. OpenRouter's summary gives `$0.14 / $0.28`; unverified.
+  - **DeepSeek V4.1 Flash on OpenRouter** is **#2 by token share** (22.7T) — an acclaimed
+    smaller sibling that could ride beside the routed V4 Pro the way Codex rides beside the
+    OpenAI pair. Not added: OpenRouter's input price reads `$0.02` on 2026-09-30 and `$0.0243`
+    today, so the routed figure is not settled.
+  - **Declined:** GLM 5.3 Prime (`z-ai/glm-5.3-prime`, 2026-09-23 — GLM-5.3 on faster serving
+    at 2x, a speed tier); `~z-ai/glm-flash-latest` (alias).
+  - **Nothing new:** Google (no Gemini 3.8 Pro; 3.1 Pro is still the flagship), Moonshot (Kimi
+    K3.1 is announced for October with no id or price), MiniMax (M3.1 still has no API id),
+    Mistral, NVIDIA. A search summary claimed a Llama 5 in April 2026; a domain-scoped search of
+    OpenRouter's catalog shows no `meta-llama/llama-5*` model, so Llama 4 Maverick stays.
+  - **Pointer to watch:** Space Bunny Alpha is #1 by token share (28.4T), still cloaked — note
+    and wait.
+
+  **Still owed to a pass with tier-1 access**, in order: Grok 4.7, DeepSeek V4.1 Flash and
+  GLM-5.3 Flash off their labs' own pages; GPT-6.1 Sol and GPT-6 Luna (owed since 2026-09-30);
+  what `deepseek-flash` serves, and whether V4.1 Flash should advertise vision; Xiaomi as a
+  new lab; a routed V4.1 Flash; MiniMax M3's routed discount; Gemini 3.8 Flash's routed
+  discount; Astra's `cache_hit`; Sonnet 5.5's `between_tools`; GPT-5.6 Terra's place (still
+  recommended to drop, still the user's call); Haiku 4.5's retirement. Also noticed, not
+  changed: `scripts/wizard/providers.py` defines two `LLMProvider`s named `zai` (upstream's
+  standalone GLM-5.3-Flash and the fork's home block), so any lookup keyed by name sees only
+  the home block — which now carries GLM-5.3 Flash itself.
+
+  **Prose copies no test reads** — `config.example.yaml`'s `QUICK START` comment and the xAI,
+  DeepSeek and z.ai block comments, `sync-api-key-models.py`'s docstring, `providers.py`'s
+  `description=` strings and comments, FORK.md's key table — updated for all three rolls.
+  README names labs, not versions, for these three, and needed nothing. `.env.example`'s xAI,
+  DeepSeek and z.ai lines are pinned and were updated. The stale fixture needed no
+  regeneration: it never carried a Grok (its deliberate "retired" drift is the xAI flagship), so
+  only `TestStaleFixture`'s pinned slug moved to `x-ai/grok-4.7`.
+
 - **2026-09-30 — partial: tier 1 for Anthropic, tier 2 for OpenAI, tier 3 elsewhere. Two
   roster rolls (GPT-6.1 Sol in for GPT-5.6 Sol, GPT-6 Luna in for GPT-5.6 Luna); no Anthropic
   price changed.** Requested in words with the upstream sync of 37 commits, naming GPT-6 Astra

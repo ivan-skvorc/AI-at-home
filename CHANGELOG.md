@@ -8,6 +8,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- **models:** three roster rolls from the 2026-10-02 model audit. Grok 4.7 (`grok-4.7` /
+  `x-ai/grok-4.7`, $2/$6) replaces Grok 4.6 in the xAI home block and as xAI's routed flagship.
+  DeepSeek V4.1 Flash replaces V4 Flash in the DeepSeek home block under DeepSeek's new id
+  `deepseek-flash` (the old `deepseek-v4-flash` id is only temporarily routed to it) and at its
+  lower price, $0.30/$1.20 peak (was $0.44/$1.32). GLM-5.3 Flash (`glm-5.3-flash`, $0.15/$0.50)
+  replaces GLM-4.5 Air as the cheap model in the z.ai home block, carrying the required-thinking
+  reasoning contract that model needs. All three prices are corroborated (the lab's docs and an
+  independent source agree) rather than read off the lab's own page, which this environment
+  cannot reach; the audit log names them for the next pass to re-check.
 - **upstream:** merged `upstream/main` (37 commits since 2026-09-29). Brings upstream's
   skill authorization at agent assembly and slash activation, agent-scoped memory management,
   current-task notes that keep existing notes when parallel additions overflow, a null-safe
