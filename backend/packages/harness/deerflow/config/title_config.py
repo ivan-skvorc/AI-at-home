@@ -1,10 +1,16 @@
 """Configuration for automatic thread title generation."""
 
+<<<<<<< HEAD
 import logging
 from collections.abc import Mapping
 from typing import Any
 
 from pydantic import BaseModel, Field
+=======
+from pydantic import BaseModel, Field, ValidationInfo, field_validator
+
+from deerflow.config._boolean_guards import reject_boolean
+>>>>>>> upstream/main
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +42,11 @@ class TitleConfig(BaseModel):
         default=("Generate a concise title (max {max_words} words) for this conversation.\nUser: {user_msg}\nAssistant: {assistant_msg}\n\nReturn ONLY the title, no quotes, no explanation."),
         description="Prompt template for LLM title generation when model_name is set",
     )
+
+    @field_validator("max_words", "max_chars", mode="before")
+    @classmethod
+    def _reject_boolean_limits(cls, value: object, info: ValidationInfo) -> object:
+        return reject_boolean(value, info, kind="an integer")
 
 
 # Global configuration instance

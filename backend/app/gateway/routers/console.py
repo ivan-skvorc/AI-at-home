@@ -54,7 +54,7 @@ class ConsoleStatsResponse(BaseModel):
     total_threads: int = Field(..., description="Conversation threads owned by the current user")
     total_agents: int = Field(..., description="Custom agents owned by the current user")
     total_tokens: int = Field(..., description="Tokens consumed across all recorded runs")
-    total_cost: float | None = Field(default=None, description="Estimated spend across priced runs; null when no models[*].pricing is configured")
+    total_cost: float | None = Field(default=None, description="Estimated spend across priced runs; null when pricing is unavailable or any call explicitly lacks usage")
     currency: str | None = Field(default=None, description="Display currency taken from the first configured pricing entry")
 
 
@@ -72,7 +72,7 @@ class ConsoleRunItem(BaseModel):
     duration_seconds: float | None = Field(default=None, description="Wall-clock duration; live elapsed time for active runs")
     total_tokens: int = 0
     message_count: int = 0
-    cost: float | None = Field(default=None, description="Estimated spend for this run; null when its models are unpriced")
+    cost: float | None = Field(default=None, description="Estimated spend for this run; null when unpriced or any call explicitly lacks usage")
     error: str | None = Field(default=None, description="Error excerpt for failed runs")
 
 
@@ -91,7 +91,7 @@ class ConsoleUsageDay(BaseModel):
     input_tokens: int = 0
     output_tokens: int = 0
     runs: int = 0
-    cost: float = Field(default=0.0, description="Estimated spend for the day across priced runs")
+    cost: float | None = Field(default=0.0, description="Estimated spend for the day across priced runs; null when any call explicitly lacks usage")
 
 
 class ConsoleUsageModelBreakdown(BaseModel):
@@ -99,7 +99,7 @@ class ConsoleUsageModelBreakdown(BaseModel):
 
     tokens: int = 0
     runs: int = Field(default=0, description="Runs that used this model (non-exclusive)")
-    cost: float | None = Field(default=None, description="Estimated spend for this model; null when unpriced")
+    cost: float | None = Field(default=None, description="Estimated spend for this model; null when unpriced or any call explicitly lacks usage")
     input_tokens: int = Field(default=0, description="Input tokens attributed to this model")
     cache_read_tokens: int = Field(default=0, description="Prompt-cache-hit input tokens attributed to this model")
 
@@ -111,7 +111,7 @@ class ConsoleUsageResponse(BaseModel):
     by_model: dict[str, ConsoleUsageModelBreakdown]
     total_tokens: int
     total_runs: int
-    total_cost: float | None = Field(default=None, description="Estimated spend for the window; null when no pricing is configured")
+    total_cost: float | None = Field(default=None, description="Estimated spend for the window; null when pricing is unavailable or any call explicitly lacks usage")
     currency: str | None = Field(default=None, description="Display currency taken from the first configured pricing entry")
 
 
@@ -216,7 +216,124 @@ def _build_pricing_map() -> dict[str, ModelPricing]:
     except Exception:  # pragma: no cover - defensive: cost display must not break the console
         logger.warning("console: failed to load model pricing from config", exc_info=True)
         return {}
+<<<<<<< HEAD
     return build_pricing_map(models, logger=logger)
+=======
+
+    pricing: dict[str, _ModelPricing] = {}
+    pricing_currency: str | None = None
+    pricing_currency_model: str | None = None
+    for model_cfg in models or []:
+        raw = getattr(model_cfg, "pricing", None)
+        if not isinstance(raw, dict):
+            continue
+        try:
+            input_price = float(raw.get("input_per_million") or 0)
+            output_price = float(raw.get("output_per_million") or 0)
+            raw_hit_price = raw.get("input_cache_hit_per_million")
+            cache_hit_price = float(raw_hit_price) if raw_hit_price is not None else None
+        except (TypeError, ValueError):
+            logger.warning("console: ignoring malformed pricing on model %s", model_cfg.name)
+            continue
+        if input_price <= 0 and output_price <= 0:
+            continue
+        model_currency = str(raw.get("currency") or "USD").strip().upper() or "USD"
+        if pricing_currency is None:
+            pricing_currency = model_currency
+            pricing_currency_model = model_cfg.name
+        elif model_currency != pricing_currency:
+            logger.warning(
+                "console: disabling cost reporting because model pricing mixes currencies (%s on %s, %s on %s)",
+                pricing_currency,
+                pricing_currency_model,
+                model_currency,
+                model_cfg.name,
+            )
+            return {}
+        entry = _ModelPricing(input_price, output_price, model_currency, cache_hit_price)
+        for key in (model_cfg.name, getattr(model_cfg, "model", None)):
+            if key:
+                pricing.setdefault(key, entry)
+                pricing.setdefault(key.lower(), entry)
+    return pricing
+
+
+def _pricing_currency(pricing: dict[str, _ModelPricing]) -> str | None:
+    """Display currency: the first configured entry's (one currency per deployment)."""
+    return next(iter(pricing.values())).currency if pricing else None
+
+
+def _lookup_pricing(pricing: dict[str, _ModelPricing], model: str | None) -> _ModelPricing | None:
+    if not model:
+        return None
+    return pricing.get(model) or pricing.get(model.lower())
+
+
+def _token_cost(input_tokens: int, output_tokens: int, price: _ModelPricing, cache_read_tokens: int = 0) -> float:
+    """Cache-aware spend: cache-hit input tokens are billed at the hit price.
+
+    ``cache_read_tokens`` is clamped into ``[0, input_tokens]``; the remainder
+    is billed at the full (cache-miss) input price. Without a configured hit
+    price all input is billed at the miss price.
+    """
+    cache_read = min(max(int(cache_read_tokens or 0), 0), max(int(input_tokens or 0), 0))
+    uncached = max(int(input_tokens or 0), 0) - cache_read
+    hit_price = price.input_cache_hit_per_million if price.input_cache_hit_per_million is not None else price.input_per_million
+    return (uncached / 1_000_000) * price.input_per_million + (cache_read / 1_000_000) * hit_price + (output_tokens / 1_000_000) * price.output_per_million
+
+
+def _usage_is_missing(usage: dict) -> bool:
+    return int(usage.get("missing_usage_calls") or 0) > 0
+
+
+def _has_missing_usage(token_usage_by_model: object) -> bool:
+    return isinstance(token_usage_by_model, dict) and any(isinstance(usage, dict) and _usage_is_missing(usage) for usage in token_usage_by_model.values())
+
+
+def _run_cost(
+    pricing: dict[str, _ModelPricing],
+    *,
+    model_name: str | None,
+    total_input_tokens: int | None,
+    total_output_tokens: int | None,
+    token_usage_by_model: dict | None,
+) -> float | None:
+    """Estimate one run's spend, or None when none of its models are priced.
+
+    Prefers the per-model breakdown (accurate for multi-model runs, e.g.
+    subagents on a different model); falls back to run-level totals priced at
+    ``model_name`` for legacy rows. Buckets without an input/output split are
+    skipped rather than guessed. An explicit missing-usage call makes the
+    whole run unpriceable: neither partial buckets nor legacy totals repair it.
+    """
+    if _has_missing_usage(token_usage_by_model):
+        return None
+    cost = 0.0
+    priced = False
+    if isinstance(token_usage_by_model, dict):
+        for model, usage in token_usage_by_model.items():
+            if not isinstance(usage, dict):
+                continue
+            price = _lookup_pricing(pricing, model)
+            if price is None:
+                continue
+            input_tokens = int(usage.get("input_tokens") or 0)
+            output_tokens = int(usage.get("output_tokens") or 0)
+            if input_tokens == 0 and output_tokens == 0:
+                continue
+            cost += _token_cost(input_tokens, output_tokens, price, int(usage.get("cache_read_tokens") or 0))
+            priced = True
+    if priced:
+        return cost
+    price = _lookup_pricing(pricing, model_name)
+    if price is None:
+        return None
+    input_tokens = int(total_input_tokens or 0)
+    output_tokens = int(total_output_tokens or 0)
+    if input_tokens == 0 and output_tokens == 0:
+        return None
+    return _token_cost(input_tokens, output_tokens, price)
+>>>>>>> upstream/main
 
 
 # ---------------------------------------------------------------------------
@@ -263,7 +380,14 @@ async def console_stats(request: Request) -> ConsoleStatsResponse:
                 )
             ).all()
             cost_sum = 0.0
+<<<<<<< HEAD
             for model_name, input_tokens, output_tokens, usage_map, snapshot in cost_rows:
+=======
+            for model_name, input_tokens, output_tokens, usage_map in cost_rows:
+                if _has_missing_usage(usage_map):
+                    cost_sum = None
+                    break
+>>>>>>> upstream/main
                 cost = _run_cost(
                     pricing,
                     model_name=model_name,
@@ -274,7 +398,7 @@ async def console_stats(request: Request) -> ConsoleStatsResponse:
                 )
                 if cost is not None:
                     cost_sum += cost
-            total_cost = round(cost_sum, 6)
+            total_cost = round(cost_sum, 6) if cost_sum is not None else None
 
     try:
         # Filesystem scan; resolves the effective user internally (AuthMiddleware
@@ -409,6 +533,8 @@ async def console_usage(
     total_tokens = 0
     total_runs = 0
     total_cost = 0.0 if pricing else None
+    missing_models: set[str] = set()
+    missing_model_prices: set[int] = set()
     for row in rows:
         created = _as_utc(row.created_at)
         if created is None:
@@ -436,9 +562,14 @@ async def console_usage(
             # cannot rewrite what an old run cost.
             pricing_snapshot=row.pricing_snapshot,
         )
-        if run_cost is not None and total_cost is not None:
-            bucket.cost = round(bucket.cost + run_cost, 6)
-            total_cost = round(total_cost + run_cost, 6)
+        if _has_missing_usage(row.token_usage_by_model):
+            bucket.cost = None
+            total_cost = None
+        elif run_cost is not None:
+            if bucket.cost is not None:
+                bucket.cost = round(bucket.cost + run_cost, 6)
+            if total_cost is not None:
+                total_cost = round(total_cost + run_cost, 6)
 
         usage_map = row.token_usage_by_model or {}
         if isinstance(usage_map, dict) and usage_map:
@@ -454,6 +585,12 @@ async def console_usage(
                 entry.input_tokens += int(usage.get("input_tokens") or 0)
                 entry.cache_read_tokens += int(usage.get("cache_read_tokens") or 0)
                 price = _lookup_pricing(pricing, model)
+                if _usage_is_missing(usage):
+                    missing_models.add(model.lower())
+                    if price is not None:
+                        # Configured name/provider-ID aliases share this entry;
+                        # equal rates on an unrelated model are not aliases.
+                        missing_model_prices.add(id(price))
                 if price is not None:
                     model_cost = _token_cost(int(usage.get("input_tokens") or 0), int(usage.get("output_tokens") or 0), price, int(usage.get("cache_read_tokens") or 0))
                     entry.cost = round((entry.cost or 0.0) + model_cost, 6)
@@ -464,6 +601,13 @@ async def console_usage(
             entry.runs += 1
             if run_cost is not None:
                 entry.cost = round((entry.cost or 0.0) + run_cost, 6)
+
+    # Missing usage stays unknown even if a later known bucket or legacy row
+    # shares this model. Do not restore its quote by treating None as zero.
+    for model, entry in by_model.items():
+        price = _lookup_pricing(pricing, model)
+        if model.lower() in missing_models or (price is not None and id(price) in missing_model_prices):
+            entry.cost = None
 
     return ConsoleUsageResponse(
         days=list(day_buckets.values()),

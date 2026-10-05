@@ -424,7 +424,17 @@ function ChatInstanceContent({
       return;
     }
     try {
+<<<<<<< HEAD:frontend/src/components/workspace/chats/chat-instance.tsx
       await createThread({ threadId, projectId: projectParam });
+=======
+      const created = await createThread(threadId, projectParam);
+      // Keep confirmed membership available while the first metadata read is pending
+      // or fails after the composer materializes this new project thread.
+      queryClient.setQueryData(
+        ["thread", "metadata", threadId, false],
+        created,
+      );
+>>>>>>> upstream/main:frontend/src/components/workspace/chats/chat-page.tsx
       void queryClient.invalidateQueries({
         queryKey: INFINITE_THREADS_QUERY_KEY_PREFIX,
       });
@@ -743,6 +753,7 @@ function ChatInstanceContent({
                       )}
                       isWelcomeMode={isWelcomeMode}
                       threadId={threadId}
+                      projectId={projectParam ?? affiliatedProjectId}
                       draftThreadId={isNewThread ? "new" : threadId}
                       knowledgeScopeControl={
                         selectorVisible && knowledgeScope ? (
@@ -782,6 +793,16 @@ function ChatInstanceContent({
                       }}
                       onGoalChange={setLocalGoal}
                       onPrepareThread={ensureProjectThread}
+                      onReferenceFileAttached={() => {
+                        if (!isNewThread) return;
+                        history.replaceState(
+                          null,
+                          "",
+                          `/workspace/chats/${threadId}`,
+                        );
+                        setThreadId(threadId);
+                        setIsNewThread(false);
+                      }}
                       onSubmit={handleSubmit}
                       onStop={handleStop}
                       canStopStreaming={canStopStreaming}

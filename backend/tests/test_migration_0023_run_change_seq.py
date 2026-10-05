@@ -56,7 +56,17 @@ async def test_upgrade_exposes_legacy_runs_and_allocates_new_positions(tmp_path)
                     {"run_id": run_id, "thread_id": f"thread-{run_id}"},
                 )
 
+<<<<<<< HEAD
         await asyncio.to_thread(command.upgrade, cfg, UPGRADE_TO)
+=======
+        await asyncio.to_thread(command.upgrade, cfg, REVISION)
+        async with engine.connect() as connection:
+            rows = (await connection.execute(sa.text("SELECT change_seq, run_id FROM runs ORDER BY change_seq, run_id"))).all()
+            assert rows == [(0, "legacy-a"), (0, "legacy-b")]
+        # The historical revision is asserted with its own SQL shape. Current
+        # repositories require the later nullable columns installed at startup.
+        await asyncio.to_thread(command.upgrade, cfg, "head")
+>>>>>>> upstream/main
         factory = async_sessionmaker(engine, expire_on_commit=False)
         repo = RunRepository(factory)
         legacy = await repo.list_changed(

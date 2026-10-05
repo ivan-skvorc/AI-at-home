@@ -5,6 +5,7 @@ Equivalent to the original RunManager._runs dict behavior.
 
 from __future__ import annotations
 
+import copy
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -14,10 +15,14 @@ from deerflow.runtime.runs.store.base import (
     RunIdempotencyConflict,
     RunStore,
     StatusFinalization,
+<<<<<<< HEAD
     add_per_run_model_usage,
     counted_run_statuses,
     new_by_model_usage_entry,
     new_per_run_usage_entry,
+=======
+    canonical_run_created_at,
+>>>>>>> upstream/main
     run_is_before_cursor,
     run_sort_key,
 )
@@ -67,6 +72,7 @@ class MemoryRunStore(RunStore):
         kwargs=None,
         error=None,
         stop_reason=None,
+        goal_verdict=None,
         created_at=None,
         owner_worker_id=None,
         lease_expires_at=None,
@@ -87,6 +93,7 @@ class MemoryRunStore(RunStore):
             "kwargs": kwargs or {},
             "error": error,
             "stop_reason": stop_reason,
+            "goal_verdict": copy.deepcopy(goal_verdict),
             "created_at": created_at or now,
             "updated_at": now,
             "owner_worker_id": owner_worker_id,
@@ -152,6 +159,20 @@ class MemoryRunStore(RunStore):
         results.sort(key=lambda r: run_sort_key(r.get("created_at"), r["run_id"]), reverse=True)
         return results[:limit]
 
+    async def list_by_thread_created_at(self, thread_id, *, user_id, created_at):
+        target = canonical_run_created_at(created_at)
+        matches = []
+        for run_id in self._runs_by_thread.get(thread_id, ()):
+            row = self._runs[run_id]
+            if row.get("user_id") != user_id:
+                continue
+            try:
+                if canonical_run_created_at(row["created_at"]) == target:
+                    matches.append(row)
+            except (TypeError, ValueError):
+                continue
+        return matches
+
     async def list_successful_regenerate_sources(self, thread_id, *, user_id=None):
         run_ids = self._runs_by_thread.get(thread_id) or ()
         sources: set[str] = set()
@@ -186,7 +207,7 @@ class MemoryRunStore(RunStore):
         thread_run_ids = self._runs_by_thread.get(thread_id) or ()
         return {run_id: run for run_id in thread_run_ids if run_id in run_ids and (run := self._runs.get(run_id)) is not None and run.get("operation_kind", "run") == "run" and (user_id is None or run.get("user_id") == user_id)}
 
-    async def update_status(self, run_id, status, *, error=None, stop_reason=None):
+    async def update_status(self, run_id, status, *, error=None, stop_reason=None, goal_verdict=None):
         run = self._runs.get(run_id)
         if run is None:
             return False
@@ -199,6 +220,8 @@ class MemoryRunStore(RunStore):
             run["error"] = error
         if stop_reason is not None:
             run["stop_reason"] = stop_reason
+        if goal_verdict is not None:
+            run["goal_verdict"] = copy.deepcopy(goal_verdict)
         run["updated_at"] = datetime.now(UTC).isoformat()
         self._mark_changed(run)
         return True
@@ -255,7 +278,7 @@ class MemoryRunStore(RunStore):
         run["status"] = status
         for key, value in kwargs.items():
             if value is not None:
-                run[key] = value
+                run[key] = copy.deepcopy(value) if key == "goal_verdict" else value
         run["updated_at"] = datetime.now(UTC).isoformat()
         self._mark_changed(run)
         return True
@@ -412,6 +435,7 @@ class MemoryRunStore(RunStore):
         status: str,
         error: str | None = None,
         stop_reason: str | None = None,
+        goal_verdict: dict[str, Any] | None = None,
     ) -> StatusFinalization:
         run = self._runs.get(run_id)
         if run is None:
@@ -428,6 +452,8 @@ class MemoryRunStore(RunStore):
             run["error"] = error
         if stop_reason is not None:
             run["stop_reason"] = stop_reason
+        if goal_verdict is not None:
+            run["goal_verdict"] = copy.deepcopy(goal_verdict)
         run["updated_at"] = datetime.now(UTC).isoformat()
         self._mark_changed(run)
         return StatusFinalization(finalized=True)

@@ -452,7 +452,22 @@ test.describe("Thread history", () => {
     await expect
       .poll(() => latestPageRequestCount, { timeout: 15_000 })
       .toBeGreaterThan(latestPageRequestsBeforeSubmit);
+<<<<<<< HEAD
     await expectMessageAtBottom(scroller, page.getByText(followUpPrompt));
+=======
+    // The refreshed page extends the virtualized list after submission. Keep
+    // positioning its measured tail until the follow-up enters the DOM.
+    await expect
+      .poll(async () => {
+        await scroller.evaluate((element) => {
+          element.scrollTop = element.scrollHeight;
+          element.dispatchEvent(new Event("scroll"));
+        });
+        return page.getByText(followUpPrompt).isVisible();
+      })
+      .toBe(true);
+    await expect(page.getByText(followUpPrompt)).toBeVisible();
+>>>>>>> upstream/main
 
     let preservedDurationFound = false;
     for (let step = 0; step <= 12; step += 1) {

@@ -1,10 +1,8 @@
 # AGENTS.md
 
-This file provides guidance to AI coding agents (Claude Code, Codex, and others) when working with code in this repository. It is the source of truth; the sibling `CLAUDE.md` imports it via `@AGENTS.md`.
+This is the source of truth for repository agent guidance; `CLAUDE.md` imports it via `@AGENTS.md`.
 
-It is the **monorepo orientation layer**: it maps the whole repo and points to the
-module guides that own the depth. For anything inside a module, read that module's
-guide rather than expecting full detail here:
+This **monorepo orientation layer** maps the repo. For module details, read its guide:
 
 - **[backend/AGENTS.md](backend/AGENTS.md)** — backend depth: harness/app split, agent &
   middleware chain, sandbox, MCP, skills, memory, IM channels, persistence/migrations,
@@ -14,11 +12,10 @@ guide rather than expecting full detail here:
 
 ## What is DeerFlow
 
-DeerFlow is a LangGraph-based AI super-agent system with a full-stack architecture. The
-backend runs a "super agent" with sandboxed execution, persistent memory, subagent
-delegation, and extensible tools (built-in, MCP, community), all per-thread isolated. The
-frontend is a Next.js chat UI. External IM platforms (Feishu, Slack, Telegram, Discord,
-DingTalk) bridge into the same agent through the Gateway.
+DeerFlow pairs a LangGraph super agent with a Next.js chat UI. The backend provides
+sandboxed execution, persistent memory, subagents, and extensible built-in, MCP,
+and community tools, isolated per thread. Feishu, Slack, Telegram, Discord, and
+DingTalk connect through the Gateway.
 
 ## Service Topology
 
@@ -66,12 +63,18 @@ deer-flow/
 │                                    # Managed integration skill packs are global at .deer-flow/integrations/skills/{provider}/
 │                                    # Integration credentials and enabled state remain per-user
 ├── contracts/                      # Cross-component JSON contracts (e.g. subagent status, skill review)
+<<<<<<< HEAD
 ├── examples/                       # Extension examples: deerflow-extension-{example,bookmarks,jev-*}
 ├── scripts/                        # Root orchestration scripts invoked by the Makefile — see scripts/AGENTS.md
+=======
+├── examples/                       # Extension examples: deerflow-extension-{example,bookmarks,agent-teams}
+├── scripts/                        # Root orchestration scripts invoked by the Makefile (check, configure, doctor, support_bundle, serve, nginx, docker, deploy, setup_wizard)
+>>>>>>> upstream/main
 ├── tests/                          # Root-level tests (currently tests/skills/ — public skill tests)
 └── docs/                           # Cross-cutting docs, plans, and design notes
 ```
 
+<<<<<<< HEAD
 Third-party extensions load from a top-level `plugins:` list in `config.yaml`, kept out
 of the API-writable `extensions_config.json` on purpose: that list causes code to be
 imported, and build hooks and extension code run with Gateway privileges, so only trusted
@@ -83,6 +86,26 @@ source forms and lock discipline:
 [the extensions guide](backend/packages/harness/deerflow/extensions/AGENTS.md), with a
 [reference extension](examples/deerflow-extension-example/); the user manual is
 `frontend/src/content/{en,zh}/harness/extensions/`.
+=======
+Third-party extensions load from operator-controlled `config.yaml -> plugins:`.
+This imports code, so the list stays outside API-writable `extensions_config.json`.
+Extensions contribute middleware, lifecycle observers, Gateway services, FastAPI
+routers, and experimental full-stack plugins. Use
+`deerflow extensions install/upgrade/list/enable/disable/remove` or root
+`make extension-*` wrappers. Restart Gateway after every mutation. Build hooks
+and extension code run with Gateway privileges; use only trusted operator sources.
+Transactions, accepted source forms, locking, and contribution contracts:
+[extensions guide](backend/packages/harness/deerflow/extensions/AGENTS.md).
+User manual: `frontend/src/content/{en,zh}/harness/extensions/`.
+
+**Extension-first evaluation** — before implementing a feature by editing core code,
+evaluate whether it can ship as a packaged extension through the contribution points
+above. Stay in core for bug fixes and for changes to the agent loop, memory, context
+compaction, or authentication. If existing hooks cannot express the feature, add a
+generic hook to the extension contract plus an extension that uses it — do not
+hard-code business logic into core. Working examples:
+`examples/deerflow-extension-{example,bookmarks,agent-teams}`.
+>>>>>>> upstream/main
 
 Runtime config lives at the **repo root** — `config.yaml` (main) and
 `extensions_config.json` (MCP servers + skills), both copied from their examples by
@@ -100,6 +123,31 @@ Scheduled tasks: `/workspace/scheduled-tasks` plus a background scheduler gated 
 occurrence states, durable queue and dispatch-time `scheduler.recursion_limit` are in
 [backend/AGENTS.md](backend/AGENTS.md).
 
+<<<<<<< HEAD
+=======
+Skill quality review note:
+- `skills/public/skill-reviewer/` is the built-in read-only reviewer (harness tool
+  `review_skill_package`, contracts in `contracts/skill_review/`). Model-visible review
+  data is tag-neutralized; raw payloads stay in tool artifacts. See
+  [backend/AGENTS.md](backend/AGENTS.md) for the ownership boundaries.
+- CI waivers live in `.github/skill-review-waivers.v1.json`, enforced by
+  `scripts/review_changed_public_skills.py`. Only the manifest from the trusted base
+  revision can suppress a run, and blocker findings can never be waived.
+
+Scheduled-task note:
+- `scheduler.tool_enabled` (default off) offers owner-bound schedule tools only
+  through Gateway capability admission. Interactive turns create/manage their
+  schedules; scheduled turns can request stopping only their own schedule.
+  Per-occurrence goal success does not end a recurring schedule.
+- The scheduled-task MVP adds a workspace page at `/workspace/scheduled-tasks` plus a
+  background scheduler gated by `config.yaml -> scheduler.enabled`.
+- Scheduled runs are non-interactive: `ask_clarification` is excluded. `non_interactive`,
+  `disable_clarification`, and `github_token` are honored only for internally-authenticated
+  callers; client-supplied copies are dropped.
+- Busy occurrences persist as `queued`; `scheduler.queue_timeout_seconds` bounds the wait.
+  Do not reintroduce skip-on-overlap.
+
+>>>>>>> upstream/main
 ## Commands: Root vs. Module
 
 **Root `make` targets drive the whole stack** (run from the repo root):
@@ -176,9 +224,9 @@ cd frontend && pnpm rstest run <pattern>     # e.g. pnpm rstest run my-component
 ### Logs
 
 - Docker stack: `make docker-logs` (or `docker compose -f docker/... logs -f <svc>`).
-- Local `make dev`: each service logs to its own terminal pane. Frontend dev-server
-  errors surface in the browser console at `localhost:3000`; backend tracebacks appear
-  in the Gateway terminal.
+- Local `make dev`: Gateway and frontend output goes to
+  `logs/gateway.log` and `logs/frontend.log` in the repository root.
+  Run `tail -f logs/gateway.log logs/frontend.log` there to follow both.
 
 ## Where to Go Next
 
@@ -188,7 +236,7 @@ cd frontend && pnpm rstest run <pattern>     # e.g. pnpm rstest run my-component
 - Frontend work → **[frontend/AGENTS.md](frontend/AGENTS.md)**
 - Setup & install → **[Install.md](Install.md)**, **[CONTRIBUTING.md](CONTRIBUTING.md)**
 - Project overview & usage → **[README.md](README.md)** (translations: `README_zh.md`,
-  `README_ja.md`, `README_fr.md`, `README_ru.md`)
+  `README_ja.md`, `README_fr.md`, `README_ru.md`, `README_pt.md`)
 - Security policy → **[SECURITY.md](SECURITY.md)**
 - Changes → **[CHANGELOG.md](CHANGELOG.md)**
 - Cutting a release → **[RELEASING.md](RELEASING.md)**

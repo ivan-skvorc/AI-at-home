@@ -15,9 +15,13 @@ Order of resolution:
    - channels.buzz.enabled == true       -> buzz
    - tools[].name == browser_navigate    -> browser
    - sandbox.ownership.type == redis     -> redis
+<<<<<<< HEAD
    - web_fetch resolving to camoufox     -> camoufox (explicit ``backend:`` /
      ``fallback:`` / ``use:`` selection, or a dispatcher entry that omits
      ``backend:`` — camoufox is the code-level default)
+=======
+   - channels.discord.enabled == true    -> discord
+>>>>>>> upstream/main
    - channels.buzz.enabled == true       -> buzz
    - models[].use == langchain_ollama:*  -> ollama
 3. Runtime environment toggles that enable optional backends:
