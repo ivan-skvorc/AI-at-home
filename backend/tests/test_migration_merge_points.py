@@ -46,6 +46,10 @@ ORIGINAL_PARENTS = {
     # pinning is that *nobody re-points it again* to paper over a future
     # collision — the next one gets another merge revision, as 0027 did.
     "0023_user_preferences": ("0023_run_change_seq",),
+    # Upstream's notification-delivery branch. It hangs off 0026 — the revision
+    # 0027_merge_preferences_mcp_tasks had already claimed, splitting the tree a
+    # fourth time — and was joined by 0031_merge_prefs_notifications.
+    "0027_notification_deliveries": ("0026_mcp_task_lease_tokens",),
 }
 
 # Every leaf the merge points must keep reachable: one per branch tip that
@@ -57,6 +61,8 @@ MERGED_TIPS = (
     "0023_user_preferences",
     # Upstream's tip at the 2026-09-22 sync, joined by 0027_merge_preferences_mcp_tasks.
     "0026_mcp_task_lease_tokens",
+    # Upstream's tip at the 2026-10-05 sync, joined by 0031_merge_prefs_notifications.
+    "0030_notification_claim_tokens",
 )
 
 
@@ -92,3 +98,15 @@ def test_no_branch_root_was_re_parented_to_resolve_a_collision() -> None:
             "Two heads are joined with another merge revision, never by re-parenting a branch: "
             "a database stamped at the old parent would read as being at head with the other branch's DDL never applied."
         )
+
+
+def test_every_revision_id_fits_postgres_version_column() -> None:
+    """``alembic_version.version_num`` is VARCHAR(32) on Postgres.
+
+    A merge revision is the one id this fork names itself, and the descriptive
+    name it wants (``0031_merge_preferences_notifications``) is 36 characters.
+    SQLite never checks the width, so the suite stays green and the first
+    Postgres boot fails stamping the head.
+    """
+    too_long = sorted(revision.revision for revision in _script().walk_revisions() if len(revision.revision) > 32)
+    assert not too_long, f"revision ids longer than 32 characters fail to stamp on Postgres: {too_long}"

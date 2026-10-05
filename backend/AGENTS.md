@@ -131,7 +131,7 @@ make stop       # Stop all services
 make install            # Install backend dependencies
 make dev                # Gateway API, reload (port 8001)
 make gateway            # Gateway API only (port 8001)
-make test               # offline tests (no live/blocking-io)
+make test               # four offline workers; TEST_JOBS=1 for serial
 make test-live          # live tests (real APIs)
 make test-blocking-io   # strict Blockbuster gate on tests/blocking_io/
 make test-shard SPLITS=4 GROUP=2  # one duration-aware shard
@@ -213,14 +213,13 @@ only `AUTH_SOURCE_INTERNAL` run input may retain them.
 - If a module causes circular import issues in tests, add a `sys.modules` mock in `tests/conftest.py` (see existing example for `deerflow.subagents.executor`)
 
 ```bash
-# Run default offline tests
+# Four duration-balanced offline shards
 make test
 
 # Run strict blocking-I/O tests
 make test-blocking-io
 
-# Explicit live integration tests (requires config.yaml and credentials;
-# calls real APIs and may create local side effects)
+# Live API tests: require config.yaml, credentials, and explicit opt-in
 make test-live
 
 # Run a specific test file
@@ -279,13 +278,13 @@ When using `make dev` from root, the frontend automatically connects through ngi
 
 ### Web Search Recency
 
-DDG, Brave, Tavily, SearXNG, and Sofya `web_search` share optional
-`time_range=day|week|month|year`; omission preserves request shape. DDG maps to
-`d|w|m|y`, Brave to `pd|pw|pm|py`, Tavily/SearXNG pass values unchanged, and
-Sofya passes them unchanged as `freshness`.
-For recency, DDGS 9.14.1 uses only enabled Brave, DuckDuckGo, and Yahoo engines
-that honor `timelimit`: `auto`/`all` resolves to this set, incompatible configured
-engines are removed, and an empty set falls back to it. Re-check on DDGS upgrades.
+Optional `web_search` `time_range=day|week|month|year` mappings:
+DDG → `d|w|m|y`; Brave → `pd|pw|pm|py`; Tavily/SearXNG → unchanged;
+Sofya → unchanged in `freshness`; Serper → `qdr:d|w|m|y` in `tbs`.
+Omission preserves request shape; Serper null also omits `tbs`. Image search is unchanged.
+DDGS 9.14.1 recency uses only enabled Brave/DuckDuckGo/Yahoo engines honoring
+`timelimit`: `auto`/`all` selects this set; drop incompatible engines and fall back
+to this set if empty. Re-check on DDGS upgrades.
 
 ### Tavily Fetch
 
@@ -299,6 +298,7 @@ Outlines use ATX syntax (1–6 hashes, space/tab separator, ≤3 leading spaces)
 - Rejects directory inputs before copying so uploads stay all-or-nothing
 - Reuses one conversion worker per request when called from a live event loop
 - Files stored in thread-isolated directories under the resolving user's bucket (`users/{user_id}/threads/{thread_id}/user-data/uploads`). For IM channels the owner is threaded explicitly via the `user_id=` kwarg (see IM Channels → Owner-scoped file storage); HTTP/embedded callers resolve it from `get_effective_user_id()`
+- Per-thread `upload-companions/`: source mtime/ctime.
 - Duplicate filenames within one request get `_N` suffixes to prevent overwrites.
 - Gateway HTTP uploads stage `.upload-*.part` files, hidden from upload listings, agent context, and sandbox listings/searches. After size validation, publication is atomic; staged-name cleanup logs errors and leaves leftovers for startup sweep.
 - Gateway HTTP upload/list/delete handlers offload filesystem work through `deerflow.utils.file_io.run_file_io`, a dedicated ContextVar-preserving file IO executor. Non-mounted sandbox uploads acquire sandboxes with `SandboxProvider.acquire_async()` and offload `read_bytes()` plus `sandbox.update_file()` together.
@@ -331,6 +331,7 @@ Automatic conversation summarization when approaching token limits:
   manual state updates). Its short-lived `checkpoint_write` thread operation
   shares the durable active-thread uniqueness constraint with run admission,
   preventing either worker-local or cross-worker checkpoint-write races.
+- Cache only first-candidate no-ops; never suppress primary retries with fallback results. See [reuse and telemetry](docs/summarization.md#reuse-and-telemetry) for cache and counter contracts.
 
 See [docs/summarization.md](docs/summarization.md) for details.
 

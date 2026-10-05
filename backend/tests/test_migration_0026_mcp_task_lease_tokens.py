@@ -1,9 +1,8 @@
 """Migration tests for 0026_mcp_task_lease_tokens.
 
 Adds the nullable per-claim token columns ``McpTaskRepository`` uses to fence
-poll, cancel, and notification mutations to the exact claim generation. This
-file owns the chain-head pin, moved on from
-``test_migration_0025_repair_run_change_seq`` with this revision.
+poll, cancel, and notification mutations to the exact claim generation. The
+chain-head pin moved on to ``test_migration_0027_0028_notification_outbox``.
 """
 
 from __future__ import annotations
@@ -25,20 +24,12 @@ PREVIOUS = "0025_repair_run_change_seq"
 TOKEN_COLUMNS = {"lease_token", "notification_lease_token"}
 
 
-async def test_0026_is_reachable_from_the_chain_head():
-    """Upstream ships this as the head; in the fork a merge point sits above it.
-
-    This fork carries its own migration branch (`0019_runs_pricing_snapshot`,
-    FORK.md §17), so every sync that extends a revision the fork already merged
-    needs another no-op merge revision to rejoin the two. Asserting an exact
-    head here would therefore fail on every future sync and say nothing about
-    this revision. What must stay true is that the head still reaches it — a
-    merge point that stopped naming a branch would skip this DDL silently.
-    """
-    head = bootstrap._get_head_revision()
+async def test_0026_chains_into_the_single_head():
     script = ScriptDirectory(str(bootstrap._MIGRATIONS_DIR))
-    reachable = {revision.revision for revision in script.iterate_revisions(head, "base")}
-    assert REVISION in reachable, f"{REVISION} is not an ancestor of head {head!r}"
+    assert len(script.get_heads()) == 1
+    # Later migrations may advance the head without removing this revision.
+    assert REVISION in {revision.revision for revision in script.walk_revisions()}
+    assert script.get_revision(REVISION).down_revision == PREVIOUS
 
 
 async def test_0026_adds_nullable_claim_tokens_and_downgrades(tmp_path):

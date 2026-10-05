@@ -19,30 +19,22 @@ stay `in_progress`. Never infer status from reply text.
 
 Assembly order: `tool_error_handling_middleware.py::_build_runtime_middlewares` (exposed as `build_lead_runtime_middlewares`), then `../lead_agent/agent.py::build_middlewares` appends lead-only entries. Optional entries require their config/runtime condition.
 
-**Message provenance.** At injection/rewrite, always stamp `additional_kwargs`
-via `deerflow_extension_api.provenance.provenance_kwargs()`:
-`deerflow_content_kind`, `deerflow_producer_kind`, optional
-`deerflow_producer_entity_id`. All are server-owned inbound metadata; stamp even
-without observers, since downstream cannot recover producers. Producers:
-DynamicContext (reminder/memory), DurableContext (contract/data),
+**Message provenance.** Stamp injected/rewritten messages with
+`provenance_kwargs()` from `deerflow_extension_api.provenance`: server-owned
+`deerflow_content_kind`, `deerflow_producer_kind`, and optional entity ID, even
+without observers. Producers: DynamicContext, DurableContext,
 SystemMessageCoalescing, ViewImage, SkillActivation. Summarization/Title use
-`SystemOperationKind.SUMMARIZATION`/`.TITLE` model-call attribution; summaries
-enter via DurableContext's stamped `durable_context_data`, not separate
-messages. Memory only queues extraction; recall uses DynamicContext's
-`dynamic_context_memory` stamp.
+`SystemOperationKind.SUMMARIZATION`/`.TITLE`; summaries enter via DurableContext's
+`durable_context_data`, memory recall via DynamicContext's
+`dynamic_context_memory`. Memory only queues extraction.
 
-**Middleware self-description.** Behaviour-configurable middleware implements
-`release_policy_parameters() -> dict[str, object]` (duck-typed
-`deerflow_extension_api.release.ReleasePolicyProvider`, no base class).
-Use JSON-serialisable values and `canonical_hash` for long text, not prompt
-copies. `collect_release_policies()` gathers stack declarations; update them
-alongside every behaviour-affecting field.
-Summarization declares its enabled `task_continuity` retention settings (else
-`None`); DurableContext declares its normalized skills root, sorted read-tool
-names and continuity switch, so each capture/injection policy affects assembly
-identity without private-field probing. Continuity history readers share shape
-validation, so malformed persisted metadata cannot abort compaction or a model
-call.
+**Self-description.** Configurable middleware exposes JSON-serialisable
+`release_policy_parameters()` (`ReleasePolicyProvider`, duck typed). Update
+`collect_release_policies()` declarations with behavior; use `canonical_hash`
+for long text. Summarization declares enabled task-continuity retention or None;
+DurableContext declares normalized skills root, sorted read tools and continuity
+switch. History readers, including capture failures, validate persisted metadata
+so malformed values cannot abort compaction/model calls.
 
 **Removing tool calls.** Use `clone_ai_message_with_tool_calls`, not a bare
 `tool_calls` update: adapters resend stale `content` tool-call blocks, which

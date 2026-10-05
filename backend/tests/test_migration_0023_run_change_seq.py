@@ -21,11 +21,9 @@ PREVIOUS = "0022_scheduled_occurrence_seq"
 # fork's rather than after it. Upgrading straight to either revision therefore
 # builds a `runs` table without the fork's `pricing_snapshot` column, and the
 # ORM below — which selects every mapped column — fails on it. The upgrade test
-# walks through the merge points instead, which is also what a real deployment
-# does: `UPGRADE_FROM` is the last shared state before `change_seq` exists, and
-# `UPGRADE_TO` is the first that has it on both branches.
+# starts from `UPGRADE_FROM`, the last shared state before `change_seq` exists,
+# checks the revision with raw SQL, and only then goes to `head` for the ORM.
 UPGRADE_FROM = "0023_merge_pricing_scheduler"
-UPGRADE_TO = "0024_merge_preferences"
 
 
 async def test_changed_run_revision_is_in_single_head_chain():
@@ -56,7 +54,13 @@ async def test_upgrade_exposes_legacy_runs_and_allocates_new_positions(tmp_path)
                     {"run_id": run_id, "thread_id": f"thread-{run_id}"},
                 )
 
-        await asyncio.to_thread(command.upgrade, cfg, UPGRADE_TO)
+        await asyncio.to_thread(command.upgrade, cfg, REVISION)
+        async with engine.connect() as connection:
+            rows = (await connection.execute(sa.text("SELECT change_seq, run_id FROM runs ORDER BY change_seq, run_id"))).all()
+            assert rows == [(0, "legacy-a"), (0, "legacy-b")]
+        # The historical revision is asserted with its own SQL shape. Current
+        # repositories require the later nullable columns installed at startup.
+        await asyncio.to_thread(command.upgrade, cfg, "head")
         factory = async_sessionmaker(engine, expire_on_commit=False)
         repo = RunRepository(factory)
         legacy = await repo.list_changed(

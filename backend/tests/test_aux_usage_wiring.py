@@ -240,6 +240,39 @@ def test_goal_evaluator_collapses_a_stream_duplicated_model_id():
     assert list(aux_usage.get_thread_aux_usage("t-dup")["goal"]) == ["goal-model"]
 
 
+def test_goal_evaluator_billed_by_the_run_journal_is_not_also_aux_usage():
+    """Upstream's ``usage_callback`` bills the check into the run itself.
+
+    The worker hands ``evaluate_goal_completion`` its journal's
+    ``record_external_llm_usage_records``, which lands the evaluator's tokens in
+    the run's ``token_usage_by_model``. Recording the same call as aux usage too
+    would make the header count it twice — silently, since both figures look
+    plausible on their own.
+    """
+    from deerflow.runtime.goal import evaluate_goal_completion
+
+    response = SimpleNamespace(
+        content='{"satisfied": true, "blocker": "none", "reason": "done", "evidence_summary": "ok"}',
+        response_metadata={"model_name": "goal-model"},
+        usage_metadata={"input_tokens": 900, "output_tokens": 40, "total_tokens": 940},
+    )
+    model = SimpleNamespace(ainvoke=mock.AsyncMock(return_value=response))
+    journal_records: list[dict] = []
+
+    asyncio.run(
+        evaluate_goal_completion(
+            {"objective": "ship the feature"},
+            [AIMessage(content="I shipped it.")],
+            model=model,
+            thread_id="t-journal",
+            usage_callback=journal_records.extend,
+        )
+    )
+
+    assert [record["total_tokens"] for record in journal_records] == [940]
+    assert "goal" not in aux_usage.get_thread_aux_usage("t-journal")
+
+
 def test_every_chat_aux_sink_survives_a_gateway_restart():
     """Every per-conversation sink, through one simulated restart.
 
