@@ -24,7 +24,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   run's console cost unknown applies to the console's own pages but not to the spend page,
   which keeps pricing the known tokens the spend caps are measured against; and a fourth
   Alembic merge revision (`0031_merge_prefs_notifications`) rejoins upstream's notification
-  migrations with the fork's pricing branch.
+  migrations with the fork's pricing branch. With a side chat open the composer's tool row no
+  longer wraps: the reasoning-effort button drops its "Reasoning Effort:" prefix when the
+  composer is narrower than 40rem.
 - **models:** three roster rolls from the 2026-10-02 model audit. Grok 4.7 (`grok-4.7` /
   `x-ai/grok-4.7`, $2/$6) replaces Grok 4.6 in the xAI home block and as xAI's routed flagship.
   DeepSeek V4.1 Flash replaces V4 Flash in the DeepSeek home block under DeepSeek's new id

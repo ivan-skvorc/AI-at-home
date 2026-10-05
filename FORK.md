@@ -147,6 +147,13 @@ once you know to look. The 2026-09-09 sync hit all three at once:
   fork now records the aux row only when no callback is passed
   (`test_aux_usage_wiring.py::test_goal_evaluator_billed_by_the_run_journal_is_not_also_aux_usage`).
   On any sync that touches token accounting, grep the new sinks against `CHAT_AUX_CATEGORIES`.
+- **Upstream adding a control to a row the fork has already filled.** The fork's composer
+  carries Dictate and the internet switch beside upstream's tools, so the left tool row ran
+  within ~35px of its width with a side chat open. The 2026-10-05 sync's `@` button (#6063)
+  wrapped "Reasoning Effort: Medium" onto a second line, and only
+  `sidecar-chat.spec.ts`'s equal-height assert noticed. The trigger now drops its text
+  prefix below a 40rem `@container/composer-footer` (the accessible name keeps it). When an
+  upstream sync adds a composer button, run that spec, not just the unit suite.
 - **Upstream editing reference text the fork split into a sibling doc.** `CHAIN.md`,
   `DATA_FLOW.md` and `AUTHORIZATION.md` hold text upstream still keeps inline in the
   `AGENTS.md` beside them, so upstream's edits arrive as a conflict in the pointer file. Taking

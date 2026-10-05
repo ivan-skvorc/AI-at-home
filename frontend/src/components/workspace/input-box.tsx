@@ -3393,7 +3393,10 @@ export function InputBox({
             />
           )}
         </div>
-        <PromptInputFooter className="flex flex-wrap gap-2 sm:flex-nowrap">
+        {/* Fork: a named container so the effort trigger can shed its text
+            prefix when the composer is narrow (a side chat beside it), instead
+            of wrapping the tool row onto a second line. */}
+        <PromptInputFooter className="@container/composer-footer flex flex-wrap gap-2 sm:flex-nowrap">
           <PromptInputTools className="min-w-0 flex-1 flex-wrap">
             <Tooltip content={t.inputBox.mentionPicker}>
               <PromptInputButton
@@ -3645,9 +3648,12 @@ export function InputBox({
                 <PromptInputActionMenuTrigger
                   className="hidden gap-1! px-2! sm:inline-flex"
                   disabled={composerLocked}
+                  aria-label={`${t.inputBox.reasoningEffort}: ${reasoningEffortLabel(effectiveReasoningEffort)}`}
                 >
                   <div className="text-xs font-normal">
-                    {t.inputBox.reasoningEffort}:{" "}
+                    <span className="hidden @[40rem]/composer-footer:inline">
+                      {t.inputBox.reasoningEffort}:{" "}
+                    </span>
                     {reasoningEffortLabel(effectiveReasoningEffort)}
                   </div>
                 </PromptInputActionMenuTrigger>
