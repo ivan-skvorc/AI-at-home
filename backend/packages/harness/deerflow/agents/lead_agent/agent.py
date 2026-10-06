@@ -48,7 +48,8 @@ from deerflow.agents.middlewares.summarization_middleware import DeerFlowSummari
 from deerflow.agents.middlewares.terminal_response_middleware import TerminalResponseMiddleware
 from deerflow.agents.middlewares.title_middleware import TitleMiddleware
 from deerflow.agents.middlewares.todo_middleware import TodoMiddleware
-from deerflow.agents.middlewares.token_usage_middleware import TokenUsageMiddleware
+from deerflow.agents.middlewares.token_usage_middleware import CompletedSubagentUsageMiddleware, TokenUsageMiddleware
+from deerflow.agents.middlewares.tool_declarations import layer_one_outcome, narrow_declared_tools, verify_declared_tool_view
 from deerflow.agents.middlewares.tool_error_handling_middleware import build_lead_runtime_middlewares
 from deerflow.agents.middlewares.view_image_middleware import ViewImageMiddleware
 from deerflow.agents.task_continuity.tools import append_task_continuity_tools
@@ -74,6 +75,7 @@ from deerflow.runtime.checkpoint_mode import (
     frozen_checkpoint_channel_mode,
     inject_checkpoint_mode,
 )
+from deerflow.scheduler.runtime import SCHEDULER_CAPABILITY_CONTEXT_KEY, is_scheduler_capability
 from deerflow.skills.types import Skill
 from deerflow.subagents.capacity import configured_subagent_max_running
 from deerflow.tools.internet_access import INTERNET_ENABLED_CONTEXT_KEY, append_offline_notice, internet_access_enabled
@@ -785,6 +787,11 @@ def build_middlewares(
             # Self-disable loudly rather than enforce a cap against a permanent
             # zero; `make doctor`'s `spend budget` check says the same thing.
             logger.warning("spend_budget.enabled is true but no model carries a price, so spend caps are not enforced. Add a pricing: block (or a ($in/out) pair in the display name) to at least one model.")
+    # https://docs.langchain.com/oss/python/langchain/middleware/custom#execution-order
+    # Backfill only completed child usage before budget enforcement. Keep
+    # current-step attribution after the guards that can change tool calls.
+    if token_budget_config.enabled and resolved_app_config.token_usage.enabled:
+        middlewares.append(CompletedSubagentUsageMiddleware())
 
     # Inject custom middlewares before ClarificationMiddleware
     if custom_middlewares:
@@ -1056,6 +1063,11 @@ def _assemble_lead_agent(config: RunnableConfig, *, app_config: AppConfig) -> Le
     config.setdefault("configurable", {})[INTERNET_ENABLED_CONTEXT_KEY] = internet_enabled
     if isinstance(config.get("context"), dict):
         config["context"][INTERNET_ENABLED_CONTEXT_KEY] = internet_enabled
+    # The live host capability never comes from checkpoint-configurable data.
+    runtime_context = config.get("context")
+    scheduler_capability = runtime_context.get(SCHEDULER_CAPABILITY_CONTEXT_KEY) if isinstance(runtime_context, Mapping) else None
+    if is_bootstrap or cfg.get("is_subagent") or not is_scheduler_capability(scheduler_capability) or scheduler_capability.mode != interaction_policy.mode.value:
+        scheduler_capability = None
     agent_name = validate_agent_name(cfg.get("agent_name"))
 
     agent_config = load_agent_config(agent_name, user_id=resolved_user_id) if not is_bootstrap else None
@@ -1237,6 +1249,7 @@ def _assemble_lead_agent(config: RunnableConfig, *, app_config: AppConfig) -> Le
             context=cfg,
             app_config=resolved_app_config,
         )
+        layer_one = layer_one_outcome(authorization_candidates, authorized_tools)
         configured_tools = [tool for tool in authorized_tools if id(tool) in configured_tool_ids]
         late_tools = [tool for tool in authorized_tools if id(tool) not in configured_tool_ids]
         final_tools, setup = assemble_deferred_tools(configured_tools, enabled=resolved_app_config.tool_search.enabled)
@@ -1265,6 +1278,13 @@ def _assemble_lead_agent(config: RunnableConfig, *, app_config: AppConfig) -> Le
             authorization_provider=_authz_provider,
             skill_authorization=skill_authorization,
             subagent_execution_capacity=subagent_execution_capacity,
+        )
+        middlewares, declared_authorized = narrow_declared_tools(
+            middlewares,
+            outcome=layer_one,
+            context=cfg,
+            app_config=resolved_app_config,
+            authorization_provider=_authz_provider,
         )
         system_prompt = apply_prompt_template(
             subagent_enabled=subagent_enabled,
@@ -1297,10 +1317,12 @@ def _assemble_lead_agent(config: RunnableConfig, *, app_config: AppConfig) -> Le
         # would silently drop the notice for exactly the people who customized it.
         if not internet_enabled:
             system_prompt = append_offline_notice(system_prompt)
+        bound_middlewares = normalize_middleware_state_schemas(middlewares, mode)
+        verify_declared_tool_view(bound_middlewares, authorized_names=declared_authorized)
         graph = create_agent(
             model=chat_model,
             tools=final_tools,
-            middleware=normalize_middleware_state_schemas(middlewares, mode),
+            middleware=bound_middlewares,
             system_prompt=system_prompt,
             state_schema=get_thread_state_schema(mode),
             context_schema=dict,
@@ -1374,6 +1396,7 @@ def _assemble_lead_agent(config: RunnableConfig, *, app_config: AppConfig) -> Le
         mcp_plugins=getattr(agent_config, "mcp_plugins", None),
         subagent_enabled=subagent_enabled,
         include_conversation_reader=callable(cfg.get(CONVERSATION_READER_CONTEXT_KEY)) and not bool(cfg.get("is_subagent")),
+        **({"scheduler_capability": scheduler_capability} if scheduler_capability is not None else {}),
         app_config=resolved_app_config,
         internet_enabled=internet_enabled,
         chat_model=chat_model,
@@ -1393,6 +1416,7 @@ def _assemble_lead_agent(config: RunnableConfig, *, app_config: AppConfig) -> Le
         context=cfg,
         app_config=resolved_app_config,
     )
+    layer_one = layer_one_outcome(authorization_candidates, authorized_tools)
     configured_tools = [tool for tool in authorized_tools if id(tool) in configured_tool_ids]
     late_tools = [tool for tool in authorized_tools if id(tool) not in configured_tool_ids]
     final_tools, setup = assemble_deferred_tools(configured_tools, enabled=resolved_app_config.tool_search.enabled)
@@ -1416,6 +1440,13 @@ def _assemble_lead_agent(config: RunnableConfig, *, app_config: AppConfig) -> Le
         authorization_provider=_authz_provider,
         skill_authorization=skill_authorization,
         subagent_execution_capacity=subagent_execution_capacity,
+    )
+    middlewares, declared_authorized = narrow_declared_tools(
+        middlewares,
+        outcome=layer_one,
+        context=cfg,
+        app_config=resolved_app_config,
+        authorization_provider=_authz_provider,
     )
     system_prompt = apply_prompt_template(
         subagent_enabled=subagent_enabled,
@@ -1442,10 +1473,12 @@ def _assemble_lead_agent(config: RunnableConfig, *, app_config: AppConfig) -> Le
     # would silently drop the notice for exactly the people who customized it.
     if not internet_enabled:
         system_prompt = append_offline_notice(system_prompt)
+    bound_middlewares = normalize_middleware_state_schemas(middlewares, mode)
+    verify_declared_tool_view(bound_middlewares, authorized_names=declared_authorized)
     graph = create_agent(
         model=chat_model,
         tools=final_tools,
-        middleware=normalize_middleware_state_schemas(middlewares, mode),
+        middleware=bound_middlewares,
         system_prompt=system_prompt,
         state_schema=get_thread_state_schema(mode),
         context_schema=dict,

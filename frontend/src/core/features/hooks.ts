@@ -79,7 +79,7 @@ export function useAutoTitleCapability(): AutoTitleCapability & {
 }
 
 export function useConversationReferencesCapability() {
-  const { data, isPending } = useQuery({
+  const { data, isPending, isSuccess, error, refetch } = useQuery({
     queryKey: ["features", "conversation_references"],
     queryFn: () => fetchConversationReferencesCapability(),
     staleTime: 0,
@@ -87,9 +87,12 @@ export function useConversationReferencesCapability() {
     retry: false,
   });
   return {
-    enabled: data?.enabled ?? false,
+    enabled: isSuccess && (data?.enabled ?? false),
     maxReferences: data?.maxReferences ?? 0,
     isLoading: isPending,
+    isSuccess,
+    error,
+    refetch,
   };
 }
 

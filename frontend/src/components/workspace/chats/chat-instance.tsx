@@ -424,7 +424,13 @@ function ChatInstanceContent({
       return;
     }
     try {
-      await createThread({ threadId, projectId: projectParam });
+      const created = await createThread({ threadId, projectId: projectParam });
+      // Keep confirmed membership available while the first metadata read is pending
+      // or fails after the composer materializes this new project thread.
+      queryClient.setQueryData(
+        ["thread", "metadata", threadId, false],
+        created,
+      );
       void queryClient.invalidateQueries({
         queryKey: INFINITE_THREADS_QUERY_KEY_PREFIX,
       });
@@ -743,6 +749,7 @@ function ChatInstanceContent({
                       )}
                       isWelcomeMode={isWelcomeMode}
                       threadId={threadId}
+                      projectId={projectParam ?? affiliatedProjectId}
                       draftThreadId={isNewThread ? "new" : threadId}
                       knowledgeScopeControl={
                         selectorVisible && knowledgeScope ? (
@@ -782,6 +789,25 @@ function ChatInstanceContent({
                       }}
                       onGoalChange={setLocalGoal}
                       onPrepareThread={ensureProjectThread}
+                      onReferenceFileAttached={() => {
+                        if (!isNewThread) return;
+                        // Fork (live chat slots): the owner holds thread-id
+                        // state, so promote the draft the way onStart does —
+                        // same id, now real — and only rewrite the URL from
+                        // the visible slot.
+                        if (isActiveRef.current) {
+                          history.replaceState(
+                            null,
+                            "",
+                            `/workspace/chats/${threadId}`,
+                          );
+                        }
+                        recordOnPromotion(
+                          threadId,
+                          settingsRef.current.context,
+                        );
+                        onThreadStarted?.(slotKey, threadId);
+                      }}
                       onSubmit={handleSubmit}
                       onStop={handleStop}
                       canStopStreaming={canStopStreaming}

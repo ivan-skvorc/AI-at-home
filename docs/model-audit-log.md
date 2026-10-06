@@ -11,6 +11,76 @@ Newest first. Append a pass; never rewrite one. A dated line is what tells the
 next person whether the roster was checked last week or last year, and _which_
 providers that pass could actually reach.
 
+- **2026-10-05 (upstream sync `5872d07`) — partial: tier 1 for Anthropic, tier 2 for OpenAI,
+  xAI, DeepSeek, z.ai, Google and OpenRouter's Qwen page, tier 3 elsewhere. No roster change
+  and no price changed.** Requested in words with the upstream sync of 146 commits ("bring the
+  repo up to date with upstream and do a model audit"), three days after the 2026-10-02 pass.
+
+  **Machine half clean.** `python3 scripts/audit_models.py` reports **no drift**; `openrouter`
+  is _skipped_ (`Tunnel connection failed: 403 Forbidden`) and the ten catalog-less providers
+  likewise. The stale fixture still yields exactly its four findings, one per drift kind.
+  Step 8: `sync-api-key-models.py --dry-run` is a clean no-op on an empty env, and on a copy of
+  the example with Anthropic, OpenRouter and xAI keys it enables exactly 23 models (6 + 15 + 2);
+  `test_sync_api_key_models.py`, `test_setup_wizard.py`, `test_config_integrity.py`,
+  `test_audit_models.py`, `test_model_price_fields.py` and `test_pricing.py` are green (303
+  passed).
+
+  **What the network reached.** `platform.claude.com/docs/en/about-claude/{pricing,models/overview,model-deprecations}.md`
+  answer 200. Refused at the proxy (`http=000`): `openrouter.ai`, `developers.openai.com`,
+  `docs.x.ai`, `ai.google.dev`, `api-docs.deepseek.com`, `docs.z.ai`, `mistral.ai`,
+  `platform.moonshot.ai`, `platform.minimax.io`. Web search was available; tier 2 below is
+  domain-scoped searches whose summaries quote the lab's (or OpenRouter's) own page, paired with
+  independent trackers where the figure had no fresh corroboration already.
+
+  **Anthropic — tier 1, all six verified, unchanged.** Ids, prices and cache-read rates match the
+  overview and pricing pages exactly (Fable 5.1 `$10/$50` at `$0.25`, Opus 5.5 `$4/$20` at
+  `$0.20`, Opus 5 `$5/$25`, Sonnet 5.5 and Sonnet 5 `$2/$10` at `$0.20`, Haiku 4.5 `$1/$5`).
+  **Haiku 4.5** is still _Active_ with a retirement floor of "not sooner than October 15, 2026"
+  and **no deprecation notice**; the newest notice is still Sonnet 4.5 (2026-09-30). With at
+  least 60 days' notice it cannot retire before December, but the floor is ten days out, so the
+  next pass should read the deprecations page first.
+
+  **Tier 2 re-reads — every figure unchanged:**
+
+  | Model | Shipped | Read this pass | Source |
+  | ----- | ------- | -------------- | ------ |
+  | GPT-6.1 Sol (home + routed) | $2/$10 | $2/$10 | OpenAI pricing (domain-scoped), OpenRouter's model page (domain-scoped), lmmarketcap |
+  | GPT-6 Luna | $0.10/$0.50 | $0.10/$0.50 | eesel, llmgateway, computeprices |
+  | Grok 4.7 (home + routed) | $2/$6 | $2/$6 (<200K) | docs.x.ai pricing (domain-scoped) |
+  | DeepSeek V4.1 Flash | $0.30/$1.20 peak | $0.30/$1.20 peak | api-docs.deepseek.com pricing (domain-scoped) |
+  | GLM-5.3 Flash | $0.15/$0.50 | $0.15/$0.50 | docs.z.ai pricing (domain-scoped) |
+  | Gemini 3.8 Flash (home) | $1.50/$7.50, intro $0.75/$3.75 `until: 2026-12-31` | same | blog.google + ai.google.dev (domain-scoped) |
+  | Qwen3.8 Max (routed) | $2/$6 | $2/$6, no promotion | OpenRouter's model page (domain-scoped) |
+  | Kimi K3 (home + routed) | $3/$15 | $3/$15 | eesel, pricepertoken |
+
+  The stale fixture's Qwen3.8 Max promotion is fixture data, not a real one: OpenRouter shows
+  none. **MiniMax M3's routed discount** reads `$0.23 / $0.96` against the shipped
+  `$0.24 / $0.96`, as on 2026-10-02; a discount never qualifies for tier 2, so it stays and is
+  still owed.
+
+  **Discovery (step 2) — nothing new from a bundled lab since 2026-10-02.** No Grok after 4.7
+  (Grok 5 exists only as a prediction market); Gemini 3.5 Pro still has no API id or price, so
+  Gemini 3.1 Pro stays Google's flagship; DeepSeek V4.1 Pro is unreleased; Qwen 4 is "in
+  training"; no API id yet for GLM-5.4, MiniMax M3.1 or Kimi K3.1; no Llama 5; no Mistral
+  Large 4. OpenRouter's weekly ranking as of 2026-10-04 (tokenmaxxing.com's summary of
+  `openrouter.ai/rankings`): Space Bunny Alpha 6.73T, DeepSeek V4.1 Flash 3.42T,
+  MiMo-V2.6-Flash 1.32T, GLM 5.3 Flash 1.19T, **Hy4 preview** 968B (+26%).
+  - **Tencent Hy4-preview** (`tencent/hy4-preview`, 770B MoE, open weights, released
+    2026-08-28) is the second lab the bundle does not carry to reach that board, after Xiaomi on
+    2026-10-02. Same verdict: a new lab is a provider integration (a new key across step 3's
+    seven copies, plus an OpenRouter entry), recommended as its own change — and its name says
+    preview, so waiting for the GA id costs little. OpenRouter's summary gives `$0.834 / $2.501`;
+    unverified.
+  - **Space Bunny Alpha** is still cloaked (a fingerprint reportedly points at MiniMax) — note
+    and wait.
+
+  **Still owed to a pass with tier-1 access**, unchanged in order from 2026-10-02: Grok 4.7,
+  DeepSeek V4.1 Flash and GLM-5.3 Flash off their labs' own pages; GPT-6.1 Sol and GPT-6 Luna;
+  what `deepseek-flash` serves, and whether V4.1 Flash should advertise vision; Xiaomi and now
+  Tencent as new labs; a routed V4.1 Flash; MiniMax M3's routed discount; Gemini 3.8 Flash's
+  routed discount; Astra's `cache_hit`; Sonnet 5.5's `between_tools`; GPT-5.6 Terra's place;
+  Haiku 4.5's retirement.
+
 - **2026-10-02 — partial: tier 1 for Anthropic, tier 2 for xAI, DeepSeek, z.ai, MiniMax and
   Qwen, tier 3 elsewhere. Three roster rolls (Grok 4.7, DeepSeek V4.1 Flash, GLM-5.3 Flash);
   no Anthropic price changed.** Requested in words as a standalone audit ("run just the model

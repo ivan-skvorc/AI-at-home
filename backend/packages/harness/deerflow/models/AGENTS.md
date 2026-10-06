@@ -58,10 +58,39 @@ the same policy first so run metadata reports the effective values. Design note:
 `tests/test_reasoning_contract.py`, the contract section of
 `tests/test_model_factory.py`, `tests/test_models_router_reasoning.py`.
 
+### CLI credential files (`packages/harness/deerflow/models/credential_loader.py`)
+
+CLI credential JSON uses `utf-8-sig` for locale-independent reads with optional
+BOM. Decode failures follow the existing unreadable-source path, preserving
+Claude's override-to-default fallback. Doctor's mirrored JSON reader must accept
+the same optional BOM. Tests: `test_credential_file_encoding.py`.
+
+### Codex tool-call/result serialization (`packages/harness/deerflow/models/openai_codex_provider.py`)
+
+`_convert_messages` uses `_is_valid_call_id` for both assistant tool calls
+(including `invalid_tool_calls`) and tool results, omitting empty or
+whitespace-only call IDs even when direct provider use bypasses middleware repair.
+Non-blank IDs remain byte-for-byte unchanged so calls and results keep their
+correlation; serialization does not trim IDs or rewrite the input messages.
+Each omitted tool result emits a warning with its normalized content length;
+the warning never includes the result content.
+Coverage: `tests/test_codex_provider.py`.
+
+### Codex SSE termination (`packages/harness/deerflow/models/openai_codex_provider.py`)
+
+`response.completed` ends stream consumption immediately, before transport EOF;
+retain the output-item recovery path for empty completed output. Terminal
+`response.failed`, `response.incomplete`, and `error` events raise with their
+error code/message or incomplete reason, closing the response and client without
+returning partial output. Non-object error details or response containers are
+reported as text instead of raising `AttributeError`. SSE failures do not enter
+the HTTP-status retry loop.
+Offline HTTP-stream coverage: `tests/test_codex_stream_terminal_events.py`.
+
 ### Claude Code Credentials (`packages/harness/deerflow/models/credential_loader.py`)
 
 - `ClaudeChatModel.model_post_init` calls `load_claude_code_credential()` for every instance, and `create_chat_model` builds fresh instances per run (lead agent, title, summarization, subagents)
-- `$CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR` is a one-shot handoff: a pipe returns EOF and a file keeps its advanced offset. `_read_secret_from_file_descriptor` therefore caches a non-empty secret per `(env_var, fd)` under a lock held across the read. Do not drop the cache or the lock — later instances would get no credential, and the Anthropic SDK raises `TypeError: Could not resolve authentication method` before sending. Empty reads and `OSError` are not cached. The key is the descriptor number on purpose — a closed handoff keeps serving its token, and a secret placed on a recycled number in-process is not re-read unless the cache is cleared. The cache is per process, so a new process (e.g. a uvicorn `--reload` worker) cannot recover a drained descriptor. Pinned by `tests/test_credential_loader.py`, including a two-instance `ClaudeChatModel` test
+- `$CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR` is a one-shot handoff: a pipe returns EOF and a file keeps its advanced offset. `_read_secret_from_file_descriptor` therefore caches a non-empty secret per `(env_var, fd)` under a lock held across the read. Do not drop the cache or the lock — later instances would get no credential, and the Anthropic SDK raises `TypeError: Could not resolve authentication method` before sending. Empty reads, `OSError`, and UTF-8 decode failures are not cached; unreadable handoffs return `None` so the loader can try credential files. Warnings must not include token contents. The key is the descriptor number on purpose — a closed handoff keeps serving its token, and a secret placed on a recycled number in-process is not re-read unless the cache is cleared. The cache is per process, so a new process (e.g. a uvicorn `--reload` worker) cannot recover a drained descriptor. Pinned by `tests/test_credential_loader.py` and `tests/test_claude_fd_encoding.py`, including two-instance `ClaudeChatModel` tests
 
 ### Claude Prompt Caching (`packages/harness/deerflow/models/claude_provider.py`)
 
@@ -72,7 +101,7 @@ the same policy first so run metadata reports the effective values. Design note:
 ### vLLM Provider (`packages/harness/deerflow/models/vllm_provider.py`)
 
 - `VllmChatModel` subclasses `langchain_openai:ChatOpenAI` for vLLM 0.19.0 OpenAI-compatible endpoints
-- Preserves vLLM's non-standard assistant `reasoning` field on full responses, streaming deltas, and follow-up tool-call turns
+- Preserves vLLM's non-standard assistant `reasoning` field on full responses, streaming deltas, and follow-up tool-call turns, falling back to the legacy `reasoning_content` wire field when `reasoning` is absent or null (a payload carrying both keeps `reasoning`); `_pick_reasoning` owns this precedence across all three paths and preserves empty-string `reasoning` rather than falling back
 - Designed for configs that enable thinking through `extra_body.chat_template_kwargs.enable_thinking` on vLLM 0.19.0 Qwen reasoning models, while accepting the older `thinking` alias
 - `cumulative_stream_usage` is an opt-in model setting (default `false`) for endpoints that repeat cumulative token totals on each streaming chunk. The provider converts snapshots to deltas only when a stable completion id is present, isolates interleaved streams by id, and leaves the original usage untouched otherwise. Per-model tracking is lock-protected and cleared on the trailing empty-`choices` frame whether or not that frame carries usage. A soft cap of 1024 ids evicts only entries idle for at least one hour; active streams may temporarily exceed the cap so eviction cannot corrupt their deltas. Regression coverage lives in `tests/test_vllm_provider.py`.
 

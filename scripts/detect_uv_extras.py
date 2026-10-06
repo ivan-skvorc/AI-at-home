@@ -18,7 +18,6 @@ Order of resolution:
    - web_fetch resolving to camoufox     -> camoufox (explicit ``backend:`` /
      ``fallback:`` / ``use:`` selection, or a dispatcher entry that omits
      ``backend:`` — camoufox is the code-level default)
-   - channels.buzz.enabled == true       -> buzz
    - models[].use == langchain_ollama:*  -> ollama
 3. Runtime environment toggles that enable optional backends:
    - DEER_FLOW_STREAM_BRIDGE_REDIS_URL   -> redis
