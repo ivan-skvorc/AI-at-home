@@ -91,9 +91,8 @@ OPENAI_COMPAT_THINKING_CONFIG = {
 }
 
 # Latest Claude models (Opus 5, Sonnet 5) use adaptive thinking — the
-# fixed `budget_tokens` form is rejected by these models. Haiku 4.5 still takes an
-# explicit thinking budget. Opus 5 / Sonnet 5 accept an explicit
-# `thinking: {type: disabled}` when the toggle is off.
+# fixed `budget_tokens` form is rejected by these models. Opus 5 / Sonnet 5 /
+# Haiku 5.5 accept an explicit `thinking: {type: disabled}` when the toggle is off.
 #
 # Opus 5 caveat: it accepts `thinking: {type: disabled}` only at reasoning effort
 # `high` or below (400 at `xhigh`/`max`). DeerFlow never sends an effort/
@@ -166,14 +165,15 @@ ANTHROPIC_BUDGET_THINKING_CONFIG = {
     },
 }
 
-# Retained for backward compatibility (older callers / the `other` gateway path).
+# No bundled Claude uses this budget form since Haiku 5.5 replaced Haiku 4.5;
+# retained for backward compatibility (older callers / the `other` gateway path).
 ANTHROPIC_THINKING_CONFIG = ANTHROPIC_BUDGET_THINKING_CONFIG
 
 # Latest Claude models, enabled together when the user has an ANTHROPIC_API_KEY.
 # Opus and Sonnet each ship their previous generation alongside the current one
 # (Opus 5 + Opus 5.5, Sonnet 5 + Sonnet 5.5); Haiku and Fable ship only the
 # latest. Fable 5.1, Opus 5.5 and Sonnet 5.5 run adaptive thinking that cannot be
-# disabled; Opus 5 / Sonnet 5 use adaptive thinking; Haiku 4.5 takes a budget.
+# disabled; Opus 5 / Sonnet 5 / Haiku 5.5 run adaptive thinking that can be.
 # Ordered most- to least-capable; the previous generation is kept alongside its
 # successor so existing threads can stay pinned to it.
 ANTHROPIC_BUNDLE_MODELS: list[dict] = [
@@ -238,16 +238,16 @@ ANTHROPIC_BUNDLE_MODELS: list[dict] = [
         **ANTHROPIC_ADAPTIVE_THINKING_CONFIG,
     },
     {
-        "name": "claude-haiku-4-5",
-        "display_name": "Claude Haiku 4.5 (Anthropic)",
+        "name": "claude-haiku-5-5",
+        "display_name": "Claude Haiku 5.5 (Anthropic)",
         "use": "langchain_anthropic:ChatAnthropic",
-        "model": "claude-haiku-4-5",
+        "model": "claude-haiku-5-5",
         "api_key": "$ANTHROPIC_API_KEY",
         "default_request_timeout": 600.0,
         "max_retries": 2,
-        "max_tokens": 16000,
+        "max_tokens": 32000,
         "supports_vision": True,
-        **ANTHROPIC_BUDGET_THINKING_CONFIG,
+        **ANTHROPIC_ADAPTIVE_THINKING_CONFIG,
     },
 ]
 
@@ -581,9 +581,11 @@ MODEL_PRICES: dict[str, dict] = {
     "claude-fable-5-1": {"price": {"currency": "USD", "input": 10.0, "output": 50.0, "cache_hit": 0.25}},  # 0.025x, not the usual 0.1x
     "claude-opus-5-5": {"price": {"currency": "USD", "input": 4.0, "output": 20.0, "cache_hit": 0.2}},  # 0.05x
     "claude-opus-5": {"price": {"currency": "USD", "input": 5.0, "output": 25.0, "cache_hit": 0.5}},
-    "claude-sonnet-5-5": {"price": {"currency": "USD", "input": 2.0, "output": 10.0, "cache_hit": 0.2}},
+    "claude-sonnet-5-5": {"price": {"currency": "USD", "input": 2.0, "output": 10.0, "cache_hit": 0.1}},  # 0.05x
     "claude-sonnet-5": {"price": {"currency": "USD", "input": 2.0, "output": 10.0, "cache_hit": 0.2}},
-    "claude-haiku-4-5": {"price": {"currency": "USD", "input": 1.0, "output": 5.0, "cache_hit": 0.1}},
+    # Haiku 5.5 bills by prompt length: these are the <=100K-token rates; a longer
+    # prompt pays $0.50/$2.50 (cache $0.05). Read off Anthropic's pricing page 2026-10-10.
+    "claude-haiku-5-5": {"price": {"currency": "USD", "input": 0.1, "output": 0.5, "cache_hit": 0.01}},
     # DeepSeek bills peak/off-peak since 2026-08-16; these are the peak (upper-bound)
     # rates, matching config.example.yaml. Off-peak is exactly half.
     "deepseek-v4-pro": {"price": {"currency": "USD", "input": 1.32, "output": 3.96}},
@@ -833,9 +835,9 @@ LLM_PROVIDERS: list[LLMProvider] = [
     LLMProvider(
         name="anthropic",
         display_name="Anthropic",
-        description="Latest Claude Fable 5.1, Opus 5.5, Opus 5, Sonnet 5.5, Sonnet 5 and Haiku 4.5",
+        description="Latest Claude Fable 5.1, Opus 5.5, Opus 5, Sonnet 5.5, Sonnet 5 and Haiku 5.5",
         use="langchain_anthropic:ChatAnthropic",
-        models=["claude-fable-5-1", "claude-opus-5-5", "claude-opus-5", "claude-sonnet-5-5", "claude-sonnet-5", "claude-haiku-4-5"],
+        models=["claude-fable-5-1", "claude-opus-5-5", "claude-opus-5", "claude-sonnet-5-5", "claude-sonnet-5", "claude-haiku-5-5"],
         default_model="claude-opus-5-5",
         env_var="ANTHROPIC_API_KEY",
         package="langchain-anthropic",
@@ -1148,6 +1150,23 @@ LLM_PROVIDERS: list[LLMProvider] = [
         package="langchain-openai",
         extra_config={
             "base_url": "https://api.orcarouter.ai/v1",
+            "request_timeout": 600.0,
+            "max_retries": 2,
+            "max_tokens": 8192,
+            "temperature": 0.7,
+        },
+    ),
+    LLMProvider(
+        name="opper",
+        display_name="Opper",
+        description="EU-hosted AI gateway, 700+ models behind one OpenAI-compatible API",
+        use="langchain_openai:ChatOpenAI",
+        models=["claude-sonnet-4-6", "gpt-5.5", "gemini-3.8-flash", "gpt-5.4-mini"],
+        default_model="claude-sonnet-4-6",
+        env_var="OPPER_API_KEY",
+        package="langchain-openai",
+        extra_config={
+            "base_url": "https://api.opper.ai/v3/compat",
             "request_timeout": 600.0,
             "max_retries": 2,
             "max_tokens": 8192,

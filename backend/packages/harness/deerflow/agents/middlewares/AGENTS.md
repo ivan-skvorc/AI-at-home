@@ -1,5 +1,14 @@
 ### Middleware Chain
 
+Async gate waiters own separate cross-loop futures. Cancel only their signal;
+notify outside the state lock. `_await_off_thread` drains started I/O across
+repeated cancellation.
+
+Table synopses count nonblank CSV/TSV logical records, excluding the header.
+Preserve the recognition sample and 5,000,000 UTF-8-byte guard. Count incrementally;
+on parsing or field-limit errors, report an undetermined count rather than a
+physical-line or sample total.
+
 Compaction keeps state `SystemMessage`s; transient instructions use request
 wrappers, and fully rescued partitions skip compaction. If latest-user rescue
 empties an AI/Tool-only window, use `_build_summary_input_text(strategy="last")`;
@@ -39,6 +48,9 @@ so malformed values cannot abort compaction/model calls.
 **Removing tool calls.** Use `clone_ai_message_with_tool_calls`, not a bare
 `tool_calls` update: adapters resend stale `content` tool-call blocks, which
 strict providers reject.
+
+Read marks bind to request `tool_call_id`, including `Command` results.
+No match: skip inspection, log ID. Tests: `test_read_mark_tool_call_correlation.py`.
 
 **Shared runtime base** (`build_lead_runtime_middlewares`; subagents reuse most of this via `build_subagent_runtime_middlewares`):
 

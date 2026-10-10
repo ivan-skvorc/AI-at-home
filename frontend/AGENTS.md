@@ -54,7 +54,13 @@ page zero polls or refreshes on focus/reconnect. Task switches reset to page zer
 and consumed AbortSignals cancel obsolete reads. Live offsets are not snapshots;
 explicit mutations or navigation may observe newly inserted runs.
 Run status `unmet` identifies a finished occurrence whose scheduled goal was not satisfied; keep it distinct from execution failure.
-`core/scheduled-tasks/goal-outcome.ts` maps goal verdicts and host reason codes for run history; show known codes as localized labels (raw code only in the tooltip), unknown codes verbatim, and leave runs without a goal unchanged. `contracts/scheduled_goal_notes_contract.json` pins the host strings it matches.
+`core/scheduled-tasks/goal-outcome.ts` maps goal verdicts and host reason codes for run history; show known codes as localized labels; unknown codes, raw run errors and the evaluator's reason stay behind the run row's Details. Check-failure codes are "unchecked", not a miss. `contracts/scheduled_goal_notes_contract.json` pins the host strings it and `run-error.ts` match.
+Scheduled-task views read state through the pure `core/scheduled-tasks` helpers (`status.ts`, `actions.ts`, `format.ts`, `describeTaskSchedule`, `errors.ts`) so list, detail and chat card agree. "Is a run active?" is `status === "running"` or `active_run_status` (a recurring task stays `enabled` while it runs). Default views show no IDs, ISO times, cron strings or enum names; errors localize by `detail.code` (`contracts/scheduled_task_errors_contract.json`) with raw text only behind Details. `tests/e2e/utils/readable.ts` and `tests/unit/helpers/readable.ts` assert this.
+The tasks page (`app/workspace/scheduled-tasks/page.tsx`) only composes `components/workspace/scheduled-tasks/*`: list with status tabs, detail (Runs / Stops when / goal / Does / notes / History), outcome notice, create/edit/duplicate dialog (PATCH sends only changed fields, `null` clears) and the renew dialog that a `limits_exhausted` Resume opens. `?task_id=` selects a task; `?thread_id=` scopes the list to one chat.
+In chat, a `schedule_task` result becomes an `assistant:scheduled-task` group (`core/scheduled-tasks/tool-result.ts`, last card per task per turn; not a turn boundary) rendered by `ScheduledTaskCard`, which polls the task only while on screen. A human message with `additional_kwargs.deerflow_scheduled_origin` stays a `human` group with `scheduledOrigin`: `ScheduledRunPrompt` renders the origin's user-language parts, never the launched text, and it is not editable.
+Server-created threads: `core/threads/origin.ts` reads `metadata.deerflow_origin` (`contracts/thread_origin_contract.json`), then `channel_source`, then a legacy `scheduled_task_id`; provider names come from `threads.origin.providers`. `core/threads/activity.ts` polls `/api/thread-activity` (mount `useThreadActivity` once; unmounting resets its cursor; first poll only seeds; invalidate lists only on server-origin threads, truncation or a higher `read_version`) and `useMarkThreadRead` posts reads. `core/scheduled-tasks/events.ts` loads a chat's lifecycle events, not gated on its task list; `placeTaskEvents` puts each at the end of its `after_run_id` turn. The UI language is saved as the `locale` preference once per session and on each switch, only when the Gateway's preferences include `locale`.
+Thread rows (sidebar, `/workspace/chats`) show `ThreadOriginIcon` and, if `unread === true` and not the open thread, `ThreadUnreadDot` with `threads.unreadLabel` as row label. `WorkspaceSidebar` mounts `useThreadActivity`. Chat pages call `useMarkOpenThreadRead` once metadata loads (marks read on load, on an unread flip, on tab visible, and via its callback from `onFinish`).
+Chat pages pass `useThreadScheduledTaskEvents` data to `MessageList` (`scheduledTaskEvents`; the custom-agent page also passes its agent for the run link), which renders `ScheduledTaskEventLine` through `VirtualMessageList.renderAfterGroup` at the `placeTaskEvents` position, inside the group's measured row. Lines are history: never gated on the task list. Channel provider cards (Settings and the sidebar list) render `ChannelScheduledUpdates` from `proactive_notifications`, and nothing when the field is absent.
 
 ## Architecture
 
@@ -102,6 +108,12 @@ Custom Agent `display_name` is an optional Unicode UI label, edited in
 keep `name` for React identity, URLs, requests, and runtime `agent_name`.
 The 100-code-point budget uses `[...value.trim()].length`, matching Pydantic;
 do not use HTML `maxLength`, which counts UTF-16 code units instead.
+
+Custom Agent portability uses the versioned `deerflow.custom-agent` JSON
+document through `core/agents/api.ts`. Keep file parsing client-side only for
+previewing the proposed local name; the Gateway is authoritative for schema,
+name, model, and conflict validation. Export downloads must never synthesize
+runtime state from browser caches.
 
 - **Imports**: Enforced ordering (builtin → external → internal → parent → sibling), alphabetized, newlines between groups. Use inline type imports: `import { type Foo }`.
 - **Unused variables**: Prefix with `_`.
@@ -248,23 +260,10 @@ caller builds, so a project group passes nothing and the submenu does not render
 than the row having to know which list it is in. The link is **always** `draggable`
 (§32's one-drag-one-payload rule), because the same payload serves every drop target.
 
-**One model picker, everywhere.** Selecting a model is
-`components/workspace/model-select.tsx` (`ModelSelect`) — or, inside the
-composer and sidecar, the `ModelPickerControls` + `ModelPickerList` pair it is
-built from (`components/workspace/model-picker-controls.tsx`). Do **not** map
-`models` into `SelectItem`s: that is the state this feature existed to end, and
-it is silent when reintroduced — a flat list in `config.yaml` order with a grey
-price is not an error, it just makes a model impossible to find on that one
-screen while every other screen sorts, groups, searches and colours. All the
-pickers share the single `modelPicker` entry in `core/settings/local.ts`, so a
-sort chosen in a conversation is already applied in Settings. Rows are
-`ModelPickerRow` from the same file — provider, name, price pinned to the right
-edge, and a local model's weights and context window under it, from
-`modelRowParts` in `core/models/sorting.ts`. Hand-rolling that markup on one
-screen is the same silent drift as a flat list: the row still renders, it just
-lines up with nothing. Pinned by
-`tests/unit/components/workspace/model-select.dom.test.tsx`,
-`model-picker-sites.test.ts` and `tests/unit/core/models/sorting.test.ts`.
+**One model picker, everywhere.** Never map `models` into `SelectItem`s — use
+`ModelSelect` / `ModelPickerControls` + `ModelPickerList`; the silent-drift
+rules and the tests pinning them are in
+[`src/components/workspace/MODEL_PICKER.md`](src/components/workspace/MODEL_PICKER.md).
 
 ## Capability Center
 

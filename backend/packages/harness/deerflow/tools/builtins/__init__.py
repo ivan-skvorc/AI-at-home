@@ -1,6 +1,6 @@
 from .analyze_document_tool import analyze_document
 from .background_tasks_tool import cancel_background_task, list_background_tasks
-from .batch_task_tool import batch_status, batch_task, cancel_batch
+from .batch_task_tool import batch_status, batch_task, cancel_batch, read_batch_result
 from .clarification_tool import ask_clarification_tool
 from .list_uploaded_files_tool import list_uploaded_files
 from .present_file_tool import present_file_tool
@@ -22,6 +22,7 @@ __all__ = [
     "batch_status",
     "cancel_batch",
     "analyze_document",
+    "read_batch_result",
     "list_uploaded_files",
     "list_background_tasks",
     "cancel_background_task",

@@ -32,7 +32,7 @@ import { ThreadArchiveStatus } from "@/components/workspace/thread-archive-statu
 import { ThreadAutoRename } from "@/components/workspace/thread-auto-rename";
 import { ThreadBackgroundTasks } from "@/components/workspace/thread-background-tasks";
 import { ThreadExtensionActions } from "@/components/workspace/thread-extension-actions";
-import { ThreadScheduledTasksLink } from "@/components/workspace/thread-scheduled-tasks-link";
+import { ThreadScheduledTasksButton } from "@/components/workspace/thread-scheduled-tasks-button";
 import { ThreadSubagentBatches } from "@/components/workspace/thread-subagent-batches";
 import { ThreadTitle } from "@/components/workspace/thread-title";
 import { TodoList } from "@/components/workspace/todo-list";
@@ -62,6 +62,8 @@ import { isHiddenFromUIMessage } from "@/core/messages/utils";
 import { useModels } from "@/core/models/hooks";
 import { useNotification } from "@/core/notification/hooks";
 import { useProject } from "@/core/projects";
+import { useThreadScheduledTaskEvents } from "@/core/scheduled-tasks/events";
+import { useScheduleToolResultRefresh } from "@/core/scheduled-tasks/hooks";
 import { useLocalSettings, useThreadSettings } from "@/core/settings";
 import {
   copyThreadContextOverride,
@@ -92,6 +94,7 @@ import { useSpecificChatMode } from "./use-chat-mode";
 import { useDemocracyLaunch } from "./use-democracy-launch";
 import { useEditVersions, usePendingEditSend } from "./use-edit-versions";
 import { useImageLaunch } from "./use-image-launch";
+import { useMarkOpenThreadRead } from "./use-mark-open-thread-read";
 import { useThreadWorkflowMemory } from "./use-thread-workflow-memory";
 
 export type ChatInstanceProps = {
@@ -189,6 +192,19 @@ function ChatInstanceContent({
       void refetchMetadataRef.current();
     }
   }, [isActive, isNewThread, isMock]);
+  // A saved thread that exists on the server is being read while open:
+  // clears its unread dot (sidebar and chats list) on every device. Keep-alive
+  // (fork): a background slot is mounted but not being read, so only the
+  // visible slot counts as open.
+  const markThreadRead = useMarkOpenThreadRead(threadId, {
+    enabled: isActive && !isNewThread && !isMock && threadMetadata.data != null,
+  });
+  // Lifecycle lines of schedules created in this chat ("Paused by agent",
+  // "Finished"); they stay after the task is deleted.
+  const scheduledTaskEvents = useThreadScheduledTaskEvents(threadId, {
+    isNewThread,
+    enabled: !isMock,
+  });
   const backendTokenUsage = threadTokenUsageToTokenUsage(threadTokenUsage.data);
   const backendCostSummary = threadTokenUsageToCostSummary(
     threadTokenUsage.data,
@@ -349,6 +365,10 @@ function ChatInstanceContent({
       onThreadStarted?.(slotKey, createdThreadId);
     },
     onFinish: (state) => {
+      // A run in this thread ended (a send, or a joined scheduled run) while
+      // it is open: it has been read. A background slot (fork keep-alive) has
+      // not been read; the hook is disabled there, so this is a no-op.
+      markThreadRead();
       // A background tab is exactly the case this notification is for: the
       // user moved on to another chat and cannot see this one finish.
       if (document.hidden || !document.hasFocus() || !isActiveRef.current) {
@@ -380,6 +400,8 @@ function ChatInstanceContent({
   }, [reportBusy, slotKey]);
 
   const hasThreadMessages = thread.messages.length > 0;
+  // A schedule_task result refreshes the header button and cards at once.
+  useScheduleToolResultRefresh(isMock ? null : threadId, thread.messages);
 
   useEffect(() => {
     if (
@@ -556,9 +578,11 @@ function ChatInstanceContent({
     : "off";
   const hasTodos = (thread.values.todos?.length ?? 0) > 0;
   const browserEnabled = !isNewThread && !isMock && browserControlEnabled;
-  const { activeGoal, hasGoal, setLocalGoal } = useActiveGoal(
+  const { activeGoal, hasGoal, goalOutcome, setLocalGoal } = useActiveGoal(
     threadId,
     thread.values.goal,
+    thread.values.goal_outcome,
+    thread.messages,
   );
   const hasOpenHumanInputCard = useMemo(
     () =>
@@ -576,6 +600,15 @@ function ChatInstanceContent({
     !isNewThread && !isMock && threadMetadata.data
       ? projectIdOfThread(threadMetadata.data)
       : null;
+  // A goal blocks edit-and-rerun server-side; show the pencil locked.
+  // Fork: editing creates a hidden version (FORK.md §18), so readiness is the
+  // edit-versions hook's, not upstream's branch mutation.
+  const editBase =
+    isEditVersionsReady &&
+    !isUploading &&
+    !thread.isLoading &&
+    !isCreatingEditVersion &&
+    !hasOpenHumanInputCard;
 
   return (
     <ThreadContext.Provider value={{ thread, isMock }}>
@@ -633,7 +666,7 @@ function ChatInstanceContent({
                     <ThreadSubagentBatches threadId={threadId} />
                   )}
                 {!isNewThread && !isMock && (
-                  <ThreadScheduledTasksLink threadId={threadId} />
+                  <ThreadScheduledTasksButton threadId={threadId} />
                 )}
                 {tokenUsageEnabled ? (
                   <TokenUsageIndicator
@@ -669,6 +702,7 @@ function ChatInstanceContent({
                   testId="main-message-list"
                   threadId={threadId}
                   thread={thread}
+                  scheduledTaskEvents={scheduledTaskEvents.data}
                   enableConversationOutline
                   paddingBottom={MESSAGE_LIST_DEFAULT_PADDING_BOTTOM}
                   hasMoreHistory={hasMoreHistory}
@@ -683,14 +717,8 @@ function ChatInstanceContent({
                     !thread.isLoading
                   }
                   onRegenerateMessage={handleRegenerate}
-                  canEdit={
-                    isEditVersionsReady &&
-                    !isUploading &&
-                    !thread.isLoading &&
-                    !isCreatingEditVersion &&
-                    !hasGoal &&
-                    !hasOpenHumanInputCard
-                  }
+                  canEdit={editBase && !hasGoal}
+                  editLockedByGoal={editBase && hasGoal}
                   onEditMessage={handleEditMessage}
                   editVersionSwitchers={editVersionSwitchers}
                   onSelectEditVersion={handleSelectEditVersion}
@@ -717,7 +745,7 @@ function ChatInstanceContent({
                       : "max-w-(--container-width-md)",
                   )}
                 >
-                  {(hasGoal || hasTodos) && (
+                  {(hasGoal || goalOutcome !== null || hasTodos) && (
                     <div
                       className={cn(
                         "right-0 left-0 z-0",
@@ -730,7 +758,12 @@ function ChatInstanceContent({
                           isWelcomeMode ? "absolute" : "relative",
                         )}
                       >
-                        {activeGoal && <GoalStatus goal={activeGoal} />}
+                        <GoalStatus
+                          goal={activeGoal}
+                          outcome={goalOutcome}
+                          isRunning={thread.isLoading}
+                          hasOpenHumanInputCard={hasOpenHumanInputCard}
+                        />
                         {hasTodos && (
                           <TodoList
                             className="bg-background/5"

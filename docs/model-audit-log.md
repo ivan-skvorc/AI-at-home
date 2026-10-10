@@ -11,6 +11,75 @@ Newest first. Append a pass; never rewrite one. A dated line is what tells the
 next person whether the roster was checked last week or last year, and _which_
 providers that pass could actually reach.
 
+- **2026-10-10 (upstream sync `cd15687`) — partial: tier 1 for Anthropic, tier 2 for OpenAI's
+  Astra and Sol, tier 3 elsewhere. One roster roll (Claude Haiku 5.5) and one price corrected
+  (Sonnet 5.5's cache read).** Requested in words with the upstream sync of 171 commits ("bring
+  the repo up to date with upstream and run change_cycle.md including the model audit"), five
+  days after the 2026-10-05 pass.
+
+  **Machine half clean.** `python3 scripts/audit_models.py` reports **no drift**; `openrouter`
+  is _skipped_ (`Tunnel connection failed: 403 Forbidden`) and the ten catalog-less providers
+  likewise. The stale fixture still yields exactly its four findings, one per drift kind. Step 8:
+  `sync-api-key-models.py --dry-run` is a clean no-op on an empty env, and on a copy of the
+  example with Anthropic, OpenRouter and xAI keys it enables exactly 23 models (6 + 15 + 2), with
+  `claude-haiku-5-5` among them; `test_sync_api_key_models.py`, `test_setup_wizard.py`,
+  `test_config_integrity.py`, `test_audit_models.py`, `test_model_price_fields.py` and
+  `test_pricing.py` are green (303 passed).
+
+  **What the network reached.** `platform.claude.com/docs/en/about-claude/{pricing,model-deprecations}.md`,
+  `.../models/overview.md`, `.../models/haiku-5-5/{overview,migration-guide}.md` and
+  `.../build-with-claude/thinking.md` answer 200. Refused at the proxy (`http=000`; the fetch
+  tool cannot resolve `openrouter.ai`): `openrouter.ai`, `developers.openai.com`, `docs.x.ai`,
+  `ai.google.dev`, `api-docs.deepseek.com`, `docs.z.ai`, `mistral.ai`, `platform.moonshot.ai`,
+  `platform.minimax.io`, `alibabacloud.com`. Web search was available.
+
+  **Anthropic — tier 1; it moved twice.**
+  - **Roll: Claude Haiku 5.5 in, Haiku 4.5 out.** Released 2026-10-07, id `claude-haiku-5-5`
+    (overview, model page and deprecations table agree), 1M context, 128K output, text + image
+    in. The Haiku tier keeps only its latest, so 4.5 leaves the bundle; it is still _Active_ on
+    the API ("not sooner than October 15, 2026", no deprecation notice yet). Haiku 5.5 is
+    **priced by prompt length**: `$0.10 / $0.50` (cache read `$0.01`) for prompts up to 100K
+    tokens, `$0.50 / $2.50` (cache `$0.05`) above. The bundle ships the lower tier, the precedent
+    Grok 4.7's `<200K` rate set; a long-prompt run on it is under-reported by up to 5x, and the
+    entry's comment says so. Thinking, per the thinking page's per-model table: adaptive by
+    default, `budget_tokens` is a 400 (so Haiku 4.5's budget form could not carry over), and
+    `type: disabled` is accepted at effort `high` or below — the same shape as Opus 5, so the
+    disabled state stays `type: disabled`. Sampling parameters other than the defaults are a 400;
+    the entry carries none. `max_tokens` follows the other 5.x entries (32000), since thinking
+    tokens now count toward it.
+  - **Sonnet 5.5's cache read is `$0.10`, not `$0.20`.** Pricing and overview pages both state
+    0.05x input for Opus 5.5 and Sonnet 5.5. The 2026-10-05 pass recorded `$0.20` for Sonnet 5.5;
+    whether that was a misread or a change since, the page is unambiguous today. The other five
+    are unchanged: Fable 5.1 `$10/$50` at `$0.25`, Opus 5.5 `$4/$20` at `$0.20`, Opus 5 `$5/$25`
+    at `$0.50`, Sonnet 5 `$2/$10` at `$0.20`.
+
+  **Tier 2 re-reads.** GPT-6 Astra `$10/$50` and GPT-6.1 Sol `$2/$10` again agree across two
+  independent trackers (cloudzero, aipricing.guru); one tracker files Sol's API id as
+  `gpt-6-sol`, which disagrees with the shipped `gpt-6.1-sol` that OpenAI's own docs gave on
+  2026-09-30 — not acted on, owed to tier 1. Everything else was re-read five days ago at tier 2
+  and was not re-read here.
+
+  **Discovery (step 2).**
+  - **Mistral Large 4** (2026-10-06, public preview) is Mistral's next flagship, but its API id
+    is not settled across sources (`mistral-large-4`, `mistral-large-2610`, OpenRouter's
+    `mistralai/mistral-large-4-0`) and nothing reachable is Mistral's own page. Its list price
+    (`$1.36 / $4.18`, preview rate half that) agrees across trackers, but a slug no source
+    settles cannot ship, and the model is a preview. **Not rolled; owed** to a pass that can read
+    Mistral's model list.
+  - **GLM-5.3 Fast** (2026-10-07) appears only on one aggregator, at a price another attributes
+    to GLM-5.1 Fast; a speed variant at about twice the price, the Grok 4.7 Fast precedent.
+    Declined.
+  - Nothing else from a bundled lab: no Gemini 3.5 Pro API (Gemini 4 "Argon" is reportedly
+    limited to a trusted-tester programme), no Grok 5, no DeepSeek V4.1 Pro, no Kimi K3.1, no
+    Qwen 4, no MiniMax M3.1. OpenRouter's rankings were not readable this pass.
+
+  **Still owed to a pass with tier-1 access**, in order: Mistral Large 4 (slug and GA);
+  Haiku 4.5's API retirement (it no longer matters to the bundle); Grok 4.7, DeepSeek V4.1 Flash
+  and GLM-5.3 Flash off their labs' own pages; GPT-6.1 Sol's id and GPT-6 Luna; what
+  `deepseek-flash` serves; Xiaomi and Tencent as new labs; a routed V4.1 Flash; MiniMax M3's
+  routed discount; Gemini 3.8 Flash's routed discount; Astra's `cache_hit`; Sonnet 5.5's
+  `between_tools`; GPT-5.6 Terra's place.
+
 - **2026-10-05 (upstream sync `5872d07`) — partial: tier 1 for Anthropic, tier 2 for OpenAI,
   xAI, DeepSeek, z.ai, Google and OpenRouter's Qwen page, tier 3 elsewhere. No roster change
   and no price changed.** Requested in words with the upstream sync of 146 commits ("bring the

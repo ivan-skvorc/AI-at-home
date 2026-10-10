@@ -214,7 +214,7 @@ class TestBundleProviders:
             "claude-opus-5",
             "claude-sonnet-5-5",
             "claude-sonnet-5",
-            "claude-haiku-4-5",
+            "claude-haiku-5-5",
         ]
         by_model = {m["model"]: m for m in provider.bundle_models}
         # Fable 5.1 / Opus 5.5 / Opus 5 / Sonnet 5.5 / Sonnet 5 must use adaptive thinking (budget_tokens 400s).
@@ -226,10 +226,10 @@ class TestBundleProviders:
         assert by_model["claude-sonnet-5-5"]["when_thinking_enabled"]["thinking"]["type"] == "adaptive"
         assert by_model["claude-sonnet-5-5"]["when_thinking_disabled"]["thinking"]["type"] == "adaptive"
         assert by_model["claude-sonnet-5"]["when_thinking_enabled"]["thinking"]["type"] == "adaptive"
-        # Haiku 4.5 still takes an explicit thinking budget.
-        haiku_thinking = by_model["claude-haiku-4-5"]["when_thinking_enabled"]["thinking"]
-        assert haiku_thinking["type"] == "enabled"
-        assert haiku_thinking["budget_tokens"] == 4096
+        # Haiku 5.5 rejects Haiku 4.5's budget form (400); it is adaptive, and unlike
+        # the always-on three it accepts an explicit disable.
+        assert by_model["claude-haiku-5-5"]["when_thinking_enabled"]["thinking"]["type"] == "adaptive"
+        assert by_model["claude-haiku-5-5"]["when_thinking_disabled"]["thinking"]["type"] == "disabled"
         # One shared key + native Anthropic provider on every entry.
         assert all(m["api_key"] == "$ANTHROPIC_API_KEY" for m in provider.bundle_models)
         assert all(m["use"] == "langchain_anthropic:ChatAnthropic" for m in provider.bundle_models)
@@ -577,7 +577,7 @@ class TestBuildMinimalConfig:
             "claude-opus-5",
             "claude-sonnet-5-5",
             "claude-sonnet-5",
-            "claude-haiku-4-5",
+            "claude-haiku-5-5",
         ]
         fable = data["models"][0]
         assert fable["when_thinking_enabled"]["thinking"]["type"] == "adaptive"
