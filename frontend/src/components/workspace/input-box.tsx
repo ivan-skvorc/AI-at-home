@@ -105,7 +105,10 @@ import {
   supportsThinking as modelSupportsThinking,
 } from "@/core/models/reasoning";
 import { attachProjectDocument } from "@/core/projects/api";
-import { useStagedProjectAttachments } from "@/core/projects/composer-attach";
+import {
+  retireProjectAttachments,
+  useStagedProjectAttachments,
+} from "@/core/projects/composer-attach";
 import { useLocalSettings } from "@/core/settings";
 import {
   buildReferenceMessageMetadata,
@@ -123,6 +126,7 @@ import {
   getSessionComposerDraftStorage,
   readComposerDraft,
   resolveComposerDraft,
+  retireSentComposerDraft,
   type ComposerDraft,
   writeComposerDraft,
 } from "@/core/threads/composer-draft";
@@ -231,8 +235,15 @@ import {
 } from "./model-picker-controls";
 import { ReferenceAttachmentSummary, useMaybeSidecar } from "./sidecar";
 import { Tooltip } from "./tooltip";
+import {
+  normalizeGoalStatusRead,
+  type GoalChangeKind,
+} from "./use-active-goal";
 
 const COMPOSER_DRAFT_SAVE_DELAY_MS = 300;
+
+/** A `/goal` request either saved, failed (toast shown), or went stale. */
+type GoalCommandResult = "saved" | "failed" | "stale";
 
 function focusContentEditableEnd(element: HTMLElement | null) {
   if (!element) {
@@ -420,7 +431,7 @@ export function InputBox({
     options?: { automatic: boolean },
   ) => void;
   onFollowupsVisibilityChange?: (visible: boolean) => void;
-  onGoalChange?: (goal: GoalState | null) => void;
+  onGoalChange?: (goal: GoalState | null, kind: GoalChangeKind) => void;
   /**
    * Prepare a not-yet-materialized thread before a builtin command creates
    * it server-side. The `/goal <condition>` PUT endpoint materializes a
@@ -621,6 +632,10 @@ export function InputBox({
   } | null>(null);
   const draftSaveTimerRef = useRef<number | null>(null);
   const draftSaveGenerationRef = useRef(0);
+  // Bumped whenever the composer stops showing a conversation (switch or
+  // unmount). A send's onSent can arrive after an attachment upload, when
+  // the composer that sent it shows another conversation or is gone.
+  const composerLifetimeRef = useRef(0);
 
   const [followups, setFollowups] = useState<string[]>([]);
   const { data: suggestionsConfig } = useSuggestionsConfig();
@@ -972,9 +987,10 @@ export function InputBox({
   }, [cancelDraftSaveTimer]);
   const scheduleDraftSave = useCallback(
     (draft: ComposerDraft, key = draftKey) => {
-      // An accepted attachment send keeps its text visible until upload finishes.
-      // Reference cleanup can rerun this effect meanwhile; do not resurrect the
-      // accepted snapshot. Actual input edits release it, even for identical text.
+      // An accepted attachment send keeps its text visible until its submit
+      // resolves. Reference cleanup can rerun this effect meanwhile; do not
+      // resurrect the accepted snapshot. Actual input edits release it, even
+      // for identical text.
       const accepted = acceptedDraftRef.current;
       if (
         accepted?.key === key &&
@@ -1078,6 +1094,7 @@ export function InputBox({
   }, [thread.messages]);
 
   useLayoutEffect(() => {
+    composerLifetimeRef.current += 1;
     promptHistoryIndexRef.current = null;
     promptHistoryDraftRef.current = "";
     setTextInput("");
@@ -1096,6 +1113,7 @@ export function InputBox({
     latestDraftRef.current = null;
     invalidateDraftSaveTimer();
     return () => {
+      composerLifetimeRef.current += 1;
       mentionEpoch.current += 1;
       flushLatestDraft(draftKey);
     };
@@ -1293,9 +1311,16 @@ export function InputBox({
   );
 
   const handleGoalCommand = useCallback(
-    async (command: GoalCommand): Promise<boolean> => {
+    async (command: GoalCommand): Promise<GoalCommandResult> => {
       const request = beginGoalRequest(goalRequestStateRef.current, threadId);
       const signal = request.controller.signal;
+      // A 409 means a run this tab is not streaming is still in flight.
+      const requestError = async (response: Response) =>
+        new Error(
+          response.status === 409
+            ? t.inputBox.goalBar.busy
+            : await readGoalResponseError(response),
+        );
       try {
         let goal: GoalState | null = null;
         if (command.kind === "status") {
@@ -1306,11 +1331,11 @@ export function InputBox({
             { method: "GET", signal },
           );
           if (!response.ok) {
-            throw new Error(await readGoalResponseError(response));
+            throw await requestError(response);
           }
-          goal =
-            ((await response.json()) as { goal?: GoalState | null }).goal ??
-            null;
+          goal = normalizeGoalStatusRead(
+            ((await response.json()) as { goal?: unknown }).goal,
+          );
           if (
             !isCurrentGoalRequest(
               goalRequestStateRef.current,
@@ -1318,7 +1343,7 @@ export function InputBox({
               threadId,
             )
           ) {
-            return false;
+            return "stale";
           }
           const objective = goal?.objective;
           toast.info(
@@ -1328,7 +1353,7 @@ export function InputBox({
                 t.inputBox.goalActive.replace("{goal}", () => objective)
               : t.inputBox.goalNone,
           );
-          onGoalChange?.(goal);
+          onGoalChange?.(goal, "status");
         } else if (command.kind === "clear") {
           const response = await fetch(
             `${getBackendBaseURL()}/api/threads/${encodeURIComponent(
@@ -1337,7 +1362,7 @@ export function InputBox({
             { method: "DELETE", signal },
           );
           if (!response.ok) {
-            throw new Error(await readGoalResponseError(response));
+            throw await requestError(response);
           }
           if (
             !isCurrentGoalRequest(
@@ -1346,10 +1371,10 @@ export function InputBox({
               threadId,
             )
           ) {
-            return false;
+            return "stale";
           }
           toast.success(t.inputBox.goalCleared);
-          onGoalChange?.(null);
+          onGoalChange?.(null, "clear");
         } else {
           const response = await fetch(
             `${getBackendBaseURL()}/api/threads/${encodeURIComponent(
@@ -1363,7 +1388,7 @@ export function InputBox({
             },
           );
           if (!response.ok) {
-            throw new Error(await readGoalResponseError(response));
+            throw await requestError(response);
           }
           goal =
             ((await response.json()) as { goal?: GoalState | null }).goal ??
@@ -1375,24 +1400,24 @@ export function InputBox({
               threadId,
             )
           ) {
-            return false;
+            return "stale";
           }
           toast.success(t.inputBox.goalSet);
-          onGoalChange?.(goal);
+          onGoalChange?.(goal, "set");
         }
         textInput.setInput("");
-        return true;
+        return "saved";
       } catch (error) {
         if (
           isAbortError(error) ||
           !isCurrentGoalRequest(goalRequestStateRef.current, request, threadId)
         ) {
-          return false;
+          return "stale";
         }
         toast.error(
           error instanceof Error ? error.message : t.inputBox.goalFailed,
         );
-        return false;
+        return "failed";
       } finally {
         finishGoalRequest(goalRequestStateRef.current, request);
       }
@@ -1400,6 +1425,7 @@ export function InputBox({
     [
       onGoalChange,
       t.inputBox.goalActive,
+      t.inputBox.goalBar.busy,
       t.inputBox.goalCleared,
       t.inputBox.goalFailed,
       t.inputBox.goalNone,
@@ -1518,12 +1544,13 @@ export function InputBox({
           ),
         );
       }
-      const activeConversations = reconcileConversationReferences(
+      const reconciledDraft = reconcileConversationReferences(
         textInput.value,
         conversationReferences,
         conversationCapability,
         threadId,
-      ).references;
+      );
+      const activeConversations = reconciledDraft.references;
       const referenceIds = activeConversations.map(
         (reference) => reference.threadId,
       );
@@ -1570,6 +1597,12 @@ export function InputBox({
         text: textInput.value,
         skillName: null,
       };
+      // What this send carries, so a late onSent retires only that.
+      const sendingLifetime = composerLifetimeRef.current;
+      const sentDraftTexts = [textInput.value, reconciledDraft.text];
+      const sentAttachmentPaths = new Set(
+        projectAttachments.map((attachment) => attachment.virtual_path),
+      );
       const additionalKwargs = {
         ...extensionMetadata,
         ...(skillReferences.length
@@ -1595,9 +1628,23 @@ export function InputBox({
         ...(referenceIds.length
           ? { conversationReferences: referenceIds }
           : {}),
-        // Clear one-time state only once the send genuinely proceeds. If the
-        // send is dropped by the in-flight guard, `onSent` never fires.
+        // Clear one-time state only once the send is genuinely dispatched.
+        // `onSent` never fires for a dropped send or a failed attachment
+        // upload, so a retry keeps its quotes, references and staged files.
         onSent: () => {
+          if (composerLifetimeRef.current !== sendingLifetime) {
+            // The upload finished after the composer moved to another
+            // conversation or unmounted. Leave live state alone and retire
+            // only what this send persisted, keeping anything a later
+            // composer saved or staged since.
+            retireSentComposerDraft(
+              getSessionComposerDraftStorage(),
+              draftKey,
+              sentDraftTexts,
+            );
+            retireProjectAttachments(threadId, projectAttachments);
+            return;
+          }
           setMentionQuery(null);
           setMentionButtonOpen(false);
           if (pendingDraftSubmissionRef.current?.key === draftKey) {
@@ -1613,7 +1660,11 @@ export function InputBox({
           }
           sidecar?.clearConversationQuotes(quoteIds);
           setConversationReferences([]);
-          setProjectAttachments([]);
+          setProjectAttachments((previous) =>
+            previous.filter(
+              (attachment) => !sentAttachmentPaths.has(attachment.virtual_path),
+            ),
+          );
         },
       };
       const submit = () => onSubmit?.(message, submitOptions);
@@ -1762,9 +1813,15 @@ export function InputBox({
         setFollowups([]);
         setFollowupsHidden(false);
         setFollowupsLoading(false);
-        const saved = await handleGoalCommand(submitAction.command);
+        const result = await handleGoalCommand(submitAction.command);
+        if (result !== "saved") {
+          // Reject so PromptInput leaves the composer alone: a failed command
+          // keeps the /goal text for a retry, and a stale one leaves it to the
+          // request or conversation that replaced it.
+          return Promise.reject(new Error(`goal-command-${result}`));
+        }
         // Only start a run when a goal was actually saved; status/clear never run.
-        if (saved && submitAction.command.kind === "set") {
+        if (submitAction.command.kind === "set") {
           return submitThreadMessage({
             ...message,
             text: submitAction.command.objective,

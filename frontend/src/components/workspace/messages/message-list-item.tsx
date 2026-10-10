@@ -11,6 +11,7 @@ import {
 import {
   memo,
   useCallback,
+  useId,
   useMemo,
   useState,
   type ImgHTMLAttributes,
@@ -149,6 +150,7 @@ export function MessageListItem({
   showWorkspaceChanges = false,
   durationSeconds,
   canEdit = false,
+  editLockedByGoal = false,
   isEditPending = false,
   onEditAndRegenerate,
   versionSwitcher,
@@ -164,12 +166,15 @@ export function MessageListItem({
   showWorkspaceChanges?: boolean;
   durationSeconds?: number;
   canEdit?: boolean;
+  /** Edit would be allowed but for an active goal: show the pencil locked. */
+  editLockedByGoal?: boolean;
   isEditPending?: boolean;
   onEditAndRegenerate?: (replacementText: string) => void | Promise<boolean>;
   /** `‹ n/m ›` control for a message that has alternative edited versions. */
   versionSwitcher?: ReactNode;
 }) {
   const { t } = useI18n();
+  const editLockedId = useId();
   const isHuman = message.type === "human";
   // One derivation serves both editing and the toolbar, and only runs when a
   // consumer can actually use it, instead of deriving for every settled row.
@@ -200,6 +205,13 @@ export function MessageListItem({
   const editLabel = isHuman ? t.common.editMessage : t.common.editAnswer;
   const showEditButton =
     canEdit && Boolean(onEditAndRegenerate) && !isEditing && !isLoading;
+  // Edit would be allowed but for an active goal: show the pencil locked.
+  const showLockedEditButton =
+    !canEdit &&
+    editLockedByGoal &&
+    Boolean(onEditAndRegenerate) &&
+    !isEditing &&
+    !isLoading;
 
   const startEditing = useCallback(() => {
     setDraft(editableText);
@@ -262,54 +274,82 @@ export function MessageListItem({
             : undefined
         }
       />
-      {!isLoading && (showCopyButton || showEditButton || versionSwitcher) && (
-        <MessageToolbar
-          className={cn(
-            isHuman
-              ? "absolute right-0 -bottom-9 left-0 justify-end"
-              : "absolute right-0 bottom-0 left-0",
-            "z-20",
-          )}
-        >
-          {/* The switcher is the only affordance telling the reader this turn
+      {!isLoading &&
+        (showCopyButton ||
+          showEditButton ||
+          showLockedEditButton ||
+          versionSwitcher) && (
+          <MessageToolbar
+            className={cn(
+              isHuman
+                ? "absolute right-0 -bottom-9 left-0 justify-end"
+                : "absolute right-0 bottom-0 left-0",
+              "z-20",
+            )}
+            data-testid="message-toolbar"
+          >
+            {/* The switcher is the only affordance telling the reader this turn
               has other versions, so unlike the hover actions beside it, it stays
               visible. */}
-          {versionSwitcher && (
-            <div className="pointer-events-auto flex items-center">
-              {versionSwitcher}
-            </div>
-          )}
-          {(showCopyButton || showEditButton) && (
-            <div className="pointer-events-auto flex gap-1 opacity-0 transition-opacity delay-200 duration-300 group-hover/conversation-message:opacity-100">
-              {showCopyButton && <CopyButton clipboardData={copyData} />}
-              {showEditButton && (
-                <Tooltip content={editLabel}>
-                  <Button
-                    aria-label={editLabel}
-                    size="icon-sm"
-                    type="button"
-                    variant="ghost"
-                    disabled={isEditPending || isSubmittingEdit}
-                    onClick={startEditing}
-                  >
-                    <PencilIcon className="size-4" />
-                  </Button>
-                </Tooltip>
-              )}
-              {showCopyButton &&
-                feedback !== undefined &&
-                runId &&
-                threadId && (
-                  <FeedbackButtons
-                    threadId={threadId}
-                    runId={runId}
-                    initialFeedback={feedback}
-                  />
+            {versionSwitcher && (
+              <div className="pointer-events-auto flex items-center">
+                {versionSwitcher}
+              </div>
+            )}
+            {(showCopyButton || showEditButton || showLockedEditButton) && (
+              // focus-within: a keyboard user tabbing to a button sees it.
+              <div className="pointer-events-auto flex gap-1 opacity-0 transition-opacity delay-200 duration-300 group-hover/conversation-message:opacity-100 focus-within:opacity-100">
+                {showCopyButton && <CopyButton clipboardData={copyData} />}
+                {showEditButton && (
+                  <Tooltip content={editLabel}>
+                    <Button
+                      aria-label={editLabel}
+                      size="icon-sm"
+                      type="button"
+                      variant="ghost"
+                      disabled={isEditPending || isSubmittingEdit}
+                      onClick={startEditing}
+                    >
+                      <PencilIcon className="size-4" />
+                    </Button>
+                  </Tooltip>
                 )}
-            </div>
-          )}
-        </MessageToolbar>
-      )}
+                {showLockedEditButton && (
+                  <>
+                    <Tooltip content={t.inputBox.goalBar.editLocked}>
+                      <Button
+                        aria-label={editLabel}
+                        aria-disabled="true"
+                        aria-describedby={editLockedId}
+                        className="aria-disabled:cursor-not-allowed"
+                        size="icon-sm"
+                        type="button"
+                        variant="ghost"
+                        data-testid="message-edit-locked"
+                      >
+                        {/* Dim only the icon so the focus ring stays at full strength. */}
+                        <PencilIcon className="size-4 opacity-50" />
+                      </Button>
+                    </Tooltip>
+                    <span id={editLockedId} className="sr-only">
+                      {t.inputBox.goalBar.editLocked}
+                    </span>
+                  </>
+                )}
+                {showCopyButton &&
+                  feedback !== undefined &&
+                  runId &&
+                  threadId && (
+                    <FeedbackButtons
+                      threadId={threadId}
+                      runId={runId}
+                      initialFeedback={feedback}
+                    />
+                  )}
+              </div>
+            )}
+          </MessageToolbar>
+        )}
     </AIElementMessage>
   );
 }
@@ -623,7 +663,7 @@ function MessageContent_({
                   agent_name: reference.agentName,
                 })}
                 key={reference.threadId}
-                title={reference.title || "Untitled"}
+                title={reference.title || t.pages.untitled}
               />
             ))}
           </div>

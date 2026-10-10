@@ -7,7 +7,7 @@ every launch path and, when it finds a real provider API key in your ``.env``
 in ``config.yaml`` so the models light up on first start with no manual editing.
 
     ANTHROPIC_API_KEY  -> direct Claude Fable 5.1 / Opus 5.5 / Opus 5 / Sonnet 5.5 /
-                          Sonnet 5 / Haiku 4.5
+                          Sonnet 5 / Haiku 5.5
     OPENROUTER_API_KEY -> Claude Fable 5.1 / Claude Opus 5.5 / Grok 4.7 /
                           GPT-6 Astra / GPT-6.1 Sol / GPT-5.3 Codex /
                           MiniMax M3 / Qwen3.8 Max / Kimi K3 /

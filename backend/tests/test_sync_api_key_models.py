@@ -190,37 +190,33 @@ class TestRealExampleConfig:
         out = sync_api.sync(self.text, {"anthropic"})
         data = yaml.safe_load(out)
         names = {m["model"] for m in data["models"]}
-        assert {"claude-fable-5-1", "claude-opus-5-5", "claude-opus-5", "claude-sonnet-5-5", "claude-sonnet-5", "claude-haiku-4-5"}.issubset(names)
+        assert {"claude-fable-5-1", "claude-opus-5-5", "claude-opus-5", "claude-sonnet-5-5", "claude-sonnet-5", "claude-haiku-5-5"}.issubset(names)
         assert "claude-sonnet-4-6" not in names  # rolled out when Sonnet 5.5 shipped (2026-09-28)
+        assert "claude-haiku-4-5" not in names  # rolled out when Haiku 5.5 shipped (2026-10-07)
         assert all(m["api_key"] == "$ANTHROPIC_API_KEY" for m in data["models"])
 
     def test_anthropic_adaptive_models_request_summarized_thinking(self):
-        """The adaptive Claude models (Fable 5.1, Opus 5.5, Opus 5, Sonnet 5.5,
-        Sonnet 5) must request `display: summarized` when thinking is enabled.
+        """The adaptive Claude models (every bundled one since Haiku 5.5 replaced
+        Haiku 4.5) must request `display: summarized` when thinking is enabled.
         Their default (`omitted`) returns thinking blocks with empty text, which
         langchain-anthropic drops on multi-turn tool-use replay, producing a 400
-        (`messages.N.content.0.thinking.thinking: Field required`). Haiku 4.5 uses the
-        older `type: enabled` budget form, which returns full thinking text, so it
-        needs no display override."""
+        (`messages.N.content.0.thinking.thinking: Field required`). Haiku 5.5 also
+        rejects the `budget_tokens` form Haiku 4.5 took, with a 400."""
         out = sync_api.sync(self.text, {"anthropic"})
         data = yaml.safe_load(out)
         by_model = {m["model"]: m for m in data["models"]}
 
-        for slug in ("claude-fable-5-1", "claude-opus-5-5", "claude-opus-5", "claude-sonnet-5-5", "claude-sonnet-5"):
+        for slug in ("claude-fable-5-1", "claude-opus-5-5", "claude-opus-5", "claude-sonnet-5-5", "claude-sonnet-5", "claude-haiku-5-5"):
             enabled = by_model[slug]["when_thinking_enabled"]["thinking"]
             assert enabled.get("type") == "adaptive", slug
             assert enabled.get("display") == "summarized", slug
-
-        haiku_enabled = by_model["claude-haiku-4-5"]["when_thinking_enabled"]["thinking"]
-        assert haiku_enabled.get("type") == "enabled"
-        assert haiku_enabled.get("budget_tokens")
-        assert "display" not in haiku_enabled
+            assert "budget_tokens" not in enabled, slug
 
     def test_fable_never_sends_disabled_thinking_but_opus_sonnet_do(self):
         """Fable 5.1, Opus 5.5 and Sonnet 5.5 reject `thinking: {type: disabled}` with a 400, so
         neither may send it on either toggle state: when thinking is "disabled" they
         keep adaptive+summarized (they cannot turn thinking off, and summarized keeps
-        the multi-turn replay legal). Opus 5 / Sonnet 5 accept
+        the multi-turn replay legal). Opus 5 / Sonnet 5 / Haiku 5.5 accept
         and keep `type: disabled`. Regression guard against both the disable-path 400
         and the omitted-display replay 400.
 
@@ -237,7 +233,7 @@ class TestRealExampleConfig:
             assert disabled.get("type") == "adaptive", (always_on, disabled)
             assert disabled.get("display") == "summarized", (always_on, disabled)
 
-        for slug in ("claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5"):
+        for slug in ("claude-opus-5", "claude-sonnet-5", "claude-haiku-5-5"):
             disabled = by_model[slug].get("when_thinking_disabled") or {}
             assert disabled.get("thinking", {}).get("type") == "disabled", slug
 

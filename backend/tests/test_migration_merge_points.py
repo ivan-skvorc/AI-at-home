@@ -50,6 +50,10 @@ ORIGINAL_PARENTS = {
     # 0027_merge_preferences_mcp_tasks had already claimed, splitting the tree a
     # fourth time — and was joined by 0031_merge_prefs_notifications.
     "0027_notification_deliveries": ("0026_mcp_task_lease_tokens",),
+    # Upstream's streak-boundary branch. It hangs off 0030 — the revision
+    # 0031_merge_prefs_notifications had already claimed, splitting the tree a
+    # fifth time — and was joined by 0038_merge_prefs_summaries.
+    "0031_scheduled_streak_boundary": ("0030_notification_claim_tokens",),
 }
 
 # Every leaf the merge points must keep reachable: one per branch tip that
@@ -63,6 +67,8 @@ MERGED_TIPS = (
     "0026_mcp_task_lease_tokens",
     # Upstream's tip at the 2026-10-05 sync, joined by 0031_merge_prefs_notifications.
     "0030_notification_claim_tokens",
+    # Upstream's tip at the 2026-10-10 sync, joined by 0038_merge_prefs_summaries.
+    "0037_project_document_summaries",
 )
 
 

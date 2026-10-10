@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from deerflow.config.runtime_settings import resolve_owner_scope
 from deerflow.model_ids import normalize_reported_model_name
 from deerflow.persistence.run.model import RunChangeClockRow, RunRow
+from deerflow.runtime.run_origin import origin_kind_of
 from deerflow.runtime.runs.store.base import (
     LeaseRenewal,
     RunIdempotencyConflict,
@@ -37,6 +38,15 @@ from deerflow.utils.time import coerce_iso
 def _lease_expired_or_null(lease_col, cutoff: datetime):
     """SQLAlchemy filter: True when the lease is NULL or has expired past *cutoff*."""
     return or_(lease_col.is_(None), lease_col < cutoff)
+
+
+def _origin_kind(operation_kind: str, metadata: Any) -> str | None:
+    """Denormalized ``runs.origin_kind``: the server-owned origin of an agent run.
+
+    Thread operations (checkpoint writes, deletes) never carry one, and a run
+    without a well-formed ``deerflow_origin`` stays NULL (interactive/legacy).
+    """
+    return origin_kind_of(metadata) if operation_kind == "run" else None
 
 
 class RunRepository(RunStore):
@@ -103,6 +113,7 @@ class RunRepository(RunStore):
         # Remap JSON columns to match RunStore interface
         d["metadata"] = d.pop("metadata_json", {})
         d["kwargs"] = d.pop("kwargs_json", {})
+        d["idempotency_request"] = d.pop("idempotency_request_json", None)
         # Convert datetime to ISO string for consistency with MemoryRunStore.
         # SQLite drops tzinfo on read despite ``DateTime(timezone=True)`` —
         # ``coerce_iso`` normalizes naive datetimes as UTC.
@@ -133,6 +144,7 @@ class RunRepository(RunStore):
         owner_worker_id: str | None = None,
         lease_expires_at: str | None = None,
         idempotency_key: str | None = None,
+        idempotency_request: dict[str, Any] | None = None,
     ):
         """Insert or update a run row.
 
@@ -161,6 +173,8 @@ class RunRepository(RunStore):
             "owner_worker_id": owner_worker_id,
             "lease_expires_at": lease_dt,
             "idempotency_key": idempotency_key,
+            "idempotency_request_json": self._safe_json(idempotency_request),
+            "origin_kind": _origin_kind(operation_kind, metadata),
             "updated_at": now,
         }
         async with self._sf() as session:
@@ -210,6 +224,17 @@ class RunRepository(RunStore):
         async with self._sf() as session:
             result = await session.execute(stmt)
             return [self._row_to_dict(row) for row in result.scalars()]
+
+    async def latest_change(self, *, user_id: str) -> tuple[int, str] | None:
+        """The caller's newest run-change position ``(change_seq, run_id)``, or ``None``.
+
+        Seeds the activity feed cursor: one backward seek on
+        ``ix_runs_user_change_seq``. ``user_id`` is always an explicit owner id.
+        """
+        stmt = select(RunRow.change_seq, RunRow.run_id).where(RunRow.user_id == user_id).order_by(RunRow.change_seq.desc(), RunRow.run_id.desc()).limit(1)
+        async with self._sf() as session:
+            row = (await session.execute(stmt)).first()
+        return (int(row.change_seq), str(row.run_id)) if row is not None else None
 
     async def list_by_thread(
         self,
@@ -886,6 +911,7 @@ class RunRepository(RunStore):
         created_at: str | None = None,
         grace_seconds: int = 10,
         idempotency_key: str | None = None,
+        idempotency_request: dict[str, Any] | None = None,
     ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
         """Atomically create a run with cross-process thread-uniqueness.
 
@@ -921,6 +947,8 @@ class RunRepository(RunStore):
             "owner_worker_id": owner_worker_id,
             "lease_expires_at": lease_dt,
             "idempotency_key": idempotency_key,
+            "idempotency_request_json": self._safe_json(idempotency_request),
+            "origin_kind": _origin_kind(operation_kind, metadata),
             "created_at": created,
             "updated_at": now,
         }
@@ -931,6 +959,11 @@ class RunRepository(RunStore):
             # provides deterministic ordering within the position.
             change_seq = await self._next_change_seq(session)
             claimed: list[dict[str, Any]] = []
+
+            if idempotency_key is not None:
+                existing = (await session.execute(select(RunRow).where(RunRow.idempotency_key == idempotency_key).with_for_update())).scalar_one_or_none()
+                if existing is not None:
+                    raise RunIdempotencyConflict(self._row_to_dict(existing))
 
             if multitask_strategy in ("interrupt", "rollback"):
                 stmt = (
