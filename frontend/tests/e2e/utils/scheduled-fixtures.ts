@@ -55,9 +55,16 @@ export async function setLocaleCookie(page: Page, lang: "en" | "zh") {
   ]);
 }
 
-/** The open chat's message area (excludes the sidebar's thread titles). */
+/**
+ * The open chat's message area (excludes the sidebar's thread titles).
+ *
+ * Fork: live chat slots (FORK.md §9) key the chat panel's id by thread id, not
+ * by pathname (upstream's `workspace-chats-…-chat`), and keep background slots
+ * mounted, so match the visible panel.
+ */
 export function conversation(page: Page): Locator {
-  return page.locator(
-    '[data-testid^="workspace-chats-"][data-testid$="-chat"] main',
-  );
+  return page
+    .locator('[data-testid$="-chat"]')
+    .filter({ visible: true })
+    .locator("main");
 }

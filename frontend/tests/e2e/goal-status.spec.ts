@@ -318,17 +318,29 @@ for (const chatPage of CHAT_PAGES) {
       );
 
       // No pointer over the message: only keyboard focus can show its toolbar.
+      // Fork (Gaslight mode, FORK.md §18): the prompt's pencil is "Edit
+      // message" (the answer has its own, "Edit answer", locked as well), and
+      // the hover actions rather than the whole toolbar carry the opacity, so
+      // a version switcher beside them stays visible.
       await page.mouse.move(0, 0);
       const toolbar = page
         .getByTestId("message-toolbar")
-        .filter({ has: page.getByTestId("message-edit-locked") });
-      const pencil = toolbar.getByRole("button", { name: "Edit and rerun" });
+        .filter({ has: page.getByRole("button", { name: "Edit message" }) });
+      const pencil = toolbar.getByRole("button", { name: "Edit message" });
       await toolbar.getByRole("button", { name: "Copy to clipboard" }).focus();
       await page.keyboard.press("Tab");
 
       await expect(pencil).toBeFocused();
+      await expect(pencil).toHaveAttribute(
+        "data-testid",
+        "message-edit-locked",
+      );
       await expect(pencil).toBeDisabled();
-      await expect(toolbar).toHaveCSS("opacity", "1");
+      await expect(
+        pencil.locator(
+          "xpath=ancestor::div[contains(@class, 'focus-within:opacity-100')][1]",
+        ),
+      ).toHaveCSS("opacity", "1");
       await expect(
         page.getByRole("tooltip").filter({
           hasText:
@@ -338,7 +350,7 @@ for (const chatPage of CHAT_PAGES) {
 
       await page.keyboard.press("Enter");
       await expect(
-        page.getByRole("button", { name: "Update and rerun" }),
+        page.getByRole("button", { name: "Save and send" }),
       ).toBeHidden();
 
       // No turn can be edited while a file uploads, so no pencil shows, not
@@ -364,7 +376,8 @@ for (const chatPage of CHAT_PAGES) {
       await composer(page).press("Enter");
       await expect(page.getByTestId("message-edit-locked")).toHaveCount(0);
       releaseUpload();
-      await expect(page.getByTestId("message-edit-locked")).toHaveCount(1);
+      // Fork: the prompt and its answer are both editable turns, so both lock.
+      await expect(page.getByTestId("message-edit-locked")).toHaveCount(2);
     });
 
     test("shows Goal met after one automatic follow-up until the chat moves on", async ({
@@ -473,8 +486,9 @@ for (const chatPage of CHAT_PAGES) {
           page.getByText("Done: the summary now has three lines."),
         ).toBeVisible();
         // The goal is no longer active, so edit-and-rerun is back.
+        // Fork: every settled prompt is editable, so take the latest.
         await expect(
-          page.getByRole("button", { name: "Edit and rerun" }),
+          page.getByRole("button", { name: "Edit message" }).last(),
         ).toBeEnabled();
         await expect(page.getByTestId("message-edit-locked")).toHaveCount(0);
         await expectNoRawIdentifiers(bar);
@@ -566,7 +580,7 @@ for (const chatPage of CHAT_PAGES) {
         ).toBeVisible();
         await expect(page).not.toHaveURL(/\/new$/);
         await expect(
-          page.getByRole("button", { name: "Edit and rerun" }),
+          page.getByRole("button", { name: "Edit message" }).last(),
         ).toBeEnabled();
 
         await page.reload();
