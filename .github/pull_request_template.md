@@ -55,10 +55,25 @@ Fixes #
 
 ## Validation
 
-<!-- What you actually ran. Run at least the checks for the area you changed:
-       Backend:   cd backend  && make lint && make test
-       Frontend:  cd frontend && pnpm format && pnpm lint && pnpm typecheck && BETTER_AUTH_SECRET=local-dev-secret pnpm build && make test
-       Frontend E2E (if you touched frontend/): cd frontend && make test-e2e -->
+<!-- Follow CHANGE_CYCLE.md step 5. List commands actually run, baseline and final
+     outcomes (including counts), scope rationale, and failures or skipped checks.
+     Relevant existing tests are required even if no new tests were needed.
+     Docs/guidance-only: focused existing checks, including guidance budgets.
+     Backend code: make lint && make test; blocking-I/O when affected.
+     Frontend code: pnpm check && pnpm test; E2E for affected workflows, full E2E
+     for shared controls/navigation/streaming. Full checklist for upstream merges
+     or broad changes. Don't rerun checklist commands covered by the same suite. -->
+
+
+## Test maintenance
+
+<!-- Required for every change; "none" needs a reason. Review only the affected
+     area. Do not remove tests just because they fail, are slow, or are old. -->
+
+- **Existing coverage reviewed/reused:**
+- **Tests added/extended, or why none were needed:**
+- **Tests removed/consolidated, or why none were unnecessary:**
+- **For removals, retained coverage or deliberately removed behavior:**
 
 
 ## AI assistance

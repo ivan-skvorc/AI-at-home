@@ -2,6 +2,14 @@
 
 This is the source of truth for repository agent guidance; `CLAUDE.md` imports it via `@AGENTS.md`.
 
+**Before making any repository change, read and follow [CHANGE_CYCLE.md](CHANGE_CYCLE.md).**
+It applies automatically to every change request, with no special trigger or
+agent-specific opt-in: run existing tests, add coverage only where needed, review
+and remove unnecessary tests, and open a pull request. Read the applicable nested
+`AGENTS.md` files too; delegated agents follow the same guidance, and the lead
+agent owns final validation and the PR. For tools that do not discover `AGENTS.md`,
+configure them to read this file before working (see [CONTRIBUTING.md](CONTRIBUTING.md#development-workflow)).
+
 This **monorepo orientation layer** maps the repo. For module details, read its guide:
 
 - **[backend/AGENTS.md](backend/AGENTS.md)** — backend depth: harness/app split, agent &
@@ -207,12 +215,11 @@ cd frontend && pnpm rstest run <pattern>     # e.g. pnpm rstest run my-component
 These apply repo-wide; module guides own the module-specific detail.
 
 - **The change cycle** — every change follows
-  **[CHANGE_CYCLE.md](CHANGE_CYCLE.md)**: implement, decide whether a new test is
-  owed and write it, add/edit/retire the matching row in
-  [FORK.md's post-sync checklist](FORK.md#post-sync-feature-checklist), run that
-  full list, run the [model audit](FORK.md#the-model-bundle-and-its-audit) only
-  when the request asks for one, then open the PR. Ending a request with "run the code change
-  cycle from CHANGE_CYCLE.md" asks for exactly that, end to end.
+  **[CHANGE_CYCLE.md](CHANGE_CYCLE.md)** automatically. Maintain the tests and
+  [FORK.md's post-sync checklist](FORK.md#post-sync-feature-checklist), run existing
+  checks at the scope step 5 requires, then commit, push, and open the PR. The full
+  checklist is due for upstream merges or broad changes; the
+  [model audit](FORK.md#the-model-bundle-and-its-audit) runs only when requested.
 - **Documentation update policy** — keep docs in sync with code: update `README.md` for
   user-facing changes and the relevant `AGENTS.md` for development/architecture changes in
   the same change set.
@@ -223,9 +230,10 @@ These apply repo-wide; module guides own the module-specific detail.
   `backend/docs/RUNTIME.md`, `frontend/src/DATA_FLOW.md` and
   `app/gateway/AUTHORIZATION.md` stay discoverable without being inherited. Trim the
   nearest shared ancestor first — it pays into every chain below it.
-- **Test-driven development** — features and bug fixes ship with tests: `backend/tests/`
-  (TDD mandatory there, see [backend/AGENTS.md](backend/AGENTS.md)) and `frontend/tests/`.
-- **Format before pushing** — `make format` (backend) / `pnpm check` (frontend); backend CI
+- **Useful tests** — reuse coverage first; add or extend tests for uncovered
+  behavior and regressions, and prune proven redundant or obsolete tests in the
+  area being changed. Follow CHANGE_CYCLE.md step 3 and the backend's TDD policy.
+- **Format code before pushing** — `make format` (backend) / `pnpm check` (frontend); backend CI
   enforces `ruff format --check`.
 - **Skill text encoding** — treat `SKILL.md` and other textual skill resources as UTF-8;
   Python utilities reading or writing them must pass `encoding="utf-8"` rather than

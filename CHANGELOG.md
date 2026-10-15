@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- **development:** the shared agent change cycle now applies automatically to
+  Claude Code, Codex/ChatGPT, and other configured coding agents. It requires
+  existing-test runs, coverage only where needed, a scoped review of unnecessary
+  tests with removal rationale, proportional validation, and an open pull request.
 - **upstream:** merged `upstream/main` (171 commits since 2026-10-05). Brings upstream's
   portable Custom Agent packages (export and import a versioned JSON file from the Agents
   gallery), the finished user-facing side of conversation schedules (a scheduled run shows its

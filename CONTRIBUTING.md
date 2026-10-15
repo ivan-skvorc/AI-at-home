@@ -287,7 +287,28 @@ Nginx (port 2026) ← Unified entry point
 > **Fork note.** This fork formalizes the loop below — including which tests a
 > change owes, keeping [FORK.md's post-sync checklist](FORK.md#post-sync-feature-checklist)
 > in sync with the code, and when the model audit is due — in
-> [`CHANGE_CYCLE.md`](CHANGE_CYCLE.md). Coding agents should follow that file.
+> [`CHANGE_CYCLE.md`](CHANGE_CYCLE.md). Every coding-agent change request follows
+> it automatically, through tests, test cleanup, and an open pull request.
+
+[`AGENTS.md`](AGENTS.md) is the shared instruction source. Codex/ChatGPT coding
+environments that support `AGENTS.md` discover it directly; Claude Code imports it
+through the existing `CLAUDE.md` shims. Keep shared rules in `AGENTS.md` and
+`CHANGE_CYCLE.md` so the two agents use the same procedure. Read the root and
+applicable nested guides even when starting in a subdirectory, and pass them to
+delegated agents.
+
+For another coding tool, configure its repository instructions to read those
+files before editing. If it has no instruction-file discovery, start its session
+with: "Read AGENTS.md, the applicable nested AGENTS.md files, and CHANGE_CYCLE.md;
+follow them for every repository change, including test maintenance and opening
+a PR." Repository text cannot force an unsupported tool to load instructions or
+grant missing GitHub access. Report such limits instead of claiming completion.
+
+Run relevant existing tests before editing and the final checks from the cycle's
+scope table afterward. Reuse coverage, add tests for gaps, and review tests near
+the change for proven redundancy or obsolete behavior. Record additions, reuse,
+removals (including retained coverage), and check results in the PR template;
+there is no quota for test additions or deletions.
 
 1. **Create a feature branch**:
    ```bash

@@ -1,17 +1,24 @@
 # The code change cycle
 
-**The trigger.** State the change you want, then end the request with:
+**Automatic for every change request.** Claude Code, Codex/ChatGPT, other coding
+agents, and their delegated agents follow this procedure whenever they modify
+the repository. Read it before editing; no special phrase is needed. Read-only
+questions and reviews do not start a change cycle. Explicit user instructions
+can narrow the scope (for example, local edits without a PR); otherwise carry
+the cycle through to an open pull request without asking for each step.
+
+The existing phrase remains a supported reminder:
 
 > run the code change cycle from CHANGE_CYCLE.md
 
-That sentence means: do everything below, in this order, without asking for the
-steps one at a time. Stop and ask only when a step cannot be decided from the
-repository — never to confirm that the next step should happen.
+Stop and ask only when a material decision cannot be resolved from the request
+or repository. Report unavailable tools or access honestly; do not claim an
+unfinished check or unopened PR is complete.
 
-**The shape, end to end:** make the change → decide which tests a *future* reader
-needs to catch it breaking, and write them → add the matching rows to FORK.md's
-checklist and delete the rows that no longer prove anything → run the whole list,
-including the tests you just added → run the model audit **only if you were told
+**The shape, end to end:** run relevant existing tests → make the change → reuse
+coverage, add missing tests, and remove unnecessary tests in the affected area →
+maintain FORK.md's checklist → run the required checks at the scope in step 5,
+including new or changed tests → run the model audit **only if you were told
 to** → land the docs, and a **new feature owes `README.md` its bullet** → commit,
 push, and **open the pull request**. The cycle is
 not finished when the tests pass; it is finished when the PR is open. Nobody has
@@ -48,37 +55,71 @@ Never commit to `main`. For anything beyond a mechanical edit, run the decision
 gates in [`.agent/skills/engineer-system-change`](.agent/skills/engineer-system-change/SKILL.md)
 first — they are what keeps a real problem from turning into an oversized fix.
 
+Inspect the working tree, the root and applicable nested `AGENTS.md` files, and
+existing tests for the affected behavior. Choose the checks using step 5 and run
+the relevant existing tests before editing to establish a baseline. Give delegated
+agents the same instructions and scope; the lead agent remains responsible for
+the final combined checks and the PR. Preserve unrelated user changes.
+
 ## 2. Implement the smallest sufficient change
 
 Change only the paths the accepted outcome needs. Do not widen the diff with
 speculative abstractions, compatibility layers, or drive-by refactors; note them
 instead and let the next cycle decide.
 
-## 3. Decide whether the change needs a new test — then write it
+## 3. Maintain useful tests: reuse, add, and remove
 
-Ask it explicitly, and answer in the report. **Yes** when the change:
+Review existing coverage before adding anything. Ask whether it already protects
+the changed behavior, and answer in the report. Add or extend a test only when
+there is a gap, particularly when the change:
 
 - alters behavior a caller, user, or the UI can observe;
 - changes a default, a config key, a schema, a stored shape, or a wire contract;
-- fixes a bug — the bug becomes a failing test **before** the fix;
+- fixes a bug — reproduce an executable regression **before** the fix;
 - adds or removes a security, ownership, or concurrency boundary;
 - relies on an invariant whose broken state is **silent** (a lock that must stay
   scoped, an option that must reach the wire, a branch that must decline rather
   than evict). This is the fork's most common shape, and the reason a row exists
   at all.
 
-**No** for prose docs, comments, formatting, and renames with no behavior
-change. Say "no new test, <reason>" rather than leaving it unstated.
+**No new test** when existing tests already prove the contract, or for prose docs,
+comments, formatting, and renames with no behavior change. Name the existing
+coverage or say "no new test, <reason>". Prefer extending the nearest focused test
+or parameterizing equivalent cases to adding a parallel suite. Use the cheapest
+test layer that catches the failure; add E2E only when a user workflow needs it.
 
-Where they go: `backend/tests/` for Python (TDD is mandatory there),
+Where they go: `backend/tests/` for Python (TDD for new behavioral coverage),
 `frontend/tests/unit/` for the pure model, `frontend/tests/e2e/` for a user
 workflow. Then:
 
-- **Prove it fails without the change.** Neutralize the one line that implements
-  the behavior, watch the new test go red, put it back. A test that passes both
-  ways pins nothing.
+- **Prove new behavioral coverage detects the regression.** Run it before the
+  fix, or safely reproduce the old behavior in isolation, then run the final
+  version after the change. Explain when a failing reproduction is impractical.
 - **Pin the property, not the implementation** — assert the thing a future
   refactor would quietly "simplify" away.
+
+### Review and remove unnecessary tests on every change
+
+Review tests for the area being changed, including nearby fixtures and checklist
+commands. Keep this local to the task; a routine change is not a suite-wide purge.
+Remove or consolidate tests when evidence shows they:
+
+- duplicate the same contract and failure mode already covered by a retained test;
+- exercise removed behavior or assert an implementation detail no longer required
+  by any caller, contract, or security boundary;
+- cannot detect a regression (for example, assertions only on a mock's own setup).
+
+For every removal, name the retained coverage or the behavior deliberately removed
+and explain why no unique guarantee is lost. Preserve distinct edge cases and
+regression, security, ownership, and concurrency checks. A slow or flaky test needs
+investigation; failure, age, test count, or runtime alone never justifies deletion.
+Never delete, weaken, skip, or quarantine a test just to make a failing run green.
+
+Update shared fixtures, FORK.md rows, and other references in the same change set,
+then run the remaining affected suite. Record tests reviewed, added/reused,
+removed/consolidated, and the reason in the PR's **Test maintenance** section.
+"None removed — <what was reviewed and why it remains useful>" is a valid outcome;
+there is no quota for adding or removing tests.
 
 ## 4. Update the test list in FORK.md
 
@@ -131,11 +172,23 @@ skip:
   Anything it prints is either a row to fix or a row to delete — decide, don't
   leave it.
 
-## 5. Run the full list
+## 5. Run existing tests at the required scope
 
-The whole [post-sync checklist](FORK.md#post-sync-feature-checklist), in its own
-order: the mechanical gates first, then every feature row — not only the rows
-you think you touched. The wide gates are:
+Always run relevant **existing** tests, as well as any tests added or changed.
+Use the baseline from step 1 to distinguish pre-existing failures from regressions.
+After all edits (including docs and formatting), run the checks below and the
+affected rows in the [post-sync checklist](FORK.md#post-sync-feature-checklist):
+
+| Change | Required final checks |
+| ------ | --------------------- |
+| Docs, comments, formatting, or agent guidance only | Relevant existing documentation/contract tests and link checks; for any `AGENTS.md` edit, run `python3 scripts/check_agent_guidance.py` and `backend/tests/test_agent_guidance_check.py`; for this procedure, run `backend/tests/test_change_cycle_doc.py`. No application-wide suites for prose alone. |
+| Backend code | `cd backend && make lint && make test`; also `make test-blocking-io` for async, runtime, or I/O changes. |
+| Frontend code | `cd frontend && pnpm check && pnpm test`; run affected `pnpm test:e2e <pattern>` workflows for UI behavior. Shared UI controls, navigation, or streaming changes require the full E2E suite. |
+| Scripts, config, build, or CI | Existing tests for the changed commands/contracts and affected consumers; add module gates when their behavior can change. |
+| Upstream merge, changes whose effects cannot be bounded to named areas, or explicit full-cycle validation request | Whole post-sync checklist: mechanical gates, then every feature row. |
+
+The reminder phrase alone uses this table; it does not request unrelated suites.
+For a complete cross-module pass, the wide gates include:
 
 ```bash
 git grep -nE '^(<{7}|={7}|>{7})( |$)'   # must print nothing
@@ -144,16 +197,19 @@ cd frontend && pnpm check && pnpm test
 cd frontend && pnpm test:e2e            # no filter — a shared control's specs are not in the file you edited
 ```
 
-Then the per-row commands from the table — **and the tests you added in step 3**,
-if the run above did not already cover them. A test written and never executed in
+Run each check once on the final tree. When a selected suite already executes a
+checklist row or a new test, record that coverage instead of repeating the same
+command; run separately only what the suite omits. Broaden or repeat checks when
+failures, new edits, or unresolved impact justify it. A test written and never executed in
 its final form is the most common way this cycle ships red: it passed while you
 were iterating, then a rename, a fixture edit, or a formatter pass moved under it.
 
 **Environmental failures are reported, never patched away.** FORK.md names the
 known ones — chiefly a sandbox whose pre-baked Playwright browsers are older
 than the pinned `playwright`, which fails deterministically and is not a
-regression. Confirm one against `origin/main` on the same commit before calling
-it environmental, then say so in the report with that evidence. Do **not** run
+regression. Reproduce the same failure on the unchanged base revision in the same
+environment before calling it environmental, then report that evidence. When
+this is not possible, classify it as an unresolved validation failure. Do **not** run
 `playwright install`, and never skip, disable, or quarantine a test to reach
 green.
 
@@ -246,10 +302,13 @@ belongs inside that subsection.
 
 ## 8. Format, commit, push
 
+Format only the affected code, then rerun any checks affected by formatting.
+For backend code use `make format`; for frontend code use `pnpm check`.
+Stage only files belonging to this change; preserve unrelated work.
+
 ```bash
-cd backend  && make format
-cd frontend && pnpm check
-cd .. && git add -A
+git diff --check
+git add <changed-paths>
 git commit -m "<type>: <what changed for the user>"
 git push -u origin <branch>
 ```
@@ -273,6 +332,10 @@ Fill in [`.github/pull_request_template.md`](.github/pull_request_template.md) �
   the section reviewers read first and the one most often filled in with
   intentions instead of results; "the suite passes" without the numbers is not
   validation.
+- **Test maintenance** — the coverage reviewed, tests added or reused and why,
+  tests removed or consolidated with retained coverage or retired behavior,
+  and the reason for the validation scope. State when no new or removed tests
+  were needed; do not leave the decision implicit.
 
 Then post the link. One PR per cycle: if the branch already carries earlier
 commits from this session, say so in **What changed** rather than opening a
@@ -286,15 +349,19 @@ Last thing you output, in this shape:
 ```text
 Change:           <the one sentence from step 1>
 Tests added:      <paths, or "none — <reason>">
+Tests reviewed:   <existing coverage reused and scope>
+Tests removed:    <paths and retained coverage/retired behavior, or "none — <reason>">
 README:           <the bullet added or edited, or "no README change — <reason>">
 Rows added:       <FORK.md rows>
 Rows removed:     <rows, and why they went obsolete>
-Full list:        <pass | pass except <check> (environmental, evidence: …)>
+Validation:       <scope, commands and results; failures/skips and evidence>
 Model audit:      <run — logged <date> | not run (not asked) — last pass <date>
                   [; recommended because <bundle touched | drift reported>]>
 PR:               <url>
 ```
 
-**Done means:** the list ran, the checklist matches the code, the docs landed in
-the same commit, and **the PR is open with its URL in the report**. A green diff
-with a stale checklist is not done, and neither is a pushed branch with no PR.
+**Done means:** the checks required by step 5 ran, test maintenance was reviewed,
+the checklist matches the code, the docs landed in the same change set, and
+**the PR is open with its URL in the report** (unless the user explicitly narrowed
+delivery). If checks or PR creation are blocked, report the actual failure and
+remaining work; do not call the cycle complete.

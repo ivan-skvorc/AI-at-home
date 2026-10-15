@@ -5,11 +5,11 @@
 ## How to use this file
 
 **Making a change? Run the procedure in [`CHANGE_CYCLE.md`](CHANGE_CYCLE.md).**
-That file is the *order of operations* — implement, decide whether a new test is
-owed, add or retire the checklist rows below, run the list, decide on the audit,
-open the PR — and it reads this file's two lists rather than copying them.
-"Run the code change cycle from CHANGE_CYCLE.md" is the whole instruction. This
-file stays the *material*: the checks themselves, and why each one exists.
+That file is the *order of operations* — baseline existing tests, implement,
+reuse/add/prune tests, maintain the checklist rows below, run the required scope,
+decide on the audit, and open the PR. It applies automatically to every coding-agent
+change request; "run the code change cycle from CHANGE_CYCLE.md" remains a reminder.
+This file stays the *material*: the checks themselves, and why each one exists.
 
 **This file is the fork's checklist, not its brochure.** Two things are asked of
 anyone — human or coding agent — who adds a feature, changes one, or merges
@@ -19,7 +19,9 @@ first is always due; the second is a **decision**, and usually the answer is no:
 1. **Run the checks.** [Post-sync feature checklist](#post-sync-feature-checklist)
    is the list: the mechanical gates first, then one row per fork feature naming
    the exact command that proves that feature survived. Run the whole thing on
-   every upstream merge; on a feature PR, run the rows your change touches. What
+   every upstream merge or broad change; on a scoped PR, run the relevant gates
+   and rows as defined by CHANGE_CYCLE.md step 5, without repeating tests already
+   covered by a selected suite. What
    a _new_ feature has to ship alongside its code — README section, checklist
    row, `AGENTS.md` entry, changelog line, tests — is spelled out in
    [Adding a new fork feature](#adding-a-new-fork-feature--what-to-write-and-where).
@@ -30,19 +32,20 @@ first is always due; the second is a **decision**, and usually the answer is no:
    shape — but it is **opt-in, not part of a sync**. The manual pass means
    reading a dozen provider pages, and a roster nothing has happened to comes
    back identical, so running it by reflex spends real time and tokens to
-   confirm what the last pass already said. Run it when the user asks for one,
-   when the weekly `model-audit` job reports actual drift, or when you changed
-   the bundle yourself. Otherwise check
+   confirm what the last pass already said. Run it when the user asks for one.
+   Bundle changes or drift from the weekly `model-audit` job merit a recommendation
+   to request an audit, rather than starting one automatically. Otherwise check
    [`docs/model-audit-log.md`](docs/model-audit-log.md) for when it last ran,
-   say so, and move on.
+   say so, and move on. CHANGE_CYCLE.md step 6 owns the trigger.
 
-**The checklist is only true if you maintain it.** A feature that ships without a
-row is a feature the next sync cannot verify, and a row whose test no longer
-exists is worse than no row at all — it reads green and checks nothing. So:
-**adding a feature means adding its row in the same change set, and removing a
-feature means removing its row.** If a check stops being the right one, replace
-it; if it stops being needed, delete it. Treat the table as code that happens to
-be prose.
+**The checklist is only true if you maintain it.** A silent risk uncovered by
+either the gates or a feature row is a risk the next sync cannot verify, and a
+row whose test no longer exists reads green and checks nothing. So:
+**Add a row for a silent post-sync risk not already covered by the mechanical
+gates; remove a feature's row when the feature is removed.** If a check stops being
+the right one, replace it; if it stops being needed, delete it. Treat the table as code that happens to
+be prose. Review the underlying tests too, following CHANGE_CYCLE.md step 3;
+removing a checklist row alone does not remove a redundant or obsolete test.
 
 **Where the depth goes.** The row itself stays in this file:
 `scripts/upstream_sync.py` parses that table into every auto-generated sync PR, so
@@ -689,7 +692,7 @@ Convenience features on top of upstream, designed around running DeerFlow locall
 
 ### Adding a new fork feature — what to write, and where
 
-A feature that only exists in code is a feature the next person deletes by accident. Every fork addition lands the same documents — and its own tests — in the **same change set** as the code, and the two guidance files below are byte-budgeted, so where the depth goes is a decision, not a preference.
+A feature that only exists in code is a feature the next person deletes by accident. Every fork addition lands the same documents — and useful test coverage, reused or extended as needed — in the **same change set** as the code, and the two guidance files below are byte-budgeted, so where the depth goes is a decision, not a preference.
 
 - **`README.md` — the user-facing half.** Add a `###` subsection under **Core Features** (or a top-level `##` if the feature is not a core-agent behavior, the way _Scheduled Tasks_ and _Backup and Restore_ sit on their own). Write it for someone deciding whether to turn the feature on, not for someone maintaining it. Cover, in this order and in prose rather than a bare list:
   - **What it is, in one paragraph**, naming the UI entry point (the page and the button) so the reader can find it. If it replaces or sits beside an existing flow, say which and how they differ.
@@ -698,10 +701,10 @@ A feature that only exists in code is a feature the next person deletes by accid
   - **How to turn it on**, with the literal `config.yaml` block, every key that matters, and any _other_ switch it depends on. State the default explicitly — "off by default" is not implied by an example that shows `enabled: true`.
   - **Add the anchor to the Table of Contents** in the same edit. The TOC is hand-maintained; a section missing from it is a section nobody browses to.
   - **Add a bullet to the leading list** in the blockquote at the top of the file ("On top of upstream, it adds — out of the box:"). That list is the fork's shop window and is meant to be **exhaustive** — every fork upgrade gets a line, with its own emoji, in the same change set that adds the feature. It is not a summary of the section below it: write two or three sentences that lead with what a user _gets_, name the surprising behavior, and say what it costs to turn on (a config key, a daemon setting, nothing). A feature that is documented everywhere except here is a feature nobody discovers, because this list is as far as most readers get.
-- **`FORK.md` — this file, the maintainer's half.** Add a numbered `### N.` section under _What this fork adds_ covering the reasoning the README deliberately omits: why the design is shaped this way, which properties are load-bearing, and what a future refactor must not "simplify" away. Then add a row to the [Post-sync feature checklist](#post-sync-feature-checklist) naming **the exact command that verifies it** and the specific asserts that are silent when broken — that row is what a sync 18 months from now actually runs, and `scripts/upstream_sync.py` renders it into every auto-generated sync PR. The rule runs both ways: **a feature that is removed takes its row with it**, and a check that is replaced is replaced in the row too — see [How to use this file](#how-to-use-this-file) for why a stale row is worse than a missing one, and for when the depth behind a row belongs in its own file.
+- **`FORK.md` — this file, the maintainer's half.** Add a numbered `### N.` section under _What this fork adds_ covering the reasoning the README deliberately omits: why the design is shaped this way, which properties are load-bearing, and what a future refactor must not "simplify" away. Add a row to the [Post-sync feature checklist](#post-sync-feature-checklist) only for a silent risk not already covered by the mechanical gates, following CHANGE_CYCLE.md step 4. Name **the exact command that verifies it** and the specific asserts that are silent when broken; `scripts/upstream_sync.py` renders the row into every auto-generated sync PR. The rule runs both ways: **a feature that is removed takes its row with it**, and a check that is replaced is replaced in the row too — see [How to use this file](#how-to-use-this-file) for why a stale row is worse than a missing one, and for when the depth behind a row belongs in its own file.
 - **The nearest `AGENTS.md` — the agent's half.** Invariants an AI coding agent needs _before_ editing the code go beside the code, in the module-local guide. **Do not grow the root or module files**: `backend/tests/test_agent_guidance_check.py` is a hard assert (soft budgets: root 16 KiB, module 28 KiB, local 40 KiB), the root file runs within a few dozen bytes of its budget, and _documenting a feature can fail CI on its own_. Put the depth in a local `AGENTS.md` next to the code, leave a one-line pointer in the module file, and register the new path in that test's approved-guidance list.
-- **The checks themselves — write them, don't just cite them.** The FORK.md row above names a command; this is the work of making that command exist and mean something. A fork feature ships with **new** tests, not a note that the existing suite still passes: the pure model or helper in a unit test, the wiring in whatever layer owns it (`backend/tests/` for Python — TDD is mandatory there — `frontend/tests/unit/` for logic and hooks, `frontend/tests/e2e/` for anything a user clicks through), and a launch-time script in the test that already covers that script. Two rules make the difference between a test and a decoration:
-  - **Prove the test fails without the change.** Revert the behavior (or neutralize the one line that implements it), watch the new test go red, put it back. A test that passes both ways pins nothing, and the fork is full of invariants — a per-thread lock, a stripped request option, a default that must stay off — where the broken state is _silent_ and every other test stays green.
+- **The checks themselves — reuse coverage, fill gaps, and prune.** Follow CHANGE_CYCLE.md step 3. Name existing tests that prove the contract; extend them or add tests only for uncovered behavior. Use `backend/tests/` for Python, `frontend/tests/unit/` for logic and hooks, and `frontend/tests/e2e/` when a user workflow needs browser coverage. Extend the existing script tests for launch behavior. Review and remove proven unnecessary tests in the affected area, recording retained coverage or deliberately retired behavior in the PR. Two rules apply to new behavioral coverage:
+  - **Prove the test detects the regression.** Run it before the fix or safely reproduce the old behavior in isolation, then run its final form after the change. Explain when a failing reproduction is impractical. A test that passes both ways pins nothing, and the fork is full of invariants — a per-thread lock, a stripped request option, a default that must stay off — where the broken state is _silent_ and every other test stays green.
   - **Pin the property, not the implementation.** Name the thing that would be quietly "simplified" away and assert on that: the option that must reach the wire, the lock that must stay scoped, the branch that must decline rather than evict. Then say so in the row and in the local `AGENTS.md`, so the next person reads why before they refactor.
 - **`CHANGELOG.md` — the release half.** One `### Added` bullet under `## [Unreleased]`, written from the user's perspective and leading with what changed for them, not with the module you touched. Name the config key and its default in the same bullet.
 - **Config, if the feature has any.** **Any** new key means bumping `config_version` **and both chart copies** (`deploy/helm/deer-flow/values.yaml` and that chart's `README.md`) — `scripts/check_config_version.sh` is CI's `validate-chart` job, and nothing outside CI reads those copies. It is tempting to assume a single leaf key inside an existing section is exempt; it is not. `config_upgrade.py` compares the **shape**, nested keys included, and at equal versions it _warns and writes nothing_, so an existing install keeps a config permanently missing the key while every launch path prints the warning. Don't reason about it — prove it, on a copy of the previous example:
