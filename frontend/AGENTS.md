@@ -179,8 +179,11 @@ When adding features:
 
 1. Follow the established `src/` structure
 2. Add TypeScript types and proper error handling
-3. Write unit tests under `tests/unit/` (`pnpm test`) and E2E tests under `tests/e2e/` (`pnpm test:e2e`)
-4. Run `pnpm check` before committing (it runs `prettier --check .` too, which covers Markdown under `frontend/` — `src/AGENTS.md` included)
+3. Follow [CHANGE_CYCLE.md](../CHANGE_CYCLE.md) for test scope and hygiene. Reuse
+   coverage; add or extend tests only for uncovered behavior (`tests/unit/` or
+   `tests/e2e/`).
+4. For code changes, run `pnpm check` and `pnpm test`; use the cycle's scope table
+   for E2E. Docs-only edits use focused checks, including Markdown formatting.
 5. Update this `AGENTS.md` when architecture, commands, or conventions change
 
 Route asset budgets are enforced with `pnpm perf:check`. The command measures

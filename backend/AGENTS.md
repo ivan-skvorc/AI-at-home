@@ -207,12 +207,17 @@ only `AUTH_SOURCE_INTERNAL` run input may retain them.
 
 ## Development Workflow
 
-### Test-Driven Development (TDD) — MANDATORY
+### Behavioral testing and TDD
 
-**Every new feature or bug fix MUST be accompanied by unit tests. No exceptions.**
+Follow [CHANGE_CYCLE.md](../CHANGE_CYCLE.md) for test scope, test hygiene, and
+reporting. Reuse existing coverage first; add or extend tests only for uncovered
+behavior. For uncovered executable regressions or new behavior, write a failing behavioral
+test before implementation (TDD).
 
 - Write tests in `backend/tests/` following the existing naming convention `test_<feature>.py`
-- Run both offline targets before and after your change: `make test` and `make test-blocking-io`
+- Run relevant existing tests as a baseline before edits; after backend code changes,
+  run `make test`, plus `make test-blocking-io` when async, runtime, or I/O paths change.
+  Docs-only changes use focused documentation/guidance checks from the cycle.
 - Tests must pass before a feature is considered complete
 - For lightweight config/utility modules, prefer pure unit tests with no external dependencies
 - If a module causes circular import issues in tests, add a `sys.modules` mock in `tests/conftest.py` (see existing example for `deerflow.subagents.executor`)
