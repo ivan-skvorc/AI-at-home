@@ -23,6 +23,13 @@ export type DeviceSignIn = {
   interval: number;
   expires_in: number;
 };
+export type ChatGPTSignIn = {
+  status: "pending";
+  flow_id: string;
+  authorization_url: string;
+  redirect_uri: string;
+  expires_in: number;
+};
 type Connected = {
   status: "connected";
   provider: SubscriptionProvider;
@@ -62,6 +69,31 @@ export const loadSubscriptions = (signal?: AbortSignal) =>
   );
 export const beginGrokSignIn = () =>
   request<DeviceSignIn>("/grok/connect", "POST", {});
+export async function beginChatGPTSignIn(
+  newAccount = false,
+): Promise<ChatGPTSignIn> {
+  const flow = await request<ChatGPTSignIn>(
+    "/chatgpt/start",
+    "POST",
+    newAccount ? { new_account: true } : {},
+  );
+  const authorization = new URL(flow.authorization_url);
+  if (
+    authorization.origin !== "https://auth.openai.com" ||
+    authorization.pathname !== "/api/accounts/authorize" ||
+    authorization.username ||
+    authorization.password ||
+    authorization.hash ||
+    authorization.searchParams.has("id_token_hint")
+  )
+    throw new Error("Invalid ChatGPT sign-in response");
+  return flow;
+}
+export const completeChatGPTSignIn = (flowId: string, callbackURL: string) =>
+  request<Connected>("/chatgpt/complete", "POST", {
+    flow_id: flowId,
+    callback_url: callbackURL,
+  });
 export const pollGrokSignIn = (flowId: string, signal?: AbortSignal) =>
   request<Connected | { status: "pending"; interval: number }>(
     "/grok/poll",

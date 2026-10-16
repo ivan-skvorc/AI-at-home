@@ -43,11 +43,22 @@ class PollRequest(BaseModel):
     flow_id: str = Field(min_length=1, max_length=100)
 
 
+class ChatGPTCallbackRequest(PollRequest):
+    callback_url: SecretStr = Field(min_length=1, max_length=8192)
+
+
+class ChatGPTStartRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    new_account: bool = False
+
+
 def _call(func, *args):
     try:
         return func(*args)
     except service.SubscriptionError as exc:
-        raise HTTPException(exc.status_code, str(exc)) from None
+        # Only DeerFlow session authentication should return 401. The shared
+        # browser fetcher redirects to /login for that status.
+        raise HTTPException(400 if exc.status_code == 401 else exc.status_code, str(exc)) from None
     except Exception:
         # Provider and validation exceptions can contain credentials. Never
         # include their text in HTTP responses or drained-write diagnostics.
@@ -72,6 +83,21 @@ async def download_chatgpt_helper(request: Request):
 
     source = await asyncio.to_thread(_call, helper_source)
     return Response(source, media_type="text/x-python", headers={"Content-Disposition": 'attachment; filename="deerflow-chatgpt-login.py"', "Cache-Control": "no-store"})
+
+
+@router.post("/chatgpt/start")
+async def start_chatgpt(request: Request, response: Response, body: ChatGPTStartRequest):
+    await require_admin_user(request, detail=_ADMIN)
+    owner = await _owner(request)
+    response.headers["Cache-Control"] = "no-store"
+    return await run_drained_write("Start ChatGPT sign-in", _call, (HTTPException,), service.begin_chatgpt_connection, owner, body.new_account)
+
+
+@router.post("/chatgpt/complete")
+async def complete_chatgpt(request: Request, body: ChatGPTCallbackRequest):
+    await require_admin_user(request, detail=_ADMIN)
+    owner = await _owner(request)
+    return await run_drained_write("Complete ChatGPT sign-in", _call, (HTTPException,), service.complete_chatgpt_connection, owner, body.flow_id, body.callback_url.get_secret_value())
 
 
 @router.post("/{provider}/connect")

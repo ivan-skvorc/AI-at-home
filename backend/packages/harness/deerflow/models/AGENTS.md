@@ -251,7 +251,13 @@ reasoning replay, stream terminal checks and subscription-specific usage names.
 Grok always streams with its routing/auth headers. Kimi preserves reasoning on
 tool followups and rejects inherited non-interactive policy before auth/network.
 Subscription-selected models bypass API fallback chains and per-token pricing.
-Remote ChatGPT OAuth uses packaged `chatgpt_subscription_login.py`; imports verify
-both signed grants and retain the runtime's own host ID. Full operator flow:
+Remote ChatGPT OAuth starts server-owned PKCE and accepts a manual loopback URL
+handoff. Bind the encrypted pending attempt to its owner, expiry and generation;
+verify the exact saved URI and state before consuming it. Never fetch pasted URLs
+or expose PKCE verifiers/tokens in browser responses. Save issued registrations
+before exchange and renewable grants before discovery. Keep only non-secret
+registration metadata on disconnect. The packaged `chatgpt_subscription_login.py`
+and JSON import remain a fallback; imports verify both signed grants and retain
+the runtime's own host ID. Full operator flow:
 [README](../../../../../README.md#subscription-models). Focused coverage:
 `tests/test_{subscriptions,subscription_providers,chatgpt_subscription_auth}.py`.

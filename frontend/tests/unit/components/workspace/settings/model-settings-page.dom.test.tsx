@@ -21,6 +21,8 @@ import {
   type ManagedModel,
 } from "@/core/models/management";
 import {
+  beginChatGPTSignIn,
+  completeChatGPTSignIn,
   loadSubscriptions,
   beginGrokSignIn,
   pollGrokSignIn,
@@ -31,6 +33,8 @@ import {
 rs.mock("@/core/auth/AuthProvider", () => ({ useAuth: rs.fn() }));
 rs.mock("@/core/i18n/hooks", () => ({ useI18n: () => ({ t: enUS }) }));
 rs.mock("@/core/models/subscriptions", () => ({
+  beginChatGPTSignIn: rs.fn(),
+  completeChatGPTSignIn: rs.fn(),
   loadSubscriptions: rs.fn(),
   beginGrokSignIn: rs.fn(),
   pollGrokSignIn: rs.fn(),
@@ -66,6 +70,14 @@ beforeEach(() => {
   rs.mocked(useAuth).mockReturnValue(auth("admin"));
   rs.mocked(loadManagedModels).mockResolvedValue({ models: [existing] });
   rs.mocked(loadSubscriptions).mockResolvedValue({ providers: [] });
+  rs.mocked(beginChatGPTSignIn).mockResolvedValue({
+    status: "pending",
+    flow_id: "chatgpt-flow",
+    authorization_url:
+      "https://auth.openai.com/api/accounts/authorize?state=state&code_challenge=challenge&nonce=nonce",
+    redirect_uri: "http://127.0.0.1:1455/auth/callback",
+    expires_in: 600,
+  });
   rs.mocked(saveManagedModel).mockResolvedValue({
     ...existing,
     revision: "v2",
@@ -144,11 +156,79 @@ test("subscription device sign-in refreshes the picker and keys are cleared afte
   expect(connectKimiSubscription).toHaveBeenCalledWith("private-key");
 });
 
-test("remote ChatGPT setup offers the local helper and keeps provider errors private", async () => {
-  mount();
+test("remote ChatGPT browser sign-in keeps callbacks private and preserves the helper fallback", async () => {
+  const client = mount();
   fireEvent.click(
     screen.getByRole("button", { name: "Continue with ChatGPT" }),
   );
+  const signIn = await screen.findByRole("link", {
+    name: "Open ChatGPT sign-in",
+  });
+  expect(signIn.getAttribute("href")).toBe(
+    "https://auth.openai.com/api/accounts/authorize?state=state&code_challenge=challenge&nonce=nonce",
+  );
+  expect(signIn.getAttribute("rel")).toBe("noopener noreferrer");
+  expect(signIn.getAttribute("referrerpolicy")).toBe("no-referrer");
+  const callback = screen.getByLabelText<HTMLInputElement>(
+    "ChatGPT return address",
+  );
+  expect(callback.type).toBe("password");
+  expect(callback.autocomplete).toBe("off");
+  expect(client.getQueryState(["models"])?.isInvalidated).toBe(false);
+  const callbackURL =
+    "http://127.0.0.1:1455/auth/callback?state=state&code=private-one-time-code&client_id=oaiapp_test";
+  rs.mocked(completeChatGPTSignIn).mockRejectedValueOnce(
+    new Error("private-one-time-code in provider failure"),
+  );
+  fireEvent.change(callback, { target: { value: callbackURL } });
+  fireEvent.click(screen.getByRole("button", { name: "Complete sign-in" }));
+  const dialog = screen.getByRole("dialog");
+  expect((await within(dialog).findByRole("alert")).textContent).toBe(
+    enUS.settings.subscriptions.failed,
+  );
+  expect(
+    within(dialog).queryByText("private-one-time-code in provider failure"),
+  ).toBeNull();
+  await waitFor(() =>
+    expect(client.getQueryState(["models"])?.isInvalidated).toBe(true),
+  );
+  client.setQueryData(["models"], { models: [] });
+  fireEvent.click(screen.getByRole("button", { name: "Start a new sign-in" }));
+  await waitFor(() => expect(beginChatGPTSignIn).toHaveBeenCalledTimes(2));
+  expect(callback.value).toBe("");
+  await screen.findByRole("link", { name: "Open ChatGPT sign-in" });
+  rs.mocked(completeChatGPTSignIn).mockResolvedValueOnce({
+    status: "connected",
+    provider: "chatgpt",
+    model_count: 1,
+  });
+  fireEvent.change(callback, { target: { value: callbackURL } });
+  fireEvent.click(screen.getByRole("button", { name: "Complete sign-in" }));
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  expect(completeChatGPTSignIn).toHaveBeenLastCalledWith(
+    "chatgpt-flow",
+    callbackURL,
+  );
+  expect(client.getQueryState(["models"])?.isInvalidated).toBe(true);
+  fireEvent.click(
+    screen.getByRole("button", { name: "Continue with ChatGPT" }),
+  );
+  expect(
+    screen.getByLabelText<HTMLInputElement>("ChatGPT return address").value,
+  ).toBe("");
+  const otherAccount = screen.getByRole<HTMLButtonElement>("button", {
+    name: "Use another ChatGPT account",
+  });
+  await waitFor(() => expect(otherAccount.disabled).toBe(false));
+  fireEvent.click(otherAccount);
+  await waitFor(() =>
+    expect(beginChatGPTSignIn).toHaveBeenLastCalledWith(true),
+  );
+  const advanced = screen.getByRole<HTMLButtonElement>("button", {
+    name: "Advanced: local sign-in helper",
+  });
+  await waitFor(() => expect(advanced.disabled).toBe(false));
+  fireEvent.click(advanced);
   expect(
     screen
       .getByRole("link", { name: "Download sign-in helper" })
@@ -171,15 +251,16 @@ test("remote ChatGPT setup offers the local helper and keeps provider errors pri
       ],
     },
   });
-  const dialog = screen.getByRole("dialog");
-  expect((await within(dialog).findByRole("alert")).textContent).toBe(
-    enUS.settings.subscriptions.failed,
-  );
+  expect(
+    (await within(screen.getByRole("dialog")).findByRole("alert")).textContent,
+  ).toBe(enUS.settings.subscriptions.failed);
   expect(rs.mocked(importChatGPTConnection).mock.calls[0]?.[0]).toEqual({
     access_token: "private-access-token",
   });
   expect(
-    within(dialog).queryByText("private-refresh-token in provider failure"),
+    within(screen.getByRole("dialog")).queryByText(
+      "private-refresh-token in provider failure",
+    ),
   ).toBeNull();
   fireEvent.click(screen.getByText("Close", { selector: "button" }));
   rs.mocked(connectKimiSubscription).mockRejectedValueOnce(

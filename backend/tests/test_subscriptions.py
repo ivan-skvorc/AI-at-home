@@ -5,6 +5,7 @@ import json
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
+from urllib.parse import parse_qs, urlencode, urlsplit
 
 import pytest
 from fastapi import HTTPException
@@ -331,3 +332,142 @@ def test_config_snapshots_remain_readable_while_subscription_provider_is_waiting
         finally:
             release.set()
             connecting.result(timeout=5)
+
+
+def test_chatgpt_browser_handoff_binds_callback_and_keeps_pkce_on_server(store, monkeypatch):
+    from deerflow.models import chatgpt_subscription_auth as auth
+    from deerflow.models import chatgpt_subscription_login as login
+
+    started = service.begin_chatgpt_connection("owner")
+    flow = store.get("chatgpt")["pending_flow"]
+    parameters = parse_qs(urlsplit(started["authorization_url"]).query)
+    assert parameters["client_id"] == [login.DYNAMIC_CLIENT]
+    assert parameters["redirect_uri"] == [started["redirect_uri"]]
+    assert parameters["ext_agent_host_id"] == [flow["ext_agent_host_id"]]
+    assert parameters["code_challenge_method"] == ["S256"]
+    assert "id_token_hint" not in parameters
+    assert flow["verifier"] not in json.dumps(started)
+    assert flow["verifier"].encode() not in store.path.read_bytes()
+    callback = started["redirect_uri"] + "?" + urlencode({"state": parameters["state"][0], "code": "private-code", "client_id": "oaiapp_issued"})
+    requests = []
+
+    def exchange(method, url, **kwargs):
+        requests.append("token")
+        assert url == login.TOKEN_ENDPOINT
+        assert kwargs["data"]["code_verifier"] == flow["verifier"]
+        assert kwargs["data"]["redirect_uri"] == started["redirect_uri"]
+        assert store.get("chatgpt")["client_id"] == "oaiapp_issued"
+        assert "pending_flow" not in store.get("chatgpt")
+        return {"access_token": "new-access", "refresh_token": "new-refresh"}
+
+    def validate(tokens, **kwargs):
+        requests.append("validate")
+        assert kwargs == {"client_id": "oaiapp_issued", "subject": None, "nonce": parameters["nonce"][0], "jwks": {"keys": []}}
+        return {**tokens, "client_id": "oaiapp_issued", "subject": "verified-subject", "expires_at": 9999999999}
+
+    monkeypatch.setattr(service, "_request_json", exchange)
+    monkeypatch.setattr(auth, "_fetch_jwks", lambda: requests.append("keys") or {"keys": []})
+    monkeypatch.setattr(auth, "validate_chatgpt_token_response", validate)
+    monkeypatch.setattr(service, "_catalog", lambda *args: [])
+    bad_callbacks = [
+        callback.replace("127.0.0.1", "attacker.invalid"),
+        callback.replace("http:", "https:"),
+        callback.replace("/auth/callback", "/other-path"),
+        callback.replace("127.0.0.1", "user@127.0.0.1"),
+        callback + "#fragment",
+        callback + "&state=duplicate",
+        callback.replace(parameters["state"][0], "wrong-state"),
+        callback.replace(parameters["state"][0], "wrong-state") + "&error=access_denied",
+    ]
+    for candidate in bad_callbacks:
+        with pytest.raises(service.SubscriptionError):
+            service.complete_chatgpt_connection("owner", started["flow_id"], candidate)
+        assert store.get("chatgpt")["pending_flow"] == flow
+    with pytest.raises(service.SubscriptionError) as error:
+        service.complete_chatgpt_connection("other-owner", started["flow_id"], callback)
+    assert error.value.status_code == 404
+    assert requests == []
+    assert service.complete_chatgpt_connection("owner", started["flow_id"], callback)["status"] == "connected"
+    assert requests == ["keys", "token", "validate"]
+    assert store.get("chatgpt")["ext_agent_host_id"] == flow["ext_agent_host_id"]
+    with pytest.raises(service.SubscriptionError):
+        service.complete_chatgpt_connection("owner", started["flow_id"], callback)
+    declined = service.begin_chatgpt_connection("owner")
+    declined_params = parse_qs(urlsplit(declined["authorization_url"]).query)
+    denial = declined["redirect_uri"] + "?" + urlencode({"state": declined_params["state"][0], "error": "access_denied"})
+    with pytest.raises(service.SubscriptionError):
+        service.complete_chatgpt_connection("owner", declined["flow_id"], denial)
+    assert "pending_flow" not in store.get("chatgpt")
+    assert store.get("chatgpt")["connected"] is True
+    assert requests == ["keys", "token", "validate"]
+
+
+@pytest.mark.parametrize("failure", ["keys", "exchange", "grant", "catalog"])
+def test_chatgpt_browser_completion_preserves_active_grant_until_verified(store, monkeypatch, failure):
+    from deerflow.models import chatgpt_subscription_auth as auth
+
+    original = {"connected": True, "client_id": "oaiapp_existing", "subject": "selected", "access_token": "old-access", "id_token": "private-id", "models": []}
+    store.save("chatgpt", original)
+    started = service.begin_chatgpt_connection("owner")
+    params = parse_qs(urlsplit(started["authorization_url"]).query)
+    assert params["client_id"] == ["oaiapp_existing"]
+    assert "private-id" not in started["authorization_url"]
+    callback = started["redirect_uri"] + "?" + urlencode({"state": params["state"][0], "code": "code"})
+
+    def keys():
+        if failure == "keys":
+            raise auth.ChatGPTKeyDiscoveryError("Provider details must not escape")
+        return {"keys": []}
+
+    def exchange(*args, **kwargs):
+        if failure == "exchange":
+            raise service.SubscriptionError("Exchange unavailable")
+        return {"access_token": "new-access", "refresh_token": "new-refresh"}
+
+    def validate(tokens, **kwargs):
+        assert kwargs["subject"] == "selected"
+        if failure == "grant":
+            raise ValueError("private-token must not escape")
+        return {**tokens, "client_id": "oaiapp_existing", "subject": "selected", "expires_at": 9999999999}
+
+    monkeypatch.setattr(auth, "_fetch_jwks", keys)
+    monkeypatch.setattr(service, "_request_json", exchange)
+    monkeypatch.setattr(auth, "validate_chatgpt_token_response", validate)
+    monkeypatch.setattr(service, "_catalog", lambda *args: (_ for _ in ()).throw(service.SubscriptionError("Catalog unavailable")))
+    with pytest.raises(service.SubscriptionError) as error:
+        service.complete_chatgpt_connection("owner", started["flow_id"], callback)
+    assert "private-token" not in str(error.value)
+    saved = store.get("chatgpt")
+    assert "pending_flow" not in saved
+    assert saved["access_token"] == ("new-access" if failure == "catalog" else "old-access")
+    if failure == "catalog":
+        assert saved["refresh_token"] == "new-refresh"
+
+
+def test_chatgpt_browser_generation_expiry_and_disconnect_retain_only_registration(store, monkeypatch):
+    import httpx
+
+    store.save("chatgpt", {"client_id": "oaiapp_saved", "subject": "saved-account", "connected": True, "access_token": "private-access", "refresh_token": "private-refresh", "models": []})
+    first = service.begin_chatgpt_connection("owner")
+    second = service.begin_chatgpt_connection("owner")
+    with pytest.raises(service.SubscriptionError):
+        service.complete_chatgpt_connection("owner", first["flow_id"], first["redirect_uri"])
+    assert store.get("chatgpt")["pending_flow"]["flow_id"] == second["flow_id"]
+    monkeypatch.setattr(service.time, "monotonic", lambda: 999999999999)
+    with pytest.raises(service.SubscriptionError) as error:
+        service.complete_chatgpt_connection("owner", second["flow_id"], second["redirect_uri"])
+    assert error.value.status_code == 410
+    assert store.get("chatgpt")["access_token"] == "private-access"
+    monkeypatch.setattr(httpx.Client, "post", lambda *args, **kwargs: httpx.Response(200))
+    service.disconnect_subscription("chatgpt")
+    assert store.get("chatgpt") == {"provider": "chatgpt", "client_id": "oaiapp_saved", "subject": "saved-account", "connected": False}
+    again = service.begin_chatgpt_connection("owner")
+    assert parse_qs(urlsplit(again["authorization_url"]).query)["client_id"] == ["oaiapp_saved"]
+    other_account = service.begin_chatgpt_connection("owner", new_account=True)
+    assert parse_qs(urlsplit(other_account["authorization_url"]).query)["client_id"] == ["dynamic_agent_client"]
+    assert service.SubscriptionStore().get("chatgpt")["pending_flow"]["subject"] is None
+    store.save("chatgpt", {"connected": True, "client_id": "oaiapp_active", "access_token": "private-access"})
+    with pytest.raises(service.SubscriptionError) as error:
+        service.begin_chatgpt_connection("owner", new_account=True)
+    assert error.value.status_code == 409
+    assert store.get("chatgpt")["access_token"] == "private-access"

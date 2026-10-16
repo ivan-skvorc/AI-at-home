@@ -15,14 +15,17 @@ import { Input } from "@/components/ui/input";
 import { useI18n } from "@/core/i18n/hooks";
 import { MODELS_QUERY_KEY } from "@/core/models/hooks";
 import {
+  beginChatGPTSignIn,
   beginGrokSignIn,
   chatGPTSignInHelperURL,
+  completeChatGPTSignIn,
   connectKimiSubscription,
   disconnectSubscription,
   importChatGPTConnection,
   loadSubscriptions,
   pollGrokSignIn,
   refreshSubscriptionModels,
+  type ChatGPTSignIn,
   type DeviceSignIn,
   type SubscriptionProvider,
 } from "@/core/models/subscriptions";
@@ -42,6 +45,9 @@ export function SubscriptionSettings({ userId }: { userId: string }) {
   const [notice, setNotice] = useState("");
   const [key, setKey] = useState("");
   const [chatgpt, setChatgpt] = useState(false);
+  const [chatgptFlow, setChatgptFlow] = useState<ChatGPTSignIn | null>(null);
+  const [callbackURL, setCallbackURL] = useState("");
+  const [advanced, setAdvanced] = useState(false);
   const [flow, setFlow] = useState<DeviceSignIn | null>(null);
 
   async function refresh() {
@@ -51,19 +57,44 @@ export function SubscriptionSettings({ userId }: { userId: string }) {
     ]);
   }
 
-  async function run(action: () => Promise<unknown>) {
+  async function run(action: () => Promise<unknown>, refreshCatalog = true) {
     setBusy(true);
     setError("");
     setNotice("");
     try {
       await action();
-      await refresh();
     } catch {
       // Provider errors and imported JSON may contain credentials. Keep UI errors generic.
       setError(text.failed);
     } finally {
+      if (refreshCatalog) {
+        try {
+          // A provider can save a new grant before discovery temporarily fails.
+          await refresh();
+        } catch {
+          setError(text.failed);
+        }
+      }
       setBusy(false);
     }
+  }
+
+  function closeChatGPT() {
+    setCallbackURL("");
+    setChatgptFlow(null);
+    setAdvanced(false);
+    setChatgpt(false);
+  }
+
+  async function startChatGPT(newAccount = false) {
+    setCallbackURL("");
+    setChatgptFlow(null);
+    setAdvanced(false);
+    setChatgpt(true);
+    await run(
+      async () => setChatgptFlow(await beginChatGPTSignIn(newAccount)),
+      false,
+    );
   }
 
   useEffect(() => {
@@ -119,7 +150,7 @@ export function SubscriptionSettings({ userId }: { userId: string }) {
     }
     await run(async () => {
       await importChatGPTConnection(connection);
-      setChatgpt(false);
+      closeChatGPT();
     });
   }
 
@@ -151,13 +182,7 @@ export function SubscriptionSettings({ userId }: { userId: string }) {
                   : text.disconnected}
             </p>
             {provider === "chatgpt" && (
-              <Button
-                disabled={busy}
-                onClick={() => {
-                  setError("");
-                  setChatgpt(true);
-                }}
-              >
+              <Button disabled={busy} onClick={() => void startChatGPT()}>
                 {text.chatgptConnect}
               </Button>
             )}
@@ -271,38 +296,125 @@ export function SubscriptionSettings({ userId }: { userId: string }) {
         );
       })}
       {notice && <p role="status">{notice}</p>}
-      <Dialog open={chatgpt} onOpenChange={setChatgpt}>
-        <DialogContent>
+      <Dialog
+        open={chatgpt}
+        onOpenChange={(open) => {
+          if (!open && !busy) closeChatGPT();
+        }}
+      >
+        <DialogContent className="max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>{text.helperTitle}</DialogTitle>
-            <DialogDescription>{text.helperDescription}</DialogDescription>
+            <DialogTitle>{text.browserTitle}</DialogTitle>
+            <DialogDescription>{text.browserDescription}</DialogDescription>
           </DialogHeader>
-          <a href={chatGPTSignInHelperURL()} download className="underline">
-            {text.helperDownload}
-          </a>
-          <p>{text.helperRun}</p>
-          <code className="text-sm break-all">
-            uv run deerflow-chatgpt-login.py
-          </code>
-          <p>{text.helperImport}</p>
+          <p>{text.browserInstructions}</p>
+          {chatgptFlow && (
+            <a
+              href={chatgptFlow.authorization_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              referrerPolicy="no-referrer"
+              className="underline"
+            >
+              {text.browserOpen}
+            </a>
+          )}
+          <p className="text-muted-foreground text-sm">{text.browserExpiry}</p>
           {error && <p role="alert">{error}</p>}
-          <label className="space-y-1">
-            <span>{text.connectionFile}</span>
-            <Input
-              type="file"
-              accept="application/json,.json"
-              disabled={busy}
-              onChange={(event) => {
-                void importFile(event.target.files?.[0]);
-                event.target.value = "";
-              }}
-            />
-          </label>
-          <Button
-            variant="outline"
-            disabled={busy}
-            onClick={() => setChatgpt(false)}
+          <form
+            className="space-y-3"
+            onSubmit={(event) => {
+              event.preventDefault();
+              if (!chatgptFlow || !callbackURL.trim()) return;
+              void run(async () => {
+                await completeChatGPTSignIn(
+                  chatgptFlow.flow_id,
+                  callbackURL.trim(),
+                );
+                closeChatGPT();
+              });
+            }}
           >
+            <label className="block space-y-1">
+              <span>{text.callbackLabel}</span>
+              <Input
+                type="password"
+                autoComplete="off"
+                autoCorrect="off"
+                spellCheck={false}
+                inputMode="url"
+                maxLength={8192}
+                value={callbackURL}
+                disabled={busy || !chatgptFlow}
+                onChange={(event) => setCallbackURL(event.target.value)}
+              />
+            </label>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                type="submit"
+                disabled={busy || !chatgptFlow || !callbackURL.trim()}
+              >
+                {text.callbackComplete}
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                disabled={busy}
+                onClick={() => void startChatGPT()}
+              >
+                {text.browserRestart}
+              </Button>
+              {!catalog.data?.providers.some(
+                (connection) =>
+                  connection.provider === "chatgpt" &&
+                  (connection.connected || connection.needs_reauth),
+              ) && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={busy}
+                  onClick={() => void startChatGPT(true)}
+                >
+                  {text.browserOtherAccount}
+                </Button>
+              )}
+            </div>
+          </form>
+          <Button
+            variant="ghost"
+            disabled={busy}
+            aria-expanded={advanced}
+            onClick={() => setAdvanced(!advanced)}
+          >
+            {text.advancedHelper}
+          </Button>
+          {advanced && (
+            <div className="space-y-3 border-t pt-3">
+              <h4 className="font-medium">{text.helperTitle}</h4>
+              <p>{text.helperDescription}</p>
+              <a href={chatGPTSignInHelperURL()} download className="underline">
+                {text.helperDownload}
+              </a>
+              <p>{text.helperRun}</p>
+              <code className="text-sm break-all">
+                uv run deerflow-chatgpt-login.py
+              </code>
+              <p>{text.helperImport}</p>
+              <label className="block space-y-1">
+                <span>{text.connectionFile}</span>
+                <Input
+                  type="file"
+                  accept="application/json,.json"
+                  disabled={busy}
+                  onChange={(event) => {
+                    void importFile(event.target.files?.[0]);
+                    event.target.value = "";
+                  }}
+                />
+              </label>
+            </div>
+          )}
+          <Button variant="outline" disabled={busy} onClick={closeChatGPT}>
             {busy ? text.working : text.close}
           </Button>
         </DialogContent>
