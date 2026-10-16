@@ -11,11 +11,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **subscription models:** administrator connections in Settings → Models for
   ChatGPT plan access, Grok device-code OAuth, and Kimi Code subscription keys.
   Provider catalogs populate the picker without YAML edits; credentials are
-  encrypted and renewed on the server. Remote ChatGPT setup uses a downloadable
-  local sign-in helper. Kimi is restricted to personal interactive sessions, and
+  encrypted and renewed on the server. Remote ChatGPT setup offers browser
+  sign-in with a manual return-URL handoff and a local helper fallback.
+  Kimi is restricted to personal interactive sessions, and
   selected subscription models never silently switch to paid API billing.
 
 ### Changed
+- **ChatGPT sign-in:** Settings starts authorization in your browser and accepts
+  its final loopback return URL, removing the downloaded-script requirement for
+  LAN/Tailscale users. Expiring one-time attempts keep PKCE and renewable tokens
+  on the server; helper download/import remains available as a fallback.
 - **development:** the shared agent change cycle now applies automatically to
   Claude Code, Codex/ChatGPT, and other configured coding agents. It requires
   existing-test runs, coverage only where needed, a scoped review of unnecessary

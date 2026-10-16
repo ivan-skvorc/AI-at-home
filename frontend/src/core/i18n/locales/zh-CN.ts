@@ -1972,6 +1972,19 @@ export const zhCN: Translations = {
       working: "处理中…",
       failed: "订阅请求未能完成。",
       chatgptConnect: "使用 ChatGPT 继续",
+      browserTitle: "在浏览器中连接 ChatGPT",
+      browserDescription:
+        "在另一标签页登录，然后将返回地址粘贴到这里。此手动交接无需本地脚本。OpenAI 文档中的本地登录方式仍可在“高级”选项中使用。",
+      browserInstructions:
+        "打开 OpenAI 登录页并授权使用订阅。最后的地址以 127.0.0.1 开头；当 DeerFlow 位于另一设备时，该页面可能显示无法连接。请复制该标签页地址栏中的完整地址，返回这里，通过 HTTPS 或可信的 Tailscale 连接粘贴到下方。",
+      browserOpen: "打开 ChatGPT 登录页",
+      browserExpiry:
+        "每次登录尝试将在几分钟后过期。如果过期或失败，请重新开始登录。",
+      browserRestart: "重新开始登录",
+      browserOtherAccount: "使用其他 ChatGPT 账号",
+      callbackLabel: "ChatGPT 返回地址",
+      callbackComplete: "完成登录",
+      advancedHelper: "高级：本地登录助手",
       grokConnect: "登录 Grok",
       kimiKey: "Kimi Code 订阅密钥",
       kimiConnect: "连接 Kimi Code",

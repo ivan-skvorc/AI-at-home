@@ -2090,6 +2090,19 @@ export const enUS: Translations = {
       working: "Working…",
       failed: "Could not complete the subscription request.",
       chatgptConnect: "Continue with ChatGPT",
+      browserTitle: "Connect ChatGPT in your browser",
+      browserDescription:
+        "Sign in in another tab, then paste its return address here. This manual handoff needs no local script. OpenAI’s documented local sign-in flow is available under Advanced.",
+      browserInstructions:
+        "Open OpenAI’s sign-in page and approve plan access. The final address starts with 127.0.0.1 and may show that it cannot connect when DeerFlow runs on another device. Copy the full address from that tab’s address bar, return here, and paste it below over HTTPS or a trusted Tailscale connection.",
+      browserOpen: "Open ChatGPT sign-in",
+      browserExpiry:
+        "Each attempt expires after a few minutes. If it expires or fails, start a new sign-in.",
+      browserRestart: "Start a new sign-in",
+      browserOtherAccount: "Use another ChatGPT account",
+      callbackLabel: "ChatGPT return address",
+      callbackComplete: "Complete sign-in",
+      advancedHelper: "Advanced: local sign-in helper",
       grokConnect: "Sign in to Grok",
       kimiKey: "Kimi Code subscription key",
       kimiConnect: "Connect Kimi Code",

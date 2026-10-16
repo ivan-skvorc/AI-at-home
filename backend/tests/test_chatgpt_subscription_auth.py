@@ -57,6 +57,46 @@ def test_import_verifies_identity_and_preserves_runtime_host(credentials):
     assert "chatgpt.tokens.use.direct" in first["scopes"]
 
 
+def test_browser_handoff_verifies_nonce_and_keeps_provider_errors_in_settings(credentials, monkeypatch):
+    from types import SimpleNamespace
+    from urllib.parse import urlencode
+
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from app.gateway.routers import subscriptions as router
+    from deerflow.models import subscriptions as service
+
+    app = FastAPI()
+
+    @app.middleware("http")
+    async def administrator(request, call_next):
+        request.state.user = SimpleNamespace(id="admin", system_role="admin")
+        return await call_next(request)
+
+    app.include_router(router.router)
+    monkeypatch.setattr(service, "_catalog", lambda *args: [])
+    with TestClient(app) as client:
+        for valid_nonce in (False, True):
+            start = client.post("/api/subscriptions/chatgpt/start", json={})
+            assert start.status_code == 200
+            assert start.headers["cache-control"] == "no-store"
+            flow = start.json()
+            parameters = parse_qs(urlsplit(flow["authorization_url"]).query)
+            token_response = credentials(identity_updates={"nonce": parameters["nonce"][0] if valid_nonce else "another-attempt"})
+            monkeypatch.setattr(service, "_request_json", lambda *args, **kwargs: token_response)
+            callback = flow["redirect_uri"] + "?" + urlencode({"state": parameters["state"][0], "code": "private-code", "client_id": "oaiapp_deerflow"})
+            response = client.post("/api/subscriptions/chatgpt/complete", json={"flow_id": flow["flow_id"], "callback_url": callback})
+            # A provider rejection must not use 401: the browser fetcher would
+            # mistake that for an expired DeerFlow session and leave settings.
+            assert response.status_code == (200 if valid_nonce else 400)
+            assert "private-code" not in response.text
+            assert token_response["access_token"] not in response.text
+            assert token_response["refresh_token"] not in response.text
+            status = client.get("/api/subscriptions").json()
+            assert next(item for item in status["providers"] if item["provider"] == "chatgpt")["connected"] is valid_nonce
+
+
 @pytest.mark.parametrize(
     "changes",
     [

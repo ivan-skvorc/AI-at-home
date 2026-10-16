@@ -12,11 +12,12 @@ import hashlib
 import json
 import math
 import re
+import secrets
 import threading
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 from uuid import uuid4
 
 import httpx
@@ -364,6 +365,105 @@ def connect_chatgpt(connection: dict) -> dict:
         return _connected("chatgpt", record)
 
 
+def begin_chatgpt_connection(owner: str, new_account: bool = False) -> dict:
+    """Create server-held PKCE state for a manually pasted loopback return URL.
+
+    No callback listener is opened on either machine. The browser follows the
+    provider's loopback redirect; its final URL is handed back through settings.
+    """
+    from deerflow.models import chatgpt_subscription_login as login
+
+    store = SubscriptionStore()
+    with store.locked():
+        previous = store.get("chatgpt") or {}
+        if new_account:
+            if previous.get("connected") or previous.get("access_token") or previous.get("refresh_token"):
+                raise SubscriptionError("Disconnect ChatGPT before choosing another account", status_code=409)
+            previous = {}
+        client_id = previous.get("client_id", login.DYNAMIC_CLIENT)
+        if not isinstance(client_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]{3,256}", client_id):
+            raise SubscriptionError("The saved ChatGPT registration is invalid; restore the subscription storage", status_code=503)
+        host_id = login.get_or_create_host_id(runtime_home() / "subscriptions")
+        redirect_uri = f"http://127.0.0.1:{49152 + secrets.randbelow(16384)}/auth/callback"
+        state, nonce, verifier = (secrets.token_urlsafe(48) for _ in range(3))
+        flow = {
+            "flow_id": uuid4().hex,
+            "owner": owner,
+            "state": state,
+            "nonce": nonce,
+            "verifier": verifier,
+            "client_id": client_id,
+            "subject": previous.get("subject"),
+            "ext_agent_host_id": host_id,
+            "redirect_uri": redirect_uri,
+            "expires_at": time.time() + 300,
+            "deadline": time.monotonic() + 300,
+        }
+        # Identity-token hints are credentials. Never place one in a browser API
+        # response; the provider can select the account using its own session.
+        authorization_url = login.build_authorization_url(client_id=client_id, host_id=host_id, redirect_uri=redirect_uri, state=state, nonce=nonce, verifier=verifier)
+        store.save("chatgpt", {**previous, "pending_flow": flow})
+        return {"status": "pending", "flow_id": flow["flow_id"], "authorization_url": authorization_url, "redirect_uri": redirect_uri, "expires_in": 300}
+
+
+def complete_chatgpt_connection(owner: str, flow_id: str, callback_url: str) -> dict:
+    """Exchange a matching manual callback once, without dereferencing its URL."""
+    from deerflow.models import chatgpt_subscription_auth as auth
+    from deerflow.models import chatgpt_subscription_login as login
+
+    store = SubscriptionStore()
+    with store.locked():
+        previous = store.get("chatgpt") or {}
+        flow = previous.get("pending_flow", {})
+        if flow.get("owner") != owner or flow.get("flow_id") != flow_id:
+            raise SubscriptionError("This sign-in flow was not found; start again", status_code=404)
+        retained = {key: value for key, value in previous.items() if key != "pending_flow"}
+        if time.monotonic() >= flow["deadline"] or time.time() >= flow["expires_at"]:
+            store.save("chatgpt", retained)
+            raise SubscriptionError("This sign-in attempt expired; start again", status_code=410)
+        try:
+            if not isinstance(callback_url, str) or len(callback_url) > 8192 or any(ord(char) < 32 or ord(char) == 127 for char in callback_url) or "#" in callback_url:
+                raise ValueError
+            callback, expected = urlsplit(callback_url), urlsplit(flow["redirect_uri"])
+            if callback.username is not None or callback.password is not None or (callback.scheme, callback.netloc, callback.path) != (expected.scheme, expected.netloc, expected.path):
+                raise ValueError
+            parameters = parse_qs(callback.query, keep_blank_values=True)
+            if "error" in parameters and all(len(values) == 1 for values in parameters.values()) and secrets.compare_digest(parameters.get("state", [""])[0], flow["state"]):
+                # An authenticated denial ends this attempt without changing
+                # the active account. Unrelated callbacks cannot cancel it.
+                store.save("chatgpt", retained)
+                raise ValueError
+            code, client_id = login.parse_callback(callback_url, state=flow["state"], client_id=flow["client_id"])
+        except (ValueError, TypeError):
+            # Unrelated or malformed callbacks must leave the legitimate attempt
+            # usable. Do not echo a pasted URL, code, state, or provider error.
+            raise SubscriptionError("Paste the complete return URL from this ChatGPT sign-in attempt", status_code=400) from None
+        # Consume the valid attempt and retain an issued registration before any
+        # network operation. A code exchange may succeed despite a lost reply;
+        # retrying that code must not race a newer attempt or rotate it twice.
+        store.save("chatgpt", {**retained, "client_id": client_id})
+        try:
+            jwks = auth._fetch_jwks()
+        except auth.ChatGPTKeyDiscoveryError:
+            raise SubscriptionError("ChatGPT verification keys are temporarily unavailable; start sign-in again", status_code=503) from None
+        tokens = _request_json(
+            "POST", login.TOKEN_ENDPOINT, data={"grant_type": "authorization_code", "client_id": client_id, "code": code, "code_verifier": flow["verifier"], "redirect_uri": flow["redirect_uri"], "resource": login.RESOURCE}
+        )
+        try:
+            validated = auth.validate_chatgpt_token_response(tokens, client_id=client_id, subject=flow.get("subject"), nonce=flow["nonce"], jwks=jwks)
+            if not validated.get("refresh_token"):
+                raise ValueError
+        except ValueError:
+            raise SubscriptionError("ChatGPT did not authorize a renewable grant for this account; sign in again", status_code=401) from None
+        connected = {**validated, "ext_agent_host_id": flow["ext_agent_host_id"], "connected": True, "needs_reauth": False, "models": [], "updated_at": time.time()}
+        # Preserve the verified grant if discovery is temporarily unavailable;
+        # the ordinary Refresh action can load its catalog without signing in.
+        store.save("chatgpt", connected)
+        connected["models"] = _catalog("chatgpt", connected["access_token"])
+        store.save("chatgpt", connected)
+        return _connected("chatgpt", connected)
+
+
 def begin_grok_connection(owner: str) -> dict:
     store = SubscriptionStore()
     with store.locked():
@@ -450,5 +550,14 @@ def disconnect_subscription(provider: str) -> dict:
                 pass
         elif provider != "kimi":
             confirmed = not record.get("access_token")
-        store.delete(provider)
+        client_id = record.get("client_id")
+        if provider == "chatgpt" and isinstance(client_id, str) and client_id != "dynamic_agent_client" and re.fullmatch(r"[A-Za-z0-9_-]{3,256}", client_id):
+            # Registration/subject are nonsecret reauthorization metadata, not
+            # renewable access. Disconnection clears every token and flow.
+            registration = {"client_id": client_id, "connected": False}
+            if isinstance(record.get("subject"), str):
+                registration["subject"] = record["subject"]
+            store.save(provider, registration)
+        else:
+            store.delete(provider)
     return {"status": "disconnected", "provider": provider, "revocation_confirmed": confirmed}

@@ -1759,6 +1759,16 @@ export interface Translations {
       working: string;
       failed: string;
       chatgptConnect: string;
+      browserTitle: string;
+      browserDescription: string;
+      browserInstructions: string;
+      browserOpen: string;
+      browserExpiry: string;
+      browserRestart: string;
+      browserOtherAccount: string;
+      callbackLabel: string;
+      callbackComplete: string;
+      advancedHelper: string;
       grokConnect: string;
       kimiKey: string;
       kimiConnect: string;

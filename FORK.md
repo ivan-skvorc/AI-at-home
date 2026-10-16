@@ -4129,12 +4129,21 @@ Network, encryption and filesystem work stay off the Gateway event loop, with
 persistent mutations drained across cancellation.
 
 ChatGPT uses the public SIWC Responses endpoint. Its documented loopback login
-cannot return directly from a remote browser to this server, so the settings flow
-downloads a packaged local helper, then accepts a protected JSON import. Both
+cannot return directly from a remote browser to this server. Settings now starts
+authorization with server-owned PKCE and accepts a manually pasted loopback
+return URL. This removes the script requirement; it is a DeerFlow manual handoff,
+not an OpenAI-documented remote-browser flow. A packaged local helper and protected
+JSON import remain available as the documented-flow fallback. Both
 identity and access grants are signature-verified against fixed OpenAI metadata;
 client identity, audience, subject, expiry, scopes and fresh-login nonce are
-checked. A transfer cannot replace the server's persisted host identity. The
-local helper retains issued account registrations for later reauthorization.
+checked. Pending browser attempts are encrypted, owner-bound, expiring and fenced
+by a one-time generation. Only the exact saved loopback origin/path is accepted;
+pasted URLs are never fetched. Replacing an attempt or disconnecting invalidates
+older completions. Issued registrations survive a failed exchange and disconnect,
+without retaining disconnected tokens; valid grants are saved before discovery
+so a catalog outage does not strand renewable access. A helper import cannot
+replace the server's persisted host identity. Configuration snapshots never wait
+on provider HTTP calls.
 
 Grok uses the first-party device protocol and documented subscription proxy,
 including its per-model routing header and mandatory streaming. Kimi's supported
@@ -4153,3 +4162,5 @@ so no duplicate post-sync checklist command was added. No existing tests became
 obsolete: the legacy Codex provider still has a distinct contract.
 The settings workflow checks also prove the administrator can discover the panel;
 a separate presence-only test was consolidated into that coverage.
+The browser-return workflow replaces the old helper-first UI assertions; the
+helper's protocol and signed-grant tests remain useful for its fallback path.

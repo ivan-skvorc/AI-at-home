@@ -158,6 +158,9 @@ remain usable when a provider fails or times out.
 Models. Its catalog/query keys include the account ID; mutations invalidate the
 existing model picker. Poll Grok only at the provider's returned interval and
 cancel pending polling on unmount. Credentials never enter browser storage or
-error messages. Remote ChatGPT uses a downloaded local helper and protected JSON
-import; it cannot finish the provider's loopback callback on the remote server.
+error messages. ChatGPT starts server-owned PKCE, opens the official browser
+authorization link and accepts the final loopback return URL pasted by the user.
+The handoff is manual because the remote server cannot receive that callback.
+Keep return URLs only in component memory; clear them on close, restart and
+success. The helper download and JSON import remain an advanced fallback.
 Kimi uses a subscription-key field with an explicit interactive-use limit.

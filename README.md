@@ -7,7 +7,7 @@
 > - 🔓 **Passwordless on your own network** — `make dev` / `make start` come up with no login wall, so your phone and laptop reach it over the LAN or [Tailscale](https://tailscale.com/) immediately. Opt out with `DEER_FLOW_AUTH_DISABLED=0`; auth stays on in production regardless.
 > - 🦙 **Auto-populated Ollama models** — `config.yaml` syncs from your `ollama pull` list on every launch, with capabilities detected and a VRAM-aware context window instead of Ollama's 2048-token default. Local models are **free** — you pay for electricity.
 > - 🔑 **API-key model auto-config** — drop a cloud key in `.env` and the matching models uncomment themselves in `config.yaml` on the next launch. Anthropic, OpenAI, xAI, Gemini, DeepSeek, Moonshot, Qwen, Mistral, MiniMax, Z.ai direct, plus a routed set via OpenRouter — one flagship per lab, except Anthropic and OpenAI, whose top tier is really two models a factor of two or more apart in price, so both halves are routed (Fable 5.1 + Opus 5.5, GPT-6 Astra + GPT-6.1 Sol).
-> - 🎟️ **Subscription models from Settings → Models** — connect a ChatGPT plan, sign in to Grok with a device code, or add a Kimi Code subscription key. Available models populate the picker automatically, with encrypted server-side credentials and refresh/disconnect controls. Remote ChatGPT sign-in uses a small local helper; Kimi is restricted to personal interactive chats.
+> - 🎟️ **Subscription models from Settings → Models** — connect a ChatGPT plan in your browser, sign in to Grok with a device code, or add a Kimi Code subscription key. Available models populate the picker automatically, with encrypted server-side credentials and refresh/disconnect controls. ChatGPT uses a manual return-URL handoff for LAN/Tailscale access; Kimi is restricted to personal interactive chats.
 > - 🔎 **Self-hosted search, no API key** — a bundled SearXNG is provisioned at startup (an existing instance is reused) and backs the default `web_search`.
 > - 🦊 **A local browser for page fetching, no API key** — Camoufox replaces the Jina cloud reader as the default `web_fetch`, and installs itself on every launch path.
 > - 📱 **Installable on your phone** — a web app manifest and service worker, so you can add it to your home screen and get a Web Push notification when a long run finishes with the browser closed. Needs a secure origin; the settings page says so if you are on plain HTTP.
@@ -1556,14 +1556,30 @@ allowance. One connection is active per provider.
 
 | Provider | Connect in settings | What it uses |
 | --- | --- | --- |
-| ChatGPT | Continue with ChatGPT → download the local helper → import its connection file | Your eligible ChatGPT plan through OpenAI's public Responses API |
+| ChatGPT | Continue with ChatGPT → sign in on OpenAI's page → paste the final return URL | Your eligible ChatGPT plan through OpenAI's public Responses API |
 | Grok | Sign in to Grok → open the official sign-in page and enter the displayed device code | Subscription access through xAI's documented CLI proxy |
 | Kimi Code | Enter your **Kimi Code subscription key** | The coding-plan endpoint, distinct from a Moonshot paid API key |
 
-**Remote ChatGPT setup needs the computer running your browser.** OpenAI's
-supported open-source OAuth flow requires an HTTP callback on `127.0.0.1`, which
-cannot return directly to your LAN/Tailscale server. Download the sign-in helper
-from settings and run it on that computer with Python 3.12+ and
+**ChatGPT sign-in can stay in the browser.** Select **Continue with ChatGPT**,
+then open the official sign-in link in the dialog. After authorizing your plan,
+OpenAI redirects to an address starting with `http://127.0.0.1:`. On a remote
+LAN/Tailscale setup, that tab may show a connection error. Copy its **complete
+address from the address bar**, return to DeerFlow, and paste it into the return
+URL field to complete sign-in. No Python installation or downloaded script is
+needed for this path. Use HTTPS or your trusted Tailscale connection for the
+handoff; the URL contains a short-lived authorization code and should stay private.
+
+This manual handoff is DeerFlow's adaptation of OpenAI's loopback authorization
+code flow, rather than an OpenAI-documented remote-browser workflow. The server
+owns the PKCE verifier and validates the exact return address, one-time state,
+nonce and signed grants. OpenAI's public open-source flow still requires a
+`127.0.0.1` redirect, so a fully automatic return to your LAN/Tailscale web address
+is unavailable without a separately registered OpenAI website integration.
+
+**The local helper remains available as a fallback.** If your browser or provider
+does not leave a usable return URL, expand the helper option in the dialog.
+Download the helper and run it on the computer with your browser, using Python
+3.12+ and
 [uv](https://docs.astral.sh/uv/):
 
 ```bash
@@ -1580,7 +1596,7 @@ that account's file to replace the server's active connection. This step require
 a computer that can run the helper; it is not a phone-only sign-in flow.
 
 DeerFlow validates signed ChatGPT identity and plan grants before accepting the
-import, preserves a separate host identity for the server, and owns subsequent
+browser handoff or import, preserves a separate host identity for the server, and owns subsequent
 refresh-token rotation. The helper and web settings do not reuse Codex's private
 endpoint or scrape a browser session. The existing manually configured Codex
 provider remains separate. This ChatGPT adapter currently returns the completed
@@ -1591,7 +1607,10 @@ longer offers. A temporary discovery error preserves the previous catalog.
 **Disconnect** removes that provider's discovered models and stored credentials
 from future calls and attempts to revoke its renewable OAuth session. If remote
 revocation cannot be confirmed, settings says so; disconnect the app at the
-provider too. Manual YAML and API models are preserved. Selected subscription
+provider too. ChatGPT keeps its non-secret client registration to reuse on the
+next sign-in. To switch ChatGPT accounts, disconnect first, then choose
+**Use another ChatGPT account** in the sign-in dialog. Manual YAML and API models
+are preserved. Selected subscription
 models never silently fall back to separately billed API models.
 
 **Kimi Code is for personal interactive use.** Its third-party path uses a
