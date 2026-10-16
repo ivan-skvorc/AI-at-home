@@ -1747,6 +1747,37 @@ export interface Translations {
   settings: {
     title: string;
     description: string;
+    subscriptions: {
+      revocationPending: string;
+      title: string;
+      description: string;
+      connected: string;
+      disconnected: string;
+      reauth: string;
+      refresh: string;
+      disconnect: string;
+      working: string;
+      failed: string;
+      chatgptConnect: string;
+      grokConnect: string;
+      kimiKey: string;
+      kimiConnect: string;
+      kimiNote: string;
+      helperTitle: string;
+      helperDescription: string;
+      helperDownload: string;
+      helperRun: string;
+      helperImport: string;
+      connectionFile: string;
+      invalidFile: string;
+      close: string;
+      deviceInstructions: string;
+      deviceLink: string;
+      waiting: string;
+      models: string;
+      none: string;
+      usage: string;
+    };
     models: {
       title: string;
       description: string;

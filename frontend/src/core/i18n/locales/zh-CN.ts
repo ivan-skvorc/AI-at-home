@@ -1958,6 +1958,43 @@ export const zhCN: Translations = {
 
   // Settings
   settings: {
+    subscriptions: {
+      revocationPending:
+        "已断开 DeerFlow 连接，但无法确认远程撤销。请同时在供应商账号设置中断开此应用。",
+      title: "订阅",
+      description:
+        "连接服务器的订阅账号，发现的模型将显示在模型选择器中。供应商用量限制仍然适用，连接将与此服务器的用户共享。",
+      connected: "已连接",
+      disconnected: "未连接",
+      reauth: "请重新登录",
+      refresh: "刷新模型",
+      disconnect: "断开连接",
+      working: "处理中…",
+      failed: "订阅请求未能完成。",
+      chatgptConnect: "使用 ChatGPT 继续",
+      grokConnect: "登录 Grok",
+      kimiKey: "Kimi Code 订阅密钥",
+      kimiConnect: "连接 Kimi Code",
+      kimiNote:
+        "Kimi 为第三方应用提供订阅密钥。此连接仅供个人交互式聊天，计划任务和自主运行将被阻止。",
+      helperTitle: "从此电脑连接 ChatGPT",
+      helperDescription:
+        "即使 DeerFlow 位于其他设备，ChatGPT 登录也必须在运行浏览器的电脑上完成。",
+      helperDownload: "下载登录助手",
+      helperRun:
+        "使用 uv 和 Python 3.12 或更高版本在此电脑运行下载的助手，它将打开官方 ChatGPT 登录页并保存受保护的连接文件。",
+      helperImport:
+        "请通过 HTTPS 或可信的 Tailscale 连接在下方导入连接文件。DeerFlow 将在服务器上保存并续期访问凭据。请保密该文件并在传输后删除副本。",
+      connectionFile: "ChatGPT 连接文件",
+      invalidFile: "请选择小于 64 KB 的有效 ChatGPT 连接 JSON 文件。",
+      close: "关闭",
+      deviceInstructions: "打开供应商登录页并输入此代码：",
+      deviceLink: "打开 Grok 登录",
+      waiting: "等待你完成登录…",
+      models: "已发现的模型",
+      none: "当前没有可用模型。",
+      usage: "管理 ChatGPT 订阅用量",
+    },
     title: "设置",
     description: "根据你的偏好调整 DeerFlow 的界面和行为。",
     models: {

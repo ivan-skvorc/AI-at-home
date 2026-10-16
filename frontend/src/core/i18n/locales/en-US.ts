@@ -2076,6 +2076,45 @@ export const enUS: Translations = {
 
   // Settings
   settings: {
+    subscriptions: {
+      revocationPending:
+        "Disconnected from DeerFlow. Remote revocation could not be confirmed; disconnect the app in the provider’s account settings as well.",
+      title: "Subscriptions",
+      description:
+        "Connect the server’s subscription accounts. Discovered models appear in the model picker; provider limits still apply. These connections are shared with users of this server.",
+      connected: "Connected",
+      disconnected: "Not connected",
+      reauth: "Sign in again",
+      refresh: "Refresh models",
+      disconnect: "Disconnect",
+      working: "Working…",
+      failed: "Could not complete the subscription request.",
+      chatgptConnect: "Continue with ChatGPT",
+      grokConnect: "Sign in to Grok",
+      kimiKey: "Kimi Code subscription key",
+      kimiConnect: "Connect Kimi Code",
+      kimiNote:
+        "Kimi supports subscription keys for third-party apps. This connection is for personal interactive chats; scheduled and autonomous runs are blocked.",
+      helperTitle: "Connect ChatGPT from this computer",
+      helperDescription:
+        "ChatGPT sign-in must finish on the computer running your browser, even when DeerFlow is on another device.",
+      helperDownload: "Download sign-in helper",
+      helperRun:
+        "Run the downloaded helper on this computer using uv and Python 3.12 or newer. It opens the official ChatGPT sign-in page and saves a protected connection file.",
+      helperImport:
+        "Import that connection file below over HTTPS or a trusted Tailscale connection. DeerFlow stores it on the server and renews access there. Keep the file private and remove the transfer copy afterward.",
+      connectionFile: "ChatGPT connection file",
+      invalidFile:
+        "Choose a valid ChatGPT connection JSON file smaller than 64 KB.",
+      close: "Close",
+      deviceInstructions:
+        "Open the provider’s sign-in page and enter this code:",
+      deviceLink: "Open Grok sign-in",
+      waiting: "Waiting for you to complete sign-in…",
+      models: "Discovered models",
+      none: "No models are currently available.",
+      usage: "Manage ChatGPT plan usage",
+    },
     title: "Settings",
     description: "Adjust how DeerFlow looks and behaves for you.",
     models: {

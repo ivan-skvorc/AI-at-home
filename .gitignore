@@ -72,3 +72,6 @@ config.yaml.bak
 
 # Whole-instance backups (make backup) — may contain credentials with INCLUDE_SECRETS=1
 /backups/
+
+# Protected transfer file from the local ChatGPT subscription login helper
+deerflow-chatgpt-connection*.json

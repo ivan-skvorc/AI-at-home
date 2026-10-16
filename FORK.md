@@ -4113,3 +4113,43 @@ path are unit-tested against a stubbed `AsyncCamoufox`; a real launch with
 environment does not have. The retry is what makes that acceptable: the
 un-verified path fails safe, into the launch that was shipping before.
 
+### 41. Subscription accounts in model settings
+
+Settings → Models now connects the operator's ChatGPT, Grok, and Kimi Code
+subscriptions and discovers the account catalog. This follows managed models'
+effective-snapshot path instead of changing YAML: YAML and manually managed names
+win collisions, the current run keeps its snapshot, and later calls observe
+refresh/disconnect. Existing API-key and Ollama population remain independent.
+
+The OAuth grants and device-flow secrets live in a separate encrypted store under
+runtime-home `subscriptions/`, using the existing managed-model atomic writer and
+cross-process config lock. Refresh rotation is serialized across workers; revoked
+grants hide discovered models. Device polls are owner-bound, paced and expiring.
+Network, encryption and filesystem work stay off the Gateway event loop, with
+persistent mutations drained across cancellation.
+
+ChatGPT uses the public SIWC Responses endpoint. Its documented loopback login
+cannot return directly from a remote browser to this server, so the settings flow
+downloads a packaged local helper, then accepts a protected JSON import. Both
+identity and access grants are signature-verified against fixed OpenAI metadata;
+client identity, audience, subject, expiry, scopes and fresh-login nonce are
+checked. A transfer cannot replace the server's persisted host identity. The
+local helper retains issued account registrations for later reauthorization.
+
+Grok uses the first-party device protocol and documented subscription proxy,
+including its per-model routing header and mandatory streaming. Kimi's supported
+third-party path uses a subscription key and the real DeerFlow identity; inherited
+non-interactive run policy is checked before auth or inference. No browser cookies
+or spoofed CLI identities are used. Account-specific discovery does not promise
+inference entitlement; provider limits are surfaced without paid fallbacks.
+Subscription usage reports distinct model identities so API price aliases cannot
+silently price plan usage as API spend.
+
+Coverage: `test_subscriptions.py`, `test_chatgpt_subscription_auth.py`, and
+`test_subscription_providers.py`; settings tests extend
+`model-settings-page.dom.test.tsx`, with the browser workflow in
+`subscription-models.spec.ts`. These already run in the mechanical module gates,
+so no duplicate post-sync checklist command was added. No existing tests became
+obsolete: the legacy Codex provider still has a distinct contract.
+The settings workflow checks also prove the administrator can discover the panel;
+a separate presence-only test was consolidated into that coverage.

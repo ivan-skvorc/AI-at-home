@@ -26,7 +26,7 @@ class SaveModelRequest(BaseModel):
 
 def _catalog():
     config = get_app_config()
-    yaml_models = [item for item in config.models if item.name not in config._managed_model_names]
+    yaml_models = [item for item in config.models if item.name not in config._managed_model_names | config._subscription_model_names]
     yaml_names = {item.name for item in yaml_models}
     return {
         "models": [{"name": item.name, "display_name": item.display_name or item.name, "model": item.model, "source": "config", "enabled": True} for item in yaml_models]

@@ -151,3 +151,13 @@ Inline plugin references serialize into human-message
 `additional_kwargs.extension_mentions`; these IDs and labels
 are untrusted input, never a routing or permission grant. Built-in mentions must
 remain usable when a provider fails or times out.
+
+### Subscription model settings
+
+`components/workspace/settings/subscription-settings.tsx` is mounted only for administrators under
+Models. Its catalog/query keys include the account ID; mutations invalidate the
+existing model picker. Poll Grok only at the provider's returned interval and
+cancel pending polling on unmount. Credentials never enter browser storage or
+error messages. Remote ChatGPT uses a downloaded local helper and protected JSON
+import; it cannot finish the provider's loopback callback on the remote server.
+Kimi uses a subscription-key field with an explicit interactive-use limit.

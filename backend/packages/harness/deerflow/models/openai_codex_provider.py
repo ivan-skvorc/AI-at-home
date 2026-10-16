@@ -277,13 +277,17 @@ class CodexChatModel(BaseChatModel):
 
         raise last_error
 
+    @property
+    def _responses_url(self) -> str:
+        return f"{CODEX_BASE_URL}/responses"
+
     def _stream_response(self, headers: dict, payload: dict) -> dict:
         """Stream SSE from Codex API and collect the final response."""
         completed_response = None
         streamed_output_items: dict[int, dict[str, Any]] = {}
 
         with httpx.Client(timeout=300) as client:
-            with client.stream("POST", f"{CODEX_BASE_URL}/responses", headers=headers, json=payload) as resp:
+            with client.stream("POST", self._responses_url, headers=headers, json=payload) as resp:
                 resp.raise_for_status()
                 for line in resp.iter_lines():
                     data = self._parse_sse_data_line(line)

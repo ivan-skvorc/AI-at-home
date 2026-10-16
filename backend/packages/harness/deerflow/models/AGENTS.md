@@ -234,3 +234,24 @@ repeat provider selection or persist the probe override.
 Tests: `test_managed_models.py`, `test_managed_deepseek.py` (real SDK serialization
 with an HTTP double), opt-in `test_managed_deepseek_live.py`, and
 `tests/blocking_io/test_managed_models.py`.
+
+### Subscription connections
+
+`subscriptions.py` owns operator-shared encrypted grants and discovered catalog
+snapshots. Configuration merging is network-free, preserves YAML/managed names,
+and never mutates an active AppConfig. Resolve credentials per inference under
+the shared thread/process lock; rotating refresh tokens are one transaction.
+Catalog snapshot reads must not wait on the credential transaction's network I/O.
+No token belongs in a ModelConfig, LangChain serialized model, status response,
+validation error, or log. Route mutations use drained workers.
+
+`subscription_providers.py` keeps the public ChatGPT SIWC transport separate from
+legacy Codex CLI auth. Preserve namespace/tool-result correlation, encrypted
+reasoning replay, stream terminal checks and subscription-specific usage names.
+Grok always streams with its routing/auth headers. Kimi preserves reasoning on
+tool followups and rejects inherited non-interactive policy before auth/network.
+Subscription-selected models bypass API fallback chains and per-token pricing.
+Remote ChatGPT OAuth uses packaged `chatgpt_subscription_login.py`; imports verify
+both signed grants and retain the runtime's own host ID. Full operator flow:
+[README](../../../../../README.md#subscription-models). Focused coverage:
+`tests/test_{subscriptions,subscription_providers,chatgpt_subscription_auth}.py`.

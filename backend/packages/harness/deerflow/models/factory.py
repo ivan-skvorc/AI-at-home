@@ -49,6 +49,7 @@ _MODEL_METADATA_FIELDS: frozenset[str] = frozenset(
         # client, which would forward it into the request payload.
         "fallback",
         "request_admission",
+        "subscription_provider",
     }
 )
 
@@ -661,6 +662,10 @@ def _wrap_with_fallbacks(
     actually selected — degrading to "no fallback" is always better than
     degrading to "no model".
     """
+    if getattr(model_instance, "subscription_provider", None) in {"chatgpt", "grok", "kimi"}:
+        # Selecting a plan-backed connection must not silently incur API charges
+        # through an unrelated global or profile fallback chain.
+        return model_instance
     from deerflow.models.fallback import FallbackChatModel, resolve_fallback_chain
 
     model_configs = {entry.name: entry for entry in config.models}
