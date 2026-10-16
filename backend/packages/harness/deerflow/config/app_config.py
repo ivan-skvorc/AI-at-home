@@ -441,6 +441,7 @@ class AppConfig(BaseModel):
     # / ``get_tool_group_config`` O(1) instead of an O(n) ``next(...)`` scan per
     # call. Private attrs are excluded from serialization.
     _managed_model_names: set[str] = PrivateAttr(default_factory=set)
+    _subscription_model_names: set[str] = PrivateAttr(default_factory=set)
     _models_by_name: dict[str, ModelConfig] = PrivateAttr(default_factory=dict)
     _tools_by_name: dict[str, ToolConfig] = PrivateAttr(default_factory=dict)
     _tool_groups_by_name: dict[str, ToolGroupConfig] = PrivateAttr(default_factory=dict)
@@ -898,8 +899,9 @@ def get_app_config() -> AppConfig:
             logger.info("Extensions config changed, reloading AppConfig")
         _load_and_cache_app_config(str(resolved_path), extensions_source=current_extensions_source)
     from deerflow.config.managed_models import merge_managed_models
+    from deerflow.models.subscriptions import merge_subscription_models
 
-    return merge_managed_models(_app_config)
+    return merge_subscription_models(merge_managed_models(_app_config))
 
 
 def reload_app_config(config_path: str | None = None) -> AppConfig:
@@ -916,8 +918,9 @@ def reload_app_config(config_path: str | None = None) -> AppConfig:
         The newly loaded AppConfig instance.
     """
     from deerflow.config.managed_models import merge_managed_models
+    from deerflow.models.subscriptions import merge_subscription_models
 
-    return merge_managed_models(_load_and_cache_app_config(config_path))
+    return merge_subscription_models(merge_managed_models(_load_and_cache_app_config(config_path)))
 
 
 def reset_app_config() -> None:

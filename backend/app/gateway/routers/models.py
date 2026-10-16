@@ -102,6 +102,8 @@ def _price_response(pricing: dict, model: Any) -> ModelPriceResponse | None:
     with what actually gets billed — including the one-currency rule, which
     disables cost reporting wholesale when configured models mix currencies.
     """
+    if getattr(model, "subscription_provider", None) in {"chatgpt", "grok", "kimi"}:
+        return None
     entry = lookup_pricing(pricing, model.name) or lookup_pricing(pricing, getattr(model, "model", None))
     if entry is None:
         return None

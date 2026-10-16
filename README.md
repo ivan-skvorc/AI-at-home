@@ -7,6 +7,7 @@
 > - 🔓 **Passwordless on your own network** — `make dev` / `make start` come up with no login wall, so your phone and laptop reach it over the LAN or [Tailscale](https://tailscale.com/) immediately. Opt out with `DEER_FLOW_AUTH_DISABLED=0`; auth stays on in production regardless.
 > - 🦙 **Auto-populated Ollama models** — `config.yaml` syncs from your `ollama pull` list on every launch, with capabilities detected and a VRAM-aware context window instead of Ollama's 2048-token default. Local models are **free** — you pay for electricity.
 > - 🔑 **API-key model auto-config** — drop a cloud key in `.env` and the matching models uncomment themselves in `config.yaml` on the next launch. Anthropic, OpenAI, xAI, Gemini, DeepSeek, Moonshot, Qwen, Mistral, MiniMax, Z.ai direct, plus a routed set via OpenRouter — one flagship per lab, except Anthropic and OpenAI, whose top tier is really two models a factor of two or more apart in price, so both halves are routed (Fable 5.1 + Opus 5.5, GPT-6 Astra + GPT-6.1 Sol).
+> - 🎟️ **Subscription models from Settings → Models** — connect a ChatGPT plan, sign in to Grok with a device code, or add a Kimi Code subscription key. Available models populate the picker automatically, with encrypted server-side credentials and refresh/disconnect controls. Remote ChatGPT sign-in uses a small local helper; Kimi is restricted to personal interactive chats.
 > - 🔎 **Self-hosted search, no API key** — a bundled SearXNG is provisioned at startup (an existing instance is reused) and backs the default `web_search`.
 > - 🦊 **A local browser for page fetching, no API key** — Camoufox replaces the Jina cloud reader as the default `web_fetch`, and installs itself on every launch path.
 > - 📱 **Installable on your phone** — a web app manifest and service worker, so you can add it to your home screen and get a Web Push notification when a long run finishes with the browser closed. Needs a secure origin; the settings page says so if you are on plain HTTP.
@@ -154,6 +155,7 @@ DeerFlow has newly integrated the intelligent search and crawling toolset indepe
       - [Personal Access Tokens](#personal-access-tokens)
   - [From Deep Research to Super Agent Harness](#from-deep-research-to-super-agent-harness)
   - [Core Features](#core-features)
+    - [Subscription Models](#subscription-models)
     - [Skills \& Tools](#skills--tools)
       - [Exporting Custom Skills](#exporting-custom-skills)
       - [Claude Code Integration](#claude-code-integration)
@@ -1542,6 +1544,74 @@ DeerFlow 2.0 is no longer a framework you wire together. It's a super agent harn
 Use it as-is. Or tear it apart and make it yours.
 
 ## Core Features
+
+### Subscription Models
+
+Open **Settings → Models → Subscriptions** as an administrator. Connect the
+server's subscription once; the provider's available models appear in the existing
+model picker immediately, without editing `config.yaml` or restarting DeerFlow.
+**These are shared server connections**, like administrator-managed API models:
+any user authorized to use a discovered model consumes that connected account's
+allowance. One connection is active per provider.
+
+| Provider | Connect in settings | What it uses |
+| --- | --- | --- |
+| ChatGPT | Continue with ChatGPT → download the local helper → import its connection file | Your eligible ChatGPT plan through OpenAI's public Responses API |
+| Grok | Sign in to Grok → open the official sign-in page and enter the displayed device code | Subscription access through xAI's documented CLI proxy |
+| Kimi Code | Enter your **Kimi Code subscription key** | The coding-plan endpoint, distinct from a Moonshot paid API key |
+
+**Remote ChatGPT setup needs the computer running your browser.** OpenAI's
+supported open-source OAuth flow requires an HTTP callback on `127.0.0.1`, which
+cannot return directly to your LAN/Tailscale server. Download the sign-in helper
+from settings and run it on that computer with Python 3.12+ and
+[uv](https://docs.astral.sh/uv/):
+
+```bash
+uv run deerflow-chatgpt-login.py
+```
+
+It opens the official ChatGPT authorization page, asks permission to use your plan,
+and writes `deerflow-chatgpt-connection.json` with owner-only file permissions on
+Unix. Import that file in the same settings dialog over HTTPS or your trusted
+Tailscale connection, then delete the transfer copy. Keep the helper's protected
+local registration directory: later sign-ins reuse the account's issued client ID.
+Use `--profile another-account` to register another account/workspace, then import
+that account's file to replace the server's active connection. This step requires
+a computer that can run the helper; it is not a phone-only sign-in flow.
+
+DeerFlow validates signed ChatGPT identity and plan grants before accepting the
+import, preserves a separate host identity for the server, and owns subsequent
+refresh-token rotation. The helper and web settings do not reuse Codex's private
+endpoint or scrape a browser session. The existing manually configured Codex
+provider remains separate. This ChatGPT adapter currently returns the completed
+streamed response rather than live text deltas.
+
+Use **Refresh models** to discover additions or remove models the account no
+longer offers. A temporary discovery error preserves the previous catalog.
+**Disconnect** removes that provider's discovered models and stored credentials
+from future calls and attempts to revoke its renewable OAuth session. If remote
+revocation cannot be confirmed, settings says so; disconnect the app at the
+provider too. Manual YAML and API models are preserved. Selected subscription
+models never silently fall back to separately billed API models.
+
+**Kimi Code is for personal interactive use.** Its third-party path uses a
+subscription key, rather than impersonating Kimi CLI's OAuth client. Scheduled,
+webhook, and other autonomous runs are refused before contacting Kimi; use a
+normal paid API model for unattended work. Client identity stays DeerFlow.
+
+Provider plans, account eligibility, model capabilities, quotas, and regional
+availability still apply. Models come from each account's catalog; listing a
+model does not guarantee that its next inference request will be admitted.
+Subscription token usage is kept separate from paid API identities, with no
+invented per-token price. Credentials are encrypted under the persistent runtime
+home's `subscriptions/` directory; back up its local key with the encrypted file,
+just as for administrator-managed API models. Tokens never appear in status
+responses or model configuration sent to the browser.
+
+Provider references: [OpenAI plan access](https://developers.openai.com/siwc/token-sharing-open-source),
+[remote ChatGPT hosts](https://developers.openai.com/siwc/token-sharing-open-source/self-hosted-vms),
+[xAI's documented direct access](https://github.com/xai-org/grok-build/blob/main/crates/codegen/xai-grok-shell/README.md#using-authjson-for-api-access),
+and [Kimi Code usage guidelines](https://www.kimi.com/code/docs/en/kimi-code/community-guidelines.html).
 
 ### Skills & Tools
 

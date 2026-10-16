@@ -27,6 +27,7 @@ import {
 import { isStaticWebsiteOnly } from "@/core/static-mode";
 
 import { SettingsSection } from "./settings-section";
+import { SubscriptionSettings } from "./subscription-settings";
 
 export function ModelSettingsPage() {
   const { user } = useAuth();
@@ -68,6 +69,7 @@ export function ModelSettingsPage() {
         <p>{text.adminOnly}</p>
       ) : (
         <div className="space-y-4">
+          <SubscriptionSettings key={user?.id} userId={user?.id ?? ""} />
           <div className="flex gap-2">
             <Button disabled={pending} onClick={() => setEditing("new")}>
               {text.add}
