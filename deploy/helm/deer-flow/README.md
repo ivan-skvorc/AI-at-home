@@ -135,7 +135,7 @@ they resolve from the `secrets` map):
 
 ```yaml
 config: |
-  config_version: 61
+  config_version: 62
   models:
     - name: gpt-4
       use: langchain_openai:ChatOpenAI
@@ -300,11 +300,19 @@ kubectl -n deer-flow exec deploy/deer-flow-provisioner -- curl -s localhost:8002
   PodDisruptionBudget (`minAvailable: 1`) is rendered immediately and blocks
   every voluntary eviction and node drain while only one Pod exists, so set
   `gateway.podDisruptionBudget.enabled: false` for that interim if you need
-  to drain nodes first. `gateway.replicas: 1` stays the
-  default because the following are still single-instance: **IM channels**
-  (every Pod would connect to every platform — Telegram polling conflicts and
-  Discord double-processes; keep 1 replica while channels are enabled), the
-  WeChat QR login, and browser tools. Before raising replicas, also set
+  to drain nodes first. **IM channels** run on several replicas through
+  `channels.leader_lease` in `config` (default `auto`, which turns on with the
+  multi-instance declaration): each platform connection is held by the one Pod
+  owning that provider's row in the `channel_leases` table, a crashed holder is
+  replaced within `lease_seconds + grace_seconds` plus one renewal interval
+  (50 s by default) and a Pod stopped cleanly hands its providers over on the
+  next heartbeat. The startup gate refuses `enabled: false` while channels are
+  enabled. Credentials saved from the web UI reach the holding Pod only when it
+  next starts the channel, so restart it after changing them, and a failover
+  loses the IM replies in flight on the old holder, though the runs themselves
+  finish and their threads stay readable in the web UI. `gateway.replicas: 1`
+  stays the default because the WeChat QR login and browser tools are still
+  single-instance. Before raising replicas, also set
   `persistence.home.accessMode: ReadWriteMany` on multi-node clusters (thread
   uploads, outputs, memory and `extensions_config.json` live on that volume)
   and `agent_storage.backend: db` so custom agents are visible on every Pod.
@@ -378,6 +386,25 @@ kubectl -n deer-flow exec deploy/deer-flow-provisioner -- curl -s localhost:8002
   ```bash
   JWT=$(kubectl -n deer-flow exec deploy/deer-flow-gateway -- cat /app/backend/.deer-flow/.jwt_secret)
   kubectl -n deer-flow patch secret deer-flow-app -p "{\"stringData\":{\"AUTH_JWT_SECRET\":\"$JWT\"}}"
+  ```
+- **Credentials key.** The app Secret also holds `DEER_FLOW_CREDENTIALS_KEY`,
+  the Fernet key the gateway encrypts stored credentials with (per-connection
+  IM channel credentials today). The chart generates it once (32 random bytes,
+  urlsafe base64) and preserves it across upgrades via `lookup`; every gateway
+  Pod reads the same value. **Back it up**: deleting the Secret or the release
+  generates a new key, and credentials stored under the old one become
+  unreadable (they are treated as missing, never as an error). To rotate,
+  prepend a new key — `new,old` — and keep the old one listed until stored
+  values have been rewritten. An `existingAppSecret` should carry it; the env
+  entry is optional, so without it a single Pod falls back to an auto-generated
+  `.credentials_key` on the home volume, while a multi-instance gateway with
+  `channel_connections.enabled` refuses to start. If you add the key to an
+  `existingAppSecret` later, copy that file's value so stored credentials stay
+  readable:
+
+  ```bash
+  KEY=$(kubectl -n deer-flow exec deploy/deer-flow-gateway -- cat /app/backend/.deer-flow/.credentials_key)
+  kubectl -n deer-flow patch secret my-app-secret -p "{\"stringData\":{\"DEER_FLOW_CREDENTIALS_KEY\":\"$KEY\"}}"
   ```
 - **Scheduled task recovery.** If a deployment explicitly enables
   `scheduler.multi_instance: true`, it must use shared Postgres,
@@ -493,7 +520,7 @@ but not file mode — so a PVC written by an earlier **root** run (e.g. a cluste
 that ran the gateway as root before enabling this hardening, or a backup restore
 of root-owned files) will keep files like `.jwt_secret` at `0600 root:root`. The
 non-root gateway (uid 1000) then can't read them and crashes on the first auth
-request with `RuntimeError: Failed to read JWT secret from .../​.jwt_secret`.
+request with `RuntimeError: Failed to read or persist the JWT secret at .../​.jwt_secret`.
 
 **Fresh installs are unaffected** — uid 1000 creates every file as `1000:1000`.
 

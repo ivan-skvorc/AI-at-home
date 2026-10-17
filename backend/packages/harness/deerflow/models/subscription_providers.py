@@ -80,10 +80,13 @@ class ChatGPTSubscriptionChatModel(CodexChatModel):
             input_items.extend(items)
         return "\n\n".join(instructions) or "You are a helpful assistant.", input_items
 
-    def _call_codex_api(self, messages: list[BaseMessage], tools: list[dict] | None = None) -> dict:
+    def _call_codex_api(self, messages: list[BaseMessage], tools: list[dict] | None = None, tool_choice: str | dict | bool | None = None) -> dict:
         instructions, input_items = self._convert_messages(messages)
         # Build an allowlisted payload: the subscription preview rejects many
         # ordinary Responses API controls, including output limits/temperature.
+        # `tool_choice` is accepted because the base class now passes it
+        # (upstream #6898) but stays off the wire: it is not on the allowlist,
+        # and a named choice has no verified form for namespaced tools.
         payload = {
             "model": self.model,
             "instructions": instructions,

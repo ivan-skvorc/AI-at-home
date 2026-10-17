@@ -420,3 +420,34 @@ class TestAnUnconfiguredPrimaryPromotesTheFallback:
 
         assert calls == ["tavily"]
         assert "no API key" in payload["error"]
+
+
+# --------------------------------------------------------------------------
+# A malformed Tavily reply is a failure, not a result
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_a_malformed_tavily_reply_raises_on_the_dispatcher_path(monkeypatch):
+    """Upstream turns a malformed Tavily payload into an error *string*.
+
+    Backends here signal failure by raising, so the dispatcher's Tavily entry
+    point must still raise on it; returned as a string, the fallback would never
+    run and the agent would get an error where SearXNG had an answer.
+    """
+    import deerflow.community.tavily.tools as tavily_tools
+
+    class _Client:
+        async def search(self, query, **kwargs):
+            return {"results": "not a list"}
+
+        async def close(self):
+            pass
+
+    monkeypatch.setattr(tavily_tools, "get_app_config", lambda: type("C", (), {"get_tool_config": lambda self, name: None})())
+    monkeypatch.setattr(tavily_tools, "_get_tavily_client", lambda *args, **kwargs: _Client())
+
+    with pytest.raises(tavily_tools.TavilyFormatError):
+        await tavily_tools.search_via_tavily("q")
+    payload = json.loads(await tavily_tools.web_search_tool.ainvoke({"query": "q"}))
+    assert payload == {"error": "Tavily returned an unexpected response format", "query": "q"}

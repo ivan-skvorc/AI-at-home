@@ -117,6 +117,30 @@ def test_the_entry_point_is_reachable_from_the_guidance_an_agent_reads_first() -
     assert "CHANGE_CYCLE.md" in FORK_MD.read_text(encoding="utf-8")
 
 
+def test_every_agent_reaches_the_cycle_without_being_asked() -> None:
+    """The cycle runs automatically only if every agent's entry file leads to it.
+
+    Codex, Grok Build and others read `AGENTS.md`; Claude Code reads `CLAUDE.md`,
+    which must stay a pure `@AGENTS.md` import so no agent or model gets rules the
+    others miss. The pointer sits above the root guide's first section because
+    some agents cap how much instruction text they load (Codex: 32 KiB by
+    default); moved further down, it still renders and is silently cut.
+    """
+    root = ROOT_AGENTS.read_text(encoding="utf-8")
+    first_section = root.index("\n## ")
+    assert "CHANGE_CYCLE.md" in root[:first_section], "the cycle pointer moved below the root guide's first section"
+    assert "automatically" in root[:first_section]
+    assert "Automatic for every change request" in CHANGE_CYCLE.read_text(encoding="utf-8")
+
+    shims = sorted(REPO_ROOT.glob("CLAUDE.md")) + sorted(REPO_ROOT.glob("*/CLAUDE.md"))
+    assert shims, "no CLAUDE.md shim found"
+    for shim in shims:
+        text = shim.read_text(encoding="utf-8")
+        assert text.rstrip().endswith("@AGENTS.md"), f"{shim.relative_to(REPO_ROOT)} must import its sibling AGENTS.md"
+        assert (shim.parent / "AGENTS.md").is_file(), f"{shim.relative_to(REPO_ROOT)} imports a missing AGENTS.md"
+        assert "CHANGE_CYCLE" not in text and "## " not in text, f"{shim.relative_to(REPO_ROOT)} carries rules of its own; put them in AGENTS.md"
+
+
 def test_the_cycle_asks_whether_the_change_is_a_feature_and_owes_the_readme() -> None:
     """The documentation duty CI cannot fail for you.
 

@@ -172,7 +172,7 @@ Skills and assets:
 This fork's full procedure — which tests a change owes, keeping
 [FORK.md's post-sync checklist](../FORK.md#post-sync-feature-checklist) in sync
 with the code, and when the model audit is due — is
-[`CHANGE_CYCLE.md`](../CHANGE_CYCLE.md). Follow it for any non-trivial change.
+[`CHANGE_CYCLE.md`](../CHANGE_CYCLE.md). Follow it automatically for every repository change.
 
 Before submitting changes, run at minimum:
 

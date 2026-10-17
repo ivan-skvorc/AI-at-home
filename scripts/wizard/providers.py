@@ -372,8 +372,14 @@ def _home_openai_compat_model(
     thinking_toggle: bool = False,
     max_tokens: int = 32000,
     temperature: float | None = None,
+    responses_api: bool = False,
 ) -> dict:
     """Build one first-party OpenAI-compatible (`ChatOpenAI` + base_url) entry.
+
+    ``responses_api`` routes the entry through OpenAI's Responses API. The
+    gpt-6 family needs it: OpenAI rejects function tools for it on
+    ``/v1/chat/completions``, and the factory's automatic switch skips any
+    entry that names a ``base_url``, as every home entry does.
 
     ``thinking_toggle`` wires the shared ``extra_body.thinking`` enable/disable
     pair for gateways that honor it; otherwise the entry only advertises
@@ -394,6 +400,9 @@ def _home_openai_compat_model(
     }
     if temperature is not None:
         entry["temperature"] = temperature
+    if responses_api:
+        entry["use_responses_api"] = True
+        entry["output_version"] = "responses/v1"
     entry["supports_vision"] = supports_vision
     if supports_thinking:
         if thinking_toggle:
@@ -463,11 +472,11 @@ def _home_gemini_model(name: str, display_name: str, model: str, *, max_tokens: 
 # Terra is the tier that took `mini`'s place and Luna the one below it. GPT-6
 # shipped no Terra, so that tier is still GPT-5.6's.
 OPENAI_HOME_BUNDLE_MODELS: list[dict] = [
-    _home_openai_compat_model("openai-gpt-6-astra", "GPT-6 Astra (OpenAI)", "gpt-6-astra", api_key_env="OPENAI_API_KEY", base_url="https://api.openai.com/v1", supports_vision=True),
-    _home_openai_compat_model("openai-gpt-6.1-sol", "GPT-6.1 Sol (OpenAI)", "gpt-6.1-sol", api_key_env="OPENAI_API_KEY", base_url="https://api.openai.com/v1", supports_vision=True),
+    _home_openai_compat_model("openai-gpt-6-astra", "GPT-6 Astra (OpenAI)", "gpt-6-astra", api_key_env="OPENAI_API_KEY", base_url="https://api.openai.com/v1", supports_vision=True, responses_api=True),
+    _home_openai_compat_model("openai-gpt-6.1-sol", "GPT-6.1 Sol (OpenAI)", "gpt-6.1-sol", api_key_env="OPENAI_API_KEY", base_url="https://api.openai.com/v1", supports_vision=True, responses_api=True),
     _home_openai_compat_model("openai-gpt-5.3-codex", "GPT-5.3 Codex (OpenAI)", "gpt-5.3-codex", api_key_env="OPENAI_API_KEY", base_url="https://api.openai.com/v1", supports_vision=True),
     _home_openai_compat_model("openai-gpt-5.6-terra", "GPT-5.6 Terra (OpenAI)", "gpt-5.6-terra", api_key_env="OPENAI_API_KEY", base_url="https://api.openai.com/v1", supports_vision=True),
-    _home_openai_compat_model("openai-gpt-6-luna", "GPT-6 Luna (OpenAI)", "gpt-6-luna", api_key_env="OPENAI_API_KEY", base_url="https://api.openai.com/v1", supports_vision=True, max_tokens=16000),
+    _home_openai_compat_model("openai-gpt-6-luna", "GPT-6 Luna (OpenAI)", "gpt-6-luna", api_key_env="OPENAI_API_KEY", base_url="https://api.openai.com/v1", supports_vision=True, max_tokens=16000, responses_api=True),
 ]
 
 # xAI: Grok 4.7 (flagship) + Grok 4.3 (the cheaper, 1M-context tier). There is
@@ -1368,6 +1377,25 @@ SEARCH_PROVIDERS: list[SearchProvider] = [
         description="One key across six engines, price-routed with failover, API key required",
         use="deerflow.community.groundroute.tools:web_search_tool",
         env_var="GROUNDROUTE_API_KEY",
+        extra_config={"max_results": 5},
+    ),
+    SearchProvider(
+        name="webz",
+        display_name="Webz.io News Search",
+        description="Recent news search (not general web search), API key required",
+        use="deerflow.community.webz.tools:web_search_tool",
+        env_var="WEBZ_API_KEY",
+        extra_config={"max_results": 5},
+    ),
+    SearchProvider(
+        name="youcom",
+        display_name="You.com",
+        description="Own index with extracted page snippets, free tier needs no key",
+        use="deerflow.community.youcom.tools:web_search_tool",
+        # No env_var: the provider falls back to You.com's keyless endpoint, so the
+        # wizard should not demand a key. Operators who have one set YDC_API_KEY in
+        # .env (or api_key in config.yaml) and the provider switches endpoints.
+        env_var=None,
         extra_config={"max_results": 5},
     ),
 ]

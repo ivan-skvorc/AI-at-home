@@ -54,6 +54,10 @@ ORIGINAL_PARENTS = {
     # 0031_merge_prefs_notifications had already claimed, splitting the tree a
     # fifth time — and was joined by 0038_merge_prefs_summaries.
     "0031_scheduled_streak_boundary": ("0030_notification_claim_tokens",),
+    # Upstream's channel-binding branch. It hangs off 0037 — the revision
+    # 0038_merge_prefs_summaries had already claimed, splitting the tree a
+    # sixth time — and was joined by 0044_merge_prefs_im_notices.
+    "0038_channel_thread_bindings": ("0037_project_document_summaries",),
 }
 
 # Every leaf the merge points must keep reachable: one per branch tip that
@@ -69,6 +73,8 @@ MERGED_TIPS = (
     "0030_notification_claim_tokens",
     # Upstream's tip at the 2026-10-10 sync, joined by 0038_merge_prefs_summaries.
     "0037_project_document_summaries",
+    # Upstream's tip at the 2026-10-17 sync, joined by 0044_merge_prefs_im_notices.
+    "0043_runtime_im_notices",
 )
 
 

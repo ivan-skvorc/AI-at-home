@@ -295,29 +295,21 @@ def _provider_cls():
     return importlib.import_module("deerflow.community.aio_sandbox.aio_sandbox_provider").AioSandboxProvider
 
 
-class TestResolveEnvVars:
-    def test_github_token_resolved_from_host_env(self, monkeypatch):
-        monkeypatch.setenv("GITHUB_TOKEN", SENTINEL_TOKEN)
-        resolved = _provider_cls()._resolve_env_vars({"GITHUB_TOKEN": "$GITHUB_TOKEN"})
-        assert resolved["GITHUB_TOKEN"] == SENTINEL_TOKEN
-
-    def test_unset_reference_resolves_to_empty_string(self, monkeypatch):
-        monkeypatch.delenv("GITHUB_TOKEN", raising=False)
-        resolved = _provider_cls()._resolve_env_vars({"GITHUB_TOKEN": "$GITHUB_TOKEN"})
-        assert resolved["GITHUB_TOKEN"] == ""
-
-    def test_literal_values_pass_through(self):
-        resolved = _provider_cls()._resolve_env_vars({"NODE_ENV": "production", "DEBUG": "false"})
+class TestSandboxEnvironmentDefaults:
+    # $VAR resolution happens once, at config load (upstream #6673); these pin
+    # only the fork's non-interactive git default on top of the loaded values.
+    def test_values_pass_through_unchanged(self):
+        resolved = _provider_cls()._with_git_prompt_default({"NODE_ENV": "production", "PASSWORD_HASH": "$2b$12$abc"})
         assert resolved["NODE_ENV"] == "production"
-        assert resolved["DEBUG"] == "false"
+        assert resolved["PASSWORD_HASH"] == "$2b$12$abc"
 
     def test_git_terminal_prompt_defaults_off(self):
         # Interactive git prompts would hang the agent's shell session.
-        resolved = _provider_cls()._resolve_env_vars({})
+        resolved = _provider_cls()._with_git_prompt_default({})
         assert resolved["GIT_TERMINAL_PROMPT"] == "0"
 
     def test_git_terminal_prompt_user_override_wins(self):
-        resolved = _provider_cls()._resolve_env_vars({"GIT_TERMINAL_PROMPT": "1"})
+        resolved = _provider_cls()._with_git_prompt_default({"GIT_TERMINAL_PROMPT": "1"})
         assert resolved["GIT_TERMINAL_PROMPT"] == "1"
 
 

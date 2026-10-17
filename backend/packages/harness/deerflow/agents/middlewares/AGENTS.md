@@ -9,12 +9,14 @@ Preserve the recognition sample and 5,000,000 UTF-8-byte guard. Count incrementa
 on parsing or field-limit errors, report an undetermined count rather than a
 physical-line or sample total.
 
-Compaction keeps state `SystemMessage`s; transient instructions use request
-wrappers, and fully rescued partitions skip compaction. If latest-user rescue
-empties an AI/Tool-only window, use `_build_summary_input_text(strategy="last")`;
-mixed windows keep normal anchoring and final-message fallback. Budget raw text
-before escaping/wrapping; pass `trim_tokens_to_summarize=None` to avoid the
-LangChain default.
+Keep state `SystemMessage`s; inject transient instructions via request wrappers.
+Skip fully rescued partitions. Fold all raw source in order without human
+anchoring. PII-redact before splitting; budget before escaping. Generated carry:
+marked head/tail within half the raw budget; at most 64 chunks/pass. Commit
+hooks/history/removal only on success. Cap breaches use a bounded process-local
+5m cooldown across builds for the same user/thread/executor/window/policy;
+smaller source or changed policy retries immediately. See the linked contract.
+`trim_tokens_to_summarize=None` uses one unbounded step.
 
 Todo compaction: [contract](../../../../../docs/summarization.md#todo-reminders).
 
@@ -26,24 +28,25 @@ It preserves resumes, same-run continuations, and entries without `run_id`.
 A pre-turn reply prevents cancellation; legacy replies without status metadata may
 stay `in_progress`. Never infer status from reply text.
 
-Assembly order: `tool_error_handling_middleware.py::_build_runtime_middlewares` (exposed as `build_lead_runtime_middlewares`), then `../lead_agent/agent.py::build_middlewares` appends lead-only entries. Optional entries require their config/runtime condition.
+Assembly order: `tool_error_handling_middleware.py::_build_runtime_middlewares` (exposed as `build_lead_runtime_middlewares`), then `../lead_agent/agent.py::build_middlewares`. Optional entries require their config/runtime condition.
 
-**Message provenance.** Stamp injected/rewritten messages with
-`provenance_kwargs()` from `deerflow_extension_api.provenance`: server-owned
-`deerflow_content_kind`, `deerflow_producer_kind`, and optional entity ID, even
+**Message provenance.** Injected/rewritten messages use
+`deerflow_extension_api.provenance.provenance_kwargs()`: server-owned
+`deerflow_content_kind`, `deerflow_producer_kind`, optional entity ID, even
 without observers. Producers: DynamicContext, DurableContext,
 SystemMessageCoalescing, ViewImage, SkillActivation. Summarization/Title use
-`SystemOperationKind.SUMMARIZATION`/`.TITLE`; summaries enter via DurableContext's
-`durable_context_data`, memory recall via DynamicContext's
-`dynamic_context_memory`. Memory only queues extraction.
+`SystemOperationKind.SUMMARIZATION`/`.TITLE`; summaries enter through
+DurableContext's `durable_context_data`, recall through DynamicContext's
+`dynamic_context_memory`; Memory only queues extraction. Request-only rewrites
+need no stamps (InputSanitization, DanglingToolCall, ModelContentCompatibility).
 
-**Self-description.** Configurable middleware exposes JSON-serialisable
+**Self-description.** Configurable middleware: JSON-safe
 `release_policy_parameters()` (`ReleasePolicyProvider`, duck typed). Update
-`collect_release_policies()` declarations with behavior; use `canonical_hash`
-for long text. Summarization declares enabled task-continuity retention or None;
-DurableContext declares normalized skills root, sorted read tools and continuity
-switch. History readers, including capture failures, validate persisted metadata
-so malformed values cannot abort compaction/model calls.
+`collect_release_policies()` with behavior; hash long text with `canonical_hash`.
+Summarization: enabled task-continuity retention or None. DurableContext:
+normalized skills root, sorted read tools, continuity switch. All history readers,
+including capture failures, validate persisted metadata; malformed values must
+not abort compaction/model calls.
 
 **Removing tool calls.** Use `clone_ai_message_with_tool_calls`, not a bare
 `tool_calls` update: adapters resend stale `content` tool-call blocks, which
@@ -54,7 +57,7 @@ No match: skip inspection, log ID. Tests: `test_read_mark_tool_call_correlation.
 
 **Shared runtime base** (`build_lead_runtime_middlewares`; subagents reuse most of this via `build_subagent_runtime_middlewares`):
 
-The per-middleware catalogue — all 39 entries, their order, and the invariants
+The per-middleware catalogue — all 40 entries, their order, and the invariants
 each one carries — is reference material long enough to dominate this file's
 guidance budget, so it lives beside it in [`CHAIN.md`](CHAIN.md). Read it before
 adding, reordering or removing a middleware: position in the chain *is* the

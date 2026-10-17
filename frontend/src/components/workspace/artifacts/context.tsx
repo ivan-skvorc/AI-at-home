@@ -12,7 +12,9 @@ import {
 } from "react";
 
 import { useSidebar } from "@/components/ui/sidebar";
+import { useArtifactDrafts } from "@/core/artifacts/draft-context";
 import type { ArtifactDraftState } from "@/core/artifacts/editing";
+import { useAuth } from "@/core/auth/AuthProvider";
 import { env } from "@/env";
 
 export interface ArtifactsContextType {
@@ -98,13 +100,19 @@ export function ArtifactsProvider({
     env.NEXT_PUBLIC_STATIC_WEBSITE_ONLY === "true",
   );
   const [autoOpen, setAutoOpen] = useState(true);
-  const [drafts, setDrafts] = useState<Record<string, ArtifactDraftState>>({});
   const [editingPath, setEditingPath] = useState<string | null>(null);
   const { setOpen: setSidebarOpen } = useSidebar();
   const pathname = usePathname();
   // Isolation scope for persisted panel state: an explicit per-instance scope
   // (keep-alive chat tabs) or the route pathname (classic single chat).
   const scope = storageScope ?? pathname;
+  const { user } = useAuth();
+  // Drafts follow the same scope, so two keep-alive chats under one pathname
+  // never share (or overwrite) each other's unsaved file edits.
+  const { drafts, setDrafts } = useArtifactDrafts(
+    scope ?? "",
+    user?.id ?? null,
+  );
   const hydratedPathRef = useRef<string | null>(null);
 
   useEffect(() => {
@@ -118,24 +126,9 @@ export function ArtifactsProvider({
     setOpen(persisted?.open ?? env.NEXT_PUBLIC_STATIC_WEBSITE_ONLY === "true");
     setAutoOpen(true);
     setAutoSelect(!persisted?.selectedArtifact);
-    setDrafts({});
     setEditingPath(null);
     hydratedPathRef.current = scope;
   }, [scope]);
-
-  useEffect(() => {
-    const hasUnsavedDrafts = Object.values(drafts).some(
-      (draft) => draft.draftContent !== draft.baselineContent,
-    );
-    if (!hasUnsavedDrafts) {
-      return;
-    }
-    const handleBeforeUnload = (event: BeforeUnloadEvent) => {
-      event.preventDefault();
-    };
-    window.addEventListener("beforeunload", handleBeforeUnload);
-    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
-  }, [drafts]);
 
   useEffect(() => {
     if (!scope || hydratedPathRef.current !== scope) {

@@ -1,3 +1,4 @@
+import type { Message } from "@langchain/langgraph-sdk";
 import {
   CheckCircleIcon,
   ChevronUp,
@@ -18,6 +19,7 @@ import { Shimmer } from "@/components/ai-elements/shimmer";
 import { Button } from "@/components/ui/button";
 import { ShineBorder } from "@/components/ui/shine-border";
 import { useReducedMotion } from "@/core/appearance";
+import { readKnowledgeSources } from "@/core/citations/sources";
 import { useI18n } from "@/core/i18n/hooks";
 import { hasToolCalls } from "@/core/messages/utils";
 import { useModels } from "@/core/models/hooks";
@@ -45,6 +47,7 @@ import { CitationLink } from "../citations/citation-link";
 import { FlipDisplay } from "../flip-display";
 
 import { MarkdownContent } from "./markdown-content";
+import { createMarkdownLinkComponent } from "./markdown-link";
 
 export function SubtaskCard({
   className,
@@ -53,6 +56,7 @@ export function SubtaskCard({
   runId,
   isLoading,
   fallbackTask,
+  resultMessage,
 }: {
   className?: string;
   taskId: string;
@@ -60,8 +64,24 @@ export function SubtaskCard({
   runId?: string;
   isLoading: boolean;
   fallbackTask: Subtask;
+  resultMessage?: Message;
 }) {
   const { t } = useI18n();
+  const reportSources = useMemo(
+    () =>
+      resultMessage?.type === "tool" &&
+      resultMessage.name === "task" &&
+      resultMessage.tool_call_id === taskId
+        ? readKnowledgeSources([resultMessage])
+        : [],
+    [resultMessage, taskId],
+  );
+  const reportComponents = useMemo(
+    () => ({
+      a: createMarkdownLinkComponent(threadId, reportSources),
+    }),
+    [reportSources, threadId],
+  );
   const [collapsed, setCollapsed] = useState(true);
   const reduceMotion = useReducedMotion();
   const task = resolveRenderedSubtask(useSubtask(taskId), fallbackTask)!;
@@ -277,7 +297,14 @@ export function SubtaskCard({
               <ChainOfThoughtStep
                 label={
                   task.result ? (
-                    <MarkdownContent content={task.result} isLoading={false} />
+                    <MarkdownContent
+                      // Streamdown caches blocks by text. Re-resolve unchanged
+                      // report text when its validated evidence arrives/changes.
+                      key={reportSources.map((source) => source.id).join(",")}
+                      content={task.result}
+                      isLoading={false}
+                      components={reportComponents}
+                    />
                   ) : null
                 }
               ></ChainOfThoughtStep>

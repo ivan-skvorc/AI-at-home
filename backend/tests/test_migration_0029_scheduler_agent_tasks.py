@@ -23,7 +23,7 @@ from deerflow.persistence.postgres_schema import build_asyncpg_connect_args
 from deerflow.persistence.scheduled_tasks import ScheduledTaskRepository
 
 REVISION = "0029_scheduler_agent_tasks"
-CURRENT_HEAD = "0037_project_document_summaries"
+CURRENT_HEAD = "0043_runtime_im_notices"
 NEXT = "0030_notification_claim_tokens"
 PREVIOUS = "0028_parked_attempts"
 # Fork: the `runs` schema diff below compares against the ORM, which maps the

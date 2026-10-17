@@ -290,10 +290,12 @@ Nginx (port 2026) ← Unified entry point
 > [`CHANGE_CYCLE.md`](CHANGE_CYCLE.md). Every coding-agent change request follows
 > it automatically, through tests, test cleanup, and an open pull request.
 
-[`AGENTS.md`](AGENTS.md) is the shared instruction source. Codex/ChatGPT coding
-environments that support `AGENTS.md` discover it directly; Claude Code imports it
-through the existing `CLAUDE.md` shims. Keep shared rules in `AGENTS.md` and
-`CHANGE_CYCLE.md` so the two agents use the same procedure. Read the root and
+[`AGENTS.md`](AGENTS.md) is the shared instruction source. Codex/ChatGPT, Grok
+Build and other agents that support `AGENTS.md` discover it directly; Claude Code
+imports it through the existing `CLAUDE.md` shims. Keep shared rules in `AGENTS.md`
+and `CHANGE_CYCLE.md` so every agent and model uses the same procedure, and keep
+the cycle pointer at the top of the root `AGENTS.md`: some agents cap how much
+instruction text they load (Codex reads 32 KiB by default). Read the root and
 applicable nested guides even when starting in a subdirectory, and pass them to
 delegated agents.
 
