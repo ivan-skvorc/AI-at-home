@@ -117,10 +117,11 @@ test("an explicit switch to a model without reasoning clears incompatible defaul
   await expect(
     dialog.getByText("Thinking mode", { exact: true }),
   ).toBeVisible();
-  await dialog
-    .getByRole("combobox", { name: "Default model", exact: true })
-    .click();
-  await page.getByRole("option", { name: "Plain model", exact: true }).click();
+  // Fork: the model is chosen through the shared ModelSelect, targeted by its
+  // own data-slot rather than the role of the primitive underneath it.
+  await dialog.locator('[data-slot="model-select"]').click();
+  // Fork: model rows carry provider and price after the name (FORK.md §8).
+  await page.getByRole("option", { name: "Plain model" }).click();
   await dialog.getByRole("button", { name: "Save", exact: true }).click();
   await expect(dialog).toBeHidden();
   expect(saved).toMatchObject({
@@ -233,9 +234,7 @@ for (const state of ["pending", "failed"] as const) {
       const dialog = page.getByRole("dialog");
       if (state === "failed")
         await expect.poll(() => responses).toBeGreaterThanOrEqual(2);
-      await dialog
-        .getByRole("combobox", { name: "Default model", exact: true })
-        .click();
+      await dialog.locator('[data-slot="model-select"]').click();
       await page
         .getByRole("option", { name: "Use global default", exact: true })
         .click();
