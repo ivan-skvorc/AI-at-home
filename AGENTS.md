@@ -3,9 +3,10 @@
 This is the source of truth for repository agent guidance; `CLAUDE.md` imports it via `@AGENTS.md`.
 
 **Before making any repository change, read and follow [CHANGE_CYCLE.md](CHANGE_CYCLE.md).**
-It applies automatically to every change request, with no special trigger or
-agent-specific opt-in: run existing tests, add coverage only where needed, review
-and remove unnecessary tests, and open a pull request. Read the applicable nested
+It applies automatically to every change request, whichever agent, model or
+provider runs it, with no special trigger or agent-specific opt-in: run existing
+tests, add coverage only where needed, review and remove unnecessary tests, and
+open a pull request. Read the applicable nested
 `AGENTS.md` files too; delegated agents follow the same guidance, and the lead
 agent owns final validation and the PR. For tools that do not discover `AGENTS.md`,
 configure them to read this file before working (see [CONTRIBUTING.md](CONTRIBUTING.md#development-workflow)).

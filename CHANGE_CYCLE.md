@@ -1,9 +1,12 @@
 # The code change cycle
 
-**Automatic for every change request.** Claude Code, Codex/ChatGPT, other coding
-agents, and their delegated agents follow this procedure whenever they modify
-the repository. Read it before editing; no special phrase is needed. Read-only
-questions and reviews do not start a change cycle. Explicit user instructions
+**Automatic for every change request, whichever agent or model runs it.** Claude
+Code (Opus, Sonnet), Codex/ChatGPT (Sol, Astra), Grok Build, any other coding
+agent, and their delegated agents follow this procedure whenever they modify the
+repository. Read it before editing; no special phrase is needed. Read-only
+questions and reviews do not start a change cycle. Nothing here depends on one
+vendor's tools: where a step names a command (`gh`, a PR tool), use the
+equivalent your environment provides, and report it if there is none. Explicit user instructions
 can narrow the scope (for example, local edits without a PR); otherwise carry
 the cycle through to an open pull request without asking for each step.
 
