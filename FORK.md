@@ -174,8 +174,20 @@ once you know to look. The 2026-09-09 sync hit all three at once:
   has. It is ported into `getHumanTurnEditPoints` (editable `false`, anchor kept), and upstream's
   tests are rewritten against the fork's API rather than dropped (`utils.test.ts`,
   `message-list-scheduled.dom.test.tsx`).
+- **Upstream changing a contract the fork builds on, with no conflict.** The 2026-10-17 sync
+  hit three. #6898 made `CodexChatModel` pass `tool_choice` to `_call_codex_api`, which the
+  fork's ChatGPT-subscription subclass overrides with the old signature: every subscription
+  call raised `TypeError`, and only `test_subscription_providers.py` noticed (the override now
+  accepts it and keeps it off its allowlisted payload). #6645 made Tavily return a format
+  error as a string, where the fork's web_search dispatcher falls back only on a raise
+  (`test_web_search_dispatcher.py::test_a_malformed_tavily_reply_raises_on_the_dispatcher_path`).
+  #6863 routes gpt-6 through the Responses API but skips any entry with a `base_url`, which
+  every home-block entry has (`test_config_integrity.py::TestBundledGpt6Routing`). On each
+  sync, grep upstream's diff for signatures of methods the fork overrides, and for return
+  shapes the fork's wrappers branch on.
 - **Upstream editing reference text the fork split into a sibling doc.** `CHAIN.md`,
-  `DATA_FLOW.md` and `AUTHORIZATION.md` hold text upstream still keeps inline in the
+  `DATA_FLOW.md`, `AUTHORIZATION.md`, `RUNTIME.md` and (since 2026-10-17)
+  `artifacts/DELIMITED_PREVIEW.md` hold text upstream still keeps inline in the
   `AGENTS.md` beside them, so upstream's edits arrive as a conflict in the pointer file. Taking
   either side loses them. Port them into the sibling with a three-way `git merge-file`
   (sibling, base section, upstream section), then keep the pointer. The 2026-09-29 sync also

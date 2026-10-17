@@ -30,7 +30,10 @@ pytestmark = pytest.mark.asyncio
 
 async def test_0042_remains_in_the_single_migration_chain():
     script = ScriptDirectory(str(bootstrap._MIGRATIONS_DIR))
-    assert script.get_heads() == [CURRENT_HEAD]
+    # Fork: a merge revision above upstream's tip is the single head
+    # (test_migration_merge_points.py); upstream's tip is one of its parents.
+    (head,) = script.get_heads()
+    assert CURRENT_HEAD in script.get_revision(head).down_revision
     assert script.get_revision(CURRENT_HEAD).down_revision == REVISION
     assert script.get_revision(REVISION).down_revision == PREVIOUS
     # alembic_version.version_num is VARCHAR(32).
@@ -156,6 +159,6 @@ async def test_bootstrap_provisions_the_table_on_an_empty_database(tmp_path):
         await bootstrap.bootstrap_schema(engine, backend="sqlite")
         assert set((await _shape(engine))["columns"]) == COLUMNS
         async with engine.connect() as conn:
-            assert (await conn.execute(sa.text("SELECT version_num FROM alembic_version"))).scalar_one() == CURRENT_HEAD
+            assert (await conn.execute(sa.text("SELECT version_num FROM alembic_version"))).scalar_one() == bootstrap._get_head_revision()  # fork: the merge head
     finally:
         await engine.dispose()

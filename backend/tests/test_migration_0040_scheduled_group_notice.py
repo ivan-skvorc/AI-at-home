@@ -22,7 +22,10 @@ COLUMN = "notification_group_connection_id"
 
 def test_group_notification_revision_has_one_head_after_0039():
     script = ScriptDirectory(str(bootstrap._MIGRATIONS_DIR))
-    assert script.get_heads() == [CURRENT_HEAD]
+    # Fork: a merge revision above upstream's tip is the single head
+    # (test_migration_merge_points.py); upstream's tip is one of its parents.
+    (head,) = script.get_heads()
+    assert CURRENT_HEAD in script.get_revision(head).down_revision
     assert script.get_revision("0041_im_notice_preferences").down_revision == REVISION
     assert script.get_revision(REVISION).down_revision == PREVIOUS
     assert len(REVISION) <= 32

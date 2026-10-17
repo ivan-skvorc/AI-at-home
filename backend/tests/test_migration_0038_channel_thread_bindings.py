@@ -31,7 +31,10 @@ pytestmark = pytest.mark.asyncio
 
 async def test_0038_remains_in_the_single_migration_chain():
     script = ScriptDirectory(str(bootstrap._MIGRATIONS_DIR))
-    assert script.get_heads() == [CURRENT_HEAD]
+    # Fork: a merge revision above upstream's tip is the single head
+    # (test_migration_merge_points.py); upstream's tip is one of its parents.
+    (head,) = script.get_heads()
+    assert CURRENT_HEAD in script.get_revision(head).down_revision
     assert script.get_revision(REVISION).down_revision == PREVIOUS
     # alembic_version.version_num is VARCHAR(32).
     assert len(REVISION) <= 32
@@ -185,6 +188,6 @@ async def test_bootstrap_provisions_the_table_on_an_empty_database_and_is_idempo
         async with engine.connect() as conn:
             # Bootstrap runs the chain to its head, which this test no longer
             # owns once later revisions chain after 0038.
-            assert (await conn.execute(sa.text("SELECT version_num FROM alembic_version"))).scalar_one() == CURRENT_HEAD
+            assert (await conn.execute(sa.text("SELECT version_num FROM alembic_version"))).scalar_one() == bootstrap._get_head_revision()  # fork: the merge head
     finally:
         await engine.dispose()

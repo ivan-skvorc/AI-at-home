@@ -107,8 +107,12 @@ describe("every model-selection site goes through the shared picker", () => {
       const source = readFileSync(file, "utf8");
       // The shape being banned: iterating the models array straight into a
       // Radix `SelectItem`. `ModelPickerList` renders models too, but through
-      // `renderItem`, and never as a `SelectItem`.
-      return /\bmodels\s*\.map\(/.test(source) && /<SelectItem\b/.test(source);
+      // `renderItem`, and never as a `SelectItem`. Matched as one expression:
+      // the managed-model page maps models into cards and *providers* into a
+      // Select, and neither is a flat model picker.
+      return /\bmodels\s*\.map\(\s*\(?\s*\w+\s*\)?\s*=>\s*\(?\s*<SelectItem\b/.test(
+        source,
+      );
     });
     expect(offenders.map((f) => path.relative(FRONTEND_ROOT, f))).toEqual([]);
   });
