@@ -436,15 +436,7 @@ def resolve_config_path(repo_root: Path) -> Path | None:
     Relative paths resolve against the working directory, which the wrapper
     sets to backend/ because that is where the Gateway runs.
     """
-    try:
-        from dotenv import load_dotenv
-    except ImportError:
-        pass
-    else:
-        # The Gateway loads .env without overriding the shell. Named
-        # explicitly: python-dotenv's own search starts from the caller's
-        # file, which need not be this checkout.
-        load_dotenv(repo_root / ".env", override=False)
+    _load_env_like_the_gateway(repo_root)
     # serve.sh replaces an unset or empty runtime root with the checkout.
     if not os.environ.get("DEER_FLOW_PROJECT_ROOT"):
         os.environ["DEER_FLOW_PROJECT_ROOT"] = str(repo_root)
@@ -459,6 +451,36 @@ def resolve_config_path(repo_root: Path) -> Path | None:
         if os.environ.get("DEER_FLOW_CONFIG_PATH"):
             raise ValueError(str(exc)) from exc
         return None
+
+
+def _load_env_like_the_gateway(repo_root: Path) -> None:
+    """Load the env file the Gateway would, without overriding the shell.
+
+    An explicit DEER_FLOW_ENV_FILE wins over the checkout .env (upstream
+    #6845): loading the checkout file first would shadow the
+    selected file's values, since neither load overrides. The harness owns the
+    selector's rules and raises ValueError for an unreadable file; a host
+    without the harness reads the selected file with plain python-dotenv.
+    """
+    try:
+        from deerflow.env import load_selected_env_file
+    except ImportError:
+        load_selected_env_file = None
+    if load_selected_env_file is not None and load_selected_env_file():
+        return
+    try:
+        from dotenv import load_dotenv
+    except ImportError:
+        return
+    selected = os.environ.get("DEER_FLOW_ENV_FILE") if load_selected_env_file is None else None
+    if selected:
+        if not Path(selected).is_file():
+            raise ValueError("DEER_FLOW_ENV_FILE must point to a readable UTF-8 regular file. Check the path and permissions; relative paths use the backend process working directory.")
+        load_dotenv(selected, override=False, encoding="utf-8")
+        return
+    # Named explicitly: python-dotenv's own search starts from the caller's
+    # file, which need not be this checkout.
+    load_dotenv(repo_root / ".env", override=False)
 
 
 def _resolve_config_path_without_harness(repo_root: Path) -> Path | None:

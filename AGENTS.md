@@ -20,10 +20,8 @@ This **monorepo orientation layer** maps the repo. For module details, read its 
 
 ## What is DeerFlow
 
-DeerFlow pairs a LangGraph super agent with a Next.js chat UI. The backend provides
-sandboxed execution, persistent memory, subagents, and extensible built-in, MCP,
-and community tools, isolated per thread. Feishu, Slack, Telegram, Discord, and
-DingTalk connect through the Gateway.
+DeerFlow combines LangGraph and Next.js with thread-isolated sandbox execution,
+memory, subagents and extensible tools. IM channels connect through the Gateway.
 
 ## Service Topology
 
@@ -96,6 +94,8 @@ compaction, or authentication. If existing hooks cannot express the feature, add
 generic hook to the extension contract plus an extension that uses it — do not
 hard-code business logic into core. Working examples:
 `examples/deerflow-extension-{example,bookmarks,agent-teams}`.
+[Workflow guide](examples/deerflow-extension-workflows/AGENTS.md): public
+AgentRuns; POSIX, one process/store; live resume/approval; no restart replay or hard currency budget.
 
 Runtime config lives at the **repo root** — `config.yaml` (main) and
 `extensions_config.json` (MCP servers + skills), both copied from their examples by
@@ -117,7 +117,7 @@ only stop its own schedule, and one occurrence's goal success does not end a rec
 
 ## Commands: Root vs. Module
 
-**Root `make` targets drive the whole stack** (run from the repo root):
+**Root stack commands** (from repo root):
 
 ```bash
 make setup       # Interactive setup wizard (recommended for new users)
@@ -134,13 +134,17 @@ make up-start    # Restart the prod stack from pre-built images — applies conf
 make docker-start / docker-stop / docker-logs   # Docker development environment
 ```
 
+Production uses image Python (`uv run --no-sync`) and `exec` for SIGTERM;
+Compose sets `init: true` (`backend/tests/test_gateway_sigterm_delivery.py`).
+`make up` waits for Gateway `/health`; failures show Compose status and Gateway logs.
+
 Fork-specific families, each documented in the FORK.md section named beside it:
 `support-bundle` / `backup` / `restore ARCHIVE=` (§13), `extension-*` (the extensions
 guide), `comfy-*` (§26), `sandbox-enable/disable/up/down/logs`, `fetch-browser`,
 `auto-update*` (*Automatic updates*), `searxng` / `searxng-stop`, `drift-eval` (§25).
 `make help` lists all.
 
-**Per-module commands drive a single module** (run inside that module):
+**Module commands** (from each module):
 
 ```bash
 # Backend (see backend/AGENTS.md for the full set)
@@ -156,9 +160,6 @@ cd frontend && pnpm check     # Format + lint + types — the gates CI runs (bef
 cd frontend && pnpm test      # Unit tests
 ```
 
-Rule of thumb: **root `make` = the full application**; **`backend/Makefile` and `frontend/`
-(`pnpm`) = per-module work.**
-
 Host pnpm calls use `scripts/pnpm.py`: native Windows tries `pnpm.cmd` before
 `pnpm`; POSIX reverses the order. Its Corepack fallback applies the same ordering
 to `corepack.cmd` and `corepack`. The runner operates from `frontend/` so
@@ -166,16 +167,9 @@ Corepack honors its pinned package-manager version.
 
 ### Prerequisites before `make dev`
 
-`make dev` does **not** generate config files. First-time setup order:
-
-```bash
-make config      # copy both examples to config.yaml / extensions_config.json (gitignored)
-make install     # install frontend + backend deps and pre-commit hooks
-make dev         # then start everything
-```
-
-Without `config.yaml` present, services fail to boot, and neither real file is ever
-committed.
+Run `make config`, then `make install`, then `make dev` on first setup.
+`make dev` requires existing config; both runtime configs are API-editable and
+gitignored. Never commit them.
 
 ### Run a single test
 
@@ -195,7 +189,7 @@ cd frontend && pnpm rstest run <pattern>     # e.g. pnpm rstest run my-component
   `logs/gateway.log` and `logs/frontend.log` in the repository root.
   Run `tail -f logs/gateway.log logs/frontend.log` there to follow both.
 
-## Where to Go Next
+## References
 
 - Making a change → **[CHANGE_CYCLE.md](CHANGE_CYCLE.md)** (the procedure; the
   test list and model audit it runs live in [FORK.md](FORK.md))
@@ -203,7 +197,7 @@ cd frontend && pnpm rstest run <pattern>     # e.g. pnpm rstest run my-component
 - Frontend work → **[frontend/AGENTS.md](frontend/AGENTS.md)**
 - Setup & install → **[Install.md](Install.md)**, **[CONTRIBUTING.md](CONTRIBUTING.md)**
 - Project overview & usage → **[README.md](README.md)** (translations: `README_zh.md`,
-  `README_ja.md`, `README_fr.md`, `README_ru.md`, `README_pt.md`)
+  `README_ja.md`, `README_fr.md`, `README_ru.md`, `README_pt.md`, `README_ko.md`)
 - Security policy → **[SECURITY.md](SECURITY.md)**
 - Changes → **[CHANGELOG.md](CHANGELOG.md)**
 - Cutting a release → **[RELEASING.md](RELEASING.md)**
@@ -212,7 +206,7 @@ cd frontend && pnpm rstest run <pattern>     # e.g. pnpm rstest run my-component
 
 ## Cross-Cutting Conventions
 
-These apply repo-wide; module guides own the module-specific detail.
+Repo-wide conventions:
 
 - **The change cycle** — every change follows
   **[CHANGE_CYCLE.md](CHANGE_CYCLE.md)** automatically. Maintain the tests and
@@ -233,6 +227,8 @@ These apply repo-wide; module guides own the module-specific detail.
 - **Useful tests** — reuse coverage first; add or extend tests for uncovered
   behavior and regressions, and prune proven redundant or obsolete tests in the
   area being changed. Follow CHANGE_CYCLE.md step 3 and the backend's TDD policy.
+  Public skill script regressions live in `tests/skills/`; exercise dependency fallbacks
+  with the optional import unavailable and mock HTTP transport to keep tests offline.
 - **Format code before pushing** — `make format` (backend) / `pnpm check` (frontend); backend CI
   enforces `ruff format --check`.
 - **Skill text encoding** — treat `SKILL.md` and other textual skill resources as UTF-8;

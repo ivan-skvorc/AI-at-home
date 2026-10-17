@@ -75,9 +75,23 @@ class RedisCheckpointHistoryCache:
             if raw is None:
                 self._misses += 1
                 continue
+            try:
+                tag, payload = raw.split(_TAG_SEPARATOR, 1)
+                entry = self._serde.loads_typed((tag.decode(), payload))
+                if not isinstance(entry, dict) or not isinstance(entry.get("writes"), list):
+                    raise ValueError("invalid checkpoint history entry shape")
+            except Exception as exc:
+                # Cached history is optional. A malformed entry must not prevent
+                # rebuilding history from authoritative checkpoints.
+                logger.warning(
+                    "checkpoint history cache decode failed; treating as miss (key=%s): %s",
+                    key,
+                    type(exc).__name__,
+                )
+                self._misses += 1
+                continue
             self._hits += 1
-            tag, payload = raw.split(_TAG_SEPARATOR, 1)
-            found[key] = self._serde.loads_typed((tag.decode(), payload))
+            found[key] = entry
         return found
 
     async def aset_many(self, entries: dict[str, dict[str, Any]]) -> None:
@@ -98,10 +112,16 @@ class RedisCheckpointHistoryCache:
         TTL-bounded residual retention; the source-of-truth delete already
         happened, so this never raises."""
         stem = thread_key_stem(key_prefix, thread_id)
+        # The configured namespace is a literal key prefix, not a Redis glob.
+        pattern = "".join("\\" + char if char in "\\*?[]" else char for char in stem) + "*"
+        # redis-py encodes SCAN results with the configured connection encoder.
+        # A fixed UTF-8 fence silently skips owned keys for other encodings.
+        encoded_stem = self._client.connection_pool.get_encoder().encode(stem)
         try:
             cursor = 0
             while True:
-                cursor, keys = await self._client.scan(cursor=cursor, match=stem + "*", count=500)
+                cursor, keys = await self._client.scan(cursor=cursor, match=pattern, count=500)
+                keys = [key for key in keys if key.startswith(encoded_stem if isinstance(key, bytes) else stem)]
                 if keys:
                     await self._client.unlink(*keys)
                 if cursor == 0:

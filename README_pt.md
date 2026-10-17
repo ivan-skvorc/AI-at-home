@@ -1,6 +1,6 @@
 # 🦌 DeerFlow - 2.0
 
-[English](./README.md) | [中文](./README_zh.md) | [日本語](./README_ja.md) | [Français](./README_fr.md) | [Русский](./README_ru.md) | Português
+[English](./README.md) | [中文](./README_zh.md) | [日本語](./README_ja.md) | [Français](./README_fr.md) | [Русский](./README_ru.md) | Português | [한국어](./README_ko.md)
 
 [![Python](https://img.shields.io/badge/Python-3.12%2B-3776AB?logo=python&logoColor=white)](./backend/pyproject.toml)
 [![Node.js](https://img.shields.io/badge/Node.js-22%2B-339933?logo=node.js&logoColor=white)](./Makefile)
@@ -1653,7 +1653,7 @@ O PoC não faz limpeza automática. Concluída a verificação, exclua o chat de
 
 ### Padrões de implantação
 
-A stack Docker publica a porta de entrada apenas em `127.0.0.1`, de acordo com o modelo de ambiente local confiável descrito acima. Para acessá-la de outra máquina, defina `BIND_HOST` no `.env` (por exemplo `BIND_HOST=0.0.0.0`), e só depois de adotar as medidas de segurança abaixo.
+A stack Docker publica a porta de entrada apenas em `127.0.0.1`, e o `make dev` / `make start` local vinculam o nginx, o Gateway e o frontend ao loopback, de acordo com o modelo de ambiente local confiável descrito acima. Para acessá-la de outra máquina, defina `BIND_HOST` no `.env` (por exemplo `BIND_HOST=0.0.0.0`), e só depois de adotar as medidas de segurança abaixo. Na execução local, `BIND_HOST` vale apenas para o nginx na porta `2026`; o Gateway e o frontend continuam no loopback, atrás dele.
 
 **Conclua a configuração de primeiro uso antes que o host fique acessível.** Uma instância nova ainda não tem contas, então crie a conta de admin por `/setup` logo depois de iniciar qualquer implantação que não seja só de loopback.
 

@@ -534,6 +534,7 @@ class TestInboundFileIngestion:
 
 
 class TestInboundFileSandboxPerms:
+    @pytest.mark.skipif(os.name != "posix", reason="POSIX-only: Windows CRT chmod cannot express the 0644 mode this test asserts")
     def test_make_inbound_file_sandbox_readable_sets_group_other_read(self, tmp_path):
         from app.channels.manager import _make_inbound_file_sandbox_readable
 
@@ -548,6 +549,7 @@ class TestInboundFileSandboxPerms:
         assert mode & stat.S_IRGRP
         assert mode & stat.S_IROTH
 
+    @pytest.mark.skipif(os.name != "posix", reason="POSIX-only: Windows CRT chmod cannot express the 0644 mode this test asserts")
     def test_make_inbound_file_sandbox_readable_preserves_owner_bits(self, tmp_path):
         from app.channels.manager import _make_inbound_file_sandbox_readable
 
@@ -563,6 +565,7 @@ class TestInboundFileSandboxPerms:
         assert mode == 0o644
         assert not (mode & stat.S_IWOTH)
 
+    @pytest.mark.skipif(os.name != "posix", reason="POSIX-only: Windows CRT chmod cannot express the 0600 mode this test asserts")
     def test_make_inbound_file_sandbox_readable_skips_symlink(self, tmp_path):
         from support.symlinks import symlink_or_skip
 
@@ -585,6 +588,7 @@ class TestInboundFileSandboxPerms:
         # Best-effort helper: a missing file is a silent no-op.
         _make_inbound_file_sandbox_readable(tmp_path / "does-not-exist.txt")
 
+    @pytest.mark.skipif(os.name != "posix", reason="POSIX-only: Windows CRT chmod cannot express the 0600 mode this test asserts")
     def test_make_inbound_file_sandbox_readable_swap_after_lstat_does_not_follow_symlink(self, tmp_path, monkeypatch):
         from app.channels.manager import _make_inbound_file_sandbox_readable
 
@@ -613,6 +617,12 @@ class TestInboundFileSandboxPerms:
                 os.unlink(path)
                 os.symlink(target, path)
             return st
+
+        # Staging the TOCTOU swap needs symlink creation; a host without the
+        # privilege cannot stage the race at all, so skip before installing the hook.
+        probe = tmp_path / ".symlink_probe"
+        symlink_or_skip(probe, upload)
+        probe.unlink()
 
         monkeypatch.setattr(os, "lstat", racing_lstat)
 

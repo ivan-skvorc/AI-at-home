@@ -75,6 +75,25 @@ _SANDBOX_AUTHORIZATION_CHECKED: ContextVar[bool] = ContextVar(
 )
 
 _ABSOLUTE_PATH_PATTERN = re.compile(r"(?<![:\w])(?<!:/)/(?:[^\s\"'`;&|<>()]+)")
+# ``$NAME/...`` expands to a host path at runtime (``$HOME/.ssh/id_rsa``), but
+# the absolute-path regex skips a ``/`` that follows a word character, so the
+# bare-name form needs its own scan. Positional ``$1/etc/passwd`` slips the
+# same way, and ``bash -c`` gets no positionals, so it expands to ``/etc/passwd``.
+# ``${NAME}/``, ``~/`` and special parameters (``$@/``, ``$?/``) already surface
+# through the absolute-path regex because ``}``, ``~``, ``@`` and ``?`` are not
+# word chars. The remainder is captured in a lookahead so a skipped prefix does
+# not hide a later one (``$1/$2/etc/passwd``).
+_SHELL_VARIABLE_PATH_PATTERN = re.compile(r"\$([A-Za-z_][A-Za-z0-9_]*|[0-9])/(?=([^\s\"'`;&|<>()]*))")
+# ``~name/`` expands to that user's home (``~root/.ssh/id_rsa``) and slips the
+# absolute-path regex for the same reason. Tilde expansion only applies at the
+# start of a word or after ``=``/``:``, so ``HEAD~1/`` stays out of scope.
+_NAMED_TILDE_PATH_PATTERN = re.compile(r"(?<![^\s=:;&|<>()\"'`])~[A-Za-z0-9._-]+/[^\s\"'`;&|<>()]*")
+# ``PWD`` written anywhere except as a ``$PWD`` expansion (``PWD=/``,
+# ``read PWD``, ``for PWD in``) may rebind it away from the workspace.
+_PWD_REBIND_PATTERN = re.compile(r"(?<!\$)\bPWD\b")
+# ``CDPATH`` makes a relative ``cd docs`` land outside the workspace without any
+# absolute path in the command.
+_CDPATH_PATTERN = re.compile(r"\bCDPATH\b")
 # A ``{...}`` block holding a single identifier-like placeholder (e.g. ``{id}``
 # in a REST template or ``{port}`` in an f-string). Bash brace expansion such as
 # ``{passwd,shadow}`` or ``{,.bak}`` does NOT match (commas/dots/empty inner).
@@ -1315,6 +1334,8 @@ def _validate_local_bash_shell_tokens(command: str, allowed_paths: list[str], to
     """Conservatively reject relative path escapes missed by absolute-path scanning."""
     if re.search(r"\$\([^)]*\b(?:cd|pushd)\b", command):
         raise PermissionError(f"Unsafe working directory change in command substitution. Use paths under {VIRTUAL_PATH_PREFIX}")
+    if _CDPATH_PATTERN.search(command):
+        raise PermissionError(f"Unsafe working directory change via CDPATH. Use paths under {VIRTUAL_PATH_PREFIX}")
 
     for token in tokens:
         if _is_shell_command_separator(token) or _is_shell_redirection_operator(token):
@@ -1437,6 +1458,10 @@ def validate_local_bash_command_paths(command: str, thread_data: ThreadDataState
     A small allowlist of common system path prefixes is kept for executable
     and device references (e.g. /bin/sh, /dev/null). Quoted shell words are
     validated whole, so a space inside quotes is not treated as a new segment.
+    A shell variable used as a path prefix (``$HOME/...``, ``$1/...``) or a named
+    home (``~root/...``) is rejected like ``${HOME}/...`` and ``~/...``, since its
+    runtime value is unknown here;
+    ``$PWD/...`` is checked like the relative path it is equivalent to.
     A windows-incompatible segment still rejects a path that is not already
     stored on the host; an existing host file may be read or renamed.
     """
@@ -1468,6 +1493,31 @@ def validate_local_bash_command_paths(command: str, thread_data: ThreadDataState
             continue
 
         unsafe_paths.append(candidate)
+
+    # A variable's value is unknown here, so its path is never allowed. The one
+    # exception is ``$PWD``: ``$PWD/.venv/bin`` names the same file as the
+    # relative ``.venv/bin``, which this guard already accepts, unless the
+    # command rebinds ``PWD`` itself.
+    # The prose exemption used above does not apply: ``$HOME/文档`` is a real
+    # host directory.
+    pwd_is_workspace = not _PWD_REBIND_PATTERN.search(command)
+    for match in _SHELL_VARIABLE_PATH_PATTERN.finditer(command):
+        if _is_in_spans(match.start(), url_spans):
+            continue
+        name, remainder = match.group(1), match.group(2)
+        if name == "PWD" and pwd_is_workspace:
+            continue
+        # ``$1/1024`` and ``$1/$2`` are awk-style field arithmetic
+        # (``awk '{print $1/$2}'``), not paths: standard top-level host
+        # directories do not start with a digit.
+        if name.isdigit() and remainder.removeprefix("$")[:1].isdigit():
+            continue
+        unsafe_paths.append(match.group() + remainder)
+
+    for match in _NAMED_TILDE_PATH_PATTERN.finditer(command):
+        if _is_in_spans(match.start(), url_spans):
+            continue
+        unsafe_paths.append(match.group())
 
     if unsafe_paths:
         unsafe = ", ".join(sorted(dict.fromkeys(unsafe_paths)))
@@ -2493,12 +2543,10 @@ def bash_tool(runtime: Runtime, command: str, description: str = "") -> str:
 
             sandbox_cfg = get_app_config().sandbox
             max_chars = sandbox_cfg.bash_output_max_chars if sandbox_cfg else 20000
+            command_timeout = sandbox_cfg.bash_command_timeout if sandbox_cfg else None
         except Exception:
             max_chars = 20000
-        # No per-call timeout on the remote path: the provider is constructed
-        # with `bash_command_timeout` as its `default_command_timeout`, so the
-        # configured budget already reaches the sandbox. Passing it again here
-        # would make one setting arrive by two routes, which is how they drift.
+            command_timeout = None
         return _truncate_bash_output(
             mask_secret_values(
                 _execute_bash_command(
@@ -2506,6 +2554,7 @@ def bash_tool(runtime: Runtime, command: str, description: str = "") -> str:
                     command,
                     runtime=runtime,
                     env=injected_env,
+                    timeout=command_timeout,
                 ),
                 injected_env,
             ),

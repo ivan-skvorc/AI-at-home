@@ -75,6 +75,8 @@ export function ModelSelect({
   demoteLast,
   annotate,
   id,
+  "aria-label": ariaLabel,
+  "aria-describedby": ariaDescribedBy,
   "data-testid": dataTestId,
 }: {
   models: readonly Model[];
@@ -91,6 +93,8 @@ export function ModelSelect({
   /** Optional annotation rendered after a model's name in the list. */
   annotate?: (model: Model) => ReactNode;
   id?: string;
+  "aria-label"?: string;
+  "aria-describedby"?: string;
   "data-testid"?: string;
 }) {
   const { t } = useI18n();
@@ -112,6 +116,8 @@ export function ModelSelect({
           type="button"
           id={id}
           disabled={disabled}
+          aria-label={ariaLabel}
+          aria-describedby={ariaDescribedBy}
           data-testid={dataTestId}
           // The stable hook every test targets a model picker through.
           //
