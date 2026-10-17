@@ -832,6 +832,8 @@ models:
   #   request_timeout: 600.0
   #   max_retries: 2
   #   max_tokens: 32000
+  #   use_responses_api: true        # gpt-6 tools 400 on /v1/chat/completions
+  #   output_version: responses/v1
   #   supports_vision: true
   #   supports_thinking: true
   #   price:                          # per 1M tokens; the single source of truth for cost display and budgets
@@ -848,6 +850,8 @@ models:
   #   request_timeout: 600.0
   #   max_retries: 2
   #   max_tokens: 32000
+  #   use_responses_api: true        # gpt-6 tools 400 on /v1/chat/completions
+  #   output_version: responses/v1
   #   supports_vision: true
   #   supports_thinking: true
   #   price:                          # per 1M tokens; the single source of truth for cost display and budgets
@@ -896,6 +900,8 @@ models:
   #   request_timeout: 600.0
   #   max_retries: 2
   #   max_tokens: 16000
+  #   use_responses_api: true        # gpt-6 tools 400 on /v1/chat/completions
+  #   output_version: responses/v1
   #   supports_vision: true
   #   supports_thinking: true
   #   price:                          # per 1M tokens; the single source of truth for cost display and budgets

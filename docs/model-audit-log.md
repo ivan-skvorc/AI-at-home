@@ -11,6 +11,62 @@ Newest first. Append a pass; never rewrite one. A dated line is what tells the
 next person whether the roster was checked last week or last year, and _which_
 providers that pass could actually reach.
 
+- **2026-10-17 (upstream sync `169002a4`) — partial: tier 1 for Anthropic, tier 2 for OpenAI's
+  Sol and DeepSeek's Flash, tier 3 elsewhere. No roster roll and no price change; one settings
+  fix (the OpenAI home block's gpt-6 entries now reach the Responses API).** Requested in words
+  with the upstream sync of 196 commits ("bring the repo up to date with upstream and do the
+  model audit"), seven days after the 2026-10-10 pass.
+
+  **Machine half clean.** `python3 scripts/audit_models.py` reports **no drift**; `openrouter`
+  is _skipped_ (`Tunnel connection failed: 403 Forbidden`) and the ten catalog-less providers
+  likewise. The stale fixture still yields exactly its four findings, one per drift kind.
+  `test_sync_api_key_models.py`, `test_setup_wizard.py`, `test_config_integrity.py`,
+  `test_audit_models.py`, `test_model_price_fields.py` and `test_pricing.py` are green
+  (304 passed, one of them new — below).
+
+  **What the network reached.** `platform.claude.com/docs/en/about-claude/{pricing,model-deprecations}.md`
+  answer 200. Refused at the proxy (`http=000`): `openrouter.ai`, `developers.openai.com`,
+  `docs.x.ai`, `ai.google.dev`, `api-docs.deepseek.com`, `docs.z.ai`, `mistral.ai`,
+  `platform.moonshot.ai`, `platform.minimax.io`, `alibabacloud.com`. Web search was available.
+
+  **Anthropic — tier 1, unchanged.** All six ids are _Active_ on the deprecations page and every
+  figure matches the pricing page: Fable 5.1 `$10/$50` (cache `$0.25`), Opus 5.5 `$4/$20`
+  (`$0.20`), Opus 5 `$5/$25` (`$0.50`), Sonnet 5.5 `$2/$10` (`$0.10`), Sonnet 5 `$2/$10`
+  (`$0.20`, the former intro rate, still standard), Haiku 5.5 `$0.10/$0.50` (`$0.01`) for prompts
+  up to 100K tokens. No new Claude since Haiku 5.5.
+
+  **Settings fix (step 5): GPT-6 Astra, GPT-6.1 Sol and GPT-6 Luna on the OpenAI key.** This
+  sync brought upstream #6863: OpenAI rejects function tools for the gpt-6 family on
+  `/v1/chat/completions`, so the model factory now switches gpt-6 to the Responses API by
+  itself — but skips any entry with a `base_url` as a custom gateway, and every home entry names
+  `https://api.openai.com/v1`. Left alone, all three would load, chat, and 400 on their first
+  tool call. They now carry `use_responses_api: true` and `output_version: responses/v1` in both
+  synced sources (an explicit flag always wins in the factory), pinned by
+  `test_config_integrity.py::TestBundledGpt6Routing`, which fails on the previous config. The
+  OpenRouter copies stay on OpenRouter's endpoint, as upstream intends for gateways.
+
+  **Tier 2 re-reads.** GPT-6.1 Sol: id `gpt-6.1-sol` and `$2/$10` agree across a launch report
+  (propakistani, 2026-09-30) and a dated tracker (anotherwrapper, 2026-10-11) — the shipped
+  figures; the `gpt-6-sol` id one tracker gave last pass did not reappear. DeepSeek V4.1 Flash:
+  `deepseek-flash` as the API id and `$0.30/$1.20` peak agree across two trackers — the shipped
+  figures.
+
+  **Discovery (step 2).**
+  - **Gemini 4 Argon** is reported generally available to paid API users since 2026-10-13, at an
+    introductory `$2/$10` through 2026-11-30 and `$4/$20` after. No source gives a public model
+    id (two from early October report `models/gemini-4-argon` as 404), the standard rate rests on
+    one report, and an introductory rate never ships from secondary sources. **Not rolled; owed
+    first** — it would replace Gemini 3.1 Pro (still a preview id) at the top of Google's home
+    block once Google's own model list names it.
+  - **Mistral Large 4** is still a public preview with an unsettled id (`mistral-large-4` vs
+    OpenRouter's `mistralai/mistral-large-4-0`). Still owed.
+  - Nothing else from a bundled lab: Grok's latest is Grok 4.7 (Grok Voice 3.0 is not a chat
+    model), no Kimi K3.1, Qwen 4, GLM-6 or MiniMax M3.1. OpenRouter's rankings were not readable
+    (the last cached snapshot is from 2026-09-08).
+
+  **Still owed to a pass with tier-1 access**, in order: Gemini 4 Argon (id, standard price);
+  Mistral Large 4 (id and GA); the items the 2026-10-10 entry lists, unchanged.
+
 - **2026-10-10 (upstream sync `cd15687`) — partial: tier 1 for Anthropic, tier 2 for OpenAI's
   Astra and Sol, tier 3 elsewhere. One roster roll (Claude Haiku 5.5) and one price corrected
   (Sonnet 5.5's cache read).** Requested in words with the upstream sync of 171 commits ("bring

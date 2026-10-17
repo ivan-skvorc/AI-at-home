@@ -224,6 +224,34 @@ class TestBundledModelPricing:
                 assert parse_discount_expiry(example_until) == parse_discount_expiry(wizard_until), f"{slug}:{entry['name']} discount expiry differs between the example and the wizard"
 
 
+class TestBundledGpt6Routing:
+    def test_direct_gpt6_entries_reach_the_responses_api(self):
+        """OpenAI 400s gpt-6 function tools on /v1/chat/completions.
+
+        The factory switches gpt-6 to the Responses API on its own, but skips
+        any entry with a ``base_url`` as a custom endpoint, and every home
+        entry names one. Without its own flag a direct gpt-6 entry loads, chats
+        and fails its first tool call. OpenRouter copies stay on their endpoint.
+        """
+        import sys
+
+        from langchain_openai import ChatOpenAI
+
+        from deerflow.models.factory import _apply_openai_responses_api_default
+
+        sys.path.insert(0, str(REPO_ROOT / "scripts"))
+        from wizard.providers import HOME_API_BUNDLES
+
+        example = [entry for entries in TestBundledModelPricing._marker_blocks().values() for entry in entries]
+        wizard = [entry for _, bundle in HOME_API_BUNDLES.values() for entry in bundle]
+        direct = [entry for entry in example + wizard if str(entry.get("model", "")).startswith("gpt-6") and "api.openai.com" in str(entry.get("base_url", ""))]
+        assert len(direct) >= 4, "expected the OpenAI home block's gpt-6 entries in both sources"
+        for entry in direct:
+            settings = {key: value for key, value in entry.items() if key not in {"name", "display_name", "use", "price", "discount"}}
+            _apply_openai_responses_api_default(ChatOpenAI, settings)
+            assert settings.get("use_responses_api") is True, f"{entry['name']} would send gpt-6 tool calls to /v1/chat/completions"
+
+
 class TestSandboxKeyLint:
     def test_unknown_sandbox_key_warns_with_did_you_mean(self):
         warnings = lint_unknown_config_keys({"sandbox": {"use": "x", "allow_hostbash": True}})

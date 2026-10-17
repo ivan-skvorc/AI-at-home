@@ -17,12 +17,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   selected subscription models never silently switch to paid API billing.
 
 ### Changed
+- **GPT-6 on your own OpenAI key:** the bundled GPT-6 Astra, GPT-6.1 Sol and GPT-6
+  Luna entries route through OpenAI's Responses API, so their tool calls no longer
+  fail with a 400 on `/v1/chat/completions`. An existing `config.yaml` keeps its
+  old entries: add `use_responses_api: true` and `output_version: responses/v1` by hand.
 - **ChatGPT sign-in:** Settings starts authorization in your browser and accepts
   its final loopback return URL, removing the downloaded-script requirement for
   LAN/Tailscale users. Expiring one-time attempts keep PKCE and renewable tokens
   on the server; helper download/import remains available as a fallback.
 - **development:** the shared agent change cycle now applies automatically to
-  Claude Code, Codex/ChatGPT, and other configured coding agents. It requires
+  Claude Code, Codex/ChatGPT, Grok Build and other configured coding agents,
+  whichever model or provider runs them. It requires
   existing-test runs, coverage only where needed, a scoped review of unnecessary
   tests with removal rationale, proportional validation, and an open pull request.
 - **upstream:** merged `upstream/main` (171 commits since 2026-10-05). Brings upstream's
