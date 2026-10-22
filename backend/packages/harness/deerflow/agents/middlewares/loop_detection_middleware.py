@@ -111,7 +111,8 @@ _UI_NARRATION_TOOLS = frozenset({"bash", "ls", "glob", "grep"})
 # progress, so the read/run calls recorded before it stop counting toward either
 # layer: edit → run the same test → edit → run it again is a debug session, not
 # a loop. The edits themselves keep counting (their hash is content-sensitive),
-# so re-applying one edit, or editing without end, is still stopped.
+# so re-applying one edit is still stopped, and so are back-to-back edits past
+# their frequency limit. A call that already drew a warning is not re-armed.
 _WORKSPACE_EDIT_TOOLS = frozenset({"write_file", "str_replace"})
 _EDIT_HISTORY_PREFIX = "edit:"
 
@@ -609,7 +610,11 @@ class LoopDetectionMiddleware(AgentMiddleware[AgentState]):
 
             history = self._history[scope_key]
             if is_edit:
-                history[:] = [key for key in history if key.startswith(_EDIT_HISTORY_PREFIX)]
+                # A call that already drew a warning keeps counting: the warning
+                # itself asks for a save, and that save must not launder the
+                # loop it warned about.
+                still_warned = self._warned.get(scope_key, set())
+                history[:] = [key for key in history if key.startswith(_EDIT_HISTORY_PREFIX) or key in still_warned]
             history.append(history_key)
             if len(history) > self.window_size:
                 history[:] = history[-self.window_size :]
@@ -665,14 +670,17 @@ class LoopDetectionMiddleware(AgentMiddleware[AgentState]):
             name_counter = self._tool_name_counter[scope_key]
             if is_edit:
                 # Same rule as Layer 1: an edit re-arms every other tool's
-                # frequency budget; edit tools keep their own count.
-                kept = [name for name in tool_name_history if name in _WORKSPACE_EDIT_TOOLS]
-                if len(kept) != len(tool_name_history):
-                    tool_name_history.clear()
-                    tool_name_history.extend(kept)
-                    name_counter.clear()
-                    name_counter.update(kept)
-                    self._tool_freq_warned[scope_key].intersection_update(_WORKSPACE_EDIT_TOOLS)
+                # frequency budget unless that tool was already warned. The
+                # re-armed calls keep their slots as blanks, so the window still
+                # spans the last N calls and edit names decay at the normal rate
+                # (deleting them shrank the window: interleaved edits never
+                # decayed, and spaced ones never reached their own limit).
+                freq_warned = self._tool_freq_warned[scope_key]
+                for index, name in enumerate(tool_name_history):
+                    if name and name not in _WORKSPACE_EDIT_TOOLS and name not in freq_warned:
+                        tool_name_history[index] = ""
+                for name in [name for name in name_counter if name not in _WORKSPACE_EDIT_TOOLS and name not in freq_warned]:
+                    del name_counter[name]
             for tc in tool_calls:
                 name = tc.get("name", "")
                 if not name:

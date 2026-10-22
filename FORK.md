@@ -4217,8 +4217,11 @@ counts as progress: it drops the read/run calls recorded before it from both
 layers, and the run-again-after-an-edit pattern stays under every threshold.
 Nothing else was loosened. The same call repeated with no edit between is
 still a loop (reads are not progress), re-applying one edit is still caught
-(edit entries stay in the history), and edits still count toward their own
-frequency limit. Edits made through `bash` (`sed -i`, heredocs) are not
+(edit entries stay in the history), edits still count toward their own
+frequency limit within one window, and a call that already drew a warning keeps
+counting even across a save (the warning asks for one, so the save must not
+launder the loop). A run that keeps making distinct edits is bounded by its
+`recursion_limit`, not by loop detection. Edits made through `bash` (`sed -i`, heredocs) are not
 recognised as progress, so repo work should edit through the file tools —
 which also gets it read-before-write protection.
 

@@ -2530,3 +2530,27 @@ class TestWorkspaceEditProgress:
 
         assert decisions[-1] is not None
         assert mw.consume_stop_reason("test-run") == "loop_capped"
+
+    def test_a_save_after_a_warning_does_not_rearm_the_warned_call(self):
+        """The warning asks for a save; that save must not launder the loop it warned about."""
+        mw = LoopDetectionMiddleware(warn_threshold=3, hard_limit=5)
+        runtime = _make_runtime()
+        search = {"name": "web_search", "id": "search", "args": {"query": "same"}}
+
+        for n in range(3):
+            for _ in range(3):
+                mw._apply(_make_state(tool_calls=[search]), runtime)
+            mw._apply(_make_state(tool_calls=[{"name": "write_file", "id": f"save_{n}", "args": {"path": "/mnt/user-data/outputs/notes.md", "content": f"so far {n}"}}]), runtime)
+
+        assert mw.consume_stop_reason("test-run") == "loop_capped"
+
+    def test_edits_spaced_by_one_call_decay_out_of_the_frequency_window(self):
+        """Writing many files, each followed by one check, is not an edit loop."""
+        mw = LoopDetectionMiddleware()
+        runtime = _make_runtime()
+
+        for n in range(60):
+            write = {"name": "write_file", "id": f"write_{n}", "args": {"path": f"/mnt/user-data/workspace/f{n}.py", "content": "x = 1\n"}}
+            assert mw._apply(_make_state(tool_calls=[write]), runtime) is None
+            assert mw._apply(_make_state(tool_calls=[_bash_call(f"python -m py_compile f{n}.py")]), runtime) is None
+        assert mw.consume_stop_reason("test-run") is None
