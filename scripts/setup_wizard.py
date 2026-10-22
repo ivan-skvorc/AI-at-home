@@ -19,6 +19,10 @@ def _is_interactive() -> bool:
 
 
 def main() -> int:
+    # Unsupported status symbols must not abort setup after writing config.
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(errors="replace")
+
     try:
         if not _is_interactive():
             print("Non-interactive environment detected.\nPlease edit config.yaml and .env directly, or run 'make setup' in a terminal.")

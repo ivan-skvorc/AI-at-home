@@ -21,7 +21,7 @@ import { getBackendBaseURL } from "../config";
 import { useI18n } from "../i18n/hooks";
 import { getMessageRunId } from "../messages/run-duration";
 import {
-  hasContent,
+  extractContentFromMessage,
   hasToolCalls,
   isHiddenFromUIMessage,
 } from "../messages/utils";
@@ -177,25 +177,58 @@ export type PendingPreparedReplayMask = {
   replacementHumanMessageId?: string;
 };
 
-export function hasToolResult(messages: Message[], toolName: string): boolean {
-  const matchingToolCallIds = new Set<string>();
+export type ToolResultStatus = "pending" | "success" | "error";
+
+function isErrorToolMessage(message: Message): boolean {
+  if (message.type !== "tool") {
+    return false;
+  }
+  if (message.status === "error") {
+    return true;
+  }
+  const metadata = message.additional_kwargs?.deerflow_tool_meta;
+  return (
+    typeof metadata === "object" &&
+    metadata !== null &&
+    "status" in metadata &&
+    metadata.status === "error"
+  );
+}
+
+export function getToolResultStatus(
+  messages: Message[],
+  toolName: string,
+): ToolResultStatus {
+  let latestToolCallId: string | undefined;
   for (const message of messages) {
     if (message.type !== "ai") {
       continue;
     }
     for (const toolCall of message.tool_calls ?? []) {
       if (toolCall.name === toolName && toolCall.id) {
-        matchingToolCallIds.add(toolCall.id);
+        latestToolCallId = toolCall.id;
       }
     }
   }
 
-  return messages.some(
-    (message) =>
-      message.type === "tool" &&
-      (message.name === toolName ||
-        matchingToolCallIds.has(message.tool_call_id)),
-  );
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message?.type !== "tool") {
+      continue;
+    }
+    const matches = latestToolCallId
+      ? message.tool_call_id === latestToolCallId
+      : message.name === toolName;
+    if (matches) {
+      return isErrorToolMessage(message) ? "error" : "success";
+    }
+  }
+
+  return "pending";
+}
+
+export function hasToolResult(messages: Message[], toolName: string): boolean {
+  return getToolResultStatus(messages, toolName) !== "pending";
 }
 
 /**
@@ -283,17 +316,33 @@ export function buildRunContext({
       ([key]) => key !== "conversation_references",
     ),
   );
+  // Derived through the shared helper rather than inline: Democracy mode is a
+  // fourth mode with its own plan/subagent answers, its own delegation budget,
+  // and roster keys that must be *cleared* when the thread leaves the mode.
+  // An inline `mode === "ultra"` ladder silently omits all of that.
+  const modeContext = deriveModeContext(settings);
+  // Fork: the thread's Ultra-mode subagent dropdown shares this key with
+  // upstream's scoped "ask <model> to ..." control. The one-run choice wins, and
+  // neither is sent on a run that cannot delegate: the backend rejects a child
+  // selection without subagents, so a dropdown value left over from an Ultra
+  // turn would otherwise fail every later Pro or Flash turn in the thread.
+  const subagentModelName =
+    typeof extraContext?.subagent_model_name === "string"
+      ? extraContext.subagent_model_name
+      : settings.subagent_model_name;
   return {
     ...extraContext,
     ...ownedSettings,
+    ...(typeof extraContext?.model_name === "string"
+      ? { model_name: extraContext.model_name }
+      : {}),
     ...(conversationReferences?.length
       ? { conversation_references: [...conversationReferences] }
       : {}),
-    // Derived through the shared helper rather than inline: Democracy mode is a
-    // fourth mode with its own plan/subagent answers, its own delegation budget,
-    // and roster keys that must be *cleared* when the thread leaves the mode.
-    // An inline `mode === "ultra"` ladder silently omits all of that.
-    ...deriveModeContext(settings),
+    ...modeContext,
+    subagent_model_name: modeContext.subagent_enabled
+      ? subagentModelName
+      : undefined,
     memory_enabled: getLocalSettings().memory.enabled,
     ...autoTitleRunContext(),
     // Sent explicitly rather than left to the settings spread: the switch is
@@ -1063,7 +1112,9 @@ export function restoreReconnectedTurnMessageOrder(
     if (
       message.type === "ai" &&
       !isHiddenFromUIMessage(message) &&
-      hasContent(message) &&
+      // Thinking-only blocks (Anthropic) are not completed answers: require
+      // extractable text/image content to close the turn.
+      extractContentFromMessage(message).length > 0 &&
       !hasToolCalls(message)
     ) {
       candidateStart = index + 1;

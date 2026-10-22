@@ -5,9 +5,10 @@ import os
 from langchain.tools import tool
 
 from deerflow.community.search_time_range import SearchTimeRange
+from deerflow.community.url_safety import safe_public_result_url
 from deerflow.config import get_app_config
 
-from .searxng_client import SearxngClient
+from .searxng_client import SearxngClient, SearxngResponseError
 
 logger = logging.getLogger(__name__)
 
@@ -17,6 +18,21 @@ DEFAULT_BASE_URL = "http://localhost:8088"
 # this to the in-network service URL (http://searxng:8080). Mirrors the
 # DEER_FLOW_CHANNELS_LANGGRAPH_URL / DEER_FLOW_CHANNELS_GATEWAY_URL pattern.
 BASE_URL_ENV_VAR = "DEER_FLOW_SEARXNG_BASE_URL"
+
+
+def _unexpected_format_error(query: str) -> str:
+    """Report a malformed instance payload without echoing the payload.
+
+    A SearXNG instance that answers HTTP 200 with an error page, a non-list
+    ``results`` container, or a non-empty list holding no objects is not an
+    empty search: "No results found" would tell the agent the query legitimately
+    matched nothing.
+
+    The query is echoed back on purpose, matching the sibling providers, so the
+    agent can tell which search the error belongs to; only the payload is
+    withheld.
+    """
+    return json.dumps({"error": "SearXNG returned an unexpected response format", "query": query}, ensure_ascii=False)
 
 
 def _get_tool_config(tool_name: str) -> dict | None:
@@ -44,7 +60,8 @@ async def search_via_searxng(query: str, time_range: SearchTimeRange | None = No
     """Search via SearXNG and return a JSON array of {title, url, snippet}.
 
     Raises on failure rather than returning an error string — chiefly
-    ``SearxngEnginesUnavailableError`` when every engine was blocked. The
+    ``SearxngEnginesUnavailableError`` when every engine was blocked, and
+    ``SearxngResponseError`` for a malformed instance payload. The
     web_search dispatcher relies on that distinction: an exception is a real
     failure worth falling back from, while an empty list is a successful search
     that simply matched nothing and must NOT trigger a fallback (FORK.md §31).
@@ -74,7 +91,7 @@ async def search_via_searxng(query: str, time_range: SearchTimeRange | None = No
     normalized = [
         {
             "title": r.get("title", ""),
-            "url": r.get("url", ""),
+            "url": safe_public_result_url(r.get("url")),
             "snippet": r.get("content", ""),
         }
         for r in results
@@ -92,6 +109,8 @@ async def web_search_tool(query: str, time_range: SearchTimeRange | None = None)
     """
     try:
         return await search_via_searxng(query, time_range)
+    except SearxngResponseError:
+        return _unexpected_format_error(query)
     except Exception as e:
         logger.error(f"Error in web_search_tool: {e}")
         return json.dumps({"error": str(e), "query": query}, ensure_ascii=False)

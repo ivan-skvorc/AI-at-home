@@ -117,7 +117,7 @@ def main() -> int:
             print("Hint: Check file permissions and ensure the files are not read-only or locked by another process.")
         return 1
 
-    print("✓ Configuration files generated")
+    print("Configuration files generated")
 
     # Optional interactive choices (TTY only; non-interactive runs skip these).
     _offer_sandbox_choice(project_root)

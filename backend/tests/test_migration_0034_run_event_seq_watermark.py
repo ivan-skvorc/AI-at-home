@@ -24,18 +24,14 @@ IDEMPOTENCY = "0036_run_idempotency_request"
 DOCUMENT_SUMMARIES = "0037_project_document_summaries"
 CHANNEL_BINDINGS = "0038_channel_thread_bindings"
 USER_DISABLED = "0039_user_disabled"
-CURRENT_HEAD = "0043_runtime_im_notices"
 TABLE = "run_event_thread_seq"
 pytestmark = pytest.mark.asyncio
 
 
 async def test_0034_remains_in_the_single_migration_chain():
     script = ScriptDirectory(str(bootstrap._MIGRATIONS_DIR))
-    # Fork: a merge revision above upstream's tip is the single head
-    # (test_migration_merge_points.py); upstream's tip is one of its parents.
-    (head,) = script.get_heads()
-    assert head == bootstrap._get_head_revision()
-    assert CURRENT_HEAD in script.get_revision(head).down_revision
+    assert len(script.get_heads()) == 1
+    assert REVISION in {revision.revision for revision in script.walk_revisions()}
     assert script.get_revision(REVISION).down_revision == PREVIOUS
     assert script.get_revision(LOGIN_THROTTLE).down_revision == REVISION
     assert script.get_revision(IDEMPOTENCY).down_revision == LOGIN_THROTTLE

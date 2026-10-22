@@ -304,9 +304,9 @@ export function getThreadContextOverride(
 export function saveThreadContextOverride(
   threadId: string,
   override: ThreadContextOverride,
-) {
+): boolean {
   if (!isBrowser()) {
-    return;
+    return false;
   }
   const key = getThreadContextStorageKey(threadId);
   // Persist only defined values; an override with nothing left to store is
@@ -315,10 +315,9 @@ export function saveThreadContextOverride(
     Object.entries(override).filter(([, v]) => v !== undefined),
   );
   if (Object.keys(persisted).length === 0) {
-    safeLocalStorage.removeItem(key);
-    return;
+    return safeLocalStorage.removeItem(key);
   }
-  safeLocalStorage.setItem(key, JSON.stringify(persisted));
+  return safeLocalStorage.setItem(key, JSON.stringify(persisted));
 }
 
 /**

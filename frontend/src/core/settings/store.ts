@@ -227,6 +227,27 @@ export const updateLocalSettings: LocalSettingsSetter = (key, value) => {
   emitChange();
 };
 
+/** Explicit conversation-only selection; never edits account/base preferences. */
+export function selectThreadModel(threadId: string, modelName: string) {
+  ensureBaseSettingsLoaded();
+  ensureStorageListenerRegistered();
+  // Fork: the conversation's model lives in its per-thread context override
+  // (FORK.md §36), not upstream's separate per-thread model key, so the choice
+  // merges into the same record the composer's picker writes.
+  const previous = threadContextOverrides.has(threadId)
+    ? (threadContextOverrides.get(threadId) ?? EMPTY_THREAD_CONTEXT)
+    : getThreadContextOverride(threadId);
+  const nextOverride: ThreadContextOverride = {
+    ...previous,
+    model_name: modelName,
+  };
+  if (!saveThreadContextOverride(threadId, nextOverride)) {
+    throw new Error("Unable to save the conversation model in this browser.");
+  }
+  threadContextOverrides.set(threadId, nextOverride);
+  emitChange();
+}
+
 export function updateThreadSettings<K extends keyof LocalSettings>(
   threadId: string,
   key: K,

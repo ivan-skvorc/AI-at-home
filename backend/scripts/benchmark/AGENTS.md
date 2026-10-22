@@ -5,6 +5,10 @@ evaluations of production backend behavior. A benchmark may import the
 production function it measures, but it must not duplicate or introduce an
 alternative runtime implementation.
 
+OpenSandbox benchmarks reuse the production lifecycle with scoped config overrides.
+Export only non-secret dimensions; final cleanup failures must fail both the runner
+and JSONL summary. See the sandbox benchmark README for supported options and tests.
+
 - Pin every external dataset by immutable revision and SHA-256. Callers provide
   the local dataset path; evaluation commands must not silently download data.
 - Never commit upstream dataset text, credentials, complete provider requests,

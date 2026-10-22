@@ -74,6 +74,12 @@ export interface AgentThreadState extends Record<string, unknown> {
   tool_artifacts?: ArtifactEntry[];
 }
 
+export interface AgentClientContext {
+  name?: string;
+  capabilities?: Record<string, boolean>;
+  preferences?: Record<string, string | number | boolean>;
+}
+
 export interface AgentThreadContext extends Record<string, unknown> {
   thread_id: string;
   model_name: string | undefined;
@@ -108,6 +114,7 @@ export interface AgentThreadContext extends Record<string, unknown> {
   // groups, MCP servers, external ACP agents). Omitted means "no opinion" and
   // leaves the operator's configured tool list alone.
   internet_enabled?: boolean;
+  client?: AgentClientContext;
 }
 
 export interface AgentThread extends Thread<AgentThreadState> {
