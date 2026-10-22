@@ -11,6 +11,71 @@ Newest first. Append a pass; never rewrite one. A dated line is what tells the
 next person whether the roster was checked last week or last year, and _which_
 providers that pass could actually reach.
 
+- **2026-10-22 (upstream sync `29ba806f`) — partial: tier 1 for Anthropic, tier 2 for
+  DeepSeek's Flash, tier 3 elsewhere. No roster roll, no price change, no settings change.**
+  Requested in words with the upstream sync of 163 commits ("bring the repo up to date with
+  upstream and do the model audit"), five days after the 2026-10-17 pass.
+
+  **Machine half clean.** `python3 scripts/audit_models.py` reports **no drift**; `openrouter`
+  is _skipped_ (`Tunnel connection failed: 403 Forbidden`) and the ten catalog-less providers
+  likewise. The stale fixture still yields exactly its four findings, one per drift kind. Step 8:
+  `sync-api-key-models.py --dry-run` is a clean no-op on an empty env, and on a copy of the
+  example with Anthropic, OpenRouter and Gemini keys it enables exactly 24 models (6 + 15 + 3);
+  `test_sync_api_key_models.py`, `test_setup_wizard.py`, `test_config_integrity.py`,
+  `test_audit_models.py`, `test_model_price_fields.py` and `test_pricing.py` are green
+  (304 passed).
+
+  **What the network reached.** `platform.claude.com/docs/en/about-claude/{pricing,model-deprecations}.md`,
+  `.../models/overview.md` and `.../api/migration-2026-10-21.md` answer 200. Refused at the proxy
+  (`http=000`): `openrouter.ai`, `developers.openai.com`, `platform.openai.com`, `docs.x.ai`,
+  `ai.google.dev`, `api-docs.deepseek.com`, `docs.z.ai`, `mistral.ai`, `docs.mistral.ai`,
+  `platform.moonshot.ai`, `platform.minimax.io`, `alibabacloud.com`; the fetch tool cannot resolve
+  any third-party host either. Web search was available.
+
+  **Anthropic — tier 1, unchanged.** All six ids are _Active_ on the deprecations page, the
+  overview's latest four are still Fable 5.1, Opus 5.5, Sonnet 5.5 and Haiku 5.5, and every figure
+  matches the pricing page: Fable 5.1 `$10/$50` (cache `$0.25`), Opus 5.5 `$4/$20` (`$0.20`),
+  Opus 5 `$5/$25` (`$0.50`), Sonnet 5.5 `$2/$10` (`$0.10`), Sonnet 5 `$2/$10` (`$0.20`),
+  Haiku 5.5 `$0.10/$0.50` (`$0.01`) up to 100K-token prompts. Claude Mythos 5.1 is listed but
+  _limited availability_, so not a bundle candidate.
+
+  **Settings check (step 5): Anthropic API version `2026-10-21`.** It makes `temperature`,
+  `top_p` and `top_k` a 400 on every model, even at their defaults, and rejects `document`
+  blocks in assistant messages and `citations` on user text. It is opt-in through the
+  `anthropic-version` header, which SDK majors released after it send by default. The pinned
+  `anthropic` 0.97.0 still sends `2023-06-01`, and no bundled Claude entry carries a sampling
+  parameter, so nothing changes today. **Recheck when `anthropic`/`langchain-anthropic` takes a
+  new major**: anything that passes `temperature` to `ChatAnthropic` would then start failing.
+
+  **Tier 2 re-read.** DeepSeek V4.1 Flash: `deepseek-flash` now serves the `1017` build (one
+  source dates it 2026-10-17); `$0.30/$1.20` (peak, the conservative bound) agrees across two
+  trackers, and two more state the same as off-peak `$0.15/$0.60` doubled at peak — the shipped
+  figures. The alias moving under the entry is the `*-latest` shape step 4 warns about; it stays
+  owed to a pass that can read DeepSeek's own model list.
+
+  **Discovery (step 2).**
+  - **Gemini 4 Argon** — general availability since 2026-10-13 and the id `gemini-4-argon` now
+    agree across Google's own launch posts and docs (as surfaced by search; the pages themselves
+    were unreadable) and several secondary sources. The standard rate after the introductory
+    window is reported as `$4/$20` (intro `$2/$10` through 2026-11-30) by most sources, but one
+    (The Rundown) states `$3.60/$18` intro and `$7.20/$36` after. That is a disagreement on both
+    numbers, so tier 2 is not met and the price is unknown. **Not rolled; owed first**: one read
+    of `ai.google.dev/gemini-api/docs/pricing` settles it, after which Argon replaces Gemini 3.1
+    Pro (a preview id) at the top of Google's home block at the standard rate, with no discount.
+  - **Mistral Large 4** — still a public preview, id still unsettled (`mistral-large-4` vs
+    OpenRouter's `mistralai/mistral-large-4-0`). Still owed.
+  - **MiniMax M3.1 Flash** (2026-10-19, the unmasked "Space Bunny Alpha") — `$0.15/$0.60`
+    agrees widely, but no source gives its API id and OpenRouter's trending surfaces, the
+    acclaim evidence a cheaper sibling needs, were unreadable. Declined for now; it ages out of
+    `new_candidate` on its own if never taken.
+  - **Qwen3.6 27B** (2026-10-21) — a small open model, not a flagship. Declined.
+  - Nothing else from a bundled lab: no Grok 5 (Grok Voice 3.0 is not a chat model), no
+    Kimi K3.1, Qwen 4, GLM-5.4/GLM-6 or GPT-6.2 — only tracker projections.
+
+  **Still owed to a pass with tier-1 access**, in order: Gemini 4 Argon (standard price); Mistral
+  Large 4 (id and GA); what `deepseek-flash` serves; the items the 2026-10-10 entry lists,
+  unchanged.
+
 - **2026-10-17 (upstream sync `169002a4`) — partial: tier 1 for Anthropic, tier 2 for OpenAI's
   Sol and DeepSeek's Flash, tier 3 elsewhere. No roster roll and no price change; one settings
   fix (the OpenAI home block's gpt-6 entries now reach the Responses API).** Requested in words
