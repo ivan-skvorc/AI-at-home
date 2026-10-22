@@ -1156,9 +1156,12 @@ local default stays unchanged; this mode is strictly opt-in.
    repos.
 4. For private repos: create a **fine-grained personal access token** at
    github.com → Settings → Developer settings → Fine-grained tokens. Restrict
-   *Repository access* to just the repos the agent needs and grant only the
-   **Contents** repository permission (read-only unless the agent must push).
-   Put it in `.env` as `GITHUB_TOKEN=...` (see `.env.example`).
+   *Repository access* to just the repos the agent needs. **Contents:
+   Read-only** is enough to clone; for the agent to push a branch and open a
+   pull request, grant **Contents: Read and write** and **Pull requests: Read
+   and write**. Put it in `.env` as `GITHUB_TOKEN=...` (see `.env.example`).
+   A running sandbox keeps the token it was created with, so restart DeerFlow
+   after rotating it.
 5. `make dev` — the preflight verifies Docker is usable, pulls the sandbox
    image on first run (it is large), and prints an actionable error with
    fallback instructions when the environment cannot run containers. Sandbox
@@ -1183,8 +1186,9 @@ the container boundary does not protect them.
 **Security note:** the token is ordinary process environment inside the
 sandbox container, so *any code the agent runs there can read it*. That is
 inherent to giving the agent authenticated git. Scope the token minimally —
-fine-grained, selected repositories, Contents permission only — rotate it
-periodically, and never reuse a classic all-repos PAT here.
+fine-grained, selected repositories, only the permissions the task needs
+(Contents read to clone; Contents and Pull requests write to deliver a PR) —
+rotate it periodically, and never reuse a classic all-repos PAT here.
 
 Managed async AIO runs can opt into bounded sandbox prewarming to overlap startup
 with the first model call. Direct SDK graphs keep lazy acquisition. It defaults off; see the guide and

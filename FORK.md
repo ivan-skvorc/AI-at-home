@@ -4198,3 +4198,28 @@ The settings workflow checks also prove the administrator can discover the panel
 a separate presence-only test was consolidated into that coverage.
 The browser-return workflow replaces the old helper-first UI assertions; the
 helper's protocol and signed-grant tests remain useful for its fallback path.
+
+### 42. An edit is progress, so a debug session is not a loop
+
+**Why.** Loop detection stopped real coding work. Its identical-call layer
+counted the test command across a whole debug session — edit, run
+`pytest -x`, edit, run it again — and the command is byte-identical every
+time, so the fifth fix hit the hard limit and the run was forced to a final
+answer mid-task; the third already told the model to "wrap up now". Its
+frequency layer did the same to `bash`, which a setup-and-test session calls
+far more than 30 times in 50.
+
+**What changed.** A model response containing `write_file` or `str_replace`
+counts as progress: it drops the read/run calls recorded before it from both
+layers, and the run-again-after-an-edit pattern stays under every threshold.
+Nothing else was loosened. The same call repeated with no edit between is
+still a loop (reads are not progress), re-applying one edit is still caught
+(edit entries stay in the history), and edits still count toward their own
+frequency limit. Edits made through `bash` (`sed -i`, heredocs) are not
+recognised as progress, so repo work should edit through the file tools —
+which also gets it read-before-write protection.
+
+Pinned by `TestWorkspaceEditProgress` in
+`backend/tests/test_loop_detection_middleware.py`, both directions; the
+mechanism is in `backend/docs/LOOP_DETECTION.md`, *Edits are progress*. It
+runs in `make test` and fails loudly, so it has no checklist row.

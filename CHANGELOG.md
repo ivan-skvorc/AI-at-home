@@ -17,6 +17,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   selected subscription models never silently switch to paid API billing.
 
 ### Changed
+- **Long coding sessions:** loop detection treats a `write_file` / `str_replace`
+  edit as progress, so editing and re-running the same test no longer forces a
+  final answer after a few fixes. A call repeated with no edit between is still
+  stopped. GitHub token docs now list the permissions a push and a pull request
+  need (Contents and Pull requests: read and write).
 - **Subagent model picker:** the Ultra-mode subagent picker now shares its setting
   with upstream's "ask <model> to …" chat control. It is sent only on turns that can
   delegate (a pick left over from an Ultra turn no longer breaks later Pro or Flash
