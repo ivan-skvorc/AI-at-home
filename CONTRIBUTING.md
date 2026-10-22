@@ -291,13 +291,13 @@ Nginx (port 2026) ← Unified entry point
 
 > **Fork note.** This fork formalizes the loop below — including which tests a
 > change owes, keeping [FORK.md's post-sync checklist](FORK.md#post-sync-feature-checklist)
-> in sync with the code, and when the model audit is due — in
+> in sync with the code, and the model audit, which runs only when asked — in
 > [`CHANGE_CYCLE.md`](CHANGE_CYCLE.md). Every coding-agent change request follows
 > it automatically, through tests, test cleanup, and an open pull request.
 
 [`AGENTS.md`](AGENTS.md) is the shared instruction source. Codex/ChatGPT, Grok
 Build and other agents that support `AGENTS.md` discover it directly; Claude Code
-imports it through the existing `CLAUDE.md` shims. Keep shared rules in `AGENTS.md`
+and Gemini CLI import it through the `CLAUDE.md` and `GEMINI.md` shims. Keep shared rules in `AGENTS.md`
 and `CHANGE_CYCLE.md` so every agent and model uses the same procedure, and keep
 the cycle pointer at the top of the root `AGENTS.md`: some agents cap how much
 instruction text they load (Codex reads 32 KiB by default). Read the root and
@@ -339,7 +339,7 @@ there is no quota for test additions or deletions.
 
 5. **Commit your changes**:
    ```bash
-   git add .
+   git add <changed-paths>   # only this change's files; leave unrelated work unstaged
    git commit -m "feat: description of your changes"
    ```
 

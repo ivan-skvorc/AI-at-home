@@ -18,6 +18,7 @@ or not at all.
 from __future__ import annotations
 
 import re
+import subprocess
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -25,6 +26,7 @@ CHANGE_CYCLE = REPO_ROOT / "CHANGE_CYCLE.md"
 FORK_MD = REPO_ROOT / "FORK.md"
 ROOT_AGENTS = REPO_ROOT / "AGENTS.md"
 README = REPO_ROOT / "README.md"
+PR_TEMPLATE = REPO_ROOT / ".github" / "pull_request_template.md"
 
 TRIGGER = "run the code change cycle from CHANGE_CYCLE.md"
 # The sentence that introduces README.md's leading bullet list — the fork's shop
@@ -120,11 +122,12 @@ def test_the_entry_point_is_reachable_from_the_guidance_an_agent_reads_first() -
 def test_every_agent_reaches_the_cycle_without_being_asked() -> None:
     """The cycle runs automatically only if every agent's entry file leads to it.
 
-    Codex, Grok Build and others read `AGENTS.md`; Claude Code reads `CLAUDE.md`,
-    which must stay a pure `@AGENTS.md` import so no agent or model gets rules the
-    others miss. The pointer sits above the root guide's first section because
-    some agents cap how much instruction text they load (Codex: 32 KiB by
-    default); moved further down, it still renders and is silently cut.
+    Codex, Grok Build and others read `AGENTS.md`; Claude Code reads `CLAUDE.md`
+    and Gemini CLI reads `GEMINI.md`, and each of those, at any depth, must stay a
+    pure `@AGENTS.md` import so no agent or model gets rules the others miss.
+    The pointer sits above the root guide's first section because some agents
+    cap how much instruction text they load (Codex: 32 KiB by default); moved
+    further down, it still renders and is silently cut.
     """
     root = ROOT_AGENTS.read_text(encoding="utf-8")
     first_section = root.index("\n## ")
@@ -132,13 +135,51 @@ def test_every_agent_reaches_the_cycle_without_being_asked() -> None:
     assert "automatically" in root[:first_section]
     assert "Automatic for every change request" in CHANGE_CYCLE.read_text(encoding="utf-8")
 
-    shims = sorted(REPO_ROOT.glob("CLAUDE.md")) + sorted(REPO_ROOT.glob("*/CLAUDE.md"))
-    assert shims, "no CLAUDE.md shim found"
+    tracked = subprocess.run(
+        ["git", "ls-files", "--", "CLAUDE.md", "*/CLAUDE.md", "GEMINI.md", "*/GEMINI.md"],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.splitlines()
+    shims = [REPO_ROOT / rel for rel in sorted(tracked)]
+    assert REPO_ROOT / "CLAUDE.md" in shims, "no root CLAUDE.md shim found"
+    assert REPO_ROOT / "GEMINI.md" in shims, "no root GEMINI.md shim found; Gemini CLI reads GEMINI.md, not AGENTS.md"
     for shim in shims:
         text = shim.read_text(encoding="utf-8")
-        assert text.rstrip().endswith("@AGENTS.md"), f"{shim.relative_to(REPO_ROOT)} must import its sibling AGENTS.md"
+        assert text.rstrip().splitlines()[-1] in ("@AGENTS.md", "@./AGENTS.md"), f"{shim.relative_to(REPO_ROOT)} must import its sibling AGENTS.md"
         assert (shim.parent / "AGENTS.md").is_file(), f"{shim.relative_to(REPO_ROOT)} imports a missing AGENTS.md"
         assert "CHANGE_CYCLE" not in text and "## " not in text, f"{shim.relative_to(REPO_ROOT)} carries rules of its own; put them in AGENTS.md"
+
+
+def test_the_cycle_keeps_the_test_and_audit_steps_the_owner_asked_for() -> None:
+    """Run tests, add them only for gaps, prune redundant ones, audit only on request.
+
+    Like the PR step, each of these can be deleted or inverted without any other
+    test noticing: the cycle still renders, its links resolve, and the next agent
+    simply stops pruning tests or starts auditing models on every change. Pinned
+    by step headings and report lines, so the prose stays free to change.
+    """
+    text = CHANGE_CYCLE.read_text(encoding="utf-8")
+    flags = re.MULTILINE | re.IGNORECASE
+
+    assert re.search(r"^##\s+\d+\.\s+.*\btests\b.*\badd\b.*\bremove\b", text, flags), "the test-maintenance step no longer covers adding and removing tests"
+    assert re.search(r"^###\s+.*\bremove\b.*\btests\b", text, flags), "the review-and-remove-unnecessary-tests sub-step is gone"
+    assert re.search(r"^##\s+\d+\.\s+Run existing tests\b", text, flags), "the step that runs existing tests at the required scope is gone"
+    assert re.search(r"^##\s+\d+\.\s+Model audit\b.*\boptional\b", text, flags), "the model audit step is no longer marked optional"
+    for line in ("Tests added:", "Tests reviewed:", "Tests removed:", "Validation:", "Model audit:"):
+        assert line in text, f"the report shape lost {line!r}"
+
+    root = ROOT_AGENTS.read_text(encoding="utf-8")
+    header = root[: root.index("\n## ")]
+    assert "remove unnecessary tests" in header, "the root pointer stopped naming test pruning"
+    assert "pull request" in header, "the root pointer stopped naming the pull request"
+
+    template = PR_TEMPLATE.read_text(encoding="utf-8")
+    assert re.search(r"^##\s+Validation\s*$", template, re.MULTILINE), "the PR template lost the Validation section step 9 fills in"
+    section = re.search(r"^##\s+Test maintenance\s*$(.*?)(?=^##\s)", template, re.MULTILINE | re.DOTALL)
+    assert section, "the PR template lost the Test maintenance section step 3 records into"
+    assert "removed" in section.group(1).lower(), "Test maintenance no longer asks which tests were removed"
 
 
 def test_the_cycle_asks_whether_the_change_is_a_feature_and_owes_the_readme() -> None:

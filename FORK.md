@@ -55,11 +55,14 @@ feature's name, the command, and the one or two asserts that are silent when
 broken; when it needs more than that, put the depth in its own file — or in the
 nearest `AGENTS.md`, for what an agent needs before editing the code — and link
 it from the row. There is a hard budget forcing this rather than a preference:
-the rendered PR body is ~63 KB against GitHub's 65,536-character limit, and
-`test_the_body_stays_within_github_limits` fails when it stops fitting.
+the rendered PR body is clamped at 65,000 characters against GitHub's 65,536
+limit and already overflows it, so the checklist's tail is truncated out of every
+sync PR. `test_the_body_stays_within_github_limits` measures the body *after*
+that clamp and cannot catch it; CHANGE_CYCLE.md step 4 has the command that
+measures what a row costs.
 
 **Everything after the audit is reference.** [What this fork adds](#what-this-fork-adds)
-(§1–§23) records _why_ each feature is shaped the way it is and which properties
+(the numbered `### N.` sections) records _why_ each feature is shaped the way it is and which properties
 a refactor must not "simplify" away; the sections after it cover setup, cost,
 Tailscale, and troubleshooting. Read them when a check fails and you need to know
 what the check was defending.
