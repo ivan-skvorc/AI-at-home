@@ -28,14 +28,28 @@ for (const agentName of [undefined, "test-agent"]) {
         },
       ],
     });
+    // Fork: Gaslight mode (FORK.md §18) replaced upstream's in-place rerun.
+    // Saving a prompt edit creates a hidden version thread instead (POST
+    // /api/threads for the first turn, /branches for a later one), so block
+    // and count those beside upstream's no-longer-wired prepare route.
     let rerunRequests = 0;
-    await page.route("**/runs/edit-regenerate/prepare", async (route) => {
-      rerunRequests++;
-      await route.fulfill({
-        status: 409,
-        json: { detail: "Test rerun blocked" },
+    for (const pattern of [
+      "**/runs/edit-regenerate/prepare",
+      "**/api/threads",
+      /\/api\/threads\/[^/]+\/branches$/,
+    ]) {
+      await page.route(pattern, async (route) => {
+        if (route.request().method() !== "POST") {
+          await route.fallback();
+          return;
+        }
+        rerunRequests++;
+        await route.fulfill({
+          status: 409,
+          json: { detail: "Test rerun blocked" },
+        });
       });
-    });
+    }
     await page.goto(
       agentName
         ? `/workspace/agents/${agentName}/chats/${MOCK_THREAD_ID}`
@@ -45,8 +59,10 @@ for (const agentName of [undefined, "test-agent"]) {
       page.getByText("Original answer", { exact: true }),
     ).toBeVisible();
     await page.getByText("Original question", { exact: true }).hover();
+    // Fork: the human row's edit control is "Edit message" (FORK.md §18),
+    // not upstream's "Edit and rerun".
     await page
-      .getByRole("button", { name: "Edit and rerun", exact: true })
+      .getByRole("button", { name: "Edit message", exact: true })
       .click();
     const editor = page.locator(".is-user textarea");
     await editor.fill("Unfinished draft");

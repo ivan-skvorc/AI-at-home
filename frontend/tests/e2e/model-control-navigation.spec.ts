@@ -1,6 +1,19 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 
 import { mockLangGraphAPI, MOCK_THREAD_ID } from "./utils/mock-api";
+
+// Fork: a conversation's model lives in its per-thread context override
+// (FORK.md §36): JSON under `deerflow.thread-context.<id>`, the record the
+// composer's picker also writes, not upstream's plain-string
+// `deerflow.thread-model.<id>` key, which the fork only reads for migration.
+function readThreadModel(page: Page, threadId: string) {
+  return page.evaluate((id) => {
+    const raw = localStorage.getItem(`deerflow.thread-context.${id}`);
+    if (!raw) return null;
+    const { model_name } = JSON.parse(raw) as { model_name?: unknown };
+    return typeof model_name === "string" ? model_name : null;
+  }, threadId);
+}
 
 test.beforeEach(async ({ page }) => {
   mockLangGraphAPI(page, {
@@ -68,11 +81,8 @@ for (const destination of ["agent-thread", "normal-chat"] as const) {
     await input.fill("From now on use Model B");
     await input.press("Enter");
     const createRequest = await intercepted;
-    const previousModel = await page.evaluate(
-      // No override and an explicit model-a both select the configured default.
-      (id) => localStorage.getItem(`deerflow.thread-model.${id}`) ?? "model-a",
-      createdId,
-    );
+    // No override and an explicit model-a both select the configured default.
+    const previousModel = (await readThreadModel(page, createdId)) ?? "model-a";
     try {
       await page
         .getByRole("link", {
@@ -101,13 +111,9 @@ for (const destination of ["agent-thread", "normal-chat"] as const) {
       );
       await expect(page).toHaveURL(new RegExp(`${target}$`));
       await expect(input).toHaveText("Keep this draft");
-      expect(
-        await page.evaluate(
-          (id) =>
-            localStorage.getItem(`deerflow.thread-model.${id}`) ?? "model-a",
-          createdId,
-        ),
-      ).toBe(previousModel);
+      expect((await readThreadModel(page, createdId)) ?? "model-a").toBe(
+        previousModel,
+      );
       await expect(
         page.getByText("Conversation default model saved.", { exact: true }),
       ).toBeHidden();
@@ -135,11 +141,6 @@ test("a completed Custom Agent model change still saves without a run", async ({
   ).toBeVisible();
   const threadId = new URL(page.url()).pathname.split("/").at(-1)!;
   expect(threadId).not.toBe("new");
-  expect(
-    await page.evaluate(
-      (id) => localStorage.getItem(`deerflow.thread-model.${id}`),
-      threadId,
-    ),
-  ).toBe("model-b");
+  expect(await readThreadModel(page, threadId)).toBe("model-b");
   expect(runs).toEqual([]);
 });
