@@ -428,6 +428,32 @@ class TestPerCallModel:
 
         assert panel_task_tool["executor_kwargs"]["model_override"] == "premium"
 
+    def test_per_call_model_is_authorized_like_model_name(self, panel_task_tool, monkeypatch):
+        """``model=`` outranks the user's ``model_name`` choice, so it must clear the same gate.
+
+        Upstream authorizes ``model_name`` against ``model:use``; a catalog check
+        alone would let the per-call path run a child on a model the caller's
+        role is denied.
+        """
+
+        def _deny_premium(name, **kwargs):
+            if name == "premium":
+                raise ValueError("The selected model is not available for your role.")
+
+        monkeypatch.setattr(task_tool_module, "authorize_selected_model", _deny_premium)
+        runtime = _make_runtime(app_config=_app_config(PANEL))
+        result = _run_task_tool(
+            runtime=runtime,
+            description="panelist",
+            prompt="the brief",
+            subagent_type="general-purpose",
+            tool_call_id="tc-deny",
+            model="premium",
+        )
+
+        assert "not available for your role" in _message(result).content
+        assert "executor_kwargs" not in panel_task_tool
+
     def test_routing_still_applies_when_no_per_call_model_is_given(self, panel_task_tool, monkeypatch):
         # The guard above must not disable the policy for ordinary delegations.
         monkeypatch.setattr(

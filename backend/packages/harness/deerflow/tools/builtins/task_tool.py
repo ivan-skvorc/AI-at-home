@@ -1135,6 +1135,15 @@ async def task_tool(
         requested_model, model_error = resolve_requested_subagent_model(model, routing_models)
         if model_error is not None:
             return _task_result_command(tool_call_id=tool_call_id, status="failed", error=model_error)
+        # The same model:use gate upstream applies to ``model_name``: this path
+        # outranks that choice, and a catalog check alone would let it reach a
+        # model the caller's role is denied. Skipped for a caller with no
+        # readable catalog, which cannot adjudicate the name either.
+        if routing_models and callable(getattr(routing_app_config, "get_model_config", None)):
+            try:
+                await run_assembly(authorize_selected_model, requested_model, context=parent_context, app_config=routing_app_config)
+            except ValueError as exc:
+                return _task_result_command(tool_call_id=tool_call_id, status="failed", error=str(exc))
         subagent_model_override = requested_model
         effective_model = requested_model
 

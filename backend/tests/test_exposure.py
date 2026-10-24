@@ -78,6 +78,20 @@ class TestResolveFacts:
         assert facts.reach == "tailscale"
         assert facts.bind_source == ".env"
 
+    def test_a_selected_dotenv_outside_the_project_is_the_one_read(self, tmp_path):
+        # deploy.sh starts the stack from DEER_FLOW_COMPOSE_ENV_FILE when it is set;
+        # summarising the repo-root .env instead understates a network-bound stack.
+        root = tmp_path / "repo"
+        root.mkdir()
+        (root / ".env").write_text("BIND_HOST=127.0.0.1\n", encoding="utf-8")
+        selected = tmp_path / "stage.env"
+        selected.write_text("BIND_HOST=0.0.0.0\n", encoding="utf-8")
+
+        assert exposure.resolve_facts(root, surface="docker", env={}).reach == "loopback"
+        facts = exposure.resolve_facts(root, surface="docker", env={}, env_file=selected)
+        assert facts.bind_host == "0.0.0.0"
+        assert facts.reach == "wildcard"
+
     def test_process_environment_wins_over_dotenv(self, tmp_path):
         (tmp_path / ".env").write_text("BIND_HOST=192.168.1.5\n", encoding="utf-8")
         facts = exposure.resolve_facts(tmp_path, surface="docker", env={"BIND_HOST": "127.0.0.1"})

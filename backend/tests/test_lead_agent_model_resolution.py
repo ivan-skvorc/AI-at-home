@@ -111,6 +111,19 @@ def test_assembly_child_selection_requires_enabled_subagents(model_control_assem
     assert fallback.call_args.args == ("default",)
 
 
+def test_unconfigured_subagent_model_follows_the_lead(model_control_assembly):
+    """Fork: the Ultra dropdown value is persisted per thread (FORK.md §3).
+
+    A model later removed from config.yaml must not fail every turn of that
+    thread at assembly: the picker already reads "Follow lead", so the run does.
+    """
+    app_config, strict, fallback, model_factory = model_control_assembly
+    config = {"context": {"subagent_enabled": True, "subagent_model_name": "removed-model"}}
+    lead_agent_module._make_lead_agent(config, app_config=app_config)
+    strict.assert_not_called()
+    assert "subagent_model_name" not in config["context"]
+
+
 class ConfiguredGuardMiddleware(AgentMiddleware):
     pass
 
@@ -1518,6 +1531,31 @@ def test_empty_allowed_subagents_disables_requested_delegation(monkeypatch, mcp_
     assert config["configurable"]["subagent_enabled"] is False
     assert config["metadata"]["allowed_subagents"] == []
     assert config["metadata"]["mcp_plugins"] == mcp_plugins
+
+
+def test_hard_deny_drops_a_persisted_subagent_model_instead_of_failing(monkeypatch):
+    """Fork: an Ultra thread's dropdown value must not fail every turn of a hard-deny Custom Agent.
+
+    The Web UI sends the thread's subagent model whenever the mode delegates; a
+    Custom Agent with `allowed_subagents: []` turns delegation off server-side,
+    so the value has nothing to apply to and the run follows the lead.
+    """
+    app_config = _make_app_config([_make_model("agent-model", supports_thinking=False), _make_model("child", supports_thinking=False)])
+    agent_config = _make_agent_config(model="agent-model", allowed_subagents=[])
+
+    import deerflow.tools as tools_module
+
+    monkeypatch.setattr(lead_agent_module, "load_agent_config", lambda name, *, user_id=None: agent_config)
+    monkeypatch.setattr(tools_module, "get_available_tools", MagicMock(return_value=[]))
+    monkeypatch.setattr(lead_agent_module, "build_middlewares", lambda config, model_name, agent_name=None, **kwargs: [])
+    monkeypatch.setattr(lead_agent_module, "create_chat_model", lambda **kwargs: object())
+    monkeypatch.setattr(lead_agent_module, "create_agent", lambda **kwargs: kwargs)
+
+    config = {"context": {"agent_name": "researcher", "subagent_enabled": True, "subagent_model_name": "child"}}
+    lead_agent_module._make_lead_agent(config, app_config=app_config)
+
+    assert config["context"]["subagent_enabled"] is False
+    assert "subagent_model_name" not in config["context"]
 
 
 def test_make_lead_agent_no_agent_settings_passes_none_overrides(monkeypatch):

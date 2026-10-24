@@ -854,7 +854,9 @@ _CONTEXT_CONFIGURABLE_KEYS: frozenset[str] = frozenset(
         # scoped child-model control share that key, and upstream makes it a
         # run-only choice (_MODEL_SELECTION_CONTEXT_KEYS writes it to the runtime
         # context alone, never to checkpointed configurable). The Web UI sends
-        # the dropdown value on every delegating run, so nothing is lost.
+        # the dropdown value on every delegating run, so it needs no
+        # checkpoint copy; the lead-agent factory drops one that cannot apply
+        # (a hard-deny agent, a model no longer configured).
         "max_concurrent_subagents",
         "max_total_subagents",
         # Fork: the Democracy panel roster (list of configured model names).

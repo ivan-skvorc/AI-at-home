@@ -1408,6 +1408,28 @@ def _assemble_lead_agent(config: RunnableConfig, *, app_config: AppConfig) -> Le
         chat_model=chat_model,
     )
     selected_child_model = cfg.get("subagent_model_name")
+    if selected_child_model is not None and requested_subagent_enabled:
+        # Fork (FORK.md §3): the Web UI sends the thread's Ultra-mode subagent
+        # dropdown under this key on every delegating run, and the value is
+        # persisted per thread. Two server-side facts can leave it with nothing
+        # to apply to, and neither may fail every turn of the thread: a Custom
+        # Agent's hard deny (allowed_subagents: []) turned delegation off, or
+        # the model has since left config.yaml (the picker then reads "Follow
+        # lead"). Follow the lead instead. Upstream's rejection of a selection
+        # on a run that did not request subagents is unchanged.
+        get_model_config = getattr(resolved_app_config, "get_model_config", None)
+        if not subagent_enabled:
+            ignore_reason = "this agent disallows subagents"
+        elif isinstance(selected_child_model, str) and callable(get_model_config) and get_model_config(selected_child_model) is None:
+            ignore_reason = "not a configured model"
+        else:
+            ignore_reason = None
+        if ignore_reason is not None:
+            logger.warning("Ignoring subagent_model_name %r: %s", selected_child_model, ignore_reason)
+            selected_child_model = None
+            for section in (config.get("context"), config.get("configurable")):
+                if isinstance(section, dict):
+                    section.pop("subagent_model_name", None)
     if selected_child_model is not None:
         from deerflow.models.selection import authorize_selected_model, bind_selected_task_model
 

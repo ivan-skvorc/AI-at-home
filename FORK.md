@@ -206,8 +206,12 @@ once you know to look. The 2026-09-09 sync hit all three at once:
   subagent dropdown (§3) sends `subagent_model_name` on every run; the 2026-10-22 sync's
   #7249 made the same key a run-only child-model choice that the lead agent **rejects** without
   subagents. No conflict and no failing test, and every Pro or Flash turn in a thread that had
-  once picked a subagent model would have failed. The Web UI now sends it only on a run that can
-  delegate, a one-run choice beats the dropdown (`run-context.test.ts`), and upstream's
+  once picked a subagent model would have failed — as would every turn of a hard-deny Custom
+  Agent (`allowed_subagents: []`) or a thread whose picked model has left `config.yaml`. The Web
+  UI now sends it only on a run that can delegate, a one-run choice beats the dropdown
+  (`run-context.test.ts`), the lead-agent factory drops a value that cannot apply instead of
+  failing the run (`test_lead_agent_model_resolution.py::test_hard_deny_drops_a_persisted_subagent_model_instead_of_failing`),
+  `task(model=...)` now clears the same `model:use` gate as `model_name`, and upstream's
   `task(model_name=...)` stands the cost-aware router (§15) down like the dropdown does
   (`test_democracy_panel.py::TestPerCallModel::test_an_explicit_child_model_choice_stands_the_routing_policy_down`).
   On each sync, grep upstream's diff for every run-context key the fork's frontend sends.
@@ -918,7 +922,7 @@ A second model selector appears next to the lead-model picker when **Ultra mode*
 
 Backend reads `subagent_model_name` from the LangGraph thread context in `task_tool.py` and overrides the resolved subagent model. Frontend stores the choice in `AgentThreadContext` only — **ephemeral per thread**, no localStorage. Switch threads and it resets to "Follow lead".
 
-Since the 2026-10-22 sync the key is shared with upstream's scoped child-model control ("ask <model> to …", #7249), which treats it as a run-only choice: the Gateway writes it to the runtime context alone, the lead agent authorizes it and **rejects it on a run without subagents**, and `task` refuses a `model_name` that contradicts it. So `buildRunContext` sends it only when the run can delegate, and a one-run choice beats the dropdown. The selection stands cost-aware routing (§15) down whichever way it arrived; `task(model=...)` (§22) still outranks it.
+Since the 2026-10-22 sync the key is shared with upstream's scoped child-model control ("ask <model> to …", #7249), which treats it as a run-only choice: the Gateway writes it to the runtime context alone, the lead agent authorizes it and **rejects it on a run without subagents**, and `task` refuses a `model_name` that contradicts it. So `buildRunContext` sends it only when the run can delegate, a one-run choice beats the dropdown, and the lead-agent factory follows the lead (with a warning in the log) when the agent disallows subagents or the picked model is no longer configured. The selection stands cost-aware routing (§15) down whichever way it arrived; `task(model=...)` (§22) still outranks it.
 
 Models flagged `supports_tools: false` (only Ollama models that don't report the tools capability) appear at the bottom of the list, dimmed, with a "(no tool support)" annotation. Still selectable in case the flag is wrong; tool-using subagents will simply fail at runtime.
 

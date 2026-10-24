@@ -761,7 +761,7 @@ echo ""
 # computes the combination; `make doctor` prints the same assessment. Diagnosis
 # only — it changes nothing and never fails the launch.
 if [ -n "$_detect_python" ]; then
-    "$_detect_python" "$REPO_ROOT/scripts/exposure.py" --surface docker --project-root "$REPO_ROOT" 2>/dev/null || true
+    "$_detect_python" "$REPO_ROOT/scripts/exposure.py" --surface docker --project-root "$REPO_ROOT" --env-file "$ENV_FILE" 2>/dev/null || true
     echo ""
 fi
 echo "  Manage:"
