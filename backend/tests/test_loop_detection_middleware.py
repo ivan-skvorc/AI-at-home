@@ -2448,3 +2448,109 @@ class TestWarningLetsAgentSaveResultsFirst:
         message = getattr(loop_detection_module, name)
         assert message == expected
         assert loop_detection_module._WRAP_UP_INSTRUCTIONS not in message
+
+
+class TestWorkspaceEditProgress:
+    """An edit is progress: the same check repeated after it is a re-test, not a loop.
+
+    Edit → test → edit → test is the shape of every debug session, and the test
+    command is identical each time. Counted naively it reached the hard limit on
+    the fifth fix, forcing a final answer in the middle of the work. Only
+    ``write_file`` / ``str_replace`` count as an edit, and the edits themselves
+    keep being counted, so a run re-applying one edit is still stopped.
+    """
+
+    @staticmethod
+    def _edit(n):
+        return {"name": "str_replace", "id": f"edit_{n}", "args": {"path": "/mnt/user-data/workspace/app.py", "old_str": f"v{n}", "new_str": f"v{n + 1}"}}
+
+    @staticmethod
+    def _read(start):
+        return {"name": "read_file", "id": f"read_{start}", "args": {"path": "/mnt/user-data/workspace/app.py", "start_line": start, "end_line": start + 9}}
+
+    def test_rerunning_the_tests_after_each_edit_never_trips(self):
+        mw = LoopDetectionMiddleware(warn_threshold=3, hard_limit=5)
+        runtime = _make_runtime()
+
+        for n in range(8):
+            assert mw._apply(_make_state(tool_calls=[self._edit(n)]), runtime) is None
+            assert mw._apply(_make_state(tool_calls=[_bash_call("pytest -x")]), runtime) is None
+        assert mw._pending_warnings.get(_pending_key()) in (None, [])
+        assert mw.consume_stop_reason("test-run") is None
+
+    def test_rerunning_without_an_edit_still_hard_stops(self):
+        """Reads between the runs are not progress: nothing changed, so it is a loop."""
+        mw = LoopDetectionMiddleware(warn_threshold=3, hard_limit=5)
+        runtime = _make_runtime()
+
+        decisions = []
+        for n in range(5):
+            decisions.append(mw._apply(_make_state(tool_calls=[self._read(1 + 10 * n)]), runtime))
+            decisions.append(mw._apply(_make_state(tool_calls=[_bash_call("pytest -x")]), runtime))
+
+        assert decisions[-1] is not None
+        assert mw.consume_stop_reason("test-run") == "loop_capped"
+
+    def test_reapplying_the_same_edit_still_hard_stops(self):
+        mw = LoopDetectionMiddleware(warn_threshold=3, hard_limit=5)
+        runtime = _make_runtime()
+
+        decisions = []
+        for _ in range(5):
+            decisions.append(mw._apply(_make_state(tool_calls=[self._edit(0)]), runtime))
+            decisions.append(mw._apply(_make_state(tool_calls=[_bash_call("pytest -x")]), runtime))
+
+        assert decisions[-2] is not None
+        assert mw.consume_stop_reason("test-run") == "loop_capped"
+
+    def test_an_edit_rearms_the_bash_frequency_window(self):
+        mw = LoopDetectionMiddleware(warn_threshold=10, hard_limit=20, tool_freq_warn=30, tool_freq_hard_limit=5)
+        runtime = _make_runtime()
+
+        for round_ in range(3):
+            for n in range(4):
+                assert mw._apply(_make_state(tool_calls=[_bash_call(f"step-{round_}-{n}")]), runtime) is None
+            assert mw._apply(_make_state(tool_calls=[self._edit(round_)]), runtime) is None
+        assert mw.consume_stop_reason("test-run") is None
+
+    def test_bash_frequency_without_an_edit_still_hard_stops(self):
+        mw = LoopDetectionMiddleware(warn_threshold=10, hard_limit=20, tool_freq_warn=30, tool_freq_hard_limit=5)
+        runtime = _make_runtime()
+
+        decisions = [mw._apply(_make_state(tool_calls=[_bash_call(f"step-{n}")]), runtime) for n in range(5)]
+
+        assert decisions[-1] is not None
+        assert mw.consume_stop_reason("test-run") == "loop_capped"
+
+    def test_edits_keep_counting_toward_their_own_frequency_limit(self):
+        mw = LoopDetectionMiddleware(warn_threshold=10, hard_limit=20, tool_freq_warn=30, tool_freq_hard_limit=5)
+        runtime = _make_runtime()
+
+        decisions = [mw._apply(_make_state(tool_calls=[self._edit(n)]), runtime) for n in range(5)]
+
+        assert decisions[-1] is not None
+        assert mw.consume_stop_reason("test-run") == "loop_capped"
+
+    def test_a_save_after_a_warning_does_not_rearm_the_warned_call(self):
+        """The warning asks for a save; that save must not launder the loop it warned about."""
+        mw = LoopDetectionMiddleware(warn_threshold=3, hard_limit=5)
+        runtime = _make_runtime()
+        search = {"name": "web_search", "id": "search", "args": {"query": "same"}}
+
+        for n in range(3):
+            for _ in range(3):
+                mw._apply(_make_state(tool_calls=[search]), runtime)
+            mw._apply(_make_state(tool_calls=[{"name": "write_file", "id": f"save_{n}", "args": {"path": "/mnt/user-data/outputs/notes.md", "content": f"so far {n}"}}]), runtime)
+
+        assert mw.consume_stop_reason("test-run") == "loop_capped"
+
+    def test_edits_spaced_by_one_call_decay_out_of_the_frequency_window(self):
+        """Writing many files, each followed by one check, is not an edit loop."""
+        mw = LoopDetectionMiddleware()
+        runtime = _make_runtime()
+
+        for n in range(60):
+            write = {"name": "write_file", "id": f"write_{n}", "args": {"path": f"/mnt/user-data/workspace/f{n}.py", "content": "x = 1\n"}}
+            assert mw._apply(_make_state(tool_calls=[write]), runtime) is None
+            assert mw._apply(_make_state(tool_calls=[_bash_call(f"python -m py_compile f{n}.py")]), runtime) is None
+        assert mw.consume_stop_reason("test-run") is None

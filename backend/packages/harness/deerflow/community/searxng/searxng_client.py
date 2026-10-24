@@ -8,6 +8,17 @@ from deerflow.community.search_time_range import SearchTimeRange
 logger = logging.getLogger(__name__)
 
 
+class SearxngResponseError(ValueError):
+    """Raised when a SearXNG instance answers with a malformed success payload.
+
+    The search API answers HTTP 200 with ``results`` as its only contract; an
+    instance behind a reverse proxy or captive portal instead answers an HTML or
+    plain-text error page with the same status. Such a payload is not an empty
+    search, so the caller reports a format error rather than "No results found"
+    -- the containment rule the sibling providers already follow.
+    """
+
+
 class SearxngEnginesUnavailableError(RuntimeError):
     """Every engine that could have answered was blocked, suspended or timed out.
 
@@ -101,6 +112,42 @@ class SearxngClient:
 
         return collected
 
+    @staticmethod
+    def _response_rows(data: object) -> list[dict[str, Any]]:
+        """Return the object rows of one page, or raise when the payload is malformed.
+
+        A missing or null ``results`` is an empty search. A payload that is not
+        an object, a ``results`` container that is not a list, and a non-empty
+        list holding no object entries are all malformed: an instance behind a
+        reverse proxy or captive portal answers an HTML or plain-text error page
+        with HTTP 200, and reporting "No results found" for it would tell the
+        agent the query legitimately matched nothing. Non-object entries in an
+        otherwise valid list are skipped in order so the valid rows survive, and
+        each skip is logged with the entry index: this is the provider where
+        drift is most expected (a self-hosted instance serves whatever sits
+        behind its reverse proxy), and with ``_MAX_PAGES`` requests per search a
+        drifting instance would otherwise shed rows with no trace at all.
+        """
+        if not isinstance(data, dict):
+            logger.error("SearXNG returned an unexpected payload type: %s", type(data).__name__)
+            raise SearxngResponseError("SearXNG returned an unexpected response format")
+        results = data.get("results")
+        if results is None:
+            return []
+        if not isinstance(results, list):
+            logger.error("SearXNG returned an unexpected 'results' payload type: %s", type(results).__name__)
+            raise SearxngResponseError("SearXNG returned an unexpected response format")
+        usable: list[dict[str, Any]] = []
+        for index, row in enumerate(results):
+            if not isinstance(row, dict):
+                logger.warning("Skipping malformed SearXNG result entry at results[%d]", index)
+                continue
+            usable.append(row)
+        if results and not usable:
+            logger.error("SearXNG returned 'results' with no usable result objects")
+            raise SearxngResponseError("SearXNG returned an unexpected response format")
+        return usable
+
     async def _search_page(
         self,
         query: str,
@@ -137,8 +184,12 @@ class SearxngClient:
                     },
                 )
                 resp.raise_for_status()
-                data = resp.json()
-                results = data.get("results") or []
+                try:
+                    data = resp.json()
+                except ValueError as e:
+                    logger.error("SearXNG returned a response body that is not JSON")
+                    raise SearxngResponseError("SearXNG returned an unexpected response format") from e
+                results = self._response_rows(data)
                 # An empty result set is ambiguous: either nothing matched, or
                 # every engine was blocked. Only `unresponsive_engines` tells
                 # the two apart, and only the second one is an error. Only on
@@ -163,6 +214,8 @@ class SearxngClient:
             raise
         except httpx.RequestError as e:
             logger.error(f"SearXNG search request failed: {e}")
+            raise
+        except SearxngResponseError:
             raise
         except Exception as e:
             logger.error(f"An unexpected error occurred during SearXNG search: {e}")

@@ -1,6 +1,6 @@
 # DeerFlow - Unified Development Environment
 
-.PHONY: help drift-eval config config-upgrade check check-agent-guidance install extension-install extension-upgrade extension-list extension-enable extension-disable extension-remove setup doctor support-bundle detect-thread-boundaries detect-blocking-io backup restore dev dev-daemon dev-multi dev-multi-check dev-multi-down start start-daemon nginx stop up up-start down clean docker-init docker-start docker-stop docker-logs docker-logs-frontend docker-logs-gateway docker-logs-redis searxng searxng-stop comfy-up comfy-down comfy-logs comfy-models comfy-model-add sandbox-up sandbox-down sandbox-logs sandbox-enable sandbox-disable setup-sandbox prod-logs fetch-browser auto-update auto-update-install auto-update-uninstall
+.PHONY: help drift-eval config config-upgrade test-config-version check check-agent-guidance install extension-install extension-upgrade extension-list extension-enable extension-disable extension-remove setup doctor support-bundle detect-thread-boundaries detect-blocking-io backup restore dev dev-daemon dev-multi dev-multi-check dev-multi-down start start-daemon nginx stop up up-start down clean docker-init docker-start docker-stop docker-logs docker-logs-frontend docker-logs-gateway docker-logs-redis searxng searxng-stop comfy-up comfy-down comfy-logs comfy-models comfy-model-add sandbox-up sandbox-down sandbox-logs sandbox-enable sandbox-disable setup-sandbox prod-logs fetch-browser auto-update auto-update-install auto-update-uninstall
 
 # docker compose shim: prefer the v2 plugin, fall back to legacy docker-compose.
 DOCKER_COMPOSE ?= docker compose
@@ -37,6 +37,7 @@ help:
 	@echo "  make restore ARCHIVE=<file> - Restore a snapshot (refuses while the stack is running)"
 	@echo "  make config          - Generate local config files (aborts if config already exists)"
 	@echo "  make config-upgrade  - Merge new fields from config.example.yaml into config.yaml"
+	@echo "  make test-config-version - Run config upgrade tests with the public uv index"
 	@echo "  make check           - Check if all required tools are installed"
 	@echo "  make check-agent-guidance - Validate scoped AGENTS.md file and chain budgets"
 	@echo "  make detect-thread-boundaries - Inventory backend executor/thread/event-loop boundaries"
@@ -136,6 +137,9 @@ config:
 
 config-upgrade:
 	@$(RUN_SHELL_SCRIPT) ./scripts/config-upgrade.sh
+
+test-config-version:
+	@$(RUN_SHELL_SCRIPT) ./scripts/test-config-version.sh
 
 # Check required tools
 check:

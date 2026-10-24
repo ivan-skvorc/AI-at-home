@@ -58,6 +58,10 @@ ORIGINAL_PARENTS = {
     # 0038_merge_prefs_summaries had already claimed, splitting the tree a
     # sixth time — and was joined by 0044_merge_prefs_im_notices.
     "0038_channel_thread_bindings": ("0037_project_document_summaries",),
+    # Upstream's channel-runtime-config branch. It hangs off 0043 — the revision
+    # 0044_merge_prefs_im_notices had already claimed, splitting the tree a
+    # seventh time — and was joined by 0048_merge_prefs_oauth_tokens.
+    "0044_channel_runtime_configs": ("0043_runtime_im_notices",),
 }
 
 # Every leaf the merge points must keep reachable: one per branch tip that
@@ -75,6 +79,8 @@ MERGED_TIPS = (
     "0037_project_document_summaries",
     # Upstream's tip at the 2026-10-17 sync, joined by 0044_merge_prefs_im_notices.
     "0043_runtime_im_notices",
+    # Upstream's tip at the 2026-10-22 sync, joined by 0048_merge_prefs_oauth_tokens.
+    "0047_mcp_oauth_tokens",
 )
 
 

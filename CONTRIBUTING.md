@@ -51,11 +51,14 @@ Docker provides a consistent, isolated environment with all dependencies pre-con
    version, creates the missing `.env` files, and exports `DEER_FLOW_ROOT`.
 
    If you do run Compose directly, run it **from the repository root** and set
-   `DEER_FLOW_ROOT` to the absolute path of your checkout. Compose interpolates
-   that variable into host-side paths (`DEER_FLOW_HOST_BASE_DIR`,
-   `THREADS_HOST_PATH`) that the AIO and provisioner sandbox modes bind-mount;
-   leaving it unset renders them as `/backend/.deer-flow`, so those mounts
-   silently miss your checkout instead of failing:
+   `DEER_FLOW_ROOT` to the absolute path of your checkout. The default command
+   starts the local/AIO development stack without Kubernetes; add
+   `--profile provisioner` only when you need provisioner/Kubernetes sandbox
+   mode. Compose interpolates `DEER_FLOW_ROOT` into host-side paths
+   (`DEER_FLOW_HOST_BASE_DIR`, `THREADS_HOST_PATH`) that the AIO and provisioner
+   sandbox modes bind-mount; leaving it unset renders them as
+   `/backend/.deer-flow`, so those mounts silently miss your checkout instead of
+   failing:
 
    ```bash
    # macOS / Linux
@@ -104,6 +107,8 @@ If Docker builds are slow in your network, you can override the default package 
 export UV_INDEX_URL=https://pypi.org/simple
 export NPM_REGISTRY=https://registry.npmjs.org
 ```
+
+Keep `UV_INDEX_URL` at `https://pypi.org/simple`: the gateway image installs with `uv sync --locked`, and `uv.lock` is locked to that index, so a mirror makes the build fail with ``The lockfile at `uv.lock` needs to be updated, but `--locked` was provided``.
 
 #### Recommended host resources
 
@@ -286,13 +291,13 @@ Nginx (port 2026) ← Unified entry point
 
 > **Fork note.** This fork formalizes the loop below — including which tests a
 > change owes, keeping [FORK.md's post-sync checklist](FORK.md#post-sync-feature-checklist)
-> in sync with the code, and when the model audit is due — in
+> in sync with the code, and the model audit, which runs only when asked — in
 > [`CHANGE_CYCLE.md`](CHANGE_CYCLE.md). Every coding-agent change request follows
 > it automatically, through tests, test cleanup, and an open pull request.
 
 [`AGENTS.md`](AGENTS.md) is the shared instruction source. Codex/ChatGPT, Grok
 Build and other agents that support `AGENTS.md` discover it directly; Claude Code
-imports it through the existing `CLAUDE.md` shims. Keep shared rules in `AGENTS.md`
+and Gemini CLI import it through the `CLAUDE.md` and `GEMINI.md` shims. Keep shared rules in `AGENTS.md`
 and `CHANGE_CYCLE.md` so every agent and model uses the same procedure, and keep
 the cycle pointer at the top of the root `AGENTS.md`: some agents cap how much
 instruction text they load (Codex reads 32 KiB by default). Read the root and
@@ -334,7 +339,7 @@ there is no quota for test additions or deletions.
 
 5. **Commit your changes**:
    ```bash
-   git add .
+   git add <changed-paths>   # only this change's files; leave unrelated work unstaged
    git commit -m "feat: description of your changes"
    ```
 
@@ -383,6 +388,11 @@ make test
 cd frontend
 make test-e2e
 ```
+
+If a host-configured uv package mirror blocks dependencies while running the
+config upgrade tests, run `make test-config-version` from the repository root.
+That command uses public PyPI for this suite and its subprocesses without
+changing the host's uv settings or the normal config upgrade command.
 
 `make test-live` calls real external APIs and may incur API costs or create
 local sandboxes, artifacts, and files. It is never run by the default backend

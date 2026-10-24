@@ -411,10 +411,12 @@ fi
 # block matching whatever provider key is present in the environment / .env.
 #
 # Only the repo-root config.yaml is seeded, and only when NO config resolves via
-# DEER_FLOW_CONFIG_PATH / backend/config.yaml / config.yaml — an existing config
+# DEER_FLOW_CONFIG_PATH / $DEER_FLOW_PROJECT_ROOT/config.yaml / backend/config.yaml /
+# config.yaml — an existing config
 # at any of those locations is never overwritten.
 seed_missing_config() {
     if { [ -n "$DEER_FLOW_CONFIG_PATH" ] && [ -f "$DEER_FLOW_CONFIG_PATH" ]; } ||
+        [ -f "$DEER_FLOW_PROJECT_ROOT/config.yaml" ] ||
         [ -f "$REPO_ROOT/backend/config.yaml" ] ||
         [ -f "$REPO_ROOT/config.yaml" ]; then
         return 0

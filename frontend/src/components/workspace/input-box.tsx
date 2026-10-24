@@ -368,6 +368,7 @@ export function InputBox({
   projectId,
   draftAgentName,
   defaultModelName,
+  defaultModelLoading = false,
   knowledgeScopeControl,
   initialValue,
   onContextChange,
@@ -413,6 +414,13 @@ export function InputBox({
    * (issue #4336). ``null`` / undefined = no agent default → use models[0].
    */
   defaultModelName?: string | null;
+  /**
+   * True while the active custom agent (and so ``defaultModelName``) is still
+   * loading. Automatic model resolution waits for it: resolving earlier pins
+   * models[0], which then matches as the current model and is never replaced
+   * by the agent's default once it arrives.
+   */
+  defaultModelLoading?: boolean;
   /** Optional knowledge-scope control rendered directly after mode. */
   knowledgeScopeControl?: React.ReactNode;
   initialValue?: string;
@@ -820,7 +828,11 @@ export function InputBox({
   ]);
 
   useEffect(() => {
-    if (models.length === 0) {
+    // An agent chat cannot know its fallback until the agent has loaded. The
+    // models list can win that race (e.g. after an account switch remounts the
+    // workspace with an empty query cache), and resolving then would pin
+    // models[0] over the agent's own default for good.
+    if (models.length === 0 || defaultModelLoading) {
       return;
     }
     const currentModel = models.find((m) => m.name === context.model_name);
@@ -857,7 +869,7 @@ export function InputBox({
       },
       { automatic: true },
     );
-  }, [context, models, defaultModelName, onContextChange]);
+  }, [context, models, defaultModelName, defaultModelLoading, onContextChange]);
 
   const selectedModel = useMemo(() => {
     if (models.length === 0) {

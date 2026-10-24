@@ -12,6 +12,8 @@ import {
   isClosingFence,
 } from "@/core/streamdown/fences";
 
+import { modelControlDisplayText } from "./model-control";
+
 interface GenericMessageGroup<T = string> {
   type: T;
   id: string | undefined;
@@ -737,6 +739,8 @@ export function getMessageCopyData(message: Message) {
 }
 
 export function extractTextFromMessage(message: Message) {
+  const selectedModelText = modelControlDisplayText(message);
+  if (selectedModelText !== null) return selectedModelText;
   if (typeof message.content === "string") {
     return (
       splitInlineReasoningFromAIMessage(message)?.content ??
@@ -995,6 +999,8 @@ function splitInlineReasoningFromAIMessage(message: Message) {
 }
 
 export function extractContentFromMessage(message: Message) {
+  const selectedModelText = modelControlDisplayText(message);
+  if (selectedModelText !== null) return selectedModelText;
   if (typeof message.content === "string") {
     return (
       splitInlineReasoningFromAIMessage(message)?.content ??

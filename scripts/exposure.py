@@ -188,9 +188,13 @@ def resolve_facts(
     surface: Surface = "docker",
     env: Mapping[str, str] | None = None,
     config_path: Path | None = None,
+    env_file: Path | None = None,
 ) -> DeploymentFacts:
     env = os.environ if env is None else env
-    dotenv = _read_dotenv(project_root / ".env")
+    # deploy.sh passes the file DEER_FLOW_COMPOSE_ENV_FILE selected; the
+    # repo-root .env is only the default, and summarising it instead of the
+    # file the stack started with understates a network-bound deployment.
+    dotenv = _read_dotenv(env_file if env_file is not None else project_root / ".env")
 
     if surface == "local":
         # nginx.local.conf listens without an address; BIND_HOST is not consulted.
@@ -377,8 +381,9 @@ def assess_project(
     *,
     surface: Surface = "docker",
     env: Mapping[str, str] | None = None,
+    env_file: Path | None = None,
 ) -> Exposure:
-    return assess(resolve_facts(project_root, surface=surface, env=env))
+    return assess(resolve_facts(project_root, surface=surface, env=env, env_file=env_file))
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -386,11 +391,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--surface", choices=["docker", "local"], default="docker")
     parser.add_argument("--format", choices=["text", "json", "line"], default="text")
     parser.add_argument("--project-root", default=None)
+    parser.add_argument("--env-file", default=None, help="Dotenv file the stack was started with (default: <project-root>/.env).")
     args = parser.parse_args(argv)
 
     root = Path(args.project_root) if args.project_root else Path(__file__).resolve().parents[1]
     try:
-        result = assess_project(root, surface=args.surface)
+        result = assess_project(root, surface=args.surface, env_file=Path(args.env_file) if args.env_file else None)
     except Exception as exc:  # diagnosis must never break a launch
         print(f"Exposure: unavailable ({exc})", file=sys.stderr)
         return 0

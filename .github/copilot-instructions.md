@@ -1,5 +1,7 @@
 # Copilot Onboarding Instructions for DeerFlow
 
+**Before making any repository change, read and follow [`AGENTS.md`](../AGENTS.md) and [`CHANGE_CYCLE.md`](../CHANGE_CYCLE.md).** The cycle applies automatically to every change request: run relevant existing tests, add tests only for gaps, review and remove unnecessary tests in the affected area, run the checks its step 5 scope table requires, run the model audit only when the request asks for one, and finish by opening a pull request. Where this file and `CHANGE_CYCLE.md` disagree, `CHANGE_CYCLE.md` wins.
+
 Use this file as the default operating guide for this repository. Follow it first, and only search the codebase when this file is incomplete or incorrect.
 
 ## 1) Repository Summary
@@ -71,8 +73,8 @@ Run from `frontend/`.
 Recommended reliable sequence:
 
 ```bash
-pnpm lint
-pnpm typecheck
+pnpm check
+pnpm test
 BETTER_AUTH_SECRET=local-dev-secret pnpm build
 ```
 
@@ -81,7 +83,7 @@ Observed failure modes and workarounds:
 - `pnpm build` fails without `BETTER_AUTH_SECRET` in production-mode env validation.
 - Workaround: set `BETTER_AUTH_SECRET` (best) or set `SKIP_ENV_VALIDATION=1`.
 - Even with `SKIP_ENV_VALIDATION=1`, Better Auth can still warn/error in logs about default secret; prefer setting a real non-default secret.
-- `pnpm check` currently fails (`next lint` invocation is incompatible here and resolves to an invalid directory). Do not rely on `pnpm check`; run `pnpm lint` and `pnpm typecheck` explicitly.
+- `pnpm check` runs `prettier --check`, `eslint` and `tsc --noEmit` — the format, lint and type gates `lint-check.yml` runs. `pnpm test` runs the unit tests.
 
 ### D. Run locally (all services)
 
@@ -126,7 +128,7 @@ Use this exact order for local code changes:
 1. `make check`
 2. `make install` (if frontend fails with proxy errors, rerun frontend install with proxy vars unset)
 3. Backend checks: `cd backend && make lint && make test`
-4. Frontend checks: `cd frontend && pnpm lint && pnpm typecheck`
+4. Frontend checks: `cd frontend && pnpm check && pnpm test`
 5. Frontend build (if UI changes or release-sensitive changes): `BETTER_AUTH_SECRET=... pnpm build`
 
 Always run backend lint/tests before opening PRs because that is what CI enforces.
@@ -171,13 +173,13 @@ Skills and assets:
 
 This fork's full procedure — which tests a change owes, keeping
 [FORK.md's post-sync checklist](../FORK.md#post-sync-feature-checklist) in sync
-with the code, and when the model audit is due — is
+with the code, and the model audit, which runs only when the request asks for one — is
 [`CHANGE_CYCLE.md`](../CHANGE_CYCLE.md). Follow it automatically for every repository change.
 
-Before submitting changes, run at minimum:
+Before submitting changes, run the checks CHANGE_CYCLE.md step 5 requires for the change. For code changes that means at minimum:
 
-- Backend: `cd backend && make lint && make test`
-- Frontend (if touched): `cd frontend && pnpm lint && pnpm typecheck`
+- Backend (if touched): `cd backend && make lint && make test`
+- Frontend (if touched): `cd frontend && pnpm check && pnpm test`
 - Frontend build when changing env/auth/routing/build-sensitive files: `BETTER_AUTH_SECRET=... pnpm build`
 
 If touching orchestration/config (`Makefile`, `docker/*`, `config*.yaml`), also run `make dev` and verify the four services start.

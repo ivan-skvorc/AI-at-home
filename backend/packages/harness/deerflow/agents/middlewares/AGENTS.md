@@ -57,7 +57,7 @@ No match: skip inspection, log ID. Tests: `test_read_mark_tool_call_correlation.
 
 **Shared runtime base** (`build_lead_runtime_middlewares`; subagents reuse most of this via `build_subagent_runtime_middlewares`):
 
-The per-middleware catalogue — all 40 entries, their order, and the invariants
+The per-middleware catalogue — all 39 entries, their order, and the invariants
 each one carries — is reference material long enough to dominate this file's
 guidance budget, so it lives beside it in [`CHAIN.md`](CHAIN.md). Read it before
 adding, reordering or removing a middleware: position in the chain *is* the

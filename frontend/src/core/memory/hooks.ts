@@ -36,7 +36,8 @@ export function useClearMemory() {
 
   return useMutation({
     mutationFn: () => clearMemory(),
-    onSuccess: (memory) => {
+    onSuccess: async (memory) => {
+      await queryClient.cancelQueries({ queryKey: ["memory"], exact: true });
       queryClient.setQueryData<UserMemory>(["memory"], memory);
     },
   });
@@ -47,7 +48,8 @@ export function useDeleteMemoryFact() {
 
   return useMutation({
     mutationFn: (factId: string) => deleteMemoryFact(factId),
-    onSuccess: (memory) => {
+    onSuccess: async (memory) => {
+      await queryClient.cancelQueries({ queryKey: ["memory"], exact: true });
       queryClient.setQueryData<UserMemory>(["memory"], memory);
     },
   });
@@ -58,7 +60,8 @@ export function useImportMemory() {
 
   return useMutation({
     mutationFn: (memory: UserMemory) => importMemory(memory),
-    onSuccess: (memory) => {
+    onSuccess: async (memory) => {
+      await queryClient.cancelQueries({ queryKey: ["memory"], exact: true });
       queryClient.setQueryData<UserMemory>(["memory"], memory);
     },
   });
@@ -69,7 +72,8 @@ export function useCreateMemoryFact() {
 
   return useMutation({
     mutationFn: (input: MemoryFactInput) => createMemoryFact(input),
-    onSuccess: (memory) => {
+    onSuccess: async (memory) => {
+      await queryClient.cancelQueries({ queryKey: ["memory"], exact: true });
       queryClient.setQueryData<UserMemory>(["memory"], memory);
     },
   });
@@ -86,7 +90,8 @@ export function useUpdateMemoryFact() {
       factId: string;
       input: MemoryFactPatchInput;
     }) => updateMemoryFact(factId, input),
-    onSuccess: (memory) => {
+    onSuccess: async (memory) => {
+      await queryClient.cancelQueries({ queryKey: ["memory"], exact: true });
       queryClient.setQueryData<UserMemory>(["memory"], memory);
     },
   });

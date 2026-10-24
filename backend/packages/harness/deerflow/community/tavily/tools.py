@@ -6,6 +6,7 @@ from langchain.tools import tool
 from tavily import AsyncTavilyClient
 
 from deerflow.community.search_time_range import SearchTimeRange
+from deerflow.community.url_safety import safe_public_result_url
 from deerflow.config import get_app_config
 
 # Tavily's own SDK reads this when constructed without an explicit key. It is
@@ -134,7 +135,7 @@ async def _search_tavily(query: str, time_range: SearchTimeRange | None = None) 
     normalized_results = [
         {
             "title": result.get("title") or "",
-            "url": result.get("url") or "",
+            "url": safe_public_result_url(result.get("url")),
             "snippet": result.get("content") or "",
         }
         for result in results

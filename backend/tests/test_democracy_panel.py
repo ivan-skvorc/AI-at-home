@@ -334,7 +334,14 @@ def panel_task_tool(monkeypatch):
 
 
 def _app_config(models, *, model_routing=None):
-    return SimpleNamespace(models=[_Model(name) for name in models], model_routing=model_routing)
+    configured = [_Model(name) for name in models]
+    return SimpleNamespace(
+        models=configured,
+        model_routing=model_routing,
+        # Upstream's explicit child-model selection authorizes the name against
+        # the catalog before dispatch (deerflow.models.selection).
+        get_model_config=lambda name: next((model for model in configured if model.name == name), None),
+    )
 
 
 class TestPerCallModel:
@@ -395,6 +402,57 @@ class TestPerCallModel:
         )
 
         assert panel_task_tool["executor_kwargs"]["model_override"] == "premium"
+
+    def test_an_explicit_child_model_choice_stands_the_routing_policy_down(self, panel_task_tool, monkeypatch):
+        """Upstream's ``model_name`` is the user's own choice for this child.
+
+        It arrives from a scoped "ask <model> to ..." control, so it is as
+        explicit as the per-thread dropdown and must stand the cost-aware policy
+        down the same way: otherwise the child silently runs on the routed
+        model while the user believes their pick did the work.
+        """
+        monkeypatch.setattr(
+            task_tool_module,
+            "resolve_routed_model",
+            lambda *args, **kwargs: task_tool_module.RoutingDecision("local-tools", "cheap-everything", "policy"),
+        )
+        runtime = _make_runtime(app_config=_app_config(PANEL, model_routing=SimpleNamespace(enabled=True)))
+        _run_task_tool(
+            runtime=runtime,
+            description="chosen",
+            prompt="do a thing",
+            subagent_type="general-purpose",
+            tool_call_id="tc-5",
+            model_name="premium",
+        )
+
+        assert panel_task_tool["executor_kwargs"]["model_override"] == "premium"
+
+    def test_per_call_model_is_authorized_like_model_name(self, panel_task_tool, monkeypatch):
+        """``model=`` outranks the user's ``model_name`` choice, so it must clear the same gate.
+
+        Upstream authorizes ``model_name`` against ``model:use``; a catalog check
+        alone would let the per-call path run a child on a model the caller's
+        role is denied.
+        """
+
+        def _deny_premium(name, **kwargs):
+            if name == "premium":
+                raise ValueError("The selected model is not available for your role.")
+
+        monkeypatch.setattr(task_tool_module, "authorize_selected_model", _deny_premium)
+        runtime = _make_runtime(app_config=_app_config(PANEL))
+        result = _run_task_tool(
+            runtime=runtime,
+            description="panelist",
+            prompt="the brief",
+            subagent_type="general-purpose",
+            tool_call_id="tc-deny",
+            model="premium",
+        )
+
+        assert "not available for your role" in _message(result).content
+        assert "executor_kwargs" not in panel_task_tool
 
     def test_routing_still_applies_when_no_per_call_model_is_given(self, panel_task_tool, monkeypatch):
         # The guard above must not disable the policy for ordinary delegations.

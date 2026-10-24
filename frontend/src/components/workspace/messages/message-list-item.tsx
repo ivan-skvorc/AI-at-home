@@ -58,6 +58,7 @@ import {
 } from "@/core/skills";
 import { useSkills } from "@/core/skills/hooks";
 import { pathOfThread } from "@/core/threads/utils";
+import { isIMEComposing } from "@/lib/ime";
 import { cn } from "@/lib/utils";
 
 import { WorkspaceChangeBadge } from "../changes";
@@ -480,6 +481,7 @@ function MessageEditor({ editState }: { editState: MessageEditState }) {
         value={editState.draft}
         onChange={(event) => editState.onDraftChange(event.currentTarget.value)}
         onKeyDown={(event) => {
+          if (isIMEComposing(event)) return;
           if (event.key === "Escape") {
             event.preventDefault();
             editState.onCancel();

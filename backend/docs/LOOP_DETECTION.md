@@ -22,6 +22,28 @@ covers abnormal exits. The compatibility-named
 `max_tracked_threads` limit bounds run scopes, and `reset(thread_id)` clears
 every retained run scope for that thread.
 
+## Edits are progress (fork)
+
+A batch containing `write_file` or `str_replace` (`_WORKSPACE_EDIT_TOOLS`)
+re-arms every non-edit call before it is counted: those entries leave the
+run's hash history, and their slots in the frequency window become blanks (the
+window keeps spanning the last N calls, so edit names decay at the normal
+rate). Edit entries stay, tagged with `_EDIT_HISTORY_PREFIX` so a later edit can
+tell them apart, and so does any call or tool that has already drawn a warning:
+the warning asks the model to save, and that save must not launder the loop. A debug session is
+edit → run the same test → edit → run it again, and the run command is
+byte-identical each time: counted across edits it reached the hard limit on the
+fifth fix and forced a final answer mid-task, and `bash` crossed its frequency
+warning in any long setup-and-test session. What still stops a run: the same
+call repeated with no edit between (reads are not progress), the same edit
+re-applied, edits past their own frequency limit within one window, and a call
+that already drew a warning, even across a later save. A run that keeps making
+distinct edits between identical test runs is treated as progress for as long
+as it lasts; the run's `recursion_limit` is what bounds it. Edits made through
+`bash` (`sed -i`, heredocs) are invisible here, which is one more reason repo
+work should edit through the file tools. `TestWorkspaceEditProgress` in
+`backend/tests/test_loop_detection_middleware.py` pins both directions.
+
 ## Decision ordering
 
 Loop decisions are severity-first across both detection layers: a warning

@@ -241,12 +241,14 @@ def test_task_tool_description_is_optional_but_discoverable() -> None:
     assert parameters["required"] == ["prompt", "subagent_type"]
     # `model` is the fork's per-call subagent override (FORK.md §22); it sits
     # between the required pair and the optional tail, and is listed here rather
-    # than tolerated so an upstream change that drops it fails loudly.
-    assert list(parameters["properties"]) == ["prompt", "subagent_type", "model", "acceptance_criteria", "description", "context_mode"]
+    # than tolerated so an upstream change that drops it fails loudly. Upstream's
+    # `model_name` (the user's scoped child-model choice) stays last.
+    assert list(parameters["properties"]) == ["prompt", "subagent_type", "model", "acceptance_criteria", "description", "context_mode", "model_name"]
     assert parameters["properties"]["description"]["description"]
 
     validated = task_tool.tool_call_schema.model_validate({"prompt": "go", "subagent_type": "general-purpose"})
     assert validated.description == ""
+    assert validated.model_name is None
 
 
 def test_list_uploaded_files_model_schema_excludes_injected_runtime() -> None:

@@ -107,6 +107,15 @@ _OPEN_ENDED_READ = "end"
 # ``create_issue`` send it), so it stays in the key.
 _UI_NARRATION_TOOLS = frozenset({"bash", "ls", "glob", "grep"})
 
+# Fork: tools whose call changes the workspace. A batch containing one is
+# progress, so the read/run calls recorded before it stop counting toward either
+# layer: edit → run the same test → edit → run it again is a debug session, not
+# a loop. The edits themselves keep counting (their hash is content-sensitive),
+# so re-applying one edit is still stopped, and so are back-to-back edits past
+# their frequency limit. A call that already drew a warning is not re-armed.
+_WORKSPACE_EDIT_TOOLS = frozenset({"write_file", "str_replace"})
+_EDIT_HISTORY_PREFIX = "edit:"
+
 type _RunScopeKey = tuple[str, str | None]
 
 
@@ -586,6 +595,10 @@ class LoopDetectionMiddleware(AgentMiddleware[AgentState]):
         scope_key = self._run_scope_key(runtime)
         thread_id, run_id = scope_key
         call_hash = _hash_tool_calls(tool_calls)
+        is_edit = any(tc.get("name") in _WORKSPACE_EDIT_TOOLS for tc in tool_calls)
+        # Edit batches are tagged so a later edit can keep them while dropping
+        # the read/run calls that preceded it (see _WORKSPACE_EDIT_TOOLS).
+        history_key = f"{_EDIT_HISTORY_PREFIX}{call_hash}" if is_edit else call_hash
 
         with self._lock:
             # Touch / create entry (move to end for LRU)
@@ -596,7 +609,13 @@ class LoopDetectionMiddleware(AgentMiddleware[AgentState]):
                 self._evict_if_needed()
 
             history = self._history[scope_key]
-            history.append(call_hash)
+            if is_edit:
+                # A call that already drew a warning keeps counting: the warning
+                # itself asks for a save, and that save must not launder the
+                # loop it warned about.
+                still_warned = self._warned.get(scope_key, set())
+                history[:] = [key for key in history if key.startswith(_EDIT_HISTORY_PREFIX) or key in still_warned]
+            history.append(history_key)
             if len(history) > self.window_size:
                 history[:] = history[-self.window_size :]
 
@@ -606,7 +625,7 @@ class LoopDetectionMiddleware(AgentMiddleware[AgentState]):
                 if not warned_hashes:
                     self._warned.pop(scope_key, None)
 
-            count = history.count(call_hash)
+            count = history.count(history_key)
             tool_names = [str(tc.get("name") or "?") for tc in tool_calls]
 
             # --- Layer 1: hash-based (identical call sets) ---
@@ -636,7 +655,7 @@ class LoopDetectionMiddleware(AgentMiddleware[AgentState]):
             # admitted call has been checked. Only the selected warning is
             # marked/logged; a hard stop may supersede it below.
             warning: _LoopDecision | None = None
-            if count >= self.warn_threshold and call_hash not in self._warned.get(scope_key, set()):
+            if count >= self.warn_threshold and history_key not in self._warned.get(scope_key, set()):
                 warning = _LoopDecision(
                     message=_WARNING_MSG,
                     action="warn",
@@ -649,6 +668,19 @@ class LoopDetectionMiddleware(AgentMiddleware[AgentState]):
             # --- Layer 2: per-tool-type frequency (windowed) ---
             tool_name_history = self._tool_name_history[scope_key]
             name_counter = self._tool_name_counter[scope_key]
+            if is_edit:
+                # Same rule as Layer 1: an edit re-arms every other tool's
+                # frequency budget unless that tool was already warned. The
+                # re-armed calls keep their slots as blanks, so the window still
+                # spans the last N calls and edit names decay at the normal rate
+                # (deleting them shrank the window: interleaved edits never
+                # decayed, and spaced ones never reached their own limit).
+                freq_warned = self._tool_freq_warned[scope_key]
+                for index, name in enumerate(tool_name_history):
+                    if name and name not in _WORKSPACE_EDIT_TOOLS and name not in freq_warned:
+                        tool_name_history[index] = ""
+                for name in [name for name in name_counter if name not in _WORKSPACE_EDIT_TOOLS and name not in freq_warned]:
+                    del name_counter[name]
             for tc in tool_calls:
                 name = tc.get("name", "")
                 if not name:
@@ -714,7 +746,7 @@ class LoopDetectionMiddleware(AgentMiddleware[AgentState]):
 
             if warning is not None:
                 if warning.detection_layer == "identical_call_set":
-                    self._warned[scope_key].add(call_hash)
+                    self._warned[scope_key].add(history_key)
                     logger.warning(
                         "Repetitive tool calls detected — injecting warning",
                         extra={

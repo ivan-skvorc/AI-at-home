@@ -419,6 +419,7 @@ start() {
     services="redis frontend gateway nginx"
     if [ "$sandbox_mode" = "provisioner" ]; then
         services="redis frontend gateway provisioner nginx"
+        COMPOSE_CMD="$COMPOSE_CMD --profile provisioner"
     fi
 
     # Only aio mode (AioSandboxProvider without provisioner_url) needs the host
@@ -672,6 +673,14 @@ logs() {
 
     compose_preflight
 
+    # The provisioner is profile-gated in docker-compose-dev.yaml. Enable the
+    # profile for dev logs that need to include it; --prod uses a different file.
+    if [ "$is_prod" = 0 ]; then
+        if [ "$service" = "provisioner" ] || { [ -z "$service" ] && [ "$(detect_sandbox_mode)" = "provisioner" ]; }; then
+            COMPOSE_CMD="$COMPOSE_CMD --profile provisioner"
+        fi
+    fi
+
     # No --env-file append here. Upstream added one at this point because its
     # COMPOSE_CMD carried none and compose_preflight() may rebuild the command;
     # in this fork _refresh_compose_cmd() is what builds it and always includes
@@ -695,7 +704,8 @@ logs() {
 stop() {
     compose_preflight
     echo "Stopping Docker development services..."
-    cd "$DOCKER_DIR" && $COMPOSE_CMD down
+    # Include profile-gated services so a running provisioner is removed too.
+    cd "$DOCKER_DIR" && $COMPOSE_CMD --profile provisioner down
     echo "Cleaning up sandbox containers..."
     bash "$SCRIPT_DIR/cleanup-containers.sh" deer-flow-sandbox 2>/dev/null || true
     echo -e "${GREEN}✓ Docker services stopped${NC}"
@@ -703,7 +713,13 @@ stop() {
 
 # Restart Docker development environment
 restart() {
+    local sandbox_mode
+
     compose_preflight
+    sandbox_mode="$(detect_sandbox_mode)"
+    if [ "$sandbox_mode" = "provisioner" ]; then
+        COMPOSE_CMD="$COMPOSE_CMD --profile provisioner"
+    fi
     echo "========================================"
     echo "  Restarting DeerFlow Docker Services"
     echo "========================================"

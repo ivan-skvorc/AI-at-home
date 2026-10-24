@@ -55,11 +55,14 @@ feature's name, the command, and the one or two asserts that are silent when
 broken; when it needs more than that, put the depth in its own file — or in the
 nearest `AGENTS.md`, for what an agent needs before editing the code — and link
 it from the row. There is a hard budget forcing this rather than a preference:
-the rendered PR body is ~63 KB against GitHub's 65,536-character limit, and
-`test_the_body_stays_within_github_limits` fails when it stops fitting.
+the rendered PR body is clamped at 65,000 characters against GitHub's 65,536
+limit and already overflows it, so the checklist's tail is truncated out of every
+sync PR. `test_the_body_stays_within_github_limits` measures the body *after*
+that clamp and cannot catch it; CHANGE_CYCLE.md step 4 has the command that
+measures what a row costs.
 
 **Everything after the audit is reference.** [What this fork adds](#what-this-fork-adds)
-(§1–§23) records _why_ each feature is shaped the way it is and which properties
+(the numbered `### N.` sections) records _why_ each feature is shaped the way it is and which properties
 a refactor must not "simplify" away; the sections after it cover setup, cost,
 Tailscale, and troubleshooting. Read them when a check fails and you need to know
 what the check was defending.
@@ -103,7 +106,9 @@ once you know to look. The 2026-09-09 sync hit all three at once:
   (`test_migration_merge_points.py::test_every_revision_id_fits_postgres_version_column`). The
   2026-10-10 sync made it five (`0031_scheduled_streak_boundary` → `0037` off `0030`, joined by
   `0038_merge_prefs_summaries`); upstream's per-revision tests pin *their* head, so each one is
-  adapted to the merged head and re-upgrades through alembic after a mid-tree downgrade. The depth is in
+  adapted to the merged head and re-upgrades through alembic after a mid-tree downgrade. The
+  2026-10-22 sync made it seven (`0044_channel_runtime_configs` → `0047` off `0043`, joined by
+  `0048_merge_prefs_oauth_tokens`). The depth is in
   [`persistence/migrations/AGENTS.md`](backend/packages/harness/deerflow/persistence/migrations/AGENTS.md).
 - **Both sides adding a function of the same name to the same module.** Git merges two
   non-overlapping additions cleanly, so `frontend/src/core/threads/api.ts` came out of
@@ -129,7 +134,9 @@ once you know to look. The 2026-09-09 sync hit all three at once:
   Upstream adds sections without bumping it, so the new keys never reach an existing
   `config.yaml` and the feature is simply absent for everyone who already installed.
   `make config-upgrade` says so in words; bump `config_version` in the example **and both
-  chart copies**, then re-run it.
+  chart copies**, then re-run it. The same holds when upstream *does* bump, to a number the fork
+  has already passed: the 2026-10-22 sync's `sandbox.prewarm` arrived as upstream's 61 against
+  the fork's 62, and the fork went to 63.
 - **Upstream shipping a config-upgrade migration under its own version number.** The
   fork's `config_version` runs ahead of upstream's, so fork configs were stamped past
   upstream's number before upstream reached it, and a migration ported under that key
@@ -192,7 +199,27 @@ once you know to look. The 2026-09-09 sync hit all three at once:
   either side loses them. Port them into the sibling with a three-way `git merge-file`
   (sibling, base section, upstream section), then keep the pointer. The 2026-09-29 sync also
   found a duplicate block that an earlier sync had left in `CHAIN.md`: count the numbered
-  entries against upstream's.
+  entries against upstream's. The 2026-10-22 sync renumbered all of them (upstream retired
+  `SkillToolPolicyMiddleware` with allowed-tools enforcement), so `git merge-file` reported
+  every later entry as a conflict: keep the fork's wording under upstream's number.
+- **Upstream giving a key the fork already sends a stricter meaning.** The fork's Ultra-mode
+  subagent dropdown (§3) sends `subagent_model_name` on every run; the 2026-10-22 sync's
+  #7249 made the same key a run-only child-model choice that the lead agent **rejects** without
+  subagents. No conflict and no failing test, and every Pro or Flash turn in a thread that had
+  once picked a subagent model would have failed — as would every turn of a hard-deny Custom
+  Agent (`allowed_subagents: []`) or a thread whose picked model has left `config.yaml`. The Web
+  UI now sends it only on a run that can delegate, a one-run choice beats the dropdown
+  (`run-context.test.ts`), the lead-agent factory drops a value that cannot apply instead of
+  failing the run (`test_lead_agent_model_resolution.py::test_hard_deny_drops_a_persisted_subagent_model_instead_of_failing`),
+  `task(model=...)` now clears the same `model:use` gate as `model_name`, and upstream's
+  `task(model_name=...)` stands the cost-aware router (§15) down like the dropdown does
+  (`test_democracy_panel.py::TestPerCallModel::test_an_explicit_child_model_choice_stands_the_routing_policy_down`).
+  On each sync, grep upstream's diff for every run-context key the fork's frontend sends.
+- **Upstream end-to-end tests that run a copied script in a throwaway checkout.** They copy
+  only the files upstream's script needs, and the fork's version of that script calls more
+  (`sandbox-preflight.sh` from `serve.sh`, `exposure.py` from `doctor.py`, `sandbox_toggle.py`
+  from `configure.py` when Docker is on `PATH`). Stub or copy the fork's extra helper in the
+  test's fixture with a `# Fork:` note; never strip the call from the script.
 
 **It also runs itself weekly.** `.github/workflows/upstream-sync.yml` fetches
 upstream every Monday, merges (never rebases) onto a dated
@@ -894,6 +921,8 @@ section: [The model bundle and its audit](#the-model-bundle-and-its-audit).
 A second model selector appears next to the lead-model picker when **Ultra mode** (subagents enabled) is active. Default is "Follow lead" (subagents inherit the lead model, identical to upstream behavior). Pick anything else and `task` tool delegations route to that model instead.
 
 Backend reads `subagent_model_name` from the LangGraph thread context in `task_tool.py` and overrides the resolved subagent model. Frontend stores the choice in `AgentThreadContext` only — **ephemeral per thread**, no localStorage. Switch threads and it resets to "Follow lead".
+
+Since the 2026-10-22 sync the key is shared with upstream's scoped child-model control ("ask <model> to …", #7249), which treats it as a run-only choice: the Gateway writes it to the runtime context alone, the lead agent authorizes it and **rejects it on a run without subagents**, and `task` refuses a `model_name` that contradicts it. So `buildRunContext` sends it only when the run can delegate, a one-run choice beats the dropdown, and the lead-agent factory follows the lead (with a warning in the log) when the agent disallows subagents or the picked model is no longer configured. The selection stands cost-aware routing (§15) down whichever way it arrived; `task(model=...)` (§22) still outranks it.
 
 Models flagged `supports_tools: false` (only Ollama models that don't report the tools capability) appear at the bottom of the list, dimmed, with a "(no tool support)" annotation. Still selectable in case the flag is wrong; tool-using subagents will simply fail at runtime.
 
@@ -4176,3 +4205,31 @@ The settings workflow checks also prove the administrator can discover the panel
 a separate presence-only test was consolidated into that coverage.
 The browser-return workflow replaces the old helper-first UI assertions; the
 helper's protocol and signed-grant tests remain useful for its fallback path.
+
+### 42. An edit is progress, so a debug session is not a loop
+
+**Why.** Loop detection stopped real coding work. Its identical-call layer
+counted the test command across a whole debug session — edit, run
+`pytest -x`, edit, run it again — and the command is byte-identical every
+time, so the fifth fix hit the hard limit and the run was forced to a final
+answer mid-task; the third already told the model to "wrap up now". Its
+frequency layer did the same to `bash`, which a setup-and-test session calls
+far more than 30 times in 50.
+
+**What changed.** A model response containing `write_file` or `str_replace`
+counts as progress: it drops the read/run calls recorded before it from both
+layers, and the run-again-after-an-edit pattern stays under every threshold.
+Nothing else was loosened. The same call repeated with no edit between is
+still a loop (reads are not progress), re-applying one edit is still caught
+(edit entries stay in the history), edits still count toward their own
+frequency limit within one window, and a call that already drew a warning keeps
+counting even across a save (the warning asks for one, so the save must not
+launder the loop). A run that keeps making distinct edits is bounded by its
+`recursion_limit`, not by loop detection. Edits made through `bash` (`sed -i`, heredocs) are not
+recognised as progress, so repo work should edit through the file tools —
+which also gets it read-before-write protection.
+
+Pinned by `TestWorkspaceEditProgress` in
+`backend/tests/test_loop_detection_middleware.py`, both directions; the
+mechanism is in `backend/docs/LOOP_DETECTION.md`, *Edits are progress*. It
+runs in `make test` and fails loudly, so it has no checklist row.

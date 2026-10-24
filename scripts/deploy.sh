@@ -50,7 +50,21 @@ cd "$REPO_ROOT"
 # shellcheck source=scripts/tailscale_lib.sh
 . "$REPO_ROOT/scripts/tailscale_lib.sh"
 
-ENV_FILE="$REPO_ROOT/.env"
+ENV_FILE="${DEER_FLOW_COMPOSE_ENV_FILE:-$REPO_ROOT/.env}"
+# Docker Compose's interpolation file and service env_file must select the same
+# host file. Relative selectors are rooted at this checkout, not docker/.
+if command -v cygpath >/dev/null 2>&1; then
+    ENV_FILE="$(cygpath -au -- "$ENV_FILE")"
+elif [[ "$ENV_FILE" != /* ]]; then
+    ENV_FILE="$REPO_ROOT/$ENV_FILE"
+fi
+if [ -n "${DEER_FLOW_COMPOSE_ENV_FILE:-}" ] && [ "$CMD" != "down" ] && { [ ! -f "$ENV_FILE" ] || [ ! -r "$ENV_FILE" ]; }; then
+    echo "DEER_FLOW_COMPOSE_ENV_FILE must name a readable file: $ENV_FILE" >&2
+    exit 1
+fi
+export DEER_FLOW_COMPOSE_ENV_FILE="$ENV_FILE"
+# Fork: the tailnet opt-out and the API-key model sync read the same selected file.
+TAILSCALE_LIB_ENV_FILE="${TAILSCALE_LIB_ENV_FILE:-$ENV_FILE}"
 DOCKER_DIR="$REPO_ROOT/docker"
 COMPOSE_ENV_FILE_ARGS=()
 if [ -f "$ENV_FILE" ]; then
@@ -515,7 +529,7 @@ fi
 # before the containers mount it (mounted read-only into the gateway), when
 # their keys are present in .env. Best-effort: missing key = no-op.
 if [ -n "$_detect_python" ]; then
-    "$_detect_python" "$REPO_ROOT/scripts/sync-api-key-models.py" --config "$DEER_FLOW_CONFIG_PATH" --env-file "$REPO_ROOT/.env" --verbose || true
+    "$_detect_python" "$REPO_ROOT/scripts/sync-api-key-models.py" --config "$DEER_FLOW_CONFIG_PATH" --env-file "$ENV_FILE" --verbose || true
 fi
 
 # ── Banner ────────────────────────────────────────────────────────────────────
@@ -727,7 +741,7 @@ tailscale_print_urls "$RESOLVED_PORT"
 echo ""
 if [ "$RESOLVED_BIND_HOST" = "127.0.0.1" ] || [ "$RESOLVED_BIND_HOST" = "::1" ] || [ "$RESOLVED_BIND_HOST" = "localhost" ]; then
     echo "  🔒 Bound to ${RESOLVED_BIND_HOST} — reachable from this machine only."
-    echo "     To expose it, set BIND_HOST in .env, put TLS/auth in front, and"
+    echo "     To expose it, set BIND_HOST in the selected dotenv file, put TLS/auth in front, and"
     echo "     create the admin account before the host becomes reachable."
 else
     echo "  ⚠️  Bound to ${RESOLVED_BIND_HOST} — reachable from the network."
@@ -747,7 +761,7 @@ echo ""
 # computes the combination; `make doctor` prints the same assessment. Diagnosis
 # only — it changes nothing and never fails the launch.
 if [ -n "$_detect_python" ]; then
-    "$_detect_python" "$REPO_ROOT/scripts/exposure.py" --surface docker --project-root "$REPO_ROOT" 2>/dev/null || true
+    "$_detect_python" "$REPO_ROOT/scripts/exposure.py" --surface docker --project-root "$REPO_ROOT" --env-file "$ENV_FILE" 2>/dev/null || true
     echo ""
 fi
 echo "  Manage:"
