@@ -596,7 +596,13 @@ function ChatInstanceContent({
           if (isActiveRef.current) {
             history.replaceState(null, "", `/workspace/chats/${threadId}`);
           }
-          recordOnPromotion(threadId, settingsRef.current.context);
+          // settingsRef still holds the render from before selectThreadModel
+          // ran: record the default just saved, not the model it replaced.
+          recordOnPromotion(threadId, {
+            ...settingsRef.current.context,
+            model_name:
+              choice.model_name ?? settingsRef.current.context.model_name,
+          });
           onThreadStarted?.(slotKey, threadId);
         }
         options?.onSent?.();

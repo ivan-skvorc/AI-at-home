@@ -52,22 +52,25 @@ test.describe("UI polish mobile regressions", () => {
     mockLangGraphAPI(page);
     await page.goto("/workspace/chats/new");
 
-    const readRing = () =>
-      page.evaluate(() =>
-        getComputedStyle(document.documentElement)
-          .getPropertyValue("--ring")
-          .trim(),
-      );
+    // Toggle the theme class and read the token in one synchronous task.
+    // next-themes applies the resolved theme from a mount effect that can run
+    // after page.goto() resolves; with the toggle and the read in separate
+    // evaluate() calls, that effect could strip "dark" in between.
+    const readRing = (theme: "light" | "dark") =>
+      page.evaluate((mode) => {
+        const root = document.documentElement;
+        const hadDark = root.classList.contains("dark");
+        root.classList.toggle("dark", mode === "dark");
+        const ring = getComputedStyle(root).getPropertyValue("--ring").trim();
+        root.classList.toggle("dark", hadDark);
+        return ring;
+      }, theme);
 
-    await page.evaluate(() =>
-      document.documentElement.classList.remove("dark"),
-    );
-    const lightRing = await readRing();
+    const lightRing = await readRing("light");
     expect(lightRing).not.toBe("transparent");
     expect(lightRing).not.toBe("");
 
-    await page.evaluate(() => document.documentElement.classList.add("dark"));
-    const darkRing = await readRing();
+    const darkRing = await readRing("dark");
     expect(darkRing).not.toBe("transparent");
     expect(darkRing).not.toBe("");
 
