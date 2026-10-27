@@ -52,6 +52,11 @@ class ChatGPTStartRequest(BaseModel):
     new_account: bool = False
 
 
+class GrokFeaturesRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    features: dict[Literal["image", "video", "x_search", "voice"], bool] = Field(min_length=1, max_length=4)
+
+
 def _call(func, *args):
     try:
         return func(*args)
@@ -121,6 +126,13 @@ async def poll_grok(request: Request, body: PollRequest):
     await require_admin_user(request, detail=_ADMIN)
     owner = await _owner(request)
     return await run_drained_write("Complete subscription sign-in", _call, (HTTPException,), service.poll_grok_connection, owner, body.flow_id)
+
+
+@router.patch("/grok/features")
+async def update_grok_features(request: Request, body: GrokFeaturesRequest):
+    """Switch Grok's API features (Imagine, X search, voice) for this shared connection."""
+    await require_admin_user(request, detail=_ADMIN)
+    return await run_drained_write("Update Grok features", _call, (HTTPException,), service.set_grok_features, dict(body.features))
 
 
 @router.post("/{provider}/refresh")

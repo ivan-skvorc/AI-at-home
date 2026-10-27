@@ -169,6 +169,9 @@ export interface Translations {
     exportFailed: string;
     regenerate: string;
     editMessage: string;
+    readAloud: string;
+    stopReadAloud: string;
+    readAloudFailed: string;
     editAnswer: string;
     saveAndSend: string;
     saveAnswerVersion: string;
@@ -379,6 +382,7 @@ export interface Translations {
     voiceInputUnavailable: string;
     voiceInputInsecureContext: string;
     voiceInputCloudNotice: string;
+    voiceInputGrokNotice: string;
     voiceInputServerNotice: string;
     mode: string;
     flashMode: string;
@@ -1839,6 +1843,20 @@ export interface Translations {
       models: string;
       none: string;
       usage: string;
+      grokFeaturesTitle: string;
+      grokFeaturesDescription: string;
+      grokFeatureImage: string;
+      grokFeatureImageNote: string;
+      grokFeatureVideo: string;
+      grokFeatureVideoNote: string;
+      grokFeatureXSearch: string;
+      grokFeatureXSearchNote: string;
+      grokFeatureVoice: string;
+      grokFeatureVoiceNote: string;
+      grokAvailable: string;
+      grokNotOnPlan: string;
+      grokUnknown: string;
+      grokNotOnPlanHint: string;
     };
     models: {
       title: string;

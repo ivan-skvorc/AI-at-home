@@ -280,7 +280,12 @@ validation error, or log. Route mutations use drained workers.
 `subscription_providers.py` keeps the public ChatGPT SIWC transport separate from
 legacy Codex CLI auth. Preserve namespace/tool-result correlation, encrypted
 reasoning replay, stream terminal checks and subscription-specific usage names.
-Grok always streams with its routing/auth headers. Kimi preserves reasoning on
+Grok always streams with its routing/auth headers. Responses-only Grok models
+(`GrokResponsesSubscriptionChatModel`, `api.x.ai`) are listed only after the reach
+probe shows the grant gets there; they replay encrypted reasoning with
+`store: false` and must keep renaming usage to the subscription identity. The
+probe, feature switches and Grok tools: [xai guide](../community/xai/AGENTS.md).
+Kimi preserves reasoning on
 tool followups and rejects inherited non-interactive policy before auth/network.
 Subscription-selected models bypass API fallback chains and per-token pricing.
 Remote ChatGPT OAuth starts server-owned PKCE and accepts a manual loopback URL

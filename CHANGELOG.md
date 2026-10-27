@@ -15,6 +15,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   sign-in with a manual return-URL handoff and a local helper fallback.
   Kimi is restricted to personal interactive sessions, and
   selected subscription models never silently switch to paid API billing.
+- **Grok features on your Grok plan:** the Grok card in Settings → Models →
+  Subscriptions gains switches for Grok Imagine image generation and editing,
+  video generation, X search and voice (read-aloud, plus Grok transcription when
+  `voice.stt.enabled` is false), all off by default and locked when xAI refuses
+  them for the plan. New `grok_generate_image`, `grok_edit_image`,
+  `grok_generate_video` and `x_search` tools (new `cloud_media` tool group,
+  removed by the chat's internet switch) and Responses-only Grok models in the
+  picker. `config_version` 64 adds the tool entries to existing configs, and the
+  config upgrade now also backfills missing `tool_groups`.
 
 ### Changed
 - **Long coding sessions:** loop detection treats a `write_file` / `str_replace`

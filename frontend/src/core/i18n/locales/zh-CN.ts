@@ -224,6 +224,9 @@ export const zhCN: Translations = {
     exportFailed: "导出对话失败。",
     regenerate: "重新生成",
     editMessage: "编辑消息",
+    readAloud: "用 Grok 朗读（文本会发送给 xAI）",
+    stopReadAloud: "停止朗读",
+    readAloudFailed: "无法朗读这条回答。",
     editAnswer: "编辑回答",
     saveAndSend: "保存并发送",
     saveAnswerVersion: "保存版本",
@@ -458,6 +461,7 @@ export const zhCN: Translations = {
       "语音输入需要安全连接。请打开 https:// 地址（通过 Tailscale 时使用 MagicDNS 名称而非原始 IP）。",
     voiceInputCloudNotice:
       "正在使用浏览器的云端语音服务——这段音频会离开你的机器。",
+    voiceInputGrokNotice: "正在使用 Grok（xAI）转写——录音会离开你的设备。",
     voiceInputServerNotice: "录音中……点击停止并在你的服务器上转录。",
     mode: "模式",
     flashMode: "闪速",
@@ -2086,6 +2090,25 @@ export const zhCN: Translations = {
       models: "已发现的模型",
       none: "当前没有可用模型。",
       usage: "管理 ChatGPT 订阅用量",
+      grokFeaturesTitle: "Grok 功能",
+      grokFeaturesDescription:
+        "让已连接的 Grok 套餐不只用于聊天。每项功能都会把数据发送给 xAI，并为本服务器的所有用户消耗套餐额度。在你开启之前，它们全部保持关闭。",
+      grokFeatureImage: "图像生成与编辑（Grok Imagine）",
+      grokFeatureImageNote: "会把提示词以及你要求编辑的图片发送给 xAI。",
+      grokFeatureVideo: "视频生成（Grok Imagine）",
+      grokFeatureVideoNote:
+        "会把提示词和图片发送给 xAI。视频片段消耗的套餐额度较多。",
+      grokFeatureXSearch: "X 搜索",
+      grokFeatureXSearchNote:
+        "会把搜索内容发送给 xAI，并附上 X 帖子的链接作答。",
+      grokFeatureVoice: "语音：朗读回答并转写语音",
+      grokFeatureVoiceNote:
+        "会把回答文本和录音发送给 xAI。如已配置本地转录服务，仍优先使用本地服务。",
+      grokAvailable: "套餐已包含",
+      grokNotOnPlan: "套餐未包含",
+      grokUnknown: "无法确认",
+      grokNotOnPlanHint:
+        "Grok 拒绝为当前套餐提供此功能。可使用“刷新模型”重新检查。",
     },
     title: "设置",
     description: "根据你的偏好调整 DeerFlow 的界面和行为。",

@@ -2499,6 +2499,11 @@ export function InputBox({
     setVoiceTier(tier);
 
     if (tier === "server") {
+      if (voiceServerConfig.transcription_provider === "xai") {
+        // Grok's cloud transcription is a server tier that still leaves the
+        // machine; it says so every time, like the browser cloud tier.
+        toast.warning(t.inputBox.voiceInputGrokNotice);
+      }
       setVoiceListening(true);
       try {
         voiceRecordingRef.current = await startRecording();
@@ -2525,6 +2530,7 @@ export function InputBox({
     speechRecognitionConstructor,
     startVoiceRecognition,
     t.inputBox.voiceInputCloudNotice,
+    t.inputBox.voiceInputGrokNotice,
     t.inputBox.voiceInputInsecureContext,
     t.inputBox.voiceInputMicrophoneUnavailable,
     t.inputBox.voiceInputUnavailable,

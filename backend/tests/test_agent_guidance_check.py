@@ -24,6 +24,7 @@ EXPECTED_GUIDANCE_PATHS = {
     "backend/packages/harness/deerflow/agents/lead_agent/AGENTS.md",
     "backend/packages/harness/deerflow/community/comfyui/AGENTS.md",
     "backend/packages/harness/deerflow/community/speech/AGENTS.md",
+    "backend/packages/harness/deerflow/community/xai/AGENTS.md",
     "backend/packages/harness/deerflow/agents/task_continuity/AGENTS.md",
     "backend/packages/harness/deerflow/community/brave/AGENTS.md",
     "backend/packages/harness/deerflow/community/groundroute/AGENTS.md",

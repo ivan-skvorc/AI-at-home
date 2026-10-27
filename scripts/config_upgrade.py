@@ -263,7 +263,7 @@ def merge_missing(target: dict, source: dict, path: str = "") -> list[str]:
 
 
 def backfill_missing_default_tools(user: dict, example: dict) -> list[str]:
-    """Append example ``tools:`` entries whose names are missing from the user list.
+    """Append example ``tools:`` and ``tool_groups:`` entries missing from the user lists.
 
     ``merge_missing`` is dict-based, so a ``tools:`` list that exists but lost
     default entries (e.g. a wizard run that declined bash, or a config created
@@ -275,20 +275,24 @@ def backfill_missing_default_tools(user: dict, example: dict) -> list[str]:
     ``sandbox.allow_host_bash`` is true, so this cannot widen the security
     boundary.
     """
-    example_tools = example.get("tools")
-    user_tools = user.get("tools")
-    if not isinstance(example_tools, list) or not isinstance(user_tools, list):
-        # An absent tools section is handled wholesale by merge_missing.
-        return []
-    existing_names = {tool.get("name") for tool in user_tools if isinstance(tool, dict)}
     added = []
-    for tool in example_tools:
-        if not isinstance(tool, dict):
+    # tool_groups first, by the same name-keyed rule: an appended tool whose
+    # group is missing there still runs for the default agent, but the agent
+    # API lists groups from this section, so no custom agent could select it.
+    for section in ("tool_groups", "tools"):
+        example_entries = example.get(section)
+        user_entries = user.get(section)
+        if not isinstance(example_entries, list) or not isinstance(user_entries, list):
+            # An absent section is handled wholesale by merge_missing.
             continue
-        name = tool.get("name")
-        if name and name not in existing_names:
-            user_tools.append(copy.deepcopy(tool))
-            added.append(f"tools[{name}]")
+        existing_names = {entry.get("name") for entry in user_entries if isinstance(entry, dict)}
+        for entry in example_entries:
+            if not isinstance(entry, dict):
+                continue
+            name = entry.get("name")
+            if name and name not in existing_names:
+                user_entries.append(copy.deepcopy(entry))
+                added.append(f"{section}[{name}]")
     return added
 
 

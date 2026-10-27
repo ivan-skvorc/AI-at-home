@@ -58,6 +58,7 @@ import {
 } from "@/core/skills";
 import { useSkills } from "@/core/skills/hooks";
 import { pathOfThread } from "@/core/threads/utils";
+import { useReadAloudConfig } from "@/core/voice-input/read-aloud-context";
 import { isIMEComposing } from "@/lib/ime";
 import { cn } from "@/lib/utils";
 
@@ -66,6 +67,7 @@ import { CitationSourcesPanel } from "../citations/citation-sources-panel";
 import { KnowledgeSourcesPanel } from "../citations/knowledge-source";
 import { ConversationReferenceChip } from "../conversation-references/conversation-reference-chip";
 import { CopyButton } from "../copy-button";
+import { ReadAloudButton } from "../read-aloud-button";
 import { ReferenceAttachmentSummary } from "../sidecar/reference-attachments";
 import { SlashSkillChip } from "../slash-skill-chip";
 import { Tooltip } from "../tooltip";
@@ -190,12 +192,18 @@ export function MessageListItem({
   // so an editable assistant row still needs its text — with the guard left
   // as upstream wrote it, an answer edit would open on an empty draft.
   const isRowEditable = canEdit && Boolean(onEditAndRegenerate);
+  // Fork (FORK.md §43): settled answers can be read aloud through Grok while
+  // an administrator has the Grok voice feature switched on.
+  const readAloud = useReadAloudConfig();
+  const showReadAloud = !isHuman && !isLoading && readAloud.available;
   const copyData = useMemo(
     () =>
-      isHuman || isRowEditable || (!isLoading && showCopyButton)
+      isHuman ||
+      isRowEditable ||
+      (!isLoading && (showCopyButton || showReadAloud))
         ? (getMessageCopyData(message) ?? "")
         : "",
-    [isHuman, isRowEditable, isLoading, showCopyButton, message],
+    [isHuman, isRowEditable, isLoading, showCopyButton, showReadAloud, message],
   );
   const editableText = copyData;
   const [isEditing, setIsEditing] = useState(false);
@@ -283,6 +291,7 @@ export function MessageListItem({
       />
       {!isLoading &&
         (showCopyButton ||
+          showReadAloud ||
           showEditButton ||
           showLockedEditButton ||
           versionSwitcher) && (
@@ -303,10 +312,19 @@ export function MessageListItem({
                 {versionSwitcher}
               </div>
             )}
-            {(showCopyButton || showEditButton || showLockedEditButton) && (
+            {(showCopyButton ||
+              showReadAloud ||
+              showEditButton ||
+              showLockedEditButton) && (
               // focus-within: a keyboard user tabbing to a button sees it.
               <div className="pointer-events-auto flex gap-1 opacity-0 transition-opacity delay-200 duration-300 group-hover/conversation-message:opacity-100 focus-within:opacity-100">
                 {showCopyButton && <CopyButton clipboardData={copyData} />}
+                {showReadAloud && copyData.trim() && (
+                  <ReadAloudButton
+                    text={copyData}
+                    maxChars={readAloud.maxChars}
+                  />
+                )}
                 {showEditButton && (
                   <Tooltip content={editLabel}>
                     <Button
