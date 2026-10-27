@@ -30,6 +30,12 @@ ideas that this fork's own thesis argues for. The rejected candidates from that 
 recorded at the bottom of this file, because knowing what was considered and declined is
 worth as much as the list itself.
 
+Items **26–31** came from scouting what a connected Grok subscription reaches beyond chat
+(2026-10-27). The Settings → Models connection (FORK.md §41) only uses Grok's chat proxy,
+while xAI lets the same subscription login drive Grok Imagine, voice and X search through
+its public API. Every one of those sends prompts — and, for edits, your images — to xAI,
+so they arrive as opt-in features beside the local defaults, never as replacements.
+
 ---
 
 ## At a glance
@@ -56,12 +62,29 @@ Open items, one line each. The full orchestrator prompts follow.
   the stateless core and its neighbours.
 - **25. A behavioural regression suite** — opt-in, judged, out of CI; the measuring stick for
   everything above it.
+- **26. Grok API reach and feature switches** — measure which xAI features the connected
+  Grok login can call, and let the operator switch each one on; the base for 27–31.
+- **27. Grok Imagine images** — generate and edit pictures on the Grok subscription, landing
+  in the artifact panel like ComfyUI output.
+- **28. Grok Imagine video** — text-, image- and reference-to-video clips, with stills the
+  agent can judge.
+- **29. X search** — search X posts through Grok and answer with links to the posts.
+- **30. Responses-only Grok chat models** — the Grok models the catalog drops today,
+  selectable in the picker.
+- **31. Grok voice, as a labelled cloud tier** — read-aloud and transcription on the
+  subscription, off by default, beside item 19's local voice.
 
 **Suggested order for 19–25.** Voice first (19), since it is the one missing modality and it
 closes a live privacy leak. Then the injection boundary (23), *before* anything widens the
 surface it defends. Then the two that make local models worth preferring rather than
 tolerating (20, 21). Then proactive triggers and spec upkeep (22, 24). The regression suite
 last (25), because every earlier item is a change it would have measured.
+
+**Suggested order for 26–31.** The probe and switches first (26): every later item needs
+its proof that the token reaches `api.x.ai` and its per-feature gate. Then images (27),
+then video (28), which reuses 27's client, path handling and output writer. X search (29)
+and the Responses models (30) are independent of each other. Voice last (31), because it
+needs the most UI and must not pre-empt item 19's local-first default.
 
 ---
 
@@ -569,6 +592,295 @@ CI.
 
 ---
 
+## 26. Grok API reach and feature switches
+
+**Goal** — Before any Grok tool exists, know which xAI API features the connected Grok
+subscription can actually call, show that in Settings, and let the operator switch each one
+on.
+
+**Why it fits** — The subscription is already paid for, so Imagine, X search and voice cost
+nothing extra at the margin — the argument that made Ollama the free tier for text. None of
+it is proven yet, though. This repo's Grok sign-in uses the Grok CLI's public client ID at
+`auth.x.ai/oauth2` and already requests the `api:access` scope (`begin_grok_connection` in
+`models/subscriptions.py`), but inference only goes to
+`cli-chat-proxy.grok.com/v1/chat/completions`. Hermes Agent sends a SuperGrok token to
+`https://api.x.ai/v1` for Responses chat, Imagine, TTS, transcription and `x_search`
+([xAI, 2026-05-15](https://x.ai/news/grok-hermes);
+[Hermes guide](https://github.com/NousResearch/hermes-agent/blob/main/website/docs/guides/xai-grok-oauth.md)).
+Whether a token issued to the CLI's client is accepted there is unverified, and some
+subscribers get HTTP 403 on that API despite an active plan (same guide). A tool the model
+can see but the plan cannot call is a failed turn, so availability is measured, not assumed.
+
+**Depends on** — the shipped subscription connections (FORK.md §41).
+
+**Scope**
+
+- **One shared xAI client**, `community/xai/client.py`. It takes the token from
+  `deerflow.models.subscriptions.get_access_token("grok")` per request — the same lock and
+  refresh rotation chat uses — and never stores it on a tool, model or client object. It
+  never retries a 429 or quota error (the subscription chat stance), its errors carry status
+  and endpoint only, never the response body, and it identifies as DeerFlow rather than
+  impersonating the Grok CLI.
+- **A probe on connect and on Refresh models**, beside catalog discovery: one cheap,
+  non-generating, read-only call per feature, chosen from docs.x.ai (for example a model list
+  for Imagine, `GET /v1/tts/voices` for voice). Record `available`, `not_on_plan` (401/403)
+  or `unknown` (network, 5xx) per feature, plus the model IDs the account lists, in the
+  encrypted Grok record. A temporary probe failure keeps the previous result, as catalog
+  refresh already does.
+- **Operator switches, off by default** — `image`, `video`, `x_search`, `voice` — stored in
+  the same Grok record (operator-shared, like the connection) and cleared on disconnect. One
+  admin-only mutation route (e.g. `PATCH /api/subscriptions/grok/features`) on the drained
+  worker path the other subscription mutations use; `GET /api/subscriptions` reports each
+  feature's `enabled` and `availability`.
+- **Settings UI**: the Grok card in `subscription-settings.tsx` gains a Features list — a
+  switch, an availability badge ("On your plan" / "Not on your plan" / "Couldn't check"),
+  and one line saying the feature sends prompts (and, for edits, images) to xAI. The switch
+  for an unavailable feature is disabled and says why. Strings go in every locale file.
+- **Tool exposure is decided here, once**: a `grok_feature_ready(name)` check (connected,
+  enabled, available) that `get_available_tools` applies beside the knowledge-group filter,
+  so items 27–31 never offer the model a tool that will 403.
+- **Extension-first evaluation, recorded.** The tools need the Grok credential, and
+  authentication stays in core (AGENTS.md). The extension contract has no credential
+  capability, and adding one would hand a refreshable plan token to third-party code. So
+  this ships in core beside `community/comfyui/`, with the exception recorded in the
+  extensions guide the way the project-shelf summaries exception is.
+
+**Key files** — `backend/packages/harness/deerflow/models/subscriptions.py`,
+`backend/app/gateway/routers/subscriptions.py`,
+`backend/packages/harness/deerflow/community/xai/` (new),
+`backend/packages/harness/deerflow/tools/tools.py`,
+`backend/packages/harness/deerflow/extensions/AGENTS.md`,
+`frontend/src/components/workspace/settings/subscription-settings.tsx`,
+`frontend/src/core/models/subscriptions.ts`, `frontend/src/core/i18n/locales/`,
+`backend/tests/test_subscriptions.py`, `backend/tests/test_xai_client.py` (new),
+`frontend/tests/unit/components/workspace/settings/model-settings-page.dom.test.tsx`.
+
+**Done when** — connecting Grok shows each feature's availability; a 403 shows "Not on your
+plan" and keeps its switch disabled; switches survive a restart and vanish on disconnect;
+and no token appears in any response, log or serialized model.
+
+---
+
+## 27. Grok Imagine images — generate and edit
+
+**Goal** — Ask for a picture, or attach one and ask for a change, and get the result from
+Grok Imagine in the artifact panel, the same way ComfyUI output arrives.
+
+**Why it fits** — Local ComfyUI needs an NVIDIA GPU and installed weights; without them the
+agent falls back to the paid MiniMax/Gemini `image-generation` skill. A Grok subscription
+covers that machine at no extra cost, and adds natural-language editing, which the local
+templates do not do.
+
+**Depends on** — 26.
+
+**Scope**
+
+- **Two Gateway-side tools** in `community/xai/imagine.py`, shaped like
+  `community/comfyui/tools.py` rather than a skill script: the token must never enter the
+  sandbox, and writing from the Gateway is what keeps outputs correct under every sandbox
+  mode.
+  - `grok_generate_image(prompt, aspect_ratio?, n?, filename?)` → `POST /v1/images/generations`.
+  - `grok_edit_image(prompt, images, filename?)` → `POST /v1/images/edits` with a JSON body
+    (xAI rejects the OpenAI SDK's multipart edit), up to 5 source images
+    ([image editing](https://docs.x.ai/developers/model-capabilities/images/editing)).
+  - Model IDs come from item 26's probe. The docs say `grok-imagine-image-2.0`, Hermes lists
+    `grok-imagine-image`; never hardcode either.
+- **Source images are thread files.** Resolve `/mnt/user-data/{uploads,outputs,workspace}`
+  virtual paths to host paths with the existing resolver, refuse anything outside the
+  thread, cap the size, and send base64 data URIs — a home server has no public URL to give
+  xAI.
+- **Outputs**: ask for base64 where offered so nothing has to be fetched. If only a URL comes
+  back, download it at once (xAI's URLs are temporary) through `url_safety`, with a host
+  allowlist pinned from the first live response. Write to `outputs_path`, return the same
+  `Command` + `artifacts` shape as ComfyUI so the panel opens the file, and save a
+  `<name>.request.json` beside it (prompt, parameters, model — no token) as the
+  reproduction record, the way `.workflow.json` is.
+- **Not in the `media` group.** `media` is on `OFFLINE_ALLOWED_TOOL_GROUPS`
+  (`tools/internet_access.py`) because ComfyUI is local; a cloud tool there would silently
+  survive the per-conversation internet switch. Use a new group (e.g. `cloud_media`) and pin
+  the exclusion in `test_internet_toggle.py`.
+- **Local or Grok**: the tool docstrings say plainly that Grok leaves the machine and spends
+  plan quota. Update the `image-generation` and `image-refine` skills so local ComfyUI stays
+  the default when it is reachable, and Grok is used when asked for, for edits, or when
+  there is no GPU. Refine sessions count Grok generations too (`session_id`, `sessions.py`).
+- **Quota**: SuperGrok image limits are unpublished and move without notice, and failed
+  generations reportedly count
+  ([secondary source](https://www.atlascloud.ai/blog/guides/grok-xai-image-generation-daily-limit)).
+  No retries; a limit reaches the user in one sentence.
+
+**Key files** — `backend/packages/harness/deerflow/community/xai/`,
+`backend/packages/harness/deerflow/community/comfyui/tools.py` (the shape to copy),
+`backend/packages/harness/deerflow/community/comfyui/sessions.py`,
+`backend/packages/harness/deerflow/tools/internet_access.py`, `config.example.yaml` (tool
+entries and group), `skills/public/image-generation/SKILL.md`,
+`skills/public/image-refine/SKILL.md`, `backend/tests/test_grok_imagine_tools.py` (new),
+`backend/tests/test_internet_toggle.py`.
+
+**Done when** — "draw a lighthouse at dusk" and "make the sky in this photo purple" (with an
+attachment) each put a PNG in the artifact panel; with internet off, no Grok tool is
+offered; with the feature off or Grok disconnected, the tools are absent; and a quota error
+reaches the user without a retry.
+
+---
+
+## 28. Grok Imagine video
+
+**Goal** — Short clips from text, from an attached still, or from reference images,
+generated on the Grok subscription and playable in the artifact panel.
+
+**Why it fits** — Local video is the heaviest thing the fork asks of a GPU: minutes per clip
+on a 24 GB card, and impossible without one. `grok-imagine-video-1.5` documents clips up to
+15 s at native 1080p, image-to-video, and up to 14 reference images
+([video generation](https://docs.x.ai/developers/model-capabilities/video/generation)).
+
+**Depends on** — 26, 27 (client, path resolution, output writer).
+
+**Scope**
+
+- `grok_generate_video(prompt, image?, reference_images?, duration?, aspect_ratio?, resolution?, filename?)`
+  → `POST /v1/videos/generations` returns a `request_id`; poll `GET /v1/videos/{request_id}`
+  until `done`, `failed` or `expired`, then download `video.url` at once (it is ephemeral).
+- Its own wall-clock cap and poll interval in config, like `media.comfyui.video_timeout`. A
+  cancelled run stops polling and says the remote job may still finish on xAI's side.
+- **Stills for the critic.** `view_image` cannot read an MP4, and `comfyui/frames.py` only
+  tiles frames ComfyUI already hands back. An xAI clip needs decoding, which the backend
+  cannot do today (no PyAV, imageio-ffmpeg or ffmpeg dependency). Decide that dependency
+  explicitly; until then the tool returns the MP4 and says no contact sheet was made — it
+  never loses the clip over it.
+- Video edit and extend are reported in xAI's docs; verify them on docs.x.ai, and add them
+  as a follow-up only if the subscription can call them.
+- Same group, exposure gate, quota stance and `.request.json` record as 27. Video quotas are
+  reportedly small (about 20 a day on standard SuperGrok, same secondary source), so the
+  tool description tells the model to confirm with the user before spending one.
+
+**Key files** — `backend/packages/harness/deerflow/community/xai/`,
+`backend/packages/harness/deerflow/community/comfyui/frames.py`,
+`skills/public/video-generation/SKILL.md`, `config.example.yaml`,
+`backend/tests/test_grok_imagine_video.py` (new).
+
+**Done when** — an uploaded still becomes an MP4 that plays in the artifact panel; `failed`
+and `expired` jobs are reported as such; a timeout says how long it waited; and a missing
+decoder costs the contact sheet, never the clip.
+
+---
+
+## 29. X search
+
+**Goal** — Ask what people on X are saying about something, and get an answer with links to
+the actual posts.
+
+**Why it fits** — X is the one corpus the bundled search backends cannot reach: SearXNG,
+Tavily and the rest index the web, not X. xAI's `x_search` is a server-side tool on the
+Responses API that reads the posts it fetches and cites them
+([X Search](https://docs.x.ai/developers/tools/x-search)); on the subscription it draws
+plan quota instead of the API's $5 per 1,000 posts
+([pricing](https://docs.x.ai/developers/pricing), 2026-10).
+
+**Depends on** — 26. Coordinate with 23: X posts are exactly the untrusted content that
+item's boundary exists for.
+
+**Scope**
+
+- An `x_search(query, from_date?, to_date?, handles?)` tool that sends one
+  `POST /v1/responses` with a Grok model and `tools: [{"type": "x_search"}]`, and returns the
+  answer plus the cited post URLs.
+- Group `web`, so the internet switch already removes it; exposure gate from 26.
+- Return citations in the shape `web_search` results already use, so the chat's existing
+  source rendering shows them. The citation format in Responses output is not clearly
+  documented; pin it from a live response in a fixture.
+- Mark the result as external, untrusted text in the tool output, and through item 23's
+  provenance once that exists.
+- Not in scope: xAI's `web_search` as another `web_search` backend — SearXNG already covers
+  the web for free.
+
+**Key files** — `backend/packages/harness/deerflow/community/xai/`,
+`backend/packages/harness/deerflow/community/web_search/tools.py` (the result shape),
+`config.example.yaml`, `backend/tests/test_x_search_tool.py` (new).
+
+**Done when** — a question about a current X discussion returns cited `x.com` links;
+internet-off and Grok-off conversations do not offer the tool; and a quota error is
+reported, not retried.
+
+---
+
+## 30. Responses-only Grok chat models
+
+**Goal** — Grok models that xAI serves only through its Responses API appear in the model
+picker beside the ones that work today.
+
+**Why it fits** — `_catalog` drops Grok entries whose `apiBackend` is `responses` or
+`messages` (`models/subscriptions.py`), because the only Grok transport is chat completions
+on the CLI proxy. Hermes lists models such as `grok-4.20-multi-agent-0309` and
+`grok-build-0.1` on the same subscription through the Responses API — models the plan
+already pays for that the picker cannot show.
+
+**Depends on** — 26 (proves the token reaches `api.x.ai`).
+
+**Scope**
+
+- A `GrokResponsesSubscriptionChatModel` on `https://api.x.ai/v1/responses`, with
+  `_SubscriptionChatOpenAI`'s request-local auth but `use_responses_api=True` — or built on
+  the ChatGPT adapter's Responses transport if LangChain's Responses mode loses xAI's
+  reasoning state. Decide by testing reasoning replay across a tool follow-up, the property
+  the ChatGPT adapter already pins.
+- Catalog: route `apiBackend: responses` entries to the new class instead of dropping them;
+  keep dropping `messages` until there is a reason not to.
+- Every subscription invariant still holds: no fallback chain, no per-token price, distinct
+  usage names, credentials never on the model. `x-grok-model-override` stays proxy-only
+  unless a live call shows the API needs it.
+
+**Key files** — `backend/packages/harness/deerflow/models/subscription_providers.py`,
+`backend/packages/harness/deerflow/models/subscriptions.py`,
+`backend/packages/harness/deerflow/models/AGENTS.md`,
+`backend/tests/test_subscription_providers.py`, `backend/tests/test_subscriptions.py`.
+
+**Done when** — a Responses-only Grok model appears after Refresh models, completes a
+tool-calling turn, and keeps its reasoning across the follow-up; existing proxy models are
+unchanged.
+
+---
+
+## 31. Grok voice, as a labelled cloud tier
+
+**Goal** — A "read aloud" button on answers and a transcription tier for the microphone,
+both on the Grok subscription, both off by default and labelled as leaving the machine.
+
+**Why it fits** — Only as an opt-in tier, and that is the first thing to settle. Item 19
+argues for voice that never leaves the house, and the speech module's first invariant is
+that the cloud tier is off by default. xAI's TTS (`POST /v1/tts`, voices from
+`GET /v1/tts/voices`) and transcription (`grok-voice-transcribe-2.0`)
+([TTS](https://docs.x.ai/developers/model-capabilities/audio/text-to-speech),
+[STT](https://docs.x.ai/developers/models/speech-to-text)) make a good cloud tier for a
+machine with no local voice models — under the opt-in `voice.allow_cloud_fallback` that
+already exists for exactly this, never as the default.
+
+**Depends on** — 26. Read item 19 first; this must not pre-empt its local path.
+
+**Scope**
+
+- **Read aloud**: a message action that calls a new Gateway route (e.g.
+  `POST /api/voice/speak`), which calls xAI TTS with the Grok token and streams the MP3 back
+  to an `<audio>` element. The text is capped server-side, and the UI says it goes to xAI.
+- **Transcription**: xAI as the cloud tier behind `voice.allow_cloud_fallback`. The current
+  client speaks OpenAI's `/v1/audio/transcriptions`; xAI's REST STT path is not confirmed to
+  be that shape, so expect a second adapter rather than a base-URL change.
+- Keep the speech module's invariants: the size cap is enforced while reading, errors never
+  echo the service body, and Tailscale CGNAT still counts as local.
+- Out of scope: the realtime Voice Agent API (see *Deliberately not on this roadmap*).
+
+**Key files** — `backend/packages/harness/deerflow/community/speech/`,
+`backend/app/gateway/routers/voice.py`,
+`backend/packages/harness/deerflow/config/voice_config.py`,
+`frontend/src/core/voice-input/`,
+`frontend/src/components/workspace/messages/message-list-item.tsx` (message actions),
+`backend/tests/test_voice_stt.py`.
+
+**Done when** — with the cloud tier off, nothing reaches xAI and the button is absent; with
+it on, an answer plays aloud on a phone over the tailnet and a recording is transcribed; and
+the UI names xAI as the destination both times.
+
+---
+
 ## Deliberately not on this roadmap
 
 **More model providers, more IM channels, more bundled skills.** The model bundle is
@@ -609,3 +921,9 @@ host session, and that is the one surface where a prompt injection stops being a
 and becomes a keystroke. Item 23 exists because the *current* exposure already justifies a
 provenance boundary; widening the blast radius to the desktop before that lands has the
 order backwards.
+
+**Grok's realtime Voice Agent API.** Speech-to-speech over a long-lived socket is a
+different feature from item 31's push-to-talk tiers: it needs a WebSocket audio path
+through nginx, holds the microphone open for the whole session, and sends all of it to
+xAI. Item 19's push-to-talk, local-first voice is the one this fork wants; a realtime cloud
+agent would make the opposite the default.
