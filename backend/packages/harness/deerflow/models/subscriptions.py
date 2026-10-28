@@ -32,6 +32,10 @@ PROVIDERS = ("chatgpt", "grok", "kimi")
 GROK_CLIENT_ID = "b1a00492-073a-47ea-816f-4c329264a828"
 GROK_AUTH = "https://auth.x.ai/oauth2"
 GROK_BASE = "https://cli-chat-proxy.grok.com/v1"
+# xAI's public API, which the same Grok grant may reach for Imagine, voice and
+# server-side search. Reach is measured per grant (_probe_grok), never assumed.
+XAI_API = "https://api.x.ai/v1"
+GROK_FEATURES = ("image", "video", "x_search", "voice")
 KIMI_BASE = "https://api.kimi.ai/coding/v1"
 USER_AGENT = "DeerFlow/2 subscription-connect"
 _LOCK = threading.RLock()
@@ -44,10 +48,13 @@ _TERMINAL_REFRESH_ERRORS = frozenset({"invalid_grant", "invalid_token", "access_
 class SubscriptionError(ValueError):
     """A sanitized domain error safe to return to the settings UI."""
 
-    def __init__(self, message: str, *, code: str = "subscription_error", status_code: int = 502):
+    def __init__(self, message: str, *, code: str = "subscription_error", status_code: int = 502, http_status: int | None = None):
         super().__init__(message)
         self.code = code
         self.status_code = status_code
+        # The provider's own HTTP status, kept apart from the status returned to
+        # the browser: the reach probe must tell "refused" from "unreachable".
+        self.http_status = http_status
 
 
 def _provider(provider: str) -> None:
@@ -125,11 +132,13 @@ class SubscriptionStore(ManagedModelStore):
             raise SubscriptionError("Subscription storage is unavailable; check the catalog and encryption key", status_code=503) from None
 
 
-def _request_json(method: str, url: str, **kwargs) -> dict:
+def _request_json(method: str, url: str, *, json_object: bool = True, **kwargs) -> dict:
     headers = {"User-Agent": USER_AGENT, "Accept": "application/json", **kwargs.pop("headers", {})}
+    status = None
     try:
         with httpx.Client(timeout=20, follow_redirects=False) as client:
             with client.stream(method, url, headers=headers, **kwargs) as response:
+                status = response.status_code
                 content = bytearray()
                 for chunk in response.iter_bytes():
                     content.extend(chunk)
@@ -137,16 +146,27 @@ def _request_json(method: str, url: str, **kwargs) -> dict:
                         raise SubscriptionError("The subscription provider returned an oversized response")
                 payload = json.loads(content)
     except (httpx.HTTPError, ValueError):
+        if status is not None and not 200 <= status < 300:
+            # A refusal with a non-JSON body is still a refusal, not an outage.
+            raise SubscriptionError("The subscription provider rejected the request; check access or reconnect", code="provider_error", status_code=401 if status == 401 else 502, http_status=status) from None
         raise SubscriptionError("The subscription provider could not be reached; try again") from None
     if not isinstance(payload, dict):
-        raise SubscriptionError("The subscription provider returned an invalid response")
+        if not json_object and response.is_success:
+            # A reach probe only needs the status; some listings are bare arrays.
+            return {"data": payload}
+        raise SubscriptionError("The subscription provider returned an invalid response", http_status=status)
     if not response.is_success:
         raw_error = payload.get("error")
         code = raw_error if isinstance(raw_error, str) else "provider_error"
         # Return only known protocol codes. Error text and response bodies can
         # contain credentials, account information, or client-supplied content.
         safe_codes = _TERMINAL_REFRESH_ERRORS | {"authorization_pending", "slow_down", "expired_token", "invalid_client"}
-        raise SubscriptionError("The subscription provider rejected the request; check access or reconnect", code=code if code in safe_codes else "provider_error", status_code=401 if response.status_code == 401 else 502)
+        raise SubscriptionError(
+            "The subscription provider rejected the request; check access or reconnect",
+            code=code if code in safe_codes else "provider_error",
+            status_code=401 if response.status_code == 401 else 502,
+            http_status=response.status_code,
+        )
     return payload
 
 
@@ -219,18 +239,115 @@ def get_access_token(provider: str) -> str:
         return _access_token_locked(store, provider)
 
 
-def get_subscription_models() -> list[ModelConfig]:
-    """Read discovered snapshots only; disconnected subscriptions expose nothing."""
-    records = SubscriptionStore()._read()
+def _usable(record: dict) -> bool:
+    return bool(record.get("connected") and record.get("enabled", True) and not record.get("needs_reauth"))
+
+
+def _record_models(records: dict) -> list[ModelConfig]:
     models = []
     for provider in PROVIDERS:
         record = records.get(provider, {})
-        if record.get("connected") and record.get("enabled", True) and not record.get("needs_reauth"):
+        if _usable(record):
             try:
                 models.extend(ModelConfig.model_validate(item) for item in record.get("models", []))
             except (ValueError, TypeError):
                 raise SubscriptionError("Subscription model storage is invalid; refresh the connection", status_code=503) from None
     return models
+
+
+def get_subscription_models() -> list[ModelConfig]:
+    """Read discovered snapshots only; disconnected subscriptions expose nothing."""
+    return _record_models(SubscriptionStore()._read())
+
+
+def _feature_availability(probe: dict | None) -> dict[str, str]:
+    """Per-feature reach from the last probe: available, not_on_plan or unknown.
+
+    Only a 401/403 is a definite no. A successful listing that omits a model
+    family proves nothing about it, so that family stays switchable as
+    "unknown" rather than locking the operator out of a feature xAI does serve.
+    """
+    probe = probe if isinstance(probe, dict) else {}
+    api = probe.get("api")
+    families = probe.get("models") if isinstance(probe.get("models"), dict) else {}
+
+    def family(name: str) -> str:
+        if api == "not_on_plan":
+            return "not_on_plan"
+        if api != "available":
+            return "unknown"
+        return "available" if families.get(name) else "unknown"
+
+    voice = probe.get("voice")
+    return {"image": family("image"), "video": family("video"), "x_search": family("text"), "voice": voice if voice in {"available", "not_on_plan"} else "unknown"}
+
+
+def _ready_features(records: dict) -> frozenset[str]:
+    """Grok features whose tools and routes may be offered right now."""
+    record = records.get("grok", {})
+    if not _usable(record):
+        return frozenset()
+    availability = _feature_availability(record.get("api_probe"))
+    switches = record.get("features") if isinstance(record.get("features"), dict) else {}
+    return frozenset(name for name in GROK_FEATURES if switches.get(name) is True and availability[name] != "not_on_plan")
+
+
+def _public_features(record: dict) -> list[dict]:
+    availability = _feature_availability(record.get("api_probe"))
+    switches = record.get("features") if isinstance(record.get("features"), dict) else {}
+    return [{"name": name, "enabled": switches.get(name) is True, "availability": availability[name]} for name in GROK_FEATURES]
+
+
+def grok_feature_ready(feature: str) -> bool:
+    """Whether one Grok feature is switched on and not refused by the plan.
+
+    Reads the published snapshot only, never the network. Gateway routes use
+    it to decide what to offer; tools are filtered from the run's AppConfig.
+    """
+    return feature in _ready_features(SubscriptionStore()._read())
+
+
+def grok_api_access(feature: str) -> tuple[str, list[str]]:
+    """Token plus listed model IDs for one operator-enabled xAI API feature.
+
+    Checked on every call under the shared lock, so a switch turned off or a
+    plan that starts refusing takes effect on the next tool call, not the next
+    run. The token is returned for one request and must not be stored.
+    """
+    if feature not in GROK_FEATURES:
+        raise SubscriptionError("Unknown Grok feature", status_code=404)
+    store = SubscriptionStore()
+    with store.locked():
+        record = store.get("grok") or {}
+        if not _usable(record):
+            raise SubscriptionError("Connect Grok in Settings → Models → Subscriptions before using this feature", status_code=401)
+        switches = record.get("features") if isinstance(record.get("features"), dict) else {}
+        if switches.get(feature) is not True:
+            raise SubscriptionError("This Grok feature is switched off in Settings → Models → Subscriptions", status_code=403)
+        if _feature_availability(record.get("api_probe"))[feature] == "not_on_plan":
+            raise SubscriptionError("The connected Grok plan does not include this feature", status_code=403)
+        probe = record.get("api_probe") if isinstance(record.get("api_probe"), dict) else {}
+        families = probe.get("models") if isinstance(probe.get("models"), dict) else {}
+        listed = families.get("text" if feature == "x_search" else feature, [])
+        return _access_token_locked(store, "grok"), [item for item in listed if isinstance(item, str)] if isinstance(listed, list) else []
+
+
+def set_grok_features(updates: dict[str, bool]) -> dict:
+    """Switch Grok API features on or off for every user of this connection."""
+    if not isinstance(updates, dict) or not updates or any(name not in GROK_FEATURES or not isinstance(value, bool) for name, value in updates.items()):
+        raise SubscriptionError("Unknown Grok feature", status_code=422)
+    store = SubscriptionStore()
+    with store.locked():
+        record = store.get("grok") or {}
+        if not _usable(record):
+            raise SubscriptionError("Connect Grok before changing its features", status_code=409)
+        availability = _feature_availability(record.get("api_probe"))
+        if any(value and availability[name] == "not_on_plan" for name, value in updates.items()):
+            raise SubscriptionError("The connected Grok plan does not include this feature", status_code=409)
+        switches = record.get("features") if isinstance(record.get("features"), dict) else {}
+        record["features"] = {**switches, **updates}
+        store.save("grok", record)
+        return {"provider": "grok", "features": _public_features(record)}
 
 
 def merge_subscription_models(config):
@@ -247,10 +364,13 @@ def merge_subscription_models(config):
         if _MODEL_CACHE is not None and _MODEL_CACHE[0] is config and _MODEL_CACHE[1] == signature:
             return _MODEL_CACHE[2]
         existing_names = {item.name for item in config.models}
-        models = [item for item in get_subscription_models() if item.name not in existing_names]
+        records = store._read()
+        models = [item for item in _record_models(records) if item.name not in existing_names]
         result = config.model_copy(update={"models": [*config.models, *models]})
         result._models_by_name = {**config._models_by_name, **{item.name: item for item in models}}
         result._subscription_model_names = {item.name for item in models}
+        # Read with the models so one run sees one answer for both.
+        result._subscription_features = _ready_features(records)
         _MODEL_CACHE = (config, signature, result)
         return result
 
@@ -273,12 +393,69 @@ def subscription_status() -> dict:
                 "interactive_only": provider == "kimi",
                 "updated_at": record.get("updated_at"),
                 "account_label": record.get("email") if provider == "chatgpt" else None,
+                "features": _public_features(record) if provider == "grok" and connected else [],
+                "api_access": ((record.get("api_probe") or {}).get("api") or "unknown") if provider == "grok" and connected else None,
             }
         )
     return {"providers": providers}
 
 
-def _catalog(provider: str, token: str) -> list[dict]:
+def _classify_api_models(data: list) -> dict[str, list[str]]:
+    """Group xAI's model listing by what each model outputs."""
+    families: dict[str, list[str]] = {"image": [], "video": [], "text": []}
+    for item in data[:1000]:
+        model_id = item.get("id") if isinstance(item, dict) else None
+        if not isinstance(model_id, str) or not model_id.strip() or len(model_id) > 200:
+            continue
+        outputs = item.get("output_modalities")
+        if isinstance(outputs, list) and outputs:
+            kinds = [kind for kind in ("video", "image", "text") if kind in outputs]
+        elif model_id.startswith("grok-imagine-video"):
+            kinds = ["video"]
+        elif model_id.startswith("grok-imagine-image"):
+            kinds = ["image"]
+        elif model_id.startswith("grok-"):
+            kinds = ["text"]
+        else:
+            kinds = []
+        for kind in kinds:
+            if model_id not in families[kind] and len(families[kind]) < 100:
+                families[kind].append(model_id)
+    return families
+
+
+def _probe_grok(token: str, previous: dict | None = None) -> dict:
+    """Measure what this grant reaches on xAI's API without generating anything.
+
+    401/403 is a definite "not on this plan". Anything else — network, 5xx, a
+    malformed body — is "unknown" and keeps the previous answer, the way a
+    catalog refresh keeps the previous catalog. Never raises: a probe outage
+    must not cost the operator a working chat connection.
+    """
+    probe = {**(previous if isinstance(previous, dict) else {}), "checked_at": time.time()}
+    headers = {"Authorization": f"Bearer {token}"}
+    try:
+        data = _request_json("GET", f"{XAI_API}/models", headers=headers).get("data")
+        if not isinstance(data, list):
+            raise SubscriptionError("The subscription provider returned an invalid model listing")
+        probe.update(api="available", models=_classify_api_models(data))
+    except SubscriptionError as exc:
+        if exc.http_status in {401, 403}:
+            probe.update(api="not_on_plan", models={})
+        else:
+            probe.setdefault("api", "unknown")
+    try:
+        _request_json("GET", f"{XAI_API}/tts/voices", headers=headers, json_object=False)
+        probe["voice"] = "available"
+    except SubscriptionError as exc:
+        if exc.http_status in {401, 403}:
+            probe["voice"] = "not_on_plan"
+        else:
+            probe.setdefault("voice", "unknown")
+    return probe
+
+
+def _catalog(provider: str, token: str, include_responses: bool = False) -> list[dict]:
     if provider == "chatgpt":
         from deerflow.models.chatgpt_subscription_auth import discover_chatgpt_models
 
@@ -295,9 +472,14 @@ def _catalog(provider: str, token: str) -> list[dict]:
         if not isinstance(item, dict) or item.get("available") is False or item.get("enabled") is False:
             continue
         meta = item.get("_meta") if isinstance(item.get("_meta"), dict) else {}
+        responses = False
         if provider == "grok":
-            if item.get("hidden", meta.get("hidden")) is True or (item.get("apiBackend") or item.get("api_backend")) in {"responses", "messages"}:
+            backend = item.get("apiBackend") or item.get("api_backend")
+            # Responses-only models need xAI's public API, so they are listed
+            # only once the probe has shown this grant reaches it.
+            if item.get("hidden", meta.get("hidden")) is True or backend == "messages" or (backend == "responses" and not include_responses):
                 continue
+            responses = backend == "responses"
             # Grok's picker slug (`id`) may differ from the inference route.
             # Match its official client precedence, without trusting a remote
             # base URL or other credential-bearing constructor settings.
@@ -331,7 +513,11 @@ def _catalog(provider: str, token: str) -> list[dict]:
                 profile["when_thinking_disabled"] = {"extra_body": {"thinking": {"type": "disabled"}}}
         # The per-model routing header is required even if the JSON model field
         # is present. An empty catalog stays empty: never invent entitlements.
-        if provider == "grok":
+        if responses:
+            # The proxy's routing headers belong to the proxy; xAI's public
+            # Responses API takes the model from the request body.
+            profile.update(use="deerflow.models.subscription_providers:GrokResponsesSubscriptionChatModel", base_url=XAI_API, default_headers={"User-Agent": USER_AGENT})
+        elif provider == "grok":
             profile["default_headers"] = {"X-XAI-Token-Auth": "xai-grok-cli", "x-grok-model-override": model_id, "User-Agent": USER_AGENT}
         else:
             profile["default_headers"] = {"User-Agent": USER_AGENT}
@@ -516,7 +702,10 @@ def poll_grok_connection(owner: str, flow_id: str) -> dict:
         connected = _token_update({"client_id": GROK_CLIENT_ID}, tokens)
         # Keep a successful OAuth grant even if model discovery temporarily fails.
         store.save("grok", {**connected, "models": []})
-        connected.update(models=_catalog("grok", connected["access_token"]), updated_at=time.time())
+        # A new grant starts with every API feature switched off; the probe
+        # only records what the operator could switch on.
+        connected["api_probe"] = _probe_grok(connected["access_token"])
+        connected.update(models=_catalog("grok", connected["access_token"], connected["api_probe"].get("api") == "available"), updated_at=time.time())
         store.save("grok", connected)
         return _connected("grok", connected)
 
@@ -527,7 +716,11 @@ def refresh_subscription(provider: str) -> dict:
     with store.locked():
         token = _access_token_locked(store, provider)
         record = store.get(provider)
-        record.update(models=_catalog(provider, token), updated_at=time.time())
+        if provider == "grok":
+            record["api_probe"] = _probe_grok(token, record.get("api_probe"))
+            record.update(models=_catalog(provider, token, record["api_probe"].get("api") == "available"), updated_at=time.time())
+        else:
+            record.update(models=_catalog(provider, token), updated_at=time.time())
         store.save(provider, record)
         return _connected(provider, record)
 

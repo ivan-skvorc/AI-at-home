@@ -236,6 +236,9 @@ export const enUS: Translations = {
     exportFailed: "Failed to export conversation.",
     regenerate: "Regenerate",
     editMessage: "Edit message",
+    readAloud: "Read aloud with Grok (the text is sent to xAI)",
+    stopReadAloud: "Stop reading aloud",
+    readAloudFailed: "Could not read this answer aloud.",
     editAnswer: "Edit answer",
     saveAndSend: "Save and send",
     saveAnswerVersion: "Save version",
@@ -486,6 +489,8 @@ export const enUS: Translations = {
       "Voice input needs a secure connection. Open the https:// address (over Tailscale, the MagicDNS name rather than the raw IP).",
     voiceInputCloudNotice:
       "Using your browser's cloud speech service — this audio leaves your machine.",
+    voiceInputGrokNotice:
+      "Transcribing with Grok (xAI) — this recording leaves your machine.",
     voiceInputServerNotice:
       "Recording... Click to stop and transcribe on your server.",
     mode: "Mode",
@@ -2216,6 +2221,26 @@ export const enUS: Translations = {
       models: "Discovered models",
       none: "No models are currently available.",
       usage: "Manage ChatGPT plan usage",
+      grokFeaturesTitle: "Grok features",
+      grokFeaturesDescription:
+        "Use the connected Grok plan for more than chat. Each feature sends data to xAI and uses the plan’s quota, for every user of this server. All of them stay off until you switch them on.",
+      grokFeatureImage: "Image generation and editing (Grok Imagine)",
+      grokFeatureImageNote:
+        "Sends prompts, and any images you ask it to edit, to xAI.",
+      grokFeatureVideo: "Video generation (Grok Imagine)",
+      grokFeatureVideoNote:
+        "Sends prompts and images to xAI. Clips use scarce plan quota.",
+      grokFeatureXSearch: "X search",
+      grokFeatureXSearchNote:
+        "Sends search queries to xAI and answers with links to X posts.",
+      grokFeatureVoice: "Voice: read answers aloud and transcribe speech",
+      grokFeatureVoiceNote:
+        "Sends answer text and recordings to xAI. A configured local transcription service is still used first.",
+      grokAvailable: "On your plan",
+      grokNotOnPlan: "Not on your plan",
+      grokUnknown: "Couldn’t check",
+      grokNotOnPlanHint:
+        "Grok refused this feature for the connected plan. Use Refresh models to check again.",
     },
     title: "Settings",
     description: "Adjust how DeerFlow looks and behaves for you.",

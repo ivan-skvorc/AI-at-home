@@ -16,6 +16,7 @@ import { WorkspaceSidebar } from "@/components/workspace/workspace-sidebar";
 import { ExtensionPageBootstrap } from "@/core/extensions/hooks";
 import { UserPreferencesBoundary } from "@/core/settings/user-preferences-boundary";
 import { LiveChatSlotsProvider } from "@/core/threads/live-chat-slots-context";
+import { ReadAloudConfigProvider } from "@/core/voice-input/read-aloud-context";
 
 function parseSidebarOpenCookie(
   value: string | undefined,
@@ -43,16 +44,18 @@ export async function WorkspaceContent({
         <ExtensionPageBootstrap />
         <SidebarProvider className="h-screen" defaultOpen={initialSidebarOpen}>
           <LiveChatSlotsProvider>
-            <WorkspaceSidebar />
-            <SidebarInset className="min-w-0">
-              <GatewayOfflineBanner gatewayUnavailable={gatewayUnavailable} />
-              <ModelLoadErrorBanner gatewayUnavailable={gatewayUnavailable} />
-              {/* Persistent keep-alive host for chat tabs. Mounted above the
+            <ReadAloudConfigProvider>
+              <WorkspaceSidebar />
+              <SidebarInset className="min-w-0">
+                <GatewayOfflineBanner gatewayUnavailable={gatewayUnavailable} />
+                <ModelLoadErrorBanner gatewayUnavailable={gatewayUnavailable} />
+                {/* Persistent keep-alive host for chat tabs. Mounted above the
                 route so navigating between chats never remounts them; hidden
                 (but still mounted) on non-chat workspace routes. */}
-              <KeepAliveChatViewport />
-              {children}
-            </SidebarInset>
+                <KeepAliveChatViewport />
+                {children}
+              </SidebarInset>
+            </ReadAloudConfigProvider>
           </LiveChatSlotsProvider>
         </SidebarProvider>
         <CommandPalette />

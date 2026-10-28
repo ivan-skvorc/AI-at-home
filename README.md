@@ -8,6 +8,7 @@
 > - 🦙 **Auto-populated Ollama models** — `config.yaml` syncs from your `ollama pull` list on every launch, with capabilities detected and a VRAM-aware context window instead of Ollama's 2048-token default. Local models are **free** — you pay for electricity.
 > - 🔑 **API-key model auto-config** — drop a cloud key in `.env` and the matching models uncomment themselves in `config.yaml` on the next launch. Anthropic, OpenAI, xAI, Gemini, DeepSeek, Moonshot, Qwen, Mistral, MiniMax, Z.ai direct, plus a routed set via OpenRouter — one flagship per lab, except Anthropic and OpenAI, whose top tier is really two models a factor of two or more apart in price, so both halves are routed (Fable 5.1 + Opus 5.5, GPT-6 Astra + GPT-6.1 Sol).
 > - 🎟️ **Subscription models from Settings → Models** — connect a ChatGPT plan in your browser, sign in to Grok with a device code, or add a Kimi Code subscription key. Available models populate the picker automatically, with encrypted server-side credentials and refresh/disconnect controls. ChatGPT uses a manual return-URL handoff for LAN/Tailscale access; Kimi is restricted to personal interactive chats.
+> - 🎨 **Grok Imagine, X search and voice on your Grok plan** — once Grok is connected, an administrator can switch on image generation and editing, short video clips, X (Twitter) search and Grok voice (read answers aloud, transcribe speech), all paid for by the Grok subscription instead of API billing. **Every switch starts off**, a feature xAI refuses for your plan stays locked, and each one says it sends your prompt (and, for edits, your images) to xAI; the internet switch turns them all off for a chat. Costs nothing to turn on beyond the plan you already have.
 > - 🔎 **Self-hosted search, no API key** — a bundled SearXNG is provisioned at startup (an existing instance is reused) and backs the default `web_search`.
 > - 🦊 **A local browser for page fetching, no API key** — Camoufox replaces the Jina cloud reader as the default `web_fetch`, and installs itself on every launch path.
 > - 📱 **Installable on your phone** — a web app manifest and service worker, so you can add it to your home screen and get a Web Push notification when a long run finishes with the browser closed. Needs a secure origin; the settings page says so if you are on plain HTTP.
@@ -156,6 +157,7 @@ DeerFlow has newly integrated the intelligent search and crawling toolset indepe
   - [From Deep Research to Super Agent Harness](#from-deep-research-to-super-agent-harness)
   - [Core Features](#core-features)
     - [Subscription Models](#subscription-models)
+      - [Grok Features: Imagine, X Search and Voice](#grok-features-imagine-x-search-and-voice)
     - [Skills \& Tools](#skills--tools)
       - [Exporting Custom Skills](#exporting-custom-skills)
       - [Claude Code Integration](#claude-code-integration)
@@ -1842,6 +1844,78 @@ Provider references: [OpenAI plan access](https://developers.openai.com/siwc/tok
 [remote ChatGPT hosts](https://developers.openai.com/siwc/token-sharing-open-source/self-hosted-vms),
 [xAI's documented direct access](https://github.com/xai-org/grok-build/blob/main/crates/codegen/xai-grok-shell/README.md#using-authjson-for-api-access),
 and [Kimi Code usage guidelines](https://www.kimi.com/code/docs/en/kimi-code/community-guidelines.html).
+
+#### Grok Features: Imagine, X Search and Voice
+
+A connected Grok subscription can do more than chat. In **Settings → Models →
+Subscriptions**, the Grok card lists four **Grok features**, each with a switch:
+**image generation and editing** (Grok Imagine), **video generation** (Grok
+Imagine), **X search**, and **voice** (read answers aloud, and transcribe the
+microphone when no local transcription service is configured). They use the
+same sign-in as Grok chat and are paid for by the plan, not by API billing, for
+every user of this server — the connection is shared, like the models.
+
+**Every switch starts off**, and turns off again when Grok is reconnected. On
+connect and on **Refresh models**, DeerFlow asks xAI what this grant can reach
+without generating anything. Each feature then shows **On your plan**, **Not on
+your plan** (xAI refused it; the switch stays locked) or **Couldn't check**
+(DeerFlow could not tell; you may still switch it on, and a refusal is reported
+when it is used). Turning a feature off takes effect on the very next request,
+including inside a run that is already going.
+
+Once switched on, the agent gets these tools:
+
+| Tool | What it does | Sends to xAI |
+| --- | --- | --- |
+| `grok_generate_image` | Up to four images from a prompt, with an optional aspect ratio | The prompt |
+| `grok_edit_image` | Changes one picture, or combines up to five, from an instruction | The prompt and the images (PNG/JPEG/WebP, up to 20 MB each) |
+| `grok_generate_video` | A clip of up to 15 seconds from text, a first-frame still, or reference images | The prompt and any images |
+| `x_search` | Answers what people on X are saying, with links to the posts | The query |
+
+Results land in the conversation's outputs and open in the artifact panel, with
+a `<name>.request.json` beside each file recording the request (source images
+by path, never their contents). **Local generation stays the default**: the
+agent is told to prefer the on-machine ComfyUI tools when they are available and
+you did not ask for Grok. The Grok tools sit outside the local `media` group, so
+**the chat's internet switch removes all of them**. Grok video gets no contact
+sheet — DeerFlow cannot decode video yet — so the agent asks you to watch the
+clip rather than claiming it did. A plan-quota refusal is reported once and
+never retried; xAI does not publish Imagine quotas, and video clips use the
+scarcest share.
+
+With **voice** on, answers show a speaker button that reads them aloud through
+Grok (up to 12,000 characters; code blocks are skipped), and the microphone
+transcribes through Grok when `voice.stt.enabled` is false. **A local
+transcription service always wins** when one is configured, and its failures are
+never retried against xAI. Both voice paths say that the text or recording goes
+to xAI. Grok voice does not depend on `voice.allow_cloud_fallback`, which still
+governs only the browser's own cloud recognition.
+
+Grok models that xAI serves only through its newer Responses API also appear in
+the picker, but only once the probe shows this grant reaches xAI's public API.
+
+The tool entries ship active in `config.example.yaml` (and are added to an
+existing `config.yaml` by the config upgrade); they stay invisible until a
+feature is switched on. Optional keys on each entry:
+
+```yaml
+tools:
+  - name: grok_generate_video
+    group: cloud_media
+    use: deerflow.community.xai.tools:grok_generate_video_tool
+    # model: grok-imagine-video      # default: the account's listed model
+    # timeout_seconds: 900           # give up waiting after this long
+    # poll_interval_seconds: 5
+    # download_hosts: [x.ai]         # where Grok's temporary file links may live
+```
+
+Whether a given SuperGrok tier accepts this API access is xAI's decision, and
+some subscribers have reported refusals despite an active plan; the per-feature
+badges show what your grant actually got. References:
+[xAI on Grok subscriptions in third-party agents](https://x.ai/news/grok-hermes),
+[Imagine](https://docs.x.ai/developers/model-capabilities/imagine),
+[X Search](https://docs.x.ai/developers/tools/x-search),
+[text to speech](https://docs.x.ai/developers/model-capabilities/audio/text-to-speech).
 
 ### Workspace
 

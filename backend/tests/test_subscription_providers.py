@@ -239,3 +239,79 @@ def test_subscription_factory_never_uses_paid_fallbacks_or_api_prices(wire):
     model = create_chat_model("subscription-chatgpt-account-model", app_config=config, attach_tracing=False)
     assert isinstance(model, providers.ChatGPTSubscriptionChatModel)
     assert _price_response(build_pricing_map(config.models), config.models[0]) is None
+
+
+def _responses_events(body: dict) -> list[dict]:
+    """A minimal OpenAI-compatible Responses stream: reasoning + tool call, then text."""
+    follow = any(item.get("type") == "function_call_output" for item in body["input"])
+    response = {"id": "resp-one", "object": "response", "created_at": 1, "model": body["model"], "status": "in_progress", "parallel_tool_calls": True, "tool_choice": "auto", "tools": [], "output": []}
+    events = [{"type": "response.created", "sequence_number": 0, "response": response}]
+    if follow:
+        item = {"type": "message", "id": "msg-one", "role": "assistant", "status": "completed", "content": [{"type": "output_text", "text": "Done", "annotations": []}]}
+        events += [
+            {"type": "response.output_item.added", "sequence_number": 1, "output_index": 0, "item": {**item, "content": [], "status": "in_progress"}},
+            {"type": "response.content_part.added", "sequence_number": 2, "output_index": 0, "item_id": "msg-one", "content_index": 0, "part": {"type": "output_text", "text": "", "annotations": []}},
+            {"type": "response.output_text.delta", "sequence_number": 3, "output_index": 0, "item_id": "msg-one", "content_index": 0, "delta": "Done", "logprobs": []},
+            {"type": "response.output_item.done", "sequence_number": 4, "output_index": 0, "item": item},
+        ]
+        output = [item]
+    else:
+        reasoning = {"type": "reasoning", "id": "rs-one", "summary": [], "encrypted_content": "opaque-reasoning"}
+        call = {"type": "function_call", "id": "fc-one", "call_id": "call-one", "name": "lookup", "arguments": "{}", "status": "completed"}
+        events += [
+            {"type": "response.output_item.added", "sequence_number": 1, "output_index": 0, "item": reasoning},
+            {"type": "response.output_item.done", "sequence_number": 2, "output_index": 0, "item": reasoning},
+            {"type": "response.output_item.added", "sequence_number": 3, "output_index": 1, "item": {**call, "arguments": "", "status": "in_progress"}},
+            {"type": "response.function_call_arguments.delta", "sequence_number": 4, "output_index": 1, "item_id": "fc-one", "delta": "{}"},
+            {"type": "response.output_item.done", "sequence_number": 5, "output_index": 1, "item": call},
+        ]
+        output = [reasoning, call]
+    usage = {"input_tokens": 5, "output_tokens": 3, "total_tokens": 8, "input_tokens_details": {"cached_tokens": 0}, "output_tokens_details": {"reasoning_tokens": 1}}
+    events.append({"type": "response.completed", "sequence_number": 9, "response": {**response, "status": "completed", "output": output, "usage": usage}})
+    return events
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["invoke", "astream"])
+async def test_grok_responses_models_replay_reasoning_on_xais_public_api(monkeypatch, mode):
+    requests, tokens = [], iter(["grok-secret-one", "grok-secret-two"])
+    monkeypatch.setattr(providers, "get_access_token", lambda provider: next(tokens))
+
+    def respond(request):
+        body = json.loads(request.content)
+        requests.append((request, body))
+        data = "".join(f"event: {event['type']}\ndata: {json.dumps(event)}\n\n" for event in _responses_events(body))
+        return httpx.Response(200, request=request, headers={"content-type": "text/event-stream"}, content=data.encode())
+
+    async def asend(client, request, **kwargs):
+        return respond(request)
+
+    monkeypatch.setattr(httpx.Client, "send", lambda client, request, **kwargs: respond(request))
+    monkeypatch.setattr(httpx.AsyncClient, "send", asend)
+    model = providers.GrokResponsesSubscriptionChatModel(model="grok-agentic", api_key="accidental-paid-key")
+    bound = model.bind_tools([TOOL])
+
+    async def call(history):
+        if mode == "invoke":
+            return bound.invoke(history)
+        chunks = [chunk async for chunk in bound.astream(history)]
+        result = chunks[0]
+        for chunk in chunks[1:]:
+            result += chunk
+        return result
+
+    history = [HumanMessage(content="Find the value")]
+    first = await call(history)
+    assert first.tool_calls[0]["name"] == "lookup"
+    history.extend([first, ToolMessage(content="42", tool_call_id="call-one")])
+    second = await call(history)
+    # Plan usage keeps a subscription identity, never the paid API alias.
+    assert second.response_metadata["model_name"] == "subscription-grok-grok-agentic"
+    assert {"id": "rs-one", "summary": [], "type": "reasoning", "encrypted_content": "opaque-reasoning"} in requests[1][1]["input"]
+    for index, (request, body) in enumerate(requests):
+        assert str(request.url) == "https://api.x.ai/v1/responses"
+        assert request.headers["authorization"] == f"Bearer grok-secret-{'one' if index == 0 else 'two'}"
+        assert "x-grok-model-override" not in request.headers
+        assert body["store"] is False and body["include"] == ["reasoning.encrypted_content"]
+    serialized = json.dumps(model.to_json(), default=str)
+    assert "grok-secret" not in serialized and "accidental-paid-key" not in serialized

@@ -402,6 +402,24 @@ class TestDefaultToolsBackfill:
         assert "+ tools[bash]" in out
         assert "+ tools[web_search]" not in out
 
+    def test_a_new_tool_group_reaches_an_existing_list(self, tmp_path, capsys):
+        # An appended tool whose group is missing from `tool_groups:` works for
+        # the default agent but cannot be picked for an allowlisted custom one,
+        # because the agent API lists groups from that section.
+        import yaml
+
+        example = _write_example_with_tools(tmp_path, version=3)
+        text = example.read_text(encoding="utf-8").replace("tools:\n", "tool_groups:\n  - name: web\n  - name: cloud_media\ntools:\n", 1)
+        example.write_text(text, encoding="utf-8")
+        config = tmp_path / "config.yaml"
+        config.write_text("config_version: 1\nsandbox:\n  use: custom\nmodels: []\ntool_groups:\n  - name: web\n    label: kept\ntools: []\n", encoding="utf-8")
+
+        assert config_upgrade.upgrade(config, example, REPO_ROOT) == 0
+
+        groups = yaml.safe_load(config.read_text(encoding="utf-8"))["tool_groups"]
+        assert groups == [{"name": "web", "label": "kept"}, {"name": "cloud_media"}]
+        assert "+ tool_groups[cloud_media]" in capsys.readouterr().out
+
     def test_backfill_second_run_is_a_no_op(self, tmp_path):
         example = _write_example_with_tools(tmp_path, version=3)
         config = tmp_path / "config.yaml"

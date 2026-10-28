@@ -13,6 +13,7 @@ import { I18nContext } from "@/core/i18n/context";
 import { enUS } from "@/core/i18n/locales/en-US";
 import { zhCN } from "@/core/i18n/locales/zh-CN";
 import * as messageUtils from "@/core/messages/utils";
+import { ReadAloudContext } from "@/core/voice-input/read-aloud-context";
 
 // The unit under test is the row's copy-data memo, not message rendering.
 // Stubbing the markdown pipeline also removes its first-render suspension:
@@ -131,6 +132,37 @@ describe("MessageListItem edit shortcuts during IME composition", () => {
       expect(view.queryByRole("textbox")).toBeNull();
     },
   );
+});
+
+describe("MessageListItem read-aloud", () => {
+  it("offers Grok read-aloud on a settled answer only while the workspace enables it", () => {
+    const message = makeMessage("ai");
+    const row = (available: boolean, isLoading = false) =>
+      withI18n(
+        <ReadAloudContext.Provider value={{ available, maxChars: 100 }}>
+          <MessageListItem
+            message={message}
+            threadId="thread-1"
+            showCopyButton={false}
+            isLoading={isLoading}
+          />
+        </ReadAloudContext.Provider>,
+      );
+    const view = render(row(false));
+    expect(
+      view.queryByRole("button", { name: enUS.common.readAloud }),
+    ).toBeNull();
+    view.rerender(row(true, true));
+    expect(
+      view.queryByRole("button", { name: enUS.common.readAloud }),
+    ).toBeNull();
+    view.rerender(row(true));
+    // The label itself names xAI as the destination of the text.
+    expect(
+      view.getByRole("button", { name: enUS.common.readAloud }),
+    ).toBeTruthy();
+    expect(enUS.common.readAloud).toContain("xAI");
+  });
 });
 
 describe("MessageListItem copy-data derivation guard", () => {

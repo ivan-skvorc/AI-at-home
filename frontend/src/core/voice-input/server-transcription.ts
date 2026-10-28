@@ -30,6 +30,11 @@ export type VoiceServerConfig = {
   server_transcription: boolean;
   allow_cloud_fallback: boolean;
   local_service: boolean;
+  /** "xai" when the server tier is Grok on the connected Grok subscription. */
+  transcription_provider: string | null;
+  /** Whether answers can be read aloud through Grok (POST /api/voice/speak). */
+  read_aloud: boolean;
+  read_aloud_max_chars: number;
 };
 
 export const DEFAULT_VOICE_SERVER_CONFIG: VoiceServerConfig = {
@@ -39,6 +44,10 @@ export const DEFAULT_VOICE_SERVER_CONFIG: VoiceServerConfig = {
   // as one that permitted the vendor cloud tier.
   allow_cloud_fallback: false,
   local_service: true,
+  transcription_provider: null,
+  // Fail closed here too: no answer means no read-aloud button.
+  read_aloud: false,
+  read_aloud_max_chars: 12000,
 };
 
 /**
@@ -131,6 +140,15 @@ export async function fetchVoiceServerConfig(
         DEFAULT_VOICE_SERVER_CONFIG.allow_cloud_fallback,
       local_service:
         body.local_service ?? DEFAULT_VOICE_SERVER_CONFIG.local_service,
+      transcription_provider:
+        body.transcription_provider ??
+        DEFAULT_VOICE_SERVER_CONFIG.transcription_provider,
+      read_aloud: body.read_aloud === true,
+      read_aloud_max_chars:
+        typeof body.read_aloud_max_chars === "number" &&
+        body.read_aloud_max_chars > 0
+          ? body.read_aloud_max_chars
+          : DEFAULT_VOICE_SERVER_CONFIG.read_aloud_max_chars,
     };
   } catch {
     return DEFAULT_VOICE_SERVER_CONFIG;

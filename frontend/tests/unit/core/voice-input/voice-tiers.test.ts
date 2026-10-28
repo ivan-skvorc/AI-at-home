@@ -287,11 +287,32 @@ describe("voice capability report", () => {
         local_service: false,
       }),
     })) as unknown as typeof fetch);
+    // An older Gateway that omits the Grok fields reads as "no Grok voice".
     expect(config).toEqual({
       prefer_on_device: false,
       server_transcription: true,
       allow_cloud_fallback: true,
       local_service: false,
+      transcription_provider: null,
+      read_aloud: false,
+      read_aloud_max_chars: 12000,
     });
+  });
+
+  it("reads the Grok voice tier and read-aloud only from an explicit answer", async () => {
+    const config = await fetchVoiceServerConfig((async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        server_transcription: true,
+        local_service: false,
+        transcription_provider: "xai",
+        read_aloud: "yes",
+        read_aloud_max_chars: 500,
+      }),
+    })) as unknown as typeof fetch);
+    expect(config.transcription_provider).toBe("xai");
+    expect(config.read_aloud).toBe(false);
+    expect(config.read_aloud_max_chars).toBe(500);
   });
 });

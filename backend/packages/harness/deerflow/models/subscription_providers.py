@@ -125,6 +125,7 @@ class _SubscriptionChatOpenAI(ChatOpenAI):
 
     subscription_provider: ClassVar[str]
     subscription_endpoint: ClassVar[str]
+    subscription_responses_api: ClassVar[bool] = False
 
     def __init__(self, **kwargs: Any) -> None:
         kwargs.pop("subscription_provider", None)
@@ -132,7 +133,12 @@ class _SubscriptionChatOpenAI(ChatOpenAI):
         kwargs.pop("openai_api_base", None)
         # The fixed placeholder satisfies SDK construction. Actual auth is added
         # to each request after refresh, never saved on the model or SDK client.
-        kwargs.update(api_key="deerflow-managed-subscription", base_url=self.subscription_endpoint, streaming=True, max_retries=0, use_responses_api=False, default_headers={"User-Agent": USER_AGENT})
+        kwargs.update(api_key="deerflow-managed-subscription", base_url=self.subscription_endpoint, streaming=True, max_retries=0, use_responses_api=self.subscription_responses_api, default_headers={"User-Agent": USER_AGENT})
+        if self.subscription_responses_api:
+            # Nothing is stored provider-side, so reasoning survives a tool
+            # follow-up only as the encrypted items replayed with the history.
+            kwargs.update(store=False, include=["reasoning.encrypted_content"])
+            kwargs.setdefault("output_version", "responses/v1")
         super().__init__(**kwargs)
 
     def _check_subscription_use(self) -> None:
@@ -179,6 +185,40 @@ class GrokSubscriptionChatModel(_SubscriptionChatOpenAI):
 
     def _subscription_headers(self, access_token: str) -> dict[str, str]:
         return {**super()._subscription_headers(access_token), "X-XAI-Token-Auth": "xai-grok-cli", "x-grok-model-override": self.model_name}
+
+
+class GrokResponsesSubscriptionChatModel(_SubscriptionChatOpenAI):
+    """Grok models xAI serves only through its public Responses API, on the same grant.
+
+    Listed only after the reach probe showed this grant is accepted by
+    ``api.x.ai``. The CLI proxy's routing headers do not apply here: the
+    public API takes the model from the request body.
+    """
+
+    subscription_provider: ClassVar[str] = "grok"
+    subscription_endpoint: ClassVar[str] = "https://api.x.ai/v1"
+    subscription_responses_api: ClassVar[bool] = True
+
+    def _subscription_chunk(self, chunk: ChatGenerationChunk) -> ChatGenerationChunk:
+        from deerflow.models.subscriptions import subscription_model_name
+
+        # The Responses stream bypasses the chat-completions chunk converter,
+        # so the usage identity is renamed here: plan usage must never be
+        # priced under the same model ID's paid API alias.
+        name = subscription_model_name(self.subscription_provider, self.model_name)
+        if "model_name" in chunk.message.response_metadata:
+            chunk.message.response_metadata["model_name"] = name
+        if chunk.generation_info and "model_name" in chunk.generation_info:
+            chunk.generation_info["model_name"] = name
+        return chunk
+
+    def _stream(self, messages: list[BaseMessage], stop: list[str] | None = None, run_manager: CallbackManagerForLLMRun | None = None, **kwargs: Any) -> Iterator[ChatGenerationChunk]:
+        for chunk in super()._stream(messages, stop=stop, run_manager=run_manager, **kwargs):
+            yield self._subscription_chunk(chunk)
+
+    async def _astream(self, messages: list[BaseMessage], stop: list[str] | None = None, run_manager: AsyncCallbackManagerForLLMRun | None = None, **kwargs: Any) -> AsyncIterator[ChatGenerationChunk]:
+        async for chunk in super()._astream(messages, stop=stop, run_manager=run_manager, **kwargs):
+            yield self._subscription_chunk(chunk)
 
 
 class KimiSubscriptionChatModel(_SubscriptionChatOpenAI):

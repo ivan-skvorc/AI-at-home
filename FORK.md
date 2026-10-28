@@ -4233,3 +4233,71 @@ Pinned by `TestWorkspaceEditProgress` in
 `backend/tests/test_loop_detection_middleware.py`, both directions; the
 mechanism is in `backend/docs/LOOP_DETECTION.md`, *Edits are progress*. It
 runs in `make test` and fails loudly, so it has no checklist row.
+
+### 43. Grok features beyond chat: Imagine, X search, voice
+
+**Why.** §41 connected a Grok subscription for chat through the CLI proxy, but
+the same grant can drive xAI's public API: Grok Imagine (images, edits, video),
+X search, text-to-speech and transcription (xAI announced subscription use in
+third-party agents on 2026-05-15). A plan the operator already pays for was
+reaching one feature in five. Each one sends data to xAI, so each is an opt-in
+beside the local tiers, never a replacement for them.
+
+**Reach is measured, not assumed.** The Grok sign-in requests `api:access` with
+the Grok CLI's public client ID, and whether xAI's API accepts that grant is a
+per-plan fact some subscribers report as "no". `_probe_grok` therefore runs on
+connect and on Refresh, with no generation: the model listing grouped by
+`output_modalities`, and the voice list. Only a 401/403 is a verdict
+(`not_on_plan`, switch locked). An outage or a listing that omits a family reads
+`unknown` and stays switchable: locking on silence would let a change in xAI's
+listing take a paid feature away with no error anywhere. The probe never raises,
+so it cannot cost a working chat connection.
+
+**Off by default, decided twice.** Switches live in the encrypted Grok record,
+admin-only through `PATCH /api/subscriptions/grok/features`, and a new grant
+starts with all of them off. The run's tool list filters on
+`AppConfig._subscription_features`, read from the same snapshot as the
+subscription models so one run sees one answer; each call then re-checks the
+switch while resolving its token (`grok_api_access`). The first keeps a dead
+tool out of the schema, the second makes "off" bind mid-run.
+
+**`cloud_media` is its own group** because `media` is offline-safe for local
+ComfyUI. Put a Grok tool there and the per-conversation internet switch (§27)
+keeps sending prompts to xAI. `x_search` sits in `web`.
+
+**The rest of the shape follows ComfyUI's (§23):** Gateway-side tools writing to
+the host outputs path, a reproduction record beside every output
+(`.request.json`, source images by path), no retries on plan quota. Downloads
+from xAI's temporary links are pinned to `download_hosts` and never carry the
+token. Grok video has no contact sheet because the backend has no decoder;
+adding one is its own dependency decision.
+
+**Voice is gated on the Grok switch alone**, not on `voice.allow_cloud_fallback`,
+which means the *browser's* vendor cloud; conflating them would let one opt-in
+send audio to two companies. A configured local STT always wins, and its failures
+are never retried in the cloud — the composer would otherwise label a local tier
+while audio left the machine. Read-aloud has no local tier yet (roadmap item 19).
+
+**Responses-only Grok models** (`apiBackend: responses`), dropped by §41's
+catalog, are listed once the probe shows API reach, on
+`GrokResponsesSubscriptionChatModel`: LangChain's Responses mode with
+`store: false` plus encrypted reasoning replay, and the usage identity renamed
+on the Responses stream, which bypasses the chat-completions converter §41
+relied on.
+
+**Extension-first:** recorded exception — the tools need the core-owned Grok
+credential, and the extension contract has no credential capability.
+
+**What was not verified.** No xAI endpoint was reachable from the build
+environment, so every wire shape (probe listing, Imagine, video polling,
+`x_search` citations, `/v1/tts`, `/v1/stt`) is taken from docs.x.ai and pinned
+with offline doubles. The first live connection is the real check; the probe
+badges are designed to make a mismatch visible rather than silent.
+
+Coverage: `test_grok_features.py`, `test_grok_xai_tools.py`, the Responses case in
+`test_subscription_providers.py`, the Grok tier in `test_voice_stt.py`, the
+`tool_groups` backfill in `test_config_upgrade_script.py`, and the frontend
+`model-settings-page.dom.test.tsx`, `read-aloud.test.ts` and `voice-tiers.test.ts`.
+All run inside `make test` / `pnpm test` and fail loudly, so no checklist row
+was added (CHANGE_CYCLE.md step 4). Depth for agents:
+`backend/packages/harness/deerflow/community/xai/AGENTS.md`.

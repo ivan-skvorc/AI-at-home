@@ -20,7 +20,7 @@
 # ============================================================================
 # Bump this number when the config schema changes.
 # Run `make config-upgrade` to merge new fields into your local config.yaml.
-config_version: 63
+config_version: 64
 
 # Optional operator-owned literal prompt extensions (see CONFIGURATION.md):
 # lead_prompt_overlay:
@@ -2290,6 +2290,9 @@ knowledge_base:
 tool_groups:
   - name: web
   - name: media
+  # Grok Imagine on the connected Grok subscription. Its own group because it
+  # leaves the machine: the internet switch drops it, unlike local `media`.
+  - name: cloud_media
   - name: file:read
   - name: file:write
   - name: bash
@@ -2905,6 +2908,38 @@ tools:
   - name: refine_verdict
     group: media
     use: deerflow.community.comfyui.tools:refine_verdict_tool
+
+  # ── Grok features on the connected Grok subscription (fork feature) ───────
+  # Grok Imagine (images, edits, video) and X search through xAI's API, paid
+  # for by the Grok plan connected in Settings → Models → Subscriptions. These
+  # entries are active but INVISIBLE until an administrator switches each
+  # feature on in that Grok card — every switch is off by default, and a
+  # feature the plan refuses (HTTP 401/403 on connect or Refresh) cannot be
+  # switched on. Everything here sends the prompt, and for edits your images,
+  # to xAI; the internet switch removes all of them.
+  #
+  # Optional per-entry keys: `model:` (an xAI model ID; default: the account's
+  # listed model, else grok-imagine-image / grok-imagine-video / grok-4.3),
+  # `timeout_seconds:`, and `download_hosts:` (hosts Grok's temporary file
+  # links may live on; default [x.ai], subdomains included).
+  - name: grok_generate_image
+    group: cloud_media
+    use: deerflow.community.xai.tools:grok_generate_image_tool
+
+  - name: grok_edit_image
+    group: cloud_media
+    use: deerflow.community.xai.tools:grok_edit_image_tool
+
+  # Minutes per clip and scarce plan quota. timeout_seconds (default 900) caps
+  # the wait; poll_interval_seconds (default 5) paces the status checks.
+  - name: grok_generate_video
+    group: cloud_media
+    use: deerflow.community.xai.tools:grok_generate_video_tool
+
+  # X (Twitter) posts, which web_search does not index. Answers cite the posts.
+  - name: x_search
+    group: web
+    use: deerflow.community.xai.tools:x_search_tool
 
   # File operations tools
   - name: ls

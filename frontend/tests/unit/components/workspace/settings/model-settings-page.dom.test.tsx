@@ -32,6 +32,7 @@ import {
   pollGrokSignIn,
   connectKimiSubscription,
   importChatGPTConnection,
+  updateGrokFeatures,
 } from "@/core/models/subscriptions";
 import { isStaticWebsiteOnly } from "@/core/static-mode";
 
@@ -49,6 +50,7 @@ rs.mock("@/core/models/subscriptions", () => ({
   importChatGPTConnection: rs.fn(),
   refreshSubscriptionModels: rs.fn(),
   disconnectSubscription: rs.fn(),
+  updateGrokFeatures: rs.fn(),
   chatGPTSignInHelperURL: () => "/api/subscriptions/chatgpt/helper",
 }));
 rs.mock("@/core/models/management", () => ({
@@ -206,6 +208,58 @@ test("subscription device sign-in refreshes the picker and keys are cleared afte
   fireEvent.click(screen.getByRole("button", { name: "Connect Kimi Code" }));
   await waitFor(() => expect(keyInput.value).toBe(""));
   expect(connectKimiSubscription).toHaveBeenCalledWith("private-key");
+});
+
+test("Grok features start off, keep plan refusals locked, and refresh read-aloud", async () => {
+  const text = enUS.settings.subscriptions;
+  rs.mocked(loadSubscriptions).mockResolvedValue({
+    providers: [
+      {
+        provider: "grok",
+        connected: true,
+        needs_reauth: false,
+        model_count: 0,
+        models: [],
+        auth_type: "oauth",
+        interactive_only: false,
+        updated_at: 1,
+        features: [
+          { name: "image", enabled: false, availability: "available" },
+          { name: "video", enabled: false, availability: "unknown" },
+          { name: "x_search", enabled: false, availability: "available" },
+          { name: "voice", enabled: false, availability: "not_on_plan" },
+        ],
+      },
+    ],
+  });
+  rs.mocked(updateGrokFeatures).mockResolvedValue({
+    provider: "grok",
+    features: [],
+  });
+  const client = mount();
+  client.setQueryData(["voice-config"], { read_aloud: false });
+  const image = await screen.findByRole("switch", {
+    name: text.grokFeatureImage,
+  });
+  expect(image.getAttribute("aria-checked")).toBe("false");
+  const voice = screen.getByRole("switch", { name: text.grokFeatureVoice });
+  expect(voice.hasAttribute("disabled")).toBe(true);
+  expect(
+    screen.getByTestId("grok-feature-voice-availability").textContent,
+  ).toContain(text.grokNotOnPlan);
+  // "Couldn't check" must stay switchable: an outage never locks a feature.
+  expect(
+    screen
+      .getByRole("switch", { name: text.grokFeatureVideo })
+      .hasAttribute("disabled"),
+  ).toBe(false);
+  fireEvent.click(image);
+  await waitFor(() =>
+    expect(updateGrokFeatures).toHaveBeenCalledWith({ image: true }),
+  );
+  await waitFor(() =>
+    expect(client.getQueryState(["voice-config"])?.isInvalidated).toBe(true),
+  );
 });
 
 test("remote ChatGPT browser sign-in keeps callbacks private and preserves the helper fallback", async () => {

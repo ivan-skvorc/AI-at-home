@@ -442,6 +442,9 @@ class AppConfig(BaseModel):
     # call. Private attrs are excluded from serialization.
     _managed_model_names: set[str] = PrivateAttr(default_factory=set)
     _subscription_model_names: set[str] = PrivateAttr(default_factory=set)
+    # Grok API features (image, video, x_search, voice) switched on and not
+    # refused by the plan, from the same snapshot as the subscription models.
+    _subscription_features: frozenset[str] = PrivateAttr(default_factory=frozenset)
     _models_by_name: dict[str, ModelConfig] = PrivateAttr(default_factory=dict)
     _tools_by_name: dict[str, ToolConfig] = PrivateAttr(default_factory=dict)
     _tool_groups_by_name: dict[str, ToolGroupConfig] = PrivateAttr(default_factory=dict)

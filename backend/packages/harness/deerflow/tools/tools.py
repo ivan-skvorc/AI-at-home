@@ -6,6 +6,7 @@ from langchain.tools import BaseTool
 from langchain_core.language_models import BaseChatModel
 from pydantic import BaseModel
 
+from deerflow.community.xai.features import required_grok_feature
 from deerflow.config import get_app_config
 from deerflow.config.app_config import AppConfig
 from deerflow.constants import CONVERSATION_TOOL_USE
@@ -170,6 +171,12 @@ def get_available_tools(
     knowledge_base_config = getattr(config, "knowledge_base", None)
     if not getattr(knowledge_base_config, "enabled", False):
         tool_configs = [tool for tool in tool_configs if tool.group != "knowledge"]
+
+    # Fork: Grok subscription tools appear only when the operator switched the
+    # feature on and the plan is not known to refuse it, read from the same
+    # snapshot as the run's subscription models (FORK.md §43).
+    grok_ready = getattr(config, "_subscription_features", frozenset())
+    tool_configs = [tool for tool in tool_configs if (feature := required_grok_feature(tool.use)) is None or feature in grok_ready]
 
     # Do not expose host bash by default when LocalSandboxProvider is active.
     if not is_host_bash_allowed(config):

@@ -53,7 +53,8 @@ OFFLINE_ALLOWED_TOOL_GROUPS: frozenset[str] = frozenset(
         "file:read",
         "file:write",
         "bash",
-        # Local ComfyUI image/video generation (FORK.md §23/§26).
+        # Local ComfyUI image/video generation (FORK.md §23/§26). Grok Imagine
+        # is deliberately *not* here: it lives in "cloud_media" (FORK.md §43).
         "media",
         # Self-hosted knowledge base (RAGFlow); reads an operator-run index.
         "knowledge",

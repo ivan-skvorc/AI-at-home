@@ -3,6 +3,14 @@ import { fetch } from "@/core/api/fetcher";
 import { getBackendBaseURL } from "@/core/config";
 
 export type SubscriptionProvider = "chatgpt" | "grok" | "kimi";
+export type GrokFeatureName = "image" | "video" | "x_search" | "voice";
+/** Only `not_on_plan` (a 401/403 from xAI) locks a switch; `unknown` stays switchable. */
+export type GrokFeatureAvailability = "available" | "not_on_plan" | "unknown";
+export type GrokFeature = {
+  name: GrokFeatureName;
+  enabled: boolean;
+  availability: GrokFeatureAvailability;
+};
 export type SubscriptionConnection = {
   provider: SubscriptionProvider;
   connected: boolean;
@@ -13,6 +21,8 @@ export type SubscriptionConnection = {
   interactive_only: boolean;
   updated_at: number | null;
   account_label?: string | null;
+  /** Grok only, and only while connected; absent from older Gateways. */
+  features?: GrokFeature[];
 };
 export type DeviceSignIn = {
   status: "pending";
@@ -105,6 +115,14 @@ export const connectKimiSubscription = (apiKey: string) =>
   request<Connected>("/kimi/connect", "POST", { api_key: apiKey });
 export const importChatGPTConnection = (connection: object) =>
   request<Connected>("/chatgpt/connect", "POST", { connection });
+export const updateGrokFeatures = (
+  features: Partial<Record<GrokFeatureName, boolean>>,
+) =>
+  request<{ provider: "grok"; features: GrokFeature[] }>(
+    "/grok/features",
+    "PATCH",
+    { features },
+  );
 export const refreshSubscriptionModels = (provider: SubscriptionProvider) =>
   request<Connected>(`/${provider}/refresh`, "POST", {});
 export const disconnectSubscription = (provider: SubscriptionProvider) =>

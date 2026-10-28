@@ -12,6 +12,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { Switch } from "@/components/ui/switch";
 import { useI18n } from "@/core/i18n/hooks";
 import { MODELS_QUERY_KEY } from "@/core/models/hooks";
 import {
@@ -25,10 +26,14 @@ import {
   loadSubscriptions,
   pollGrokSignIn,
   refreshSubscriptionModels,
+  updateGrokFeatures,
   type ChatGPTSignIn,
   type DeviceSignIn,
+  type GrokFeature,
+  type GrokFeatureName,
   type SubscriptionProvider,
 } from "@/core/models/subscriptions";
+import { VOICE_CONFIG_QUERY_KEY } from "@/core/voice-input/read-aloud";
 
 const names = { chatgpt: "ChatGPT", grok: "Grok", kimi: "Kimi Code" };
 
@@ -54,6 +59,8 @@ export function SubscriptionSettings({ userId }: { userId: string }) {
     await Promise.all([
       client.invalidateQueries({ queryKey: ["subscriptions", userId] }),
       client.invalidateQueries({ queryKey: MODELS_QUERY_KEY }),
+      // Grok voice decides whether answers offer read-aloud.
+      client.invalidateQueries({ queryKey: VOICE_CONFIG_QUERY_KEY }),
     ]);
   }
 
@@ -282,6 +289,17 @@ export function SubscriptionSettings({ userId }: { userId: string }) {
                 </div>
               </>
             )}
+            {provider === "grok" &&
+              connection?.connected === true &&
+              !!connection.features?.length && (
+                <GrokFeatures
+                  features={connection.features}
+                  busy={busy}
+                  onChange={(name, enabled) =>
+                    void run(() => updateGrokFeatures({ [name]: enabled }))
+                  }
+                />
+              )}
             {provider === "chatgpt" && connection?.connected && (
               <a
                 href="https://chatgpt.com/settings/usage"
@@ -420,5 +438,76 @@ export function SubscriptionSettings({ userId }: { userId: string }) {
         </DialogContent>
       </Dialog>
     </section>
+  );
+}
+
+/**
+ * Per-feature switches for what the Grok grant reaches beyond chat.
+ *
+ * Every switch starts off. A feature xAI refused for this plan (401/403 at
+ * connect or Refresh) cannot be switched on, but one already on can still be
+ * switched off; "couldn't check" stays switchable so an outage never locks a
+ * feature the plan does include.
+ */
+function GrokFeatures({
+  features,
+  busy,
+  onChange,
+}: {
+  features: GrokFeature[];
+  busy: boolean;
+  onChange: (name: GrokFeatureName, enabled: boolean) => void;
+}) {
+  const { t } = useI18n();
+  const text = t.settings.subscriptions;
+  const labels: Record<GrokFeatureName, [string, string]> = {
+    image: [text.grokFeatureImage, text.grokFeatureImageNote],
+    video: [text.grokFeatureVideo, text.grokFeatureVideoNote],
+    x_search: [text.grokFeatureXSearch, text.grokFeatureXSearchNote],
+    voice: [text.grokFeatureVoice, text.grokFeatureVoiceNote],
+  };
+  const availability = {
+    available: text.grokAvailable,
+    not_on_plan: text.grokNotOnPlan,
+    unknown: text.grokUnknown,
+  };
+  return (
+    <fieldset className="space-y-2 rounded-md border p-3">
+      <legend className="px-1 font-medium">{text.grokFeaturesTitle}</legend>
+      <p className="text-muted-foreground text-sm">
+        {text.grokFeaturesDescription}
+      </p>
+      <ul className="space-y-3">
+        {features.map((feature) => {
+          if (!(feature.name in labels)) return null;
+          const [label, note] = labels[feature.name];
+          const id = `grok-feature-${feature.name}`;
+          const locked = feature.availability === "not_on_plan";
+          return (
+            <li
+              key={feature.name}
+              className="flex items-start justify-between gap-3"
+            >
+              <div className="min-w-0 space-y-0.5">
+                <label htmlFor={id} className="text-sm font-medium">
+                  {label}
+                </label>
+                <p className="text-muted-foreground text-xs">{note}</p>
+                <p className="text-xs" data-testid={`${id}-availability`}>
+                  {availability[feature.availability] ?? text.grokUnknown}
+                  {locked && ` — ${text.grokNotOnPlanHint}`}
+                </p>
+              </div>
+              <Switch
+                id={id}
+                checked={feature.enabled}
+                disabled={busy || (locked && !feature.enabled)}
+                onCheckedChange={(checked) => onChange(feature.name, checked)}
+              />
+            </li>
+          );
+        })}
+      </ul>
+    </fieldset>
   );
 }

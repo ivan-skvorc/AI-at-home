@@ -30,6 +30,11 @@ ideas that this fork's own thesis argues for. The rejected candidates from that 
 recorded at the bottom of this file, because knowing what was considered and declined is
 worth as much as the list itself.
 
+Items **26–31** — Grok features beyond chat on the connected Grok subscription (the
+API-reach probe and feature switches, Grok Imagine images and video, X search,
+Responses-only Grok models and Grok voice) — landed together as one change set: see
+[FORK.md §43](./FORK.md). Their numbers stay retired like 12–15.
+
 ---
 
 ## At a glance
@@ -609,3 +614,9 @@ host session, and that is the one surface where a prompt injection stops being a
 and becomes a keystroke. Item 23 exists because the *current* exposure already justifies a
 provenance boundary; widening the blast radius to the desktop before that lands has the
 order backwards.
+
+**Grok's realtime Voice Agent API.** Speech-to-speech over a long-lived socket is a
+different feature from the push-to-talk Grok voice tier (FORK.md §43): it needs a WebSocket audio path
+through nginx, holds the microphone open for the whole session, and sends all of it to
+xAI. Item 19's push-to-talk, local-first voice is the one this fork wants; a realtime cloud
+agent would make the opposite the default.

@@ -11,6 +11,14 @@ allowed at all.
 ``POST /api/voice/transcribe`` is the second tier: recorded audio in, transcript
 out, transcribed by a service on this machine. It exists so that a browser
 without on-device recognition still does not have to send its audio to Google.
+When no local service is configured and the operator switched the Grok
+``voice`` feature on, the same route transcribes through xAI instead, and the
+config response says so (``local_service: false``, ``transcription_provider:
+"xai"``) so the composer can name the destination. A configured local service
+always wins, and its failures are never retried against the cloud.
+
+``POST /api/voice/speak`` is read-aloud: an answer's text in, Grok's speech
+out. It exists only while the Grok ``voice`` feature is on (FORK.md §43).
 
 The audio is streamed to a bounded in-memory buffer and forwarded; it is never
 written to disk and never logged. A transcript is speech, and speech that lands
@@ -19,12 +27,15 @@ in a log file outlives the conversation it belonged to.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 
-from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi import APIRouter, File, HTTPException, Response, UploadFile
 from pydantic import BaseModel, Field
 
 from deerflow.community.speech import SpeechToTextError, SpeechToTextUnavailableError, build_client, is_local_endpoint, resolve_base_url
+from deerflow.community.xai import voice as grok_voice
+from deerflow.community.xai.client import XaiError
 from deerflow.config import get_app_config
 
 logger = logging.getLogger(__name__)
@@ -46,6 +57,13 @@ class VoiceConfigResponse(BaseModel):
     local_service: bool = Field(
         default=True, description="Whether the configured transcription endpoint resolves to this machine or its private network. False means the server tier still sends audio off this host, and the composer says so."
     )
+    transcription_provider: str | None = Field(default=None, description="'xai' when the server tier is Grok's cloud transcription on the connected Grok subscription; null for an operator-configured service.")
+    read_aloud: bool = Field(default=False, description="Whether POST /api/voice/speak reads answers aloud through Grok. Requires the Grok voice feature switched on in Settings.")
+    read_aloud_max_chars: int = Field(default=grok_voice.MAX_SPEAK_CHARS, description="Longest text one read-aloud request accepts.")
+
+
+class SpeakRequest(BaseModel):
+    text: str = Field(min_length=1, max_length=grok_voice.MAX_SPEAK_CHARS, description="Plain text to read aloud.")
 
 
 class TranscriptionResponse(BaseModel):
@@ -56,15 +74,32 @@ class TranscriptionResponse(BaseModel):
 async def get_voice_config() -> VoiceConfigResponse:
     """Report the permitted tiers so the composer can pick one up front."""
     voice = get_app_config().voice
+    grok = await _grok_voice_ready()
     local_service = True
+    provider = None
     if voice.stt.enabled:
         local_service = is_local_endpoint(resolve_base_url(voice.stt.base_url))
+    elif grok:
+        local_service, provider = False, "xai"
     return VoiceConfigResponse(
         prefer_on_device=voice.prefer_on_device,
-        server_transcription=voice.stt.enabled,
+        server_transcription=voice.stt.enabled or grok,
         allow_cloud_fallback=voice.allow_cloud_fallback,
         local_service=local_service,
+        transcription_provider=provider,
+        read_aloud=grok,
     )
+
+
+async def _grok_voice_ready() -> bool:
+    """Whether the operator switched Grok voice on; storage problems read as off."""
+    from deerflow.models.subscriptions import SubscriptionError, grok_feature_ready
+
+    try:
+        return await asyncio.to_thread(grok_feature_ready, "voice")
+    except SubscriptionError:
+        logger.warning("voice: subscription storage is unavailable; Grok voice is off")
+        return False
 
 
 @router.post("/transcribe", response_model=TranscriptionResponse)
@@ -78,7 +113,15 @@ async def transcribe(file: UploadFile = File(...)) -> TranscriptionResponse:
     """
     voice = get_app_config().voice
     if not voice.stt.enabled:
-        raise HTTPException(status_code=503, detail="Server-side transcription is not enabled. Set voice.stt.enabled: true and point voice.stt.base_url at a local transcription service.")
+        if not await _grok_voice_ready():
+            raise HTTPException(status_code=503, detail="Server-side transcription is not enabled. Set voice.stt.enabled: true and point voice.stt.base_url at a local transcription service.")
+        audio = await _read_bounded(file, voice.stt.max_audio_bytes)
+        try:
+            text = await grok_voice.transcribe(audio, filename=file.filename or "speech.webm", content_type=file.content_type or "audio/webm", language=voice.stt.language)
+        except XaiError as exc:
+            logger.warning("voice: Grok transcription failed (HTTP %s)", exc.status)
+            raise HTTPException(status_code=502, detail=str(exc)) from None
+        return TranscriptionResponse(text=text)
 
     audio = await _read_bounded(file, voice.stt.max_audio_bytes)
 
@@ -99,6 +142,23 @@ async def transcribe(file: UploadFile = File(...)) -> TranscriptionResponse:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
     return TranscriptionResponse(text=text)
+
+
+@router.post("/speak", response_class=Response, responses={200: {"content": {"audio/mpeg": {}}}})
+async def speak(body: SpeakRequest) -> Response:
+    """Read text aloud through Grok's text-to-speech on the connected subscription.
+
+    503 means Grok voice is not switched on; 502 means Grok did not answer.
+    The text is never logged, and errors never echo it or the service's body.
+    """
+    if not await _grok_voice_ready():
+        raise HTTPException(status_code=503, detail="Read-aloud needs the Grok voice feature switched on in Settings → Models → Subscriptions.")
+    try:
+        audio, media_type = await grok_voice.synthesize(body.text, language=get_app_config().voice.stt.language)
+    except XaiError as exc:
+        logger.warning("voice: Grok read-aloud failed (HTTP %s)", exc.status)
+        raise HTTPException(status_code=502, detail=str(exc)) from None
+    return Response(content=audio, media_type=media_type, headers={"Cache-Control": "no-store"})
 
 
 async def _read_bounded(file: UploadFile, limit: int) -> bytes:
