@@ -608,7 +608,7 @@ missing is scale, a workspace children can share, a way back into the conversati
 the mode itself. A prompt-only variant (Ultra plus an orchestration brief) is a cheaper
 interim step, but it leaves the plan in the lead's context; it is not this item.
 
-**Depends on** — the shipped script-workflows extension (Phase 3). Item 23 should land
+**Depends on** — the shipped script-workflows extension (Phase 4 since the 2026-10-29 sync). Item 23 should land
 first or alongside: the return path hands the lead other agents' output, which is exactly
 the untrusted content that boundary exists for.
 

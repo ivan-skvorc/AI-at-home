@@ -26,6 +26,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   config upgrade now also backfills missing `tool_groups`.
 
 ### Changed
+- **upstream:** merged `upstream/main` (225 commits since 2026-10-22). Brings upstream's replies
+  and DeerMem updates in the web UI's language, IM channel runs that inherit the configured
+  `recursion_limit` (this fork's 250) instead of a fixed 100, a step-limit stop that presents the
+  files it made and says why it stopped, browser review of persisted batch results, a read-only
+  run-status tool, an Exa-compatible `base_url`, a Jsonify dataset tool, managed Kimi K3.1 Pro
+  capabilities, multi-Gateway coordination for the script-workflows extension, knowledge-platform
+  connections, a docs search index in the frontend build, `serve.sh` reading `.env` as data, a
+  configurable Gateway startup timeout, and a long run of cancellation and event-loop fixes.
+  `tool_output.elide_superseded_writes` now defaults off (it rewrote earlier prompt prefixes and
+  cost provider cache hits); a `config.yaml` copied from the old example still sets it on. New
+  config keys, so `config_version` is 65 in
+  `config.example.yaml` and both Helm chart copies. Adapted rather than taken as-is: the
+  passwordless default moved below the new `.env` loader so `DEER_FLOW_AUTH_DISABLED=0` still opts
+  out, SearXNG and Tavily keep the fork's fall-back-on-error contract around upstream's off-loop
+  config read, and an eighth Alembic merge revision (`0049_merge_prefs_ext_leases`) rejoins
+  upstream's 0048 with the fork's branch.
+- **models:** GPT-6.1 Terra (`gpt-6.1-terra`, $1/$5) replaces GPT-5.6 Terra on the OpenAI key,
+  and Gemini 4 Argon (`gemini-4-argon`, $4/$20 standard) replaces the Gemini 3.1 Pro preview on
+  the Gemini key. Google's $2/$10 introductory rate through 2026-11-30 is not shown as a discount:
+  it could not be confirmed on Google's own page. An existing `config.yaml` keeps its old entries
+  until you edit them. Found in the 2026-10-29 audit; the Anthropic roster and prices are unchanged.
 - **Long coding sessions:** loop detection treats a `write_file` / `str_replace`
   edit as progress, so editing and re-running the same test no longer forces a
   final answer after a few fixes. A call repeated with no edit between is still

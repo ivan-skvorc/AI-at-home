@@ -108,7 +108,8 @@ once you know to look. The 2026-09-09 sync hit all three at once:
   `0038_merge_prefs_summaries`); upstream's per-revision tests pin *their* head, so each one is
   adapted to the merged head and re-upgrades through alembic after a mid-tree downgrade. The
   2026-10-22 sync made it seven (`0044_channel_runtime_configs` → `0047` off `0043`, joined by
-  `0048_merge_prefs_oauth_tokens`). The depth is in
+  `0048_merge_prefs_oauth_tokens`), and the 2026-10-29 sync eight (`0048_extension_execution_leases`
+  off `0047`, joined by `0049_merge_prefs_ext_leases`). The depth is in
   [`persistence/migrations/AGENTS.md`](backend/packages/harness/deerflow/persistence/migrations/AGENTS.md).
 - **Both sides adding a function of the same name to the same module.** Git merges two
   non-overlapping additions cleanly, so `frontend/src/core/threads/api.ts` came out of
@@ -195,7 +196,8 @@ once you know to look. The 2026-09-09 sync hit all three at once:
 - **Upstream editing reference text the fork split into a sibling doc.** `CHAIN.md`,
   `DATA_FLOW.md`, `AUTHORIZATION.md`, `RUNTIME.md` and (since 2026-10-17)
   `artifacts/DELIMITED_PREVIEW.md` hold text upstream still keeps inline in the
-  `AGENTS.md` beside them, so upstream's edits arrive as a conflict in the pointer file. Taking
+  `AGENTS.md` beside them, and (since 2026-10-29) `scripts/STATIC_ANALYSIS.md` likewise, so
+  upstream's edits arrive as a conflict in the pointer file. Taking
   either side loses them. Port them into the sibling with a three-way `git merge-file`
   (sibling, base section, upstream section), then keep the pointer. The 2026-09-29 sync also
   found a duplicate block that an earlier sync had left in `CHAIN.md`: count the numbered
@@ -219,7 +221,20 @@ once you know to look. The 2026-09-09 sync hit all three at once:
   only the files upstream's script needs, and the fork's version of that script calls more
   (`sandbox-preflight.sh` from `serve.sh`, `exposure.py` from `doctor.py`, `sandbox_toggle.py`
   from `configure.py` when Docker is on `PATH`). Stub or copy the fork's extra helper in the
-  test's fixture with a `# Fork:` note; never strip the call from the script.
+  test's fixture with a `# Fork:` note; never strip the call from the script. The 2026-10-29 sync
+  brought two more: `test_doctor_script.py` (copies `exposure.py`) and
+  `test_serve_gateway_startup_timeout.py` (stubs `sandbox-preflight.sh`).
+- **Upstream moving a step a fork block depends on.** The 2026-10-29 sync's #7606 stopped
+  sourcing `.env` at the top of `serve.sh` and parses it as data further down. The fork's
+  passwordless default reads `DEER_FLOW_AUTH_DISABLED` from that environment, so it moved below
+  the new loader; left where it was, `DEER_FLOW_AUTH_DISABLED=0` in `.env` would silently stop
+  opting out. `test_serve_auth_default.py` exercises the function, not its position: read the
+  order by eye when upstream touches the launcher's head.
+- **Upstream tests that read the finalization head.** The same sync's delta-resume tests expect
+  the run-duration checkpoint to be the head once a paused run finishes. §33 writes a fallback
+  title on every terminal status, and a delta checkpoint carries no inline messages, so an
+  untitled delta thread gains a title leaf above it. The helper pins that leaf and steps past it
+  (`test_delta_resume_pending_execution.py`); upstream's resume logic itself was unaffected.
 
 **It also runs itself weekly.** `.github/workflows/upstream-sync.yml` fetches
 upstream every Monday, merges (never rebases) onto a dated
