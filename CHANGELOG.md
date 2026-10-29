@@ -159,6 +159,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   clamped them to Flash.
 
 ### Fixed
+- **chat:** a link in the last line of a short answer opens again. The answer's edit and
+  read-aloud bar lies over that line, and its empty strip took the click; only its buttons do now.
 - **sandbox:** git inside the AIO sandbox authenticates with `GITHUB_TOKEN` again on the pinned
   `agent-infra/sandbox:1.11.0` image. The credential helper is written by the sandbox shell into
   `$HOME/.local/bin` instead of through the file API into `/usr/local/bin`, which that image
