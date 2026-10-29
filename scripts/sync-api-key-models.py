@@ -21,9 +21,9 @@ on its direct API, so its flagship is reachable through both the home API and
 OpenRouter:
 
     OPENAI_API_KEY     -> GPT-6 Astra / GPT-6.1 Sol / GPT-5.3 Codex /
-                          GPT-5.6 Terra / GPT-6 Luna (OpenAI)
+                          GPT-6.1 Terra / GPT-6 Luna (OpenAI)
     XAI_API_KEY        -> Grok 4.7 / Grok 4.3 (xAI)
-    GEMINI_API_KEY     -> Gemini 3.8 Flash / 3.5 Flash-Lite / 3.1 Pro (Google)
+    GEMINI_API_KEY     -> Gemini 3.8 Flash / 3.5 Flash-Lite / 4 Argon (Google)
     DEEPSEEK_API_KEY   -> DeepSeek V4 Pro / V4.1 Flash (DeepSeek)
     MISTRAL_API_KEY    -> Mistral Large 3 / Medium 3.5 / Small 4 (Mistral)
     MOONSHOT_API_KEY   -> Kimi K3 / Kimi K2.6 (Moonshot)

@@ -299,9 +299,11 @@ def _openrouter_model(
 #     5.3-Codex is still the newest agentic-coding variant.
 #   - `google/gemini-3.5-pro` -> dropped. Gemini 3.5 Pro has slipped three times
 #     and is still unreleased (Google shipped 3.6 Flash / 3.5 Flash-Lite / Flash
-#     Cyber on 2026-07-21 with no Pro). The newest shipped Pro is the older
-#     `gemini-3.1-pro-preview`, which 3.5+ Flash already beats on coding, agentic
+#     Cyber on 2026-07-21 with no Pro). The newest shipped Pro was then the older
+#     `gemini-3.1-pro-preview`, which 3.5+ Flash already beat on coding, agentic
 #     work and tool use — so the Gemini slot is one Flash entry, upgraded to 3.6.
+#     Gemini 4 Argon (GA 2026-10-13) has since taken the Pro slot in Google's
+#     home block.
 #
 # One flagship per lab, with two deliberate exceptions where a lab's top tier is
 # really two models at very different prices: Anthropic routes **Fable 5.1 and
@@ -474,13 +476,13 @@ def _home_gemini_model(name: str, display_name: str, model: str, *, max_tokens: 
 # pair) + GPT-5.3 Codex (the acclaimed agentic-coding variant — the same double
 # kept on OpenRouter) + the two cheaper tiers. The tiers ship as Sol / Terra /
 # Luna rather than a `-mini`/`-nano` pair, so `gpt-5.6-mini` never existed —
-# Terra is the tier that took `mini`'s place and Luna the one below it. GPT-6
-# shipped no Terra, so that tier is still GPT-5.6's.
+# Terra is the tier that took `mini`'s place and Luna the one below it.
+# GPT-6.1 Terra (2026-10-26) replaced GPT-5.6 Terra in that tier.
 OPENAI_HOME_BUNDLE_MODELS: list[dict] = [
     _home_openai_compat_model("openai-gpt-6-astra", "GPT-6 Astra (OpenAI)", "gpt-6-astra", api_key_env="OPENAI_API_KEY", base_url="https://api.openai.com/v1", supports_vision=True, responses_api=True),
     _home_openai_compat_model("openai-gpt-6.1-sol", "GPT-6.1 Sol (OpenAI)", "gpt-6.1-sol", api_key_env="OPENAI_API_KEY", base_url="https://api.openai.com/v1", supports_vision=True, responses_api=True),
     _home_openai_compat_model("openai-gpt-5.3-codex", "GPT-5.3 Codex (OpenAI)", "gpt-5.3-codex", api_key_env="OPENAI_API_KEY", base_url="https://api.openai.com/v1", supports_vision=True),
-    _home_openai_compat_model("openai-gpt-5.6-terra", "GPT-5.6 Terra (OpenAI)", "gpt-5.6-terra", api_key_env="OPENAI_API_KEY", base_url="https://api.openai.com/v1", supports_vision=True),
+    _home_openai_compat_model("openai-gpt-6.1-terra", "GPT-6.1 Terra (OpenAI)", "gpt-6.1-terra", api_key_env="OPENAI_API_KEY", base_url="https://api.openai.com/v1", supports_vision=True, responses_api=True),
     _home_openai_compat_model("openai-gpt-6-luna", "GPT-6 Luna (OpenAI)", "gpt-6-luna", api_key_env="OPENAI_API_KEY", base_url="https://api.openai.com/v1", supports_vision=True, max_tokens=16000, responses_api=True),
 ]
 
@@ -492,12 +494,12 @@ XAI_HOME_BUNDLE_MODELS: list[dict] = [
     _home_openai_compat_model("xai-grok-4.3", "Grok 4.3 (xAI)", "grok-4.3", api_key_env="XAI_API_KEY", base_url="https://api.x.ai/v1", supports_vision=True, max_tokens=16000),
 ]
 
-# Google: Gemini 3.8 Flash (flagship) + 3.5 Flash-Lite (cheaper) + the newest
-# shipped Pro (3.1 Pro preview — the exact set the config's OpenRouter note names).
+# Google: Gemini 3.8 Flash (flagship) + 3.5 Flash-Lite (cheaper) + Gemini 4
+# Argon (GA 2026-10-13, the Pro tier's successor to the 3.1 Pro preview).
 GOOGLE_HOME_BUNDLE_MODELS: list[dict] = [
     _home_gemini_model("google-gemini-3.8-flash", "Gemini 3.8 Flash (Google)", "gemini-3.8-flash"),
     _home_gemini_model("google-gemini-3.5-flash-lite", "Gemini 3.5 Flash-Lite (Google)", "gemini-3.5-flash-lite"),
-    _home_gemini_model("google-gemini-3.1-pro", "Gemini 3.1 Pro (Google)", "gemini-3.1-pro-preview"),
+    _home_gemini_model("google-gemini-4-argon", "Gemini 4 Argon (Google)", "gemini-4-argon"),
 ]
 
 # DeepSeek: V4 Pro (flagship) + V4.1 Flash (cheaper). V4.1 Flash's id is
@@ -607,7 +609,9 @@ MODEL_PRICES: dict[str, dict] = {
     # Google's introductory rate, read off its own pricing page 2026-09-26.
     "google-gemini-3.8-flash": {"price": {"currency": "USD", "input": 1.5, "output": 7.5}, "discount": {"input": 0.75, "output": 3.75, "until": date(2026, 12, 31)}},
     "google-gemini-3.5-flash-lite": {"price": {"currency": "USD", "input": 0.3, "output": 2.5}},
-    "google-gemini-3.1-pro": {"price": {"currency": "USD", "input": 2.0, "output": 12.0}},
+    # The standard rate: Google's $2/$10 introductory rate through 2026-11-30 is a
+    # discount that could not be read off Google's own page, so it is not shipped.
+    "google-gemini-4-argon": {"price": {"currency": "USD", "input": 4.0, "output": 20.0}},
     "minimax-m3": {"price": {"currency": "USD", "input": 0.6, "output": 2.4}},
     "minimax-m2.7": {"price": {"currency": "USD", "input": 0.3, "output": 1.2}},
     "mistral-large-3": {"price": {"currency": "USD", "input": 0.5, "output": 1.5}},
@@ -618,7 +622,7 @@ MODEL_PRICES: dict[str, dict] = {
     "openai-gpt-6-astra": {"price": {"currency": "USD", "input": 10.0, "output": 50.0}},
     "openai-gpt-6.1-sol": {"price": {"currency": "USD", "input": 2.0, "output": 10.0}},
     "openai-gpt-5.3-codex": {"price": {"currency": "USD", "input": 1.75, "output": 14.0}},
-    "openai-gpt-5.6-terra": {"price": {"currency": "USD", "input": 2.0, "output": 12.0}},
+    "openai-gpt-6.1-terra": {"price": {"currency": "USD", "input": 1.0, "output": 5.0}},
     "openai-gpt-6-luna": {"price": {"currency": "USD", "input": 0.1, "output": 0.5}},
     "openrouter-fable-5-1": {"price": {"currency": "USD", "input": 10.0, "output": 50.0}},
     "openrouter-opus-5-5": {"price": {"currency": "USD", "input": 4.0, "output": 20.0}},
@@ -815,7 +819,7 @@ LLM_PROVIDERS: list[LLMProvider] = [
     LLMProvider(
         name="openai",
         display_name="OpenAI",
-        description="GPT-6 Astra + GPT-6.1 Sol + GPT-5.3 Codex + GPT-5.6 Terra + GPT-6 Luna (direct OpenAI API)",
+        description="GPT-6 Astra + GPT-6.1 Sol + GPT-5.3 Codex + GPT-6.1 Terra + GPT-6 Luna (direct OpenAI API)",
         use="langchain_openai:ChatOpenAI",
         models=[entry["model"] for entry in OPENAI_HOME_BUNDLE_MODELS],
         default_model=OPENAI_HOME_BUNDLE_MODELS[0]["model"],
@@ -888,7 +892,7 @@ LLM_PROVIDERS: list[LLMProvider] = [
     LLMProvider(
         name="google",
         display_name="Google Gemini",
-        description="Gemini 3.8 Flash + 3.5 Flash-Lite + 3.1 Pro (native Gemini SDK, no thinking)",
+        description="Gemini 3.8 Flash + 3.5 Flash-Lite + 4 Argon (native Gemini SDK, no thinking)",
         use="langchain_google_genai:ChatGoogleGenerativeAI",
         models=[entry["model"] for entry in GOOGLE_HOME_BUNDLE_MODELS],
         default_model=GOOGLE_HOME_BUNDLE_MODELS[0]["model"],

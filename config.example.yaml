@@ -300,9 +300,9 @@ models:
   # enabled when THAT lab's key is present, carrying the lab's full lineup on its
   # direct API (see the "FIRST-PARTY HOME API BLOCKS" section after OpenRouter):
   #   OPENAI_API_KEY     -> GPT-6 Astra / GPT-6.1 Sol / GPT-5.3 Codex /
-  #                         GPT-5.6 Terra / GPT-6 Luna (OpenAI)
+  #                         GPT-6.1 Terra / GPT-6 Luna (OpenAI)
   #   XAI_API_KEY        -> Grok 4.7 / Grok 4.3 (xAI)
-  #   GEMINI_API_KEY     -> Gemini 3.8 Flash / 3.5 Flash-Lite / 3.1 Pro (Google)
+  #   GEMINI_API_KEY     -> Gemini 3.8 Flash / 3.5 Flash-Lite / 4 Argon (Google)
   #   DEEPSEEK_API_KEY   -> DeepSeek V4 Pro / V4.1 Flash (DeepSeek)
   #   MISTRAL_API_KEY    -> Mistral Large 3 / Medium 3.5 / Small 4 (Mistral)
   #   MOONSHOT_API_KEY   -> Kimi K3 / Kimi K2.6 (Moonshot)
@@ -537,10 +537,11 @@ models:
   # 5.5/5.6 Codex exists; 5.3-Codex is still the newest agentic-coding variant)
   # and `google/gemini-3.5-pro` (Gemini 3.5 Pro has slipped three times and is
   # still unreleased — Google shipped 3.6 Flash / 3.5 Flash-Lite / Flash Cyber on
-  # 2026-07-21 with no Pro). The newest shipped Gemini Pro is the older
-  # `gemini-3.1-pro-preview`, which 3.5+ Flash already beats on coding, agentic
+  # 2026-07-21 with no Pro). The newest shipped Gemini Pro was then the older
+  # `gemini-3.1-pro-preview`, which 3.5+ Flash already beat on coding, agentic
   # work and tool use, so the Gemini slot is a single Flash entry, now at 3.8
-  # (GA 2026-09-02; 3.7 Flash shipped in between).
+  # (GA 2026-09-02; 3.7 Flash shipped in between). Gemini 4 Argon (GA
+  # 2026-10-13) has since taken the Pro slot in Google's home block.
   # The startup auto-config (scripts/sync-api-key-models.py) uncomments the entries
   # between the markers below when it finds a real OPENROUTER_API_KEY in your .env.
   # Delete any you don't want after they are enabled.
@@ -815,11 +816,11 @@ models:
   # ══════════════════════════════════════════════════════════════════════════
 
   # ── OpenAI — auto-enabled when OPENAI_API_KEY is set ──────────────────────
-  # GPT-6 Astra (flagship) and the GPT-6 tiers below it — GPT-6.1 Sol and GPT-6
-  # Luna (cheap, high volume) — plus the acclaimed GPT-5.3 Codex (the same double
-  # kept on OpenRouter), on the direct OpenAI API. GPT-6 shipped no Terra, so the
-  # balanced tier is still GPT-5.6 Terra. None of these tiers is a `-mini`/`-nano`
-  # pair; Terra is the tier that replaced `mini`.
+  # GPT-6 Astra (flagship) and the GPT-6 tiers below it — GPT-6.1 Sol, GPT-6.1
+  # Terra (balanced) and GPT-6 Luna (cheap, high volume) — plus the acclaimed
+  # GPT-5.3 Codex (the same double kept on OpenRouter), on the direct OpenAI API.
+  # None of these tiers is a `-mini`/`-nano` pair; Terra is the tier that
+  # replaced `mini`.
   # The startup auto-config (scripts/sync-api-key-models.py) uncomments the
   # entries below when it finds a real OPENAI_API_KEY in your .env.
   # === BEGIN auto-model-config: openai (uncommented at startup when OPENAI_API_KEY is set) ===
@@ -875,21 +876,23 @@ models:
   #     input: 1.75
   #     output: 14.0
   #
-  # - name: openai-gpt-5.6-terra
-  #   display_name: GPT-5.6 Terra (OpenAI)
+  # - name: openai-gpt-6.1-terra
+  #   display_name: GPT-6.1 Terra (OpenAI)
   #   use: langchain_openai:ChatOpenAI
-  #   model: gpt-5.6-terra
+  #   model: gpt-6.1-terra
   #   api_key: $OPENAI_API_KEY
   #   base_url: https://api.openai.com/v1
   #   request_timeout: 600.0
   #   max_retries: 2
   #   max_tokens: 32000
+  #   use_responses_api: true        # gpt-6 tools 400 on /v1/chat/completions
+  #   output_version: responses/v1
   #   supports_vision: true
   #   supports_thinking: true
   #   price:                          # per 1M tokens; the single source of truth for cost display and budgets
   #     currency: USD
-  #     input: 2.0
-  #     output: 12.0
+  #     input: 1.0                     # prompts up to 272K tokens; a longer one bills 2x input and 1.5x output
+  #     output: 5.0
   #
   # - name: openai-gpt-6-luna
   #   display_name: GPT-6 Luna (OpenAI)
@@ -954,7 +957,7 @@ models:
   # === END auto-model-config: xai ===
 
   # ── Google Gemini — auto-enabled when GEMINI_API_KEY is set ───────────────
-  # Gemini 3.8 Flash + 3.5 Flash-Lite + the newest shipped Pro (3.1 Pro preview),
+  # Gemini 3.8 Flash + 3.5 Flash-Lite + Gemini 4 Argon (the Pro tier, GA 2026-10-13),
   # via the native Gemini SDK. The native SDK path has no thinking toggle here
   # (the OpenRouter Gemini copy carries supports_thinking) — use the OpenRouter
   # entry or a gemini_openai_gateway for Gemini thinking.
@@ -993,20 +996,19 @@ models:
   #     input: 0.3
   #     output: 2.5
   #
-  # - name: google-gemini-3.1-pro
-  #   display_name: Gemini 3.1 Pro (Google)
+  # - name: google-gemini-4-argon
+  #   display_name: Gemini 4 Argon (Google)
   #   use: langchain_google_genai:ChatGoogleGenerativeAI
-  #   model: gemini-3.1-pro-preview
+  #   model: gemini-4-argon
   #   gemini_api_key: $GEMINI_API_KEY
   #   timeout: 600.0
   #   max_retries: 2
   #   max_tokens: 8192
   #   supports_vision: true
-  
   #   price:                          # per 1M tokens; the single source of truth for cost display and budgets
   #     currency: USD
-  #     input: 2.0
-  #     output: 12.0
+  #     input: 4.0                     # the standard rate; Google's $2/$10 introductory rate (to 2026-11-30) is not shipped
+  #     output: 20.0
 # === END auto-model-config: google ===
 
   # ── DeepSeek — auto-enabled when DEEPSEEK_API_KEY is set ──────────────────
