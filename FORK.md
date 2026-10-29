@@ -234,6 +234,14 @@ once you know to look. The 2026-09-09 sync hit all three at once:
   title on every terminal status, and a delta checkpoint carries no inline messages, so an
   untitled delta thread gains a title leaf above it. The helper pins that leaf and steps past it
   (`test_delta_resume_pending_execution.py`); upstream's resume logic itself was unaffected.
+- **Upstream preapproving a skill change one PR ahead.** `skill-review` trusts only the
+  waiver manifest on the base branch (`.github/skill-review-waivers.v1.json`), and upstream
+  lands new `preapproved_file_sha256s` in one PR and the skill change that needs them in a
+  later one. A sync that brings both fails the check by design; the 2026-10-29 sync brought
+  three manifest commits and two skill-creator fixes. Land the manifest, with its pin in
+  `test_skill_review_waivers.py`, on `main` in its own PR first, then merge `main` into the
+  sync branch so the check re-runs against the new base. On each sync, look for the manifest
+  in upstream's diff before opening the PR.
 
 **It also runs itself weekly.** `.github/workflows/upstream-sync.yml` fetches
 upstream every Monday, merges (never rebases) onto a dated
