@@ -20,6 +20,9 @@ def doctor_checkout(tmp_path: Path) -> Path:
     scripts_dir.mkdir(parents=True)
     (checkout / "frontend").mkdir()
     shutil.copyfile(REPO_ROOT / "scripts" / "doctor.py", scripts_dir / "doctor.py")
+    # Fork: doctor.py imports the fork's deployment exposure check (FORK.md §12)
+    # from its own directory, so the disposable checkout carries it as well.
+    shutil.copyfile(REPO_ROOT / "scripts" / "exposure.py", scripts_dir / "exposure.py")
     (checkout / "config.yaml").write_text("config_version: 5\nmodels: []\n", encoding="utf-8")
     return checkout
 

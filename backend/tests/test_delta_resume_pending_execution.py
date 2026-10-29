@@ -134,8 +134,17 @@ async def _paused_worker(saver, mode, *, branch_tasks=False):
 
     # Normal Worker finalization makes the paused checkpoint historical.
     head_tuple = await saver.aget_tuple(config)
-    assert "runtime_run_duration" in head_tuple.metadata["writes"]
-    selected = await graph.aget_state(head_tuple.parent_config)
+    # Fork: the fallback title runs on every terminal status, not only after an
+    # interrupt (FORK.md §33). A delta checkpoint carries no inline messages, so
+    # it titles this untitled thread from the run's input and that leaf sits above
+    # upstream's duration checkpoint; a full checkpoint shows two user turns and
+    # is left untitled.
+    duration_tuple = head_tuple
+    if mode == "delta":
+        assert "runtime_interrupt_title" in head_tuple.metadata["writes"]
+        duration_tuple = await saver.aget_tuple(head_tuple.parent_config)
+    assert "runtime_run_duration" in duration_tuple.metadata["writes"]
+    selected = await graph.aget_state(duration_tuple.parent_config)
     head = await graph.aget_state(config)
     assert selected.config["configurable"]["checkpoint_id"] != head.config["configurable"]["checkpoint_id"]
     assert selected.next == head.next == ("tools",)
