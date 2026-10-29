@@ -35,6 +35,10 @@ API-reach probe and feature switches, Grok Imagine images and video, X search,
 Responses-only Grok models and Grok voice) — landed together as one change set: see
 [FORK.md §43](./FORK.md). Their numbers stay retired like 12–15.
 
+Item **32** came from comparing Ultra mode with Claude Code's *ultracode* (October 2026):
+the fork already ships most of a script-driven workflow runtime as an example extension,
+and the item is what stands between that and a mode you pick in the composer.
+
 ---
 
 ## At a glance
@@ -61,6 +65,8 @@ Open items, one line each. The full orchestrator prompts follow.
   the stateless core and its neighbours.
 - **25. A behavioural regression suite** — opt-in, judged, out of CI; the measuring stick for
   everything above it.
+- **32. Ultracode mode** — the lead writes a workflow script, the runtime fans it out in the
+  background, and the answer comes back into the same conversation.
 
 **Suggested order for 19–25.** Voice first (19), since it is the one missing modality and it
 closes a live privacy leak. Then the injection boundary (23), *before* anything widens the
@@ -571,6 +577,114 @@ effect it would measure.
 dated scored row; deliberately degrading a component (a worse subagent model, memory
 disabled) moves the score in the expected direction; and the suite never runs in ordinary
 CI.
+
+---
+
+## 32. Ultracode mode — the plan moves out of the lead's head and into a script
+
+**Goal** — A composer mode in which the lead answers a substantive request by writing an
+inspectable workflow script; the runtime runs it in the background across many agents, and
+the bounded final answer arrives back in the conversation that asked, without the user
+having to ask for it.
+
+**Why it fits** — Ultra keeps the plan in the lead's context. Every subagent result lands
+there, the delegation prompt (`_build_subagent_section`) is tuned to *avoid* delegating,
+and the defaults cap a run at 3 parallel and 6 total `task` calls (hard maximum 50).
+Claude Code's ultracode takes the opposite shape: the model writes a JavaScript script
+(`agent()`, `parallel()`, `pipeline()`, `phase()`), a runtime executes it, intermediate
+results stay in script variables, and only the final answer reaches the conversation — up
+to 16 agents at once and 1,000 per run by default
+([Claude Code docs](https://code.claude.com/docs/en/workflows), read 2026-10-29). That is
+what makes cross-checked research, adversarial review of findings and many-file sweeps
+affordable in context.
+
+The fork already has the hard half. `examples/deerflow-extension-workflows` runs generated
+JavaScript in an isolated, capability-free QuickJS worker; `agent()` and `parallel()`
+dispatch full DeerFlow Agents through the public `AgentRuns` capability; `launch_workflow`
+lets the lead start a script from chat; runs are supervised in the background with a
+progress page, saved immutable versions and journal-replay recovery after a restart (with
+`Date` and `Math.random` disabled for the same reason ultracode disables them). What is
+missing is scale, a workspace children can share, a way back into the conversation, and
+the mode itself. A prompt-only variant (Ultra plus an orchestration brief) is a cheaper
+interim step, but it leaves the plan in the lead's context; it is not this item.
+
+**Depends on** — the shipped script-workflows extension (Phase 3). Item 23 should land
+first or alongside: the return path hands the lead other agents' output, which is exactly
+the untrusted content that boundary exists for.
+
+**Scope**
+
+- **Raise the ceilings as operator config, never as script input.** Today's hard
+  ceilings in `__init__.py` — 4 children per workflow, 8 globally, 32 calls, 600 s of wall
+  time, 20 progress messages — rule out a real coding fan-out (one child run on a code task
+  can outlast the whole budget). Move them to ultracode's order of magnitude with new hard
+  ceilings, keep the per-owner and global bounds, and size per-workflow concurrency against
+  the host's actual execution capacity, including §34's local-model parallelism, so a
+  fan-out onto a local model queues instead of thrashing the GPU.
+- **A workspace children can share — opt-in, and as a public contract.** Each `agent()`
+  call today runs on its own owned child thread with its own workspace, and passing a file
+  to a later step means `captureArtifact` plus an authenticated browser approval. That is
+  right for inspection reports and wrong for "migrate these 40 files in parallel". Add a
+  generic, authorization-checked `AgentRuns` option that binds a child to the launching
+  thread's workspace (read-only by default; read-write only when the operator enables it),
+  or gives each child an isolated copy a final step merges back. It belongs in
+  `deerflow_extension_api`, not in a private import — the extension rules forbid
+  `app.*`/`deerflow.*` imports. The existing checkpoint semantics stay exactly as they are:
+  agent success is never human approval.
+- **The return path.** When a workflow launched from a conversation reaches a terminal
+  state, the host starts one server-owned follow-up run in that conversation carrying the
+  bounded final result (or the failure), marked as untrusted agent output, so the lead
+  synthesizes it the way ultracode's report "appears in your session". Exactly once per
+  workflow run, including across recovery; never by having the lead poll, which the tool
+  descriptions already forbid. A new authority-looking block is registered in
+  `InputSanitizationMiddleware._BLOCKED_TAG_NAMES`, like `<democracy_panel>`.
+- **Script API parity where it buys something.** `pipeline(items, fn)` (one lazy agent per
+  item, bounded by the service rather than by promises), `phase(title)` to group progress,
+  and `agent({..., schema})` with host-side validation and a bounded number of re-asks under
+  new attempt identities — today attempts are always 1 and verdicts are validated by hand.
+  Per-step model choice, cleared through the same `model:use` authorization as
+  `task(model=...)`, so a fan-out can run on a cheap or local model while the organizer
+  stays strong.
+- **The mode.** An *Ultracode* entry in the composer. `deriveModeContext` maps it to Ultra's
+  flags plus **one** run-context key that exposes the workflow tools on that run only and
+  adds an orchestration section: plan a workflow for each substantive request (understand →
+  change → verify), size it to a guideline (small / medium / large, as ultracode's
+  `workflowSizeGuideline` does), and verify findings adversarially before reporting them.
+  Follow the Democracy precedent (FORK.md §22): the section rides `{subagent_section}` so a
+  saved `SYSTEM_PROMPT.md` still receives it, and the key goes into
+  `_CONTEXT_CONFIGURABLE_KEYS` — drop it and the mode silently becomes Ultra. With the
+  extension disabled or not installed the mode is not offered; it never degrades silently.
+  A per-prompt `ultracode:` keyword is optional, and if added it works only for input a
+  human typed in the web UI — never for scheduled, channel-relayed or API prompts.
+- **Visible spend.** Child runs live on child threads, so the launching conversation's cost
+  header (§7) does not see them today. Show a workflow's tokens and cost from the
+  conversation that launched it, warn advisorily past a size threshold (ultracode's is 25
+  agents or 1.5M projected tokens), and prove §10's spend cap refuses new child admissions
+  with a clean workflow failure. Do not advertise a hard per-workflow dollar budget: the
+  extension deliberately has none, and its README says what must exist before one is
+  claimed.
+
+**Key files** — `examples/deerflow-extension-workflows/deerflow_extension_workflows/`
+(`__init__.py` ceilings and tool schemas, `service.py`, `worker.py`, `store.py`,
+`recovery.py`, `static/`), `backend/packages/extension-api/` (shared-workspace binding,
+completion hook, run-gated tools), `backend/packages/harness/deerflow/agents/lead_agent/`
+(`prompt.py`, `agent.py`), `backend/app/gateway/services.py`,
+`backend/app/gateway/routers/user_preferences.py`, `frontend/src/core/threads/run-context.ts`,
+`frontend/src/core/models/reasoning.ts`, `frontend/src/core/settings/{local,preferences-sync}.ts`,
+`frontend/src/components/workspace/{input-box,mode-hover-guide,welcome}.tsx`,
+`frontend/src/components/workspace/sidecar/sidecar-panel.tsx`, the en/zh locales,
+`backend/tests/test_workflow_plugin.py`, `backend/tests/test_workflow_recovery.py`,
+`backend/tests/test_ultracode_mode.py` (new), `frontend/tests/unit/core/threads/run-context.test.ts`.
+
+**Done when** — a request in Ultracode mode yields a saved script, runs in the background,
+and its bounded answer arrives in the same conversation unasked, exactly once, including
+after a Gateway restart and recovery; a fan-out of at least 20 agents with 8 or more running
+at once completes under the new ceilings while a configuration past them is refused at
+startup; with the operator's read-write binding on, parallel children edit disjoint files
+of the launching thread's workspace, and with it off they cannot; `pipeline`, `phase` and
+schema-validated outputs work, and `Date`/`Math.random` still throw; the mode is absent
+when the extension is off; a spend cap reached mid-run stops new children with a clean
+failure; and FORK.md gains a section plus a checklist row, README its bullet.
 
 ---
 
