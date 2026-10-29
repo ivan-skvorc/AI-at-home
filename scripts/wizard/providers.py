@@ -24,6 +24,9 @@ class LLMProvider:
     # capability (e.g. MiniMax M3 supports vision but M2.7 is text-only). The
     # provider-level extra_config holds the default (default_model) capability.
     model_vision_overrides: dict[str, bool] = field(default_factory=dict)
+    # Per-model extra_config keys to leave out for models whose API rejects
+    # them (e.g. Claude Sonnet 5.5 rejects budget_tokens and thinking disabled).
+    model_omitted_config: dict[str, tuple[str, ...]] = field(default_factory=dict)
     auth_hint: str | None = None
     base_url_prompt: str | None = None
     model_prompt: str | None = None
@@ -47,6 +50,8 @@ class LLMProvider:
         config = dict(self.extra_config)
         if model_name in self.model_vision_overrides:
             config["supports_vision"] = self.model_vision_overrides[model_name]
+        for key in self.model_omitted_config.get(model_name, ()):
+            config.pop(key, None)
         return config
 
 
@@ -858,6 +863,8 @@ LLM_PROVIDERS: list[LLMProvider] = [
             **ANTHROPIC_ADAPTIVE_THINKING_CONFIG,
         },
         bundle_models=ANTHROPIC_BUNDLE_MODELS,
+        # Sonnet 5.5 thinks by default and rejects budget_tokens and thinking disabled.
+        model_omitted_config={"claude-sonnet-5-5": ("when_thinking_enabled", "when_thinking_disabled")},
     ),
     LLMProvider(
         name="deepseek",

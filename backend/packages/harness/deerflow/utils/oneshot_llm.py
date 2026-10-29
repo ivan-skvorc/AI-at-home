@@ -26,6 +26,7 @@ from deerflow.model_ids import normalize_reported_model_name
 from deerflow.models import create_chat_model
 from deerflow.runtime.user_context import get_effective_user_id
 from deerflow.tracing import inject_langfuse_metadata
+from deerflow.utils.assembly_io import run_assembly
 from deerflow.utils.llm_text import extract_response_text
 
 
@@ -102,7 +103,7 @@ async def run_oneshot_llm_detailed(
         The extracted plain text plus the raw :class:`AIMessage`.
     """
     model_kwargs: dict[str, Any] = {"model_overrides": model_overrides} if model_overrides is not None else {}
-    model = create_chat_model(name=model_name, thinking_enabled=False, app_config=app_config, **model_kwargs)
+    model = await run_assembly(create_chat_model, name=model_name, thinking_enabled=False, app_config=app_config, **model_kwargs)
     invoke_config: dict = {"run_name": run_name}
     inject_langfuse_metadata(
         invoke_config,

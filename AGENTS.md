@@ -28,13 +28,13 @@ memory, subagents and extensible tools. IM channels connect through the Gateway.
 
 A single `make dev` / Docker stack runs these cooperating services:
 
-| Service         | Port   | Role                                                                 |
-| --------------- | ------ | ------------------------------------------------------------------- |
-| **Nginx**       | `2026` | Unified reverse-proxy entry point — open this in the browser        |
-| **Gateway API** | `8001` | FastAPI REST API + embedded LangGraph-compatible agent runtime      |
-| **Frontend**    | `3000` | Next.js web interface                                               |
-| **SearXNG**     | `8088` | Self-hosted metasearch behind the default `web_search`. `scripts/detect_searxng.py` reuses a reachable instance at startup, else starts the bundled container; Docker stacks use in-network `http://searxng:8080` (`DEER_FLOW_SEARXNG_BASE_URL`). Loopback-only. `make searxng` / `searxng-stop` |
-| **ComfyUI**     | `8188` | Local image/video generation (`media` tools, on by default). `scripts/detect_comfyui.py` reuses a running instance, else starts the bundled container where Docker and a GPU allow. Loopback-only. Depth: FORK.md §26 |
+| Service | Port | Role |
+| --- | --- | --- |
+| **Nginx** | `2026` | Unified reverse-proxy entry point — open this in the browser |
+| **Gateway API** | `8001` | FastAPI REST API + embedded LangGraph-compatible agent runtime |
+| **Frontend** | `3000` | Next.js web interface |
+| **SearXNG** | `8088` | Self-hosted metasearch behind the default `web_search`. `scripts/detect_searxng.py` reuses a reachable instance at startup, else starts the bundled container; Docker stacks use in-network `http://searxng:8080` (`DEER_FLOW_SEARXNG_BASE_URL`). Loopback-only. `make searxng` / `searxng-stop` |
+| **ComfyUI** | `8188` | Local image/video generation (`media` tools, on by default). `scripts/detect_comfyui.py` reuses a running instance, else starts the bundled container where Docker and a GPU allow. Loopback-only. Depth: FORK.md §26 |
 | **Provisioner** | `8002` | Optional — only when sandbox is configured for provisioner/K8s mode |
 
 Nginx is the single public entry: it serves the frontend and proxies `/api/langgraph/*`
@@ -55,29 +55,33 @@ rather than configured — are in FORK.md, *Reaching the stack over Tailscale*,
 pinned by `test_compose_default_bind_host.py`, `test_deploy_loopback_cobind.py`
 and `test_docker_dev_tailnet.py`.
 
+Provisioner PVC mode declares `USERDATA_PVC_NAME` once as `user-data`; extra and
+Lark broker credential mounts reuse it with their existing subPaths and read-only
+flags. Keep credential mounts broker-only and keep distinct volumes in hostPath mode.
+
 ## Repository Map
 
 ```
 deer-flow/
-├── Makefile                        # Root orchestration: drives the full stack (dev/start/stop, docker, setup)
-├── config.example.yaml             # Template → copy to config.yaml (gitignored) at repo root
+├── Makefile  # Root orchestration: drives the full stack (dev/start/stop, docker, setup)
+├── config.example.yaml  # Template → copy to config.yaml (gitignored) at repo root
 ├── extensions_config.example.json  # Template → copy to extensions_config.json (gitignored): MCP servers + skills
-├── backend/                        # Python backend — see backend/AGENTS.md
-│   ├── Makefile                    # Per-module backend commands (dev, gateway, test, lint, migrate-rev)
-│   ├── extensions/sources/         # Deployable snapshots of locally installed Python extensions
-│   ├── packages/extension-api/     # deerflow-extension-api package (import: deerflow_extension_api.*) — public extension contract
-│   ├── packages/harness/           # deerflow-harness package (import: deerflow.*) — agent framework
-│   └── app/                        # FastAPI Gateway + IM channels (import: app.*)
-├── frontend/                       # Next.js frontend (pnpm) — see frontend/AGENTS.md
-├── docker/                         # docker-compose files, nginx config, provisioner
-├── skills/                         # Agent skills: public/ (committed), custom/ (gitignored)
-│                                    # Managed integration skill packs are global at .deer-flow/integrations/skills/{provider}/
-│                                    # Integration credentials and enabled state remain per-user
-├── contracts/                      # Cross-component JSON contracts (e.g. subagent status, skill review)
-├── examples/                       # Extension examples: deerflow-extension-{example,bookmarks,agent-teams,jev-*}
-├── scripts/                        # Root orchestration scripts invoked by the Makefile — see scripts/AGENTS.md
-├── tests/                          # Root-level tests (currently tests/skills/ — public skill tests)
-└── docs/                           # Cross-cutting docs, plans, and design notes
+├── backend/  # Python backend — see backend/AGENTS.md
+│   ├── Makefile  # Per-module backend commands (dev, gateway, test, lint, migrate-rev)
+│   ├── extensions/sources/  # Deployable snapshots of locally installed Python extensions
+│   ├── packages/extension-api/  # deerflow-extension-api package (import: deerflow_extension_api.*) — public extension contract
+│   ├── packages/harness/  # deerflow-harness package (import: deerflow.*) — agent framework
+│   └── app/  # FastAPI Gateway + IM channels (import: app.*)
+├── frontend/  # Next.js frontend (pnpm) — see frontend/AGENTS.md
+├── docker/  # docker-compose files, nginx config, provisioner
+├── skills/  # Agent skills: public/ (committed), custom/ (gitignored)
+│  # Managed integration skill packs are global at .deer-flow/integrations/skills/{provider}/
+│  # Integration credentials and enabled state remain per-user
+├── contracts/  # Cross-component JSON contracts (e.g. subagent status, skill review)
+├── examples/  # Extension examples: deerflow-extension-{example,bookmarks,agent-teams,jev-*}
+├── scripts/  # Root orchestration scripts invoked by the Makefile — see scripts/AGENTS.md
+├── tests/  # Root-level tests (currently tests/skills/ — public skill tests)
+└── docs/  # Cross-cutting docs, plans, and design notes
 ```
 
 Third-party extensions load from operator-controlled `config.yaml -> plugins:`.
@@ -102,6 +106,12 @@ hard-code business logic into core. Working examples:
 [Workflow guide](examples/deerflow-extension-workflows/AGENTS.md): public
 AgentRuns; POSIX, one process/store; approval and session-authorized recovery; uncertain admissions need reconciliation;
 no multi-Gateway failover or hard currency budget.
+
+Knowledge management/space policy: `examples/deerflow-extension-knowledge-{management,platform}/`
+(scoped `AGENTS.md`, `CONTRACT.md`). Use existing plugin/router/principal contracts;
+retrieval stays independent. Space policy intersects administrator/resource/operation
+and upstream grants, never grants chat access. SQLite holds plugin-owned space policy.
+Provider stages are not completion evidence; reconcile uncertain writes, never retry.
 
 Runtime config lives at the **repo root** — `config.yaml` (main) and
 `extensions_config.json` (MCP servers + skills), both copied from their examples by
@@ -233,8 +243,13 @@ Repo-wide conventions:
 - **Useful tests** — reuse coverage first; add or extend tests for uncovered
   behavior and regressions, and prune proven redundant or obsolete tests in the
   area being changed. Follow CHANGE_CYCLE.md step 3 and the backend's TDD policy.
-  Public skill script regressions live in `tests/skills/`; exercise dependency fallbacks
-  with the optional import unavailable and mock HTTP transport to keep tests offline.
+  Skill-creator tests must preserve YAML values/body, restore bytecode settings,
+  and check invalid metadata through offline CLI subprocesses.
+  Public skill script regressions live in `tests/skills/` and run in Skill Review CI
+  independently of package review. Exercise dependency fallbacks with the optional
+  import unavailable and mock HTTP transport to keep tests offline.
+  Video, podcast, and chart-visualization CLI failures exit non-zero;
+  diagnostics on stderr, success URLs on stdout; test offline.
 - **Format code before pushing** — `make format` (backend) / `pnpm check` (frontend); backend CI
   enforces `ruff format --check`.
 - **Skill text encoding** — use explicit UTF-8 for textual skill resources.

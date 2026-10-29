@@ -4,11 +4,7 @@
 
 The LangGraph backend provides sandbox execution, persistent memory, subagent delegation, and extensible tools, isolated per thread.
 
-**Architecture**:
-- **Gateway API** (port 8001): REST API plus embedded LangGraph-compatible agent runtime
-- **Frontend** (port 3000): Next.js web interface
-- **Nginx** (port 2026): Unified reverse proxy entry point
-- **Provisioner** (port 8002, optional in Docker dev): Started only when sandbox is configured for provisioner/Kubernetes mode
+Service roles and ports: [root service topology](../AGENTS.md#service-topology).
 
 **Voice input**: server-side speech-to-text lives in `packages/harness/deerflow/community/speech/` (see its `AGENTS.md`); the cloud tier is off by default and Tailscale CGNAT counts as local.
 
@@ -19,36 +15,12 @@ write path each carry invariants that are silent when broken. They are reference
 material rather than orientation, so they live in
 [docs/RUNTIME.md](docs/RUNTIME.md) — read it before changing any of them.
 
-**Project Structure** (backend/ subtree; the root guide maps the full repo):
-```
-backend/
-├── Makefile                    # Backend-only commands (dev, gateway, lint)
-├── langgraph.json              # LangGraph Studio graph configuration
-├── packages/
-│   ├── extension-api/          # public, host-independent extension contracts (import: deerflow_extension_api.*)
-│   └── harness/                # deerflow-harness package (import: deerflow.*)
-│       └── deerflow/
-│           ├── agents/         # LangGraph agent system (lead_agent/, middlewares/ — see Middleware Chain, memory/, thread_state.py)
-│           ├── sandbox/        # Sandbox execution system
-│           ├── subagents/      # Subagent delegation (builtins/, executor.py, registry.py)
-│           ├── tools/builtins/ # Built-in tools (present_files, ask_clarification, view_image, review_skill_package)
-│           ├── mcp/            # MCP integration (tools, cache, client)
-│           ├── integrations/   # Managed first-party integration installers (e.g. Lark CLI skill pack)
-│           ├── extensions/     # Python plugin loader, registry, placement, and isolation
-│           ├── models/         # Model factory with thinking/vision support
-│           ├── skills/         # Skills discovery, loading, parsing
-│           ├── config/         # Configuration system
-│           ├── community/      # Community tools (search/fetch/scrape, image search, AIO sandbox)
-│           ├── reflection/     # Dynamic module loading (resolve_variable, resolve_class)
-│           ├── utils/          # Utilities (network, readability)
-│           └── client.py       # Embedded Python client (DeerFlowClient)
-├── app/                        # Application layer (import: app.*)
-│   ├── gateway/                # FastAPI Gateway API (app.py, routers/)
-│   └── channels/               # IM platform integrations
-├── scripts/benchmark/          # Standalone reproducible backend benchmarks
-├── tests/                      # Test suite
-└── docs/                       # Documentation
-```
+**Project structure:** The [root repository map](../AGENTS.md#repository-map)
+indexes the stack. Backend code lives in `app/` (Gateway and channels),
+`packages/harness/deerflow/` (agent runtime), and `packages/extension-api/`
+(public extension contracts). Tests, detailed docs, and standalone benchmarks
+live in `tests/`, `docs/`, and `scripts/benchmark/` respectively. Module-local
+`AGENTS.md` files describe their implementation boundaries.
 
 ## Important Development Guidelines
 
@@ -170,10 +142,22 @@ float filters accept integer or real JSON numbers through `json_value_matches`.
 
 Gate server-owned run context on both client feeds (`body.context` and
 `body.config`): `merge_run_context_overrides` admits it only for `internal=True`,
-while `strip_internal_context_keys` scrubs both destinations. Treat
+while `strip_internal_context_keys` scrubs both destinations. A validated
+`context.locale` (`en-US` / `zh-CN`) is a runtime-only language preference for
+replies and memory writes; it never persists into checkpoint `configurable`,
+and an explicit invalid/null top-level value clears a legacy preference. Treat
 `disable_clarification` like `non_interactive`. Before run/state writes,
 `_normalize_input_messages` rejects canonical external system/developer roles;
 only `AUTH_SOURCE_INTERNAL` run input may retain them.
+
+`contracts/ui_locales.v1.json` pins the UI/Gateway locale allowlists in tests;
+DeerMem's portable map stays separate. Scheduled/MCP notification runs omit
+locale; persisted owner locale is used for scheduled IM notices only.
+
+`start_run` assigns IDs to ID-less messages before recording input or invoking
+the graph; keyed retries keep those IDs stable, while the pre-stamp input
+remains the idempotency identity. The record and checkpoint share IDs so
+frontend reconnect can deduplicate the user's message.
 
 ## Development Workflow
 
@@ -191,20 +175,6 @@ test before implementation (TDD).
 - Tests must pass before a feature is considered complete
 - For lightweight config/utility modules, prefer pure unit tests with no external dependencies
 - If a module causes circular import issues in tests, add a `sys.modules` mock in `tests/conftest.py` (see existing example for `deerflow.subagents.executor`)
-
-```bash
-# Four duration-balanced offline shards
-make test
-
-# Run strict blocking-I/O tests
-make test-blocking-io
-
-# Live API tests: require config.yaml, credentials, and explicit opt-in
-make test-live
-
-# Run a specific test file
-PYTHONPATH=. uv run pytest tests/test_<feature>.py -v
-```
 
 Keep live tests opt-in via `DEER_FLOW_RUN_LIVE_TESTS=1`; guard POSIX-only
 markers with `os.name` for Windows collection.

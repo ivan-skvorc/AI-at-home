@@ -62,6 +62,10 @@ ORIGINAL_PARENTS = {
     # 0044_merge_prefs_im_notices had already claimed, splitting the tree a
     # seventh time — and was joined by 0048_merge_prefs_oauth_tokens.
     "0044_channel_runtime_configs": ("0043_runtime_im_notices",),
+    # Upstream's extension-lease revision. It hangs off 0047 — the revision
+    # 0048_merge_prefs_oauth_tokens had already claimed, splitting the tree an
+    # eighth time — and was joined by 0049_merge_prefs_ext_leases.
+    "0048_extension_execution_leases": ("0047_mcp_oauth_tokens",),
 }
 
 # Every leaf the merge points must keep reachable: one per branch tip that
@@ -81,6 +85,8 @@ MERGED_TIPS = (
     "0043_runtime_im_notices",
     # Upstream's tip at the 2026-10-22 sync, joined by 0048_merge_prefs_oauth_tokens.
     "0047_mcp_oauth_tokens",
+    # Upstream's tip at the 2026-10-29 sync, joined by 0049_merge_prefs_ext_leases.
+    "0048_extension_execution_leases",
 )
 
 

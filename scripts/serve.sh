@@ -31,32 +31,6 @@ set -e
 REPO_ROOT="$(builtin cd "$(dirname "${BASH_SOURCE[0]}")/.." >/dev/null 2>&1 && pwd -P)"
 cd "$REPO_ROOT"
 
-# ── Load .env ────────────────────────────────────────────────────────────────
-
-if [ -f "$REPO_ROOT/.env" ]; then
-    set -a
-    source "$REPO_ROOT/.env"
-    set +a
-fi
-
-# ── Fork: passwordless by default for local use ──────────────────────────────
-# This fork runs the local stack without a login wall. DEER_FLOW_AUTH_DISABLED=1
-# makes the Gateway and the Next.js SSR auth check both resolve every request to
-# the built-in `default` admin user, so the app is reachable (including from other
-# LAN devices) with no username/password. Exported here — before the gateway and
-# frontend are launched — so both child processes inherit it.
-#
-# It is opt-out, not forced: set DEER_FLOW_AUTH_DISABLED=0 in .env to restore the
-# normal email/password login. It is also self-disabling in production — the
-# backend and frontend both ignore the flag when DEER_FLOW_ENV / ENVIRONMENT is
-# `prod`/`production` (see auth_disabled.py and auth-disabled-user.ts), so a real
-# deployment that sets that variable keeps authentication on regardless.
-# Kept as a function so tests can exercise the opt-out (test_serve_auth_default.py).
-apply_default_auth_mode() {
-    export DEER_FLOW_AUTH_DISABLED="${DEER_FLOW_AUTH_DISABLED:-1}"
-}
-apply_default_auth_mode
-
 _pick_python() {
     local candidate
     for candidate in python3 python py; do
@@ -75,6 +49,41 @@ _pick_python() {
     done
     return 1
 }
+
+# ── Load .env ────────────────────────────────────────────────────────────────
+
+# .env is data, not a script: sourcing it turned `$$` into this shell's PID, ran
+# backticks and `$(...)`, and ran the second word of an unquoted value with a
+# space as a command. dotenv_exports.py parses it like python-dotenv, keeping the
+# launcher's `$NAME` / `${NAME:-default}` / leading `~` expansion and its
+# precedence over inherited variables, and prints shell-quoted exports.
+if [ -f "$REPO_ROOT/.env" ]; then
+    if ! DOTENV_PYTHON="$(_pick_python)"; then
+        echo "✗ Python 3 is required to read .env." >&2
+        exit 1
+    fi
+    DOTENV_EXPORTS="$("$DOTENV_PYTHON" "$REPO_ROOT/scripts/dotenv_exports.py" "$REPO_ROOT/.env")" || exit 1
+    eval "$DOTENV_EXPORTS"
+    unset DOTENV_PYTHON DOTENV_EXPORTS
+fi
+
+# ── Fork: passwordless by default for local use ──────────────────────────────
+# This fork runs the local stack without a login wall. DEER_FLOW_AUTH_DISABLED=1
+# makes the Gateway and the Next.js SSR auth check both resolve every request to
+# the built-in `default` admin user, so the app is reachable (including from other
+# LAN devices) with no username/password. Exported here — after .env is loaded and
+# before the gateway and frontend are launched — so both child processes inherit it.
+#
+# It is opt-out, not forced: set DEER_FLOW_AUTH_DISABLED=0 in .env to restore the
+# normal email/password login. It is also self-disabling in production — the
+# backend and frontend both ignore the flag when DEER_FLOW_ENV / ENVIRONMENT is
+# `prod`/`production` (see auth_disabled.py and auth-disabled-user.ts), so a real
+# deployment that sets that variable keeps authentication on regardless.
+# Kept as a function so tests can exercise the opt-out (test_serve_auth_default.py).
+apply_default_auth_mode() {
+    export DEER_FLOW_AUTH_DISABLED="${DEER_FLOW_AUTH_DISABLED:-1}"
+}
+apply_default_auth_mode
 
 # ── Argument parsing ─────────────────────────────────────────────────────────
 
@@ -315,6 +324,11 @@ fi
 # not tear down a running stack. Gateway and frontend always bind loopback;
 # nginx is the only entry point, as in the Docker stack.
 if [ "$ACTION" != "stop" ]; then
+    GATEWAY_STARTUP_TIMEOUT="${DEER_FLOW_GATEWAY_STARTUP_TIMEOUT-30}"
+    if [[ ! "$GATEWAY_STARTUP_TIMEOUT" =~ ^[0-9]+$ ]] || ! [ "$GATEWAY_STARTUP_TIMEOUT" -gt 0 ] 2>/dev/null; then
+        echo "✗ DEER_FLOW_GATEWAY_STARTUP_TIMEOUT must be a positive integer (seconds)." >&2
+        exit 1
+    fi
     NGINX_CONF="$(bash "$REPO_ROOT/scripts/nginx-local-conf.sh")" || exit 1
 fi
 
@@ -522,7 +536,7 @@ fi
 
 # ── API-key model auto-config ────────────────────────────────────────────────
 # Enable the Anthropic / OpenRouter model blocks in config.yaml when their keys
-# are present in .env (already sourced above). Best-effort: no key = no-op, and a
+# are present in .env (already loaded above). Best-effort: no key = no-op, and a
 # duplicate-key abort is swallowed because the gateway re-checks on startup.
 if [ -n "$DETECT_PYTHON" ]; then
     "$DETECT_PYTHON" "$REPO_ROOT/scripts/sync-api-key-models.py" --config "$_ollama_config" --verbose || true
@@ -680,6 +694,10 @@ run_service() {
         local logfile="logs/$(echo "$name" | tr '[:upper:]' '[:lower:]' | tr ' ' '-').log"
         echo "✗ $name failed to start."
         [ -f "$logfile" ] && tail -20 "$logfile"
+        if [ "$name" = "Gateway" ]; then
+            echo "  Check logs/gateway.log for startup errors. If Gateway is still initializing,"
+            echo "  increase DEER_FLOW_GATEWAY_STARTUP_TIMEOUT (seconds; current: $GATEWAY_STARTUP_TIMEOUT)."
+        fi
         cleanup 1
     }
     echo "✓ $name started on localhost:$port"
@@ -693,7 +711,7 @@ mkdir -p temp/client_body_temp temp/proxy_temp temp/fastcgi_temp temp/uwsgi_temp
 # 1. Gateway API
 run_service "Gateway" \
     "cd backend && PYTHONPATH=. uv run --no-sync uvicorn app.gateway.app:app --host 127.0.0.1 --port 8001 $GATEWAY_EXTRA_FLAGS > ../logs/gateway.log 2>&1" \
-    8001 30
+    8001 "$GATEWAY_STARTUP_TIMEOUT"
 
 # 2. Frontend
 run_service "Frontend" \
