@@ -228,8 +228,7 @@ once you know to look. The 2026-09-09 sync hit all three at once:
   sourcing `.env` at the top of `serve.sh` and parses it as data further down. The fork's
   passwordless default reads `DEER_FLOW_AUTH_DISABLED` from that environment, so it moved below
   the new loader; left where it was, `DEER_FLOW_AUTH_DISABLED=0` in `.env` would silently stop
-  opting out. `test_serve_auth_default.py` exercises the function, not its position: read the
-  order by eye when upstream touches the launcher's head.
+  opting out (`test_serve_auth_default.py::test_the_default_is_applied_after_dotenv_is_loaded`).
 - **Upstream tests that read the finalization head.** The same sync's delta-resume tests expect
   the run-duration checkpoint to be the head once a paused run finishes. §33 writes a fallback
   title on every terminal status, and a delta checkpoint carries no inline messages, so an
