@@ -303,7 +303,11 @@ export function MessageListItem({
               isHuman
                 ? "absolute right-0 -bottom-9 left-0 justify-end"
                 : "absolute right-0 bottom-0 left-0",
-              "z-20",
+              // Fork: answers get a toolbar too (edit §18, read-aloud §43), and
+              // an answer's bar sits over its last line. The bar itself must
+              // let clicks through to that text (a link there is otherwise
+              // dead); only the button groups below take pointer events.
+              "pointer-events-none z-20",
             )}
             data-testid="message-toolbar"
           >
