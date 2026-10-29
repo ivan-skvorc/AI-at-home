@@ -63,6 +63,7 @@ import { isHiddenFromUIMessage } from "@/core/messages/utils";
 import { modelTaskInput } from "@/core/models/control";
 import { useModels } from "@/core/models/hooks";
 import { useModelControl } from "@/core/models/use-model-control";
+import { notificationBody } from "@/core/notification/body";
 import { useNotification } from "@/core/notification/hooks";
 import { useProject } from "@/core/projects";
 import { useThreadScheduledTaskEvents } from "@/core/scheduled-tasks/events";
@@ -382,18 +383,12 @@ function ChatInstanceContent({
       // A background tab is exactly the case this notification is for: the
       // user moved on to another chat and cannot see this one finish.
       if (document.hidden || !document.hasFocus() || !isActiveRef.current) {
-        let body = "Conversation finished";
         const lastMessage = state.messages.at(-1);
-        if (lastMessage) {
-          const textContent = textOfMessage(lastMessage);
-          if (textContent) {
-            body =
-              textContent.length > 200
-                ? textContent.substring(0, 200) + "..."
-                : textContent;
-          }
-        }
-        showNotification(state.title, { body });
+        showNotification(state.title, {
+          body: notificationBody(
+            lastMessage ? textOfMessage(lastMessage) : null,
+          ),
+        });
       }
     },
   });

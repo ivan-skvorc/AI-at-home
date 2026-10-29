@@ -11,6 +11,96 @@ Newest first. Append a pass; never rewrite one. A dated line is what tells the
 next person whether the roster was checked last week or last year, and _which_
 providers that pass could actually reach.
 
+- **2026-10-29 (upstream sync `5c4ba4d2`) — partial: tier 1 for Anthropic, tier 2 for OpenAI's
+  Terra and Google's Argon, tier 3 elsewhere. Two roll-forwards: GPT-6.1 Terra replaces GPT-5.6
+  Terra, and Gemini 4 Argon replaces the Gemini 3.1 Pro preview. No other roster, price or settings
+  change.** Requested in words with the upstream sync of 225 commits ("bring the repo up to date
+  with upstream and do the change_cycle.md including the model audit"), seven days after the
+  2026-10-22 pass.
+
+  **Machine half clean.** `python3 scripts/audit_models.py` reports **no drift**; `openrouter`
+  is _skipped_ (`Tunnel connection failed: 403 Forbidden`) and the ten catalog-less providers
+  likewise. The stale fixture still yields exactly its four findings, one per drift kind. Step 8:
+  `sync-api-key-models.py --dry-run` is a clean no-op on an empty env, and on a copy of the
+  example with Anthropic, OpenAI, Gemini and OpenRouter keys it enables exactly 29 models
+  (6 + 5 + 3 + 15), both new entries among them with their prices; `test_sync_api_key_models.py`,
+  `test_setup_wizard.py`, `test_config_integrity.py`, `test_audit_models.py`,
+  `test_model_price_fields.py` and `test_pricing.py` are green (305 passed).
+
+  **What the network reached.** `platform.claude.com/docs/en/about-claude/{pricing,model-deprecations}.md`,
+  `.../models/overview.md`, `.../models/sonnet-5-5/{overview,whats-new-sonnet-5-5}.md`,
+  `.../build-with-claude/adaptive-thinking.md` and `.../api/versioning.md` answer 200. Refused at
+  the proxy (`http=000`): `openrouter.ai`, `ai.google.dev`, `developers.openai.com`,
+  `platform.openai.com`, `docs.x.ai`, `api-docs.deepseek.com`, `docs.z.ai`, `mistral.ai`,
+  `docs.mistral.ai`, `platform.moonshot.ai`, `platform.minimax.io`, `alibabacloud.com`; the fetch
+  tool cannot resolve `ai.google.dev` either. Web search was available.
+
+  **Anthropic — tier 1, unchanged.** All six ids are _Active_ on the deprecations page, the
+  overview's latest four are still Fable 5.1, Opus 5.5, Sonnet 5.5 and Haiku 5.5, and every figure
+  matches the pricing page: Fable 5.1 `$10/$50` (cache `$0.25`), Opus 5.5 `$4/$20` (`$0.20`),
+  Opus 5 `$5/$25` (`$0.50`), Sonnet 5.5 `$2/$10` (`$0.10`), Sonnet 5 `$2/$10` (`$0.20`),
+  Haiku 5.5 `$0.10/$0.50` (`$0.01`) up to 100K-token prompts. The newest API version is still
+  `2026-10-21`. `claude-sonnet-4-5-20250929` is deprecated (retires 2026-11-30) and not bundled.
+  "Claude Duet", which trackers list as a 2026-10-21 research preview, is on neither the pricing
+  nor the models page, so it is not an API candidate.
+
+  **Settings (step 5): Sonnet 5.5's `between_tools`, read at tier 1 and not adopted.** Owed since
+  2026-10-10. `thinking: {type: disabled}` is a 400 on Sonnet 5.5 and `between_tools` is its lowest
+  setting, but `between_tools` is itself a 400 at `xhigh`/`max` effort, rejects a per-message effort
+  change, and takes no `display`, `budget_tokens` or `block_binding`. The bundle keeps the disabled
+  state on adaptive (equivalent to omitting `thinking`), which is valid at every effort the composer
+  can send. Upstream's wizard now also omits both thinking templates for Sonnet 5.5 on its
+  non-bundle path (#7585); the fork's bundle already carried the always-on shape.
+
+  **GPT-6.1 Terra replaces GPT-5.6 Terra — tier 2.** This settles "GPT-5.6 Terra's place", owed
+  since 2026-10-02. It launched 2026-10-26 as GPT-5.6 Terra's successor; the id `gpt-6.1-terra` and
+  `$1/$5` (cached input `$0.05`) agree between OpenAI's own announcement and OpenRouter's page for
+  `openai/gpt-6.1-terra` (both as surfaced by search; neither readable here) and several
+  independent write-ups (DataCamp, eesel, apidog, aicybr, elser). A prompt over 272K tokens bills
+  2x input and 1.5x output for the whole request; the entry notes it, the price block does not
+  model it. As a gpt-6 id on `api.openai.com` it carries `use_responses_api` + `output_version`
+  like its siblings (`TestBundledGpt6Routing` covers it). No `cache_hit`: only one source states it.
+
+  **Gemini 4 Argon replaces the Gemini 3.1 Pro preview — tier 2.** Owed since 2026-10-10. The
+  disagreement that blocked it last pass is resolved: The Rundown's `$3.60/$18` → `$7.20/$36` are
+  Argon's **Priority-tier** rates, which two trackers list beside the standard ones. The standard
+  rate — `$2/$10` introductory through 2026-11-30, then `$4/$20` — agrees across Google's own docs
+  (as surfaced by search), VentureBeat, LiteLLM's model catalog, SentiSight, aipricing.guru and
+  eesel, and the id `gemini-4-argon` across Google's model page (surfaced) and several registries.
+  Shipped at the standard `$4/$20` with **no** `discount:`, since the intro rate could not be read
+  off Google's own page and tier 2 never ships a discount. Same native-SDK shape and 8192
+  `max_tokens` as its siblings; Gemini 3.8 Flash stays the routed and the first home entry.
+
+  **Discovery (step 2).**
+  - **Kimi K3.1 Pro** (2026-10-23; `kimi-k3.1-pro` and `kimi-k3.1-pro-highspeed`, the ids
+    upstream's managed Moonshot preset now recognizes, #7566) — `$2/$10` (cache `$0.20`) is widely
+    reported, but no OpenRouter listing for a routed twin was found, and a home flagship must be
+    doubled. **Not rolled; owed**: the routed slug, then K3.1 Pro replaces Kimi K3 in both places.
+    Upstream's notes say the official endpoint rejects the thinking switch and fixed sampling
+    parameters, so the home entry must not ship the `extra_body` toggle the K3 entry carries.
+  - **Kimi K3's routed price** — OpenRouter's page (as surfaced) now shows `$2.60/$13`; other
+    trackers say `$2.55/$12.75` and `$2.00/$11.20`. A disagreement: the shipped `$3/$15` stays.
+  - **Mistral Large 4** — still _Public Preview_ on Mistral's model page (as surfaced), ids
+    `mistral-large-4` / `mistral-large-4-0`, sale `$0.68/$2.09` against `$1.36/$4.18`. Still owed.
+  - **Meta Muse Spark Open** (2026-10-15, `meta/muse-spark-open`, `$1.25/$4.25`, open weights under
+    a custom license) — newer than Llama 4 Maverick, but under a new `meta/` prefix beside several
+    closed `muse-spark*` entries, so which one is Meta's flagship is unclear, and OpenRouter's
+    trending surfaces were unreadable. Not rolled. Note for the next pass: `audit_models.py`
+    groups the catalog by lab prefix, so `new_candidate` never sees a `meta/` model while the
+    bundle's Meta entry is `meta-llama/`.
+  - Declined: **MiniMax M3.1 Flash** (still no API id; it ages out on its own), **Qwen3.6 27B** and
+    **Qwen3 VL 32B** (small), **Nemotron 3.5 Rerank 8B** (a reranker). No Grok 5, GPT-6.2,
+    GLM-5.4/GLM-6 or DeepSeek successor; trackers say `deepseek-flash` still serves V4.1 Flash (1017).
+
+  **Synced in every copy**: `config.example.yaml` (both entries, its QUICK START and block
+  comments), `scripts/wizard/providers.py` (bundles, `MODEL_PRICES`, `description=`), the sync
+  script's QUICK START docstring, `.env.example`, and FORK.md §2's table; the README bullet names
+  neither model. An existing `config.yaml` keeps its old entries until edited by hand.
+
+  **Still owed to a pass with tier-1 access**, in order: Kimi K3.1 Pro (routed slug, price); Kimi
+  K3's routed price; Mistral Large 4 (GA); Meta's flagship under `meta/`; what `deepseek-flash`
+  serves; the remaining items the 2026-10-10 entry lists.
+
 - **2026-10-22 (upstream sync `29ba806f`) — partial: tier 1 for Anthropic, tier 2 for
   DeepSeek's Flash, tier 3 elsewhere. No roster roll, no price change, no settings change.**
   Requested in words with the upstream sync of 163 commits ("bring the repo up to date with

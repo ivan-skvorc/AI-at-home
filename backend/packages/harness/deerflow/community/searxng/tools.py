@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import os
@@ -44,12 +45,17 @@ def _get_tool_config(tool_name: str) -> dict | None:
     return extras if extras is not None else {}
 
 
-def _get_searxng_client() -> SearxngClient:
+_UNSET = object()
+
+
+def _get_searxng_client(cfg: dict | None = _UNSET) -> SearxngClient:
+    """Build a SearXNG client, from ``cfg`` when the caller already read it."""
     env_base_url = os.getenv(BASE_URL_ENV_VAR, "").strip()
     if env_base_url:
         return SearxngClient(base_url=env_base_url)
 
-    cfg = _get_tool_config("web_search")
+    if cfg is _UNSET:
+        cfg = _get_tool_config("web_search")
     base_url = DEFAULT_BASE_URL
     if cfg is not None:
         base_url = cfg.get("base_url", base_url)
@@ -66,7 +72,9 @@ async def search_via_searxng(query: str, time_range: SearchTimeRange | None = No
     failure worth falling back from, while an empty list is a successful search
     that simply matched nothing and must NOT trigger a fallback (FORK.md §31).
     """
-    cfg = _get_tool_config("web_search")
+    # Config resolution stats and hashes the config files; keep it off the
+    # event loop, and build the client from the same read.
+    cfg = await asyncio.to_thread(_get_tool_config, "web_search")
     max_results = 5
     if cfg is not None:
         raw = cfg.get("max_results", max_results)
@@ -82,7 +90,7 @@ async def search_via_searxng(query: str, time_range: SearchTimeRange | None = No
                     max_results,
                 )
 
-    client = _get_searxng_client()
+    client = _get_searxng_client(cfg)
     search_kwargs: dict[str, object] = {"max_results": max_results}
     if time_range is not None:
         search_kwargs["time_range"] = time_range

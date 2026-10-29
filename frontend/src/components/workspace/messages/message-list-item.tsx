@@ -74,7 +74,10 @@ import { Tooltip } from "../tooltip";
 
 import { KnowledgeScopeSummary } from "./knowledge-scope-summary";
 import { MarkdownContent } from "./markdown-content";
-import { createMarkdownLinkComponent } from "./markdown-link";
+import {
+  createMarkdownLinkComponent,
+  MessageArtifactPathsContext,
+} from "./markdown-link";
 import { MessageReasoning } from "./message-reasoning";
 
 function FeedbackButtons({
@@ -300,7 +303,11 @@ export function MessageListItem({
               isHuman
                 ? "absolute right-0 -bottom-9 left-0 justify-end"
                 : "absolute right-0 bottom-0 left-0",
-              "z-20",
+              // Fork: answers get a toolbar too (edit §18, read-aloud §43), and
+              // an answer's bar sits over its last line. The bar itself must
+              // let clicks through to that text (a link there is otherwise
+              // dead); only the button groups below take pointer events.
+              "pointer-events-none z-20",
             )}
             data-testid="message-toolbar"
           >
@@ -733,12 +740,14 @@ function MessageContent_({
           {reasoningContent}
         </MessageReasoning>
       )}
-      <MarkdownContent
-        content={contentToDisplay}
-        isLoading={isLoading}
-        className="my-3"
-        components={components}
-      />
+      <MessageArtifactPathsContext.Provider value={artifactPaths}>
+        <MarkdownContent
+          content={contentToDisplay}
+          isLoading={isLoading}
+          className="my-3"
+          components={components}
+        />
+      </MessageArtifactPathsContext.Provider>
       <CitationSourcesPanel sources={citationSources} />
       <KnowledgeSourcesPanel content={contentToDisplay} />
       {message.type === "ai" && showWorkspaceChanges && (

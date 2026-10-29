@@ -73,3 +73,15 @@ def test_explicit_opt_out_is_preserved() -> None:
 def test_explicit_enabled_value_is_preserved() -> None:
     # An explicit 1 is likewise left untouched (idempotent).
     assert _run_apply_default_auth_mode("1") == "1"
+
+
+def test_the_default_is_applied_after_dotenv_is_loaded() -> None:
+    # The opt-out lives in .env, so .env must already be in the environment when
+    # the default runs. serve.sh reads it as data (dotenv_exports.py, upstream
+    # #7606); were the call to sit above that loader again, `${VAR:-1}` would see
+    # nothing, and `DEER_FLOW_AUTH_DISABLED=0` in .env would silently stop opting
+    # out of the passwordless mode.
+    text = SERVE_SH.read_text(encoding="utf-8")
+    loader = text.index('"$REPO_ROOT/scripts/dotenv_exports.py" "$REPO_ROOT/.env"')
+    call = text.index("\napply_default_auth_mode\n")
+    assert loader < call

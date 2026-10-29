@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, rs } from "@rstest/core";
+import { afterEach, beforeEach, describe, expect, it, rs } from "@rstest/core";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import { useEffect, type ReactNode } from "react";
@@ -100,6 +100,24 @@ function buildTree(
     </I18nProvider>
   );
 }
+
+// Fork: the panel's thread stream loads /history for the probe thread, which no
+// server answers here. happy-dom 21 reports the refused fetch as an unhandled
+// rejection and fails the whole file (pure upstream does the same). History is
+// not what this file tests, so it is answered locally with an empty list.
+beforeEach(() => {
+  const realFetch = globalThis.fetch;
+  rs.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url.includes("/threads/sidecar-thread-1/history")) {
+      return new Response("[]", {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    return realFetch(input, init);
+  });
+});
 
 afterEach(() => {
   rs.restoreAllMocks();

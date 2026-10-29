@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import os
@@ -8,6 +9,7 @@ from tavily import AsyncTavilyClient
 from deerflow.community.search_time_range import SearchTimeRange
 from deerflow.community.url_safety import safe_public_result_url
 from deerflow.config import get_app_config
+from deerflow.config.tool_config import ToolConfig
 
 # Tavily's own SDK reads this when constructed without an explicit key. It is
 # named here as well so the web_search dispatcher can ask "is the backup set
@@ -17,6 +19,7 @@ API_KEY_ENV_VAR = "TAVILY_API_KEY"
 logger = logging.getLogger(__name__)
 
 _FORMAT_ERROR = "Tavily returned an unexpected response format"
+_UNSET = object()
 
 
 class TavilyFormatError(ValueError):
@@ -68,7 +71,7 @@ def tavily_api_key_present() -> bool:
     return resolve_tavily_api_key() is not None
 
 
-def _get_tavily_client(tool_name: str = "web_search") -> AsyncTavilyClient:
+def _get_tavily_client(tool_name: str = "web_search", config: ToolConfig | None = _UNSET) -> AsyncTavilyClient:
     """Tavily client for ``tool_name``: its own key, else the environment.
 
     Each tool carries its own credential so ``web_fetch`` can be pointed at a
@@ -78,9 +81,13 @@ def _get_tavily_client(tool_name: str = "web_search") -> AsyncTavilyClient:
     ``resolve_tavily_api_key`` chain: that reads the ``web_search`` entry, which
     belongs to whichever provider is configured there — borrowing it here would
     hand Serper's key to Tavily.
+
+    ``config`` is the caller's own read of that entry, so a caller that already
+    resolved config off the event loop does not resolve it again on it.
     """
+    if config is _UNSET:
+        config = get_app_config().get_tool_config(tool_name)
     api_key = None
-    config = get_app_config().get_tool_config(tool_name)
     if config is not None and "api_key" in config.model_extra:
         value = config.model_extra.get("api_key")
         if isinstance(value, str) and value.strip():
@@ -113,7 +120,10 @@ def _response_objects(data: object, container: str) -> list[dict] | None:
 
 async def _search_tavily(query: str, time_range: SearchTimeRange | None = None) -> str:
     """Tavily search returning a JSON array of {title, url, snippet}."""
-    extras = _web_search_extras()
+    # Config resolution stats and hashes the config files; keep it off the event
+    # loop, and build the client from the same read.
+    config = (await asyncio.to_thread(get_app_config)).get_tool_config("web_search")
+    extras = (getattr(config, "model_extra", None) or {}) if config is not None else {}
     max_results = extras.get("max_results", 5)
 
     search_kwargs: dict[str, object] = {"max_results": max_results}
@@ -124,7 +134,7 @@ async def _search_tavily(query: str, time_range: SearchTimeRange | None = None) 
         search_kwargs["include_domains_mode"] = "filter"
     if time_range is not None:
         search_kwargs["time_range"] = time_range
-    client = _get_tavily_client()
+    client = _get_tavily_client(config=config)
     try:
         res = await client.search(query, **search_kwargs)
     finally:
@@ -146,8 +156,8 @@ async def _search_tavily(query: str, time_range: SearchTimeRange | None = None) 
 async def search_via_tavily(query: str, time_range: SearchTimeRange | None = None) -> str:
     """Tavily search for the web_search dispatcher.
 
-    Native async since the SDK moved to ``AsyncTavilyClient``: nothing here
-    blocks the event loop, so it is awaited directly rather than offloaded.
+    Native async since the SDK moved to ``AsyncTavilyClient``: the one blocking
+    step, the config read, is offloaded inside, so this is awaited directly.
     """
     return await _search_tavily(query, time_range)
 
@@ -177,7 +187,8 @@ async def web_fetch_tool(url: str) -> str:
     Args:
         url: The URL to fetch the contents of.
     """
-    client = _get_tavily_client("web_fetch")
+    # Config resolution stats and hashes the config files; keep it off the event loop.
+    client = await asyncio.to_thread(_get_tavily_client, "web_fetch")
     try:
         res = await client.extract([url])
     finally:

@@ -28,6 +28,7 @@ export interface Translations {
     installationGuide: string;
     catalog: Record<
       | "workflows"
+      | "reportSections"
       | "agentTeams"
       | "bookmarks"
       | "context"
@@ -35,6 +36,8 @@ export interface Translations {
       | "screening"
       | "retrieval"
       | "knowledge"
+      | "knowledgeManagement"
+      | "knowledgePlatform"
       | "weknora"
       | "lightrag"
       | "example",
@@ -182,6 +185,13 @@ export interface Translations {
     showBrowser: string;
   };
 
+  browserStream: {
+    connecting: string;
+    disconnected: string;
+    handshakeTimeout: string;
+    connectionFailed: string;
+  };
+
   skillUsage: {
     used: string;
     title: string;
@@ -210,6 +220,11 @@ export interface Translations {
   home: {
     docs: string;
     blog: string;
+    searchDocs: string;
+    searchDocsLabel: string;
+    searchNoResults: string;
+    searchLoadFailed: string;
+    searchLoading: string;
   };
 
   // Welcome
@@ -464,6 +479,7 @@ export interface Translations {
         noProgress: string;
         tokenCapped: string;
         loopCapped: string;
+        recursionCapped: string;
         missingEvidence: string;
         runFailed: string;
         needsInputCard: string;
@@ -826,6 +842,18 @@ export interface Translations {
     cancel: string;
     retryItem: string;
     exportResults: string;
+    viewResult: string;
+    resultTitle: string;
+    resultDescription: string;
+    report: string;
+    evidence: string;
+    noEvidence: string;
+    acceptance: string;
+    noReport: string;
+    loadResultFailed: string;
+    truncated: string;
+    omittedEvidence: (count: number) => string;
+    pagesLabel: string;
     viewItems: string;
     hideItems: string;
     itemsFailed: string;
@@ -1151,6 +1179,7 @@ export interface Translations {
         noProgress: string;
         tokenCapped: string;
         loopCapped: string;
+        recursionCapped: string;
         evaluatorFailed: string;
         noDurableEndOfTurn: string;
         threadChanged: string;
@@ -1600,6 +1629,23 @@ export interface Translations {
       confirmed: string;
       retry: string;
     };
+    /** The `/connect <code>` dialog for apps linked by messaging their bot. */
+    bindingCode: {
+      description: (provider: string) => string;
+      loading: string;
+      copy: string;
+      copied: string;
+      copyFailed: string;
+      expiresAt: (time: string) => string;
+      waiting: (provider: string) => string;
+      connected: (provider: string) => string;
+      done: string;
+      expired: string;
+      newCode: string;
+      failed: string;
+      tooManyCodes: string;
+      retry: string;
+    };
     saveAndConnect: string;
     saveChanges: string;
     descriptions: Record<string, string>;
@@ -1623,6 +1669,9 @@ export interface Translations {
   // Tool calls
   toolCalls: {
     details: string;
+    failed: string;
+    scheduleTaskPending: string;
+    stopScheduledTaskPending: string;
     toolName: string;
     callId: string;
     input: string;
@@ -2450,6 +2499,9 @@ export interface Translations {
       sso_account_exists: string;
       sso_not_allowed: string;
       account_disabled: string;
+      invalid_email: string;
+      password_too_short: string;
+      registration_password_too_short: string;
     };
   };
 }

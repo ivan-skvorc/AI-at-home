@@ -28,12 +28,13 @@ the single revision `0019_runs_pricing_snapshot` (FORK.md §17).
 `0022_merge_pricing_projects` joins the fork's revision to
 `0021_batch_acceptance`, `0023_merge_pricing_scheduler` joins that merge to
 `0022_scheduled_occurrence_seq`, `0024_merge_preferences` joins *that* merge to
-`0023_user_preferences`, and five more follow the same way:
+`0023_user_preferences`, and six more follow the same way:
 `0027_merge_preferences_mcp_tasks` (upstream's 0026),
 `0031_merge_prefs_notifications` (upstream's 0030),
 `0038_merge_prefs_summaries` (upstream's 0037),
-`0044_merge_prefs_im_notices` (upstream's 0043) and
-`0048_merge_prefs_oauth_tokens` (upstream's 0047; **current head**). Each time, upstream extended a
+`0044_merge_prefs_im_notices` (upstream's 0043),
+`0048_merge_prefs_oauth_tokens` (upstream's 0047) and
+`0049_merge_prefs_ext_leases` (upstream's 0048; **current head**). Each time, upstream extended a
 revision an earlier merge had already claimed, which put the tree back on two
 heads. `upgrade head` refuses to run against two, and the Gateway's bootstrap
 fails outright before serving a request, so expect this shape on every sync
@@ -65,7 +66,7 @@ revision by upgrading a clean database to it, never by downgrading head — see
 `0039_user_disabled` → `0040_scheduled_group_notice` →
 `0041_im_notice_preferences` → `0042_channel_leases` →
 `0043_runtime_im_notices` → `0044_channel_runtime_configs` →
-`0045_completed_run_evidence` → `0046_skill_mutations` → `0047_mcp_oauth_tokens` (upstream's tip; the fork's head is the merge revision above it). The preference
+`0045_completed_run_evidence` → `0046_skill_mutations` → `0047_mcp_oauth_tokens` → `0048_extension_execution_leases` (upstream's tip; the fork's head is the merge revision above it). The preference
 revision adds a separate owner/key table with a cascading users foreign key and
 does not alter users; the project-documents revision adds a new owner-scoped
 shelf table, and the MCP lease-token revision adds two nullable token columns to
@@ -235,3 +236,6 @@ Tests: `test_migration_0041_im_notice_preferences.py`.
 - `0045_completed_run_evidence` adds nullable evidence sealing fields and completed-run snapshots after `0044_channel_runtime_configs`.
 - `0046_skill_mutations` adds durable owner enrollment, asset revisions, proposals, publication operations and scan leases.
 - `0047_mcp_oauth_tokens` creates the table-guarded `mcp_oauth_tokens` (PK `scope`, `owner_user_id` (`''` for deployment), `server_key`; encrypted token columns, chain and request fingerprints, `version`, refresh lease) with no backfill. The single-head pin lives in `tests/test_migration_0047_mcp_oauth_tokens.py`.
+
+- `0048_extension_execution_leases` adds generic extension execution fences after
+  the shipped OAuth revision; test upgrade/downgrade in `test_extension_execution_fence.py`.

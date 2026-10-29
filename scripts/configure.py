@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import argparse
 import shutil
 import subprocess
 import sys
@@ -90,7 +91,13 @@ def _offer_web_fetch_choice(project_root: Path) -> None:
         print("  Could not update the web_fetch backend automatically; edit config.yaml by hand.")
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        prog="configure.py",
+        description="Cross-platform config bootstrap script for DeerFlow.",
+    )
+    parser.parse_args(argv)
+
     project_root = Path(__file__).resolve().parent.parent
 
     existing_config = [

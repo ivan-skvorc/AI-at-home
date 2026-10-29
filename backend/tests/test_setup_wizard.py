@@ -157,6 +157,22 @@ class TestProviders:
             # Override must not mutate the shared provider-level config.
             assert provider.extra_config["supports_vision"] is True
 
+    def test_anthropic_sonnet_5_5_omits_rejected_thinking_templates(self):
+        """Sonnet 5.5 rejects budget_tokens and thinking disabled; other Claude models keep them."""
+        providers = {provider.name: provider for provider in LLM_PROVIDERS}
+        anthropic = providers["anthropic"]
+        # Fork: the Anthropic default is the bundle's primary model (FORK.md §2),
+        # and its other Claude models think adaptively rather than on a budget.
+        assert anthropic.default_model == "claude-opus-5-5"
+
+        config = anthropic.extra_config_for("claude-sonnet-5-5")
+        assert "when_thinking_enabled" not in config
+        assert "when_thinking_disabled" not in config
+
+        assert anthropic.extra_config_for("claude-sonnet-5")["when_thinking_enabled"]["thinking"]["type"] == "adaptive"
+        # Omission must not mutate the shared provider-level config.
+        assert "when_thinking_enabled" in anthropic.extra_config
+
     def test_extra_config_for_returns_provider_config_without_override(self):
         """Providers without per-model overrides return their config unchanged."""
         providers = {provider.name: provider for provider in LLM_PROVIDERS}
