@@ -26,6 +26,8 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from .constants import NAMESPACE
 
 MODE = "ultracode"
+#: Id prefix of the result messages delivery.py posts.
+RESULT_MESSAGE_PREFIX = "workflow-result-"
 #: Advisory size threshold, from Claude Code's ultracode (25 agents).
 SIZE_WARNING_AGENTS = 25
 
@@ -78,9 +80,14 @@ def run_limits(options, config):
 
 
 def posted_result(messages):
+    """The latest visible human message is a workflow result this plugin posted.
+
+    The host-stamped marker proves this plugin posted it; the id prefix tells a
+    result (delivery.py) from a child's task message, which this plugin posts too.
+    """
     latest = next((m for m in reversed(messages) if isinstance(m, HumanMessage) and not m.additional_kwargs.get("hide_from_ui")), None)
     origin = latest.additional_kwargs.get(EXTENSION_MESSAGE_ORIGIN_KEY) if latest is not None else None
-    return isinstance(origin, dict) and origin.get("namespace") == NAMESPACE
+    return isinstance(origin, dict) and origin.get("namespace") == NAMESPACE and str(latest.id or "").startswith(RESULT_MESSAGE_PREFIX)
 
 
 class UltracodeMode(AgentMiddleware):

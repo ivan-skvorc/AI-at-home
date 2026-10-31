@@ -82,11 +82,11 @@ import {
   buildConversationReferenceMetadata,
   type ConversationReference,
 } from "@/core/conversation-references";
+import { useFrontendExtensions } from "@/core/extensions/hooks";
 import {
   extensionMentionId,
   MAX_EXTENSION_MENTIONS,
 } from "@/core/extensions/mentions";
-import { useFrontendExtensions } from "@/core/extensions/hooks";
 import { useConversationReferencesCapability } from "@/core/features/hooks";
 import { useI18n } from "@/core/i18n/hooks";
 import { polishInputDraft } from "@/core/input-polish/api";

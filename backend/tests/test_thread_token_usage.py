@@ -82,6 +82,8 @@ def test_thread_token_usage_returns_stable_shape(monkeypatch: pytest.MonkeyPatch
         "context_usage": None,
         # The spend cap is off by default, so the header gets no budget line.
         "spend_budget": None,
+        # No workflow child threads link here, so no "Workflow agents" row.
+        "delegated": None,
     }
     run_store.aggregate_tokens_by_thread.assert_awaited_once_with("thread-1", include_active=False, user_id=None)
     build_context_usage.assert_awaited_once()

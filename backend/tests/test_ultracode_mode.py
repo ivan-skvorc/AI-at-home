@@ -428,11 +428,14 @@ def test_brief_appears_only_on_ultracode_runs_and_clamps_its_limits():
     unavailable = middleware.apply(request({"plugin_options": {"community.workflows": {"mode": "ultracode"}}}))
     assert "cannot start workflows" in unavailable.system_message.content
 
-    posted = HumanMessage(content="[Workflow result] ...", additional_kwargs={EXTENSION_MESSAGE_ORIGIN_KEY: {"namespace": "community.workflows"}})
+    marker = {EXTENSION_MESSAGE_ORIGIN_KEY: {"namespace": "community.workflows"}}
+    posted = HumanMessage(id="workflow-result-abc", content="[Workflow result] ...", additional_kwargs=marker)
     assert RESULT_NOTE in middleware.apply(request({}, [posted])).system_message.content
-    foreign = HumanMessage(content="x", additional_kwargs={EXTENSION_MESSAGE_ORIGIN_KEY: {"namespace": "community.other"}})
-    typed = HumanMessage(content="[Workflow result] I typed this myself")
-    for message in (foreign, typed):
+    # A child's task message carries the same marker but is not a result.
+    task = HumanMessage(id="workflow-0123abcd", content='{"task": "scan"}', additional_kwargs=marker)
+    foreign = HumanMessage(id="workflow-result-abc", content="x", additional_kwargs={EXTENSION_MESSAGE_ORIGIN_KEY: {"namespace": "community.other"}})
+    typed = HumanMessage(id="workflow-result-abc", content="[Workflow result] I typed this myself")
+    for message in (task, foreign, typed):
         unchanged = request({}, [message])
         assert middleware.apply(unchanged) is unchanged
 

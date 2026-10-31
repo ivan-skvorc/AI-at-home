@@ -23,6 +23,8 @@ import logging
 
 from deerflow_extension_api import AgentRunError
 
+from .ultracode import RESULT_MESSAGE_PREFIX
+
 logger = logging.getLogger(__name__)
 
 DELIVERABLE = frozenset({"completed", "failed", "needs_reconciliation", "waiting_input", "interrupted"})
@@ -74,6 +76,9 @@ class Delivery:
             return
         key = (owner, run_id)
         if key in self.deliveries:
+            # A task that already saw the workflow running may be about to end
+            # with "wait": run once more after it, so the end is never missed.
+            self.delivery_rearm[key] = runs
             return
         task = asyncio.create_task(self.deliver(owner, run_id, runs))
         self.deliveries[key] = task
@@ -81,8 +86,13 @@ class Delivery:
 
     def delivery_finished(self, key, task):
         self.deliveries.pop(key, None)
-        if not task.cancelled() and task.exception() is not None:
+        rearm = self.delivery_rearm.pop(key, None)
+        if task.cancelled():
+            return
+        if task.exception() is not None:
             logger.error("Workflow %s result delivery failed (%s); it stays pending", key[1], type(task.exception()).__name__)
+        elif rearm is not None:
+            self.schedule_delivery(key[0], key[1], rearm)
 
     async def resume_deliveries(self, owner, runs):
         """Re-arm deliveries a restart left pending, with this caller's fresh handle."""
@@ -123,7 +133,7 @@ class Delivery:
             async with asyncio.timeout(self.config["admission_timeout_seconds"]):
                 run = await runs.start(
                     thread_id=thread_id,
-                    input={"messages": [{"role": "user", "id": f"workflow-result-{run_id[:32]}", "content": result_message(record)}]},
+                    input={"messages": [{"role": "user", "id": f"{RESULT_MESSAGE_PREFIX}{run_id[:32]}", "content": result_message(record)}]},
                     idempotency_key=f"workflow-result:{run_id}",
                 )
         except AgentRunError as exc:

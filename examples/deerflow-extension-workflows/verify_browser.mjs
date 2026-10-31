@@ -36,7 +36,7 @@ const server=createServer(async(req,res)=>{
         if(action==='list')return {runs:saved&&!window.hidden?[{run_id:'fixture-run',status:window.state}]:[]};
         if(action==='cancel'){window.state='cancelled';return {status:'cancelling'};}
         if(action==='delete'){window.hidden=true;return {deleted:true};}
-        if(action==='get')return {fingerprint:'fingerprint',checkpoints:(window.state==='waiting_approval'||(window.fileReview&&window.state==='completed'))?[{step_id:'confirm',attempt:1,kind:'humanCheckpoint',status:window.state==='completed'?'approved':'pending',source_step_id:'check',artifact_version:'artifact-v1'}]:window.state==='paused'?[{step_id:'p',attempt:1,kind:'pause',status:'pending'}]:[],run_id:'fixture-run',status:window.state,script:saved.script,args:saved.args,script_hash:'script-version',args_hash:'args-version',limits:{concurrency:2,max_calls:8},steps:[{step_id:'check',agent_ref:'lead_agent',status:window.state,thread_id:'child-thread',run_id:'child-run'}],logs:['Checking'],result:'<img src=x onerror=alert(1)>'};
+        if(action==='get')return {fingerprint:'fingerprint',checkpoints:(window.state==='waiting_approval'||(window.fileReview&&window.state==='completed'))?[{step_id:'confirm',attempt:1,kind:'humanCheckpoint',status:window.state==='completed'?'approved':'pending',source_step_id:'check',artifact_version:'artifact-v1'}]:window.state==='paused'?[{step_id:'p',attempt:1,kind:'pause',status:'pending'}]:[],run_id:'fixture-run',status:window.state,script:saved.script,args:saved.args,script_hash:'script-version',args_hash:'args-version',limits:{concurrency:2,max_calls:8},mode:'ultracode',phases:[{title:'Verify <img src=x onerror=alert(1)>',first_step:0}],delivery:{status:'pending',error:'Waiting for the conversation to finish its current turn'},steps:[{step_id:'check',agent_ref:'lead_agent',status:window.state,thread_id:'child-thread',run_id:'child-run',phase:0,attempt:2,model:'local-small',workspace:'merge',workspace_merge:{applied_count:3,conflict_count:1}}],logs:['Checking'],result:'<img src=x onerror=alert(1)>'};
       }});
   </script></body></html>`);
 });
@@ -58,6 +58,12 @@ try{
   await page.evaluate(()=>window.state='running');
   await page.locator('nav button').first().click();
 
+  // Double Plus Ultracode details: the mode, the phase heading above its steps,
+  // the result's delivery state and each step's attempt/model/workspace facts.
+  await page.getByText('Double Plus Ultracode run',{exact:true}).waitFor();
+  await page.getByText('Result to conversation: waiting to post · Waiting for the conversation to finish its current turn',{exact:true}).waitFor();
+  await page.getByRole('heading',{name:'Phase 1 · Verify <img src=x onerror=alert(1)>',exact:true}).waitFor();
+  assert.match(await page.locator('main').textContent(),/check · lead_agent · running · attempt 2 · local-small · workspace: merge · merged 3, conflicts 1/);
   assert.equal(launch.payload.request_id.length,32);
   assert.match(launch.payload.script,/await agent/);
   await page.getByRole('button',{name:'Open child conversation',exact:true}).click();
@@ -146,7 +152,7 @@ try{
   await page.evaluate(()=>view.dispose());
   assert.equal(await page.locator('.script-workflows').count(),0);
   assert.deepEqual(errors,[]);
-  console.log('Browser checks passed: launch retries, saved versions, exact-output review, approval, resume, child navigation, cancellation, escaped output, deletion and disposal.');
+  console.log('Browser checks passed: launch retries, saved versions, exact-output review, approval, resume, child navigation, cancellation, escaped output, Double Plus Ultracode details, deletion and disposal.');
 }finally{
   await browser.close();await new Promise(resolve=>server.close(resolve));
 }

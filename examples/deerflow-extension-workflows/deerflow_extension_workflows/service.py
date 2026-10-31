@@ -141,6 +141,7 @@ class Workflows(Cluster, Recovery, Lifecycle, Artifacts, Delivery):
         self.write_lock = asyncio.Lock()
         self.global_slots = asyncio.Semaphore(config["global_concurrency"])
         self.deliveries = {}
+        self.delivery_rearm = {}
         self.lockfile = None
 
     async def start(self, deps):
