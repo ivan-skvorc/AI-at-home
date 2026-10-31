@@ -410,6 +410,11 @@ export interface Translations {
     ultraModeDescription: string;
     democracyMode: string;
     democracyModeDescription: string;
+    /** Double Plus Ultracode (fork feature, FORK.md §44). */
+    ultracodeMode: string;
+    ultracodeModeDescription: string;
+    /** Toast when a remembered Double Plus Ultracode selection cannot run. */
+    ultracodeUnavailable: string;
     reasoningEffort: string;
     reasoningEffortMinimal: string;
     reasoningEffortMinimalDescription: string;
@@ -1758,6 +1763,12 @@ export interface Translations {
   };
 
   // Token Usage
+  /** A message an extension posted into a conversation (fork feature, FORK.md §44). */
+  extensionMessage: {
+    postedBy: (extension: string) => string;
+    notTyped: string;
+    showMessage: string;
+  };
   tokenUsage: {
     title: string;
     label: string;
@@ -1803,6 +1814,10 @@ export interface Translations {
     replacedTurns: string;
     /** Tooltip explaining why replaced spend is in the total but not the chart. */
     replacedTurnsHint: string;
+    /** Row label for spend by agents that workflows from this chat ran. */
+    workflowAgents: string;
+    /** Tooltip for that row: separate threads, outside the total and the chart. */
+    workflowAgentsHint: (threads: number, runs: number) => string;
     /** Remaining currency spend cap (fork feature, roadmap item 2). */
     budgetLeft: string;
     /** Human label for a cap window: "today" / "this week" / "this month". */
@@ -2128,6 +2143,13 @@ export interface Translations {
     subagents: {
       title: string;
       description: string;
+      /** Double Plus Ultracode limits (fork feature, FORK.md §44). */
+      ultracodeTitle: string;
+      ultracodeDescription: string;
+      ultracodeMaxAgents: string;
+      ultracodeMaxParallel: string;
+      ultracodeRange: (max: number) => string;
+      ultracodeUnavailable: string;
       executionNote: string;
       adminNote: string;
       create: string;

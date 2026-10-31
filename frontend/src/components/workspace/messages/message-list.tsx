@@ -115,6 +115,7 @@ import { SkillUsageMenu } from "../skill-usage/skill-usage-menu";
 import { Tooltip } from "../tooltip";
 
 import { ConversationOutline } from "./conversation-outline";
+import { ExtensionMessageCard } from "./extension-message-card";
 import {
   HumanInputCard,
   type HumanInputSubmitResult,
@@ -1253,6 +1254,22 @@ export function MessageList({
                   group,
                   groupIndex,
                   <ScheduledRunPrompt origin={group.scheduledOrigin} />,
+                );
+              }
+              if (
+                group.type === "human" &&
+                group.extensionOrigin &&
+                group.messages[0]
+              ) {
+                // Posted by an extension (a workflow's result): its card, with
+                // no edit or copy actions, since the user never typed it.
+                return withRunDuration(
+                  group,
+                  groupIndex,
+                  <ExtensionMessageCard
+                    message={group.messages[0]}
+                    origin={group.extensionOrigin}
+                  />,
                 );
               }
               if (group.type === "human" || group.type === "assistant") {

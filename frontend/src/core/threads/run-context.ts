@@ -1,13 +1,15 @@
 import type { InputMode, ReasoningEffortValue } from "../models/reasoning";
 import { getLocalSettings } from "../settings/local";
 
-import { type UltracodePluginOptions, ultracodePluginOptions } from "./ultracode";
-
 import {
   type DemocracyGrading,
   democracyRunContext,
   isValidDemocracyPanel,
 } from "./democracy";
+import {
+  type UltracodePluginOptions,
+  ultracodePluginOptions,
+} from "./ultracode";
 
 /**
  * Derive the run context the backend actually reads from the composer's mode.

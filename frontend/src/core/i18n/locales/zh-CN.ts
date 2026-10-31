@@ -504,6 +504,11 @@ export const zhCN: Translations = {
     democracyMode: "众议",
     democracyModeDescription:
       "由多个不同模型独立回答同一问题并互相评审，再由一个组织者模型汇总结论。Token 消耗极高。",
+    ultracodeMode: "Double Plus Ultracode",
+    ultracodeModeDescription:
+      "把任务规划成工作流脚本，由多个智能体在后台执行，结果会自动回到本对话。灵感来自 Claude Code 的 ultracode。Token 消耗极高。",
+    ultracodeUnavailable:
+      "Double Plus Ultracode 需要“脚本工作流”扩展，但它未启用。本对话已改用 Ultra。",
     reasoningEffort: "推理深度",
     reasoningEffortMinimal: "最低",
     reasoningEffortMinimalDescription: "检索 + 直接输出",
@@ -2025,6 +2030,11 @@ export const zhCN: Translations = {
   },
 
   // Token Usage
+  extensionMessage: {
+    postedBy: (extension: string) => `由 ${extension} 发送`,
+    notTyped: "自动发送，并非你输入",
+    showMessage: "显示完整消息",
+  },
   tokenUsage: {
     title: "Token 用量",
     label: "Tokens",
@@ -2069,6 +2079,9 @@ export const zhCN: Translations = {
     replacedTurns: "已替换的轮次",
     replacedTurnsHint:
       "通过编辑消息或重新生成回答而被替换掉的轮次。这些花费已经产生，因此仍计入总额；但它们已不属于当前对话，所以图表中不再显示。",
+    workflowAgents: "工作流智能体",
+    workflowAgentsHint: (threads: number, runs: number) =>
+      `由本对话启动的工作流中的智能体在各自的对话里产生的花费（${threads} 个对话，${runs} 次运行）。不计入上方总额和图表。`,
     budgetLeft: "预算余额",
     budgetPeriod: (period: string) =>
       period === "daily"
@@ -2433,6 +2446,14 @@ export const zhCN: Translations = {
       title: "子智能体",
       description:
         "可由 Lead Agent 和已授权 Custom Agent 派遣、执行边界明确任务的复用型工作智能体。",
+      ultracodeTitle: "Double Plus Ultracode 上限",
+      ultracodeDescription:
+        "Double Plus Ultracode 可规划的工作流规模。“脚本工作流”扩展仍会应用运维方设置的上限，因此这里只能把运行调小。",
+      ultracodeMaxAgents: "每个工作流的智能体数",
+      ultracodeMaxParallel: "同时运行的智能体数",
+      ultracodeRange: (max: number) => `1 到 ${max} 之间的整数。`,
+      ultracodeUnavailable:
+        "“脚本工作流”扩展未启用，因此输入框不会提供 Double Plus Ultracode。",
       executionNote:
         "每次调用都使用全新的临时上下文，没有独立持久会话或记忆，也不能向用户追问。系统提示词只改变工作方式；工具和技能才提供实际能力。",
       adminNote:

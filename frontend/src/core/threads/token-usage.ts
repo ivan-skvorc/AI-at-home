@@ -164,6 +164,18 @@ export interface ThreadCostSummary {
   supersededRuns: number;
   /** Remaining currency spend cap, when one is configured and enforceable. */
   spendBudget: SpendBudgetSummary | null;
+  /**
+   * Spend by agents that workflows launched from this conversation ran on their
+   * own threads (Double Plus Ultracode, FORK.md §44). Outside `totalCost`: none
+   * of it is a turn of this conversation. Null when there are none or none of
+   * it is priced, so the header drops the row.
+   */
+  delegated: {
+    cost: number;
+    promoCost: number | null;
+    threads: number;
+    runs: number;
+  } | null;
 }
 
 /**
@@ -260,6 +272,20 @@ export function threadTokenUsageToCostSummary(
     supersededTokens: usage.superseded_tokens ?? 0,
     supersededRuns: usage.superseded_runs ?? 0,
     spendBudget: threadTokenUsageToSpendBudget(usage),
+    delegated:
+      usage.delegated?.cost != null
+        ? {
+            cost: usage.delegated.cost,
+            // Same rule as the headline pair: an equal promo is not a discount.
+            promoCost:
+              usage.delegated.promo_cost != null &&
+              usage.delegated.promo_cost !== usage.delegated.cost
+                ? usage.delegated.promo_cost
+                : null,
+            threads: usage.delegated.threads,
+            runs: usage.delegated.runs,
+          }
+        : null,
   };
 }
 

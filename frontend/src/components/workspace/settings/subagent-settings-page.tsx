@@ -52,6 +52,7 @@ import {
   positiveInteger,
   type OptionalNameListMode,
 } from "./subagent-settings-helpers";
+import { UltracodeLimitsSection } from "./ultracode-limits-section";
 
 type Draft = {
   name: string;
@@ -139,6 +140,7 @@ export function SubagentSettingsPage() {
       description={t.settings.subagents.description}
     >
       <div className="space-y-4">
+        <UltracodeLimitsSection />
         <p className="text-muted-foreground text-sm">
           {t.settings.subagents.executionNote}
         </p>

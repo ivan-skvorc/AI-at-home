@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 import { describe, expect, test } from "@rstest/core";
 
 import { enUS, zhCN } from "@/core/i18n";
+import { EXTENSION_ORIGIN_KEY } from "@/core/messages/utils";
 import {
   DEERFLOW_ORIGIN_KEY,
   labelOfThreadOrigin,
@@ -23,7 +24,12 @@ const CONTRACT = JSON.parse(
     resolve(__dirname, "../../../../../contracts/thread_origin_contract.json"),
     "utf-8",
   ),
-) as { version: number; key: string; kinds: string[] };
+) as {
+  version: number;
+  key: string;
+  kinds: string[];
+  extension_message_key: string;
+};
 
 const thread = (metadata: Record<string, unknown>) => ({ metadata });
 
@@ -31,6 +37,7 @@ describe("threadOriginOf", () => {
   test("the frontend key and kinds equal the contract fixture", () => {
     expect(CONTRACT.key).toBe(DEERFLOW_ORIGIN_KEY);
     expect([...THREAD_ORIGIN_KINDS].sort()).toEqual([...CONTRACT.kinds].sort());
+    expect(CONTRACT.extension_message_key).toBe(EXTENSION_ORIGIN_KEY);
   });
 
   test("deerflow_origin wins over channel_source and the legacy task id", () => {

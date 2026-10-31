@@ -210,6 +210,18 @@ export interface ThreadTokenUsageResponse {
   // is where the user is already looking at money. Null when the cap is off or
   // not enforceable.
   spend_budget?: ThreadSpendBudgetResponse | null;
+  // Spend in child threads an extension ran for this conversation (workflow
+  // agents, linked server-side). Outside `total_cost` and `steps`, because none
+  // of it is a turn of this conversation. Null when there are none.
+  delegated?: ThreadDelegatedUsageResponse | null;
+}
+
+export interface ThreadDelegatedUsageResponse {
+  threads: number;
+  runs: number;
+  tokens: number;
+  cost: number | null;
+  promo_cost: number | null;
 }
 
 export interface ThreadTokenUsageStepResponse {

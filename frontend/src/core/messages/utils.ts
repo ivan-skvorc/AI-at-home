@@ -26,6 +26,36 @@ interface HumanMessageGroup extends GenericMessageGroup<"human"> {
    * is replaced by these user-language parts, and the message is not editable.
    */
   scheduledOrigin?: ScheduledOrigin;
+  /**
+   * Set when an extension posted the message (a workflow's result): it renders
+   * as that extension's card, not as something the user typed, and is not
+   * editable.
+   */
+  extensionOrigin?: ExtensionOrigin;
+}
+
+export interface ExtensionOrigin {
+  namespace: string;
+}
+
+/**
+ * `additional_kwargs` key the Gateway stamps on a message an extension posted
+ * through AgentRuns. Pinned as `extension_message_key` in
+ * `contracts/thread_origin_contract.json`; client copies are stripped.
+ */
+export const EXTENSION_ORIGIN_KEY = "deerflow_extension_origin";
+
+/** The extension that posted a human message, or null for ordinary input. */
+export function extensionOriginOf(message: Message): ExtensionOrigin | null {
+  if (message.type !== "human") {
+    return null;
+  }
+  const raw: unknown = message.additional_kwargs?.[EXTENSION_ORIGIN_KEY];
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+    return null;
+  }
+  const namespace = (raw as Record<string, unknown>).namespace;
+  return typeof namespace === "string" && namespace ? { namespace } : null;
 }
 
 interface AssistantProcessingGroup extends GenericMessageGroup<"assistant:processing"> {}
@@ -163,6 +193,9 @@ export function getMessageGroups(
 
     if (message.type === "human") {
       const scheduledOrigin = scheduledOriginOf(message);
+      const extensionOrigin = scheduledOrigin
+        ? null
+        : extensionOriginOf(message);
       groups.push(
         scheduledOrigin
           ? {
@@ -171,7 +204,14 @@ export function getMessageGroups(
               messages: [message],
               scheduledOrigin,
             }
-          : { id: message.id, type: "human", messages: [message] },
+          : extensionOrigin
+            ? {
+                id: message.id,
+                type: "human",
+                messages: [message],
+                extensionOrigin,
+              }
+            : { id: message.id, type: "human", messages: [message] },
       );
       continue;
     }
@@ -393,9 +433,13 @@ export function getHumanTurnEditPoints(
       turnIndex,
       baseMessageId,
       baseMessageIds,
-      // A scheduled launch's prompt belongs to the task, not to the user.
+      // A scheduled launch's prompt belongs to the task, and an extension's
+      // posted result to that extension; neither is the user's to edit.
       editable:
-        !(group.type === "human" && group.scheduledOrigin) &&
+        !(
+          group.type === "human" &&
+          (group.scheduledOrigin ?? group.extensionOrigin)
+        ) &&
         (turnIndex === 0 || baseMessageId !== null),
     });
   };

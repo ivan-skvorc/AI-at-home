@@ -3787,7 +3787,8 @@ export function InputBox({
                             <WorkflowIcon
                               className={cn(
                                 "mr-2 size-4",
-                                context.mode === "ultracode" && "text-[#dabb5e]",
+                                context.mode === "ultracode" &&
+                                  "text-[#dabb5e]",
                               )}
                             />
                             <div

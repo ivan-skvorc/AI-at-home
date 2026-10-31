@@ -2,15 +2,15 @@ import type { ReasoningEffortValue } from "@/core/models/reasoning";
 
 import type { TokenUsageInlineMode } from "../messages/usage-model";
 import {
-  DEFAULT_ULTRACODE_LIMITS,
-  normalizeUltracodeLimits,
-  type UltracodeLimits,
-} from "../threads/ultracode";
-import {
   DEFAULT_MODEL_PICKER_PREFS,
   type ModelPickerPrefs,
 } from "../models/sorting";
 import type { AgentThreadContext } from "../threads";
+import {
+  DEFAULT_ULTRACODE_LIMITS,
+  normalizeUltracodeLimits,
+  type UltracodeLimits,
+} from "../threads/ultracode";
 
 export const DEFAULT_LOCAL_SETTINGS: LocalSettings = {
   notification: {

@@ -537,6 +537,11 @@ export const enUS: Translations = {
     democracyMode: "Democracy",
     democracyModeDescription:
       "Several different models answer the same question independently, review each other, then one organizer synthesizes the result. Very token-heavy.",
+    ultracodeMode: "Double Plus Ultracode",
+    ultracodeModeDescription:
+      "Plans the work as a workflow script that many agents run in the background; the result comes back to this chat on its own. Inspired by Claude Code's ultracode. Very token-heavy.",
+    ultracodeUnavailable:
+      "Double Plus Ultracode needs the Script workflows extension, which is not enabled. This chat now uses Ultra.",
     reasoningEffort: "Reasoning Effort",
     reasoningEffortMinimal: "Minimal",
     reasoningEffortMinimalDescription: "Retrieval + Direct Output",
@@ -2140,6 +2145,11 @@ export const enUS: Translations = {
   },
 
   // Token Usage
+  extensionMessage: {
+    postedBy: (extension: string) => `Posted by ${extension}`,
+    notTyped: "Sent automatically, not typed by you",
+    showMessage: "Show the full message",
+  },
   tokenUsage: {
     title: "Token Usage",
     label: "Tokens",
@@ -2185,6 +2195,9 @@ export const enUS: Translations = {
     replacedTurns: "Replaced turns",
     replacedTurnsHint:
       "Turns you replaced by editing a message or regenerating an answer. They already cost money, so they stay in the total — but they are not part of the conversation any more, so the chart leaves them out.",
+    workflowAgents: "Workflow agents",
+    workflowAgentsHint: (threads: number, runs: number) =>
+      `Spent by agents that workflows launched from this chat ran in their own conversations (${threads} ${threads === 1 ? "conversation" : "conversations"}, ${runs} ${runs === 1 ? "run" : "runs"}). Not included in the total or the chart above.`,
     budgetLeft: "Budget left",
     budgetPeriod: (period: string) =>
       period === "daily"
@@ -2568,6 +2581,14 @@ export const enUS: Translations = {
       title: "Subagents",
       description:
         "Reusable workers that the Lead Agent and permitted Custom Agents can delegate bounded tasks to.",
+      ultracodeTitle: "Double Plus Ultracode limits",
+      ultracodeDescription:
+        "How large a workflow Double Plus Ultracode may plan. The Script workflows extension still applies the operator's limits, so these can only make a run smaller.",
+      ultracodeMaxAgents: "Agents per workflow",
+      ultracodeMaxParallel: "Agents at once",
+      ultracodeRange: (max: number) => `A whole number from 1 to ${max}.`,
+      ultracodeUnavailable:
+        "The Script workflows extension is not enabled, so the composer does not offer Double Plus Ultracode.",
       executionNote:
         "Each invocation starts a fresh temporary context with no persistent chat or memory and cannot ask the user follow-up questions. A system prompt changes behavior; tools and skills grant actual capabilities.",
       adminNote:
