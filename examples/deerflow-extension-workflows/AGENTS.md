@@ -100,6 +100,11 @@ Proven pre-admission rejection releases child capacity before retiring the lease
 unknown admission errors retain it. Share the slot-release predicate across cleanup paths.
 Acceptance routing counts final Gateway ports, not nginx retry-history strings.
 
+Bundled (FORK.md §44): edit examples/deerflow-extension-workflows, then copy it
+over the committed snapshot uv installs, backend/extensions/sources/deerflow-
+extension-workflows (test_bundled_workflows_extension.py). A relative
+storage_path resolves under DEER_FLOW_HOME; keep pyproject.toml's uv cache-keys.
+
 Double Plus Ultracode (FORK.md §44) lives here: ultracode.py, delivery.py.
 Read limits only from `ToolContext.run_options`/`plugin_run_options` and clamp to
 operator config; never let run options raise a limit. Keep the brief behind the

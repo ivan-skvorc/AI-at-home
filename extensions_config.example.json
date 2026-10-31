@@ -13,7 +13,7 @@
         "@modelcontextprotocol/server-github"
       ],
       "env": {
-        "GITHUB_TOKEN": "$GITHUB_TOKEN"
+        "GITHUB_PERSONAL_ACCESS_TOKEN": "$GITHUB_TOKEN"
       },
       "tool_name_prefix": true,
       "session_init_timeout": 60,

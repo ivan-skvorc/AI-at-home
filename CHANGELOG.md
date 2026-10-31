@@ -37,6 +37,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   config upgrade now also backfills missing `tool_groups`.
 
 ### Changed
+- **Double Plus Ultracode works out of the box:** the Script workflows extension is bundled as a
+  locked snapshot (`backend/extensions/sources/deerflow-extension-workflows`, installed by every
+  `uv sync`, skipped on Windows) and enabled in `config.example.yaml`, with its store under
+  `DEER_FLOW_HOME` (a relative `storage_path` now resolves there). `config_version` 66 adds the
+  record to existing configs once, leaving any record you already have alone, and `make up` /
+  `make docker-start` now run the config upgrade before starting, as the local launchers do.
+  Turn it off with `make extension-disable NAME=workflows`.
 - **upstream:** merged `upstream/main` (225 commits since 2026-10-22). Brings upstream's replies
   and DeerMem updates in the web UI's language, IM channel runs that inherit the configured
   `recursion_limit` (this fork's 250) instead of a fixed 100, a step-limit stop that presents the
@@ -170,6 +177,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   clamped them to Flash.
 
 ### Fixed
+- **GitHub token:** the GitHub MCP server in `extensions_config.example.json` received the token
+  as `GITHUB_TOKEN`, which `@modelcontextprotocol/server-github` ignores, so it ran
+  unauthenticated; it now gets `GITHUB_PERSONAL_ACCESS_TOKEN` from the same `.env` line. Either
+  name works in `.env` for every `$GITHUB_TOKEN` / `$GITHUB_PERSONAL_ACCESS_TOKEN` reference, an
+  unset token no longer stops the Gateway from loading the container-sandbox config `make config`
+  writes (GitHub stays anonymous instead, and `make doctor` says so), and `make setup`'s container
+  sandbox now forwards the token so private clones authenticate.
 - **chat:** a link in the last line of a short answer opens again. The answer's edit and
   read-aloud bar lies over that line, and its empty strip took the click; only its buttons do now.
 - **sandbox:** git inside the AIO sandbox authenticates with `GITHUB_TOKEN` again on the pinned

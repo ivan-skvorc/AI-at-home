@@ -1007,6 +1007,9 @@ dev = [
     { name = "ruff" },
     { name = "textual" },
 ]
+extensions = [
+    { name = "deerflow-extension-workflows", marker = "sys_platform != 'win32'" },
+]
 
 [package.metadata]
 requires-dist = [
@@ -1060,12 +1063,34 @@ dev = [
     { name = "ruff", specifier = ">=0.14.11" },
     { name = "textual", specifier = ">=0.80" },
 ]
-extensions = []
+extensions = [{ name = "deerflow-extension-workflows", marker = "sys_platform != 'win32'", directory = "extensions/sources/deerflow-extension-workflows" }]
 
 [[package]]
 name = "deerflow-extension-api"
 version = "0.2.10"
 source = { editable = "packages/extension-api" }
+
+[[package]]
+name = "deerflow-extension-workflows"
+version = "0.5.0"
+source = { directory = "extensions/sources/deerflow-extension-workflows" }
+dependencies = [
+    { name = "deerflow-extension-api" },
+    { name = "jsonschema" },
+    { name = "langchain" },
+    { name = "quickjs" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "deerflow-extension-api", specifier = ">=0.2.10,<0.3" },
+    { name = "jsonschema", specifier = ">=4.23,<5" },
+    { name = "langchain", specifier = ">=1.2,<2" },
+    { name = "psycopg", extras = ["binary"], marker = "extra == 'postgres'", specifier = ">=3.2,<4" },
+    { name = "quickjs", specifier = "==1.19.4" },
+    { name = "sqlalchemy", marker = "extra == 'postgres'", specifier = ">=2,<3" },
+]
+provides-extras = ["postgres"]
 
 [[package]]
 name = "deerflow-harness"
@@ -2039,7 +2064,7 @@ name = "jinxed"
 version = "2.1.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "ansicon", marker = "sys_platform == 'win32'" },
+    { name = "ansicon" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/39/d7/6e6d474ec5eaeca6a61acc17766bb19563b3a372b4b9d92910078f5fe49f/jinxed-2.1.0.tar.gz", hash = "sha256:7e755b831faa2443d44fb4ce7c0202eb9c3ed39bd5bf1193365888f4f6092b54", size = 61287, upload-time = "2026-07-03T15:46:48.153Z" }
 wheels = [
@@ -4297,7 +4322,7 @@ name = "pyobjc-framework-cocoa"
 version = "12.2.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "pyobjc-core", marker = "sys_platform != 'win32'" },
+    { name = "pyobjc-core" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/51/34/fbe38a204643aa4e1b91391cdce07a34da565a69171ebcad08de7438a556/pyobjc_framework_cocoa-12.2.1.tar.gz", hash = "sha256:b94b37fe5730e5ae1fb0052912cd174e6ec329b0bfba4a012ae5db1014b5864b", size = 3125751, upload-time = "2026-06-19T16:20:05.159Z" }
 wheels = [

@@ -20,7 +20,7 @@
 # ============================================================================
 # Bump this number when the config schema changes.
 # Run `make config-upgrade` to merge new fields into your local config.yaml.
-config_version: 65
+config_version: 66
 
 # Optional operator-owned literal prompt extensions (see CONFIGURATION.md):
 # lead_prompt_overlay:
@@ -5454,3 +5454,26 @@ authorization:
 #                                         # also match a host-owned table name.
 #     config:
 #       label: example                    # extension-private values, if any
+
+# Bundled and on by default: Script workflows, the engine behind the composer's
+# Double Plus Ultracode mode. Its source is examples/deerflow-extension-workflows,
+# installed from the locked snapshot in backend/extensions/sources (POSIX only;
+# SQLite mode wants a single Gateway process). The mode spends tokens only when
+# you pick it. Turn it off with `make extension-disable NAME=workflows`, which
+# keeps this record; the limits are documented in the extension's README.
+plugins:
+  - name: workflows
+    package: deerflow-extension-workflows
+    use: deerflow_extension_workflows:install
+    enabled: true
+    required: false
+    config:
+      enabled: true
+      storage_path: workflows/workflows.sqlite  # relative = under DEER_FLOW_HOME (local and Docker alike)
+      agents: [lead_agent]       # agents a workflow may start
+      concurrency: 8             # at once per workflow (ceiling 16)
+      global_concurrency: 16     # across all workflows (ceiling 32)
+      max_calls: 64              # agents per workflow (ceiling 256)
+      timeout_seconds: 3600      # wall time per workflow (ceiling 14400)
+      shared_workspace: "off"    # "off" | "read" | "write" (quoted: YAML reads off as false)
+      deliver_results: true      # post a finished result back into its chat

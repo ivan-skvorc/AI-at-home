@@ -1385,6 +1385,33 @@ class TestCheckEnvPlaceholders:
     def test_no_config_returns_empty(self, tmp_path):
         assert doctor.check_env_placeholders(tmp_path / "missing.yaml") == []
 
+    _SANDBOX_TOKEN = "config_version: 5\nsandbox:\n  use: deerflow.community.aio_sandbox:AioSandboxProvider\n  environment:\n    GITHUB_TOKEN: $GITHUB_TOKEN\n"
+
+    def test_an_unset_github_token_is_optional_not_a_load_failure(self, tmp_path, monkeypatch):
+        for name in doctor.GITHUB_TOKEN_NAMES:
+            monkeypatch.delenv(name, raising=False)
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text(self._SANDBOX_TOKEN)
+        results = doctor.check_env_placeholders(cfg)
+        assert next(r for r in results if r.label == "referenced env vars present").status == "ok"
+        note = next(r for r in results if r.label == "optional GitHub token")
+        assert note.status == "ok"
+        assert "GITHUB_TOKEN" in note.detail
+
+    def test_the_github_token_counts_as_present_under_either_name(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+        monkeypatch.setenv("GITHUB_PERSONAL_ACCESS_TOKEN", "github_pat_example")
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text(self._SANDBOX_TOKEN)
+        results = doctor.check_env_placeholders(cfg)
+        assert next(r for r in results if r.label == "referenced env vars present").status == "ok"
+        assert not any(r.label == "optional GitHub token" for r in results)
+
+    def test_the_alias_names_mirror_the_harness(self):
+        from deerflow.env import GITHUB_TOKEN_NAMES
+
+        assert doctor.GITHUB_TOKEN_NAMES == GITHUB_TOKEN_NAMES
+
 
 class TestCheckModelPricing:
     """`make doctor` must be able to explain a `—` cost estimate.

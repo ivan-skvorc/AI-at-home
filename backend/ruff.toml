@@ -1,5 +1,10 @@
 line-length = 240
 target-version = "py312"
+# Managed extension snapshots are copies of separately maintained packages
+# (tests/test_bundled_workflows_extension.py pins the bundled one to its
+# source); restyling them here would only make them drift.
+extend-exclude = ["extensions/sources"]
+force-exclude = true  # also when pre-commit passes the files explicitly
 
 [lint]
 select = ["E", "F", "I", "UP"]

@@ -1,0 +1,26 @@
+[project]
+name = "deerflow-extension-workflows"
+version = "0.5.0"
+description = "Opt-in constrained script orchestration of public DeerFlow AgentRuns"
+requires-python = ">=3.12"
+license = "MIT"
+dependencies = ["deerflow-extension-api>=0.2.10,<0.3", "quickjs==1.19.4", "jsonschema>=4.23,<5", "langchain>=1.2,<2"]
+
+[project.entry-points."deerflow.extensions"]
+workflows = "deerflow_extension_workflows:install"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["deerflow_extension_workflows"]
+
+[project.optional-dependencies]
+postgres = ["psycopg[binary]>=3.2,<4", "sqlalchemy>=2,<3"]
+
+[tool.uv]
+# Rebuild the installed copy when any packaged file changes, not only
+# pyproject.toml (uv's default): DeerFlow bundles this extension as a snapshot
+# that `git pull` updates in place, and a stale build would keep old code.
+cache-keys = [{ file = "pyproject.toml" }, { file = "deerflow_extension_workflows/**/*" }]

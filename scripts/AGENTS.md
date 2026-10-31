@@ -213,6 +213,11 @@ Fork: the lookup is `config_upgrade.py --print-config-path` via
 it applies the same order by hand.
 `backend/tests/test_config_version.py::test_config_upgrade_*` and
 `test_config_upgrade_script.py::TestResolveConfigPath` pin this.
+`serve.sh`, `deploy.sh` and `docker.sh` all run it before starting the
+Gateway (the Docker two best-effort): `git pull` + restart is the documented
+update, so a launcher that skips it strands new config. A migration's
+`plugins_from_example` appends a bundled `plugins:` record once and never
+touches one that matches it (`TestBundledPluginDelivery`).
 
 ## ComfyUI Provisioning and Model Files
 

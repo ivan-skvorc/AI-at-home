@@ -43,6 +43,39 @@ class TestStrictResolution:
         assert resolved["channels"]["slack"]["bot_token"] == "xoxb-real"
 
 
+class TestGitHubTokenNames:
+    """One GitHub token under two names, and never a config-load failure.
+
+    `make config` / `make sandbox-enable` write ``GITHUB_TOKEN: $GITHUB_TOKEN``
+    into the active sandbox section whether or not the operator has a token, so
+    a fresh install with no token could not load its config at all. And a token
+    entered in ``.env`` as ``GITHUB_PERSONAL_ACCESS_TOKEN`` (the name GitHub's
+    MCP servers read) left every ``$GITHUB_TOKEN`` reference unresolved.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _no_github_token(self, monkeypatch):
+        for name in ("GITHUB_TOKEN", "GITHUB_PERSONAL_ACCESS_TOKEN"):
+            monkeypatch.delenv(name, raising=False)
+
+    def test_an_unset_token_leaves_github_anonymous_instead_of_failing_the_load(self):
+        config = {"sandbox": {"use": "deerflow.community.aio_sandbox:AioSandboxProvider", "environment": {"GITHUB_TOKEN": "$GITHUB_TOKEN"}}}
+        resolved = AppConfig.resolve_env_variables(config)
+        assert resolved["sandbox"]["environment"]["GITHUB_TOKEN"] == ""
+
+    @pytest.mark.parametrize(("set_name", "referenced"), [("GITHUB_PERSONAL_ACCESS_TOKEN", "GITHUB_TOKEN"), ("GITHUB_TOKEN", "GITHUB_PERSONAL_ACCESS_TOKEN")])
+    def test_either_env_name_satisfies_a_reference_to_the_other(self, monkeypatch, set_name, referenced):
+        monkeypatch.setenv(set_name, "github_pat_example")
+        resolved = AppConfig.resolve_env_variables({"sandbox": {"environment": {"TOKEN": f"${referenced}"}}})
+        assert resolved["sandbox"]["environment"]["TOKEN"] == "github_pat_example"
+
+    def test_the_referenced_name_wins_over_its_alias(self, monkeypatch):
+        monkeypatch.setenv("GITHUB_TOKEN", "named")
+        monkeypatch.setenv("GITHUB_PERSONAL_ACCESS_TOKEN", "alias")
+        resolved = AppConfig.resolve_env_variables({"sandbox": {"environment": {"GITHUB_TOKEN": "$GITHUB_TOKEN"}}})
+        assert resolved["sandbox"]["environment"]["GITHUB_TOKEN"] == "named"
+
+
 class TestLenientDisabledSections:
     """A disabled (``enabled: false``) section no longer crashes on a missing var."""
 

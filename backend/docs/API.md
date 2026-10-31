@@ -860,7 +860,7 @@ their expanded values. Invalid operator-authored JSON/config shapes return
       "command": "npx",
       "args": ["-y", "@modelcontextprotocol/server-github"],
       "env": {
-        "GITHUB_TOKEN": "***"
+        "GITHUB_PERSONAL_ACCESS_TOKEN": "***"
       },
       "description": "GitHub operations"
     }
@@ -892,7 +892,7 @@ deployment needs additional trusted launchers.
       "command": "npx",
       "args": ["-y", "@modelcontextprotocol/server-github"],
       "env": {
-        "GITHUB_TOKEN": "$GITHUB_TOKEN"
+        "GITHUB_PERSONAL_ACCESS_TOKEN": "$GITHUB_TOKEN"
       },
       "description": "GitHub operations"
     }
@@ -910,7 +910,7 @@ deployment needs additional trusted launchers.
       "command": "npx",
       "args": ["-y", "@modelcontextprotocol/server-github"],
       "env": {
-        "GITHUB_TOKEN": "***"
+        "GITHUB_PERSONAL_ACCESS_TOKEN": "***"
       },
       "description": "GitHub operations"
     }
@@ -984,7 +984,7 @@ Content-Type: application/json
     "enabled": true,
     "command": "npx",
     "args": ["-y", "@modelcontextprotocol/server-github"],
-    "env": {"GITHUB_TOKEN": "***"}
+    "env": {"GITHUB_PERSONAL_ACCESS_TOKEN": "***"}
   }
 }
 ```

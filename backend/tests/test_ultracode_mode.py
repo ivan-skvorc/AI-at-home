@@ -402,6 +402,30 @@ async def test_operator_configuration_validates_the_new_options(tmp_path, monkey
         assert bool(loaded.plugins) is ok and bool(diagnostics) is not ok, extra
 
 
+def test_a_relative_storage_path_lives_under_deer_flow_home(tmp_path, monkeypatch):
+    """The bundled config ships one path for every deployment.
+
+    A container sees the runtime home at /app/backend/.deer-flow and a local
+    launch at the checkout's own, so the shipped record names a path relative
+    to DEER_FLOW_HOME, which every launcher exports as an absolute path.
+    """
+    monkeypatch.syspath_prepend(str(ROOT / "examples/deerflow-extension-workflows"))
+    config = {"enabled": True, "storage_path": "workflows/workflows.sqlite", "agents": ["lead_agent"]}
+
+    monkeypatch.setenv("DEER_FLOW_HOME", str(tmp_path))
+    loaded, diagnostics = load_extensions([ExtensionSpec(use="deerflow_extension_workflows:install", config=config)])
+    assert not diagnostics, diagnostics
+    ((_, declaration),) = loaded.plugins
+    service = next(a.handler for a in declaration.backend if a.name == "launch").__self__
+    assert service.config["storage_path"] == str(tmp_path / "workflows" / "workflows.sqlite")
+
+    # Without an absolute home to anchor it, the plugin fails to load (with a
+    # diagnostic) rather than writing next to whatever the working directory is.
+    monkeypatch.delenv("DEER_FLOW_HOME")
+    loaded, diagnostics = load_extensions([ExtensionSpec(use="deerflow_extension_workflows:install", config=config)])
+    assert not loaded.plugins and diagnostics
+
+
 def test_brief_appears_only_on_ultracode_runs_and_clamps_its_limits():
     from deerflow_extension_workflows.ultracode import RESULT_NOTE, UltracodeMode
 

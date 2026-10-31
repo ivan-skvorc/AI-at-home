@@ -257,6 +257,18 @@ else
     echo -e "${GREEN}✓ extensions_config.json: $DEER_FLOW_EXTENSIONS_CONFIG_PATH${NC}"
 fi
 
+# ── config.yaml upgrade ──────────────────────────────────────────────────────
+# Same step scripts/serve.sh runs on every local launch: after a `git pull`,
+# merge what the update added to config.example.yaml (new sections, bundled
+# plugins such as Script workflows) into config.yaml before the gateway mounts
+# it. Best-effort: a host with neither backend/.venv nor PyYAML keeps its
+# config and is told how to upgrade it by hand.
+if [ "$CMD" != "down" ] && [ "$CMD" != "build" ]; then
+    if ! bash "$REPO_ROOT/scripts/config-upgrade.sh"; then
+        echo -e "${YELLOW}⚠ config.yaml was not upgraded; run 'make config-upgrade' (needs PyYAML or 'make install').${NC}"
+    fi
+fi
+
 
 # Compose interpolates ${BETTER_AUTH_SECRET} and ${DEER_FLOW_INTERNAL_AUTH_TOKEN}
 # from the shell environment first and --env-file second. A secret the operator

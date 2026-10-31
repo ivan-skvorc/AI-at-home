@@ -492,6 +492,14 @@ start() {
 
     ensure_env_files
 
+    # ── config.yaml upgrade ──────────────────────────────────────────────
+    # As in scripts/serve.sh: merge what a pulled update added to
+    # config.example.yaml (new sections, bundled plugins such as Script
+    # workflows) before the containers mount config.yaml. Best-effort.
+    if ! bash "$SCRIPT_DIR/config-upgrade.sh"; then
+        echo -e "${YELLOW}⚠ config.yaml was not upgraded; run 'make config-upgrade' (needs PyYAML or 'make install').${NC}"
+    fi
+
     # ── Ollama auto-populate ─────────────────────────────────────────────
     # Reconcile config.yaml's managed models block with the host's installed
     # Ollama models before the containers mount config.yaml. Runs on the HOST
