@@ -69,6 +69,8 @@ EXPECTED_GUIDANCE_PATHS = {
     "frontend/src/components/workspace/chats/AGENTS.md",
     "examples/deerflow-extension-agent-teams/AGENTS.md",
     "examples/deerflow-extension-workflows/AGENTS.md",
+    # The bundled snapshot copies its package byte for byte, guide included.
+    "backend/extensions/sources/deerflow-extension-workflows/AGENTS.md",
     "examples/deerflow-extension-weknora/AGENTS.md",
     "examples/deerflow-extension-knowledge-management/AGENTS.md",
     "examples/deerflow-extension-knowledge-platform/AGENTS.md",

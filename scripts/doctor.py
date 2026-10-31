@@ -31,6 +31,9 @@ import exposure as exposure_module
 # ---------------------------------------------------------------------------
 
 Status = Literal["ok", "warn", "fail", "skip"]
+# Mirrors deerflow.env.GITHUB_TOKEN_NAMES (pinned by test_doctor.py): either
+# name satisfies a reference to the other, and an unset token is optional.
+GITHUB_TOKEN_NAMES = ("GITHUB_TOKEN", "GITHUB_PERSONAL_ACCESS_TOKEN")
 PNPM_SCRIPT_PATH = Path(__file__).resolve().with_name("pnpm.py")
 FRONTEND_DIR = PNPM_SCRIPT_PATH.parent.parent / "frontend"
 
@@ -691,8 +694,16 @@ def check_env_placeholders(config_path: Path) -> list[CheckResult]:
 
     active_missing: list[str] = []
     disabled_missing: list[str] = []
+    github_missing: list[str] = []
+    github_token_set = any(os.environ.get(name) for name in GITHUB_TOKEN_NAMES)
     for var, in_disabled in _collect_env_placeholders(data):
         if os.environ.get(var):
+            continue
+        if var in GITHUB_TOKEN_NAMES:
+            # The config loader resolves these from each other and treats an
+            # unset token as anonymous GitHub access, never a load failure.
+            if not github_token_set:
+                github_missing.append(var)
             continue
         (disabled_missing if in_disabled else active_missing).append(var)
 
@@ -717,6 +728,15 @@ def check_env_placeholders(config_path: Path) -> list[CheckResult]:
                 "disabled-section placeholders",
                 "ok",
                 f"unset but tolerated (enabled: false): {names}",
+            )
+        )
+    if github_missing:
+        names = ", ".join(sorted(set(github_missing)))
+        results.append(
+            CheckResult(
+                "optional GitHub token",
+                "ok",
+                f"{names} unset: GitHub access stays anonymous (public repos only); set GITHUB_TOKEN in .env for private repos",
             )
         )
     return results

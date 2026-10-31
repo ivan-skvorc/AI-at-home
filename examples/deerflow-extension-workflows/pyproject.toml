@@ -18,3 +18,9 @@ packages = ["deerflow_extension_workflows"]
 
 [project.optional-dependencies]
 postgres = ["psycopg[binary]>=3.2,<4", "sqlalchemy>=2,<3"]
+
+[tool.uv]
+# Rebuild the installed copy when any packaged file changes, not only
+# pyproject.toml (uv's default): DeerFlow bundles this extension as a snapshot
+# that `git pull` updates in place, and a stale build would keep old code.
+cache-keys = [{ file = "pyproject.toml" }, { file = "deerflow_extension_workflows/**/*" }]

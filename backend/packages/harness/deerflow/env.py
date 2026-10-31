@@ -6,6 +6,27 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+#: One GitHub token, read under two names: the sandbox's git credential helper
+#: and the bundled skills read GITHUB_TOKEN, GitHub's MCP servers read
+#: GITHUB_PERSONAL_ACCESS_TOKEN. scripts/doctor.py mirrors this tuple.
+GITHUB_TOKEN_NAMES = ("GITHUB_TOKEN", "GITHUB_PERSONAL_ACCESS_TOKEN")
+
+
+def config_env_value(name: str) -> str | None:
+    """Return what a ``$name`` config reference resolves to; None when unset.
+
+    Every name reads the process environment, except the GitHub token names:
+    each falls back to the other, so ``.env`` may use either, and neither set
+    resolves to an empty string. The token is optional (GitHub stays anonymous
+    without it), and the generated container-sandbox config forwards
+    ``$GITHUB_TOKEN`` whether or not one exists, so an unset token must not stop
+    the Gateway from loading its config.
+    """
+    value = os.environ.get(name)
+    if name not in GITHUB_TOKEN_NAMES or value:
+        return value
+    return next((os.environ[alias] for alias in GITHUB_TOKEN_NAMES if os.environ.get(alias)), "")
+
 
 def load_selected_env_file() -> bool:
     """Load DEER_FLOW_ENV_FILE; return False only when the option is unset.

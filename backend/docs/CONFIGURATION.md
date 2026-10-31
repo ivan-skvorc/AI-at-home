@@ -2010,6 +2010,11 @@ The default GitHub API rate limits are quite restrictive. For frequent project r
 1. Uncomment the `GITHUB_TOKEN` line in the `.env` file and add your personal access token
 2. Restart the DeerFlow service to apply changes
 
+`GITHUB_TOKEN` and `GITHUB_PERSONAL_ACCESS_TOKEN` are one token to the config loader: a
+`$GITHUB_TOKEN` or `$GITHUB_PERSONAL_ACCESS_TOKEN` reference in `config.yaml` or
+`extensions_config.json` resolves from whichever is set, and to an empty string (anonymous
+GitHub) when neither is, rather than failing to load.
+
 ## Environment Variables
 
 DeerFlow supports environment variable substitution using the `$` prefix:

@@ -1164,7 +1164,7 @@ async def get_mcp_configuration(request: Request) -> McpConfigResponse:
                     "enabled": true,
                     "command": "npx",
                     "args": ["-y", "@modelcontextprotocol/server-github"],
-                    "env": {"GITHUB_TOKEN": "***"},
+                    "env": {"GITHUB_PERSONAL_ACCESS_TOKEN": "***"},
                     "description": "GitHub MCP server for repository operations"
                 }
             }
@@ -1616,7 +1616,7 @@ async def update_mcp_configuration(request: Request, body: McpConfigUpdateReques
                     "enabled": true,
                     "command": "npx",
                     "args": ["-y", "@modelcontextprotocol/server-github"],
-                    "env": {"GITHUB_TOKEN": "$GITHUB_TOKEN"},
+                    "env": {"GITHUB_PERSONAL_ACCESS_TOKEN": "$GITHUB_TOKEN"},
                     "description": "GitHub MCP server for repository operations"
                 }
             }

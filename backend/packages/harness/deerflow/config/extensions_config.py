@@ -24,6 +24,7 @@ from deerflow.constants import (
     MCP_TASK_NAME_MAX_LENGTH,
     MCP_TASK_SERVER_NAME_MAX_LENGTH,
 )
+from deerflow.env import config_env_value
 
 logger = logging.getLogger(__name__)
 
@@ -566,7 +567,9 @@ class ExtensionsConfig(BaseModel):
     def resolve_env_variables(cls, config: Any) -> Any:
         """Recursively resolve environment variables in the config.
 
-        Environment variables are resolved using the `os.getenv` function. Example: $OPENAI_API_KEY
+        Environment variables are resolved through ``deerflow.env.config_env_value``
+        (the process environment; the GitHub token names alias each other and
+        are optional). Example: $OPENAI_API_KEY
 
         Args:
             config: The config to resolve environment variables in.
@@ -577,7 +580,7 @@ class ExtensionsConfig(BaseModel):
         if isinstance(config, str):
             if not config.startswith("$"):
                 return config
-            env_value = os.getenv(config[1:])
+            env_value = config_env_value(config[1:])
             if env_value is None:
                 # Unresolved placeholder — store empty string so downstream
                 # consumers (e.g. MCP servers) don't receive the literal "$VAR"

@@ -257,6 +257,11 @@ def build_minimal_config(
         # docker/docker-compose.sandbox.yml) so the sandbox bash works out of the
         # box instead of the provider's broken :latest DEFAULT_IMAGE fallback.
         sandbox_config["image"] = "ghcr.io/agent-infra/sandbox:1.11.0"
+        # The container sees only what sandbox.environment forwards; match
+        # `make sandbox-enable` so a token in .env reaches git's credential
+        # helper. An unset token resolves to empty (anonymous GitHub).
+        if not sandbox_config.get("environment"):
+            sandbox_config["environment"] = {"GITHUB_TOKEN": "$GITHUB_TOKEN"}
     data["sandbox"] = sandbox_config
     if channel_connection_providers is not None:
         data["channel_connections"] = _build_channel_connections_config(channel_connection_providers)
