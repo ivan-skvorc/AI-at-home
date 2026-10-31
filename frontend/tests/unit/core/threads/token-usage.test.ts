@@ -555,3 +555,48 @@ test("a genuinely discounted replaced turn keeps both figures", () => {
   });
   expect(summary!.supersededPromoCost).toBe(2);
 });
+
+// --- Workflow agents (Double Plus Ultracode, FORK.md §44) -------------------
+//
+// A workflow's agents run on their own threads. That spend is real but it is no
+// turn of this conversation, so it stays out of the total and the chart and is
+// carried as its own row.
+
+test("workflow agent spend is its own row, outside the total", () => {
+  const summary = threadTokenUsageToCostSummary({
+    ...BUDGET_BASE,
+    currency: "USD",
+    total_cost: 1.5,
+    delegated: {
+      threads: 3,
+      runs: 4,
+      tokens: 900,
+      cost: 2.25,
+      promo_cost: 2.25,
+    },
+  });
+  expect(summary!.totalCost).toBe(1.5);
+  expect(summary!.delegated).toEqual({
+    cost: 2.25,
+    // Equal to the standard figure, so not a discount.
+    promoCost: null,
+    threads: 3,
+    runs: 4,
+  });
+});
+
+test("a thread with no workflow agents, or none priced, drops the row", () => {
+  for (const delegated of [
+    undefined,
+    null,
+    { threads: 1, runs: 1, tokens: 10, cost: null, promo_cost: null },
+  ]) {
+    const summary = threadTokenUsageToCostSummary({
+      ...BUDGET_BASE,
+      currency: "USD",
+      total_cost: 1.5,
+      delegated,
+    });
+    expect(summary!.delegated).toBeNull();
+  }
+});

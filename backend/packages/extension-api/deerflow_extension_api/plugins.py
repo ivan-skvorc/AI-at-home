@@ -9,11 +9,37 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any, Literal
 
 from deerflow_extension_api.agent_runs import AgentRuns
 from deerflow_extension_api.auth import ExtensionPrincipal
 from deerflow_extension_api.settings import FrontendBinding, SettingsContribution, SettingsField, SettingValue
+
+#: Run-context key carrying per-run options a client addresses to plugins by
+#: namespace (API 0.2.10). The host keeps it run-only (never a checkpoint
+#: default) and bounds its size; the values are untrusted user input, so a
+#: plugin validates and clamps them against its own operator configuration.
+PLUGIN_OPTIONS_CONTEXT_KEY = "plugin_options"
+
+_EMPTY_OPTIONS: Mapping[str, Any] = MappingProxyType({})
+
+
+def plugin_run_options(context: Mapping[str, Any] | None, namespace: str) -> Mapping[str, Any]:
+    """Return one plugin's slice of a run context's ``plugin_options``, read-only.
+
+    Middleware reads it from ``runtime.context``; model tools receive the same
+    slice as :attr:`ToolContext.run_options`. Anything malformed reads as empty.
+    """
+    if not isinstance(context, Mapping):
+        return _EMPTY_OPTIONS
+    options = context.get(PLUGIN_OPTIONS_CONTEXT_KEY)
+    if not isinstance(options, Mapping):
+        return _EMPTY_OPTIONS
+    selected = options.get(namespace)
+    if not isinstance(selected, Mapping):
+        return _EMPTY_OPTIONS
+    return MappingProxyType(dict(selected))
 
 
 @dataclass(frozen=True)
@@ -36,10 +62,12 @@ class ToolContext(ActionContext):
     """Host-bound identity for a model tool call.
 
     Resource ownership remains the plugin provider's responsibility,
-    using principal.user_id.
+    using principal.user_id. ``run_options`` is this plugin's slice of the
+    calling run's ``plugin_options`` (see :func:`plugin_run_options`).
     """
 
     thread_id: str | None
+    run_options: Mapping[str, Any] = field(default=_EMPTY_OPTIONS, kw_only=True)
 
 
 @dataclass(frozen=True)

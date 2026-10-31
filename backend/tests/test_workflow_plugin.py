@@ -371,7 +371,8 @@ async def test_uncertain_admission_is_retained_without_automatic_retry(plugin):
 @pytest.mark.parametrize(
     "script",
     [
-        "for(let i=0;i<21;i++)log('progress');return 1;",
+        # One past the default max_logs (100).
+        "for(let i=0;i<101;i++)log('progress');return 1;",
         "return 'x'.repeat(50000);",
         "agent({stepId:'a',agentRef:'lead_agent',task:'blocked'}); return 'early';",
     ],

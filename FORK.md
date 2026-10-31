@@ -4323,3 +4323,97 @@ Coverage: `test_grok_features.py`, `test_grok_xai_tools.py`, the Responses case 
 All run inside `make test` / `pnpm test` and fail loudly, so no checklist row
 was added (CHANGE_CYCLE.md step 4). Depth for agents:
 `backend/packages/harness/deerflow/community/xai/AGENTS.md`.
+
+### 44. Double Plus Ultracode — the plan moves into a script
+
+**Why.** Ultra keeps the plan in the lead's context: every `task` result lands
+there, `_build_subagent_section` is tuned to *avoid* delegating, and the defaults
+cap a run at 3 parallel and 6 total calls. Claude Code's *ultracode*, which this
+is named after and inspired by, takes the opposite shape: the model writes a
+script, a runtime executes it, intermediate results stay in script variables and
+only the final answer reaches the conversation. Roadmap item 32 asked for that
+shape on top of the script-workflows extension, which already ran generated
+JavaScript in a capability-free QuickJS worker with journal-replay recovery. What
+it lacked was scale, a way back into the conversation, a workspace children could
+share, visible spend, and the mode itself.
+
+**Extension-first, with four generic hooks (extension API 0.2.10).** The mode's
+behaviour lives in the extension; core gained only contracts any extension can
+use:
+
+- `plugin_options` — a run-context key addressed to plugins by namespace. Run-only
+  (written to the runtime context, never to checkpointed `configurable`, so a later
+  channel or scheduled run cannot inherit it), bounded to 8 namespaces and 4 KiB,
+  400 on a malformed value. Tools read their slice as `ToolContext.run_options`,
+  middleware through `plugin_run_options(runtime.context, namespace)`. The values
+  are user input: the extension clamps every limit to its operator config, so the
+  Settings numbers can only make a run smaller.
+- `deerflow_extension_origin` — the Gateway stamps `{"namespace": ...}` on the input
+  messages of a run a **plugin-scoped** AgentRuns handle started, from the host-set
+  run origin, and strips client copies (`_SERVER_OWNED_MESSAGE_METADATA_KEYS`). The
+  frontend renders such a message as the extension's card (never editable), and the
+  extension's middleware tells the lead it is untrusted agent output. A browser
+  cannot make its text look posted by an extension, and an extension cannot pass as
+  the user.
+- `create_thread(parent_thread_id=...)` — a server-owned child-thread link
+  (`deerflow_parent_thread_id`, reserved thread metadata). The parent's
+  `/token-usage` reports linked children as `delegated`, outside `total_cost`, so the
+  header's `sum(steps) + superseded_cost == total_cost` identity still holds.
+- `copy_workspace` / `merge_workspace` — host file copies between two of one user's
+  thread user-data roots (`app/gateway/extension_workspaces.py`). Descriptor-relative
+  IO with `O_NOFOLLOW` throughout: links and special files are skipped, never
+  followed. A merge applies a file only while the parent still holds the snapshot
+  version (or still lacks a new path); everything else is a conflict and untouched;
+  deletions are reported, never applied; uploads are never written back. It needs
+  `uses_thread_data_mounts` and fails closed (409) on a synced sandbox. Merges into
+  one parent are serialized in-process.
+
+**The mode is one run option.** The composer's `ultracode` mode is Ultra's flags
+plus `plugin_options["community.workflows"] = {mode, max_agents, max_parallel}`;
+`deriveModeContext` overwrites `plugin_options` with `undefined` on every other mode,
+because a stale value would put a workflow brief on a run nobody asked to plan as a
+script. The extension's `UltracodeMode` middleware appends the brief to the system
+message (so a saved `SYSTEM_PROMPT.md` still gets it) and, without a session-bound
+AgentRuns handle, says the mode is unavailable instead of silently answering as
+Ultra. The composer offers the mode only when `/api/plugins` lists
+`community.workflows` enabled, and moves a remembered selection to Ultra with a toast.
+
+**The return path is exactly once.** On a terminal workflow launched from a
+conversation the extension posts `[Workflow result] ...` through the plugin-scoped
+handle with idempotency key `workflow-result:<run>`: the host admits at most one run
+per key, so a retry or a second Gateway gets the same run back. Delivery state is a
+separate `workflow_deliveries` row, not a record field, because PostgreSQL mode fences
+every record write with the execution lease, which retires at terminal status. A busy
+conversation (active run, open question, interrupt) is retried, never interrupted;
+cancelled workflows post nothing; the message text is a deterministic function of the
+finished record so retries send identical input. Handles are process-local, so after
+a restart a pending delivery waits for the owner's next authenticated workflow action.
+
+**Script API and limits.** `phase()` groups steps; `pipeline()` keeps at most its
+window of agent calls pending. `agent({schema})` validates host-side
+(`jsonschema`) and re-asks up to twice on the same child thread under new attempt
+identities, persisted before admission like the first attempt, so an uncertain re-ask
+is still reconciliation and never a replay. `agent({model})` passes `model_name` in
+the child's run context, where the lead-agent factory enforces `model:use`. Ceilings
+rose to 16 at once, 32 globally, 256 per workflow and 4 hours; `max_calls` stays far
+below ultracode's 1,000 because every step rewrites the whole record. A spend-cap 402
+is now a definitive pre-admission rejection, a clean failure that releases the slot,
+rather than an uncertain admission.
+
+**What a future refactor must not simplify away.** Writing `plugin_options` to
+`configurable` (it would persist into every later run of the thread); dropping
+`EXTENSION_MESSAGE_ORIGIN_KEY` from the server-owned set (browsers could forge the
+card); keying the delivery on anything but the workflow run (exactly-once rests on the
+host's idempotency); storing delivery state in the lease-fenced record; following links
+or applying deletions in a merge; and counting `delegated` inside `total_cost`.
+
+Coverage: `test_ultracode_mode.py` (limits clamp, brief gating, phase/pipeline,
+delivery once/busy/restart/cancel, schema re-asks, per-step model, workspace policy,
+402, size advisory), `test_extension_host_api_0_2_10.py` (run-only options, marker
+stamping and stripping, parent links, delegated roll-up, copy/merge safety),
+`test_workflow_plugin.py`, `test_user_preferences_fork_modes.py`, and the frontend
+`ultracode.test.ts`, `ultracode-submit.dom.test.ts`, `utils.test.ts`, `origin.test.ts`,
+`token-usage.test.ts` and `tests/e2e/ultracode-mode.spec.ts`. All run inside
+`make test` / `pnpm test` / `pnpm test:e2e` and fail loudly, so no checklist row was
+added (CHANGE_CYCLE.md step 4; the table is over its budget). Depth for agents:
+`examples/deerflow-extension-workflows/AGENTS.md` and the extensions guide.

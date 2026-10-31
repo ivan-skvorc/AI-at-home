@@ -3,6 +3,8 @@ import { describe, expect, test } from "@rstest/core";
 
 import {
   areStreamMetadataSnapshotsEqual,
+  EXTENSION_ORIGIN_KEY,
+  extensionOriginOf,
   extractContentFromMessage,
   extractTextFromMessage,
   extractReasoningContentFromMessage,
@@ -2284,6 +2286,47 @@ describe("scheduled task cards and run prompts", () => {
       stop_condition: null,
       standing_notes: ["a"],
     });
+  });
+
+  test("an extension's posted result is its own human group and is not editable", () => {
+    const posted = {
+      id: "workflow-result-1",
+      type: "human",
+      content: "[Workflow result] review (abc) ended: completed.",
+      additional_kwargs: {
+        [EXTENSION_ORIGIN_KEY]: { namespace: "community.workflows" },
+      },
+    } as Message;
+    const groups = getMessageGroups([
+      human as Message,
+      reply as Message,
+      posted,
+    ] as Message[]);
+    const last = groups.filter((group) => group.type === "human").at(-1);
+    expect(last?.type === "human" && last.extensionOrigin).toEqual({
+      namespace: "community.workflows",
+    });
+    expect(
+      getHumanTurnEditPoints(groups, false).get("workflow-result-1"),
+    ).toMatchObject({ editable: false });
+  });
+
+  test("extensionOriginOf ignores typed and malformed messages", () => {
+    expect(extensionOriginOf(human as Message)).toBeNull();
+    for (const value of ["community.workflows", { namespace: "" }, [1]]) {
+      expect(
+        extensionOriginOf({
+          ...human,
+          additional_kwargs: { [EXTENSION_ORIGIN_KEY]: value },
+        } as Message),
+      ).toBeNull();
+    }
+    expect(
+      extensionOriginOf({
+        ...reply,
+        additional_kwargs: { [EXTENSION_ORIGIN_KEY]: { namespace: "x" } },
+      } as Message),
+    ).toBeNull();
   });
 
   test("SCHEDULED_ORIGIN_KEY matches the backend contract", () => {

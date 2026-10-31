@@ -44,6 +44,7 @@
 > **Going further**
 >
 > - 🏛️ **Democracy — several models answer, then decide together** — pick an organizer and panelists; the organizer researches once, briefs them identically, they review each other anonymously, and it synthesizes one answer reporting the split rather than averaging it away. Extremely token-heavy, and the setup page estimates the multiple before you commit.
+> - 🧬 **Double Plus Ultracode — the plan becomes a script** — inspired by Claude Code's *ultracode*. In this composer mode the agent answers a substantive request by writing an inspectable workflow script that many agents run in the background (understand, change, verify, with findings checked by a second agent), and the result **comes back to the same chat on its own**, exactly once. Needs the optional Script workflows extension; agent limits live under **Settings → Subagents**, and workflow agent spend shows as its own row in the cost header.
 > - 🤖 **Generate a custom agent from your history** — point a model at past conversations and let it decide whether a new agent is even worth adding. It is allowed to say **no**, naming the agent that already covers the work. You get an editable **SOUL.md** draft; nothing is saved until you press Create.
 > - 🧵 **Sub-agents that respect what your GPU can hold** — local dispatch asks the card instead of using a fixed number, so five sub-agents on a model that fits once run one at a time rather than queueing invisibly inside Ollama. On by default.
 > - 🧩 **Per-thread subagent model** — in Ultra mode, route `task` subagents to a cheaper or local model (defaults to "Follow lead").
@@ -168,6 +169,7 @@ DeerFlow has newly integrated the intelligent search and crawling toolset indepe
     - [Sub-Agents](#sub-agents)
     - [Local Models Get the Parallelism the GPU Has](#local-models-get-the-parallelism-the-gpu-has)
     - [Democracy — Several Models Answer, Then Decide Together](#democracy--several-models-answer-then-decide-together)
+    - [Double Plus Ultracode — The Plan Becomes a Script](#double-plus-ultracode--the-plan-becomes-a-script)
     - [Generating Agents From Your History](#generating-agents-from-your-history)
     - [Sandbox \& File System](#sandbox--file-system)
     - [Agentic Browser Control](#agentic-browser-control)
@@ -3378,6 +3380,98 @@ subagent_runtime:
 
 There is nothing to switch on: Democracy needs no config keys and is available as
 soon as you have two or more models configured.
+
+### Double Plus Ultracode — The Plan Becomes a Script
+
+**Double Plus Ultracode** is inspired by Claude Code's *ultracode*. Ultra keeps the
+whole plan in the lead agent's head: every subagent result lands in its context,
+and it is tuned to delegate sparingly. Double Plus Ultracode takes the opposite
+shape. For a substantive request the agent writes a **workflow script** (plain
+JavaScript you can read), the [Script workflows extension](examples/deerflow-extension-workflows/README.md)
+runs it in the background across many agents, intermediate results stay in the
+script, and only the final answer comes back to the conversation.
+
+**What a run looks like.** You pick *Double Plus Ultracode* in the composer's mode
+menu and ask. The agent plans the work in phases (usually understand, change,
+verify), launches the script, tells you in a sentence what is running and ends
+its turn. When the workflow finishes, its result is **posted into the same chat
+automatically** and the agent writes the answer from it. The posted message shows
+as a *Posted by Script workflows* card, not as something you typed, and the agent
+is told it is untrusted output from other agents. It is posted **exactly once**,
+even across retries or a second Gateway. If the chat is busy (a run in progress,
+an open question) it waits rather than interrupting. Cancelled workflows post
+nothing. After a Gateway restart a pending result is posted the next time you open
+**Script workflows** or use any workflow tool.
+
+**What the scripts can do.** Besides `agent()`, `parallel()`, `log()` and
+checkpoints, a script can group its work with `phase(title)` (the progress page
+shows steps under each phase), fan out over a long list with
+`pipeline(items, fn, {concurrency})` (one lazy agent per item, never more than the
+window in flight), require an agent's answer to match a JSON `schema` (a mismatch
+is re-asked up to twice, on the same child conversation, under new attempt
+identities), and run a step on a different `model`, so a fan-out can use a cheap or
+local model while the organizer stays strong. The model choice goes through the
+same `model:use` permission check as any other run. `Date` and `Math.random` stay
+unavailable, so a recovered workflow replays exactly.
+
+**Shared workspaces are opt-in.** By default every agent works in its own empty
+workspace. With `shared_workspace: read` in the extension's operator config a step
+can ask for `workspace: "snapshot"`: it starts from a copy of the launching chat's
+workspace and uploads. With `shared_workspace: write` a step can also ask for
+`workspace: "merge"`: when it finishes, its edits to `workspace/` and `outputs/` are
+written back, but **only for files the chat still holds unchanged**. A file that
+changed meanwhile is reported as a conflict and left alone, deletions are reported
+and never applied, and uploads are never written back. So parallel agents can edit
+disjoint files of one project. This needs thread data that the sandbox mounts from
+the host (the local sandbox, or AIO with `thread_data_mounts`); anything else fails
+closed.
+
+**Limits.** Under **Settings → Subagents → Double Plus Ultracode limits** you set the
+most agents one workflow may start and how many run at once (defaults 64 and 8).
+They can only make a run smaller: the extension clamps both to the operator's
+`max_calls` and `concurrency`, whose hard ceilings are 256 agents per workflow and
+16 at once, with up to four hours of wall time. Workflows that may start more than
+25 agents come back with a size advisory, and the agent is told to name the
+planned size before launching one that large.
+
+**What it costs.** It is very token-heavy: every agent is a full run. Each agent
+runs in its own conversation linked to yours, so the chat header's cost dropdown
+shows a **Workflow agents** row with their combined spend. It is kept outside the
+chat's own total and chart, because none of it is a turn of this chat. Your
+`spend_budget` caps still apply: when a cap refuses a new agent the workflow fails
+cleanly ("Spend cap reached; no new agents were started") instead of waiting on a
+reconciliation. There is no hard per-workflow money budget.
+
+**Switching it on.** The mode is only offered when the Script workflows extension
+is installed and enabled (if it is not, a remembered selection falls back to Ultra
+and says so). From the repository root:
+
+```bash
+make extension-install SOURCE="$(pwd)/examples/deerflow-extension-workflows"
+```
+
+then add its operator block to `config.yaml` and restart the Gateway:
+
+```yaml
+plugins:
+  - name: workflows
+    use: deerflow_extension_workflows:install
+    enabled: true
+    config:
+      enabled: true
+      storage_path: /absolute/path/to/workflows.sqlite
+      agents: [lead_agent]       # Agents a workflow may start
+      concurrency: 8             # at once per workflow (ceiling 16)
+      global_concurrency: 16     # across all workflows (ceiling 32)
+      max_calls: 64              # agents per workflow (ceiling 256)
+      timeout_seconds: 3600      # wall time per workflow (ceiling 14400)
+      shared_workspace: "off"    # "off" | "read" | "write" (quoted: YAML reads off as false)
+      deliver_results: true      # post finished results back into the chat
+```
+
+It works from the web app only: channels, schedules and API tokens have no browser
+session to start workflows with, and there the agent says the mode is unavailable
+and answers as Ultra. The lead model needs tool support, as in Ultra.
 
 ### Generating Agents From Your History
 

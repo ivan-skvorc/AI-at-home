@@ -13,6 +13,7 @@ import { useThreadActivityFeature } from "@/core/features/hooks";
 import {
   INFINITE_THREADS_QUERY_KEY_PREFIX,
   mapInfiniteThreadsCache,
+  threadHistoryQueryKey,
   type InfiniteThreadsData,
 } from "./hooks";
 import { isThreadOriginKind, type ThreadOriginKind } from "./origin";
@@ -219,6 +220,21 @@ export function applyThreadActivity(
   );
   if (scheduledTasks) {
     void queryClient.invalidateQueries({ queryKey: SCHEDULED_TASKS_QUERY_KEY });
+  }
+  // An extension can start a run inside a conversation the user already has
+  // open (a Double Plus Ultracode workflow posting its result). Refresh that
+  // conversation's runs and history so an open chat rejoins the run's stream,
+  // or shows its messages if it already finished, without a reload.
+  for (const entry of relevant) {
+    if (entry.origin_kind === "extension") {
+      void queryClient.invalidateQueries({
+        queryKey: ["thread", entry.thread_id],
+        exact: true,
+      });
+      void queryClient.invalidateQueries({
+        queryKey: threadHistoryQueryKey(entry.thread_id),
+      });
+    }
   }
   return { seeded: false, threads, scheduledTasks };
 }

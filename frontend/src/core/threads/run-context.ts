@@ -6,6 +6,10 @@ import {
   democracyRunContext,
   isValidDemocracyPanel,
 } from "./democracy";
+import {
+  type UltracodePluginOptions,
+  ultracodePluginOptions,
+} from "./ultracode";
 
 /**
  * Derive the run context the backend actually reads from the composer's mode.
@@ -26,6 +30,7 @@ export interface ModeDerivedContext {
   democracy_grading?: DemocracyGrading;
   max_total_subagents?: number;
   max_concurrent_subagents?: number;
+  plugin_options?: UltracodePluginOptions;
 }
 
 interface ModeContextInput {
@@ -34,6 +39,8 @@ interface ModeContextInput {
   model_name?: string | undefined;
   democracy_participants?: string[];
   democracy_grading?: DemocracyGrading;
+  /** Settings → Subagents limits; read only on a Double Plus Ultracode run. */
+  ultracode_limits?: unknown;
 }
 
 function defaultReasoningEffort(
@@ -45,6 +52,7 @@ function defaultReasoningEffort(
     // quality it was spent for.
     case "democracy":
     case "ultra":
+    case "ultracode":
       return "high";
     case "pro":
       return "medium";
@@ -59,12 +67,15 @@ export function deriveModeContext(
   context: ModeContextInput,
 ): ModeDerivedContext {
   const { mode } = context;
+  // Double Plus Ultracode is an Ultra run whose plan becomes a workflow script.
+  const ultracode = mode === "ultracode";
   const derived: ModeDerivedContext = {
     thinking_enabled: mode !== "flash",
-    is_plan_mode: mode === "pro" || mode === "ultra" || mode === "democracy",
+    is_plan_mode:
+      mode === "pro" || mode === "ultra" || mode === "democracy" || ultracode,
     // Democracy dispatches its entire panel through `task`, so it is an Ultra
     // run with an organizer brief on top.
-    subagent_enabled: mode === "ultra" || mode === "democracy",
+    subagent_enabled: mode === "ultra" || mode === "democracy" || ultracode,
     reasoning_effort: context.reasoning_effort ?? defaultReasoningEffort(mode),
     // Cleared unless this really is a panel run. The caller spreads the whole
     // thread context first, and the roster is a thread-scoped key that outlives
@@ -76,6 +87,12 @@ export function deriveModeContext(
     // Cleared for the same reason as the roster: a scale left over from a panel
     // thread would otherwise put a scoreboard on an ordinary Ultra answer.
     democracy_grading: undefined,
+    // The one key the extension reads to treat this run as Double Plus
+    // Ultracode. Present on that mode only: anywhere else it would put a
+    // workflow brief on a run the user did not ask to plan as a script.
+    plugin_options: ultracode
+      ? ultracodePluginOptions(context.ultracode_limits)
+      : undefined,
   };
 
   const participants = context.democracy_participants ?? [];

@@ -14,9 +14,10 @@ from deerflow_extension_api import (
 
 from .constants import NAMESPACE
 from .service import Workflows
+from .ultracode import Contributor
 
 
-@extension(api="0.2.9", name="workflows")
+@extension(api="0.2.10", name="workflows")
 def install(registry, config):
     enabled = config.get("enabled", False)
     if type(enabled) is not bool:
@@ -33,21 +34,27 @@ def install(registry, config):
         "pause_timeout_seconds": 86400,
         "cpu_seconds": 5,
         "memory_bytes": 16 * 1024 * 1024,
+        "max_logs": 100,
     }
+    # Hard ceilings sized for Double Plus Ultracode fan-outs (Claude Code's
+    # ultracode runs up to 16 agents at once). max_calls stays well below its
+    # 1,000: each step rewrites the whole workflow record, so record size, not
+    # a policy choice, bounds one run until steps get append-only storage.
     ceilings = {
         "lease_seconds": 60,
-        "concurrency": 4,
-        "global_concurrency": 8,
-        "max_calls": 32,
-        "max_workflows": 8,
-        "max_workflows_per_owner": 4,
-        "timeout_seconds": 600,
+        "concurrency": 16,
+        "global_concurrency": 32,
+        "max_calls": 256,
+        "max_workflows": 16,
+        "max_workflows_per_owner": 8,
+        "timeout_seconds": 14400,
         "admission_timeout_seconds": 20,
         "pause_timeout_seconds": 604800,
-        "cpu_seconds": 10,
-        "memory_bytes": 32 * 1024 * 1024,
+        "cpu_seconds": 60,
+        "memory_bytes": 64 * 1024 * 1024,
+        "max_logs": 500,
     }
-    if set(config) - set(defaults) - {"enabled", "storage_path", "storage_url", "agents"}:
+    if set(config) - set(defaults) - {"enabled", "storage_path", "storage_url", "agents", "shared_workspace", "deliver_results"}:
         raise ValueError("Unknown workflow configuration; currency budgets are not supported")
     storage_url = config.get("storage_url")
     if storage_url is not None and (not isinstance(storage_url, str) or not storage_url.strip()):
@@ -61,6 +68,18 @@ def install(registry, config):
         raise ValueError("lease_seconds must be at least 5")
     if resolved["memory_bytes"] < 4 * 1024 * 1024:
         raise ValueError("memory_bytes must be at least 4 MiB")
+    # off: every agent() gets its own empty workspace (the default). read: a step
+    # may ask for a copy of the launching conversation's workspace. write: it may
+    # also merge its edits back (AgentRuns.merge_workspace, conflicts untouched).
+    resolved["shared_workspace"] = config.get("shared_workspace", "off")
+    if resolved["shared_workspace"] is False:
+        # YAML 1.1 reads an unquoted `off` as false; it can only mean "off".
+        resolved["shared_workspace"] = "off"
+    if resolved["shared_workspace"] not in ("off", "read", "write"):
+        raise ValueError("shared_workspace must be off, read or write")
+    resolved["deliver_results"] = config.get("deliver_results", True)
+    if type(resolved["deliver_results"]) is not bool:
+        raise ValueError("deliver_results must be boolean")
     agents = config.get("agents", [])
     if not isinstance(agents, list) or len(agents) > 32 or any(not isinstance(a, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,80}", a) for a in agents) or len(set(agents)) != len(agents):
         raise ValueError("agents must be a bounded, unique operator allowlist")
@@ -166,13 +185,16 @@ def install(registry, config):
                     ),
                     ModelTool(
                         "launch_workflow",
-                        "Launch an inspectable JavaScript orchestration script in the background and return a workflow run ID. Use agent({stepId,agentRef,task}), parallel([()=>...]), log(text), pause({stepId}) and "
-                        "humanCheckpoint({stepId,sourceStepId,artifactVersion}). Await checkpoints alone after all calls. agent resolves to "
-                        "{output,threadId,runId,status,artifactVersion}; args contains JSON arguments. Use unique step IDs, explicit bounded loops and await every Agent call. Only operator-allowed agent references are admitted with "
-                        "this caller's permissions. Keep request_id stable on retries. After restart, an authenticated browser session can explicitly recover a compatible workflow. "
+                        "Launch an inspectable JavaScript orchestration script in the background and return a workflow run ID. Use agent({stepId,agentRef,task}), parallel([()=>...]), pipeline(items,(item,index)=>..., {concurrency}), "
+                        "phase(title), log(text), pause({stepId}) and humanCheckpoint({stepId,sourceStepId,artifactVersion}). agent also accepts schema (JSON Schema the output must match; mismatches are re-asked up to twice), "
+                        "model (a configured model name for that step) and workspace ('isolated', or when the operator allows it 'snapshot' to start from a copy of this conversation's workspace, 'merge' to also write edits back). "
+                        "Await checkpoints alone after all calls. agent resolves to {output,threadId,runId,status,artifactVersion,attempts,workspace}; args contains JSON arguments. "
+                        "Use unique step IDs, explicit bounded loops and await every Agent call. "
+                        "Only operator-allowed agent references are admitted with this caller's permissions. Keep request_id stable on retries. "
+                        "When launched from a conversation, the final result (or failure) is posted back into it automatically "
+                        "as a new message, exactly once: tell the user what is running, end your turn, and never poll. After restart, an authenticated browser session can explicitly recover a compatible workflow. "
                         "Pass timestamps and randomness in args; Date and Math.random are unavailable. Human decisions are browser-only and cover retained step output. "
-                        "Inspect results on request; do not poll in a loop or equate Agent "
-                        "success with product approval. No hard monetary cost guarantee.",
+                        "Do not equate Agent success with product approval. No hard monetary cost guarantee.",
                         launch_schema,
                         workflows.launch,
                     ),
@@ -197,3 +219,5 @@ def install(registry, config):
         raise RuntimeError("Workflows requires the full-stack plugin host")
     if enabled:
         registry.service(workflows)
+        # Double Plus Ultracode's brief and the result-message note (ultracode.py).
+        registry.middlewares(Contributor(resolved))

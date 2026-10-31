@@ -503,3 +503,21 @@ async def test_rejected_admission_slot_accounting(cluster, monkeypatch, failure)
     await asyncio.wait_for(b.wait_idle(peer), 10)
     assert (await b.get({"run_id": peer}, context(runs)))["status"] == "completed"
     assert len(runs.starts) == 1
+
+
+async def test_result_delivery_leaves_pending_once_across_gateways(cluster):
+    """Delivery state is shared, unfenced SQL: both Gateways race, one wins."""
+    a, b, _ = cluster
+    await asyncio.gather(
+        asyncio.to_thread(a.store.delivery_create, "alice", "run-1", "conversation"),
+        asyncio.to_thread(b.store.delivery_create, "alice", "run-1", "conversation"),
+    )
+    assert (await asyncio.to_thread(a.store.pending_deliveries, "alice")) == ["run-1"]
+    finished = await asyncio.gather(
+        asyncio.to_thread(a.store.delivery_finish, "alice", "run-1", "delivered", run_id="r-a"),
+        asyncio.to_thread(b.store.delivery_finish, "alice", "run-1", "delivered", run_id="r-b"),
+    )
+    assert sorted(finished) == [False, True]
+    record = await asyncio.to_thread(b.store.delivery, "alice", "run-1")
+    assert record["status"] == "delivered" and record["run_id"] in ("r-a", "r-b")
+    assert (await asyncio.to_thread(a.store.pending_deliveries, "alice")) == []

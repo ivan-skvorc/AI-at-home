@@ -14,7 +14,7 @@ No arbitrary JavaScript continuation serialization or hard monetary budget is pr
 
 ## Install and enable
 
-Requires a POSIX Gateway (Linux/macOS), Python 3.12+, the public extension API 0.2.9,
+Requires a POSIX Gateway (Linux/macOS), Python 3.12+, the public extension API 0.2.10,
 and a **single Gateway process per SQLite storage file**, or the shared PostgreSQL
 mode described below. Windows execution is unsupported. SQLite holds an exclusive process lock; another process using that same file
 fails service startup rather than recovering another worker's live workflows.
@@ -55,6 +55,9 @@ plugins:
       pause_timeout_seconds: 86400  # Separate bound for each human/pause wait, maximum 7 days.
       cpu_seconds: 5
       memory_bytes: 16777216
+      max_logs: 100
+      shared_workspace: "off"  # "off" | "read" | "write"; quoted, YAML reads off as false
+      deliver_results: true  # Post a finished workflow's result back into its conversation.
 ```
 
 Find **Script workflows** in the workspace extension directory for the installation
@@ -108,12 +111,41 @@ log('Two checks finished');
 return checks.map(check => check.output);
 ```
 
-`agent()` resolves to `{output, threadId, runId, status: 'success', artifactVersion}`. `output` is the
-last attributable non-tool assistant answer: parsed JSON if valid, otherwise text
-or content blocks. There is no provider-enforced structured output schema in this
-API; validate verdicts in the script before branching. Every Agent call must be
-awaited, including fan-out calls. Returning while child promises are outstanding
-fails the workflow and interrupts tracked children.
+`agent()` resolves to `{output, threadId, runId, status: 'success', artifactVersion, attempts}`
+(plus `workspace` after a merge). `output` is the last attributable non-tool assistant
+answer: parsed JSON if valid, otherwise text or content blocks. Pass `schema` (a JSON
+Schema object, at most 4,000 bytes) to have the host validate the output: a mismatch
+is re-asked on the same child thread up to twice, each under a new attempt identity
+persisted before admission, and still failing after three attempts fails the step.
+Pass `model` to run that step on a configured model; the host enforces `model:use`
+for it exactly as for any run. Every Agent call must be awaited, including fan-out
+calls. Returning while child promises are outstanding fails the workflow and
+interrupts tracked children.
+
+`phase(title)` starts a named group; the steps admitted after it are shown under it
+on the progress page (at most 64 phases). `pipeline(items, fn, {concurrency})` calls
+`fn(item, index)` for each of up to 1,000 items with at most `concurrency` (default
+16, at most 64) calls pending, and resolves to the results in order. The service's
+slots still bound how many children actually run.
+
+`workspace` chooses where a step works: `'isolated'` (the default, an empty
+workspace), `'snapshot'` (a copy of the launching conversation's workspace and
+uploads) or `'merge'` (the same copy, with edits to `workspace/` and `outputs/`
+written back when the step succeeds). The operator's `shared_workspace` allows
+`snapshot` (`read`) or both (`write`); the default `off` allows neither. A merge
+applies a file only while the conversation still holds the version the step copied
+(or still lacks a new path); anything else is reported as a conflict and left alone,
+deletions are reported and never applied, and uploads are never written back. Both
+need a workflow launched from a conversation and thread data the sandbox mounts from
+the host.
+
+When a workflow launched from a conversation ends (completed, failed, waiting for
+input, uncertain or interrupted; not cancelled), its result or failure is posted into
+that conversation as a new message, exactly once: the host admits one run per
+`workflow-result:<run>` idempotency key, and the message is marked as posted by this
+extension. A busy conversation is retried, never interrupted. After a restart, a
+pending result is posted on the owner's next authenticated workflow action. Turn it
+off with `deliver_results: false`.
 
 Agent task inputs allow 16,000 serialized JSON bytes, including wrapping fields
 and file references; step outputs allow 12,000. This leaves room to pass a saved
@@ -128,7 +160,7 @@ Limit faults, human-input waits, and uncertain admissions stop the supervisor ev
 if script code catches their promise rejection.
 
 Step IDs contain 1–80 ASCII letters, digits, underscores or hyphens and cannot
-repeat within a workflow. Attempts are currently always 1. `task` is JSON and
+repeat within a workflow. Attempts are 1 unless a `schema` mismatch is re-asked. `task` is JSON and
 becomes an ordinary human message on a distinct, stably named owned child thread.
 The host binds that thread's target Agent, checks current authorization on each
 operation, and uses its normal agent assembly, models, tools, skills, memory and
@@ -228,9 +260,17 @@ capability handles are serialized. Start new work only after considering prior e
 ## Limits and status
 
 Limits are deployment-controlled, not writable by generated script or browser input.
-Defaults are in the configuration above; ceilings are concurrency 4, global
-concurrency 8, calls 32, active workflows 8 (4 per owner), wall time 600 seconds,
-admission 20 seconds, cumulative worker CPU 10 seconds, JS memory 32 MiB.
+Defaults are in the configuration above; ceilings are concurrency 16, global
+concurrency 32, calls 256, active workflows 16 (8 per owner), wall time 14,400 seconds,
+admission 20 seconds, cumulative worker CPU 60 seconds, JS memory 64 MiB and 500
+progress messages (`max_logs`, default 100). `max_calls` stays far below Claude Code
+ultracode's 1,000 agents because every step rewrites the whole workflow record.
+
+A Double Plus Ultracode run (the composer mode in the web app) may lower
+`max_calls` and `concurrency` for itself through the run's `plugin_options`, the
+user's Settings → Subagents limits; values above the operator's are ignored, so a
+user can make a run smaller but never larger. Such a launch, or any launch whose
+call limit exceeds 25, returns an `advisory` naming the possible size.
 
 Each JS engine entry has a 50 ms CPU interruption limit; stack is 256 KiB. The
 isolated worker additionally has a cumulative POSIX CPU limit, no core dumps,
@@ -246,16 +286,22 @@ turns, so long child runs are limited only by the wall deadline.
 The local wait checks worker exits every 20 ms alongside cancellation and faults;
 an exit triggers prompt failure handling and cleanup of pending child runs.
 
-IPC frames are bounded to 48 KiB. Script JSON encoding is at most 16,000 bytes,
+IPC frames are bounded to 128 KiB (128 messages per frame). Script JSON encoding is at most 16,000 bytes,
 arguments 4,000 bytes, task 8,000 bytes, each captured Agent output/final result
-12,000 bytes. There are at most 20 progress messages of 160 JSON bytes each and
-100 retained workflows per owner. Inspect responses are bounded to 60 KiB. Unicode
+12,000 bytes. Progress messages are 160 JSON bytes each (`max_logs` of them) and
+100 workflows are retained per owner. Inspect responses are bounded to 60 KiB; a
+larger record drops its oldest steps and messages from the response and says how
+many (`steps_omitted`, `logs_omitted`). Unicode
 limits apply to the JSON encoding too, including escapes. Oversized results fail
 explicitly instead of truncating evidence silently. Latest list returns 20 records;
 keep a workflow run ID to inspect older retained records.
 
 There is **no hard dollar-cost limit**. Call/time/CPU limits and ordinary host token
-policies do not constitute a shared workflow currency budget. Unknown configuration
+policies do not constitute a shared workflow currency budget. A host spend cap that
+refuses a child's admission (HTTP 402) fails the workflow cleanly and releases the
+slot; it is never treated as an uncertain admission. Child threads are linked to the
+launching conversation, whose cost header reports their spend as a separate
+*Workflow agents* row. Unknown configuration
 keys such as `max_cost_usd` are rejected. Add a generic, authoritative host budget
 reservation/enforcement contract before advertising that guarantee.
 

@@ -115,6 +115,24 @@ describe("activity responses", () => {
     expect(state).toEqual({ cursor: "10:run-10", readVersion: 4 });
   });
 
+  test("an extension run refreshes that conversation's runs and history", () => {
+    // A workflow posting its result starts a run inside a chat that may be
+    // open: its runs and history must refetch so the chat rejoins the stream.
+    const { queryClient, keys } = seededClient();
+    apply(queryClient, {
+      cursor: "13:run-13",
+      threads: [
+        { thread_id: "chat-1", origin_kind: "extension", status: "running" },
+        { thread_id: "chat-2", origin_kind: "im_channel", status: "success" },
+      ],
+    });
+    expect(keys).toEqual([
+      ...LIST_KEYS,
+      ["thread", "chat-1"],
+      ["thread-messages", "chat-1"],
+    ]);
+  });
+
   test("a server-originated thread invalidates both thread lists", () => {
     const { queryClient, keys } = seededClient();
     const outcome = apply(queryClient, {

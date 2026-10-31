@@ -35,6 +35,9 @@ class Store:
             )
             db.execute("CREATE TRIGGER IF NOT EXISTS workflow_artifacts_immutable BEFORE UPDATE ON workflow_artifacts BEGIN SELECT RAISE(ABORT, 'Artifact versions cannot be overwritten'); END")
             db.execute("CREATE TABLE IF NOT EXISTS workflow_definitions (owner TEXT NOT NULL, name TEXT NOT NULL, version TEXT NOT NULL, script TEXT NOT NULL, PRIMARY KEY(owner,name,version))")
+            # Result delivery outlives the execution lease, so it is never a field of
+            # the lease-fenced workflow record (see delivery.py).
+            db.execute("CREATE TABLE IF NOT EXISTS workflow_deliveries (owner TEXT NOT NULL, workflow TEXT NOT NULL, thread_id TEXT NOT NULL, status TEXT NOT NULL, run_id TEXT, error TEXT, PRIMARY KEY(owner,workflow))")
 
     def capture_artifact(self, owner, workflow, step_id, name, content, *, execution_record=None):
         if not isinstance(content, bytes) or len(content) > 2 * 1024 * 1024:
@@ -153,6 +156,44 @@ class Store:
     def connect(self):
         return sqlite3.connect(self.path, timeout=5)
 
+    # Result delivery (delivery.py). Portable SQL: PostgresStore inherits these.
+    def delivery_create(self, owner, workflow, thread_id):
+        with closing(self.connect()) as db, db:
+            db.execute(
+                "INSERT INTO workflow_deliveries (owner,workflow,thread_id,status) VALUES (?,?,?,'pending') ON CONFLICT DO NOTHING",
+                (owner, workflow, thread_id),
+            )
+
+    def delivery(self, owner, workflow):
+        with closing(self.connect()) as db, db:
+            row = db.execute(
+                "SELECT thread_id,status,run_id,error FROM workflow_deliveries WHERE owner=? AND workflow=?",
+                (owner, workflow),
+            ).fetchone()
+        return dict(zip(("thread_id", "status", "run_id", "error"), row, strict=True)) if row else None
+
+    def delivery_finish(self, owner, workflow, status, *, run_id=None, error=None):
+        """Leave ``pending`` exactly once; a finished delivery never regresses."""
+        with closing(self.connect()) as db, db:
+            return (
+                db.execute(
+                    "UPDATE workflow_deliveries SET status=?,run_id=?,error=? WHERE owner=? AND workflow=? AND status='pending'",
+                    (status, run_id, error, owner, workflow),
+                ).rowcount
+                == 1
+            )
+
+    def delivery_note(self, owner, workflow, error):
+        with closing(self.connect()) as db, db:
+            db.execute(
+                "UPDATE workflow_deliveries SET error=? WHERE owner=? AND workflow=? AND status='pending'",
+                (error, owner, workflow),
+            )
+
+    def pending_deliveries(self, owner):
+        with closing(self.connect()) as db, db:
+            return [row[0] for row in db.execute("SELECT workflow FROM workflow_deliveries WHERE owner=? AND status='pending'", (owner,)).fetchall()]
+
     def create(self, owner, record):
         with closing(self.connect()) as db, db:
             db.execute("BEGIN IMMEDIATE")
@@ -229,6 +270,7 @@ class Store:
                 "DELETE FROM workflow_artifacts WHERE owner=? AND workflow=?",
                 (owner, run_id),
             )
+            db.execute("DELETE FROM workflow_deliveries WHERE owner=? AND workflow=?", (owner, run_id))
             db.execute("DELETE FROM workflows WHERE owner=? AND id=?", (owner, run_id))
 
     def interrupt_unfinished(self):

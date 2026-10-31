@@ -17,7 +17,13 @@ export type GenericReasoningEffort = (typeof GENERIC_REASONING_EFFORTS)[number];
  */
 export type ReasoningEffortValue = GenericReasoningEffort | (string & {});
 
-export type InputMode = "flash" | "thinking" | "pro" | "ultra" | "democracy";
+export type InputMode =
+  | "flash"
+  | "thinking"
+  | "pro"
+  | "ultra"
+  | "democracy"
+  | "ultracode";
 
 const MODE_EFFORT_PRESETS: Record<InputMode, GenericReasoningEffort> = {
   flash: "minimal",
@@ -26,6 +32,8 @@ const MODE_EFFORT_PRESETS: Record<InputMode, GenericReasoningEffort> = {
   ultra: "high",
   // Democracy (fork feature) runs each panelist at Ultra's depth.
   democracy: "high",
+  // Double Plus Ultracode (fork feature) plans a workflow at Ultra's depth.
+  ultracode: "high",
 };
 
 const UNSUPPORTED: ModelReasoningCapabilities = {

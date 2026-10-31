@@ -21,7 +21,20 @@ from __future__ import annotations
 import re
 from collections.abc import Mapping
 
+from deerflow_extension_api.agent_runs import EXTENSION_MESSAGE_ORIGIN_KEY as _EXTENSION_MESSAGE_ORIGIN_KEY
+
 DEERFLOW_ORIGIN_KEY = "deerflow_origin"
+# Message-level twin for extension launches: the Gateway stamps
+# ``additional_kwargs[EXTENSION_MESSAGE_ORIGIN_KEY] = {"namespace": ...}`` on the
+# input messages of a run an extension started (AgentRuns), so a conversation can
+# show "posted by an extension" instead of a bubble the user never typed, and the
+# extension can tell the lead it is extension output. Client copies are stripped.
+# The public name lives in the extension contract, which plugins import.
+EXTENSION_MESSAGE_ORIGIN_KEY = _EXTENSION_MESSAGE_ORIGIN_KEY
+# Thread lineage for extension child threads (``AgentRuns.create_thread(
+# parent_thread_id=...)``): the conversation a child works for. Server-owned like
+# the origin; the parent's token-usage overview rolls the children's spend up.
+DEERFLOW_PARENT_THREAD_KEY = "deerflow_parent_thread_id"
 ORIGIN_KINDS: frozenset[str] = frozenset({"schedule", "im_channel", "github", "extension", "mcp_notification"})
 
 _PROVIDER_RE = re.compile(r"[a-z0-9_-]{1,32}")
@@ -69,6 +82,14 @@ def make_origin(kind: str, *, provider: str | None = None, namespace: str | None
     return origin
 
 
+def extension_message_origin(origin: Mapping | None) -> dict[str, str] | None:
+    """The message marker an extension-launched run's input carries, else ``None``."""
+    admitted = admit_origin(origin) if origin is not None else None
+    if admitted is None or admitted["kind"] != "extension" or "namespace" not in admitted:
+        return None
+    return {"namespace": admitted["namespace"]}
+
+
 def origin_kind_of(metadata: Mapping | None) -> str | None:
     """``metadata["deerflow_origin"]["kind"]`` when well-formed, else ``None`` (interactive or legacy)."""
     if not isinstance(metadata, Mapping):
@@ -77,4 +98,4 @@ def origin_kind_of(metadata: Mapping | None) -> str | None:
     return origin["kind"] if origin is not None else None
 
 
-__all__ = ["DEERFLOW_ORIGIN_KEY", "ORIGIN_KINDS", "admit_origin", "make_origin", "origin_kind_of"]
+__all__ = ["DEERFLOW_ORIGIN_KEY", "DEERFLOW_PARENT_THREAD_KEY", "EXTENSION_MESSAGE_ORIGIN_KEY", "ORIGIN_KINDS", "admit_origin", "extension_message_origin", "make_origin", "origin_kind_of"]

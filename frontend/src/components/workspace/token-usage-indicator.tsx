@@ -298,6 +298,44 @@ export function TokenUsageIndicator({
                   </span>
                 </div>
               )}
+              {cost.delegated && cost.currency && (
+                // Workflow agents run on their own threads, so their spend is
+                // neither a turn of this chat nor inside its total. Named here so
+                // a Double Plus Ultracode run's real cost is visible from the
+                // conversation that launched it.
+                <div
+                  data-testid="token-usage-workflow-agents"
+                  className="mt-1 flex items-center justify-between gap-4"
+                >
+                  <span className="text-muted-foreground flex items-center gap-1">
+                    {t.tokenUsage.workflowAgents}
+                    <Tooltip
+                      content={
+                        <span className="block max-w-72 text-xs leading-relaxed">
+                          {t.tokenUsage.workflowAgentsHint(
+                            cost.delegated.threads,
+                            cost.delegated.runs,
+                          )}
+                        </span>
+                      }
+                    >
+                      <CircleHelpIcon
+                        className="text-muted-foreground size-3 cursor-help"
+                        aria-label={t.tokenUsage.workflowAgentsHint(
+                          cost.delegated.threads,
+                          cost.delegated.runs,
+                        )}
+                      />
+                    </Tooltip>
+                  </span>
+                  <span className="font-mono">
+                    {formatCost(
+                      cost.delegated.promoCost ?? cost.delegated.cost,
+                      cost.currency,
+                    )}
+                  </span>
+                </div>
+              )}
               {cost.steps.length > 0 && cost.currency && (
                 // The totals above say what the conversation cost; this says
                 // which turn cost it. Only rendered once there is a step to

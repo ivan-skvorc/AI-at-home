@@ -6,6 +6,11 @@ import {
   type ModelPickerPrefs,
 } from "../models/sorting";
 import type { AgentThreadContext } from "../threads";
+import {
+  DEFAULT_ULTRACODE_LIMITS,
+  normalizeUltracodeLimits,
+  type UltracodeLimits,
+} from "../threads/ultracode";
 
 export const DEFAULT_LOCAL_SETTINGS: LocalSettings = {
   notification: {
@@ -49,6 +54,9 @@ export const DEFAULT_LOCAL_SETTINGS: LocalSettings = {
   memory: {
     enabled: false,
   },
+  // Double Plus Ultracode's agent limits (Settings → Subagents). The Script
+  // workflows extension clamps both to the operator's limits.
+  ultracode: DEFAULT_ULTRACODE_LIMITS,
   // Per-browser model-picker preference (sort key/direction + group-by-provider
   // toggle). Defaults to config order, ungrouped, so the picker looks unchanged
   // until the user opts into sorting/grouping.
@@ -185,6 +193,9 @@ export interface LocalSettings {
     // operator master switch `memory.enabled` in config.yaml.
     enabled: boolean;
   };
+  // Double Plus Ultracode limits (fork feature, FORK.md §44): most agents one
+  // workflow may start, and how many at once. Sent with each run in that mode.
+  ultracode: UltracodeLimits;
   // How the model dropdown orders/groups its entries (fork feature). Per browser,
   // shared across threads. See `core/models/sorting.ts`.
   modelPicker: ModelPickerPrefs;
@@ -201,7 +212,14 @@ export interface LocalSettings {
   > & {
     model_name?: string | undefined;
     subagent_model_name?: string | undefined;
-    mode: "flash" | "thinking" | "pro" | "ultra" | "democracy" | undefined;
+    mode:
+      | "flash"
+      | "thinking"
+      | "pro"
+      | "ultra"
+      | "democracy"
+      | "ultracode"
+      | undefined;
     reasoning_effort?: ReasoningEffortValue;
     // Per-conversation internet switch (fork feature, FORK.md §27). Sent to the
     // backend in the run context; `false` strips every internet-reaching tool
@@ -235,6 +253,10 @@ export function mergeLocalSettings(
       ...DEFAULT_LOCAL_SETTINGS.memory,
       ...settings?.memory,
     },
+    ultracode: normalizeUltracodeLimits({
+      ...DEFAULT_LOCAL_SETTINGS.ultracode,
+      ...settings?.ultracode,
+    }),
     modelPicker: {
       ...DEFAULT_LOCAL_SETTINGS.modelPicker,
       ...settings?.modelPicker,

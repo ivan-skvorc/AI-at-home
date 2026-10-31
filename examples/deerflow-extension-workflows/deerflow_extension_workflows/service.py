@@ -13,20 +13,33 @@ import time
 import uuid
 from pathlib import Path
 
-from deerflow_extension_api import AgentRunError
+from deerflow_extension_api import AgentRunError, WorkspaceSnapshot
+from deerflow_extension_api.plugins import ToolContext
+from jsonschema import Draft202012Validator
+from jsonschema.exceptions import SchemaError
 
 from .artifacts import Artifacts
 from .cluster import Cluster
 from .constants import NAMESPACE as NAMESPACE
+from .delivery import Delivery
 from .lifecycle import Lifecycle
 from .postgres import LeaseLost
 from .recovery import RECOVERY_VERSION, Recovery
 from .store import TERMINAL, Store
+from .ultracode import MODE, SIZE_WARNING_AGENTS, run_limits
 
-FRAME = 48 * 1024
+FRAME = 128 * 1024
 TURN_LIMIT = 10000
 AGENT_TASK_BYTES = 16000
 AGENT_OUTPUT_BYTES = 12000
+SCHEMA_BYTES = 4000
+#: Re-asks after a schema mismatch, each under a new attempt identity.
+MAX_REASKS = 2
+PHASE_LIMIT = 64
+FRAME_MESSAGES = 128
+#: Copies and merges of a conversation's workspace are bounded file IO, not admission.
+WORKSPACE_SECONDS = 120
+WORKSPACE_MODES = {"off": ("isolated",), "read": ("isolated", "snapshot"), "write": ("isolated", "snapshot", "merge")}
 logger = logging.getLogger(__name__)
 
 
@@ -70,6 +83,9 @@ def project(record, detail=True):
         fingerprint=record["fingerprint"],
         definition=record.get("definition"),
         configuration_revision=record.get("configuration_revision"),
+        mode=record.get("mode"),
+        phases=copy.deepcopy(record.get("phases", [])),
+        launched_from_conversation=bool(record.get("origin_thread_id")),
     )
     if detail:
         result.update(
@@ -78,7 +94,7 @@ def project(record, detail=True):
             pause_expires_at=record.get("pause_expires_at"),
             script=record["script"],
             args=record["args"],
-            logs=record["logs"],
+            logs=list(record["logs"]),
             result=record.get("result"),
             steps=[
                 {
@@ -90,16 +106,25 @@ def project(record, detail=True):
                         "output",
                         "configuration_evidence",
                         "input_artifacts",
+                        "workspace_base",
                     )
                 }
                 for step in record["steps"]
             ],
         )
+    # Larger fan-outs can outgrow one 60 KiB read (the model-tool result cap is
+    # 64 KiB): keep the newest steps and logs and say how many were left out.
+    for key in ("steps", "logs", "phases"):
+        items = result.get(key)
+        while items and len(encoded(result, 1 << 30).encode("utf-8")) > 60 * 1024:
+            dropped = max(1, len(items) // 8)
+            del items[:dropped]
+            result[f"{key}_omitted"] = result.get(f"{key}_omitted", 0) + dropped
     encoded(result, 60 * 1024)
     return result
 
 
-class Workflows(Cluster, Recovery, Lifecycle, Artifacts):
+class Workflows(Cluster, Recovery, Lifecycle, Artifacts, Delivery):
     def __init__(self, config):
         self.config = config
         self.clustered = bool(config.get("storage_url"))
@@ -115,6 +140,8 @@ class Workflows(Cluster, Recovery, Lifecycle, Artifacts):
         self.control_lock = asyncio.Lock()
         self.write_lock = asyncio.Lock()
         self.global_slots = asyncio.Semaphore(config["global_concurrency"])
+        self.deliveries = {}
+        self.delivery_rearm = {}
         self.lockfile = None
 
     async def start(self, deps):
@@ -183,6 +210,12 @@ class Workflows(Cluster, Recovery, Lifecycle, Artifacts):
             await asyncio.gather(*list(self.admissions), return_exceptions=True)
         if workers:
             await asyncio.gather(*workers, return_exceptions=True)
+        # Deliveries stay pending in the store; the next session re-arms them.
+        if self.deliveries:
+            deliveries = list(self.deliveries.values())
+            for delivery in deliveries:
+                delivery.cancel()
+            await asyncio.gather(*deliveries, return_exceptions=True)
         if self.heartbeats:
             heartbeats = list(self.heartbeats.values())
             for heartbeat in heartbeats:
@@ -265,6 +298,12 @@ class Workflows(Cluster, Recovery, Lifecycle, Artifacts):
                 "memory_bytes",
             )
         }
+        # A Double Plus Ultracode run may lower its own agent limits (the user's
+        # Settings); run_limits clamps them to the operator values above.
+        tool_launch = isinstance(context, ToolContext)
+        per_run = run_limits(context.run_options, self.config) if tool_launch else None
+        if per_run is not None:
+            limits.update(per_run)
         script_hash = hashlib.sha256(script.encode()).hexdigest()
         args_hash = identity(args)
         fingerprint = identity(
@@ -299,13 +338,25 @@ class Workflows(Cluster, Recovery, Lifecycle, Artifacts):
             "steps": [],
             "logs": [],
             "result": None,
+            "mode": MODE if per_run is not None else None,
+            "phases": [],
+            # The conversation that launched it: where the result is posted, the
+            # workspace a step may copy, and the parent its child threads link to.
+            "origin_thread_id": context.thread_id if tool_launch else None,
         }
+        await self.resume_deliveries(owner, context.agent_runs)
         # SQLite threads survive caller cancellation. Retain a service-owned task
         # through commit AND supervisor publication, shielding only the caller's wait.
         admission = asyncio.create_task(self.admit(owner, record, context))
         self.admissions.add(admission)
         admission.add_done_callback(self.admission_finished)
-        return await asyncio.shield(admission)
+        admitted = await asyncio.shield(admission)
+        if limits["max_calls"] > SIZE_WARNING_AGENTS:
+            admitted = {
+                **admitted,
+                "advisory": f"This workflow may start up to {limits['max_calls']} agents ({limits['concurrency']} at once). Large workflows cost more; there is no hard monetary budget.",
+            }
+        return admitted
 
     def admission_finished(self, task):
         self.admissions.discard(task)
@@ -332,6 +383,9 @@ class Workflows(Cluster, Recovery, Lifecycle, Artifacts):
                 raise ValueError("Active workflow limit")
             record, created = await asyncio.to_thread(self.store.create, owner, record)
             if created:
+                if record.get("origin_thread_id") and self.config["deliver_results"]:
+                    # Before publication, so the supervisor cannot finish first.
+                    await asyncio.to_thread(self.store.delivery_create, owner, record["id"], record["origin_thread_id"])
                 self.publish(self.new_entry(owner, record, context.agent_runs))
             return {"run_id": record["id"], "status": record["status"]}
 
@@ -342,7 +396,7 @@ class Workflows(Cluster, Recovery, Lifecycle, Artifacts):
             "runs": runs,
             "cancel": asyncio.Event(),
             "tasks": set(),
-            "slots": asyncio.Semaphore(self.config["concurrency"]),
+            "slots": asyncio.Semaphore(record["limits"]["concurrency"]),
             "fault": None,
         }
 
@@ -370,10 +424,13 @@ class Workflows(Cluster, Recovery, Lifecycle, Artifacts):
 
     async def get(self, payload, context):
         owner = self.owner(context)
-        return project(await asyncio.to_thread(self.store.get, owner, text(payload.get("run_id"), 64)))
+        await self.resume_deliveries(owner, context.agent_runs)
+        record = await asyncio.to_thread(self.store.get, owner, text(payload.get("run_id"), 64))
+        return {**project(record), "delivery": await asyncio.to_thread(self.store.delivery, owner, record["id"])}
 
     async def list(self, payload, context):
         owner = self.owner(context)
+        await self.resume_deliveries(owner, context.agent_runs)
         records = await asyncio.to_thread(self.store.list, owner)
         return {"runs": [project(r, False) for r in records], "limit": 20}
 
@@ -427,19 +484,41 @@ class Workflows(Cluster, Recovery, Lifecycle, Artifacts):
         await asyncio.to_thread(self.store.delete, owner, run_id)
         return {"deleted": True}
 
-    async def step(self, entry, message, *, replay=False):
+    async def step(self, entry, message, *, replay=False, phase=None):
         owner, record, runs = entry["owner"], entry["record"], entry["runs"]
         payload = message.get("payload")
         response = {"id": message["id"]}
         row = None
         try:
-            if not isinstance(payload, dict) or not {"stepId", "agentRef", "task"} <= set(payload) or set(payload) - {"stepId", "agentRef", "task", "artifacts"}:
+            if not isinstance(payload, dict) or not {"stepId", "agentRef", "task"} <= set(payload) or set(payload) - {"stepId", "agentRef", "task", "artifacts", "schema", "model", "workspace"}:
                 raise ValueError("agent requires stepId, agentRef, task")
             step_id = text(payload["stepId"], 80)
             if not re.fullmatch(r"[A-Za-z0-9_-]{1,80}", step_id):
                 raise ValueError("stepId must contain ASCII letters, digits, underscores or hyphens")
             if payload["agentRef"] not in self.config["agents"]:
                 raise ValueError("Agent reference not permitted by operator")
+            schema = payload.get("schema")
+            if schema is not None:
+                if not isinstance(schema, dict):
+                    raise ValueError("schema must be a JSON Schema object")
+                encoded(schema, SCHEMA_BYTES)
+                try:
+                    Draft202012Validator.check_schema(schema)
+                except SchemaError:
+                    raise ValueError("schema is not a valid JSON Schema") from None
+            # The host authorizes model:use for this name at child admission,
+            # exactly as for task(model=...); this only bounds the string.
+            model = payload.get("model")
+            if model is not None and (not isinstance(model, str) or not re.fullmatch(r"[A-Za-z0-9._:/@+-]{1,200}", model)):
+                raise ValueError("model must be a configured model name")
+            workspace = payload.get("workspace", "isolated")
+            if workspace not in ("isolated", "snapshot", "merge"):
+                raise ValueError("workspace must be isolated, snapshot or merge")
+            if workspace not in WORKSPACE_MODES[self.config["shared_workspace"]]:
+                raise ValueError(f"The operator does not allow workspace '{workspace}'")
+            origin = record.get("origin_thread_id")
+            if workspace != "isolated" and not origin:
+                raise ValueError("A shared workspace needs a workflow launched from a conversation")
             versions = payload.get("artifacts", [])
             if not isinstance(versions, list) or len(versions) > 16 or any(not isinstance(v, str) for v in versions):
                 raise ValueError("artifacts must contain at most 16 version IDs")
@@ -455,12 +534,20 @@ class Workflows(Cluster, Recovery, Lifecycle, Artifacts):
                     }
                 )
             task = payload["task"]
+            extras = {}
             if references:
-                task = {
-                    "task": task,
-                    "approved_artifacts": references,
-                    "artifact_instruction": "Read these exact versions using read_workflow_artifact (run_id, version, offset). Follow next_offset until null. Do not use source file paths.",
-                }
+                extras.update(
+                    approved_artifacts=references,
+                    artifact_instruction="Read these exact versions using read_workflow_artifact (run_id, version, offset). Follow next_offset until null. Do not use source file paths.",
+                )
+            if schema is not None:
+                extras.update(output_schema=schema, output_instruction="Reply with only a JSON value that matches output_schema: no prose and no code fence.")
+            if workspace != "isolated":
+                extras["workspace_note"] = "Your /mnt/user-data/workspace and uploads start as a copy of the launching conversation's." + (
+                    " When you finish, your changes to workspace and outputs are merged back into it; change only the files your task names." if workspace == "merge" else " Your changes stay in this copy."
+                )
+            if extras:
+                task = {"task": task, **extras}
             # Stable identity/input are recorded BEFORE thread creation or run admission.
             thread_id = "workflow-" + identity([record["id"], step_id])[:32]
             message_id = "workflow-" + identity([record["id"], step_id, 1])[:32]
@@ -473,10 +560,11 @@ class Workflows(Cluster, Recovery, Lifecycle, Artifacts):
                     }
                 ]
             }
+            run_context = {"context": {"model_name": model}} if model else {}
             existing = next((s for s in record["steps"] if s["step_id"] == step_id), None) if replay else None
             if existing:
                 row = existing
-                if row["input"] != input or row["agent_ref"] != payload["agentRef"]:
+                if row["input"] != input or row["agent_ref"] != payload["agentRef"] or row.get("model") != model or row.get("workspace", "isolated") != workspace:
                     raise ValueError("Recovery step input changed")
                 if row["status"] == "completed":
                     response["value"] = self.step_result(row)
@@ -487,7 +575,7 @@ class Workflows(Cluster, Recovery, Lifecycle, Artifacts):
             if not existing:
                 if any(s["step_id"] == step_id for s in record["steps"] + record.get("checkpoints", []) + record.get("artifacts", [])):
                     raise ValueError("Step ID already used")
-                if len(record["steps"]) >= self.config["max_calls"]:
+                if len(record["steps"]) >= record["limits"]["max_calls"]:
                     entry["fault"] = "Total Agent call limit"
                     raise ValueError(entry["fault"])
                 row = {
@@ -501,8 +589,16 @@ class Workflows(Cluster, Recovery, Lifecycle, Artifacts):
                     "input_artifacts": references,
                     "idempotency_key": f"{record['id']}:{message_id}:1",
                 }
+                for key, value in (("model", model), ("schema", schema), ("phase", phase)):
+                    if value is not None:
+                        row[key] = value
+                if workspace != "isolated":
+                    row["workspace"] = workspace
                 record["steps"].append(row)
+                if len(record["steps"]) == SIZE_WARNING_AGENTS + 1 and len(record["logs"]) < self.config["max_logs"]:
+                    record["logs"].append(f"Size advisory: more than {SIZE_WARNING_AGENTS} agents started; large workflows cost more.")
                 await self.save(owner, record)
+            message_id = row.get("message_id", message_id)
             async with entry["slots"], self.global_slots, self.cluster_slot(entry, row):
                 if entry["cancel"].is_set() or entry["fault"]:
                     row["status"] = "cancelled"
@@ -526,16 +622,34 @@ class Workflows(Cluster, Recovery, Lifecycle, Artifacts):
                             assistant_id=payload["agentRef"],
                             thread_id=thread_id,
                             metadata={"title": f"Workflow {record['id'][:8]} / {step_id}"},
+                            # Links the child to its conversation for spend roll-up.
+                            **({"parent_thread_id": origin} if origin else {}),
                         )
-                        if entry["cancel"].is_set():
-                            row["status"] = "cancelled"
-                            raise ValueError("Workflow stopping")
-                        row["status"] = "admitting"
+                    if workspace != "isolated" and "workspace_base" not in row:
+                        try:
+                            async with asyncio.timeout(WORKSPACE_SECONDS):
+                                snapshot = await runs.copy_workspace(source_thread_id=origin, thread_id=thread_id)
+                        except TimeoutError:
+                            # Nothing was admitted: a plain failure, not an uncertain admission.
+                            row.update(status="failed", admission_rejected=True)
+                            raise ValueError("Copying the conversation workspace timed out") from None
+                        row["workspace_base"] = {
+                            "source_thread_id": snapshot.source_thread_id,
+                            "files": dict(snapshot.files) if workspace == "merge" else {},
+                            "count": len(snapshot.files),
+                        }
                         await self.save(owner, record)
+                    if entry["cancel"].is_set():
+                        row["status"] = "cancelled"
+                        raise ValueError("Workflow stopping")
+                    row["status"] = "admitting"
+                    await self.save(owner, record)
+                    async with asyncio.timeout(self.config["admission_timeout_seconds"]):
                         run = await runs.start(
                             thread_id=thread_id,
                             input=input,
                             idempotency_key=row["idempotency_key"],
+                            **run_context,
                             **self.dispatch_fence(record),
                         )
                     row.update(
@@ -547,54 +661,96 @@ class Workflows(Cluster, Recovery, Lifecycle, Artifacts):
                 else:
                     run = await runs.get(thread_id=thread_id, run_id=row["run_id"])
                 while True:
-                    if entry["cancel"].is_set() or entry["fault"]:
-                        if not entry.get("lease_lost"):
-                            await self.cancel_child(runs, row, **({"record": record} if self.clustered else {}))
-                        raise ValueError("Workflow stopping")
+                    while True:
+                        if entry["cancel"].is_set() or entry["fault"]:
+                            if not entry.get("lease_lost"):
+                                await self.cancel_child(runs, row, **({"record": record} if self.clustered else {}))
+                            raise ValueError("Workflow stopping")
+                        async with asyncio.timeout(5):
+                            run = await runs.get(thread_id=thread_id, run_id=run.run_id)
+                        if run.status not in ("pending", "running"):
+                            break
+                        await asyncio.sleep(0.02)
+                    row.update(child_status=run.status, stop_reason=run.stop_reason)
                     async with asyncio.timeout(5):
-                        run = await runs.get(thread_id=thread_id, run_id=run.run_id)
-                    if run.status not in ("pending", "running"):
-                        break
-                    await asyncio.sleep(0.02)
-                row.update(child_status=run.status, stop_reason=run.stop_reason)
-                async with asyncio.timeout(5):
-                    state = await runs.get_state(thread_id=thread_id)
-                messages = state.get("values", {}).get("messages", [])
-                if state.get("next") or state.get("interrupts") or pending_input(messages):
-                    row["status"] = "waiting_input"
-                    entry["fault"] = "waiting_input"
-                    raise ValueError("Child requires input; workflow resume cannot answer child interrupts")
-                if run.status != "success":
-                    row["status"] = "failed"
-                    raise ValueError("Agent run did not succeed")
-                # Dynamic context keeps X on a hidden system reminder and moves
-                # the visible human input to X__user. Never anchor on the reminder
-                # or hidden memory; genuinely later human messages still conflict.
-                marker = next(
-                    (
-                        i
-                        for i, m in enumerate(messages)
-                        if m.get("type", m.get("role")) in ("human", "user")
-                        and not m.get("additional_kwargs", {}).get("hide_from_ui")
-                        and (m.get("id") in (message_id, f"{message_id}__user") or m.get("additional_kwargs", {}).get("run_id") == run.run_id)
-                    ),
-                    None,
-                )
-                if marker is None or any(m.get("type", m.get("role")) in ("human", "user") for m in messages[marker + 1 :]):
-                    row["status"] = "result_conflict"
-                    raise ValueError("Thread advanced before result collection")
-                answers = [m for m in messages[marker + 1 :] if m.get("type", m.get("role")) in ("ai", "assistant") and not m.get("tool_calls")]
-                if not answers:
-                    raise ValueError("Agent completed without an answer")
-                content = answers[-1].get("content")
-                if isinstance(content, str):
-                    try:
-                        output = json.loads(content)
-                    except ValueError:
+                        state = await runs.get_state(thread_id=thread_id)
+                    messages = state.get("values", {}).get("messages", [])
+                    if state.get("next") or state.get("interrupts") or pending_input(messages):
+                        row["status"] = "waiting_input"
+                        entry["fault"] = "waiting_input"
+                        raise ValueError("Child requires input; workflow resume cannot answer child interrupts")
+                    if run.status != "success":
+                        row["status"] = "failed"
+                        raise ValueError("Agent run did not succeed")
+                    # Dynamic context keeps X on a hidden system reminder and moves
+                    # the visible human input to X__user. Never anchor on the reminder
+                    # or hidden memory; genuinely later human messages still conflict.
+                    marker = next(
+                        (
+                            i
+                            for i, m in enumerate(messages)
+                            if m.get("type", m.get("role")) in ("human", "user")
+                            and not m.get("additional_kwargs", {}).get("hide_from_ui")
+                            and (m.get("id") in (message_id, f"{message_id}__user") or m.get("additional_kwargs", {}).get("run_id") == run.run_id)
+                        ),
+                        None,
+                    )
+                    if marker is None or any(m.get("type", m.get("role")) in ("human", "user") for m in messages[marker + 1 :]):
+                        row["status"] = "result_conflict"
+                        raise ValueError("Thread advanced before result collection")
+                    answers = [m for m in messages[marker + 1 :] if m.get("type", m.get("role")) in ("ai", "assistant") and not m.get("tool_calls")]
+                    if not answers:
+                        raise ValueError("Agent completed without an answer")
+                    content = answers[-1].get("content")
+                    if isinstance(content, str):
+                        try:
+                            output = json.loads(content)
+                        except ValueError:
+                            output = content
+                    else:
                         output = content
-                else:
-                    output = content
-                encoded(output, AGENT_OUTPUT_BYTES)
+                    encoded(output, AGENT_OUTPUT_BYTES)
+                    problem = None
+                    if schema is not None:
+                        problem = next(iter(sorted(Draft202012Validator(schema).iter_errors(output), key=lambda error: list(error.absolute_path))), None)
+                    if problem is None:
+                        break
+                    if row["attempt"] > MAX_REASKS:
+                        row["status"] = "failed"
+                        raise ValueError(f"Output did not match the schema after {row['attempt']} attempts: {problem.message[:160]}")
+                    # Re-ask on the same child thread under a new attempt identity,
+                    # persisted before admission like the first attempt.
+                    row["attempt"] += 1
+                    message_id = "workflow-" + identity([record["id"], step_id, row["attempt"]])[:32]
+                    reask = {
+                        "messages": [
+                            {
+                                "role": "user",
+                                "id": message_id,
+                                "content": encoded(
+                                    {
+                                        "reask": "Your previous reply did not match output_schema.",
+                                        "problem": problem.message[:500],
+                                        "output_schema": schema,
+                                        "output_instruction": "Reply again with only a JSON value that matches output_schema: no prose and no code fence.",
+                                    },
+                                    AGENT_TASK_BYTES,
+                                ),
+                            }
+                        ]
+                    }
+                    row.update(status="admitting", run_id=None, message_id=message_id, idempotency_key=f"{record['id']}:{message_id}:{row['attempt']}")
+                    await self.save(owner, record)
+                    async with asyncio.timeout(self.config["admission_timeout_seconds"]):
+                        run = await runs.start(
+                            thread_id=thread_id,
+                            input=reask,
+                            idempotency_key=row["idempotency_key"],
+                            **run_context,
+                            **self.dispatch_fence(record),
+                        )
+                    row.update(run_id=run.run_id, status="running")
+                    await self.save(owner, record)
                 # Evidence comes from the run's completed host assembly, never a
                 # fresh read of mutable configuration after the Agent finishes.
                 async with asyncio.timeout(5):
@@ -603,6 +759,22 @@ class Workflows(Cluster, Recovery, Lifecycle, Artifacts):
                     raise ValueError("Host configuration evidence does not match child run")
                 row["configuration_evidence"] = proof
                 row["configuration_version"] = proof["version"]
+                if workspace == "merge" and "workspace_merge" not in row:
+                    base = row["workspace_base"]
+                    try:
+                        async with asyncio.timeout(WORKSPACE_SECONDS):
+                            merged = await runs.merge_workspace(thread_id=thread_id, into_thread_id=origin, base=WorkspaceSnapshot(source_thread_id=base["source_thread_id"], files=base["files"]))
+                    except TimeoutError:
+                        row["status"] = "failed"
+                        raise ValueError("Merging the workspace back timed out; inspect the conversation's workspace") from None
+                    row["workspace_merge"] = {
+                        "applied": list(merged.applied)[:100],
+                        "conflicts": list(merged.conflicts)[:100],
+                        "skipped": list(merged.skipped)[:100],
+                        "applied_count": len(merged.applied),
+                        "conflict_count": len(merged.conflicts),
+                        "skipped_count": len(merged.skipped),
+                    }
                 # Capture before any later turn can alter the thread checkpoint.
                 row.update(
                     status="completed",
@@ -622,11 +794,14 @@ class Workflows(Cluster, Recovery, Lifecycle, Artifacts):
                 entry["fault"] = "Admission timed out; inspect the stable child thread, do not replay"
             response["error"] = entry["fault"]
         except AgentRunError as exc:
+            # 402 is the spend cap refusing admission: definitive, like a
+            # permission rejection. No child exists and none will be retried.
+            definitive = exc.status_code in (400, 402, 403, 404, 409, 422)
             if row:
-                if row.get("run_id") is None and exc.status_code in (400, 403, 404, 409, 422):
+                if row.get("run_id") is None and definitive:
                     row["admission_rejected"] = True
-                row["status"] = "failed" if exc.status_code in (400, 403, 404, 409, 422) else "needs_reconciliation"
-            response["error"] = f"AgentRuns rejected operation ({exc.status_code})"
+                row["status"] = "failed" if definitive else "needs_reconciliation"
+            response["error"] = "Spend cap reached; no new agents were started" if exc.status_code == 402 else f"AgentRuns rejected operation ({exc.status_code})"
             entry["fault"] = response["error"]
         except Exception as exc:
             if row and row["status"] in ("creating_thread", "admitting"):
@@ -647,13 +822,18 @@ class Workflows(Cluster, Recovery, Lifecycle, Artifacts):
 
     @staticmethod
     def step_result(row):
-        return {
+        result = {
             "artifactVersion": row["artifact_version"],
             "output": copy.deepcopy(row["output"]),
             "threadId": row["thread_id"],
             "runId": row["run_id"],
             "status": "success",
+            "attempts": row.get("attempt", 1),
         }
+        merged = row.get("workspace_merge")
+        if merged is not None:
+            result["workspace"] = {"applied": merged["applied_count"], "conflicts": merged["conflicts"], "skipped": merged["skipped_count"]}
+        return result
 
     async def cancel_child(self, runs, row, record=None):
         try:
@@ -720,7 +900,7 @@ class Workflows(Cluster, Recovery, Lifecycle, Artifacts):
                         raise ValueError(entry["fault"] or "Cancelled")
                     frame = json.loads(raw)
                     messages = frame["messages"]
-                    if not isinstance(messages, list) or len(messages) > 64:
+                    if not isinstance(messages, list) or len(messages) > FRAME_MESSAGES:
                         raise ValueError("Worker message limit")
                     replayed = await self.begin_frame(entry, frame)
                     if replayed is not None:
@@ -744,15 +924,28 @@ class Workflows(Cluster, Recovery, Lifecycle, Artifacts):
                             log_id = f"{entry['frame_index']}:{message_index}"
                             if log_id in record.get("log_ids", []):
                                 continue
-                            if len(record["logs"]) >= 20:
+                            if len(record["logs"]) >= self.config["max_logs"]:
                                 raise ValueError("Log limit")
                             log = text(message.get("text"), 160)
                             encoded(log, 160)
                             record["logs"].append(log)
                             record.setdefault("log_ids", []).append(log_id)
                             await self.save(owner, record)
+                        elif message.get("type") == "phase":
+                            # Groups the steps that follow it on the progress page.
+                            phase_id = f"{entry['frame_index']}:{message_index}"
+                            if phase_id in record.get("phase_ids", []):
+                                entry["phase"] = record["phase_ids"].index(phase_id)
+                                continue
+                            if len(record["phases"]) >= PHASE_LIMIT:
+                                raise ValueError("Phase limit")
+                            title = text(message.get("title"), 80)
+                            record["phases"].append({"title": title, "first_step": len(record["steps"])})
+                            record.setdefault("phase_ids", []).append(phase_id)
+                            entry["phase"] = len(record["phases"]) - 1
+                            await self.save(owner, record)
                         elif message.get("type") == "agent":
-                            if type(message.get("id")) is not int or len(entry["tasks"]) >= self.config["max_calls"]:
+                            if type(message.get("id")) is not int or len(entry["tasks"]) >= record["limits"]["max_calls"]:
                                 raise ValueError("Pending Agent call limit")
                             entry["tasks"].add(
                                 asyncio.create_task(
@@ -760,6 +953,7 @@ class Workflows(Cluster, Recovery, Lifecycle, Artifacts):
                                         entry,
                                         message,
                                         replay=entry.get("recover_frame", False),
+                                        phase=entry.get("phase"),
                                     )
                                 )
                             )
@@ -853,6 +1047,8 @@ class Workflows(Cluster, Recovery, Lifecycle, Artifacts):
                     )
             await self.save(owner, record)
             self.entries.pop(record["id"], None)
+            if record.get("origin_thread_id"):
+                self.schedule_delivery(owner, record["id"], runs)
 
     async def send(self, process, message):
         process.stdin.write((encoded(message) + "\n").encode())

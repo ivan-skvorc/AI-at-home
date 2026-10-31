@@ -88,7 +88,7 @@ from deerflow.runtime.goal import (
     write_thread_goal,
 )
 from deerflow.runtime.journal import build_branch_history_seed_events
-from deerflow.runtime.run_origin import DEERFLOW_ORIGIN_KEY, admit_origin
+from deerflow.runtime.run_origin import DEERFLOW_ORIGIN_KEY, DEERFLOW_PARENT_THREAD_KEY, admit_origin
 from deerflow.runtime.runs.manager import ConflictError
 from deerflow.runtime.runs.worker import RUN_MESSAGE_IDS_METADATA_KEY, valid_duration_entry, valid_run_message_id_entry
 from deerflow.runtime.secret_context import redact_metadata_secrets
@@ -139,7 +139,7 @@ def _checkpoint_mode_http_error(exc: Exception, thread_id: str) -> HTTPException
 # the auth contextvar; this list closes the metadata-blob echo gap.
 # ``deerflow_origin`` marks a thread the server created for a schedule or an
 # extension; only the server sets it (``create_thread`` below, run admission).
-_SERVER_RESERVED_METADATA_KEYS: frozenset[str] = frozenset({"owner_id", "user_id", THREAD_PROJECT_METADATA_KEY, DEERFLOW_ORIGIN_KEY})
+_SERVER_RESERVED_METADATA_KEYS: frozenset[str] = frozenset({"owner_id", "user_id", THREAD_PROJECT_METADATA_KEY, DEERFLOW_ORIGIN_KEY, DEERFLOW_PARENT_THREAD_KEY})
 _SIDECAR_METADATA_KEY = "deerflow_sidecar"
 _BRANCH_METADATA_KEY = "deerflow_branch"
 _BRANCH_TITLE_SEQUENCE_METADATA_KEY = "branch_title_sequence"
@@ -1078,6 +1078,9 @@ async def create_thread(body: ThreadCreateRequest, request: Request) -> ThreadRe
     metadata = dict(body.metadata)
     if (origin := admit_origin(getattr(request.state, "run_origin", None))) is not None:
         metadata[DEERFLOW_ORIGIN_KEY] = origin
+    parent_thread_id = getattr(request.state, "parent_thread_id", None)
+    if isinstance(parent_thread_id, str) and parent_thread_id:
+        metadata[DEERFLOW_PARENT_THREAD_KEY] = parent_thread_id
 
     # Idempotency: return existing record when already present
     existing_record = await _resolve_existing_thread(thread_store, thread_id, thread_owner_user_id, thread_owner_kwargs)
