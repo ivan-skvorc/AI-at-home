@@ -393,6 +393,8 @@ async def test_operator_configuration_validates_the_new_options(tmp_path, monkey
         ({"concurrency": 17}, False),
         ({"max_calls": 257}, False),
         ({"shared_workspace": "everything"}, False),
+        ({"shared_workspace": False}, True),  # an unquoted YAML `off`
+        ({"shared_workspace": True}, False),
         ({"deliver_results": "yes"}, False),
         ({"max_logs": 501}, False),
     ):

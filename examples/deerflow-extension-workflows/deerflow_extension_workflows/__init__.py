@@ -72,6 +72,9 @@ def install(registry, config):
     # may ask for a copy of the launching conversation's workspace. write: it may
     # also merge its edits back (AgentRuns.merge_workspace, conflicts untouched).
     resolved["shared_workspace"] = config.get("shared_workspace", "off")
+    if resolved["shared_workspace"] is False:
+        # YAML 1.1 reads an unquoted `off` as false; it can only mean "off".
+        resolved["shared_workspace"] = "off"
     if resolved["shared_workspace"] not in ("off", "read", "write"):
         raise ValueError("shared_workspace must be off, read or write")
     resolved["deliver_results"] = config.get("deliver_results", True)

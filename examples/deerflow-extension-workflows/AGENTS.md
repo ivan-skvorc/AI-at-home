@@ -1,8 +1,9 @@
 # Script workflow extension
 
 Keep workflow business logic in this packaged extension. Import only public
-`deerflow_extension_api` contracts, standard library and declared QuickJS dependency;
-never import private `app.*` or `deerflow.*` runtime modules.
+`deerflow_extension_api` contracts, standard library and the declared QuickJS,
+jsonschema and LangChain (middleware base) dependencies; never import private
+`app.*` or `deerflow.*` runtime modules.
 
 Generated script runs only in worker.py's isolated, capability-free JS context.
 Never pass host callables, capability handles, credentials or ambient environment
@@ -98,3 +99,16 @@ a barrier-based cluster regression.
 Proven pre-admission rejection releases child capacity before retiring the lease;
 unknown admission errors retain it. Share the slot-release predicate across cleanup paths.
 Acceptance routing counts final Gateway ports, not nginx retry-history strings.
+
+Double Plus Ultracode (FORK.md §44) lives here: ultracode.py, delivery.py.
+Read limits only from `ToolContext.run_options`/`plugin_run_options` and clamp to
+operator config; never let run options raise a limit. Keep the brief behind the
+mode option and the result note behind the host-stamped
+`EXTENSION_MESSAGE_ORIGIN_KEY` for this namespace only. Delivery is exactly once:
+idempotency key `workflow-result:<run>`, deterministic message text, state in
+`workflow_deliveries` (never the lease-fenced record), busy threads retried, never
+interrupted; cancelled runs are skipped. Schema re-asks persist the new attempt
+identity before admission; an uncertain re-ask needs reconciliation. A 402 is a
+definitive pre-admission rejection. Workspace copy/merge only through AgentRuns,
+gated by `shared_workspace`; merge results stay bounded in the row.
+Tests: backend/tests/test_ultracode_mode.py.

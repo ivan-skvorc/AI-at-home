@@ -8,6 +8,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Double Plus Ultracode:** a composer mode, inspired by Claude Code's
+  *ultracode*, that plans substantive work as a workflow script run in the
+  background by the Script workflows extension; the result is posted back into
+  the chat exactly once, as the extension's card. Scripts gain `phase()`,
+  `pipeline()`, schema-checked agent outputs with bounded re-asks, per-step
+  models and operator-gated shared workspaces (`shared_workspace: read|write`).
+  Limits under Settings → Subagents (clamped to the operator's), workflow agent
+  spend as its own row in the cost header, and a clean failure when a spend cap
+  refuses a child. Extension API 0.2.10 adds per-run `plugin_options`, the
+  posted-message marker, child-thread links and `AgentRuns.copy_workspace` /
+  `merge_workspace`; workflow ceilings rise to 16 at once and 256 per workflow.
 - **subscription models:** administrator connections in Settings → Models for
   ChatGPT plan access, Grok device-code OAuth, and Kimi Code subscription keys.
   Provider catalogs populate the picker without YAML edits; credentials are
