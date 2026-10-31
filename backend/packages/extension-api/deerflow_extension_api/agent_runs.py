@@ -8,6 +8,10 @@ from typing import Any, Protocol
 
 AGENT_RUNS_RESOLVER_KEY = "deerflow_agent_runs_resolver"
 AGENT_RUNS_CONTEXT_KEY = "__deerflow_extension_agent_runs"
+#: Host-stamped ``additional_kwargs`` marker, ``{"namespace": ...}``, on the input
+#: messages of runs a plugin-scoped handle started (API 0.2.10). Client copies are
+#: stripped, so a plugin can trust it to recognize the messages it posted.
+EXTENSION_MESSAGE_ORIGIN_KEY = "deerflow_extension_origin"
 
 
 class AgentRunError(Exception):
@@ -59,6 +63,28 @@ class AgentRun:
     stop_reason: str | None = None
 
 
+@dataclass(frozen=True)
+class WorkspaceSnapshot:
+    """What ``copy_workspace`` placed in a child thread: the merge base (API 0.2.10).
+
+    ``files`` maps each copied path, relative to the user-data root (for
+    example ``workspace/src/app.py``), to its SHA-256 hex digest. Retain it with
+    the child; a merge compares against it, never against a fresh source read.
+    """
+
+    source_thread_id: str
+    files: Mapping[str, str]
+
+
+@dataclass(frozen=True)
+class WorkspaceMerge:
+    """Outcome of ``merge_workspace``. Conflicts and skipped paths are untouched."""
+
+    applied: tuple[str, ...] = ()
+    conflicts: tuple[str, ...] = ()
+    skipped: tuple[str, ...] = ()
+
+
 class AgentRuns(Protocol):
     """A process-local delegated capability bound by the host to one user.
 
@@ -104,8 +130,33 @@ class AgentRuns(Protocol):
         """
         ...
 
-    async def create_thread(self, *, assistant_id: str = "lead_agent", thread_id: str | None = None, metadata: Mapping[str, Any] | None = None) -> str:
-        """Create an owned thread, or return the caller's existing thread ID."""
+    async def create_thread(self, *, assistant_id: str = "lead_agent", thread_id: str | None = None, metadata: Mapping[str, Any] | None = None, parent_thread_id: str | None = None) -> str:
+        """Create an owned thread, or return the caller's existing thread ID.
+
+        ``parent_thread_id`` (API 0.2.10) links a new thread to a conversation
+        the caller owns. The host records the link server-side, so the parent's
+        token-usage overview can include the child's spend; metadata cannot forge it.
+        """
+        ...
+
+    async def copy_workspace(self, *, source_thread_id: str, thread_id: str) -> WorkspaceSnapshot:
+        """Copy the source thread's workspace and uploads into a child (API 0.2.10).
+
+        Both threads must be the caller's, and thread data must be host-mounted
+        into the sandbox; otherwise the host fails closed (409). Regular files
+        only, never following links, within host file and byte bounds. Call it
+        before starting the child's run and retain the returned snapshot.
+        """
+        ...
+
+    async def merge_workspace(self, *, thread_id: str, into_thread_id: str, base: WorkspaceSnapshot) -> WorkspaceMerge:
+        """Apply a child's workspace and output edits onto the source (API 0.2.10).
+
+        A path is applied only while the source still holds its base version (or,
+        for a new path, still lacks it); anything else is a conflict and stays
+        untouched. Deletions are reported as skipped, never applied. Whether a
+        script may write back at all is the calling extension's operator decision.
+        """
         ...
 
     async def start(self, *, thread_id: str, input: Mapping[str, Any], context: Mapping[str, Any] | None = None, idempotency_key: str | None = None, execution_fence: ExecutionFence | None = None) -> AgentRun:

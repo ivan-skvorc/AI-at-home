@@ -1,10 +1,10 @@
 [project]
 name = "deerflow-extension-workflows"
-version = "0.4.0"
+version = "0.5.0"
 description = "Opt-in constrained script orchestration of public DeerFlow AgentRuns"
 requires-python = ">=3.12"
 license = "MIT"
-dependencies = ["deerflow-extension-api>=0.2.9,<0.3", "quickjs==1.19.4"]
+dependencies = ["deerflow-extension-api>=0.2.10,<0.3", "quickjs==1.19.4", "jsonschema>=4.23,<5", "langchain>=1.2,<2"]
 
 [project.entry-points."deerflow.extensions"]
 workflows = "deerflow_extension_workflows:install"

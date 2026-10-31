@@ -75,12 +75,25 @@ function mount(root, context) {
     if(!alive(version)||id!==selected)return;
     releaseFiles();
     detail.replaceChildren(node('h3',`${run.run_id} · ${run.status}`));
+    if(run.mode==='ultracode')detail.append(node('p',t('Double Plus Ultracode run','Double Plus Ultracode 运行')));
+    if(run.delivery){
+      const states={pending:t('waiting to post','等待发送'),delivered:t('posted to the conversation','已发送到对话'),skipped:t('not posted (cancelled)','未发送（已取消）'),failed:t('could not be posted','无法发送')};
+      detail.append(node('p',`${t('Result to conversation','结果回传对话')}: ${states[run.delivery.status]||run.delivery.status}${run.delivery.error?` · ${run.delivery.error}`:''}`));
+    }
     if(['paused','waiting_approval'].includes(run.status))detail.append(button(t('Refresh checkpoint','刷新检查点'),()=>show()),node('p',t('After restart, recover this workflow before continuing its checkpoint.','重启后请先恢复工作流，再继续此检查点。')));
     if(run.status==='recoverable')detail.append(button(t('Recover workflow','恢复工作流'),async()=>{await call('recover',{run_id:id});await show();}),button(t('Cancel workflow','取消工作流'),async()=>{await call('cancel',{run_id:id});await show();}));
     if(run.error)detail.append(node('p',run.error));
     detail.append(node('h4',t('Script','脚本')),node('pre',run.script),node('h4',t('Arguments and execution limits','参数和执行上限')),node('pre',JSON.stringify({definition:run.definition,configuration_revision:run.configuration_revision,args:run.args,limits:run.limits,script_hash:run.script_hash,args_hash:run.args_hash},null,2)));
+    if(run.steps_omitted)detail.append(node('p',t(`${run.steps_omitted} earlier steps not shown`,`未显示 ${run.steps_omitted} 个较早步骤`)));
+    let phase=null;
     for(const step of run.steps){
-      const row=node('div',`${step.step_id} · ${step.agent_ref} · ${step.status}`);
+      if(step.phase!==undefined&&step.phase!==phase&&run.phases?.[step.phase]){phase=step.phase;detail.append(node('h4',`${t('Phase','阶段')} ${phase+1} · ${run.phases[phase].title}`));}
+      const facts=[step.step_id,step.agent_ref,step.status];
+      if(step.attempt>1)facts.push(t(`attempt ${step.attempt}`,`第 ${step.attempt} 次尝试`));
+      if(step.model)facts.push(step.model);
+      if(step.workspace)facts.push(t(`workspace: ${step.workspace}`,`工作区：${step.workspace}`));
+      if(step.workspace_merge)facts.push(t(`merged ${step.workspace_merge.applied_count}, conflicts ${step.workspace_merge.conflict_count}`,`已合并 ${step.workspace_merge.applied_count}，冲突 ${step.workspace_merge.conflict_count}`));
+      const row=node('div',facts.join(' · '));
       if(step.thread_id && context.openConversation) row.append(button(t('Open child conversation','打开子对话'),()=>context.openConversation(step.thread_id)));
       if(step.status==='completed') row.append(button(t('Inspect retained output','查看保留输出'),async()=>{
         const value=await call('get_step',{run_id:id,step_id:step.step_id});
@@ -135,7 +148,7 @@ function mount(root, context) {
         }));
       }
     }
-    detail.append(node('h4',t('Progress','进度')),node('pre',run.logs.join('\n')),node('h4',t('Final result','最终结果')),node('pre',JSON.stringify(run.result,null,2)));
+    detail.append(node('h4',t('Progress','进度')),node('pre',(run.logs_omitted?[t(`(${run.logs_omitted} earlier messages not shown)`,`（未显示 ${run.logs_omitted} 条较早消息）`)]:[]).concat(run.logs).join('\n')),node('h4',t('Final result','最终结果')),node('pre',JSON.stringify(run.result,null,2)));
     if(['queued','running','cancelling','paused','waiting_approval'].includes(run.status)){
       detail.append(button(t('Cancel workflow','取消工作流'),async()=>{await call('cancel',{run_id:id});await show();}));
       clearTimeout(timer);if(['queued','running','cancelling'].includes(run.status))timer=setTimeout(()=>show().catch(e=>{if(!disposed)notice.textContent=e.message;}),2000);

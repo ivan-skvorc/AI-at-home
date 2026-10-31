@@ -8,5 +8,7 @@
     "im_channel",
     "mcp_notification",
     "schedule"
-  ]
+  ],
+  "extension_message_key": "deerflow_extension_origin",
+  "extension_message_description": "Message-level marker: additional_kwargs[extension_message_key] = {\"namespace\": ...} on the input messages of a run an extension started through AgentRuns. Server-stamped from the run's origin; client copies are stripped. The frontend renders such a message as posted by that extension, not typed by the user."
 }

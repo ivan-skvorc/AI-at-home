@@ -62,6 +62,7 @@ class PostgresStore(Store):
             if db.execute("SELECT policy FROM workflow_cluster_policy WHERE id=1").fetchone()[0] != policy:
                 raise ValueError("Workflow cluster limits differ; coordinate the operator configuration before startup")
             db.execute("CREATE TABLE IF NOT EXISTS workflow_slots (workflow TEXT NOT NULL, step TEXT NOT NULL, PRIMARY KEY(workflow,step))")
+            db.execute("CREATE TABLE IF NOT EXISTS workflow_deliveries (owner TEXT NOT NULL, workflow TEXT NOT NULL, thread_id TEXT NOT NULL, status TEXT NOT NULL, run_id TEXT, error TEXT, PRIMARY KEY(owner,workflow))")
 
     def connect(self, *, readonly=False):
         import psycopg
@@ -239,6 +240,7 @@ class PostgresStore(Store):
                 raise ValueError("Reconcile retained child reservations before deleting")
             db.execute("DELETE FROM workflow_artifacts WHERE owner=? AND workflow=?", (owner, run_id))
             db.execute("DELETE FROM workflow_controls WHERE workflow=?", (run_id,))
+            db.execute("DELETE FROM workflow_deliveries WHERE owner=? AND workflow=?", (owner, run_id))
             db.execute("DELETE FROM workflows WHERE owner=? AND id=?", (owner, run_id))
             # Keep the lease generation tombstone: deletion never resets fencing.
 

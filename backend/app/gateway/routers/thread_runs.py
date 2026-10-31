@@ -76,6 +76,7 @@ from deerflow.config.paths import get_paths, make_safe_user_id
 from deerflow.runtime import CancelOutcome, ConflictError, RunRecord, RunStatus, ThreadOperationKind, serialize_channel_values_for_api
 from deerflow.runtime.aux_usage import aget_thread_aux_usage
 from deerflow.runtime.goal import is_active_goal
+from deerflow.runtime.run_origin import DEERFLOW_PARENT_THREAD_KEY
 from deerflow.runtime.runs.store.base import format_run_cursor_created_at, normalize_run_created_at_iso
 from deerflow.runtime.secret_context import redact_config_secrets, redact_metadata_secrets
 from deerflow.runtime.user_context import get_effective_user_id
@@ -379,6 +380,23 @@ class ThreadContextUsage(BaseModel):
     percentage: float | None = None
 
 
+class ThreadDelegatedUsage(BaseModel):
+    """Spend in child threads an extension ran for this conversation.
+
+    A workflow's agents run on their own threads, linked back to the
+    conversation that launched them (``deerflow_parent_thread_id``, extension
+    API 0.2.10). That money left the account because of this conversation, but
+    none of it is a step of it, so it stays out of ``total_cost`` (whose identity
+    with ``steps`` + ``superseded_cost`` the header states) and is reported here.
+    """
+
+    threads: int = 0
+    runs: int = 0
+    tokens: int = 0
+    cost: float | None = None
+    promo_cost: float | None = None
+
+
 class ThreadTokenUsageResponse(BaseModel):
     thread_id: str
     total_tokens: int = 0
@@ -433,6 +451,8 @@ class ThreadTokenUsageResponse(BaseModel):
     # Remaining currency spend budget (fork feature). Null when the cap is off
     # or not enforceable, so the header simply shows no budget line.
     spend_budget: ThreadSpendBudget | None = None
+    # Child-thread spend (extension workflows). Null when the thread has none.
+    delegated: ThreadDelegatedUsage | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -2400,7 +2420,62 @@ async def thread_token_usage(
         aux=aux,
         context_usage=context_usage,
         spend_budget=await _thread_spend_budget(request),
+        delegated=await _delegated_usage(request, run_store, thread_id, pricing, currency, include_active=include_active, user_id=scope_user_id),
     )
+
+
+_DELEGATED_THREAD_LIMIT = 1000
+
+
+async def _delegated_usage(request: Request, run_store, thread_id: str, pricing: dict, currency: str | None, *, include_active: bool, user_id) -> ThreadDelegatedUsage | None:
+    """Sum the spend of child threads linked to this one, or None when there are none.
+
+    Children are found by the server-owned parent link, within the caller's own
+    threads only; each child run is priced from its own recorded rates, exactly
+    like the parent's runs. Failures degrade to no line rather than breaking
+    the header's own figures.
+    """
+    thread_store = getattr(request.app.state, "thread_store", None)
+    if thread_store is None:
+        return None
+    try:
+        children: list[dict] = []
+        while len(children) < _DELEGATED_THREAD_LIMIT:
+            page = await thread_store.search(metadata={DEERFLOW_PARENT_THREAD_KEY: thread_id}, limit=100, offset=len(children), user_id=await get_current_user(request))
+            children.extend(page)
+            if len(page) < 100:
+                break
+        if not children:
+            return None
+        usage = ThreadDelegatedUsage(threads=len(children))
+        has_promo = False
+        for child in children[:_DELEGATED_THREAD_LIMIT]:
+            child_id = str(child.get("thread_id") or "")
+            if not child_id or child_id == thread_id:
+                continue
+            agg = await run_store.aggregate_tokens_by_thread(child_id, include_active=include_active, user_id=user_id)
+            usage.runs += int(agg.get("total_runs") or 0)
+            usage.tokens += int(agg.get("total_tokens") or 0)
+            for run_entry in agg.get("by_run") or []:
+                run_pricing = resolve_run_pricing(pricing, run_entry.get("pricing_snapshot"), currency=currency, logger=logger)
+                for model, model_usage in (run_entry.get("by_model") or {}).items():
+                    run_input = int(model_usage.get("input_tokens") or 0)
+                    run_output = int(model_usage.get("output_tokens") or 0)
+                    run_cache_read = int(model_usage.get("cache_read_tokens") or 0)
+                    price = lookup_pricing(run_pricing, model)
+                    if price is None or not (run_input or run_output):
+                        continue
+                    model_cost = token_cost(run_input, run_output, price, run_cache_read)
+                    promo_price = price.promo()
+                    has_promo = has_promo or promo_price is not None
+                    usage.cost = round((usage.cost or 0.0) + model_cost, 6)
+                    usage.promo_cost = round((usage.promo_cost or 0.0) + (token_cost(run_input, run_output, promo_price, run_cache_read) if promo_price is not None else model_cost), 6)
+        if not has_promo:
+            usage.promo_cost = None
+        return usage
+    except Exception:  # pragma: no cover - defensive: the child roll-up must not break the header
+        logger.warning("thread token-usage: failed to roll up child-thread spend", exc_info=True)
+        return None
 
 
 async def _thread_spend_budget(request: Request) -> ThreadSpendBudget | None:

@@ -22,7 +22,7 @@ from dataclasses import replace
 from types import SimpleNamespace
 from typing import Any
 
-from deerflow_extension_api import PROVENANCE_KEYS
+from deerflow_extension_api import PLUGIN_OPTIONS_CONTEXT_KEY, PROVENANCE_KEYS
 from fastapi import HTTPException, Request
 from langchain_core.messages import BaseMessage, ChatMessage, HumanMessage, SystemMessage
 from langchain_core.messages.utils import convert_to_messages
@@ -98,7 +98,7 @@ from deerflow.runtime.events.message_identity import MESSAGE_SEQ_KEY
 from deerflow.runtime.goal import goal_thread_lock
 from deerflow.runtime.journal import build_checkpoint_history_seed_events
 from deerflow.runtime.keyed_lock import KeyedLockTable
-from deerflow.runtime.run_origin import DEERFLOW_ORIGIN_KEY, make_origin
+from deerflow.runtime.run_origin import DEERFLOW_ORIGIN_KEY, EXTENSION_MESSAGE_ORIGIN_KEY, extension_message_origin, make_origin
 from deerflow.runtime.runs.naming import resolve_root_run_name
 from deerflow.runtime.runs.schemas import EVIDENCE_ORIGINS
 from deerflow.runtime.secret_context import (
@@ -202,6 +202,8 @@ _SERVER_OWNED_MESSAGE_METADATA_KEYS = (
             SUBAGENT_RECEIPT_VERDICT_KEY,
             SUBAGENT_ACCEPTANCE_VERDICT_KEY,
             UNTRUSTED_INPUT_KEY,
+            # Stamped by start_run from an extension launch's run origin only.
+            EXTENSION_MESSAGE_ORIGIN_KEY,
         }
     )
     | PROVENANCE_KEYS
@@ -748,6 +750,21 @@ def normalize_input(raw_input: dict[str, Any] | None, *, trusted_internal: bool 
     return result
 
 
+def _stamp_extension_message_origin(graph_input: dict[str, Any], origin: Mapping | None) -> dict[str, Any]:
+    """Mark the human input of an extension-launched run as posted by that extension.
+
+    The marker derives from the host-set run origin alone (client copies were
+    stripped in ``normalize_input``), so a browser or API caller cannot make its
+    own text render as extension output, and an extension cannot pass as the user.
+    """
+    marker = extension_message_origin(origin)
+    messages = graph_input.get("messages")
+    if marker is None or not isinstance(messages, list):
+        return graph_input
+    stamped = [message.model_copy(update={"additional_kwargs": {**message.additional_kwargs, EXTENSION_MESSAGE_ORIGIN_KEY: dict(marker)}}) if isinstance(message, HumanMessage) else message for message in messages]
+    return {**graph_input, "messages": stamped}
+
+
 def _assign_missing_run_input_message_ids(graph_input: dict[str, Any], *, thread_id: str, idempotency_key: str | None) -> dict[str, Any]:
     """Give the run record and graph the same IDs before add_messages runs.
 
@@ -1040,6 +1057,33 @@ def _sanitize_request_client_context(raw: Any) -> dict[str, Any] | None:
     return client
 
 
+_PLUGIN_OPTIONS_MAX_NAMESPACES = 8
+_PLUGIN_OPTIONS_MAX_BYTES = 4096
+
+
+def sanitize_plugin_options(raw: Any) -> dict[str, dict[str, Any]] | None:
+    """Return a bounded plain copy of ``context.plugin_options``, else ``None``.
+
+    The value is per-run user input addressed to installed plugins by namespace
+    (extension API 0.2.10): a JSON object of at most eight namespaces, each a
+    JSON object, at most 4 KiB encoded. Namespaces follow AgentRuns plugin
+    naming (1-96 characters, no ``:``). It grants nothing: a plugin validates
+    and clamps every value against its own operator configuration.
+    """
+    if not isinstance(raw, Mapping) or len(raw) > _PLUGIN_OPTIONS_MAX_NAMESPACES:
+        return None
+    for namespace, options in raw.items():
+        if not isinstance(namespace, str) or not namespace or len(namespace) > 96 or ":" in namespace or not isinstance(options, Mapping):
+            return None
+    try:
+        encoded = json.dumps(raw, ensure_ascii=False, allow_nan=False)
+    except (TypeError, ValueError):
+        return None
+    if len(encoded.encode("utf-8")) > _PLUGIN_OPTIONS_MAX_BYTES:
+        return None
+    return json.loads(encoded)
+
+
 def merge_run_context_overrides(config: dict[str, Any], context: Mapping[str, Any] | None, *, internal: bool = False) -> None:
     """Merge whitelisted keys from ``body.context`` into both ``config['configurable']``
     and ``config['context']`` so they are visible to legacy configurable readers and
@@ -1072,7 +1116,14 @@ def merge_run_context_overrides(config: dict[str, Any], context: Mapping[str, An
         # and ``configurable`` is persisted in checkpoints.
         existing_configurable.pop("client", None)
         existing_configurable.pop("locale", None)
+        existing_configurable.pop(PLUGIN_OPTIONS_CONTEXT_KEY, None)
     existing_runtime_context = config.get("context")
+    if isinstance(existing_runtime_context, dict) and PLUGIN_OPTIONS_CONTEXT_KEY in existing_runtime_context:
+        existing_plugin_options = sanitize_plugin_options(existing_runtime_context.get(PLUGIN_OPTIONS_CONTEXT_KEY))
+        if existing_plugin_options is None:
+            existing_runtime_context.pop(PLUGIN_OPTIONS_CONTEXT_KEY, None)
+        else:
+            existing_runtime_context[PLUGIN_OPTIONS_CONTEXT_KEY] = existing_plugin_options
     if isinstance(existing_runtime_context, dict) and "locale" in existing_runtime_context:
         locale = ui_locale(existing_runtime_context)
         existing_runtime_context.pop("locale")
@@ -1120,6 +1171,15 @@ def merge_run_context_overrides(config: dict[str, Any], context: Mapping[str, An
                 runtime_context[key] = value
     if "model_selection_requested" in context and (context.get("model_name") != context["model_selection_requested"] or not isinstance(runtime_context, dict) or runtime_context.get("model_name") != context["model_selection_requested"]):
         raise HTTPException(status_code=400, detail="model_selection_requested must match model_name in context.")
+    # Per-run plugin options are the composer's choice for this run only, like
+    # the model selection above: never a checkpoint default that a later run on
+    # another surface (a channel, a schedule) would silently inherit.
+    if PLUGIN_OPTIONS_CONTEXT_KEY in context:
+        plugin_options = sanitize_plugin_options(context[PLUGIN_OPTIONS_CONTEXT_KEY])
+        if plugin_options is None:
+            raise HTTPException(status_code=400, detail="plugin_options must be an object of at most 8 plugin namespaces and 4 KiB.")
+        if isinstance(runtime_context, dict):
+            runtime_context[PLUGIN_OPTIONS_CONTEXT_KEY] = plugin_options
     # Context-only keys (secrets / runtime flags) land in ``config['context']``
     # only — never ``configurable`` (which is persisted in checkpoints) — and only
     # for internal callers, the sole legitimate producers.
@@ -2340,6 +2400,8 @@ async def start_run(
         # body.config["metadata"] into the live config, so the second pop below
         # is what keeps a forged value out of the live run config.
         origin = resolve_request_origin(request, body.metadata)
+        if isinstance(graph_input, dict):
+            graph_input = _stamp_extension_message_origin(graph_input, origin)
         run_metadata = _admit_scheduler_metadata(body.metadata, trusted=scheduled_task_runtime is not None)
         run_metadata.pop(DEERFLOW_ORIGIN_KEY, None)
         if origin is not None:

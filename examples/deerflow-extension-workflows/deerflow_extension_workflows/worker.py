@@ -6,7 +6,7 @@ import sys
 
 import quickjs
 
-MAX_FRAME = 48 * 1024
+MAX_FRAME = 128 * 1024
 
 BOOT = r"""
 (() => {
@@ -32,8 +32,22 @@ BOOT = r"""
     if(!Array.isArray(tasks)||tasks.length>64) throw new Error('Parallel item limit');
     return Promise.all(tasks.map(task=>task()));
   }),writable:false,configurable:false});
+  // One lazy call per item with a bounded window, so a long list never holds
+  // more promises than the pending-call limit; the host's slots bound real work.
+  Object.defineProperty(globalThis,'pipeline',{value:Object.freeze((items,fn,options)=>{
+    if(!Array.isArray(items)||items.length>1000) throw new Error('Pipeline item limit');
+    if(typeof fn!=='function') throw new Error('pipeline needs a function');
+    const requested=options&&options.concurrency;
+    const width=Math.max(1,Math.min(64,items.length,Number.isInteger(requested)&&requested>0?requested:16));
+    const results=new Array(items.length); let next=0;
+    const lane=async()=>{while(next<items.length){const index=next++;results[index]=await fn(items[index],index);}};
+    return Promise.all(Array.from({length:items.length?width:0},lane)).then(()=>results);
+  }),writable:false,configurable:false});
   Object.defineProperty(globalThis,'log',{value:Object.freeze(text=>{
-    if(requests.length>=64)throw new Error('Message limit');requests.push({type:'log',text:String(text)});
+    if(requests.length>=128)throw new Error('Message limit');requests.push({type:'log',text:String(text)});
+  }),writable:false,configurable:false});
+  Object.defineProperty(globalThis,'phase',{value:Object.freeze(title=>{
+    if(requests.length>=128)throw new Error('Message limit');requests.push({type:'phase',title:String(title)});
   }),writable:false,configurable:false});
   return {
     launch:(source,args)=>{

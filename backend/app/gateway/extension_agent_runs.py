@@ -10,9 +10,10 @@ import math
 import secrets
 from collections.abc import Awaitable, Callable, Mapping
 from contextlib import asynccontextmanager
+from types import MappingProxyType
 from typing import Any
 
-from deerflow_extension_api.agent_runs import AgentRun, AgentRunError, ExecutionFence
+from deerflow_extension_api.agent_runs import AgentRun, AgentRunError, ExecutionFence, WorkspaceMerge, WorkspaceSnapshot
 from fastapi import HTTPException, Request
 from pydantic import TypeAdapter, ValidationError
 
@@ -191,12 +192,39 @@ class _BoundAgentRuns:
 
             return await asyncio.to_thread(snapshot)
 
-    async def create_thread(self, *, assistant_id="lead_agent", thread_id=None, metadata=None) -> str:
+    async def create_thread(self, *, assistant_id="lead_agent", thread_id=None, metadata=None, parent_thread_id=None) -> str:
         from app.gateway.routers.threads import ThreadCreateRequest, create_thread
 
+        if parent_thread_id is not None:
+            # The link feeds the parent's spend overview, so the caller must own
+            # the parent too; the check also validates the thread ID format.
+            async with self._request("threads:read", parent_thread_id):
+                pass
         async with self._request("threads:write") as request:
+            # Host-set, never HTTP input (create_thread strips client copies).
+            request.state.parent_thread_id = parent_thread_id
             response = await create_thread(ThreadCreateRequest(assistant_id=assistant_id, thread_id=thread_id, metadata=_json_object(metadata) or {}), request)
             return response.thread_id
+
+    async def copy_workspace(self, *, source_thread_id, thread_id) -> WorkspaceSnapshot:
+        from app.gateway.extension_workspaces import copy_workspace
+
+        async with self._request("threads:read", source_thread_id):
+            pass
+        async with self._request("threads:write", thread_id):
+            files = await asyncio.to_thread(copy_workspace, self._user_id, source_thread_id, thread_id)
+        return WorkspaceSnapshot(source_thread_id=source_thread_id, files=MappingProxyType(files))
+
+    async def merge_workspace(self, *, thread_id, into_thread_id, base) -> WorkspaceMerge:
+        from app.gateway.extension_workspaces import merge_workspace
+
+        if not isinstance(base, WorkspaceSnapshot) or base.source_thread_id != into_thread_id:
+            raise AgentRunError(422, "Merge base must be the snapshot copied from the target thread")
+        async with self._request("threads:read", thread_id):
+            pass
+        async with self._request("threads:write", into_thread_id):
+            applied, conflicts, skipped = await asyncio.to_thread(merge_workspace, self._user_id, thread_id, into_thread_id, dict(base.files))
+        return WorkspaceMerge(applied=tuple(applied), conflicts=tuple(conflicts), skipped=tuple(skipped))
 
     async def _start(self, *, thread_id, input=None, resume=None, context=None, idempotency_key=None, execution_fence=None):
         from app.gateway.routers.thread_runs import create_run

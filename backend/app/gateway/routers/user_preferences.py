@@ -21,7 +21,7 @@ class Preferences(BaseModel):
     # "democracy" is this fork's multi-model mode (FORK.md). It belongs in the
     # union because `extra="forbid"` + `strict=True` means an account that last
     # selected it would otherwise get a 422 on every preference PATCH.
-    mode: Literal["flash", "thinking", "pro", "ultra", "democracy"] | None = None
+    mode: Literal["flash", "thinking", "pro", "ultra", "democracy", "ultracode"] | None = None
     # Provider vocabularies differ (issue #5073): accept any effort token so a
     # model-specific default such as ``max`` can be remembered. The UI checks
     # remembered values against the selected model; the factory enforces

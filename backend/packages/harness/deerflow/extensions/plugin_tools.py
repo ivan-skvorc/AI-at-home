@@ -13,7 +13,7 @@ from types import MappingProxyType
 
 from deerflow_extension_api.agent_runs import AGENT_RUNS_CONTEXT_KEY
 from deerflow_extension_api.auth import ExtensionPrincipal
-from deerflow_extension_api.plugins import PluginToolResult, ToolContext
+from deerflow_extension_api.plugins import PluginToolResult, ToolContext, plugin_run_options
 from jsonschema import Draft202012Validator
 from langchain.tools import ToolRuntime
 from langchain_core.tools import StructuredTool, ToolException
@@ -89,6 +89,9 @@ def _build_tool(source, plugin, declaration):
                 MappingProxyType(settings),
                 context.get("thread_id"),
                 agent_runs=runs.for_plugin(plugin.namespace) if runs is not None else None,
+                # Only this plugin's slice, detached from the run context (the
+                # Gateway bounded it in sanitize_plugin_options).
+                run_options=MappingProxyType(deepcopy(dict(plugin_run_options(context, plugin.namespace)))),
             )
             async with asyncio.timeout(30):
                 result = await declaration.handler(MappingProxyType(payload), tool_context)
