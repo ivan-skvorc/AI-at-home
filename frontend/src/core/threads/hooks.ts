@@ -309,7 +309,12 @@ export function buildRunContext({
   // fourth mode with its own plan/subagent answers, its own delegation budget,
   // and roster keys that must be *cleared* when the thread leaves the mode.
   // An inline `mode === "ultra"` ladder silently omits all of that.
-  const modeContext = deriveModeContext(settings);
+  // Read at submit time, like the rename preference below, so a limit changed in
+  // Settings applies to the very next Double Plus Ultracode message.
+  const modeContext = deriveModeContext({
+    ...settings,
+    ultracode_limits: getLocalSettings().ultracode,
+  });
   // Fork: the thread's Ultra-mode subagent dropdown shares this key with
   // upstream's scoped "ask <model> to ..." control. The one-run choice wins, and
   // neither is sent on a run that cannot delegate: the backend rejects a child

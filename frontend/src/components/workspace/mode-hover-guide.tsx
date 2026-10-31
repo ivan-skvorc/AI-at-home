@@ -5,13 +5,24 @@ import type { Translations } from "@/core/i18n/locales/types";
 
 import { Tooltip } from "./tooltip";
 
-export type AgentMode = "flash" | "thinking" | "pro" | "ultra" | "democracy";
+export type AgentMode =
+  | "flash"
+  | "thinking"
+  | "pro"
+  | "ultra"
+  | "democracy"
+  | "ultracode";
 
 function getModeLabelKey(
   mode: AgentMode,
 ): keyof Pick<
   Translations["inputBox"],
-  "flashMode" | "reasoningMode" | "proMode" | "ultraMode" | "democracyMode"
+  | "flashMode"
+  | "reasoningMode"
+  | "proMode"
+  | "ultraMode"
+  | "democracyMode"
+  | "ultracodeMode"
 > {
   switch (mode) {
     case "flash":
@@ -24,6 +35,8 @@ function getModeLabelKey(
       return "ultraMode";
     case "democracy":
       return "democracyMode";
+    case "ultracode":
+      return "ultracodeMode";
   }
 }
 
@@ -36,6 +49,7 @@ function getModeDescriptionKey(
   | "proModeDescription"
   | "ultraModeDescription"
   | "democracyModeDescription"
+  | "ultracodeModeDescription"
 > {
   switch (mode) {
     case "flash":
@@ -48,6 +62,8 @@ function getModeDescriptionKey(
       return "ultraModeDescription";
     case "democracy":
       return "democracyModeDescription";
+    case "ultracode":
+      return "ultracodeModeDescription";
   }
 }
 
