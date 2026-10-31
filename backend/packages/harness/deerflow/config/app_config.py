@@ -73,7 +73,7 @@ from deerflow.config.typesafe_config import TypeSafeConfig, load_typesafe_config
 from deerflow.config.verification_config import VerificationConfig
 from deerflow.config.voice_config import VoiceConfig
 from deerflow.config.yaml_guard import safe_load_guarded
-from deerflow.env import load_selected_env_file
+from deerflow.env import config_env_value, load_selected_env_file
 from deerflow.extensions.loader import ExtensionSpec
 
 if not load_selected_env_file():
@@ -701,7 +701,9 @@ class AppConfig(BaseModel):
     def resolve_env_variables(cls, config: Any, *, lenient_missing: bool = False) -> Any:
         """Recursively resolve environment variables in the config.
 
-        Environment variables are resolved using the `os.getenv` function. Example: $OPENAI_API_KEY
+        Environment variables are resolved through ``deerflow.env.config_env_value``
+        (the process environment; the GitHub token names alias each other and
+        are optional). Example: $OPENAI_API_KEY
 
         A missing ``$VAR`` normally raises, so a real misconfiguration (an
         active model with no API key) fails loudly at startup rather than
@@ -725,7 +727,7 @@ class AppConfig(BaseModel):
         if isinstance(config, str):
             if config.startswith("$"):
                 var_name = config[1:]
-                env_value = os.getenv(var_name)
+                env_value = config_env_value(var_name)
                 if env_value is None:
                     if lenient_missing:
                         logger.warning(

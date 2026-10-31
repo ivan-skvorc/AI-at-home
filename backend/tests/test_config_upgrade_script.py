@@ -330,6 +330,92 @@ class TestMigrations:
         assert yaml.safe_load(kept.read_text(encoding="utf-8"))["pii_redaction"]["token_secret"] == "mine"
 
 
+class TestBundledPluginDelivery:
+    """Migration 66 hands existing installs the plugin a fresh one ships enabled.
+
+    ``merge_missing`` is dict-based: a config that already lists another
+    extension under ``plugins:`` would never receive the bundled workflows
+    record, and Double Plus Ultracode would stay unavailable after an update.
+    """
+
+    RECORD = {
+        "name": "workflows",
+        "package": "deerflow-extension-workflows",
+        "use": "deerflow_extension_workflows:install",
+        "enabled": True,
+        "required": False,
+        "config": {"enabled": True, "storage_path": "workflows/workflows.sqlite", "agents": ["lead_agent"]},
+    }
+    BASE = "sandbox:\n  use: custom\nmodels: []\nnew_section:\n  enabled: true\n"
+
+    def _example(self, tmp_path: Path) -> Path:
+        example = _write_example(tmp_path, version=66)
+        with example.open("a", encoding="utf-8") as handle:
+            yaml.safe_dump({"plugins": [self.RECORD]}, handle, sort_keys=False)
+        return example
+
+    def _plugins(self, config: Path) -> list:
+        return yaml.safe_load(config.read_text(encoding="utf-8"))["plugins"]
+
+    def test_an_existing_install_gets_the_bundled_record_beside_its_own(self, tmp_path):
+        config = tmp_path / "config.yaml"
+        config.write_text(f"config_version: 65\n{self.BASE}plugins:\n  - name: acme\n    use: acme_ext:install\n", encoding="utf-8")
+
+        assert config_upgrade.upgrade(config, self._example(tmp_path), REPO_ROOT) == 0
+
+        assert self._plugins(config) == [{"name": "acme", "use": "acme_ext:install"}, self.RECORD]
+
+    def test_a_config_without_plugins_gets_the_record(self, tmp_path):
+        config = tmp_path / "config.yaml"
+        config.write_text(f"config_version: 65\n{self.BASE}", encoding="utf-8")
+
+        assert config_upgrade.upgrade(config, self._example(tmp_path), REPO_ROOT) == 0
+
+        assert self._plugins(config) == [self.RECORD]
+
+    def test_a_record_the_operator_already_has_is_left_alone(self, tmp_path):
+        """A manual `make extension-install` or a disabled record keeps its own settings."""
+        mine = {"name": "workflows", "package": "deerflow-extension-workflows", "use": "deerflow_extension_workflows:install", "enabled": False, "config": {"storage_path": "/srv/wf.sqlite"}}
+        config = tmp_path / "config.yaml"
+        config.write_text(f"config_version: 65\n{self.BASE}" + yaml.safe_dump({"plugins": [mine]}, sort_keys=False), encoding="utf-8")
+
+        assert config_upgrade.upgrade(config, self._example(tmp_path), REPO_ROOT) == 0
+
+        assert self._plugins(config) == [mine]
+
+    def test_it_runs_once_so_removing_the_record_sticks(self, tmp_path):
+        config = tmp_path / "config.yaml"
+        original = f"config_version: 66\n{self.BASE}plugins: []\n"
+        config.write_text(original, encoding="utf-8")
+
+        assert config_upgrade.upgrade(config, self._example(tmp_path), REPO_ROOT) == 0
+
+        assert config.read_text(encoding="utf-8") == original
+
+    @pytest.mark.parametrize(
+        ("launcher", "gateway_start"),
+        [
+            ("serve.sh", "uv run --no-sync uvicorn app.gateway.app:app"),
+            ("deploy.sh", "up -d --remove-orphans --wait"),
+            ("docker.sh", "$COMPOSE_CMD up --build -d"),
+        ],
+    )
+    def test_every_launcher_upgrades_config_before_starting_the_gateway(self, launcher, gateway_start):
+        """`git pull` + restart is the documented update; a launcher that skips
+        the upgrade leaves an existing install without the bundled plugin."""
+        text = (REPO_ROOT / "scripts" / launcher).read_text(encoding="utf-8")
+        upgrade_at = text.find('scripts/config-upgrade.sh"') if launcher != "docker.sh" else text.find('"$SCRIPT_DIR/config-upgrade.sh"')
+        assert upgrade_at != -1
+        assert upgrade_at < text.find(gateway_start)
+
+    def test_the_migration_names_a_record_the_shipped_example_carries(self):
+        example = yaml.safe_load((REPO_ROOT / "config.example.yaml").read_text(encoding="utf-8"))
+        shipped = {record["name"]: record for record in example["plugins"]}
+
+        for name in config_upgrade.MIGRATIONS[66]["plugins_from_example"]:
+            assert shipped[name]["enabled"] is True
+
+
 def _write_example_with_tools(tmp_path: Path, version: int = 3) -> Path:
     example = tmp_path / "config.example.yaml"
     example.write_text(

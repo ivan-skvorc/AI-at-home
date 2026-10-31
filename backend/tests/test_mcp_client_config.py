@@ -253,6 +253,30 @@ def test_build_server_params_excludes_tool_call_timeout():
     }
 
 
+@pytest.mark.parametrize("env_name", ["GITHUB_TOKEN", "GITHUB_PERSONAL_ACCESS_TOKEN"])
+def test_github_example_hands_the_server_the_token_under_the_name_it_reads(monkeypatch, env_name):
+    """``@modelcontextprotocol/server-github`` reads only GITHUB_PERSONAL_ACCESS_TOKEN.
+
+    The example used to pass the token as GITHUB_TOKEN, which that server
+    silently ignores: it then ran unauthenticated (public repos only, 60
+    requests an hour, every write refused). Whichever name ``.env`` uses must
+    reach the server under the one it reads.
+    """
+    import json
+    from pathlib import Path
+
+    example = json.loads((Path(__file__).parents[2] / "extensions_config.example.json").read_text())
+    assert example["mcpServers"]["github"]["args"][-1] == "@modelcontextprotocol/server-github"
+
+    for name in ("GITHUB_TOKEN", "GITHUB_PERSONAL_ACCESS_TOKEN"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv(env_name, "github_pat_example")
+    config = ExtensionsConfig.model_validate(ExtensionsConfig.resolve_env_variables(example))
+    config.mcp_servers["github"].enabled = True
+
+    assert build_servers_config(config)["github"]["env"] == {"GITHUB_PERSONAL_ACCESS_TOKEN": "github_pat_example"}
+
+
 def test_parallel_search_example_is_explicitly_opt_in_and_uses_anonymous_http_transport():
     """The shipped example must not enable or authenticate the optional free server."""
     import json

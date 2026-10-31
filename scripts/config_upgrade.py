@@ -118,6 +118,48 @@ def migrate_pii_token_secret(data):
     return changes
 
 
+def _plugin_identity(record) -> set[str]:
+    """Names one ``plugins:`` record answers to: its name, module and package."""
+    if not isinstance(record, dict):
+        return set()
+    identity = set()
+    if isinstance(record.get("name"), str):
+        identity.add(f"name:{record['name']}")
+    if isinstance(record.get("use"), str):
+        identity.add(f"module:{record['use'].split(':', 1)[0]}")
+    if isinstance(record.get("package"), str):
+        identity.add("package:" + re.sub(r"[-_.]+", "-", record["package"]).lower())
+    return identity
+
+
+def backfill_example_plugins(user: dict, example: dict, names) -> list[str]:
+    """Append the example's ``plugins:`` records named in ``names`` that ``user`` lacks.
+
+    For a bundled plugin that ships enabled. ``merge_missing`` is dict-based, so
+    a config already listing another extension never receives the record. A
+    record that already matches by name, module or package (a manual install,
+    a disabled or hand-edited one) is left exactly as it is. Called only from
+    the migration that introduced the plugin, so removing the record later
+    sticks.
+    """
+    plugins = user.get("plugins")
+    if plugins is None:
+        plugins = []
+    elif not isinstance(plugins, list):
+        return []  # malformed; the Gateway's loader reports it
+    added = []
+    for record in example.get("plugins") or []:
+        if not isinstance(record, dict) or record.get("name") not in names:
+            continue
+        if any(_plugin_identity(record) & _plugin_identity(existing) for existing in plugins):
+            continue
+        plugins.append(copy.deepcopy(record))
+        added.append(f"plugins[{record['name']}] added (bundled and enabled by default)")
+    if added:
+        user["plugins"] = plugins
+    return added
+
+
 MIGRATIONS = {
     1: {
         "description": "Rename src.* module paths to deerflow.*",
@@ -155,6 +197,12 @@ MIGRATIONS = {
         # install with redaction enabled would fail startup after upgrading.
         "description": "Generate a token_secret for configs with pii_redaction enabled (now mandatory)",
         "data_transform": migrate_pii_token_secret,
+    },
+    66: {
+        # Double Plus Ultracode needs the Script workflows plugin, now bundled
+        # (backend/extensions/sources) and enabled in the example.
+        "description": "Add the bundled Script workflows plugin that Double Plus Ultracode runs on",
+        "plugins_from_example": ("workflows",),
     },
     # Future migrations go here:
     # 60: {
@@ -377,6 +425,9 @@ def upgrade(config_path: Path, example_path: Path, repo_root: Path) -> int:
         transform = migration.get("data_transform") if migration else None
         if transform:
             structural_changes.extend(transform(user))
+        bundled = migration.get("plugins_from_example") if migration else None
+        if bundled:
+            structural_changes.extend(backfill_example_plugins(user, example, bundled))
     migrated.extend(structural_changes)
 
     if migrated:

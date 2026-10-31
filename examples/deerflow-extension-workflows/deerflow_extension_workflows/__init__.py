@@ -84,8 +84,18 @@ def install(registry, config):
     if not isinstance(agents, list) or len(agents) > 32 or any(not isinstance(a, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,80}", a) for a in agents) or len(set(agents)) != len(agents):
         raise ValueError("agents must be a bounded, unique operator allowlist")
     resolved["agents"] = agents
-    if enabled and (os.name != "posix" or not agents or not isinstance(config.get("storage_path"), str) or not Path(config["storage_path"]).is_absolute()):
-        raise ValueError("Enabled workflows require POSIX, an absolute storage_path and allowed agents")
+    storage_path = config.get("storage_path")
+    if isinstance(storage_path, str) and storage_path and not Path(storage_path).is_absolute():
+        # Relative paths live under the Gateway's runtime home, which every
+        # launcher exports as an absolute DEER_FLOW_HOME (the checkout's own
+        # locally, /app/backend/.deer-flow in the containers), so one shipped
+        # config fits every deployment.
+        home = os.environ.get("DEER_FLOW_HOME", "")
+        if not Path(home).is_absolute():
+            raise ValueError("A relative storage_path needs an absolute DEER_FLOW_HOME")
+        resolved["storage_path"] = str(Path(home) / storage_path)
+    if enabled and (os.name != "posix" or not agents or not isinstance(resolved.get("storage_path"), str) or not Path(resolved["storage_path"]).is_absolute()):
+        raise ValueError("Enabled workflows require POSIX, an absolute (or DEER_FLOW_HOME-relative) storage_path and allowed agents")
     workflows = Workflows(resolved)
     id_schema = {
         "type": "object",

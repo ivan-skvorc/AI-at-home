@@ -44,7 +44,7 @@
 > **Going further**
 >
 > - 🏛️ **Democracy — several models answer, then decide together** — pick an organizer and panelists; the organizer researches once, briefs them identically, they review each other anonymously, and it synthesizes one answer reporting the split rather than averaging it away. Extremely token-heavy, and the setup page estimates the multiple before you commit.
-> - 🧬 **Double Plus Ultracode — the plan becomes a script** — inspired by Claude Code's *ultracode*. In this composer mode the agent answers a substantive request by writing an inspectable workflow script that many agents run in the background (understand, change, verify, with findings checked by a second agent), and the result **comes back to the same chat on its own**, exactly once. Needs the optional Script workflows extension; agent limits live under **Settings → Subagents**, and workflow agent spend shows as its own row in the cost header.
+> - 🧬 **Double Plus Ultracode — the plan becomes a script** — inspired by Claude Code's *ultracode*. In this composer mode the agent answers a substantive request by writing an inspectable workflow script that many agents run in the background (understand, change, verify, with findings checked by a second agent), and the result **comes back to the same chat on its own**, exactly once. The Script workflows extension it runs on is bundled and on by default, and an existing install gets it on its next update; agent limits live under **Settings → Subagents**, and workflow agent spend shows as its own row in the cost header.
 > - 🤖 **Generate a custom agent from your history** — point a model at past conversations and let it decide whether a new agent is even worth adding. It is allowed to say **no**, naming the agent that already covers the work. You get an editable **SOUL.md** draft; nothing is saved until you press Create.
 > - 🧵 **Sub-agents that respect what your GPU can hold** — local dispatch asks the card instead of using a fixed number, so five sub-agents on a model that fits once run one at a time rather than queueing invisibly inside Ollama. On by default.
 > - 🧩 **Per-thread subagent model** — in Ultra mode, route `task` subagents to a cheaper or local model (defaults to "Follow lead").
@@ -931,8 +931,10 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for detailed Docker development guide.
 
 Keep `config.yaml`, `.env`, and `extensions_config.json`. Stop the services you
 currently use, run `git pull --ff-only`, then start the same mode again. Do not run
-`make config` or `make docker-init` again for a routine source upgrade. If the new
-version requires configuration changes, run `make config-upgrade` before restarting.
+`make config` or `make docker-init` again for a routine source upgrade. Every launcher
+runs `make config-upgrade` before it starts, so new configuration (such as a bundled
+plugin) arrives on its own. A Docker host with neither `backend/.venv` nor PyYAML
+says so instead; install PyYAML (e.g. `python3-yaml`) and run `make config-upgrade`.
 See [Operations and Troubleshooting](frontend/src/content/en/application/operations-and-troubleshooting.mdx#upgrading-an-existing-checkout)
 for the commands for each mode.
 
@@ -1287,7 +1289,10 @@ local default stays unchanged; this mode is strictly opt-in.
    *Repository access* to just the repos the agent needs. **Contents:
    Read-only** is enough to clone; for the agent to push a branch and open a
    pull request, grant **Contents: Read and write** and **Pull requests: Read
-   and write**. Put it in `.env` as `GITHUB_TOKEN=...` (see `.env.example`).
+   and write**. Put it in `.env` as `GITHUB_TOKEN=...` (see `.env.example`);
+   `GITHUB_PERSONAL_ACCESS_TOKEN=...` works too, and the same token reaches the
+   GitHub MCP server under the name it reads. Without a token, GitHub stays
+   anonymous (public repos only) and DeerFlow still starts.
    A running sandbox keeps the token it was created with, so restart DeerFlow
    after rotating it.
 5. `make dev` — the preflight verifies Docker is usable, pulls the sandbox
@@ -3442,24 +3447,21 @@ chat's own total and chart, because none of it is a turn of this chat. Your
 cleanly ("Spend cap reached; no new agents were started") instead of waiting on a
 reconciliation. There is no hard per-workflow money budget.
 
-**Switching it on.** The mode is only offered when the Script workflows extension
-is installed and enabled (if it is not, a remembered selection falls back to Ultra
-and says so). From the repository root:
-
-```bash
-make extension-install SOURCE="$(pwd)/examples/deerflow-extension-workflows"
-```
-
-then add its operator block to `config.yaml` and restart the Gateway:
+**It is on by default.** The Script workflows extension ships bundled: a locked
+snapshot in `backend/extensions/sources/deerflow-extension-workflows` that every
+`uv sync` and image build installs (POSIX only; Windows skips it), and an enabled
+record in `config.example.yaml`:
 
 ```yaml
 plugins:
   - name: workflows
+    package: deerflow-extension-workflows
     use: deerflow_extension_workflows:install
     enabled: true
+    required: false
     config:
       enabled: true
-      storage_path: /absolute/path/to/workflows.sqlite
+      storage_path: workflows/workflows.sqlite  # relative = under DEER_FLOW_HOME
       agents: [lead_agent]       # Agents a workflow may start
       concurrency: 8             # at once per workflow (ceiling 16)
       global_concurrency: 16     # across all workflows (ceiling 32)
@@ -3468,6 +3470,13 @@ plugins:
       shared_workspace: "off"    # "off" | "read" | "write" (quoted: YAML reads off as false)
       deliver_results: true      # post finished results back into the chat
 ```
+
+An existing install gets that record from `config_version` 66 on its next start
+after `git pull` (every launcher runs `make config-upgrade` first; a record you
+already have is left alone). The mode spends nothing until you pick it. To turn
+it off, run `make extension-disable NAME=workflows` and restart; if the extension
+is disabled or failed to load, a remembered selection falls back to Ultra and
+says so.
 
 It works from the web app only: channels, schedules and API tokens have no browser
 session to start workflows with, and there the agent says the mode is unavailable
@@ -5450,13 +5459,13 @@ performs a production static-demo build for the fixture-backed workspace routes.
 It measures the unique JavaScript and CSS referenced by representative routes
 and writes the detailed result to `.next/performance-results.json`.
 
-### Script workflows (optional extension)
+### Script workflows (bundled extension)
 
 The [script workflows extension](examples/deerflow-extension-workflows/README.md)
 adds inspectable JavaScript orchestration through full AgentRuns, background launch,
-bounded parallel execution, progress, retained results and cancellation. It is
-disabled by default and requires a POSIX Gateway and operator-authorized Agent
-references. Versioned definitions, retained step outputs, live-process pause/resume
+bounded parallel execution, progress, retained results and cancellation. This fork
+bundles it and enables it by default for [Double Plus Ultracode](#double-plus-ultracode--the-plan-becomes-a-script);
+it requires a POSIX Gateway and operator-authorized Agent references. Versioned definitions, retained step outputs, live-process pause/resume
 and authenticated human checkpoints support staged inspection reports. Confirmation
 binds the exact retained output or captured file version (SHA-256); preview and
 downstream reads use the same immutable bytes. Each child retains host-generated

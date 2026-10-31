@@ -275,7 +275,7 @@ the task poller indefinitely. Set it to `null` to disable:
          "command": "npx",
          "args": ["-y", "@modelcontextprotocol/server-github"],
          "env": {
-            "GITHUB_TOKEN": "$GITHUB_TOKEN"
+            "GITHUB_PERSONAL_ACCESS_TOKEN": "$GITHUB_TOKEN"
          },
          "session_init_timeout": 60,
          "tool_call_timeout": 60

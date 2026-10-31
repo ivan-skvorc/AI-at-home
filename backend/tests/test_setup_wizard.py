@@ -504,6 +504,9 @@ class TestBuildMinimalConfig:
         # A working image is pinned so the container sandbox bash works out of the
         # box rather than falling back to the provider's broken :latest default.
         assert data["sandbox"]["image"] == "ghcr.io/agent-infra/sandbox:1.11.0"
+        # The container only sees what sandbox.environment forwards: without
+        # this, a token in .env never reached git and private clones failed.
+        assert data["sandbox"]["environment"] == {"GITHUB_TOKEN": "$GITHUB_TOKEN"}
         tool_names = [t["name"] for t in data.get("tools", [])]
         assert "bash" in tool_names
 

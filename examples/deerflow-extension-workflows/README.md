@@ -60,6 +60,11 @@ plugins:
       deliver_results: true  # Post a finished workflow's result back into its conversation.
 ```
 
+A relative `storage_path` resolves under the Gateway's `DEER_FLOW_HOME`, which must
+then be absolute. This fork ships the extension installed and enabled with
+`storage_path: workflows/workflows.sqlite`; see the root README's Double Plus Ultracode
+section.
+
 Find **Script workflows** in the workspace extension directory for the installation
 guide. Its catalog listing does not indicate installation or activation; the operator
 configuration above and Gateway runtime registration determine availability.
