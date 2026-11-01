@@ -25,7 +25,7 @@ Three failures, three modules:
 | A scanned PDF converts "successfully" to a near-empty file | `extraction.py` (detect), `ocr.py` (read it anyway) |
 | The model has to navigate 200 pages itself | `chunking.py` + `analysis.py`, surfaced as the `analyze_document` tool |
 
-## The four modules
+## The modules
 
 - **`extraction.py`** — page anchors (`<!-- page: 12 -->`, emitted by
   `utils/file_conversion.py` from pymupdf4llm's `page_chunks=True`) and
@@ -57,7 +57,20 @@ Three failures, three modules:
   reduce stage: notes dropped after the last merge round were read but are not
   in the answer.
 
+- **`formats.py`** — books that are not PDFs (roadmap item 33, FORK.md §45):
+  `estimate_extent` sizes text-like, HTML, EPUB and zip uploads from the byte
+  count or the zip listing for the uploads prompt, and `read_container_text`
+  gives `analyze_document` Markdown for HTML/EPUB and a zip's text/HTML members.
+
 ## Rules that are load-bearing
+
+- **Size an upload without parsing it; bound an archive before opening it.**
+  Upload conversion is off by default because it runs parsers on the host, so the
+  routing estimate must not need one. Archive limits are checked against the zip
+  listing first, and a zip never reaches MarkItDown's unbounded `ZipConverter`.
+  HTML/EPUB stay out of `CONVERTIBLE_EXTENSIONS` (project documents would stop
+  reading HTML with auto-convert off) and are converted in memory, never into a
+  companion beside the upload.
 
 - **A configured limit is a ceiling, never a floor.** `clamp_to_context` only
   lowers. An unknown window (`resolve_context_budget` returns `None`) leaves
@@ -105,4 +118,4 @@ Tests: `backend/tests/test_context_budget.py`,
 `test_context_aware_tool_output.py`, `test_document_extraction.py`,
 `test_document_chunking.py`, `test_document_ocr.py`,
 `test_document_analysis.py`, `test_analyze_document_tool.py`,
-`test_bench_drift_eval.py` (the drift harness itself).
+`test_bench_drift_eval.py` (the drift harness itself), `test_document_formats.py`.

@@ -20,6 +20,7 @@ is preserved where it can be read.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from pathlib import Path
 from typing import Annotated, Any
@@ -31,11 +32,13 @@ from deerflow.agents.middlewares.input_sanitization_middleware import neutralize
 from deerflow.config.paths import get_paths
 from deerflow.documents.analysis import AnalysisResult, analyze_document_text
 from deerflow.documents.extraction import assess_extraction
+from deerflow.documents.formats import CONTAINER_SUFFIXES, UnreadableDocument, read_container_text
 from deerflow.documents.ocr import ocr_pdf_to_markdown
 from deerflow.runtime.user_context import get_effective_user_id
 from deerflow.tools.types import Runtime
 from deerflow.utils.context_budget import resolve_context_budget
 from deerflow.utils.file_conversion import CONVERTIBLE_EXTENSIONS, convert_file_to_markdown
+from deerflow.utils.file_io import await_drained
 
 logger = logging.getLogger(__name__)
 
@@ -163,7 +166,10 @@ async def _analyze_document_impl(
 
     # 1. Get Markdown for the document: an existing companion, a fresh
     #    conversion, or the file itself when it is already text.
-    text, origin = await _load_text(source, settings)
+    try:
+        text, origin = await _load_text(source, settings)
+    except UnreadableDocument as refusal:
+        return f"{neutralize_untrusted_tags(filename)} was not read: {neutralize_untrusted_tags(str(refusal))}. Ask the user to upload the document itself."
 
     quality = assess_extraction(text)
     ocr_note = ""
@@ -199,7 +205,7 @@ async def _analyze_document_impl(
     if len(answer) > settings.answer_max_chars:
         answer = answer[: settings.answer_max_chars] + "\n\n[answer truncated]"
 
-    lines = [answer, "", f"— source: {neutralize_untrusted_tags(filename)} ({origin}); {result.coverage_line()}."]
+    lines = [answer, "", f"— source: {neutralize_untrusted_tags(filename)} ({neutralize_untrusted_tags(origin)}); {result.coverage_line()}."]
     if ocr_note:
         lines.append(f"— {ocr_note}")
     if notes_path:
@@ -212,6 +218,12 @@ async def _load_text(source: Path, settings: Any) -> tuple[str, str]:
     companion = _companion_markdown(source)
     if companion is not None:
         return companion.read_text(encoding="utf-8", errors="replace"), "converted Markdown"
+
+    # HTML, EPUB and zip are converted in memory, never into a companion beside
+    # the upload: a companion would be reused as the document on every later
+    # read, and its name could collide with a file the user uploaded.
+    if source.suffix.lower() in CONTAINER_SUFFIXES:
+        return await await_drained(asyncio.to_thread(read_container_text, source))
 
     if source.suffix.lower() in CONVERTIBLE_EXTENSIONS:
         converted = await convert_file_to_markdown(source)
@@ -284,7 +296,9 @@ async def analyze_document(
 
     The document is split into parts sized for the model reading them; each part
     is read separately and the findings are combined. Scanned PDFs (no text
-    layer) are transcribed from page images first, then summarised.
+    layer) are transcribed from page images first, then summarised. HTML and
+    EPUB books are read as Markdown, and a .zip is read through the text and
+    HTML documents inside it.
 
     The reply ends with a coverage line naming the pages that were actually
     read. On a long document against a small context window the read can stop

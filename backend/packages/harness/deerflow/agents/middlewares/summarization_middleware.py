@@ -1177,6 +1177,36 @@ def _drop_unusable_fraction_clauses(
     return (kept if isinstance(trigger, list) else kept[0]), new_keep, True
 
 
+# Share of the run model's prompt space past which compaction fires (fork,
+# roadmap item 34). Half, not most: the trigger counts messages only, while the
+# system prompt and the bound tool schemas (~10K tokens for the default tool
+# set) ride on every request outside that count.
+COMPACTION_TRIGGER_SHARE = 0.5
+
+
+def _clamp_token_triggers_to_window(trigger: Any, run_model: Any, app_config: Any) -> Any:
+    """Lower absolute ``tokens`` triggers to fire before the run model's window fills.
+
+    The shipped ``tokens: 32000`` is the *whole* window of a synced Ollama entry,
+    so compaction fired only after the request had already overflowed. The
+    configured value stays a ceiling, never a floor: a cloud window keeps it,
+    and an unknown window leaves every clause as configured.
+    """
+    from deerflow.utils.context_budget import resolve_context_budget
+
+    budget = resolve_context_budget(run_model, app_config)
+    if budget is None or trigger is None:
+        return trigger
+    ceiling = max(1, int(budget.prompt_tokens * COMPACTION_TRIGGER_SHARE))
+
+    def clamp(clause: Any) -> Any:
+        if isinstance(clause, tuple) and len(clause) == 2 and clause[0] == "tokens" and isinstance(clause[1], int) and clause[1] > ceiling:
+            return ("tokens", ceiling)
+        return clause
+
+    return [clamp(clause) for clause in trigger] if isinstance(trigger, list) else clamp(trigger)
+
+
 def create_summarization_middleware(
     *,
     app_config: Any | None = None,
@@ -1264,6 +1294,7 @@ def create_summarization_middleware(
     # attaches a profile from a declared ``context_window``, so this path is
     # reached only when the model's capacity is genuinely unknown.
     trigger, keep_tuple, has_usable_trigger = _drop_unusable_fraction_clauses(anchor_model, trigger, keep or config.keep.to_tuple())
+    trigger = _clamp_token_triggers_to_window(trigger, anchor_model, resolved_app_config)
     if not has_usable_trigger:
         logger.warning(
             "Every configured summarization trigger is fraction-based but run model %r "

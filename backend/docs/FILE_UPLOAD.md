@@ -153,6 +153,11 @@ To work with these files:
 </current_uploads>
 ```
 
+未生成 Markdown 伴随文件的文本类、HTML、EPUB 和 zip 上传，还会附带一行 `Estimated text:`：
+按文件大小或 zip 目录中声明的大小估算，不在网关主机上解析或解压任何内容；超过
+`documents.large_document_chars` 时提示改用 `analyze_document`。zip 会列出其中可读的文本/HTML
+文档，越过成员数、解压大小等上限或含嵌套压缩包时说明拒绝原因（FORK.md §45）。
+
 以前轮次上传的文件不会在每次请求中重复注入。Agent 可按需调用
 `list_uploaded_files` 查询历史上传（可选 `query` 按文件名子串过滤、
 `extensions` 按类型过滤；过滤发生在默认 20 条上限之前）。如果已知文件名，也可直接使用

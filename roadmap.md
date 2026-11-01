@@ -45,7 +45,9 @@ cookbook — Escoffier's *A Guide to Modern Cookery*, a 3.3 MB HTML file — and
 recipes a beginner could manage. It never split the book. It read on until the window was
 gone, and the run ended in `github_create_repository`, creating a public repository nobody
 had asked for. Each item closes one link in that chain, and every figure quoted in them was
-measured on that file.
+measured on that file. Item **33** and most of **34** — the pre-call window guard and the
+window-derived compaction trigger — landed together: see [FORK.md §45](./FORK.md). 33's
+number stays retired like 12–15; 34 keeps only its unshipped half.
 
 ---
 
@@ -73,10 +75,8 @@ Open items, one line each. The full orchestrator prompts follow.
   the stateless core and its neighbours.
 - **25. A behavioural regression suite** — opt-in, judged, out of CI; the measuring stick for
   everything above it.
-- **33. Every big upload announces itself** — HTML, EPUB, plain-text and zipped books get the
-  "too large, use `analyze_document`" routing a converted PDF gets, on a default install.
-- **34. Never send a prompt the window cannot hold** — compact, or refuse visibly, before a
-  request reaches a server that silently drops its head.
+- **34. A model with an unknown window says so** — an Ollama model without `num_ctx` reads
+  its window from `/api/show`, and one that still has none is marked as unprotected.
 - **35. Long documents fan out in Ultra and Double Plus Ultracode** — outline first, then
   parts read in parallel by children inside their own windows, reduced hierarchically.
 - **36. Consequential tool calls wait for a yes** — creating a repository, pushing, sending
@@ -88,11 +88,11 @@ surface it defends. Then the two that make local models worth preferring rather 
 tolerating (20, 21). Then proactive triggers and spec upkeep (22, 24). The regression suite
 last (25), because every earlier item is a change it would have measured.
 
-**Suggested order for 33–36.** 33 first: it is small, and on its own it would have changed
-the plan of the run that prompted these items. Then 34, which turns a silent truncation into
-a visible error and removes the likeliest cause of the stray tool call. Then 36, before 35
-multiplies the number of agents holding write tools. 35 last, because it builds on the part
-plan from 33 and the window accounting from 34.
+**Suggested order for 34–36.** 36 first: the guard from item 34 removed the likeliest cause
+of the stray tool call, but not the reach — a confused model can still create a repository —
+and 35 multiplies the number of agents holding write tools. Then 35, which builds on the
+part sizing and window accounting that landed in FORK.md §45. 34's remainder is small and can
+go any time.
 
 ---
 
@@ -600,125 +600,45 @@ CI.
 
 ---
 
-## 33. Every big upload announces itself
+## 34. A model with an unknown window says so
 
-**Goal** — A book uploaded as HTML, EPUB, plain text or a zip of those is announced with its
-real extent and routed to `analyze_document` — the treatment a converted PDF gets today — on
-a default install.
+**Goal** — A model whose context window DeerFlow cannot resolve is either given one or
+visibly marked as unprotected, instead of silently getting none of the window machinery.
 
-**Why it fits** — The routing from FORK.md §25 exists and works, but it only fires for a file
-that has a converted Markdown companion: `_document_quality()` reads `<name>.md`, and nothing
-else sets `document_is_large`. Two things keep that companion from existing. Upload
-conversion covers only PDF and Office formats (`CONVERTIBLE_EXTENSIONS`), and it is off by
-default anyway (`uploads.auto_convert_documents: false`, because it parses untrusted files on
-the host before sandbox isolation applies). Measured on the Escoffier HTML (Project Gutenberg
-#71395): 3,330,848 characters, ~833K tokens by the budget's 4 characters per token.
-`_document_quality()` returns `None`, and `<current_uploads>` shows the agent **zero outline
-entries and no preview** — a file name, "3.3 MB", and a hint to use `grep`. Nothing tells it
-the file is twenty-five windows long. `analyze_document` then reads anything it does not
-convert as plain text, so at a synced 32K Ollama entry the same file costs 76 parts of raw
-markup — past `max_chunks: 60`, so one call stops at a prefix — against 49 parts of its
-MarkItDown conversion (2,155,340 characters, 3,338 headings). A zip is worse: it is read as
-compressed bytes.
+**Why it fits** — The rest of item 34 landed (FORK.md §45): a pre-call guard measures every
+request against the serving model's prompt space, drops the oldest tool results or refuses to
+send, and compaction's token trigger caps at half a small window. Every one of those — and the
+§25 tool-output caps and part sizes before them — is a no-op when `resolve_context_budget`
+returns `None`, deliberately, so an unknown window behaves exactly as before. That is the safe
+default and the wrong place to stop. `scripts/sync-ollama-models.py` writes `num_ctx` and
+`context_window` for the models it syncs, but an Ollama model added in Settings → Models, or
+by hand, carries neither — and Ollama's own default window is small (2048 or 4096 tokens by
+version), so the model most likely to overflow is the one with no protection at all.
 
 **Depends on** — nothing.
 
 **Scope**
 
-- **Announce from the size, without parsing.** For text-like uploads (`.txt`, `.md`,
-  `.html`/`.htm`/`.xhtml`, `.csv`, `.json`, `.xml`) the byte count bounds the text, so a
-  conservative estimate — the raw size for plain text, a stated markup discount for HTML —
-  can set `document_is_large` and an "about N tokens" extent with no parser running on the
-  host. For EPUB and ZIP, sum `ZipInfo.file_size` from the central directory, which needs no
-  decompression. This is what makes the routing work with `auto_convert_documents: false`.
-  Keep the estimate visibly an estimate in the text the agent reads.
-- **Convert HTML and EPUB where conversion already runs.** MarkItDown 0.1.5, already a
-  dependency, ships `HtmlConverter` and `EpubConverter`. Add them to `analyze_document`'s
-  on-demand conversion so it reads Markdown rather than markup, and to upload-time
-  conversion only behind the existing `auto_convert_documents` gate. Decide — and write into
-  `SECURITY.md` — whether BeautifulSoup-based parsing on the host is the same risk class as
-  the PDF and Office parsers that gate was written for.
-- **Never hand an upload to MarkItDown's `ZipConverter`.** In 0.1.5 it `read()`s every member
-  into memory and recurses into nested archives, with no bound on count, size or depth. Bound
-  a zip from `infolist()` first — member count, total uncompressed size, per-member
-  compression ratio, no nested archives, no path outside the archive root — then convert or
-  extract only text, HTML, EPUB, PDF and Office members, and refuse the rest with a reason
-  the agent can pass on ("upload the .html inside it").
-- Keep `_do_convert(file_path, pdf_converter) -> str` as the single conversion seam, per
-  FORK.md §25's upstream-shape rule.
+- For an Ollama entry without `num_ctx`, read the model's native context length from
+  `/api/show` (`model_info.<arch>.context_length`) the way the sync script does, apply the
+  same 32,768 clamp, and set `num_ctx` and `context_window` on the entry — at save time in
+  Settings → Models, and at config load for hand-written entries.
+- Mark a model with no resolvable window in Settings → Models and in the model picker's
+  detail line ("window unknown — overflow protection off"), with the one config key that
+  fixes it.
+- Keep `resolve_context_budget`'s contract: unknown stays `None`; this item supplies the
+  number, it does not guess one.
 
-**Key files** — `backend/packages/harness/deerflow/agents/middlewares/uploads_middleware.py`
-(`_document_quality`, `document_is_large`, `_format_file_entry`),
-`backend/packages/harness/deerflow/utils/file_conversion.py` (`CONVERTIBLE_EXTENSIONS`),
-`backend/packages/harness/deerflow/utils/file_outline.py`,
-`backend/packages/harness/deerflow/tools/builtins/analyze_document_tool.py` (`_load_text`),
-`backend/packages/harness/deerflow/documents/extraction.py`, `config.example.yaml`
-(`uploads:`, `documents:`), `SECURITY.md`, FORK.md §25 and its checklist row.
+**Key files** — `scripts/sync-ollama-models.py` (the `/api/show` read to share),
+`backend/packages/harness/deerflow/models/` (the Ollama factory),
+`backend/app/gateway/routers/` (managed models), `frontend/src/core/models/management.ts`,
+`frontend/src/components/workspace/model-picker-controls.tsx`,
+`backend/packages/harness/deerflow/utils/context_budget.py`.
 
-**Done when** — with `auto_convert_documents: false`, uploading the Gutenberg HTML, its EPUB,
-its plain-text edition and a zip of the HTML each produces a `<current_uploads>` entry with
-an extent and the "does not fit in one context window — use `analyze_document`"
-instruction; `analyze_document` on the HTML reads converted Markdown (49 parts at a 32K
-entry, not 76); a zip past any bound, or holding a nested archive, is refused with a reason
-and nothing is decompressed; and small files and every PDF path behave as before.
-
----
-
-## 34. Never send a prompt the window cannot hold
-
-**Goal** — A model call whose request is larger than the serving model's window is compacted,
-or refused with a visible error, before it is sent — never handed to a server that drops its
-head.
-
-**Why it fits** — Ollama does not reject an oversized prompt. It truncates it, logs a
-warning — `truncating input prompt limit=4096 prompt=4339 keep=4 new=4096` from Ollama
-0.12.5 in [an October 2025 report](https://github.com/orgs/infiniflow/discussions/10500) —
-and keeps the most recent tokens, so the system prompt, the tool rules and the user's
-question are the first things lost, as FORK.md §25 and `context_budget.py` already say. A model left holding a tool
-list and a page of cookbook still does *something*; in the run behind items 33–36 it called
-`github_create_repository`. (That run's steps could not be recovered, so this chain is the
-likely one, not a confirmed one.) The fork's protections are per value, or late. Each tool
-result is clamped to a share of the window, but nothing bounds their sum. The default
-compaction trigger is 32,000 tokens, which §25 notes is the *whole* window of a synced Ollama
-entry. A fraction trigger is dropped with a warning when the model declares no
-`context_window`. And the fixed part of every request is larger than it looks: with subagents
-on, the 21 default built-in tools' schemas alone are ~40K characters (~10K tokens) per call
-— about 40% of a synced 32K entry's 24,576-token prompt space — before any MCP server, whose
-tools are all bound eagerly because `tool_search.enabled` defaults to false.
-
-**Depends on** — nothing; it reuses the resolver in `deerflow/utils/context_budget.py`.
-
-**Scope**
-
-- A last-before-the-model guard — a `wrap_model_call` middleware ordered after summarization
-  and the tool-output budget — that estimates the whole request (system prompt, bound tool
-  schemas, messages) with the resolver's `CHARS_PER_TOKEN` against
-  `ContextBudget.prompt_tokens`.
-- Over budget: compact first (the summarization middleware and its manual-compaction path
-  exist), then externalize the oldest large tool results through the existing `tool_output`
-  externalization, and if the request still does not fit, end the run with an error naming
-  the model and its window. Never send it. The system prompt and the latest genuine user
-  message are never what gets dropped.
-- Derive the default compaction trigger from the run model's window when it is known — say
-  70% of `prompt_tokens` — keeping 32,000 as a ceiling. §25's rule holds unchanged: a
-  configured limit is a ceiling, never a floor.
-- An unknown window keeps every helper a no-op, as today, but stops being silent: probe
-  Ollama's `/api/show` for an entry without `num_ctx`, as `scripts/sync-ollama-models.py`
-  already does, and mark models with no known window in Settings → Models, since overflow
-  protection is off for them.
-
-**Key files** — `backend/packages/harness/deerflow/utils/context_budget.py`,
-`backend/packages/harness/deerflow/agents/middlewares/tool_output_budget_middleware.py`,
-`backend/packages/harness/deerflow/agents/middlewares/summarization_middleware.py`,
-`backend/packages/harness/deerflow/agents/lead_agent/` (middleware order),
-`scripts/sync-ollama-models.py`, `config.example.yaml` (`summarization.trigger`),
-`backend/tests/test_context_overflow_guard.py` (new), FORK.md §25.
-
-**Done when** — a fake model with a 32K window never receives a request over its prompt space
-(assert on what it receives); every request it does receive carries the system prompt and
-the latest user message; a run that cannot be compacted under the window ends with a visible
-error naming the model and the window; `make drift-eval` (§25a) on a local model shows no new
-drift; and a 200K cloud model's requests are byte-for-byte unchanged.
+**Done when** — an Ollama model added in Settings → Models without a window gets `num_ctx`
+and `context_window` from `/api/show` and the guard engages for it; a model whose window
+cannot be found is marked as unprotected in the UI; and a model with a configured window is
+untouched.
 
 ---
 
@@ -732,10 +652,10 @@ question needs.
 **Why it fits** — "Split the book into parts" is what a user expects these modes to do, and
 neither does it. Ultra adds the `task` tool, but neither the lead-agent prompt nor the
 subagent prompts mention `analyze_document` or splitting a document; the only steering is the
-per-upload text that item 33 repairs. `analyze_document` already owns the split
+per-upload text, which FORK.md §45 extended to HTML, EPUB, text and zipped books. `analyze_document` already owns the split
 (`documents/chunking.py`, sized by `chunk_chars_for`) and the hierarchical reduce, but it maps
 every part with one model at `documents.concurrency: 2`, and it cannot choose parts: asking
-for "a few beginner-friendly recipes" pays for all 49 parts of the cookbook. The research
+for "a few beginner-friendly recipes" pays for all 53 parts of the cookbook. The research
 points the same way. *Chain of Agents* (NeurIPS 2024) has workers read consecutive segments
 and pass notes to a manager, and reports up to 10% over RAG and full-context baselines
 ([proceedings](https://proceedings.neurips.cc/paper_files/paper/2024/hash/ee71a4b14ec26710b39ee6be113d7750-Abstract.html)).
@@ -748,9 +668,9 @@ windows ([report](https://research.trychroma.com/context-rot)) — so the target
 part, not one that merely fits. A Double Plus Ultracode script is already the shape RLM
 describes: code that plans, fans out with `pipeline()`, and reduces.
 
-**Depends on** — 33 (an outline and a companion for HTML, EPUB and text) and 34 (every child
-call provably inside its window); the shipped workflows extension (former item 32, FORK.md
-§44).
+**Depends on** — the shipped §45 work (former item 33's HTML/EPUB/zip reading and item 34's
+window guard, so every child call stays inside its window) and the shipped workflows
+extension (former item 32, FORK.md §44).
 
 **Scope**
 
@@ -889,4 +809,5 @@ agent would make the opposite the default.
 `num_ctx` at 32,768 so a 128K-native model does not allocate a KV cache the GPU cannot hold
 (FORK.md §1). No local window holds a 539K-token cookbook anyway, and Chroma's *Context Rot*
 found reliability falling with input length even inside the window. A bigger window moves
-the cliff; items 33–35 remove the need to stand at it.
+the cliff; the reading in parts that FORK.md §45 extended, and item 35, remove the need to
+stand at it.

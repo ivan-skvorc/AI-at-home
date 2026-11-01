@@ -805,6 +805,13 @@ def build_subagent_runtime_middlewares(
 
     middlewares.append(ModelContentCompatibilityMiddleware())
 
+    # Fork (roadmap item 34): a subagent on a small local model overflows the same
+    # way the lead does. Same position as in the lead chain, so the date reminder
+    # and the coalescer below stay innermost and MODEL_PHYSICAL keeps its place.
+    from deerflow.agents.middlewares.context_window_guard_middleware import ContextWindowGuardMiddleware
+
+    middlewares.append(ContextWindowGuardMiddleware(app_config=app_config))
+
     # SubagentDateContextMiddleware (#4781) — inject framework-owned temporal
     # context before the first model call without registering the lead agent's
     # DynamicContextMiddleware. The latter also reads user memory, performs a

@@ -787,6 +787,14 @@ def build_middlewares(
     # extensions placed there keep their final-request guarantee.
     middlewares.append(ModelContentCompatibilityMiddleware())
 
+    # Fork (roadmap item 34): never send a request the serving model's window
+    # cannot hold. Inner of every built-in request transform so it measures the
+    # near-final request; outer of the MODEL_PHYSICAL extension anchor so
+    # extensions placed there still see the final request.
+    from deerflow.agents.middlewares.context_window_guard_middleware import ContextWindowGuardMiddleware
+
+    middlewares.append(ContextWindowGuardMiddleware(app_config=resolved_app_config))
+
     # Inject custom middlewares before ClarificationMiddleware
     if custom_middlewares:
         middlewares.extend(custom_middlewares)

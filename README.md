@@ -23,6 +23,8 @@
 > - 🌐 **An internet switch on the composer** — a globe takes *this* conversation offline: search, fetching, browser control, MCP and external agents are left out of the run, and subagents inherit it. Per chat, not a global setting.
 > - 📄 **PDF / Office uploads that just work** — `pymupdf4llm` is bundled, so PDF / DOCX / PPTX / XLSX uploads are reliably readable by the agent (`uploads.auto_convert_documents: true`).
 > - 📚 **Big documents on small models** — `analyze_document` reads a document in parts sized for whichever model is serving, so a 300-page PDF never has to fit in a 32K local model. A **scanned** PDF is detected and transcribed by a vision model rather than summarised into fiction. An upload too large to read in one window now says so in the prompt — with its real extracted size, not the compressed file size — and every answer names the **pages** it came from, so a read that stopped early hands back a `start_part` to continue from instead of quietly answering about the first 40%.
+> - 📖 **Books in any format, zipped or not** — an HTML, EPUB, plain-text or zipped book (a Project Gutenberg download, say) now states its size in the prompt and, when it is too big for one window, is routed to `analyze_document`, which reads HTML and EPUB as Markdown and reads the documents inside a zip. **Nothing is parsed or unpacked on the host to size an upload**, and a zip that would unpack past 64 MB, holds over 1,000 files, nests another archive or is encrypted is refused with the reason. Nothing to turn on.
+> - 🧱 **No request bigger than the window** — before every model call the whole request (system prompt, tool schemas, conversation) is measured against the serving model's window. If it does not fit, the oldest tool results are dropped from that request — never your messages or the instructions — and if it still does not fit it is **not sent**: the chat says why, instead of Ollama silently cutting off the start of the prompt. Compaction now fires at half a small model's window instead of at 32,000 tokens. Nothing to turn on; a model whose window is unknown is left alone.
 > - 🎯 **A drift check for long documents** — `make drift-eval` gives a model a large PDF with facts planted at known pages, then has a *second* model judge whether the answer still addresses the question that was asked or quietly became "summarise this document". The planted facts grade the judge too, so a judge that waves through a wrong answer is reported as the judge failing. Runs offline against the document path, or end to end through the running agent with `MODE=agent`.
 > - 🐳 **Full clone-and-debug sandbox runs** — one-command per-thread containers, host-reachable ports, native debuggers (`gdb` / `strace`), and a `repo-runner` skill that encodes clone → install → run → debug.
 > - 📜 **Scroll-back that survives a restart** — history is served by the run-event store, which now defaults to `db` rather than process memory. Older messages keep loading after the Gateway restarts.
@@ -196,6 +198,8 @@ DeerFlow has newly integrated the intelligent search and crawling toolset indepe
     - [Upgrade Notes](#upgrade-notes)
   - [Voice Input](#voice-input)
   - [Large Documents and Scanned PDFs](#large-documents-and-scanned-pdfs)
+    - [Books That Are Not PDFs](#books-that-are-not-pdfs)
+    - [Requests That Would Overflow the Window](#requests-that-would-overflow-the-window)
   - [Measuring Mission Drift on a Large Document](#measuring-mission-drift-on-a-large-document)
   - [Terminal Workbench (TUI)](#terminal-workbench-tui)
   - [Updating Camoufox and SearXNG](#updating-camoufox-and-searxng)
@@ -5019,6 +5023,60 @@ document stops at `max_chunks` parts — and when it does, the answer says which
 that" are different claims. Following that to the end is what makes the first
 one true. OCR needs a model with `supports_vision: true`; without one it says so
 instead of returning an empty answer.
+
+### Books That Are Not PDFs
+
+A book often arrives as HTML, EPUB, plain text or a zip of those — Project
+Gutenberg offers all four. Upload conversion covers PDF and Office files only,
+and it is off by default (`uploads.auto_convert_documents`), so a 3.3 MB HTML
+cookbook used to reach the agent as a file name and a byte count: no outline, no
+size warning, nothing pointing at `analyze_document`. The agent read it straight
+through until the window was gone.
+
+Every text-like, HTML, EPUB or zip upload now **states its size in the prompt**,
+estimated from the file size or the archive's file listing — **nothing is parsed
+or unpacked on the host to produce it** — and past
+`documents.large_document_chars` it is routed to `analyze_document` exactly like
+a large PDF. A zip also names the documents inside it and how many other files it
+skips. `analyze_document` reads HTML and EPUB as Markdown rather than markup —
+that cookbook is 53 parts of Markdown against a 32K local model, where its raw
+HTML was 79, past the 60-part cap — and reads the text and HTML documents inside
+a zip in order, each under its own `## File:` heading.
+
+**Limits.** An archive is checked from its listing before anything inside it is
+opened: more than 1,000 files, more than 64 MB unpacked, an encrypted member, a
+path that leaves the archive, or another archive inside it, and it is refused
+with the reason, which the agent passes on with a request for the document
+itself. Images, fonts and PDFs inside a zip are skipped and counted, not read.
+HTML and EPUB are converted in memory when `analyze_document` runs, so nothing is
+written beside your upload. Nothing to configure.
+
+### Requests That Would Overflow the Window
+
+Ollama does not reject a prompt longer than the model's `num_ctx`: it cuts it to
+fit and keeps the most recent part, so the system prompt, the tool rules and your
+question are the first things lost — and the model goes on to answer whatever is
+left. The per-result caps above leave the *sum* unbounded, and the default
+compaction trigger (32,000 tokens) is the whole window of a synced Ollama model.
+
+**Before every model call the whole request is now measured** — system prompt,
+tool schemas and conversation — against the window of the model serving it, for
+the lead agent and subagents alike. If it does not fit, **the oldest tool results
+are dropped from that request**, each replaced by a note telling the model to
+work from what it has or use `analyze_document`. Your messages, the instructions
+and the results the model is about to read are never touched, and the stored
+conversation is unchanged. **If it still does not fit, it is not sent**: the chat
+ends with a message naming the model and its window and suggesting a new chat,
+`/compact`, or a model with a larger window. Compaction also fires earlier: at
+half the model's prompt space when that is below the configured
+`summarization.trigger` token count — 12,288 tokens on a synced 32K Ollama model —
+which stays the ceiling for larger models.
+
+**Limits.** The size is estimated, not tokenized: about four characters per token
+for English and about one token per character for Chinese or Japanese, with a 10%
+margin for JSON-heavy tool schemas. A model whose window is unknown — no
+`num_ctx`, no `context_window` in `config.yaml` — behaves exactly as before.
+Nothing to configure.
 
 ## Measuring Mission Drift on a Large Document
 
