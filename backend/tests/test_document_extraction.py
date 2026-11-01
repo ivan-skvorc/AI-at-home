@@ -187,6 +187,17 @@ class TestUploadsMiddlewareWarning:
         assert _extraction_warning(source) is None
 
 
+def _rendered_entry(source: Path, *, size: int) -> str:
+    """Render one upload exactly as ``before_agent`` derives and formats it."""
+    from deerflow.agents.middlewares.uploads_middleware import UploadsMiddleware, _document_signals, _large_document_chars
+
+    file = {"filename": source.name, "size": size, "path": f"/mnt/user-data/uploads/{source.name}"}
+    file.update(_document_signals(source, _large_document_chars()))
+    lines: list[str] = []
+    UploadsMiddleware(base_dir=str(source.parent))._format_file_entry(file, lines)
+    return "\n".join(lines)
+
+
 class TestUploadsMiddlewareExtent:
     """The size next to an upload is the compressed file, not what reading costs.
 
@@ -199,30 +210,10 @@ class TestUploadsMiddlewareExtent:
     """
 
     def _entry(self, tmp_path: Path, md_body: str) -> str:
-        from deerflow.agents.middlewares.uploads_middleware import (
-            UploadsMiddleware,
-            _document_quality,
-            _large_document_chars,
-        )
-
         source = tmp_path / "report.pdf"
         source.write_bytes(b"%PDF-1.4")
         (tmp_path / "report.pdf.md").write_text(md_body, encoding="utf-8")
-        quality = _document_quality(source)
-        sparse = quality is not None and quality.is_sparse
-        lines: list[str] = []
-        UploadsMiddleware(base_dir=str(tmp_path))._format_file_entry(
-            {
-                "filename": "report.pdf",
-                "size": 216_605,
-                "path": "/mnt/user-data/uploads/report.pdf",
-                "extraction_warning": quality.describe() if sparse else None,
-                "document_extent": quality.describe_extent() if quality is not None and not sparse else None,
-                "document_is_large": bool(quality is not None and not sparse and quality.chars >= _large_document_chars()),
-            },
-            lines,
-        )
-        return "\n".join(lines)
+        return _rendered_entry(source, size=216_605)
 
     def _body(self, pages: int) -> str:
         return "\n".join(f"{page_anchor(n)}\n## Section {n}\n\n" + ("word " * 200) for n in range(1, pages + 1))
@@ -258,3 +249,81 @@ class TestUploadsMiddlewareExtent:
 
         assert _large_document_chars() >= 1_000
         assert _DEFAULT_LARGE_DOCUMENT_CHARS == 120_000
+
+
+class TestUploadsMiddlewareEstimatedExtent:
+    """A book that is not converted on upload still announces its size.
+
+    Upload conversion covers PDF and Office only, and it is off by default, so an
+    HTML, plain-text, EPUB or zipped book used to arrive as a name and a byte
+    count — the Escoffier HTML that prompted roadmap item 33 showed the agent
+    zero outline entries and no preview, and it read the 3.3 MB file linearly
+    until the window was gone. The estimate comes from the file size or the
+    archive listing, so nothing is parsed on the host to produce it.
+    """
+
+    def test_a_large_html_upload_is_routed_without_converting_it(self, tmp_path: Path):
+        source = tmp_path / "pg71395-images.html"
+        source.write_bytes(b"<p>Melt the butter.</p>" * 10_000)
+        rendered = _rendered_entry(source, size=230_000)
+        assert "Estimated text: up to 230,000 characters (~57,500 tokens), estimated from the file size" in rendered
+        assert "does not fit in one context window" in rendered
+        assert "analyze_document" in rendered
+        assert not list(tmp_path.glob("*.md")), "the estimate must not convert the file"
+
+    def test_a_large_plain_text_upload_is_routed(self, tmp_path: Path):
+        source = tmp_path / "book.txt"
+        source.write_text("word " * 30_000, encoding="utf-8")
+        assert "does not fit in one context window" in _rendered_entry(source, size=150_000)
+
+    def test_a_small_text_upload_is_neither_flagged_as_a_scan_nor_routed(self, tmp_path: Path):
+        # A tiny file is short, not image-based: the OCR warning belongs to PDFs.
+        source = tmp_path / "note.txt"
+        source.write_text("buy eggs", encoding="utf-8")
+        rendered = _rendered_entry(source, size=8)
+        assert "image-based" not in rendered
+        assert "does not fit in one context window" not in rendered
+        assert "Estimated text: up to 8 characters" in rendered
+
+    def test_a_zipped_book_names_its_documents_and_points_at_analyze_document(self, tmp_path: Path):
+        import zipfile
+
+        source = tmp_path / "book.zip"
+        with zipfile.ZipFile(source, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+            archive.writestr("pg71395-images.html", b"<p>soup</p>" * 20_000)
+            archive.writestr("images/cover.jpg", b"\xff\xd8" * 100)
+        rendered = _rendered_entry(source, size=source.stat().st_size)
+        assert "Archive contents: pg71395-images.html (214.8 KB); 1 other file not read" in rendered
+        assert "`read_file` cannot open an archive" in rendered
+        assert "does not fit in one context window" in rendered
+
+    def test_a_refused_archive_says_why_and_is_not_routed(self, tmp_path: Path):
+        import zipfile
+
+        source = tmp_path / "nested.zip"
+        with zipfile.ZipFile(source, "w") as archive:
+            archive.writestr("inner.zip", b"PK")
+        rendered = _rendered_entry(source, size=source.stat().st_size)
+        assert "⚠ This archive will not be opened: it contains another archive (inner.zip)" in rendered
+        assert "Archive contents:" not in rendered
+        assert "does not fit in one context window" not in rendered
+
+    def test_before_agent_announces_the_estimate(self, tmp_path: Path):
+        from unittest.mock import MagicMock
+
+        from langchain_core.messages import HumanMessage
+
+        from deerflow.agents.middlewares.uploads_middleware import UploadsMiddleware
+        from deerflow.config.paths import Paths
+        from deerflow.runtime.user_context import get_effective_user_id
+
+        uploads = Paths(str(tmp_path)).sandbox_uploads_dir("t-1", user_id=get_effective_user_id())
+        uploads.mkdir(parents=True, exist_ok=True)
+        (uploads / "book.html").write_bytes(b"<p>soup</p>" * 20_000)
+        runtime = MagicMock()
+        runtime.context = {"thread_id": "t-1"}
+        message = HumanMessage(content="find easy recipes", additional_kwargs={"files": [{"filename": "book.html", "size": 220_000, "path": "/mnt/user-data/uploads/book.html"}]})
+        result = UploadsMiddleware(base_dir=str(tmp_path)).before_agent({"messages": [message]}, runtime)
+        content = result["messages"][-1].content
+        assert "Estimated text: up to 220,000 characters" in content
+        assert "analyze_document" in content

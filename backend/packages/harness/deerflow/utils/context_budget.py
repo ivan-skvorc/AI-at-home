@@ -64,6 +64,21 @@ _RESERVE_ATTRS = ("num_predict", "max_tokens")
 _IDENTIFIER_ATTRS = ("name", "model_name", "model", "deployment_name")
 
 
+def estimate_tokens(text: str) -> int:
+    """Estimate the tokens *text* costs, erring high.
+
+    ``CHARS_PER_TOKEN`` is right for English prose and four times too optimistic
+    for Chinese or Japanese, where a character is about a token. Counting each
+    UTF-8 continuation byte twice keeps ASCII at ``CHARS_PER_TOKEN`` characters
+    per token, puts accented Latin at ~0.75 tokens per character and CJK at
+    ~1.25 — so a guard fed this estimate fails safe on every script.
+    """
+    if not text:
+        return 0
+    weighted = 2 * len(text.encode("utf-8", errors="replace")) - len(text)
+    return -(-weighted // CHARS_PER_TOKEN)
+
+
 @dataclass(frozen=True)
 class ContextBudget:
     """The usable context of the model serving the current run, in tokens."""

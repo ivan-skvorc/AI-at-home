@@ -19,6 +19,7 @@ from langgraph.runtime import Runtime
 from deerflow.agents.middlewares.input_sanitization_middleware import neutralize_untrusted_tags
 from deerflow.config.paths import Paths, get_paths
 from deerflow.documents.extraction import ExtractionQuality
+from deerflow.documents.formats import estimate_extent
 from deerflow.runtime.user_context import resolve_runtime_user_id
 from deerflow.uploads.manager import is_upload_staging_file
 from deerflow.utils.file_conversion import assess_converted_markdown
@@ -64,6 +65,39 @@ def _extraction_warning(source: Path) -> str | None:
     """
     quality = _document_quality(source)
     return quality.describe() if quality is not None and quality.is_sparse else None
+
+
+def _document_signals(source: Path, large_document_chars: int) -> dict:
+    """What the agent should know about an upload's size before it opens it.
+
+    A converted companion gives the real extent and catches a scan. Without one
+    — every upload on a default install, where conversion is off, and every
+    HTML, text, EPUB or zipped book whatever the setting — the size comes from
+    the file or its archive listing instead (``deerflow.documents.formats``), so
+    nothing is parsed on the host to produce it. An estimate never raises the
+    OCR warning: a short text file is short, not scanned.
+    """
+    quality = _document_quality(source)
+    if quality is not None:
+        sparse = quality.is_sparse
+        return {
+            "extraction_warning": quality.describe() if sparse else None,
+            "document_extent": None if sparse else quality.describe_extent(),
+            "document_is_large": not sparse and quality.chars >= large_document_chars,
+        }
+    signals: dict = {"extraction_warning": None, "document_extent": None, "document_is_large": False}
+    estimate = estimate_extent(source)
+    if estimate is None:
+        return signals
+    archive = estimate.archive
+    if archive is not None and archive.refusal:
+        signals["archive_refusal"] = archive.refusal
+        return signals
+    signals["document_estimate"] = estimate.describe()
+    signals["document_is_large"] = estimate.chars >= large_document_chars
+    if archive is not None and source.suffix.lower() == ".zip":
+        signals["archive_contents"] = archive.describe_contents()
+    return signals
 
 
 def _large_document_chars() -> int:
@@ -150,6 +184,17 @@ class UploadsMiddleware(AgentMiddleware[UploadsMiddlewareState]):
         extent = file.get("document_extent")
         if extent:
             lines.append(f"  Extracted text: {neutralize_untrusted_tags(extent)}")
+        estimate = file.get("document_estimate")
+        if estimate:
+            lines.append(f"  Estimated text: {neutralize_untrusted_tags(estimate)}")
+        refusal = file.get("archive_refusal")
+        if refusal:
+            lines.append(f"  ⚠ This archive will not be opened: {neutralize_untrusted_tags(refusal)}.")
+            lines.append("    Ask the user to upload the document inside it directly.")
+        contents = file.get("archive_contents")
+        if contents:
+            lines.append(f"  Archive contents: {neutralize_untrusted_tags(contents)}")
+            lines.append("    `read_file` cannot open an archive; `analyze_document(path=..., question=...)` reads the documents inside it.")
         if file.get("document_is_large"):
             lines.append("  ⚠ This does not fit in one context window. Reading it end to end will")
             lines.append("    exhaust the window and cost you the task you were asked to do.")
@@ -349,11 +394,7 @@ class UploadsMiddleware(AgentMiddleware[UploadsMiddlewareState]):
                 outline, preview = extract_outline_for_file(phys_path)
                 file["outline"] = outline
                 file["outline_preview"] = preview
-                quality = _document_quality(phys_path)
-                sparse = quality is not None and quality.is_sparse
-                file["extraction_warning"] = quality.describe() if sparse else None
-                file["document_extent"] = quality.describe_extent() if quality is not None and not sparse else None
-                file["document_is_large"] = bool(quality is not None and not sparse and quality.chars >= large_document_chars)
+                file.update(_document_signals(phys_path, large_document_chars))
 
         logger.debug(f"Current uploads: {[f['filename'] for f in new_files]}")
 

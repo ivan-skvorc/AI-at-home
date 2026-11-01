@@ -8,6 +8,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Books in any format:** an HTML, EPUB, plain-text or zipped upload now states its size in
+  the prompt — estimated from the file size or the zip listing, with nothing parsed or unpacked
+  on the host — and past `documents.large_document_chars` (120,000) it is routed to
+  `analyze_document`, as a large PDF already was. `analyze_document` reads HTML and EPUB as
+  Markdown (a 3.3 MB Gutenberg cookbook: 53 parts at a 32K window instead of 79 of raw markup)
+  and reads the text and HTML documents inside a zip. An archive with over 1,000 files, over
+  64 MB unpacked, an encrypted member, a path outside it or a nested archive is refused with the
+  reason. No new config.
+- **No request bigger than the model's window:** every model call, lead agent and subagents,
+  is measured against the serving model's window first. If it does not fit, the oldest tool
+  results are dropped from that request (never the instructions or your messages, and the
+  stored conversation is unchanged); if it still does not fit, it is not sent and the chat ends
+  with a message naming the model and its window, instead of Ollama silently cutting off the
+  start of the prompt. Compaction's `summarization.trigger` token count now also caps at half a
+  small model's prompt space (12,288 on a synced 32K Ollama model). Models with an unknown
+  window are unaffected. No new config.
 - **Double Plus Ultracode:** a composer mode, inspired by Claude Code's
   *ultracode*, that plans substantive work as a workflow script run in the
   background by the Script workflows extension; the result is posted back into

@@ -40,6 +40,15 @@ workflow script on the script-workflows extension (inspired by Claude Code's *ul
 with exactly-once result delivery, shared workspaces and visible workflow spend — landed as
 one change set: see [FORK.md §44](./FORK.md). Its number stays retired like 12–15.
 
+Items **33–36** came out of one incident. A local model was handed a Project Gutenberg
+cookbook — Escoffier's *A Guide to Modern Cookery*, a 3.3 MB HTML file — and asked for a few
+recipes a beginner could manage. It never split the book. It read on until the window was
+gone, and the run ended in `github_create_repository`, creating a public repository nobody
+had asked for. Each item closes one link in that chain, and every figure quoted in them was
+measured on that file. Item **33** and most of **34** — the pre-call window guard and the
+window-derived compaction trigger — landed together: see [FORK.md §45](./FORK.md). 33's
+number stays retired like 12–15; 34 keeps only its unshipped half.
+
 ---
 
 ## At a glance
@@ -66,12 +75,24 @@ Open items, one line each. The full orchestrator prompts follow.
   the stateless core and its neighbours.
 - **25. A behavioural regression suite** — opt-in, judged, out of CI; the measuring stick for
   everything above it.
+- **34. A model with an unknown window says so** — an Ollama model without `num_ctx` reads
+  its window from `/api/show`, and one that still has none is marked as unprotected.
+- **35. Long documents fan out in Ultra and Double Plus Ultracode** — outline first, then
+  parts read in parallel by children inside their own windows, reduced hierarchically.
+- **36. Consequential tool calls wait for a yes** — creating a repository, pushing, sending
+  or spending pauses for approval unless the operator pre-approved it.
 
 **Suggested order for 19–25.** Voice first (19), since it is the one missing modality and it
 closes a live privacy leak. Then the injection boundary (23), *before* anything widens the
 surface it defends. Then the two that make local models worth preferring rather than
 tolerating (20, 21). Then proactive triggers and spec upkeep (22, 24). The regression suite
 last (25), because every earlier item is a change it would have measured.
+
+**Suggested order for 34–36.** 36 first: the guard from item 34 removed the likeliest cause
+of the stray tool call, but not the reach — a confused model can still create a repository —
+and 35 multiplies the number of agents holding write tools. Then 35, which builds on the
+part sizing and window accounting that landed in FORK.md §45. 34's remainder is small and can
+go any time.
 
 ---
 
@@ -579,6 +600,164 @@ CI.
 
 ---
 
+## 34. A model with an unknown window says so
+
+**Goal** — A model whose context window DeerFlow cannot resolve is either given one or
+visibly marked as unprotected, instead of silently getting none of the window machinery.
+
+**Why it fits** — The rest of item 34 landed (FORK.md §45): a pre-call guard measures every
+request against the serving model's prompt space, drops the oldest tool results or refuses to
+send, and compaction's token trigger caps at half a small window. Every one of those — and the
+§25 tool-output caps and part sizes before them — is a no-op when `resolve_context_budget`
+returns `None`, deliberately, so an unknown window behaves exactly as before. That is the safe
+default and the wrong place to stop. `scripts/sync-ollama-models.py` writes `num_ctx` and
+`context_window` for the models it syncs, but an Ollama model added in Settings → Models, or
+by hand, carries neither — and Ollama's own default window is small (2048 or 4096 tokens by
+version), so the model most likely to overflow is the one with no protection at all.
+
+**Depends on** — nothing.
+
+**Scope**
+
+- For an Ollama entry without `num_ctx`, read the model's native context length from
+  `/api/show` (`model_info.<arch>.context_length`) the way the sync script does, apply the
+  same 32,768 clamp, and set `num_ctx` and `context_window` on the entry — at save time in
+  Settings → Models, and at config load for hand-written entries.
+- Mark a model with no resolvable window in Settings → Models and in the model picker's
+  detail line ("window unknown — overflow protection off"), with the one config key that
+  fixes it.
+- Keep `resolve_context_budget`'s contract: unknown stays `None`; this item supplies the
+  number, it does not guess one.
+
+**Key files** — `scripts/sync-ollama-models.py` (the `/api/show` read to share),
+`backend/packages/harness/deerflow/models/` (the Ollama factory),
+`backend/app/gateway/routers/` (managed models), `frontend/src/core/models/management.ts`,
+`frontend/src/components/workspace/model-picker-controls.tsx`,
+`backend/packages/harness/deerflow/utils/context_budget.py`.
+
+**Done when** — an Ollama model added in Settings → Models without a window gets `num_ctx`
+and `context_window` from `/api/show` and the guard engages for it; a model whose window
+cannot be found is marked as unprotected in the UI; and a model with a configured window is
+untouched.
+
+---
+
+## 35. Long documents fan out in Ultra and Double Plus Ultracode
+
+**Goal** — In Ultra (subagents) and Double Plus Ultracode (script workflows), a document past
+the window is split along its outline and read in parallel, each part by a child inside its
+own window, then reduced hierarchically — and an outline-first plan reads only the parts the
+question needs.
+
+**Why it fits** — "Split the book into parts" is what a user expects these modes to do, and
+neither does it. Ultra adds the `task` tool, but neither the lead-agent prompt nor the
+subagent prompts mention `analyze_document` or splitting a document; the only steering is the
+per-upload text, which FORK.md §45 extended to HTML, EPUB, text and zipped books. `analyze_document` already owns the split
+(`documents/chunking.py`, sized by `chunk_chars_for`) and the hierarchical reduce, but it maps
+every part with one model at `documents.concurrency: 2`, and it cannot choose parts: asking
+for "a few beginner-friendly recipes" pays for all 53 parts of the cookbook. The research
+points the same way. *Chain of Agents* (NeurIPS 2024) has workers read consecutive segments
+and pass notes to a manager, and reports up to 10% over RAG and full-context baselines
+([proceedings](https://proceedings.neurips.cc/paper_files/paper/2024/hash/ee71a4b14ec26710b39ee6be113d7750-Abstract.html)).
+*Recursive Language Models* (Zhang, Kraska, Khattab, December 2025) keep the input outside
+the window as a variable the model probes and slices in code before recursing on the slices,
+and report inputs two orders of magnitude past the window
+([arXiv 2512.24601](https://arxiv.org/abs/2512.24601)). Chroma's *Context Rot* (July 2025)
+found reliability falling as input grows across the 18 models it tested, even inside their
+windows ([report](https://research.trychroma.com/context-rot)) — so the target is a small
+part, not one that merely fits. A Double Plus Ultracode script is already the shape RLM
+describes: code that plans, fans out with `pipeline()`, and reduces.
+
+**Depends on** — the shipped §45 work (former item 33's HTML/EPUB/zip reading and item 34's
+window guard, so every child call stays inside its window) and the shipped workflows
+extension (former item 32, FORK.md §44).
+
+**Scope**
+
+- **One part plan.** Expose the chunker as a part plan — line ranges cut at outline headings,
+  sized by `chunk_chars_for` for the *child* model's budget — so `analyze_document`, Ultra and
+  a workflow script agree on what a part is. A second chunker is the failure to avoid.
+- **Outline first.** Before mapping, the plan reads the outline with section sizes and selects
+  parts for the question; reading everything stays available, and the coverage line stays
+  honest about what was skipped. The upload block caps the outline at 50 headings
+  (`MAX_OUTLINE_ENTRIES`) and the cookbook has 3,338, so the plan needs the full outline from
+  a tool.
+- **Ultra.** When an upload is flagged large and subagents are on, the routing text names the
+  plan: delegate parts to subagents — on the Ultra subagent model, FORK.md §3 — with each
+  part's line range and the question, then reduce. Or move `analyze_document`'s map step onto
+  subagents directly. Pick one path, not both.
+- **Double Plus Ultracode.** Add a long-document recipe to the brief in `ultracode.py`: part
+  plan, then `pipeline(parts, …, {concurrency})` with a `schema` for the notes, then a
+  hierarchical reduce, each child reading only its own range.
+- **Concurrency from the GPU.** Take it from the model's parallel slots (FORK.md §34) rather
+  than a constant; on one local card, extra parallelism only queues.
+
+**Key files** — `backend/packages/harness/deerflow/documents/chunking.py`,
+`backend/packages/harness/deerflow/documents/analysis.py`,
+`backend/packages/harness/deerflow/tools/builtins/analyze_document_tool.py`,
+`backend/packages/harness/deerflow/agents/middlewares/uploads_middleware.py` (routing text),
+`backend/extensions/sources/deerflow-extension-workflows/deerflow_extension_workflows/ultracode.py`
+and its `examples/` twin, `backend/scripts/benchmark/drift_eval/`.
+
+**Done when** — on the §25a drift corpus and on the cookbook, an Ultra run and a Double Plus
+Ultracode run each return a coverage line naming every part read, recover the planted late
+fact, and keep every child prompt under its model's window; an outline-first run on a narrow
+question reads strictly fewer parts than a full read; and wall-clock time beats sequential
+`analyze_document` on the same model and GPU.
+
+---
+
+## 36. Consequential tool calls wait for a yes
+
+**Goal** — A tool call that changes something outside the conversation — creating a
+repository, pushing, opening an issue, sending a message, spending — pauses for the user's
+approval unless the operator pre-approved it.
+
+**Why it fits** — In the run behind items 33–36, a model asked about recipes created a public
+GitHub repository through the GitHub MCP server, whose tools include `create_repository`
+beside its reads. No injected text was involved, so item 23's provenance gate would not have
+caught it: the instruction came from a confused model, not from fetched content. Today the
+only stop is an operator-written denylist (`guardrails` with `AllowlistProvider` and
+`denied_tools`), off by default. `McpToolOverride` carries nothing but routing, and scheduled
+runs are non-interactive by design, so they have nobody to ask.
+
+**Depends on** — nothing. It shares the `guardrails/` seam with item 23, so one provider
+decides both, but it is the other axis: who asked, not where the text came from.
+
+**Scope**
+
+- Classify every tool as **read**, **local write** (inside the thread's workspace) or
+  **outward**. Built-ins declare their class. MCP tools take their server's annotations
+  (`readOnlyHint`, `destructiveHint`, `openWorldHint`) as a hint only — annotations come from
+  the server — so an unannotated tool, or one from an untrusted server, defaults to outward.
+- An outward call pauses with a LangGraph interrupt and an approve/deny card in the chat;
+  a denial returns a tool error the model sees. Scheduled and other non-interactive runs deny
+  outward calls that were not pre-approved, and the run history says why.
+- Operator pre-approval per server and per tool in `extensions_config.json`
+  (`tools.<name>.approval: auto | ask | deny`, on `McpToolOverride`, which already accepts
+  extra fields), mirrored in Settings.
+- Ship the GitHub MCP example read-only. The official server takes `--read-only` or
+  `GITHUB_READ_ONLY=1` and narrows by `GITHUB_TOOLSETS`
+  ([docs](https://pkg.go.dev/github.com/github/github-mcp-server)); the example still
+  launches the older `@modelcontextprotocol/server-github`.
+- Until this lands, the stop is config: `guardrails.enabled: true` with
+  `deerflow.guardrails.builtin:AllowlistProvider` and `denied_tools` listing the write tools
+  of every enabled MCP server.
+
+**Key files** — `backend/packages/harness/deerflow/guardrails/` (provider, middleware,
+builtin), `backend/packages/harness/deerflow/config/guardrails_config.py`,
+`backend/packages/harness/deerflow/config/extensions_config.py` (`McpToolOverride`),
+`backend/packages/harness/deerflow/mcp/tools.py`, `extensions_config.example.json` (the
+`github` server), `frontend/src/components/workspace/` (the approval card), `SECURITY.md`,
+`backend/tests/test_consequential_tool_approval.py` (new).
+
+**Done when** — with the GitHub MCP server enabled, an interactive chat's `create_repository`
+call shows an approval card and changes nothing until approved; a denial reaches the model as
+a tool error; a scheduled run's outward call is denied with a reason; read tools run without
+a prompt; and an MCP tool with no annotations is treated as outward.
+
+---
+
 ## Deliberately not on this roadmap
 
 **More model providers, more IM channels, more bundled skills.** The model bundle is
@@ -625,3 +804,10 @@ different feature from the push-to-talk Grok voice tier (FORK.md §43): it needs
 through nginx, holds the microphone open for the whole session, and sends all of it to
 xAI. Item 19's push-to-talk, local-first voice is the one this fork wants; a realtime cloud
 agent would make the opposite the default.
+
+**Raising the context clamp until the book fits.** `scripts/sync-ollama-models.py` clamps
+`num_ctx` at 32,768 so a 128K-native model does not allocate a KV cache the GPU cannot hold
+(FORK.md §1). No local window holds a 539K-token cookbook anyway, and Chroma's *Context Rot*
+found reliability falling with input length even inside the window. A bigger window moves
+the cliff; the reading in parts that FORK.md §45 extended, and item 35, remove the need to
+stand at it.

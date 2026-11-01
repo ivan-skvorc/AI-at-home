@@ -4420,3 +4420,96 @@ stamping and stripping, parent links, delegated roll-up, copy/merge safety),
 `make test` / `pnpm test` / `pnpm test:e2e` and fail loudly, so no checklist row was
 added (CHANGE_CYCLE.md step 4; the table is over its budget). Depth for agents:
 `examples/deerflow-extension-workflows/AGENTS.md` and the extensions guide.
+
+### 45. Books that are not PDFs, and requests that do not fit the window
+
+Roadmap items 33 and 34, from one incident: a local model was handed a 3.3 MB
+Project Gutenberg HTML cookbook, never split it, read on until the window was
+gone, and ended the run in `github_create_repository`. §25 already had the
+machinery — `analyze_document`, window-sized parts, the "this does not fit"
+routing — and none of it engaged, for two separate reasons.
+
+**The routing never fired.** `_document_quality()` reads a converted Markdown
+companion, and nothing else set `document_is_large`. Upload conversion covers PDF
+and Office only and is **off by default** (`uploads.auto_convert_documents`,
+because it runs third-party parsers on the host before sandbox isolation), so on
+a default install no upload was routed at all, and an HTML book showed the agent
+zero outline entries and no preview. `deerflow/documents/formats.py` sizes
+text-like, HTML, EPUB and zip uploads **without parsing them**: the byte count
+(an upper bound on the characters, and exactly what `read_file` returns for HTML,
+markup included) or the declared sizes in a zip's central directory.
+`UploadsMiddleware._document_signals` uses it only when there is no companion,
+and an estimate never raises the OCR warning — a short text file is short, not
+scanned.
+
+**`analyze_document` read markup and bytes.** It read anything not in
+`CONVERTIBLE_EXTENSIONS` as plain text: the cookbook was 79 parts of raw HTML at
+a synced 32K entry, past `max_chunks: 60`, against 53 parts of MarkItDown output,
+and a zip was compressed bytes. HTML, EPUB and zip now go through
+`read_container_text`. Three decisions to keep:
+
+- **HTML and EPUB are not added to `CONVERTIBLE_EXTENSIONS`.** That set also
+  gates project documents, where a convertible extension takes the conversion
+  path — or the `conversion_disabled` decline — *before* the text heuristic, so
+  adding `.html` would make HTML project documents unreadable whenever
+  auto-convert is off. The conversion is scoped to `analyze_document`.
+- **Conversion is in memory; no companion is written.** A companion is reused as
+  the document on every later read, and `<name>.md` can collide with a file the
+  user uploaded — `convert_file_to_markdown` writes with `write_text`.
+- **An archive is bounded from its listing before any member is opened**:
+  1,000 files, 64 MiB unpacked, no encrypted member, no path leaving the archive,
+  no nested archive. MarkItDown's `ZipConverter` `read()`s every member and
+  recurses into nested archives with no bound, and `EpubConverter` streams every
+  chapter; a zip is never handed to the former, and an EPUB reaches the latter
+  only after the same check. `zipfile` stops a member at its declared size (a
+  member that inflates past it fails its CRC instead), which is what makes the
+  listing a real bound.
+
+**Nothing bounded the sum.** Every protection was per value (each tool result
+clamped to a share of the window) or late (compaction at 32,000 tokens, the whole
+window of a synced Ollama entry). Ollama does not reject an oversized prompt — it
+truncates it and keeps the tail, so the instructions and the question go first.
+`ContextWindowGuardMiddleware` estimates the whole request — system prompt, bound
+tool schemas, messages — against the serving model's prompt space and, over it,
+replaces the oldest tool results with a placeholder until it fits; if it still
+cannot fit it is **not sent**, and the run ends with a `deerflow_error_fallback`
+message naming the model and its window, so it is recorded as failed. Properties a
+refactor must not "simplify" away:
+
+- **Only tool results before the last assistant message are elided**, oldest
+  first. The results the model is about to read, and every non-tool message —
+  system prompt, the user's question — always survive, and the elision is in the
+  request view only: state, checkpoints and the journal keep the original.
+- **Refuse, never truncate.** A request that cannot fit is not sent; sending it is
+  exactly the silent truncation this exists to remove.
+- **Placement**: right after `ModelContentCompatibilityMiddleware` in both the lead
+  and the subagent chain — inner of every built-in request transform, outer of the
+  `MODEL_PHYSICAL` extension anchor, whose final-request guarantee
+  `test_extension_placement_guarantees.py` pins.
+- **The estimate errs high.** `estimate_tokens` counts UTF-8 continuation bytes
+  twice — four ASCII characters per token, about a token per CJK character — and
+  the guard aims at 90% of the prompt space, because the tool schemas riding on
+  every call are JSON, which tokenizes nearer three characters per token. An
+  unknown window is a no-op, as for every other budget helper.
+
+Compaction also fires earlier: `_clamp_token_triggers_to_window` lowers each
+absolute `tokens` trigger to half the run model's prompt space — 12,288 on a
+synced 32K entry. Half, because LangChain's trigger counts messages only and the
+system prompt and tool schemas (~10K tokens for the default tool set) ride
+outside that count. The configured value stays a ceiling: a cloud window keeps
+32,000.
+
+Still open from item 34: an unknown window stays silent — a managed Ollama model
+without `num_ctx` gets none of this. Probing `/api/show` and flagging such models
+in Settings → Models remain on the roadmap.
+
+Coverage: `test_document_formats.py` (archive bounds read from the listing,
+nothing decompressed while surveying, HTML/EPUB/zip reading, size estimates),
+`test_document_extraction.py` (`TestUploadsMiddlewareEstimatedExtent`, and the
+§25 extent tests, which now drive the production `_document_signals` instead of
+re-deriving it), `test_analyze_document_tool.py` (`TestBooksThatAreNotPdfs`),
+and `test_context_overflow_guard.py` (fit, no-op, elision, schema cost, refusal,
+the CJK estimate, the trigger clamp and the wiring of both chains). All run inside
+`make test` and fail loudly, so no checklist row was added (CHANGE_CYCLE.md step
+4; the table is over its budget). Depth for agents: `documents/AGENTS.md` and
+`agents/middlewares/CHAIN.md`.
