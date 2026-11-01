@@ -55,6 +55,16 @@ def validate_schema(schema, *, tool=False):
         raise ValueError("Invalid plugin object schema") from exc
 
 
+# Providers reject these at the root of a tool's parameters, and the 400 fails
+# every request the tool is bound to, not just calls to it. They stay valid in
+# the declared schema: each call is still validated against it in full.
+_ROOT_ONLY_HOST_KEYWORDS = frozenset({"oneOf", "anyOf", "allOf", "enum", "not"})
+
+
+def _model_facing_schema(schema):
+    return {key: value for key, value in schema.items() if key not in _ROOT_ONLY_HOST_KEYWORDS}
+
+
 def plugin_tool_name(namespace, name):
     digest = hashlib.sha256(f"{namespace}:{name}".encode()).hexdigest()[:12]
     return f"ext_{re.sub('[^a-z0-9_]', '_', namespace)[:20]}_{name[:25]}_{digest}"
@@ -119,7 +129,7 @@ def _build_tool(source, plugin, declaration):
             raise ToolException("Plugin tool unavailable or input rejected.") from None
 
     options = {"response_format": "content_and_artifact"} if declaration.response_format == "content_and_artifact" else {}
-    tool = StructuredTool(name=plugin_tool_name(plugin.namespace, declaration.name), description=declaration.description, args_schema=schema, coroutine=invoke, handle_tool_error=True, **options)
+    tool = StructuredTool(name=plugin_tool_name(plugin.namespace, declaration.name), description=declaration.description, args_schema=_model_facing_schema(schema), coroutine=invoke, handle_tool_error=True, **options)
     tag_plugin_tool(tool, namespace=plugin.namespace, declaration=declaration.name, installation=source)
     return tool
 

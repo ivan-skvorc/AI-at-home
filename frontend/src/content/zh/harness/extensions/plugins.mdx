@@ -152,7 +152,7 @@ ModelTool(name, description, input_schema, handler, group="extensions")
 ```
 
 - **名称。** 模型看到的是由命名空间派生的名字：`ext_<namespace>_<name>_<hash>`。其中命名空间被清洗为 `[a-z0-9_]` 并截断到 20 个字符，名称截断到 25 个字符，再加 12 位哈希。例如 `acme.notes` 里的 `count_notes` 会变成 `ext_acme_notes_count_notes_d8aad91f72da`。哈希覆盖完整的命名空间和名称，所以截断不会让两个工具合并；万一两个插件工具仍然同名，工具组装会直接报错而不是二选一。与普通工具重名时，保留普通工具，跳过插件工具并记录警告。
-- **Schema。** `input_schema` 必须是合法的 JSON Schema（draft 2020-12），`"type": "object"`，而且完全内联：`$ref`、`$dynamicRef`、`$recursiveRef` 都会被拒绝，因此校验永远不会解析引用或访问网络。参数名 `runtime` 和 `config` 是保留的。
+- **Schema。** `input_schema` 必须是合法的 JSON Schema（draft 2020-12），`"type": "object"`，而且完全内联：`$ref`、`$dynamicRef`、`$recursiveRef` 都会被拒绝，因此校验永远不会解析引用或访问网络。参数名 `runtime` 和 `config` 是保留的。顶层的 `oneOf`、`anyOf`、`allOf`、`enum` 和 `not` 仍会在每次调用时校验，但宿主不会把它们放进模型看到的 schema：模型服务商会拒绝工具参数根部的这些关键字，而这个错误会让绑定了该工具的每个请求都失败。
 - **限制。** 宿主会按 schema 校验每次调用的输入，上限 256 KiB。处理函数必须在 30 秒内返回，JSON 编码后的结果不能超过 64 KiB。
 - **上下文。** 处理函数收到一个 `ToolContext`：`settings`、`thread_id`（不在会话中时为 `None`）和 `principal`。对工具来说，principal **只**带 `user_id`，`is_admin` 恒为 `False`，`roles` 为空。不要让工具的授权依赖它们。
 - **错误。** 任何失败都以通用工具错误的形式交给模型：`Invalid plugin tool input.`、`Plugin result exceeds 64 KiB.`、`Plugin disabled by administrator.` 或 `Plugin tool unavailable or input rejected.`。Gateway 日志会记录插件、工具和异常类型。
