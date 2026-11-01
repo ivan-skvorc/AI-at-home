@@ -177,6 +177,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   clamped them to Flash.
 
 ### Fixed
+- **chat:** every message failed with `400 … invalid_client_tool_schema … tool parameter root
+  must be an object type` on providers that check tool schemas, since the Script workflows
+  extension ships enabled: its `launch_workflow` declares a root-level `oneOf`. Extension tools
+  no longer send root-level `oneOf` / `anyOf` / `allOf` / `enum` / `not` to the model; the host
+  still enforces them on every call.
 - **GitHub token:** the GitHub MCP server in `extensions_config.example.json` received the token
   as `GITHUB_TOKEN`, which `@modelcontextprotocol/server-github` ignores, so it ran
   unauthenticated; it now gets `GITHUB_PERSONAL_ACCESS_TOKEN` from the same `.env` line. Either

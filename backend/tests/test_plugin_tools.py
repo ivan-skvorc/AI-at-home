@@ -8,6 +8,8 @@ from types import MappingProxyType, SimpleNamespace
 import pytest
 from deerflow_extension_api.plugins import ModelTool, PluginContribution
 from langchain_core.messages import AIMessage
+from langchain_core.tools import ToolException
+from langchain_core.utils.function_calling import convert_to_openai_tool
 from langgraph.graph import END, START, MessagesState, StateGraph
 from langgraph.prebuilt import ToolNode
 
@@ -75,6 +77,34 @@ def test_registration_rejects_invalid_schema_without_partial_install(installed):
             with pytest.raises(ValueError):
                 registry.plugin(replace(plugin, tools=(replace(plugin.tools[0], input_schema=schema),)))
             assert not registry.build().plugins
+
+
+@pytest.mark.asyncio
+async def test_root_composition_is_enforced_but_never_sent_to_the_model(installed):
+    # Providers 400 a request whose tool root carries a union, and that fails
+    # every chat the tool is bound to, not just calls to it.
+    loaded, plugin, calls = installed
+    schema = {
+        "type": "object",
+        "properties": {"query": {"type": "string"}, "ids": {"type": "array", "items": {"type": "string"}}},
+        "oneOf": [{"required": ["query"]}, {"required": ["ids"]}],
+        "additionalProperties": False,
+    }
+    registry = ExtensionRegistry()
+    with registry.attributed_to("test"):
+        registry.plugin(replace(plugin, tools=(replace(plugin.tools[0], input_schema=schema),)))
+    (tool,) = build_plugin_tools(registry.build())
+    parameters = convert_to_openai_tool(tool)["function"]["parameters"]
+    assert parameters["type"] == "object"
+    assert not {"oneOf", "anyOf", "allOf", "enum", "not"} & parameters.keys()
+    assert parameters["properties"] == schema["properties"]
+    runtime = SimpleNamespace(context={"user_id": "u"}, config={"configurable": {"user_id": "u"}})
+    # The host still validates each call against the declared schema.
+    for payload in ({"query": "a", "ids": ["b"]}, {}):
+        with pytest.raises(ToolException, match="Invalid plugin tool input"):
+            await tool.coroutine(runtime=runtime, **payload)
+    assert not calls
+    assert json.loads(await tool.coroutine(runtime=runtime, query="a")) == {"query": "a", "user": "u"}
 
 
 def test_group_filter_and_name_collision_fail_closed(installed):
