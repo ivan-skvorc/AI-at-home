@@ -257,4 +257,5 @@ class TestStatusHelpers:
         message = sb.exhausted_message(sb.SpendLimitStatus("daily", 10.0, 12.0), "USD")
         assert "daily" in message
         assert "10 USD" in message
-        assert "spend_budget" in message
+        # The fix is the Settings page now, not a config.yaml edit (FORK.md §46).
+        assert "Settings → Run limits" in message

@@ -2287,7 +2287,64 @@ export const zhCN: Translations = {
       autoTitle: "会话标题",
       systemPrompt: "系统提示词",
       maintenance: "维护",
+      runLimits: "运行限制",
       about: "关于",
+    },
+    runLimits: {
+      title: "运行限制",
+      description:
+        "这些限制可能让一次运行在任务完成前结束。每一项默认取自 config.yaml；在这里保存的修改会替代它，作用于本服务器上的所有运行，直到你切换回去。",
+      adminOnly: "只有管理员可以修改运行限制。",
+      loadError: "无法加载运行限制。",
+      retry: "重试",
+      sourceYaml: "来自 config.yaml",
+      sourceSettings: "在此设置",
+      useYaml: "使用 config.yaml",
+      save: "保存修改",
+      saving: "正在保存…",
+      saved: "运行限制已保存，从下一次运行开始生效。",
+      saveError: (message: string) => `无法保存运行限制：${message}`,
+      appliesNext: "修改从下一次运行开始生效；正在进行的运行保留启动时的限制。",
+      spendTitle: "花费上限",
+      spendDescription:
+        "在时间窗口内花费达到此金额后，阻止新的运行，并让正在进行的运行收尾。未定价的模型（例如本地 Ollama 模型）不计费用。",
+      spendDaily: "每天",
+      spendWeekly: "每周",
+      spendMonthly: "每月",
+      spendBlankHint: "留空表示该时间窗口不设上限。",
+      spendCurrency: (currency: string) => `金额单位为 ${currency}。`,
+      spendNoPricing:
+        "没有任何模型设置价格，因此上限无从计量，即使开启也不会生效。",
+      toolTitle: "工具调用限制",
+      toolDescription:
+        "先提醒智能体收尾，再强制它用已有结果作答。处理合并、大型重构等长任务时可以关闭。",
+      toolRepeatWarn: "相同调用达到多少次时提醒",
+      toolRepeatStop: "相同调用达到多少次时停止",
+      toolPerToolWarn: "同一工具调用多少次时提醒",
+      toolPerToolStop: "同一工具调用多少次时停止",
+      toolAppliesToAll:
+        "在这里保存后，这些限制适用于所有工具，包括 config.yaml 单独设置了限制的工具。",
+      toolYamlOverrides: (list: string) =>
+        `config.yaml 为这些工具单独设置了限制：${list}。`,
+      leadTokensTitle: "每次运行的令牌预算",
+      leadTokensDescription: "一次运行用掉这么多令牌后，让主智能体作答。",
+      subagentTokensTitle: "每个子智能体的令牌预算",
+      subagentTokensDescription:
+        "每个被委派的子智能体用掉这么多令牌后，让它作答。默认开启。",
+      maxTokens: "令牌数",
+      stepsTitle: "后台运行的步数",
+      stepsDescription:
+        "运行未自行指定时可执行的步数：工作流智能体、渠道和 API 调用。网页应用中的对话始终使用最大值。",
+      steps: "步数",
+      stepsHint: (max: number) => `整数；任何运行都不会超过 ${max}。`,
+      errors: {
+        spendNeedsAmount: "至少填写一个金额才能开启上限。",
+        notPositiveNumber: "请输入大于 0 的数字。",
+        notWholeNumber: "请输入不小于 1 的整数。",
+        stopBeforeWarn: "停止限制必须不小于对应的提醒限制。",
+        tooFewTokens: "请至少输入 1,000 个令牌。",
+        tooLarge: "这个数字太大了。",
+      },
     },
     maintenance: {
       title: "更新依赖",
@@ -2451,6 +2508,7 @@ export const zhCN: Translations = {
         "Double Plus Ultracode 可规划的工作流规模。“脚本工作流”扩展仍会应用运维方设置的上限，因此这里只能把运行调小。",
       ultracodeMaxAgents: "每个工作流的智能体数",
       ultracodeMaxParallel: "同时运行的智能体数",
+      ultracodeMaxMinutes: "每个工作流的分钟数",
       ultracodeRange: (max: number) => `1 到 ${max} 之间的整数。`,
       ultracodeUnavailable:
         "“脚本工作流”扩展未启用，因此输入框不会提供 Double Plus Ultracode。",

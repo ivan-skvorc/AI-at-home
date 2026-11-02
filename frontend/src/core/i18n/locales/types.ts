@@ -2001,7 +2001,57 @@ export interface Translations {
       autoTitle: string;
       systemPrompt: string;
       maintenance: string;
+      runLimits: string;
       about: string;
+    };
+    /** Settings → Run limits (fork feature, FORK.md §46). */
+    runLimits: {
+      title: string;
+      description: string;
+      adminOnly: string;
+      loadError: string;
+      retry: string;
+      sourceYaml: string;
+      sourceSettings: string;
+      useYaml: string;
+      save: string;
+      saving: string;
+      saved: string;
+      saveError: (message: string) => string;
+      appliesNext: string;
+      spendTitle: string;
+      spendDescription: string;
+      spendDaily: string;
+      spendWeekly: string;
+      spendMonthly: string;
+      spendBlankHint: string;
+      spendCurrency: (currency: string) => string;
+      spendNoPricing: string;
+      toolTitle: string;
+      toolDescription: string;
+      toolRepeatWarn: string;
+      toolRepeatStop: string;
+      toolPerToolWarn: string;
+      toolPerToolStop: string;
+      toolAppliesToAll: string;
+      toolYamlOverrides: (list: string) => string;
+      leadTokensTitle: string;
+      leadTokensDescription: string;
+      subagentTokensTitle: string;
+      subagentTokensDescription: string;
+      maxTokens: string;
+      stepsTitle: string;
+      stepsDescription: string;
+      steps: string;
+      stepsHint: (max: number) => string;
+      errors: {
+        spendNeedsAmount: string;
+        notPositiveNumber: string;
+        notWholeNumber: string;
+        stopBeforeWarn: string;
+        tooFewTokens: string;
+        tooLarge: string;
+      };
     };
     // On-demand Camoufox + SearXNG refresh (fork feature).
     maintenance: {
@@ -2148,6 +2198,7 @@ export interface Translations {
       ultracodeDescription: string;
       ultracodeMaxAgents: string;
       ultracodeMaxParallel: string;
+      ultracodeMaxMinutes: string;
       ultracodeRange: (max: number) => string;
       ultracodeUnavailable: string;
       executionNote: string;

@@ -160,6 +160,35 @@ def backfill_example_plugins(user: dict, example: dict, names) -> list[str]:
     return added
 
 
+# Limits the bundled workflows record shipped with in v66, and the extension's
+# hard ceilings v67 ships instead (FORK.md §46). Only a value still equal to the
+# old shipped one is raised: anything an operator typed stays theirs. The
+# per-user Settings → Subagents limits can then use the full range, while still
+# only lowering a run.
+_WORKFLOW_LIMITS_V66_TO_V67 = {
+    "concurrency": (8, 16),
+    "global_concurrency": (16, 32),
+    "max_calls": (64, 256),
+    "timeout_seconds": (3600, 14400),
+}
+
+
+def raise_shipped_workflow_limits(user: dict) -> list[str]:
+    """Raise the bundled workflows record's untouched v66 limits to the ceilings."""
+    changes = []
+    for record in user.get("plugins") or []:
+        if not isinstance(record, dict) or not ({"name:workflows", "module:deerflow_extension_workflows", "package:deerflow-extension-workflows"} & _plugin_identity(record)):
+            continue
+        config = record.get("config")
+        if not isinstance(config, dict):
+            continue
+        for key, (shipped, ceiling) in _WORKFLOW_LIMITS_V66_TO_V67.items():
+            if type(config.get(key)) is int and config[key] == shipped:
+                config[key] = ceiling
+                changes.append(f"plugins[{record.get('name')}].config.{key}: {shipped} -> {ceiling}")
+    return changes
+
+
 MIGRATIONS = {
     1: {
         "description": "Rename src.* module paths to deerflow.*",
@@ -203,6 +232,12 @@ MIGRATIONS = {
         # (backend/extensions/sources) and enabled in the example.
         "description": "Add the bundled Script workflows plugin that Double Plus Ultracode runs on",
         "plugins_from_example": ("workflows",),
+    },
+    67: {
+        # A long Double Plus Ultracode run stopped at the shipped 64 agents / 1 h
+        # even when the user's own Settings asked for more.
+        "description": "Raise the bundled workflows plugin's untouched limits to the extension's ceilings",
+        "data_transform": raise_shipped_workflow_limits,
     },
     # Future migrations go here:
     # 60: {

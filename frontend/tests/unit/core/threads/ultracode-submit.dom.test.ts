@@ -26,6 +26,7 @@ describe("Double Plus Ultracode on submit", () => {
         mode: "ultracode",
         max_agents: 5,
         max_parallel: 2,
+        max_minutes: 240,
       },
     });
     expect(context.subagent_enabled).toBe(true);

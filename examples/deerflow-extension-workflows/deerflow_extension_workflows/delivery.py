@@ -30,7 +30,14 @@ logger = logging.getLogger(__name__)
 DELIVERABLE = frozenset({"completed", "failed", "needs_reconciliation", "waiting_input", "interrupted"})
 SKIPPED = frozenset({"cancelled"})
 RETRY_DELAYS = (2, 4, 8, 15, 30, 60)
+#: Failed attempts (timeouts, unexpected statuses) before delivery waits for the
+#: owner's next workflow action instead.
 MAX_ATTEMPTS = 60
+#: How long a result waits out a busy conversation (a run in progress, an open
+#: question, an interrupt). A long task in the launching chat must not make the
+#: result give up, so these waits do not count as failed attempts.
+BUSY_WAIT_SECONDS = 24 * 3600
+BUSY = "Waiting for the conversation to finish its current turn"
 
 
 def open_question(messages):
@@ -102,11 +109,20 @@ class Delivery:
             self.schedule_delivery(owner, run_id, runs)
 
     async def deliver(self, owner, run_id, runs):
-        for attempt in range(MAX_ATTEMPTS):
+        failures = busy = 0
+        waited = 0.0
+        while failures < MAX_ATTEMPTS and waited < BUSY_WAIT_SECONDS:
             outcome = await self.deliver_once(owner, run_id, runs)
-            if outcome != "retry":
+            if outcome == "busy":
+                delay = RETRY_DELAYS[min(busy, len(RETRY_DELAYS) - 1)]
+                busy += 1
+                waited += delay
+            elif outcome == "retry":
+                delay = RETRY_DELAYS[min(failures, len(RETRY_DELAYS) - 1)]
+                failures += 1
+            else:
                 return outcome
-            await asyncio.sleep(RETRY_DELAYS[min(attempt, len(RETRY_DELAYS) - 1)])
+            await asyncio.sleep(delay)
         return "retry"
 
     async def deliver_once(self, owner, run_id, runs):
@@ -128,8 +144,8 @@ class Delivery:
             async with asyncio.timeout(10):
                 state = await runs.get_state(thread_id=thread_id)
             if state.get("next") or state.get("interrupts") or open_question(state.get("values", {}).get("messages", [])):
-                await asyncio.to_thread(self.store.delivery_note, owner, run_id, "Waiting for the conversation to finish its current turn")
-                return "retry"
+                await asyncio.to_thread(self.store.delivery_note, owner, run_id, BUSY)
+                return "busy"
             async with asyncio.timeout(self.config["admission_timeout_seconds"]):
                 run = await runs.start(
                     thread_id=thread_id,
@@ -138,8 +154,8 @@ class Delivery:
                 )
         except AgentRunError as exc:
             if exc.status_code == 409:
-                await asyncio.to_thread(self.store.delivery_note, owner, run_id, "Waiting for the conversation to finish its current turn")
-                return "retry"
+                await asyncio.to_thread(self.store.delivery_note, owner, run_id, BUSY)
+                return "busy"
             if exc.status_code == 404:
                 await asyncio.to_thread(self.store.delivery_finish, owner, run_id, "failed", error="The launching conversation is no longer available")
                 return "done"

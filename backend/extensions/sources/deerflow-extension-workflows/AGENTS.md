@@ -116,4 +116,8 @@ interrupted; cancelled runs are skipped. Schema re-asks persist the new attempt
 identity before admission; an uncertain re-ask needs reconciliation. A 402 is a
 definitive pre-admission rejection. Workspace copy/merge only through AgentRuns,
 gated by `shared_workspace`; merge results stay bounded in the row.
-Tests: backend/tests/test_ultracode_mode.py.
+`max_minutes` clamps to `timeout_seconds` into the record's limits; the supervisor
+reads the record, never the config, for wall time. `RUN_NOTE` (unattended, bounded
+answer) goes on ultracode children only, so plain tasks stay byte-identical. A busy
+conversation is waiting, not a failed delivery attempt (bounded by BUSY_WAIT_SECONDS).
+Tests: backend/tests/test_ultracode_mode.py (FORK.md §46 covers the run limits).

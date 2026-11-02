@@ -159,6 +159,82 @@ async def test_settings_limits_lower_the_run_and_never_raise_it(mode):
 
 
 @pytest.mark.asyncio
+async def test_settings_time_limit_shortens_the_run_and_never_lengthens_it(tmp_path, monkeypatch):
+    import deerflow_extension_workflows.delivery as delivery
+
+    monkeypatch.setattr(delivery, "RETRY_DELAYS", (0.01,))
+    _, _, service = await load(tmp_path, monkeypatch, timeout_seconds=600)
+    runs = ModeRuns()
+    try:
+        short = await service.launch({"request_id": "short", "script": "return 1;"}, tool_context(runs, {**ULTRACODE, "max_minutes": 2}))
+        await asyncio.wait_for(service.wait_idle(short["run_id"]), 10)
+        long = await service.launch({"request_id": "long", "script": "return 1;"}, tool_context(runs, {**ULTRACODE, "max_minutes": 999}))
+        await asyncio.wait_for(service.wait_idle(long["run_id"]), 10)
+        get = lambda run_id: service.store.get("alice", run_id)  # noqa: E731
+        assert (await asyncio.to_thread(get, short["run_id"]))["limits"]["timeout_seconds"] == 120
+        assert (await asyncio.to_thread(get, long["run_id"]))["limits"]["timeout_seconds"] == 600
+    finally:
+        await service.stop()
+        await runs.close()
+
+
+@pytest.mark.asyncio
+async def test_the_run_wall_clock_comes_from_the_record_not_the_operator(mode):
+    import deerflow_extension_workflows.service as service_module
+
+    mode.monkeypatch.setattr(service_module, "run_limits", lambda options, config: {"max_calls": 3, "concurrency": 1, "timeout_seconds": 1})
+
+    async def slow(run, input):
+        await asyncio.sleep(5)
+
+    mode.runs.answer = slow
+    launched = await mode.service.launch({"request_id": "slow", "script": "await agent({stepId:'a', agentRef:'lead_agent', task:'x'}); return 1;"}, tool_context(mode.runs, ULTRACODE))
+    started = asyncio.get_running_loop().time()
+    record = await finish(mode, launched["run_id"])
+    assert record["status"] == "failed" and "Execution deadline exceeded" in record["error"]
+    assert asyncio.get_running_loop().time() - started < 4  # the operator's 10 s would still be running
+
+
+@pytest.mark.asyncio
+async def test_agents_are_told_they_run_unattended_with_a_bounded_answer(mode):
+    script = "await agent({stepId:'a', agentRef:'lead_agent', task:'scan'}); return 1;"
+    launched = await mode.service.launch({"request_id": "note", "script": script}, tool_context(mode.runs, ULTRACODE))
+    await finish(mode, launched["run_id"])
+    task = json.loads(mode.runs.starts[0][1]["messages"][0]["content"])
+    assert task["task"] == "scan"
+    assert "never ask for clarification" in task["run_note"] and "8,000 characters" in task["run_note"]
+    # Plain workflows keep their task exactly as the script wrote it.
+    plain = await mode.service.launch({"request_id": "plain-note", "script": script.replace("'a'", "'b'")}, tool_context(mode.runs))
+    await finish(mode, plain["run_id"])
+    assert mode.runs.starts[1][1]["messages"][0]["content"] == json.dumps("scan")
+
+
+@pytest.mark.asyncio
+async def test_a_caught_agent_failure_does_not_end_the_workflow(mode):
+    """The brief's settle pattern works: an over-long answer fails one step only."""
+    original_create = mode.runs.create_thread
+    created = []
+
+    async def scripted_create(*, assistant_id, thread_id, metadata, parent_thread_id=None):
+        created.append(thread_id)
+        mode.runs.answers[thread_id] = ["x" * 13_000] if len(created) == 1 else ["fine"]
+        return await original_create(assistant_id=assistant_id, thread_id=thread_id, metadata=metadata, parent_thread_id=parent_thread_id)
+
+    mode.runs.create_thread = scripted_create
+    script = """
+const settle = (p) => p.then((r) => ({ok: true, output: r.output}), (e) => ({ok: false, error: String(e)}));
+const big = await settle(agent({stepId:'big', agentRef:'lead_agent', task:'report everything'}));
+const small = await settle(agent({stepId:'small', agentRef:'lead_agent', task:'summarize'}));
+return {big, small};
+"""
+    launched = await mode.service.launch({"request_id": "settled", "script": script}, tool_context(mode.runs, ULTRACODE))
+    record = await finish(mode, launched["run_id"])
+    assert record["status"] == "completed", record["error"]
+    assert record["result"]["big"]["ok"] is False and "12,000-byte limit" in record["result"]["big"]["error"]
+    assert record["result"]["small"] == {"ok": True, "output": "fine"}
+
+
+@pytest.mark.asyncio
 async def test_settings_agent_limit_stops_the_fourth_agent(mode):
     script = "for (let i = 0; i < 4; i++) await agent({stepId:'s'+i, agentRef:'lead_agent', task:'t'+i}); return 'never';"
     launched = await mode.service.launch({"request_id": "capped", "script": script}, tool_context(mode.runs, ULTRACODE))
@@ -214,6 +290,21 @@ async def test_a_busy_conversation_is_waited_for_not_interrupted(mode):
     mode.runs.threads[CONVERSATION]["interrupts"] = []
     assert (await delivered(mode, launched["run_id"]))["status"] == "delivered"
     assert len(mode.runs.deliveries) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_long_busy_conversation_does_not_use_up_delivery_attempts(mode):
+    """A long task in the launching chat must not make the result give up."""
+    import deerflow_extension_workflows.delivery as delivery
+
+    mode.monkeypatch.setattr(delivery, "MAX_ATTEMPTS", 2)
+    mode.runs.threads[CONVERSATION]["next"] = ["agent"]
+    launched = await mode.service.launch({"request_id": "long-busy", "script": "return 1;"}, tool_context(mode.runs))
+    await finish(mode, launched["run_id"])
+    await asyncio.sleep(0.2)  # many more busy polls than MAX_ATTEMPTS
+    assert mode.runs.deliveries == []
+    mode.runs.threads[CONVERSATION]["next"] = []
+    assert (await delivered(mode, launched["run_id"]))["status"] == "delivered"
 
 
 @pytest.mark.asyncio
@@ -429,7 +520,7 @@ def test_a_relative_storage_path_lives_under_deer_flow_home(tmp_path, monkeypatc
 def test_brief_appears_only_on_ultracode_runs_and_clamps_its_limits():
     from deerflow_extension_workflows.ultracode import RESULT_NOTE, UltracodeMode
 
-    middleware = UltracodeMode({"max_calls": 40, "concurrency": 4})
+    middleware = UltracodeMode({"max_calls": 40, "concurrency": 4, "timeout_seconds": 600})
 
     def request(context, messages=()):
         return SimpleNamespace(
@@ -447,7 +538,9 @@ def test_brief_appears_only_on_ultracode_runs_and_clamps_its_limits():
     text = briefed.system_message.content
     assert text.startswith("base prompt") and "## Double Plus Ultracode mode" in text
     flat = " ".join(text.split())
-    assert "up to 12 agents, at most 4 at once" in flat
+    assert "up to 12 agents, at most 4 at once, 10 minutes in total" in flat
+    # The lead is told how to keep one failed agent from ending the workflow.
+    assert "Keep going when one agent fails" in flat and "parallel()` rejects on the first rejection" in flat
 
     unavailable = middleware.apply(request({"plugin_options": {"community.workflows": {"mode": "ultracode"}}}))
     assert "cannot start workflows" in unavailable.system_message.content

@@ -16,6 +16,8 @@
 >
 > **Using it every day**
 >
+> - 🧬 **Double Plus Ultracode — the plan becomes a script** — inspired by Claude Code's *ultracode*. In this composer mode the agent answers a substantive request by writing an inspectable workflow script that many agents run in the background (understand, change, verify, with findings checked by a second agent), and the result **comes back to the same chat on its own**, exactly once. The Script workflows extension it runs on is bundled and on by default, and an existing install gets it on its next update; agent and time limits live under **Settings → Subagents**, one failed agent no longer ends the whole workflow, and workflow agent spend shows as its own row in the cost header.
+> - 🎚️ **Run limits you can change or switch off in Settings** — the spend cap, the tool-call limits that tell an agent to "wrap up" after 30 calls to one tool, the token budgets and the step limit for background runs all live under **Settings → Run limits**, so a long merge or refactor — in Double Plus Ultracode or any other mode — no longer stops halfway because of a number buried in `config.yaml`. Each limit shows whether it comes from `config.yaml` or was set on the page, and **one click goes back to `config.yaml`**. Administrators only; changes apply from the next run, with no restart.
 > - 🔀 **Independent model per conversation, remembered by the conversation** — every chat keeps its own model, subagent model, mode and reasoning effort, recorded on the chat itself rather than in one browser. Switching conversations switches the picker to *that* chat's model instead of leaving the last one selected — on your phone and after a site-data clear too — and a brand-new chat no longer forgets its model the moment it is created.
 > - 🚦 **Concurrent chats** — leaving a chat used to cancel its run. Now a chat you leave mid-answer keeps streaming in the background and notifies you when it lands; come back and the answer is already there.
 > - 🗃️ **Folders in the sidebar, with subfolders** — the chat list is a tree. A conversation you file is **inside its folder and gone from the list outside it**, the way a file manager works, and folders nest up to five levels. Drag chats and folders around, or use the **⋯** menus. Deleting a folder never deletes the chats in it. Stored per user on the server; nothing to configure.
@@ -46,7 +48,6 @@
 > **Going further**
 >
 > - 🏛️ **Democracy — several models answer, then decide together** — pick an organizer and panelists; the organizer researches once, briefs them identically, they review each other anonymously, and it synthesizes one answer reporting the split rather than averaging it away. Extremely token-heavy, and the setup page estimates the multiple before you commit.
-> - 🧬 **Double Plus Ultracode — the plan becomes a script** — inspired by Claude Code's *ultracode*. In this composer mode the agent answers a substantive request by writing an inspectable workflow script that many agents run in the background (understand, change, verify, with findings checked by a second agent), and the result **comes back to the same chat on its own**, exactly once. The Script workflows extension it runs on is bundled and on by default, and an existing install gets it on its next update; agent limits live under **Settings → Subagents**, and workflow agent spend shows as its own row in the cost header.
 > - 🤖 **Generate a custom agent from your history** — point a model at past conversations and let it decide whether a new agent is even worth adding. It is allowed to say **no**, naming the agent that already covers the work. You get an editable **SOUL.md** draft; nothing is saved until you press Create.
 > - 🧵 **Sub-agents that respect what your GPU can hold** — local dispatch asks the card instead of using a fixed number, so five sub-agents on a model that fits once run one at a time rather than queueing invisibly inside Ollama. On by default.
 > - 🧩 **Per-thread subagent model** — in Ultra mode, route `task` subagents to a cheaper or local model (defaults to "Follow lead").
@@ -172,6 +173,7 @@ DeerFlow has newly integrated the intelligent search and crawling toolset indepe
     - [Local Models Get the Parallelism the GPU Has](#local-models-get-the-parallelism-the-gpu-has)
     - [Democracy — Several Models Answer, Then Decide Together](#democracy--several-models-answer-then-decide-together)
     - [Double Plus Ultracode — The Plan Becomes a Script](#double-plus-ultracode--the-plan-becomes-a-script)
+    - [Run Limits — What Can End a Run Early](#run-limits--what-can-end-a-run-early)
     - [Generating Agents From Your History](#generating-agents-from-your-history)
     - [Sandbox \& File System](#sandbox--file-system)
     - [Agentic Browser Control](#agentic-browser-control)
@@ -3436,12 +3438,25 @@ the host (the local sandbox, or AIO with `thread_data_mounts`); anything else fa
 closed.
 
 **Limits.** Under **Settings → Subagents → Double Plus Ultracode limits** you set the
-most agents one workflow may start and how many run at once (defaults 64 and 8).
-They can only make a run smaller: the extension clamps both to the operator's
-`max_calls` and `concurrency`, whose hard ceilings are 256 agents per workflow and
-16 at once, with up to four hours of wall time. Workflows that may start more than
-25 agents come back with a size advisory, and the agent is told to name the
-planned size before launching one that large.
+most agents one workflow may start, how many run at once and how many minutes the
+whole workflow may take. They default to the extension's maximums (256 agents, 16
+at once, 240 minutes), because the agent sizes each workflow to its request and a
+low default only cut long tasks short. They can only make a run smaller: the
+extension clamps each to the operator's `max_calls`, `concurrency` and
+`timeout_seconds`, which now ship at those same maximums. An existing install's
+untouched values (64, 8 and one hour) are raised on its next update, and a value
+you set yourself stays. Workflows that may start more than 25 agents come back
+with a size advisory, and the agent is told to name the planned size before
+launching one that large.
+
+**One failed agent does not end the workflow.** The agent is told to catch each
+agent's failure in its script, so an agent that errors is reported in the result
+instead of cancelling the others. Agents are told they run unattended (a question
+from one would stop the workflow) and to keep their answer under the 12,000-byte
+limit. When a workflow still fails or leaves steps unfinished, the agent finishes
+the rest itself or launches one smaller workflow for just that part, instead of
+stopping at a failure report. A result waits up to a day for a busy chat to finish
+its turn before it falls back to being posted on your next workflow action.
 
 **What it costs.** It is very token-heavy: every agent is a full run. Each agent
 runs in its own conversation linked to yours, so the chat header's cost dropdown
@@ -3485,6 +3500,34 @@ says so.
 It works from the web app only: channels, schedules and API tokens have no browser
 session to start workflows with, and there the agent says the mode is unavailable
 and answers as Ultra. The lead model needs tool support, as in Ultra.
+
+### Run Limits — What Can End a Run Early
+
+**Settings → Run limits** (administrators only) is where you change, or switch
+off, every limit that can end a run before its task is done. Before, each one was
+a number in `config.yaml`, and the only symptom of hitting it was an agent that
+said it "stopped before" the work you asked for:
+
+- **Spend cap** — the daily / weekly / monthly amounts in your pricing currency.
+  Leave a window blank for no cap in it; switch it off to stop enforcing it.
+- **Tool-call limits** — the agent is told to wrap up after 30 calls to one tool
+  and forced to answer after 50, and after 3 and 5 identical calls. Long tasks
+  such as an upstream merge make hundreds of `bash` calls, so raise these or
+  switch them off for that kind of work. **A value set here applies to every
+  tool**, including any tool `config.yaml` gives its own limit.
+- **Token budget per run** and **per subagent** — the subagent one is **on by
+  default** (one to two million tokens).
+- **Steps for background runs** — the step limit for runs that do not choose
+  their own: workflow agents, channels and API calls. Chats in the web app always
+  get the maximum, `max_recursion_limit`.
+
+Each limit shows whether it comes from `config.yaml` or was set on the page, and
+**Use config.yaml** puts it back. The page never edits `config.yaml`: its values
+are stored server-wide beside it (`runtime_settings.json` in the DeerFlow home)
+and win until you switch back. A change applies from the next run, with no
+restart; runs already going keep the limits they started with. Anyone signed in
+can read the effective limits through `GET /api/settings/run-limits`; only an
+administrator can change them.
 
 ### Generating Agents From Your History
 

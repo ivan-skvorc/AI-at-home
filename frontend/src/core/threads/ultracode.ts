@@ -5,8 +5,8 @@
  * to the conversation on its own.
  *
  * The mode is an Ultra run plus one per-run plugin option addressed to the
- * extension (`plugin_options["community.workflows"]`). The two limits are the
- * user's Settings → Subagents choice; the extension clamps both to the
+ * extension (`plugin_options["community.workflows"]`). The three limits are the
+ * user's Settings → Subagents choice; the extension clamps each to the
  * operator's configuration, so they can only lower a run, never raise it.
  */
 
@@ -20,18 +20,27 @@ export interface UltracodeLimits {
   maxAgents: number;
   /** Most of them running at once. */
   maxParallel: number;
+  /** Wall time of the whole workflow, in minutes. */
+  maxMinutes: number;
 }
 
 /** The extension's hard ceilings; the operator's own limits may be lower. */
 export const ULTRACODE_LIMIT_CEILINGS: UltracodeLimits = {
   maxAgents: 256,
   maxParallel: 16,
+  maxMinutes: 240,
 };
 
+/**
+ * Defaults are the ceilings (FORK.md §46): the brief sizes each workflow to its
+ * request, so a low default only cut long tasks short. Lower them in Settings.
+ */
 export const DEFAULT_ULTRACODE_LIMITS: UltracodeLimits = {
-  maxAgents: 64,
-  maxParallel: 8,
+  ...ULTRACODE_LIMIT_CEILINGS,
 };
+
+/** The defaults before maxMinutes existed, saved whole into every browser. */
+const PREVIOUS_DEFAULTS = { maxAgents: 64, maxParallel: 8 } as const;
 
 function clampLimit(value: unknown, ceiling: number, fallback: number) {
   return typeof value === "number" &&
@@ -48,6 +57,15 @@ export function normalizeUltracodeLimits(value: unknown): UltracodeLimits {
     string,
     unknown
   >;
+  // A stored pair equal to the old defaults, saved before the minutes field
+  // existed, was never chosen by the user: move it to the new defaults.
+  if (
+    !("maxMinutes" in raw) &&
+    raw.maxAgents === PREVIOUS_DEFAULTS.maxAgents &&
+    raw.maxParallel === PREVIOUS_DEFAULTS.maxParallel
+  ) {
+    return { ...DEFAULT_ULTRACODE_LIMITS };
+  }
   return {
     maxAgents: clampLimit(
       raw.maxAgents,
@@ -59,6 +77,11 @@ export function normalizeUltracodeLimits(value: unknown): UltracodeLimits {
       ULTRACODE_LIMIT_CEILINGS.maxParallel,
       DEFAULT_ULTRACODE_LIMITS.maxParallel,
     ),
+    maxMinutes: clampLimit(
+      raw.maxMinutes,
+      ULTRACODE_LIMIT_CEILINGS.maxMinutes,
+      DEFAULT_ULTRACODE_LIMITS.maxMinutes,
+    ),
   };
 }
 
@@ -67,6 +90,7 @@ export interface UltracodePluginOptions {
     mode: typeof ULTRACODE_MODE;
     max_agents: number;
     max_parallel: number;
+    max_minutes: number;
   };
 }
 
@@ -74,12 +98,14 @@ export interface UltracodePluginOptions {
 export function ultracodePluginOptions(
   limits: unknown,
 ): UltracodePluginOptions {
-  const { maxAgents, maxParallel } = normalizeUltracodeLimits(limits);
+  const { maxAgents, maxParallel, maxMinutes } =
+    normalizeUltracodeLimits(limits);
   return {
     [ULTRACODE_NAMESPACE]: {
       mode: ULTRACODE_MODE,
       max_agents: maxAgents,
       max_parallel: Math.min(maxParallel, maxAgents),
+      max_minutes: maxMinutes,
     },
   };
 }

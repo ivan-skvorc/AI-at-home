@@ -20,11 +20,12 @@ const SETTINGS_SECTIONS: Record<SettingsSection, true> = {
   memory: true,
   subagents: true,
   notification: true,
-  // Fork sections (FORK.md §4, §19, §33 and Maintenance).
+  // Fork sections (FORK.md §4, §19, §33, §46 and Maintenance).
   suggestions: true,
   autoTitle: true,
   systemPrompt: true,
   maintenance: true,
+  runLimits: true,
   about: true,
 };
 

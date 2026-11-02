@@ -37,6 +37,14 @@ SCHEMA_BYTES = 4000
 MAX_REASKS = 2
 PHASE_LIMIT = 64
 FRAME_MESSAGES = 128
+#: Sent with every Double Plus Ultracode agent task. Children cannot answer an
+#: interrupt (a question fails the workflow) and an answer over
+#: AGENT_OUTPUT_BYTES fails the step.
+RUN_NOTE = (
+    "You run unattended inside a background workflow: nobody can answer questions, so never ask for clarification; "
+    "make reasonable assumptions and state them. Keep your final answer under 8,000 characters (1,500 if it is mostly "
+    "non-Latin text such as Chinese): summarize instead of pasting raw logs or whole files."
+)
 #: Copies and merges of a conversation's workspace are bounded file IO, not admission.
 WORKSPACE_SECONDS = 120
 WORKSPACE_MODES = {"off": ("isolated",), "read": ("isolated", "snapshot"), "write": ("isolated", "snapshot", "merge")}
@@ -534,7 +542,10 @@ class Workflows(Cluster, Recovery, Lifecycle, Artifacts, Delivery):
                     }
                 )
             task = payload["task"]
-            extras = {}
+            # A Double Plus Ultracode child runs unattended and its answer has a
+            # hard size limit; without saying so, a clarifying question or a long
+            # report fails the step (and, uncaught, the whole workflow).
+            extras = {"run_note": RUN_NOTE} if record.get("mode") == MODE else {}
             if references:
                 extras.update(
                     approved_artifacts=references,
@@ -709,7 +720,10 @@ class Workflows(Cluster, Recovery, Lifecycle, Artifacts, Delivery):
                             output = content
                     else:
                         output = content
-                    encoded(output, AGENT_OUTPUT_BYTES)
+                    try:
+                        encoded(output, AGENT_OUTPUT_BYTES)
+                    except ValueError:
+                        raise ValueError(f"Agent answer exceeded the {AGENT_OUTPUT_BYTES:,}-byte limit") from None
                     problem = None
                     if schema is not None:
                         problem = next(iter(sorted(Draft202012Validator(schema).iter_errors(output), key=lambda error: list(error.absolute_path))), None)
@@ -856,7 +870,9 @@ class Workflows(Cluster, Recovery, Lifecycle, Artifacts, Delivery):
         try:
             if record.get("budget_deadline") is not None:
                 record["remaining_seconds"] = max(0, record["budget_deadline"] - time.time())
-            record["budget_deadline"] = time.time() + record.get("remaining_seconds", self.config["timeout_seconds"])
+            # A Double Plus Ultracode run may shorten its own wall time (run_limits).
+            wall_seconds = record["limits"].get("timeout_seconds", self.config["timeout_seconds"])
+            record["budget_deadline"] = time.time() + record.get("remaining_seconds", wall_seconds)
             record["status"] = "running"
             await self.save(owner, record)
             workspace = await asyncio.to_thread(tempfile.TemporaryDirectory, prefix="deerflow-workflow-")
@@ -884,7 +900,7 @@ class Workflows(Cluster, Recovery, Lifecycle, Artifacts, Delivery):
                     "memory_bytes": self.config["memory_bytes"],
                 },
             )
-            async with asyncio.timeout(record.get("remaining_seconds", self.config["timeout_seconds"])) as deadline:
+            async with asyncio.timeout(record.get("remaining_seconds", wall_seconds)) as deadline:
                 entry["deadline"] = deadline
                 turns = 0
                 while True:

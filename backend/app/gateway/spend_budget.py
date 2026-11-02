@@ -41,6 +41,7 @@ from datetime import UTC, datetime
 from sqlalchemy import select
 
 from deerflow.config.app_config import AppConfig
+from deerflow.config.run_limit_overrides import effective_spend_budget
 from deerflow.config.spend_budget_config import SpendBudgetConfig
 from deerflow.persistence.engine import get_session_factory
 from deerflow.persistence.run.model import RunRow
@@ -196,7 +197,9 @@ async def resolve_spend_budget_status(
         from deerflow.config import get_app_config
 
         app_config = get_app_config()
-    config: SpendBudgetConfig = app_config.spend_budget
+    # Settings → Run limits may replace the YAML cap (FORK.md §46). Reading the
+    # override stats a file, so keep it off the event loop.
+    config: SpendBudgetConfig = await asyncio.to_thread(effective_spend_budget, app_config.spend_budget)
     if not config.enabled or not config.limits():
         return inactive_status(config, DISABLED_NOT_CONFIGURED)
 
@@ -295,4 +298,4 @@ async def resolve_run_spend_budget(request, *, owner_user_id: str | None) -> Spe
 def exhausted_message(limit: SpendLimitStatus, currency: str | None) -> str:
     """Operator-facing text for a refused run."""
     unit = f" {currency}" if currency else ""
-    return f"Spend budget exhausted: the {limit.period} cap of {limit.limit:g}{unit} is already at {limit.spent:g}{unit}. Raise or clear spend_budget in config.yaml, or wait for the window to roll over."
+    return f"Spend budget exhausted: the {limit.period} cap of {limit.limit:g}{unit} is already at {limit.spent:g}{unit}. Raise or turn off the cap in Settings → Run limits, or wait for the window to roll over."

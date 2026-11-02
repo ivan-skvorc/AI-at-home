@@ -2414,7 +2414,67 @@ export const enUS: Translations = {
       autoTitle: "Conversation titles",
       systemPrompt: "System prompt",
       maintenance: "Maintenance",
+      runLimits: "Run limits",
       about: "About",
+    },
+    runLimits: {
+      title: "Run limits",
+      description:
+        "Limits that can end a run before its task is done. Each one starts from config.yaml; a change saved here replaces it for every run on this server until you switch back.",
+      adminOnly: "Only administrators can change run limits.",
+      loadError: "Could not load the run limits.",
+      retry: "Try again",
+      sourceYaml: "From config.yaml",
+      sourceSettings: "Set here",
+      useYaml: "Use config.yaml",
+      save: "Save changes",
+      saving: "Saving…",
+      saved: "Run limits saved. They apply from the next run.",
+      saveError: (message: string) => `Could not save run limits: ${message}`,
+      appliesNext:
+        "Changes apply from the next run; runs already going keep the limits they started with.",
+      spendTitle: "Spend cap",
+      spendDescription:
+        "Stops new runs, and makes a running one wrap up, once this much has been spent in the window. Unpriced models, such as local Ollama ones, cost nothing.",
+      spendDaily: "Per day",
+      spendWeekly: "Per week",
+      spendMonthly: "Per month",
+      spendBlankHint: "Leave a window blank for no cap in it.",
+      spendCurrency: (currency: string) => `Amounts are in ${currency}.`,
+      spendNoPricing:
+        "No model has a price, so the cap has nothing to measure and stays off even when switched on.",
+      toolTitle: "Tool-call limits",
+      toolDescription:
+        "First the agent is told to wrap up, then it is made to answer with what it has. Turn this off for long tasks such as merges or big refactors.",
+      toolRepeatWarn: "Identical calls before a warning",
+      toolRepeatStop: "Identical calls before a stop",
+      toolPerToolWarn: "Calls to one tool before a warning",
+      toolPerToolStop: "Calls to one tool before a stop",
+      toolAppliesToAll:
+        "Saving here applies these limits to every tool, including any tool config.yaml gives its own limit.",
+      toolYamlOverrides: (list: string) =>
+        `config.yaml gives these tools their own limits: ${list}.`,
+      leadTokensTitle: "Token budget per run",
+      leadTokensDescription:
+        "Makes the main agent answer once one run has used this many tokens.",
+      subagentTokensTitle: "Token budget per subagent",
+      subagentTokensDescription:
+        "Makes each delegated subagent answer once it has used this many tokens. On by default.",
+      maxTokens: "Tokens",
+      stepsTitle: "Steps for background runs",
+      stepsDescription:
+        "How many steps a run may take when it does not choose its own: workflow agents, channels and API calls. Chats in the web app always get the maximum.",
+      steps: "Steps",
+      stepsHint: (max: number) =>
+        `A whole number; runs never get more than ${max}.`,
+      errors: {
+        spendNeedsAmount: "Enter at least one amount to turn the cap on.",
+        notPositiveNumber: "Enter a number greater than 0.",
+        notWholeNumber: "Enter a whole number of at least 1.",
+        stopBeforeWarn: "A stop limit must be at least its warning limit.",
+        tooFewTokens: "Enter at least 1,000 tokens.",
+        tooLarge: "That number is too large.",
+      },
     },
     maintenance: {
       title: "Update dependencies",
@@ -2586,6 +2646,7 @@ export const enUS: Translations = {
         "How large a workflow Double Plus Ultracode may plan. The Script workflows extension still applies the operator's limits, so these can only make a run smaller.",
       ultracodeMaxAgents: "Agents per workflow",
       ultracodeMaxParallel: "Agents at once",
+      ultracodeMaxMinutes: "Minutes per workflow",
       ultracodeRange: (max: number) => `A whole number from 1 to ${max}.`,
       ultracodeUnavailable:
         "The Script workflows extension is not enabled, so the composer does not offer Double Plus Ultracode.",

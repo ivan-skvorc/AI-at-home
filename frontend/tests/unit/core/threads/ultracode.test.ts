@@ -15,7 +15,7 @@ describe("Double Plus Ultracode run context", () => {
   it("is an Ultra run plus the one plugin option the extension reads", () => {
     const derived = deriveModeContext({
       mode: "ultracode",
-      ultracode_limits: { maxAgents: 12, maxParallel: 3 },
+      ultracode_limits: { maxAgents: 12, maxParallel: 3, maxMinutes: 30 },
     });
     expect(derived).toMatchObject({
       thinking_enabled: true,
@@ -28,6 +28,7 @@ describe("Double Plus Ultracode run context", () => {
         mode: "ultracode",
         max_agents: 12,
         max_parallel: 3,
+        max_minutes: 30,
       },
     });
   });
@@ -53,15 +54,24 @@ describe("Double Plus Ultracode run context", () => {
 
 describe("Double Plus Ultracode limits", () => {
   it("keeps whole numbers within the extension's ceilings", () => {
-    expect(normalizeUltracodeLimits({ maxAgents: 40, maxParallel: 6 })).toEqual(
-      {
+    expect(
+      normalizeUltracodeLimits({
         maxAgents: 40,
         maxParallel: 6,
-      },
-    );
+        maxMinutes: 90,
+      }),
+    ).toEqual({
+      maxAgents: 40,
+      maxParallel: 6,
+      maxMinutes: 90,
+    });
     for (const bad of [0, -1, 2.5, "8", 10_000, Number.NaN, null]) {
       expect(
-        normalizeUltracodeLimits({ maxAgents: bad, maxParallel: bad }),
+        normalizeUltracodeLimits({
+          maxAgents: bad,
+          maxParallel: bad,
+          maxMinutes: bad,
+        }),
       ).toEqual(DEFAULT_ULTRACODE_LIMITS);
     }
     expect(normalizeUltracodeLimits("garbage")).toEqual(
@@ -78,7 +88,37 @@ describe("Double Plus Ultracode limits", () => {
       mode: "ultracode",
       max_agents: 2,
       max_parallel: 2,
+      max_minutes: DEFAULT_ULTRACODE_LIMITS.maxMinutes,
     });
+  });
+
+  it("defaults to the extension's ceilings", () => {
+    expect(DEFAULT_ULTRACODE_LIMITS).toEqual({
+      maxAgents: 256,
+      maxParallel: 16,
+      maxMinutes: 240,
+    });
+  });
+
+  it("moves the old saved defaults to the new ones, but keeps a chosen pair", () => {
+    // Every browser saved {64, 8} whole before maxMinutes existed (FORK.md §46).
+    expect(normalizeUltracodeLimits({ maxAgents: 64, maxParallel: 8 })).toEqual(
+      DEFAULT_ULTRACODE_LIMITS,
+    );
+    expect(
+      normalizeUltracodeLimits({
+        maxAgents: 64,
+        maxParallel: 8,
+        maxMinutes: 60,
+      }),
+    ).toEqual({ maxAgents: 64, maxParallel: 8, maxMinutes: 60 });
+    expect(normalizeUltracodeLimits({ maxAgents: 20, maxParallel: 8 })).toEqual(
+      {
+        maxAgents: 20,
+        maxParallel: 8,
+        maxMinutes: DEFAULT_ULTRACODE_LIMITS.maxMinutes,
+      },
+    );
   });
 
   it("loads stored settings through the same normalization", () => {
@@ -90,7 +130,14 @@ describe("Double Plus Ultracode limits", () => {
     ).toEqual({
       maxAgents: DEFAULT_ULTRACODE_LIMITS.maxAgents,
       maxParallel: 4,
+      maxMinutes: DEFAULT_ULTRACODE_LIMITS.maxMinutes,
     });
+    // The upgrade must see the stored object, not one pre-merged with defaults.
+    expect(
+      mergeLocalSettings({
+        ultracode: { maxAgents: 64, maxParallel: 8 },
+      } as Partial<LocalSettings>).ultracode,
+    ).toEqual(DEFAULT_ULTRACODE_LIMITS);
   });
 
   it("round-trips the mode through the account preference", () => {

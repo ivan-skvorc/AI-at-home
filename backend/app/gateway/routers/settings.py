@@ -13,6 +13,10 @@ here:
 * **dependency updates** — an on-demand refresh of the Camoufox browser and the
   bundled SearXNG image. This runs commands on the host, so it is admin-gated
   like multi-user mode, and takes no input from the caller at all.
+* **run limits** — Settings → Run limits replaces the spend cap, tool-call
+  limits, token budgets and background step limit from ``config.yaml``
+  (FORK.md §46). Server-wide, so the write is admin-gated; any signed-in user
+  may read what runs enforce.
 """
 
 from __future__ import annotations
@@ -24,6 +28,16 @@ from pydantic import BaseModel, Field
 
 from app.gateway.dependency_update import get_dependency_updater
 from app.gateway.deps import require_admin_user
+from deerflow.config.run_limit_overrides import (
+    RunLimitOverrides,
+    effective_loop_detection,
+    effective_recursion_limit,
+    effective_spend_budget,
+    effective_subagent_token_budget,
+    effective_token_budget,
+    get_run_limit_overrides,
+    set_run_limit_overrides,
+)
 from deerflow.config.runtime_settings import is_multi_user_mode_enabled, set_multi_user_mode
 from deerflow.config.user_ui_state import (
     MAX_CHAT_FOLDERS,
@@ -162,3 +176,103 @@ async def start_dependency_update(request: Request) -> DependencyUpdateResponse:
     # would hold an HTTP request open past every reverse-proxy read timeout.
     asyncio.get_running_loop().run_in_executor(None, updater.run)
     return DependencyUpdateResponse(**updater.status().to_dict())
+
+
+class SpendCapStatus(BaseModel):
+    """The spend cap runs enforce now, and whether anything can be measured."""
+
+    enabled: bool
+    daily_limit: float | None = None
+    weekly_limit: float | None = None
+    monthly_limit: float | None = None
+    #: The pricing currency, or None when no model carries a price (the cap
+    #: then measures nothing and stays off even when enabled).
+    currency: str | None = None
+
+
+class ToolCallLimitsStatus(BaseModel):
+    enabled: bool
+    warn_threshold: int
+    hard_limit: int
+    tool_freq_warn: int
+    tool_freq_hard_limit: int
+    #: YAML per-tool limits in force; empty while the page's override is set.
+    tool_freq_overrides: dict[str, dict[str, int]] = Field(default_factory=dict)
+
+
+class TokenBudgetStatus(BaseModel):
+    enabled: bool
+    max_tokens: int
+
+
+class EffectiveRunLimits(BaseModel):
+    spend_budget: SpendCapStatus
+    loop_detection: ToolCallLimitsStatus
+    token_budget: TokenBudgetStatus
+    subagent_token_budget: TokenBudgetStatus
+    recursion_limit: int
+    max_recursion_limit: int
+
+
+class RunLimitsResponse(BaseModel):
+    """What runs enforce (``effective``) and which sections the page set."""
+
+    overrides: RunLimitOverrides
+    effective: EffectiveRunLimits
+
+
+def _run_limits_snapshot() -> RunLimitsResponse:
+    from deerflow.config import get_app_config
+    from deerflow.pricing import build_pricing_map, pricing_currency
+
+    app_config = get_app_config()
+    spend = effective_spend_budget(app_config.spend_budget)
+    loop = effective_loop_detection(app_config.loop_detection)
+    lead_tokens = effective_token_budget(app_config.token_budget)
+    # The general-purpose subagent stands for every subagent without its own
+    # YAML budget; the page's override, when set, applies to all of them.
+    subagent_tokens = effective_subagent_token_budget(app_config.subagents.get_token_budget_for("general-purpose", summarization_enabled=app_config.summarization.enabled))
+    max_steps = app_config.max_recursion_limit
+    return RunLimitsResponse(
+        overrides=get_run_limit_overrides(),
+        effective=EffectiveRunLimits(
+            spend_budget=SpendCapStatus(
+                enabled=spend.enabled,
+                daily_limit=spend.daily_limit,
+                weekly_limit=spend.weekly_limit,
+                monthly_limit=spend.monthly_limit,
+                currency=pricing_currency(build_pricing_map(app_config.models)),
+            ),
+            loop_detection=ToolCallLimitsStatus(
+                enabled=loop.enabled,
+                warn_threshold=loop.warn_threshold,
+                hard_limit=loop.hard_limit,
+                tool_freq_warn=loop.tool_freq_warn,
+                tool_freq_hard_limit=loop.tool_freq_hard_limit,
+                tool_freq_overrides={name: {"warn": item.warn, "hard_limit": item.hard_limit} for name, item in loop.tool_freq_overrides.items()},
+            ),
+            token_budget=TokenBudgetStatus(enabled=lead_tokens.enabled, max_tokens=lead_tokens.max_tokens),
+            subagent_token_budget=TokenBudgetStatus(enabled=subagent_tokens.enabled, max_tokens=subagent_tokens.max_tokens),
+            recursion_limit=min(effective_recursion_limit(app_config.recursion_limit), max_steps),
+            max_recursion_limit=max_steps,
+        ),
+    )
+
+
+@router.get("/run-limits", response_model=RunLimitsResponse)
+async def get_run_limits_setting() -> RunLimitsResponse:
+    """Return the limits runs enforce now and which ones Settings replaced."""
+    return await asyncio.to_thread(_run_limits_snapshot)
+
+
+@router.put("/run-limits", response_model=RunLimitsResponse)
+async def update_run_limits_setting(body: RunLimitOverrides, request: Request) -> RunLimitsResponse:
+    """Replace the run-limit overrides (admin only); a null section uses config.yaml.
+
+    The body is the whole override set, not a patch, so the page can clear a
+    section by sending null. Applies to the next run; running ones keep the
+    limits they started with.
+    """
+    await require_admin_user(request, detail="Only an admin can change run limits.")
+    await asyncio.to_thread(set_run_limit_overrides, body)
+    return await asyncio.to_thread(_run_limits_snapshot)

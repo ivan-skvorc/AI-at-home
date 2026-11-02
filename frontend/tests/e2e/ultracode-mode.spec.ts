@@ -78,6 +78,8 @@ test.describe("Double Plus Ultracode", () => {
           mode: "ultracode",
           max_agents: 12,
           max_parallel: 3,
+          // Not stored yet, so the default: the extension's 240-minute ceiling.
+          max_minutes: 240,
         },
       });
     expect(context?.subagent_enabled).toBe(true);
@@ -122,7 +124,7 @@ test.describe("Double Plus Ultracode", () => {
     expect(context?.plugin_options).toBeUndefined();
   });
 
-  test("Settings → Subagents stores both limits for the next run", async ({
+  test("Settings → Subagents stores all three limits for the next run", async ({
     page,
   }) => {
     mockLangGraphAPI(page);
@@ -138,9 +140,12 @@ test.describe("Double Plus Ultracode", () => {
     // Out of range snaps back instead of saving a silently different value.
     await parallel.fill("99");
     await parallel.press("Enter");
-    await expect(parallel).toHaveValue("8");
+    await expect(parallel).toHaveValue("16");
     await parallel.fill("4");
     await parallel.press("Enter");
+    const minutes = section.getByLabel("Minutes per workflow");
+    await minutes.fill("90");
+    await minutes.press("Enter");
 
     await expect
       .poll(() =>
@@ -153,7 +158,7 @@ test.describe("Double Plus Ultracode", () => {
             ).ultracode,
         ),
       )
-      .toEqual({ maxAgents: 20, maxParallel: 4 });
+      .toEqual({ maxAgents: 20, maxParallel: 4, maxMinutes: 90 });
   });
 
   test("a posted workflow result reads as the extension's card", async ({
