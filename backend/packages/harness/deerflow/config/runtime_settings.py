@@ -15,6 +15,9 @@ visible regardless of which login/device created them (matching the passwordless
 older per-account histories may be stranded under other ids). Writes still stamp
 the real owner, so turning multi-user mode back ON cleanly restores isolation.
 
+**Run limits** (fork feature, FORK.md §46) live here too, under ``run_limits``;
+:mod:`deerflow.config.run_limit_overrides` owns their shape and validation.
+
 Security note: with multi-user mode OFF, anyone who can reach the server sees all
 conversations. That is the intended semantics for a trusted personal/LAN setup;
 do not disable it on a shared or public deployment.
@@ -91,11 +94,29 @@ def is_multi_user_mode_enabled() -> bool:
 
 def set_multi_user_mode(enabled: bool) -> None:
     """Persist the multi-user-mode setting (atomic write) and refresh the cache."""
+    set_runtime_setting(MULTI_USER_MODE_KEY, bool(enabled))
+
+
+def get_runtime_setting(key: str) -> Any:
+    """Return one stored setting, or ``None`` when it is absent."""
+    return _read_settings().get(key)
+
+
+def set_runtime_setting(key: str, value: Any) -> None:
+    """Persist one JSON-serializable setting atomically; ``None`` removes it.
+
+    The read-modify-write happens under the module lock against the file's
+    current contents, so writing one key never drops another key a sibling
+    worker stored since this process last read the file.
+    """
     path = _settings_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     with _lock:
         data = _load(path)
-        data[MULTI_USER_MODE_KEY] = bool(enabled)
+        if value is None:
+            data.pop(key, None)
+        else:
+            data[key] = value
         tmp = path.with_name(f"{path.name}.tmp")
         with tmp.open("w", encoding="utf-8") as handle:
             json.dump(data, handle, indent=2, sort_keys=True)

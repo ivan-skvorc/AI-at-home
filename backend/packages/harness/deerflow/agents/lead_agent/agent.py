@@ -744,12 +744,15 @@ def build_middlewares(
         middlewares.append(SubagentLimitMiddleware(max_concurrent=max_concurrent_subagents, max_total=max_total_subagents))
 
     # LoopDetectionMiddleware — detect and break repetitive tool call loops
-    loop_detection_config = resolved_app_config.loop_detection
+    # Settings → Run limits may replace each of these three (FORK.md §46).
+    from deerflow.config.run_limit_overrides import effective_loop_detection, effective_spend_budget, effective_token_budget
+
+    loop_detection_config = effective_loop_detection(resolved_app_config.loop_detection)
     if loop_detection_config.enabled:
         middlewares.append(LoopDetectionMiddleware.from_config(loop_detection_config))
 
     # TokenBudgetMiddleware - enforce per-run token limits
-    token_budget_config = resolved_app_config.token_budget
+    token_budget_config = effective_token_budget(resolved_app_config.token_budget)
     if token_budget_config.enabled:
         from deerflow.agents.middlewares.token_budget_middleware import TokenBudgetMiddleware
 
@@ -759,7 +762,7 @@ def build_middlewares(
     # (fork feature). Deliberately after the token budget: they are independent
     # ceilings and whichever binds first wins, but the money cap is the one this
     # fork's mixed premium/local model story actually needs.
-    spend_budget_config = resolved_app_config.spend_budget
+    spend_budget_config = effective_spend_budget(resolved_app_config.spend_budget)
     if spend_budget_config.enabled:
         from deerflow.agents.middlewares.spend_budget_middleware import SpendBudgetMiddleware
         from deerflow.pricing import build_pricing_map

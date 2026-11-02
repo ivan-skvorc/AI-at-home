@@ -165,6 +165,25 @@ def _isolate_aux_usage_store(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _isolate_run_limit_overrides(monkeypatch):
+    """Keep the developer's saved Settings → Run limits out of every test.
+
+    The overrides live in ``runtime_settings.json`` under the DeerFlow home,
+    which is the same ``backend/.deer-flow`` a local ``make dev`` writes, so a
+    limit saved in the UI would otherwise change what spend, loop and budget
+    tests assemble. Tests of the overrides re-bind the real reader.
+    """
+    try:
+        from deerflow.config import run_limit_overrides
+    except ImportError:  # pragma: no cover - harness not importable
+        yield
+        return
+
+    monkeypatch.setattr(run_limit_overrides, "get_runtime_setting", lambda key: None)
+    yield
+
+
+@pytest.fixture(autouse=True)
 def _isolate_trace_context():
     """Give every test an unbound request trace context.
 

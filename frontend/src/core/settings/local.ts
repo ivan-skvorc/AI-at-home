@@ -54,8 +54,8 @@ export const DEFAULT_LOCAL_SETTINGS: LocalSettings = {
   memory: {
     enabled: false,
   },
-  // Double Plus Ultracode's agent limits (Settings → Subagents). The Script
-  // workflows extension clamps both to the operator's limits.
+  // Double Plus Ultracode's limits (Settings → Subagents). The Script
+  // workflows extension clamps each to the operator's limits.
   ultracode: DEFAULT_ULTRACODE_LIMITS,
   // Per-browser model-picker preference (sort key/direction + group-by-provider
   // toggle). Defaults to config order, ungrouped, so the picker looks unchanged
@@ -193,8 +193,9 @@ export interface LocalSettings {
     // operator master switch `memory.enabled` in config.yaml.
     enabled: boolean;
   };
-  // Double Plus Ultracode limits (fork feature, FORK.md §44): most agents one
-  // workflow may start, and how many at once. Sent with each run in that mode.
+  // Double Plus Ultracode limits (fork feature, FORK.md §44, §46): most agents
+  // one workflow may start, how many at once, and its wall time in minutes.
+  // Sent with each run in that mode.
   ultracode: UltracodeLimits;
   // How the model dropdown orders/groups its entries (fork feature). Per browser,
   // shared across threads. See `core/models/sorting.ts`.
@@ -253,10 +254,9 @@ export function mergeLocalSettings(
       ...DEFAULT_LOCAL_SETTINGS.memory,
       ...settings?.memory,
     },
-    ultracode: normalizeUltracodeLimits({
-      ...DEFAULT_LOCAL_SETTINGS.ultracode,
-      ...settings?.ultracode,
-    }),
+    // Normalized from the stored value alone: it fills each missing field, and
+    // it must see whether `maxMinutes` was stored to upgrade old defaults.
+    ultracode: normalizeUltracodeLimits(settings?.ultracode),
     modelPicker: {
       ...DEFAULT_LOCAL_SETTINGS.modelPicker,
       ...settings?.modelPicker,

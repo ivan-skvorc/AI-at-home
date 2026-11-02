@@ -663,7 +663,11 @@ def build_subagent_runtime_middlewares(
     # docstring requires ("register after LoopDetection") and mirrors the lead
     # chain (``lead_agent/agent.py``). Phase 1 of #3875; a deterministic
     # turn/token budget with lead-visible stop reason is Phase 2.
-    loop_detection_config = app_config.loop_detection
+    # Settings → Run limits may replace the loop limits and the subagent token
+    # budget (FORK.md §46); the page's values win over per-agent YAML budgets.
+    from deerflow.config.run_limit_overrides import effective_loop_detection, effective_subagent_token_budget
+
+    loop_detection_config = effective_loop_detection(app_config.loop_detection)
     if loop_detection_config.enabled:
         from deerflow.agents.middlewares.loop_detection_middleware import LoopDetectionMiddleware
 
@@ -692,6 +696,7 @@ def build_subagent_runtime_middlewares(
         token_budget_config = app_config.subagents.get_token_budget_for(agent_name, summarization_enabled=summarization_enabled)
     else:
         token_budget_config = app_config.subagents.token_budget
+    token_budget_config = effective_subagent_token_budget(token_budget_config)
     if token_budget_config.enabled:
         from deerflow.agents.middlewares.token_budget_middleware import TokenBudgetMiddleware
 

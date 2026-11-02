@@ -8,6 +8,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Settings → Run limits:** administrators can change or switch off every limit that can end a
+  run early — the spend cap, the tool-call limits (warn at 30 / stop at 50 calls to one tool),
+  the lead and subagent token budgets, and the step limit for background runs — without editing
+  `config.yaml`. Values are stored server-wide in `runtime_settings.json`, apply from the next
+  run without a restart, and "Use config.yaml" restores the YAML value. A tool-call limit set
+  there applies to every tool. API: `GET`/`PUT /api/settings/run-limits` (writes admin-only).
+- **Double Plus Ultracode keeps going:** the brief tells the agent to catch each agent's failure
+  so one failed agent no longer ends the workflow, its agents are told they run unattended and to
+  stay under the 12,000-byte answer limit, a failed or unfinished workflow is finished by the
+  agent instead of only reported, and a result waits up to a day for a busy chat instead of
+  about an hour. Settings → Subagents gains a minutes-per-workflow limit, and the limits default
+  to the extension's maximums (256 agents, 16 at once, 240 minutes). Config v67 raises the
+  bundled workflows record's untouched `concurrency`, `global_concurrency`, `max_calls` and
+  `timeout_seconds` to those maximums; values you changed stay.
 - **Books in any format:** an HTML, EPUB, plain-text or zipped upload now states its size in
   the prompt — estimated from the file size or the zip listing, with nothing parsed or unpacked
   on the host — and past `documents.large_document_chars` (120,000) it is routed to

@@ -20,7 +20,7 @@
 # ============================================================================
 # Bump this number when the config schema changes.
 # Run `make config-upgrade` to merge new fields into your local config.yaml.
-config_version: 66
+config_version: 67
 
 # Optional operator-owned literal prompt extensions (see CONFIGURATION.md):
 # lead_prompt_overlay:
@@ -102,6 +102,8 @@ token_usage:
 # When warn_threshold is crossed, the agent receives an in-context warning.
 # When hard_stop_threshold is crossed, tool_calls are stripped and the agent
 # is forced to produce a final answer immediately.
+# Settings → Run limits (admin) can replace this from the UI without editing
+# this file; the UI's value wins until reset there (FORK.md §46).
 token_budget:
   enabled: false                # Set to true to activate budget enforcement
   max_tokens: 200000            # Total token limit (input + output) per run
@@ -128,6 +130,8 @@ token_budget:
 # Enforced in two places: a new run is refused with HTTP 402 when a cap is
 # already spent, and a run in flight gets an in-context warning at
 # warn_threshold then a forced final answer at hard_stop_threshold.
+# Settings → Run limits (admin) can replace this from the UI without editing
+# this file; the UI's value wins until reset there (FORK.md §46).
 spend_budget:
   enabled: false                # Set to true to activate spend enforcement
   daily_limit: null             # e.g. 5.00 — max spend per day, in the pricing currency
@@ -212,6 +216,8 @@ model_routing:
 # 250, not upstream's 100: long clone-and-iterate agent sessions (many bash /
 # read_file / write_file / str_replace turns, each a super-step) abort mid-task
 # with GraphRecursionError under a lower cap.
+# Settings → Run limits (admin) can replace this from the UI without editing
+# this file; the UI's value wins until reset there (FORK.md §46).
 recursion_limit: 250
 
 # The Gateway never trusts a configured or client-supplied value above this
@@ -3150,6 +3156,8 @@ input_polish:
 # Detect and interrupt repeated identical tool-call loops.
 # Frequency thresholds are safety limits for repeated use of the same tool type.
 
+# Settings → Run limits (admin) can replace this from the UI without editing
+# this file; the UI's value wins until reset there (FORK.md §46).
 loop_detection:
   enabled: true
   warn_threshold: 3
@@ -5471,9 +5479,11 @@ plugins:
       enabled: true
       storage_path: workflows/workflows.sqlite  # relative = under DEER_FLOW_HOME (local and Docker alike)
       agents: [lead_agent]       # agents a workflow may start
-      concurrency: 8             # at once per workflow (ceiling 16)
-      global_concurrency: 16     # across all workflows (ceiling 32)
-      max_calls: 64              # agents per workflow (ceiling 256)
-      timeout_seconds: 3600      # wall time per workflow (ceiling 14400)
+      # Operator ceilings, set to the extension's maximums: Settings → Subagents
+      # (per user) can only lower a run below them. FORK.md §46.
+      concurrency: 16            # at once per workflow (ceiling 16)
+      global_concurrency: 32     # across all workflows (ceiling 32)
+      max_calls: 256             # agents per workflow (ceiling 256)
+      timeout_seconds: 14400     # wall time per workflow (ceiling 14400 = 4 h)
       shared_workspace: "off"    # "off" | "read" | "write" (quoted: YAML reads off as false)
       deliver_results: true      # post a finished result back into its chat

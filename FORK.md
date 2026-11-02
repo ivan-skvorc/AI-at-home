@@ -4513,3 +4513,81 @@ the CJK estimate, the trigger clamp and the wiring of both chains). All run insi
 `make test` and fail loudly, so no checklist row was added (CHANGE_CYCLE.md step
 4; the table is over its budget). Depth for agents: `documents/AGENTS.md` and
 `agents/middlewares/CHAIN.md`.
+
+### 46. Run limits in Settings, and workflows that keep going
+
+**Why.** A Double Plus Ultracode run asked to merge upstream and run the change
+cycle ended with "I stopped before the change cycle… nothing has been committed".
+Nothing had failed: a limit had fired. Every limit that can end a run early —
+the spend cap, `loop_detection` (30 calls to one tool inject "wrap up now", 50
+strip tool calls), the lead and subagent token budgets (the subagent one is on by
+default), the 250-step default for runs that send no `recursion_limit` — lived in
+`config.yaml`, which the UI never rewrites, and the workflow layer added its own
+stops: 64 agents and one hour as shipped, a `parallel()` that fails the whole
+workflow on one agent's error, a 12,000-byte answer cap no agent was told about,
+an unanswerable clarifying question, a result delivery that gave up after about
+an hour of a busy chat, and a result note that told the lead never to relaunch.
+
+**Overrides, not a config writer.** `deerflow/config/run_limit_overrides.py` keeps
+one optional section per limit under `run_limits` in `runtime_settings.json` (the
+store multi-user mode already used; `set_runtime_setting` now writes any key
+atomically without dropping the others). `effective_*` helpers merge a section
+over the YAML value at every place a run reads the limit: lead assembly
+(`lead_agent/agent.py`), the subagent chain
+(`build_subagent_runtime_middlewares`), spend status and admission
+(`app/gateway/spend_budget.py`, offloaded with `to_thread`), and the Gateway's
+step default (`_resolve_gateway_recursion_limits`, still clamped to
+`max_recursion_limit`). Settings → Run limits (`run-limits-settings-page.tsx`,
+admin-only nav entry) reads `GET /api/settings/run-limits` (any signed-in user)
+and writes `PUT` (admin, the whole override set; a null section means
+config.yaml).
+
+**What a future refactor must not simplify away.**
+
+- **A section is a complete replacement.** A saved tool-call section clears YAML
+  `tool_freq_overrides`, and a saved token budget clears `max_input_tokens` /
+  `max_output_tokens` and per-subagent YAML budgets. Merging field by field would
+  let a `bash: 150/300` override keep stopping a run the page shows as unlimited.
+- **Every read site goes through `effective_*`.** A site that reads
+  `app_config.<limit>` directly silently ignores the page;
+  `test_run_limit_overrides.py::TestRunsReadTheOverride` fails for each of the
+  five sites with the wiring removed.
+- **An invalid stored section falls back to config.yaml, per section, logged at
+  error level.** A hand-edited file must never stop every run.
+- **Tests never see the developer's saved limits.** The autouse
+  `_isolate_run_limit_overrides` fixture in `tests/conftest.py` rebinds the
+  reader, because `backend/.deer-flow/runtime_settings.json` is the same file a
+  local `make dev` writes.
+- **The web composer still pins `recursion_limit: 1000`.** The step override is
+  for runs that send none; raising `max_recursion_limit` stays an operator edit.
+
+**Workflows.** The brief now tells the lead to catch each `agent()` (a settle
+wrapper) because `parallel()` is `Promise.all` and a rejection ends the workflow;
+`test_a_caught_agent_failure_does_not_end_the_workflow` runs that exact pattern.
+Double Plus Ultracode children get a `run_note` in their task (unattended, answer
+under 8,000 characters) — only ultracode runs, so a plain workflow's task stays
+byte-identical to what its script wrote. Plugin runs cannot set the server-owned
+`non_interactive` flag (a forged one would auto-confirm risk prompts), so the note
+is the boundary-respecting fix. `max_minutes` joins the run options and is clamped
+to the operator's `timeout_seconds`; the supervisor reads the record's limit, not
+the config. Delivery counts a busy conversation as waiting, not as a failed
+attempt, up to `BUSY_WAIT_SECONDS` (24 h). The result note now asks the lead to
+finish unfinished work or launch one smaller follow-up, never the same workflow.
+
+**Defaults move up, chosen values stay.** The example ships the extension's
+ceilings; config v67 (`raise_shipped_workflow_limits`) raises only values equal
+to the v66 shipped ones. The browser does the same: a stored `{64, 8}` without
+`maxMinutes` is the old default saved whole, so `normalizeUltracodeLimits` moves
+it to the new defaults, which is why `mergeLocalSettings` passes the stored object
+unmerged.
+
+Coverage: `test_run_limit_overrides.py` (replacement semantics, strict
+validation, invalid-section fallback, the five read sites, admin gate),
+`test_ultracode_mode.py` (minutes clamp, record wall clock, run note on ultracode
+runs only, caught failure, busy wait past `MAX_ATTEMPTS`, brief text),
+`test_config_upgrade_script.py::TestWorkflowLimitRaise`, and the frontend
+`run-limits.test.ts`, `run-limits-settings-page.dom.test.tsx` and
+`ultracode.test.ts`. All run inside `make test` / `pnpm test` and fail loudly, so
+no checklist row was added (CHANGE_CYCLE.md step 4; the table is over its
+budget). Depth for agents: `deerflow/config/AGENTS.md` and
+`examples/deerflow-extension-workflows/AGENTS.md`.

@@ -10,6 +10,7 @@ import {
   LightbulbIcon,
   PaletteIcon,
   PencilLineIcon,
+  GaugeIcon,
   ScrollTextIcon,
   UserCogIcon,
   UsersRoundIcon,
@@ -113,6 +114,13 @@ const MaintenanceSettingsPage = dynamic(
     ),
   { loading: SettingsPageLoading },
 );
+const RunLimitsSettingsPage = dynamic(
+  () =>
+    import("./run-limits-settings-page").then(
+      (module) => module.RunLimitsSettingsPage,
+    ),
+  { loading: SettingsPageLoading },
+);
 const ModelSettingsPage = dynamic(
   () =>
     import("./model-settings-page").then((module) => module.ModelSettingsPage),
@@ -142,6 +150,7 @@ export type SettingsSection =
   | "suggestions"
   | "systemPrompt"
   | "maintenance"
+  | "runLimits"
   | "about";
 
 type SettingsDialogProps = React.ComponentProps<typeof Dialog> & {
@@ -232,6 +241,12 @@ export function SettingsDialog(props: SettingsDialogProps) {
         label: t.settings.sections.users,
         icon: UserCogIcon,
       });
+      // Server-wide limits (FORK.md §46): writes are admin-only, so is the entry.
+      items.splice(items.length - 1, 0, {
+        id: "runLimits",
+        label: t.settings.sections.runLimits,
+        icon: GaugeIcon,
+      });
     }
     return items;
   }, [
@@ -246,6 +261,7 @@ export function SettingsDialog(props: SettingsDialogProps) {
     t.settings.sections.subagents,
     t.settings.sections.notification,
     t.settings.sections.maintenance,
+    t.settings.sections.runLimits,
     t.settings.sections.suggestions,
     t.settings.sections.systemPrompt,
     t.settings.sections.about,
@@ -312,6 +328,7 @@ export function SettingsDialog(props: SettingsDialogProps) {
               {activeId === "channels" && <ChannelsSettingsPage />}
               {activeId === "systemPrompt" && <SystemPromptSettingsPage />}
               {activeId === "maintenance" && <MaintenanceSettingsPage />}
+              {activeId === "runLimits" && <RunLimitsSettingsPage />}
               {activeId === "about" && <AboutSettingsPage />}
             </div>
           </ScrollArea>

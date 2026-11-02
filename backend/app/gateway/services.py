@@ -58,6 +58,7 @@ from deerflow.agents.middlewares.view_image_middleware import _IMAGE_CONTEXT_MES
 from deerflow.config.agents_config import load_agent_config
 from deerflow.config.app_config import get_app_config
 from deerflow.config.database_config import resolve_checkpoint_graph_cache_max
+from deerflow.config.run_limit_overrides import effective_recursion_limit
 from deerflow.knowledge_scope import KNOWLEDGE_SCOPE_KEY, KNOWLEDGE_SCOPE_RUNTIME_KEY
 from deerflow.mcp_scope import (
     THREAD_INCARNATION_METADATA_GUARD_KEY,
@@ -1332,7 +1333,8 @@ def _resolve_gateway_recursion_limits() -> tuple[int, int]:
     """Resolve the run default and ceiling from one hot-reloaded snapshot."""
     try:
         app_config = get_app_config()
-        raw = app_config.recursion_limit
+        # Settings → Run limits may replace the YAML default (FORK.md §46).
+        raw = effective_recursion_limit(app_config.recursion_limit)
         max_limit = app_config.max_recursion_limit
         if raw > max_limit:
             logger.warning(

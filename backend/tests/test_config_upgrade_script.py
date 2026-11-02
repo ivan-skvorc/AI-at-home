@@ -416,6 +416,39 @@ class TestBundledPluginDelivery:
             assert shipped[name]["enabled"] is True
 
 
+class TestWorkflowLimitRaise:
+    """Migration 67 lifts the bundled workflows record's untouched v66 limits.
+
+    The v66 record shipped 64 agents / 8 at once / 1 h, which stopped long
+    Double Plus Ultracode runs even when the user's Settings asked for more
+    (the Settings values can only lower a run). An operator's own value stays.
+    """
+
+    BASE = "sandbox:\n  use: custom\nmodels: []\nnew_section:\n  enabled: true\n"
+
+    def _upgrade(self, tmp_path: Path, workflow_config: dict) -> dict:
+        record = {"name": "workflows", "package": "deerflow-extension-workflows", "use": "deerflow_extension_workflows:install", "config": workflow_config}
+        config = tmp_path / "config.yaml"
+        config.write_text(f"config_version: 66\n{self.BASE}" + yaml.safe_dump({"plugins": [record]}, sort_keys=False), encoding="utf-8")
+        assert config_upgrade.upgrade(config, _write_example(tmp_path, version=67), REPO_ROOT) == 0
+        return yaml.safe_load(config.read_text(encoding="utf-8"))["plugins"][0]["config"]
+
+    def test_the_shipped_v66_limits_are_raised_to_the_ceilings(self, tmp_path):
+        upgraded = self._upgrade(tmp_path, {"enabled": True, "concurrency": 8, "global_concurrency": 16, "max_calls": 64, "timeout_seconds": 3600})
+        assert (upgraded["concurrency"], upgraded["global_concurrency"], upgraded["max_calls"], upgraded["timeout_seconds"]) == (16, 32, 256, 14400)
+
+    def test_an_operator_value_is_left_alone(self, tmp_path):
+        upgraded = self._upgrade(tmp_path, {"enabled": True, "concurrency": 4, "max_calls": 100, "timeout_seconds": 3600})
+        assert (upgraded["concurrency"], upgraded["max_calls"], upgraded["timeout_seconds"]) == (4, 100, 14400)
+        assert "global_concurrency" not in upgraded
+
+    def test_the_example_ships_the_ceilings_the_migration_targets(self):
+        example = yaml.safe_load((REPO_ROOT / "config.example.yaml").read_text(encoding="utf-8"))
+        shipped = next(record for record in example["plugins"] if record["name"] == "workflows")["config"]
+        for key, (_, ceiling) in config_upgrade._WORKFLOW_LIMITS_V66_TO_V67.items():
+            assert shipped[key] == ceiling
+
+
 def _write_example_with_tools(tmp_path: Path, version: int = 3) -> Path:
     example = tmp_path / "config.example.yaml"
     example.write_text(

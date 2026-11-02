@@ -15,9 +15,9 @@ import {
 
 /**
  * Settings → Subagents: how large a workflow Double Plus Ultracode may plan
- * (fork feature, FORK.md §44). Stored per browser and sent with each run in that
- * mode; the Script workflows extension clamps both values to the operator's own
- * limits, so a number here can only make a run smaller.
+ * (fork feature, FORK.md §44, §46). Stored per browser and sent with each run in
+ * that mode; the Script workflows extension clamps every value to the
+ * operator's own limits, so a number here can only make a run smaller.
  */
 export function UltracodeLimitsSection() {
   const { t } = useI18n();
@@ -59,6 +59,15 @@ export function UltracodeLimitsSection() {
             ULTRACODE_LIMIT_CEILINGS.maxParallel,
           )}
           field="maxParallel"
+          limits={limits}
+          onCommit={(next) => setSettings("ultracode", next)}
+        />
+        <LimitField
+          label={t.settings.subagents.ultracodeMaxMinutes}
+          hint={t.settings.subagents.ultracodeRange(
+            ULTRACODE_LIMIT_CEILINGS.maxMinutes,
+          )}
+          field="maxMinutes"
           limits={limits}
           onCommit={(next) => setSettings("ultracode", next)}
         />
