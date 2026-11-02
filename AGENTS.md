@@ -255,6 +255,7 @@ Repo-wide conventions:
 - **Skill text encoding** — use explicit UTF-8 for textual skill resources.
   Read `SKILL.md` with `encoding="utf-8-sig"` to strip a leading BOM; write with
   `encoding="utf-8"`. Never rely on the platform locale.
+<<<<<<< HEAD
 - **Version sources must stay in lockstep** — a release version must match identically in
   `backend/pyproject.toml`, `frontend/package.json`, and `deploy/helm/deer-flow/Chart.yaml`
   (`version` + `appVersion`), and `backend/uv.lock` must record the root package's PEP 440
@@ -262,5 +263,14 @@ Repo-wide conventions:
   **blocks all publishing** on any drift. Bump with `scripts/bump_version.sh <ver>` (aligns
   all four and refreshes `uv.lock`; needs `uv` on `PATH`) and check with
   `scripts/verify_versions.sh <ver>`. See [RELEASING.md](RELEASING.md).
+=======
+- **Version lockstep** — keep `backend/pyproject.toml`,
+  `backend/packages/harness/pyproject.toml`, `frontend/package.json`, and
+  `deploy/helm/deer-flow/Chart.yaml` (`version`/`appVersion`) identical.
+  `backend/uv.lock` must match both `deer-flow` and `deerflow-harness` in PEP 440 form.
+  Run `scripts/bump_version.sh <ver>` (requires `uv` on `PATH`) to update all five
+  fields and the lock, then `scripts/verify_versions.sh <ver>`. `v*` tag CI blocks
+  all publishing on drift. See [RELEASING.md](RELEASING.md).
+>>>>>>> upstream/main
 - **Don't edit `CLAUDE.md`** — it only contains `@AGENTS.md`. All agent guidance changes
   belong here in `AGENTS.md`; `CLAUDE.md` is a thin import shim.

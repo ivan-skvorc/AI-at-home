@@ -44,12 +44,22 @@ pytestmark = pytest.mark.asyncio
 
 
 async def test_0047_remains_in_the_single_migration_chain():
+<<<<<<< HEAD
     script = ScriptDirectory(str(bootstrap._MIGRATIONS_DIR))
     # Fork: a merge revision above upstream's tip is the single head
     # (test_migration_merge_points.py); upstream's tip is one of its parents.
     (head,) = script.get_heads()
     assert head == bootstrap._get_head_revision()
     assert "0048_extension_execution_leases" in script.get_revision(head).down_revision
+=======
+    assert bootstrap._get_head_revision() == "0051_merge_run_inputs_fencing"
+    script = ScriptDirectory(str(bootstrap._MIGRATIONS_DIR))
+    assert script.get_heads() == ["0051_merge_run_inputs_fencing"]
+    assert set(script.get_revision("0051_merge_run_inputs_fencing").down_revision) == {"0049_run_inputs", "0050_history_seed_authority"}
+    assert script.get_revision("0050_history_seed_authority").down_revision == "0049_run_producer_fencing"
+    assert script.get_revision("0049_run_producer_fencing").down_revision == "0048_extension_execution_leases"
+    assert script.get_revision("0049_run_inputs").down_revision == "0048_extension_execution_leases"
+>>>>>>> upstream/main
     assert script.get_revision("0048_extension_execution_leases").down_revision == REVISION
     assert script.get_revision(REVISION).down_revision == PREVIOUS
     assert script.get_revision(PREVIOUS).down_revision == "0045_completed_run_evidence"
