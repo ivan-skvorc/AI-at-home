@@ -20,7 +20,7 @@
 # ============================================================================
 # Bump this number when the config schema changes.
 # Run `make config-upgrade` to merge new fields into your local config.yaml.
-config_version: 67
+config_version: 68
 
 # Optional operator-owned literal prompt extensions (see CONFIGURATION.md):
 # lead_prompt_overlay:
@@ -75,6 +75,7 @@ logging:
 #   middlewares:
 #     - my_company.deerflow_middlewares:DomainGuardMiddleware
 #     - class: my_company.deerflow_middlewares:LatencyStampingMiddleware
+#       apply_to: lead  # both (default), lead, or subagent
 #       kwargs:
 #         header: X-DeerFlow-Latency
 
@@ -299,7 +300,7 @@ models:
   #                         GPT-6 Astra / GPT-6.1 Sol / GPT-5.3 Codex /
   #                         Gemini 3.8 Flash / Llama 4 Maverick /
   #                         MiniMax M3 / Qwen3.8 Max /
-  #                         Kimi K3 / Mistral Large 3 / DeepSeek V4 Pro /
+  #                         Kimi K3.1 Pro / Mistral Large 3 / DeepSeek V4 Pro /
   #                         GLM-5.3 / Nemotron 3 Ultra
   #                         (via OpenRouter)
   # Each big-name lab that ships its own API also has a first-party "home" block,
@@ -311,7 +312,7 @@ models:
   #   GEMINI_API_KEY     -> Gemini 3.8 Flash / 3.5 Flash-Lite / 4 Argon (Google)
   #   DEEPSEEK_API_KEY   -> DeepSeek V4 Pro / V4.1 Flash (DeepSeek)
   #   MISTRAL_API_KEY    -> Mistral Large 3 / Medium 3.5 / Small 4 (Mistral)
-  #   MOONSHOT_API_KEY   -> Kimi K3 / Kimi K2.6 (Moonshot)
+  #   MOONSHOT_API_KEY   -> Kimi K3.1 Pro / Kimi K2.6 (Moonshot)
   #   DASHSCOPE_API_KEY  -> Qwen3.8 Max / Qwen3.7 Plus (Qwen)
   #   MINIMAX_API_KEY    -> MiniMax M3 / MiniMax M2.7 (MiniMax)
   #   ZAI_API_KEY        -> GLM-5.3 / GLM-5.3 Flash (z-ai)
@@ -672,7 +673,7 @@ models:
   # - name: openrouter-qwen3.8-max
   #   display_name: Qwen3.8 Max (OpenRouter) (p)
   #   use: langchain_openai:ChatOpenAI
-  #   model: qwen/qwen3.8-max
+  #   model: qwen/qwen3.8-max-0902   # bare qwen/qwen3.8-max 308s here; same $2/$6 model
   #   api_key: $OPENROUTER_API_KEY
   #   base_url: https://openrouter.ai/api/v1
   #   request_timeout: 600.0
@@ -685,10 +686,10 @@ models:
   #     input: 2.0
   #     output: 6.0
   #
-  # - name: openrouter-kimi-k3
-  #   display_name: Kimi K3 (OpenRouter) (p)
+  # - name: openrouter-kimi-k3.1-pro
+  #   display_name: Kimi K3.1 Pro (OpenRouter) (p)
   #   use: langchain_openai:ChatOpenAI
-  #   model: moonshotai/kimi-k3
+  #   model: moonshotai/kimi-k3.1-pro
   #   api_key: $OPENROUTER_API_KEY
   #   base_url: https://openrouter.ai/api/v1
   #   request_timeout: 600.0
@@ -698,8 +699,9 @@ models:
   #   supports_thinking: true
   #   price:                          # per 1M tokens; the single source of truth for cost display and budgets
   #     currency: USD
-  #     input: 3.0
-  #     output: 15.0
+  #     input: 2.0
+  #     output: 10.0
+  #     cache_hit: 0.2
   #
   # - name: openrouter-gemini-3.8-flash
   #   display_name: Gemini 3.8 Flash (OpenRouter) (p)
@@ -1139,14 +1141,15 @@ models:
 # === END auto-model-config: mistral ===
 
   # ── Moonshot (Kimi) — auto-enabled when MOONSHOT_API_KEY is set ───────────
-  # Kimi K3 + K2.6, on the direct Moonshot international API (thinking toggle on).
+  # Kimi K3.1 Pro + K2.6, on the direct Moonshot international API.
+  # K3.1 Pro always thinks and rejects a thinking switch, so that entry ships none.
   # The startup auto-config (scripts/sync-api-key-models.py) uncomments the
   # entries below when it finds a real MOONSHOT_API_KEY in your .env.
   # === BEGIN auto-model-config: moonshot (uncommented at startup when MOONSHOT_API_KEY is set) ===
-  # - name: moonshot-kimi-k3
-  #   display_name: Kimi K3 (Moonshot)
+  # - name: moonshot-kimi-k3.1-pro
+  #   display_name: Kimi K3.1 Pro (Moonshot)
   #   use: deerflow.models.patched_deepseek:PatchedChatDeepSeek
-  #   model: kimi-k3
+  #   model: kimi-k3.1-pro
   #   api_base: https://api.moonshot.ai/v1
   #   api_key: $MOONSHOT_API_KEY
   #   timeout: 600.0
@@ -1156,16 +1159,9 @@ models:
   #   supports_thinking: true
   #   price:                          # per 1M tokens; the single source of truth for cost display and budgets
   #     currency: USD
-  #     input: 3.0
-  #     output: 15.0
-  #   when_thinking_enabled:
-  #     extra_body:
-  #       thinking:
-  #         type: enabled
-  #   when_thinking_disabled:
-  #     extra_body:
-  #       thinking:
-  #         type: disabled
+  #     input: 2.0
+  #     output: 10.0
+  #     cache_hit: 0.2
   #
   # - name: moonshot-kimi-k2.6
   #   display_name: Kimi K2.6 (Moonshot)
@@ -3768,6 +3764,8 @@ subagent_runtime:
 #       # token_budget:        # per-agent override of the global token_budget above
 #       #   max_tokens: 3000000  # raise the ceiling for deep-research tasks
 #       # model: qwen3:32b     # Use a specific model (default: inherit from lead agent)
+#       # thinking_enabled: true  # Enable thinking/reasoning for this subagent (default: false)
+#       # reasoning_effort: medium # Use an effort value or alias supported by this model
 #       # skills:               # Skill discovery/activation allowlist (default: all enabled)
 #       #   - web-search
 #       #   - data-analysis
@@ -3795,11 +3793,15 @@ subagent_runtime:
 #   #       - data-analysis
 #   #       - visualization
 #   #     model: inherit          # 'inherit' uses parent's model
+#   #     thinking_enabled: true   # Enable thinking/reasoning (default: false)
+#   #     reasoning_effort: medium  # Use an effort value or alias supported by this model
 #   #     max_turns: 80
 #   #     timeout_seconds: 600
 #
 #   # Model override: by default, subagents inherit the lead agent's model.
 #   # Set `model` to use a different model (e.g., a local Ollama model for cost savings).
+#   # Unset thinking requests false; the selected model's required-thinking policy
+#   # and effort defaults/aliases still apply. Parent thinking settings are not inherited.
 #   # The model name must match a name defined in the `models:` section above.
 
 # Durable native-subagent batches. Disabled by default because enabling it can
@@ -4567,6 +4569,16 @@ run_events:
   backend: db
   max_trace_content: 10240
   track_token_usage: true
+  # With a fencing-capable SQL RunStore and DB event store:
+  # off: host-authorized writes still check Run incarnation, epoch and state;
+  #      stale Journal flushes after takeover or deletion may be rejected.
+  # strict: additionally checks raw SQL and unaware legacy writers via the
+  #         database trigger after an offline cutover.
+  # Restart-required; strict requires database.backend: postgres and backend: db.
+  # Stop every Gateway, activate the database policy, then restart all with the
+  # matching cutover ID. See README.md#configuration for the offline cutover.
+  producer_fencing: "off"
+  # producer_cutover_id: deployment-2026-10-27
 
 # ============================================================================
 # Agent Storage Configuration

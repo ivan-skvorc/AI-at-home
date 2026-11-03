@@ -367,7 +367,7 @@ ingress:
 # -- DeerFlow config.yaml content. Secrets MUST stay as $VAR references — never
 #    inline literal secret values here. The default enables provisioner sandbox.
 config: |
-  config_version: 67
+  config_version: 68
   log_level: info
   recursion_limit: 100
   max_recursion_limit: 1000
@@ -442,6 +442,9 @@ config: |
     heartbeat_enabled: true
   run_events:
     backend: db
+    # off: host-authorized writes still check Run incarnation, epoch and state.
+    # strict needs postgres, backend: db, and an offline cutover. See the example.
+    producer_fencing: "off"
 
   # Custom agents and managed subagents default to per-Pod files under the
   # home volume. Switch to the shared database when running more than one

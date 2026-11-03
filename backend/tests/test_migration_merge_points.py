@@ -66,6 +66,11 @@ ORIGINAL_PARENTS = {
     # 0048_merge_prefs_oauth_tokens had already claimed, splitting the tree an
     # eighth time — and was joined by 0049_merge_prefs_ext_leases.
     "0048_extension_execution_leases": ("0047_mcp_oauth_tokens",),
+    # Upstream's run-input / producer-fence join. It is upstream's own merge of
+    # two children of 0048, which 0049_merge_prefs_ext_leases had already claimed
+    # as a head, splitting the tree a ninth time — joined by
+    # 0052_merge_prefs_run_inputs, not by moving either parent.
+    "0051_merge_run_inputs_fencing": ("0049_run_inputs", "0050_history_seed_authority"),
 }
 
 # Every leaf the merge points must keep reachable: one per branch tip that
@@ -87,6 +92,8 @@ MERGED_TIPS = (
     "0047_mcp_oauth_tokens",
     # Upstream's tip at the 2026-10-29 sync, joined by 0049_merge_prefs_ext_leases.
     "0048_extension_execution_leases",
+    # Upstream's tip at the 2026-11-03 sync, joined by 0052_merge_prefs_run_inputs.
+    "0051_merge_run_inputs_fencing",
 )
 
 

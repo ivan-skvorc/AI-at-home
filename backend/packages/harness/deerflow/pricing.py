@@ -29,6 +29,7 @@ reporting rather than producing an invalid aggregate.
 from __future__ import annotations
 
 import logging
+import math
 import re
 from datetime import UTC, date, datetime
 from functools import lru_cache
@@ -334,6 +335,13 @@ def build_pricing_map(models: Any, *, logger: logging.Logger | None = None, now:
         except (TypeError, ValueError):
             log.warning("pricing: ignoring malformed pricing on model %s", getattr(model_cfg, "name", "?"))
             continue
+        # ``float("nan")`` / ``float("inf")`` parse successfully, and NaN then
+        # survives every ``<=`` comparison and every ``round()``, ending up in
+        # a JSON body Starlette rejects (allow_nan=False) — a 500 for the whole
+        # usage report. Treat non-finite prices as malformed.
+        if any(not math.isfinite(price) for price in (input_price, output_price, cache_hit_price) if price is not None):
+            log.warning("pricing: ignoring non-finite pricing on model %s", getattr(model_cfg, "name", "?"))
+            continue
         if input_price <= 0 and output_price <= 0:
             continue
         model_currency = str(raw.get("currency") or "USD").strip().upper() or "USD"
@@ -585,6 +593,26 @@ def lookup_pricing(pricing: dict[str, ModelPricing], model: str | None) -> Model
     return None
 
 
+def token_count(value: object) -> int:
+    """Coerce one stored token counter to a non-negative ``int``.
+
+    ``token_usage_by_model`` is a JSON column written from provider-reported
+    usage, so a bucket value is not guaranteed to be a number. Booleans are
+    rejected because ``int(True) == 1`` would invent a token. A JSON integer
+    past the float range (``10**400``) parses as an exact ``int`` and then
+    overflows ``token_cost``'s division back to float, so it is junk too.
+    """
+    if isinstance(value, bool):
+        return 0
+    try:
+        count = int(value)  # type: ignore[arg-type]
+        if count < 0 or not math.isfinite(float(count)):
+            return 0
+    except (TypeError, ValueError, OverflowError):
+        return 0
+    return count
+
+
 def token_cost(input_tokens: int, output_tokens: int, price: ModelPricing, cache_read_tokens: int = 0) -> float:
     """Cache-aware spend: cache-hit input tokens are billed at the hit price.
 
@@ -629,19 +657,19 @@ def run_cost(
             price = lookup_pricing(pricing, model)
             if price is None:
                 continue
-            input_tokens = int(usage.get("input_tokens") or 0)
-            output_tokens = int(usage.get("output_tokens") or 0)
+            input_tokens = token_count(usage.get("input_tokens"))
+            output_tokens = token_count(usage.get("output_tokens"))
             if input_tokens == 0 and output_tokens == 0:
                 continue
-            cost += token_cost(input_tokens, output_tokens, price, int(usage.get("cache_read_tokens") or 0))
+            cost += token_cost(input_tokens, output_tokens, price, token_count(usage.get("cache_read_tokens")))
             priced = True
     if priced:
         return cost
     price = lookup_pricing(pricing, model_name)
     if price is None:
         return None
-    input_tokens = int(total_input_tokens or 0)
-    output_tokens = int(total_output_tokens or 0)
+    input_tokens = token_count(total_input_tokens)
+    output_tokens = token_count(total_output_tokens)
     if input_tokens == 0 and output_tokens == 0:
         return None
     return token_cost(input_tokens, output_tokens, price)

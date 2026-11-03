@@ -21,7 +21,7 @@ from sqlalchemy import func, select
 
 from app.gateway.authz import require_permission
 from app.gateway.deps import get_current_user
-from app.gateway.pricing import ModelPricing, build_pricing_map, lookup_pricing, pricing_currency, run_cost, token_cost
+from app.gateway.pricing import ModelPricing, build_pricing_map, lookup_pricing, pricing_currency, run_cost, token_cost, token_count
 from deerflow.config import get_app_config
 from deerflow.config.agents_config import list_custom_agents
 from deerflow.model_ids import normalize_reported_model_name
@@ -208,6 +208,16 @@ _lookup_pricing = lookup_pricing
 _token_cost = token_cost
 
 
+def _token_count(value: object) -> int:
+    """Coerce one stored token counter to a non-negative ``int``.
+
+    Kept as the console's name so existing tests patch and call it here.
+    The implementation lives in :func:`deerflow.pricing.token_count`, which
+    ``run_cost`` uses, so a junk bucket cannot 500 either surface.
+    """
+    return token_count(value)
+
+
 def _build_pricing_map() -> dict[str, ModelPricing]:
     """Collect per-model prices from ``models[*].pricing`` in config.yaml."""
     try:
@@ -219,7 +229,7 @@ def _build_pricing_map() -> dict[str, ModelPricing]:
 
 
 def _usage_is_missing(usage: dict) -> bool:
-    return int(usage.get("missing_usage_calls") or 0) > 0
+    return _token_count(usage.get("missing_usage_calls")) > 0
 
 
 def _has_missing_usage(token_usage_by_model: object) -> bool:
@@ -479,9 +489,9 @@ async def console_usage(
                 entry.runs += 1
                 if not isinstance(usage, dict):
                     continue
-                entry.tokens += int(usage.get("total_tokens", 0) or 0)
-                entry.input_tokens += int(usage.get("input_tokens") or 0)
-                entry.cache_read_tokens += int(usage.get("cache_read_tokens") or 0)
+                entry.tokens += _token_count(usage.get("total_tokens"))
+                entry.input_tokens += _token_count(usage.get("input_tokens"))
+                entry.cache_read_tokens += _token_count(usage.get("cache_read_tokens"))
                 price = _lookup_pricing(pricing, model)
                 if _usage_is_missing(usage):
                     missing_models.add(model.lower())
@@ -490,7 +500,7 @@ async def console_usage(
                         # equal rates on an unrelated model are not aliases.
                         missing_model_prices.add(id(price))
                 if price is not None:
-                    model_cost = _token_cost(int(usage.get("input_tokens") or 0), int(usage.get("output_tokens") or 0), price, int(usage.get("cache_read_tokens") or 0))
+                    model_cost = _token_cost(_token_count(usage.get("input_tokens")), _token_count(usage.get("output_tokens")), price, _token_count(usage.get("cache_read_tokens")))
                     entry.cost = round((entry.cost or 0.0) + model_cost, 6)
         elif row.model_name and run_tokens > 0:
             # Legacy rows predating token_usage_by_model: fall back to the run's model.
@@ -613,10 +623,10 @@ async def console_spend(
                 entry.runs += 1
                 if not isinstance(usage, dict):
                     continue
-                model_input = int(usage.get("input_tokens") or 0)
-                model_output = int(usage.get("output_tokens") or 0)
-                model_cache = int(usage.get("cache_read_tokens") or 0)
-                entry.tokens += int(usage.get("total_tokens") or 0)
+                model_input = _token_count(usage.get("input_tokens"))
+                model_output = _token_count(usage.get("output_tokens"))
+                model_cache = _token_count(usage.get("cache_read_tokens"))
+                entry.tokens += _token_count(usage.get("total_tokens"))
                 entry.input_tokens += model_input
                 entry.output_tokens += model_output
                 entry.cache_read_tokens += model_cache
@@ -645,10 +655,10 @@ async def console_spend(
     aux_tokens_by_category: dict[str, int] = {}
     for aux in aux_rows:
         totals = aux.totals
-        aux_input = int(totals.get("input_tokens") or 0)
-        aux_output = int(totals.get("output_tokens") or 0)
-        aux_cache = int(totals.get("cache_read_tokens") or 0)
-        aux_total_tokens = int(totals.get("total_tokens") or 0)
+        aux_input = _token_count(totals.get("input_tokens"))
+        aux_output = _token_count(totals.get("output_tokens"))
+        aux_cache = _token_count(totals.get("cache_read_tokens"))
+        aux_total_tokens = _token_count(totals.get("total_tokens"))
         # Same treatment as the run rows above: an aux record written before the
         # source normalization landed can name a doubled model id.
         aux_model_name = normalize_reported_model_name(aux.model_name) or "unknown"
@@ -660,7 +670,7 @@ async def console_spend(
         entry.input_tokens += aux_input
         entry.output_tokens += aux_output
         entry.cache_read_tokens += aux_cache
-        entry.aux_calls += int(totals.get("calls") or 0)
+        entry.aux_calls += _token_count(totals.get("calls"))
 
         thread_row = by_thread.setdefault(aux.thread_id, ConsoleSpendThreadRow(thread_id=aux.thread_id, title=thread_titles.get(aux.thread_id)))
         thread_row.tokens += aux_total_tokens

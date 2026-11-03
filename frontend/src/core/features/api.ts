@@ -2,6 +2,7 @@ import { fetch } from "@/core/api/fetcher";
 import { getBackendBaseURL } from "@/core/config";
 
 export interface FeaturesResponse {
+  run_inputs?: boolean;
   agents_api: { enabled: boolean };
   // Fork: the operator master switch for automatic conversation renaming
   // (config.yaml -> title). Optional so an older Gateway degrades to "on".

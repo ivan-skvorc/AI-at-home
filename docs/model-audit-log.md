@@ -11,6 +11,68 @@ Newest first. Append a pass; never rewrite one. A dated line is what tells the
 next person whether the roster was checked last week or last year, and _which_
 providers that pass could actually reach.
 
+- **2026-11-03 (upstream sync, branch `chore/upstream-sync-20261103`) — tier 1 for
+  Anthropic, Moonshot, and the OpenRouter pages that were opened. Two roster edits:
+  Kimi K3.1 Pro replaces Kimi K3, and the routed Qwen3.8 Max slug is pinned to
+  `qwen/qwen3.8-max-0902`. No other price or settings change.** Requested in words
+  with the upstream sync of 72 commits.
+
+  **Machine half.** `uv run python scripts/audit_models.py` reached OpenRouter
+  (`https://openrouter.ai/api/v1/models`, 451 models) and reported 25 findings:
+  one retired slug, seven list-price mismatches, and new-candidate rows. The stale
+  fixture still yields exactly four findings, one per drift kind. The script's
+  price diffs are not applied on their own — several are a cheaper figure sitting
+  beside the standard rate on the same page.
+
+  **What the network reached.** Anthropic pricing
+  (`platform.claude.com/docs/en/about-claude/pricing.md`) and Moonshot's pricing
+  page (`platform.kimi.ai/docs/pricing/chat`, the table in the page source) answer
+  200. OpenRouter model pages answer 200; `qwen/qwen3.8-max` returns **308** to
+  `/qwen/qwen3.8-max-0902`. The other labs' own pricing pages were not opened.
+
+  **Anthropic — tier 1, unchanged.** The model-pricing table still lists Fable 5.1
+  `$10/$50` (cache `$0.25`), Opus 5.5 `$4/$20` (`$0.20`), Opus 5 `$5/$25`
+  (`$0.50`), Sonnet 5.5 `$2/$10` (`$0.10`), Sonnet 5 `$2/$10` (`$0.20`, and the
+  page now says the old intro rate is the standard price — the `$3/$15` increase
+  will not happen), Haiku 5.5 `$0.10/$0.50` (`$0.01`) up to 100K tokens. The
+  half-price table further down is Batch API, not the list. Fast mode (Opus 5.5
+  `$8/$40`) is not bundled.
+
+  **Kimi K3.1 Pro replaces Kimi K3 — tier 1.** Owed since 2026-10-29. Moonshot's
+  own table: `kimi-k3.1-pro` `$2/$10`, cache `$0.20` (5m write `$2`, 1h write `$4`).
+  OpenRouter's page and API for `moonshotai/kimi-k3.1-pro` state the same `$2/$10`
+  and `$0.20`. `kimi-k3` is still `$3/$15` on Moonshot, so the routed catalog's
+  `$0.192/$15` for `moonshotai/kimi-k3` was not adopted. The home entry keeps
+  `supports_thinking: true` and ships no `when_thinking_*` block: K3.1 rejects the
+  switch (the China endpoint already strips it; the international entry must not
+  send it either). `kimi-k3.1-pro-highspeed` (`$4/$20`) is the speed tier, not the
+  flagship. K2.6 stays the cheaper sibling.
+
+  **Qwen3.8 Max routed slug — tier 1, price unchanged.** The catalog no longer
+  lists `qwen/qwen3.8-max`, and OpenRouter 308s that URL to `qwen/qwen3.8-max-0902`
+  at the same `$2/$6`. The home DashScope id stays `qwen3.8-max` (that API was not
+  re-read). Qwen3.8 Max Prime (`$4/$12`) is a different, dearer model and was not
+  rolled.
+
+  **Left alone (catalog disagreed, the page did not settle on one standard rate).**
+  MiniMax M3 still shows `$0.60/$2.40` beside `$0.30/$1.20` and the shipped
+  discount `$0.24/$0.96`. Gemini 3.8 Flash still shows `$1.50/$7.50` beside
+  `$0.825/$4.125`. GLM-5.3 shows `$1.40` and `$0.08/$3.60`. Nemotron 3 Ultra shows
+  both `$0.50/$2.20` and `$0.60/$2.40`. Llama 4 Maverick's headline is
+  `$0.1875/$0.6525` but that was not corroborated off Meta's own page. DeepSeek V4
+  Pro's page is a provider mix, not one figure matching the catalog's `$1.60/$3.20`.
+  Kimi K3's routed price is moot: the entry was replaced.
+
+  **Discovery declined.** Haiku 5.5 and Sonnet 5.5 are already in the home block;
+  the routed pair stays Fable 5.1 and Opus 5.5. Gemini 4 Argon is already the home
+  Pro-tier entry; Flash stays the routed one. GPT-6.1 Terra is already home-only.
+  GPT-6.1 Sol Pro, Nano Banana, GLM-5.3 FlashX / FlashX Legal, DeepSeek V4.1 Flash
+  `1017` (a dated build of the alias already owed), MiniMax M3.1 Flash, Mistral
+  Large 4 (still the preview id `mistral-large-4-0`, sale-looking `$0.70/$2.10`
+  on the API only), and Nemotron 3.5 Super VL were not rolled. Mistral Large 4 and
+  what `deepseek-flash` serves remain owed to a pass that can read those labs'
+  own pages.
+
 - **2026-10-29 (upstream sync `5c4ba4d2`) — partial: tier 1 for Anthropic, tier 2 for OpenAI's
   Terra and Google's Argon, tier 3 elsewhere. Two roll-forwards: GPT-6.1 Terra replaces GPT-5.6
   Terra, and Gemini 4 Argon replaces the Gemini 3.1 Pro preview. No other roster, price or settings

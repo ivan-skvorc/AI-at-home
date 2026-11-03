@@ -22,6 +22,7 @@ from deerflow.pricing import (
     resolve_run_pricing,
     run_cost,
     token_cost,
+    token_count,
 )
 
 __all__ = [
@@ -33,4 +34,5 @@ __all__ = [
     "resolve_run_pricing",
     "run_cost",
     "token_cost",
+    "token_count",
 ]
