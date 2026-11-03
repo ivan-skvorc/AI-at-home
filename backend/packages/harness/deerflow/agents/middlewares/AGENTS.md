@@ -1,5 +1,15 @@
 ### Middleware Chain
 
+Tool-result JSON analysis is best-effort: parser depth failures must preserve the
+original content and must not abort the graph. Explicit error results fall back
+to `unknown` / recoverable / `try_alternative`, without classifying incidental
+JSON fields as auth failures. Producer metadata remains authoritative. Keep
+depth regressions in `tests/test_tool_result_meta_json_depth.py`, including real
+LocalSandbox reads through both synchronous and asynchronous agent graphs.
+Deep graph cases must establish a real parser depth failure or report a skip.
+
+Tool-call argument depth handling is best-effort; see `tests/test_tool_call_json_depth.py`.
+
 Async gate waiters own separate cross-loop futures. Cancel only their signal;
 notify outside the state lock. `_await_off_thread` drains started I/O across
 repeated cancellation.
@@ -29,6 +39,13 @@ A pre-turn reply prevents cancellation; legacy replies without status metadata m
 stay `in_progress`. Never infer status from reply text.
 
 Assembly order: `tool_error_handling_middleware.py::_build_runtime_middlewares` (exposed as `build_lead_runtime_middlewares`), then `../lead_agent/agent.py::build_middlewares`. Optional entries require their config/runtime condition.
+
+Config-declared middleware uses `configured_extensions.py`; the lead and subagent
+builders pass their own required keyword-only `scope` (no implicit lead default).
+Optional `apply_to: both | lead | subagent`
+defaults to both, including legacy strings. Filter before reflection/construction;
+preserve selected entry order and create fresh instances per build. This fixed-slot
+selector does not alter packaged extensions' `AgentScope` or placement contract.
 
 **Message provenance.** Injected/rewritten messages use
 `deerflow_extension_api.provenance.provenance_kwargs()`: server-owned

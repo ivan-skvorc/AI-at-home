@@ -332,8 +332,8 @@ OPENROUTER_BUNDLE_MODELS: list[dict] = [
     _openrouter_model("openrouter-gemini-3.8-flash", "Gemini 3.8 Flash (OpenRouter) (p)", "google/gemini-3.8-flash", supports_vision=True),
     _openrouter_model("openrouter-llama-4-maverick", "Llama 4 Maverick (OpenRouter) (p)", "meta-llama/llama-4-maverick", supports_vision=True, supports_thinking=False),
     _openrouter_model("openrouter-minimax-m3", "MiniMax M3 (OpenRouter) (p)", "minimax/minimax-m3", supports_vision=True, max_tokens=16000, temperature=1.0),
-    _openrouter_model("openrouter-qwen3.8-max", "Qwen3.8 Max (OpenRouter) (p)", "qwen/qwen3.8-max"),
-    _openrouter_model("openrouter-kimi-k3", "Kimi K3 (OpenRouter) (p)", "moonshotai/kimi-k3", supports_vision=True),
+    _openrouter_model("openrouter-qwen3.8-max", "Qwen3.8 Max (OpenRouter) (p)", "qwen/qwen3.8-max-0902"),
+    _openrouter_model("openrouter-kimi-k3.1-pro", "Kimi K3.1 Pro (OpenRouter) (p)", "moonshotai/kimi-k3.1-pro", supports_vision=True),
     _openrouter_model("openrouter-mistral-large-3", "Mistral Large 3 (OpenRouter) (p)", "mistralai/mistral-large-2512", supports_vision=True, supports_thinking=False),
     _openrouter_model("openrouter-deepseek-v4-pro", "DeepSeek V4 Pro (OpenRouter) (p)", "deepseek/deepseek-v4-pro"),
     _openrouter_model("openrouter-glm-5.3", "GLM-5.3 (OpenRouter) (p)", "z-ai/glm-5.3", max_tokens=16000),
@@ -428,14 +428,17 @@ def _home_deepseek_style_model(
     api_base: str,
     supports_vision: bool = False,
     max_tokens: int = 32000,
+    thinking_toggle: bool = True,
 ) -> dict:
     """Build one first-party `PatchedChatDeepSeek` entry (DeepSeek / Moonshot).
 
     These labs' native endpoints honor the OpenAI-compatible ``extra_body``
     thinking toggle, so the entry ships the full enable/disable pair like the
-    wizard's existing ``deepseek`` / ``kimi`` providers.
+    wizard's existing ``deepseek`` / ``kimi`` providers. Kimi K3.1 Pro does not:
+    Moonshot rejects ``thinking`` and the fixed sampling parameters, so that
+    entry sets ``thinking_toggle=False`` and sends neither.
     """
-    return {
+    entry = {
         "name": name,
         "display_name": display_name,
         "use": "deerflow.models.patched_deepseek:PatchedChatDeepSeek",
@@ -446,8 +449,11 @@ def _home_deepseek_style_model(
         "max_retries": 2,
         "max_tokens": max_tokens,
         "supports_vision": supports_vision,
-        **OPENAI_COMPAT_THINKING_CONFIG,
+        "supports_thinking": True,
     }
+    if thinking_toggle:
+        entry.update(OPENAI_COMPAT_THINKING_CONFIG)
+    return entry
 
 
 def _home_gemini_model(name: str, display_name: str, model: str, *, max_tokens: int = 8192, supports_vision: bool = True) -> dict:
@@ -522,9 +528,19 @@ MISTRAL_HOME_BUNDLE_MODELS: list[dict] = [
     ),
 ]
 
-# Moonshot/Kimi: K3 (flagship) + K2.6 (cheaper), via the international endpoint.
+# Moonshot/Kimi: K3.1 Pro (flagship, 2026-10-23) + K2.6 (cheaper), via the
+# international endpoint. K3.1 Pro always thinks and rejects the thinking switch.
 MOONSHOT_HOME_BUNDLE_MODELS: list[dict] = [
-    _home_deepseek_style_model("moonshot-kimi-k3", "Kimi K3 (Moonshot)", "kimi-k3", api_key_env="MOONSHOT_API_KEY", api_base="https://api.moonshot.ai/v1", supports_vision=True, max_tokens=32768),
+    _home_deepseek_style_model(
+        "moonshot-kimi-k3.1-pro",
+        "Kimi K3.1 Pro (Moonshot)",
+        "kimi-k3.1-pro",
+        api_key_env="MOONSHOT_API_KEY",
+        api_base="https://api.moonshot.ai/v1",
+        supports_vision=True,
+        max_tokens=32768,
+        thinking_toggle=False,
+    ),
     _home_deepseek_style_model("moonshot-kimi-k2.6", "Kimi K2.6 (Moonshot)", "kimi-k2.6", api_key_env="MOONSHOT_API_KEY", api_base="https://api.moonshot.ai/v1", supports_vision=False, max_tokens=32768),
 ]
 
@@ -617,7 +633,7 @@ MODEL_PRICES: dict[str, dict] = {
     "mistral-large-3": {"price": {"currency": "USD", "input": 0.5, "output": 1.5}},
     "mistral-medium-3.5": {"price": {"currency": "USD", "input": 1.5, "output": 7.5}},
     "mistral-small-4": {"price": {"currency": "USD", "input": 0.15, "output": 0.6}},
-    "moonshot-kimi-k3": {"price": {"currency": "USD", "input": 3.0, "output": 15.0}},
+    "moonshot-kimi-k3.1-pro": {"price": {"currency": "USD", "input": 2.0, "output": 10.0, "cache_hit": 0.2}},
     "moonshot-kimi-k2.6": {"price": {"currency": "USD", "input": 0.95, "output": 4.0}},
     "openai-gpt-6-astra": {"price": {"currency": "USD", "input": 10.0, "output": 50.0}},
     "openai-gpt-6.1-sol": {"price": {"currency": "USD", "input": 2.0, "output": 10.0}},
@@ -634,7 +650,7 @@ MODEL_PRICES: dict[str, dict] = {
     "openrouter-llama-4-maverick": {"price": {"currency": "USD", "input": 0.2, "output": 0.8}},
     "openrouter-minimax-m3": {"price": {"currency": "USD", "input": 0.6, "output": 2.4}, "discount": {"input": 0.24, "output": 0.96}},
     "openrouter-qwen3.8-max": {"price": {"currency": "USD", "input": 2.0, "output": 6.0}},
-    "openrouter-kimi-k3": {"price": {"currency": "USD", "input": 3.0, "output": 15.0}},
+    "openrouter-kimi-k3.1-pro": {"price": {"currency": "USD", "input": 2.0, "output": 10.0, "cache_hit": 0.2}},
     "openrouter-mistral-large-3": {"price": {"currency": "USD", "input": 0.5, "output": 1.5}},
     "openrouter-deepseek-v4-pro": {"price": {"currency": "USD", "input": 0.44, "output": 0.87}},
     "openrouter-glm-5.3": {"price": {"currency": "USD", "input": 1.4, "output": 4.4}},
@@ -984,7 +1000,7 @@ LLM_PROVIDERS: list[LLMProvider] = [
     LLMProvider(
         name="kimi",
         display_name="Moonshot Kimi",
-        description="Kimi K3 + K2.6 with thinking support (direct Moonshot API)",
+        description="Kimi K3.1 Pro + K2.6 (direct Moonshot API; K3.1 Pro always thinks)",
         use="deerflow.models.patched_deepseek:PatchedChatDeepSeek",
         models=[entry["model"] for entry in MOONSHOT_HOME_BUNDLE_MODELS],
         default_model=MOONSHOT_HOME_BUNDLE_MODELS[0]["model"],
@@ -999,6 +1015,9 @@ LLM_PROVIDERS: list[LLMProvider] = [
             **OPENAI_COMPAT_THINKING_CONFIG,
         },
         bundle_models=MOONSHOT_HOME_BUNDLE_MODELS,
+        # K3.1 Pro rejects the thinking switch. K2.6 still uses it.
+        model_omitted_config={"kimi-k3.1-pro": ("when_thinking_enabled", "when_thinking_disabled")},
+        model_vision_overrides={"kimi-k2.6": False},
     ),
     LLMProvider(
         name="novita",

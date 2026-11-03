@@ -15,12 +15,9 @@ write path each carry invariants that are silent when broken. They are reference
 material rather than orientation, so they live in
 [docs/RUNTIME.md](docs/RUNTIME.md) — read it before changing any of them.
 
-**Project structure:** The [root repository map](../AGENTS.md#repository-map)
-indexes the stack. Backend code lives in `app/` (Gateway and channels),
-`packages/harness/deerflow/` (agent runtime), and `packages/extension-api/`
-(public extension contracts). Tests, detailed docs, and standalone benchmarks
-live in `tests/`, `docs/`, and `scripts/benchmark/` respectively. Module-local
-`AGENTS.md` files describe their implementation boundaries.
+**Layout:** [Repository map](../AGENTS.md#repository-map). Tests: `tests/`;
+docs: `docs/`; benchmarks: `scripts/benchmark/`. Read module-local `AGENTS.md`
+for implementation boundaries.
 
 ## Important Development Guidelines
 
@@ -95,6 +92,8 @@ Read the nearest scoped `AGENTS.md` for subsystem ownership.
 
 Read-only knowledge: [contract](docs/KNOWLEDGE.md) covers independent retrieval
 tools, scope intersection and extension-owned providers.
+RAGFlow/LightRAG clients offload HTTPX construction (synchronous TLS trust loading)
+with `asyncio.to_thread`; keep request execution and session cleanup on the loop.
 
 ### Harness / App Split
 

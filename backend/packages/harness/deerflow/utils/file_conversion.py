@@ -13,9 +13,9 @@ Converted PDFs carry ``<!-- page: N -->`` anchors (see
 back to a page, and every conversion reports what it actually recovered so a
 scanned PDF is named as such instead of silently producing an empty file.
 
-All document parsing runs in a thread pool via asyncio.to_thread() so compressed
-Office files and small PDFs cannot block the serving event loop. Source byte
-size does not bound parsing time.
+Configuration resolution and all document parsing run in a thread pool via
+asyncio.to_thread() so config reads, compressed Office files and small PDFs cannot
+block the serving event loop. Source byte size does not bound parsing time.
 
 No FastAPI or HTTP dependencies — pure utility functions.
 """
@@ -223,12 +223,17 @@ async def convert_file_to_markdown_reported(file_path: Path, output_path: Path |
     a file with no text in it; without this the only signal is an agent
     confidently summarising nothing.
     """
+
+    def convert_source() -> str:
+        return _do_convert(file_path, _get_pdf_converter())
+
     try:
-        pdf_converter = _get_pdf_converter()
+        # Config resolution also stats and hashes files, including cache hits.
+        # Keep it in the same drained worker as parsing.
         # Compressed size cannot predict parsing cost (e.g. a small XLSX can
         # contain many cells). Always offload, and drain across cancellation so
         # the caller retains its source until the converter finishes reading.
-        text = await await_drained(asyncio.to_thread(_do_convert, file_path, pdf_converter))
+        text = await await_drained(asyncio.to_thread(convert_source))
 
         md_path = output_path if output_path is not None else file_path.with_suffix(".md")
         # Belt-and-suspenders: also write <original_filename_with_extension>.md

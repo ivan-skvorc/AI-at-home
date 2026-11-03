@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import {
   type AutoTitleCapability,
   fetchAutoTitleCapability,
+  fetchFeatures,
   DEFAULT_SCHEDULED_TASKS_FEATURE,
   DEFAULT_THREAD_ACTIVITY_FEATURE,
   fetchBrowserControlEnabled,
@@ -13,6 +14,17 @@ import {
   fetchSubagentBatchesCapability,
   fetchThreadActivityFeature,
 } from "./api";
+
+export function useRunInputsEnabled(enabled = true) {
+  const { data } = useQuery({
+    queryKey: ["features", "run_inputs"],
+    queryFn: async () => (await fetchFeatures()).run_inputs === true,
+    enabled,
+    retry: false,
+    staleTime: 60_000,
+  });
+  return enabled && data === true;
+}
 
 export function useBrowserControlEnabled() {
   const { data, isPending } = useQuery({

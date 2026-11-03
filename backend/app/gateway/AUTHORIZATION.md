@@ -5,6 +5,11 @@ Split out of [`AGENTS.md`](AGENTS.md) to keep it within its guidance budget
 
 ### Route and skill-listing authorization
 
+Role writes serialize protection of the last **active** admin. Disabled admins may
+be demoted before restoration; role-only writes preserve credentials and lifecycle
+fields. Regressions: `tests/test_admin_users_router.py` and
+`tests/test_disabled_admin_demotion_auth.py`.
+
 `authz.authorize_model_use` shares the `model:use` decision between model details
 and follow-up suggestions, including the factory's first configured model when
 the caller omits `model_name`. Suggestions check admission before their

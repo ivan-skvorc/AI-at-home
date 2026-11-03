@@ -81,6 +81,7 @@ def test_features_reports_agents_api_enabled() -> None:
     assert response.json() == {
         "agents_api": {"enabled": True},
         "auto_title": {"enabled": True, "model_name": None},
+        "run_inputs": False,
         "browser_control": {"enabled": False},
         "mcp_tasks": {"enabled": False},
         "subagent_batches": {
@@ -105,6 +106,7 @@ def test_features_reports_agents_api_disabled() -> None:
     assert response.json() == {
         "agents_api": {"enabled": False},
         "auto_title": {"enabled": True, "model_name": None},
+        "run_inputs": False,
         "browser_control": {"enabled": False},
         "mcp_tasks": {"enabled": False},
         "subagent_batches": {

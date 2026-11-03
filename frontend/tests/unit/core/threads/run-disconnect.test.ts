@@ -21,8 +21,11 @@ async function captureSubmitOptions(): Promise<SubmitCall[]> {
 
   rs.resetModules();
   rs.doMock("react", () => ({
+    // useThreadStream reads AuthQueryScopeContext, created at module scope.
+    createContext: <T>(defaultValue: T) => ({ defaultValue }),
     useCallback: <T extends (...args: never[]) => unknown>(callback: T) =>
       callback,
+    useContext: <T>(context: { defaultValue: T }) => context.defaultValue,
     useEffect: () => undefined,
     useMemo: <T>(factory: () => T) => factory(),
     useRef: <T>(initialValue: T) => ({ current: initialValue }),
@@ -77,6 +80,8 @@ async function captureSubmitOptions(): Promise<SubmitCall[]> {
   rs.doMock("@/core/i18n/hooks", () => ({
     useI18n: () => ({
       t: {
+        conversation: { streamReplayGap: "Stream replay gap" },
+        inputBox: { runInputUnavailable: "Run input unavailable" },
         pages: { newChat: "New chat" },
         uploads: { uploadingFiles: "Uploading files" },
       },

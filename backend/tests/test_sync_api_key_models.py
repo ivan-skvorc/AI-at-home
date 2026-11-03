@@ -42,8 +42,13 @@ def same_model(model_id: str) -> str:
     separator: Anthropic's API hyphenates it (claude-fable-5-1) where OpenRouter
     dots it (anthropic/claude-fable-5.1). Only comparisons normalise — deriving
     one spelling from the other is how an uncallable routed slug shipped.
+
+    A trailing date stamp is the same model pinned to a snapshot. OpenRouter
+    308s ``qwen/qwen3.8-max`` to ``qwen/qwen3.8-max-0902`` while DashScope still
+    serves ``qwen3.8-max``; without this strip the home flagship looks undoubled.
     """
-    return model_id.lower().replace(".", "-")
+    normalized = model_id.lower().replace(".", "-")
+    return re.sub(r"-\d{4,8}$", "", normalized)
 
 
 # A miniature config carrying both marker blocks in the same commented shape the
@@ -252,8 +257,8 @@ class TestRealExampleConfig:
             "google/gemini-3.8-flash",
             "meta-llama/llama-4-maverick",
             "minimax/minimax-m3",
-            "qwen/qwen3.8-max",
-            "moonshotai/kimi-k3",
+            "qwen/qwen3.8-max-0902",
+            "moonshotai/kimi-k3.1-pro",
             "mistralai/mistral-large-2512",
             "deepseek/deepseek-v4-pro",
             "z-ai/glm-5.3",

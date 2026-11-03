@@ -109,7 +109,10 @@ once you know to look. The 2026-09-09 sync hit all three at once:
   adapted to the merged head and re-upgrades through alembic after a mid-tree downgrade. The
   2026-10-22 sync made it seven (`0044_channel_runtime_configs` → `0047` off `0043`, joined by
   `0048_merge_prefs_oauth_tokens`), and the 2026-10-29 sync eight (`0048_extension_execution_leases`
-  off `0047`, joined by `0049_merge_prefs_ext_leases`). The depth is in
+  off `0047`, joined by `0049_merge_prefs_ext_leases`). The 2026-11-03 sync made it nine:
+  upstream grew `0049_run_inputs` and `0049_run_producer_fencing` off `0048` and joined them at
+  `0051_merge_run_inputs_fencing`, so the fork's head and that tip were two heads again, rejoined
+  by `0052_merge_prefs_run_inputs`. The depth is in
   [`persistence/migrations/AGENTS.md`](backend/packages/harness/deerflow/persistence/migrations/AGENTS.md).
 - **Both sides adding a function of the same name to the same module.** Git merges two
   non-overlapping additions cleanly, so `frontend/src/core/threads/api.ts` came out of
@@ -506,7 +509,7 @@ is the whole design, and the audit below exists to keep both halves true.
 
 - **Through OpenRouter, on a single key.** Each lab's critically acclaimed
   flagship carries an OpenRouter entry — Claude Fable 5.1 and Opus 5.5, Grok,
-  GPT-6 Astra and GPT-6.1 Sol, Gemini, Kimi K3, DeepSeek, Qwen, MiniMax,
+  GPT-6 Astra and GPT-6.1 Sol, Gemini, Kimi K3.1 Pro, DeepSeek, Qwen, MiniMax,
   Mistral Large, GLM, Llama, Nemotron — so a user holding nothing but an
   `OPENROUTER_API_KEY` still reaches all of them.
 - **Through each lab's own API, with a fuller lineup.** That same flagship
@@ -888,13 +891,13 @@ A companion to the Ollama sync for **cloud** models. `scripts/sync-api-key-model
 | `.env` key present   | Models enabled                                                                                                                                                                                                                              | Provider / `use`                                                             |
 | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
 | `ANTHROPIC_API_KEY`  | Claude **Fable 5.1**, **Opus 5.5**, **Opus 5**, **Sonnet 5.5**, **Sonnet 5**, **Haiku 5.5**                                                                                                                                                   | direct Anthropic API (`langchain_anthropic:ChatAnthropic`)                   |
-| `OPENROUTER_API_KEY` | Claude **Fable 5.1**, **Opus 5.5**, **Grok 4.7**, **GPT-6 Astra**, **GPT-6.1 Sol**, **GPT-5.3 Codex**, **Gemini 3.8 Flash**, **Llama 4 Maverick**, **MiniMax M3**, **Qwen3.8 Max**, **Kimi K3**, **Mistral Large 3**, **DeepSeek V4 Pro**, **GLM-5.3**, **Nemotron 3 Ultra** | OpenRouter (`langchain_openai:ChatOpenAI` + `base_url`) |
+| `OPENROUTER_API_KEY` | Claude **Fable 5.1**, **Opus 5.5**, **Grok 4.7**, **GPT-6 Astra**, **GPT-6.1 Sol**, **GPT-5.3 Codex**, **Gemini 3.8 Flash**, **Llama 4 Maverick**, **MiniMax M3**, **Qwen3.8 Max**, **Kimi K3.1 Pro**, **Mistral Large 3**, **DeepSeek V4 Pro**, **GLM-5.3**, **Nemotron 3 Ultra** | OpenRouter (`langchain_openai:ChatOpenAI` + `base_url`) |
 | `OPENAI_API_KEY`     | **GPT-6 Astra**, **GPT-6.1 Sol**, **GPT-5.3 Codex**, **GPT-6.1 Terra**, **GPT-6 Luna**                                                                                                                                                                       | direct OpenAI API (`langchain_openai:ChatOpenAI`)           |
 | `XAI_API_KEY`        | **Grok 4.7**, **Grok 4.3**                                                                                                                                                                                                                  | direct xAI API (`langchain_openai:ChatOpenAI` + `base_url`)                  |
 | `GEMINI_API_KEY`     | **Gemini 3.8 Flash**, **3.5 Flash-Lite**, **4 Argon**                                                                                                                                                                                       | native Gemini SDK (`langchain_google_genai:ChatGoogleGenerativeAI`)          |
 | `DEEPSEEK_API_KEY`   | **DeepSeek V4 Pro**, **V4.1 Flash**                                                                                                                                                                                                         | direct DeepSeek API (`deerflow.models.patched_deepseek:PatchedChatDeepSeek`) |
 | `MISTRAL_API_KEY`    | **Mistral Large 3**, **Medium 3.5**, **Small 4**                                                                                                                                                                                            | direct Mistral API (`langchain_openai:ChatOpenAI` + `base_url`)              |
-| `MOONSHOT_API_KEY`   | **Kimi K3**, **Kimi K2.6**                                                                                                                                                                                                                  | direct Moonshot API (`deerflow.models.patched_deepseek:PatchedChatDeepSeek`) |
+| `MOONSHOT_API_KEY`   | **Kimi K3.1 Pro**, **Kimi K2.6**                                                                                                                                                                                                            | direct Moonshot API (`deerflow.models.patched_deepseek:PatchedChatDeepSeek`) |
 | `DASHSCOPE_API_KEY`  | **Qwen3.8 Max**, **Qwen3.7 Plus**                                                                                                                                                                                                           | Alibaba DashScope (`langchain_openai:ChatOpenAI` + `base_url`)               |
 | `MINIMAX_API_KEY`    | **MiniMax M3**, **MiniMax M2.7**                                                                                                                                                                                                            | direct MiniMax API (`langchain_openai:ChatOpenAI` + `base_url`)              |
 | `ZAI_API_KEY`        | **GLM-5.3**, **GLM-5.3 Flash**                                                                                                                                                                                                              | direct z.ai API (`langchain_openai:ChatOpenAI` + `base_url`)                 |
