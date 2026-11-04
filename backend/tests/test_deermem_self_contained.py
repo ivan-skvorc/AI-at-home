@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import sys
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -36,6 +37,15 @@ def deermem_data_dir(tmp_path, monkeypatch):
     d.mkdir()
     monkeypatch.setenv("DEERMEM_DATA_DIR", str(d))
     yield d
+
+
+def _days_ago(days: int) -> str:
+    """ISO-Z timestamp this many days before now.
+
+    Hybrid confirmation freshness has a 90-day half-life. A fixed
+    2026-08-12 stops counting as recent, and the capacity ranking flips.
+    """
+    return (datetime.now(UTC) - timedelta(days=days)).isoformat().replace("+00:00", "Z")
 
 
 class _FakeLLM:
@@ -752,7 +762,7 @@ def test_hybrid_capacity_keeps_recent_confirmation_over_stale_confidence(deermem
                         "content": f"high {index}",
                         "category": "preference",
                         "confidence": 0.99,
-                        "createdAt": "2026-08-12T00:00:00Z",
+                        "createdAt": _days_ago(0),
                     }
                     for index in range(8)
                 ],
@@ -761,15 +771,15 @@ def test_hybrid_capacity_keeps_recent_confirmation_over_stale_confidence(deermem
                     "content": "stale high confidence",
                     "category": "preference",
                     "confidence": 0.9,
-                    "createdAt": "2025-01-01T00:00:00Z",
+                    "createdAt": _days_ago(600),
                 },
                 {
                     "id": "confirmed_recently",
                     "content": "recently confirmed preference",
                     "category": "preference",
                     "confidence": 0.7,
-                    "createdAt": "2025-01-01T00:00:00Z",
-                    "lastConfirmedAt": "2026-08-12T00:00:00Z",
+                    "createdAt": _days_ago(600),
+                    "lastConfirmedAt": _days_ago(0),
                 },
             ],
         },
@@ -809,7 +819,7 @@ def test_hybrid_import_applies_same_capacity_policy(deermem_data_dir):
                         "content": f"high {index}",
                         "category": "preference",
                         "confidence": 0.99,
-                        "createdAt": "2026-08-12T00:00:00Z",
+                        "createdAt": _days_ago(0),
                     }
                     for index in range(8)
                 ],
@@ -818,22 +828,22 @@ def test_hybrid_import_applies_same_capacity_policy(deermem_data_dir):
                     "content": "stale high confidence",
                     "category": "preference",
                     "confidence": 0.9,
-                    "createdAt": "2025-01-01T00:00:00Z",
+                    "createdAt": _days_ago(600),
                 },
                 {
                     "id": "confirmed_recently",
                     "content": "recently confirmed preference",
                     "category": "preference",
                     "confidence": 0.7,
-                    "createdAt": "2025-01-01T00:00:00Z",
-                    "lastConfirmedAt": "2026-08-12T00:00:00Z",
+                    "createdAt": _days_ago(600),
+                    "lastConfirmedAt": _days_ago(0),
                 },
                 {
                     "id": "new_context",
                     "content": "new useful context",
                     "category": "context",
                     "confidence": 0.8,
-                    "createdAt": "2026-08-12T00:00:00Z",
+                    "createdAt": _days_ago(0),
                 },
             ],
         },
@@ -903,7 +913,7 @@ def test_confidence_policy_shadow_does_not_change_actual_selection(deermem_data_
                 "content": f"high {index}",
                 "category": "preference",
                 "confidence": 0.99,
-                "createdAt": "2026-08-12T00:00:00Z",
+                "createdAt": _days_ago(0),
             }
             for index in range(8)
         ],
@@ -912,15 +922,15 @@ def test_confidence_policy_shadow_does_not_change_actual_selection(deermem_data_
             "content": "stale high confidence",
             "category": "preference",
             "confidence": 0.9,
-            "createdAt": "2025-01-01T00:00:00Z",
+            "createdAt": _days_ago(600),
         },
         {
             "id": "confirmed_recently",
             "content": "recently confirmed preference",
             "category": "preference",
             "confidence": 0.7,
-            "createdAt": "2025-01-01T00:00:00Z",
-            "lastConfirmedAt": "2026-08-12T00:00:00Z",
+            "createdAt": _days_ago(600),
+            "lastConfirmedAt": _days_ago(0),
         },
     ]
     dm.import_memory({"user": {}, "history": {}, "facts": facts}, user_id="u1")

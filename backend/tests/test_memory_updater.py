@@ -3,6 +3,7 @@ import copy
 import json
 import logging
 import threading
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -23,6 +24,15 @@ from deerflow.agents.memory.backends.deermem.deermem.core.updater import (
 )
 from deerflow.agents.memory.manager import LangfuseMemoryCallbacks
 from deerflow.trace_context import get_current_trace_id, request_trace_context
+
+
+def _days_ago(days: int) -> str:
+    """ISO-Z timestamp this many days before now.
+
+    Hybrid confirmation freshness has a 90-day half-life. A fixed
+    2026-08-12 stops counting as recent, and the capacity ranking flips.
+    """
+    return (datetime.now(UTC) - timedelta(days=days)).isoformat().replace("+00:00", "Z")
 
 
 def _make_memory(facts: list[dict[str, object]] | None = None) -> dict[str, object]:
@@ -278,7 +288,7 @@ def test_automatic_update_uses_hybrid_capacity_policy() -> None:
                     "content": f"high {index}",
                     "category": "preference",
                     "confidence": 0.99,
-                    "createdAt": "2026-08-12T00:00:00Z",
+                    "createdAt": _days_ago(0),
                 }
                 for index in range(8)
             ],
@@ -287,15 +297,15 @@ def test_automatic_update_uses_hybrid_capacity_policy() -> None:
                 "content": "stale high confidence",
                 "category": "preference",
                 "confidence": 0.9,
-                "createdAt": "2025-01-01T00:00:00Z",
+                "createdAt": _days_ago(600),
             },
             {
                 "id": "confirmed_recently",
                 "content": "recently confirmed preference",
                 "category": "preference",
                 "confidence": 0.7,
-                "createdAt": "2025-01-01T00:00:00Z",
-                "lastConfirmedAt": "2026-08-12T00:00:00Z",
+                "createdAt": _days_ago(600),
+                "lastConfirmedAt": _days_ago(0),
             },
         ]
     )
