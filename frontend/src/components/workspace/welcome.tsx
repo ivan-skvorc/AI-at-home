@@ -23,12 +23,20 @@ export function Welcome({
   mode,
 }: {
   className?: string;
-  mode?: "ultra" | "pro" | "thinking" | "flash" | "democracy" | "ultracode";
+  mode?:
+    | "ultra"
+    | "pro"
+    | "thinking"
+    | "flash"
+    | "democracy"
+    | "ultracode"
+    | "double_ultracode";
 }) {
   const { t } = useI18n();
   const searchParams = useSearchParams();
   const isUltra = useMemo(
-    () => mode === "ultra" || mode === "ultracode",
+    () =>
+      mode === "ultra" || mode === "ultracode" || mode === "double_ultracode",
     [mode],
   );
   const colors = useMemo(() => {

@@ -105,10 +105,13 @@ over the committed snapshot uv installs, backend/extensions/sources/deerflow-
 extension-workflows (test_bundled_workflows_extension.py). A relative
 storage_path resolves under DEER_FLOW_HOME; keep pyproject.toml's uv cache-keys.
 
-Double Plus Ultracode (FORK.md §44) lives here: ultracode.py, delivery.py.
+Plus Ultracode and Double Plus Ultracode (FORK.md §44) live here: ultracode.py, delivery.py.
 Read limits only from `ToolContext.run_options`/`plugin_run_options` and clamp to
-operator config; never let run options raise a limit. Keep the brief behind the
-mode option and the result note behind the host-stamped
+operator config; never let run options raise a limit. Both `ultracode` and
+`double_ultracode` get the brief; only the double mode gets the tool-call-limits
+note, and only its children are started with `context.mode = "double_ultracode"`
+so the host can suspend tool-call limits. A Plus or plain workflow must not carry
+that mode. Keep the brief behind the mode option and the result note behind the host-stamped
 `EXTENSION_MESSAGE_ORIGIN_KEY` for this namespace only. Delivery is exactly once:
 idempotency key `workflow-result:<run>`, deterministic message text, state in
 `workflow_deliveries` (never the lease-fenced record), busy threads retried, never

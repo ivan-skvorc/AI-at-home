@@ -133,6 +133,10 @@ through additive `stop_reason`, never a new status enum.
 - `LoopDetectionMiddleware` detects repeated identical call sets or repeated
   tool types with varying arguments. Token/loop hard stops strip tool calls,
   force `finish_reason="stop"`, and request a final answer without raising.
+  A runtime context `mode` of `double_ultracode` (Double Plus Ultracode) returns
+  before either layer, on the lead and on workflow agents the extension starts
+  with that mode. Plus Ultracode and every other mode stay limited. Task
+  subagents do not inherit the mode.
 
 `_aexecute` duck-types every middleware's per-run `consume_stop_reason(run_id)`
 and uses the first non-`None` reason. Usable final answers or turn-cap partials

@@ -210,6 +210,22 @@ async def test_agents_are_told_they_run_unattended_with_a_bounded_answer(mode):
 
 
 @pytest.mark.asyncio
+async def test_double_ultracode_children_carry_the_unlimited_mode(mode):
+    """The host suspends tool-call limits only when the child context says so."""
+    script = "await agent({stepId:'a', agentRef:'lead_agent', task:'scan'}); return 1;"
+    options = {"mode": "double_ultracode", "max_agents": 3, "max_parallel": 1}
+    launched = await mode.service.launch({"request_id": "double", "script": script}, tool_context(mode.runs, options))
+    record = await finish(mode, launched["run_id"])
+    assert record["mode"] == "double_ultracode"
+    assert record["limits"]["max_calls"] == 3
+    assert mode.runs.contexts == [{"mode": "double_ultracode"}]
+    # Plus Ultracode does not stamp the mode, so its agents stay limited.
+    plus = await mode.service.launch({"request_id": "plus", "script": script.replace("'a'", "'b'")}, tool_context(mode.runs, ULTRACODE))
+    await finish(mode, plus["run_id"])
+    assert mode.runs.contexts[1] is None
+
+
+@pytest.mark.asyncio
 async def test_a_caught_agent_failure_does_not_end_the_workflow(mode):
     """The brief's settle pattern works: an over-long answer fails one step only."""
     original_create = mode.runs.create_thread
@@ -536,14 +552,20 @@ def test_brief_appears_only_on_ultracode_runs_and_clamps_its_limits():
 
     briefed = middleware.apply(request({AGENT_RUNS_CONTEXT_KEY: handle, "plugin_options": {"community.workflows": {"mode": "ultracode", "max_agents": 12, "max_parallel": 99}}}))
     text = briefed.system_message.content
-    assert text.startswith("base prompt") and "## Double Plus Ultracode mode" in text
+    assert text.startswith("base prompt") and "## Plus Ultracode mode" in text
     flat = " ".join(text.split())
     assert "up to 12 agents, at most 4 at once, 10 minutes in total" in flat
     # The lead is told how to keep one failed agent from ending the workflow.
     assert "Keep going when one agent fails" in flat and "parallel()` rejects on the first rejection" in flat
 
     unavailable = middleware.apply(request({"plugin_options": {"community.workflows": {"mode": "ultracode"}}}))
-    assert "cannot start workflows" in unavailable.system_message.content
+    assert "cannot start workflows" in unavailable.system_message.content and "Plus Ultracode" in unavailable.system_message.content
+
+    doubled = middleware.apply(request({AGENT_RUNS_CONTEXT_KEY: handle, "plugin_options": {"community.workflows": {"mode": "double_ultracode", "max_agents": 12, "max_parallel": 2, "max_minutes": 5}}}))
+    doubled_text = " ".join(doubled.system_message.content.split())
+    assert "## Double Plus Ultracode mode" in doubled_text
+    assert "Tool-call limits are off" in doubled_text and "token-risky" in doubled_text
+    assert "up to 12 agents, at most 2 at once, 5 minutes in total" in doubled_text
 
     marker = {EXTENSION_MESSAGE_ORIGIN_KEY: {"namespace": "community.workflows"}}
     posted = HumanMessage(id="workflow-result-abc", content="[Workflow result] ...", additional_kwargs=marker)

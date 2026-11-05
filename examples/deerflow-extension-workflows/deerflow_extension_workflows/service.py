@@ -26,7 +26,7 @@ from .lifecycle import Lifecycle
 from .postgres import LeaseLost
 from .recovery import RECOVERY_VERSION, Recovery
 from .store import TERMINAL, Store
-from .ultracode import MODE, SIZE_WARNING_AGENTS, run_limits
+from .ultracode import MODE_DOUBLE, MODES, SIZE_WARNING_AGENTS, run_limits
 
 FRAME = 128 * 1024
 TURN_LIMIT = 10000
@@ -346,7 +346,7 @@ class Workflows(Cluster, Recovery, Lifecycle, Artifacts, Delivery):
             "steps": [],
             "logs": [],
             "result": None,
-            "mode": MODE if per_run is not None else None,
+            "mode": context.run_options.get("mode") if per_run is not None else None,
             "phases": [],
             # The conversation that launched it: where the result is posted, the
             # workspace a step may copy, and the parent its child threads link to.
@@ -545,7 +545,7 @@ class Workflows(Cluster, Recovery, Lifecycle, Artifacts, Delivery):
             # A Double Plus Ultracode child runs unattended and its answer has a
             # hard size limit; without saying so, a clarifying question or a long
             # report fails the step (and, uncaught, the whole workflow).
-            extras = {"run_note": RUN_NOTE} if record.get("mode") == MODE else {}
+            extras = {"run_note": RUN_NOTE} if record.get("mode") in MODES else {}
             if references:
                 extras.update(
                     approved_artifacts=references,
@@ -571,7 +571,15 @@ class Workflows(Cluster, Recovery, Lifecycle, Artifacts, Delivery):
                     }
                 ]
             }
-            run_context = {"context": {"model_name": model}} if model else {}
+            run_context_body = {}
+            if model:
+                run_context_body["model_name"] = model
+            # Double Plus Ultracode children must carry the mode: the host
+            # suspends tool-call limits only when runtime context says so.
+            # Plus Ultracode and plain workflows stay limited.
+            if record.get("mode") == MODE_DOUBLE:
+                run_context_body["mode"] = MODE_DOUBLE
+            run_context = {"context": run_context_body} if run_context_body else {}
             existing = next((s for s in record["steps"] if s["step_id"] == step_id), None) if replay else None
             if existing:
                 row = existing

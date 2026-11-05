@@ -14,7 +14,7 @@ import {
 } from "@/core/threads/ultracode";
 
 /**
- * Settings → Subagents: how large a workflow Double Plus Ultracode may plan
+ * Settings → Subagents: how large a workflow Plus or Double Plus Ultracode may plan.
  * (fork feature, FORK.md §44, §46). Stored per browser and sent with each run in
  * that mode; the Script workflows extension clamps every value to the
  * operator's own limits, so a number here can only make a run smaller.

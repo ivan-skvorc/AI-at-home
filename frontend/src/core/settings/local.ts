@@ -220,6 +220,7 @@ export interface LocalSettings {
       | "ultra"
       | "democracy"
       | "ultracode"
+      | "double_ultracode"
       | undefined;
     reasoning_effort?: ReasoningEffortValue;
     // Per-conversation internet switch (fork feature, FORK.md §27). Sent to the

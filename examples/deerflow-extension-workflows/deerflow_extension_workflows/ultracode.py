@@ -1,11 +1,15 @@
-"""Double Plus Ultracode: the composer mode that plans work as a workflow script.
+"""Plus Ultracode and Double Plus Ultracode: composer modes that plan work as a script.
 
 Inspired by Claude Code's ultracode. The composer sends Ultra's flags plus this
 plugin's run options, ``plugin_options["community.workflows"] = {"mode":
-"ultracode", "max_agents": n, "max_parallel": m, "max_minutes": t}`` (extension
-API 0.2.10). The
-options are user input for this run only: every limit is clamped to the
-operator's configuration here, and the mode adds no permission.
+"ultracode" | "double_ultracode", "max_agents": n, "max_parallel": m,
+"max_minutes": t}`` (extension API 0.2.10). The options are user input for this
+run only: every limit is clamped to the operator's configuration here, and the
+mode adds no permission.
+
+``ultracode`` is Plus Ultracode. ``double_ultracode`` is the same brief and the
+same agent and time limits, and the host turns tool-call limits off for that
+mode (the lead, and each agent this plugin starts with ``context.mode`` set).
 
 On such a run this middleware appends one brief to the lead's system prompt:
 plan substantive requests as a workflow (understand, change, verify), size it,
@@ -28,13 +32,17 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from .constants import NAMESPACE
 
 MODE = "ultracode"
+#: Same workflow as Plus Ultracode, with tool-call limits suspended by the host.
+MODE_DOUBLE = "double_ultracode"
+MODES = frozenset({MODE, MODE_DOUBLE})
+NAMES = {MODE: "Plus Ultracode", MODE_DOUBLE: "Double Plus Ultracode"}
 #: Id prefix of the result messages delivery.py posts.
 RESULT_MESSAGE_PREFIX = "workflow-result-"
 #: Advisory size threshold, from Claude Code's ultracode (25 agents).
 SIZE_WARNING_AGENTS = 25
 
-BRIEF = """## Double Plus Ultracode mode
-The user chose Double Plus Ultracode for this message: plan substantive work as a workflow script that runs
+BRIEF = """## {name} mode
+The user chose {name} for this message: plan substantive work as a workflow script that runs
 in the background across several agents, instead of doing it inside this conversation's context.
 
 1. Understand the request first. Ask one clarifying question only when you cannot proceed without the answer.
@@ -59,9 +67,13 @@ in the background across several agents, instead of doing it inside this convers
 Answer directly, without a workflow, only for small talk or a question you can answer accurately in a few
 sentences."""
 
-UNAVAILABLE = """## Double Plus Ultracode mode
-The user chose Double Plus Ultracode, but this run cannot start workflows (it has no signed-in browser
-session). Answer as you would in Ultra mode, and say in one sentence that Double Plus Ultracode only works
+#: Appended only for Double Plus Ultracode. The host also suspends tool-call limits.
+DOUBLE_LIMITS = """
+8. Tool-call limits are off for this run and for every agent this workflow starts. Do not stop early to save tokens, and do not wrap up because a tool has been called many times. This mode is token-risky. It is meant for an extremely large task that should run until it is finished, without interruptions."""
+
+UNAVAILABLE = """## {name} mode
+The user chose {name}, but this run cannot start workflows (it has no signed-in browser
+session). Answer as you would in Ultra mode, and say in one sentence that {name} only works
 from the web app."""
 
 RESULT_NOTE = """## Workflow result message
@@ -79,8 +91,8 @@ def bounded(value, upper):
 
 
 def run_limits(options, config):
-    """Effective per-run limits for an ultracode run, or None for any other run."""
-    if options.get("mode") != MODE:
+    """Effective per-run limits for a Plus or Double Plus Ultracode run, or None otherwise."""
+    if options.get("mode") not in MODES:
         return None
     # Whole minutes from the browser; the operator's wall time stays the ceiling.
     minutes = bounded(options.get("max_minutes"), max(1, config["timeout_seconds"] // 60))
@@ -89,6 +101,11 @@ def run_limits(options, config):
         "concurrency": bounded(options.get("max_parallel"), config["concurrency"]),
         "timeout_seconds": min(minutes * 60, config["timeout_seconds"]),
     }
+
+
+def options_mode(context):
+    mode = plugin_run_options(context, NAMESPACE).get("mode")
+    return mode if mode in MODES else None
 
 
 def posted_result(messages):
@@ -113,10 +130,14 @@ class UltracodeMode(AgentMiddleware):
         notes = []
         limits = run_limits(plugin_run_options(context, NAMESPACE), self.config)
         if limits is not None:
+            name = NAMES.get(options_mode(context), NAMES[MODE])
             if context.get(AGENT_RUNS_CONTEXT_KEY) is None:
-                notes.append(UNAVAILABLE)
+                notes.append(UNAVAILABLE.format(name=name))
             else:
-                notes.append(BRIEF.format(max_agents=limits["max_calls"], max_parallel=limits["concurrency"], max_minutes=limits["timeout_seconds"] // 60, warn=SIZE_WARNING_AGENTS))
+                brief = BRIEF.format(name=name, max_agents=limits["max_calls"], max_parallel=limits["concurrency"], max_minutes=limits["timeout_seconds"] // 60, warn=SIZE_WARNING_AGENTS)
+                if options_mode(context) == MODE_DOUBLE:
+                    brief += DOUBLE_LIMITS
+                notes.append(brief)
         if posted_result(request.messages):
             notes.append(RESULT_NOTE)
         return notes

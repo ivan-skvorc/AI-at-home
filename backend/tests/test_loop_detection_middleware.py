@@ -1808,6 +1808,23 @@ class TestToolFrequencyDetection:
         assert "FORCED STOP" in msg.content
         assert "read_file" in msg.content
 
+    def test_double_ultracode_does_not_warn_or_hard_stop(self):
+        """Tool-call limits stay off for the whole run, not merely higher."""
+        mw = LoopDetectionMiddleware(warn_threshold=2, hard_limit=3, tool_freq_warn=3, tool_freq_hard_limit=4)
+        runtime = _make_runtime()
+        runtime.context["mode"] = "double_ultracode"
+        same = self._read_call("/file.py")
+        for _ in range(8):
+            assert mw._apply(_make_state(tool_calls=[same]), runtime) is None
+        assert not mw._pending_warnings.get(_pending_key())
+
+        limited = _make_runtime(run_id="limited")
+        for _ in range(2):
+            mw._apply(_make_state(tool_calls=[same]), limited)
+        stopped = mw._apply(_make_state(tool_calls=[same]), limited)
+        assert stopped is not None
+        assert stopped["messages"][0].tool_calls == []
+
     def test_windowed_frequency_decay_avoids_hard_stop_when_interleaved(self):
         """More than ``window_size`` total calls to one tool type must NOT hard-stop
         as long as they are spread out.

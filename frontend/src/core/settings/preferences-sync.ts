@@ -5,9 +5,18 @@ const fields = {
   model_name: z.string().max(200).nullable(),
   // "democracy" is this fork's multi-model mode; it must round-trip through
   // the account preference or selecting it would be silently dropped on sync.
-  // "ultracode" is Double Plus Ultracode, the workflow-script mode.
+  // "ultracode" is Plus Ultracode. "double_ultracode" is the same workflow
+  // with tool-call limits off. Both must round-trip or a selection is dropped.
   mode: z
-    .enum(["flash", "thinking", "pro", "ultra", "democracy", "ultracode"])
+    .enum([
+      "flash",
+      "thinking",
+      "pro",
+      "ultra",
+      "democracy",
+      "ultracode",
+      "double_ultracode",
+    ])
     .nullable(),
   // Provider contracts may add values such as `max`; the Gateway validates
   // the token against the selected model (issue #5073).

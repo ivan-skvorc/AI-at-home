@@ -1,10 +1,15 @@
 /**
- * Double Plus Ultracode (fork feature, FORK.md §44), inspired by Claude Code's
- * ultracode: the lead plans substantive work as a workflow script that the
- * Script workflows extension runs in the background, and the result comes back
- * to the conversation on its own.
+ * Plus Ultracode and Double Plus Ultracode (fork feature, FORK.md §44),
+ * inspired by Claude Code's ultracode: the lead plans substantive work as a
+ * workflow script that the Script workflows extension runs in the background,
+ * and the result comes back to the conversation on its own.
  *
- * The mode is an Ultra run plus one per-run plugin option addressed to the
+ * Plus Ultracode (`ultracode`) keeps the usual tool-call limits. Double Plus
+ * Ultracode (`double_ultracode`) is the same run with those limits off, so an
+ * extremely large task can finish without being told to wrap up. The host
+ * reads `mode` for that; this module only tells the extension which one it is.
+ *
+ * Either mode is an Ultra run plus one per-run plugin option addressed to the
  * extension (`plugin_options["community.workflows"]`). The three limits are the
  * user's Settings → Subagents choice; the extension clamps each to the
  * operator's configuration, so they can only lower a run, never raise it.
@@ -13,7 +18,19 @@
 import type { FrontendContribution } from "../extensions/contracts";
 
 export const ULTRACODE_MODE = "ultracode";
+/** Same workflow as Plus Ultracode, with tool-call limits suspended. */
+export const DOUBLE_ULTRACODE_MODE = "double_ultracode";
 export const ULTRACODE_NAMESPACE = "community.workflows";
+
+export type WorkflowScriptMode =
+  | typeof ULTRACODE_MODE
+  | typeof DOUBLE_ULTRACODE_MODE;
+
+export function isWorkflowScriptMode(
+  mode: string | null | undefined,
+): mode is WorkflowScriptMode {
+  return mode === ULTRACODE_MODE || mode === DOUBLE_ULTRACODE_MODE;
+}
 
 export interface UltracodeLimits {
   /** Most agents one workflow may start. */
@@ -87,7 +104,7 @@ export function normalizeUltracodeLimits(value: unknown): UltracodeLimits {
 
 export interface UltracodePluginOptions {
   [ULTRACODE_NAMESPACE]: {
-    mode: typeof ULTRACODE_MODE;
+    mode: WorkflowScriptMode;
     max_agents: number;
     max_parallel: number;
     max_minutes: number;
@@ -97,12 +114,13 @@ export interface UltracodePluginOptions {
 /** The run's `plugin_options`: the one key that makes an Ultra run this mode. */
 export function ultracodePluginOptions(
   limits: unknown,
+  mode: WorkflowScriptMode = ULTRACODE_MODE,
 ): UltracodePluginOptions {
   const { maxAgents, maxParallel, maxMinutes } =
     normalizeUltracodeLimits(limits);
   return {
     [ULTRACODE_NAMESPACE]: {
-      mode: ULTRACODE_MODE,
+      mode,
       max_agents: maxAgents,
       max_parallel: Math.min(maxParallel, maxAgents),
       max_minutes: maxMinutes,

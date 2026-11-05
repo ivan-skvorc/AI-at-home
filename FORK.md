@@ -4372,15 +4372,30 @@ use:
   `uses_thread_data_mounts` and fails closed (409) on a synced sandbox. Merges into
   one parent are serialized in-process.
 
-**The mode is one run option.** The composer's `ultracode` mode is Ultra's flags
-plus `plugin_options["community.workflows"] = {mode, max_agents, max_parallel}`;
-`deriveModeContext` overwrites `plugin_options` with `undefined` on every other mode,
-because a stale value would put a workflow brief on a run nobody asked to plan as a
-script. The extension's `UltracodeMode` middleware appends the brief to the system
-message (so a saved `SYSTEM_PROMPT.md` still gets it) and, without a session-bound
-AgentRuns handle, says the mode is unavailable instead of silently answering as
-Ultra. The composer offers the mode only when `/api/plugins` lists
-`community.workflows` enabled, and moves a remembered selection to Ultra with a toast.
+**The mode is one run option.** The composer's `ultracode` mode (shown as Plus
+Ultracode; it used to be labeled Double Plus Ultracode) is Ultra's flags plus
+`plugin_options["community.workflows"] = {mode, max_agents, max_parallel}`;
+`deriveModeContext` overwrites `plugin_options` with `undefined` on every other
+mode except `double_ultracode`, because a stale value would put a workflow brief
+on a run nobody asked to plan as a script. The extension's `UltracodeMode`
+middleware appends the brief to the system message (so a saved `SYSTEM_PROMPT.md`
+still gets it) and, without a session-bound AgentRuns handle, says the mode is
+unavailable instead of silently answering as Ultra. The composer offers both
+modes only when `/api/plugins` lists `community.workflows` enabled, and moves a
+remembered selection to Ultra with a toast.
+
+**Double Plus Ultracode is the same run with tool-call limits off.** Its id is
+`double_ultracode`, a new value so a stored `ultracode` preference keeps the
+limited mode. The extension treats both ids as ultracode (same brief, same
+clamped agent and minute limits) and appends one extra instruction on the double
+mode. It also starts each workflow agent with `context.mode = "double_ultracode"`.
+`LoopDetectionMiddleware` returns before either detection layer when runtime
+context mode is that string, so the lead and those agents are not told to wrap
+up and are not hard-stopped for repeated tool calls. Task subagents those agents
+launch still use the normal limits: the workflow agents themselves are the ones
+that run unlimited. The mode-menu hover states that this is token-risky and
+meant for extremely large tasks that should run until finished, without
+interruptions. Ordinary chats should stay on Plus Ultracode.
 
 **The return path is exactly once.** On a terminal workflow launched from a
 conversation the extension posts `[Workflow result] ...` through the plugin-scoped
