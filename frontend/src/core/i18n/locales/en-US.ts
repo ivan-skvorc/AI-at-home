@@ -596,11 +596,14 @@ export const enUS: Translations = {
     democracyMode: "Democracy",
     democracyModeDescription:
       "Several different models answer the same question independently, review each other, then one organizer synthesizes the result. Very token-heavy.",
-    ultracodeMode: "Double Plus Ultracode",
+    ultracodeMode: "Plus Ultracode",
     ultracodeModeDescription:
-      "Plans the work as a workflow script that many agents run in the background; the result comes back to this chat on its own. Inspired by Claude Code's ultracode. Very token-heavy.",
+      "Plans the work as a workflow script that many agents run in the background; the result comes back to this chat on its own. Inspired by Claude Code's ultracode. Tool-call limits still apply. Very token-heavy.",
+    doubleUltracodeMode: "Double Plus Ultracode",
+    doubleUltracodeModeDescription:
+      "Token-risky. Meant for extremely large tasks that should run until they finish, without interruptions. Same workflow script as Plus Ultracode, but tool-call limits are off, so the run is not told to wrap up and is not stopped for calling a tool too many times.",
     ultracodeUnavailable:
-      "Double Plus Ultracode needs the Script workflows extension, which is not enabled. This chat now uses Ultra.",
+      "Plus Ultracode and Double Plus Ultracode need the Script workflows extension, which is not enabled. This chat now uses Ultra.",
     reasoningEffort: "Reasoning Effort",
     reasoningEffortMinimal: "Minimal",
     reasoningEffortMinimalDescription: "Retrieval + Direct Output",
@@ -2719,15 +2722,15 @@ export const enUS: Translations = {
       title: "Subagents",
       description:
         "Reusable workers that the Lead Agent and permitted Custom Agents can delegate bounded tasks to.",
-      ultracodeTitle: "Double Plus Ultracode limits",
+      ultracodeTitle: "Ultracode limits",
       ultracodeDescription:
-        "How large a workflow Double Plus Ultracode may plan. The Script workflows extension still applies the operator's limits, so these can only make a run smaller.",
+        "How large a workflow Plus Ultracode or Double Plus Ultracode may plan. The Script workflows extension still applies the operator's limits, so these can only make a run smaller. They do not turn tool-call limits back on in Double Plus Ultracode.",
       ultracodeMaxAgents: "Agents per workflow",
       ultracodeMaxParallel: "Agents at once",
       ultracodeMaxMinutes: "Minutes per workflow",
       ultracodeRange: (max: number) => `A whole number from 1 to ${max}.`,
       ultracodeUnavailable:
-        "The Script workflows extension is not enabled, so the composer does not offer Double Plus Ultracode.",
+        "The Script workflows extension is not enabled, so the composer does not offer Plus Ultracode or Double Plus Ultracode.",
       executionNote:
         "Each invocation starts a fresh temporary context with no persistent chat or memory and cannot ask the user follow-up questions. A system prompt changes behavior; tools and skills grant actual capabilities.",
       adminNote:

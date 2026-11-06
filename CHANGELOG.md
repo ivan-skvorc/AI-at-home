@@ -12,6 +12,8 @@ This section accumulates work toward the **2.3.0** milestone
 
 ### Added
 
+- **chat:** Plus Ultracode is the composer mode that was called Double Plus Ultracode: a workflow script, with the usual tool-call limits still on. A new Double Plus Ultracode mode is that same run with tool-call limits off, so an extremely large task can finish without being told to wrap up or forced to stop. Hovering it warns that it is token-risky and only for those tasks. Agent and time limits under Settings → Subagents still apply to both. A chat that already had the old name stays on Plus Ultracode.
+
 - **upstream:** merged `upstream/main` (72 commits since 2026-10-29). Brings Queue and Steer during an active web chat, a token usage dashboard, optional knowledge ingestion, middleware scoped to the lead or a subagent, and thinking settings for native subagents. The ninth Alembic merge revision (`0052_merge_prefs_run_inputs`) rejoins this fork's migration head with upstream's. `config_version` moves to 68 so existing installs receive `run_events.producer_fencing` (default `off`). `make config-upgrade` delivers that key and rewrites `config.yaml`, dropping comments; a `.bak` is kept and hand-edited values survive.
 
 - **models:** Kimi K3.1 Pro (`kimi-k3.1-pro`, `$2/$10`, cache `$0.20`) replaces Kimi K3 on the Moonshot key and on OpenRouter. It always thinks, so the home entry does not send a thinking switch. The routed Qwen3.8 Max slug is now `qwen/qwen3.8-max-0902` — OpenRouter redirects the bare slug there; the price stays `$2/$6`.

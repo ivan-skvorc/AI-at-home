@@ -60,13 +60,13 @@ test.describe("Double Plus Ultracode", () => {
     await page.getByRole("button").filter({ hasText: /^Pro$/ }).first().click();
     await page
       .getByRole("menuitem")
-      .filter({ hasText: "Double Plus Ultracode" })
+      .filter({ hasText: /^Plus Ultracode/ })
       .click();
     // The menu can stay open after a pick; while it is open the rest of the
     // page is hidden from the accessibility tree.
     await page.keyboard.press("Escape");
     await expect(
-      page.getByRole("button").filter({ hasText: /^Double Plus Ultracode$/ }),
+      page.getByRole("button").filter({ hasText: /^Plus Ultracode$/ }),
     ).toBeVisible();
 
     await textarea.fill("audit every route for missing permission checks");
@@ -107,14 +107,12 @@ test.describe("Double Plus Ultracode", () => {
 
     await page.goto("/workspace/chats/new");
     const textarea = await composer(page);
-    await expect(
-      page.getByText(/Double Plus Ultracode needs the Script workflows/),
-    ).toBeVisible();
+    await expect(page.getByText(/Script workflows/)).toBeVisible();
     const trigger = page.getByRole("button").filter({ hasText: /^Ultra$/ });
     await expect(trigger.first()).toBeVisible();
     await trigger.first().click();
     await expect(
-      page.getByRole("menuitem").filter({ hasText: "Double Plus Ultracode" }),
+      page.getByRole("menuitem").filter({ hasText: /^Plus Ultracode/ }),
     ).toHaveCount(0);
     await page.keyboard.press("Escape");
 

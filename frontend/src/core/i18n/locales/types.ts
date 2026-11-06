@@ -462,10 +462,13 @@ export interface Translations {
     ultraModeDescription: string;
     democracyMode: string;
     democracyModeDescription: string;
-    /** Double Plus Ultracode (fork feature, FORK.md §44). */
+    /** Plus Ultracode (fork feature, FORK.md §44). */
     ultracodeMode: string;
     ultracodeModeDescription: string;
-    /** Toast when a remembered Double Plus Ultracode selection cannot run. */
+    /** Double Plus Ultracode: the same script, with tool-call limits off. */
+    doubleUltracodeMode: string;
+    doubleUltracodeModeDescription: string;
+    /** Toast when a remembered Plus or Double Plus Ultracode selection cannot run. */
     ultracodeUnavailable: string;
     reasoningEffort: string;
     reasoningEffortMinimal: string;
@@ -2261,7 +2264,7 @@ export interface Translations {
     subagents: {
       title: string;
       description: string;
-      /** Double Plus Ultracode limits (fork feature, FORK.md §44). */
+      /** Shared by Plus Ultracode and Double Plus Ultracode (FORK.md §44). */
       ultracodeTitle: string;
       ultracodeDescription: string;
       ultracodeMaxAgents: string;

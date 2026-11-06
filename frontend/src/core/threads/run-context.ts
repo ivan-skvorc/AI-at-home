@@ -8,18 +8,20 @@ import {
 } from "./democracy";
 import {
   type UltracodePluginOptions,
+  isWorkflowScriptMode,
   ultracodePluginOptions,
 } from "./ultracode";
 
 /**
  * Derive the run context the backend actually reads from the composer's mode.
  *
- * The `mode` string itself is inert server-side — nothing in Python branches on
- * it. What drives behaviour is the set of booleans below, which is why this
- * derivation is the load-bearing part of a mode and why it lives in one pure
- * function: it used to be duplicated at the submit and regenerate call sites,
- * where the two copies could disagree and a regenerated turn would silently run
- * in a different mode than the original.
+ * Most of a mode is the booleans below. `mode` itself is still sent: Double
+ * Plus Ultracode turns tool-call limits off only when the server sees
+ * `mode === "double_ultracode"` (the lead, and each workflow agent the
+ * extension starts). Dropping the string would leave that mode limited.
+ * The derivation lives in one function because it used to be duplicated at
+ * the submit and regenerate call sites, where the two copies could disagree
+ * and a regenerated turn would silently run in a different mode.
  */
 export interface ModeDerivedContext {
   thinking_enabled: boolean;
@@ -39,7 +41,7 @@ interface ModeContextInput {
   model_name?: string | undefined;
   democracy_participants?: string[];
   democracy_grading?: DemocracyGrading;
-  /** Settings → Subagents limits; read only on a Double Plus Ultracode run. */
+  /** Settings → Subagents limits; read on Plus and Double Plus Ultracode. */
   ultracode_limits?: unknown;
 }
 
@@ -53,6 +55,7 @@ function defaultReasoningEffort(
     case "democracy":
     case "ultra":
     case "ultracode":
+    case "double_ultracode":
       return "high";
     case "pro":
       return "medium";
@@ -67,8 +70,10 @@ export function deriveModeContext(
   context: ModeContextInput,
 ): ModeDerivedContext {
   const { mode } = context;
-  // Double Plus Ultracode is an Ultra run whose plan becomes a workflow script.
-  const ultracode = mode === "ultracode";
+  // Plus Ultracode and Double Plus Ultracode are Ultra runs whose plan becomes
+  // a workflow script. Only the double mode suspends tool-call limits, and it
+  // does that by the `mode` string the settings spread already sends.
+  const ultracode = isWorkflowScriptMode(mode);
   const derived: ModeDerivedContext = {
     thinking_enabled: mode !== "flash",
     is_plan_mode:
@@ -87,11 +92,11 @@ export function deriveModeContext(
     // Cleared for the same reason as the roster: a scale left over from a panel
     // thread would otherwise put a scoreboard on an ordinary Ultra answer.
     democracy_grading: undefined,
-    // The one key the extension reads to treat this run as Double Plus
-    // Ultracode. Present on that mode only: anywhere else it would put a
+    // The one key the extension reads to treat this run as Plus or Double Plus
+    // Ultracode. Present on those modes only: anywhere else it would put a
     // workflow brief on a run the user did not ask to plan as a script.
     plugin_options: ultracode
-      ? ultracodePluginOptions(context.ultracode_limits)
+      ? ultracodePluginOptions(context.ultracode_limits, mode)
       : undefined,
   };
 

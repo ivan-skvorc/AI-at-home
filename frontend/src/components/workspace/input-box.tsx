@@ -22,6 +22,7 @@ import {
   Undo2Icon,
   UsersRoundIcon,
   WorkflowIcon,
+  TriangleAlertIcon,
   XIcon,
   ZapIcon,
 } from "lucide-react";
@@ -135,7 +136,10 @@ import {
 } from "@/core/threads/composer-draft";
 import type { RunInputMode } from "@/core/threads/run-inputs";
 import { threadTokenUsageQueryKey } from "@/core/threads/token-usage";
-import { isUltracodeAvailable } from "@/core/threads/ultracode";
+import {
+  isUltracodeAvailable,
+  isWorkflowScriptMode,
+} from "@/core/threads/ultracode";
 import { textOfMessage } from "@/core/threads/utils";
 import {
   formatUploadSize,
@@ -404,6 +408,7 @@ export function InputBox({
       | "ultra"
       | "democracy"
       | "ultracode"
+      | "double_ultracode"
       | undefined;
     reasoning_effort?: ReasoningEffortValue;
   };
@@ -452,6 +457,7 @@ export function InputBox({
           | "ultra"
           | "democracy"
           | "ultracode"
+          | "double_ultracode"
           | undefined;
         reasoning_effort?: ReasoningEffortValue;
       }
@@ -1336,18 +1342,16 @@ export function InputBox({
     [disabled, onContextChange, polishingInput, selectedModel],
   );
 
-  // Double Plus Ultracode needs the Script workflows extension. Offer it only
-  // where it can run, and move a remembered selection to Ultra visibly rather
-  // than send a mode nothing on the server would act on.
+  // Plus Ultracode and Double Plus Ultracode need the Script workflows
+  // extension. Offer them only where they can run, and move a remembered
+  // selection to Ultra visibly rather than send a mode nothing on the server
+  // would act on.
   const { data: frontendExtensions, isSuccess: frontendExtensionsLoaded } =
     useFrontendExtensions();
   const ultracodeAvailable = isUltracodeAvailable(frontendExtensions);
+  const workflowMode = isWorkflowScriptMode(context.mode);
   useEffect(() => {
-    if (
-      context.mode !== "ultracode" ||
-      !frontendExtensionsLoaded ||
-      ultracodeAvailable
-    ) {
+    if (!workflowMode || !frontendExtensionsLoaded || ultracodeAvailable) {
       return;
     }
     toast.message(t.inputBox.ultracodeUnavailable);
@@ -1360,6 +1364,7 @@ export function InputBox({
     );
   }, [
     context.mode,
+    workflowMode,
     frontendExtensionsLoaded,
     onContextChange,
     selectedModel,
@@ -3636,7 +3641,8 @@ export function InputBox({
                   context.mode === "pro" ||
                   context.mode === "ultra" ||
                   context.mode === "democracy" ||
-                  context.mode === "ultracode"
+                  context.mode === "ultracode" ||
+                  context.mode === "double_ultracode"
                     ? context.mode
                     : "flash"
                 }
@@ -3662,11 +3668,14 @@ export function InputBox({
                     {context.mode === "ultracode" && (
                       <WorkflowIcon className="size-3 text-[#dabb5e]" />
                     )}
+                    {context.mode === "double_ultracode" && (
+                      <TriangleAlertIcon className="size-3 text-[#dabb5e]" />
+                    )}
                   </div>
                   <div
                     className={cn(
                       "truncate text-xs font-normal",
-                      context.mode === "ultra" || context.mode === "ultracode"
+                      context.mode === "ultra" || workflowMode
                         ? "golden-text"
                         : "",
                     )}
@@ -3679,7 +3688,9 @@ export function InputBox({
                       (context.mode === "democracy" &&
                         t.inputBox.democracyMode) ||
                       (context.mode === "ultracode" &&
-                        t.inputBox.ultracodeMode)}
+                        t.inputBox.ultracodeMode) ||
+                      (context.mode === "double_ultracode" &&
+                        t.inputBox.doubleUltracodeMode)}
                   </div>
                 </PromptInputActionMenuTrigger>
               </ModeHoverGuide>
@@ -3851,6 +3862,44 @@ export function InputBox({
                         )}
                       </PromptInputActionMenuItem>
                     )}
+                    {ultracodeAvailable && (
+                      <PromptInputActionMenuItem
+                        className={cn(
+                          context.mode === "double_ultracode"
+                            ? "text-accent-foreground"
+                            : "text-muted-foreground/65",
+                        )}
+                        onSelect={() => handleModeSelect("double_ultracode")}
+                      >
+                        <div className="flex flex-col gap-2">
+                          <div className="flex items-center gap-1 font-bold">
+                            <TriangleAlertIcon
+                              className={cn(
+                                "mr-2 size-4",
+                                context.mode === "double_ultracode" &&
+                                  "text-[#dabb5e]",
+                              )}
+                            />
+                            <div
+                              className={cn(
+                                context.mode === "double_ultracode" &&
+                                  "golden-text",
+                              )}
+                            >
+                              {t.inputBox.doubleUltracodeMode}
+                            </div>
+                          </div>
+                          <div className="pl-7 text-xs">
+                            {t.inputBox.doubleUltracodeModeDescription}
+                          </div>
+                        </div>
+                        {context.mode === "double_ultracode" ? (
+                          <CheckIcon className="ml-auto size-4" />
+                        ) : (
+                          <div className="ml-auto size-4" />
+                        )}
+                      </PromptInputActionMenuItem>
+                    )}
                   </PromptInputActionMenu>
                 </DropdownMenuGroup>
               </PromptInputActionMenuContent>
@@ -3970,8 +4019,7 @@ export function InputBox({
                     // Ultracode via the workflow tools), so the lead model must
                     // be able to call tools.
                     const unusable =
-                      (context.mode === "ultra" ||
-                        context.mode === "ultracode") &&
+                      (context.mode === "ultra" || workflowMode) &&
                       lacksToolSupport(m);
                     return (
                       <ModelSelectorItem
@@ -4004,7 +4052,7 @@ export function InputBox({
                 />
               </ModelSelectorContent>
             </ModelSelector>
-            {(context.mode === "ultra" || context.mode === "ultracode") && (
+            {(context.mode === "ultra" || workflowMode) && (
               // Deliberately not rendered for Democracy: a panel names its model
               // per `task` call, and a thread-wide subagent override would be
               // outranked by every one of them (see FORK.md §22 precedence).

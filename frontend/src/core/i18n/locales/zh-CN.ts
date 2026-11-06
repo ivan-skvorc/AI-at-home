@@ -562,11 +562,14 @@ export const zhCN: Translations = {
     democracyMode: "众议",
     democracyModeDescription:
       "由多个不同模型独立回答同一问题并互相评审，再由一个组织者模型汇总结论。Token 消耗极高。",
-    ultracodeMode: "Double Plus Ultracode",
+    ultracodeMode: "Plus Ultracode",
     ultracodeModeDescription:
-      "把任务规划成工作流脚本，由多个智能体在后台执行，结果会自动回到本对话。灵感来自 Claude Code 的 ultracode。Token 消耗极高。",
+      "把任务规划成工作流脚本，由多个智能体在后台执行，结果会自动回到本对话。灵感来自 Claude Code 的 ultracode。工具调用上限仍然生效。Token 消耗极高。",
+    doubleUltracodeMode: "Double Plus Ultracode",
+    doubleUltracodeModeDescription:
+      "消耗 Token 的风险很高。只适合极大的任务，让它一直跑到做完、中途不要被打断。与 Plus Ultracode 相同的工作流脚本，但关闭了工具调用上限，因此不会因为某个工具调用太多次而被要求收尾或强制停止。",
     ultracodeUnavailable:
-      "Double Plus Ultracode 需要“脚本工作流”扩展，但它未启用。本对话已改用 Ultra。",
+      "Plus Ultracode 与 Double Plus Ultracode 需要“脚本工作流”扩展，但它未启用。本对话已改用 Ultra。",
     reasoningEffort: "推理深度",
     reasoningEffortMinimal: "最低",
     reasoningEffortMinimalDescription: "检索 + 直接输出",
@@ -2580,15 +2583,15 @@ export const zhCN: Translations = {
       title: "子智能体",
       description:
         "可由 Lead Agent 和已授权 Custom Agent 派遣、执行边界明确任务的复用型工作智能体。",
-      ultracodeTitle: "Double Plus Ultracode 上限",
+      ultracodeTitle: "Ultracode 上限",
       ultracodeDescription:
-        "Double Plus Ultracode 可规划的工作流规模。“脚本工作流”扩展仍会应用运维方设置的上限，因此这里只能把运行调小。",
+        "Plus Ultracode 与 Double Plus Ultracode 可规划的工作流规模。“脚本工作流”扩展仍会应用运维方设置的上限，因此这里只能把运行调小。这里不会重新打开 Double Plus Ultracode 已关闭的工具调用上限。",
       ultracodeMaxAgents: "每个工作流的智能体数",
       ultracodeMaxParallel: "同时运行的智能体数",
       ultracodeMaxMinutes: "每个工作流的分钟数",
       ultracodeRange: (max: number) => `1 到 ${max} 之间的整数。`,
       ultracodeUnavailable:
-        "“脚本工作流”扩展未启用，因此输入框不会提供 Double Plus Ultracode。",
+        "“脚本工作流”扩展未启用，因此输入框不会提供 Plus Ultracode 或 Double Plus Ultracode。",
       executionNote:
         "每次调用都使用全新的临时上下文，没有独立持久会话或记忆，也不能向用户追问。系统提示词只改变工作方式；工具和技能才提供实际能力。",
       adminNote:

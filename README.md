@@ -16,8 +16,9 @@
 >
 > **Using it every day**
 >
-> - 🧬 **Double Plus Ultracode — the plan becomes a script** — inspired by Claude Code's *ultracode*. In this composer mode the agent answers a substantive request by writing an inspectable workflow script that many agents run in the background (understand, change, verify, with findings checked by a second agent), and the result **comes back to the same chat on its own**, exactly once. The Script workflows extension it runs on is bundled and on by default, and an existing install gets it on its next update; agent and time limits live under **Settings → Subagents**, one failed agent no longer ends the whole workflow, and workflow agent spend shows as its own row in the cost header.
-> - 🎚️ **Run limits you can change or switch off in Settings** — the spend cap, the tool-call limits that tell an agent to "wrap up" after 30 calls to one tool, the token budgets and the step limit for background runs all live under **Settings → Run limits**, so a long merge or refactor — in Double Plus Ultracode or any other mode — no longer stops halfway because of a number buried in `config.yaml`. Each limit shows whether it comes from `config.yaml` or was set on the page, and **one click goes back to `config.yaml`**. Administrators only; changes apply from the next run, with no restart.
+> - ➕ **Plus Ultracode — the plan becomes a script** — inspired by Claude Code's *ultracode* (this is the mode that used to be called Double Plus Ultracode). In this composer mode the agent answers a substantive request by writing an inspectable workflow script that many agents run in the background (understand, change, verify, with findings checked by a second agent), and the result **comes back to the same chat on its own**, exactly once. The Script workflows extension it runs on is bundled and on by default. Agent and time limits live under **Settings → Subagents**, one failed agent no longer ends the whole workflow, and the usual **tool-call limits still apply** — a runaway tool loop is still told to wrap up.
+> - 🧬 **Double Plus Ultracode — the same script, with no tool-call limits** — the same workflow as Plus Ultracode, but tool-call limits are off: the agent is not told to wrap up after repeated calls, and it is not forced to stop. Hover the mode in the composer — the popup warns that this is **token-risky** and meant for **extremely large tasks that should run until they finish, without interruptions**. Agent count and time limits under **Settings → Subagents** still apply to both modes. Do not leave this selected for ordinary chat.
+> - 🎚️ **Run limits you can change or switch off in Settings** — the spend cap, the tool-call limits that tell an agent to "wrap up" after 30 calls to one tool, the token budgets and the step limit for background runs all live under **Settings → Run limits**, so a long merge or refactor — in Plus Ultracode or any other mode — no longer stops halfway because of a number buried in `config.yaml`. Double Plus Ultracode already runs with tool-call limits off for that one run. Each limit shows whether it comes from `config.yaml` or was set on the page, and **one click goes back to `config.yaml`**. Administrators only; changes apply from the next run, with no restart.
 > - 🔀 **Independent model per conversation, remembered by the conversation** — every chat keeps its own model, subagent model, mode and reasoning effort, recorded on the chat itself rather than in one browser. Switching conversations switches the picker to *that* chat's model instead of leaving the last one selected — on your phone and after a site-data clear too — and a brand-new chat no longer forgets its model the moment it is created.
 > - 🚦 **Concurrent chats** — leaving a chat used to cancel its run. Now a chat you leave mid-answer keeps streaming in the background and notifies you when it lands; come back and the answer is already there.
 > - 🗃️ **Folders in the sidebar, with subfolders** — the chat list is a tree. A conversation you file is **inside its folder and gone from the list outside it**, the way a file manager works, and folders nest up to five levels. Drag chats and folders around, or use the **⋯** menus. Deleting a folder never deletes the chats in it. Stored per user on the server; nothing to configure.
@@ -172,7 +173,7 @@ DeerFlow has newly integrated the intelligent search and crawling toolset indepe
     - [Sub-Agents](#sub-agents)
     - [Local Models Get the Parallelism the GPU Has](#local-models-get-the-parallelism-the-gpu-has)
     - [Democracy — Several Models Answer, Then Decide Together](#democracy--several-models-answer-then-decide-together)
-    - [Double Plus Ultracode — The Plan Becomes a Script](#double-plus-ultracode--the-plan-becomes-a-script)
+    - [Plus Ultracode and Double Plus Ultracode — The Plan Becomes a Script](#plus-ultracode-and-double-plus-ultracode--the-plan-becomes-a-script)
     - [Run Limits — What Can End a Run Early](#run-limits--what-can-end-a-run-early)
     - [Generating Agents From Your History](#generating-agents-from-your-history)
     - [Sandbox \& File System](#sandbox--file-system)
@@ -3526,17 +3527,27 @@ subagent_runtime:
 There is nothing to switch on: Democracy needs no config keys and is available as
 soon as you have two or more models configured.
 
-### Double Plus Ultracode — The Plan Becomes a Script
+### Plus Ultracode and Double Plus Ultracode — The Plan Becomes a Script
 
-**Double Plus Ultracode** is inspired by Claude Code's *ultracode*. Ultra keeps the
+**Plus Ultracode** is inspired by Claude Code's *ultracode*. Ultra keeps the
 whole plan in the lead agent's head: every subagent result lands in its context,
-and it is tuned to delegate sparingly. Double Plus Ultracode takes the opposite
+and it is tuned to delegate sparingly. Plus Ultracode takes the opposite
 shape. For a substantive request the agent writes a **workflow script** (plain
 JavaScript you can read), the [Script workflows extension](examples/deerflow-extension-workflows/README.md)
 runs it in the background across many agents, intermediate results stay in the
 script, and only the final answer comes back to the conversation.
 
-**What a run looks like.** You pick *Double Plus Ultracode* in the composer's mode
+**Two modes, one script.** *Plus Ultracode* is that workflow with the usual
+tool-call limits still on (wrap up after repeated calls to one tool, then a
+forced stop). *Double Plus Ultracode* is the same run — same brief, same agent
+and time limits — with those tool-call limits **off** for the lead and for
+every agent the workflow starts. Hover it in the mode menu: the popup warns
+that it is token-risky and meant only for extremely large tasks that should
+run until they finish, without interruptions. A chat that already had the old
+Double Plus Ultracode name keeps Plus Ultracode, so it does not silently lose
+its limits. Do not leave Double Plus Ultracode selected for ordinary chat.
+
+**What a run looks like.** You pick *Plus Ultracode* or *Double Plus Ultracode* in the composer's mode
 menu and ask. The agent plans the work in phases (usually understand, change,
 verify), launches the script, tells you in a sentence what is running and ends
 its turn. When the workflow finishes, its result is **posted into the same chat
@@ -3571,7 +3582,7 @@ disjoint files of one project. This needs thread data that the sandbox mounts fr
 the host (the local sandbox, or AIO with `thread_data_mounts`); anything else fails
 closed.
 
-**Limits.** Under **Settings → Subagents → Double Plus Ultracode limits** you set the
+**Limits.** Under **Settings → Subagents → Ultracode limits** you set the
 most agents one workflow may start, how many run at once and how many minutes the
 whole workflow may take. They default to the extension's maximums (256 agents, 16
 at once, 240 minutes), because the agent sizes each workflow to its request and a
@@ -5723,7 +5734,7 @@ and writes the detailed result to `.next/performance-results.json`.
 The [script workflows extension](examples/deerflow-extension-workflows/README.md)
 adds inspectable JavaScript orchestration through full AgentRuns, background launch,
 bounded parallel execution, progress, retained results and cancellation. This fork
-bundles it and enables it by default for [Double Plus Ultracode](#double-plus-ultracode--the-plan-becomes-a-script);
+bundles it and enables it by default for [Plus Ultracode and Double Plus Ultracode](#plus-ultracode-and-double-plus-ultracode--the-plan-becomes-a-script);
 it requires a POSIX Gateway and operator-authorized Agent references. Versioned definitions, retained step outputs, live-process pause/resume
 and authenticated human checkpoints support staged inspection reports. Confirmation
 binds the exact retained output or captured file version (SHA-256); preview and

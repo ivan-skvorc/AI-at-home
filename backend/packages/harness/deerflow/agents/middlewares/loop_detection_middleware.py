@@ -283,6 +283,11 @@ _HARD_STOP_MSG = "[FORCED STOP] Repeated tool calls exceeded the safety limit. P
 
 _TOOL_FREQ_HARD_STOP_MSG = "[FORCED STOP] Tool {tool_name} called {count} times — exceeded the per-tool safety limit. Producing final answer with results collected so far."
 
+# Composer mode that must not be interrupted by these limits. Matches the
+# frontend's `double_ultracode` and the workflows extension, which stamps the
+# same mode onto each workflow agent. Plus Ultracode (`ultracode`) is not here.
+DOUBLE_ULTRACODE_MODE = "double_ultracode"
+
 
 @dataclass(frozen=True)
 class _LoopDecision:
@@ -847,7 +852,19 @@ class LoopDetectionMiddleware(AgentMiddleware[AgentState]):
                 exc_info=True,
             )
 
+    def _tool_call_limits_suspended(self, runtime: Runtime) -> bool:
+        """Double Plus Ultracode runs until the task is finished.
+
+        The composer sets ``mode`` on the lead, and the workflow extension
+        copies it onto each agent it starts. Other modes, including Plus
+        Ultracode, keep both detection layers.
+        """
+        ctx = getattr(runtime, "context", None)
+        return isinstance(ctx, dict) and ctx.get("mode") == DOUBLE_ULTRACODE_MODE
+
     def _apply(self, state: AgentState, runtime: Runtime) -> dict | None:
+        if self._tool_call_limits_suspended(runtime):
+            return None
         decision = self._track_and_check(state, runtime)
         if decision is None:
             return None

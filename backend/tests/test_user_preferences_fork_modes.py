@@ -26,8 +26,9 @@ from app.gateway.routers.user_preferences import Preferences
 UPSTREAM_MODES = ("flash", "thinking", "pro", "ultra")
 
 
-# "ultracode" is Double Plus Ultracode (FORK.md), the workflow-script mode.
-@pytest.mark.parametrize("mode", (*UPSTREAM_MODES, "democracy", "ultracode"))
+# "ultracode" is Plus Ultracode; "double_ultracode" is the same run with
+# tool-call limits off (FORK.md §44).
+@pytest.mark.parametrize("mode", (*UPSTREAM_MODES, "democracy", "ultracode", "double_ultracode"))
 def test_every_selectable_mode_round_trips_through_the_account_preference(mode: str):
     assert Preferences(mode=mode).mode == mode
 

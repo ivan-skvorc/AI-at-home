@@ -33,6 +33,27 @@ describe("Double Plus Ultracode run context", () => {
     });
   });
 
+  it("sends double_ultracode the same way, which is what suspends tool-call limits", () => {
+    const derived = deriveModeContext({
+      mode: "double_ultracode",
+      ultracode_limits: { maxAgents: 12, maxParallel: 3, maxMinutes: 30 },
+    });
+    expect(derived).toMatchObject({
+      thinking_enabled: true,
+      is_plan_mode: true,
+      subagent_enabled: true,
+      reasoning_effort: "high",
+    });
+    expect(derived.plugin_options).toEqual({
+      [ULTRACODE_NAMESPACE]: {
+        mode: "double_ultracode",
+        max_agents: 12,
+        max_parallel: 3,
+        max_minutes: 30,
+      },
+    });
+  });
+
   it("never sends the option on any other mode", () => {
     for (const mode of [
       "flash",
@@ -143,6 +164,9 @@ describe("Double Plus Ultracode limits", () => {
   it("round-trips the mode through the account preference", () => {
     expect(parsePreferences({ mode: "ultracode" })).toEqual({
       mode: "ultracode",
+    });
+    expect(parsePreferences({ mode: "double_ultracode" })).toEqual({
+      mode: "double_ultracode",
     });
   });
 });

@@ -11,7 +11,8 @@ export type AgentMode =
   | "pro"
   | "ultra"
   | "democracy"
-  | "ultracode";
+  | "ultracode"
+  | "double_ultracode";
 
 function getModeLabelKey(
   mode: AgentMode,
@@ -23,6 +24,7 @@ function getModeLabelKey(
   | "ultraMode"
   | "democracyMode"
   | "ultracodeMode"
+  | "doubleUltracodeMode"
 > {
   switch (mode) {
     case "flash":
@@ -37,6 +39,8 @@ function getModeLabelKey(
       return "democracyMode";
     case "ultracode":
       return "ultracodeMode";
+    case "double_ultracode":
+      return "doubleUltracodeMode";
   }
 }
 
@@ -50,6 +54,7 @@ function getModeDescriptionKey(
   | "ultraModeDescription"
   | "democracyModeDescription"
   | "ultracodeModeDescription"
+  | "doubleUltracodeModeDescription"
 > {
   switch (mode) {
     case "flash":
@@ -64,6 +69,8 @@ function getModeDescriptionKey(
       return "democracyModeDescription";
     case "ultracode":
       return "ultracodeModeDescription";
+    case "double_ultracode":
+      return "doubleUltracodeModeDescription";
   }
 }
 
