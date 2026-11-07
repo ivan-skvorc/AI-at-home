@@ -37,6 +37,8 @@ This section accumulates work toward the **2.3.0** milestone
 
 - **chat:** Choosing a model for subtasks no longer fails with "Enable Ultra mode first" in Plus Ultracode, Double Plus Ultracode or Democracy, which all delegate.
 
+- **ci:** Backend unit-test shards no longer get cancelled after passing: each runs 13–14.5 minutes on a hosted runner, against a 15-minute job limit that is now 25. The OpenViking owner-key test no longer flakes on a busy runner (its loopback health check had 1 second).
+
 - **extensions:** Context-compaction observers now learn which task a
   compaction happened in. Inside a lead run or subagent they receive that
   task's store instead of a detached one, and `CompactionEvent` gains

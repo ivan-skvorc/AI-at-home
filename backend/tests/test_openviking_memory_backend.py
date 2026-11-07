@@ -472,7 +472,11 @@ def test_user_key_connection_uses_owner_key_without_ambient_authorization(
         monkeypatch.setenv("OPENVIKING_USERNAME", "foreign-user")
         monkeypatch.setenv("OPENVIKING_PASSWORD", "foreign-password")
     base_url, requests = openviking_http_server
-    manager = _manager(tmp_path, monkeypatch, base_url=base_url, timeout_seconds=1, failure_policy={"read": "raise"})
+    # The property is which credentials reach the server, not how fast it
+    # answers: with 1 s the loopback health check timed out on a loaded CI
+    # runner, the client reported unhealthy and warm() returned False (main,
+    # Unit Tests run 42206903233). A healthy server answers in milliseconds.
+    manager = _manager(tmp_path, monkeypatch, base_url=base_url, timeout_seconds=10, failure_policy={"read": "raise"})
     try:
         assert manager.warm() is True
         facts = manager.search("response style", top_k=2, user_id="alice")
