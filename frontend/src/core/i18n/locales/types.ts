@@ -468,6 +468,7 @@ export interface Translations {
     /** Double Plus Ultracode: the same script, with tool-call limits off. */
     doubleUltracodeMode: string;
     doubleUltracodeModeDescription: string;
+    doubleUltracodeWarningTitle: string;
     /** Toast when a remembered Plus or Double Plus Ultracode selection cannot run. */
     ultracodeUnavailable: string;
     reasoningEffort: string;

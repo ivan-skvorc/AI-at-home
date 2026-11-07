@@ -108,3 +108,22 @@ chain of every sibling package (`middlewares/` among them).
   falls back to loading the repo-root `config.yaml`, which is gitignored — a render test
   that omits it passes on a machine that has run `make config` and fails in CI with
   `FileNotFoundError`. Pinned by `tests/test_system_prompt_store.py::TestConfigIndependence`.
+
+### Small windows and prompt size (fork, FORK.md §47)
+
+- `assemble_lead_agent` reads the serving model's budget (`resolve_context_budget`
+  on the model config) before the skill and tool setup. On a small window
+  (`ContextBudget.is_small`) skills are listed by name (`describe_skill`) and MCP
+  schemas wait behind `tool_search`, whatever `skills.deferred_discovery` and
+  `tool_search.enabled` say; `effective_policies` records the effective values.
+- **Prompt text costs every request.** `backend/tests/test_context_fit_critical.py`
+  (a CHANGE_CYCLE.md critical check) builds this agent from `config.example.yaml`
+  with a synced 32K Ollama entry in every composer mode and fails when the system
+  prompt plus short-form tool schemas exceed `FIXED_REQUEST_ALLOWANCE_TOKENS`.
+  Make the text smaller rather than raising the allowance.
+- `<response_style>` is the user's contract in every mode: answer first, overview
+  by default, detail on request, commands in fenced copy-pasteable blocks
+  (`test_system_prompt_answers_overview_first_with_copyable_commands`). Several
+  blocks (response style, citations, clarification, plan-mode todo text) are the
+  fork's shorter wording of upstream's; on a sync conflict keep the fork's and
+  port any new rule into it.

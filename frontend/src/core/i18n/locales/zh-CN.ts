@@ -568,6 +568,7 @@ export const zhCN: Translations = {
     doubleUltracodeMode: "Double Plus Ultracode",
     doubleUltracodeModeDescription:
       "消耗 Token 的风险很高。只适合极大的任务，让它一直跑到做完、中途不要被打断。与 Plus Ultracode 相同的工作流脚本，但关闭了工具调用上限，因此不会因为某个工具调用太多次而被要求收尾或强制停止。",
+    doubleUltracodeWarningTitle: "Token 风险高：会一直运行到任务完成",
     ultracodeUnavailable:
       "Plus Ultracode 与 Double Plus Ultracode 需要“脚本工作流”扩展，但它未启用。本对话已改用 Ultra。",
     reasoningEffort: "推理深度",
@@ -2262,10 +2263,11 @@ export const zhCN: Translations = {
       grokFeaturesDescription:
         "让已连接的 Grok 套餐不只用于聊天。每项功能都会把数据发送给 xAI，并为本服务器的所有用户消耗套餐额度。在你开启之前，它们全部保持关闭。",
       grokFeatureImage: "图像生成与编辑（Grok Imagine）",
-      grokFeatureImageNote: "会把提示词以及你要求编辑的图片发送给 xAI。",
+      grokFeatureImageNote:
+        "会把提示词以及你要求编辑的图片发送给 xAI。使用套餐自身的 Imagine 额度，首次请求时才会确认套餐是否包含。",
       grokFeatureVideo: "视频生成（Grok Imagine）",
       grokFeatureVideoNote:
-        "会把提示词和图片发送给 xAI。视频片段消耗的套餐额度较多。",
+        "会把提示词和图片发送给 xAI。视频片段消耗的套餐额度较多，首次请求时才会确认套餐是否包含。",
       grokFeatureXSearch: "X 搜索",
       grokFeatureXSearchNote:
         "会把搜索内容发送给 xAI，并附上 X 帖子的链接作答。",

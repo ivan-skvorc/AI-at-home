@@ -148,11 +148,16 @@ def test_apply_prompt_template_preserves_interactive_clarification_guidance(monk
 
     prompt = prompt_module.apply_prompt_template(app_config=config)
 
-    assert "**WORKFLOW PRIORITY: CLARIFY → PLAN → ACT**" in prompt
-    assert "DO NOT call any other tool in the same turn as ask_clarification" in prompt
-    assert "❌ DO NOT make assumptions when information is missing - ALWAYS ask" in prompt
-    assert '**Example:**\nUser: "Deploy the application"' in prompt
-    assert 'User: "staging"\nYou: "Deploying to staging..." [proceed]' in prompt
+    # The fork's shorter wording (FORK.md §47) keeps every rule: clarify before
+    # acting, never guess what only the user knows, all five types, one question
+    # at a time, and no sibling tool calls (they are dropped).
+    assert "**Clarify, then plan, then act.**" in prompt
+    assert "you MUST call ask_clarification before doing any work" in prompt
+    assert "never guess at something only the user knows" in prompt
+    for clarification_type in ("missing_info", "ambiguous_requirement", "approach_choice", "risk_confirmation", "suggestion"):
+        assert f"`{clarification_type}`" in prompt
+    assert "One clarification at a time" in prompt
+    assert "Call no other tool in the same turn: sibling calls are dropped" in prompt
 
 
 def test_apply_prompt_template_includes_memory_tool_guidance_only_in_tool_mode(monkeypatch):
@@ -822,3 +827,15 @@ def test_apply_prompt_template_deferred_path_mentions_describe_skill(monkeypatch
     assert "describe_skill(name)" in prompt
     # Must NOT contain the legacy wording
     assert "Always load the relevant skill" not in prompt
+
+
+def test_system_prompt_answers_overview_first_with_copyable_commands():
+    """Every mode renders this block: answer first, detail on request, commands
+    in fenced blocks the user can copy as-is (FORK.md §47)."""
+    template = prompt_module.SYSTEM_PROMPT_TEMPLATE
+    style = " ".join(template[template.index("<response_style>") : template.index("</response_style>")].split())
+
+    assert "Lead with the answer or the result" in style
+    assert "Give an overview by default" in style and "only when the user asks for it" in style
+    assert "fenced code block tagged with its language" in style
+    assert "one copy-pasteable block per step, with no `$` prompt and no output mixed in" in style

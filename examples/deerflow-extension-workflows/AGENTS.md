@@ -110,8 +110,8 @@ Read limits only from `ToolContext.run_options`/`plugin_run_options` and clamp t
 operator config; never let run options raise a limit. Both `ultracode` and
 `double_ultracode` get the brief; only the double mode gets the tool-call-limits
 note, and only its children are started with `context.mode = "double_ultracode"`
-so the host can suspend tool-call limits. A Plus or plain workflow must not carry
-that mode. Keep the brief behind the mode option and the result note behind the host-stamped
+so the host can suspend tool-call limits and give them the operator's step ceiling
+(they send no `recursion_limit`). A Plus or plain workflow must not carry that mode. Keep the brief behind the mode option and the result note behind the host-stamped
 `EXTENSION_MESSAGE_ORIGIN_KEY` for this namespace only. Delivery is exactly once:
 idempotency key `workflow-result:<run>`, deterministic message text, state in
 `workflow_deliveries` (never the lease-fenced record), busy threads retried, never

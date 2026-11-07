@@ -266,6 +266,11 @@ def _feature_availability(probe: dict | None) -> dict[str, str]:
     Only a 401/403 is a definite no. A successful listing that omits a model
     family proves nothing about it, so that family stays switchable as
     "unknown" rather than locking the operator out of a feature xAI does serve.
+
+    Image and video are always "unknown" here: Imagine runs on the subscription
+    host (``community/xai/client.py``), and the probe reads the public API,
+    whose answer says nothing about the plan's Imagine quota. Locking them on a
+    public-API 403 is what made them unavailable to signed-in Grok plans.
     """
     probe = probe if isinstance(probe, dict) else {}
     api = probe.get("api")
@@ -279,7 +284,7 @@ def _feature_availability(probe: dict | None) -> dict[str, str]:
         return "available" if families.get(name) else "unknown"
 
     voice = probe.get("voice")
-    return {"image": family("image"), "video": family("video"), "x_search": family("text"), "voice": voice if voice in {"available", "not_on_plan"} else "unknown"}
+    return {"image": "unknown", "video": "unknown", "x_search": family("text"), "voice": voice if voice in {"available", "not_on_plan"} else "unknown"}
 
 
 def _ready_features(records: dict) -> frozenset[str]:

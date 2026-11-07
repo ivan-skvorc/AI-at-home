@@ -2937,7 +2937,8 @@ def test_inject_authenticated_user_context_strips_internal_spoofed_attribution()
     assert "oauth_id" not in config["context"]
 
 
-async def _capture_start_run_graph_input(body, *, auth_source=None):
+async def _capture_start_run(body, *, auth_source=None) -> dict:
+    """Run start_run with a fake run_agent and return the keyword arguments it received."""
     from types import SimpleNamespace
     from unittest.mock import patch
 
@@ -2967,7 +2968,7 @@ async def _capture_start_run_graph_input(body, *, auth_source=None):
     captured: dict[str, object] = {}
 
     async def fake_run_agent(*args, **kwargs):
-        captured["graph_input"] = kwargs["graph_input"]
+        captured.update(kwargs)
 
     with (
         patch("app.gateway.services.resolve_agent_factory", return_value=object()),
@@ -2976,7 +2977,22 @@ async def _capture_start_run_graph_input(body, *, auth_source=None):
         record = await start_run(body, "thread-command-test", request)
         await record.task
 
-    return captured["graph_input"]
+    return captured
+
+
+async def _capture_start_run_graph_input(body, *, auth_source=None):
+    return (await _capture_start_run(body, auth_source=auth_source))["graph_input"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("mode", "expected"), [("double_ultracode", 1000), ("ultracode", 250)])
+async def test_start_run_gives_double_plus_ultracode_the_step_ceiling(_stub_app_config, mode, expected):
+    """A Double Plus Ultracode workflow agent sends no step limit (FORK.md §44)."""
+    from app.gateway.run_models import RunCreateRequest
+
+    captured = await _capture_start_run(RunCreateRequest(input={"messages": [{"role": "user", "content": "go"}]}, context={"mode": mode}))
+
+    assert captured["config"]["recursion_limit"] == expected
 
 
 @pytest.mark.parametrize(

@@ -66,6 +66,16 @@ function defaultReasoningEffort(
   }
 }
 
+/**
+ * Modes whose run has `task` delegation on: Ultra, Democracy (its panel is
+ * dispatched through `task`) and both Ultracodes. The one place that says so,
+ * because a check written as `mode === "ultra"` told Ultracode and Democracy
+ * users that subtasks were disabled when they were not.
+ */
+export function modeUsesSubagents(mode: InputMode | undefined): boolean {
+  return mode === "ultra" || mode === "democracy" || isWorkflowScriptMode(mode);
+}
+
 export function deriveModeContext(
   context: ModeContextInput,
 ): ModeDerivedContext {
@@ -80,7 +90,7 @@ export function deriveModeContext(
       mode === "pro" || mode === "ultra" || mode === "democracy" || ultracode,
     // Democracy dispatches its entire panel through `task`, so it is an Ultra
     // run with an organizer brief on top.
-    subagent_enabled: mode === "ultra" || mode === "democracy" || ultracode,
+    subagent_enabled: modeUsesSubagents(mode),
     reasoning_effort: context.reasoning_effort ?? defaultReasoningEffort(mode),
     // Cleared unless this really is a panel run. The caller spreads the whole
     // thread context first, and the roster is a thread-scoped key that outlives

@@ -12,6 +12,12 @@ This section accumulates work toward the **2.3.0** milestone
 
 ### Added
 
+- **chat:** Answers lead with the result in every mode: an overview by default, detail only when you ask, and every command in its own copy-pasteable code block. The built-in prompt text is about 1,200 tokens shorter in every mode; on a local model, with skills listed by name, Flash's whole prompt is about 2,500 tokens (it was about 7,100).
+
+- **chat:** Double Plus Ultracode warns as you hover or focus it in the mode menu, before you pick it, and its workflow agents get the step limit's ceiling (`max_recursion_limit`, 1000 as shipped) instead of the 250-step default. The spend cap and token budgets still apply.
+
+- **dev:** CHANGE_CYCLE.md runs four critical checks before anything else on every code change — local models fit their window, nothing listens beyond loopback by default, an existing install still starts, a run cannot spend past its caps — listed first in FORK.md's checklist and in every automated sync PR. Roadmap item 37 proposes model-aware system prompts.
+
 - **chat:** Plus Ultracode is the composer mode that was called Double Plus Ultracode: a workflow script, with the usual tool-call limits still on. A new Double Plus Ultracode mode is that same run with tool-call limits off, so an extremely large task can finish without being told to wrap up or forced to stop. Hovering it warns that it is token-risky and only for those tasks. Agent and time limits under Settings → Subagents still apply to both. A chat that already had the old name stays on Plus Ultracode.
 
 - **upstream:** merged `upstream/main` (72 commits since 2026-10-29). Brings Queue and Steer during an active web chat, a token usage dashboard, optional knowledge ingestion, middleware scoped to the lead or a subagent, and thinking settings for native subagents. The ninth Alembic merge revision (`0052_merge_prefs_run_inputs`) rejoins this fork's migration head with upstream's. `config_version` moves to 68 so existing installs receive `run_events.producer_fencing` (default `off`). `make config-upgrade` delivers that key and rewrites `config.yaml`, dropping comments; a `.bak` is kept and hand-edited values survive.
@@ -24,6 +30,12 @@ This section accumulates work toward the **2.3.0** milestone
   after a Gateway restart. ([#7729])
 
 ### Fixed
+
+- **models:** A new chat on a local model is no longer refused because its instructions do not fit. On a window of up to 64K prompt tokens, tool definitions go out in short form, skills are listed by name and MCP tools wait behind `tool_search`, whatever the config says: a synced 32K Ollama model now keeps about 15K tokens for the conversation in Flash (it had about 7K, and Double Plus Ultracode 74). Compaction fires before the window fills, and a refusal states the room the model really has instead of a figure larger than the request.
+
+- **models:** Grok image and video generation work on a signed-in Grok plan. They now go to the subscription's own host instead of xAI's public API, which refused a subscription token on billing grounds (HTTP 403 "spending-limit") and, through the plan check, locked both switches. Image and video show "Couldn't check" until their first request.
+
+- **chat:** Choosing a model for subtasks no longer fails with "Enable Ultra mode first" in Plus Ultracode, Double Plus Ultracode or Democracy, which all delegate.
 
 - **extensions:** Context-compaction observers now learn which task a
   compaction happened in. Inside a lead run or subagent they receive that

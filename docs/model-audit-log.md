@@ -11,6 +11,59 @@ Newest first. Append a pass; never rewrite one. A dated line is what tells the
 next person whether the roster was checked last week or last year, and _which_
 providers that pass could actually reach.
 
+- **2026-11-07 (branch `claude/preprompts-model-audit-phzeld`) — tier 1 for Anthropic only;
+  discovery by web search. No roster, price or settings change.** Requested in words with the
+  prompt and context-size work ("run change_cycle.md including the model audit"), four days after
+  the 2026-11-03 pass.
+
+  **Machine half.** `uv run --no-sync --project backend python scripts/audit_models.py` reports
+  **no drift**; `openrouter` is _skipped_ (`Tunnel connection failed: 403 Forbidden`) and the ten
+  catalog-less providers likewise. Step 8: `sync-api-key-models.py --dry-run` is a clean no-op with
+  no keys, and on a copy of the example with Anthropic, OpenRouter, xAI and DeepSeek keys it
+  enables exactly those four blocks; `test_sync_api_key_models.py`, `test_setup_wizard.py`,
+  `test_config_integrity.py`, `test_audit_models.py`, `test_model_price_fields.py` and
+  `test_pricing.py` are green (305 passed).
+
+  **What the network reached.** `platform.claude.com/docs/en/about-claude/{pricing,model-deprecations}.md`,
+  `.../models/overview.md` and `.../api/versioning.md` answer 200. Refused at the proxy
+  (`http=000`): `openrouter.ai` (API and pages), `docs.x.ai`, `platform.kimi.ai`, `ai.google.dev`,
+  `developers.openai.com`, `api-docs.deepseek.com`, `docs.mistral.ai`, `docs.z.ai`,
+  `platform.minimax.io`, `alibabacloud.com`; the fetch tool cannot resolve `openrouter.ai` either
+  (outside this session's allowed hosts). Web search was available.
+
+  **Anthropic — tier 1, unchanged.** All six bundled ids are _Active_ on the deprecations page and
+  the overview's latest four are still Fable 5.1, Opus 5.5, Sonnet 5.5 and Haiku 5.5. Every figure
+  matches the pricing page and both synced sources: Fable 5.1 `$10/$50` (cache `$0.25`), Opus 5.5
+  `$4/$20` (`$0.20`), Opus 5 `$5/$25` (`$0.50`), Sonnet 5.5 `$2/$10` (`$0.10`), Sonnet 5 `$2/$10`
+  (`$0.20`; the page still says the intro rate is the standard price), Haiku 5.5 `$0.10/$0.50`
+  (`$0.01`) up to 100K-token prompts. Claude Mythos 5.1 is on the pricing table at Fable's rates but
+  marked _limited availability_, so it is not a bundle candidate.
+
+  **Discovery (step 2), by web search — nothing rolled.**
+  - **xAI** — no Grok 5 in the API; Grok 4.7 stays the flagship. Several trackers (benchlm,
+    geotoolbox, ai-toolbox) give `$2/$6`, matching the bundle; one (pricepertoken) says
+    `$1.60/$4.80`, a disagreement, so nothing moves on that evidence either way.
+  - **DeepSeek** — the owed question is answered: `deepseek-flash` has served V4.1-Flash-1017 since
+    2026-10-17 at unchanged prices (DeepSeek's change log as surfaced by search, SiliconANGLE,
+    MindStudio). The bundle's alias entry needs no edit. An aggregator's "`deepseek-v4-flash-0731`,
+    2026-11-05" was not corroborated anywhere else.
+  - **Mistral Large 4** — still a public preview (no GA found); `$0.70/$2.10`, cache `$0.07` is
+    reported after the 2026-10-29 open-weights cut. Still owed, at GA.
+  - **OpenAI** — only image models since the last pass (GPT Image 2.6 Flare / Sunburst, 2026-11-04);
+    the chat bundle is unaffected. **Google** — Gemini 4 Argon's intro `$2/$10` through 2026-11-30 is
+    still reported; the bundle ships the standard `$4/$20` as decided on 2026-10-29.
+  - **Tencent Hy4** (2026-11-04, a lab not in the bundle) — OpenRouter's trending surfaces could not
+    be read, which is the test step 2 uses for a new lab, so it is not rolled. Look again when
+    OpenRouter is reachable.
+  - A vendor study (digitalapplied, 2026-11-05) counts 35 OpenRouter price moves and 27 delistings
+    between 2026-10-28 and 11-05 without naming which in anything search surfaced. The weekly
+    `model-audit` job, which reads the catalog itself, is the check for those.
+
+  **Still owed to a pass that can reach OpenRouter and the labs' own pages**: everything the
+  2026-11-03 entry left alone (MiniMax M3, Gemini 3.8 Flash, GLM-5.3, Nemotron 3 Ultra, Llama 4
+  Maverick, DeepSeek V4 Pro routed figures), Mistral Large 4 at GA, Meta's flagship under `meta/`,
+  and Tencent Hy4.
+
 - **2026-11-03 (upstream sync, branch `chore/upstream-sync-20261103`) — tier 1 for
   Anthropic, Moonshot, and the OpenRouter pages that were opened. Two roster edits:
   Kimi K3.1 Pro replaces Kimi K3, and the routed Qwen3.8 Max slug is pinned to

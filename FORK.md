@@ -272,13 +272,22 @@ can be finished locally with a personal access token.
 
 After every upstream merge, run this checklist before pushing — passing unit tests do not prove the fork's _UI wiring_ or _launch-time scripts_ survived a large merge. Root commands run from the repo root; backend commands from `backend/`.
 
+#### Critical checks
+
+These come first, before the gates below and before any feature row, and they run on **every change that touches code, configuration or a prompt** — not only after a sync. Each guards something a user loses outright and that the rest of the suite does not notice: a local model that refuses or silently truncates its first message, a private stack reachable from the network, an install that will not start after an update, a run that spends past its cap. A red critical check stops the change: fix it or take the change back out. It is environmental only when the same failure reproduces on the base revision in the same environment ([CHANGE_CYCLE.md](CHANGE_CYCLE.md#critical-checks--before-everything-else)).
+
+- [ ] **Critical — local models fit their window** (§30, §45, §47): `cd backend && uv run pytest tests/test_context_fit_critical.py tests/test_context_overflow_guard.py tests/test_sync_ollama_models.py -q`. A fresh request in every composer mode fits a synced 32K Ollama entry with room for the conversation, the refusal names the real limit, compaction fires before the guard refuses, and the sync writes a `num_ctx` the agent can run in.
+- [ ] **Critical — nothing listens beyond loopback by default** (*Reaching the stack over Tailscale*): `cd backend && uv run pytest tests/test_compose_default_bind_host.py tests/test_deploy_loopback_cobind.py tests/test_docker_dev_tailnet.py -q`. A published port without an explicit bind address puts the whole stack on the LAN.
+- [ ] **Critical — an existing install still starts**: `scripts/check_config_version.sh` and `cd backend && uv run pytest tests/test_config_upgrade_script.py tests/test_config_version.py tests/test_migration_merge_points.py -q`. Example and chart versions agree, the upgrade delivers new keys without breaking the file, and Alembic has one head.
+- [ ] **Critical — a run cannot spend past its caps** (§10, §46): `cd backend && uv run pytest tests/test_spend_budget.py tests/test_spend_budget_config.py tests/test_spend_budget_middleware.py tests/test_run_limit_overrides.py -q`. The money cap refuses at admission and stops a run in flight, and Settings → Run limits reach every place a run reads a limit.
+
 First, the mechanical gates:
 
 - [ ] No leftover conflict markers: `git grep -nE '^(<{7}|={7}|>{7})( |$)'` returns nothing.
 - [ ] Backend: `make lint && make test` (CI enforces `ruff format --check`). **One failure is environmental, not yours:** `test_browser_automation.py::test_real_playwright_navigate_click_type` launches a real headless Chromium, and its only guard is `pytest.importorskip("playwright.async_api")` — which checks the _Python package_, not the _browser binary_. So on any machine whose pre-baked Playwright browsers are older than the pinned `playwright` (1.60.0 wants build `1223`; a sandbox image shipping `chromium_headless_shell-1194` is the common case), it fails with `Executable doesn't exist at …/chromium_headless_shell-<build>/…` while the other 49 tests in that file pass. It is deterministic, not a flake, and it is not a regression — confirm with `git diff HEAD@{1} HEAD -- backend/tests/test_browser_automation.py backend/packages/harness/deerflow/community/browser_automation/`, which is empty on a sync that did not touch them. Don't skip or quarantine the test, and don't run `playwright install` in an agent sandbox that pre-bakes its browsers; just note it and read the rest of the suite.
 - [ ] **Upstream pinned a list the fork extends, or read from disk in a path the fork keeps disk-free.** Two shapes of the same collision, both seen on the 2026-09-02 sync, and both invisible until the suite runs. (1) An upstream test asserting an _exact_ schema — `test_task_tool_description_is_optional_but_discoverable` pins `task`'s full property list, which the fork's per-call `model=` (§22) legitimately extends; re-assert the fork's list rather than loosening the check to a subset, so a future upstream change that drops the parameter still fails loudly. (2) An upstream feature adding a config read inside a path the fork guarantees is config-free — upstream's custom-agent store put `get_app_config()` under `apply_prompt_template`, which §19's `TestConfigIndependence` requires to touch no disk because `config.yaml` is gitignored and absent in CI. The fix is to thread the already-resolved `app_config` down (`get_agent_soul` → `load_agent_soul` → `get_agent_store`), never to relax the guard: it was written strict precisely because "does it work without the file" passes while the fallback is still there, silently reading a developer's own `config.yaml`.
 - [ ] **VPN-hostile defaults** (§31): `cd backend && uv run pytest tests/test_searxng_client.py tests/test_ensure_camoufox.py tests/test_camoufox_runtime_deps.py tests/test_search_fetch_defaults.py -q`. Each silent: `TestCamoufoxRuntimeLibraries::test_the_libraries_are_installed_beside_the_browser_copy` (a browser copied where it cannot run passes every presence check); `TestFetchEnvironment::test_the_fetch_call_site_actually_uses_the_scrubbed_environment` (the *call site*, not the helper — the helper tests pass against a module that cannot resolve `os`); `TestUnresponsiveEngines::test_all_engines_blocked_raises_rather_than_returning_empty` **with** `test_a_genuinely_empty_result_set_is_still_a_success` ("empty means error" breaks a no-match search) and `test_a_blocked_later_page_keeps_the_results_already_collected` (the client walks pages; only page 1 may raise); and `TestSearxngEngineMix` (the VPN-tolerant engines, and that the json/limiter deltas survived the edit). A sync that drops the apt block from `backend/Dockerfile`, or takes upstream's `_search_page` without the `unresponsive_engines` branch, is green elsewhere.
-- [ ] **Offloaded-model context sizing** (§30): `cd backend && uv run pytest tests/test_sync_ollama_models.py tests/test_setup_wizard.py -q`. Bounded on **both** sides, and each side is a different silent failure. `TestVramNumCtxLimitUnderOffload::test_a_model_bigger_than_vram_gets_a_window_the_agent_can_run_in` catches the 4096-token floor that makes a 128K model unusable; `test_it_does_not_hand_the_whole_card_to_the_kv_cache` catches the opposite — Ollama pays for context in GPU layers ([#9750](https://github.com/ollama/ollama/issues/9750)), so an unbounded window evicts the weights and the model merely crawls instead of failing. `test_a_model_that_fits_still_takes_all_the_spare_vram` pins that the fits-in-VRAM path did not move. Do not "simplify" the two branches into one: they are opposite policies for opposite regimes.
+- [ ] **Offloaded-model context sizing** (§30): runs inside the first critical check (`test_sync_ollama_models.py`). Bounded on both sides: `TestVramNumCtxLimitUnderOffload::test_a_model_bigger_than_vram_gets_a_window_the_agent_can_run_in` (the 4096-token floor) and `test_it_does_not_hand_the_whole_card_to_the_kv_cache` (Ollama pays for context in GPU layers, [#9750](https://github.com/ollama/ollama/issues/9750)); `test_a_model_that_fits_still_takes_all_the_spare_vram` pins the fits-in-VRAM path. Opposite policies for opposite regimes: do not merge the branches.
 - [ ] **Local-model subagent parallelism** (§34): `cd backend && uv run pytest tests/test_subagent_local_residency.py tests/test_subagent_executor.py -k "residency or capacity" -q`. Everything this defends is silent: Ollama answers an over-dispatch by queueing inside the daemon or evicting a model, never by failing. `TestGate::test_a_model_that_fits_the_card_once_runs_one_subagent_at_a_time` and `test_a_model_the_card_holds_twice_runs_two_at_a_time` are the feature; `test_models_that_co_reside_run_in_parallel` is the half a "just serialize local models" simplification would delete. `test_a_small_model_does_not_jump_the_queue_ahead_of_a_waiting_large_one` pins strict FIFO (throughput here is bought with starvation), `test_a_model_bigger_than_the_card_runs_alone_rather_than_never` pins that an offloaded model is slow, not barred, and `test_an_unknown_model_is_not_gated_at_all` pins that a hosted model or an unsized entry dispatches exactly as before. `test_aexecute_holds_gpu_residency_for_a_local_model_for_the_whole_run` is the wiring: the gate is nested inside the process capacity slot and wraps the model call, and it goes red if either is undone.
 - [ ] **Sidebar chat folders** (§32): `cd frontend && pnpm test chat-folders` and `cd backend && uv run pytest tests/test_user_ui_state.py tests/test_chat_folders_settings_router.py tests/test_threads_router.py -k "folder or pin or ui_state or chat_folders" -q`. Four silent failures. `groupThreadsByFolder > lists a filed chat inside its folder and NOT at the root` **with** `falls back to the root for a folder that no longer exists` — both directions of one partition: filed chats left in the root duplicate every conversation, threads naming a deleted folder vanish. `breaks a parent cycle instead of hanging or hiding the branch` **with** `promotes a folder whose parent is unknown rather than dropping it`, both sides of the wire: a parent link taken on trust leaves a branch unreachable from every root, so its folders and their chats stop rendering. `test_patch_thread_folder_move_preserves_updated_at` **with** `test_patch_thread_folder_with_a_wrong_typed_value_still_bumps_updated_at` — the exemption is shape-guarded per key; collapsed to "the key is present" it stays green and hands any client a way to edit metadata without touching recency. And `test_folders_and_tabs_do_not_clobber_each_other`: both keys share one `ui_state.json`, so a writer that replaces rather than merges eats the other's state. Also `cd frontend && pnpm test:e2e sidebar-chat-folders` when the sidebar was touched: `is labelled, not a bare icon` and `created before there are any conversations` pin the only entry point, unfindable when it loses its label or its group renders nothing; `a subfolder lives inside its parent` pins nesting, which renders identically as a sibling.
 - [ ] **Sidebar list scroll margin** (§35): `cd frontend && pnpm test thread-list-scroll-margin thread-list-virtualizer`. The sidebar's chat lists virtualize inside a scroll container they do not own, so each carries its own offset into it; a stale offset selects the wrong rows and positions them correctly — an empty band, no error. Three signals keep it honest and **each covers a hole the others do not**: `re-measures on a re-render, which is how an expanding folder reports` (the layout effect has no dependency list on purpose — restoring one is green against every other test here), `re-measures when a section above the list grows` **with** `re-measures and re-observes when a section mounts after the list` (the ResizeObserver/MutationObserver pair; a sibling growing never re-renders this component, and the sidebar's sections are conditional, so a fixed set watched at mount is not enough), and `still corrects itself on scroll when nothing else reported` (the backstop — dropping it is invisible until a layout change resizes no box). `keeps the offset scroll-invariant` pins what makes re-measuring during a scroll safe at all. Also run `cd frontend && pnpm test:e2e sidebar-long-chat-list sidebar-chat-folders` when the sidebar or the virtualizer was touched — only a real layout engine can say the rows the reader looks at are the rows that are there.
@@ -4320,6 +4329,27 @@ environment, so every wire shape (probe listing, Imagine, video polling,
 with offline doubles. The first live connection is the real check; the probe
 badges are designed to make a mismatch visible rather than silent.
 
+**Imagine runs on the subscription host, not the public API (2026-11-07).** The
+first live connections were the check, and they failed it: image and video were
+unavailable to signed-in Grok plans. On `api.x.ai` a subscription token bills the
+developer team's pay-as-you-go credits, so a plan that includes Imagine gets HTTP
+403 `personal-team-blocked:spending-limit` there ("You have run out of credits or
+need a Grok subscription"), and a public-API 403 on the probe also locked both
+switches as "not on your plan". The subscription's own host — `GROK_BASE`, the
+one chat already uses — serves the same `/images/generations`, `/images/edits`,
+`/videos/generations` and `/videos/{id}` routes against the plan's quota, with
+results on `imgen.x.ai` / `vidgen.x.ai` (inside the default `download_hosts`);
+CLIProxyAPI hit and fixed the same thing
+([router-for-me/CLIProxyAPI#5335](https://github.com/router-for-me/CLIProxyAPI/issues/5335)).
+`XaiClient` now routes `image` and `video` there with the CLI's
+`X-XAI-Token-Auth: xai-grok-cli` header; X search and voice stay on the public
+API. The probe still reads only the public API, so it no longer decides image or
+video: both read `unknown` (switchable), and a plan without Imagine refuses the
+first request with the tool's ordinary 401/403 message. Do not move media back to
+`XAI_API`, and do not let a public-API verdict lock them again. Still unverified
+live: whether `x_search` on the public API meets the same credit refusal for a
+subscription token.
+
 Coverage: `test_grok_features.py`, `test_grok_xai_tools.py`, the Responses case in
 `test_subscription_providers.py`, the Grok tier in `test_voice_stt.py`, the
 `tool_groups` backfill in `test_config_upgrade_script.py`, and the frontend
@@ -4419,6 +4449,23 @@ below ultracode's 1,000 because every step rewrites the whole record. A spend-ca
 is now a definitive pre-admission rejection, a clean failure that releases the slot,
 rather than an uncertain admission.
 
+**Double Plus also lifts the step limit, to the operator's ceiling (2026-11-07).**
+Tool-call limits were off, but the workflow agents the extension starts send no
+`recursion_limit`, so they still stopped at the 250-step default (~125 tool calls)
+with the task unfinished. `apply_double_ultracode_step_ceiling` in
+`app/gateway/services.py` gives any run whose context says `double_ultracode` and
+that sent no limit `max_recursion_limit` (1000 as shipped) — the value the web
+composer already pins on the lead. It stays inside the administrator's ceiling,
+and the spend cap and token budget (cost caps an administrator set) still apply:
+the mode suspends heuristics, not money. The same pass made the warning a warning:
+hovering or focusing the Double Plus menu option, before anyone selects it, and
+the mode button while it is selected, shows `ModeWarning` (an alert icon, "Token-risky:
+runs until the task is finished", and the description) after 100 ms instead of a
+plain 500 ms tip on the selected mode only. And the chat pages refused a per-task
+model in Plus/Double Plus Ultracode and Democracy ("Subtasks are disabled. Enable
+Ultra mode first.") because the check was `mode === "ultra"`; `modeUsesSubagents`
+in `run-context.ts` is now the one answer, used by `deriveModeContext` too.
+
 **What a future refactor must not simplify away.** Writing `plugin_options` to
 `configurable` (it would persist into every later run of the thread); dropping
 `EXTENSION_MESSAGE_ORIGIN_KEY` from the server-owned set (browsers could forge the
@@ -4511,11 +4558,11 @@ refactor must not "simplify" away:
   unknown window is a no-op, as for every other budget helper.
 
 Compaction also fires earlier: `_clamp_token_triggers_to_window` lowers each
-absolute `tokens` trigger to half the run model's prompt space — 12,288 on a
-synced 32K entry. Half, because LangChain's trigger counts messages only and the
-system prompt and tool schemas (~10K tokens for the default tool set) ride
-outside that count. The configured value stays a ceiling: a cloud window keeps
-32,000.
+absolute `tokens` trigger to half the run model's prompt space. Half, because
+LangChain's trigger counts messages only and the system prompt and tool schemas
+ride outside that count. The configured value stays a ceiling: a cloud window
+keeps 32,000. On a small window §47 lowers it further, to what the guard leaves
+after those fixed tokens — 10,118 on a synced 32K entry, not 12,288.
 
 Still open from item 34: an unknown window stays silent — a managed Ollama model
 without `num_ctx` gets none of this. Probing `/api/show` and flagging such models
@@ -4609,3 +4656,90 @@ runs only, caught failure, busy wait past `MAX_ATTEMPTS`, brief text),
 no checklist row was added (CHANGE_CYCLE.md step 4; the table is over its
 budget). Depth for agents: `deerflow/config/AGENTS.md` and
 `examples/deerflow-extension-workflows/AGENTS.md`.
+
+### 47. Local models fit their window from the first message, and answers lead with the result
+
+**Why.** A brand-new Flash chat on `deepseek-r1:14b` (a synced entry:
+`num_ctx: 32768`, `num_predict: 8192`) was refused with "the next request needs
+about 22,910 tokens, and the window leaves 24,576 for the prompt". Two things were
+wrong. The message quoted the prompt space while the §45 guard enforces 90% of it
+(22,118), so a refusal that was correct read as a bug. And nothing about the chat
+was large: the system prompt and tool schemas alone had grown, one harmless
+addition at a time, to **15,122 tokens for Flash and 22,044 for Double Plus
+Ultracode on the stock config** — 74 tokens of room — before memory, bash or MCP
+servers. No test measured that sum on the real build. A second defect hid behind
+it: §45's compaction trigger (half the prompt space, 12,288) sat above the room
+the guard left for messages, so a long text-only chat was refused instead of
+compacted.
+
+**The fixed part of the request is sized to the window.** `ContextBudget.is_small`
+(prompt space ≤ 65,536 — what a local GPU serves) switches on, whatever the config
+says:
+
+- **Short-form tool schemas** (`short_tool_schema`, in the guard, request view
+  only): the same names, parameter structure, types, enums and required lists;
+  descriptions cut to their opening sentences (280 characters, 120 per
+  parameter); schema `title`s dropped; pydantic's optional `anyOf [T, null]` +
+  `default: null` reduced to `T`. **Always** on a small window, not only when over,
+  so the request prefix — and the server's KV cache — stays stable. On a larger
+  window short form is the last step before a refusal. A call is still validated
+  against the real tool, so the short form can lose guidance, never correctness.
+- **Skills listed by name** (`describe_skill`, upstream's deferred discovery) and
+  **MCP schemas behind `tool_search`**, decided in `assemble_lead_agent` from the
+  serving model's budget; the subagent executor defers MCP the same way for a
+  small child model. An enabled MCP server binds dozens of full schemas otherwise.
+- **A compaction trigger that leaves room**: on a small window, at most
+  `REQUEST_FIT_SHARE` × prompt space − `FIXED_REQUEST_ALLOWANCE_TOKENS` (12,000).
+
+Result on the stock config and a synced 32K entry, as the guard sends it: Flash
+7,395 tokens (14,723 left for the conversation), Pro 7,730, Ultra 10,121, Plus
+Ultracode 11,354, Double Plus Ultracode 11,434 (10,684 left).
+
+**The refusal says what is true.** It states the room the guard really allows,
+how it is derived (window, reply reservation, 10% estimating margin), how much of
+the request is system prompt and tool definitions, and, when those are most of
+it, says so and points at `num_ctx` / `ollama.vram_gb` / fewer tools instead of
+"start a new chat", which would be just as large.
+
+**The prompts got shorter, and answer overview-first.** Every mode's
+`<response_style>` now says: lead with the answer, overview by default and detail
+only on request, no preamble or recap, every command in a fenced, language-tagged,
+copy-pasteable block with no `$` prompt or output mixed in. The citations block
+lost its worked report (rules kept), the interactive clarification block keeps
+its five types and its rules in a third of the text (and no longer asks about
+details with an obvious default), plan mode's todo section and tool description
+stopped repeating each other, Democracy's synthesis opens with the panel's
+answer and split, and the Ultracode result note asks for an overview first.
+The text cuts save ~1,200 tokens in every mode; with skills listed by name on a small window, Flash's whole prompt went from ~7,100 to ~2,500 tokens. The subagent routing section
+and the confidentiality block are upstream's and pinned by their tests; they
+were left alone.
+
+**Critical checks.** `test_context_fit_critical.py` builds the real lead agent
+from `config.example.yaml` plus a synced 32K entry in every composer mode,
+including both Ultracodes with the workflows extension's own brief and tools, and
+fails when the fixed part outgrows the allowance, when the guard would refuse a
+first message, or when compaction would fire after the guard refuses. It is the
+first of the [critical checks](#critical-checks) CHANGE_CYCLE.md runs on every
+change. Raising the allowance is a product decision about how much conversation a
+32K model keeps, not a fix.
+
+**What a future refactor must not simplify away.** The short form keeping names
+and parameter structure exact (a renamed or reshaped parameter is a failed tool
+call); not descending into `enum`, `default`, `const` or `examples` (a parameter
+*named* `title` or `description` lives under `properties` and must survive);
+shortening in the request view only, never on the bound tool; the small-window
+decisions being made from the serving model's budget rather than a config flag
+the operator has to know about; and the trigger staying below the guard's room.
+On an upstream sync that edits the shortened prompt blocks, keep the fork's
+wording and port any new rule into it — the critical check fails if the merge
+brings the old size back.
+
+Coverage: `test_context_fit_critical.py`, `test_context_overflow_guard.py`
+(short form on small and large windows, the refusal text, the trigger),
+`test_lead_agent_prompt.py` (response style, clarification rules),
+`test_grok_features.py` and `test_grok_xai_tools.py` (the §43 route),
+`test_recursion_limit_default.py` and `test_gateway_services.py` (the §44 step
+ceiling), and the frontend `mode-hover-guide.dom.test.tsx` and
+`ultracode.test.ts`. The first is the first critical check; the rest run inside
+`make test` / `pnpm test` and fail loudly. Depth for agents:
+`agents/middlewares/CHAIN.md`, `lead_agent/AGENTS.md`, `community/xai/AGENTS.md`.

@@ -11,12 +11,21 @@ no credential capability — adding one would hand a refreshable plan token to
 third-party code. Tools only ever get `grok_api_access(feature)`: one
 switch-checked token for one request.
 
+**Imagine goes to the subscription host.** `XaiClient` sends `image` and `video`
+to `GROK_BASE` (the chat proxy) with `X-XAI-Token-Auth: xai-grok-cli`; X search and
+voice use `https://api.x.ai/v1`. On the public API a subscription token is billed
+to the developer team's credits and refused with 403 "spending-limit" even on a
+plan with Imagine (FORK.md §43). Do not move media back to `XAI_API`.
+
 **Reach is measured, never assumed.** `_probe_grok` (in `models/subscriptions.py`)
 runs on connect and on Refresh: `GET /models` (grouped by `output_modalities`)
-and `GET /tts/voices`. Only a 401/403 is `not_on_plan`; an outage or a listing
-that omits a family is `unknown`, keeps the previous answer, and stays
-switchable — do not "tighten" that into a lock, or an xAI listing change locks
-operators out of features they pay for. The probe never raises.
+and `GET /tts/voices`, both on the public API. Only a 401/403 is `not_on_plan`;
+an outage or a listing that omits a family is `unknown`, keeps the previous
+answer, and stays switchable — do not "tighten" that into a lock, or an xAI
+listing change locks operators out of features they pay for. Image and video are
+always `unknown`: the public API says nothing about the subscription host's
+Imagine quota, and locking them on its 403 is what hid them from signed-in
+plans. The probe never raises.
 
 **Every feature is off until an administrator switches it on**, per connection,
 and a new grant (reconnect) starts off again. Switches live in the encrypted

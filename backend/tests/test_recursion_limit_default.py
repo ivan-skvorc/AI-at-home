@@ -60,3 +60,33 @@ def test_config_example_ships_the_fork_budget():
 def test_the_budget_stays_under_the_shipped_ceiling():
     """A default above `max_recursion_limit` would be clamped on every run."""
     assert AppConfig.model_fields["recursion_limit"].default <= AppConfig.model_fields["max_recursion_limit"].default
+
+
+class TestDoublePlusUltracodeStepCeiling:
+    """Double Plus Ultracode runs to the operator's step ceiling (FORK.md §44).
+
+    Its workflow agents send no ``recursion_limit``, so they stopped at the
+    default with the task unfinished even though tool-call limits were off.
+    """
+
+    def _config(self, mode, limit=FORK_RECURSION_LIMIT):
+        return {"recursion_limit": limit, "context": {"mode": mode}, "configurable": {"thread_id": "t"}}
+
+    def test_a_double_plus_run_without_a_step_limit_gets_the_ceiling(self, monkeypatch):
+        monkeypatch.setattr(services, "_resolve_max_recursion_limit", lambda: 1000)
+        config = self._config("double_ultracode")
+        services.apply_double_ultracode_step_ceiling(config, None)
+        assert config["recursion_limit"] == 1000
+
+    def test_other_modes_keep_the_default(self, monkeypatch):
+        monkeypatch.setattr(services, "_resolve_max_recursion_limit", lambda: 1000)
+        for mode in ("ultracode", "ultra", None):
+            config = self._config(mode)
+            services.apply_double_ultracode_step_ceiling(config, {})
+            assert config["recursion_limit"] == FORK_RECURSION_LIMIT, mode
+
+    def test_an_explicit_client_limit_is_left_to_the_ordinary_clamp(self, monkeypatch):
+        monkeypatch.setattr(services, "_resolve_max_recursion_limit", lambda: 1000)
+        config = self._config("double_ultracode", limit=40)
+        services.apply_double_ultracode_step_ceiling(config, {"recursion_limit": 40})
+        assert config["recursion_limit"] == 40

@@ -235,7 +235,10 @@ import {
 } from "./mentions/mention-picker";
 import { getMentionQuery, type MentionQuery } from "./mentions/query";
 import { useThread } from "./messages/context";
-import { ModeHoverGuide } from "./mode-hover-guide";
+import {
+  DoubleUltracodeWarningTooltip,
+  ModeHoverGuide,
+} from "./mode-hover-guide";
 import {
   ModelDisplayName,
   ModelPickerControls,
@@ -3863,42 +3866,44 @@ export function InputBox({
                       </PromptInputActionMenuItem>
                     )}
                     {ultracodeAvailable && (
-                      <PromptInputActionMenuItem
-                        className={cn(
-                          context.mode === "double_ultracode"
-                            ? "text-accent-foreground"
-                            : "text-muted-foreground/65",
-                        )}
-                        onSelect={() => handleModeSelect("double_ultracode")}
-                      >
-                        <div className="flex flex-col gap-2">
-                          <div className="flex items-center gap-1 font-bold">
-                            <TriangleAlertIcon
-                              className={cn(
-                                "mr-2 size-4",
-                                context.mode === "double_ultracode" &&
-                                  "text-[#dabb5e]",
-                              )}
-                            />
-                            <div
-                              className={cn(
-                                context.mode === "double_ultracode" &&
-                                  "golden-text",
-                              )}
-                            >
-                              {t.inputBox.doubleUltracodeMode}
+                      <DoubleUltracodeWarningTooltip>
+                        <PromptInputActionMenuItem
+                          className={cn(
+                            context.mode === "double_ultracode"
+                              ? "text-accent-foreground"
+                              : "text-muted-foreground/65",
+                          )}
+                          onSelect={() => handleModeSelect("double_ultracode")}
+                        >
+                          <div className="flex flex-col gap-2">
+                            <div className="flex items-center gap-1 font-bold">
+                              <TriangleAlertIcon
+                                className={cn(
+                                  "mr-2 size-4",
+                                  context.mode === "double_ultracode" &&
+                                    "text-[#dabb5e]",
+                                )}
+                              />
+                              <div
+                                className={cn(
+                                  context.mode === "double_ultracode" &&
+                                    "golden-text",
+                                )}
+                              >
+                                {t.inputBox.doubleUltracodeMode}
+                              </div>
+                            </div>
+                            <div className="pl-7 text-xs">
+                              {t.inputBox.doubleUltracodeModeDescription}
                             </div>
                           </div>
-                          <div className="pl-7 text-xs">
-                            {t.inputBox.doubleUltracodeModeDescription}
-                          </div>
-                        </div>
-                        {context.mode === "double_ultracode" ? (
-                          <CheckIcon className="ml-auto size-4" />
-                        ) : (
-                          <div className="ml-auto size-4" />
-                        )}
-                      </PromptInputActionMenuItem>
+                          {context.mode === "double_ultracode" ? (
+                            <CheckIcon className="ml-auto size-4" />
+                          ) : (
+                            <div className="ml-auto size-4" />
+                          )}
+                        </PromptInputActionMenuItem>
+                      </DoubleUltracodeWarningTooltip>
                     )}
                   </PromptInputActionMenu>
                 </DropdownMenuGroup>

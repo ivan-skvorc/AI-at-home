@@ -105,6 +105,9 @@ This is the part that is easy to do badly:
   do not privilege your own Phase 1 hunch. If your reading differs from the
   panel's, present it as one more labelled view.
 - Attribute each position to the model that held it, so the reader can weigh it.
+- Open with the panel's answer and its split in two or three sentences, then one
+  short paragraph per position. Give each panelist's full reasoning only when the
+  user asks for it.
 
 {grading_section}**The panel is standing. Every follow-up question runs it again.**
 This conversation is one continuous panel, not a one-shot. When the user asks a
