@@ -2,7 +2,10 @@ import { describe, expect, it } from "@rstest/core";
 
 import { mergeLocalSettings, type LocalSettings } from "@/core/settings/local";
 import { parsePreferences } from "@/core/settings/preferences-sync";
-import { deriveModeContext } from "@/core/threads/run-context";
+import {
+  deriveModeContext,
+  modeUsesSubagents,
+} from "@/core/threads/run-context";
 import {
   DEFAULT_ULTRACODE_LIMITS,
   isUltracodeAvailable,
@@ -190,5 +193,25 @@ describe("Double Plus Ultracode availability", () => {
         { namespace: ULTRACODE_NAMESPACE, settings: { enabled: true } },
       ]),
     ).toBe(true);
+  });
+});
+
+describe("modeUsesSubagents", () => {
+  // The chat pages refused a per-task model choice with "Enable Ultra mode
+  // first" in Plus/Double Plus Ultracode and Democracy, which all delegate.
+  it("covers every mode that turns task delegation on, and only those", () => {
+    for (const mode of [
+      "ultra",
+      "democracy",
+      "ultracode",
+      "double_ultracode",
+    ] as const) {
+      expect(modeUsesSubagents(mode)).toBe(true);
+      expect(deriveModeContext({ mode }).subagent_enabled).toBe(true);
+    }
+    for (const mode of ["flash", "thinking", "pro", undefined] as const) {
+      expect(modeUsesSubagents(mode)).toBe(false);
+      expect(deriveModeContext({ mode }).subagent_enabled).toBe(false);
+    }
   });
 });

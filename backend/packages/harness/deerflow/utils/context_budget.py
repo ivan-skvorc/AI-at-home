@@ -57,6 +57,25 @@ EXTERNALIZE_SHARE = 0.10
 # but never so much that the instructions and the answer have nowhere to go.
 CHUNK_SHARE = 0.45
 
+# Prompt space at or below which a window counts as small: what a local GPU
+# serves (a synced Ollama entry is 32,768 with 8,192 kept for the reply). There
+# the fixed part of every request — system prompt and tool schemas — is a large
+# share of the window, so the request is built smaller: skills listed by name
+# and tool schemas in short form (FORK.md §47). Cloud windows stay above it.
+SMALL_WINDOW_PROMPT_TOKENS = 65_536
+
+# Share of the prompt space a whole request may fill. The token estimate is
+# right for prose and ~25% low for JSON, and the tool schemas on every request
+# are JSON, so the context guard aims this far inside the window.
+REQUEST_FIT_SHARE = 0.9
+
+# What the fixed part of a request (system prompt + tool schemas) may cost on a
+# small window, in any composer mode, with the stock config. Compaction's token
+# trigger is placed below the room this leaves, so a long chat is compacted
+# before the context guard has to refuse it. `test_context_fit_critical.py`
+# fails when the stock prompt or tool set outgrows it.
+FIXED_REQUEST_ALLOWANCE_TOKENS = 12_000
+
 # Attributes a chat-model client may expose, most authoritative first.
 _WINDOW_ATTRS = ("num_ctx", "context_window")
 _RESERVE_ATTRS = ("num_predict", "max_tokens")
@@ -102,6 +121,11 @@ class ContextBudget:
         """Return ``share`` of the usable prompt window, in characters."""
         computed = int(self.prompt_tokens * CHARS_PER_TOKEN * share)
         return max(minimum, computed)
+
+    @property
+    def is_small(self) -> bool:
+        """Whether this is a local-GPU-sized window (see ``SMALL_WINDOW_PROMPT_TOKENS``)."""
+        return self.prompt_tokens <= SMALL_WINDOW_PROMPT_TOKENS
 
 
 def clamp_to_context(
@@ -234,6 +258,21 @@ def resolve_context_budget(model: Any, app_config: Any | None = None) -> Context
 
         return ContextBudget(context_window=window, reserved_output=reserve or 0)
     except Exception:  # pragma: no cover - defensive
+        return None
+
+
+def configured_model_budget(app_config: Any, model_name: str | None) -> ContextBudget | None:
+    """Budget of the configured model *model_name*, or ``None`` when unknown.
+
+    For build-time decisions made before a client exists. Never raises.
+    """
+    if not model_name:
+        return None
+    try:
+        getter = getattr(app_config, "get_model_config", None)
+        model_config = getter(model_name) if callable(getter) else None
+        return resolve_context_budget(model_config, app_config) if model_config is not None else None
+    except Exception:
         return None
 
 

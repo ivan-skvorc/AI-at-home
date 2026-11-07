@@ -64,7 +64,11 @@ def test_probe_classifies_the_listing_and_only_refusals_lock_a_feature(store, mo
     monkeypatch.setattr(service, "_request_json", refused)
     locked = service._probe_grok("token", probe)
     assert locked["api"] == "not_on_plan" and locked["voice"] == "not_on_plan"
-    assert set(service._feature_availability(locked).values()) == {"not_on_plan"}
+    availability = service._feature_availability(locked)
+    assert availability["x_search"] == availability["voice"] == "not_on_plan"
+    # Imagine runs on the subscription host, where a public-API refusal proves
+    # nothing: locking it here is what hid image and video from signed-in plans.
+    assert availability["image"] == availability["video"] == "unknown"
 
     # An outage is not a verdict: the previous answer survives it.
     outage, _ = _xai({"/models": 0, "/tts/voices": 502})
@@ -76,7 +80,8 @@ def test_probe_classifies_the_listing_and_only_refusals_lock_a_feature(store, mo
 
 def test_a_listing_that_omits_a_family_leaves_it_switchable():
     probe = {"api": "available", "models": {"image": ["grok-imagine-image"], "video": [], "text": []}, "voice": "available"}
-    assert service._feature_availability(probe) == {"image": "available", "video": "unknown", "x_search": "unknown", "voice": "available"}
+    # Image and video are never decided by the public API (see the probe test).
+    assert service._feature_availability(probe) == {"image": "unknown", "video": "unknown", "x_search": "unknown", "voice": "available"}
 
 
 def test_new_grant_starts_switched_off_and_lists_responses_models_only_when_api_reaches(store, monkeypatch):
@@ -93,7 +98,8 @@ def test_new_grant_starts_switched_off_and_lists_responses_models_only_when_api_
     assert "x-grok-model-override" not in models["grok-agentic"]["default_headers"]
     assert "x-grok-model-override" in models["grok-chat"]["default_headers"]
     status = next(item for item in service.subscription_status()["providers"] if item["provider"] == "grok")
-    assert status["features"] == [{"name": name, "enabled": False, "availability": "available"} for name in service.GROK_FEATURES]
+    expected = {"image": "unknown", "video": "unknown", "x_search": "available", "voice": "available"}
+    assert status["features"] == [{"name": name, "enabled": False, "availability": expected[name]} for name in service.GROK_FEATURES]
     assert "private" not in json.dumps(status) and "access" not in json.dumps(status["features"])
 
     # A grant the API refuses keeps chat but hides the Responses-only models.

@@ -1184,6 +1184,9 @@ def _drop_unusable_fraction_clauses(
 # system prompt and the bound tool schemas (~10K tokens for the default tool
 # set) ride on every request outside that count.
 COMPACTION_TRIGGER_SHARE = 0.5
+# A window too small to hold the stock request at all still compacts at a
+# usable size rather than on every turn.
+MIN_COMPACTION_TRIGGER_TOKENS = 1_024
 
 
 def _clamp_token_triggers_to_window(trigger: Any, run_model: Any, app_config: Any) -> Any:
@@ -1193,13 +1196,22 @@ def _clamp_token_triggers_to_window(trigger: Any, run_model: Any, app_config: An
     so compaction fired only after the request had already overflowed. The
     configured value stays a ceiling, never a floor: a cloud window keeps it,
     and an unknown window leaves every clause as configured.
+
+    On a small window half the prompt space is not low enough: the context
+    guard refuses at ``REQUEST_FIT_SHARE`` of it, and the system prompt and tool
+    schemas — outside this message count — take up to
+    ``FIXED_REQUEST_ALLOWANCE_TOKENS``. A trigger above what is left never
+    fires, and a long text-only chat is refused instead of compacted.
     """
-    from deerflow.utils.context_budget import resolve_context_budget
+    from deerflow.utils.context_budget import FIXED_REQUEST_ALLOWANCE_TOKENS, REQUEST_FIT_SHARE, resolve_context_budget
 
     budget = resolve_context_budget(run_model, app_config)
     if budget is None or trigger is None:
         return trigger
-    ceiling = max(1, int(budget.prompt_tokens * COMPACTION_TRIGGER_SHARE))
+    ceiling = int(budget.prompt_tokens * COMPACTION_TRIGGER_SHARE)
+    if budget.is_small:
+        ceiling = min(ceiling, int(budget.prompt_tokens * REQUEST_FIT_SHARE) - FIXED_REQUEST_ALLOWANCE_TOKENS)
+    ceiling = max(MIN_COMPACTION_TRIGGER_TOKENS, ceiling)
 
     def clamp(clause: Any) -> Any:
         if isinstance(clause, tuple) and len(clause) == 2 and clause[0] == "tokens" and isinstance(clause[1], int) and clause[1] > ceiling:

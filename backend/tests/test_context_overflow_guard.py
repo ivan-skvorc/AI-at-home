@@ -14,9 +14,14 @@ The properties under test:
   request view only — the system prompt, the question and the result the model
   is waiting for always survive, and stored history is never modified;
 - tool schemas count against the window, because they ride along on every call;
+- on a small window tool schemas always go out in short form (same names and
+  parameters, shorter text), and on a large one only as the last step before a
+  refusal (FORK.md §47);
 - a request that still cannot fit is never sent: the run ends with a visible
-  error naming the model and its window;
-- compaction's token trigger follows the run model's window, as a ceiling.
+  error naming the model, the room it really has, and — when the system prompt
+  and tools are what fills it — the fix that applies, not "start a new chat";
+- compaction's token trigger follows the run model's window, as a ceiling, and
+  on a small window leaves room for the fixed part of the request.
 """
 
 from __future__ import annotations
@@ -37,9 +42,13 @@ from deerflow.agents.middlewares.context_window_guard_middleware import (
 from deerflow.utils.context_budget import estimate_tokens
 
 # A synced Ollama entry: 32,768 total with 8,192 reserved for the answer leaves
-# 24,576 tokens of prompt space.
+# 24,576 tokens of prompt space, of which the guard fills 90%.
 LOCAL = SimpleNamespace(model="qwen3:8b", num_ctx=32_768, num_predict=8_192)
 PROMPT_TOKENS = 24_576
+LIMIT = int(PROMPT_TOKENS * 0.9)
+# Above the small-window line: full tool guidance until it would not fit.
+LARGE = SimpleNamespace(model="qwen3:32b", num_ctx=131_072, num_predict=8_192)
+LARGE_LIMIT = int((131_072 - 8_192) * 0.9)
 NO_CONFIG = SimpleNamespace(models=[])
 ANALYZE_DOCUMENT = {"type": "function", "function": {"name": "analyze_document", "description": "Read a long document in parts.", "parameters": {"type": "object", "properties": {}}}}
 
@@ -122,19 +131,117 @@ async def test_old_tool_results_are_elided_until_the_request_fits(asynchronous):
 @pytest.mark.anyio
 @ASYNC
 async def test_tool_schemas_count_against_the_window(asynchronous):
-    # ~20K tokens of tool schema leave too little room for two reads that
+    # ~75K tokens of tool schema leave too little room for two reads that
     # would fit comfortably without them.
-    tools = [_schema_tool(i, 8_000) for i in range(10)]
-    request = _request([HumanMessage("q"), *_read(1, 20_000), *_read(2, 4_000)], tools=tools)
-    assert estimate_request_tokens(_request(request.messages)) < PROMPT_TOKENS
+    tools = [_schema_tool(i, 30_000) for i in range(10)]
+    request = _request([HumanMessage("q"), *_read(1, 160_000), *_read(2, 16_000)], model=LARGE, tools=tools)
+    assert estimate_request_tokens(_request(request.messages, model=LARGE)) < LARGE_LIMIT
+    assert estimate_request_tokens(request) > LARGE_LIMIT
 
     sent, _ = await _send(request, asynchronous)
 
-    assert estimate_request_tokens(sent) <= PROMPT_TOKENS
+    assert estimate_request_tokens(sent) <= LARGE_LIMIT
     assert sent.messages[2].content.startswith(ELIDED_TOOL_RESULT_PREFIX)
     # analyze_document is not bound here, so the note must not send the model after it.
     assert "analyze_document" not in sent.messages[2].content
+    # A large window keeps its full tool guidance while the request fits with it.
     assert sent.tools == tools
+
+
+def _long_tool() -> dict:
+    return {
+        "type": "function",
+        "function": {
+            "name": "write_file",
+            "description": "Write a file to the workspace. " + "Worked example with caveats. " * 200,
+            "parameters": {
+                "type": "object",
+                "title": "WriteFileArgs",
+                "properties": {
+                    "path": {"type": "string", "title": "Path", "description": "Where to write it. " + "More detail. " * 60},
+                    # A parameter that happens to be called "title" is a parameter, not a schema title.
+                    "title": {"type": "string", "description": "Document title."},
+                    "mode": {"anyOf": [{"type": "string", "enum": ["w", "a"], "title": "Mode"}, {"type": "null"}], "default": "w"},
+                },
+                "required": ["path", "title"],
+            },
+        },
+    }
+
+
+@pytest.mark.anyio
+@ASYNC
+async def test_a_small_window_always_sends_tool_schemas_in_short_form(asynchronous):
+    # The reported case was a brand-new chat: ~8K tokens of full tool schemas
+    # is a third of a synced 32K entry before the user has typed anything.
+    from langchain_core.tools import StructuredTool
+    from pydantic import BaseModel, Field
+
+    class LookupArgs(BaseModel):
+        city: str = Field(description="The city to look up. " + "Background the model does not need. " * 10)
+        units: str = Field(default="metric", description="metric or imperial.")
+
+    lookup = StructuredTool.from_function(
+        func=lambda city, units="metric": city,
+        name="lookup",
+        description="Look up the weather for a city. " + "This paragraph is long background the model does not need every turn. " * 20,
+        args_schema=LookupArgs,
+    )
+
+    original = _long_tool()
+    request = _request([HumanMessage("hi")], tools=[original, lookup])
+    assert estimate_request_tokens(request) < LIMIT, "it fits either way; small windows shorten anyway"
+
+    sent, _ = await _send(request, asynchronous)
+
+    short, short_lookup = sent.tools
+    function = short["function"]
+    assert function["name"] == "write_file"
+    assert function["description"].startswith("Write a file to the workspace.") and len(function["description"]) <= 280
+    params = function["parameters"]
+    assert set(params["properties"]) == {"path", "title", "mode"} and params["required"] == ["path", "title"]
+    assert "title" not in params and "title" not in params["properties"]["path"]
+    # An optional argument keeps its type, enum and a real default; the null branch goes.
+    assert params["properties"]["mode"] == {"type": "string", "enum": ["w", "a"], "default": "w"}
+    assert len(params["properties"]["path"]["description"]) <= 120
+    # A LangChain tool is rendered the same way, under its own name.
+    assert short_lookup["function"]["name"] == "lookup" and set(short_lookup["function"]["parameters"]["properties"]) == {"city", "units"}
+    assert len(short_lookup["function"]["description"]) <= 280
+    assert estimate_request_tokens(sent) < estimate_request_tokens(request)
+    # Request view only: the bound tools are untouched.
+    assert original == _long_tool() and lookup.name == "lookup" and len(lookup.description) > 280
+
+
+@pytest.mark.anyio
+@ASYNC
+async def test_a_large_window_shortens_tool_schemas_before_refusing(asynchronous):
+    tools = [_schema_tool(i, 50_000) for i in range(10)]  # ~125K tokens in full
+    request = _request([HumanMessage("q")], model=LARGE, tools=tools)
+
+    sent, _ = await _send(request, asynchronous)
+
+    assert sent is not None, "short form fits, so the request goes out"
+    assert estimate_request_tokens(sent) <= LARGE_LIMIT
+    assert [tool["function"]["name"] for tool in sent.tools] == [f"tool_{i}" for i in range(10)]
+
+
+@pytest.mark.anyio
+@ASYNC
+async def test_a_request_whose_setup_fills_the_window_names_the_real_limit_and_cause(asynchronous):
+    # The reported message said "needs about 22,910 tokens, and the window leaves
+    # 24,576" — a refusal that read as a bug, because the limit enforced is 90%
+    # of that. And it told the user to start a new chat, which would be just as
+    # large: the system prompt and tool schemas were what filled the window.
+    request = _request([HumanMessage("hi")], system="s" * 100_000)
+
+    sent, result = await _send(request, asynchronous)
+
+    assert sent is None
+    assert f"{LIMIT:,}" in result.content and f"{PROMPT_TOKENS:,}" in result.content
+    assert "32,768" in result.content and "8,192" in result.content
+    assert "system prompt and 0 tool definitions" in result.content
+    assert "num_ctx" in result.content
+    assert "new chat" not in result.content and "new one" not in result.content
 
 
 @pytest.mark.anyio
@@ -149,7 +256,9 @@ async def test_a_request_that_cannot_fit_is_never_sent(asynchronous):
     assert result.additional_kwargs["deerflow_error_fallback"] is True
     assert result.additional_kwargs["error_type"] == "context_window_exceeded"
     assert "qwen3:8b" in result.content
-    assert f"{PROMPT_TOKENS:,}" in result.content
+    assert f"{PROMPT_TOKENS:,}" in result.content and f"{LIMIT:,}" in result.content
+    # The conversation is what outgrew the window here, so compaction is the fix.
+    assert "/compact" in result.content
     assert result.additional_kwargs["error_detail"] == result.content
 
 
@@ -177,8 +286,16 @@ class TestCompactionTrigger:
         return create_summarization_middleware(app_config=app_config).trigger
 
     def test_a_small_window_lowers_the_token_trigger(self, monkeypatch):
+        # Half the prompt space (12,288) was above what the guard leaves for
+        # messages once the system prompt and tool schemas ride along, so a long
+        # text-only chat was refused before compaction ever fired: 90% of 24,576
+        # less the 12,000-token allowance for the fixed part of the request.
         model = MagicMock(num_ctx=32_768, num_predict=8_192)
-        assert self._trigger(monkeypatch, model) == ("tokens", 12_288)
+        assert self._trigger(monkeypatch, model) == ("tokens", 10_118)
+
+    def test_a_mid_sized_local_window_keeps_half_its_prompt_space(self, monkeypatch):
+        model = MagicMock(num_ctx=65_536, num_predict=8_192)
+        assert self._trigger(monkeypatch, model) == ("tokens", 28_672)
 
     def test_a_large_window_keeps_the_configured_trigger(self, monkeypatch):
         model = MagicMock(num_ctx=200_000, num_predict=8_192)

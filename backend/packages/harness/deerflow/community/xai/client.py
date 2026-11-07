@@ -5,6 +5,14 @@ Every request resolves the token for *one* operator-enabled feature through
 refresh rotation Grok chat uses — and drops it when the request ends. Nothing
 here stores a token, retries a plan-quota refusal, or copies a response body
 into an error: bodies can echo prompts, and prompts are the user's.
+
+Imagine (image and video) goes to the subscription's own host, the one Grok
+chat already uses (``GROK_BASE``), not to the public API. On ``api.x.ai`` a
+subscription token bills the developer team's pay-as-you-go credits, so a plan
+that includes Imagine is refused there with HTTP 403 ("spending-limit"), while
+the subscription host serves the same ``/images/*`` and ``/videos/*`` routes on
+the plan's quota (router-for-me/CLIProxyAPI#5335, fixed the same way). X search
+and voice stay on the public API.
 """
 
 from __future__ import annotations
@@ -18,6 +26,8 @@ import httpx
 
 XAI_API = "https://api.x.ai/v1"
 USER_AGENT = "DeerFlow/2 grok-features"
+# Features served on the subscription host rather than the public API.
+SUBSCRIPTION_FEATURES = frozenset({"image", "video"})
 # Base64 images make JSON bodies large; four 2K images fit well inside this.
 MAX_JSON_BYTES = 64 * 1024 * 1024
 MAX_MEDIA_BYTES = 200 * 1024 * 1024
@@ -71,12 +81,22 @@ class XaiClient:
         self.timeout = timeout
         self._transport = transport
 
+    def _route(self) -> tuple[str, dict[str, str]]:
+        """Base URL and extra headers for this feature (see the module docstring)."""
+        if self.feature in SUBSCRIPTION_FEATURES:
+            from deerflow.models.subscriptions import GROK_BASE
+
+            # The header the subscription host takes on every Grok CLI request.
+            return GROK_BASE, {"X-XAI-Token-Auth": "xai-grok-cli"}
+        return XAI_API, {}
+
     async def _send(self, method: str, path: str, *, max_bytes: int, **kwargs) -> tuple[bytes, str]:
         token, _ = await resolve_access(self.feature)
-        headers = {"Authorization": f"Bearer {token}", "User-Agent": USER_AGENT}
+        base, route_headers = self._route()
+        headers = {"Authorization": f"Bearer {token}", "User-Agent": USER_AGENT, **route_headers}
         try:
             async with httpx.AsyncClient(timeout=self.timeout, follow_redirects=False, transport=self._transport) as client:
-                async with client.stream(method, f"{XAI_API}{path}", headers=headers, **kwargs) as response:
+                async with client.stream(method, f"{base}{path}", headers=headers, **kwargs) as response:
                     if not response.is_success:
                         raise _refusal(response.status_code, path)
                     body = bytearray()

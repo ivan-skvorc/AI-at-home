@@ -1603,9 +1603,15 @@ class SubagentExecutor:
         # scoped to the subagent admitted tool list, and runtime authorization
         # still checks execution, so promotion cannot widen
         # the subagent's admitted tool authority.
+        # Fork (FORK.md §47): a subagent on a small window — the cheap local
+        # model this fork delegates to — defers MCP schemas whatever the config
+        # says, as the lead does; bound in full they can outgrow its window.
+        from deerflow.utils.context_budget import configured_model_budget
+
+        child_budget = configured_model_budget(resolved_app_config, self.model_name)
         final_tools, deferred_setup = assemble_deferred_tools(
             configured_tools,
-            enabled=resolved_app_config.tool_search.enabled,
+            enabled=resolved_app_config.tool_search.enabled or (child_budget is not None and child_budget.is_small),
         )
         final_tools.extend(late_tools)
 

@@ -602,6 +602,7 @@ export const enUS: Translations = {
     doubleUltracodeMode: "Double Plus Ultracode",
     doubleUltracodeModeDescription:
       "Token-risky. Meant for extremely large tasks that should run until they finish, without interruptions. Same workflow script as Plus Ultracode, but tool-call limits are off, so the run is not told to wrap up and is not stopped for calling a tool too many times.",
+    doubleUltracodeWarningTitle: "Token-risky: runs until the task is finished",
     ultracodeUnavailable:
       "Plus Ultracode and Double Plus Ultracode need the Script workflows extension, which is not enabled. This chat now uses Ultra.",
     reasoningEffort: "Reasoning Effort",
@@ -2385,10 +2386,10 @@ export const enUS: Translations = {
         "Use the connected Grok plan for more than chat. Each feature sends data to xAI and uses the plan’s quota, for every user of this server. All of them stay off until you switch them on.",
       grokFeatureImage: "Image generation and editing (Grok Imagine)",
       grokFeatureImageNote:
-        "Sends prompts, and any images you ask it to edit, to xAI.",
+        "Sends prompts, and any images you ask it to edit, to xAI. Uses the plan’s own Imagine quota, so the plan is checked on the first request.",
       grokFeatureVideo: "Video generation (Grok Imagine)",
       grokFeatureVideoNote:
-        "Sends prompts and images to xAI. Clips use scarce plan quota.",
+        "Sends prompts and images to xAI. Clips use scarce plan quota, and the plan is checked on the first request.",
       grokFeatureXSearch: "X search",
       grokFeatureXSearchNote:
         "Sends search queries to xAI and answers with links to X posts.",

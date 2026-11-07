@@ -230,3 +230,24 @@ def test_the_readme_still_has_the_shape_the_cycle_sends_a_feature_to() -> None:
     description = readme.find("fork of [bytedance/deer-flow]", lead)
     assert description != -1, "the short description of the repo that follows the bullet list is gone"
     assert "What this fork is for" in readme[description:], "README.md lost the statement of what the fork is for, which is what tells a reader whether a change belongs here"
+
+
+def test_the_critical_checks_come_first_and_include_the_local_model_window() -> None:
+    """The checks a user loses the product over run before everything else.
+
+    Each piece can be dropped without anything else noticing: the section, the
+    FORK.md list it points at, the ordering that keeps that list ahead of the
+    sync PR body's truncation, the Ollama context check the owner asked for by
+    name, and the report line that shows they ran.
+    """
+    cycle = CHANGE_CYCLE.read_text(encoding="utf-8")
+    fork = FORK_MD.read_text(encoding="utf-8")
+
+    assert re.search(r"^##\s+Critical checks\b", cycle, re.MULTILINE), "CHANGE_CYCLE.md lost its critical-checks section"
+    assert "Critical checks:" in cycle, "the report shape stopped listing the critical checks"
+    checklist = fork[fork.index("### Post-sync feature checklist") :]
+    assert re.search(r"^####\s+Critical checks\s*$", checklist, re.MULTILINE), "FORK.md's checklist lost its Critical checks list"
+    first_gate = next(line for line in checklist.splitlines() if line.lstrip().startswith("- [ ]"))
+    assert "Critical" in first_gate, "the critical checks are no longer the first lines the sync script parses"
+    assert "tests/test_context_fit_critical.py" in first_gate, "the local-model context-size check is no longer a critical check"
+    assert (REPO_ROOT / "backend" / "tests" / "test_context_fit_critical.py").is_file()

@@ -1,5 +1,7 @@
 "use client";
 
+import { TriangleAlertIcon } from "lucide-react";
+
 import { useI18n } from "@/core/i18n/hooks";
 import type { Translations } from "@/core/i18n/locales/types";
 
@@ -74,6 +76,56 @@ function getModeDescriptionKey(
   }
 }
 
+/**
+ * The floating warning for Double Plus Ultracode (FORK.md §44): an alert icon,
+ * a one-line risk title and the mode's description. Shown on hover and focus of
+ * the menu option, before anyone selects it, and of the composer's mode button
+ * while it is selected.
+ */
+export function ModeWarning({
+  title,
+  description,
+}: {
+  title: string;
+  description: string;
+}) {
+  return (
+    <div className="flex max-w-72 gap-2 text-left" role="note">
+      <TriangleAlertIcon
+        aria-hidden
+        className="text-destructive mt-0.5 size-4 shrink-0"
+      />
+      <div className="space-y-1">
+        <p className="font-semibold">{title}</p>
+        <p>{description}</p>
+      </div>
+    </div>
+  );
+}
+
+/** Hover/focus wrapper for the Double Plus Ultracode menu option. */
+export function DoubleUltracodeWarningTooltip({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
+  const { t } = useI18n();
+  return (
+    <Tooltip
+      side="right"
+      delayDuration={100}
+      content={
+        <ModeWarning
+          title={t.inputBox.doubleUltracodeWarningTitle}
+          description={t.inputBox.doubleUltracodeModeDescription}
+        />
+      }
+    >
+      {children}
+    </Tooltip>
+  );
+}
+
 export function ModeHoverGuide({
   mode,
   children,
@@ -87,6 +139,22 @@ export function ModeHoverGuide({
   const { t } = useI18n();
   const label = t.inputBox[getModeLabelKey(mode)];
   const description = t.inputBox[getModeDescriptionKey(mode)];
+  if (mode === "double_ultracode") {
+    // A risk, not a feature tour: warn as soon as the pointer arrives.
+    return (
+      <Tooltip
+        delayDuration={100}
+        content={
+          <ModeWarning
+            title={t.inputBox.doubleUltracodeWarningTitle}
+            description={description}
+          />
+        }
+      >
+        {children}
+      </Tooltip>
+    );
+  }
   const content = showTitle ? `${label}: ${description}` : description;
 
   return <Tooltip content={content}>{children}</Tooltip>;

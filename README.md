@@ -8,7 +8,7 @@
 > - 🦙 **Auto-populated Ollama models** — `config.yaml` syncs from your `ollama pull` list on every launch, with capabilities detected and a VRAM-aware context window instead of Ollama's 2048-token default. Local models are **free** — you pay for electricity.
 > - 🔑 **API-key model auto-config** — drop a cloud key in `.env` and the matching models uncomment themselves in `config.yaml` on the next launch. Anthropic, OpenAI, xAI, Gemini, DeepSeek, Moonshot, Qwen, Mistral, MiniMax, Z.ai direct, plus a routed set via OpenRouter — one flagship per lab, except Anthropic and OpenAI, whose top tier is really two models a factor of two or more apart in price, so both halves are routed (Fable 5.1 + Opus 5.5, GPT-6 Astra + GPT-6.1 Sol).
 > - 🎟️ **Subscription models from Settings → Models** — connect a ChatGPT plan in your browser, sign in to Grok with a device code, or add a Kimi Code subscription key. Available models populate the picker automatically, with encrypted server-side credentials and refresh/disconnect controls. ChatGPT uses a manual return-URL handoff for LAN/Tailscale access; Kimi is restricted to personal interactive chats.
-> - 🎨 **Grok Imagine, X search and voice on your Grok plan** — once Grok is connected, an administrator can switch on image generation and editing, short video clips, X (Twitter) search and Grok voice (read answers aloud, transcribe speech), all paid for by the Grok subscription instead of API billing. **Every switch starts off**, a feature xAI refuses for your plan stays locked, and each one says it sends your prompt (and, for edits, your images) to xAI; the internet switch turns them all off for a chat. Costs nothing to turn on beyond the plan you already have.
+> - 🎨 **Grok Imagine, X search and voice on your Grok plan** — once Grok is connected, an administrator can switch on image generation and editing, short video clips, X (Twitter) search and Grok voice (read answers aloud, transcribe speech), all paid for by the Grok subscription instead of API billing. **Every switch starts off**, a feature xAI refuses for your plan stays locked (image and video run on the plan's own Imagine quota, so the plan is checked on their first request), and each one says it sends your prompt (and, for edits, your images) to xAI; the internet switch turns them all off for a chat. Costs nothing to turn on beyond the plan you already have.
 > - 🔎 **Self-hosted search, no API key** — a bundled SearXNG is provisioned at startup (an existing instance is reused) and backs the default `web_search`.
 > - 🦊 **A local browser for page fetching, no API key** — Camoufox replaces the Jina cloud reader as the default `web_fetch`, and installs itself on every launch path.
 > - 📱 **Installable on your phone** — a web app manifest and service worker, so you can add it to your home screen and get a Web Push notification when a long run finishes with the browser closed. Needs a secure origin; the settings page says so if you are on plain HTTP.
@@ -17,7 +17,7 @@
 > **Using it every day**
 >
 > - ➕ **Plus Ultracode — the plan becomes a script** — inspired by Claude Code's *ultracode* (this is the mode that used to be called Double Plus Ultracode). In this composer mode the agent answers a substantive request by writing an inspectable workflow script that many agents run in the background (understand, change, verify, with findings checked by a second agent), and the result **comes back to the same chat on its own**, exactly once. The Script workflows extension it runs on is bundled and on by default. Agent and time limits live under **Settings → Subagents**, one failed agent no longer ends the whole workflow, and the usual **tool-call limits still apply** — a runaway tool loop is still told to wrap up.
-> - 🧬 **Double Plus Ultracode — the same script, with no tool-call limits** — the same workflow as Plus Ultracode, but tool-call limits are off: the agent is not told to wrap up after repeated calls, and it is not forced to stop. Hover the mode in the composer — the popup warns that this is **token-risky** and meant for **extremely large tasks that should run until they finish, without interruptions**. Agent count and time limits under **Settings → Subagents** still apply to both modes. Do not leave this selected for ordinary chat.
+> - 🧬 **Double Plus Ultracode — the same script, with no tool-call limits** — the same workflow as Plus Ultracode, but tool-call limits are off: the agent is not told to wrap up after repeated calls, and it is not forced to stop. Its workflow agents also get the step limit's ceiling instead of the default, so a long agent is not cut off at 250 steps. Hover or focus the option in the mode menu, before you pick it, and a **warning** pops up: **token-risky**, meant for **extremely large tasks that should run until they finish, without interruptions**. Agent count and time limits under **Settings → Subagents**, the spend cap and token budgets still apply. Do not leave this selected for ordinary chat.
 > - 🎚️ **Run limits you can change or switch off in Settings** — the spend cap, the tool-call limits that tell an agent to "wrap up" after 30 calls to one tool, the token budgets and the step limit for background runs all live under **Settings → Run limits**, so a long merge or refactor — in Plus Ultracode or any other mode — no longer stops halfway because of a number buried in `config.yaml`. Double Plus Ultracode already runs with tool-call limits off for that one run. Each limit shows whether it comes from `config.yaml` or was set on the page, and **one click goes back to `config.yaml`**. Administrators only; changes apply from the next run, with no restart.
 > - 🔀 **Independent model per conversation, remembered by the conversation** — every chat keeps its own model, subagent model, mode and reasoning effort, recorded on the chat itself rather than in one browser. Switching conversations switches the picker to *that* chat's model instead of leaving the last one selected — on your phone and after a site-data clear too — and a brand-new chat no longer forgets its model the moment it is created.
 > - 🚦 **Concurrent chats** — leaving a chat used to cancel its run. Now a chat you leave mid-answer keeps streaming in the background and notifies you when it lands; come back and the answer is already there.
@@ -27,7 +27,7 @@
 > - 📄 **PDF / Office uploads that just work** — `pymupdf4llm` is bundled, so PDF / DOCX / PPTX / XLSX uploads are reliably readable by the agent (`uploads.auto_convert_documents: true`).
 > - 📚 **Big documents on small models** — `analyze_document` reads a document in parts sized for whichever model is serving, so a 300-page PDF never has to fit in a 32K local model. A **scanned** PDF is detected and transcribed by a vision model rather than summarised into fiction. An upload too large to read in one window now says so in the prompt — with its real extracted size, not the compressed file size — and every answer names the **pages** it came from, so a read that stopped early hands back a `start_part` to continue from instead of quietly answering about the first 40%.
 > - 📖 **Books in any format, zipped or not** — an HTML, EPUB, plain-text or zipped book (a Project Gutenberg download, say) now states its size in the prompt and, when it is too big for one window, is routed to `analyze_document`, which reads HTML and EPUB as Markdown and reads the documents inside a zip. **Nothing is parsed or unpacked on the host to size an upload**, and a zip that would unpack past 64 MB, holds over 1,000 files, nests another archive or is encrypted is refused with the reason. Nothing to turn on.
-> - 🧱 **No request bigger than the window** — before every model call the whole request (system prompt, tool schemas, conversation) is measured against the serving model's window. If it does not fit, the oldest tool results are dropped from that request — never your messages or the instructions — and if it still does not fit it is **not sent**: the chat says why, instead of Ollama silently cutting off the start of the prompt. Compaction now fires at half a small model's window instead of at 32,000 tokens. Nothing to turn on; a model whose window is unknown is left alone.
+> - 🧱 **No request bigger than the window** — before every model call the whole request (system prompt, tool schemas, conversation) is measured against the serving model's window. If it does not fit, the oldest tool results are dropped from that request — never your messages or the instructions — and if it still does not fit it is **not sent**: the chat says why, instead of Ollama silently cutting off the start of the prompt. On a local model the request is also **built to fit from the first message**: tools are described in short form, skills are listed by name and MCP tools wait behind a search, so a synced 32K Ollama model keeps about 15K tokens for the conversation in Flash mode (it had about 7K). Compaction fires before the window fills, and a refusal states the real limit and what is using it. Nothing to turn on; a model whose window is unknown is left alone.
 > - 🎯 **A drift check for long documents** — `make drift-eval` gives a model a large PDF with facts planted at known pages, then has a *second* model judge whether the answer still addresses the question that was asked or quietly became "summarise this document". The planted facts grade the judge too, so a judge that waves through a wrong answer is reported as the judge failing. Runs offline against the document path, or end to end through the running agent with `MODE=agent`.
 > - 🐳 **Full clone-and-debug sandbox runs** — one-command per-thread containers, host-reachable ports, native debuggers (`gdb` / `strace`), and a `repo-runner` skill that encodes clone → install → run → debug.
 > - 📜 **Scroll-back that survives a restart** — history is served by the run-event store, which now defaults to `db` rather than process memory. Older messages keep loading after the Gateway restarts.
@@ -53,7 +53,7 @@
 > - 🧵 **Sub-agents that respect what your GPU can hold** — local dispatch asks the card instead of using a fixed number, so five sub-agents on a model that fits once run one at a time rather than queueing invisibly inside Ollama. On by default.
 > - 🧩 **Per-thread subagent model** — in Ultra mode, route `task` subagents to a cheaper or local model (defaults to "Follow lead").
 > - 🪃 **Model fallback chains** — a retryable failure (daemon down, context overflow, no tool support, provider 5xx) degrades to the next model you listed. Cancels, spend caps and guardrail refusals never fall back.
-> - 📜 **The system prompt is visible and editable** — Settings → System prompt shows the template in force, an Edit tab, and a Preview with every placeholder filled in. Saved beside your other state, applied with no restart, admin-gated.
+> - 📜 **The system prompt is visible and editable** — Settings → System prompt shows the template in force, an Edit tab, and a Preview with every placeholder filled in. Saved beside your other state, applied with no restart, admin-gated. The built-in prompt answers **overview-first** in every mode — the result, then detail only when you ask — and puts every command in its own copy-pasteable block.
 > - 🔃 **A sortable, grouped model picker on every screen that picks a model** — sort by name or price, group by provider, search, with prices as one right-aligned column and a local model's weights and context window under its id. Remembered per browser and shared across all of them.
 > - 🎙️ **Dictation that stops shipping your voice to Google** — Chrome's on-device recognition first, then a Whisper-compatible service on **your** machine. The vendor cloud is `voice.allow_cloud_fallback: true`, off by default.
 >
@@ -2109,7 +2109,10 @@ connect and on **Refresh models**, DeerFlow asks xAI what this grant can reach
 without generating anything. Each feature then shows **On your plan**, **Not on
 your plan** (xAI refused it; the switch stays locked) or **Couldn't check**
 (DeerFlow could not tell; you may still switch it on, and a refusal is reported
-when it is used). Turning a feature off takes effect on the very next request,
+when it is used). Image and video always show *Couldn't check*: they run on the
+subscription's own Imagine quota, the same host Grok chat uses, which the check
+cannot see — xAI's public API refuses a subscription for Imagine on billing
+grounds even when the plan includes it. Turning a feature off takes effect on the very next request,
 including inside a run that is already going.
 
 Once switched on, the agent gets these tools:
@@ -3541,9 +3544,13 @@ script, and only the final answer comes back to the conversation.
 tool-call limits still on (wrap up after repeated calls to one tool, then a
 forced stop). *Double Plus Ultracode* is the same run — same brief, same agent
 and time limits — with those tool-call limits **off** for the lead and for
-every agent the workflow starts. Hover it in the mode menu: the popup warns
-that it is token-risky and meant only for extremely large tasks that should
-run until they finish, without interruptions. A chat that already had the old
+every agent the workflow starts, and those agents get the step limit's
+ceiling (`max_recursion_limit`, 1000 as shipped) instead of the 250-step
+default. The spend cap and token budgets an administrator set still apply.
+Hover or focus it in the mode menu, before you pick it, and a warning pops up:
+it is token-risky and meant only for extremely large tasks that should run until
+they finish, without interruptions. The same warning shows on the mode button
+while it is selected. A chat that already had the old
 Double Plus Ultracode name keeps Plus Ultracode, so it does not silently lose
 its limits. Do not leave Double Plus Ultracode selected for ordinary chat.
 
@@ -4231,7 +4238,7 @@ in the turn. Rebuilt results from the same current invocation keep one history e
 
 ### System Prompt
 
-Every run starts from a system prompt — roughly 12,000 characters of instructions assembled before your first message ever reaches the model. It sets the agent's role, how it thinks, when it delegates to sub-agents, which skills it can reach for, and what it is allowed to say about itself. In most agent frameworks that text is a constant buried in the source. Here it is a page in the app.
+Every run starts from a system prompt — roughly 10,000 characters of instructions assembled before your first message ever reaches the model. It sets the agent's role, how it thinks, when it delegates to sub-agents, which skills it can reach for, and what it is allowed to say about itself. In most agent frameworks that text is a constant buried in the source. Here it is a page in the app.
 
 **Settings → System prompt** has two tabs:
 
@@ -5278,11 +5285,24 @@ are dropped from that request**, each replaced by a note telling the model to
 work from what it has or use `analyze_document`. Your messages, the instructions
 and the results the model is about to read are never touched, and the stored
 conversation is unchanged. **If it still does not fit, it is not sent**: the chat
-ends with a message naming the model and its window and suggesting a new chat,
-`/compact`, or a model with a larger window. Compaction also fires earlier: at
-half the model's prompt space when that is below the configured
-`summarization.trigger` token count — 12,288 tokens on a synced 32K Ollama model —
-which stays the ceiling for larger models.
+ends with a message naming the model, the room it really has (its window, less
+the part kept for the reply, less a 10% margin because the size is estimated) and
+how much of the request is the system prompt and tool definitions. When those are
+most of it, a new chat would be just as large, so the message says to give the
+model a larger `num_ctx`, switch off tools or MCP servers, or pick a model with a
+larger window; otherwise it suggests `/compact`.
+
+**On a small window — a local GPU's, up to 64K tokens of prompt — the request is
+built to fit from the first message.** Tool definitions go out in short form (the
+same tools and parameters, shorter descriptions), skills are listed by name and
+read on demand, and MCP tools wait behind `tool_search` until they are needed,
+whatever `skills.deferred_discovery` and `tool_search.enabled` say. On a synced
+32K Ollama model a new chat's instructions and tools take about 7.4K tokens in
+Flash and 11.4K in Double Plus Ultracode, leaving 10–15K for the conversation;
+before, Double Plus Ultracode left 74. Compaction also fires earlier: below what
+the guard leaves after those fixed tokens — 10,118 tokens on a synced 32K model —
+and at half the prompt space on larger ones, with the configured
+`summarization.trigger` token count as the ceiling.
 
 **Limits.** The size is estimated, not tokenized: about four characters per token
 for English and about one token per character for Chinese or Japanese, with a 10%

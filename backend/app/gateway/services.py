@@ -1435,6 +1435,29 @@ def _clamp_recursion_limit(value: Any, max_limit: int, default_limit: int) -> in
     return min(value, max_limit)
 
 
+def apply_double_ultracode_step_ceiling(config: dict[str, Any], request_config: Mapping[str, Any] | None) -> None:
+    """Give a Double Plus Ultracode run the operator's step ceiling (fork, FORK.md §44).
+
+    The mode is for tasks that should run until they finish. Tool-call limits are
+    off for it (``LoopDetectionMiddleware``), but the step limit still ended the
+    workflow agents the extension starts: they send no ``recursion_limit`` and
+    got the default (250 super-steps, ~125 tool calls), while the web lead
+    already sends 1000. ``max_recursion_limit`` stays the ceiling, so the mode
+    asks for nothing an administrator did not allow, and an explicit client
+    value is left to the ordinary clamp.
+    """
+    from deerflow.agents.middlewares.loop_detection_middleware import DOUBLE_ULTRACODE_MODE
+
+    context = config.get("context")
+    if not isinstance(context, Mapping) or context.get("mode") != DOUBLE_ULTRACODE_MODE:
+        return
+    if isinstance(request_config, Mapping) and "recursion_limit" in request_config:
+        return
+    current = config.get("recursion_limit")
+    ceiling = _resolve_max_recursion_limit()
+    config["recursion_limit"] = max(current, ceiling) if isinstance(current, int) and not isinstance(current, bool) else ceiling
+
+
 def custom_agent_name(assistant_id: str | None) -> str | None:
     """Return the custom agent *assistant_id* selects, or ``None`` for the lead agent.
 
@@ -2457,6 +2480,7 @@ async def start_run(
             # ``body.config`` is free-form and copied verbatim by
             # ``build_run_config``; scrub internal-only keys smuggled there.
             strip_internal_context_keys(config)
+        apply_double_ultracode_step_ceiling(config, body.config)
 
         replay_kind = run_metadata.get("replay_kind")
         target_message_id = run_metadata.get("regenerate_from_message_id")

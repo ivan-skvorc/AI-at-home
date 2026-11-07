@@ -18,10 +18,11 @@ Stop and ask only when a material decision cannot be resolved from the request
 or repository. Report unavailable tools or access honestly; do not claim an
 unfinished check or unopened PR is complete.
 
-**The shape, end to end:** run relevant existing tests → make the change → reuse
-coverage, add missing tests, and remove unnecessary tests in the affected area →
-maintain FORK.md's checklist → run the required checks at the scope in step 5,
-including new or changed tests → run the model audit **only if you were told
+**The shape, end to end:** run the **critical checks** → run relevant existing
+tests → make the change → reuse coverage, add missing tests, and remove
+unnecessary tests in the affected area →
+maintain FORK.md's checklist → run the critical checks again, then the required
+checks at the scope in step 5, including new or changed tests → run the model audit **only if you were told
 to** → land the docs, and a **new feature owes `README.md` its bullet** → commit,
 push, and **open the pull request**. The cycle is
 not finished when the tests pass; it is finished when the PR is open. Nobody has
@@ -33,6 +34,7 @@ runs on lives in [`FORK.md`](FORK.md):
 
 | What | Where |
 | ---- | ----- |
+| The critical checks | [FORK.md → Critical checks](FORK.md#critical-checks) — the first lines of the checklist, each a command that guards something a user loses outright |
 | The test list | [FORK.md → Post-sync feature checklist](FORK.md#post-sync-feature-checklist) — mechanical gates, then one row per fork feature naming the exact command that proves it still works |
 | The model audit | [FORK.md → The model bundle and its audit](FORK.md#the-model-bundle-and-its-audit), whose pass is [Auditing the model list](FORK.md#auditing-the-model-list-settings--pricing) |
 | What a new feature must document | [FORK.md → Adding a new fork feature](FORK.md#adding-a-new-fork-feature--what-to-write-and-where) |
@@ -43,6 +45,42 @@ another file silently disappears from the list meant to prove the fork still
 works.
 
 ---
+
+## Critical checks — before everything else
+
+Some failures matter more than any test count. A local model that refuses its
+first message, a private stack reachable from the network, an install that will
+not start after an update, a run that spends past its cap: each takes the product
+away from the person using it, and each is silent to the rest of the suite. The
+commands live at the top of FORK.md's checklist,
+[Critical checks](FORK.md#critical-checks); today they cover:
+
+- **Local models fit their window** — the Ollama context size. A fresh request
+  in every composer mode must fit a synced 32K entry with room for the
+  conversation, and compaction must fire before the context guard refuses.
+- **Nothing listens beyond loopback by default.**
+- **An existing install still starts** — config version, config upgrade, one
+  migration head.
+- **A run cannot spend past its caps.**
+
+The rules that make them critical rather than just more tests:
+
+- **Every change that touches code, configuration or a prompt runs all of them**,
+  whatever step 5's table selects: first as part of the baseline in step 1, and
+  again on the final tree before anything else in step 5. A docs-only change
+  skips them unless it edits a command they run.
+- **Red stops the change.** Fix it or take the change back out. Never skip,
+  loosen, or raise a threshold to make one pass — a critical check that fails
+  after your change *is* the bug report. Raising a budget it pins is a product
+  decision: say what it costs (for the context check, the conversation room a
+  32K model loses) and leave it to the reviewer.
+- **Environmental only with evidence**: the same failure on the base revision in
+  the same environment, recorded in the PR. Otherwise it is a regression.
+- **Reported first.** The PR's Validation section and the step 10 report list
+  the critical checks before anything else.
+- **Adding one is cheap, removing one is not.** A new critical check is a
+  checkbox at the top of that FORK.md list; it is parsed into every automated
+  sync PR ahead of the rest, so it survives the body's truncation.
 
 ## 1. Restate and branch
 
@@ -59,8 +97,10 @@ gates in [`.agent/skills/engineer-system-change`](.agent/skills/engineer-system-
 first — they are what keeps a real problem from turning into an oversized fix.
 
 Inspect the working tree, the root and applicable nested `AGENTS.md` files, and
-existing tests for the affected behavior. Choose the checks using step 5 and run
-the relevant existing tests before editing to establish a baseline. Give delegated
+existing tests for the affected behavior. Run the [critical
+checks](#critical-checks--before-everything-else), then choose the checks using
+step 5 and run the relevant existing tests before editing to establish a
+baseline. Give delegated
 agents the same instructions and scope; the lead agent remains responsible for
 the final combined checks and the PR. Preserve unrelated user changes.
 
@@ -179,8 +219,9 @@ skip:
 
 Always run relevant **existing** tests, as well as any tests added or changed.
 Use the baseline from step 1 to distinguish pre-existing failures from regressions.
-After all edits (including docs and formatting), run the checks below and the
-affected rows in the [post-sync checklist](FORK.md#post-sync-feature-checklist):
+After all edits (including docs and formatting), run the [critical
+checks](#critical-checks--before-everything-else) first, then the checks below and
+the affected rows in the [post-sync checklist](FORK.md#post-sync-feature-checklist):
 
 | Change | Required final checks |
 | ------ | --------------------- |
@@ -330,7 +371,8 @@ Fill in [`.github/pull_request_template.md`](.github/pull_request_template.md) �
 - **What changed** — what a user or caller sees differently now.
 - **Surface area** — what the change can reach that the diff does not name.
 - **Bug fix verification** — for a fix, how the bug was reproduced before it.
-- **Validation** — the commands you actually ran and their outcome, plus any
+- **Validation** — the critical checks first, then the commands you actually ran
+  and their outcome, plus any
   failure classified as environmental **with the evidence from step 5**. This is
   the section reviewers read first and the one most often filled in with
   intentions instead of results; "the suite passes" without the numbers is not
@@ -351,6 +393,7 @@ Last thing you output, in this shape:
 
 ```text
 Change:           <the one sentence from step 1>
+Critical checks:  <each one and its result; any failure, and the base-revision evidence>
 Tests added:      <paths, or "none — <reason>">
 Tests reviewed:   <existing coverage reused and scope>
 Tests removed:    <paths and retained coverage/retired behavior, or "none — <reason>">
@@ -363,8 +406,9 @@ Model audit:      <run — logged <date> | not run (not asked) — last pass <da
 PR:               <url>
 ```
 
-**Done means:** the checks required by step 5 ran, test maintenance was reviewed,
-the checklist matches the code, the docs landed in the same change set, and
+**Done means:** the critical checks are green, the checks required by step 5 ran,
+test maintenance was reviewed, the checklist matches the code, the docs landed in
+the same change set, and
 **the PR is open with its URL in the report** (unless the user explicitly narrowed
 delivery). If checks or PR creation are blocked, report the actual failure and
 remaining work; do not call the cycle complete.

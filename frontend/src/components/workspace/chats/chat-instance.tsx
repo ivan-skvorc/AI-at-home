@@ -83,6 +83,7 @@ import {
   useThreadTokenUsage,
 } from "@/core/threads/hooks";
 import { useMaybeLiveChatSlots } from "@/core/threads/live-chat-slots-context";
+import { modeUsesSubagents } from "@/core/threads/run-context";
 import type { ThreadWorkflow } from "@/core/threads/thread-workflow";
 import {
   selectContextUsage,
@@ -503,7 +504,7 @@ function ChatInstanceContent({
       const runModelContext: Record<string, unknown> = {};
       if (choice?.model_name) {
         if (choice.scope === "task") {
-          if (settings.context.mode !== "ultra") {
+          if (!modeUsesSubagents(settings.context.mode)) {
             toast.error(
               locale.startsWith("zh")
                 ? "当前未启用子任务，请先启用 Ultra 模式。"

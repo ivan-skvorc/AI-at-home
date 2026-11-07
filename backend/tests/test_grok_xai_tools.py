@@ -1,9 +1,11 @@
 """Grok Imagine and X search tools over offline HTTP (FORK.md §43).
 
-Pinned: the token goes only to api.x.ai and never into a written file; source
-images leave as data URIs and are recorded by path; a plan-quota refusal is
-reported without a retry; generated files are fetched only from pinned hosts;
-and a video job's terminal states are reported as themselves.
+Pinned: Imagine goes to the subscription host (a subscription token is refused
+for credits on api.x.ai), X search to api.x.ai, and the token goes nowhere else
+and never into a written file; source images leave as data URIs and are
+recorded by path; a plan-quota refusal is reported without a retry; generated
+files are fetched only from pinned hosts; and a video job's terminal states are
+reported as themselves.
 """
 
 from __future__ import annotations
@@ -21,6 +23,7 @@ from deerflow.community.xai import client as client_module
 from deerflow.community.xai import tools
 
 TOKEN = "grok-secret-token"
+SUBSCRIPTION_HOST = "cli-chat-proxy.grok.com"
 
 
 @pytest.fixture
@@ -69,8 +72,11 @@ async def test_generate_image_writes_outputs_and_keeps_the_token_off_disk(xai, t
     assert command.update["artifacts"] == payload["images"]
     assert payload["images"][0].startswith("/mnt/user-data/outputs/") and payload["images"][0].endswith(".png")
     request = xai.requests[0]
-    assert str(request.url) == "https://api.x.ai/v1/images/generations"
+    # On api.x.ai a subscription token is refused for pay-as-you-go credits
+    # (HTTP 403 "spending-limit"); the subscription host bills the plan.
+    assert str(request.url) == f"https://{SUBSCRIPTION_HOST}/v1/images/generations"
     assert request.headers["authorization"] == f"Bearer {TOKEN}"
+    assert request.headers["x-xai-token-auth"] == "xai-grok-cli"
     assert json.loads(request.content) == {"model": "grok-imagine-image", "prompt": "a lighthouse at dusk", "n": 1, "response_format": "b64_json", "aspect_ratio": "16:9"}
     written = {path.name: path.read_bytes() for path in dirs["outputs"].iterdir()}
     assert PNG_1PX in written.values()
@@ -120,7 +126,7 @@ async def test_url_results_download_only_from_pinned_hosts_and_without_the_token
     runtime, _ = _runtime(tmp_path)
 
     def handler(request):
-        if request.url.host == "api.x.ai":
+        if request.url.host == SUBSCRIPTION_HOST:
             return httpx.Response(200, json={"data": [{"url": xai.file_url}]})
         return httpx.Response(200, content=PNG_1PX)
 
@@ -135,7 +141,7 @@ async def test_url_results_download_only_from_pinned_hosts_and_without_the_token
     xai.file_url = "https://evil.example/one.png"
     command = await tools.grok_generate_image_tool.coroutine(runtime=runtime, tool_call_id="t1", prompt="cat")
     assert "unexpected host" in _message(command)
-    assert [request.url.host for request in xai.requests] == ["api.x.ai"]
+    assert [request.url.host for request in xai.requests] == [SUBSCRIPTION_HOST]
 
 
 @pytest.mark.asyncio
@@ -168,6 +174,9 @@ async def test_video_polls_until_a_terminal_status(xai, tmp_path, monkeypatch, t
         assert payload["contact_sheet"] is None
         assert (dirs["outputs"] / payload["video"].rsplit("/", 1)[1]).read_bytes() == b"mp4-bytes"
         assert json.loads(xai.requests[0].content) == {"model": "grok-imagine-video", "prompt": "waves", "duration": 6}
+        # Create and poll on the subscription host; the clip comes from xAI's file host, without the token.
+        assert [request.url.host for request in xai.requests] == [SUBSCRIPTION_HOST, SUBSCRIPTION_HOST, SUBSCRIPTION_HOST, "vidgen.x.ai"]
+        assert "authorization" not in xai.requests[-1].headers
     else:
         assert message.startswith("Error:") and expected in message
         assert list(dirs["outputs"].iterdir()) == []
@@ -211,6 +220,8 @@ async def test_x_search_sends_filters_and_returns_cited_posts(xai):
     xai.handler = lambda request: httpx.Response(200, json=output)
     result = json.loads(await tools.x_search_tool.coroutine(query="launch reactions", from_date="2026-10-01", allowed_handles=["@SpaceX"]))
     body = json.loads(xai.requests[0].content)
+    # X search stays on the public API; only Imagine moved to the subscription host.
+    assert str(xai.requests[0].url) == "https://api.x.ai/v1/responses" and "x-xai-token-auth" not in xai.requests[0].headers
     assert body["tools"] == [{"type": "x_search", "from_date": "2026-10-01", "allowed_x_handles": ["SpaceX"]}]
     assert body["store"] is False and body["model"] == "grok-4.3"
     assert result["answer"] == "People are excited."

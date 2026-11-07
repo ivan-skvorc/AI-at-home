@@ -392,104 +392,26 @@ def _create_todo_list_middleware(is_plan_mode: bool) -> TodoMiddleware | None:
     if not is_plan_mode:
         return None
 
-    # Custom prompts matching DeerFlow's style
+    # Custom prompts matching DeerFlow's style. Kept short: this rides on every
+    # Pro/Ultra request, and the tool description repeated the section verbatim
+    # (FORK.md §47 — the fixed part of a request must fit a small window).
     system_prompt = """
 <todo_list_system>
-You have access to the `write_todos` tool to help you manage and track complex multi-step objectives.
-
-**CRITICAL RULES:**
-- Mark todos as completed IMMEDIATELY after finishing each step - do NOT batch completions
-- Keep EXACTLY ONE task as `in_progress` at any time (unless tasks can run in parallel)
-- Update the todo list in REAL-TIME as you work - this gives users visibility into your progress
-- DO NOT use this tool for simple tasks (< 3 steps) - just complete them directly
-
-**When to Use:**
-This tool is designed for complex objectives that require systematic tracking:
-- Complex multi-step tasks requiring 3+ distinct steps
-- Non-trivial tasks needing careful planning and execution
-- User explicitly requests a todo list
-- User provides multiple tasks (numbered or comma-separated list)
-- The plan may need revisions based on intermediate results
-
-**When NOT to Use:**
-- Single, straightforward tasks
-- Trivial tasks (< 3 steps)
-- Purely conversational or informational requests
-- Simple tool calls where the approach is obvious
-
-**Best Practices:**
-- Break down complex tasks into smaller, actionable steps
-- Use clear, descriptive task names
-- Remove tasks that become irrelevant
-- Add new tasks discovered during implementation
-- Don't be afraid to revise the todo list as you learn more
-
-**Task Management:**
-Writing todos takes time and tokens - use it when helpful for managing complex problems, not for simple requests.
+`write_todos` tracks multi-step work so the user can follow your progress. Use it when a task has 3 or more distinct
+steps, or when the user asks for a plan or gives you several tasks. Skip it for simple, one-step or conversational
+requests: just do them.
+- Mark a step `in_progress` before you start it and `completed` as soon as it is done; do not batch completions.
+- Keep exactly one step `in_progress` unless steps really run in parallel.
+- A step is completed only when it is fully done. Errors, partial work or a blocker keep it `in_progress`; add a step for the blocker.
+- Revise the list as you learn: add steps you discover and remove ones that no longer apply.
 </todo_list_system>
 """
 
-    tool_description = """Use this tool to create and manage a structured task list for complex work sessions.
+    tool_description = """Create or replace the task list for complex work (3 or more distinct steps). For simple or conversational requests, do the work directly instead.
 
-**IMPORTANT: Only use this tool for complex tasks (3+ steps). For simple requests, just do the work directly.**
-
-## When to Use
-
-Use this tool in these scenarios:
-1. **Complex multi-step tasks**: When a task requires 3 or more distinct steps or actions
-2. **Non-trivial tasks**: Tasks requiring careful planning or multiple operations
-3. **User explicitly requests todo list**: When the user directly asks you to track tasks
-4. **Multiple tasks**: When users provide a list of things to be done
-5. **Dynamic planning**: When the plan may need updates based on intermediate results
-
-## When NOT to Use
-
-Skip this tool when:
-1. The task is straightforward and takes less than 3 steps
-2. The task is trivial and tracking provides no benefit
-3. The task is purely conversational or informational
-4. It's clear what needs to be done and you can just do it
-
-## How to Use
-
-1. **Starting a task**: Mark it as `in_progress` BEFORE beginning work
-2. **Completing a task**: Mark it as `completed` IMMEDIATELY after finishing
-3. **Updating the list**: Add new tasks, remove irrelevant ones, or update descriptions as needed
-4. **Multiple updates**: You can make several updates at once (e.g., complete one task and start the next)
-
-## Task States
-
-- `pending`: Task not yet started
-- `in_progress`: Currently working on (can have multiple if tasks run in parallel)
-- `completed`: Task finished successfully
-
-## Task Completion Requirements
-
-**CRITICAL: Only mark a task as completed when you have FULLY accomplished it.**
-
-Never mark a task as completed if:
-- There are unresolved issues or errors
-- Work is partial or incomplete
-- You encountered blockers preventing completion
-- You couldn't find necessary resources or dependencies
-- Quality standards haven't been met
-
-If blocked, keep the task as `in_progress` and create a new task describing what needs to be resolved.
-
-## Best Practices
-
-- Create specific, actionable items
-- Break complex tasks into smaller, manageable steps
-- Use clear, descriptive task names
-- Update task status in real-time as you work
-- Mark tasks complete IMMEDIATELY after finishing (don't batch completions)
-- Remove tasks that are no longer relevant
-- **IMPORTANT**: When you write the todo list, mark your first task(s) as `in_progress` immediately
-- **IMPORTANT**: Unless all tasks are completed, always have at least one task `in_progress` to show progress
-
-Being proactive with task management demonstrates thoroughness and ensures all requirements are completed successfully.
-
-**Remember**: If you only need a few tool calls to complete a task and it's clear what to do, it's better to just do the task directly and NOT use this tool at all.
+Pass the whole list on every call. States: `pending`; `in_progress` (the step you are on: mark the first one
+when you write the list); `completed` (only when fully done, never with unresolved errors or partial work).
+Keep one step `in_progress` until every step is completed, and update the list as you go.
 """
 
     return TodoMiddleware(system_prompt=system_prompt, tool_description=tool_description)
@@ -1245,8 +1167,17 @@ def _assemble_lead_agent(config: RunnableConfig, *, app_config: AppConfig) -> Le
     # Build skill search setup (deferred skill discovery).
     # Controlled by skills.deferred_discovery — independent from tool_search.enabled.
     from deerflow.skills.describe import build_skill_search_setup
+    from deerflow.utils.context_budget import resolve_context_budget
 
-    skill_search_enabled = resolved_app_config.skills.deferred_discovery
+    # Fork (FORK.md §47): on a small window the full skill catalog and every MCP
+    # tool schema are a large share of the prompt space before the user has
+    # typed anything (the skills alone ~3.7K of a synced 32K Ollama entry's
+    # 24.5K), so skills are listed by name (describe_skill) and MCP schemas wait
+    # behind tool_search, whatever the config says.
+    serving_budget = resolve_context_budget(model_config, resolved_app_config)
+    small_window = serving_budget is not None and serving_budget.is_small
+    skill_search_enabled = resolved_app_config.skills.deferred_discovery or small_window
+    deferred_tools_enabled = resolved_app_config.tool_search.enabled or small_window
     container_base_path = resolved_app_config.skills.container_path
 
     if is_bootstrap:
@@ -1280,7 +1211,7 @@ def _assemble_lead_agent(config: RunnableConfig, *, app_config: AppConfig) -> Le
         layer_one = layer_one_outcome(authorization_candidates, authorized_tools)
         configured_tools = [tool for tool in authorized_tools if id(tool) in configured_tool_ids]
         late_tools = [tool for tool in authorized_tools if id(tool) not in configured_tool_ids]
-        final_tools, setup = assemble_deferred_tools(configured_tools, enabled=resolved_app_config.tool_search.enabled)
+        final_tools, setup = assemble_deferred_tools(configured_tools, enabled=deferred_tools_enabled)
         final_tools.extend(late_tools)
         mcp_routing_middleware = build_mcp_routing_middleware(
             final_tools,
@@ -1382,7 +1313,7 @@ def _assemble_lead_agent(config: RunnableConfig, *, app_config: AppConfig) -> Le
                     allowed_subagents=allowed_subagents,
                 ),
                 "deferred_tools": {
-                    "enabled": resolved_app_config.tool_search.enabled,
+                    "enabled": deferred_tools_enabled,
                     "catalog_hash": setup.catalog_hash,
                 },
                 "deferred_skills": skill_search_enabled,
@@ -1477,7 +1408,7 @@ def _assemble_lead_agent(config: RunnableConfig, *, app_config: AppConfig) -> Le
     layer_one = layer_one_outcome(authorization_candidates, authorized_tools)
     configured_tools = [tool for tool in authorized_tools if id(tool) in configured_tool_ids]
     late_tools = [tool for tool in authorized_tools if id(tool) not in configured_tool_ids]
-    final_tools, setup = assemble_deferred_tools(configured_tools, enabled=resolved_app_config.tool_search.enabled)
+    final_tools, setup = assemble_deferred_tools(configured_tools, enabled=deferred_tools_enabled)
     final_tools.extend(late_tools)
     mcp_routing_middleware = build_mcp_routing_middleware(
         final_tools,
@@ -1571,7 +1502,7 @@ def _assemble_lead_agent(config: RunnableConfig, *, app_config: AppConfig) -> Le
                 allowed_subagents=allowed_subagents,
             ),
             "deferred_tools": {
-                "enabled": resolved_app_config.tool_search.enabled,
+                "enabled": deferred_tools_enabled,
                 "catalog_hash": setup.catalog_hash,
             },
             "deferred_skills": skill_search_enabled,

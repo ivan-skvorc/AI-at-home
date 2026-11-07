@@ -49,6 +49,11 @@ measured on that file. Item **33** and most of **34** — the pre-call window gu
 window-derived compaction trigger — landed together: see [FORK.md §45](./FORK.md). 33's
 number stays retired like 12–15; 34 keeps only its unshipped half.
 
+Item **37** came out of the prompt pass in [FORK.md §47](./FORK.md): a brand-new Flash chat on
+a 14B Ollama model was refused because the system prompt and tool schemas alone outgrew its
+window. That pass shrank the one prompt every model gets; item 37 is the next step, a prompt
+shaped for the model that reads it.
+
 ---
 
 ## At a glance
@@ -81,6 +86,8 @@ Open items, one line each. The full orchestrator prompts follow.
   parts read in parallel by children inside their own windows, reduced hierarchically.
 - **36. Consequential tool calls wait for a yes** — creating a repository, pushing, sending
   or spending pauses for approval unless the operator pre-approved it.
+- **37. Model-aware system prompts** — one standard prompt as small as it can be, plus tuned
+  overlays for a few big-name local and cloud families, each shipped only with measurements.
 
 **Suggested order for 19–25.** Voice first (19), since it is the one missing modality and it
 closes a live privacy leak. Then the injection boundary (23), *before* anything widens the
@@ -93,6 +100,9 @@ of the stray tool call, but not the reach — a confused model can still create 
 and 35 multiplies the number of agents holding write tools. Then 35, which builds on the
 part sizing and window accounting that landed in FORK.md §45. 34's remainder is small and can
 go any time.
+
+**37** can start any time; its profiles are better measured once item 25's regression suite
+exists, and the standard prompt can ship first on its own.
 
 ---
 
@@ -755,6 +765,73 @@ builtin), `backend/packages/harness/deerflow/config/guardrails_config.py`,
 call shows an approval card and changes nothing until approved; a denial reaches the model as
 a tool error; a scheduled run's outward call is denied with a reason; read tools run without
 a prompt; and an MCP tool with no annotations is treated as outward.
+
+---
+
+## 37. Model-aware system prompts
+
+**Goal** — The lead agent's system prompt comes in two shapes. A **standard** prompt, as
+small as it can be while keeping every rule that matters, used by default and always on a
+small window. And **tuned overlays** for a few big-name model families — local (Qwen, Gemma,
+Meta's Muse and Llama, DeepSeek, Mistral) and cloud (Claude, GPT, Grok, Gemini, Kimi) — each
+a handful of lines that adjust the standard prompt to how that family reads instructions,
+formats answers and calls tools.
+
+**Why it fits** — FORK.md §47 measured the fixed part of a request — system prompt plus tool
+schemas — at 15K–22K tokens on a synced 32K Ollama entry, which is what refused a fresh Flash
+chat on `deepseek-r1:14b`. That pass cut it to 7.4K–11.4K and the Flash prompt to ~2.5K, but
+it is still one prompt for every model, written for a frontier cloud model. Families differ
+in ways a single prompt can only average over: how a system message is treated (some local
+templates fold it into the first user turn), how tool calls are emitted through Ollama's
+chat templates, how much formatting an answer gets by default, and how literally a
+capitalized MUST is taken — an emphatic rule a large model needs once can make a small one
+over-clarify or refuse. The fork's thesis is local and cloud side by side, so the prompt
+should be good for both rather than a compromise between them. Claims like these are
+hypotheses until measured, which is why every overlay ships with numbers.
+
+**Depends on** — nothing to start the standard prompt. The overlays are better measured on
+item 25's regression suite; until it exists, a fixed task set run by hand will do, recorded
+in the PR.
+
+**Scope**
+
+- **The standard prompt.** Split `SYSTEM_PROMPT_TEMPLATE` into a minimal core — identity,
+  the user-input and confidentiality boundaries, response style (overview first, detail on
+  request, commands in copy-pasteable blocks), file locations, the rules the tool schemas do
+  not carry — and optional sections (citation detail, skill-system detail, worked examples)
+  that a large window adds back. Keep every placeholder, so a saved `SYSTEM_PROMPT.md`
+  (FORK.md §19) still renders and still wins over both shapes.
+- **Profiles are data, not forks of the template.** One file per family (for example
+  `lead_agent/prompt_profiles/<family>.md`) of additions and replacements at named anchors,
+  so an upstream sync that edits the template touches one place, and a profile cannot drop a
+  security rule because it cannot see one.
+- **Which profile a model gets**: an explicit `prompt_profile:` on the model entry (config
+  and Settings → Models), else a match on the model id (`qwen*`, `gemma*`, `llama*`/`muse*`,
+  `deepseek*`, `mistral*`, `claude*`, `gpt-*`, `grok-*`, `gemini*`, `kimi*`), else standard.
+  Resolve it where the small-window decision is made (`assemble_lead_agent`), and record it
+  in the assembly descriptor so a trace says which prompt a run had.
+- **Measured, never guessed.** An overlay ships only with a recorded comparison against
+  standard on its family: answer length, overview-first compliance, fenced and runnable
+  command blocks, valid tool calls, clarification and refusal rate, and tokens per answer.
+  One that does not beat standard is not shipped.
+- **The critical context-fit check runs per profile**: no profile may push any composer mode
+  over `FIXED_REQUEST_ALLOWANCE_TOKENS` on a small window.
+- **Visible and reversible**: Settings → System prompt shows which profile each model gets,
+  and an administrator can switch profiles off and fall back to standard.
+
+**Key files** — `backend/packages/harness/deerflow/agents/lead_agent/prompt.py`,
+`backend/packages/harness/deerflow/agents/lead_agent/system_prompt_store.py`,
+`backend/packages/harness/deerflow/agents/lead_agent/agent.py`,
+`backend/packages/harness/deerflow/config/model_config.py`,
+`backend/packages/harness/deerflow/agents/assembly_descriptor.py`,
+`backend/tests/test_context_fit_critical.py`,
+`frontend/src/components/workspace/settings/` (the system prompt page), `scripts/benchmark/`.
+
+**Done when** — the standard prompt renders by default, is smaller than today's and passes
+the existing prompt contract tests; at least four overlays (two local families, two cloud)
+ship, each with a recorded comparison that beats standard on its family; an unknown model
+gets standard; a saved `SYSTEM_PROMPT.md` is untouched; and the critical context-fit check
+passes for every profile.
 
 ---
 

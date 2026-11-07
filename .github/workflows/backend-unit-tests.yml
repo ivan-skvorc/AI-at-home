@@ -48,7 +48,10 @@ jobs:
   backend-unit-tests:
     if: github.event.pull_request.draft == false
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # Fork: each shard runs 13-14.5 minutes of tests on a hosted runner, so 15
+    # left no margin and shards were cancelled after passing (main runs 357,
+    # 359; PR 149). Raise the shard count rather than this when it creeps up.
+    timeout-minutes: 25
     strategy:
       # Duration-aware split: `make test-shard` balances the shards by real
       # wall-clock cost from backend/.test_durations (read-only for shards, so
