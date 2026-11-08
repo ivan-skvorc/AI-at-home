@@ -674,6 +674,59 @@ class TestGpuMemoryDetection:
         assert detector.__name__ == "detect_dedicated_vram_gb"
 
 
+REMOTE_DAEMON = "http://100.127.96.28:11434"
+
+
+class TestDaemonOnAnotherMachine:
+    """A daemon elsewhere on the network keeps syncing without OLLAMA_HOST.
+
+    A launch without OLLAMA_HOST asks localhost (the Docker launch paths never
+    read it from .env). For a daemon on another machine that is the wrong
+    place, so every such launch skipped as "unreachable" and the entries an
+    earlier OLLAMA_HOST run wrote — models and windows — never refreshed.
+    """
+
+    def _run(self, monkeypatch, capsys, tmp_path, recorded=REMOTE_DAEMON, env_host=None):
+        asked = []
+
+        def fetch_tags(host, timeout=2.0):
+            asked.append(host)
+            return [{"name": "deepseek-r1:14b", "size": DEEPSEEK_R1_14B_WEIGHTS}] if host == REMOTE_DAEMON else None
+
+        config = tmp_path / "config.yaml"
+        config.write_text(sync_ollama.sync(CLEAN_CONFIG, [("deepseek-r1:14b", ["completion"], 32768)], base_url=recorded))
+        if env_host is None:
+            monkeypatch.delenv("OLLAMA_HOST", raising=False)
+        else:
+            monkeypatch.setenv("OLLAMA_HOST", env_host)
+        monkeypatch.setattr(sync_ollama, "fetch_tags", fetch_tags)
+        monkeypatch.setattr(sync_ollama, "fetch_show", lambda host, name, timeout=5.0: DEEPSEEK_R1_14B_SHOW)
+        # This machine has a GPU; the daemon's is elsewhere and must not be sized from it.
+        monkeypatch.setattr(sync_ollama, "_load_vram_detector", lambda: lambda: (24.0, "nvidia-smi"))
+        monkeypatch.setattr(sync_ollama.sys, "argv", ["sync-ollama-models.py", "--config", str(config), "--dry-run", "--verbose"])
+        assert sync_ollama.main() == 0
+        captured = capsys.readouterr()
+        return captured.out, captured.err, asked
+
+    def test_an_unanswered_localhost_falls_back_to_where_the_entries_point(self, monkeypatch, capsys, tmp_path):
+        out, err, asked = self._run(monkeypatch, capsys, tmp_path)
+        assert asked == [sync_ollama.DEFAULT_HOST, REMOTE_DAEMON]
+        assert f"base_url: {REMOTE_DAEMON}" in out
+        # That machine's GPU cannot be read from here, so the window stays at
+        # the flat cap and the log names the setting that sizes it.
+        assert "num_ctx: 32768" in out
+        assert "ollama.vram_gb" in err
+
+    def test_an_explicit_host_is_never_second_guessed(self, monkeypatch, capsys, tmp_path):
+        out, _err, asked = self._run(monkeypatch, capsys, tmp_path, env_host="http://10.0.0.9:11434")
+        assert asked == ["http://10.0.0.9:11434"]
+        assert out == ""
+
+    def test_entries_that_point_at_this_machine_are_not_a_fallback(self, monkeypatch, capsys, tmp_path):
+        _out, _err, asked = self._run(monkeypatch, capsys, tmp_path, recorded="http://host.docker.internal:11434")
+        assert asked == [sync_ollama.DEFAULT_HOST]
+
+
 # ── Models bigger than VRAM ───────────────────────────────────────────────────
 # Ollama splits whole layers between GPU and CPU (num_gpu); it does not offload
 # MoE experts the way llama.cpp's --n-cpu-moe does (ollama/ollama#11772 is open),
