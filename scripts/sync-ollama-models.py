@@ -496,6 +496,58 @@ def vram_budget_is_configured(cli_vram_gb, settings: dict) -> bool:
     return cli_vram_gb is not None or "vram_gb" in settings
 
 
+def is_loopback_host(url: str) -> bool:
+    """Whether ``url`` names this machine by a loopback name or address."""
+    hostname = urllib.parse.urlsplit(url).hostname
+    return hostname is not None and hostname.lower() in _LOOPBACK_HOSTS
+
+
+def recorded_query_host(text: str) -> str | None:
+    """The daemon the managed entries point at, when it is another machine.
+
+    Read from the first ``base_url`` inside the markers. A loopback or
+    host-gateway record names the default host, which has already been asked,
+    so it is not a fallback; without the markers nothing is guessed from
+    hand-written entries.
+    """
+    in_block = False
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped == BEGIN_MARKER:
+            in_block = True
+        elif stripped == END_MARKER:
+            return None
+        elif in_block and stripped.startswith("base_url:"):
+            value = stripped.split(":", 1)[1].split("#", 1)[0].strip().strip("\"'")
+            hostname = urllib.parse.urlsplit(value).hostname
+            if not hostname or is_loopback_host(value) or hostname.lower() == DOCKER_HOST_ALIAS:
+                return None
+            return normalize_host(value)
+    return None
+
+
+def reach_daemon(host: str, explicit: bool, config_text: str) -> tuple[str, list | None]:
+    """Return (host, installed models), trying where the entries point when unasked.
+
+    A launch without OLLAMA_HOST asks localhost — the wrong machine for a
+    daemon elsewhere on the network, so every such launch used to skip and the
+    entries an earlier OLLAMA_HOST run wrote never refreshed. When nobody named
+    a host and localhost does not answer, the host those entries point at (the
+    one the Gateway is already calling) is asked instead. An explicit
+    OLLAMA_HOST or --host is the operator's word and is never second-guessed.
+    """
+    installed = fetch_tags(host)
+    if installed is not None or explicit:
+        return host, installed
+    recorded = recorded_query_host(config_text)
+    if recorded is None or recorded == host:
+        return host, None
+    installed = fetch_tags(recorded)
+    if installed is None:
+        return host, None
+    return recorded, installed
+
+
 def _load_vram_detector():
     """Return ``scripts/wizard/steps/ollama.py::detect_dedicated_vram_gb``, or None.
 
@@ -527,8 +579,7 @@ def detect_local_vram_gb(host: str) -> tuple[float, str] | None:
     KV cache is not free the way spare VRAM is. Never raises: a failed
     detection is the flat cap, exactly the behavior before detection existed.
     """
-    hostname = urllib.parse.urlsplit(host).hostname
-    if hostname is None or hostname.lower() not in _LOOPBACK_HOSTS:
+    if not is_loopback_host(host):
         return None
     detect = _load_vram_detector()
     if detect is None:
@@ -1031,6 +1082,7 @@ def main() -> int:
     num_parallel = resolve_num_parallel(args.num_parallel, settings)
 
     host = normalize_host(os.environ.get("OLLAMA_HOST") or args.host)
+    host_is_explicit = bool(os.environ.get("OLLAMA_HOST")) or normalize_host(args.host) != normalize_host(DEFAULT_HOST)
 
     # ── Preload-only: warm the default local model, touch nothing else ───────
     # Split out so a launch script can background it: loading weights can take
@@ -1050,11 +1102,14 @@ def main() -> int:
             print(f"[ollama-sync] could not preload {name} (daemon unreachable or busy); continuing", file=sys.stderr)
         return 0
 
+    asked_host = host
+    host, installed = reach_daemon(host, host_is_explicit, original)
     base_url = resolve_base_url(host, args.base_url, args.container)
     if args.verbose:
+        if host != asked_host:
+            print(f"[ollama-sync] {asked_host} did not answer; using {host}, where the synced entries point (set OLLAMA_HOST to choose)", file=sys.stderr)
         print(f"[ollama-sync] querying {host}; writing base_url {base_url}", file=sys.stderr)
 
-    installed = fetch_tags(host)
     if installed is None:
         if args.verbose:
             print(f"[ollama-sync] {host} unreachable; skipping (no changes)", file=sys.stderr)
@@ -1076,7 +1131,13 @@ def main() -> int:
             )
         else:
             cap = effective_num_ctx_cap(args.num_ctx_cap, None)
-            print(f"[ollama-sync] GPU memory unknown or sizing off; num_ctx capped at {cap or 'native'} (ollama.vram_gb sizes it per model)", file=sys.stderr)
+            if vram_budget_is_configured(args.vram_gb, settings):
+                reason = "GPU sizing is off (ollama.vram_gb: 0)"
+            elif not is_loopback_host(host):
+                reason = f"Ollama at {host} is on another machine, so its GPU cannot be detected from here; set ollama.vram_gb to that machine's GPU memory"
+            else:
+                reason = "no NVIDIA/AMD GPU detected; set ollama.vram_gb to size each model"
+            print(f"[ollama-sync] num_ctx capped at {cap or 'native'}: {reason}", file=sys.stderr)
 
     # The daemon is up, so entries will be written — check they will actually
     # be reachable from the containers that read them (best-effort, warn only).

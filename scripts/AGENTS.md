@@ -31,7 +31,9 @@ the window `backend/tests/test_context_fit_critical.py` proves the agent fits.
 With no `ollama.vram_gb` it sizes a loopback daemon from
 `wizard/steps/ollama.py::detect_dedicated_vram_gb`; never add a second
 detector. `vram_gb: 0` means off. Detection stays sync-only: the runtime
-residency gate needs a configured budget.
+residency gate needs a configured budget. With no `OLLAMA_HOST`/`--host` and
+no answer on localhost, it queries the host its managed entries point at;
+never override a host the operator named.
 
 ## Dependency and Label Checks
 
