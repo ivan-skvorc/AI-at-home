@@ -103,10 +103,12 @@ class TestPlan:
         assert built.vram_bytes == BUDGET
         assert built.profile_for("qwen3:32b").footprint_bytes == int(20 * GIB) + 100_000 * 16384
 
-    def test_no_vram_budget_means_no_gate(self):
+    @pytest.mark.parametrize("ollama", [OllamaConfig(), OllamaConfig(vram_gb=0)], ids=["unset", "zero-means-off"])
+    def test_no_vram_budget_means_no_gate(self, ollama):
         # The GPU's size is the one number the gate cannot infer. Guessing it
         # would serialize work on exactly the deployments that told it least.
-        assert build_local_residency_plan(app_config([ollama_model("qwen3:32b", weights_gib=20)], ollama=OllamaConfig())) is None
+        # 0 is the explicit "do not size by GPU memory" and must parse.
+        assert build_local_residency_plan(app_config([ollama_model("qwen3:32b", weights_gib=20)], ollama=ollama)) is None
 
     def test_turning_the_feature_off_means_no_gate(self):
         built = build_local_residency_plan(app_config([ollama_model("qwen3:32b", weights_gib=20)], capacity=LocalModelCapacityConfig(enabled=False)))

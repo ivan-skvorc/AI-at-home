@@ -3,8 +3,9 @@
 Runs only when an Ollama provider was selected in the LLM step. The collected
 values are written to config.yaml's ``ollama:`` section, which
 ``scripts/sync-ollama-models.py`` reads on every launch to compute a per-model
-``num_ctx`` that actually fits the GPU (see FORK.md). Skipping the step keeps
-the sync's flat default cap — no behavior change.
+``num_ctx`` that actually fits the GPU (see FORK.md). Skipping the step leaves
+the sync to detect a dedicated GPU at each launch; without one (or on Apple
+unified memory) it keeps its flat 32768 cap.
 """
 
 from __future__ import annotations
@@ -78,8 +79,12 @@ def parse_rocm_smi_gib(output: str) -> float | None:
     return total_bytes / 1024**3 if found else None
 
 
-def detect_vram_gb(run: Callable[[list[str]], str | None] = _run_command, system: Callable[[], str] = platform.system) -> tuple[float, str] | None:
-    """Best-effort GPU memory detection: (GiB, human-readable source) or None."""
+def detect_dedicated_vram_gb(run: Callable[[list[str]], str | None] = _run_command) -> tuple[float, str] | None:
+    """Memory that GPUs own (nvidia-smi, then rocm-smi), summed across cards.
+
+    The launch sync sizes context windows from this when ``ollama.vram_gb`` is
+    unset; unified memory is left out because it is shared with the OS.
+    """
     output = run(["nvidia-smi", "--query-gpu=memory.total", "--format=csv,noheader,nounits"])
     if output:
         gib = parse_nvidia_smi_gib(output)
@@ -90,6 +95,14 @@ def detect_vram_gb(run: Callable[[list[str]], str | None] = _run_command, system
         gib = parse_rocm_smi_gib(output)
         if gib:
             return gib, "rocm-smi"
+    return None
+
+
+def detect_vram_gb(run: Callable[[list[str]], str | None] = _run_command, system: Callable[[], str] = platform.system) -> tuple[float, str] | None:
+    """Best-effort GPU memory detection: (GiB, human-readable source) or None."""
+    detected = detect_dedicated_vram_gb(run)
+    if detected:
+        return detected
     if system() == "Darwin":
         output = run(["sysctl", "-n", "hw.memsize"])
         try:
@@ -148,7 +161,7 @@ def detect_system_ram_gb(
 def run_ollama_step(step_label: str) -> OllamaStepResult:
     print_header(f"{step_label} · Local Ollama context sizing (optional)")
     print_info("With a GPU memory budget, every launch sizes each Ollama model's context window (num_ctx) to what actually fits next to its weights.")
-    print_info("Leave blank to skip — models then use their native window capped at 32768 tokens.")
+    print_info("Leave blank to skip — each launch then detects an NVIDIA/AMD GPU itself, or caps models at 32768 tokens without one.")
     print()
 
     detected = detect_vram_gb()

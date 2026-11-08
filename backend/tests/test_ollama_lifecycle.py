@@ -222,9 +222,9 @@ class TestNumParallelContextSizing:
         assert abs(two - one // 2) <= sync_ollama.NUM_CTX_STEP
 
     def test_the_floor_still_holds_when_slots_outgrow_the_budget(self):
-        # Sixteen slots cannot fit; the model still gets a usable window because
-        # Ollama offloads to CPU rather than refusing to load.
-        assert sync_ollama.vram_num_ctx_limit(SHOW_8B, 5 * 1024**3, 8 * 1024**3, "f16", 16) == sync_ollama.MIN_VRAM_NUM_CTX
+        # Sixteen slots cannot fit; each still gets the smallest window the
+        # agent runs in, because Ollama offloads to CPU rather than refusing.
+        assert sync_ollama.vram_num_ctx_limit(SHOW_8B, 5 * 1024**3, 8 * 1024**3, "f16", 16) == sync_ollama.MIN_AGENT_NUM_CTX
 
     def test_unknown_geometry_still_falls_back_to_the_flat_cap(self):
         blind = {"model_info": {}, "capabilities": []}

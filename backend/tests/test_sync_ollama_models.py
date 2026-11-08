@@ -9,6 +9,7 @@ The script is a text-surgery editor for the `models:` section. These tests pin:
 from __future__ import annotations
 
 import importlib.util
+import sys
 from pathlib import Path
 
 import pytest
@@ -474,16 +475,19 @@ class TestParseKvBytesPerToken:
 class TestVramNumCtxLimit:
     """Largest window whose KV cache fits: (VRAM - weights - overhead) / per-token."""
 
-    def test_tight_vram_limits_the_window(self):
+    def test_tight_vram_never_writes_a_window_the_agent_cannot_run_in(self):
         # 8 GiB - 5.2 GB weights - 1.5 GiB overhead = ~1.66 GiB for KV cache
-        # -> 12066 tokens at f16, floored to the 2048 step.
+        # -> 10240 tokens at f16. With half of that kept for the reply, 5,120
+        # prompt tokens is less than the agent's own system prompt and tools,
+        # so the first message would be refused. The agent's floor wins and
+        # Ollama offloads a few layers instead (slower, not broken).
         limit = sync_ollama.vram_num_ctx_limit(QWEN3_SHOW, QWEN3_WEIGHTS, 8 * GIB)
-        assert limit == 10240
+        assert limit == sync_ollama.MIN_AGENT_NUM_CTX
 
     def test_q8_0_roughly_doubles_the_window(self):
-        f16 = sync_ollama.vram_num_ctx_limit(QWEN3_SHOW, QWEN3_WEIGHTS, 8 * GIB, "f16")
-        q8 = sync_ollama.vram_num_ctx_limit(QWEN3_SHOW, QWEN3_WEIGHTS, 8 * GIB, "q8_0")
-        assert q8 == 22528
+        f16 = sync_ollama.vram_num_ctx_limit(QWEN3_SHOW, QWEN3_WEIGHTS, 16 * GIB, "f16")
+        q8 = sync_ollama.vram_num_ctx_limit(QWEN3_SHOW, QWEN3_WEIGHTS, 16 * GIB, "q8_0")
+        assert q8 == 131072
         assert q8 > 2 * f16 * 0.9
 
     def test_big_vram_exceeds_native_length(self):
@@ -491,15 +495,14 @@ class TestVramNumCtxLimit:
         limit = sync_ollama.vram_num_ctx_limit(QWEN3_SHOW, QWEN3_WEIGHTS, 16 * GIB)
         assert limit == 69632
 
-    def test_no_room_takes_the_offload_floor_not_the_old_4096(self):
+    def test_no_room_takes_the_agent_floor(self):
         # Weights + overhead exceed 6 GiB, so this is the partial-offload path.
-        # It used to return MIN_VRAM_NUM_CTX (4096), which is smaller than the
-        # agent's own system prompt — a window that "fits" but cannot be used.
-        # Ollama degrades by moving layers to CPU rather than crashing, so the
-        # right answer is a usable window, bounded (see
-        # TestVramNumCtxLimitUnderOffload) so it does not evict the weights.
+        # It returned 4096, then 16384: both "fit", and neither leaves the agent
+        # room for its own system prompt once half the window is kept for the
+        # reply. Ollama degrades by moving layers to CPU rather than crashing,
+        # so the right answer is the smallest window the agent runs in.
         limit = sync_ollama.vram_num_ctx_limit(QWEN3_SHOW, QWEN3_WEIGHTS, 6 * GIB)
-        assert limit == sync_ollama.MIN_OFFLOAD_NUM_CTX
+        assert limit == sync_ollama.MIN_AGENT_NUM_CTX
 
     def test_unknown_geometry_returns_none(self):
         assert sync_ollama.vram_num_ctx_limit({"model_info": {}}, QWEN3_WEIGHTS, 8 * GIB) is None
@@ -561,6 +564,12 @@ class TestParseOllamaSettings:
         text = "ollama:\n  vram_gb: 16\nsandbox:\n  vram_gb: 99\n"
         assert sync_ollama.parse_ollama_settings(text) == {"vram_gb": 16.0}
 
+    def test_zero_vram_is_kept_as_the_off_switch_and_negative_is_dropped(self):
+        # 0 means "do not size by GPU memory", which must survive parsing so
+        # it can stop detection; a negative budget is a typo, not an intent.
+        assert sync_ollama.parse_ollama_settings("ollama:\n  vram_gb: 0\n") == {"vram_gb": 0.0}
+        assert sync_ollama.parse_ollama_settings("ollama:\n  vram_gb: -4\n") == {}
+
 
 class TestResolveSizingSettings:
     _CONFIG = "ollama:\n  vram_gb: 16\n  kv_cache_type: q8_0\n"
@@ -579,6 +588,90 @@ class TestResolveSizingSettings:
         vram_bytes, kv = sync_ollama.resolve_sizing_settings(None, None, CLEAN_CONFIG)
         assert vram_bytes is None
         assert kv == "f16"
+
+
+# deepseek-r1:14b (a Qwen2.5-14B distill), the model the identical-limit report
+# came from, as /api/show and /api/tags describe it.
+DEEPSEEK_R1_14B_SHOW = {
+    "capabilities": ["completion", "thinking"],
+    "model_info": {
+        "general.architecture": "qwen2",
+        "qwen2.block_count": 48,
+        "qwen2.context_length": 131072,
+        "qwen2.embedding_length": 5120,
+        "qwen2.attention.head_count": 40,
+        "qwen2.attention.head_count_kv": 8,
+    },
+}
+DEEPSEEK_R1_14B_WEIGHTS = 8_988_112_040  # q4_K_M on disk
+
+
+class TestGpuMemoryDetection:
+    """With no `ollama.vram_gb`, a local daemon is sized from the GPU the sync finds.
+
+    Without it every model got the same flat 32768 window: a 24 GiB card ran a
+    14B model in less than half of what it holds, and every model hit the same
+    limit. Silent when broken — the flat cap is a valid config, so nothing
+    fails; the windows just stop depending on the model and the card.
+    """
+
+    def _run(self, monkeypatch, capsys, tmp_path, config_text=CLEAN_CONFIG, detected=(24.0, "nvidia-smi"), host=None):
+        calls = []
+
+        def detector():
+            calls.append(True)
+            return detected
+
+        config = tmp_path / "config.yaml"
+        config.write_text(config_text)
+        if host is None:
+            monkeypatch.delenv("OLLAMA_HOST", raising=False)
+        else:
+            monkeypatch.setenv("OLLAMA_HOST", host)
+        monkeypatch.setattr(sync_ollama, "_load_vram_detector", lambda: detector)
+        monkeypatch.setattr(sync_ollama, "fetch_tags", lambda host, timeout=2.0: [{"name": "deepseek-r1:14b", "size": DEEPSEEK_R1_14B_WEIGHTS}])
+        monkeypatch.setattr(sync_ollama, "fetch_show", lambda host, name, timeout=5.0: DEEPSEEK_R1_14B_SHOW)
+        monkeypatch.setattr(sync_ollama.sys, "argv", ["sync-ollama-models.py", "--config", str(config), "--dry-run"])
+        assert sync_ollama.main() == 0
+        return capsys.readouterr().out, calls
+
+    def test_a_local_daemon_is_sized_from_the_detected_gpu(self, monkeypatch, capsys, tmp_path):
+        out, calls = self._run(monkeypatch, capsys, tmp_path)
+        assert calls
+        assert "num_ctx: 75776" in out
+
+    def test_a_remote_daemon_is_not_sized_from_this_machines_gpu(self, monkeypatch, capsys, tmp_path):
+        out, calls = self._run(monkeypatch, capsys, tmp_path, host="http://192.168.1.50:11434")
+        assert not calls
+        assert "num_ctx: 32768" in out
+
+    def test_an_explicit_budget_wins_without_running_detection(self, monkeypatch, capsys, tmp_path):
+        out, calls = self._run(monkeypatch, capsys, tmp_path, config_text=CLEAN_CONFIG + "ollama:\n  vram_gb: 20\n")
+        assert not calls
+        assert "num_ctx: 55296" in out
+
+    def test_vram_gb_zero_keeps_the_flat_cap(self, monkeypatch, capsys, tmp_path):
+        out, calls = self._run(monkeypatch, capsys, tmp_path, config_text=CLEAN_CONFIG + "ollama:\n  vram_gb: 0\n")
+        assert not calls
+        assert "num_ctx: 32768" in out
+
+    def test_no_gpu_found_keeps_the_flat_cap(self, monkeypatch, capsys, tmp_path):
+        out, calls = self._run(monkeypatch, capsys, tmp_path, detected=None)
+        assert calls
+        assert "num_ctx: 32768" in out
+
+    def test_the_sync_reuses_the_wizards_dedicated_gpu_detector(self, monkeypatch):
+        # One detector, not two (the GPU arbiter imports the same module), and
+        # only its dedicated-GPU half: unified memory is shared with the OS. It
+        # has to load however the sync was loaded: the launch scripts run it
+        # from scripts/, other tools load it by path with scripts/ off sys.path.
+        scripts_dir = (REPO_ROOT / "scripts").resolve()
+        monkeypatch.setattr(sys, "path", [entry for entry in sys.path if Path(entry).resolve() != scripts_dir])
+        for name in [module for module in sys.modules if module == "wizard" or module.startswith("wizard.")]:
+            monkeypatch.delitem(sys.modules, name)
+        detector = sync_ollama._load_vram_detector()
+        assert detector is not None
+        assert detector.__name__ == "detect_dedicated_vram_gb"
 
 
 # ── Models bigger than VRAM ───────────────────────────────────────────────────
@@ -612,10 +705,10 @@ class TestVramNumCtxLimitUnderOffload:
     """The regression this change exists for, bounded on both sides."""
 
     def test_a_model_bigger_than_vram_gets_a_window_the_agent_can_run_in(self):
-        # Was MIN_VRAM_NUM_CTX (4096) — below the agent's own system prompt,
-        # tool schemas, skills and memory, so the model was unusable.
+        # Was 4096 — below the agent's own system prompt, tool schemas, skills
+        # and memory, so the model was unusable.
         limit = sync_ollama.vram_num_ctx_limit(GPT_OSS_120B_SHOW, GPT_OSS_120B_WEIGHTS, 24 * GIB)
-        assert limit >= sync_ollama.MIN_OFFLOAD_NUM_CTX
+        assert limit >= sync_ollama.MIN_AGENT_NUM_CTX
 
     def test_it_does_not_hand_the_whole_card_to_the_kv_cache(self):
         # Ollama pays for context in GPU layers, so an unbounded window would
@@ -626,9 +719,9 @@ class TestVramNumCtxLimitUnderOffload:
         assert limit * per_token <= 24 * GIB * sync_ollama.OFFLOAD_KV_VRAM_SHARE
 
     def test_a_model_that_fits_still_takes_all_the_spare_vram(self):
-        # Every pre-existing expectation: the fits-in-VRAM path is untouched.
-        assert sync_ollama.vram_num_ctx_limit(QWEN3_SHOW, QWEN3_WEIGHTS, 8 * GIB) == 10240
+        # Above the agent floor the fits-in-VRAM path takes every spare byte.
         assert sync_ollama.vram_num_ctx_limit(QWEN3_SHOW, QWEN3_WEIGHTS, 16 * GIB) == 69632
+        assert sync_ollama.vram_num_ctx_limit(QWEN3_SHOW, QWEN3_WEIGHTS, 24 * GIB) == 126976
 
     def test_parallel_slots_still_divide_the_offloaded_window(self):
         one = sync_ollama.vram_num_ctx_limit(GPT_OSS_120B_SHOW, GPT_OSS_120B_WEIGHTS, 24 * GIB, "f16", 1)

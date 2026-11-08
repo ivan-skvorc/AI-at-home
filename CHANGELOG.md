@@ -12,6 +12,8 @@ This section accumulates work toward the **2.3.0** milestone
 
 ### Added
 
+- **models:** Local Ollama models get a context window sized to your GPU with no setup. When `ollama.vram_gb` is unset, every launch reads the memory of an NVIDIA or AMD card beside the daemon (`nvidia-smi` / `rocm-smi`, the detector `make setup` uses) and gives each model the largest window that fits next to its weights: `deepseek-r1:14b` on a 24 GiB card gets 75,776 tokens instead of the flat 32,768 every model used to get. A remote daemon or a Mac keeps the flat cap; `ollama.vram_gb` overrides the detection and `0` turns GPU sizing off.
+
 - **chat:** Answers lead with the result in every mode: an overview by default, detail only when you ask, and every command in its own copy-pasteable code block. The built-in prompt text is about 1,200 tokens shorter in every mode; on a local model, with skills listed by name, Flash's whole prompt is about 2,500 tokens (it was about 7,100).
 
 - **chat:** Double Plus Ultracode warns as you hover or focus it in the mode menu, before you pick it, and its workflow agents get the step limit's ceiling (`max_recursion_limit`, 1000 as shipped) instead of the 250-step default. The spend cap and token budgets still apply.
@@ -30,6 +32,8 @@ This section accumulates work toward the **2.3.0** milestone
   after a Gateway restart. ([#7729])
 
 ### Fixed
+
+- **models:** GPU-based context sizing no longer writes a window the agent cannot run in. A model that barely fit the card got as little as 4,096 tokens and one that did not fit got 16,384; with half kept for the reply, a new chat's first message was refused in every mode. A sized window is now never below 32,768: where the card cannot afford that, Ollama moves a few layers to the CPU instead (slower, not refused).
 
 - **models:** A new chat on a local model is no longer refused because its instructions do not fit. On a window of up to 64K prompt tokens, tool definitions go out in short form, skills are listed by name and MCP tools wait behind `tool_search`, whatever the config says: a synced 32K Ollama model now keeps about 15K tokens for the conversation in Flash (it had about 7K, and Double Plus Ultracode 74). Compaction fires before the window fills, and a refusal states the room the model really has instead of a figure larger than the request.
 

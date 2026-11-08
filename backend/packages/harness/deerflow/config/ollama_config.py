@@ -27,8 +27,11 @@ class OllamaConfig(BaseModel):
 
     vram_gb: float | None = Field(
         default=None,
-        gt=0,
-        description="GPU memory budget in GiB, summed across cards. Unset means the GPU size is unknown, which disables every VRAM-derived behavior rather than guessing one.",
+        ge=0,
+        description=(
+            "GPU memory budget in GiB, summed across cards. Unset: the launch sync detects a local dedicated GPU for context sizing, and every runtime VRAM-derived behavior "
+            "stays off rather than guessing. 0: GPU sizing off everywhere (the sync keeps its flat 32768 cap)."
+        ),
     )
     system_ram_gb: float | None = Field(
         default=None,

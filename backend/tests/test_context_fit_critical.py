@@ -28,6 +28,7 @@ allowance only together with what it costs a 32K model's conversation room.
 from __future__ import annotations
 
 import asyncio
+import importlib.util
 import re
 from pathlib import Path
 from types import SimpleNamespace
@@ -178,6 +179,52 @@ def _fresh_request(mode: str) -> ModelRequest:
 def _fixed_tokens(request: ModelRequest) -> int:
     """System prompt plus tool schemas in the short form a small window gets."""
     return estimate_request_tokens(request.override(messages=[], tools=[short_tool_schema(tool) for tool in request.tools]))
+
+
+# deepseek-r1:14b as /api/show and /api/tags describe it: the sync's input when
+# it sizes a window from a GPU budget.
+SHOW_14B = {
+    "model_info": {
+        "general.architecture": "qwen2",
+        "qwen2.block_count": 48,
+        "qwen2.context_length": 131072,
+        "qwen2.embedding_length": 5120,
+        "qwen2.attention.head_count": 40,
+        "qwen2.attention.head_count_kv": 8,
+    }
+}
+WEIGHTS_14B = 8_988_112_040
+GIB = 1024**3
+
+
+def _sync_script():
+    spec = importlib.util.spec_from_file_location("sync_ollama_models_fit", REPO_ROOT / "scripts" / "sync-ollama-models.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+@pytest.mark.parametrize(
+    ("vram_gib", "num_parallel"),
+    [(None, 1), (4, 1), (8, 1), (12, 1), (24, 4)],
+    ids=["gpu-unknown", "offloaded-4gib", "offloaded-8gib", "barely-fits-12gib", "four-slots-24gib"],
+)
+def test_no_window_the_launch_sync_writes_is_smaller_than_this_one(vram_gib, num_parallel):
+    """The window every test here measures is the smallest the sync can write.
+
+    Proving the agent fits a 32K entry is worth nothing if the sync writes a
+    smaller one. Its GPU sizing did: 4096 for a model that barely fit, 16384
+    for one that did not, and less per slot with several slots. With up to
+    half the window kept for the reply, none left room for the system prompt.
+    """
+    sync = _sync_script()
+    limit = sync.vram_num_ctx_limit(SHOW_14B, WEIGHTS_14B, vram_gib * GIB, "f16", num_parallel) if vram_gib else None
+    window = sync.resolve_num_ctx(131072, cap=sync.effective_num_ctx_cap(None, limit), vram_limit=limit)
+    entry = sync.render_entry("local", ["tools"], "http://localhost:11434", window)
+    num_ctx = int(re.search(r"num_ctx: (\d+)", entry).group(1))
+    num_predict = int(re.search(r"num_predict: (\d+)", entry).group(1))
+    prompt = ContextBudget(context_window=num_ctx, reserved_output=num_predict).prompt_tokens
+    assert prompt >= BUDGET.prompt_tokens, f"the sync wrote num_ctx {num_ctx} with num_predict {num_predict}: {prompt:,} prompt tokens, under the {BUDGET.prompt_tokens:,} this file proves the agent needs"
 
 
 @pytest.mark.parametrize("mode", list(MODES))

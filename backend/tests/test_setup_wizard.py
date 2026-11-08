@@ -1142,6 +1142,20 @@ class TestOllamaSizingStep:
     def test_detect_returns_none_without_gpu_tools(self):
         assert ollama_step.detect_vram_gb(run=lambda *_a, **_k: None, system=lambda: "Linux") is None
 
+    def test_dedicated_detection_finds_gpus_but_not_unified_memory(self):
+        # What the launch sync sizes from when ollama.vram_gb is unset: memory
+        # a GPU owns. Unified memory is shared with the OS and its apps, so a
+        # Mac keeps the flat cap unless the budget is configured.
+        def nvidia(args, timeout=5.0):
+            return "24576\n" if args[0] == "nvidia-smi" else None
+
+        def mac(args, timeout=5.0):
+            return str(32 * 1024**3) if args[0] == "sysctl" else None
+
+        assert ollama_step.detect_dedicated_vram_gb(run=nvidia) == (24.0, "nvidia-smi")
+        assert ollama_step.detect_dedicated_vram_gb(run=mac) is None
+        assert ollama_step.detect_vram_gb(run=mac, system=lambda: "Darwin") is not None
+
     def _silence(self, monkeypatch):
         for name in ("print_header", "print_info", "print_success"):
             monkeypatch.setattr(ollama_step, name, lambda *_args, **_kwargs: None)
