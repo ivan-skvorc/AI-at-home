@@ -23,6 +23,16 @@ For those launches, export the effective `DEER_FLOW_HOME` when collecting a bund
 and ensure the checkout `.env` does not override it. Tests clear all three runtime
 path variables and compare storage defaults with the launcher's actual shell blocks.
 
+## Ollama Model Sync
+
+`sync-ollama-models.py` runs on every launch path and owns only its marked
+block. GPU sizing never writes a `num_ctx` below `MIN_AGENT_NUM_CTX` (32768),
+the window `backend/tests/test_context_fit_critical.py` proves the agent fits.
+With no `ollama.vram_gb` it sizes a loopback daemon from
+`wizard/steps/ollama.py::detect_dedicated_vram_gb`; never add a second
+detector. `vram_gb: 0` means off. Detection stays sync-only: the runtime
+residency gate needs a configured budget.
+
 ## Dependency and Label Checks
 
 `check_extension.py`: Gateway wheel asset validator; example CI:

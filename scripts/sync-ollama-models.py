@@ -33,23 +33,30 @@ written with an explicit ``num_ctx`` read from the model's native context length
 so a 128K-native model does not allocate an OOM-sized KV cache on a typical local
 GPU. Pass ``--num-ctx-cap 0`` to use each model's full native length uncapped.
 
-VRAM-aware sizing: when a GPU memory budget is known (``ollama.vram_gb`` in
-config.yaml — written by ``make setup`` — or ``--vram-gb``), the flat cap is
+VRAM-aware sizing: when a GPU memory budget is known (``--vram-gb``, else
+``ollama.vram_gb`` in config.yaml, else detected — see below), the flat cap is
 replaced by a per-model estimate: the largest window whose KV cache fits next to
 the model's weights within that budget, derived from the model's attention
-geometry (``/api/show`` -> ``model_info``) and its on-disk size (``/api/tags``).
+geometry (``/api/show`` -> ``model_info``) and its on-disk size (``/api/tags``),
+and never smaller than ``MIN_AGENT_NUM_CTX``, the window the agent needs.
 ``ollama.kv_cache_type`` / ``--kv-cache-type`` tells the sizing which KV-cache
 quantization the daemon runs (``OLLAMA_KV_CACHE_TYPE``): ``q8_0`` roughly halves
 the per-token cost versus the default ``f16``, roughly doubling the affordable
 window. An explicit ``--num-ctx-cap`` still applies as a hard ceiling; models
 whose geometry can't be read fall back to the flat-cap behavior.
 
+Detection: with no budget configured and a daemon on this machine (a loopback
+query host), the dedicated GPUs' memory is read with nvidia-smi / rocm-smi, by
+the same detector ``make setup`` uses. A remote daemon's GPU is not this
+machine's, and Apple unified memory is shared with the OS, so both keep the flat
+cap unless the budget is configured. ``ollama.vram_gb: 0`` turns GPU sizing off.
+
 Models bigger than VRAM: Ollama splits whole layers between GPU and CPU rather
 than offloading MoE experts the way llama.cpp's ``--n-cpu-moe`` does, and when
 the weights and KV cache do not both fit it keeps the cache and drops GPU
 layers. A larger window is therefore paid for in layers, so such a model gets a
 bounded share of VRAM for context (``OFFLOAD_KV_VRAM_SHARE``) with a floor the
-agent can actually run in (``MIN_OFFLOAD_NUM_CTX``) — not the 4096-token floor
+agent can actually run in (``MIN_AGENT_NUM_CTX``) — not the 4096-token floor
 that made a 128K-native model unusable, and not the whole card either.
 ``ollama.system_ram_gb`` / ``--system-ram-gb`` names the pool those offloaded
 layers land in; it is used to warn when a model's weights exceed VRAM + RAM and
@@ -121,9 +128,17 @@ VRAM_OVERHEAD_BYTES = int(1.5 * 1024**3)
 # the sizing how many slots the daemon runs; the default of 1 reproduces the
 # previous math exactly.
 DEFAULT_NUM_PARALLEL = 1
-# Floor/step for the computed window: below 4096 the agent's system prompt alone
-# doesn't fit, and odd sizes buy nothing.
+# Smallest window GPU sizing may write. The agent's fixed request (system prompt
+# + tool schemas) and its compaction trigger are measured against a 32K entry by
+# the critical check (backend/tests/test_context_fit_critical.py), and with up
+# to half the window kept for the reply anything smaller refuses the first
+# message. When the card cannot afford it, Ollama offloads layers to CPU: slower,
+# not broken. A model whose native length is shorter keeps its native length.
+MIN_AGENT_NUM_CTX = 32768
+# The modest per-model window the contention warning charges two co-resident
+# models, so it fires only for a pair that cannot share the card even then.
 MIN_VRAM_NUM_CTX = 4096
+# Odd sizes buy nothing.
 NUM_CTX_STEP = 2048
 
 # ── Models too big for VRAM ───────────────────────────────────────────────────
@@ -138,10 +153,8 @@ NUM_CTX_STEP = 2048
 # ones. So the window for an offloaded model is deliberately a bounded share of
 # VRAM rather than "whatever fits" — the rest must stay available for layers.
 OFFLOAD_KV_VRAM_SHARE = 0.25
-# ...but never so small that the agent cannot run. Its system prompt, tool
-# schemas, skills and memory do not fit in MIN_VRAM_NUM_CTX, which is a floor
-# for "this barely fits", not a usable window for an offloaded model.
-MIN_OFFLOAD_NUM_CTX = 16384
+# ...but never below MIN_AGENT_NUM_CTX: a smaller window is not a slower agent
+# but one that refuses every message.
 
 
 def normalize_host(host: str) -> str:
@@ -346,9 +359,12 @@ def vram_num_ctx_limit(
     keeps the KV cache and drops GPU layers to make room. A bigger window is
     therefore bought with layers, and layers on the CPU are the slow ones — so
     the window gets ``OFFLOAD_KV_VRAM_SHARE`` of VRAM and no more, leaving the
-    rest to hold weights. The floor is ``MIN_OFFLOAD_NUM_CTX``: below that the
-    agent's own prompt does not fit, which is not a trade worth making however
-    slow the alternative.
+    rest to hold weights.
+
+    **Both regimes floor at** ``MIN_AGENT_NUM_CTX``: below it the agent's own
+    prompt does not fit, which is not a trade worth making however slow the
+    alternative. GPU sizing can raise a window above the flat cap, never lower
+    it below what the agent runs in.
 
     ``num_parallel`` is the daemon's ``OLLAMA_NUM_PARALLEL``: Ollama allocates a
     KV cache per slot up front, so N slots divide the affordable window by N.
@@ -364,18 +380,17 @@ def vram_num_ctx_limit(
     available = vram_bytes - weights_bytes - VRAM_OVERHEAD_BYTES
     if available > 0:
         tokens = int(available // per_token)
-        return max(MIN_VRAM_NUM_CTX, (tokens // NUM_CTX_STEP) * NUM_CTX_STEP)
-
-    # Partial offload: buy a usable window, not the largest one.
-    tokens = int((vram_bytes * OFFLOAD_KV_VRAM_SHARE) // per_token)
-    return max(MIN_OFFLOAD_NUM_CTX, (tokens // NUM_CTX_STEP) * NUM_CTX_STEP)
+    else:
+        # Partial offload: buy a usable window, not the largest one.
+        tokens = int((vram_bytes * OFFLOAD_KV_VRAM_SHARE) // per_token)
+    return max(MIN_AGENT_NUM_CTX, (tokens // NUM_CTX_STEP) * NUM_CTX_STEP)
 
 
 def parse_ollama_settings(text: str) -> dict:
     """Parse the top-level ``ollama:`` section of config.yaml.
 
-    Recognized keys: ``vram_gb`` and ``system_ram_gb`` (positive numbers),
-    ``kv_cache_type`` (one of
+    Recognized keys: ``vram_gb`` (a non-negative number; 0 turns GPU sizing
+    off), ``system_ram_gb`` (a positive number), ``kv_cache_type`` (one of
     KV_CACHE_BYTES_PER_ELEMENT), ``num_parallel`` (positive integer),
     ``keep_alive`` (opaque Ollama duration string), ``preload`` (bool), and the
     nested ``keep_alive_overrides`` map of model name -> duration. Malformed
@@ -420,7 +435,9 @@ def parse_ollama_settings(text: str) -> dict:
     settings: dict = {}
     try:
         vram_gb = float(raw["vram_gb"])
-        if vram_gb > 0:
+        # 0 is kept: it is the explicit "do not size by GPU memory", which has
+        # to survive parsing to stop detection. A negative budget is a typo.
+        if vram_gb >= 0:
             settings["vram_gb"] = vram_gb
     except (KeyError, ValueError):
         pass
@@ -472,6 +489,57 @@ def resolve_sizing_settings(cli_vram_gb, cli_kv_cache_type, config_text: str):
     kv_cache_type = cli_kv_cache_type or settings.get("kv_cache_type") or DEFAULT_KV_CACHE_TYPE
     vram_bytes = int(vram_gb * 1024**3) if vram_gb and vram_gb > 0 else None
     return vram_bytes, kv_cache_type
+
+
+def vram_budget_is_configured(cli_vram_gb, settings: dict) -> bool:
+    """Whether the operator named a GPU budget — 0 included, which means "off"."""
+    return cli_vram_gb is not None or "vram_gb" in settings
+
+
+def _load_vram_detector():
+    """Return ``scripts/wizard/steps/ollama.py::detect_dedicated_vram_gb``, or None.
+
+    One detector, shared with ``make setup`` and the GPU arbiter, rather than a
+    second copy that drifts from it. The launch scripts run this file from
+    ``scripts/``, so the plain import works there; a tool that loads it by path
+    has ``scripts/`` off ``sys.path``, so it is appended (never prepended, so it
+    cannot shadow anything) before giving up.
+    """
+    try:
+        from wizard.steps.ollama import detect_dedicated_vram_gb
+    except ImportError:
+        scripts_dir = str(Path(__file__).resolve().parent)
+        if scripts_dir not in sys.path:
+            sys.path.append(scripts_dir)
+        try:
+            from wizard.steps.ollama import detect_dedicated_vram_gb
+        except ImportError:
+            return None
+    return detect_dedicated_vram_gb
+
+
+def detect_local_vram_gb(host: str) -> tuple[float, str] | None:
+    """(GiB, source) of this machine's dedicated GPUs, when the daemon runs here.
+
+    Only for a loopback query host: a daemon on another machine is served by
+    that machine's GPU, which nothing here can measure. Dedicated GPUs only —
+    unified memory is shared with the OS and its apps, so taking all of it for
+    KV cache is not free the way spare VRAM is. Never raises: a failed
+    detection is the flat cap, exactly the behavior before detection existed.
+    """
+    hostname = urllib.parse.urlsplit(host).hostname
+    if hostname is None or hostname.lower() not in _LOOPBACK_HOSTS:
+        return None
+    detect = _load_vram_detector()
+    if detect is None:
+        return None
+    try:
+        detected = detect()
+    except Exception:
+        return None
+    if not detected or not detected[0] or detected[0] <= 0:
+        return None
+    return detected
 
 
 def resolve_num_parallel(cli_num_parallel, settings: dict) -> int:
@@ -985,18 +1053,30 @@ def main() -> int:
     base_url = resolve_base_url(host, args.base_url, args.container)
     if args.verbose:
         print(f"[ollama-sync] querying {host}; writing base_url {base_url}", file=sys.stderr)
-        if vram_bytes:
-            print(
-                f"[ollama-sync] sizing num_ctx for {vram_bytes / 1024**3:g} GiB VRAM "
-                f"(kv_cache_type={kv_cache_type}, num_parallel={num_parallel})",
-                file=sys.stderr,
-            )
 
     installed = fetch_tags(host)
     if installed is None:
         if args.verbose:
             print(f"[ollama-sync] {host} unreachable; skipping (no changes)", file=sys.stderr)
         return 0
+
+    # Detected only once the daemon answers, and only when no budget was named:
+    # an explicit `ollama.vram_gb` (0 included) is the operator's word.
+    vram_source = "--vram-gb" if args.vram_gb is not None else "ollama.vram_gb"
+    if vram_bytes is None and not vram_budget_is_configured(args.vram_gb, settings):
+        detected = detect_local_vram_gb(host)
+        if detected:
+            vram_bytes = int(detected[0] * 1024**3)
+            vram_source = f"detected via {detected[1]}"
+    if args.verbose:
+        if vram_bytes:
+            print(
+                f"[ollama-sync] sizing num_ctx for {vram_bytes / 1024**3:.1f} GiB VRAM ({vram_source}; kv_cache_type={kv_cache_type}, num_parallel={num_parallel})",
+                file=sys.stderr,
+            )
+        else:
+            cap = effective_num_ctx_cap(args.num_ctx_cap, None)
+            print(f"[ollama-sync] GPU memory unknown or sizing off; num_ctx capped at {cap or 'native'} (ollama.vram_gb sizes it per model)", file=sys.stderr)
 
     # The daemon is up, so entries will be written — check they will actually
     # be reachable from the containers that read them (best-effort, warn only).
