@@ -33,6 +33,8 @@ This section accumulates work toward the **2.3.0** milestone
 
 ### Fixed
 
+- **models:** Hybrid local models get a context window sized to the GPU instead of the flat 32K. Qwen3.5/3.6, Qwen3-Next and Nemotron-H keep a KV cache only on their attention layers, and the launch sync either could not read their layout or costed every layer as if it had one. On a 24 GiB card with a q8_0 cache, qwen3.6:27b now gets about 188K tokens and qwen3.6:35b about 122K.
+
 - **models:** An Ollama daemon on another machine (another box on your LAN or Tailscale) keeps syncing on every launch. Without `OLLAMA_HOST` in the launch's environment (the Docker launches never read it from `.env`), the sync asked `localhost`, found nothing and skipped, so the models and context windows an earlier run wrote never refreshed. It now asks the host its existing entries point at. The launch log also says that a remote daemon's GPU needs `ollama.vram_gb`, since it cannot be detected from this machine.
 
 - **models:** GPU-based context sizing no longer writes a window the agent cannot run in. A model that barely fit the card got as little as 4,096 tokens and one that did not fit got 16,384; with half kept for the reply, a new chat's first message was refused in every mode. A sized window is now never below 32,768: where the card cannot afford that, Ollama moves a few layers to the CPU instead (slower, not refused).

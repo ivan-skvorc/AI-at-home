@@ -75,6 +75,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import re
 import subprocess
@@ -305,12 +306,20 @@ def _positive_number(info: dict, key: str) -> float | None:
 def parse_kv_bytes_per_token(show: dict, kv_cache_type: str = DEFAULT_KV_CACHE_TYPE) -> float | None:
     """Estimate KV-cache bytes per context token from an /api/show payload.
 
-    KV cache per token = layers × kv_heads × (key_dim + value_dim) × bytes/element.
-    Head dims come from ``attention.key_length``/``value_length`` when present,
-    falling back to ``embedding_length / head_count``. Some hybrid architectures
-    report ``head_count_kv`` as a per-layer list; its mean is used. Returns None
-    when the payload doesn't expose the needed geometry; an unknown
-    ``kv_cache_type`` is costed as f16 (the conservative choice).
+    KV cache per token = KV heads summed over the layers that keep one ×
+    (key_dim + value_dim) × bytes/element. Head dims come from
+    ``attention.key_length``/``value_length`` when present, falling back to
+    ``embedding_length / head_count``.
+
+    Hybrid models keep a per-token cache only on their attention layers; the
+    rest (linear attention, state-space) hold a fixed-size state the overhead
+    reserve covers. They say so one of two ways: ``head_count_kv`` as a
+    per-layer list with zeros (qwen35, qwen3next, nemotron_h), or one count plus
+    ``full_attention_interval`` (qwen35moe: every Nth layer, rounded up). Costing
+    every layer sized them several times too small, and a zero in the list used
+    to fail it outright. Returns None when the payload doesn't expose the needed
+    geometry or no layer keeps a cache; an unknown ``kv_cache_type`` is costed as
+    f16 (the conservative choice).
     """
     info = show.get("model_info")
     if not isinstance(info, dict):
@@ -319,11 +328,18 @@ def parse_kv_bytes_per_token(show: dict, kv_cache_type: str = DEFAULT_KV_CACHE_T
     if not isinstance(arch, str):
         return None
     block_count = _positive_number(info, f"{arch}.block_count")
-    kv_heads = _positive_number(info, f"{arch}.attention.head_count_kv")
-    if kv_heads is None:
+    kv_heads = None  # summed over the layers that keep a cache
+    per_layer_count = _positive_number(info, f"{arch}.attention.head_count_kv")
+    if per_layer_count is not None and block_count:
+        interval = _positive_number(info, f"{arch}.full_attention_interval")
+        attention_layers = math.ceil(block_count / interval) if interval and interval > 1 else block_count
+        kv_heads = attention_layers * per_layer_count
+    elif block_count:
         raw = info.get(f"{arch}.attention.head_count_kv")
-        if isinstance(raw, list) and raw and all(isinstance(v, (int, float)) and not isinstance(v, bool) and v > 0 for v in raw):
-            kv_heads = sum(raw) / len(raw)
+        if isinstance(raw, list) and raw and all(isinstance(v, (int, float)) and not isinstance(v, bool) and v >= 0 for v in raw) and sum(raw) > 0:
+            # Scaled to block_count, so a list shorter than the layer stack
+            # (one entry per repeating group) still covers every layer.
+            kv_heads = sum(raw) * block_count / len(raw)
     key_dim = _positive_number(info, f"{arch}.attention.key_length")
     value_dim = _positive_number(info, f"{arch}.attention.value_length")
     if key_dim is None or value_dim is None:
@@ -333,10 +349,10 @@ def parse_kv_bytes_per_token(show: dict, kv_cache_type: str = DEFAULT_KV_CACHE_T
             head_dim = embedding / head_count
             key_dim = key_dim or head_dim
             value_dim = value_dim or head_dim
-    if not (block_count and kv_heads and key_dim and value_dim):
+    if not (kv_heads and key_dim and value_dim):
         return None
     bytes_per_element = KV_CACHE_BYTES_PER_ELEMENT.get(kv_cache_type, KV_CACHE_BYTES_PER_ELEMENT[DEFAULT_KV_CACHE_TYPE])
-    return block_count * kv_heads * (key_dim + value_dim) * bytes_per_element
+    return kv_heads * (key_dim + value_dim) * bytes_per_element
 
 
 def vram_num_ctx_limit(
