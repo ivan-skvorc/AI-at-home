@@ -42,6 +42,7 @@ class ModeRuns(Runs):
         self.threads[CONVERSATION] = {"values": {"messages": []}, "next": [], "interrupts": [], "assistant": "lead_agent"}
         self.created = []
         self.deliveries = []
+        self.delivery_contexts = []
         self.contexts = []
         self.copies = []
         self.merges = []
@@ -63,6 +64,7 @@ class ModeRuns(Runs):
             run = AgentRun(thread_id, idempotency_key, "success", "lead_agent")
             self.runs[idempotency_key] = run
             self.deliveries.append((input, idempotency_key))
+            self.delivery_contexts.append(context)
             return run
         if self.start_error is not None:
             raise self.start_error
@@ -211,18 +213,28 @@ async def test_agents_are_told_they_run_unattended_with_a_bounded_answer(mode):
 
 @pytest.mark.asyncio
 async def test_double_ultracode_children_carry_the_unlimited_mode(mode):
-    """The host suspends tool-call limits only when the child context says so."""
+    """The host lifts automatic limits only when a run's context says so: each
+    agent and the result follow-up carry the mode, and the workflow has no wall
+    clock. Plus Ultracode keeps every limit (FORK.md §44)."""
+    from deerflow_extension_workflows.ultracode import NO_WALL_CLOCK_SECONDS
+
     script = "await agent({stepId:'a', agentRef:'lead_agent', task:'scan'}); return 1;"
-    options = {"mode": "double_ultracode", "max_agents": 3, "max_parallel": 1}
+    options = {"mode": "double_ultracode", "max_agents": 3, "max_parallel": 1, "max_minutes": 1}
     launched = await mode.service.launch({"request_id": "double", "script": script}, tool_context(mode.runs, options))
     record = await finish(mode, launched["run_id"])
     assert record["mode"] == "double_ultracode"
     assert record["limits"]["max_calls"] == 3
+    assert record["limits"]["timeout_seconds"] == NO_WALL_CLOCK_SECONDS
     assert mode.runs.contexts == [{"mode": "double_ultracode"}]
+    assert (await delivered(mode, launched["run_id"]))["status"] == "delivered"
+    assert mode.runs.delivery_contexts == [{"mode": "double_ultracode"}]
     # Plus Ultracode does not stamp the mode, so its agents stay limited.
-    plus = await mode.service.launch({"request_id": "plus", "script": script.replace("'a'", "'b'")}, tool_context(mode.runs, ULTRACODE))
-    await finish(mode, plus["run_id"])
+    plus = await mode.service.launch({"request_id": "plus", "script": script.replace("'a'", "'b'")}, tool_context(mode.runs, {**ULTRACODE, "max_minutes": 1}))
+    plus_record = await finish(mode, plus["run_id"])
+    assert plus_record["limits"]["timeout_seconds"] == 10  # the operator's wall time
     assert mode.runs.contexts[1] is None
+    assert (await delivered(mode, plus["run_id"]))["status"] == "delivered"
+    assert mode.runs.delivery_contexts[1] is None
 
 
 @pytest.mark.asyncio
@@ -564,8 +576,10 @@ def test_brief_appears_only_on_ultracode_runs_and_clamps_its_limits():
     doubled = middleware.apply(request({AGENT_RUNS_CONTEXT_KEY: handle, "plugin_options": {"community.workflows": {"mode": "double_ultracode", "max_agents": 12, "max_parallel": 2, "max_minutes": 5}}}))
     doubled_text = " ".join(doubled.system_message.content.split())
     assert "## Double Plus Ultracode mode" in doubled_text
-    assert "Tool-call limits are off" in doubled_text and "token-risky" in doubled_text
-    assert "up to 12 agents, at most 2 at once, 5 minutes in total" in doubled_text
+    assert "Automatic limits are off" in doubled_text and "token-risky" in doubled_text
+    # The same brief as Plus, except that the workflow has no wall clock.
+    assert "up to 12 agents, at most 2 at once, no time limit" in doubled_text
+    assert "minutes in total" not in doubled_text
 
     marker = {EXTENSION_MESSAGE_ORIGIN_KEY: {"namespace": "community.workflows"}}
     posted = HumanMessage(id="workflow-result-abc", content="[Workflow result] ...", additional_kwargs=marker)

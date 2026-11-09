@@ -606,7 +606,7 @@ export const enUS: Translations = {
       "Plans the work as a workflow script that many agents run in the background; the result comes back to this chat on its own. Inspired by Claude Code's ultracode. Tool-call limits still apply. Very token-heavy.",
     doubleUltracodeMode: "Double Plus Ultracode",
     doubleUltracodeModeDescription:
-      "Token-risky. Meant for extremely large tasks that should run until they finish, without interruptions. Same workflow script as Plus Ultracode, but tool-call limits are off, so the run is not told to wrap up and is not stopped for calling a tool too many times.",
+      "Token-risky. Meant for extremely large tasks that should run until they finish, without interruptions. Same workflow script as Plus Ultracode, but automatic limits are off: no step limit, tool-call limits, token budget or time limit, so only the model finishing ends the run. Your spend cap still applies.",
     doubleUltracodeWarningTitle: "Token-risky: runs until the task is finished",
     ultracodeUnavailable:
       "Plus Ultracode and Double Plus Ultracode need the Script workflows extension, which is not enabled. This chat now uses Ultra.",
@@ -2730,7 +2730,7 @@ export const enUS: Translations = {
         "Reusable workers that the Lead Agent and permitted Custom Agents can delegate bounded tasks to.",
       ultracodeTitle: "Ultracode limits",
       ultracodeDescription:
-        "How large a workflow Plus Ultracode or Double Plus Ultracode may plan. The Script workflows extension still applies the operator's limits, so these can only make a run smaller. They do not turn tool-call limits back on in Double Plus Ultracode.",
+        "How large a workflow Plus Ultracode or Double Plus Ultracode may plan. The Script workflows extension still applies the operator's limits, so these can only make a run smaller. Minutes apply to Plus Ultracode only: Double Plus Ultracode has no time limit, and these settings do not turn its other automatic limits back on.",
       ultracodeMaxAgents: "Agents per workflow",
       ultracodeMaxParallel: "Agents at once",
       ultracodeMaxMinutes: "Minutes per workflow",

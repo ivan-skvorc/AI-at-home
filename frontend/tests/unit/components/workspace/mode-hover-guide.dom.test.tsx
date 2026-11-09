@@ -40,7 +40,8 @@ describe("Double Plus Ultracode warning (FORK.md §44)", () => {
 
     expect(tip).toContain(enUS.inputBox.doubleUltracodeWarningTitle);
     expect(tip).toContain("Token-risky");
-    expect(tip).toContain("tool-call limits are off");
+    expect(tip).toContain("automatic limits are off");
+    expect(tip).toContain("spend cap still applies");
   });
 
   it("shows on the mode button while the mode is selected, and only for that mode", async () => {

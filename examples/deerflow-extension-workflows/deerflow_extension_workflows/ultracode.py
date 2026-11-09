@@ -8,8 +8,10 @@ run only: every limit is clamped to the operator's configuration here, and the
 mode adds no permission.
 
 ``ultracode`` is Plus Ultracode. ``double_ultracode`` is the same brief and the
-same agent and time limits, and the host turns tool-call limits off for that
-mode (the lead, and each agent this plugin starts with ``context.mode`` set).
+same agent limits with no automatic limits: the workflow has no wall clock, and
+the host lifts the step limit, tool-call limits and token budgets for every run
+whose ``context.mode`` says so (the lead, each agent this plugin starts, and the
+result follow-up). The spend cap still applies.
 
 On such a run this middleware appends one brief to the lead's system prompt:
 plan substantive requests as a workflow (understand, change, verify), size it,
@@ -32,8 +34,11 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from .constants import NAMESPACE
 
 MODE = "ultracode"
-#: Same workflow as Plus Ultracode, with tool-call limits suspended by the host.
+#: Same workflow as Plus Ultracode, with no automatic limits.
 MODE_DOUBLE = "double_ultracode"
+#: A Double Plus Ultracode workflow's wall time: none, in practice (68 years),
+#: kept a number because the supervisor's asyncio deadline needs one.
+NO_WALL_CLOCK_SECONDS = 2**31 - 1
 MODES = frozenset({MODE, MODE_DOUBLE})
 NAMES = {MODE: "Plus Ultracode", MODE_DOUBLE: "Double Plus Ultracode"}
 #: Id prefix of the result messages delivery.py posts.
@@ -51,7 +56,7 @@ in the background across several agents, instead of doing it inside this convers
    `phase(title)`, `agent({{stepId, agentRef, task}})`, `parallel([() => ...])` and `pipeline(items, fn)`.
    Give each agent a self-contained task; agents do not see this conversation.
 3. Size it to the request: small (1-3 agents), medium (4-12) or large (up to {max_agents} agents, at most
-   {max_parallel} at once, {max_minutes} minutes in total). Larger workflows cost more; before launching more
+   {max_parallel} at once, {time_limit}). Larger workflows cost more; before launching more
    than {warn} agents, tell the user the planned size and why. Verification agents count toward the limit.
 4. Keep going when one agent fails. `agent()` rejects when its agent fails, and `parallel()` rejects on the
    first rejection, which ends the whole workflow and cancels the other agents. Catch each call, e.g.
@@ -67,9 +72,9 @@ in the background across several agents, instead of doing it inside this convers
 Answer directly, without a workflow, only for small talk or a question you can answer accurately in a few
 sentences."""
 
-#: Appended only for Double Plus Ultracode. The host also suspends tool-call limits.
+#: Appended only for Double Plus Ultracode. The host lifts the limits it names.
 DOUBLE_LIMITS = """
-8. Tool-call limits are off for this run and for every agent this workflow starts. Do not stop early to save tokens, and do not wrap up because a tool has been called many times. This mode is token-risky. It is meant for an extremely large task that should run until it is finished, without interruptions."""
+8. Automatic limits are off for this run, for every agent this workflow starts and for the run that receives its result: no step limit, no tool-call limits, no token budget and no time limit. The run ends when the work is finished. Do not stop early to save tokens, and do not wrap up because a tool has been called many times. This mode is token-risky. It is meant for an extremely large task that should run until it is finished, without interruptions."""
 
 UNAVAILABLE = """## {name} mode
 The user chose {name}, but this run cannot start workflows (it has no signed-in browser
@@ -95,11 +100,13 @@ def run_limits(options, config):
     if options.get("mode") not in MODES:
         return None
     # Whole minutes from the browser; the operator's wall time stays the ceiling.
+    # Double Plus Ultracode has no wall clock: only the model finishing ends it.
     minutes = bounded(options.get("max_minutes"), max(1, config["timeout_seconds"] // 60))
+    timeout = NO_WALL_CLOCK_SECONDS if options.get("mode") == MODE_DOUBLE else min(minutes * 60, config["timeout_seconds"])
     return {
         "max_calls": bounded(options.get("max_agents"), config["max_calls"]),
         "concurrency": bounded(options.get("max_parallel"), config["concurrency"]),
-        "timeout_seconds": min(minutes * 60, config["timeout_seconds"]),
+        "timeout_seconds": timeout,
     }
 
 
@@ -134,8 +141,10 @@ class UltracodeMode(AgentMiddleware):
             if context.get(AGENT_RUNS_CONTEXT_KEY) is None:
                 notes.append(UNAVAILABLE.format(name=name))
             else:
-                brief = BRIEF.format(name=name, max_agents=limits["max_calls"], max_parallel=limits["concurrency"], max_minutes=limits["timeout_seconds"] // 60, warn=SIZE_WARNING_AGENTS)
-                if options_mode(context) == MODE_DOUBLE:
+                double = options_mode(context) == MODE_DOUBLE
+                time_limit = "no time limit" if double else f"{limits['timeout_seconds'] // 60} minutes in total"
+                brief = BRIEF.format(name=name, max_agents=limits["max_calls"], max_parallel=limits["concurrency"], time_limit=time_limit, warn=SIZE_WARNING_AGENTS)
+                if double:
                     brief += DOUBLE_LIMITS
                 notes.append(brief)
         if posted_result(request.messages):

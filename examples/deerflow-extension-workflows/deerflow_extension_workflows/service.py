@@ -37,7 +37,7 @@ SCHEMA_BYTES = 4000
 MAX_REASKS = 2
 PHASE_LIMIT = 64
 FRAME_MESSAGES = 128
-#: Sent with every Double Plus Ultracode agent task. Children cannot answer an
+#: Sent with every Plus and Double Plus Ultracode agent task. Children cannot answer an
 #: interrupt (a question fails the workflow) and an answer over
 #: AGENT_OUTPUT_BYTES fails the step.
 RUN_NOTE = (
@@ -306,8 +306,9 @@ class Workflows(Cluster, Recovery, Lifecycle, Artifacts, Delivery):
                 "memory_bytes",
             )
         }
-        # A Double Plus Ultracode run may lower its own agent limits (the user's
-        # Settings); run_limits clamps them to the operator values above.
+        # A Plus or Double Plus Ultracode run may lower its own agent limits (the
+        # user's Settings); run_limits clamps them to the operator values above,
+        # and drops the wall clock for Double Plus.
         tool_launch = isinstance(context, ToolContext)
         per_run = run_limits(context.run_options, self.config) if tool_launch else None
         if per_run is not None:
@@ -542,7 +543,7 @@ class Workflows(Cluster, Recovery, Lifecycle, Artifacts, Delivery):
                     }
                 )
             task = payload["task"]
-            # A Double Plus Ultracode child runs unattended and its answer has a
+            # An Ultracode child runs unattended and its answer has a
             # hard size limit; without saying so, a clarifying question or a long
             # report fails the step (and, uncaught, the whole workflow).
             extras = {"run_note": RUN_NOTE} if record.get("mode") in MODES else {}
@@ -575,7 +576,7 @@ class Workflows(Cluster, Recovery, Lifecycle, Artifacts, Delivery):
             if model:
                 run_context_body["model_name"] = model
             # Double Plus Ultracode children must carry the mode: the host
-            # suspends tool-call limits only when runtime context says so.
+            # lifts its automatic limits only when runtime context says so.
             # Plus Ultracode and plain workflows stay limited.
             if record.get("mode") == MODE_DOUBLE:
                 run_context_body["mode"] = MODE_DOUBLE
@@ -878,7 +879,8 @@ class Workflows(Cluster, Recovery, Lifecycle, Artifacts, Delivery):
         try:
             if record.get("budget_deadline") is not None:
                 record["remaining_seconds"] = max(0, record["budget_deadline"] - time.time())
-            # A Double Plus Ultracode run may shorten its own wall time (run_limits).
+            # An Ultracode run sets its own wall time (run_limits): shorter for
+            # Plus, none for Double Plus.
             wall_seconds = record["limits"].get("timeout_seconds", self.config["timeout_seconds"])
             record["budget_deadline"] = time.time() + record.get("remaining_seconds", wall_seconds)
             record["status"] = "running"

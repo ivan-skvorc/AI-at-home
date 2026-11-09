@@ -36,6 +36,7 @@ from deerflow.agents.thread_state import SandboxState, ThreadDataState, ThreadSt
 from deerflow.authz.principal import normalize_authz_attributes
 from deerflow.config import get_app_config
 from deerflow.config.app_config import AppConfig
+from deerflow.config.run_limit_overrides import DOUBLE_ULTRACODE_MODE, UNLIMITED_STEPS
 from deerflow.knowledge_scope import KNOWLEDGE_SCOPE_RUNTIME_KEY, execution_scope
 from deerflow.mcp_scope import THREAD_INCARNATION_CONTEXT_KEY
 from deerflow.models import create_chat_model
@@ -950,6 +951,7 @@ class SubagentExecutor:
         context_snapshot: ParentContextSnapshot | None = None,
         thread_incarnation: str | None | object = _THREAD_INCARNATION_UNSET,
         input_gate: Any | None = None,
+        limits_suspended: bool = False,
     ):
         """Initialize the executor.
 
@@ -1019,8 +1021,14 @@ class SubagentExecutor:
             context_snapshot: Optional immutable parent history captured by the
                 ordinary task tool at dispatch. Rendered as background data,
                 never as child execution evidence or inherited system authority.
+            limits_suspended: Delegated from a Double Plus Ultracode run
+                (FORK.md §44): no turn limit, and the mode rides the child's
+                context so loop detection and the token budget stand down.
+                The caller lifts ``config.timeout_seconds`` itself, because
+                the task tool's poll loop reads the same value.
         """
         self.config = config
+        self.limits_suspended = limits_suspended
         self.app_config = app_config
         self._resolved_app_config = app_config
         self.parent_model = parent_model
@@ -1896,7 +1904,8 @@ class SubagentExecutor:
                 # Super-steps, not turns: ``_create_agent`` (just above) scaled
                 # ``max_turns`` by the compiled chain's per-turn node count.
                 # Unset only when that method was replaced by a test double.
-                "recursion_limit": self._recursion_limit if self._recursion_limit is not None else self.config.max_turns,
+                # Double Plus Ultracode has no turn limit at all.
+                "recursion_limit": UNLIMITED_STEPS if self.limits_suspended else self._recursion_limit if self._recursion_limit is not None else self.config.max_turns,
                 "callbacks": [collector],
                 "tags": [collector_caller],
             }
@@ -1961,6 +1970,9 @@ class SubagentExecutor:
             if self.knowledge_scope is not None:
                 context[KNOWLEDGE_SCOPE_RUNTIME_KEY] = dict(self.knowledge_scope)
             context["is_subagent"] = True
+            if self.limits_suspended:
+                # Read by LoopDetectionMiddleware and TokenBudgetMiddleware.
+                context["mode"] = DOUBLE_ULTRACODE_MODE
             context[_SANDBOX_LEASE_OWNER_CONTEXT_KEY] = sandbox_lease_owner_id
             context[_SANDBOX_COMMAND_SCOPE_CONTEXT_KEY] = sandbox_lease_owner_id
             execution_context = context

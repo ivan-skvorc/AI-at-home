@@ -83,6 +83,8 @@ from deerflow.agents.middlewares.audit_context import (
     resolve_audit_recorder,
 )
 from deerflow.agents.middlewares.tool_call_metadata import clone_ai_message_with_tool_calls
+from deerflow.config.run_limit_overrides import DOUBLE_ULTRACODE_MODE as _DOUBLE_ULTRACODE_MODE
+from deerflow.config.run_limit_overrides import run_limits_suspended
 from deerflow.runtime.events.catalog import MIDDLEWARE_LOOP_DETECTION_TAG
 
 if TYPE_CHECKING:
@@ -283,10 +285,9 @@ _HARD_STOP_MSG = "[FORCED STOP] Repeated tool calls exceeded the safety limit. P
 
 _TOOL_FREQ_HARD_STOP_MSG = "[FORCED STOP] Tool {tool_name} called {count} times — exceeded the per-tool safety limit. Producing final answer with results collected so far."
 
-# Composer mode that must not be interrupted by these limits. Matches the
-# frontend's `double_ultracode` and the workflows extension, which stamps the
-# same mode onto each workflow agent. Plus Ultracode (`ultracode`) is not here.
-DOUBLE_ULTRACODE_MODE = "double_ultracode"
+# Composer mode that must not be interrupted by these limits (re-exported for
+# existing importers). Plus Ultracode (`ultracode`) keeps them.
+DOUBLE_ULTRACODE_MODE = _DOUBLE_ULTRACODE_MODE
 
 
 @dataclass(frozen=True)
@@ -855,12 +856,11 @@ class LoopDetectionMiddleware(AgentMiddleware[AgentState]):
     def _tool_call_limits_suspended(self, runtime: Runtime) -> bool:
         """Double Plus Ultracode runs until the task is finished.
 
-        The composer sets ``mode`` on the lead, and the workflow extension
-        copies it onto each agent it starts. Other modes, including Plus
-        Ultracode, keep both detection layers.
+        The composer sets ``mode`` on the lead, the workflow extension copies
+        it onto each agent it starts, and ``task`` onto its subagents. Other
+        modes, including Plus Ultracode, keep both detection layers.
         """
-        ctx = getattr(runtime, "context", None)
-        return isinstance(ctx, dict) and ctx.get("mode") == DOUBLE_ULTRACODE_MODE
+        return run_limits_suspended(getattr(runtime, "context", None))
 
     def _apply(self, state: AgentState, runtime: Runtime) -> dict | None:
         if self._tool_call_limits_suspended(runtime):

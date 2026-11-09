@@ -271,10 +271,11 @@ admission 20 seconds, cumulative worker CPU 60 seconds, JS memory 64 MiB and 500
 progress messages (`max_logs`, default 100). `max_calls` stays far below Claude Code
 ultracode's 1,000 agents because every step rewrites the whole workflow record.
 
-A Double Plus Ultracode run (the composer mode in the web app) may lower
+A Plus or Double Plus Ultracode run (the composer modes in the web app) may lower
 `max_calls` and `concurrency` for itself through the run's `plugin_options`, the
 user's Settings → Subagents limits; values above the operator's are ignored, so a
-user can make a run smaller but never larger. Such a launch, or any launch whose
+user can make a run smaller but never larger. Plus Ultracode may also shorten its
+wall time; Double Plus Ultracode has none, so only the model finishing ends it. Such a launch, or any launch whose
 call limit exceeds 25, returns an `advisory` naming the possible size.
 
 Each JS engine entry has a 50 ms CPU interruption limit; stack is 256 KiB. The

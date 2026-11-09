@@ -36,7 +36,7 @@ describe("Double Plus Ultracode run context", () => {
     });
   });
 
-  it("sends double_ultracode the same way, which is what suspends tool-call limits", () => {
+  it("sends double_ultracode the same way, which is what lifts automatic limits", () => {
     const derived = deriveModeContext({
       mode: "double_ultracode",
       ultracode_limits: { maxAgents: 12, maxParallel: 3, maxMinutes: 30 },

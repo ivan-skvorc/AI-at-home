@@ -6,7 +6,7 @@ const fields = {
   // "democracy" is this fork's multi-model mode; it must round-trip through
   // the account preference or selecting it would be silently dropped on sync.
   // "ultracode" is Plus Ultracode. "double_ultracode" is the same workflow
-  // with tool-call limits off. Both must round-trip or a selection is dropped.
+  // with automatic limits off. Both must round-trip or a selection is dropped.
   mode: z
     .enum([
       "flash",

@@ -16,9 +16,10 @@ import {
  * Derive the run context the backend actually reads from the composer's mode.
  *
  * Most of a mode is the booleans below. `mode` itself is still sent: Double
- * Plus Ultracode turns tool-call limits off only when the server sees
- * `mode === "double_ultracode"` (the lead, and each workflow agent the
- * extension starts). Dropping the string would leave that mode limited.
+ * Plus Ultracode lifts its automatic limits (steps, tool calls, token budgets)
+ * only where the server sees `mode === "double_ultracode"` (the lead, each
+ * workflow agent and subagent it starts). Dropping the string would leave that
+ * mode limited, including by the `recursion_limit` the submit path pins.
  * The derivation lives in one function because it used to be duplicated at
  * the submit and regenerate call sites, where the two copies could disagree
  * and a regenerated turn would silently run in a different mode.
@@ -81,7 +82,7 @@ export function deriveModeContext(
 ): ModeDerivedContext {
   const { mode } = context;
   // Plus Ultracode and Double Plus Ultracode are Ultra runs whose plan becomes
-  // a workflow script. Only the double mode suspends tool-call limits, and it
+  // a workflow script. Only the double mode lifts automatic limits, and it
   // does that by the `mode` string the settings spread already sends.
   const ultracode = isWorkflowScriptMode(mode);
   const derived: ModeDerivedContext = {

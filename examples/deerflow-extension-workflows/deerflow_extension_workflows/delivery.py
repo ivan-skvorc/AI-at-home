@@ -23,7 +23,7 @@ import logging
 
 from deerflow_extension_api import AgentRunError
 
-from .ultracode import RESULT_MESSAGE_PREFIX
+from .ultracode import MODE_DOUBLE, RESULT_MESSAGE_PREFIX
 
 logger = logging.getLogger(__name__)
 
@@ -150,6 +150,10 @@ class Delivery:
                 run = await runs.start(
                     thread_id=thread_id,
                     input={"messages": [{"role": "user", "id": f"{RESULT_MESSAGE_PREFIX}{run_id[:32]}", "content": result_message(record)}]},
+                    # The lead finishing a Double Plus Ultracode task keeps the
+                    # mode's missing limits; derived from the record, so every
+                    # retry sends the same start.
+                    context={"mode": MODE_DOUBLE} if record.get("mode") == MODE_DOUBLE else None,
                     idempotency_key=f"workflow-result:{run_id}",
                 )
         except AgentRunError as exc:

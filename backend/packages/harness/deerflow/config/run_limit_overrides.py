@@ -30,11 +30,17 @@ agent assembly, the subagent chain, spend admission and status, Gateway run
 config), so a saved change applies to the next run with no restart. A stored
 section that no longer validates is ignored with an error log, and that section
 falls back to ``config.yaml``: a hand-edited file must never stop every run.
+
+Double Plus Ultracode (FORK.md §44) is the one mode that runs until the model
+finishes: :func:`run_limits_suspended` turns off the step limit, the tool-call
+limits, the token budgets and delegated subagents' turn and time limits for it.
+The spend cap is a budget someone set, not an automatic limit, and still applies.
 """
 
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictFloat, StrictInt, ValidationError, model_validator
@@ -170,6 +176,21 @@ def effective_token_budget(base: TokenBudgetConfig) -> TokenBudgetConfig:
 def effective_subagent_token_budget(base: TokenBudgetConfig) -> TokenBudgetConfig:
     """Every subagent's per-run token budget (wins over per-agent YAML budgets)."""
     return _token_budget(base, get_run_limit_overrides().subagent_token_budget, "subagent_token_budget")
+
+
+#: Composer mode with no automatic limits. The frontend sends it as ``mode`` and
+#: the workflows extension copies it onto every agent and result run it starts.
+DOUBLE_ULTRACODE_MODE = "double_ultracode"
+#: "No limit" for values LangGraph and asyncio need as numbers. 2**31 - 1 keeps
+#: them valid 32-bit integers in stored run configs; as steps or seconds (68
+#: years) no run reaches them.
+UNLIMITED_STEPS = 2**31 - 1
+UNLIMITED_SECONDS = 2**31 - 1
+
+
+def run_limits_suspended(context: object) -> bool:
+    """Whether this run's context is Double Plus Ultracode, which has no automatic limits."""
+    return isinstance(context, Mapping) and context.get("mode") == DOUBLE_ULTRACODE_MODE
 
 
 def effective_recursion_limit(base: int) -> int:

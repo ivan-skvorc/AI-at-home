@@ -108,10 +108,11 @@ storage_path resolves under DEER_FLOW_HOME; keep pyproject.toml's uv cache-keys.
 Plus Ultracode and Double Plus Ultracode (FORK.md §44) live here: ultracode.py, delivery.py.
 Read limits only from `ToolContext.run_options`/`plugin_run_options` and clamp to
 operator config; never let run options raise a limit. Both `ultracode` and
-`double_ultracode` get the brief; only the double mode gets the tool-call-limits
-note, and only its children are started with `context.mode = "double_ultracode"`
-so the host can suspend tool-call limits and give them the operator's step ceiling
-(they send no `recursion_limit`). A Plus or plain workflow must not carry that mode. Keep the brief behind the mode option and the result note behind the host-stamped
+`double_ultracode` get the brief; only the double mode gets the no-automatic-limits
+note and no wall clock (`NO_WALL_CLOCK_SECONDS` in `run_limits`), and only its
+children and its result run are started with `context.mode = "double_ultracode"`
+so the host lifts the step limit, tool-call limits and token budgets for them.
+A Plus or plain workflow must not carry that mode. Keep the brief behind the mode option and the result note behind the host-stamped
 `EXTENSION_MESSAGE_ORIGIN_KEY` for this namespace only. Delivery is exactly once:
 idempotency key `workflow-result:<run>`, deterministic message text, state in
 `workflow_deliveries` (never the lease-fenced record), busy threads retried, never
@@ -119,7 +120,7 @@ interrupted; cancelled runs are skipped. Schema re-asks persist the new attempt
 identity before admission; an uncertain re-ask needs reconciliation. A 402 is a
 definitive pre-admission rejection. Workspace copy/merge only through AgentRuns,
 gated by `shared_workspace`; merge results stay bounded in the row.
-`max_minutes` clamps to `timeout_seconds` into the record's limits; the supervisor
+`max_minutes` (Plus only) clamps to `timeout_seconds` into the record's limits; the supervisor
 reads the record, never the config, for wall time. `RUN_NOTE` (unattended, bounded
 answer) goes on ultracode children only, so plain tasks stay byte-identical. A busy
 conversation is waiting, not a failed delivery attempt (bounded by BUSY_WAIT_SECONDS).

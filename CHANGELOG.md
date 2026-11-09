@@ -35,6 +35,8 @@ This section accumulates work toward the **2.3.0** milestone
 
 ### Fixed
 
+- **ultracode:** Double Plus Ultracode no longer stops at `recursion_limit=1000`. It is now Plus Ultracode with no automatic limits: no step limit (the `max_recursion_limit` ceiling does not apply), no tool-call limits, no token budgets and no workflow time limit, for the lead, each workflow agent, each `task` subagent and the turn that receives the result. The spend cap and the workflow's agent count and parallelism still apply. Plus Ultracode is unchanged.
+
 - **models:** Hybrid local models get a context window sized to the GPU instead of the flat 32K. Qwen3.5/3.6, Qwen3-Next and Nemotron-H keep a KV cache only on their attention layers, and the launch sync either could not read their layout or costed every layer as if it had one. On a 24 GiB card with a q8_0 cache, qwen3.6:27b now gets about 188K tokens and qwen3.6:35b about 122K.
 
 - **models:** An Ollama daemon on another machine (another box on your LAN or Tailscale) keeps syncing on every launch. Without `OLLAMA_HOST` in the launch's environment (the Docker launches never read it from `.env`), the sync asked `localhost`, found nothing and skipped, so the models and context windows an earlier run wrote never refreshed. It now asks the host its existing entries point at. The launch log also says that a remote daemon's GPU needs `ollama.vram_gb`, since it cannot be detected from this machine.

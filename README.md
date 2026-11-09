@@ -17,8 +17,8 @@
 > **Using it every day**
 >
 > - ➕ **Plus Ultracode — the plan becomes a script** — inspired by Claude Code's *ultracode* (this is the mode that used to be called Double Plus Ultracode). In this composer mode the agent answers a substantive request by writing an inspectable workflow script that many agents run in the background (understand, change, verify, with findings checked by a second agent), and the result **comes back to the same chat on its own**, exactly once. The Script workflows extension it runs on is bundled and on by default. Agent and time limits live under **Settings → Subagents**, one failed agent no longer ends the whole workflow, and the usual **tool-call limits still apply** — a runaway tool loop is still told to wrap up.
-> - 🧬 **Double Plus Ultracode — the same script, with no tool-call limits** — the same workflow as Plus Ultracode, but tool-call limits are off: the agent is not told to wrap up after repeated calls, and it is not forced to stop. Its workflow agents also get the step limit's ceiling instead of the default, so a long agent is not cut off at 250 steps. Hover or focus the option in the mode menu, before you pick it, and a **warning** pops up: **token-risky**, meant for **extremely large tasks that should run until they finish, without interruptions**. Agent count and time limits under **Settings → Subagents**, the spend cap and token budgets still apply. Do not leave this selected for ordinary chat.
-> - 🎚️ **Run limits you can change or switch off in Settings** — the spend cap, the tool-call limits that tell an agent to "wrap up" after 30 calls to one tool, the token budgets and the step limit for background runs all live under **Settings → Run limits**, so a long merge or refactor — in Plus Ultracode or any other mode — no longer stops halfway because of a number buried in `config.yaml`. Double Plus Ultracode already runs with tool-call limits off for that one run. Each limit shows whether it comes from `config.yaml` or was set on the page, and **one click goes back to `config.yaml`**. Administrators only; changes apply from the next run, with no restart.
+> - 🧬 **Double Plus Ultracode — the same script, with no automatic limits** — the same workflow as Plus Ultracode, but **only the model finishing ends the run**: no step limit (not even the 1,000-step ceiling), no tool-call limits, no token budgets and no workflow time limit, for the lead, every workflow agent, every subagent it delegates to and the turn that receives the result. Hover or focus the option in the mode menu, before you pick it, and a **warning** pops up: **token-risky**, meant for **extremely large tasks that should run until they finish, without interruptions**. Your **spend cap still applies** (set one under Settings → Run limits), and so do the workflow's agent count and parallelism under **Settings → Subagents**. Do not leave this selected for ordinary chat.
+> - 🎚️ **Run limits you can change or switch off in Settings** — the spend cap, the tool-call limits that tell an agent to "wrap up" after 30 calls to one tool, the token budgets and the step limit for background runs all live under **Settings → Run limits**, so a long merge or refactor — in Plus Ultracode or any other mode — no longer stops halfway because of a number buried in `config.yaml`. Double Plus Ultracode already runs with every limit but the spend cap off for that one run. Each limit shows whether it comes from `config.yaml` or was set on the page, and **one click goes back to `config.yaml`**. Administrators only; changes apply from the next run, with no restart.
 > - 🔀 **Independent model per conversation, remembered by the conversation** — every chat keeps its own model, subagent model, mode and reasoning effort, recorded on the chat itself rather than in one browser. Switching conversations switches the picker to *that* chat's model instead of leaving the last one selected — on your phone and after a site-data clear too — and a brand-new chat no longer forgets its model the moment it is created.
 > - 🚦 **Concurrent chats** — leaving a chat used to cancel its run. Now a chat you leave mid-answer keeps streaming in the background and notifies you when it lands; come back and the answer is already there.
 > - 🗃️ **Folders in the sidebar, with subfolders** — the chat list is a tree. A conversation you file is **inside its folder and gone from the list outside it**, the way a file manager works, and folders nest up to five levels. Drag chats and folders around, or use the **⋯** menus. Deleting a folder never deletes the chats in it. Stored per user on the server; nothing to configure.
@@ -3556,10 +3556,12 @@ script, and only the final answer comes back to the conversation.
 **Two modes, one script.** *Plus Ultracode* is that workflow with the usual
 tool-call limits still on (wrap up after repeated calls to one tool, then a
 forced stop). *Double Plus Ultracode* is the same run — same brief, same agent
-and time limits — with those tool-call limits **off** for the lead and for
-every agent the workflow starts, and those agents get the step limit's
-ceiling (`max_recursion_limit`, 1000 as shipped) instead of the 250-step
-default. The spend cap and token budgets an administrator set still apply.
+count and parallelism — with **no automatic limits**: no step limit (the
+1,000-step `max_recursion_limit` ceiling does not apply to it), no tool-call
+limits, no token budgets and no workflow time limit, for the lead, every agent
+the workflow starts, every `task` subagent it delegates to, and the turn that
+receives the result. Only the model finishing ends it. The spend cap still
+applies, so set one under **Settings → Run limits** before a large run.
 Hover or focus it in the mode menu, before you pick it, and a warning pops up:
 it is token-risky and meant only for extremely large tasks that should run until
 they finish, without interruptions. The same warning shows on the mode button
@@ -3684,7 +3686,8 @@ said it "stopped before" the work you asked for:
   default** (one to two million tokens).
 - **Steps for background runs** — the step limit for runs that do not choose
   their own: workflow agents, channels and API calls. Chats in the web app always
-  get the maximum, `max_recursion_limit`.
+  get the maximum, `max_recursion_limit`; Double Plus Ultracode runs get no step
+  limit at all.
 
 Each limit shows whether it comes from `config.yaml` or was set on the page, and
 **Use config.yaml** puts it back. The page never edits `config.yaml`: its values

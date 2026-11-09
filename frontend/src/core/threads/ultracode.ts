@@ -4,10 +4,11 @@
  * workflow script that the Script workflows extension runs in the background,
  * and the result comes back to the conversation on its own.
  *
- * Plus Ultracode (`ultracode`) keeps the usual tool-call limits. Double Plus
- * Ultracode (`double_ultracode`) is the same run with those limits off, so an
- * extremely large task can finish without being told to wrap up. The host
- * reads `mode` for that; this module only tells the extension which one it is.
+ * Plus Ultracode (`ultracode`) keeps the usual limits. Double Plus Ultracode
+ * (`double_ultracode`) is the same run with no automatic limits (no step limit,
+ * tool-call limits, token budget or workflow time limit; the spend cap stays),
+ * so an extremely large task runs until the model finishes. The host reads
+ * `mode` for that; this module only tells the extension which one it is.
  *
  * Either mode is an Ultra run plus one per-run plugin option addressed to the
  * extension (`plugin_options["community.workflows"]`). The three limits are the
@@ -18,7 +19,7 @@
 import type { FrontendContribution } from "../extensions/contracts";
 
 export const ULTRACODE_MODE = "ultracode";
-/** Same workflow as Plus Ultracode, with tool-call limits suspended. */
+/** Same workflow as Plus Ultracode, with no automatic limits. */
 export const DOUBLE_ULTRACODE_MODE = "double_ultracode";
 export const ULTRACODE_NAMESPACE = "community.workflows";
 
