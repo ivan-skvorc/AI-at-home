@@ -209,6 +209,14 @@ class TestConsoleRuns:
         assert [r["run_id"] for r in data["runs"]] == ["r3", "r4"]
         assert data["has_more"] is False
 
+    def test_each_run_carries_its_input_output_and_cached_tokens(self, client):
+        """Roadmap 39: the run rows' stored split, plus cache hits summed across models."""
+        runs = {r["run_id"]: r for r in client.get("/api/console/runs", params={"limit": 10}).json()["runs"]}
+        assert (runs["r1"]["total_input_tokens"], runs["r1"]["total_output_tokens"], runs["r1"]["cache_read_tokens"]) == (800, 400, 500)
+        assert (runs["r3"]["total_input_tokens"], runs["r3"]["total_output_tokens"], runs["r3"]["cache_read_tokens"]) == (50, 0, 0)
+        # r4 recorded a total with no split: the fields stay 0, the total is untouched.
+        assert (runs["r4"]["total_tokens"], runs["r4"]["total_input_tokens"], runs["r4"]["total_output_tokens"]) == (999, 0, 0)
+
     def test_status_filter(self, client):
         resp = client.get("/api/console/runs", params={"status": "error"})
         data = resp.json()
@@ -258,6 +266,41 @@ class TestConsoleUsage:
         assert model["runs"] == 3
         assert model["cache_read_tokens"] == 500
         assert sum(day["input_tokens"] for day in data["days"]) == sum(entry["input_tokens"] for entry in data["by_model"].values())
+
+    def test_input_output_and_cache_split_for_the_window_each_day_and_model(self, client):
+        """Roadmap 39: every total carries its input/output split and cached part of input."""
+        data = client.get("/api/console/usage", params={"days": 14}).json()
+        # r1 + r2 + r3 + r5 in the window; r4 (40 days old) is not.
+        assert data["total_input_tokens"] == 800 + 200 + 50 + 40
+        assert data["total_output_tokens"] == 400 + 100 + 0 + 30
+        assert data["total_cache_read_tokens"] == 500
+        assert data["total_input_tokens"] == sum(day["input_tokens"] for day in data["days"])
+        assert data["total_output_tokens"] == sum(day["output_tokens"] for day in data["days"])
+        assert data["total_cache_read_tokens"] == sum(day["cache_read_tokens"] for day in data["days"])
+        today = NOW.date().isoformat()
+        day = {d["date"]: d for d in data["days"]}[today]
+        assert (day["input_tokens"], day["output_tokens"], day["cache_read_tokens"]) == (1040, 530, 500)
+        model = data["by_model"]["minimax-m2"]
+        assert (model["input_tokens"], model["output_tokens"], model["cache_read_tokens"]) == (1000, 500, 500)
+        # The legacy row (no per-model map) still splits from the run's columns.
+        assert (data["by_model"]["gpt-x"]["input_tokens"], data["by_model"]["gpt-x"]["output_tokens"]) == (50, 0)
+        for bucket in [*data["days"], *data["by_model"].values()]:
+            assert bucket["cache_read_tokens"] <= bucket["input_tokens"]
+            assert bucket["input_tokens"] + bucket["output_tokens"] <= bucket.get("total_tokens", bucket.get("tokens"))
+
+    def test_a_total_without_its_split_is_left_unattributed_not_folded_in(self, client, session_factory):
+        async def _total_only() -> None:
+            async with session_factory() as session:
+                row = await session.get(RunRow, "r3")
+                row.total_input_tokens = 0
+                row.total_output_tokens = 0
+                await session.commit()
+
+        asyncio.run(_total_only())
+        data = client.get("/api/console/usage", params={"days": 14}).json()
+        yesterday = {d["date"]: d for d in data["days"]}[(NOW - timedelta(days=1)).date().isoformat()]
+        assert (yesterday["total_tokens"], yesterday["input_tokens"], yesterday["output_tokens"]) == (50, 0, 0)
+        assert data["total_tokens"] - data["total_input_tokens"] - data["total_output_tokens"] == 50
 
     def test_window_excludes_old_rows_but_stats_include_them(self, client):
         usage = client.get("/api/console/usage", params={"days": 7}).json()

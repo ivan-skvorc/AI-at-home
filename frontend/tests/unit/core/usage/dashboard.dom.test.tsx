@@ -95,6 +95,80 @@ test("switches the server-side period and shows only token usage", async () => {
   );
 });
 
+test("every total shows its input and output, with cache hits as part of input", async () => {
+  mocks.usage.mockResolvedValue({
+    ...usage,
+    total_input_tokens: 70,
+    total_output_tokens: 30,
+    total_cache_read_tokens: 10,
+    days: usage.days.map((day) => ({ ...day, cache_read_tokens: 10 })),
+    by_model: {
+      flash: { ...usage.by_model.flash, output_tokens: 30 },
+    },
+  });
+  renderDashboard();
+  const split = await screen.findByTestId("usage-token-split");
+  expect(split.querySelector('[data-split="input"] dd')?.textContent).toBe(
+    "70 · 70%incl. 10 cache hits",
+  );
+  expect(split.querySelector('[data-split="output"] dd')?.textContent).toBe(
+    "30 · 30%",
+  );
+  expect(split.querySelector('[data-split="unattributed"]')).toBeNull();
+  // The bar stacks the same parts: cached and uncached input, then output.
+  const bar = screen.getByTestId("usage-day-bar");
+  const grow = (segment: string) =>
+    bar.querySelector<HTMLElement>(`[data-segment="${segment}"]`)!.style
+      .flexGrow;
+  expect([grow("cached"), grow("uncached"), grow("output")]).toEqual([
+    "10",
+    "60",
+    "30",
+  ]);
+  const legend = screen.getByTestId("usage-chart-legend");
+  expect(legend.textContent).toContain("Input tokens");
+  expect(legend.textContent).toContain("Output tokens");
+  const models = screen.getByRole("table", { name: "Usage by model" });
+  const headers = Array.from(models.querySelectorAll("th[scope=col]")).map(
+    (th) => th.textContent,
+  );
+  expect(headers).toEqual([
+    "Model",
+    "Total tokens",
+    "Input tokens",
+    "Cache-hit input tokens",
+    "Output tokens",
+    "Runs",
+  ]);
+  const row = Array.from(models.querySelectorAll("tbody td")).map(
+    (td) => td.textContent,
+  );
+  expect(row).toEqual(["100", "70", "10", "30", "1"]);
+});
+
+test("a total without its split is shown as unattributed, not folded into input", async () => {
+  mocks.usage.mockResolvedValue({
+    ...usage,
+    total_tokens: 150,
+    total_input_tokens: 70,
+    total_output_tokens: 30,
+    days: usage.days.map((day) => ({ ...day, total_tokens: 150 })),
+    by_model: { flash: { ...usage.by_model.flash, tokens: 150 } },
+  });
+  renderDashboard();
+  const split = await screen.findByTestId("usage-token-split");
+  expect(screen.getByTestId("usage-total-tokens").textContent).toBe("150");
+  expect(
+    split.querySelector('[data-split="unattributed"] dd')?.textContent,
+  ).toBe("50 · 33%");
+  expect(screen.getByTestId("usage-chart-legend").textContent).toContain(
+    "Unattributed tokens",
+  );
+  expect(
+    screen.getByRole("columnheader", { name: "Unattributed tokens" }),
+  ).toBeTruthy();
+});
+
 test("does not issue requests without runs:read", () => {
   mocks.permissions = [];
   renderDashboard();

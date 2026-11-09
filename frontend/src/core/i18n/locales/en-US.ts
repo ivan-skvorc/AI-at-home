@@ -26,6 +26,11 @@ export const enUS: Translations = {
     inputTokens: "Input tokens",
     outputTokens: "Output tokens",
     cachedTokens: "Cache-hit input tokens",
+    unattributedTokens: "Unattributed tokens",
+    unattributedHint:
+      "Reported as a total without an input/output split, so it is shown apart rather than counted as either.",
+    cachedPart: (count) => `incl. ${count} cache hits`,
+    tokenSplit: "Input and output",
     daily: "Daily token usage",
     dailyDetails: "View daily details",
     models: "Usage by model",

@@ -71,6 +71,9 @@ class ConsoleRunItem(BaseModel):
     updated_at: datetime | None = None
     duration_seconds: float | None = Field(default=None, description="Wall-clock duration; live elapsed time for active runs")
     total_tokens: int = 0
+    total_input_tokens: int = Field(default=0, description="Input tokens recorded for this run (cache hits included)")
+    total_output_tokens: int = Field(default=0, description="Output tokens recorded for this run")
+    cache_read_tokens: int = Field(default=0, description="Prompt-cache-hit input tokens, summed across the run's models; a part of input, never added to it")
     message_count: int = 0
     cost: float | None = Field(default=None, description="Estimated spend for this run; null when unpriced or any call explicitly lacks usage")
     error: str | None = Field(default=None, description="Error excerpt for failed runs")
@@ -90,6 +93,7 @@ class ConsoleUsageDay(BaseModel):
     total_tokens: int = 0
     input_tokens: int = 0
     output_tokens: int = 0
+    cache_read_tokens: int = Field(default=0, description="Prompt-cache-hit input tokens; a part of input_tokens")
     runs: int = 0
     cost: float | None = Field(default=0.0, description="Estimated spend for the day across priced runs; null when any call explicitly lacks usage")
 
@@ -101,6 +105,7 @@ class ConsoleUsageModelBreakdown(BaseModel):
     runs: int = Field(default=0, description="Runs that used this model (non-exclusive)")
     cost: float | None = Field(default=None, description="Estimated spend for this model; null when unpriced or any call explicitly lacks usage")
     input_tokens: int = Field(default=0, description="Input tokens attributed to this model")
+    output_tokens: int = Field(default=0, description="Output tokens attributed to this model")
     cache_read_tokens: int = Field(default=0, description="Prompt-cache-hit input tokens attributed to this model")
 
 
@@ -111,6 +116,12 @@ class ConsoleUsageResponse(BaseModel):
     by_model: dict[str, ConsoleUsageModelBreakdown]
     total_tokens: int
     total_runs: int
+    # Roadmap 39. Additive, default 0: input + output can fall short of
+    # total_tokens where a provider reported a total without its split, and the
+    # page shows that difference as "unattributed" rather than folding it in.
+    total_input_tokens: int = Field(default=0, description="Input tokens for the window (cache hits included)")
+    total_output_tokens: int = Field(default=0, description="Output tokens for the window")
+    total_cache_read_tokens: int = Field(default=0, description="Prompt-cache-hit input tokens for the window; a part of total_input_tokens")
     total_cost: float | None = Field(default=None, description="Estimated spend for the window; null when pricing is unavailable or any call explicitly lacks usage")
     currency: str | None = Field(default=None, description="Display currency taken from the first configured pricing entry")
 
@@ -216,6 +227,13 @@ def _token_count(value: object) -> int:
     ``run_cost`` uses, so a junk bucket cannot 500 either surface.
     """
     return token_count(value)
+
+
+def _cache_read_tokens(token_usage_by_model: object) -> int:
+    """Prompt-cache-hit input tokens summed across a run's per-model buckets."""
+    if not isinstance(token_usage_by_model, dict):
+        return 0
+    return sum(_token_count(usage.get("cache_read_tokens")) for usage in token_usage_by_model.values() if isinstance(usage, dict))
 
 
 def _build_pricing_map() -> dict[str, ModelPricing]:
@@ -395,6 +413,9 @@ async def console_runs(
                 updated_at=updated,
                 duration_seconds=max(duration, 0.0) if duration is not None else None,
                 total_tokens=row.total_tokens or 0,
+                total_input_tokens=_token_count(row.total_input_tokens),
+                total_output_tokens=_token_count(row.total_output_tokens),
+                cache_read_tokens=_cache_read_tokens(row.token_usage_by_model),
                 message_count=row.message_count or 0,
                 cost=round(cost, 6) if cost is not None else None,
                 error=row.error[:_ERROR_EXCERPT_CHARS] if row.error else None,
@@ -439,6 +460,9 @@ async def console_usage(
     pricing = _build_pricing_map()
     by_model: dict[str, ConsoleUsageModelBreakdown] = {}
     total_tokens = 0
+    total_input_tokens = 0
+    total_output_tokens = 0
+    total_cache_read_tokens = 0
     total_runs = 0
     total_cost = 0.0 if pricing else None
     missing_models: set[str] = set()
@@ -453,11 +477,18 @@ async def console_usage(
             # Row sits just outside the local window (UTC-window over-fetch); skip.
             continue
         run_tokens = row.total_tokens or 0
+        run_input = _token_count(row.total_input_tokens)
+        run_output = _token_count(row.total_output_tokens)
+        run_cached = _cache_read_tokens(row.token_usage_by_model)
         bucket.total_tokens += run_tokens
-        bucket.input_tokens += row.total_input_tokens or 0
-        bucket.output_tokens += row.total_output_tokens or 0
+        bucket.input_tokens += run_input
+        bucket.output_tokens += run_output
+        bucket.cache_read_tokens += run_cached
         bucket.runs += 1
         total_tokens += run_tokens
+        total_input_tokens += run_input
+        total_output_tokens += run_output
+        total_cache_read_tokens += run_cached
         total_runs += 1
 
         run_cost = _run_cost(
@@ -491,6 +522,7 @@ async def console_usage(
                     continue
                 entry.tokens += _token_count(usage.get("total_tokens"))
                 entry.input_tokens += _token_count(usage.get("input_tokens"))
+                entry.output_tokens += _token_count(usage.get("output_tokens"))
                 entry.cache_read_tokens += _token_count(usage.get("cache_read_tokens"))
                 price = _lookup_pricing(pricing, model)
                 if _usage_is_missing(usage):
@@ -506,7 +538,8 @@ async def console_usage(
             # Legacy rows predating token_usage_by_model: fall back to the run's model.
             entry = by_model.setdefault(row.model_name, ConsoleUsageModelBreakdown())
             entry.tokens += run_tokens
-            entry.input_tokens += row.total_input_tokens or 0
+            entry.input_tokens += run_input
+            entry.output_tokens += run_output
             entry.runs += 1
             if run_cost is not None:
                 entry.cost = round((entry.cost or 0.0) + run_cost, 6)
@@ -523,6 +556,9 @@ async def console_usage(
         by_model=by_model,
         total_tokens=total_tokens,
         total_runs=total_runs,
+        total_input_tokens=total_input_tokens,
+        total_output_tokens=total_output_tokens,
+        total_cache_read_tokens=total_cache_read_tokens,
         total_cost=total_cost,
         currency=_pricing_currency(pricing),
     )

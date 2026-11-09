@@ -8,6 +8,9 @@ function summary(days: number) {
   const tokens = days === 7 ? 3000 : 10000;
   return {
     total_tokens: tokens,
+    total_input_tokens: tokens - 100,
+    total_output_tokens: 100,
+    total_cache_read_tokens: 500,
     total_runs: 3,
     total_cost: 0.012,
     currency: "USD",
@@ -22,6 +25,7 @@ function summary(days: number) {
         total_tokens: totalTokens,
         input_tokens: totalTokens - outputTokens,
         output_tokens: outputTokens,
+        cache_read_tokens: index === days - 1 ? 500 : 0,
         runs: weight > 0 ? 1 : 0,
         cost: 0.012 * weight,
       };
@@ -32,6 +36,7 @@ function summary(days: number) {
         runs: 3,
         cost: 0.012,
         input_tokens: tokens - 100,
+        output_tokens: 100,
         cache_read_tokens: 500,
       },
     },
@@ -59,6 +64,22 @@ test("switches the usage period, sends browser offset and exposes daily details"
     .click();
   await expect(page.getByTestId("usage-total-tokens")).toHaveText("3,000");
   await expect(page.getByTestId("usage-total-cost")).toHaveCount(0);
+  // Roadmap 39: the total splits into input (cache hits marked) and output.
+  const split = page.getByTestId("usage-token-split");
+  await expect(split.locator('[data-split="input"] dd')).toHaveText(
+    "2,900 · 97%incl. 500 cache hits",
+  );
+  await expect(split.locator('[data-split="output"] dd')).toHaveText(
+    "100 · 3%",
+  );
+  await expect(page.getByTestId("usage-chart-legend")).toContainText(
+    "Output tokens",
+  );
+  await expect(
+    page
+      .getByRole("table", { name: "Usage by model", exact: true })
+      .getByRole("row", { name: /deepseek-flash/ }),
+  ).toHaveText(/3,000\s*2,900\s*500\s*100\s*3/);
   await page.getByRole("button", { name: "Last 30 days" }).click();
   await expect(page.getByTestId("usage-total-tokens")).toHaveText("10,000");
   await page.getByText("View daily details", { exact: true }).click();
@@ -134,6 +155,9 @@ test("pages run history and resets its offset when filtering failures", async ({
             updated_at: null,
             duration_seconds: 6.2,
             total_tokens: 100,
+            total_input_tokens: 70,
+            total_output_tokens: 30,
+            cache_read_tokens: 20,
             message_count: 2,
             cost: 0.012,
             error: status === "error" ? "An upstream request failed" : null,
@@ -146,6 +170,15 @@ test("pages run history and resets its offset when filtering failures", async ({
   await expect(
     page.getByRole("link", { name: "Latest report" }),
   ).toHaveAttribute("href", "/workspace/chats/thread%2Fa%20%23%3F");
+  await expect(
+    page
+      .getByRole("row", { name: /Latest report/ })
+      .getByRole("cell")
+      .last(),
+  ).toHaveText("30");
+  await expect(page.getByRole("row", { name: /Latest report/ })).toContainText(
+    "incl. 20 cache hits",
+  );
   await page.getByRole("button", { name: "Next page" }).click();
   await expect(page.getByRole("link", { name: "Older report" })).toBeVisible();
   await page

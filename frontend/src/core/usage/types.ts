@@ -4,6 +4,8 @@ export interface UsageDay {
   total_tokens: number;
   input_tokens: number;
   output_tokens: number;
+  /** Cache-hit part of input_tokens; absent from Gateways before roadmap 39. */
+  cache_read_tokens?: number;
   runs: number;
 }
 
@@ -11,6 +13,7 @@ export interface ModelUsage {
   tokens: number;
   runs: number;
   input_tokens: number;
+  output_tokens?: number;
   cache_read_tokens: number;
 }
 
@@ -19,6 +22,9 @@ export interface UsageSummary {
   by_model: Record<string, ModelUsage>;
   total_tokens: number;
   total_runs: number;
+  total_input_tokens?: number;
+  total_output_tokens?: number;
+  total_cache_read_tokens?: number;
 }
 
 export interface UsageRun {
@@ -32,6 +38,9 @@ export interface UsageRun {
   updated_at: string | null;
   duration_seconds: number | null;
   total_tokens: number;
+  total_input_tokens?: number;
+  total_output_tokens?: number;
+  cache_read_tokens?: number;
   message_count: number;
   error: string | null;
 }
