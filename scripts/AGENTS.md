@@ -28,6 +28,8 @@ path variables and compare storage defaults with the launcher's actual shell blo
 `sync-ollama-models.py` runs on every launch path and owns only its marked
 block. GPU sizing never writes a `num_ctx` below `MIN_AGENT_NUM_CTX` (32768),
 the window `backend/tests/test_context_fit_critical.py` proves the agent fits.
+KV cost counts only layers that keep a cache: a zero in a per-layer
+`head_count_kv` is a linear-attention or state-space layer, not unreadable.
 With no `ollama.vram_gb` it sizes a loopback daemon from
 `wizard/steps/ollama.py::detect_dedicated_vram_gb`; never add a second
 detector. `vram_gb: 0` means off. Detection stays sync-only: the runtime

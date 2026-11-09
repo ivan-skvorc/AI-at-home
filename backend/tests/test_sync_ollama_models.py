@@ -464,6 +464,74 @@ class TestParseKvBytesPerToken:
         }
         assert sync_ollama.parse_kv_bytes_per_token(show) == 36 * 6 * 256 * 2.0
 
+    # Hybrid models keep a per-token KV cache only on their attention layers;
+    # the rest are linear-attention or state-space layers with a fixed-size
+    # state. Geometry as Ollama 0.40 reports it for three of them.
+    @pytest.mark.parametrize(
+        ("arch", "per_layer", "head_dim", "expected"),
+        [
+            ("qwen35", [0, 0, 0, 4] * 16, 256, 16 * 4 * 512 * 2.0),  # qwen3.6:27b
+            ("qwen3next", [0, 0, 0, 2] * 12, 256, 12 * 2 * 512 * 2.0),  # qwen3-coder-next
+            ("nemotron_h_moe", [0] * 46 + [2] * 7, 128, 7 * 2 * 256 * 2.0),  # nemotron-3.5-lightning
+        ],
+    )
+    def test_layers_without_a_kv_cache_cost_nothing(self, arch, per_layer, head_dim, expected):
+        # A zero used to fail the whole list, so these models fell back to the
+        # flat 32K cap however much VRAM was free.
+        show = {
+            "model_info": {
+                "general.architecture": arch,
+                f"{arch}.block_count": len(per_layer),
+                f"{arch}.attention.head_count_kv": per_layer,
+                f"{arch}.attention.key_length": head_dim,
+                f"{arch}.attention.value_length": head_dim,
+            }
+        }
+        assert sync_ollama.parse_kv_bytes_per_token(show) == expected
+
+    def test_full_attention_interval_counts_only_the_attention_layers(self):
+        # qwen3.6:35b reports one KV-head count for every layer, but only every
+        # fourth layer is full attention (rounded up: 41 layers -> 11). Costing
+        # all 41 sized its window about 4x too small.
+        show = {
+            "model_info": {
+                "general.architecture": "qwen35moe",
+                "qwen35moe.block_count": 41,
+                "qwen35moe.full_attention_interval": 4,
+                "qwen35moe.attention.head_count_kv": 2,
+                "qwen35moe.attention.key_length": 256,
+                "qwen35moe.attention.value_length": 256,
+            }
+        }
+        assert sync_ollama.parse_kv_bytes_per_token(show) == 11 * 2 * 512 * 2.0
+
+    def test_a_model_with_no_attention_layers_is_not_sized(self):
+        # No per-token cache at all (a pure state-space model) would make the
+        # window unbounded; the flat cap is the safe answer.
+        show = {
+            "model_info": {
+                "general.architecture": "mamba2",
+                "mamba2.block_count": 4,
+                "mamba2.attention.head_count_kv": [0, 0, 0, 0],
+                "mamba2.attention.key_length": 128,
+                "mamba2.attention.value_length": 128,
+            }
+        }
+        assert sync_ollama.parse_kv_bytes_per_token(show) is None
+
+    def test_a_hybrid_model_is_sized_from_its_attention_layers(self):
+        # qwen3.6:27b on a 24 GiB card with a q8_0 cache: was None (flat 32K).
+        show = {
+            "model_info": {
+                "general.architecture": "qwen35",
+                "qwen35.block_count": 64,
+                "qwen35.attention.head_count_kv": [0, 0, 0, 4] * 16,
+                "qwen35.attention.key_length": 256,
+                "qwen35.attention.value_length": 256,
+            }
+        }
+        assert sync_ollama.vram_num_ctx_limit(show, int(16.2 * GIB), 24 * GIB, "q8_0") == 192512
+
     def test_missing_model_info_returns_none(self):
         assert sync_ollama.parse_kv_bytes_per_token({"capabilities": ["tools"]}) is None
 
