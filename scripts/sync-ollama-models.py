@@ -45,6 +45,11 @@ the per-token cost versus the default ``f16``, roughly doubling the affordable
 window. An explicit ``--num-ctx-cap`` still applies as a hard ceiling; models
 whose geometry can't be read fall back to the flat-cap behavior.
 
+Settings → Models: a GPU memory saved there (``ollama_vram_gb`` in
+``runtime_settings.json`` under the DeerFlow home) wins over ``ollama.vram_gb``
+and detection; only ``--vram-gb`` beats it. It lives outside config.yaml so
+neither this sync nor a config upgrade can reset it.
+
 Detection: with no budget configured and a daemon on this machine (a loopback
 query host), the dedicated GPUs' memory is read with nvidia-smi / rocm-smi, by
 the same detector ``make setup`` uses. A remote daemon's GPU is not this
@@ -510,6 +515,46 @@ def resolve_sizing_settings(cli_vram_gb, cli_kv_cache_type, config_text: str):
 def vram_budget_is_configured(cli_vram_gb, settings: dict) -> bool:
     """Whether the operator named a GPU budget — 0 included, which means "off"."""
     return cli_vram_gb is not None or "vram_gb" in settings
+
+
+# Settings → Models saves the GPU memory under this key in runtime_settings.json
+# (deerflow/config/ollama_config.py::VRAM_GB_SETTING_KEY), not in config.yaml.
+SETTINGS_VRAM_KEY = "ollama_vram_gb"
+SETTINGS_MAX_VRAM_GB = 1024.0
+
+
+def default_runtime_settings_path() -> Path:
+    """Where the Gateway keeps runtime_settings.json, seen from the host.
+
+    Every launch path keeps the DeerFlow home at ``$DEER_FLOW_HOME`` when it is
+    set, else ``backend/.deer-flow`` (the Docker stacks bind-mount that same
+    directory into the Gateway).
+    """
+    home = os.environ.get("DEER_FLOW_HOME")
+    base = Path(home) if home else Path(__file__).resolve().parent.parent / "backend" / ".deer-flow"
+    return base / "runtime_settings.json"
+
+
+def read_settings_page_vram_gb(path) -> float | None:
+    """The GPU memory saved on Settings → Models, or None when none is saved.
+
+    Unreadable or out-of-range values are reported and ignored, so config.yaml
+    and detection apply exactly as before the page existed.
+    """
+    try:
+        data = json.loads(Path(path).read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return None
+    except (OSError, ValueError) as exc:
+        print(f"[ollama-sync] could not read {path} ({exc.__class__.__name__}); ignoring the Settings GPU memory", file=sys.stderr)
+        return None
+    value = data.get(SETTINGS_VRAM_KEY) if isinstance(data, dict) else None
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or not 0 <= value <= SETTINGS_MAX_VRAM_GB:
+        print(f"[ollama-sync] ignoring invalid {SETTINGS_VRAM_KEY} in {path}", file=sys.stderr)
+        return None
+    return float(value)
 
 
 def is_loopback_host(url: str) -> bool:
@@ -1084,6 +1129,11 @@ def main() -> int:
         help="Skip the config sync; just load the default local model (models[0]) into VRAM so the first turn is not a cold start. No-op unless `ollama.preload: true` or --preload is set.",
     )
     ap.add_argument("--preload", action="store_true", help="Preload the default local model after syncing (overrides `ollama.preload`)")
+    ap.add_argument(
+        "--runtime-settings",
+        default=None,
+        help="runtime_settings.json holding the GPU memory saved on Settings → Models (default: $DEER_FLOW_HOME/runtime_settings.json, else backend/.deer-flow/)",
+    )
     ap.add_argument("--dry-run", action="store_true", help="Print result to stdout, do not write")
     ap.add_argument("--verbose", action="store_true")
     args = ap.parse_args()
@@ -1093,6 +1143,13 @@ def main() -> int:
         raise SystemExit(f"ERROR: config not found at {config_path}")
     original = config_path.read_text()
     check_duplicate_top_level_keys(original, config_path)
+    # Settings → Models beats config.yaml; only an explicit --vram-gb beats it.
+    vram_source = "--vram-gb"
+    if args.vram_gb is None:
+        saved_vram_gb = read_settings_page_vram_gb(args.runtime_settings or default_runtime_settings_path())
+        if saved_vram_gb is not None:
+            args.vram_gb = saved_vram_gb
+            vram_source = "Settings → Models"
     vram_bytes, kv_cache_type = resolve_sizing_settings(args.vram_gb, args.kv_cache_type, original)
     settings = parse_ollama_settings(original)
     num_parallel = resolve_num_parallel(args.num_parallel, settings)
@@ -1133,7 +1190,8 @@ def main() -> int:
 
     # Detected only once the daemon answers, and only when no budget was named:
     # an explicit `ollama.vram_gb` (0 included) is the operator's word.
-    vram_source = "--vram-gb" if args.vram_gb is not None else "ollama.vram_gb"
+    if args.vram_gb is None:
+        vram_source = "ollama.vram_gb"
     if vram_bytes is None and not vram_budget_is_configured(args.vram_gb, settings):
         detected = detect_local_vram_gb(host)
         if detected:
@@ -1148,11 +1206,11 @@ def main() -> int:
         else:
             cap = effective_num_ctx_cap(args.num_ctx_cap, None)
             if vram_budget_is_configured(args.vram_gb, settings):
-                reason = "GPU sizing is off (ollama.vram_gb: 0)"
+                reason = f"GPU sizing is off ({vram_source}: 0)"
             elif not is_loopback_host(host):
-                reason = f"Ollama at {host} is on another machine, so its GPU cannot be detected from here; set ollama.vram_gb to that machine's GPU memory"
+                reason = f"Ollama at {host} is on another machine, so its GPU cannot be detected from here; set that machine's GPU memory in Settings → Models (or ollama.vram_gb)"
             else:
-                reason = "no NVIDIA/AMD GPU detected; set ollama.vram_gb to size each model"
+                reason = "no NVIDIA/AMD GPU detected; set the GPU memory in Settings → Models (or ollama.vram_gb) to size each model"
             print(f"[ollama-sync] num_ctx capped at {cap or 'native'}: {reason}", file=sys.stderr)
 
     # The daemon is up, so entries will be written — check they will actually

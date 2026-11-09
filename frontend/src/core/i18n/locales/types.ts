@@ -2046,6 +2046,19 @@ export interface Translations {
       revisionConflict: string;
       keyOrCapabilities: string;
       invalidModel: string;
+      gpuMemory: {
+        title: string;
+        description: string;
+        label: string;
+        auto: string;
+        clear: string;
+        saved: string;
+        invalid: string;
+        usingSaved: (gib: number) => string;
+        usingConfig: (gib: number) => string;
+        usingDetection: string;
+        appliesNextLaunch: string;
+      };
     };
     users: {
       title: string;

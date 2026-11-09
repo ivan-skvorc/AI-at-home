@@ -2342,6 +2342,24 @@ export const zhCN: Translations = {
       keyOrCapabilities:
         "请检查 API Key 和能力覆盖配置。清除预设模型密钥前须先停用模型。",
       invalidModel: "模型配置无效，请检查厂商、模型 ID 和高级设置。",
+      gpuMemory: {
+        title: "本地 GPU 显存",
+        description:
+          "运行 Ollama 的 GPU 显存。每个本地模型的上下文窗口按它计算。Ollama 运行在另一台机器上时（此处无法检测其 GPU）请设置。更新和模型同步都不会重置它。",
+        label: "GPU 显存（GiB）",
+        auto: "自动",
+        clear: "清除",
+        saved: "GPU 显存已保存",
+        invalid: "请输入 0 到 1024 之间的数字，或留空。",
+        usingSaved: (gib) =>
+          gib === 0
+            ? "已关闭按 GPU 计算：本地窗口保持 32K。"
+            : `按 ${gib} GiB 计算本地模型窗口。`,
+        usingConfig: (gib) => `使用 config.yaml 中的 ${gib} GiB。`,
+        usingDetection:
+          "未设置：启动时检测本服务器上的 GPU；另一台机器上的 Ollama 窗口为 32K。",
+        appliesNextLaunch: "上下文窗口在下次重启后生效。",
+      },
     },
     users: {
       title: "用户管理",

@@ -17,9 +17,11 @@ import { loadModels } from "@/core/models/api";
 import { useModels } from "@/core/models/hooks";
 import type * as Management from "@/core/models/management";
 import {
+  loadGpuMemory,
   loadManagedModels,
   loadManagedModelProviders,
   modelDraft,
+  saveGpuMemory,
   saveManagedModel,
   testManagedModel,
   type ManagedModel,
@@ -59,6 +61,8 @@ rs.mock("@/core/models/management", () => ({
   loadManagedModelProviders: rs.fn(),
   saveManagedModel: rs.fn(),
   testManagedModel: rs.fn(),
+  loadGpuMemory: rs.fn(),
+  saveGpuMemory: rs.fn(),
 }));
 
 const existing: ManagedModel = {
@@ -120,6 +124,11 @@ beforeEach(() => {
     ...existing,
     revision: "v2",
   });
+  rs.mocked(loadGpuMemory).mockResolvedValue({
+    vram_gb: null,
+    config_vram_gb: null,
+    effective_vram_gb: null,
+  });
 });
 afterEach(() => {
   cleanup();
@@ -161,7 +170,51 @@ test("non-admin cannot load credentials configuration or add models", () => {
   expect(loadManagedModels).not.toHaveBeenCalled();
   expect(loadManagedModelProviders).not.toHaveBeenCalled();
   expect(loadSubscriptions).not.toHaveBeenCalled();
+  expect(loadGpuMemory).not.toHaveBeenCalled();
   expect(screen.queryByRole("heading", { name: "Subscriptions" })).toBeNull();
+});
+
+test("GPU memory saves a number, refuses garbage, and clears back to config.yaml", async () => {
+  rs.mocked(loadGpuMemory).mockResolvedValue({
+    vram_gb: null,
+    config_vram_gb: 16,
+    effective_vram_gb: 16,
+  });
+  rs.mocked(saveGpuMemory).mockResolvedValueOnce({
+    vram_gb: 24,
+    config_vram_gb: 16,
+    effective_vram_gb: 24,
+  });
+  mount();
+  const field = await screen.findByLabelText("GPU memory in GiB");
+  expect(field.getAttribute("placeholder")).toBe("16");
+  expect(screen.getByText(/Using 16 GiB from config\.yaml\./)).toBeTruthy();
+  const card = field.closest<HTMLElement>("div.rounded-lg")!;
+  const save = within(card).getByRole("button", { name: "Save" });
+  const clear = within(card).getByRole("button", { name: "Clear" });
+  expect(clear.hasAttribute("disabled")).toBe(true);
+
+  fireEvent.change(field, { target: { value: "lots" } });
+  expect(save.hasAttribute("disabled")).toBe(true);
+  expect(within(card).getByRole("alert").textContent).toContain("0 to 1024");
+
+  fireEvent.change(field, { target: { value: "24" } });
+  fireEvent.click(save);
+  await waitFor(() => expect(saveGpuMemory).toHaveBeenCalledWith(24));
+  expect(
+    await screen.findByText(/Sizing local models for 24 GiB\./),
+  ).toBeTruthy();
+
+  rs.mocked(saveGpuMemory).mockResolvedValueOnce({
+    vram_gb: null,
+    config_vram_gb: 16,
+    effective_vram_gb: 16,
+  });
+  fireEvent.click(clear);
+  await waitFor(() => expect(saveGpuMemory).toHaveBeenLastCalledWith(null));
+  expect(
+    await screen.findByText(/Using 16 GiB from config\.yaml\./),
+  ).toBeTruthy();
 });
 
 test("subscription device sign-in refreshes the picker and keys are cleared after saving", async () => {

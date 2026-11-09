@@ -26,11 +26,15 @@ import { useAuth } from "@/core/auth/AuthProvider";
 import { useI18n } from "@/core/i18n/hooks";
 import { MODELS_QUERY_KEY } from "@/core/models/hooks";
 import {
+  loadGpuMemory,
   loadManagedModels,
   loadManagedModelProviders,
   modelDraft,
+  parseGpuMemoryInput,
+  saveGpuMemory,
   saveManagedModel,
   testManagedModel,
+  type GpuMemorySetting,
   type ManagedModel,
   type ManagedModelProvider,
 } from "@/core/models/management";
@@ -105,6 +109,7 @@ export function ModelSettingsPage() {
       ) : (
         <div className="space-y-4">
           <SubscriptionSettings key={user?.id} userId={user?.id ?? ""} />
+          <GpuMemorySettings key={`gpu:${user?.id}`} userId={user?.id ?? ""} />
           <div className="flex gap-2">
             <Button
               disabled={pending || !providers.data}
@@ -195,6 +200,92 @@ export function ModelSettingsPage() {
         </div>
       )}
     </SettingsSection>
+  );
+}
+
+function GpuMemorySettings({ userId }: { userId: string }) {
+  const { t } = useI18n();
+  const text = t.settings.models.gpuMemory;
+  const client = useQueryClient();
+  const queryKey = ["ollama-vram", userId];
+  const setting = useQuery({
+    queryKey,
+    queryFn: ({ signal }) => loadGpuMemory(signal),
+  });
+  const [draft, setDraft] = useState<string | null>(null);
+  const [pending, setPending] = useState(false);
+  const saved = setting.data?.vram_gb ?? null;
+  const shown = draft ?? (saved === null ? "" : String(saved));
+  const parsed = parseGpuMemoryInput(shown);
+
+  async function save(value: number | null) {
+    setPending(true);
+    try {
+      const next = await saveGpuMemory(value);
+      client.setQueryData<GpuMemorySetting>(queryKey, next);
+      setDraft(null);
+      toast.success(text.saved);
+    } catch {
+      toast.error(t.settings.models.failed);
+    } finally {
+      setPending(false);
+    }
+  }
+
+  function status(data: GpuMemorySetting) {
+    if (data.vram_gb !== null) return text.usingSaved(data.vram_gb);
+    if (data.config_vram_gb !== null)
+      return text.usingConfig(data.config_vram_gb);
+    return text.usingDetection;
+  }
+
+  return (
+    <div className="space-y-2 rounded-lg border p-4">
+      <p className="font-medium">{text.title}</p>
+      <p className="text-muted-foreground text-sm">{text.description}</p>
+      {setting.error && <p role="alert">{t.settings.models.failed}</p>}
+      {setting.data && (
+        <>
+          <div className="flex flex-wrap items-center gap-2">
+            <Input
+              aria-label={text.label}
+              className="w-32"
+              inputMode="decimal"
+              placeholder={
+                setting.data.config_vram_gb === null
+                  ? text.auto
+                  : String(setting.data.config_vram_gb)
+              }
+              value={shown}
+              onChange={(event) => setDraft(event.target.value)}
+              aria-invalid={parsed === undefined}
+            />
+            <span className="text-muted-foreground text-sm">GiB</span>
+            <Button
+              disabled={pending || parsed === undefined || parsed === saved}
+              onClick={() => void save(parsed ?? null)}
+            >
+              {t.settings.models.save}
+            </Button>
+            <Button
+              variant="outline"
+              disabled={pending || saved === null}
+              onClick={() => void save(null)}
+            >
+              {text.clear}
+            </Button>
+          </div>
+          {parsed === undefined && (
+            <p role="alert" className="text-destructive text-sm">
+              {text.invalid}
+            </p>
+          )}
+          <p className="text-muted-foreground text-sm">
+            {status(setting.data)} {text.appliesNextLaunch}
+          </p>
+        </>
+      )}
+    </div>
   );
 }
 

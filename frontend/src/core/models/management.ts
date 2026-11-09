@@ -111,3 +111,57 @@ export function modelDraft(model?: ManagedModel): ModelDraft {
     max_tokens: model?.max_tokens ?? null,
   };
 }
+
+/**
+ * GPU memory for local Ollama context sizing (FORK.md §1). Stored by the
+ * Gateway outside config.yaml so updates and the launch sync never reset it;
+ * the next launch sizes every local model's window from it.
+ */
+export type GpuMemorySetting = {
+  /** Saved here; null means config.yaml (or detection) applies. */
+  vram_gb: number | null;
+  /** `ollama.vram_gb` in config.yaml. */
+  config_vram_gb: number | null;
+  /** What the next launch sizes from; null means auto-detection. */
+  effective_vram_gb: number | null;
+};
+
+export const MAX_GPU_MEMORY_GB = 1024;
+
+async function gpuMemoryRequest(
+  method: "GET" | "PUT",
+  body?: { vram_gb: number | null },
+  signal?: AbortSignal,
+): Promise<GpuMemorySetting> {
+  const response = await fetch(
+    `${getBackendBaseURL()}/api/settings/ollama-vram`,
+    {
+      method,
+      signal,
+      ...(body
+        ? {
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+          }
+        : {}),
+    },
+  );
+  if (!response.ok)
+    await throwGatewayApiError(response, "GPU memory request failed");
+  return response.json() as Promise<GpuMemorySetting>;
+}
+
+export const loadGpuMemory = (signal?: AbortSignal) =>
+  gpuMemoryRequest("GET", undefined, signal);
+export const saveGpuMemory = (vram_gb: number | null) =>
+  gpuMemoryRequest("PUT", { vram_gb });
+
+/** Parse the GiB field: "" clears (null), anything not in range is invalid. */
+export function parseGpuMemoryInput(text: string): number | null | undefined {
+  const trimmed = text.trim();
+  if (trimmed === "") return null;
+  const value = Number(trimmed);
+  return Number.isFinite(value) && value >= 0 && value <= MAX_GPU_MEMORY_GB
+    ? value
+    : undefined;
+}

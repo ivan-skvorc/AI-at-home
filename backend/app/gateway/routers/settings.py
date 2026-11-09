@@ -17,6 +17,9 @@ here:
   limits, token budgets and background step limit from ``config.yaml``
   (FORK.md §46). Server-wide, so the write is admin-gated; any signed-in user
   may read what runs enforce.
+* **GPU memory** — Settings → Models stores the Ollama GPU's memory (FORK.md
+  §1) outside ``config.yaml``, so updates and the launch sync never reset it.
+  The next launch sizes every local model's window from it. Admin-gated write.
 """
 
 from __future__ import annotations
@@ -28,6 +31,7 @@ from pydantic import BaseModel, Field
 
 from app.gateway.dependency_update import get_dependency_updater
 from app.gateway.deps import require_admin_user
+from deerflow.config.ollama_config import MAX_VRAM_GB, effective_vram_gb, get_saved_vram_gb, set_saved_vram_gb
 from deerflow.config.run_limit_overrides import (
     RunLimitOverrides,
     effective_loop_detection,
@@ -276,3 +280,41 @@ async def update_run_limits_setting(body: RunLimitOverrides, request: Request) -
     await require_admin_user(request, detail="Only an admin can change run limits.")
     await asyncio.to_thread(set_run_limit_overrides, body)
     return await asyncio.to_thread(_run_limits_snapshot)
+
+
+class OllamaVramResponse(BaseModel):
+    """The GPU memory Settings saved, what config.yaml says, and which one applies."""
+
+    #: Saved on Settings → Models; None means config.yaml (or GPU detection) applies.
+    vram_gb: float | None = None
+    #: ``ollama.vram_gb`` in config.yaml.
+    config_vram_gb: float | None = None
+    #: What the next launch sizes context windows from; None means auto-detection.
+    effective_vram_gb: float | None = None
+
+
+class OllamaVramUpdate(BaseModel):
+    """GPU memory in GiB; null clears it. 0 turns GPU sizing off."""
+
+    vram_gb: float | None = Field(default=None, ge=0, le=MAX_VRAM_GB, allow_inf_nan=False)
+
+
+def _ollama_vram_snapshot() -> OllamaVramResponse:
+    from deerflow.config import get_app_config
+
+    configured = get_app_config().ollama.vram_gb
+    return OllamaVramResponse(vram_gb=get_saved_vram_gb(), config_vram_gb=configured, effective_vram_gb=effective_vram_gb(configured))
+
+
+@router.get("/ollama-vram", response_model=OllamaVramResponse)
+async def get_ollama_vram_setting() -> OllamaVramResponse:
+    """Return the GPU memory local-model context windows are sized from."""
+    return await asyncio.to_thread(_ollama_vram_snapshot)
+
+
+@router.put("/ollama-vram", response_model=OllamaVramResponse)
+async def update_ollama_vram_setting(body: OllamaVramUpdate, request: Request) -> OllamaVramResponse:
+    """Save the GPU memory (admin only). Applies from the next launch."""
+    await require_admin_user(request, detail="Only an admin can change the GPU memory.")
+    await asyncio.to_thread(set_saved_vram_gb, body.vram_gb)
+    return await asyncio.to_thread(_ollama_vram_snapshot)
