@@ -683,6 +683,44 @@ def test_task_tool_forwards_is_internal_true_to_executor(monkeypatch):
     assert captured["executor_kwargs"]["is_internal"] is True
 
 
+@pytest.mark.parametrize(("mode", "suspended"), [("double_ultracode", True), ("ultracode", False), (None, False)])
+def test_task_tool_lifts_subagent_limits_only_under_double_plus_ultracode(monkeypatch, mode, suspended):
+    """A Double Plus Ultracode run has no automatic limits (FORK.md §44), so the
+    subagents it delegates to carry the mode and lose their wall-clock limit;
+    every other mode keeps the configured limits."""
+    from deerflow.config.run_limit_overrides import UNLIMITED_SECONDS
+
+    runtime = _make_runtime()
+    if mode is not None:
+        runtime.context["mode"] = mode
+    captured = {}
+
+    class DummyExecutor:
+        def __init__(self, **kwargs):
+            captured["executor_kwargs"] = kwargs
+
+        def execute_async(self, prompt, task_id=None):
+            return task_id or "generated-task-id"
+
+    monkeypatch.setattr(task_tool_module, "SubagentStatus", FakeSubagentStatus)
+    monkeypatch.setattr(task_tool_module, "SubagentExecutor", DummyExecutor)
+    monkeypatch.setattr(task_tool_module, "get_subagent_config", lambda _: _make_subagent_config())
+    monkeypatch.setattr(
+        task_tool_module,
+        "get_background_task_result",
+        lambda _: _make_result(FakeSubagentStatus.COMPLETED, result="done"),
+    )
+    monkeypatch.setattr(task_tool_module, "get_stream_writer", lambda: lambda _event: None)
+    monkeypatch.setattr(task_tool_module.asyncio, "sleep", _no_sleep)
+    monkeypatch.setattr("deerflow.tools.get_available_tools", lambda **kwargs: [])
+
+    _run_task_tool(runtime=runtime, description="test", prompt="p", subagent_type="general-purpose", tool_call_id="tc-1")
+
+    kwargs = captured["executor_kwargs"]
+    assert kwargs.get("limits_suspended", False) is suspended
+    assert kwargs["config"].timeout_seconds == (UNLIMITED_SECONDS if suspended else 10)
+
+
 def test_task_tool_preserves_overwrite_sandbox_state_for_executor(monkeypatch):
     """Fork-restored checkpoints wrap sandbox state in Overwrite; task_tool must preserve the wrapper so executor retains borrow semantics."""
     from langgraph.types import Overwrite

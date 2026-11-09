@@ -4423,18 +4423,15 @@ unavailable instead of silently answering as Ultra. The composer offers both
 modes only when `/api/plugins` lists `community.workflows` enabled, and moves a
 remembered selection to Ultra with a toast.
 
-**Double Plus Ultracode is the same run with tool-call limits off.** Its id is
-`double_ultracode`, a new value so a stored `ultracode` preference keeps the
-limited mode. The extension treats both ids as ultracode (same brief, same
-clamped agent and minute limits) and appends one extra instruction on the double
-mode. It also starts each workflow agent with `context.mode = "double_ultracode"`.
-`LoopDetectionMiddleware` returns before either detection layer when runtime
-context mode is that string, so the lead and those agents are not told to wrap
-up and are not hard-stopped for repeated tool calls. Task subagents those agents
-launch still use the normal limits: the workflow agents themselves are the ones
-that run unlimited. The mode-menu hover states that this is token-risky and
-meant for extremely large tasks that should run until finished, without
-interruptions. Ordinary chats should stay on Plus Ultracode.
+**Double Plus Ultracode is the same run with no automatic limits** (see *No
+automatic limits* below for the full list). Its id is `double_ultracode`, a new
+value so a stored `ultracode` preference keeps the limited mode. The extension
+treats both ids as ultracode (same brief, same clamped agent and parallel
+limits) and appends one extra instruction on the double mode. It also starts
+each workflow agent with `context.mode = "double_ultracode"`. The mode-menu hover
+states that this is token-risky and meant for extremely large tasks that should
+run until finished, without interruptions. Ordinary chats should stay on Plus
+Ultracode.
 
 **The return path is exactly once.** On a terminal workflow launched from a
 conversation the extension posts `[Workflow result] ...` through the plugin-scoped
@@ -4458,15 +4455,41 @@ below ultracode's 1,000 because every step rewrites the whole record. A spend-ca
 is now a definitive pre-admission rejection, a clean failure that releases the slot,
 rather than an uncertain admission.
 
-**Double Plus also lifts the step limit, to the operator's ceiling (2026-11-07).**
-Tool-call limits were off, but the workflow agents the extension starts send no
-`recursion_limit`, so they still stopped at the 250-step default (~125 tool calls)
-with the task unfinished. `apply_double_ultracode_step_ceiling` in
-`app/gateway/services.py` gives any run whose context says `double_ultracode` and
-that sent no limit `max_recursion_limit` (1000 as shipped) — the value the web
-composer already pins on the lead. It stays inside the administrator's ceiling,
-and the spend cap and token budget (cost caps an administrator set) still apply:
-the mode suspends heuristics, not money. The same pass made the warning a warning:
+**No automatic limits (2026-11-09).** A Double Plus run still ended with
+`recursion_limit=1000`: the 2026-11-07 pass gave its runs the operator's step
+ceiling, and the web lead pins exactly that. The mode is now Plus Ultracode with
+every limit that ends work on its own removed; only the model finishing ends it.
+`deerflow/config/run_limit_overrides.py` owns the test
+(`run_limits_suspended(context)`: `context["mode"] == "double_ultracode"`) and the
+`UNLIMITED_STEPS` / `UNLIMITED_SECONDS` stand-ins (2**31 - 1: still numbers for
+LangGraph and asyncio, never reached). What it lifts, and where:
+
+- **Steps.** `apply_double_ultracode_step_limit` (`app/gateway/services.py`) sets
+  `UNLIMITED_STEPS` on any run whose context says the mode — the lead, each
+  workflow agent, the result follow-up — **whatever the client sent**, past
+  `max_recursion_limit`, so the composer's pinned 1000 cannot cap it again.
+- **Tool-call limits and token budgets.** `LoopDetectionMiddleware` and
+  `TokenBudgetMiddleware` return early on that context.
+- **`task` subagents.** `task_tool` passes `limits_suspended=True` and
+  `timeout_seconds=UNLIMITED_SECONDS` (its poll loop reads the same value);
+  `SubagentExecutor` stamps the mode into the child's context and runs it with
+  `UNLIMITED_STEPS`, so `max_turns`, loop detection and the subagent token
+  budget stand down too. Durable `task_batch` items keep their limits.
+- **Workflow wall clock.** The extension's `run_limits` gives the double mode
+  `NO_WALL_CLOCK_SECONDS`, ignoring both Settings minutes and the operator's
+  `timeout_seconds`; the brief says "no time limit".
+- **The result turn.** `delivery.py` starts the follow-up run with
+  `context={"mode": "double_ultracode"}` (derived from the record, so retries stay
+  identical), so the lead finishing the work keeps the mode.
+
+Still applied: the spend cap (a budget someone set, not an automatic limit),
+the workflow's agent count and parallelism (Settings → Subagents; record size
+bounds `max_calls`), `task` concurrency and per-run delegation count, and the
+sandbox limits on the script worker itself. Plus Ultracode is unchanged. Any
+signed-in caller can request the mode, so the spend cap is the one bound on a
+runaway Double Plus run.
+
+The 2026-11-07 pass also made the warning a warning:
 hovering or focusing the Double Plus menu option, before anyone selects it, and
 the mode button while it is selected, shows `ModeWarning` (an alert icon, "Token-risky:
 runs until the task is finished", and the description) after 100 ms instead of a
@@ -4634,11 +4657,12 @@ config.yaml).
   local `make dev` writes.
 - **The web composer still pins `recursion_limit: 1000`.** The step override is
   for runs that send none; raising `max_recursion_limit` stays an operator edit.
+  Double Plus Ultracode runs ignore both (§44, *No automatic limits*).
 
 **Workflows.** The brief now tells the lead to catch each `agent()` (a settle
 wrapper) because `parallel()` is `Promise.all` and a rejection ends the workflow;
 `test_a_caught_agent_failure_does_not_end_the_workflow` runs that exact pattern.
-Double Plus Ultracode children get a `run_note` in their task (unattended, answer
+Plus and Double Plus Ultracode children get a `run_note` in their task (unattended, answer
 under 8,000 characters) — only ultracode runs, so a plain workflow's task stays
 byte-identical to what its script wrote. Plugin runs cannot set the server-owned
 `non_interactive` flag (a forged one would auto-confirm risk prompts), so the note
@@ -4747,8 +4771,8 @@ Coverage: `test_context_fit_critical.py`, `test_context_overflow_guard.py`
 (short form on small and large windows, the refusal text, the trigger),
 `test_lead_agent_prompt.py` (response style, clarification rules),
 `test_grok_features.py` and `test_grok_xai_tools.py` (the §43 route),
-`test_recursion_limit_default.py` and `test_gateway_services.py` (the §44 step
-ceiling), and the frontend `mode-hover-guide.dom.test.tsx` and
+`test_recursion_limit_default.py` and `test_gateway_services.py` (§44: no
+step limit in Double Plus), and the frontend `mode-hover-guide.dom.test.tsx` and
 `ultracode.test.ts`. The first is the first critical check; the rest run inside
 `make test` / `pnpm test` and fail loudly. Depth for agents:
 `agents/middlewares/CHAIN.md`, `lead_agent/AGENTS.md`, `community/xai/AGENTS.md`.

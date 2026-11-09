@@ -22,6 +22,7 @@ from deerflow.agents.middlewares.receipt_verification import verify_receipt_cita
 from deerflow.authz.principal import normalize_authz_attributes
 from deerflow.community.ragflow.sources import cited_source_artifact
 from deerflow.config import get_app_config
+from deerflow.config.run_limit_overrides import UNLIMITED_SECONDS, run_limits_suspended
 from deerflow.extensions import resolve_run_extensions
 from deerflow.knowledge_scope import KNOWLEDGE_SCOPE_RUNTIME_KEY, execution_scope
 from deerflow.mcp_scope import (
@@ -1088,6 +1089,12 @@ async def task_tool(
     if parent_available_skills is not None:
         overrides["skills"] = _merge_skill_allowlists(list(parent_available_skills), config.skills)
 
+    # Double Plus Ultracode has no automatic limits (FORK.md §44): the child
+    # carries the mode and gets no wall clock, which the poll loop below reads too.
+    limits_suspended = run_limits_suspended(parent_context)
+    if limits_suspended:
+        overrides["timeout_seconds"] = UNLIMITED_SECONDS
+
     if overrides:
         config = replace(config, **overrides)
 
@@ -1259,6 +1266,8 @@ async def task_tool(
         executor_kwargs["local_residency_gate"] = explicit_residency_gate
     if input_gate is not None:
         executor_kwargs["input_gate"] = input_gate
+    if limits_suspended:
+        executor_kwargs["limits_suspended"] = True
     executor = SubagentExecutor(**executor_kwargs)
 
     # Keep the provider tool-call ID for stream/message correlation, but use a

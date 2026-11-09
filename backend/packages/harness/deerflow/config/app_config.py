@@ -288,7 +288,7 @@ class AppConfig(BaseModel):
     max_recursion_limit: int = Field(
         default=1000,
         ge=1,
-        description="Hard server-side ceiling for configured defaults and client-supplied run recursion_limit values. Values above this are clamped; prevents runaway LangGraph super-steps (LLM cost / DoS).",
+        description="Hard server-side ceiling for configured defaults and client-supplied run recursion_limit values. Values above this are clamped; prevents runaway LangGraph super-steps. Double Plus Ultracode ignores it (FORK.md §44).",
     )
 
     @field_validator("recursion_limit", "max_recursion_limit", mode="before")

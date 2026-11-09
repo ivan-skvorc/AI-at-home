@@ -224,6 +224,8 @@ recursion_limit: 250
 # The Gateway never trusts a configured or client-supplied value above this
 # ceiling: anything higher is clamped down to it, preventing runaway API cost /
 # DoS. Raise it only if you legitimately run very deeply nested subagent graphs.
+# Double Plus Ultracode runs have no step limit and ignore it; only the spend
+# cap bounds them (FORK.md §44).
 max_recursion_limit: 1000
 
 

@@ -57,6 +57,7 @@ from langgraph.runtime import Runtime
 
 from deerflow.agents.middlewares._bounded_dict import BoundedDict
 from deerflow.agents.middlewares.tool_call_metadata import clone_ai_message_with_tool_calls
+from deerflow.config.run_limit_overrides import run_limits_suspended
 from deerflow.config.token_budget_config import TokenBudgetConfig
 
 logger = logging.getLogger(__name__)
@@ -241,7 +242,8 @@ class TokenBudgetMiddleware(AgentMiddleware[AgentState]):
         return {"messages": [stopped_msg]}
 
     def _apply(self, state: AgentState, runtime: Runtime) -> dict | None:
-        if not self._config.enabled:
+        # Double Plus Ultracode runs until the model finishes (FORK.md §44).
+        if not self._config.enabled or run_limits_suspended(getattr(runtime, "context", None)):
             return None
 
         messages = state.get("messages", [])

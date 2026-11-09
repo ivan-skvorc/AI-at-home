@@ -572,7 +572,7 @@ export const zhCN: Translations = {
       "把任务规划成工作流脚本，由多个智能体在后台执行，结果会自动回到本对话。灵感来自 Claude Code 的 ultracode。工具调用上限仍然生效。Token 消耗极高。",
     doubleUltracodeMode: "Double Plus Ultracode",
     doubleUltracodeModeDescription:
-      "消耗 Token 的风险很高。只适合极大的任务，让它一直跑到做完、中途不要被打断。与 Plus Ultracode 相同的工作流脚本，但关闭了工具调用上限，因此不会因为某个工具调用太多次而被要求收尾或强制停止。",
+      "消耗 Token 的风险很高。只适合极大的任务，让它一直跑到做完、中途不要被打断。与 Plus Ultracode 相同的工作流脚本，但关闭了所有自动限制：没有步数上限、工具调用上限、Token 预算或时间上限，只有模型完成任务才会结束运行。你设置的花费上限仍然生效。",
     doubleUltracodeWarningTitle: "Token 风险高：会一直运行到任务完成",
     ultracodeUnavailable:
       "Plus Ultracode 与 Double Plus Ultracode 需要“脚本工作流”扩展，但它未启用。本对话已改用 Ultra。",
@@ -2592,7 +2592,7 @@ export const zhCN: Translations = {
         "可由 Lead Agent 和已授权 Custom Agent 派遣、执行边界明确任务的复用型工作智能体。",
       ultracodeTitle: "Ultracode 上限",
       ultracodeDescription:
-        "Plus Ultracode 与 Double Plus Ultracode 可规划的工作流规模。“脚本工作流”扩展仍会应用运维方设置的上限，因此这里只能把运行调小。这里不会重新打开 Double Plus Ultracode 已关闭的工具调用上限。",
+        "Plus Ultracode 与 Double Plus Ultracode 可规划的工作流规模。“脚本工作流”扩展仍会应用运维方设置的上限，因此这里只能把运行调小。分钟数只对 Plus Ultracode 生效：Double Plus Ultracode 没有时间上限，这里也不会重新打开它已关闭的其他自动限制。",
       ultracodeMaxAgents: "每个工作流的智能体数",
       ultracodeMaxParallel: "同时运行的智能体数",
       ultracodeMaxMinutes: "每个工作流的分钟数",

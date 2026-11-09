@@ -59,7 +59,7 @@ from deerflow.agents.middlewares.view_image_middleware import _IMAGE_CONTEXT_MES
 from deerflow.config.agents_config import load_agent_config
 from deerflow.config.app_config import get_app_config
 from deerflow.config.database_config import resolve_checkpoint_graph_cache_max
-from deerflow.config.run_limit_overrides import effective_recursion_limit
+from deerflow.config.run_limit_overrides import UNLIMITED_STEPS, effective_recursion_limit, run_limits_suspended
 from deerflow.knowledge_scope import KNOWLEDGE_SCOPE_KEY, KNOWLEDGE_SCOPE_RUNTIME_KEY
 from deerflow.mcp_scope import (
     THREAD_INCARNATION_METADATA_GUARD_KEY,
@@ -1435,27 +1435,18 @@ def _clamp_recursion_limit(value: Any, max_limit: int, default_limit: int) -> in
     return min(value, max_limit)
 
 
-def apply_double_ultracode_step_ceiling(config: dict[str, Any], request_config: Mapping[str, Any] | None) -> None:
-    """Give a Double Plus Ultracode run the operator's step ceiling (fork, FORK.md §44).
+def apply_double_ultracode_step_limit(config: dict[str, Any]) -> None:
+    """Give a Double Plus Ultracode run no step limit (fork, FORK.md §44).
 
-    The mode is for tasks that should run until they finish. Tool-call limits are
-    off for it (``LoopDetectionMiddleware``), but the step limit still ended the
-    workflow agents the extension starts: they send no ``recursion_limit`` and
-    got the default (250 super-steps, ~125 tool calls), while the web lead
-    already sends 1000. ``max_recursion_limit`` stays the ceiling, so the mode
-    asks for nothing an administrator did not allow, and an explicit client
-    value is left to the ordinary clamp.
+    The mode runs until the model finishes. Capping it at ``max_recursion_limit``
+    still ended runs mid-task: the web lead pins 1000 and the workflow agents got
+    the same ceiling. Every run whose context says the mode — the lead, each
+    workflow agent and the result follow-up — now gets ``UNLIMITED_STEPS``,
+    whatever the client sent, so a stale composer cannot cap it again. The spend
+    cap still applies; other modes keep the ordinary clamp.
     """
-    from deerflow.agents.middlewares.loop_detection_middleware import DOUBLE_ULTRACODE_MODE
-
-    context = config.get("context")
-    if not isinstance(context, Mapping) or context.get("mode") != DOUBLE_ULTRACODE_MODE:
-        return
-    if isinstance(request_config, Mapping) and "recursion_limit" in request_config:
-        return
-    current = config.get("recursion_limit")
-    ceiling = _resolve_max_recursion_limit()
-    config["recursion_limit"] = max(current, ceiling) if isinstance(current, int) and not isinstance(current, bool) else ceiling
+    if run_limits_suspended(config.get("context")):
+        config["recursion_limit"] = UNLIMITED_STEPS
 
 
 def custom_agent_name(assistant_id: str | None) -> str | None:
@@ -2480,7 +2471,7 @@ async def start_run(
             # ``body.config`` is free-form and copied verbatim by
             # ``build_run_config``; scrub internal-only keys smuggled there.
             strip_internal_context_keys(config)
-        apply_double_ultracode_step_ceiling(config, body.config)
+        apply_double_ultracode_step_limit(config)
 
         replay_kind = run_metadata.get("replay_kind")
         target_message_id = run_metadata.get("regenerate_from_message_id")

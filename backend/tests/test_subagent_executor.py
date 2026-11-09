@@ -3071,6 +3071,31 @@ class TestAsyncExecutionPath:
         assert executor._recursion_limit is None
         assert captured_configs[0]["recursion_limit"] == base_config.max_turns
 
+    @pytest.mark.anyio
+    async def test_a_double_plus_ultracode_subagent_runs_without_automatic_limits(self, classes, base_config, mock_agent, msg):
+        """Delegated from a Double Plus Ultracode run (FORK.md §44): no turn
+        limit, and the mode rides the context so loop detection and the token
+        budget stand down inside the subagent too."""
+        from deerflow.config.run_limit_overrides import UNLIMITED_STEPS
+
+        SubagentExecutor = classes["SubagentExecutor"]
+        captured: list[dict] = []
+
+        async def capturing_astream(state, *, config, context=None, **kwargs):
+            captured.append({"config": config, "context": context})
+            yield {"messages": [msg.ai("Done", msg_id="msg-1")]}
+
+        mock_agent.astream = capturing_astream
+
+        executor = SubagentExecutor(config=base_config, tools=[], thread_id="test-thread", limits_suspended=True)
+        executor._recursion_limit = 77
+
+        with patch.object(executor, "_create_agent", return_value=mock_agent):
+            await executor._aexecute("Do something")
+
+        assert captured[0]["config"]["recursion_limit"] == UNLIMITED_STEPS
+        assert captured[0]["context"]["mode"] == "double_ultracode"
+
 
 class TestSkillAllowedTools:
     @pytest.mark.anyio

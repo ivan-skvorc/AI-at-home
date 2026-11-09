@@ -290,6 +290,23 @@ class TestTokenBudgetHardStop:
         assert mw.consume_stop_reason(None) == "token_capped"
         assert mw.consume_stop_reason(None) is None
 
+    def test_double_ultracode_is_never_warned_or_stopped(self):
+        """Double Plus Ultracode runs until the model finishes (FORK.md §44):
+        the budget is off for that run, while the same budget still stops a
+        run in any other mode."""
+        mw = TokenBudgetMiddleware.from_config(TokenBudgetConfig(max_tokens=100000, warn_threshold=0.5, enabled=True))
+        tool_calls = [{"name": "bash", "args": {"command": "ls"}, "id": "call_1"}]
+        unlimited = _make_runtime(run_id="double-run")
+        unlimited.context["mode"] = "double_ultracode"
+
+        assert mw._apply(_make_state_with_usage(total=500000, tool_calls=tool_calls), unlimited) is None
+        assert not mw._pending_warnings.get("double-run")
+        assert mw.consume_stop_reason("double-run") is None
+
+        limited = _make_runtime(run_id="plus-run")
+        limited.context["mode"] = "ultracode"
+        assert mw._apply(_make_state_with_usage(total=500000, tool_calls=tool_calls), limited) is not None
+
     def test_below_threshold_does_not_stamp_stop_reason(self):
         """A run that only crosses the warn threshold (not the hard stop) keeps
         running and must not stamp ``token_capped`` — the run is not capped."""

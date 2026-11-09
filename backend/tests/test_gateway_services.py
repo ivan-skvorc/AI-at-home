@@ -12,6 +12,7 @@ import pytest
 
 from app.gateway.auth_disabled import AUTH_SOURCE_INTERNAL
 from deerflow.config.app_config import AppConfig, reset_app_config, set_app_config
+from deerflow.config.run_limit_overrides import UNLIMITED_STEPS
 from deerflow.runtime.events.store.memory import MemoryRunEventStore
 from deerflow.trace_context import DEERFLOW_TRACE_METADATA_KEY
 
@@ -2985,12 +2986,22 @@ async def _capture_start_run_graph_input(body, *, auth_source=None):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(("mode", "expected"), [("double_ultracode", 1000), ("ultracode", 250)])
-async def test_start_run_gives_double_plus_ultracode_the_step_ceiling(_stub_app_config, mode, expected):
-    """A Double Plus Ultracode workflow agent sends no step limit (FORK.md §44)."""
+@pytest.mark.parametrize(
+    ("mode", "request_config", "expected"),
+    [
+        # A workflow agent sends no limit; the web lead pins 1000 (FORK.md §44).
+        ("double_ultracode", None, UNLIMITED_STEPS),
+        ("double_ultracode", {"recursion_limit": 1000}, UNLIMITED_STEPS),
+        ("ultracode", None, 250),
+        ("ultracode", {"recursion_limit": 1000}, 1000),
+    ],
+)
+async def test_start_run_gives_double_plus_ultracode_no_step_limit(_stub_app_config, mode, request_config, expected):
+    """Double Plus Ultracode runs until the model finishes; Plus keeps its limit."""
     from app.gateway.run_models import RunCreateRequest
 
-    captured = await _capture_start_run(RunCreateRequest(input={"messages": [{"role": "user", "content": "go"}]}, context={"mode": mode}))
+    body = RunCreateRequest(input={"messages": [{"role": "user", "content": "go"}]}, context={"mode": mode}, config=request_config)
+    captured = await _capture_start_run(body)
 
     assert captured["config"]["recursion_limit"] == expected
 
