@@ -14,6 +14,10 @@ export interface Translations {
     inputTokens: string;
     outputTokens: string;
     cachedTokens: string;
+    unattributedTokens: string;
+    unattributedHint: string;
+    cachedPart: (count: string) => string;
+    tokenSplit: string;
     daily: string;
     dailyDetails: string;
     models: string;

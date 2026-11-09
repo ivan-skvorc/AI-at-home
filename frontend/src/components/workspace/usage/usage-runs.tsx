@@ -3,7 +3,7 @@ import Link from "next/link";
 import { Badge } from "@/components/ui/badge";
 import type { Translations } from "@/core/i18n/locales/types";
 import { pathOfThread } from "@/core/threads/utils";
-import { formatRunDuration } from "@/core/usage/format";
+import { formatRunDuration, splitTokens } from "@/core/usage/format";
 import type { UsageRun } from "@/core/usage/types";
 
 export function UsageRuns({
@@ -53,6 +53,12 @@ export function UsageRuns({
             <th scope="col" className={cell}>
               {text.tokens}
             </th>
+            <th scope="col" className={cell}>
+              {text.inputTokens}
+            </th>
+            <th scope="col" className={cell}>
+              {text.outputTokens}
+            </th>
           </tr>
         </thead>
         <tbody>
@@ -71,6 +77,13 @@ export function UsageRuns({
                     timeStyle: "short",
                   }).format(date)
                 : text.unknown;
+            const split = splitTokens({
+              total: run.total_tokens,
+              input: run.total_input_tokens,
+              output: run.total_output_tokens,
+              cached: run.cache_read_tokens,
+            });
+            const count = (value: number) => value.toLocaleString(locale);
             return (
               <tr key={run.run_id} className="border-b align-top last:border-0">
                 <th
@@ -123,8 +136,25 @@ export function UsageRuns({
                   )}
                 </td>
                 <td className={cell}>
-                  {run.total_tokens.toLocaleString(locale)}
+                  {count(split.total)}
+                  {split.unattributed > 0 && (
+                    <span
+                      className="text-muted-foreground block text-xs"
+                      title={text.unattributedHint}
+                    >
+                      {text.unattributedTokens}: {count(split.unattributed)}
+                    </span>
+                  )}
                 </td>
+                <td className={cell}>
+                  {count(split.input)}
+                  {split.cached > 0 && (
+                    <span className="text-muted-foreground block text-xs">
+                      {text.cachedPart(count(split.cached))}
+                    </span>
+                  )}
+                </td>
+                <td className={cell}>{count(split.output)}</td>
               </tr>
             );
           })}

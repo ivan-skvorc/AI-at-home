@@ -12,6 +12,8 @@ This section accumulates work toward the **2.3.0** milestone
 
 ### Added
 
+- **usage:** The Token usage page shows input and output apart everywhere it shows a total — the headline, each day's bar (stacked, with a legend), the model table and every run row — with the cache-hit part of input marked. A total a provider reported without its split appears as an "unattributed" part rather than being counted as input, so the parts always add up. `/api/console/usage` and `/api/console/runs` gain additive fields (`total_input_tokens`, `total_output_tokens`, `total_cache_read_tokens`, per-day `cache_read_tokens`, per-model `output_tokens`, per-run `total_input_tokens` / `total_output_tokens` / `cache_read_tokens`), each defaulting to 0. Nothing to configure.
+
 - **models:** Local Ollama models get a context window sized to your GPU with no setup. When `ollama.vram_gb` is unset, every launch reads the memory of an NVIDIA or AMD card beside the daemon (`nvidia-smi` / `rocm-smi`, the detector `make setup` uses) and gives each model the largest window that fits next to its weights: `deepseek-r1:14b` on a 24 GiB card gets 75,776 tokens instead of the flat 32,768 every model used to get. A remote daemon or a Mac keeps the flat cap; `ollama.vram_gb` overrides the detection and `0` turns GPU sizing off.
 
 - **chat:** Answers lead with the result in every mode: an overview by default, detail only when you ask, and every command in its own copy-pasteable code block. The built-in prompt text is about 1,200 tokens shorter in every mode; on a local model, with skills listed by name, Flash's whole prompt is about 2,500 tokens (it was about 7,100).

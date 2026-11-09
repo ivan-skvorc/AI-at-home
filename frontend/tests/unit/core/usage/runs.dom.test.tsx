@@ -64,3 +64,33 @@ test.each([
     conversationLink({ assistant_id: assistantId, thread_id: "thread/a #?%" }),
   ).toBe(expected);
 });
+
+test("each run shows its input, cached part and output beside the total", () => {
+  render(
+    <UsageRuns
+      runs={[
+        {
+          ...run,
+          total_tokens: 1200,
+          total_input_tokens: 800,
+          total_output_tokens: 400,
+          cache_read_tokens: 500,
+        },
+      ]}
+      locale="en-US"
+      text={enUS.usage}
+    />,
+  );
+  const cells = Array.from(
+    screen.getByRole("table").querySelectorAll("tbody td"),
+  ).map((td) => td.textContent);
+  expect(cells.slice(-3)).toEqual(["1,200", "800incl. 500 cache hits", "400"]);
+});
+
+test("a run recorded without its split marks the total unattributed", () => {
+  render(<UsageRuns runs={[run]} locale="en-US" text={enUS.usage} />);
+  const cells = Array.from(
+    screen.getByRole("table").querySelectorAll("tbody td"),
+  ).map((td) => td.textContent);
+  expect(cells.slice(-3)).toEqual(["100Unattributed tokens: 100", "0", "0"]);
+});

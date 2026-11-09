@@ -38,6 +38,7 @@
 > - 🛑 **Spend caps in real money** — a daily / weekly / monthly limit in your own currency. The agent is warned as it approaches, then refused. Unpriced local models count as $0, so a fully local session is never blocked.
 > - 🧾 **Spend page** — where the money went this month, broken down by model, conversation and feature over 7, 30 or 90 days.
 > - 📈 **Price graph** — the cost of every step of a conversation, as columns or a running total. A turn on an unpriced local model draws **no** column rather than a zero-height one.
+> - 📊 **Input and output apart on the Token usage page** — every total on **Token usage** in the sidebar (the headline, each day's bar, each model, each run) is split into input and output, with the cache-hit part of input marked. A provider that reported only a total shows the gap as **unattributed** instead of quietly counting it as input, so the parts always add up. Nothing to turn on.
 > - 🧾 **A reply keeps the price it was billed at** — costs used to be recomputed from today's `config.yaml`, so re-pricing a model rewrote what last month's conversation cost and a retired model made it *cheaper*. Rates are now stamped on each run.
 > - 🧮 **A cost estimate that survives a restart and an edit** — interrupted runs count (they spent the tokens), and turns replaced by an edit stay in the total as a **Replaced turns** row instead of quietly vanishing. Editing a message branches the conversation into a second thread, so the total now covers **every** thread of it while the graph shows only the turns you can still see: the number stops dropping when you edit, and the chart stops losing the turns you kept.
 > - 🧭 **Cost-aware subagent routing** — a policy that sends delegated subtasks to the cheapest model that can actually do them, never one that lacks the tools, vision or context window. Off until you write a policy.
@@ -163,6 +164,7 @@ DeerFlow has newly integrated the intelligent search and crawling toolset indepe
   - [Core Features](#core-features)
     - [Subscription Models](#subscription-models)
       - [Grok Features: Imagine, X Search and Voice](#grok-features-imagine-x-search-and-voice)
+    - [Token usage dashboard](#token-usage-dashboard)
     - [Skills \& Tools](#skills--tools)
       - [Exporting Custom Skills](#exporting-custom-skills)
       - [Claude Code Integration](#claude-code-integration)
@@ -2174,6 +2176,17 @@ badges show what your grant actually got. References:
 Open **Token usage** in the workspace sidebar (`/workspace/usage`) to review
 your recorded tokens over the last 7 or 30 days, daily input/output totals,
 cache-hit input tokens by model, and paginated run history with failure filters.
+
+**Every total is split into input and output.** The headline tile lists input
+(with how much of it came from the prompt cache) and output beneath the total,
+each with its share; each day's bar stacks cached input, the rest of input and
+output, with a legend; the model table and every run row carry input and output
+columns. Input is the context resent on every call, so a heavy day that is
+mostly input points at long conversations or attachments, and one that is
+mostly output at long answers. **The parts always add up to the total:** cache
+hits are a part of input, never added on top of it, and where a provider
+reported a total without its split the difference is shown as its own
+**unattributed** part rather than counted as input or output.
 Run history covers all dates independently of the selected chart period.
 Conversation links use each run's recorded assistant to open the default or
 matching custom-agent chat.

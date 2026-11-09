@@ -2,7 +2,8 @@
 
 The workspace page at `/workspace/usage` presents the existing current-user
 reporting APIs introduced in upstream PR #3920. It adds no database tables,
-permissions, provider calls, billing logic, dependencies, or backend API changes.
+permissions, provider calls, billing logic or dependencies. The fork's input /
+output split (FORK.md §48) added only optional, zero-defaulted response fields.
 
 ## Extension-first evaluation
 
@@ -38,6 +39,13 @@ accounting or the first dashboard implementation.
   have partial persisted counters; providers that omit usage can leave gaps.
 - Cache-hit input tokens are a subset of input tokens, not an additional amount
   to add to total tokens. Model run counts are non-exclusive for multi-model runs.
+- Every total is split by `splitTokens` (`core/usage/format.ts`): input, output
+  and unattributed always add up to the total, and cached never exceeds input.
+  "Unattributed" is what a provider reported as a total without its split; it is
+  never folded into input or output. The headline uses `total_input_tokens` /
+  `total_output_tokens` / `total_cache_read_tokens`, falling back to the sum of
+  the daily buckets for a Gateway that predates them. Bars stack cached input, the
+  rest of input, output and unattributed; the per-day table keeps its columns.
 - `GET /api/console/runs` supplies 20 rows per page and a `has_more` sentinel.
   All/error/timeout filters reset pagination. This history is independent of the
   chart's period. Offset pagination is live, not a snapshot.

@@ -56,8 +56,9 @@ shaped for the model that reads it.
 
 Items **38–39** came out of tuning those windows: once each local model's `num_ctx` was
 sized to its GPU and a q8_0 cache, nothing showed what a conversation actually used of it.
-Item 38 asks for context what the cost view already does for money; item 39 makes the
-Token Usage page tell input from output, the first thing that question needs.
+Item 38 asks for context what the cost view already does for money. Item **39** — input and
+output apart on the Token Usage page, the first thing that question needs — landed: see
+[FORK.md §48](./FORK.md). Its number stays retired like 12–15.
 
 ---
 
@@ -95,8 +96,6 @@ Open items, one line each. The full orchestrator prompts follow.
   overlays for a few big-name local and cloud families, each shipped only with measurements.
 - **38. Context window analytics** — the header's context number measured the way the guard
   decides, and a per-turn view of what each turn added and what compaction took back out.
-- **39. Input and output apart on the Token Usage page** — every total on the sidebar's usage
-  page split into input and output, with the cached part of input marked; it always adds up.
 
 **Suggested order for 19–25.** Voice first (19), since it is the one missing modality and it
 closes a live privacy leak. Then the injection boundary (23), *before* anything widens the
@@ -648,6 +647,21 @@ version), so the model most likely to overflow is the one with no protection at 
 - Keep `resolve_context_budget`'s contract: unknown stays `None`; this item supplies the
   number, it does not guess one.
 
+**Found while scoping (2026-11-09), decide before building:**
+
+- Settings → Models reaches Ollama only as an `openai-compatible` custom endpoint
+  (`ChatOpenAI`, `config/managed_models.py`); there is no Ollama preset. Ollama documents
+  that its OpenAI API cannot set the context size (its `openai.md`; from memory, verify), so
+  `num_ctx` would not reach the daemon there, and writing `context_window` alone would protect
+  a window the daemon does not serve. Either save such entries as `ChatOllama`, or read the
+  served length (`/api/ps`) rather than the native one.
+- Config load is synchronous and re-runs on file change; an `/api/show` read there needs a
+  per-(host, model) cache, a short timeout, and must stay off the event loop (the
+  `make test-blocking-io` suite).
+- "No resolvable window" also counts LangChain model profiles (`_profile_input_tokens`),
+  which `/api/models` does not see; the UI marker needs a server-computed flag, not
+  `context_window == null`.
+
 **Key files** — `scripts/sync-ollama-models.py` (the `/api/show` read to share),
 `backend/packages/harness/deerflow/models/` (the Ollama factory),
 `backend/app/gateway/routers/` (managed models), `frontend/src/core/models/management.ts`,
@@ -920,66 +934,6 @@ durable run events (§28) and the guard's own estimator (`estimate_request_token
 - No message text is stored for it.
 - An older thread without records still shows today's estimate, labelled as one.
 - The critical context-fit check is unchanged.
-
----
-
-## 39. Input and output apart on the Token Usage page
-
-**Goal** — Every total on the sidebar's Token Usage page (`/workspace/usage`) shows its input
-and output tokens, with the cached part of input marked where the provider reports it: the
-headline total, each day of the chart, each model and each run. The split always adds up to
-the total it sits under.
-
-**Why it fits** — Input and output tell different stories and cost differently. Output is
-the model writing; input is the context resent on every call, which is what grows as a
-conversation, its tool results and its attachments get longer. On a cloud model output is
-priced several times higher than input, while cached input is priced well below it. On a
-local model, input is what fills the window and drives prompt-processing time. A heavy day
-that is mostly input points at long contexts (item 38's question), one that is mostly output
-at long answers. Today the page shows one total almost everywhere. Input and output appear
-only as a small text line above the daily chart and in the collapsed per-day table. The
-chart, the per-model table and the runs list show totals only, though the data underneath
-already carries the split.
-
-**Depends on** — nothing. It sharpens item 38, which builds on the same input numbers.
-
-**Scope**
-
-- **The headline.** The total-tokens tile shows input (and how much of it was cached) and
-  output beneath it, with each one's share of the total.
-- **The chart.** Daily bars stack input under output, with a legend; the per-day table keeps
-  its columns.
-- **Models and runs.** The per-model table gets input (with its cached part) and output
-  columns, and each run row its input and output.
-- **Backend, additive only.** The console usage endpoint
-  (`backend/app/gateway/routers/console.py`) already returns input and output per day, and
-  the spend endpoint's model rows already compute output. Add `output_tokens` to
-  `ConsoleUsageModelBreakdown`, `total_input_tokens` and `total_output_tokens` to
-  `ConsoleUsageResponse`, and the run rows' stored `total_input_tokens` and
-  `total_output_tokens` to the runs list. Every addition defaults to 0, so an older client
-  reads the same totals.
-- **It must add up.** Input + output = total. Cached tokens are shown as a part of input,
-  never added on top of it. Where a provider reports a total without the split, the
-  difference is shown as its own "unattributed" part, never folded silently into input or
-  output.
-- **English and Chinese strings**, and the page's existing loading, error and empty states
-  unchanged.
-
-**Key files** — `frontend/src/components/workspace/usage/usage-overview.tsx`,
-`frontend/src/components/workspace/usage/usage-runs.tsx`, `frontend/src/core/usage/types.ts`,
-`frontend/src/core/usage/format.ts`, `frontend/src/core/i18n/locales/`,
-`backend/app/gateway/routers/console.py`, `frontend/docs/token-usage-dashboard.md`,
-`backend/tests/test_console_router.py`, `frontend/tests/unit/core/usage/`,
-`frontend/tests/e2e/usage-dashboard.spec.ts`.
-
-**Done when**
-
-- The tile, every bar, every model row and every run row show input and output, with the
-  cached part of input where reported.
-- A test pins that input + output + unattributed equals the total, and that cached never
-  exceeds input, for a day, a model and a run.
-- The new response fields are additive, and the existing console router tests pass unchanged.
-- `usage-dashboard.spec.ts` covers the split on the page.
 
 ---
 

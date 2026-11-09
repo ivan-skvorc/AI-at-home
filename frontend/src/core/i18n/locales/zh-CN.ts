@@ -26,6 +26,11 @@ export const zhCN: Translations = {
     inputTokens: "输入 Token",
     outputTokens: "输出 Token",
     cachedTokens: "缓存命中输入 Token",
+    unattributedTokens: "未区分 Token",
+    unattributedHint:
+      "服务商只报告了总量，未区分输入与输出，因此单独列出，不计入任何一方。",
+    cachedPart: (count) => `其中缓存命中 ${count}`,
+    tokenSplit: "输入与输出",
     daily: "每日 Token 用量",
     dailyDetails: "查看每日明细",
     models: "模型用量分布",
