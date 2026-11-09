@@ -807,6 +807,39 @@ def _load_sync_script():
     return module
 
 
+class TestOllamaSettingsSurviveUpgrade:
+    """An update keeps the operator's `ollama:` section, on both write paths.
+
+    The section only exists commented out in the example, so nothing merges it
+    back once it is gone; a daemon on another machine then sizes every model at
+    the flat 32K with no error. The re-dump path must also leave it in a shape
+    the sync's text scanner still reads.
+    """
+
+    SETTINGS = {"kv_cache_type": "q8_0", "vram_gb": 24}
+
+    def _example(self, tmp_path: Path, adds_keys: bool) -> Path:
+        text = "config_version: 58\nmodels: []\nsandbox:\n  use: deerflow.sandbox.local:LocalSandboxProvider\n"
+        if adds_keys:
+            text += "new_section:\n  enabled: true\n"
+        example = tmp_path / "config.example.yaml"
+        example.write_text(text, encoding="utf-8")
+        return example
+
+    @pytest.mark.parametrize("adds_keys", [True, False], ids=["re-dump", "version-only"])
+    def test_the_section_survives_and_the_sync_still_reads_it(self, tmp_path, adds_keys):
+        sync = _load_sync_script()
+        base = "config_version: 41\nmodels:\n  - name: gpt-4o\n    use: langchain_openai:ChatOpenAI\n    model: gpt-4o\nsandbox:\n  use: deerflow.sandbox.local:LocalSandboxProvider\n"
+        config = tmp_path / "config.yaml"
+        config.write_text(sync.sync(base, [("qwen3:8b", ["tools"], 65536)]) + "\nollama:\n  kv_cache_type: q8_0\n  vram_gb: 24\n", encoding="utf-8")
+
+        assert config_upgrade.upgrade(config, self._example(tmp_path, adds_keys), REPO_ROOT) == 0
+
+        upgraded = config.read_text(encoding="utf-8")
+        assert yaml.safe_load(upgraded).get("ollama") == self.SETTINGS
+        assert sync.parse_ollama_settings(upgraded) == {"kv_cache_type": "q8_0", "vram_gb": 24.0}
+
+
 class TestOllamaSyncBlockSurvivesUpgrade:
     """The structural re-dump used to drop the ollama-sync markers and write
     ``- name:`` flush under ``models:``. The next launch's sync then kept the

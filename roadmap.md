@@ -54,6 +54,10 @@ a 14B Ollama model was refused because the system prompt and tool schemas alone 
 window. That pass shrank the one prompt every model gets; item 37 is the next step, a prompt
 shaped for the model that reads it.
 
+Item **38** came out of tuning those windows: once each local model's `num_ctx` was sized to
+its GPU and a q8_0 cache, nothing showed what a conversation actually used of it. It asks
+for context what the cost view already does for money.
+
 ---
 
 ## At a glance
@@ -88,6 +92,8 @@ Open items, one line each. The full orchestrator prompts follow.
   or spending pauses for approval unless the operator pre-approved it.
 - **37. Model-aware system prompts** — one standard prompt as small as it can be, plus tuned
   overlays for a few big-name local and cloud families, each shipped only with measurements.
+- **38. Context window analytics** — the header's context number measured the way the guard
+  decides, and a per-turn view of what each turn added and what compaction took back out.
 
 **Suggested order for 19–25.** Voice first (19), since it is the one missing modality and it
 closes a live privacy leak. Then the injection boundary (23), *before* anything widens the
@@ -832,6 +838,85 @@ the existing prompt contract tests; at least four overlays (two local families, 
 ship, each with a recorded comparison that beats standard on its family; an unknown model
 gets standard; a saved `SYSTEM_PROMPT.md` is untouched; and the critical context-fit check
 passes for every profile.
+
+---
+
+## 38. Context window analytics
+
+**Goal** — A per-conversation view of the model's context window that reads like the cost
+view. It shows how full the window is now and against which limit, what fills it, and for
+every turn how much was added and how much compaction or the context guard took back out.
+The question it answers — why did this chat get refused, summarized or slow — is then
+answered from the conversation itself, not from logs.
+
+**Why it fits** — On a local model, context is the scarce resource, more than money, which a
+local model does not spend; a 32K–190K window is this fork's everyday constraint. The fork
+measures it today, but only now and only half. The header badge
+(`app/gateway/context_usage.py`) counts the checkpoint's messages with LangChain's
+approximate counter and divides by the configured `context_window`. That leaves out the
+fixed part of every request — system prompt plus tool schemas, 7K–22K tokens per FORK.md
+§47 — and divides by the whole window, though `num_predict` is reserved for the reply and
+the guard fills only 90% of the rest. A chat the guard is about to refuse can read 40% in the
+header. Tuning a window (`ollama.vram_gb`, `kv_cache_type`, the model choice) has no
+feedback loop beyond the picker's label. The cost view already has the shape this needs:
+`ThreadTokenUsageResponse.steps` gives one point per user turn, per run, with superseded runs
+accounted for (FORK.md §17).
+
+**Depends on** — nothing. It reuses the per-turn steps of the token-usage endpoint (§17),
+durable run events (§28) and the guard's own estimator (`estimate_request_tokens`, §45 and
+§47).
+
+**Scope**
+
+- **One measure: the guard's.** A model call's context is what the context guard measured for
+  that call — the fixed part (system prompt plus tool schemas in the form actually sent, full
+  or short), the conversation, the total, and the limit it enforced (prompt space ×
+  `REQUEST_FIT_SHARE`). Where the provider reports input tokens (`usage_metadata`), record
+  them beside the estimate, not instead of it: providers are not uniform about cached
+  prefixes, so a provider count alone can read lower than what the window holds. Every chart
+  says which number it shows.
+- **Numbers, never content.** The guard and the summarization middleware emit one small
+  structured record per model call into the run's events: token counts, the limit, and what
+  was elided or compacted (messages and tokens, before and after). Never message text. With
+  `run_events.backend: db` the history survives a restart, like scroll-back (§28).
+- **Per turn, like the cost steps.** For each step: context at the turn's first model call, at
+  its peak and at its end; tokens added (the user message, tool results, the answer) and
+  removed (compaction, the guard eliding old tool results, `/compact`), with the turn that
+  triggered a compaction marked. Subagent calls are listed under their step but kept apart
+  from the lead's window, since each runs in its own.
+- **A truthful badge.** The header percentage becomes the last call's total against the
+  guard's limit, not the raw window, and its hover says what it counts. A thread without
+  recorded calls (older threads, a run that failed before its first model call) keeps
+  today's estimate, labelled as one.
+- **The panel.** Clicking the badge opens a panel beside the cost overview:
+  - a per-turn chart of context size, with compaction drops marked;
+  - a composition bar for now — fixed, summary, user, assistant, tool results, attachments;
+  - the next compaction trigger and the guard's limit, drawn as lines;
+  - which model's window the chart is measured against. A model switch mid-thread changes
+    the limit, and the chart shows the change rather than averaging it away.
+- **One read per header render.** Extend `ThreadTokenUsageResponse.context_usage` with the
+  per-step series, or add a sibling `GET /api/threads/{id}/context-usage` with the same owner
+  scoping and the same handling of superseded runs as the cost steps.
+
+**Key files** — `backend/app/gateway/context_usage.py`,
+`backend/app/gateway/routers/thread_runs.py` (`ThreadContextUsage`, `ThreadTokenUsageStep`),
+`backend/packages/harness/deerflow/agents/middlewares/context_window_guard_middleware.py`,
+`backend/packages/harness/deerflow/agents/middlewares/summarization_middleware.py`,
+`backend/packages/harness/deerflow/utils/context_budget.py`,
+`frontend/src/components/workspace/context-usage-badge.tsx`,
+`frontend/src/components/workspace/token-usage-indicator.tsx`,
+`frontend/src/core/threads/token-usage.ts`.
+
+**Done when**
+
+- The badge's number equals the guard's own total for the last call, against the guard's
+  limit; a test drives one request through the guard and compares the two.
+- A thread's per-turn series shows the tokens added and removed by every turn, including
+  each compaction and elision it went through.
+- The series survives a Gateway restart on the database event store.
+- No message text is stored for it.
+- An older thread without records still shows today's estimate, labelled as one.
+- The critical context-fit check is unchanged.
 
 ---
 
