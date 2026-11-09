@@ -936,6 +936,31 @@ class TestVramContentionForBigModels:
         assert sync_ollama.vram_contention_warning(loaded, 24 * GIB) is None
 
 
+OLLAMA_SETTINGS = "ollama:\n  kv_cache_type: q8_0\n  vram_gb: 24\n"
+
+
+class TestOllamaSettingsSurviveEverySync:
+    """The `ollama:` section is the operator's: the sync reads it and never writes it.
+
+    A daemon on another machine cannot have its GPU detected, so its `vram_gb`
+    is set by hand. Losing it is silent: every window drops back to the flat
+    32K and the config stays valid.
+    """
+
+    @pytest.mark.parametrize("placement", ["end_of_file", "right_after_models"])
+    def test_the_section_survives_adding_resizing_and_removing_models(self, placement):
+        if placement == "end_of_file":
+            text = CLEAN_CONFIG + "\n" + OLLAMA_SETTINGS
+        else:
+            text = CLEAN_CONFIG.replace("sandbox:", OLLAMA_SETTINGS + "sandbox:")
+        once = sync_ollama.sync(text, [("qwen3:8b", ["tools"], 32768)])
+        resized = sync_ollama.sync(once, [("qwen3:8b", ["tools"], 65536), ("gemma4:e4b", ["tools"], 83968)])
+        emptied = sync_ollama.sync(resized, [])
+        for result in (once, resized, emptied):
+            assert OLLAMA_SETTINGS in result
+            assert sync_ollama.parse_ollama_settings(result) == {"kv_cache_type": "q8_0", "vram_gb": 24.0}
+
+
 class TestConfigThatLostItsMarkers:
     """Heals a config an older config-upgrade re-dumped: markers gone and
     ``- name:`` flush under ``models:``. Appending a two-space block after

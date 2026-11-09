@@ -54,6 +54,11 @@ a 14B Ollama model was refused because the system prompt and tool schemas alone 
 window. That pass shrank the one prompt every model gets; item 37 is the next step, a prompt
 shaped for the model that reads it.
 
+Items **38–39** came out of tuning those windows: once each local model's `num_ctx` was
+sized to its GPU and a q8_0 cache, nothing showed what a conversation actually used of it.
+Item 38 asks for context what the cost view already does for money; item 39 makes the
+Token Usage page tell input from output, the first thing that question needs.
+
 ---
 
 ## At a glance
@@ -88,6 +93,10 @@ Open items, one line each. The full orchestrator prompts follow.
   or spending pauses for approval unless the operator pre-approved it.
 - **37. Model-aware system prompts** — one standard prompt as small as it can be, plus tuned
   overlays for a few big-name local and cloud families, each shipped only with measurements.
+- **38. Context window analytics** — the header's context number measured the way the guard
+  decides, and a per-turn view of what each turn added and what compaction took back out.
+- **39. Input and output apart on the Token Usage page** — every total on the sidebar's usage
+  page split into input and output, with the cached part of input marked; it always adds up.
 
 **Suggested order for 19–25.** Voice first (19), since it is the one missing modality and it
 closes a live privacy leak. Then the injection boundary (23), *before* anything widens the
@@ -832,6 +841,145 @@ the existing prompt contract tests; at least four overlays (two local families, 
 ship, each with a recorded comparison that beats standard on its family; an unknown model
 gets standard; a saved `SYSTEM_PROMPT.md` is untouched; and the critical context-fit check
 passes for every profile.
+
+---
+
+## 38. Context window analytics
+
+**Goal** — A per-conversation view of the model's context window that reads like the cost
+view. It shows how full the window is now and against which limit, what fills it, and for
+every turn how much was added and how much compaction or the context guard took back out.
+The question it answers — why did this chat get refused, summarized or slow — is then
+answered from the conversation itself, not from logs.
+
+**Why it fits** — On a local model, context is the scarce resource, more than money, which a
+local model does not spend; a 32K–190K window is this fork's everyday constraint. The fork
+measures it today, but only now and only half. The header badge
+(`app/gateway/context_usage.py`) counts the checkpoint's messages with LangChain's
+approximate counter and divides by the configured `context_window`. That leaves out the
+fixed part of every request — system prompt plus tool schemas, 7K–22K tokens per FORK.md
+§47 — and divides by the whole window, though `num_predict` is reserved for the reply and
+the guard fills only 90% of the rest. A chat the guard is about to refuse can read 40% in the
+header. Tuning a window (`ollama.vram_gb`, `kv_cache_type`, the model choice) has no
+feedback loop beyond the picker's label. The cost view already has the shape this needs:
+`ThreadTokenUsageResponse.steps` gives one point per user turn, per run, with superseded runs
+accounted for (FORK.md §17).
+
+**Depends on** — nothing. It reuses the per-turn steps of the token-usage endpoint (§17),
+durable run events (§28) and the guard's own estimator (`estimate_request_tokens`, §45 and
+§47).
+
+**Scope**
+
+- **One measure: the guard's.** A model call's context is what the context guard measured for
+  that call — the fixed part (system prompt plus tool schemas in the form actually sent, full
+  or short), the conversation, the total, and the limit it enforced (prompt space ×
+  `REQUEST_FIT_SHARE`). Where the provider reports input tokens (`usage_metadata`), record
+  them beside the estimate, not instead of it: providers are not uniform about cached
+  prefixes, so a provider count alone can read lower than what the window holds. Every chart
+  says which number it shows.
+- **Numbers, never content.** The guard and the summarization middleware emit one small
+  structured record per model call into the run's events: token counts, the limit, and what
+  was elided or compacted (messages and tokens, before and after). Never message text. With
+  `run_events.backend: db` the history survives a restart, like scroll-back (§28).
+- **Per turn, like the cost steps.** For each step: context at the turn's first model call, at
+  its peak and at its end; tokens added (the user message, tool results, the answer) and
+  removed (compaction, the guard eliding old tool results, `/compact`), with the turn that
+  triggered a compaction marked. Subagent calls are listed under their step but kept apart
+  from the lead's window, since each runs in its own.
+- **A truthful badge.** The header percentage becomes the last call's total against the
+  guard's limit, not the raw window, and its hover says what it counts. A thread without
+  recorded calls (older threads, a run that failed before its first model call) keeps
+  today's estimate, labelled as one.
+- **The panel.** Clicking the badge opens a panel beside the cost overview:
+  - a per-turn chart of context size, with compaction drops marked;
+  - a composition bar for now — fixed, summary, user, assistant, tool results, attachments;
+  - the next compaction trigger and the guard's limit, drawn as lines;
+  - which model's window the chart is measured against. A model switch mid-thread changes
+    the limit, and the chart shows the change rather than averaging it away.
+- **One read per header render.** Extend `ThreadTokenUsageResponse.context_usage` with the
+  per-step series, or add a sibling `GET /api/threads/{id}/context-usage` with the same owner
+  scoping and the same handling of superseded runs as the cost steps.
+
+**Key files** — `backend/app/gateway/context_usage.py`,
+`backend/app/gateway/routers/thread_runs.py` (`ThreadContextUsage`, `ThreadTokenUsageStep`),
+`backend/packages/harness/deerflow/agents/middlewares/context_window_guard_middleware.py`,
+`backend/packages/harness/deerflow/agents/middlewares/summarization_middleware.py`,
+`backend/packages/harness/deerflow/utils/context_budget.py`,
+`frontend/src/components/workspace/context-usage-badge.tsx`,
+`frontend/src/components/workspace/token-usage-indicator.tsx`,
+`frontend/src/core/threads/token-usage.ts`.
+
+**Done when**
+
+- The badge's number equals the guard's own total for the last call, against the guard's
+  limit; a test drives one request through the guard and compares the two.
+- A thread's per-turn series shows the tokens added and removed by every turn, including
+  each compaction and elision it went through.
+- The series survives a Gateway restart on the database event store.
+- No message text is stored for it.
+- An older thread without records still shows today's estimate, labelled as one.
+- The critical context-fit check is unchanged.
+
+---
+
+## 39. Input and output apart on the Token Usage page
+
+**Goal** — Every total on the sidebar's Token Usage page (`/workspace/usage`) shows its input
+and output tokens, with the cached part of input marked where the provider reports it: the
+headline total, each day of the chart, each model and each run. The split always adds up to
+the total it sits under.
+
+**Why it fits** — Input and output tell different stories and cost differently. Output is
+the model writing; input is the context resent on every call, which is what grows as a
+conversation, its tool results and its attachments get longer. On a cloud model output is
+priced several times higher than input, while cached input is priced well below it. On a
+local model, input is what fills the window and drives prompt-processing time. A heavy day
+that is mostly input points at long contexts (item 38's question), one that is mostly output
+at long answers. Today the page shows one total almost everywhere. Input and output appear
+only as a small text line above the daily chart and in the collapsed per-day table. The
+chart, the per-model table and the runs list show totals only, though the data underneath
+already carries the split.
+
+**Depends on** — nothing. It sharpens item 38, which builds on the same input numbers.
+
+**Scope**
+
+- **The headline.** The total-tokens tile shows input (and how much of it was cached) and
+  output beneath it, with each one's share of the total.
+- **The chart.** Daily bars stack input under output, with a legend; the per-day table keeps
+  its columns.
+- **Models and runs.** The per-model table gets input (with its cached part) and output
+  columns, and each run row its input and output.
+- **Backend, additive only.** The console usage endpoint
+  (`backend/app/gateway/routers/console.py`) already returns input and output per day, and
+  the spend endpoint's model rows already compute output. Add `output_tokens` to
+  `ConsoleUsageModelBreakdown`, `total_input_tokens` and `total_output_tokens` to
+  `ConsoleUsageResponse`, and the run rows' stored `total_input_tokens` and
+  `total_output_tokens` to the runs list. Every addition defaults to 0, so an older client
+  reads the same totals.
+- **It must add up.** Input + output = total. Cached tokens are shown as a part of input,
+  never added on top of it. Where a provider reports a total without the split, the
+  difference is shown as its own "unattributed" part, never folded silently into input or
+  output.
+- **English and Chinese strings**, and the page's existing loading, error and empty states
+  unchanged.
+
+**Key files** — `frontend/src/components/workspace/usage/usage-overview.tsx`,
+`frontend/src/components/workspace/usage/usage-runs.tsx`, `frontend/src/core/usage/types.ts`,
+`frontend/src/core/usage/format.ts`, `frontend/src/core/i18n/locales/`,
+`backend/app/gateway/routers/console.py`, `frontend/docs/token-usage-dashboard.md`,
+`backend/tests/test_console_router.py`, `frontend/tests/unit/core/usage/`,
+`frontend/tests/e2e/usage-dashboard.spec.ts`.
+
+**Done when**
+
+- The tile, every bar, every model row and every run row show input and output, with the
+  cached part of input where reported.
+- A test pins that input + output + unattributed equals the total, and that cached never
+  exceeds input, for a day, a model and a run.
+- The new response fields are additive, and the existing console router tests pass unchanged.
+- `usage-dashboard.spec.ts` covers the split on the page.
 
 ---
 
