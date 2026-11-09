@@ -55,6 +55,7 @@ from collections.abc import AsyncIterator, Iterable, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 
+from deerflow.config.ollama_config import effective_vram_gb
 from deerflow.config.subagent_runtime_config import LocalModelCapacityConfig
 from deerflow.subagents.capacity import SubagentCapacityTimeout
 
@@ -169,7 +170,8 @@ def build_local_residency_plan(app_config: object) -> LocalResidencyPlan | None:
         return None
 
     ollama = getattr(app_config, "ollama", None)
-    vram_gb = getattr(ollama, "vram_gb", None)
+    # Settings → Models wins over config.yaml, as it does for the launch sync.
+    vram_gb = effective_vram_gb(getattr(ollama, "vram_gb", None))
     try:
         vram_bytes = int(float(vram_gb) * GIB) - VRAM_OVERHEAD_BYTES
     except (TypeError, ValueError):

@@ -2468,6 +2468,24 @@ export const enUS: Translations = {
         "Check the API key and capability overrides. Preset models must be disabled before removing their key.",
       invalidModel:
         "Invalid model configuration. Check the provider, model ID and advanced settings.",
+      gpuMemory: {
+        title: "Local GPU memory",
+        description:
+          "The memory of the GPU that runs Ollama. Each local model's context window is sized from it. Set it when Ollama runs on another machine, whose GPU cannot be detected from here. Kept through updates and model syncs.",
+        label: "GPU memory in GiB",
+        auto: "Auto",
+        clear: "Clear",
+        saved: "GPU memory saved",
+        invalid: "Enter a number from 0 to 1024, or leave it empty.",
+        usingSaved: (gib) =>
+          gib === 0
+            ? "GPU sizing is off: local windows stay at 32K."
+            : `Sizing local models for ${gib} GiB.`,
+        usingConfig: (gib) => `Using ${gib} GiB from config.yaml.`,
+        usingDetection:
+          "Not set: a GPU on this server is detected at launch; Ollama on another machine gets 32K windows.",
+        appliesNextLaunch: "Context windows change at the next restart.",
+      },
     },
     users: {
       title: "User management",

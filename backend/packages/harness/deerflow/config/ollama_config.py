@@ -11,11 +11,28 @@ reader, which is why the section is typed here instead of being left to
 Every field is optional and every default is the "nothing configured" answer, so
 a deployment with no GPU (or no `ollama:` block at all) parses to a config that
 turns the gate off rather than to a validation error.
+
+Settings → Models can also store the GPU memory (``ollama_vram_gb`` in
+``runtime_settings.json`` under the DeerFlow home). It lives outside
+``config.yaml`` on purpose: a config upgrade or the launch sync can never
+rewrite it, and it wins over ``ollama.vram_gb`` while it is set. The sync reads
+the same key; :func:`effective_vram_gb` is the runtime's reader.
 """
 
+import logging
+import math
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
+
+from deerflow.config.runtime_settings import get_runtime_setting, set_runtime_setting
+
+logger = logging.getLogger(__name__)
+
+#: Key in ``runtime_settings.json``. ``scripts/sync-ollama-models.py`` names it too.
+VRAM_GB_SETTING_KEY = "ollama_vram_gb"
+#: Upper bound on a saved value: a typo, not a card, beyond this.
+MAX_VRAM_GB = 1024.0
 
 KV_CACHE_BYTES_PER_ELEMENT: dict[str, float] = {"f16": 2.0, "q8_0": 34 / 32, "q4_0": 18 / 32}
 
@@ -63,3 +80,30 @@ class OllamaConfig(BaseModel):
         default_factory=dict,
         description="Per-model `keep_alive`, winning over the global value above.",
     )
+
+
+def get_saved_vram_gb() -> float | None:
+    """The GPU memory Settings → Models saved, or None when it saved none.
+
+    A hand-edited value that is not a number in ``[0, MAX_VRAM_GB]`` is ignored
+    (and logged) so ``config.yaml`` applies, rather than sizing from garbage.
+    """
+    raw = get_runtime_setting(VRAM_GB_SETTING_KEY)
+    if raw is None:
+        return None
+    if isinstance(raw, bool) or not isinstance(raw, (int, float)) or not math.isfinite(raw) or not 0 <= raw <= MAX_VRAM_GB:
+        logger.error("runtime_settings: ignoring invalid %s; config.yaml applies", VRAM_GB_SETTING_KEY)
+        return None
+    return float(raw)
+
+
+def set_saved_vram_gb(value: float | None) -> float | None:
+    """Persist the GPU memory (None removes it, so config.yaml applies again)."""
+    set_runtime_setting(VRAM_GB_SETTING_KEY, None if value is None else float(value))
+    return get_saved_vram_gb()
+
+
+def effective_vram_gb(configured: float | None) -> float | None:
+    """The budget to size against: the saved Settings value, else ``ollama.vram_gb``."""
+    saved = get_saved_vram_gb()
+    return configured if saved is None else saved

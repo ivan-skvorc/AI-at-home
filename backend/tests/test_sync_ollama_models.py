@@ -9,6 +9,7 @@ The script is a text-surgery editor for the `models:` section. These tests pin:
 from __future__ import annotations
 
 import importlib.util
+import json
 import sys
 from pathlib import Path
 
@@ -26,6 +27,13 @@ def _load_script():
 
 
 sync_ollama = _load_script()
+
+
+@pytest.fixture(autouse=True)
+def _no_saved_gpu_memory(tmp_path, monkeypatch):
+    """Point the sync's Settings store at an empty home, not the developer's."""
+    monkeypatch.setenv("DEER_FLOW_HOME", str(tmp_path / "deer-flow-home"))
+
 
 CLEAN_CONFIG = """config_version: 3
 models:
@@ -793,6 +801,75 @@ class TestDaemonOnAnotherMachine:
     def test_entries_that_point_at_this_machine_are_not_a_fallback(self, monkeypatch, capsys, tmp_path):
         _out, _err, asked = self._run(monkeypatch, capsys, tmp_path, recorded="http://host.docker.internal:11434")
         assert asked == [sync_ollama.DEFAULT_HOST]
+
+
+class TestGpuMemorySavedInSettings:
+    """Settings → Models' GPU memory reaches the launch sync from outside config.yaml.
+
+    The case it exists for: Ollama on another machine, so detection cannot see
+    the card and every window fell back to the flat 32K after each sync. The
+    value lives in the Gateway's ``runtime_settings.json``, which neither the
+    sync nor a config upgrade writes. Silent when broken: a store the sync
+    stops finding just means 32K windows again, with a valid config.
+    """
+
+    def _run(self, monkeypatch, capsys, tmp_path, saved, config_text=CLEAN_CONFIG, extra_args=()):
+        home = Path(sync_ollama.os.environ["DEER_FLOW_HOME"])
+        home.mkdir(parents=True, exist_ok=True)
+        if saved is not None:
+            (home / "runtime_settings.json").write_text(json.dumps({"ollama_vram_gb": saved, "multi_user_mode": True}), encoding="utf-8")
+        config = tmp_path / "config.yaml"
+        config.write_text(config_text)
+        monkeypatch.setenv("OLLAMA_HOST", REMOTE_DAEMON)
+        monkeypatch.setattr(sync_ollama, "fetch_tags", lambda host, timeout=2.0: [{"name": "deepseek-r1:14b", "size": DEEPSEEK_R1_14B_WEIGHTS}])
+        monkeypatch.setattr(sync_ollama, "fetch_show", lambda host, name, timeout=5.0: DEEPSEEK_R1_14B_SHOW)
+        monkeypatch.setattr(sync_ollama.sys, "argv", ["sync-ollama-models.py", "--config", str(config), "--dry-run", "--verbose", *extra_args])
+        assert sync_ollama.main() == 0
+        captured = capsys.readouterr()
+        return captured.out, captured.err
+
+    def test_a_saved_value_sizes_a_daemon_on_another_machine(self, monkeypatch, capsys, tmp_path):
+        out, err = self._run(monkeypatch, capsys, tmp_path, saved=24)
+        assert "num_ctx: 75776" in out
+        assert "Settings → Models" in err
+
+    def test_without_a_saved_value_the_remote_daemon_keeps_the_flat_cap_and_says_where_to_set_it(self, monkeypatch, capsys, tmp_path):
+        out, err = self._run(monkeypatch, capsys, tmp_path, saved=None)
+        assert "num_ctx: 32768" in out
+        assert "Settings → Models" in err
+
+    def test_the_saved_value_wins_over_config_yaml(self, monkeypatch, capsys, tmp_path):
+        out, _err = self._run(monkeypatch, capsys, tmp_path, saved=24, config_text=CLEAN_CONFIG + "ollama:\n  vram_gb: 20\n")
+        assert "num_ctx: 75776" in out
+
+    def test_an_explicit_flag_still_wins_over_the_saved_value(self, monkeypatch, capsys, tmp_path):
+        out, _err = self._run(monkeypatch, capsys, tmp_path, saved=24, extra_args=("--vram-gb", "20"))
+        assert "num_ctx: 55296" in out
+
+    def test_a_saved_zero_turns_sizing_off(self, monkeypatch, capsys, tmp_path):
+        out, err = self._run(monkeypatch, capsys, tmp_path, saved=0, config_text=CLEAN_CONFIG + "ollama:\n  vram_gb: 20\n")
+        assert "num_ctx: 32768" in out
+        assert "GPU sizing is off (Settings → Models: 0)" in err
+
+    @pytest.mark.parametrize("saved", ["24", True, -1, 4096])
+    def test_a_value_that_is_not_a_budget_is_ignored(self, monkeypatch, capsys, tmp_path, saved):
+        out, err = self._run(monkeypatch, capsys, tmp_path, saved=saved, config_text=CLEAN_CONFIG + "ollama:\n  vram_gb: 20\n")
+        assert "num_ctx: 55296" in out
+        assert "ignoring invalid ollama_vram_gb" in err
+
+    def test_the_store_is_the_gateways_home_on_every_launch_path(self, monkeypatch):
+        # deploy.sh and serve.sh export DEER_FLOW_HOME; docker.sh does not, and
+        # its Gateway bind-mounts backend/ so the home is backend/.deer-flow.
+        monkeypatch.setenv("DEER_FLOW_HOME", "/srv/deer-flow")
+        assert sync_ollama.default_runtime_settings_path() == Path("/srv/deer-flow/runtime_settings.json")
+        monkeypatch.delenv("DEER_FLOW_HOME")
+        assert sync_ollama.default_runtime_settings_path() == REPO_ROOT / "backend" / ".deer-flow" / "runtime_settings.json"
+
+    def test_the_sync_and_the_gateway_agree_on_the_key_and_its_bounds(self):
+        from deerflow.config import ollama_config
+
+        assert sync_ollama.SETTINGS_VRAM_KEY == ollama_config.VRAM_GB_SETTING_KEY
+        assert sync_ollama.SETTINGS_MAX_VRAM_GB == ollama_config.MAX_VRAM_GB
 
 
 # ── Models bigger than VRAM ───────────────────────────────────────────────────

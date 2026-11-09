@@ -30,7 +30,10 @@ block. GPU sizing never writes a `num_ctx` below `MIN_AGENT_NUM_CTX` (32768),
 the window `backend/tests/test_context_fit_critical.py` proves the agent fits.
 KV cost counts only layers that keep a cache: a zero in a per-layer
 `head_count_kv` is a linear-attention or state-space layer, not unreadable.
-With no `ollama.vram_gb` it sizes a loopback daemon from
+A GPU memory saved in Settings → Models (`ollama_vram_gb` in
+`$DEER_FLOW_HOME/runtime_settings.json`, else `backend/.deer-flow/`) beats
+`ollama.vram_gb`; only `--vram-gb` beats it. Keep its key and bounds equal to
+`deerflow/config/ollama_config.py`. With no budget it sizes a loopback daemon from
 `wizard/steps/ollama.py::detect_dedicated_vram_gb`; never add a second
 detector. `vram_gb: 0` means off. Detection stays sync-only: the runtime
 residency gate needs a configured budget. With no `OLLAMA_HOST`/`--host` and

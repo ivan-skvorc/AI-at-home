@@ -354,3 +354,95 @@ class TestProcessSingleton:
 async def _hold(gate: LocalModelResidencyGate, model: str) -> None:
     async with gate.slot(model):
         return
+
+
+class TestGpuMemorySavedInSettings:
+    """Settings → Models stores the card's memory outside config.yaml.
+
+    A daemon on another machine cannot have its GPU detected, and an
+    ``ollama.vram_gb`` typed into config.yaml is one more line an update has to
+    carry. The saved value lives in ``runtime_settings.json`` and wins over
+    config.yaml for the gate exactly as it does for the launch sync.
+    """
+
+    ADMIN = SimpleNamespace(state=SimpleNamespace(user=SimpleNamespace(system_role="admin")))
+    MEMBER = SimpleNamespace(state=SimpleNamespace(user=SimpleNamespace(system_role="user")))
+
+    @pytest.fixture(autouse=True)
+    def settings_file(self, tmp_path, monkeypatch):
+        from deerflow.config import ollama_config, runtime_settings
+
+        path = tmp_path / "runtime_settings.json"
+        monkeypatch.setattr(runtime_settings, "_settings_path", lambda: path)
+        # conftest keeps a developer's saved value out of every test; re-bind the real reader.
+        monkeypatch.setattr(ollama_config, "get_runtime_setting", runtime_settings.get_runtime_setting)
+        runtime_settings.reset_cache_for_tests()
+        yield path
+        runtime_settings.reset_cache_for_tests()
+
+    @pytest.fixture
+    def anyio_backend(self):
+        return "asyncio"
+
+    def test_the_saved_value_wins_over_config_yaml_and_clearing_restores_it(self):
+        from deerflow.config.ollama_config import set_saved_vram_gb
+
+        models = [ollama_model("qwen3:32b", weights_gib=20)]
+        set_saved_vram_gb(48)
+        assert build_local_residency_plan(app_config(models, ollama=OllamaConfig(vram_gb=24))).vram_bytes == 48 * GIB - VRAM_OVERHEAD_BYTES
+        set_saved_vram_gb(None)
+        assert build_local_residency_plan(app_config(models, ollama=OllamaConfig(vram_gb=24))).vram_bytes == BUDGET
+
+    def test_a_saved_zero_turns_the_gate_off_like_config_yaml_does(self):
+        from deerflow.config.ollama_config import set_saved_vram_gb
+
+        set_saved_vram_gb(0)
+        assert build_local_residency_plan(app_config([ollama_model("qwen3:32b", weights_gib=20)])) is None
+
+    @pytest.mark.parametrize("stored", ["24", True, -1, 4096, float("nan")], ids=["string", "bool", "negative", "too-big", "nan"])
+    def test_a_hand_edited_value_that_is_not_a_budget_is_ignored(self, settings_file, stored):
+        import json
+
+        from deerflow.config import runtime_settings
+        from deerflow.config.ollama_config import effective_vram_gb, get_saved_vram_gb
+
+        settings_file.write_text(json.dumps({"ollama_vram_gb": stored}), encoding="utf-8")
+        runtime_settings.reset_cache_for_tests()
+        assert get_saved_vram_gb() is None
+        assert effective_vram_gb(24.0) == 24.0
+
+    @pytest.mark.anyio
+    async def test_admin_save_reports_what_the_next_launch_uses(self, monkeypatch):
+        import deerflow.config
+        from app.gateway.routers.settings import OllamaVramUpdate, get_ollama_vram_setting, update_ollama_vram_setting
+
+        monkeypatch.setattr(deerflow.config, "get_app_config", lambda: SimpleNamespace(ollama=OllamaConfig(vram_gb=16)))
+        before = await get_ollama_vram_setting()
+        assert (before.vram_gb, before.config_vram_gb, before.effective_vram_gb) == (None, 16, 16)
+
+        saved = await update_ollama_vram_setting(OllamaVramUpdate(vram_gb=24), self.ADMIN)
+        assert (saved.vram_gb, saved.effective_vram_gb) == (24, 24)
+
+        cleared = await update_ollama_vram_setting(OllamaVramUpdate(vram_gb=None), self.ADMIN)
+        assert (cleared.vram_gb, cleared.effective_vram_gb) == (None, 16)
+
+    @pytest.mark.anyio
+    async def test_only_an_admin_can_change_it(self):
+        from fastapi import HTTPException
+
+        from app.gateway.routers.settings import OllamaVramUpdate, update_ollama_vram_setting
+        from deerflow.config.ollama_config import get_saved_vram_gb
+
+        with pytest.raises(HTTPException) as exc_info:
+            await update_ollama_vram_setting(OllamaVramUpdate(vram_gb=24), self.MEMBER)
+        assert exc_info.value.status_code == 403
+        assert get_saved_vram_gb() is None
+
+    @pytest.mark.parametrize("value", [-1, 4096, float("inf")])
+    def test_the_route_refuses_a_value_that_is_not_a_budget(self, value):
+        from pydantic import ValidationError
+
+        from app.gateway.routers.settings import OllamaVramUpdate
+
+        with pytest.raises(ValidationError):
+            OllamaVramUpdate(vram_gb=value)

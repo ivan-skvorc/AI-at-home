@@ -2015,6 +2015,8 @@ models:
 # machine (nvidia-smi / rocm-smi); with no card, a remote daemon or a Mac,
 # num_ctx is the native length capped at 32768. Set vram_gb to override the
 # detection (`make setup` writes it, Macs included), or 0 to turn sizing off.
+# Settings → Models → Local GPU memory overrides this value and is kept
+# outside config.yaml, so updates and syncs never reset it.
 #
 # kv_cache_type tells the sizing which KV-cache quantization your Ollama
 # daemon runs — it must match the daemon's OLLAMA_KV_CACHE_TYPE env setting
