@@ -60,6 +60,15 @@ Item 38 asks for context what the cost view already does for money. Item **39** 
 output apart on the Token Usage page, the first thing that question needs — landed: see
 [FORK.md §48](./FORK.md). Its number stays retired like 12–15.
 
+Items **40–42** came from wanting the other two apps on this machine —
+[StocktonRich](https://github.com/ivan-skvorc/StocktonRich) (newsdesk, and insider
+beside it) and [FrontalRobotomy](https://github.com/ivan-skvorc/FrontalRobotomy) —
+to feel like parts of this one: the same models, the same Grok sign-in, the same
+light and dark look, opened from the empty-chat welcome. The reasoning, the two
+machines they already run on, and the look they should share are in
+[docs/companion-apps.md](docs/companion-apps.md). They do not pull training into
+this fork; that decision stays under *Deliberately not*.
+
 ---
 
 ## At a glance
@@ -96,6 +105,13 @@ Open items, one line each. The full orchestrator prompts follow.
   overlays for a few big-name local and cloud families, each shipped only with measurements.
 - **38. Context window analytics** — the header's context number measured the way the guard
   decides, and a per-turn view of what each turn added and what compaction took back out.
+- **40. One model plane for the companion apps** — newsdesk and FrontalRobotomy name a
+  model; this fork performs the call, with the transport and the Grok sign-in it already
+  has. They stop keeping a second copy.
+- **41. Companion apps on the welcome screen** — Stockton and Frontal Robotomy open from
+  an empty chat, in the light and dark themes, and not from the marketing landing page.
+- **42. One card, one turn** — Ollama and training stay on the daily PC; the home server
+  only serves the pages; a training run and a chat take turns on the 3090.
 
 **Suggested order for 19–25.** Voice first (19), since it is the one missing modality and it
 closes a live privacy leak. Then the injection boundary (23), *before* anything widens the
@@ -111,6 +127,12 @@ go any time.
 
 **37** can start any time; its profiles are better measured once item 25's regression suite
 exists, and the standard prompt can ship first on its own.
+
+**Suggested order for 40–42.** 40 first: a button that opens a second Grok login is not
+the integration. 42 before the first night FrontalRobotomy trains on the PC while anything
+else wants the card. 41 last of the three, once the URLs it opens are real; its look is
+specified in [docs/companion-apps.md](docs/companion-apps.md), not designed again in the
+change.
 
 ---
 
@@ -937,6 +959,182 @@ durable run events (§28) and the guard's own estimator (`estimate_request_token
 
 ---
 
+## 40. One model plane for the companion apps
+
+**Goal** — newsdesk and FrontalRobotomy call a model by the name this fork already
+resolved. The transport, the key and the Grok sign-in stay here. Neither app keeps a
+second client or a second grant.
+
+**Why it fits** — The fork's thesis is one personal AI, cheap because the local models
+are local and the paid keys are few. newsdesk already *reads* the published
+`config.example.yaml` and then reimplements every transport, and it signs in to Grok
+again. FrontalRobotomy talks only to Ollama. A model added here, a Responses-only Grok
+model, or a lapsed sign-in shows up in one app and not the others. The detail, including
+the transports and the call shape, is [docs/companion-apps.md](docs/companion-apps.md).
+
+**Depends on** — nothing shipped here. newsdesk's own catalog and subscription code is
+the behaviour being replaced, not a dependency. FrontalRobotomy's orchestrator (its
+roadmap item 12) is not required; when it is built it should call this, not grow a client.
+
+**Scope**
+
+- A loopback-only Gateway endpoint. The caller sends a model **name** from the resolved
+  list, messages, and optionally tools. The Gateway picks the transport from the model
+  entry, the way `deerflow/models/factory.py` already does: chat completions,
+  `use_responses_api` for GPT-6, Anthropic, Gemini's native SDK, `ChatOllama` with the
+  synced `num_ctx`, and the ChatGPT / Grok / Kimi subscription classes, including a Grok
+  model that only answers on xAI's Responses API.
+- The caller does not send a `base_url`, a key, or a token. An unknown name is a 404,
+  not a request to a URL the caller chose. Provider addresses stay pinned in this fork.
+- Streaming, and vision for the models that already declare `supports_vision`. Prices
+  come back with the model so newsdesk's spend caps still mean something. newsdesk keeps
+  its own budgets, fallbacks, role assignment and schema check; those are its policy.
+- One Grok sign-in: this fork's Settings page. newsdesk's pasted provider keys and its
+  own subscription sign-in come out only after a call through this endpoint works for
+  the jobs that use them today, including a scheduled run. Don't delete the second grant
+  in the same change that adds the endpoint.
+- FrontalRobotomy's scorer and teacher may use the endpoint. Its training does not: a
+  LoRA run is not a chat completion. Its later orchestrator (its item 12) names a model
+  from this list.
+- Do not mount `config.yaml` into the other containers.
+
+**Key files** — `backend/packages/harness/deerflow/models/factory.py`,
+`backend/packages/harness/deerflow/models/subscriptions.py`,
+`backend/packages/harness/deerflow/models/subscription_providers.py`,
+`backend/app/gateway/routers/models.py`, the nginx configs under `docker/nginx/`.
+In StocktonRich: `newsdesk/llm/router.py`, `catalog.py`, `subscriptions.py`,
+`ollama.py`, `openai_compat.py`, `responses.py`, `claude.py`. In FrontalRobotomy:
+`frontalrobotomy/ollama/client.py`, and its roadmap item 12 when that is written.
+The contract: [docs/companion-apps.md](docs/companion-apps.md).
+
+**Done when**
+
+- A newsdesk job and a FrontalRobotomy scoring run can both name `grok-…` on the
+  connected Grok plan, an `use_responses_api` model, and an Ollama model, and the
+  tokens never leave this fork's store. A test proves the caller cannot choose the
+  address.
+- newsdesk no longer fetches `config.example.yaml` to discover models, and no longer
+  offers a second Grok sign-in. Its model audit's "port the client" step is deleted
+  in the same change, because there is nothing left to port.
+- A scheduled newsdesk run still answers if this fork's Gateway is up, and skips with
+  the reason it skips today if the PC is off.
+- No new key, token or provider URL is written into StocktonRich or FrontalRobotomy
+  state, logs or diagnostics.
+
+---
+
+## 41. Companion apps on the welcome screen
+
+**Goal** — An empty chat offers Stockton and Frontal Robotomy. They open already
+wearing this fork's light or dark theme. The marketing landing page does not change.
+
+**Why it fits** — The two apps are how this deployment handles news and training, and
+today they are two more bookmarks on the tailnet. The welcome screen is the splash a
+person actually lands on (`/workspace/chats/new`). The page at `/` is upstream's
+landing and it is forced dark, so a launcher there cannot follow the theme and will
+conflict on every sync.
+
+**Depends on** — item 40 for the apps being worth opening as part of this one. The
+buttons may be built against configured URLs before 40 lands, but they are not done
+while each app still asks for its own Grok login. The look is specified in
+[docs/companion-apps.md](docs/companion-apps.md); apply it, don't redesign it.
+
+**Scope**
+
+- Two buttons in `Welcome`, under the greeting: **Stockton** and **Frontal Robotomy**.
+  Hidden when the URL is not configured. They open a new tab. On a 390px width they
+  wrap with the greeting and do not cover the input.
+- Serve them on this origin, proxied at `/apps/newsdesk/` and `/apps/frontal/`,
+  loopback only. Forward newsdesk's `Tailscale-User-Login` header; do not disable
+  that check. Do not publish FrontalRobotomy's `8742`. insider is not a third button
+  and not a third proxy; it stays where newsdesk already links it.
+- The URLs are operator config in `config.yaml`. Empty is the default.
+- Theme: a `deerflow-theme` cookie of `light`, `dark` or `system`, written by the
+  existing appearance control and by these buttons. `system` follows
+  `prefers-color-scheme`; an explicit choice wins over the operating system. Both
+  satellites read it and grow a control that writes it back. Tokens, radius, the
+  indigo accent that goes away, and the chart colours that stay are in the doc.
+  Do not import this fork's CSS into those apps.
+- Not on `frontend/src/app/page.tsx`.
+
+**Key files** — `frontend/src/components/workspace/welcome.tsx`,
+`frontend/src/components/workspace/chats/chat-instance.tsx`,
+`frontend/src/components/theme-provider.tsx`,
+`frontend/src/components/workspace/settings/appearance-settings-page.tsx`,
+`frontend/src/styles/globals.css`, `docker/nginx/nginx.conf`,
+`docker/nginx/nginx.local.conf`. In StocktonRich: `newsdesk/web/static/app.css`
+and `newsdesk/web/templates/base.html`. In FrontalRobotomy:
+`frontalrobotomy/app/static/style.css` and the page headers. The spec:
+[docs/companion-apps.md](docs/companion-apps.md).
+
+**Done when**
+
+- A fresh chat shows both buttons when the URLs are set, and neither when they are
+  not. The marketing page at `/` is unchanged and still forced dark.
+- Opening Stockton does not ask for a login this fork has already satisfied, and
+  does not drop the Tailscale identity check.
+- Switching to light here and opening either app shows the light tokens from the
+  doc; switching to dark shows the dark ones; `system` follows the operating system.
+  A contrast check of newsdesk's existing status and chart colours on the new
+  backgrounds is recorded, and the colours are not replaced by `--chart-*`.
+- At 390px the buttons wrap and the input is still usable. Item 18's layout is
+  not regressed.
+- No satellite port is bound on anything but loopback.
+
+---
+
+## 42. One card, one turn
+
+**Goal** — Ollama and training stay on the daily PC (i9-12900K, 64 GB RAM, RTX
+3090). The home server only serves the pages. A training run and a chat take turns
+on that one card, instead of both grabbing it.
+
+**Why it fits** — The card is the scarce thing, and three locks already miss each
+other: newsdesk's flock lives on the server's disk, this fork's arbiter only sees a
+GPU attached to the Gateway, and FrontalRobotomy's lock only covers its own jobs.
+Training runs in Docker on the PC for hours. A server-side lock cannot see it. The
+layout and the three locks are drawn in
+[docs/companion-apps.md](docs/companion-apps.md).
+
+**Depends on** — nothing. It is more urgent once item 41 makes training easy to
+start, so do it before that night. It does not depend on item 40.
+
+**Scope**
+
+- One lock on the PC, taken before any Ollama call from this fork, newsdesk, insider
+  or FrontalRobotomy, and before a training or conversion container starts. Training
+  takes it before it unloads Ollama. The kernel releases it if the holder dies.
+- A waiter says it is waiting. It does not start a second copy of the model, and it
+  does not kill a training run to answer a chat.
+- `OLLAMA_NUM_PARALLEL` stays 1. Confirm the 24 GiB budget is set (`ollama.vram_gb`
+  or Settings → Models → *Local GPU memory*); a remote daemon is not measured, so an
+  unset budget silently flattens every window to the clamp.
+- ComfyUI counts as a holder only if it is running on that card. Don't leave it on
+  the home server and expect it to draw.
+- vast.ai does not take this lock, and neither does an API call. FrontalRobotomy's
+  roadmap item 13 stays the rented-GPU plan; don't build another one here.
+- Do not move the trainer into the Gateway. The *Deliberately not* entry on
+  fine-tuning still holds.
+
+**Key files** — `backend/packages/harness/deerflow/community/comfyui/arbiter.py`,
+`backend/packages/harness/deerflow/subagents/local_residency.py`,
+`scripts/sync-ollama-models.py`. In StocktonRich: `newsdesk/engine/gpu.py`,
+insider's matching gate, `ollama.gpu_lock_file`. In FrontalRobotomy:
+`frontalrobotomy/gpu.py`, `frontalrobotomy/train/remote.py`.
+
+**Done when**
+
+- With a training container running on the PC, a chat and a newsdesk run wait, say
+  so, and proceed when the container exits — including when it is killed. A test
+  stands in for the lock; the real card is the acceptance check, named as such.
+- Two of those callers cannot hold the lock at once. A dead holder does not leave
+  it taken.
+- No code path unloads Ollama in order to jump the queue.
+- The home server still has no published port except the ones Tailscale Serve
+  already fronts, and the 3090 is still the only GPU any of this uses.
+
+---
+
 ## Deliberately not on this roadmap
 
 **More model providers, more IM channels, more bundled skills.** The model bundle is
@@ -959,7 +1157,9 @@ babysat job with its own dataset management and its own failure modes; the fork 
 *inference consumer* whose whole GPU story is one card with tenants that evict each other
 (FORK.md §23). A training run holds the card for hours, which breaks every other feature on
 the machine for as long as it runs. If this is ever wanted it belongs on separate hardware,
-reached the way any other model provider is.
+reached the way any other model provider is. Items 40–42 do not reverse this.
+FrontalRobotomy keeps the trainer, on the daily PC; this fork launches it, lends it the
+model list, and takes a turn on the card. The trainer does not move into the Gateway.
 
 **A vector database service.** Item 21 deliberately adds a local embedding *adapter* behind
 the existing `RetrievalPort` rather than a new daemon. A personal instance's memory is
