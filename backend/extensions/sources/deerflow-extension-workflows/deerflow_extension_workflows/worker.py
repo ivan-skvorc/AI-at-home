@@ -17,7 +17,7 @@ BOOT = r"""
   Object.defineProperty(globalThis,'Date',{value:undefined,writable:false,configurable:false});
   Object.defineProperty(Math,'random',{value:()=>{throw new Error('Pass randomness in args');},writable:false,configurable:false});
   const encode=JSON.stringify.bind(JSON), decode=JSON.parse.bind(JSON);
-  const requests=[], pending=new Map(), waiting=[]; let serial=0, final=null;
+  const requests=[], pending=new Map(), waiting=[]; let serial=0, final=null, progressed=0;
   const clone=value=>decode(encode(value));
   const freeze=value=>{if(value&&typeof value==='object'){Object.values(value).forEach(freeze);Object.freeze(value);}return value;};
   // At most 64 agent calls are outstanding at the host. Further calls wait here
@@ -61,9 +61,11 @@ BOOT = r"""
   // Progress text is cut here to just over what the host keeps (which marks the
   // cut), so a long line cannot fill the frame; never end on half a surrogate pair.
   const clip=(value,units)=>{const s=String(value).slice(0,units),last=s.charCodeAt(s.length-1);return last>=0xD800&&last<=0xDBFF?s.slice(0,-1):s;};
+  // Counted apart from the calls sharing the frame: a fan-out that logs once per
+  // agent() must not run out of progress messages at its 65th call.
   const progress=message=>{
-    if(requests.length>=128)throw new Error('Message limit: at most 128 log() or phase() calls without an await in between');
-    requests.push(message);
+    if(progressed>=128)throw new Error('Message limit: at most 128 log() or phase() calls without an await in between');
+    progressed++; requests.push(message);
   };
   Object.defineProperty(globalThis,'log',{value:Object.freeze(text=>progress({type:'log',text:clip(text,200)})),writable:false,configurable:false});
   Object.defineProperty(globalThis,'phase',{value:Object.freeze(title=>progress({type:'phase',title:clip(title,100)})),writable:false,configurable:false});
@@ -74,11 +76,16 @@ BOOT = r"""
       // A script that does not parse throws here, not in the promise.
       try {
         (0,eval)('(async()=>{"use strict";\n'+source+'\n})()')
-          .then(value=>{final=encode({type:'result',value:value===undefined?null:value});},failed)
+          .then(value=>{
+            // JSON has no form for a function or a symbol and says so only by leaving it out.
+            const raw=encode(value===undefined?null:value);
+            if(raw===undefined)throw new Error('Script returned a value JSON cannot hold ('+typeof value+')');
+            final='{"type":"result","value":'+raw+'}';
+          },failed)
           .catch(failed);  // a return value JSON cannot hold
       } catch(error) { failed(error); }
     },
-    take:()=>encode(requests.splice(0)), result:()=>final,
+    take:()=>{progressed=0;return encode(requests.splice(0));}, result:()=>final,
     deliver:raw=>{const m=decode(raw),p=pending.get(m.id);if(!p)throw new Error('Unknown response');
       pending.delete(m.id);if(waiting.length&&pending.size<64)issue(waiting.shift());
       m.error?p.reject(new Error(m.error)):p.resolve(m.value);}

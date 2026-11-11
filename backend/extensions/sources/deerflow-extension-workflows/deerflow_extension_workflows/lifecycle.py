@@ -71,6 +71,8 @@ class Lifecycle:
         row = next((s for s in record["steps"] if s["step_id"] == payload.get("step_id")), None)
         if not row or row["status"] != "completed":
             raise ValueError("Completed step unavailable")
+        if "output" not in row:
+            raise ValueError("Step output was not kept: the workflow record reached its size limit")
         # The cap every answer passed when it was captured.
         encoded(row["output"], AGENT_OUTPUT_BYTES)
         return {"step_id": row["step_id"], "status": row["status"], "attempt": row.get("attempt", 1), "output": copy.deepcopy(row["output"])}

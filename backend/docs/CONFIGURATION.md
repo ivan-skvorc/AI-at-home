@@ -1798,9 +1798,11 @@ shell does not run as uid 0, system packages have to come from a custom
 `sandbox.devices` is the only way to hand a host device to a per-thread
 container, and it accepts exactly `/dev/kvm` (hardware-accelerated virtual
 machines). Any other value fails config validation and DeerFlow never passes
-`--privileged`. It becomes `--device /dev/kvm:/dev/kvm:rw` on the Docker runtime
-only, and is ignored with a warning in external `base_url` mode, in provisioner
-mode and on Apple Container. The Docker host must have the device, or every
+`--privileged`. Only the AIO container provider reads it: it becomes
+`--device /dev/kvm:/dev/kvm:rw` on the Docker runtime only, and is ignored with
+a warning in external `base_url` mode, in provisioner mode and on Apple
+Container. Under any other `sandbox.use` (the local sandbox, for example) the
+key does nothing and nothing is logged. The Docker host must have the device, or every
 sandbox start fails with an error naming `sandbox.devices`. The node keeps the
 host's mode and group, so a `0660 root:kvm` host needs the udev rule shown
 beside the key in `config.example.yaml`. Guest memory counts against

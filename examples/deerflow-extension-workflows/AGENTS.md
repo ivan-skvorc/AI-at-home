@@ -119,7 +119,8 @@ options back, rebuilt from the record (`result_context`: mode, clamped limits,
 on that turn skip the brief and keep the result note plus, for Double, the
 limits-off line. The record's `model` and `internet_enabled: false` come only from
 the launching run's options (anything malformed is ignored, never an error); every
-child and the result run default to them, and a step's own `model` wins.
+child and the result run default to them, and a step's own `model` wins. An inherited
+model the host refuses is dropped from the record, never fatal (`start_child`, `deliver_once`).
 Keep the brief behind the mode option and the result note behind the host-stamped
 `EXTENSION_MESSAGE_ORIGIN_KEY` for this namespace only. Delivery is exactly once:
 idempotency key `workflow-result:<run>`, deterministic message text, state in
@@ -136,7 +137,7 @@ conversation is waiting, not a failed delivery attempt (bounded by BUSY_WAIT_SEC
 The host shows the model one fixed sentence for anything a tool raises, so the
 `launch_workflow` tool returns a refusal as `{launched: false, error}`; the browser
 action still raises. `inspect_workflow_step` returns only `{step_id, status, attempt,
-output}` of a completed agent step; never expose `get_step` as a tool (its row holds
+output}` of a completed agent step, a refusal as `{found: false, error}`; never expose `get_step` as a tool (its row holds
 evidence and file hashes). At 100 retained records `create` drops the owner's oldest
 completed, failed or cancelled record with no pending delivery, never another
 terminal state; PostgreSQL also skips what delete refuses (shared `_held`/`_discard`).

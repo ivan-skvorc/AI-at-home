@@ -261,6 +261,14 @@ async def test_a_queued_input_keeps_its_plugin_options(input_store, monkeypatch)
             await run_inputs.submit_run_input("thread", "run", run_inputs.RunInputRequest(request_id="bad", text="x", mode="queue", context={"plugin_options": malformed}), request)
         assert refused.value.status_code == 400
 
+    # No options is not a malformed value: an explicit null is stored as absent.
+    unset = await run_inputs.submit_run_input("thread", "run", run_inputs.RunInputRequest(request_id="null", text="x", mode="queue", context={"mode": "ultracode", "plugin_options": None}), request)
+    assert unset["context"] == {"mode": "ultracode"}
+    # A steer input joins the running turn and starts no run, so the key is
+    # neither validated nor stored for it.
+    steer = await run_inputs.submit_run_input("thread", "run", run_inputs.RunInputRequest(request_id="steer", text="x", mode="steer", context={"plugin_options": "double_ultracode"}), request)
+    assert "plugin_options" not in steer["context"]
+
     await input_store.update_status("run", "success")
     admitted = []
 

@@ -134,6 +134,13 @@ def install(registry, config):
         except ValueError as exc:
             return {"launched": False, "error": str(exc)[:240]}
 
+    async def step_tool(payload, context):
+        # As launch_tool: the lead must be able to tell an unknown run from a step that has no output.
+        try:
+            return await workflows.step_output(payload, context)
+        except ValueError as exc:
+            return {"found": False, "error": str(exc)[:240]}
+
     if (
         registry.plugin(
             PluginContribution(
@@ -244,7 +251,7 @@ def install(registry, config):
                             "required": ["run_id", "step_id"],
                             "additionalProperties": False,
                         },
-                        workflows.step_output,
+                        step_tool,
                     ),
                     ModelTool(
                         "cancel_workflow",

@@ -22,7 +22,6 @@ import pytest_asyncio
 from deerflow_extension_api import AGENT_RUNS_CONTEXT_KEY, EXTENSION_MESSAGE_ORIGIN_KEY, AgentRun, AgentRunError, ExtensionPrincipal, WorkspaceMerge, WorkspaceSnapshot
 from deerflow_extension_api.plugins import ActionContext, ToolContext
 from langchain_core.messages import HumanMessage, SystemMessage
-from langchain_core.tools import ToolException
 from test_workflow_plugin import Runs
 
 from deerflow.extensions.loader import ExtensionSpec, load_extensions
@@ -324,6 +323,32 @@ async def test_agents_and_the_result_turn_inherit_the_conversations_model_and_in
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("refused", ["every run", "the result turn"])
+async def test_a_conversation_model_the_host_refuses_is_dropped_not_fatal(mode, refused):
+    """The conversation's model is a default: once it is removed or renamed, runs use the server's."""
+    start = mode.runs.start
+
+    async def host_start(*, thread_id, input, idempotency_key, context=None):
+        # The host's answer for a model outside its allowlist.
+        if (context or {}).get("model_name") == "removed-model" and (refused == "every run" or thread_id == CONVERSATION):
+            raise AgentRunError(400, "Model 'removed-model' is not in the configured model allowlist")
+        return await start(thread_id=thread_id, input=input, idempotency_key=idempotency_key, context=context)
+
+    mode.runs.start = host_start
+    script = "await agent({stepId:'a', agentRef:'lead_agent', task:'x'}); await agent({stepId:'b', agentRef:'lead_agent', task:'y'}); return 1;"
+    launched = await mode.service.launch({"request_id": "stale-model", "script": script}, tool_context(mode.runs, {**ULTRACODE, "model": "removed-model"}))
+    record = await finish(mode, launched["run_id"])
+    assert record["status"] == "completed", record["error"]
+    # Both agents ran, on the server default once the host refused the name.
+    assert mode.runs.contexts == ([None, None] if refused == "every run" else [{"model_name": "removed-model"}] * 2)
+    assert (await delivered(mode, launched["run_id"]))["status"] == "delivered"
+    # The result is posted without the model, and a follow-up workflow does not inherit it.
+    assert mode.runs.delivery_contexts == [{"plugin_options": {NAMESPACE: {"mode": "ultracode", "max_agents": 3, "max_parallel": 1, "max_minutes": 1}}}]
+    # Stored, so a retry of the result turn sends the same start.
+    assert (await asyncio.to_thread(mode.service.store.get, "alice", launched["run_id"]))["model"] is None
+
+
+@pytest.mark.asyncio
 async def test_a_caught_agent_failure_does_not_end_the_workflow(mode):
     """The brief's settle pattern works: an over-long answer fails one step only."""
     original_create = mode.runs.create_thread
@@ -397,7 +422,16 @@ async def test_an_uncaught_agent_failure_is_reported_as_itself(mode):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(("script", "problem"), [("const x = ;", "SyntaxError"), ("const loop = {}; loop.self = loop; return loop;", "circular")])
+@pytest.mark.parametrize(
+    ("script", "problem"),
+    [
+        ("const x = ;", "SyntaxError"),
+        ("const loop = {}; loop.self = loop; return loop;", "circular"),
+        # JSON leaves these out without an error of its own.
+        ("return function () {};", "JSON cannot hold (function)"),
+        ("return Symbol('x');", "JSON cannot hold (symbol)"),
+    ],
+)
 async def test_a_script_that_cannot_run_or_return_names_the_problem(mode, script, problem):
     launched = await mode.service.launch({"request_id": "broken", "script": script}, tool_context(mode.runs))
     record = await finish(mode, launched["run_id"])
@@ -514,16 +548,18 @@ async def test_a_wide_fanout_with_large_tasks_fits_the_bridge(mode):
 
 @pytest.mark.asyncio
 async def test_a_fanout_wider_than_the_pending_window_queues_in_order(tmp_path, monkeypatch):
-    """More than 64 unresolved agent() calls wait their turn instead of failing the run."""
+    """More than 64 unresolved agent() calls wait their turn instead of failing the run, also when each one logs."""
     _, _, service = await load(tmp_path, monkeypatch, max_calls=256, concurrency=16, global_concurrency=16, timeout_seconds=120)
     runs = ModeRuns()
-    script = "const r = await parallel(Array.from({length: 70}, (_, i) => () => agent({stepId:'p'+i, agentRef:'lead_agent', task:'p'+i}))); return r.map((x) => x.output.echo);"
+    script = "const r = await parallel(Array.from({length: 70}, (_, i) => () => { log('start ' + i); return agent({stepId:'p'+i, agentRef:'lead_agent', task:'p'+i}); })); return r.map((x) => x.output.echo);"
     try:
         launched = await service.launch({"request_id": "queued", "script": script}, tool_context(runs))
         await asyncio.wait_for(service.wait_idle(launched["run_id"]), 60)
         record = await asyncio.to_thread(service.store.get, "alice", launched["run_id"])
         assert record["status"] == "completed", record["error"]
         assert record["result"] == [f"p{i}" for i in range(70)]
+        # Agent calls do not use up the 128 progress messages of one turn.
+        assert [line for line in record["logs"] if line.startswith("start ")] == [f"start {i}" for i in range(70)]
     finally:
         await service.stop()
         await runs.close()
@@ -552,6 +588,45 @@ async def test_a_record_over_the_store_limit_still_ends_and_reports(mode):
 
 
 @pytest.mark.asyncio
+async def test_a_merge_fanout_over_the_store_limit_still_ends_and_reports(tmp_path, monkeypatch):
+    """Merge steps keep their base file hashes in the record, so it can stay too large without its journal."""
+    import deerflow_extension_workflows.delivery as delivery
+    from deerflow_extension_workflows.store import RecordLimit
+
+    monkeypatch.setattr(delivery, "RETRY_DELAYS", (0.01,))
+    _, actions, service = await load(tmp_path, monkeypatch, shared_workspace="write")
+    runs = ModeRuns()
+    files = {f"workspace/src/module_{i:04d}.py": f"{i:064x}" for i in range(200)}
+
+    async def copy_workspace(*, source_thread_id, thread_id):
+        return WorkspaceSnapshot(source_thread_id=source_thread_id, files=files)
+
+    runs.copy_workspace = copy_workspace
+    put = service.store.put
+
+    def limited(owner, record):
+        # The store's 8 MiB check at a size a test can fill: three of the four merge bases in flight fit.
+        if len(json.dumps(record)) > 70_000:
+            raise RecordLimit("Workflow record limit (8 MiB)")
+        return put(owner, record)
+
+    monkeypatch.setattr(service.store, "put", limited)
+    env = SimpleNamespace(service=service, actions=actions, runs=runs)
+    script = "const r = await pipeline(Array.from({length: 8}, (_, i) => i), (i) => agent({stepId:'s'+i, agentRef:'lead_agent', task:'edit '+i, workspace:'merge'})); return r.length;"
+    try:
+        launched = await service.launch({"request_id": "merge-too-big", "script": script}, tool_context(runs))
+        record = await finish(env, launched["run_id"])
+        assert record["status"] == "failed" and "8 MiB" in record["error"]
+        # A full record is not an uncertain admission: nobody is sent to inspect child threads.
+        assert {step["status"] for step in record["steps"]} <= {"failed", "cancelled", "completed"}
+        assert (await delivered(env, launched["run_id"]))["status"] == "delivered"
+        assert "8 MiB" in runs.deliveries[0][0]["messages"][0]["content"]
+    finally:
+        await service.stop()
+        await runs.close()
+
+
+@pytest.mark.asyncio
 async def test_result_is_posted_once_into_the_launching_conversation(mode):
     launched = await mode.service.launch({"request_id": "deliver", "script": "const a = await agent({stepId:'a', agentRef:'lead_agent', task:'x'}); return {answer: a.output};"}, tool_context(mode.runs))
     await finish(mode, launched["run_id"])
@@ -562,6 +637,8 @@ async def test_result_is_posted_once_into_the_launching_conversation(mode):
     message = posted["messages"][0]
     assert message["role"] == "user" and message["id"] == f"workflow-result-{launched['run_id'][:32]}"
     assert message["content"].startswith("[Workflow result]") and "untrusted" in message["content"] and '"answer"' in message["content"]
+    # The whole run ID, as inspect_workflow_step needs it: a shortened one finds nothing.
+    assert launched["run_id"] in message["content"]
     # Any later session action re-arms pending deliveries only: nothing is posted twice.
     await mode.actions["list"]({}, session(mode.runs))
     await asyncio.sleep(0.05)
@@ -708,7 +785,8 @@ async def test_schema_accepts_an_answer_delivered_as_content_blocks(mode):
 
     async def blocks(run, input):
         await asyncio.sleep(0.01)
-        content = [{"type": "thinking", "thinking": "t" * 13_000, "signature": "s"}, {"type": "text", "text": '{"score": 4}'}]
+        # An empty text block (text: null) carries no answer and must not fail the step.
+        content = [{"type": "thinking", "thinking": "t" * 13_000, "signature": "s"}, {"type": "text", "text": None}, {"type": "text", "text": '{"score": 4}'}]
         mode.runs.threads[run.thread_id]["values"]["messages"].append({"type": "ai", "content": content})
         mode.runs.runs[run.run_id] = AgentRun(run.thread_id, run.run_id, "success")
 
@@ -764,6 +842,9 @@ async def test_shared_workspace_follows_the_operator_policy(tmp_path, monkeypatc
             ((merged_child, into, base),) = runs.merges
             assert (merged_child, into) == (child, CONVERSATION) and set(base) == {"workspace/a.py", "workspace/b.py"}
             assert record["result"]["workspace"] == {"applied": 1, "conflicts": ["workspace/b.py"], "skipped": 0}
+            # Only the merge needed the base: a wide fan-out does not keep every finished step's hashes.
+            stored = await asyncio.to_thread(service.store.get, "alice", launched["run_id"])
+            assert stored["steps"][0]["workspace_base"] == {"source_thread_id": CONVERSATION, "files": {}, "count": 2}
         else:
             assert runs.merges == [] and "workspace" not in record["result"]
     finally:
@@ -944,11 +1025,10 @@ async def test_the_lead_can_read_a_completed_steps_output_after_a_failure(mode):
 
     read = lead_tool(mode, "inspect_workflow_step")
     assert await read(run_id=launched["run_id"], step_id="done") == {"step_id": "done", "status": "completed", "attempt": 1, "output": {"echo": "scan"}}
-    # Only finished work, and only the caller's own.
-    with pytest.raises(ToolException):
-        await read(run_id=launched["run_id"], step_id="broken")
-    with pytest.raises(ToolException):
-        await lead_tool(mode, "inspect_workflow_step", owner="bob")(run_id=launched["run_id"], step_id="done")
+    # Only finished work, and only the caller's own. A refusal is a result the lead can read:
+    # the host replaces whatever a tool raises with one fixed sentence.
+    assert await read(run_id=launched["run_id"], step_id="broken") == {"found": False, "error": "Completed step unavailable"}
+    assert await lead_tool(mode, "inspect_workflow_step", owner="bob")(run_id=launched["run_id"], step_id="done") == {"found": False, "error": "Workflow unavailable"}
     assert "inspect_workflow_step" in RESULT_NOTE
 
 

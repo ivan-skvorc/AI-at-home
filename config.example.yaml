@@ -3502,8 +3502,11 @@ sandbox:
 #   #   - Guest RAM counts against the container's memory limit (2g by
 #   #     default); raise DEER_FLOW_SANDBOX_MEMORY in the Gateway environment
 #   #     for a larger guest.
-#   # Ignored (with a warning) in external/provisioner modes and on Apple
-#   # Container. A VM also needs an image that contains QEMU — see `image:`.
+#   # Read only by the AIO container provider. There it is ignored (with a
+#   # warning) in external/provisioner modes and on Apple Container; under
+#   # any other `use:` (the local sandbox, for one) it does nothing and
+#   # nothing is logged. A VM also needs an image that contains QEMU — see
+#   # `image:`.
 #   # devices: [/dev/kvm]
 #
 #   # Optional: Keep released containers warm longer before idle reclaim

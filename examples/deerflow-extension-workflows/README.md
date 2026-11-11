@@ -101,7 +101,9 @@ from the namespace. Use `inspect_workflow` on demand to inspect outcomes and
 `inspect_workflow` leaves step outputs out; `inspect_workflow_step` returns one
 completed step's `{step_id, status, attempt, output}` (at most the 12,000-byte
 answer limit), so the finished work of a failed workflow can be reused. It does not
-resume or replay anything.
+resume or replay anything. A refusal (an unknown run ID, a step that did not complete)
+comes back as `{"found": false, "error": "<reason>"}`; the result message carries the
+whole run ID the tool takes.
 A launch the service refuses (the active or retained workflow limit, a script or
 arguments over their size limit, a `request_id` reused with a different script)
 comes back from the tool as `{"launched": false, "error": "<reason>"}` (at most 240
@@ -177,7 +179,10 @@ from the workflow record (the mode and the limits as the record clamped them, pl
 launched from that turn keeps the mode, the user's limits, the model and the internet
 switch. The same record gives that run, and every agent the workflow starts, the
 conversation's model (`context.model_name`) and its switched-off internet
-(`context.internet_enabled = false`).
+(`context.internet_enabled = false`). That model is a default, not a requirement:
+when the host refuses it (removed or renamed since launch, HTTP 400, 403 or 422) the
+agent is started without it, the record forgets it, and later agents and the result
+turn run on the server's default. A step's own `model` is never replaced.
 
 Agent task inputs allow 16,000 serialized JSON bytes, including wrapping fields
 and file references; step outputs allow 12,000. This leaves room to pass a saved
@@ -382,8 +387,8 @@ an exit triggers prompt failure handling and cleanup of pending child runs. Each
 running child's status is polled through the host with a backoff, from 20 ms up to
 once a second per attempt, and a stopping workflow wakes the wait at once.
 
-IPC frames are bounded to 2 MiB (128 messages per frame), which holds 64 pending
-calls with 16,000-byte tasks issued in one JavaScript turn. Script JSON encoding is at most 16,000 bytes,
+IPC frames are bounded to 2 MiB (192 messages per frame: 128 progress messages and
+64 calls), which holds 64 pending calls with 16,000-byte tasks issued in one JavaScript turn. Script JSON encoding is at most 16,000 bytes,
 arguments 4,000 bytes, task 16,000 bytes, each captured Agent output/final result
 12,000 bytes; a larger return value fails the workflow with `Script result exceeded
 the 12,000-byte limit; return a summary`. A `log()` line keeps 160 bytes of
@@ -521,9 +526,13 @@ history stops before issuing new effects. The journal is bounded at 3 MiB and th
 8 MiB per run; the worker has a 10,000-round limit. The record stores every task and
 answer twice (journal and steps), so the journal limit is the one a large run meets:
 it fails the workflow with an error that names it, about 12 KB of task plus answer
-per agent at 256 agents. Should the record itself still reach 8 MiB, the supervisor
-drops the journal of the ended run (it is never replayed), stores the end state and
-posts the result; a run that would have been left `recoverable` ends `failed`.
+per agent at 256 agents. A `merge` step keeps its base (up to 1,000 file hashes) in
+the record only until its merge is applied. Should the record itself still reach
+8 MiB, the run fails with that limit named, and the supervisor drops what an ended
+run no longer needs until the end state fits: the journal (it is never replayed),
+then each step's merge base and host evidence, then the steps' tasks and last their
+answers. It always posts the result; a run that would have been left `recoverable`
+ends `failed`.
 
 Crash boundaries have explicit outcomes:
 

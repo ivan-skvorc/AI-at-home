@@ -60,8 +60,10 @@ async def submit_run_input(thread_id: str, run_id: str, body: RunInputRequest, r
             context["locale"] = body.context["locale"]
         # ``mode`` alone lifts the host's limits; the plugin reads the same
         # choice from its options. Carrying one without the other turned a
-        # queued Plus/Double Plus message into a different kind of run.
-        if PLUGIN_OPTIONS_CONTEXT_KEY in body.context:
+        # queued Plus/Double Plus message into a different kind of run. Only a
+        # queued input starts a run: a steer input joins the running turn and
+        # never reads the key, and a null means no options.
+        if body.mode == "queue" and body.context.get(PLUGIN_OPTIONS_CONTEXT_KEY) is not None:
             plugin_options = sanitize_plugin_options(body.context[PLUGIN_OPTIONS_CONTEXT_KEY])
             if plugin_options is None:
                 raise HTTPException(400, "plugin_options must be an object of at most 8 plugin namespaces and 4 KiB.")

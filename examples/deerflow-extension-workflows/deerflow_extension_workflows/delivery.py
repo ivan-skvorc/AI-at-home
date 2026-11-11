@@ -61,7 +61,8 @@ def result_message(record):
     steps = record.get("steps", [])
     finished = sum(step["status"] == "completed" for step in steps)
     lines = [
-        f"[Workflow result] {name} ({run_id[:12]}) ended: {record['status']}.",
+        # The whole ID: it is what inspect_workflow_step takes.
+        f"[Workflow result] {name} ({run_id}) ended: {record['status']}.",
         "Posted automatically by the Script workflows extension when the workflow launched from this conversation ended; the user did not type this message.",
         f"Agents: {finished} of {len(steps)} completed.",
     ]
@@ -178,13 +179,27 @@ class Delivery:
             if state.get("next") or state.get("interrupts") or open_question(state.get("values", {}).get("messages", [])):
                 await asyncio.to_thread(self.store.delivery_note, owner, run_id, BUSY)
                 return "busy"
-            async with asyncio.timeout(self.config["admission_timeout_seconds"]):
-                run = await runs.start(
-                    thread_id=thread_id,
-                    input={"messages": [{"role": "user", "id": f"{RESULT_MESSAGE_PREFIX}{run_id[:32]}", "content": result_message(record)}]},
-                    context=result_context(record),
-                    idempotency_key=f"workflow-result:{run_id}",
-                )
+            while True:
+                try:
+                    async with asyncio.timeout(self.config["admission_timeout_seconds"]):
+                        run = await runs.start(
+                            thread_id=thread_id,
+                            input={"messages": [{"role": "user", "id": f"{RESULT_MESSAGE_PREFIX}{run_id[:32]}", "content": result_message(record)}]},
+                            context=result_context(record),
+                            idempotency_key=f"workflow-result:{run_id}",
+                        )
+                    break
+                except AgentRunError as exc:
+                    if exc.status_code not in (400, 422) or not record.get("model"):
+                        raise
+                    # The conversation's model is a default: when the host refuses it
+                    # (removed or renamed since launch) the result is posted on the
+                    # server's. Stored first so every retry sends the same start; a
+                    # clustered store retired the ended record's lease, so there the
+                    # drop is repeated per attempt and the idempotency key keeps one run.
+                    record["model"] = None
+                    if not self.clustered:
+                        await self.save(owner, record)
         except AgentRunError as exc:
             if exc.status_code == 409:
                 await asyncio.to_thread(self.store.delivery_note, owner, run_id, BUSY)

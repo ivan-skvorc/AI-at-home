@@ -10,7 +10,7 @@ import pytest
 from _router_auth_helpers import make_authed_test_app
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
-from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langgraph.checkpoint.base import empty_checkpoint, uuid6
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.store.memory import InMemoryStore
@@ -3856,6 +3856,110 @@ def test_branch_answer_edit_wins_over_the_parent_feed_copy(monkeypatch) -> None:
     }
 
 
+_REMINDER_KWARGS = {"dynamic_context_reminder": True, "hide_from_ui": True}
+
+
+@pytest.mark.parametrize(
+    "reminder",
+    [
+        SystemMessage(id="h0", content="<system-reminder>date</system-reminder>", additional_kwargs=_REMINDER_KWARGS),
+        # Older checkpoints hold the reminder as a hidden user message.
+        HumanMessage(id="h0", content="<system-reminder>date</system-reminder>", additional_kwargs=_REMINDER_KWARGS),
+    ],
+    ids=["system", "legacy-human"],
+)
+def test_branch_of_a_compacted_thread_keeps_the_question_its_reminder_is_keyed_to(monkeypatch, reminder) -> None:
+    """A checkpoint-only message must not replace the feed row it shares an identity with.
+
+    DynamicContextMiddleware gives its date reminder the submitted question's
+    id and re-keys the question to ``<id>__user``, so both resolve to one feed
+    identity. Compaction keeps the reminder and summarizes the question away;
+    the reminder never enters a feed, so the question must stay in the seed.
+    """
+    from deerflow.runtime import RunManager
+    from deerflow.runtime.events.store.memory import MemoryRunEventStore
+
+    app, _store, checkpointer = _build_thread_app()
+    custom_factory = _wire_extension_agent(monkeypatch, app, checkpointer, "full")
+    app.state.run_manager = RunManager()
+    event_store = MemoryRunEventStore()
+    app.state.run_event_store = event_store
+    source_thread_id = f"branch-compacted-reminder-{reminder.type}"
+
+    async def seed() -> None:
+        await event_store.put_batch(
+            [
+                _feed_row(source_thread_id, "run-0", HumanMessage(id="h0__user", content="first question")),
+                _feed_row(source_thread_id, "run-0", AIMessage(id="a0", content="first answer")),
+                _feed_row(source_thread_id, "run-1", HumanMessage(id="h1", content="question")),
+                _feed_row(source_thread_id, "run-1", AIMessage(id="a1", content="answer")),
+            ]
+        )
+        accessor = CheckpointStateAccessor.bind(custom_factory(), checkpointer, mode="full")
+        await accessor.aupdate(
+            {"configurable": {"thread_id": source_thread_id, "checkpoint_ns": ""}},
+            {"messages": [reminder, HumanMessage(id="h1", content="question"), AIMessage(id="a1", content="answer")]},
+            as_node="model",
+        )
+
+    with TestClient(app) as client:
+        created = client.post("/api/threads", json={"thread_id": source_thread_id, "metadata": {}, "assistant_id": "extension-agent"})
+        assert created.status_code == 200, created.text
+        asyncio.run(seed())
+
+        branch_response = client.post(f"/api/threads/{source_thread_id}/branches", json={"message_id": "a1", "message_ids": ["a1"]})
+        assert branch_response.status_code == 200, branch_response.text
+        branch_thread_id = branch_response.json()["thread_id"]
+
+    rows = asyncio.run(event_store.list_messages(branch_thread_id, limit=200, user_id=None))
+    assert [row["content"]["id"] for row in rows] == ["h0__user", "a0", "h1", "a1"]
+    assert rows[0]["content"]["content"] == "first question"
+    prefix = f"branch-seed-{branch_thread_id}"
+    assert [row["run_id"] for row in rows] == [f"{prefix}-1", f"{prefix}-1", f"{prefix}-2", f"{prefix}-2"]
+
+
+def test_branch_of_a_long_thread_is_seeded_from_the_parent_feed_on_sqlite(monkeypatch, tmp_path) -> None:
+    """SQLite refuses one lookup over 1000 identities; the seed must not fall back to the checkpoint."""
+    from deerflow.runtime import RunManager
+    from deerflow.runtime.events.store.db import DbRunEventStore
+
+    app, _store, checkpointer = _build_thread_app()
+    custom_factory = _wire_extension_agent(monkeypatch, app, checkpointer, "full")
+    app.state.run_manager = RunManager()
+    anyio.run(_init_threads_db, tmp_path)
+    event_store = DbRunEventStore(get_session_factory())
+    app.state.run_event_store = event_store
+    source_thread_id = "branch-long-sqlite"
+    turns = 501
+    checkpoint_messages = [message for turn in range(turns) for message in (HumanMessage(id=f"h{turn}", content="question"), AIMessage(id=f"a{turn}", content="answer"))]
+
+    async def seed() -> None:
+        # The feed holds a turn the checkpoint lost and the branched turn.
+        await event_store.put_batch([_feed_row(source_thread_id, "run-old", message) for message in (HumanMessage(id="h-old", content="old question"), AIMessage(id="a-old", content="old answer"))])
+        await event_store.put_batch([_feed_row(source_thread_id, "run-last", message) for message in checkpoint_messages[-2:]])
+        accessor = CheckpointStateAccessor.bind(custom_factory(), checkpointer, mode="full")
+        await accessor.aupdate({"configurable": {"thread_id": source_thread_id, "checkpoint_ns": ""}}, {"messages": checkpoint_messages}, as_node="model")
+
+    last_answer_id = f"a{turns - 1}"
+    with TestClient(app) as client:
+        created = client.post("/api/threads", json={"thread_id": source_thread_id, "metadata": {}, "assistant_id": "extension-agent"})
+        assert created.status_code == 200, created.text
+        anyio.run(seed)
+
+        branch_response = client.post(f"/api/threads/{source_thread_id}/branches", json={"message_id": last_answer_id, "message_ids": [last_answer_id]})
+        assert branch_response.status_code == 200, branch_response.text
+        branch_thread_id = branch_response.json()["thread_id"]
+
+        async def read_branch_feed() -> list[dict]:
+            return await event_store.list_messages(branch_thread_id, limit=2000, user_id=None)
+
+        ids = [row["content"]["id"] for row in anyio.run(read_branch_feed)]
+
+    assert ids[:2] == ["h-old", "a-old"]
+    assert ids[-2:] == [f"h{turns - 1}", last_answer_id]
+    assert len(ids) == 2 + len(checkpoint_messages)
+
+
 def test_branch_history_seed_failure_keeps_branch_usable(monkeypatch) -> None:
     """A seeding failure must degrade, not fail the branch (best-effort)."""
 
@@ -4293,6 +4397,48 @@ def test_compact_seeds_an_empty_feed_before_it_removes_messages(monkeypatch) -> 
 
     assert compacted.status_code == 200, compacted.text
     assert feed_when_compaction_ran == ["h1", "a1", "h2"]
+
+
+def test_a_refused_compact_does_not_seed_the_feed(monkeypatch) -> None:
+    """A ``/compact`` refused for a run in flight must write nothing.
+
+    A memory or JSONL feed gives the back-fill no reservation of its own, so it
+    ran before the conflict was found and journaled the in-flight run's
+    question under a synthetic run id.
+    """
+    from deerflow.runtime import RunManager, RunStatus
+    from deerflow.runtime.events.store.memory import MemoryRunEventStore
+    from deerflow.runtime.runs.store.memory import MemoryRunStore
+
+    app, _store, checkpointer = _build_thread_app()
+    custom_factory = _wire_extension_agent(monkeypatch, app, checkpointer, "full")
+    run_store = MemoryRunStore()
+    owner = RunManager(store=run_store, worker_id="worker-a")
+    app.state.run_manager = RunManager(store=run_store, worker_id="worker-b")
+    event_store = MemoryRunEventStore()
+    app.state.run_event_store = event_store
+    thread_id = "compact-refused-empty-feed"
+
+    async def seed() -> None:
+        accessor = CheckpointStateAccessor.bind(custom_factory(), checkpointer, mode="full")
+        await accessor.aupdate(
+            {"configurable": {"thread_id": thread_id, "checkpoint_ns": ""}},
+            {"messages": [HumanMessage(id="h1", content="old question"), AIMessage(id="a1", content="old answer"), HumanMessage(id="h2", content="in flight")]},
+            as_node="model",
+        )
+        active = await owner.create_or_reject(thread_id)
+        await owner.set_status(active.run_id, RunStatus.running)
+
+    with TestClient(app) as client:
+        created = client.post("/api/threads", json={"thread_id": thread_id, "metadata": {}, "assistant_id": "extension-agent"})
+        assert created.status_code == 200, created.text
+        asyncio.run(seed())
+
+        response = client.post(f"/api/threads/{thread_id}/compact", json={"force": True})
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "Thread has a run in flight. Compact after the run finishes."
+    assert asyncio.run(event_store.list_messages(thread_id, limit=50, user_id=None)) == []
 
 
 def test_update_thread_state_rejects_unknown_state_fields(monkeypatch) -> None:
