@@ -50,12 +50,22 @@ async def submit_run_input(thread_id: str, run_id: str, body: RunInputRequest, r
     if row is None or row.get("run_inputs") is None:
         raise HTTPException(409, "This Run has not enabled interactive inputs")
     try:
-        from app.gateway.services import _CONTEXT_CONFIGURABLE_KEYS
+        from deerflow_extension_api import PLUGIN_OPTIONS_CONTEXT_KEY
+
+        from app.gateway.services import _CONTEXT_CONFIGURABLE_KEYS, sanitize_plugin_options
         from deerflow.runtime.run_origin import admit_origin
 
         context = {key: value for key, value in body.context.items() if key in _CONTEXT_CONFIGURABLE_KEYS and key not in ("agent_name", "is_bootstrap")}
         if isinstance(body.context.get("locale"), str):
             context["locale"] = body.context["locale"]
+        # ``mode`` alone lifts the host's limits; the plugin reads the same
+        # choice from its options. Carrying one without the other turned a
+        # queued Plus/Double Plus message into a different kind of run.
+        if PLUGIN_OPTIONS_CONTEXT_KEY in body.context:
+            plugin_options = sanitize_plugin_options(body.context[PLUGIN_OPTIONS_CONTEXT_KEY])
+            if plugin_options is None:
+                raise HTTPException(400, "plugin_options must be an object of at most 8 plugin namespaces and 4 KiB.")
+            context[PLUGIN_OPTIONS_CONTEXT_KEY] = plugin_options
         source = "extension" if admit_origin(getattr(request.state, "run_origin", None)) is not None else "user"
         item = await RunInputs(_store(request), run_id, user_id).submit(body.request_id, body.text, body.mode, context=context, source=source)
     except InputConflict as exc:

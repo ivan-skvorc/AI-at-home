@@ -3,6 +3,7 @@
 import logging
 from unittest.mock import MagicMock
 
+import pytest
 from langchain_core.messages import AIMessage, HumanMessage
 
 from deerflow.agents.middlewares.subagent_limit_middleware import (
@@ -324,6 +325,35 @@ class TestTruncateTaskCalls:
             tool_calls=[_other_call("bash", "b1"), _other_call("read", "r1")],
         )
         assert mw._truncate_task_calls({"messages": [msg]}) is None
+
+    @pytest.mark.parametrize("mode", ["double_ultracode", "ultracode", None])
+    def test_only_double_ultracode_is_not_stopped_by_the_per_run_total(self, mode):
+        """Double Plus promises that only the model finishing ends the run.
+
+        The per-response concurrency truncation is capacity, not a run limit,
+        so it stays in every mode.
+        """
+        mw = SubagentLimitMiddleware(max_concurrent=2, max_total=3)
+        runtime = _make_runtime()
+        runtime.context["mode"] = mode
+        prior = [_delegation("t1", run_id="run-1"), _delegation("t2", run_id="run-1"), _delegation("t3", run_id="run-1")]
+
+        fourth = AIMessage(content="", tool_calls=[_task_call("t4")])
+        result = mw.after_model({"messages": [fourth], "delegations": prior}, runtime)
+        if mode == "double_ultracode":
+            assert result is None
+            assert "stop_reason" not in runtime.context
+        else:
+            assert result["messages"][0].tool_calls == []
+            assert runtime.context["stop_reason"] == "subagent_limit_capped"
+            return
+
+        batch = AIMessage(content="", tool_calls=[_task_call("t4"), _task_call("t5"), _task_call("t6")])
+        # One below the total: a counted total would keep a single call here.
+        result = mw.after_model({"messages": [batch], "delegations": prior[:2]}, runtime)
+        assert [call["id"] for call in result["messages"][0].tool_calls] == ["t4", "t5"]
+        assert "subagent delegation limit" not in str(result["messages"][0].content)
+        assert "stop_reason" not in runtime.context
 
 
 class TestAfterModel:

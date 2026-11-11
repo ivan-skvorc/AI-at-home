@@ -1392,6 +1392,43 @@ def test_read_timeout_is_retried_and_exhaustion_returns_marked_fallback(
     assert result.additional_kwargs["error_type"] == "ReadTimeout"
 
 
+def test_a_stalled_subscription_request_is_retried_once_then_reported(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A subscription proxy that accepts the request and never answers.
+
+    The transport timeout reaches the middleware as the SDK's
+    ``APITimeoutError``. Each attempt has already cost the whole read timeout,
+    so it gets the same single retry as a raw ``ReadTimeout`` and then a
+    visible message, instead of three silent waits.
+    """
+    from deerflow.models import subscription_providers as providers
+
+    middleware = _build_middleware(retry_max_attempts=3, retry_base_delay_ms=1, retry_cap_delay_ms=1)
+    sent = 0
+
+    async def stalled(_client, request, **_kwargs):
+        nonlocal sent
+        sent += 1
+        raise httpx.ReadTimeout("no response headers", request=request)
+
+    async def fake_sleep(_delay: float) -> None:
+        return None
+
+    monkeypatch.setattr(providers, "get_access_token", lambda _provider: "token")
+    monkeypatch.setattr(httpx.AsyncClient, "send", stalled)
+    monkeypatch.setattr("asyncio.sleep", fake_sleep)
+    model = providers.GrokSubscriptionChatModel(model="grok-code")
+
+    async def handler(_request) -> AIMessage:
+        return await model.ainvoke("Hello")
+
+    result = asyncio.run(middleware.awrap_model_call(SimpleNamespace(), handler))
+
+    assert sent == 2
+    assert result.additional_kwargs["error_reason"] == "transient"
+    assert result.additional_kwargs["error_type"] == "APITimeoutError"
+    assert result.content
+
+
 def test_empty_model_result_is_retried_before_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
     middleware = _build_middleware(retry_max_attempts=2, retry_base_delay_ms=1, retry_cap_delay_ms=1)
     attempts = 0

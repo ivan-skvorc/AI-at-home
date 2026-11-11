@@ -163,13 +163,37 @@ async def test_proxy_tools_always_stream_refresh_and_preserve_kimi_reasoning(wir
         if provider == "grok":
             assert request.headers["x-xai-token-auth"] == "xai-grok-cli"
             assert request.headers["x-grok-model-override"] == model_name
+    # Both show the thinking phase; without it a reasoning model looks idle
+    # until its first answer token.
+    assert first.additional_kwargs["reasoning_content"] == "Checking the value."
+    assistant = next(message for message in wire.requests[1][1]["messages"] if message["role"] == "assistant")
     if provider == "kimi":
-        assistant = next(message for message in wire.requests[1][1]["messages"] if message["role"] == "assistant")
         assert assistant["reasoning_content"] == "Checking the value."
         assert assistant["content"] == ""
+    else:
+        # Display only: Grok's proxy is never sent its own thinking back.
+        assert "reasoning_content" not in assistant
     serialized = json.dumps(model.to_json(), default=str)
     assert "subscription-secret" not in serialized
     assert "accidental-paid-key" not in serialized
+
+
+@pytest.mark.parametrize("cls_name", ["GrokSubscriptionChatModel", "GrokResponsesSubscriptionChatModel", "KimiSubscriptionChatModel"])
+def test_proxy_requests_are_bounded_unless_the_caller_set_a_timeout(cls_name):
+    """A request that never got response headers used to wait forever.
+
+    langchain passes ``timeout=None`` to the SDK, which switches off the SDK's
+    own default, and the chunk timer only starts once the stream is open.
+    """
+    from deerflow.models.factory import _DEFAULT_STREAM_CHUNK_TIMEOUT_SECONDS
+
+    cls = getattr(providers, cls_name)
+    model = cls(model="test")
+    for client in (model.root_client, model.root_async_client):
+        assert client.timeout.connect == 10
+        assert client.timeout.read == _DEFAULT_STREAM_CHUNK_TIMEOUT_SECONDS
+    assert cls(model="test", timeout=httpx.Timeout(5.0)).root_async_client.timeout == httpx.Timeout(5.0)
+    assert cls(model="test", request_timeout=7).root_client.timeout == 7
 
 
 @pytest.mark.asyncio
