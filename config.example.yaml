@@ -20,7 +20,7 @@
 # ============================================================================
 # Bump this number when the config schema changes.
 # Run `make config-upgrade` to merge new fields into your local config.yaml.
-config_version: 68
+config_version: 69
 
 # Optional operator-owned literal prompt extensions (see CONFIGURATION.md):
 # lead_prompt_overlay:
@@ -302,7 +302,7 @@ models:
   #                         GPT-6 Astra / GPT-6.1 Sol / GPT-5.3 Codex /
   #                         Gemini 3.8 Flash / Llama 4 Maverick /
   #                         MiniMax M3 / Qwen3.8 Max /
-  #                         Kimi K3.1 Pro / Mistral Large 3 / DeepSeek V4 Pro /
+  #                         Kimi K3.1 Pro / Mistral Large 4 / DeepSeek V4 Pro /
   #                         GLM-5.3 / Nemotron 3 Ultra
   #                         (via OpenRouter)
   # Each big-name lab that ships its own API also has a first-party "home" block,
@@ -313,10 +313,10 @@ models:
   #   XAI_API_KEY        -> Grok 4.7 / Grok 4.3 (xAI)
   #   GEMINI_API_KEY     -> Gemini 3.8 Flash / 3.5 Flash-Lite / 4 Argon (Google)
   #   DEEPSEEK_API_KEY   -> DeepSeek V4 Pro / V4.1 Flash (DeepSeek)
-  #   MISTRAL_API_KEY    -> Mistral Large 3 / Medium 3.5 / Small 4 (Mistral)
+  #   MISTRAL_API_KEY    -> Mistral Large 4 / Small 4 (Mistral)
   #   MOONSHOT_API_KEY   -> Kimi K3.1 Pro / Kimi K2.6 (Moonshot)
   #   DASHSCOPE_API_KEY  -> Qwen3.8 Max / Qwen3.7 Plus (Qwen)
-  #   MINIMAX_API_KEY    -> MiniMax M3 / MiniMax M2.7 (MiniMax)
+  #   MINIMAX_API_KEY    -> MiniMax M3 / MiniMax M3.1 Flash (MiniMax)
   #   ZAI_API_KEY        -> GLM-5.3 / GLM-5.3 Flash (z-ai)
   # A lab's flagship is thus reachable through both its home API AND OpenRouter.
   # It only ever uncomments (never re-comments), skips a block whose models are
@@ -536,11 +536,15 @@ models:
   #          and keep sensitive work on the direct Anthropic or local Ollama models.
   # Prices are NOT markers on these names — see the note above. Each entry carries
   # a structured `price:` block, and a `discount:` block only while the provider
-  # is actually running a promotion. One promo is live in this bundle: MiniMax M3
-  # ($0.6/2.4 standard, $0.24/0.96 discounted, 60% off), and it carries no `until:`
-  # because OpenRouter has not announced an end date — add one the day they do, so
-  # it expires without an edit. Re-check the promotions page when refreshing: an
-  # ended promo means deleting the `discount:` block, not editing a name.
+  # is actually running a promotion. One promo is live in this bundle: Gemini 3.8
+  # Flash ($1.50/7.50 standard, $0.75/3.75 discounted, 50% off on every Google
+  # endpoint OpenRouter routes it to). OpenRouter shows no end date, so its
+  # `until:` is inherited from the home entry's Google-announced window — the
+  # same introductory rate, served only by Google's own endpoints. MiniMax M3's
+  # old 60%-off promo is gone: MiniMax made a 50% cut permanent, so $0.30/1.20 is
+  # now its plain price. Re-read each model page's "N% off" badge when refreshing
+  # (OpenRouter has no separate promotions page): an ended promo means deleting
+  # the `discount:` block, not editing a name.
   # Two slugs were corrected in the 2026-07 refresh — both named models that never
   # shipped, so picking them failed at request time: `openai/gpt-5.5-codex` (no
   # 5.5/5.6 Codex exists; 5.3-Codex is still the newest agentic-coding variant)
@@ -665,12 +669,10 @@ models:
   #   supports_thinking: true
   #   price:                          # per 1M tokens; the single source of truth for cost display and budgets
   #     currency: USD
-  #     input: 0.6
-  #     output: 2.4
-  #   discount:                       # shown beside the standard rate, never billed instead of it
-  #     input: 0.24
-  #     output: 0.96
-  #     # no `until`: the provider has not announced an end date. Add one when they do.
+  #     input: 0.3                     # MiniMax's "permanent 50% off" rate, now its standard price
+  #     output: 1.2
+  #   # No `discount:` — the 60%-off OpenRouter promotion ended; MiniMax's own
+  #   # endpoint there charges this rate with no discount (2026-11-10).
   #
   # - name: openrouter-qwen3.8-max
   #   display_name: Qwen3.8 Max (OpenRouter) (p)
@@ -720,6 +722,10 @@ models:
   #     currency: USD
   #     input: 1.5
   #     output: 7.5
+  #   discount:                       # OpenRouter: 50% off on every (Google-run) endpoint; shown beside the standard rate, never billed instead of it
+  #     input: 0.75
+  #     output: 3.75
+  #     until: 2026-12-31             # OpenRouter shows no end date; inherited from the home entry's Google-announced window
   #
   # - name: openrouter-llama-4-maverick
   #   display_name: Llama 4 Maverick (OpenRouter) (p)
@@ -734,13 +740,13 @@ models:
   #   supports_thinking: false
   #   price:                          # per 1M tokens; the single source of truth for cost display and budgets
   #     currency: USD
-  #     input: 0.2
-  #     output: 0.8
+  #     input: 0.35
+  #     output: 1.0
   #
   # - name: openrouter-deepseek-v4-pro
   #   display_name: DeepSeek V4 Pro (OpenRouter) (p)
   #   use: langchain_openai:ChatOpenAI
-  #   model: deepseek/deepseek-v4-pro
+  #   model: deepseek/deepseek-v4-pro-0813   # the GA build DeepSeek's own API serves; bare deepseek/deepseek-v4-pro is the 0423 pre-GA build
   #   api_key: $OPENROUTER_API_KEY
   #   base_url: https://openrouter.ai/api/v1
   #   request_timeout: 600.0
@@ -750,8 +756,8 @@ models:
   #   supports_thinking: true
   #   price:                          # per 1M tokens; the single source of truth for cost display and budgets
   #     currency: USD
-  #     input: 0.44
-  #     output: 0.87
+  #     input: 1.32                    # DeepSeek's own endpoint, peak rate (off-peak 0.66/1.98), as on the home block
+  #     output: 3.96
   #
   # - name: openrouter-glm-5.3
   #   display_name: GLM-5.3 (OpenRouter) (p)
@@ -769,12 +775,13 @@ models:
   #     input: 1.4
   #     output: 4.4
   #   # No `discount:` — GLM-5.2's 76%-off OpenRouter promotion belonged to that
-  #   # entry and left with it. Re-add one only against the promotions page.
+  #   # entry and left with it. Re-add one only when this model's OpenRouter page
+  #   # shows an "N% off" badge on every endpoint.
   #
-  # - name: openrouter-mistral-large-3
-  #   display_name: Mistral Large 3 (OpenRouter) (p)
+  # - name: openrouter-mistral-large-4
+  #   display_name: Mistral Large 4 (OpenRouter) (p)
   #   use: langchain_openai:ChatOpenAI
-  #   model: mistralai/mistral-large-2512
+  #   model: mistralai/mistral-large-4-0
   #   api_key: $OPENROUTER_API_KEY
   #   base_url: https://openrouter.ai/api/v1
   #   request_timeout: 600.0
@@ -784,8 +791,9 @@ models:
   #   supports_thinking: false
   #   price:                          # per 1M tokens; the single source of truth for cost display and budgets
   #     currency: USD
-  #     input: 0.5
-  #     output: 1.5
+  #     input: 0.7
+  #     output: 2.1
+  #     cache_hit: 0.07
   #
   # - name: openrouter-nemotron-3-ultra
   #   display_name: Nemotron 3 Ultra (OpenRouter) (p)
@@ -1086,15 +1094,20 @@ models:
   # === END auto-model-config: deepseek ===
 
   # ── Mistral — auto-enabled when MISTRAL_API_KEY is set ────────────────────
-  # Mistral Large 3 + Medium + Small, on the direct Mistral API. Mistral Large
-  # is not a reasoning model (matching the OpenRouter entry), so no thinking.
+  # Mistral Large 4 (GA 2026-11-05) + Small 4, on the direct Mistral API. Mistral
+  # deprecated Large 3 and Medium 3.5 on 2026-10-31 (retiring 2027-04-30) and named
+  # Large 4 the replacement for both. Mistral's model page lists no reasoning
+  # control for Large 4, so the family still ships without thinking (matching
+  # the OpenRouter entry). Ids are pinned versions, never a `*-latest` alias: an
+  # alias re-points silently, so the name, the slug and the price drift apart
+  # with nothing raising — how a Medium entry once sat at Medium 3's price.
   # The startup auto-config (scripts/sync-api-key-models.py) uncomments the
   # entries below when it finds a real MISTRAL_API_KEY in your .env.
   # === BEGIN auto-model-config: mistral (uncommented at startup when MISTRAL_API_KEY is set) ===
-  # - name: mistral-large-3
-  #   display_name: Mistral Large 3 (Mistral)
+  # - name: mistral-large-4
+  #   display_name: Mistral Large 4 (Mistral)
   #   use: langchain_openai:ChatOpenAI
-  #   model: mistral-large-2512
+  #   model: mistral-large-4-0         # the versioned id; `mistral-large-4` is the moving name
   #   api_key: $MISTRAL_API_KEY
   #   base_url: https://api.mistral.ai/v1
   #   request_timeout: 600.0
@@ -1103,27 +1116,9 @@ models:
   #   supports_vision: true
   #   price:                          # per 1M tokens; the single source of truth for cost display and budgets
   #     currency: USD
-  #     input: 0.5
-  #     output: 1.5
-  #
-  # - name: mistral-medium-3.5
-  #   display_name: Mistral Medium 3.5 (Mistral)
-  #   use: langchain_openai:ChatOpenAI
-  #   # Pinned rather than `mistral-medium-latest`: an alias silently re-points at
-  #   # a new model, so the name, the slug, and the price below drift apart with
-  #   # nothing raising — which is how this entry ended up labelled "Medium 3" at
-  #   # Medium 3's price while the alias had already moved on.
-  #   model: mistral-medium-3-5
-  #   api_key: $MISTRAL_API_KEY
-  #   base_url: https://api.mistral.ai/v1
-  #   request_timeout: 600.0
-  #   max_retries: 2
-  #   max_tokens: 32000
-  #   supports_vision: true
-  #   price:                          # per 1M tokens; the single source of truth for cost display and budgets
-  #     currency: USD
-  #     input: 1.5
-  #     output: 7.5
+  #     input: 0.7
+  #     output: 2.1
+  #     cache_hit: 0.07
   #
   # - name: mistral-small-4
   #   display_name: Mistral Small 4 (Mistral)
@@ -1229,7 +1224,10 @@ models:
   # === END auto-model-config: qwen ===
 
   # ── MiniMax — auto-enabled when MINIMAX_API_KEY is set ────────────────────
-  # MiniMax M3 (vision) + M2.7 (text-only), on the direct MiniMax international API.
+  # MiniMax M3 + M3.1 Flash (both multimodal), on the direct MiniMax international
+  # API. M3.1 Flash replaced M2.7, which MiniMax closed to new users on 2026-10-19
+  # and retires on 2026-11-18. M3's price is MiniMax's "permanent 50% off" rate for
+  # prompts up to 512K tokens; a longer prompt bills $0.60/$2.40.
   # The startup auto-config (scripts/sync-api-key-models.py) uncomments the
   # entries below when it finds a real MINIMAX_API_KEY in your .env.
   # === BEGIN auto-model-config: minimax (uncommented at startup when MINIMAX_API_KEY is set) ===
@@ -1247,25 +1245,26 @@ models:
   #   supports_thinking: true
   #   price:                          # per 1M tokens; the single source of truth for cost display and budgets
   #     currency: USD
-  #     input: 0.6
-  #     output: 2.4
+  #     input: 0.3                    # prompts up to 512K tokens; a longer prompt bills $0.60/$2.40
+  #     output: 1.2
   #
-  # - name: minimax-m2.7
-  #   display_name: MiniMax M2.7 (MiniMax)
+  # - name: minimax-m3.1-flash
+  #   display_name: MiniMax M3.1 Flash (MiniMax)
   #   use: langchain_openai:ChatOpenAI
-  #   model: MiniMax-M2.7
+  #   model: MiniMax-M3.1-Flash
   #   api_key: $MINIMAX_API_KEY
   #   base_url: https://api.minimax.io/v1
   #   request_timeout: 600.0
   #   max_retries: 2
   #   max_tokens: 16000
   #   temperature: 1.0
-  #   supports_vision: false
+  #   supports_vision: true
   #   supports_thinking: true
   #   price:                          # per 1M tokens; the single source of truth for cost display and budgets
   #     currency: USD
-  #     input: 0.3
-  #     output: 1.2
+  #     input: 0.15
+  #     output: 0.6
+  #     cache_hit: 0.015
   # === END auto-model-config: minimax ===
 
   # ── Zhipu z.ai (GLM) — auto-enabled when ZAI_API_KEY is set ───────────────
@@ -2551,6 +2550,17 @@ tools:
   #   contents_max_characters: 2000 # per-result content cap; 0 disables it
   #   # api_key: $SOFYA_API_KEY     # Optional explicit env-var reference
 
+  # Web search tool (uses SpecStream, requires SPECSTREAM_API_KEY)
+  # SpecStream answers from the live web: ranked results with a snippet each, plus a
+  # direct answer when the sources agree on one. Sign up at https://specstream.ai to get a key.
+  # Note: set SPECSTREAM_API_KEY in your environment before starting the app.
+  # Avoid putting literal API keys in config.yaml; use the $VAR form instead.
+  # - name: web_search
+  #   group: web
+  #   use: deerflow.community.specstream.tools:web_search_tool
+  #   max_results: 5
+  #   # api_key: $SPECSTREAM_API_KEY  # Optional explicit env-var reference
+
   # Web search tool (uses You.com; YDC_API_KEY optional)
   # You.com runs its own web index and returns extracted page snippets rather
   # than a single meta description, so results are usable without a follow-up
@@ -2818,6 +2828,15 @@ tools:
   #   use: deerflow.community.sofya.tools:web_fetch_tool
   #   # api_key: $SOFYA_API_KEY
 
+  # Web fetch tool (uses SpecStream, requires SPECSTREAM_API_KEY)
+  # Returns the page as markdown. Also reads PDF, Word and Excel files.
+  # NOTE: Only one web_fetch provider can be active at a time.
+  # Comment out the Jina AI web_fetch entry above before enabling this one.
+  # - name: web_fetch
+  #   group: web
+  #   use: deerflow.community.specstream.tools:web_fetch_tool
+  #   # api_key: $SPECSTREAM_API_KEY
+
   # Web fetch tool (uses Unbrowse, requires UNBROWSE_API_KEY)
   # Returns the page as markdown. Fetches over plain HTTP when that is enough and
   # falls back to a hosted cloud browser for pages that need JavaScript.
@@ -2996,9 +3015,8 @@ tools:
 
 tool_search:
   enabled: false
-  # When tool_search is enabled, PR1 MCP routing metadata can auto-promote
-  # matching deferred MCP tool schemas before a model call. This is the maximum
-  # number of matched schemas promoted per model call. Valid range: 1..5.
+  # Legacy compatibility setting (1..5). Routing keywords are advisory only;
+  # deferred schemas are exposed by explicit tool_search selection.
   auto_promote_top_k: 3
 
 # ============================================================================
@@ -3251,6 +3269,22 @@ read_before_write:
   # count, not tokens: CJK text costs ~3-4x more per character than ASCII).
   # 0 elides every non-empty payload.
   elide_min_chars: 2000
+
+# Optional pre-write syntax validation and targeted error remediation guard.
+# When enabled (write_verify_syntax: true), intercepts str_replace to validate
+# spliced .py (ast.parse) and .json (json.loads) syntax before disk I/O.
+# Also classifies tool error outputs (ModuleNotFoundError, SyntaxError,
+# FileNotFoundError, etc.) and injects actionable remediation hints directly into
+# tool results.
+harness_guard:
+  enabled: true
+  write_verify_syntax: false
+  block_on_syntax_error: true
+  targeted_hints_enabled: true
+  max_repeated_error_signatures: 2
+  detect_alternating_loops: true
+  max_loop_history: 20
+  max_tracked_scopes: 1000
 
 # ============================================================================
 # Projects
@@ -3547,6 +3581,7 @@ sandbox:
 #   # An explicit value is allowed but must be at least max_running + 1.
 #   # environment:
 #   #   MAX_SHELL_SESSIONS: "13"  # Example for subagent_runtime.max_running: 12
+#   #   AIO_BASH_MAX_SESSIONS: "50"  # Separate Bash pool; excess env calls wait (cancellable)
 #   #   NODE_ENV: production
 #   #   DEBUG: "false"
 #   #   API_KEY: $MY_API_KEY        # Reads from host's MY_API_KEY env var
@@ -3842,6 +3877,24 @@ verification:
   receipts_render_mode: "delegation_only"
   judge_enabled: false
   judge_model_name: null
+
+# ============================================================================
+# HITL tool approval
+# ============================================================================
+# Pause high-risk tool calls for human approval before execution.
+# enabled=false (default) leaves all behavior unchanged.
+# The high-risk list is host-owned security policy edited by the operator.
+# non_interactive: deny | allow — behavior for IM channels, GitHub runs,
+# scheduled tasks, and other non-interactive entry points. Subagents and
+# runtimes without resume support always fail closed regardless of this setting.
+# Approval is not authorization: read_before_write, guardrails, and sandbox
+# authorization still apply after approval ("approve to try executing").
+hitl_approval:
+  enabled: false
+  tools: []  # e.g. [write_file, str_replace, bash]
+  non_interactive: deny
+  # Maximum matching tool calls in one approval batch; 0 disables the count limit.
+  max_actions: 32
 
 # ============================================================================
 # ACP Agents Configuration

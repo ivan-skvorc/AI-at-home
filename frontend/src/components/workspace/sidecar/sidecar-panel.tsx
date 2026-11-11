@@ -74,6 +74,7 @@ import {
 import { createSidecarThread } from "@/core/sidecar/api";
 import {
   useDeleteThread,
+  useThreadMetadata,
   useThreadStream,
   type ThreadStreamOptions,
 } from "@/core/threads/hooks";
@@ -169,6 +170,11 @@ export function SidecarPanel({ className }: { className?: string }) {
     );
   }, [models, sidecar.context.model_name]);
 
+  const threadMetadata = useThreadMetadata(sidecar.sidecarThreadId, {
+    enabled: !sidecar.isMock,
+    isMock: sidecar.isMock,
+  });
+
   const {
     thread,
     sendMessage,
@@ -176,6 +182,10 @@ export function SidecarPanel({ className }: { className?: string }) {
     isHistoryLoading,
     hasMoreHistory,
     loadMoreHistory,
+    approvalRequests,
+    hasPendingApproval,
+    submitHitlApproval,
+    waitingForInputRunIds,
   } = useThreadStream({
     threadId: sidecar.sidecarThreadId ?? undefined,
     displayThreadId: sidecar.sidecarThreadId ?? undefined,
@@ -184,6 +194,9 @@ export function SidecarPanel({ className }: { className?: string }) {
     onStart: (createdThreadId) => {
       sidecar.setSidecarThreadId(createdThreadId);
     },
+    restInterrupts: threadMetadata.data?.interrupts,
+    restInterruptsLoading: threadMetadata.isLoading,
+    restInterruptsError: threadMetadata.isError,
   });
 
   const referenceCountLabel = useMemo(() => {
@@ -212,6 +225,7 @@ export function SidecarPanel({ className }: { className?: string }) {
     isUploading ||
     (hasSidecarThread && isHistoryLoading) ||
     (sidecar.isMock ?? false) ||
+    hasPendingApproval ||
     env.NEXT_PUBLIC_STATIC_WEBSITE_ONLY === "true";
 
   useEffect(() => {
@@ -402,6 +416,17 @@ export function SidecarPanel({ className }: { className?: string }) {
     [sidecar, submitToSidecarThread],
   );
 
+  const handleSubmitApproval = useCallback(
+    (
+      request: (typeof approvalRequests)[number],
+      responses: Parameters<typeof submitHitlApproval>[2],
+    ) =>
+      sidecar.sidecarThreadId
+        ? submitHitlApproval(sidecar.sidecarThreadId, request, responses)
+        : false,
+    [sidecar.sidecarThreadId, submitHitlApproval],
+  );
+
   useEffect(() => {
     if (!queuedSubmit || !sidecar.sidecarThreadId || thread.isLoading) {
       return;
@@ -583,6 +608,18 @@ export function SidecarPanel({ className }: { className?: string }) {
             sidecarSurface
             initialScroll="instant"
             resizeScroll="instant"
+            approvalRequests={approvalRequests}
+            approvalMetadataLoading={
+              hasPendingApproval && approvalRequests.length === 0
+            }
+            approvalMetadataError={
+              hasPendingApproval &&
+              approvalRequests.length === 0 &&
+              threadMetadata.isError
+            }
+            onReloadApprovalMetadata={() => threadMetadata.refetch()}
+            waitingForInputRunIds={waitingForInputRunIds}
+            onSubmitApproval={handleSubmitApproval}
             onSubmitHumanInput={
               sidecar.isMock || env.NEXT_PUBLIC_STATIC_WEBSITE_ONLY === "true"
                 ? undefined

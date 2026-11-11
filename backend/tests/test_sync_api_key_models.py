@@ -259,8 +259,9 @@ class TestRealExampleConfig:
             "minimax/minimax-m3",
             "qwen/qwen3.8-max-0902",
             "moonshotai/kimi-k3.1-pro",
-            "mistralai/mistral-large-2512",
-            "deepseek/deepseek-v4-pro",
+            "mistralai/mistral-large-4-0",
+            # The GA build DeepSeek's own API serves; bare `deepseek/deepseek-v4-pro` is 0423.
+            "deepseek/deepseek-v4-pro-0813",
             "z-ai/glm-5.3",
             "nvidia/nemotron-3-ultra-550b-a55b",
         }
@@ -343,10 +344,12 @@ class TestHomeApiBlocks:
         out = sync_api.sync(self.text, all_slugs)
         names = [m["name"] for m in yaml.safe_load(out)["models"]]
         assert len(names) == len(set(names)), "model names collide when every key is set"
-        # 6 Anthropic + 15 OpenRouter + 23 home = 44 distinct models.
+        # 6 Anthropic + 15 OpenRouter + 22 home = 43 distinct models.
         # OpenRouter gained Opus 5 and GPT-6 Astra (the two paired labs of
         # FORK.md step 3); the OpenAI home block gained Astra's direct twin.
-        assert len(names) == 44
+        # Mistral's home block lost Medium 3.5 on 2026-11-10 (deprecated, with
+        # Large 4 as its replacement).
+        assert len(names) == 43
 
     def test_openai_home_and_openrouter_gpt_are_distinct_entries(self):
         """The GPT flagship is doubled: a direct OpenAI entry AND the OpenRouter
@@ -411,8 +414,8 @@ class TestFirstPartyKeyCoverage:
         key is *present*; this checks the comment is not *lying*.
 
         The comment abbreviates the way a human does — it drops the lab name
-        when every model in the block repeats it ("Large 3 / Medium 3.5 / Small
-        4", "MiniMax M3 / M2.7") — so only a leading token shared by *every*
+        when every model in the block repeats it ("Large 4 / Small 4", "MiniMax
+        M3 / M3.1 Flash") — so only a leading token shared by *every*
         display name in that bundle is allowed to go missing. Everything that
         distinguishes one model from another, the version above all, must be
         there.

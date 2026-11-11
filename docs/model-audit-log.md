@@ -11,6 +11,135 @@ Newest first. Append a pass; never rewrite one. A dated line is what tells the
 next person whether the roster was checked last week or last year, and _which_
 providers that pass could actually reach.
 
+- **2026-11-10 (branch `claude/zealous-shannon-skhckw`) — tier 1 for every lab but Google, and
+  for OpenRouter's pages. Three roll-forwards: Mistral Large 4 replaces Large 3 (home and routed)
+  and Medium 3.5 leaves, MiniMax M3.1 Flash replaces M2.7, and the routed DeepSeek V4 Pro moves
+  to the GA `-0813` slug. Three price edits: MiniMax M3 to `$0.30/$1.20` in both places (its
+  routed discount deleted), Llama 4 Maverick to `$0.35/$1.00`, and the routed Gemini 3.8 Flash
+  gains a 50% `discount:`. Claude Fable 5.2 deferred.** Requested in words with the upstream sync
+  of 127 commits, three days after the 2026-11-07 pass.
+
+  **Machine half.** `uv run --no-sync python ../scripts/audit_models.py` reached OpenRouter
+  (469 models): 25 findings — six list-price moves and 19 `new_candidate` rows, no retired slug,
+  no promo change; ten catalog-less providers skipped. Of the six price moves two were real drift
+  (Llama 4 Maverick, MiniMax M3), one a slug problem (DeepSeek V4 Pro), one a live promotion read
+  as a list move (Gemini 3.8 Flash), and two the cheapest third-party host rather than the
+  standard rate (GLM-5.3 on Wafer fp4, Nemotron 3 Ultra on Baseten): the live parser reads only
+  the catalog headline, and never a discount, so `promo_started`/`promo_ended` cannot fire against
+  the live catalog. After the edits the stale fixture still yields exactly four findings, one per
+  kind; its promo-ended case moved from MiniMax M3 to the routed Gemini 3.8 Flash, the only
+  routed entry that now carries a discount. Step 8: `sync-api-key-models.py --dry-run` exits 0, and
+  on a copy of the example with OpenRouter, Mistral and MiniMax keys it enables 19 models
+  (15 + 2 + 2) at the new prices; `test_sync_api_key_models.py`, `test_setup_wizard.py`,
+  `test_config_integrity.py`, `test_audit_models.py`, `test_model_price_fields.py` and
+  `test_pricing.py` are green (306 passed).
+
+  **What the network reached.** 200 from `openrouter.ai` (catalog, per-model pages and
+  `/endpoints`, `/rankings`; `/promotions` and `/discounts` are 404 — OpenRouter has no promotions
+  page, so discounts were read off each model page's "N% off" badge), `platform.claude.com`,
+  `developers.openai.com` (pricing, models, deprecations), `docs.x.ai`, `api-docs.deepseek.com`,
+  `mistral.ai` and `docs.mistral.ai`, `platform.kimi.ai`, `alibabacloud.com`, `platform.minimax.io`
+  and `docs.z.ai`. Unreachable: `ai.google.dev` 301s to `aistudio.google.com`, which the proxy
+  refuses, so the Google home block stays at tier 3.
+
+  **How a routed price was read.** For a model several hosts serve, the standard rate is the lab's
+  own endpoint on the OpenRouter page (it equalled the lab's own page every time), not the page
+  headline, which is the cheapest host and often an fp4 quantisation. Kimi K3.1 Pro (`$2/$10`) and
+  GLM-5.3 (`$1.40/$4.40`) match on that reading; Nemotron 3 Ultra (no NVIDIA host) matches the page
+  headline `$0.50/$2.20` while the catalog says Baseten's `$0.60/$2.40` — left alone.
+
+  **Anthropic — tier 1, prices unchanged; Fable 5.2 deferred.** All six bundled figures match the
+  pricing page. Claude Fable 5.2 (`claude-fable-5-2`, released 2026-11-09, `$8/$40`, cache `$0.20`;
+  OpenRouter's `anthropic/claude-fable-5.2` the same) is Active and Fable 5.1 is now Legacy, so
+  "Fable keeps only the latest" would roll it — **deferred: blocked on the harness's keep-tail
+  compaction vs Fable 5.2's every-account history check.** DeerFlow's summarization keeps the tail
+  (older turns summarized, recent turns replayed with their thinking blocks), and Fable 5.2 applies
+  the thinking-block prefix check on every account, so a compacted Fable conversation would 400;
+  the fork has no `block_binding`/`drop_block` handling and it cannot be verified without a live
+  key. Fable 5.1 is still served. **Follow-up, not a fix:** the same latent issue already exists
+  for Opus 5.5, Sonnet 5.5, Haiku 5.5 and Fable 5.1 on accounts created on or after 2026-08-31,
+  where the check also applies.
+
+  **OpenAI, xAI, DeepSeek, Moonshot, Qwen, z.ai — tier 1, prices unchanged.** First tier-1 read of
+  OpenAI's page: GPT-6 Astra `$10/$50`, GPT-6.1 Sol `$2/$10`, GPT-5.3 Codex `$1.75/$14`, GPT-6.1
+  Terra `$1/$5`, GPT-6 Luna `$0.10/$0.50`. xAI: Grok 4.7 `$2/$6`, Grok 4.3 `$1.25/$2.50`. DeepSeek:
+  V4 Pro `$1.32/$3.96` peak and `deepseek-flash` `$0.30/$1.20` peak — the owed question is closed at
+  tier 1: `deepseek-flash` serves DeepSeek-V4.1-Flash-1017 and `deepseek-v4-pro` serves
+  V4-Pro-0813. Moonshot: K3.1 Pro `$2/$10` (cache `$0.20`), K2.6 `$0.95/$4`. Qwen (International):
+  3.8 Max `$2/$6`, 3.7 Plus `$0.40/$1.60`. z.ai: GLM-5.3 `$1.40/$4.40`, GLM-5.3 Flash `$0.15/$0.50`.
+
+  **Mistral — tier 1; Large 4 rolls.** Owed "at GA": Large 4 went GA on 2026-11-05 (ids
+  `mistral-large-4` / `mistral-large-4-0`; the versioned one is bundled), `$0.70/$2.10`, cached
+  `$0.07`, on Mistral's model page and on OpenRouter's `mistralai/mistral-large-4-0` (Mistral's own
+  host). Mistral deprecated Large 3 and Medium 3.5 on 2026-10-31 (retiring 2027-04-30) naming
+  Large 4 the replacement for both, so the home block is now Large 4 + Small 4 (`$0.15/$0.60`,
+  matches) and the bundle is 43 priced models. OpenRouter lists `reasoning` for Large 4 but
+  Mistral's own feature list names no reasoning control; `supports_thinking` stays off pending a
+  live call.
+
+  **MiniMax — tier 1; M3 reprices, M3.1 Flash rolls.** MiniMax's page shows M3 at a "Permanent 50%
+  off" — `$0.30/$1.20` up to 512K tokens (`$0.60/$2.40` above) — the Sonnet 5 case, so that is now
+  its price in both places, and the routed `$0.24/$0.96` discount is deleted: OpenRouter shows no
+  60%-off promotion, only per-host badges, and MiniMax's own host there charges `$0.30/$1.20`. M2.7
+  closed to new users on 2026-10-19 and retires 2026-11-18; MiniMax-M3.1-Flash (`$0.15/$0.60`,
+  cache `$0.015`, multimodal, same endpoint) replaces it — also #9 on OpenRouter's weekly token
+  board.
+
+  **OpenRouter-only changes — tier 1.** Llama 4 Maverick `$0.20/$0.80` → `$0.35/$1.00` (page
+  headline, catalog, and Parasail, the only standard-routing host, agree). DeepSeek V4 Pro's routed
+  slug `deepseek/deepseek-v4-pro` is the 0423 pre-GA build, hosted only by third parties at prices
+  none of which is the shipped `$0.44/$0.87`; it moves to `deepseek/deepseek-v4-pro-0813`, where
+  DeepSeek's own host bills `$1.32/$3.96` peak (`$0.66/$1.98` off-peak) — the home block's figure.
+  Gemini 3.8 Flash's routed copy gains `discount: $0.75/$3.75` (OpenRouter shows 50% off on every
+  endpoint; list `$1.50/$7.50` unchanged). OpenRouter states no end date: the `until: 2026-12-31` is
+  inherited from the home entry's Google-announced window, since every OpenRouter host for this
+  model is Google's own.
+
+  **Discovery (step 2).** OpenRouter rankings, "usage data through Nov 9, 2026", read 2026-11-10.
+  - **Claude Fable 5.2** — new on trending (#3) and #1 on OpenRouter's intelligence-index board;
+    deferred as above.
+  - **Tencent Hy4** — the owed new-lab test is now met: #1 New & Trending, #3 this week (16T), #2
+    today. Not rolled: its only host is Tencent at a 50%-off promo in CNY-converted figures, Tencent's
+    own pricing page was not reachable for the home-block question, and a third routed-only lab is a
+    deliberate change to a pinned rule. Owed to a dedicated change.
+  - **Meta** — Muse Wonder (`$4/$20`) and Muse Ember (`$0.10/$0.50`, #4 trending) are served by a
+    first-party "Meta" host on OpenRouter; Llama 4 Maverick is 19 months old with one standard host.
+    Whether Meta now has a consumer API (and a home block) needs Meta's own docs. Owed.
+  - **Gemini 4 Carbon** (2026-11-10) — released the day of this pass, no usage history, Google's page
+    unreachable (OpenRouter: `$4/$20` list at 50% off). Watch; it may take the Pro slot from Argon.
+  - **GPT-5.3 Codex** — OpenAI deprecated it on 2026-10-01 (shutdown 2027-04-01, replacement
+    `gpt-6-sol`). Owed: remove it from both blocks before 2027-04-01, in its own change.
+  - **Kimi K2.6** — closed to new Moonshot accounts since 2026-10-31; the K2 series retires by the
+    end of December 2026, and no cheaper K3 sibling exists (`kimi-k3` `$3/$15`, `-highspeed`
+    `$4/$20`). Owed a decision before then.
+  - Routed cheap siblings meeting the dated acclaim test — DeepSeek V4.1 Flash (#1 in all three
+    windows), GLM-5.3 Flash, GPT-6 Luna, MiniMax M3.1 Flash — are a roster-shape question, not rolled.
+  - Crouton Alpha (stealth, #2 trending) — a codename; note it and wait. Step 5 Preview (StepFun, #5
+    weekly) — a preview id. MiMo-V2.6-Flash (Xiaomi) — watch.
+  - Declined: Haiku/Sonnet 5.5 routed (home-only by rule), GPT-6.1 Terra/Terra Pro/Sol Pro, Gemini
+    Omni 1.1/1.2 Flash, Nemotron 3.5 Super VL, Switchyard, Qwen3.8 Max Prime/Omni Flash, GLM-5.3
+    Prime/FlashX/FlashX Legal.
+
+  **Settings and markers (steps 5, 7).** Every routed name ends `(OpenRouter) (p)` and no direct name
+  carries `(p)`, in both sources. `deepseek-flash` now lists vision on DeepSeek's page (the bundle
+  says false — an under-claim, left for a live check). `qwen3.7-plus` is documented as an alias of
+  `qwen3.7-plus-2026-05-26`; pinning it would forfeit the alias's live 20% discount, so it is left
+  as a maintainer call.
+
+  **Synced in every copy**: `config.example.yaml` (entries, prices, QUICK START and block comments),
+  `scripts/wizard/providers.py` (bundles, `MODEL_PRICES`, `description=`), the sync script's QUICK
+  START docstring, `.env.example`, FORK.md (§2's table and the pricing prose), the bundle tests
+  (pins moved to `mistralai/mistral-large-4-0`, `mistral-large-4-0` and
+  `deepseek/deepseek-v4-pro-0813`; the model count to 43), and the stale fixture. The README names
+  none of the changed models. An existing `config.yaml` keeps its old entries until edited by hand;
+  MiniMax M2.7 stops answering on 2026-11-18.
+
+  **Still owed**: Claude Fable 5.2 (blocked on compaction vs the every-account prefix check — the
+  same check already applies to the bundled adaptive Claudes on newer accounts); Tencent Hy4
+  (dedicated change, Tencent's own page); Meta's flagship and API; Gemini 4 Carbon and the Google
+  home block at tier 1; GPT-5.3 Codex removal (before 2027-04-01); Kimi K2.6's slot (before the end
+  of December 2026); Large 4's thinking flag (live call).
+
 - **2026-11-07 (branch `claude/preprompts-model-audit-phzeld`) — tier 1 for Anthropic only;
   discovery by web search. No roster, price or settings change.** Requested in words with the
   prompt and context-size work ("run change_cycle.md including the model audit"), four days after

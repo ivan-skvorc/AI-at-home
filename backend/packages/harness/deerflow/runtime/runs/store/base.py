@@ -73,11 +73,15 @@ def add_per_run_model_usage(entry: dict[str, Any], model: str, usage: dict[str, 
 # contradicts the spend cap displayed beside it is the worst of the three
 # possible numbers.
 #
+# ``waiting_for_input`` (a run paused for tool-call approval, upstream's HITL)
+# is counted for the same reason: the call that proposed the tool already ran
+# and was billed, and the run that resumes it is a separate row.
+#
 # ``pending`` is deliberately absent: a queued run that never reached a model
 # has no tokens to count and no step to draw. ``running`` is opt-in through
 # ``include_active`` so the header can show an in-flight turn's progress
 # without an idle thread's totals drifting between polls.
-COUNTED_RUN_STATUSES: tuple[str, ...] = ("success", "error", "timeout", "interrupted")
+COUNTED_RUN_STATUSES: tuple[str, ...] = ("success", "error", "timeout", "interrupted", "waiting_for_input")
 ACTIVE_RUN_STATUS = "running"
 
 
@@ -334,6 +338,27 @@ class RunStore(abc.ABC):
         update; None from legacy stores is unconfirmed in heartbeat mode.
         """
         pass
+
+    async def answer_approval(
+        self,
+        run_id: str,
+        *,
+        metadata: dict[str, Any],
+        answered_updated_at: str,
+        expected_request_id: str | None = None,
+    ) -> bool:
+        """Atomically answer one ``waiting_for_input`` run.
+
+        Implementations must condition the write on the row still being paused,
+        remove the consumed approval through *metadata*, and return ``True`` only
+        for the single winning transition. When supplied, *expected_request_id*
+        fences the transition to the exact validated pause. Legacy stores fail closed.
+        """
+        raise NotImplementedError("Store must implement atomic approval answering")
+
+    async def restore_approval(self, run_id: str, *, metadata: dict[str, Any], expected_updated_at: str) -> bool:
+        """Restore only the answered transition stamped with *expected_updated_at*."""
+        raise NotImplementedError("Store must implement conditional approval restoration")
 
     @abc.abstractmethod
     async def start_run(self, run_id: str) -> bool:

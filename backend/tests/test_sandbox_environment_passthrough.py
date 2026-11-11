@@ -74,7 +74,9 @@ sandbox:
     if class_name == "AioSandboxProvider":
         # Fork: the AIO sandbox also defaults GIT_TERMINAL_PROMPT off (FORK.md, Full sandbox runs).
         expected["GIT_TERMINAL_PROMPT"] = "0"
+        expected["AIO_BASH_MAX_SESSIONS"] = "50"
     assert loaded["environment"] == expected
+    assert app_config.sandbox.environment == _RESOLVED
 
 
 @pytest.mark.usefixtures("secret_env")

@@ -15,7 +15,7 @@ EXTENSION_MESSAGE_ORIGIN_KEY = "deerflow_extension_origin"
 
 
 class AgentRunError(Exception):
-    """Host rejection with an HTTP-equivalent status (403, 404, 409, 422, 503)."""
+    """Host rejection with an HTTP-equivalent status (403, 404, 409, 412, 422, 503)."""
 
     def __init__(self, status_code: int, message: str):
         super().__init__(message)
@@ -126,11 +126,32 @@ class AgentRuns(Protocol):
         """
         ...
 
-    async def read_artifact(self, *, thread_id: str, path: str) -> bytes:
+    async def validate_artifact_source(self, *, thread_id: str, run_id: str, idempotency_key: str) -> None:
+        """Require this plugin's executing keyed Run and safe output capture.
+
+        Checking the durable key also handles admission whose acknowledgement
+        has not yet reached the plugin. Caller-selected queue state is not proof.
+        """
+        ...
+
+    async def read_artifact(self, *, thread_id: str, path: str, expected_checkpoint_id: str | None = None) -> bytes:
         """Read a bounded regular output file through owner authorization.
 
         Returns at most 2 MiB, rejecting symlinks and concurrent mutations.
         The caller must retain these bytes to create an immutable version.
+        With expected_checkpoint_id, reject a changed checkpoint under the same
+        durable reservation as the read. Remote reads require sandbox authority.
+        """
+        ...
+
+    async def import_artifact(self, *, thread_id: str, filename: str, content: bytes) -> dict[str, Any]:
+        """Place at most 2 MiB of retained bytes in an idle thread's uploads.
+
+        Requires a plugin-scoped handle and current thread-write authority.
+        The host selects a content-addressed filename and synchronizes remote
+        sandboxes. Identical calls reuse the copy; a changed destination is
+        rejected without overwriting it. Returns path, filename, sha256 and size.
+        Caller cancellation drains file/sandbox IO before releasing the thread.
         """
         ...
 
@@ -175,12 +196,25 @@ class AgentRuns(Protocol):
         """
         ...
 
-    async def start(self, *, thread_id: str, input: Mapping[str, Any], context: Mapping[str, Any] | None = None, idempotency_key: str | None = None, execution_fence: ExecutionFence | None = None) -> AgentRun:
+    async def start(
+        self,
+        *,
+        thread_id: str,
+        input: Mapping[str, Any],
+        context: Mapping[str, Any] | None = None,
+        idempotency_key: str | None = None,
+        execution_fence: ExecutionFence | None = None,
+        artifact_imports: list[dict[str, Any]] | None = None,
+    ) -> AgentRun:
         """Start or continue the thread's Agent with ordinary run admission.
 
         Scoped handles namespace local idempotency keys automatically. An active
         run conflicts; start never implicitly cancels it. execution_fence is
         host-only admission authority, never copied into Agent input/context.
+        artifact_imports contains up to four import receipts (path, filename,
+        sha256, size). A new run verifies the copies while holding admission,
+        before constructing its Agent. Idempotent retries reuse the original Run
+        without revalidating files that it may already have edited.
         """
         ...
 

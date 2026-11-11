@@ -68,6 +68,8 @@ class ToolContext(ActionContext):
 
     thread_id: str | None
     run_options: Mapping[str, Any] = field(default=_EMPTY_OPTIONS, kw_only=True)
+    # Host-stamped execution identity, never supplied by tool arguments.
+    run_id: str | None = field(default=None, kw_only=True)
 
 
 @dataclass(frozen=True)

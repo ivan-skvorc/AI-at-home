@@ -1,12 +1,14 @@
 ### Middleware Chain
 
-Tool-result JSON analysis is best-effort: parser depth failures must preserve the
-original content and must not abort the graph. Explicit error results fall back
-to `unknown` / recoverable / `try_alternative`, without classifying incidental
-JSON fields as auth failures. Producer metadata remains authoritative. Keep
-depth regressions in `tests/test_tool_result_meta_json_depth.py`, including real
-LocalSandbox reads through both synchronous and asynchronous agent graphs.
-Deep graph cases must establish a real parser depth failure or report a skip.
+ToolProgress fences late results/hint retries by entry epoch, even for one run.
+
+JSON depth failures preserve content and never abort graphs. Unclassified
+explicit failures stay `unknown` / recoverable / `try_alternative`; incidental
+JSON fields cannot establish auth failure. Producer metadata wins. Keep real
+sync/async LocalSandbox tests in `tests/test_tool_result_meta_json_depth.py`;
+deep cases must prove parser depth failure or skip.
+
+Browserless artifact.deerflow_http_response.status_code carries X-Response-Code; only non-bool int 400..599 establishes failure, never titles. Direct calls return (content, artifact).
 
 Tool-call argument depth handling is best-effort; see `tests/test_tool_call_json_depth.py`.
 
@@ -19,14 +21,13 @@ Preserve the recognition sample and 5,000,000 UTF-8-byte guard. Count incrementa
 on parsing or field-limit errors, report an undetermined count rather than a
 physical-line or sample total.
 
-Keep state `SystemMessage`s; inject transient instructions via request wrappers.
-Skip fully rescued partitions. Fold all raw source in order without human
-anchoring. PII-redact before splitting; budget before escaping. Generated carry:
-marked head/tail within half the raw budget; at most 64 chunks/pass. Commit
-hooks/history/removal only on success. Cap breaches use a bounded process-local
-5m cooldown across builds for the same user/thread/executor/window/policy;
-smaller source or changed policy retries immediately. See the linked contract.
-`trim_tokens_to_summarize=None` uses one unbounded step.
+Fold selected source in order; preserve required context. Copy document metadata
+and direct plaintext; no media decoding/fetching or nested-document traversal.
+PII before splitting, budgets before escaping; hooks/history/removal on success.
+Chunk/carry/cooldown invariants and tests:
+[contract](../../../../../docs/summarization.md).
+
+vLLM compaction counts replayed reasoning. Keep it out of summary input.
 
 Todo compaction: [contract](../../../../../docs/summarization.md#todo-reminders).
 
@@ -64,6 +65,12 @@ Summarization: enabled task-continuity retention or None. DurableContext:
 normalized skills root, sorted read tools, continuity switch. All history readers,
 including capture failures, validate persisted metadata; malformed values must
 not abort compaction/model calls.
+LLMErrorHandling release identity: `structured_evidence_v1`. Classify model
+failures by status/provider fields and exception types; prose is diagnostic.
+Status/code-less OpenAI `APIError` gets at most one retry; `APIConnectionError`
+(including `APITimeoutError`) keeps `llm_call.retry_max_attempts`.
+Adapters and the legacy `langchain_openai:ChatOpenAI` factory must raise
+`EmptyModelResponseError` for HTTP-success empty choices before LangChain indexing.
 
 **Removing tool calls.** Use `clone_ai_message_with_tool_calls`, not a bare
 `tool_calls` update: adapters resend stale `content` tool-call blocks, which

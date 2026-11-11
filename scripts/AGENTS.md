@@ -42,7 +42,7 @@ never override a host the operator named.
 
 ## Dependency and Label Checks
 
-`check_extension.py`: Gateway wheel asset validator; example CI:
+`check_extension.py`: Wheel asset/documentation validator; example CI:
 `extension-package-check.yml`. Tests: `backend/tests/test_extension_check_script.py`.
 
 `check.py`: UTF-8 replacement decoding; pnpm uses
@@ -227,7 +227,10 @@ defaults `DEER_FLOW_PROJECT_ROOT` to the checkout, as `serve.sh` does, so
 Only "no config anywhere" creates `<checkout>/config.yaml` from the example.
 Fork: the lookup is `config_upgrade.py --print-config-path` via
 `backend-python.sh`, never `uv run`; without the harness (a Docker-only host)
-it applies the same order by hand.
+it applies the same order by hand. An optional first argument names the project
+root; `docker.sh start` passes its `PROJECT_ROOT`, so a launcher run against
+another root never seeds or upgrades this checkout's config
+(`test_compose_credentials_key.py`).
 `backend/tests/test_config_version.py::test_config_upgrade_*` and
 `test_config_upgrade_script.py::TestResolveConfigPath` pin this.
 `serve.sh`, `deploy.sh` and `docker.sh` all run it before starting the

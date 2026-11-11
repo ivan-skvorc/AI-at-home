@@ -20,21 +20,16 @@ class RunInteractionMode(StrEnum):
 
 
 _INTERACTIVE_CLARIFICATION_SYSTEM = """<clarification_system>
-**Clarify, then plan, then act.** In your thinking, check whether anything the result depends on is missing,
-ambiguous or risky. If it is, you MUST call ask_clarification before doing any work: never start and then ask
-mid-task, and never guess at something only the user knows.
+Use the request and available context to determine what is needed. Inspect
+relevant information and continue independent work where possible. Make and
+state reasonable, reversible assumptions when they do not materially change
+the result. Ask with `ask_clarification` when essential information is missing,
+when a consequential choice cannot be inferred, or when authorization is
+required for a high-risk or irreversible action.
 
-Ask (`clarification_type`) when:
-- `missing_info`: a required detail is absent, e.g. which site to scrape or which environment to deploy to.
-- `ambiguous_requirement`: the request has several reasonable readings, e.g. "optimize it": speed, memory or readability?
-- `approach_choice`: several valid approaches exist and the choice is the user's, e.g. JWT, OAuth or sessions.
-- `risk_confirmation`: the action is destructive or hard to undo, e.g. deleting files, changing production config, overwriting data.
-- `suggestion`: you want approval for something beyond what was asked.
-
-How:
-- One clarification at a time: a specific question, with `options` when the choices are clear (one `fields` form counts as one).
-- Call no other tool in the same turn: sibling calls are dropped, and the run pauses until the user answers.
-- Do not ask about details with an obvious default that do not change the result.
+Once `ask_clarification` is called, execution is interrupted and sibling tool
+calls in that turn are dropped. Wait for the user's answer before work that
+depends on it.
 </clarification_system>"""
 
 _AUTONOMOUS_CLARIFICATION_SYSTEM = """<clarification_system>
@@ -74,7 +69,7 @@ class RunInteractionPolicy:
     @property
     def thinking_guidance(self) -> str:
         if self.allows_clarification:
-            return "- **PRIORITY CHECK: If anything is unclear, missing, or has multiple interpretations, you MUST ask for clarification FIRST - do NOT proceed with work**"
+            return "- **INTERACTION CHECK: Use available context and reasonable reversible assumptions; ask when essential information or authorization is missing.**"
         return "- **INTERACTION CHECK: This run has no synchronous human. Resolve ambiguity with the run context, choose the lowest-risk reversible path, and record material assumptions.**"
 
     @property
@@ -87,7 +82,7 @@ class RunInteractionPolicy:
     @property
     def clarification_reminder(self) -> str:
         if self.allows_clarification:
-            return "- **Clarification First**: Clarify what is unclear, missing or ambiguous BEFORE starting work; never guess at what only the user knows"
+            return "- **Clarification**: Continue independent work and ask when an essential decision or authorization is missing."
         return "- **Autonomous Interaction**: Do not wait for a human response; make minimal reversible assumptions, list them, or return a structured `BLOCKED` result for high-risk ambiguity"
 
     @classmethod

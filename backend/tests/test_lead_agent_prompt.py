@@ -148,16 +148,13 @@ def test_apply_prompt_template_preserves_interactive_clarification_guidance(monk
 
     prompt = prompt_module.apply_prompt_template(app_config=config)
 
-    # The fork's shorter wording (FORK.md §47) keeps every rule: clarify before
-    # acting, never guess what only the user knows, all five types, one question
-    # at a time, and no sibling tool calls (they are dropped).
-    assert "**Clarify, then plan, then act.**" in prompt
-    assert "you MUST call ask_clarification before doing any work" in prompt
-    assert "never guess at something only the user knows" in prompt
-    for clarification_type in ("missing_info", "ambiguous_requirement", "approach_choice", "risk_confirmation", "suggestion"):
-        assert f"`{clarification_type}`" in prompt
-    assert "One clarification at a time" in prompt
-    assert "Call no other tool in the same turn: sibling calls are dropped" in prompt
+    assert "continue independent work where possible" in prompt
+    assert "reasonable, reversible assumptions" in prompt
+    assert "when essential information is missing" in prompt
+    assert "authorization is" in prompt
+    assert "sibling tool\ncalls in that turn are dropped" in prompt
+    assert "CLARIFY → PLAN → ACT" not in prompt
+    assert "ALWAYS ask" not in prompt
 
 
 def test_apply_prompt_template_includes_memory_tool_guidance_only_in_tool_mode(monkeypatch):
