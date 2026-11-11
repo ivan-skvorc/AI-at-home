@@ -46,6 +46,7 @@ assets, leaving SSE, fonts, images, audio, and video uncompressed at the proxy l
 Keep the dedicated `/api/threads/{thread_id}/browser/stream` WebSocket regex before
 the generic threads regex in Docker, local and Helm nginx configs. Upgrade headers
 and the 600s read timeout are pinned by `backend/tests/test_nginx_browser_websocket.py`.
+Keep local nginx temp paths checkout-relative, aligned with `serve.sh` and `nginx.sh`.
 
 The published nginx port is the whole external surface, and it is **loopback by
 default**: any new published port needs an explicit bind address or it binds

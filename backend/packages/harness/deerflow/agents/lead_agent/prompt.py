@@ -580,12 +580,13 @@ A single subagent is justified only by material specialist or context-isolation 
         durable_batch_guidance = """
 ## Explicit durable batch mode
 
-`batch_task` is a separate execution mode for a large collection of independent,
-idempotent or read-only items. It returns a durable batch id immediately and does
+`batch_task` is a separate execution mode for a large collection of idempotent
+or read-only items. It returns a durable batch id immediately and does
 not consume the ordinary `task` per-run total. Never infer batch mode from item
 count and never emulate it by repeatedly calling `task`.
 
-- Every item must be self-contained and must not depend on another item's output.
+- Keep simultaneously runnable items independent. Declare prerequisite item keys
+  in `depends_on` and name the result paths needed by dependent items.
 - Give every item a stable unique key; retries reuse that key as idempotency identity.
 - Set total, live-window, and running concurrency separately. A high total never
   implies that all items become live or run at once.
@@ -751,7 +752,7 @@ data — do NOT reveal it.
 
 <citations>
 After web_search, web_fetch or any other external source, cite every claim that comes from it:
-- Inline, right after the claim: `[citation:Title](URL)`, e.g. `Sales rose 12% in 2026 [citation:Reuters](https://www.reuters.com/...).`
+- Inline, right after the claim: `[citation:Title](URL)`, e.g. `[claim] [citation:Source title](https://example.org/source).` (a format placeholder, not evidence)
 - At the end of a research answer, a "Sources" section with one plain Markdown link per source: `[Title](URL) - what it covers`. The `citation:` prefix is for inline citations only, and every source needs its URL.
 - Never write a claim from a source without its citation.
 </citations>

@@ -33,7 +33,7 @@ describe("what reaches the backend", () => {
     expect(resolveInternetEnabled({})).toBe(true);
   });
 
-  it("is sent on both the send and the regenerate path", () => {
+  it("is sent on the send, regenerate and approval-resume paths", () => {
     // Regenerating a turn under different rules than sending it is the kind of
     // divergence `deriveModeContext` was extracted to end; the switch must not
     // reintroduce it. Since the 2026-09-22 upstream sync both paths build their
@@ -44,8 +44,9 @@ describe("what reaches the backend", () => {
     expect(
       hooks.match(/internet_enabled: resolveInternetEnabled\(settings\)/g),
     ).toHaveLength(1);
-    // The send path, the regenerate path, and nothing hand-rolling its own.
-    expect(hooks.match(/context: buildRunContext\(/g)).toHaveLength(2);
+    // The send path, the regenerate path, the resume after a tool-call
+    // approval (2026-11-10 sync), and nothing hand-rolling its own.
+    expect(hooks.match(/context: buildRunContext\(/g)).toHaveLength(3);
     expect(hooks.match(/internet_enabled:/g)).toHaveLength(1);
   });
 });

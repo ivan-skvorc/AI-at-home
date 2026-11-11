@@ -15,13 +15,16 @@ set -e
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 EXAMPLE="$REPO_ROOT/config.example.yaml"
+# The project whose config.yaml is upgraded: this checkout, unless a launcher
+# that runs against another root passes it (docker.sh passes its PROJECT_ROOT).
+PROJECT_ROOT="${1:-$REPO_ROOT}"
 
 if command -v cygpath >/dev/null 2>&1; then
-    REPO_ROOT_WIN="$(cygpath -w "$REPO_ROOT")"
+    PROJECT_ROOT_WIN="$(cygpath -w "$PROJECT_ROOT")"
     EXAMPLE_WIN="$(cygpath -w "$EXAMPLE")"
     SCRIPT_WIN="$(cygpath -w "$REPO_ROOT/scripts/config_upgrade.py")"
 else
-    REPO_ROOT_WIN="$REPO_ROOT"
+    PROJECT_ROOT_WIN="$PROJECT_ROOT"
     EXAMPLE_WIN="$EXAMPLE"
     SCRIPT_WIN="$REPO_ROOT/scripts/config_upgrade.py"
 fi
@@ -32,7 +35,7 @@ fi
 # upgraded. Run from backend/, where the Gateway resolves a relative
 # DEER_FLOW_CONFIG_PATH. Prints nothing when no config exists yet; a missing
 # DEER_FLOW_CONFIG_PATH or invalid DEER_FLOW_PROJECT_ROOT stops here.
-CONFIG="$(cd "$REPO_ROOT/backend" && bash "$REPO_ROOT/scripts/backend-python.sh" "$SCRIPT_WIN" --print-config-path "$REPO_ROOT_WIN")"
+CONFIG="$(cd "$REPO_ROOT/backend" && bash "$REPO_ROOT/scripts/backend-python.sh" "$SCRIPT_WIN" --print-config-path "$PROJECT_ROOT_WIN")"
 
 if [ ! -f "$EXAMPLE" ]; then
     echo "✗ config.example.yaml not found at $EXAMPLE"
@@ -41,7 +44,7 @@ fi
 
 if [ -z "$CONFIG" ]; then
     echo "No config.yaml found — creating from example..."
-    cp "$EXAMPLE" "$REPO_ROOT/config.yaml"
+    cp "$EXAMPLE" "$PROJECT_ROOT/config.yaml"
     echo "OK config.yaml created. Please review and set your API keys."
     exit 0
 fi

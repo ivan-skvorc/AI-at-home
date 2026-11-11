@@ -6,6 +6,8 @@ Run from repo root:
 
 from __future__ import annotations
 
+import re
+
 import yaml
 from wizard import ui as wizard_ui
 from wizard.providers import (
@@ -357,10 +359,18 @@ class TestHomeApiBundleProviders:
         def routed(bare: str) -> bool:
             # `gpt-6.1-sol` is doubled as some `<provider>/gpt-6.1-sol` OpenRouter
             # slug; the id casing can differ per API (MiniMax's own API uses
-            # `MiniMax-M3`, OpenRouter uses `minimax/minimax-m3`).
-            return any(slug.split("/", 1)[-1].lower() == bare.lower() for slug in openrouter_ids)
+            # `MiniMax-M3`, OpenRouter uses `minimax/minimax-m3`). The routed slug
+            # may also pin the dated snapshot the home id serves:
+            # `deepseek/deepseek-v4-pro-0813` is what DeepSeek's `deepseek-v4-pro`
+            # serves, while bare `deepseek/deepseek-v4-pro` is the 0423 pre-GA build.
+            for slug in openrouter_ids:
+                routed_bare = slug.split("/", 1)[-1].lower()
+                if bare.lower() in {routed_bare, re.sub(r"-\d{4,8}$", "", routed_bare)}:
+                    return True
+            return False
 
-        for flagship in ("gpt-6.1-sol", "gpt-5.3-codex", "grok-4.7", "gemini-3.8-flash", "deepseek-v4-pro", "mistral-large-2512", "kimi-k3.1-pro", "MiniMax-M3", "glm-5.3"):
+        assert "deepseek/deepseek-v4-pro-0813" in openrouter_ids
+        for flagship in ("gpt-6.1-sol", "gpt-5.3-codex", "grok-4.7", "gemini-3.8-flash", "deepseek-v4-pro", "mistral-large-4-0", "kimi-k3.1-pro", "MiniMax-M3", "glm-5.3"):
             assert flagship in home_ids, f"{flagship} missing from a home block"
             assert routed(flagship), f"{flagship} not doubled on OpenRouter"
         # OpenRouter 308s the bare `qwen/qwen3.8-max` slug to this dated snapshot.

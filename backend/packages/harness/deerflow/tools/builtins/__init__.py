@@ -1,3 +1,5 @@
+from deerflow.tools.artifact_handoff import present_shared_artifact
+
 from .analyze_document_tool import analyze_document
 from .background_tasks_tool import cancel_background_task, list_background_tasks
 from .batch_task_tool import batch_status, batch_task, cancel_batch, read_batch_result
@@ -15,6 +17,7 @@ __all__ = [
     "setup_agent",
     "update_agent",
     "present_file_tool",
+    "present_shared_artifact",
     "review_skill_package",
     "ask_clarification_tool",
     "build_inspect_run_status_tool",

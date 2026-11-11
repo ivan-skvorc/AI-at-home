@@ -496,7 +496,7 @@ start() {
     # As in scripts/serve.sh: merge what a pulled update added to
     # config.example.yaml (new sections, bundled plugins such as Script
     # workflows) before the containers mount config.yaml. Best-effort.
-    if ! bash "$SCRIPT_DIR/config-upgrade.sh"; then
+    if ! bash "$SCRIPT_DIR/config-upgrade.sh" "$PROJECT_ROOT"; then
         echo -e "${YELLOW}⚠ config.yaml was not upgraded; run 'make config-upgrade' (needs PyYAML or 'make install').${NC}"
     fi
 

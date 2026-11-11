@@ -34,14 +34,15 @@ the single revision `0019_runs_pricing_snapshot` (FORK.md §17).
 `0022_merge_pricing_projects` joins the fork's revision to
 `0021_batch_acceptance`, `0023_merge_pricing_scheduler` joins that merge to
 `0022_scheduled_occurrence_seq`, `0024_merge_preferences` joins *that* merge to
-`0023_user_preferences`, and six more follow the same way:
+`0023_user_preferences`, and eight more follow the same way:
 `0027_merge_preferences_mcp_tasks` (upstream's 0026),
 `0031_merge_prefs_notifications` (upstream's 0030),
 `0038_merge_prefs_summaries` (upstream's 0037),
 `0044_merge_prefs_im_notices` (upstream's 0043),
 `0048_merge_prefs_oauth_tokens` (upstream's 0047) and
-`0049_merge_prefs_ext_leases` (upstream's 0048), then
-`0052_merge_prefs_run_inputs` (upstream's `0051_merge_run_inputs_fencing`;
+`0049_merge_prefs_ext_leases` (upstream's 0048),
+`0052_merge_prefs_run_inputs` (upstream's `0051_merge_run_inputs_fencing`), then
+`0053_merge_prefs_batch_cont` (upstream's `0052_batch_continuation`;
 **current head**). Each time, upstream extended a
 revision an earlier merge had already claimed, which put the tree back on two
 heads. `upgrade head` refuses to run against two, and the Gateway's bootstrap
@@ -74,7 +75,7 @@ revision by upgrading a clean database to it, never by downgrading head — see
 `0039_user_disabled` → `0040_scheduled_group_notice` →
 `0041_im_notice_preferences` → `0042_channel_leases` →
 `0043_runtime_im_notices` → `0044_channel_runtime_configs` →
-`0045_completed_run_evidence` → `0046_skill_mutations` → `0047_mcp_oauth_tokens` → `0048_extension_execution_leases`, then `0049_run_inputs` and `0049_run_producer_fencing` → `0050_history_seed_authority`, joined by `0051_merge_run_inputs_fencing`. The fork's head above that is `0052_merge_prefs_run_inputs` (parents: `0049_merge_prefs_ext_leases` and `0051_merge_run_inputs_fencing`).
+`0045_completed_run_evidence` → `0046_skill_mutations` → `0047_mcp_oauth_tokens` → `0048_extension_execution_leases`, then `0049_run_inputs` and `0049_run_producer_fencing` → `0050_history_seed_authority`, joined by `0051_merge_run_inputs_fencing` → `0052_batch_continuation`. The fork's head above that is `0053_merge_prefs_batch_cont` (parents: `0052_merge_prefs_run_inputs` and `0052_batch_continuation`).
 The preference revision uses an owner/key table with a cascading users FK;
 project documents use an owner-scoped shelf. MCP lease tokens, batch evidence,
 and run-idempotency identity add nullable columns without historical backfill or

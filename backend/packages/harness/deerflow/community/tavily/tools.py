@@ -6,6 +6,7 @@ import os
 from langchain.tools import tool
 from tavily import AsyncTavilyClient
 
+from deerflow.community.provider_credentials import resolve_api_key
 from deerflow.community.search_time_range import SearchTimeRange
 from deerflow.community.url_safety import safe_public_result_url
 from deerflow.config import get_app_config
@@ -89,10 +90,12 @@ def _get_tavily_client(tool_name: str = "web_search", config: ToolConfig | None 
         config = get_app_config().get_tool_config(tool_name)
     api_key = None
     if config is not None and "api_key" in config.model_extra:
-        value = config.model_extra.get("api_key")
-        if isinstance(value, str) and value.strip():
-            api_key = value.strip()
-    return AsyncTavilyClient(api_key=api_key or os.getenv(API_KEY_ENV_VAR, "").strip() or None)
+        api_key = resolve_api_key(config.model_extra.get("api_key"))
+    if api_key is None:
+        api_key = resolve_api_key(os.getenv(API_KEY_ENV_VAR))
+    # The SDK re-reads TAVILY_API_KEY unstripped when api_key is None; "" makes a
+    # blank value fail as a missing key instead.
+    return AsyncTavilyClient(api_key=api_key or "")
 
 
 def _response_objects(data: object, container: str) -> list[dict] | None:

@@ -101,4 +101,10 @@ start
 )
 def test_make_docker_start_keeps_the_dotenv_credentials_key(tmp_path, env_file: str, shell_value: str | None, expected: str):
     """The dev launcher must hand the checkout .env key to interpolation; an empty override would replace it."""
+    # Fork: `start` also upgrades config.yaml (scripts/config-upgrade.sh). It must
+    # act on PROJECT_ROOT like the rest of `start`, not on the checkout the script
+    # sits in, or this test seeds a config.yaml into the developer's checkout.
+    checkout_config = REPO_ROOT / "config.yaml"
+    existed = checkout_config.exists()
     assert _render_through_docker_start(tmp_path, env_file, shell_value)["DEER_FLOW_CREDENTIALS_KEY"] == expected
+    assert checkout_config.exists() == existed, "docker.sh start touched the checkout's config.yaml instead of PROJECT_ROOT's"

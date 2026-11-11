@@ -35,7 +35,7 @@ EXTENSION_MESSAGE_ORIGIN_KEY = _EXTENSION_MESSAGE_ORIGIN_KEY
 # parent_thread_id=...)``): the conversation a child works for. Server-owned like
 # the origin; the parent's token-usage overview rolls the children's spend up.
 DEERFLOW_PARENT_THREAD_KEY = "deerflow_parent_thread_id"
-ORIGIN_KINDS: frozenset[str] = frozenset({"schedule", "im_channel", "github", "extension", "mcp_notification"})
+ORIGIN_KINDS: frozenset[str] = frozenset({"schedule", "im_channel", "github", "extension", "mcp_notification", "subagent_batch"})
 
 _PROVIDER_RE = re.compile(r"[a-z0-9_-]{1,32}")
 _MAX_NAMESPACE_CHARS = 96

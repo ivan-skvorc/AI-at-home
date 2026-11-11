@@ -75,15 +75,16 @@ describe("what reaches the backend", () => {
     expect(autoTitleRunContext()).toEqual({ auto_title_enabled: false });
   });
 
-  it("is sent on both the send and the regenerate path", () => {
+  it("is sent on the send, regenerate and approval-resume paths", () => {
     // Regenerating the first turn can still be the run that names the
     // conversation. Since the 2026-09-22 upstream sync both paths build their
     // run context through one `buildRunContext`, so the helper is spread once,
-    // there — and the property is that neither path builds a context without
-    // it, which a refactor re-inlining one call site would break.
+    // there — and the property is that no path builds a context without it,
+    // which a refactor re-inlining one call site would break. The 2026-11-10
+    // sync added the third: resuming a run after a tool-call approval.
     const hooks = read("src/core/threads/hooks.ts");
     expect(hooks.match(/\.\.\.autoTitleRunContext\(\)/g)).toHaveLength(1);
-    expect(hooks.match(/context: buildRunContext\(/g)).toHaveLength(2);
+    expect(hooks.match(/context: buildRunContext\(/g)).toHaveLength(3);
   });
 });
 
