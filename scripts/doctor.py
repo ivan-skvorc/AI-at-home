@@ -415,7 +415,9 @@ def check_run_events_durable(config_path: Path) -> CheckResult:
 
     ``database.backend: memory`` is not flagged: there is no session factory to
     write events through, so the in-memory event store is the only option and
-    the whole install is already non-durable by choice.
+    the whole install is already non-durable by choice. The exception is a
+    legacy ``checkpointer:`` section of type sqlite or postgres: it keeps the
+    checkpoints durable on its own, so the same silent loss occurs.
     """
     label = "run history survives a restart"
     if not config_path.exists():
@@ -430,12 +432,32 @@ def check_run_events_durable(config_path: Path) -> CheckResult:
     if not isinstance(database, dict) or not isinstance(run_events, dict):
         return CheckResult(label, "skip", "unexpected config shape")
 
-    db_backend = database.get("backend", "sqlite")
-    # Mirror RunEventsConfig's default rather than assuming a key is present:
-    # a config.yaml with no run_events section gets the durable default.
+    # Mirror the schema defaults rather than assuming a key is present: a
+    # config.yaml with no database section runs DatabaseConfig's memory backend,
+    # and one with no run_events section gets RunEventsConfig's db backend.
+    db_backend = database.get("backend", "memory")
     events_backend = run_events.get("backend", "db")
 
     if db_backend == "memory":
+        checkpointer = data.get("checkpointer")
+        checkpointer_type = checkpointer.get("type") if isinstance(checkpointer, dict) else None
+        # Without a session factory run_events.backend: db falls back to the
+        # in-memory store; only the jsonl backend still writes to disk.
+        if checkpointer_type in ("sqlite", "postgres") and events_backend != "jsonl":
+            return CheckResult(
+                label,
+                "warn",
+                f"checkpointer.type: {checkpointer_type} with database.backend: memory",
+                fix=(
+                    "The checkpointer: section keeps checkpoints, but run history is held in memory:\n"
+                    "older messages stop loading when you scroll back after a Gateway restart.\n"
+                    "Add this to config.yaml, then restart the Gateway:\n"
+                    "  database:\n"
+                    "    backend: sqlite\n"
+                    "    sqlite_dir: .deer-flow/data\n"
+                    "History already lost to earlier restarts cannot be recovered."
+                ),
+            )
         return CheckResult(label, "skip", "database.backend: memory (nothing is persisted by design)")
     if events_backend != "memory":
         return CheckResult(label, "ok", f"run_events.backend: {events_backend}")

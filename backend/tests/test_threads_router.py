@@ -3740,6 +3740,122 @@ def test_branch_seeds_run_events_with_parent_history(monkeypatch, mode) -> None:
     assert asyncio.run(event_store.list_messages(source_thread_id, user_id=None)) == []
 
 
+def _feed_row(thread_id: str, run_id: str, message) -> dict:
+    """A message row as RunJournal writes it to the thread feed."""
+    event_type = {"human": "llm.human.input", "ai": "llm.ai.response", "tool": "llm.tool.result"}[message.type]
+    return {
+        "thread_id": thread_id,
+        "run_id": run_id,
+        "event_type": event_type,
+        "category": "message",
+        "content": message.model_dump(),
+        "metadata": {"caller": "lead_agent"},
+    }
+
+
+def _build_compacted_branch_parent(monkeypatch, mode, source_thread_id):
+    """A parent whose feed holds more than its checkpoint, as compaction leaves it.
+
+    The feed has an older turn the checkpoint lost, the branched turn (its user
+    message journaled a second time by a resume run) and a later turn. The
+    checkpoint keeps the branched turn and the later one.
+    """
+    from deerflow.runtime import RunManager
+    from deerflow.runtime.events.store.memory import MemoryRunEventStore
+
+    app, _store, checkpointer = _build_thread_app()
+    custom_factory = _wire_extension_agent(monkeypatch, app, checkpointer, mode)
+    # The real manager answers the feed's superseded and edit-hidden run lookups.
+    app.state.run_manager = RunManager()
+    event_store = MemoryRunEventStore()
+    app.state.run_event_store = event_store
+    # Small pages, so the walk back to the parent's first row takes several.
+    monkeypatch.setattr(threads, "_BRANCH_SEED_FEED_PAGE_SIZE", 2)
+
+    async def seed() -> None:
+        await event_store.put_batch(
+            [
+                _feed_row(source_thread_id, "run-0", HumanMessage(id="h0", content="first question")),
+                _feed_row(source_thread_id, "run-0", AIMessage(id="a0", content="planned answer")),
+                # A steered answer is journaled again under the same id; the newest copy is the one shown.
+                _feed_row(source_thread_id, "run-0", AIMessage(id="a0", content="first answer")),
+                _feed_row(source_thread_id, "run-1", HumanMessage(id="h1", content="question")),
+                _feed_row(source_thread_id, "run-1", ToolMessage(id="t1", content="tool output", tool_call_id="call-1")),
+                _feed_row(source_thread_id, "run-1-resumed", HumanMessage(id="h1", content="question")),
+                _feed_row(source_thread_id, "run-1-resumed", AIMessage(id="a1", content="answer")),
+                _feed_row(source_thread_id, "run-2", HumanMessage(id="h2", content="later question")),
+                _feed_row(source_thread_id, "run-2", AIMessage(id="a2", content="later answer")),
+            ]
+        )
+        await _seed_branch_history_source(checkpointer, custom_factory, mode, source_thread_id)
+        accessor = CheckpointStateAccessor.bind(custom_factory(), checkpointer, mode=mode)
+        await accessor.aupdate(
+            {"configurable": {"thread_id": source_thread_id, "checkpoint_ns": ""}},
+            {"messages": [HumanMessage(id="h2", content="later question"), AIMessage(id="a2", content="later answer")]},
+            as_node="model",
+        )
+
+    return app, event_store, seed
+
+
+@pytest.mark.parametrize("mode", ["full", "delta"])
+def test_branch_of_a_compacted_thread_seeds_the_history_its_checkpoint_lost(monkeypatch, mode) -> None:
+    """An edited version must not start at the parent's compaction point.
+
+    Compaction removes older turns from the checkpoint, and only the parent's
+    feed still holds them. A branch seeded from the checkpoint alone got a feed
+    that ends there, with nothing to page back to.
+    """
+    source_thread_id = f"branch-compacted-source-{mode}"
+    app, event_store, seed = _build_compacted_branch_parent(monkeypatch, mode, source_thread_id)
+
+    with TestClient(app) as client:
+        created = client.post("/api/threads", json={"thread_id": source_thread_id, "metadata": {}, "assistant_id": "extension-agent"})
+        assert created.status_code == 200, created.text
+        asyncio.run(seed())
+
+        branch_response = client.post(f"/api/threads/{source_thread_id}/branches", json={"message_id": "a1", "message_ids": ["a1"]})
+        assert branch_response.status_code == 200, branch_response.text
+        branch_thread_id = branch_response.json()["thread_id"]
+
+    rows = asyncio.run(event_store.list_messages(branch_thread_id, limit=200, user_id=None))
+    assert branch_response.json()["history_seed_mode"] == "seeded"
+    # Everything up to the branch point, nothing after it, each message once.
+    assert [row["content"]["id"] for row in rows] == ["h0", "a0", "h1", "t1", "a1"]
+    # One synthetic run per turn: the repeated user message opens no third one.
+    prefix = f"branch-seed-{branch_thread_id}"
+    assert [row["run_id"] for row in rows] == [f"{prefix}-1", f"{prefix}-1", f"{prefix}-2", f"{prefix}-2", f"{prefix}-2"]
+    assert all((row.get("metadata") or {}).get("branch_seed") is True for row in rows)
+    # The parent's feed is read, never written.
+    assert len(asyncio.run(event_store.list_messages(source_thread_id, limit=200, user_id=None))) == 9
+
+
+def test_branch_answer_edit_wins_over_the_parent_feed_copy(monkeypatch) -> None:
+    """The checkpoint copy carries the rewrite; the parent's journaled answer must not replace it."""
+    source_thread_id = "branch-compacted-answer-edit"
+    app, event_store, seed = _build_compacted_branch_parent(monkeypatch, "full", source_thread_id)
+
+    with TestClient(app) as client:
+        created = client.post("/api/threads", json={"thread_id": source_thread_id, "metadata": {}, "assistant_id": "extension-agent"})
+        assert created.status_code == 200, created.text
+        asyncio.run(seed())
+
+        branch_response = client.post(
+            f"/api/threads/{source_thread_id}/branches",
+            json={"message_id": "a1", "message_ids": ["a1"], "replacement_assistant_message_id": "a1", "replacement_assistant_text": "edited answer"},
+        )
+        assert branch_response.status_code == 200, branch_response.text
+
+    rows = asyncio.run(event_store.list_messages(branch_response.json()["thread_id"], limit=200, user_id=None))
+    assert {row["content"]["id"]: row["content"]["content"] for row in rows} == {
+        "h0": "first question",
+        "a0": "first answer",
+        "h1": "question",
+        "t1": "tool output",
+        "a1": "edited answer",
+    }
+
+
 def test_branch_history_seed_failure_keeps_branch_usable(monkeypatch) -> None:
     """A seeding failure must degrade, not fail the branch (best-effort)."""
 
@@ -4126,6 +4242,57 @@ def test_update_thread_state_preserves_agent_binding_for_manual_compaction(monke
     assert compacted.json()["compacted"] is True
     assert captured["skip_memory_flush"] is True
     assert config_reads == ["stateless-worker"]
+
+
+def test_compact_seeds_an_empty_feed_before_it_removes_messages(monkeypatch) -> None:
+    """``/compact`` must not leave the turns it removes held nowhere.
+
+    Compaction drops messages from the checkpoint, and the thread feed is the
+    only other place they live. A thread whose feed is still empty (a
+    pre-journal thread before its first run, or a branch whose seed failed) has
+    to be back-filled first, exactly as a run start does.
+    """
+    from deerflow.runtime.context_compaction import ThreadCompactionResult
+    from deerflow.runtime.events.store.memory import MemoryRunEventStore
+
+    app, _store, checkpointer = _build_thread_app()
+    custom_factory = _wire_extension_agent(monkeypatch, app, checkpointer, "full")
+    event_store = MemoryRunEventStore()
+    app.state.run_event_store = event_store
+    thread_id = "compact-empty-feed"
+
+    async def seed_checkpoint() -> None:
+        accessor = CheckpointStateAccessor.bind(custom_factory(), checkpointer, mode="full")
+        await accessor.aupdate(
+            {"configurable": {"thread_id": thread_id, "checkpoint_ns": ""}},
+            {
+                "messages": [
+                    HumanMessage(id="h1", content="old question"),
+                    AIMessage(id="a1", content="old answer"),
+                    HumanMessage(id="h2", content="latest question"),
+                ]
+            },
+            as_node="model",
+        )
+
+    feed_when_compaction_ran: list[str] = []
+
+    async def compact_thread_context(_accessor, compacted_thread_id, **_kwargs):
+        rows = await event_store.list_messages(compacted_thread_id, limit=200, user_id=None)
+        feed_when_compaction_ran.extend(row["content"]["id"] for row in rows)
+        return ThreadCompactionResult(thread_id=compacted_thread_id, compacted=True, removed_message_count=2, preserved_message_count=1)
+
+    monkeypatch.setattr(threads, "compact_thread_context", compact_thread_context)
+
+    with TestClient(app) as client:
+        created = client.post("/api/threads", json={"thread_id": thread_id, "metadata": {}, "assistant_id": "extension-agent"})
+        assert created.status_code == 200, created.text
+        asyncio.run(seed_checkpoint())
+
+        compacted = client.post(f"/api/threads/{thread_id}/compact", json={"force": True})
+
+    assert compacted.status_code == 200, compacted.text
+    assert feed_when_compaction_ran == ["h1", "a1", "h2"]
 
 
 def test_update_thread_state_rejects_unknown_state_fields(monkeypatch) -> None:

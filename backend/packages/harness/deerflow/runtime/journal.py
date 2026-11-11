@@ -412,6 +412,11 @@ class RunJournal(BaseCallbackHandler):
         self._last_ai_msg: str | None = None
         self._first_human_msg: str | None = None
         self._first_human_message_captured = False
+        # The user message the first root invocation was started with, kept for
+        # record_unjournaled_human_input(). Later root invocations of the same
+        # run (goal continuations) carry no user input and must not replace it.
+        self._root_chain_started = False
+        self._root_human_input: HumanMessage | None = None
         self._captured_run_inputs: set[str] = set()
         self._terminal_task_results: set[str] = set()
         self._msg_count = 0
@@ -491,6 +496,27 @@ class RunJournal(BaseCallbackHandler):
                 content={"chain": chain_name},
                 metadata={"caller": caller, **(metadata or {})},
             )
+            if not self._root_chain_started:
+                self._root_chain_started = True
+                if caller == "lead_agent":
+                    self._root_human_input = self._newest_root_human_input(inputs)
+
+    @staticmethod
+    def _newest_root_human_input(inputs: Any) -> HumanMessage | None:
+        """Return the newest user message a root invocation was started with."""
+        # Resume and regenerate-from-checkpoint runs pass None or a Command.
+        if not isinstance(inputs, Mapping):
+            return None
+        messages = inputs.get("messages")
+        if not isinstance(messages, list):
+            return None
+        for raw_message in reversed(messages):
+            message = _coerce_seed_message(raw_message)
+            # Steer inputs are excluded as in on_chat_model_start: they have
+            # their own writer there and would otherwise be written twice.
+            if _should_persist_human_input_message(message) and not message.additional_kwargs.get("run_input_id"):
+                return message
+        return None
 
     def on_chain_end(
         self,
@@ -942,6 +968,32 @@ class RunJournal(BaseCallbackHandler):
             self._put(event_type=LLM_AI_RESPONSE_EVENT.event_type, category=LLM_AI_RESPONSE_EVENT.category, content=message.model_dump(), metadata={"caller": "lead_agent", "adjusted_by_input": True})
             self._record_message_summary(message, caller="lead_agent")
 
+    def record_unjournaled_human_input(self) -> bool:
+        """Persist the run's user message when no model call ever wrote it.
+
+        ``on_chat_model_start`` writes the run's human row at the lead agent's
+        first model call. A run that is stopped or fails before that (Stop
+        during a long compaction, a sandbox that does not start) leaves the
+        question in the checkpoint only, where the next compaction removes it
+        for good. The worker calls this after its agent stream has closed and
+        before the final flush. It is a no-op once the input has been captured,
+        and deliberately not part of flush: a drain or close runs after evidence
+        admission has ended, where the row would be dropped silently.
+        """
+        message = self._root_human_input
+        if self._closed or self._first_human_message_captured or message is None:
+            return False
+        persisted = restore_original_human_message(message)
+        self.set_first_human_message(self._message_text(persisted))
+        self._put(
+            event_type=LLM_HUMAN_INPUT_EVENT.event_type,
+            category=LLM_HUMAN_INPUT_EVENT.category,
+            content=persisted.model_dump(),
+            metadata={"caller": "lead_agent"},
+        )
+        self._record_message_summary(persisted, caller="lead_agent")
+        return True
+
     def record_interrupted_ai_responses(self, messages: Iterable[AIMessage]) -> int:
         """Persist visible streamed text that never reached ``on_llm_end``.
 
@@ -1061,15 +1113,17 @@ class RunJournal(BaseCallbackHandler):
             "created_at": datetime.now(UTC).isoformat(),
         }
 
-    def _commit_pending_llm_response(self) -> None:
+    def _commit_pending_llm_response(self) -> bool:
+        """Move a deferred response into the buffer; True when one was moved."""
         pending = self._pending_llm_response
         if pending is None:
-            return
+            return False
         self._pending_llm_response = None
         self._buffer.extend(pending.events)
         self._msg_count += pending.message_count
         if pending.last_ai_message is not None:
             self._last_ai_msg = pending.last_ai_message
+        return True
 
     def _snapshot_message_summary(self, messages: Sequence[AnyMessage], *, caller: str) -> tuple[int, str | None]:
         """Freeze summary fields before a provider can mutate replayed messages."""
@@ -1113,9 +1167,18 @@ class RunJournal(BaseCallbackHandler):
                 replay_content_usage = replay_content.get("usage_metadata")
                 canonical_content["usage_metadata"] = deepcopy(dict(replay_content_usage)) if isinstance(replay_content_usage, Mapping) else replay_content_usage
 
-    def _flush_if_threshold_reached(self) -> None:
+    def _flush_if_due(self, *, message_buffered: bool) -> None:
+        """Start a write for a buffered message row, or once the threshold is reached.
+
+        Message rows (human input, AI response, tool result) are the thread
+        feed. The checkpoint holds the same messages only until the next
+        compaction, so a row still in this buffer when the process is killed is
+        lost from the transcript for good. Trace rows keep the batching
+        threshold. Callers pass ``message_buffered`` only when no response is
+        deferred: a flush commits it, ahead of a provider's usage replay.
+        """
         pending_count = len(self._pending_llm_response.events) if self._pending_llm_response is not None else 0
-        if len(self._buffer) + pending_count >= self._flush_threshold:
+        if message_buffered or len(self._buffer) + pending_count >= self._flush_threshold:
             self._flush_sync()
 
     def _queue_llm_response_events(
@@ -1139,15 +1202,14 @@ class RunJournal(BaseCallbackHandler):
                 # immediate replay may enrich only corresponding usage fields.
                 self._merge_response_event_usage(pending.events, events)
                 self._commit_pending_llm_response()
-                self._flush_if_threshold_reached()
+                self._flush_if_due(message_buffered=True)
             return
         if llm_run_id in self._counted_message_llm_run_ids:
             return
 
         # A different event is the ordering boundary for an earlier no-usage
         # callback. Commit it before accepting this response.
-        self._commit_pending_llm_response()
-        self._flush_if_threshold_reached()
+        self._flush_if_due(message_buffered=self._commit_pending_llm_response())
 
         message_count, last_ai_message = self._snapshot_message_summary(messages, caller=caller)
         pending_response = _PendingLlmResponse(
@@ -1161,17 +1223,16 @@ class RunJournal(BaseCallbackHandler):
         self._pending_llm_response = pending_response
         if has_usage:
             self._commit_pending_llm_response()
-        self._flush_if_threshold_reached()
+        self._flush_if_due(message_buffered=has_usage)
         # Some providers immediately re-fire on_llm_end with usage filled in.
         # Defer an incomplete copy until the next event or flush.
 
     def _put(self, *, event_type: str, category: str, content: str | dict = "", metadata: dict | None = None, _admitted: bool = False) -> None:
         if self._closed or (not self._accepting_evidence and not _admitted):
             return
-        self._commit_pending_llm_response()
+        message_buffered = self._commit_pending_llm_response() or category == "message"
         self._buffer.append(self._make_event(event_type=event_type, category=category, content=content, metadata=metadata))
-        if len(self._buffer) >= self._flush_threshold:
-            self._flush_sync()
+        self._flush_if_due(message_buffered=message_buffered)
 
     def _flush_sync(self) -> None:
         """Best-effort flush of buffer to RunEventStore.
@@ -1419,6 +1480,12 @@ class RunJournal(BaseCallbackHandler):
             exc = task.exception()
             if exc is None:
                 self._feed_generation += 1
+                # Only one owned write runs at a time, so a message row buffered
+                # while this one was in flight could not start its own. Start it
+                # now rather than leaving it in memory until the next event. A
+                # deferred response is left alone: a flush would commit it.
+                if self._pending_llm_response is None and any(event["category"] == "message" for event in self._buffer):
+                    self._flush_sync()
             elif isinstance(exc, RunEventStoreNotCommittedError):
                 if self._abandoned:
                     logger.warning(

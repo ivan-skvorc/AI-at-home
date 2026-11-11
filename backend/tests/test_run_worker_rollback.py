@@ -8,6 +8,7 @@ from contextvars import ContextVar
 from types import SimpleNamespace
 from typing import Annotated, Any, NotRequired, TypedDict
 from unittest.mock import AsyncMock, MagicMock, call, patch
+from uuid import uuid4
 
 import pytest
 from langchain_core.messages import AIMessage, AIMessageChunk, AnyMessage, HumanMessage
@@ -1329,6 +1330,54 @@ async def test_run_agent_does_not_persist_hidden_partial_response():
 
     assert record.status == RunStatus.interrupted
     assert await event_store.list_messages(record.thread_id) == []
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("ending", ["stopped", "failed"])
+async def test_run_agent_journals_user_message_when_run_ends_before_first_model_call(ending):
+    """A question whose run never reached the model must still enter the feed.
+
+    The journal's other writer of the human row fires at the lead agent's first
+    model call. Stop during a long compaction, or a sandbox that fails to
+    start, ends the run before it; the question would then exist in the
+    checkpoint only and disappear at the next compaction.
+    """
+    run_manager = RunManager()
+    record = await run_manager.create("thread-unjournaled-input")
+    event_store = MemoryRunEventStore()
+    bridge = SimpleNamespace(
+        publish=AsyncMock(),
+        publish_end=AsyncMock(),
+        cleanup=AsyncMock(),
+    )
+    question = HumanMessage(content="my question", id="h1")
+
+    class EndsBeforeModelAgent:
+        async def astream(self, graph_input, config=None, stream_mode=None, subgraphs=False):
+            del stream_mode, subgraphs
+            # LangGraph reports the root invocation before any node runs.
+            journal = next(callback for callback in config["callbacks"] if isinstance(callback, RunJournal))
+            journal.on_chain_start({"name": "graph"}, graph_input, run_id=uuid4())
+            if ending == "failed":
+                raise RuntimeError("sandbox did not start")
+            record.abort_event.set()
+            yield {"messages": [question]}
+
+    await run_agent(
+        bridge,
+        run_manager,
+        record,
+        ctx=RunContext(checkpointer=None, event_store=event_store),
+        agent_factory=lambda **_kwargs: EndsBeforeModelAgent(),
+        graph_input={"messages": [question]},
+        config={},
+        stream_modes=["values"],
+    )
+
+    messages = await event_store.list_messages(record.thread_id)
+    assert record.status == (RunStatus.interrupted if ending == "stopped" else RunStatus.error)
+    assert [(row["run_id"], row["event_type"], row["content"]["id"]) for row in messages] == [(record.run_id, "llm.human.input", "h1")]
+    assert messages[0]["content"]["content"] == "my question"
 
 
 @pytest.mark.parametrize("stream_modes", [["values"], ["messages-tuple", "values"]])
