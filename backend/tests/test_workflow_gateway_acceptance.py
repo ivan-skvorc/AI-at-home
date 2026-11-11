@@ -371,7 +371,11 @@ def test_distinct_runtime_rollout_drains_old_and_rejects_incompatible_takeover(c
     alternate = c.root / "alternate"
     shutil.copytree(EXAMPLE, alternate, ignore=shutil.ignore_patterns("__pycache__"))
     runtime = alternate / "deerflow_extension_workflows/worker.py"
-    runtime.write_text(runtime.read_text().replace("MAX_FRAME = 48 * 1024", "MAX_FRAME = 47 * 1024"))
+    source = runtime.read_text()
+    changed = source.replace("MAX_FRAME = 2 * 1024 * 1024", "MAX_FRAME = 2 * 1024 * 1024 - 1024")
+    # A stale literal would leave both replicas on the same runtime version.
+    assert changed != source
+    runtime.write_text(changed)
     c.kill("b")
     c.start("b", alternate)
     new_run = c.launch("return 11;", "b")

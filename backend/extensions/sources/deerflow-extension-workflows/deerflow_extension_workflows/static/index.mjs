@@ -75,7 +75,8 @@ function mount(root, context) {
     if(!alive(version)||id!==selected)return;
     releaseFiles();
     detail.replaceChildren(node('h3',`${run.run_id} · ${run.status}`));
-    if(run.mode==='ultracode')detail.append(node('p',t('Double Plus Ultracode run','Double Plus Ultracode 运行')));
+    const modeName={ultracode:'Plus Ultracode',double_ultracode:'Double Plus Ultracode'}[run.mode];
+    if(modeName)detail.append(node('p',t(`${modeName} run`,`${modeName} 运行`)));
     if(run.delivery){
       const states={pending:t('waiting to post','等待发送'),delivered:t('posted to the conversation','已发送到对话'),skipped:t('not posted (cancelled)','未发送（已取消）'),failed:t('could not be posted','无法发送')};
       detail.append(node('p',`${t('Result to conversation','结果回传对话')}: ${states[run.delivery.status]||run.delivery.status}${run.delivery.error?` · ${run.delivery.error}`:''}`));

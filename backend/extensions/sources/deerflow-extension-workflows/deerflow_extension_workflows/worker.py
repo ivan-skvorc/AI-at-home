@@ -6,7 +6,9 @@ import sys
 
 import quickjs
 
-MAX_FRAME = 128 * 1024
+# One frame carries every call issued in one JS turn: 64 pending calls of
+# 16,000-byte tasks must fit. Keep equal to service.FRAME.
+MAX_FRAME = 2 * 1024 * 1024
 
 BOOT = r"""
 (() => {
@@ -15,50 +17,71 @@ BOOT = r"""
   Object.defineProperty(globalThis,'Date',{value:undefined,writable:false,configurable:false});
   Object.defineProperty(Math,'random',{value:()=>{throw new Error('Pass randomness in args');},writable:false,configurable:false});
   const encode=JSON.stringify.bind(JSON), decode=JSON.parse.bind(JSON);
-  const requests=[], pending=new Map(); let serial=0, final=null;
+  const requests=[], pending=new Map(), waiting=[]; let serial=0, final=null;
   const clone=value=>decode(encode(value));
   const freeze=value=>{if(value&&typeof value==='object'){Object.values(value).forEach(freeze);Object.freeze(value);}return value;};
+  // At most 64 agent calls are outstanding at the host. Further calls wait here
+  // and are issued in call order as slots free, so a wide fan-out queues
+  // instead of failing; replay sees the same order.
+  const issue=([payload,resolve,reject])=>{const id=++serial; requests.push({type:'agent',id,payload});pending.set(id,{resolve,reject});};
   Object.defineProperty(globalThis,'agent',{value:Object.freeze(payload=>new Promise((resolve,reject)=>{
-    if(pending.size>=64){reject(new Error('Pending call limit'));return;}
-    const id=++serial; requests.push({type:'agent',id,payload:clone(payload)});pending.set(id,{resolve,reject});
+    const call=[clone(payload),resolve,reject];
+    if(pending.size<64){issue(call);return;}
+    if(waiting.length>=1000){reject(new Error('More than 1,064 agent() calls are unresolved'));return;}
+    waiting.push(call);
   })),writable:false,configurable:false});
   for(const name of ['pause','humanCheckpoint','captureArtifact','readArtifact']) {
     Object.defineProperty(globalThis,name,{value:Object.freeze(payload=>new Promise((resolve,reject)=>{
-      if(pending.size>=64){reject(new Error('Pending call limit'));return;}
+      if(pending.size>=64){reject(new Error('Pending call limit (64)'));return;}
       const id=++serial; requests.push({type:name,id,payload:clone(payload)});pending.set(id,{resolve,reject});
     })),writable:false,configurable:false});
   }
   Object.defineProperty(globalThis,'parallel',{value:Object.freeze(tasks=>{
-    if(!Array.isArray(tasks)||tasks.length>64) throw new Error('Parallel item limit');
+    if(!Array.isArray(tasks)||tasks.length>1000) throw new Error('parallel() takes an array of at most 1,000 functions');
     return Promise.all(tasks.map(task=>task()));
   }),writable:false,configurable:false});
   // One lazy call per item with a bounded window, so a long list never holds
   // more promises than the pending-call limit; the host's slots bound real work.
-  Object.defineProperty(globalThis,'pipeline',{value:Object.freeze((items,fn,options)=>{
-    if(!Array.isArray(items)||items.length>1000) throw new Error('Pipeline item limit');
-    if(typeof fn!=='function') throw new Error('pipeline needs a function');
+  // pipeline(items, stage[, stage...][, options]): each item flows through the
+  // stages in order; a later stage receives (previousResult, item, index).
+  Object.defineProperty(globalThis,'pipeline',{value:Object.freeze((items,...stages)=>{
+    if(!Array.isArray(items)||items.length>1000) throw new Error('pipeline() takes an array of at most 1,000 items');
+    const options=stages.length&&typeof stages[stages.length-1]!=='function'?stages.pop():undefined;
+    if(!stages.length||stages.some(stage=>typeof stage!=='function')) throw new Error('pipeline needs a function for each stage');
     const requested=options&&options.concurrency;
     const width=Math.max(1,Math.min(64,items.length,Number.isInteger(requested)&&requested>0?requested:16));
     const results=new Array(items.length); let next=0;
-    const lane=async()=>{while(next<items.length){const index=next++;results[index]=await fn(items[index],index);}};
+    const lane=async()=>{while(next<items.length){
+      const index=next++; let value=await stages[0](items[index],index);
+      for(const stage of stages.slice(1)) value=await stage(value,items[index],index);
+      results[index]=value;
+    }};
     return Promise.all(Array.from({length:items.length?width:0},lane)).then(()=>results);
   }),writable:false,configurable:false});
-  Object.defineProperty(globalThis,'log',{value:Object.freeze(text=>{
-    if(requests.length>=128)throw new Error('Message limit');requests.push({type:'log',text:String(text)});
-  }),writable:false,configurable:false});
-  Object.defineProperty(globalThis,'phase',{value:Object.freeze(title=>{
-    if(requests.length>=128)throw new Error('Message limit');requests.push({type:'phase',title:String(title)});
-  }),writable:false,configurable:false});
+  // Progress text is cut here to just over what the host keeps (which marks the
+  // cut), so a long line cannot fill the frame; never end on half a surrogate pair.
+  const clip=(value,units)=>{const s=String(value).slice(0,units),last=s.charCodeAt(s.length-1);return last>=0xD800&&last<=0xDBFF?s.slice(0,-1):s;};
+  const progress=message=>{
+    if(requests.length>=128)throw new Error('Message limit: at most 128 log() or phase() calls without an await in between');
+    requests.push(message);
+  };
+  Object.defineProperty(globalThis,'log',{value:Object.freeze(text=>progress({type:'log',text:clip(text,200)})),writable:false,configurable:false});
+  Object.defineProperty(globalThis,'phase',{value:Object.freeze(title=>progress({type:'phase',title:clip(title,100)})),writable:false,configurable:false});
   return {
     launch:(source,args)=>{
       Object.defineProperty(globalThis,'args',{value:freeze(decode(args)),writable:false,configurable:false});
-      const run=(0,eval)('(async()=>{"use strict";\n'+source+'\n})()');
-      run.then(value=>{final=encode({type:'result',value:value===undefined?null:value});},
-               error=>{final=encode({type:'error',message:String(error)});});
+      const failed=error=>{final=encode({type:'error',message:String(error)});};
+      // A script that does not parse throws here, not in the promise.
+      try {
+        (0,eval)('(async()=>{"use strict";\n'+source+'\n})()')
+          .then(value=>{final=encode({type:'result',value:value===undefined?null:value});},failed)
+          .catch(failed);  // a return value JSON cannot hold
+      } catch(error) { failed(error); }
     },
     take:()=>encode(requests.splice(0)), result:()=>final,
     deliver:raw=>{const m=decode(raw),p=pending.get(m.id);if(!p)throw new Error('Unknown response');
-      pending.delete(m.id);m.error?p.reject(new Error(m.error)):p.resolve(m.value);}
+      pending.delete(m.id);if(waiting.length&&pending.size<64)issue(waiting.shift());
+      m.error?p.reject(new Error(m.error)):p.resolve(m.value);}
   };
 })()
 """

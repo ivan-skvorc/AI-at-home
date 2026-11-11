@@ -59,6 +59,22 @@ class Lifecycle:
         encoded(result)
         return result
 
+    async def step_output(self, payload, context):
+        """A completed agent step's answer, for the lead whose workflow failed.
+
+        Not get_step: that row also carries host evidence and, for a merge
+        step, up to 1,000 file hashes, more than a model tool result may hold.
+        """
+        from .service import AGENT_OUTPUT_BYTES, encoded, text
+
+        record = await asyncio.to_thread(self.store.get, self.owner(context), text(payload.get("run_id"), 64))
+        row = next((s for s in record["steps"] if s["step_id"] == payload.get("step_id")), None)
+        if not row or row["status"] != "completed":
+            raise ValueError("Completed step unavailable")
+        # The cap every answer passed when it was captured.
+        encoded(row["output"], AGENT_OUTPUT_BYTES)
+        return {"step_id": row["step_id"], "status": row["status"], "attempt": row.get("attempt", 1), "output": copy.deepcopy(row["output"])}
+
     async def check_configuration(self, entry):
         record = entry["record"]
         revision = record.get("configuration_revision")

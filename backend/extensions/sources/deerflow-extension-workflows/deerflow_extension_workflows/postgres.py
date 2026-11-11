@@ -8,7 +8,7 @@ import json
 from contextlib import closing
 
 from .constants import NAMESPACE
-from .store import TERMINAL, Store
+from .store import TERMINAL, RecordLimit, Store
 
 LOCK = 723461108
 
@@ -115,8 +115,7 @@ class PostgresStore(Store):
                     raise ValueError("request_id already used with different script or arguments")
                 return json.loads(old[1]), False
             self._capacity(db, owner)
-            if db.execute("SELECT count(*) FROM workflows WHERE owner=?", (owner,)).fetchone()[0] >= 100:
-                raise ValueError("Retained workflow limit (100); delete finished records")
+            self._make_room(db, owner)
             self._claim(db, owner, record)
             db.execute("INSERT INTO workflows(id,owner,request_id,fingerprint,status,data) VALUES (?,?,?,?,?,?)", (record["id"], owner, record["request_id"], record["fingerprint"], record["status"], json.dumps(record)))
             return record, True
@@ -143,7 +142,7 @@ class PostgresStore(Store):
         updated = {**record, "revision": revision + 1}
         raw = json.dumps(updated)
         if len(raw.encode()) > 8 * 1024 * 1024:
-            raise ValueError("Workflow recovery journal limit (8 MiB)")
+            raise RecordLimit("Workflow record limit (8 MiB)")
         with closing(self.connect()) as db, db:
             self._lease(db, owner, record)
             if db.execute("UPDATE workflows SET status=?,data=?,revision=revision+1 WHERE owner=? AND id=? AND revision=?", (record["status"], raw, owner, record["id"], revision)).rowcount != 1:
@@ -233,16 +232,25 @@ class PostgresStore(Store):
             row = db.execute("SELECT status FROM workflows WHERE owner=? AND id=?", (owner, run_id)).fetchone()
             if not row or row[0] not in TERMINAL:
                 raise ValueError("Only finished workflow records can be deleted")
-            lease = db.execute("SELECT expires_at > extract(epoch from clock_timestamp()) FROM extension_execution_leases WHERE namespace=? AND resource_id=? FOR UPDATE", (NAMESPACE, run_id)).fetchone()
-            if lease and lease[0]:
-                raise ValueError("Workflow still has an execution owner")
-            if db.execute("SELECT 1 FROM workflow_slots WHERE workflow=?", (run_id,)).fetchone():
-                raise ValueError("Reconcile retained child reservations before deleting")
-            db.execute("DELETE FROM workflow_artifacts WHERE owner=? AND workflow=?", (owner, run_id))
-            db.execute("DELETE FROM workflow_controls WHERE workflow=?", (run_id,))
-            db.execute("DELETE FROM workflow_deliveries WHERE owner=? AND workflow=?", (owner, run_id))
-            db.execute("DELETE FROM workflows WHERE owner=? AND id=?", (owner, run_id))
-            # Keep the lease generation tombstone: deletion never resets fencing.
+            held = self._held(db, run_id)
+            if held:
+                raise ValueError(held)
+            self._discard(db, owner, run_id)
+
+    def _held(self, db, run_id):
+        # Shared by delete and the retained-limit prune (Store._make_room),
+        # which skips a record these would refuse.
+        lease = db.execute("SELECT expires_at > extract(epoch from clock_timestamp()) FROM extension_execution_leases WHERE namespace=? AND resource_id=? FOR UPDATE", (NAMESPACE, run_id)).fetchone()
+        if lease and lease[0]:
+            return "Workflow still has an execution owner"
+        if db.execute("SELECT 1 FROM workflow_slots WHERE workflow=?", (run_id,)).fetchone():
+            return "Reconcile retained child reservations before deleting"
+        return None
+
+    def _discard(self, db, owner, run_id):
+        db.execute("DELETE FROM workflow_controls WHERE workflow=?", (run_id,))
+        super()._discard(db, owner, run_id)
+        # Keep the lease generation tombstone: deletion never resets fencing.
 
     def database_identity(self):
         with closing(self.connect(readonly=True)) as db:

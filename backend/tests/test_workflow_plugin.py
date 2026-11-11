@@ -369,18 +369,21 @@ async def test_uncertain_admission_is_retained_without_automatic_retry(plugin):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "script",
+    ("script", "error"),
     [
-        # One past the default max_logs (100).
-        "for(let i=0;i<101;i++)log('progress');return 1;",
-        "return 'x'.repeat(50000);",
-        "agent({stepId:'a',agentRef:'lead_agent',task:'blocked'}); return 'early';",
+        # One past the default max_logs (100): the count stays a limit, and the error names it.
+        ("for(let i=0;i<101;i++)log('progress');return 1;", "Log limit: a workflow may log at most 100 lines"),
+        ("for(let i=0;i<65;i++)phase('p'+i);return 1;", "Phase limit: a workflow may start at most 64 phases"),
+        ("for(let i=0;i<60;i++)phase('p'+i);for(let i=0;i<69;i++)log('l');return 1;", "Message limit: at most 128 log() or phase() calls without an await in between"),
+        ("return 'x'.repeat(50000);", "Script result exceeded the 12,000-byte limit; return a summary"),
+        ("agent({stepId:'a',agentRef:'lead_agent',task:'blocked'}); return 'early';", "Script returned before awaiting Agent calls"),
     ],
 )
-async def test_log_output_and_detached_call_limits(plugin, script):
+async def test_log_output_and_detached_call_limits(plugin, script, error):
     result = await launch(plugin, script)
     final = await done(plugin, result["run_id"])
     assert final["status"] == "failed"
+    assert error in final["error"]
     assert not plugin[2].processes
     assert all(r.status != "running" for r in plugin[3].runs.values())
 
@@ -535,20 +538,32 @@ async def test_model_tool_dispatch_uses_stamped_principal_and_handle(plugin):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("with_child", [False, True])
-async def test_workflow_deadline_is_failed_and_cleans_up(plugin, with_child):
+async def test_workflow_deadline_is_failed_and_cleans_up(plugin):
     service, runs = plugin[2], plugin[3]
     service.config["timeout_seconds"] = 1
-    script = "return await agent({stepId:'a',agentRef:'lead_agent',task:'blocked'});" if with_child else "return await new Promise(()=>{});"
-    result = await launch(plugin, script)
+    result = await launch(plugin, "return await agent({stepId:'a',agentRef:'lead_agent',task:'blocked'});")
     final = await done(plugin, result["run_id"])
     assert final["status"] == "failed", final
     assert final["error"] == "Execution deadline exceeded"
     assert not service.processes
-    if with_child:
-        assert len(runs.starts) == 1
-        assert final["steps"][0]["child_status"] == "interrupted"
-        assert all(run.status == "interrupted" for run in runs.runs.values())
+    assert len(runs.starts) == 1
+    assert final["steps"][0]["child_status"] == "interrupted"
+    assert all(run.status == "interrupted" for run in runs.runs.values())
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("script", ["return await new Promise(()=>{});", "log('waiting'); await new Promise(()=>{}); return 1;"])
+async def test_a_script_waiting_on_nothing_fails_at_once(plugin, script):
+    """Nothing can resolve it: no wait for the deadline, no empty frames up to the turn limit."""
+    service = plugin[2]
+    service.config["timeout_seconds"] = 60
+    started = time.monotonic()
+    result = await launch(plugin, script)
+    final = await done(plugin, result["run_id"])
+    assert final["status"] == "failed", final
+    assert final["error"] == "Script is waiting on something no agent call can resolve"
+    assert time.monotonic() - started < 5
+    assert not service.processes
 
 
 def count_sends(service, monkeypatch):
