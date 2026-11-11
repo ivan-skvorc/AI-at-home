@@ -257,6 +257,13 @@ def build_minimal_config(
         # docker/docker-compose.sandbox.yml) so the sandbox bash works out of the
         # box instead of the provider's broken :latest DEFAULT_IMAGE fallback.
         sandbox_config["image"] = "ghcr.io/agent-infra/sandbox:1.11.0"
+        # Same debug-session budgets `make config` and `make sandbox-enable
+        # MODE=container` write (scripts/sandbox_toggle.py): the example's
+        # active block carries the host-local 600 s command deadline and no
+        # idle_timeout, which reclaims a warm container (and whatever runs in
+        # it) ten minutes after a turn ends.
+        sandbox_config["bash_command_timeout"] = 1800
+        sandbox_config.setdefault("idle_timeout", 3600)
         # The container sees only what sandbox.environment forwards; match
         # `make sandbox-enable` so a token in .env reaches git's credential
         # helper. An unset token resolves to empty (anonymous GitHub).

@@ -1424,6 +1424,13 @@ frozen legacy image only gets the bounded host wait. Timed-out or otherwise
 ambiguous commands are never replayed, and a partial `list_dir` result is never
 returned as a complete listing.
 
+The deadline is wall-clock on both AIO command paths: a foreground command is
+ended when it is reached even while it keeps printing output, so a long wait
+belongs in a background process that is polled. Each command carries its own
+bounded request budget derived from the deadline, so `sandbox.request_timeout`
+does not have to be raised alongside `bash_command_timeout`; it governs session
+creation and the file/list calls only.
+
 Explicit AIO shell/bash session creation is a separate control-plane
 operation. DeerFlow bounds those create requests to 5 seconds with SDK
 retries disabled. If a response cannot prove whether creation committed,
@@ -1781,6 +1788,23 @@ A custom image that is already fully initialized as a non-root user and needs no
 | `DEER_FLOW_SANDBOX_NETWORK` | unset (daemon default network) | Legacy `open`-mode escape hatch passed through as `--network`. Prefer `sandbox.network` for managed isolation. `host`, `container:<name>`, and `none` are rejected at startup. Restricted modes ignore this variable and use their own per-sandbox internal network. |
 
 These hardening flags are Docker-only; Apple Container (`container` runtime) keeps its previous, unhardened invocation and therefore supports only `network.mode: open`. On macOS, an `open` Gateway normally prefers Apple Container, but it keeps using Docker while the configured sandbox prefix has managed Docker sandboxes so startup reconciliation can safely replace resources left by a restricted-mode deployment before the runtime changes.
+
+`no-new-privileges` is the one hardening flag without an opt-out, so no setting
+restores `sudo`-based package installs inside the container. When the sandbox
+shell does not run as uid 0, system packages have to come from a custom
+`sandbox.image` that already contains them; workspace-local installs (a venv,
+`node_modules`, a prebuilt binary) need no privilege.
+
+`sandbox.devices` is the only way to hand a host device to a per-thread
+container, and it accepts exactly `/dev/kvm` (hardware-accelerated virtual
+machines). Any other value fails config validation and DeerFlow never passes
+`--privileged`. It becomes `--device /dev/kvm:/dev/kvm:rw` on the Docker runtime
+only, and is ignored with a warning in external `base_url` mode, in provisioner
+mode and on Apple Container. The Docker host must have the device, or every
+sandbox start fails with an error naming `sandbox.devices`. The node keeps the
+host's mode and group, so a `0660 root:kvm` host needs the udev rule shown
+beside the key in `config.example.yaml`. Guest memory counts against
+`DEER_FLOW_SANDBOX_MEMORY`.
 
 Sandbox control-plane HTTP calls to loopback/private IPs, single-label cluster
 hosts, and Docker/Podman internal hostnames bypass `HTTP_PROXY`/`HTTPS_PROXY`
