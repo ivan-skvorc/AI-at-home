@@ -211,6 +211,7 @@ export default function AgentChatPage() {
     isUploading,
     isHistoryLoading,
     hasMoreHistory,
+    historyLoadFailed,
     loadMoreHistory,
   } = useThreadStream({
     threadId: isNewThread ? undefined : threadId,
@@ -608,6 +609,7 @@ export default function AgentChatPage() {
                   enableConversationOutline
                   paddingBottom={MESSAGE_LIST_DEFAULT_PADDING_BOTTOM}
                   hasMoreHistory={hasMoreHistory}
+                  historyLoadFailed={historyLoadFailed}
                   loadMoreHistory={loadMoreHistory}
                   isHistoryLoading={isHistoryLoading}
                   tokenUsageInlineMode={tokenUsageInlineMode}

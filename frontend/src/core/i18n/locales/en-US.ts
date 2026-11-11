@@ -606,7 +606,7 @@ export const enUS: Translations = {
       "Plans the work as a workflow script that many agents run in the background; the result comes back to this chat on its own. Inspired by Claude Code's ultracode. Tool-call limits still apply. Very token-heavy.",
     doubleUltracodeMode: "Double Plus Ultracode",
     doubleUltracodeModeDescription:
-      "Token-risky. Meant for extremely large tasks that should run until they finish, without interruptions. Same workflow script as Plus Ultracode, but automatic limits are off: no step limit, tool-call limits, token budget or time limit, so only the model finishing ends the run. Your spend cap still applies.",
+      "Token-risky. Meant for extremely large tasks that should run without interruptions. Same workflow script as Plus Ultracode, but automatic limits are off: no step limit, no loop or tool-call limits (including the number of subtasks per run), no token budgets and no time limit. The workflow's own agent-count and size limits still apply. A spend cap still applies only if one is set; it is off by default.",
     doubleUltracodeWarningTitle: "Token-risky: runs until the task is finished",
     ultracodeUnavailable:
       "Plus Ultracode and Double Plus Ultracode need the Script workflows extension, which is not enabled. This chat now uses Ultra.",
@@ -2525,7 +2525,7 @@ export const enUS: Translations = {
     runLimits: {
       title: "Run limits",
       description:
-        "Limits that can end a run before its task is done. Each one starts from config.yaml; a change saved here replaces it for every run on this server until you switch back.",
+        "Limits that can end a run before its task is done. Each one starts from config.yaml; a change saved here replaces it for every run on this server until you switch back. Double Plus Ultracode ignores all of them except the spend cap.",
       adminOnly: "Only administrators can change run limits.",
       loadError: "Could not load the run limits.",
       retry: "Try again",

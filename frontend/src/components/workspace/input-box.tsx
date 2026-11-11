@@ -236,6 +236,7 @@ import {
 import { getMentionQuery, type MentionQuery } from "./mentions/query";
 import { useThread } from "./messages/context";
 import {
+  DoubleUltracodeNotice,
   DoubleUltracodeWarningTooltip,
   ModeHoverGuide,
 } from "./mode-hover-guide";
@@ -3402,6 +3403,7 @@ export function InputBox({
           </div>
         )}
         <PromptInputHeader className="flex-wrap px-3 pt-3 pb-0 empty:hidden">
+          <DoubleUltracodeNotice mode={context.mode} />
           {!!conversationCapability.error &&
             inlineRefs.some((ref) => ref.kind === "conversation") && (
               <div role="alert" className="w-full text-xs">

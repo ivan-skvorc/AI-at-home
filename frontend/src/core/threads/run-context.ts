@@ -44,6 +44,8 @@ interface ModeContextInput {
   democracy_grading?: DemocracyGrading;
   /** Settings → Subagents limits; read on Plus and Double Plus Ultracode. */
   ultracode_limits?: unknown;
+  /** The conversation's internet switch; a workflow's own runs inherit it. */
+  internet_enabled?: unknown;
 }
 
 function defaultReasoningEffort(
@@ -106,8 +108,14 @@ export function deriveModeContext(
     // The one key the extension reads to treat this run as Plus or Double Plus
     // Ultracode. Present on those modes only: anywhere else it would put a
     // workflow brief on a run the user did not ask to plan as a script.
+    // It also names the conversation's model and a switched-off internet: the
+    // workflow's agents and its result turn are runs of their own, which would
+    // otherwise use the server's default model with web tools on.
     plugin_options: ultracode
-      ? ultracodePluginOptions(context.ultracode_limits, mode)
+      ? ultracodePluginOptions(context.ultracode_limits, mode, {
+          model: context.model_name,
+          internetEnabled: resolveInternetEnabled(context),
+        })
       : undefined,
   };
 

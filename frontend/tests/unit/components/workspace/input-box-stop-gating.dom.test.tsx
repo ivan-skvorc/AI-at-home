@@ -15,6 +15,7 @@ import { ThreadContext } from "@/components/workspace/messages/context";
 import { AuthProvider } from "@/core/auth/AuthProvider";
 import { DEFAULT_LOCALE } from "@/core/i18n";
 import { I18nProvider } from "@/core/i18n/context";
+import { enUS } from "@/core/i18n/locales/en-US";
 
 rs.mock("next/navigation", () => ({
   useRouter: () => ({ push: rs.fn(), replace: rs.fn(), refresh: rs.fn() }),
@@ -48,7 +49,9 @@ function renderComposer({
   onStop,
   onBusySubmit,
   canCreateRuns,
+  mode = "flash",
 }: {
+  mode?: string;
   canStopStreaming?: boolean;
   onStop: () => void;
   onBusySubmit?: (text: string, mode: "queue" | "steer") => Promise<unknown>;
@@ -76,7 +79,7 @@ function renderComposer({
               <InputBox
                 threadId="thread-1"
                 status="streaming"
-                context={{ mode: "flash" } as never}
+                context={{ mode } as never}
                 onStop={onStopProp}
                 canStopStreaming={canStopStreaming}
                 canCreateRuns={canCreateRuns}
@@ -182,5 +185,33 @@ describe("InputBox stop gating (runs:cancel)", () => {
     // name, which is exactly the regression being guarded.
     const submit = screen.getByRole("button", { name: "Submit" });
     expect(submit.tagName).toBe("BUTTON");
+  });
+});
+
+// The full warning is a tooltip, which needs hover or focus: a touch screen
+// never gives either, and nobody hovers the mode button at submit time or
+// while the run streams. The composer here is mid-run (`status="streaming"`).
+describe("InputBox Double Plus Ultracode warning (FORK.md §44)", () => {
+  it("stays on screen while the mode is selected, with no hover or focus", () => {
+    renderComposer({ onStop: () => undefined, mode: "double_ultracode" });
+
+    const note = screen.getByRole("note");
+    expect(note.textContent).toBe(enUS.inputBox.doubleUltracodeWarningTitle);
+    expect(screen.queryByRole("tooltip")).toBeNull();
+  });
+
+  it("is absent for Plus Ultracode and every other mode", () => {
+    for (const mode of [
+      "ultracode",
+      "ultra",
+      "democracy",
+      "pro",
+      "thinking",
+      "flash",
+    ]) {
+      renderComposer({ onStop: () => undefined, mode });
+      expect(screen.queryByRole("note")).toBeNull();
+      cleanup();
+    }
   });
 });

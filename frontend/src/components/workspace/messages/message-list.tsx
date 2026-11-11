@@ -224,19 +224,26 @@ type SelectionToolbarState = {
 function LoadMoreHistoryIndicator({
   isLoading,
   hasMore,
+  loadFailed,
   loadMore,
 }: {
   isLoading?: boolean;
   hasMore?: boolean;
+  /** The first page failed: nothing is loaded, so `hasMore` is false. */
+  loadFailed?: boolean;
   loadMore?: () => void;
 }) {
   const { t } = useI18n();
   const sentinelRef = useRef<HTMLDivElement | null>(null);
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastLoadRef = useRef(0);
+  // A failed first page keeps the button so older messages stay reachable, but
+  // only by hand: the sentinel below stays gated on `hasMore`, or a Gateway
+  // that is still down would be re-requested (with a toast) in a loop.
+  const canLoad = Boolean(hasMore) || Boolean(loadFailed);
 
   const throttledLoadMore = useCallback(() => {
-    if (!hasMore || isLoading) {
+    if (!canLoad || isLoading) {
       return;
     }
 
@@ -256,13 +263,13 @@ function LoadMoreHistoryIndicator({
 
     timeoutRef.current = setTimeout(() => {
       timeoutRef.current = null;
-      if (!hasMore || isLoading) {
+      if (!canLoad || isLoading) {
         return;
       }
       lastLoadRef.current = Date.now();
       loadMore?.();
     }, remaining);
-  }, [hasMore, isLoading, loadMore]);
+  }, [canLoad, isLoading, loadMore]);
 
   useEffect(() => {
     const element = sentinelRef.current;
@@ -296,7 +303,7 @@ function LoadMoreHistoryIndicator({
     };
   }, []);
 
-  if (!hasMore && !isLoading) {
+  if (!canLoad && !isLoading) {
     return null;
   }
 
@@ -307,7 +314,7 @@ function LoadMoreHistoryIndicator({
         variant="ghost"
         size="sm"
         className="text-muted-foreground hover:text-foreground rounded-full px-3"
-        disabled={(isLoading ?? false) || !hasMore}
+        disabled={(isLoading ?? false) || !canLoad}
         onClick={throttledLoadMore}
       >
         {isLoading ? (
@@ -335,6 +342,7 @@ export function MessageList({
   paddingBottom = MESSAGE_LIST_DEFAULT_PADDING_BOTTOM,
   tokenUsageInlineMode = "off",
   hasMoreHistory,
+  historyLoadFailed,
   loadMoreHistory,
   isHistoryLoading,
   onRegenerateMessage,
@@ -361,6 +369,8 @@ export function MessageList({
   paddingBottom?: number;
   tokenUsageInlineMode?: TokenUsageInlineMode;
   hasMoreHistory?: boolean;
+  /** The first history page failed; shows the pager as a manual retry. */
+  historyLoadFailed?: boolean;
   loadMoreHistory?: () => void;
   isHistoryLoading?: boolean;
   onRegenerateMessage?: (
@@ -1231,6 +1241,7 @@ export function MessageList({
           <LoadMoreHistoryIndicator
             isLoading={isHistoryLoading}
             hasMore={hasMoreHistory}
+            loadFailed={historyLoadFailed}
             loadMore={loadMoreHistory}
           />
           <VirtualMessageList

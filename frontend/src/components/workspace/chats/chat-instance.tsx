@@ -352,6 +352,7 @@ function ChatInstanceContent({
     isUploading,
     isHistoryLoading,
     hasMoreHistory,
+    historyLoadFailed,
     loadMoreHistory,
   } = useThreadStream({
     threadId: isNewThread ? undefined : threadId,
@@ -839,6 +840,7 @@ function ChatInstanceContent({
                   enableConversationOutline
                   paddingBottom={MESSAGE_LIST_DEFAULT_PADDING_BOTTOM}
                   hasMoreHistory={hasMoreHistory}
+                  historyLoadFailed={historyLoadFailed}
                   loadMoreHistory={loadMoreHistory}
                   isHistoryLoading={isHistoryLoading}
                   tokenUsageInlineMode={tokenUsageInlineMode}

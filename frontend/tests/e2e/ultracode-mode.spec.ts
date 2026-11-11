@@ -71,17 +71,20 @@ test.describe("Double Plus Ultracode", () => {
 
     await textarea.fill("audit every route for missing permission checks");
     await textarea.press("Enter");
-    await expect
-      .poll(() => context?.plugin_options)
-      .toEqual({
-        "community.workflows": {
-          mode: "ultracode",
-          max_agents: 12,
-          max_parallel: 3,
-          // Not stored yet, so the default: the extension's 240-minute ceiling.
-          max_minutes: 240,
-        },
-      });
+    await expect.poll(() => context?.plugin_options).toBeDefined();
+    // The option names the model the run itself is sent with, so the workflow's
+    // agents use it too; it is absent when the run names none.
+    const model = context?.model_name;
+    expect(context?.plugin_options).toEqual({
+      "community.workflows": {
+        mode: "ultracode",
+        max_agents: 12,
+        max_parallel: 3,
+        // Not stored yet, so the default: the extension's 240-minute ceiling.
+        max_minutes: 240,
+        ...(typeof model === "string" && model ? { model } : {}),
+      },
+    });
     expect(context?.subagent_enabled).toBe(true);
     expect(context?.is_plan_mode).toBe(true);
   });

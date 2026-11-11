@@ -103,6 +103,35 @@ export function ModeWarning({
   );
 }
 
+/**
+ * The one-line Double Plus Ultracode warning that stays in the composer for as
+ * long as that mode is selected. The tooltips in this file need hover or focus:
+ * a touch screen gives neither, and nobody hovers the mode button when a chat
+ * opens already in the mode, at submit time or while the run streams. The full
+ * text stays in the tooltip. Renders nothing for any other mode, Plus
+ * Ultracode included.
+ */
+export function DoubleUltracodeNotice({ mode }: { mode: string | undefined }) {
+  const { t } = useI18n();
+  if (mode !== "double_ultracode") {
+    return null;
+  }
+  return (
+    <div
+      className="text-muted-foreground flex w-full items-center gap-1.5 text-xs"
+      role="note"
+    >
+      <TriangleAlertIcon
+        aria-hidden
+        className="text-destructive size-3 shrink-0"
+      />
+      <span className="min-w-0 truncate">
+        {t.inputBox.doubleUltracodeWarningTitle}
+      </span>
+    </div>
+  );
+}
+
 /** Hover/focus wrapper for the Double Plus Ultracode menu option. */
 export function DoubleUltracodeWarningTooltip({
   children,
