@@ -3419,6 +3419,17 @@ turns for good, without an error. What holds now:
   earliest position, the rule the frontend already applies; partial answers
   kept after Stop are inherited. The cost: every edit copies the parent's whole
   visible history into the new version thread.
+- **The review of that seed found three holes, closed the same day.** A hidden
+  date reminder carries the id of the question it was attached to, and after
+  compaction the reminder is what the checkpoint keeps. The merge let it stand
+  in for the question's feed row, and the seed never writes a reminder, so the
+  edited version lost its first question — the case the fix exists for. A
+  checkpoint message now stands in for a feed row only when the seed would
+  write a row for it and the kind matches (`_branch_seed_row_key`). The
+  identity lookup runs in chunks of 400, because SQLite refuses an expression
+  deeper than 1,000 and a longer checkpoint fell back, silently, to the old
+  checkpoint-only seed. Pinned by `test_branch_of_a_compacted_thread_keeps_the_question_its_reminder_is_keyed_to`
+  and `test_branch_of_a_long_thread_is_seeded_from_the_parent_feed_on_sqlite`.
 - **A user message whose run never reached the model is journaled.** The human
   row was written at the lead agent's first model call. A run stopped during a
   long compaction, or one whose sandbox did not start, left the question in the
@@ -4744,6 +4755,27 @@ about 25 and 15 tokens longer. Two operational notes: `worker.py`, `service.py`,
 be recovered after this update (it stays inspectable); and the backend venv
 holds a built copy of the snapshot, so `uv sync` is what makes the installed
 package match after a refresh.
+
+**Found by the review of that pass, fixed the same day.** An ended record still
+over the 8 MiB store limit after dropping its journal sheds, in order, each
+step's merge base and host evidence, then tasks and schemas, then answers,
+until it fits — so the run always ends and its result is always scheduled; a
+`merge` step keeps its file hashes only until the merge is applied. `log()` and
+`phase()` are counted apart from agent calls (128 a turn; the host frame takes
+192 messages), so a fan-out wider than 64 that logs once per call no longer
+fails at the 65th line. The conversation's model is a default, not a
+requirement: a child start the host refuses with 400, 403 or 422 is retried
+once without it and the record forgets it, and the result turn drops it the
+same way (with the PostgreSQL store that drop is repeated per delivery attempt
+rather than stored). `inspect_workflow_step` answers a refusal as
+`{found: false, error}`, the result message carries the whole run id, and a
+script that returns a function or a symbol fails with an error that says so.
+Left as found: an `agent()` call that waited in the queue is shown under the
+phase current when it was issued, not when it was called (display only). On the
+host side, a run input reads `plugin_options` only in queue mode — absent or
+null means none, a malformed value is refused with 400, a steer input ignores
+the key — and a `/compact` refused with 409 no longer back-fills a memory or
+JSONL feed first.
 
 **Inspired by Claude Code's ultracode, not identical to it.** The shape is the
 same — a script in an isolated worker, a background run, only the final value

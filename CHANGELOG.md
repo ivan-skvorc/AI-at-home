@@ -47,6 +47,8 @@ This section accumulates work toward the **2.3.0** milestone
 
 ### Changed
 
+- **models:** A request that times out inside the provider SDK (`APITimeoutError`) is retried once instead of twice, for every configured model. It now matches the read-timeout and stalled-stream cases; the subscription timeout above made it reachable.
+
 - **ultracode:** Double Plus Ultracode is no longer described as having no automatic limits at all. The composer, README and FORK.md list what is lifted (the step limit, loop and tool-call limits, token budgets, the time limit) and what still applies: the workflow's agent count and size limits, a configuration change during the run, the active-workflow limits, the model provider's own stops, and a spend cap only if one is set, which parallel workflow agents can overshoot. Settings → Run limits says Double Plus Ultracode ignores all of its limits except the spend cap.
 
 - **ultracode:** Double Plus Ultracode no longer counts `task` subtasks per run (6 by default); reaching the total used to drop further subtasks and end the run. The limit per response still applies, and Plus Ultracode and every other mode keep the total. The lead's instructions still mention the per-run total in this mode, although nothing enforces it there.
