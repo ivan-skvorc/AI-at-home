@@ -12,6 +12,16 @@ This section accumulates work toward the **2.3.0** milestone
 
 ### Added
 
+- **sandbox:** `sandbox.devices: [/dev/kvm]` forwards the host's KVM device into the per-conversation Docker sandbox, so a virtual machine started there is hardware-accelerated instead of software-emulated. It is off by default and `/dev/kvm` is the only value accepted: anything else fails config validation, and the container is never run `--privileged`. Read the cost first: it hands the host kernel's KVM interface to everything the agent runs, the Docker host must have `/dev/kvm` or every sandbox start fails, and a VM also needs a sandbox image that already contains QEMU, which is not shipped. Not exercised against Docker, KVM or QEMU in this change (FORK.md, *Full sandbox runs*, lists what is unverified). `config_version` moves to 69. The key ships commented out, so for a config already at 68 `make config-upgrade` only rewrites the version line and keeps your comments; a `.bak` is taken first.
+
+- **skills:** The `repo-runner` skill has a recipe for a project that needs a virtual machine: probe the container, start a headless QEMU guest in the background from files kept in the workspace, seed it with cloud-init, reach it over SSH on a loopback port, and check on each later turn that it is still running. It stops and says so when the sandbox image has no QEMU. The bash audit is checked to let the recipe's commands through; the recipe itself has never been run.
+
+- **ultracode:** The agent can read the output of each finished step of a workflow (`inspect_workflow_step`), so the completed work of a failed or oversized run is not redone. It reads results; it does not resume or replay a workflow.
+
+- **ultracode:** `pipeline()` in a workflow script takes several stages, `pipeline(items, stage1, stage2, ...)`, and later stages receive the previous stage's result. A second function used to be ignored without an error.
+
+- **chat:** Double Plus Ultracode keeps a warning line in the composer for as long as it is selected, so it shows on a touch screen, in a chat that opens already in the mode, and while a run streams. The warning used to need hover or keyboard focus.
+
 - **models:** Settings → Models has a **Local GPU memory** field. It sizes every local Ollama model's context window, which is how to give Ollama on another machine (whose GPU cannot be detected) more than the flat 32K windows. The value is stored in `runtime_settings.json` under the DeerFlow home, not in `config.yaml`, so updates, `make config-upgrade` and the launch sync never reset it; it wins over `ollama.vram_gb`, only `--vram-gb` beats it, `0` turns sizing off, and windows change at the next restart. New `GET`/`PUT /api/settings/ollama-vram` (write is admin-only).
 
 - **usage:** The Token usage page shows input and output apart everywhere it shows a total — the headline, each day's bar (stacked, with a legend), the model table and every run row — with the cache-hit part of input marked. A total a provider reported without its split appears as an "unattributed" part rather than being counted as input, so the parts always add up. `/api/console/usage` and `/api/console/runs` gain additive fields (`total_input_tokens`, `total_output_tokens`, `total_cache_read_tokens`, per-day `cache_read_tokens`, per-model `output_tokens`, per-run `total_input_tokens` / `total_output_tokens` / `cache_read_tokens`), each defaulting to 0. Nothing to configure.
@@ -35,7 +45,39 @@ This section accumulates work toward the **2.3.0** milestone
   native subagents pause and resume. Unconfirmed messages can be retried
   after a Gateway restart. ([#7729])
 
+### Changed
+
+- **ultracode:** Double Plus Ultracode is no longer described as having no automatic limits at all. The composer, README and FORK.md list what is lifted (the step limit, loop and tool-call limits, token budgets, the time limit) and what still applies: the workflow's agent count and size limits, a configuration change during the run, the active-workflow limits, the model provider's own stops, and a spend cap only if one is set, which parallel workflow agents can overshoot. Settings → Run limits says Double Plus Ultracode ignores all of its limits except the spend cap.
+
+- **ultracode:** Double Plus Ultracode no longer counts `task` subtasks per run (6 by default); reaching the total used to drop further subtasks and end the run. The limit per response still applies, and Plus Ultracode and every other mode keep the total. The lead's instructions still mention the per-run total in this mode, although nothing enforces it there.
+
+- **ultracode:** Workflow agents and the turn that receives a workflow's result run on the conversation's model, with web tools off when the conversation's internet switch is off. They used the server's default model and kept their web tools.
+
+- **ultracode:** At 100 kept workflow records a launch removes your oldest finished record instead of being refused. Records waiting for input, recovery or reconciliation are never removed automatically.
+
+- **sandbox:** `make setup` writes `bash_command_timeout: 1800` and `idle_timeout: 3600` for the container sandbox, as `make config` and `make sandbox-enable MODE=container` do. A wizard install kept a 600-second command deadline and gave a warm container back ten minutes after a turn ended.
+
+- **sandbox:** The docs and the `repo-runner` skill no longer promise root or `apt-get` in the container sandbox: the hardened container blocks `sudo`, so the agent installs dependencies inside the workspace and system packages belong in a custom `sandbox.image`. The skill checks `id -u` and carries on as an unprivileged user instead of stopping when it is not root. `bash_command_timeout` is documented as what it is, a wall-clock deadline per command that `request_timeout` does not have to follow.
+
 ### Fixed
+
+- **chat:** An edited version of a long conversation keeps its whole history. Editing a message after the conversation had been compacted produced a version that began at the compaction point, with nothing older to scroll back to; the new version is now seeded from the parent's visible history. Each edit copies that history into the new version.
+
+- **chat:** A message whose run ended before the model was called (Stop during a long compaction, a sandbox that did not start) stays in the conversation's history. `/compact` on a conversation whose history store is empty fills it from the checkpoint first, so the turns it removes are not lost. Message rows are written as they arrive instead of in batches of 20 events, so a killed Gateway loses at most the row being written. History that was never written before this change does not come back.
+
+- **chat:** When the first page of a conversation's history fails to load, the **Load more** button stays as a manual retry.
+
+- **doctor:** `make doctor` warns about a `config.yaml` that keeps checkpoints through the legacy `checkpointer:` section and has no `database:` section. Run history is then held in memory, and older messages stop loading after a restart; that config used to be reported as fine.
+
+- **ultracode:** A message queued behind a running Plus or Double Plus Ultracode turn keeps the mode and its workflow limits. It kept the mode name and lost the options, so it ran as a different kind of run. A follow-up workflow launched from a workflow's result keeps them too: Double Plus stays without a time limit, Plus keeps your agents, parallelism and minutes.
+
+- **ultracode:** Workflows survive real fan-outs. `parallel()` takes 1,000 calls (it failed past 64) and calls beyond the 64 the host holds at once wait their turn; frames between the script and the host are 2 MiB (128 KiB before, which one wide turn could exceed); an answer delivered as content blocks is read as its text, so a `schema` works on models that answer in blocks; a long `log()` line or `phase()` title is cut instead of ending the run; a workflow whose record outgrew the 8 MiB store limit ends and posts its result instead of staying "running"; and a script that waits on nothing fails at once instead of spinning.
+
+- **ultracode:** Workflow failures say why: the script's own error, a syntax error, the agent's stop reason, the limit that was exceeded ("Script result exceeded the 12,000-byte limit; return a summary") and up to 20 unfinished steps with their errors. A refused launch returns its reason to the agent instead of a generic failure, and the agent is told the limits its script must respect before it writes one.
+
+- **ultracode:** In Plus and Double Plus Ultracode a workflow agent that asks a question fails only its own step instead of stopping the whole workflow. A result the spend cap refuses is retried for up to a day instead of being dropped. The Script workflows page labels a run with its real mode. Workflows left "recoverable" by the previous build cannot be recovered after this update; they stay inspectable.
+
+- **models:** Grok and Kimi subscription models no longer wait for ever on a request the provider accepted and never answered. They time out (10 seconds to connect, 240 seconds per read), retry once and then show the usual error. Grok reasoning models show their thinking text when the provider sends it. Not tested against the live Grok service.
 
 - **ultracode:** Double Plus Ultracode no longer stops at `recursion_limit=1000`. It is now Plus Ultracode with no automatic limits: no step limit (the `max_recursion_limit` ceiling does not apply), no tool-call limits, no token budgets and no workflow time limit, for the lead, each workflow agent, each `task` subagent and the turn that receives the result. The spend cap and the workflow's agent count and parallelism still apply. Plus Ultracode is unchanged.
 

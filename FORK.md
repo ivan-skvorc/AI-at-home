@@ -475,7 +475,7 @@ Then confirm each fork feature end-to-end:
 | **PDF/Office conversion**                                                                               | `pymupdf` extra (`pymupdf4llm`) present in `backend/packages/harness/pyproject.toml`. The feature stays off by default, and the converted-Markdown companion write (distinct names for multiple convertibles, never clobbering a same-request user `.md`) is pinned by `backend/tests/test_uploads_router.py` (`test_upload_files_does_not_auto_convert_documents_by_default`, `test_upload_files_two_convertibles_get_distinct_markdown_companions`, `test_upload_files_converted_markdown_does_not_overwrite_user_markdown`).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
 | **Large documents + scanned-PDF OCR** (§25)                                                             | `cd backend && uv run pytest tests/test_context_budget.py tests/test_context_aware_tool_output.py tests/test_document_extraction.py tests/test_document_chunking.py tests/test_document_ocr.py tests/test_document_analysis.py tests/test_analyze_document_tool.py` — the asserts that are silent when broken: `test_cloud_window_keeps_every_configured_value` + `test_unknown_budget_is_a_no_op` (a configured limit is a ceiling the window may lower, never a floor it raises); `test_an_explicit_disable_is_never_turned_back_on` (`0` means no limit, in both the sandbox and `tool_output` configs); `test_the_published_budget_does_not_leak_past_the_tool_call` (the ContextVar is scoped to one tool call, so a budget cannot outlive the model that produced it); `test_summarising_happens_after_transcription_not_during_it` + `test_the_instruction_forbids_summarising` (folding the two passes is cheaper and loses content); `test_anchors_do_not_count_towards_the_character_total` (else a 200-page blank scan reads as 4KB of content and never trips the sparse check); `test_a_fully_failed_document_is_not_cached` (caching an all-failed transcript makes the failure permanent); `test_notes_that_overflow_are_merged_in_rounds` (the reduce is hierarchical, or a long document just moves the overflow downstream); `test_the_ceiling_bounds_a_large_window` (`max_chunk_chars` reaches the chunker; a dead ceiling hands a 128K-window model ~55K tokens per map call); `test_a_capped_read_hands_back_the_part_to_resume_from` + `test_resuming_reads_the_next_parts_not_the_first_ones_again` (`max_chunks` returns a *prefix*, binding only on a small window, so truncation is invisible against a cloud model); `test_a_document_past_the_window_is_routed_to_analyze_document` (the size beside an upload is the *compressed* PDF, so without the extracted extent the agent reads linearly); `test_context_window_mirrors_num_ctx` in `test_sync_ollama_models.py` (without it the routing guard short-circuits on `None` for every local model). Wiring: `documents:` in `config.example.yaml` (`config_version` 54, incl. `large_document_chars`); `analyze_document` registered in `tools/tools.py` behind `documents.enabled`; `_context_clamped` at the three `sandbox/tools.py` truncation sites; `_document_quality` in `uploads_middleware.py` (scan warning + large-document routing). Manual: upload a scanned PDF with `uploads.auto_convert_documents: true` and confirm `<current_uploads>` flags it as image-based instead of showing an empty outline. Drift harness (§25a): `cd backend && uv run pytest tests/test_bench_drift_eval.py -q`, plus `make drift-eval`; silent when broken: `test_a_judge_that_passes_a_run_missing_the_fact_is_flagged` (without the planted facts a verdict is one model's opinion of another's).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
 | **Reduce animations (default on)**                                                                      | `core/appearance` (`useReducedMotion`) + `components/reduce-motion-effect.tsx`; default pinned by `local.test.ts`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| **Full sandbox runs**                                                                                   | `skills/public/repo-runner/`; `sandbox.expose_ports` / `extra_capabilities` in `config.example.yaml`, honored by `LocalContainerBackend`. Container default (any Docker/Apple Container runtime, even non-interactively) + per-thread mode: `backend/tests/test_configure_script.py` + `test_docker_sandbox_mode_detection.py`; toggle: `test_sandbox_toggle.py`, runnable without uv via `scripts/backend-python.sh` (`test_backend_python_fallback.py`); forwarded `bash_command_timeout`: `test_local_sandbox_command_timeout.py` and `test_aio_sandbox.py -k TestPerCallTimeout`. **Silent when broken:** upstream's server-side `hard_timeout` superseded the fork's idle forwarding on 2026-09-22, and its `_effective_command_timeout` treated only `None` as unset — a `0` rode through as `hard_timeout=0` bounded at the 5s grace, aborting at once with the outcome unknown. Non-positive must mean *unset*. The remote path must **not** pass a per-call timeout either (the provider carries `default_command_timeout`; sending it twice is how one setting becomes two — `test_skill_request_scoped_secrets.py -k shared_timeout`); `expose_ports`: loopback bind, and no host publish at all when the API port is unpublished (upstream's restricted-network mode) — `test_aio_sandbox_local_backend.py -k expose_ports`. Private-repo git: `test_aio_sandbox_git_credentials.py` — the helper is written by the shell into `$HOME/.local/bin`; the pinned 1.11.0 image's file API cannot write `/usr/local/bin`, and without the helper git silently ignores `GITHUB_TOKEN`. |
+| **Full sandbox runs**                                                                                   | `skills/public/repo-runner/`; `sandbox.expose_ports` / `extra_capabilities` / `devices` in `config.example.yaml`, honored by `LocalContainerBackend`. Container default (any Docker/Apple Container runtime, even non-interactively) + per-thread mode: `backend/tests/test_configure_script.py` + `test_docker_sandbox_mode_detection.py`; toggle: `test_sandbox_toggle.py`, runnable without uv via `scripts/backend-python.sh` (`test_backend_python_fallback.py`); forwarded `bash_command_timeout`: `test_local_sandbox_command_timeout.py` and `test_aio_sandbox.py -k TestPerCallTimeout`. **Silent when broken:** a non-positive timeout must mean *unset* (upstream's `_effective_command_timeout` let `0` through as `hard_timeout=0`, aborting at once with the outcome unknown), and the remote path must **not** pass a per-call timeout as well (`test_skill_request_scoped_secrets.py -k shared_timeout`); `expose_ports`: loopback bind, and no host publish when the API port is unpublished — `test_aio_sandbox_local_backend.py -k expose_ports`; `devices`: only `/dev/kvm`, Docker only, never `--privileged` — same file, `-k device`; the VM recipe's commands pass the bash audit — `test_sandbox_audit_middleware.py -k vm_recipe` (the recipe itself has never been run: §*Full sandbox runs*). Private-repo git: `test_aio_sandbox_git_credentials.py` — the shell writes the helper into `$HOME/.local/bin`; without it git silently ignores `GITHUB_TOKEN`. |
 | **First-run config seeding**                                                                            | `scripts/serve.sh::seed_missing_config` (and the equivalents in `deploy.sh` / `docker.sh`). Pinned by `backend/tests/test_serve_config_seed.py` (seeds `config.yaml` + companion config files on first run).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 | **Passwordless by default** (§5)                                                                        | `scripts/serve.sh::apply_default_auth_mode` exports `DEER_FLOW_AUTH_DISABLED="${DEER_FLOW_AUTH_DISABLED:-1}"` after loading `.env` (pinned by `backend/tests/test_serve_auth_default.py`); both `.env.example` files document the `=0` opt-out. Backend honors it via `auth_disabled.py`, frontend via `core/auth/auth-disabled-user.ts` (both ignore it when `DEER_FLOW_ENV`/`ENVIRONMENT` is prod).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | **Dev-origin defaults (§5, LAN/Tailscale)**                                                             | `frontend/src/dev-origins.js::getAllowedDevOrigins()` returns `DEFAULT_DEV_ORIGIN_PATTERNS` (private-LAN + Tailscale) merged with `DEER_FLOW_DEV_ALLOWED_ORIGINS`, unless `DEER_FLOW_DEV_ALLOWED_ORIGINS_STRICT`; wired in `next.config.js`. Pinned by `frontend/tests/unit/dev-origins.test.ts` (runs the defaults through Next's real `isCsrfOriginAllowed` matcher).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
@@ -1196,7 +1196,11 @@ spend_budget:
   from what it has. It never raises; a budget stop is an orderly wrap-up. The
   admission check also hands the run its window **baseline**, and the middleware
   adds the live run's own spend on top, so one long run cannot blow through a cap
-  it started just under.
+  it started just under. That holds for one run. Runs admitted together — the
+  agents of a script workflow, up to 16 at once — each carry the same baseline
+  and count only their own spend, so together they can end above the cap by up
+  to one agent's remaining allowance each (§44, *Still applied*). Known from
+  reading the code on 2026-11-11, not reproduced, and not fixed.
 - **Billed per model, so the fork's own lever shows up.** In-run spend is read
   from the `RunJournal`'s live per-model accumulator (a new
   `current_token_usage_by_model()`), which already folds subagent usage in by
@@ -2979,6 +2983,7 @@ cannot trust is worse than no switch.
 | Catalog filter            | `tools/tools.py::get_available_tools(internet_enabled=...)`                                                                                                                                                                                      |
 | Lead agent                | `agents/lead_agent/agent.py` (resolve, write back, append the notice, publish in `effective_policies`)                                                                                                                                           |
 | Subagents                 | `tools/builtins/task_tool.py` (inherits from the parent run context)                                                                                                                                                                             |
+| Script-workflow agents    | `plugin_options["community.workflows"].internet_enabled: false`, stored on the workflow record; every agent and the result turn start with it (§44, 2026-11-11). Before that they kept their web tools in an offline conversation                |
 | Gateway                   | `app/gateway/services.py` (`internet_enabled` in `_CONTEXT_CONFIGURABLE_KEYS`)                                                                                                                                                                   |
 | Composer                  | `frontend/src/components/workspace/input-box.tsx` (`InternetToggleButton`, `data-slot="internet-toggle"`), `core/threads/run-context.ts::resolveInternetEnabled`, `core/settings/local.ts` (`THREAD_SCOPED_CONTEXT_KEYS`), `core/i18n/locales/*` |
 | Tests                     | `backend/tests/test_internet_toggle.py`, `frontend/tests/unit/core/threads/internet-toggle.test.ts`, `frontend/tests/unit/core/settings/internet-toggle-persistence.dom.test.ts`, `frontend/tests/e2e/internet-toggle.spec.ts`                   |
@@ -3096,18 +3101,38 @@ Pinned by `backend/tests/test_update_camoufox_searxng.py` (camoufox present/abse
 
 ## Full sandbox runs (clone a repo and run/debug it)
 
-This fork rounds out the containerized AIO sandbox into a first-class "hand it a GitHub link, watch it clone, install, and debug the program" workflow. Everything here builds on upstream's `AioSandboxProvider` (root inside the container, private-repo clone via a forwarded `GITHUB_TOKEN`); the fork adds the ergonomics that were missing:
+This fork rounds out the containerized AIO sandbox into a first-class "hand it a GitHub link, watch it clone, install, and debug the program" workflow. Everything here builds on upstream's `AioSandboxProvider` (commands run in a container, away from the host; private-repo clone via a forwarded `GITHUB_TOKEN`); the fork adds the ergonomics that were missing. Until 2026-11-11 this section, the README, `config.example.yaml` and the `repo-runner` skill all said the agent is root inside the container and can `apt-get install`. The fork's own code assumes the opposite of the pinned image — an unprivileged shell user, and a container started with `no-new-privileges`, which blocks `sudo` and is the one hardening flag without an opt-out. The corrected promise: the agent installs a project's dependencies inside the workspace (venv, `node_modules`, cargo); system packages work only when the image's shell runs as uid 0, and otherwise belong in a custom `sandbox.image`. Which uid the pinned image's shell runs as was not checked against a running container.
 
-- **One-command per-thread container mode.** `make sandbox-enable MODE=container` writes an `AioSandboxProvider` block **without** a `base_url`, so DeerFlow spawns one container per thread and mounts that thread's user-data dirs. Unlike the shared external container (`make sandbox-up`), `/mnt/user-data` is host-backed, so uploads, outputs, and `present_files` all work. `make sandbox-enable` (no MODE) still writes the external block. The container block pins `image: ghcr.io/agent-infra/sandbox:1.11.0` — the same working image `docker/docker-compose.sandbox.yml` uses — so per-thread mode does not fall back to the provider's broken `:latest` default (which lacks the `/v1/bash/*` routes); `make config` (`scripts/configure.py`) and `make setup` write the same pinned block.
+- **One-command per-thread container mode.** `make sandbox-enable MODE=container` writes an `AioSandboxProvider` block **without** a `base_url`, so DeerFlow spawns one container per thread and mounts that thread's user-data dirs. Unlike the shared external container (`make sandbox-up`), `/mnt/user-data` is host-backed, so uploads, outputs, and `present_files` all work. `make sandbox-enable` (no MODE) still writes the external block. The container block pins `image: ghcr.io/agent-infra/sandbox:1.11.0` — the same working image `docker/docker-compose.sandbox.yml` uses — so per-thread mode does not fall back to the provider's broken `:latest` default (which lacks the `/v1/bash/*` routes); `make config` (`scripts/configure.py`) and `make setup` write the same pinned block. Since 2026-11-11 that is also true of the two debug-session budgets: the wizard (`scripts/wizard/writer.py`) now writes `bash_command_timeout: 1800` and `idle_timeout: 3600`, the values `scripts/sandbox_toggle.py` writes. Before, a wizard install kept the example's 600 s command deadline and no `idle_timeout`, so a warm container, and whatever ran in it, was reclaimed ten minutes after a turn ended. The wizard still does not write `request_timeout: 1800.0`, which the toggle does and which no longer matters for commands (next bullet but one).
 - **AIO is the default install when Docker is present.** `make config` (`scripts/configure.py`) and `make setup` both default to this container sandbox whenever a Docker/Apple Container runtime is detected — non-interactively too — falling back to the local sandbox only when no runtime exists. So a fresh clone with Docker installed lands on the containerized AIO sandbox out of the box; `make sandbox-disable` reverts to the local sandbox in one command.
-- **Timeouts that survive real installs.** `sandbox.bash_command_timeout` is now forwarded to the AIO sandbox per command (idle timeout on the shell path, wall-clock hard timeout on the env-bearing path), not just to the host-local sandbox. A long `pip install`/`cargo build` no longer dies at the old fixed 600s. DeerFlow warns once if you set it above `request_timeout` (the HTTP client would abort first) — raise both together.
+- **Timeouts that survive real installs.** `sandbox.bash_command_timeout` is forwarded to the AIO sandbox per command, not just to the host-local sandbox, so a long `pip install`/`cargo build` no longer dies at the old fixed 600s. It is a wall-clock deadline on both AIO paths (the persistent shell and the env-bearing `bash.exec` path): a foreground command is ended at the deadline even while it is still printing output, so a long wait belongs in a background process that is polled. Each command carries its own HTTP request budget derived from that value, so `request_timeout` does not have to follow it; it governs only session creation and the file/list calls. Until 2026-11-11 this bullet called the shell path's timeout an idle one and described a one-shot warning when the value exceeded `request_timeout`. Neither matched the code: there is no such warning, and "raise both together" was unnecessary advice.
 - **Reach the program under debug from your browser.** `sandbox.expose_ports: [8000]` publishes container ports 1:1 to the host loopback in local container mode, so a dev server the agent starts is reachable at `localhost:8000`. With a non-loopback `DEER_FLOW_SANDBOX_HOST` (the Docker-outside-of-Docker case) the port follows the sandbox API's own bind — the address that host resolves to — rather than `0.0.0.0`; upstream hardened that path because the API port beside it is an unauthenticated shell endpoint. `DEER_FLOW_SANDBOX_BIND_HOST=0.0.0.0` restores the broad bind, and wants a firewall in front of it. Upstream's controlled-egress mode (`sandbox.network`) is the one place `expose_ports` publishes nothing at all: it puts the container on an internal network reached only through a relay proxy and leaves the sandbox API port unpublished, so a debug port published to the host there would be a silent hole in the isolation that mode exists to provide — debugging with `expose_ports` means leaving `network.mode` open.
 - **Private repos over `GITHUB_TOKEN`, on the pinned image.** At sandbox creation `git_credentials.py` installs a credential helper that reads `GITHUB_TOKEN` from the container environment at call time. The sandbox's own shell writes it into `$HOME/.local/bin` and registers it with `git config --global`. It used to go through the file API into `/usr/local/bin`, which the unprivileged 1.11.0 image refuses: the helper was never installed, public clones kept working, private clones and pushes did not authenticate, and the log showed a pydantic `ResponseFileWriteResult` validation error instead of the permission problem. `AioSandbox.write_file` now turns that parse failure into an `OSError` naming the path and what the server returned. Pinned by `test_aio_sandbox_git_credentials.py`, which also runs the install command under a local `sh` and has a real `git credential fill` answer from the token.
 - **One GitHub token, two names, never a startup failure.** `@modelcontextprotocol/server-github` reads only `GITHUB_PERSONAL_ACCESS_TOKEN`; the example handed it `GITHUB_TOKEN`, so the GitHub MCP server ran anonymous (public repos, 60 requests an hour, writes refused) with nothing in any log. `extensions_config.example.json` now maps `GITHUB_PERSONAL_ACCESS_TOKEN: $GITHUB_TOKEN`, and `deerflow.env.config_env_value` makes the two names aliases for every `$` reference in both config files. Neither set resolves to an empty string: `make config` / `make sandbox-enable` write `GITHUB_TOKEN: $GITHUB_TOKEN` into the active sandbox section whether or not a token exists, and the strict resolver refused the whole config on a fresh Docker install without one. `make setup`'s container sandbox now forwards the token too (it forwarded nothing), and `make doctor` mirrors the alias (`GITHUB_TOKEN_NAMES`) and reports an unset token as optional. Pinned by `test_config_env_resolution.py::TestGitHubTokenNames`, `test_mcp_client_config.py -k github_example`, `test_doctor.py -k github` and `test_setup_wizard.py -k container_sandbox`.
 - **Native debuggers.** `sandbox.extra_capabilities: [SYS_PTRACE]` adds `--cap-add` flags (Docker only) so `gdb`/`strace` can attach.
-- **A `repo-runner` public skill** (`skills/public/repo-runner/`) that encodes the whole loop: clone into the workspace → detect the toolchain → install deps in an isolated venv/`node_modules` → run (backgrounding servers) → iterate on failures → report reproducible commands.
+- **A `repo-runner` public skill** (`skills/public/repo-runner/`) that encodes the whole loop: clone into the workspace → detect the toolchain → install deps in an isolated venv/`node_modules` → run (backgrounding servers) → iterate on failures → report reproducible commands. Its prerequisite check is `id -u && uname -a`. It stops only when the bash tool reports host bash disabled; a non-zero uid means carry on, skip `apt-get` and `sudo`, and install workspace-locally. It used to stop when `whoami` was not root, which contradicts the hardened container it is meant for.
+- **Hardware-accelerated VMs, opt-in (2026-11-11).** `sandbox.devices: [/dev/kvm]` (config v69) forwards the host's KVM device into each per-thread Docker container as `--device /dev/kvm:/dev/kvm:rw`, so a QEMU guest started in the sandbox runs on KVM instead of software emulation. Before it there was no config key that reached KVM in per-thread mode: an unknown `devices:` key was ignored, and a `/dev/kvm` entry in `sandbox.mounts` only becomes a bind mount. The key is an allowlist of exactly that one path (`ALLOWED_SANDBOX_DEVICES` in `deerflow/config/sandbox_config.py`, enforced in the `SandboxConfig` validator and again in `LocalContainerBackend.__init__`): any other value, `host:container:perm` forms included, fails config validation, and the container is never run `--privileged`. **It is off by default because of what it costs.** `/dev/kvm` hands the host kernel's KVM ioctl interface to model-authored code in a container that already runs `seccomp=unconfined`, so a KVM bug becomes a host-escape path, and whatever runs inside the guest is invisible to the bash audit. It adds no capability, no other device and no host filesystem access, and guest RAM and CPU stay inside the container's cgroup limits. What an operator has to know before setting it:
+  - The Docker host must **have** `/dev/kvm` (Docker Desktop on macOS and a cloud VM without nested virtualization do not), or **every** sandbox start fails. The error appends a hint naming `sandbox.devices` when Docker's text names the device. DeerFlow cannot check first: under Docker-outside-of-Docker it does not see the host's `/dev`.
+  - The node keeps the host's mode and group inside the container. On Debian/Ubuntu that is `0660 root:kvm`, which the sandbox's unprivileged shell user cannot open, so QEMU still falls back to emulation until the host has the udev rule from `config.example.yaml` (`KERNEL=="kvm", MODE="0666"`, which lets every local host user use KVM). No post-start root `chmod` was added, deliberately.
+  - Guest RAM counts against the container's 2g memory limit; raise `DEER_FLOW_SANDBOX_MEMORY` in the Gateway environment for a larger guest.
+  - A container adopted from before the key was set has no device until it is recreated, and `make sandbox-enable MODE=container` rewrites the sandbox section, so `devices:` and a custom `image:` have to be set again afterwards (the block it writes carries a commented hint).
+- **A VM needs a sandbox image that already contains QEMU, and none is shipped.** With `sudo` blocked, `apt-get install qemu-*` cannot succeed at run time, so the route is a custom `sandbox.image` built `FROM` the pinned tag and rebuilt when the pin moves. A derived image was proposed in that change — `docker/sandbox-vm/Dockerfile` adding `qemu-system-x86` (or `qemu-system-arm` and `qemu-efi-aarch64`), `qemu-utils`, `genisoimage` and `openssh-client`, with a `make sandbox-vm-image` target and a test that its `FROM` equals the pinned tag — and was **not shipped**: it adds a file and a Makefile target the owner has not approved, and its build assumes the base image's default user is root, which is unverified. Whether the pinned image already ships any QEMU binary was not checked either. Without KVM a guest still runs under TCG — software emulation, slow — which needs no device and no capability.
+- **A VM recipe in `repo-runner`.** The skill's *When the project needs a virtual machine* section gives the agent a path it had no guidance for: probe first (`id -u`, `uname -m`, `nproc`, the cgroup memory limit, `/dev/kvm`, `qemu-system-$(uname -m)` and the helper binaries); stop and tell the user a QEMU-capable sandbox image is required when QEMU is absent; use KVM only when `/dev/kvm` is readable and writable, otherwise TCG with a warning that it is slow; keep every file under `/mnt/user-data/workspace/vm/`, the only path that persists; build a cloud-init NoCloud seed with `genisoimage`/`cloud-localds` or serve it over HTTP, never with `dd`/`mkfs`, which the bash audit blocks; launch headless and daemonized with user-mode networking and SSH forwarded on `127.0.0.1:2222`; poll in short commands rather than one long foreground wait; and re-check the pidfile at the start of every later turn, because Stop in the run that started it, a recycled container, warm eviction beyond `replicas` or a Gateway shutdown kills the guest. `test_sandbox_audit_middleware.py::test_repo_runner_vm_recipe_commands_are_not_blocked` pins that the audit lets the recipe's commands through; nothing pins that the recipe works.
+- **None of the VM path has been run.** That change was made with no Docker daemon, no `/dev/kvm` and no QEMU available. What is verified: the allowlist, the `docker run` argument list with `subprocess.run` stubbed, the audit classification of the recipe's commands, and the skill review gate. What is not: (1) the uid the pinned image's shell runs as; (2) whether that user can open a forwarded `/dev/kvm`, with and without the udev rule; (3) that Docker's error for a missing device contains the device path, which the `sandbox.devices` hint depends on; (4) which of `qemu-system-*`, `qemu-img`, `genisoimage`/`cloud-localds`, `ssh`, `setsid` and `python3` the pinned image ships; (5) the recipe end to end, including the HTTP seed form, the aarch64 additions and whether a daemonized QEMU survives a transient session or a hard timeout; (6) guest egress through the sandbox proxy in allowlist mode; (7) that a rootless device node keeps the host's mode and group. On a Linux Docker host with KVM, this answers 1, 2, 4 and 7 (drop `--device ...` for the no-KVM baseline):
 
-The `expose_ports` / `extra_capabilities` keys are local-container-mode only; in external/provisioner mode they are warned-as-ignored (declare `ports:` / `cap_add:` in `docker/docker-compose.sandbox.yml` instead). Packages installed outside the mounted workspace (apt, global pip) are still lost when a container is recycled, so keep a project's dependencies in a workspace-local venv — the skill does this by default. Raise `sandbox.idle_timeout` to keep a warmed-up debug environment alive longer between turns.
+  ```bash
+  c=$(docker run -d --rm --device /dev/kvm:/dev/kvm:rw --cap-drop=ALL \
+        --cap-add=CHOWN --cap-add=FOWNER --cap-add=SETUID --cap-add=SETGID --cap-add=DAC_OVERRIDE \
+        --security-opt no-new-privileges --security-opt seccomp=unconfined --memory 2g \
+        -p 127.0.0.1:18080:8080 ghcr.io/agent-infra/sandbox:1.11.0) && sleep 25 \
+    && curl -s -X POST http://127.0.0.1:18080/v1/shell/exec -H 'Content-Type: application/json' \
+        -d '{"command":"id; ls -l /dev/kvm; [ -r /dev/kvm ] && [ -w /dev/kvm ] && echo kvm-rw || echo kvm-denied; command -v qemu-system-$(uname -m) qemu-img genisoimage cloud-localds ssh setsid python3"}'
+  docker rm -f "$c"
+  ```
+
+  The `/v1/shell/exec` path was written from memory of the sandbox API and is itself unverified; if it differs, set `sandbox.devices: [/dev/kvm]` and ask the agent to run the quoted command through its bash tool. For (3), run `docker run --rm --device /dev/kvm ghcr.io/agent-infra/sandbox:1.11.0 true` on a host without `/dev/kvm` and check that the error contains `/dev/kvm`.
+
+The `expose_ports` / `extra_capabilities` / `devices` keys are local-container-mode only; in external/provisioner mode they are warned-as-ignored (declare `ports:` / `cap_add:` / `devices:` in `docker/docker-compose.sandbox.yml` instead, which carries a commented `/dev/kvm` entry). `devices` is also ignored, with a warning, on Apple Container. Unlike `devices`, `extra_capabilities` is not validated — `ALL` is accepted. Anything installed outside the mounted workspace (global or user-level pip/npm, and system packages where the image allows them) is lost when a container is recycled, so keep a project's dependencies in a workspace-local venv — the skill does this by default. Raise `sandbox.idle_timeout` to keep a warmed-up debug environment alive longer between turns.
 
 ## Troubleshooting: nginx 502 after `make up`
 
@@ -3344,6 +3369,17 @@ For an install that never runs `make config-upgrade`, `make doctor` reports the
 combination directly (`run history survives a restart`). History already lost to
 earlier restarts is not recoverable — the rows were never written.
 
+That check had a blind spot until 2026-11-11: it assumed a missing `database:`
+section meant sqlite, but the schema default is `memory`. A config that keeps
+its checkpoints through a legacy `checkpointer:` section (`type: sqlite` or
+`postgres`) and has no `database:` section therefore runs the in-memory feed
+while its checkpoints survive — the same silent loss — and was reported `ok`.
+It now gets a `warn` with the fix (`database: backend: sqlite`,
+`sqlite_dir: .deer-flow/data`), a config with neither section is reported
+`skip` instead of `ok`, and `run_events.backend: jsonl` is not warned because
+it writes to disk without a session factory. The Gateway itself still logs
+nothing for this combination; only `make doctor` says it.
+
 `make_run_event_store(None)` resolves `RunEventsConfig()`'s defaults rather than
 hardcoding a backend of its own. That looked like tidying and is not: the two
 paths silently diverging is exactly how a caller ends up with less durability
@@ -3362,12 +3398,95 @@ instead of changing the default. `test_no_config_resolves_the_same_store_as_defa
 is the divergence guard, and both default sources — schema and example — are
 asserted separately because either one alone still reaches real installs.
 
-**Not addressed here.** Every run finish invalidates the whole history query,
-so TanStack refetches _every_ loaded page in sequence — twenty pages loaded
-means twenty requests after each turn. That is a real cost and the churn the
-scroll has to survive, but it is an optimisation touching the reconciliation
-path this file's neighbours warn about, so it was deliberately left out of a
-scroll fix.
+**A durable store only keeps what is written to it (2026-11-11).** A debugging
+pass found scroll-back complete in exactly one case: a conversation that was
+never edited, whose runs all reached the model, and whose feed was not empty
+when it was compacted. The feed is the only place a message lives once
+compaction has removed it from the checkpoint, so each of the other cases lost
+turns for good, without an error. What holds now:
+
+- **An edited version keeps the whole history.** `POST /api/threads/{id}/branches`
+  seeded the new thread's feed from the branch checkpoint alone, so editing a
+  message in a compacted conversation produced a version that began at the
+  compaction point with nothing to page back to. `_branch_seed_messages` now
+  reads the parent's visible feed up to the branch point — the newest feed row
+  among the checkpoint's messages — in 200-row pages
+  (`_BRANCH_SEED_FEED_PAGE_SIZE`) under the same user scope as `/messages/page`,
+  and `_merge_branch_seed` lays the checkpoint over it. The checkpoint copy wins
+  for a message in both, because that copy carries the edit; a message the feed
+  repeats (the journal rewrites the last user message on a resume, and a steered
+  answer with its correction) becomes one row with the newest content at the
+  earliest position, the rule the frontend already applies; partial answers
+  kept after Stop are inherited. The cost: every edit copies the parent's whole
+  visible history into the new version thread.
+- **A user message whose run never reached the model is journaled.** The human
+  row was written at the lead agent's first model call. A run stopped during a
+  long compaction, or one whose sandbox did not start, left the question in the
+  checkpoint only. `RunJournal.record_unjournaled_human_input()` writes it; the
+  worker calls it in its finish path before the final flush, for every terminal
+  status, and it is a no-op once a model call has captured the message. It is
+  deliberately not part of `flush`, which also runs after evidence admission has
+  closed and would drop the row silently.
+- **`/compact` seeds an empty feed first.** `POST /api/threads/{id}/compact`
+  back-fills an empty feed from the checkpoint
+  (`ensure_checkpoint_history_seeded`, under `goal_thread_lock` and before the
+  checkpoint-write reservation) the way a run start does. A seed that fails
+  aborts the compaction; a run in flight still answers 409.
+- **Message rows are written as they arrive.** The journal batched every row
+  until 20 events (`flush_threshold`) had accumulated, so a hard kill could lose
+  up to 19 events of the active run. `_flush_if_due` now starts a write as soon
+  as a human input, AI response or tool result is buffered; only trace rows wait
+  for the threshold. The cost is one `put_batch` per message row.
+- **A failed first history page can be retried.** With no page loaded there was
+  no pager and no control. The chat now keeps the **Load more** button as a
+  manual retry (`useThreadHistory.loadFailed` → `historyLoadFailed` →
+  `MessageList`). It is a separate flag on purpose: `hasMore` also arms the
+  scroll sentinel, which would re-request a Gateway that is still down in a
+  loop, and holds back the "this thread does not exist" redirect.
+
+The pins are `test_threads_router.py`
+(`test_branch_of_a_compacted_thread_seeds_the_history_its_checkpoint_lost`,
+`test_branch_answer_edit_wins_over_the_parent_feed_copy`,
+`test_compact_seeds_an_empty_feed_before_it_removes_messages`),
+`test_run_journal.py`
+(`test_run_ending_before_the_first_model_call_keeps_its_human_message`,
+`test_message_rows_reach_the_store_without_waiting_for_the_threshold`),
+`test_run_worker_rollback.py`, `test_doctor.py::TestCheckRunEventsDurable` and,
+for the retry, `local-turn-order.dom.test.tsx` and
+`message-list-scheduled.dom.test.tsx`. All of it runs inside `make test` and
+`pnpm test`; none of it was exercised through a live Gateway and browser in
+that change.
+
+**The bounds that remain.** Scroll-back has no cap on pages, messages or
+events, but it is not unconditional:
+
+- **It needs a durable store.** With `database.backend: memory` the feed is
+  process state whatever `run_events.backend` says, and a restart empties it.
+- **Nothing lost earlier comes back.** Messages that were never written — before
+  the `db` default, or by the four paths above before they were closed — are
+  not recoverable, and a version edited before 2026-11-11 keeps the short
+  history it was seeded with.
+- **An edit falls back to the checkpoint** when the parent feed holds none of
+  the checkpoint's messages (a legacy or emptied feed) or cannot be read; the
+  second case logs a warning. That is the seed every edit got before.
+- **A hard kill can still lose a row** while its own write is in flight, or when
+  the callback runs with no event loop. An AI response that carries no usage
+  stays deferred until the next event or flush, as before, so the provider's
+  usage replay still lands on it.
+- **Editing reaches back 400 raw checkpoints**
+  (`_BRANCH_HISTORY_RAW_SCAN_LIMIT`, twice `_BRANCH_HISTORY_SCAN_LIMIT`'s 200);
+  beyond that an edit returns 409. This limits editing, not reading.
+- **A failed page is not retried for ever.** The query gives up after
+  TanStack's default retries and shows "Failed to load thread history." A
+  failed older page keeps `hasMore`, so the sentinel re-arms; a failed first
+  page waits for the button.
+- **Every run finish refetches every loaded page** in sequence — twenty pages
+  loaded means twenty requests after each turn. That is a real cost and the
+  churn the scroll has to survive, but it is an optimisation touching the
+  reconciliation path this file's neighbours warn about, so it was deliberately
+  left out of a scroll fix and still is.
+- **Trace rows are cut at 10,240 bytes; messages never are.** A subagent's step
+  timeline pages up to 50,000 steps per subtask.
 
 ### 29. An edited message keeps the conversation's model
 
@@ -4244,6 +4363,53 @@ inference entitlement; provider limits are surfaced without paid fallbacks.
 Subscription usage reports distinct model identities so API price aliases cannot
 silently price plan usage as API spend.
 
+**A request that is accepted and never answered (2026-11-11).** A Grok
+subscription model could sit on "Working" for ever. One cause was on the client
+side and reproducible against a local server that accepts a request and stays
+silent: Grok and Kimi subscription models were built with no transport timeout
+at all (`connect`, `read`, `write` and `pool` all `None`). They come from the
+discovered catalog, so there is no `config.yaml` entry to carry a
+`request_timeout`, and with none langchain passes `timeout=None`, which
+switches off the SDK's own default. The 240-second `stream_chunk_timeout` only
+starts once response headers have arrived; nothing bounded the wait before
+them — no SDK retry, no fallback chain, no run-level watchdog.
+
+- **A default transport timeout.** `_SubscriptionChatOpenAI` (the base of
+  `GrokSubscriptionChatModel`, `GrokResponsesSubscriptionChatModel` and
+  `KimiSubscriptionChatModel`) now sets `httpx.Timeout(240.0, connect=10.0)`
+  when neither `timeout` nor `request_timeout` is given. The read timeout is per
+  read, so a long generation that keeps sending bytes is unaffected. An explicit
+  value is kept; an explicit `None` counts as not given, so there is no way to
+  ask for an unbounded wait, and there is still no config key. ChatGPT
+  subscription models are a different class (`CodexChatModel`) and were not
+  changed.
+- **One retry, then a visible message.** A stalled request raises
+  `openai.APITimeoutError`, already classified transient. It joins `ReadTimeout`
+  and `StreamChunkTimeoutError` in `_RETRY_BUDGET_OVERRIDES` with two attempts,
+  so the worst case is 2 × 240 s of dead air and then the ordinary error
+  message, not three attempts. The override is keyed by class name, so it
+  applies to every OpenAI-SDK-based provider: a short connect timeout there now
+  also gets one retry instead of two.
+- **Grok reasoning is shown.** `reasoning_content` deltas were extracted for
+  Kimi only, so a Grok reasoning model looked idle for its whole thinking phase.
+  The extraction moved into the shared base class. It is display only: Kimi
+  still replays the field in follow-up requests, Grok does not, and the
+  Responses-API Grok class is unaffected (its chunks have no `choices`).
+
+Not established: whether the live Grok proxy stalls this way (no credentials
+were available, so the fix was tested against fakes), and whether xAI's proxy
+emits `reasoning_content` deltas at all. The sync `_stream` path gets the same
+transport timeout but still has no chunk timer. Two other suspects stay open: a
+429 with a long `Retry-After` is slept through with only a transient toast, and
+the chat's "Working (Ns)" counts from turn start whatever the stream is doing,
+so a client stall and a server stall look the same. To tell them apart next
+time, read `logs/gateway.log`: a pre-header hang used to leave no line at all
+for the model call, while the others log "Transient LLM error on attempt" or a
+`stream_chunk_timeout` warning. Pins:
+`test_subscription_providers.py::test_proxy_requests_are_bounded_unless_the_caller_set_a_timeout`
+and
+`test_llm_error_handling_middleware.py::test_a_stalled_subscription_request_is_retried_once_then_reported`.
+
 Coverage: `test_subscriptions.py`, `test_chatgpt_subscription_auth.py`, and
 `test_subscription_providers.py`; settings tests extend
 `model-settings-page.dom.test.tsx`, with the browser workflow in
@@ -4418,25 +4584,40 @@ use:
 
 **The mode is one run option.** The composer's `ultracode` mode (shown as Plus
 Ultracode; it used to be labeled Double Plus Ultracode) is Ultra's flags plus
-`plugin_options["community.workflows"] = {mode, max_agents, max_parallel}`;
+`plugin_options["community.workflows"] = {mode, max_agents, max_parallel,
+max_minutes}`, plus, since 2026-11-11, two optional keys that describe the
+conversation: `model` (the model this run is sent with, a one-turn choice
+included; omitted when the conversation names none) and `internet_enabled: false`
+(sent only when the conversation's internet switch, §27, is off). The extension
+stores both on the workflow record and ignores a malformed value rather than
+failing on it. They exist because a workflow's agents and its result turn are
+runs of their own: without them every agent used the server's default model,
+with web tools, whatever the conversation had chosen.
 `deriveModeContext` overwrites `plugin_options` with `undefined` on every other
 mode except `double_ultracode`, because a stale value would put a workflow brief
-on a run nobody asked to plan as a script. The extension's `UltracodeMode`
+on a run nobody asked to plan as a script. A message queued behind an active run
+(`POST /api/threads/{id}/runs/{run_id}/inputs`) used to keep `mode` and drop the
+options, which turned a queued Plus or Double Plus message into a different kind
+of run; `submit_run_input` now stores the sanitized `plugin_options` beside
+`mode` and answers 400 for a malformed one, as a new run does. A queued message
+still inherits the source run's client `recursion_limit`. The extension's `UltracodeMode`
 middleware appends the brief to the system message (so a saved `SYSTEM_PROMPT.md`
 still gets it) and, without a session-bound AgentRuns handle, says the mode is
 unavailable instead of silently answering as Ultra. The composer offers both
 modes only when `/api/plugins` lists `community.workflows` enabled, and moves a
 remembered selection to Ultra with a toast.
 
-**Double Plus Ultracode is the same run with no automatic limits** (see *No
-automatic limits* below for the full list). Its id is `double_ultracode`, a new
+**Double Plus Ultracode is the same run with the host's automatic limits
+lifted** — not with no stop at all; *No automatic limits* below lists what is
+lifted and everything that still ends a run. Its id is `double_ultracode`, a new
 value so a stored `ultracode` preference keeps the limited mode. The extension
 treats both ids as ultracode (same brief, same clamped agent and parallel
 limits) and appends one extra instruction on the double mode. It also starts
-each workflow agent with `context.mode = "double_ultracode"`. The mode-menu hover
-states that this is token-risky and meant for extremely large tasks that should
-run until finished, without interruptions. Ordinary chats should stay on Plus
-Ultracode.
+each workflow agent with `context.mode = "double_ultracode"`. The mode
+description states that this is token-risky and meant for extremely large
+tasks, names the lifted limits, and says the workflow's own agent-count and size
+limits still apply and that a spend cap applies only if one is set. Ordinary
+chats should stay on Plus Ultracode.
 
 **The return path is exactly once.** On a terminal workflow launched from a
 conversation the extension posts `[Workflow result] ...` through the plugin-scoped
@@ -4449,6 +4630,29 @@ cancelled workflows post nothing; the message text is a deterministic function o
 finished record so retries send identical input. Handles are process-local, so after
 a restart a pending delivery waits for the owner's next authenticated workflow action.
 
+**The result turn carries the launching run's options (2026-11-11).** The run
+that receives a result was started with `{mode}` for Double Plus and with nothing
+for Plus, so a follow-up workflow the lead launched from it lost the mode, the
+user's Settings limits, the model and the internet switch — a Double Plus
+follow-up was limited by accident. `delivery.result_context(record)` now rebuilds
+the context from the record on every attempt: `plugin_options` with `mode`,
+`max_agents`, `max_parallel`, `max_minutes` (Plus only; Double Plus has no wall
+clock to pass on) and the stored `model` / `internet_enabled: false`; plus
+`model_name` and `internet_enabled: false` for the turn itself, and
+`mode: "double_ultracode"` for Double Plus. Every agent a workflow starts gets
+the same `model_name` (a step's own `agent({model})` wins) and the same
+switched-off internet. The planning brief is not added on a result turn: the
+lead gets the result note, and in Double Plus the limits-off sentence. Two costs
+to know. A Double Plus conversation can now chain follow-up workflows with no
+automatic limit; the result note's "if a follow-up workflow fails too, tell the
+user what is left and why" is the only brake. And an inherited model the host
+later rejects ends the workflow at its first agent and leaves the result at
+"Delivery deferred (400)". A result run the spend cap refuses (402) is retried
+like a busy conversation for up to 24 hours (`BUSY_WAIT_SECONDS`) with the note
+"Spend cap reached; the result is posted once a new run is allowed"; with a
+weekly or monthly window the wait can end first, and the result then waits for
+the owner's next workflow action.
+
 **Script API and limits.** `phase()` groups steps; `pipeline()` keeps at most its
 window of agent calls pending. `agent({schema})` validates host-side
 (`jsonschema`) and re-asks up to twice on the same child thread under new attempt
@@ -4460,10 +4664,113 @@ below ultracode's 1,000 because every step rewrites the whole record. A spend-ca
 is now a definitive pre-admission rejection, a clean failure that releases the slot,
 rather than an uncertain admission.
 
+**The script API and its limits as they are now (2026-11-11).** A parity pass
+against the reference found the shape right and the scale wrong: four of its
+defects could end an ordinary fan-out or make the mode unusable. What changed,
+in the extension only:
+
+- **Frames are 2 MiB** on both sides of the worker bridge (`worker.MAX_FRAME`,
+  `service.FRAME`; they were 128 KiB), which holds 64 pending calls with
+  16,000-byte tasks issued in one JavaScript turn.
+- **Calls past 64 wait instead of failing.** At most 64 `agent()` calls are
+  outstanding at the host; up to 1,000 more wait in the worker and are issued in
+  call order, and `parallel()` takes 1,000 thunks (it took 64). Past that the
+  call rejects with "More than 1,064 agent() calls are unresolved".
+- **`pipeline()` takes stages.** `pipeline(items, stage1, stage2, ...[, {concurrency}])`
+  runs each item through the stages in order; later stages are called as
+  `(previousResult, item, index)`. A second function used to be ignored silently.
+  The one-function form is unchanged.
+- **An answer delivered as content blocks is its text.** The joined text of the
+  text blocks (thinking excluded) is what gets parsed, measured against the
+  12,000 bytes and validated, so `agent({schema})` works on models that answer
+  in blocks.
+- **Progress text is cut, not fatal.** A `log()` line keeps 160 bytes of
+  ASCII-escaped JSON (about 26 CJK characters) and a `phase()` title 80 UTF-8
+  bytes; longer text is cut and marked `...`, empty text is skipped. The counts
+  stay fatal and their errors name them: `max_logs` lines, 64 phases, 128
+  `log()`/`phase()` calls without an `await` in between.
+- **Errors name their limit, and the script's own error wins.** A script that
+  throws, a syntax error and an unserializable return value report themselves
+  instead of "returned before awaiting"; "Agent run did not succeed" carries the
+  child's stop reason; an oversized return value fails with "Script result
+  exceeded the 12,000-byte limit; return a summary"; the posted failure lists up
+  to 20 unfinished steps as `<step> (<status>): <error>` and `(+N more)`. A
+  script whose job queue drains with no call outstanding fails at once with
+  "Script is waiting on something no agent call can resolve" — in Double Plus,
+  which has no wall clock, it used to exchange empty frames up to the
+  10,000-turn limit.
+- **The record cap no longer strands a run.** The recovery journal is capped at
+  3 MiB of tasks and answers (it was 4 MiB) so its clean failure fires before
+  the store's 8 MiB record limit. A record that still reaches 8 MiB at its
+  final save drops the journal, stores the end state and posts the result
+  instead of staying `running` for ever; a run that would have been
+  `recoverable` ends `failed`, and an already completed, cancelled or
+  needs-reconciliation record keeps its status.
+- **A child that needs input fails only its step** in the two Ultracode modes
+  (the call rejects; a script that catches it continues). Plain workflows still
+  end `waiting_input`.
+- **The status poll backs off** from 20 ms by ×1.5 to one second per attempt (it
+  was a fixed 20 ms, about 50 authorized host calls a second per running agent),
+  and a stopping workflow wakes the wait at once.
+- **A refused launch is an ordinary tool result.** `launch_workflow` returns
+  `{"launched": false, "error": "<reason, at most 240 characters>"}` and starts
+  nothing, so the lead can read "Active workflow limit", "request_id already
+  used with different script or arguments", or which of script (16,000 bytes
+  once JSON-encoded) and args (4,000 bytes) was too large, and fix it. The
+  browser's launch action still answers 422.
+- **Step outputs are reachable.** The new model tool `inspect_workflow_step`
+  (`run_id`, `step_id`) returns `{step_id, status, attempt, output}` for one
+  completed step of the caller's own workflow. It makes the finished work of a
+  failed or over-size run readable; it does not resume or replay anything. The
+  extension now registers seven model tools.
+- **Retention prunes instead of refusing.** 100 records are kept per user. At
+  the limit a launch removes that user's oldest completed, failed or cancelled
+  record whose result is not still waiting to be posted, with its captured
+  files; records in `waiting_input`, `needs_reconciliation`, `recoverable` or
+  `interrupted` are never removed automatically. The launch is refused only when
+  nothing can go.
+
+The brief and the `launch_workflow` description now state these limits to the
+lead (allowed `agentRef`s, the workspace policy, the result size with its
+non-Latin figure, the step tool, where progress and cancel live, that a later
+phase may be a new workflow), and the Script workflows page labels a run with
+its real mode — a Plus run used to be labelled "Double Plus Ultracode run". The
+price is context: the fixed request of an Ultracode run on a 32K model is now
+11,653 tokens (Plus) and 11,779 (Double Plus) of the 12,000 that §47 allows,
+measured with `shared_workspace: off`; the `read` and `write` sentences are
+about 25 and 15 tokens longer. Two operational notes: `worker.py`, `service.py`,
+`lifecycle.py`, `recovery.py` and `postgres.py` are hashed into
+`runtime_version`, so a workflow left `recoverable` by the previous build cannot
+be recovered after this update (it stays inspectable); and the backend venv
+holds a built copy of the snapshot, so `uv sync` is what makes the installed
+package match after a refresh.
+
+**Inspired by Claude Code's ultracode, not identical to it.** The shape is the
+same — a script in an isolated worker, a background run, only the final value
+returns. These parts of the reference are still absent, and nothing here should
+be read as promising them:
+
+- no `budget` object: a script cannot read or divide a token budget;
+- no nested `workflow()`: a script cannot start another workflow, only the lead
+  can, after reading a result;
+- no `meta` header on the script;
+- no progress tree in the chat: while a workflow runs the conversation shows
+  nothing, and steps, phases and logs appear only on the Script workflows page;
+- no resume or replay for the lead: recovery is a browser action after a Gateway
+  restart, and `inspect_workflow_step` only reads finished outputs.
+
+`agent()` also differs: it rejects on failure instead of returning null, and
+takes no effort, label or worktree options. None of this was exercised against a
+real model, Gateway or sandbox in that pass — the probes and tests use the
+suite's fake AgentRuns host.
+
 **No automatic limits (2026-11-09).** A Double Plus run still ended with
 `recursion_limit=1000`: the 2026-11-07 pass gave its runs the operator's step
 ceiling, and the web lead pins exactly that. The mode is now Plus Ultracode with
-every limit that ends work on its own removed; only the model finishing ends it.
+the host's own limits on how long a run may go on removed. This section used to
+add "only the model finishing ends it", and the composer said the same; that was
+never true, and the 2026-11-11 pass replaced the sentence in both places with
+the two lists below.
 `deerflow/config/run_limit_overrides.py` owns the test
 (`run_limits_suspended(context)`: `context["mode"] == "double_ultracode"`) and the
 `UNLIMITED_STEPS` / `UNLIMITED_SECONDS` stand-ins (2**31 - 1: still numbers for
@@ -4484,21 +4791,95 @@ LangGraph and asyncio, never reached). What it lifts, and where:
   `NO_WALL_CLOCK_SECONDS`, ignoring both Settings minutes and the operator's
   `timeout_seconds`; the brief says "no time limit".
 - **The result turn.** `delivery.py` starts the follow-up run with
-  `context={"mode": "double_ultracode"}` (derived from the record, so retries stay
-  identical), so the lead finishing the work keeps the mode.
+  `mode: "double_ultracode"` in its context (derived from the record, so retries
+  stay identical), so the lead finishing the work keeps the mode; since
+  2026-11-11 it carries the rest of the launching run's options too (*The result
+  turn carries the launching run's options* above).
+- **The per-run `task` total (2026-11-11).** `SubagentLimitMiddleware` stood
+  down for nothing in this mode, so once a Double Plus lead had used its total
+  (`subagents.max_total_per_run`, default 6, or the `max_total_subagents`
+  override) further `task` calls were stripped and the run ended with
+  `subagent_limit_capped`. It now consults `run_limits_suspended`: no call is
+  stripped for the total and the stop reason is not stamped. Plus Ultracode and
+  every other mode keep the total. **The lead's system prompt still states it**
+  in Double Plus ("max 6 per run; excess calls are discarded", from
+  `lead_agent/prompt.py`), where nothing enforces it any more: threading the
+  suspension through `apply_prompt_template` touches the pinned prompt tests
+  and was left out, so the model is told a limit it does not have.
 
-Still applied: the spend cap (a budget someone set, not an automatic limit),
-the workflow's agent count and parallelism (Settings → Subagents; record size
-bounds `max_calls`), `task` concurrency and per-run delegation count, and the
-sandbox limits on the script worker itself. Plus Ultracode is unchanged. Any
-signed-in caller can request the mode, so the spend cap is the one bound on a
-runaway Double Plus run.
+**Still applied in Double Plus Ultracode — every automatic stop that remains.**
+None of these consults `run_limits_suspended`; Plus Ultracode has them all too.
 
-The 2026-11-07 pass also made the warning a warning:
+- **The spend cap, when one is set** (§10). It is off by default, so a stock
+  install has no money bound on a Double Plus run, and any signed-in caller can
+  request the mode. It applies to the lead, each workflow agent and the result
+  run. **Parallel workflow agents can overshoot it.** Each agent is its own run
+  and checks only its own spend on top of a window total fixed when it was
+  admitted, so agents admitted together each see the same remaining allowance:
+  up to 16 at once per workflow (32 globally) can each spend it. The overshoot
+  is bounded by concurrency, not unbounded — run rows persist progress every few
+  seconds, so a later admission sees the siblings' spend and gets 402, which
+  fails the workflow — and it was established by reading the code, not
+  reproduced live. Refreshing the baseline during a run is a separate design
+  change that was not made.
+- **The workflow's agent count and parallelism.** `max_calls` in total and
+  `concurrency` at once (the user's Settings → Subagents values, never above the
+  operator's 256 / 16; 32 across all workflows). A call past the total fails
+  the whole workflow, whether the script catches it or not; calls past the
+  parallel limit wait.
+- **The fixed size limits.** Script 16,000 bytes once JSON-encoded and args
+  4,000; a task 16,000 bytes and an agent answer 12,000 (that call rejects); the
+  script's return value 12,000 bytes as JSON — about 8,000 characters, 1,500 if
+  mostly non-Latin — (the workflow fails; step outputs stay readable); `max_logs`
+  lines, 64 phases, 128 progress calls without an `await`; 1,064 unresolved
+  calls; 3 MiB of tasks and answers and 8 MiB per record; a workspace copy over
+  1,000 files, 16 MiB per file or 64 MiB (fails the workflow, caught or not).
+- **The script worker's sandbox.** 10,000 worker turns, cumulative `cpu_seconds`
+  and `memory_bytes`.
+- **A configuration change during the run.** Before each agent starts the
+  extension compares a revision that hashes the whole app config and the
+  extensions config. Editing `config.yaml`, or toggling a skill or an MCP server
+  in Settings (which writes `extensions_config.json`), fails the workflow at the
+  next agent start with "Agent configuration changed or unavailable", even when
+  the script catches the rejection. It is a deliberate safety guard and was not
+  narrowed.
+- **The active and retained workflow limits.** `max_workflows_per_owner` (2) and
+  `max_workflows` (4) active at once by default (ceilings 8 and 16;
+  `config.example.yaml` does not raise them). A Double Plus workflow has no wall
+  clock, so two long ones block every further launch by that user until one
+  ends. 100 records are retained, pruned as described above.
+- **The fixed 5-second observation timeouts**, unchanged: the child status poll,
+  the state read, the configuration evidence and the configuration revision
+  each have five seconds, and a timeout there faults the whole workflow.
+  Whether they fire under 16 parallel agents on a loaded Gateway was not
+  established. Admission has its own bounded timeout.
+- **Provider-side stops.** A tool call cut off at the model's output cap ends
+  the turn as `model_length_capped`; a provider safety stop ends it as
+  `safety_capped`; a transient LLM error is retried up to three attempts (two
+  for a timeout) and then reported, and the circuit breaker can refuse calls
+  after repeated failures; the context guard fails a request that cannot fit
+  the model's window even after compaction.
+- **`/goal` caps.** 8 continuations, 2 without progress.
+- **`task` calls per response** (execution capacity, default 3) and the limits
+  of durable `task_batch` items.
+- **Sandbox command timeouts**, which return an error to the model rather than
+  ending the run.
+
+The warning matches that list. The 2026-11-07 pass made it a warning:
 hovering or focusing the Double Plus menu option, before anyone selects it, and
 the mode button while it is selected, shows `ModeWarning` (an alert icon, "Token-risky:
 runs until the task is finished", and the description) after 100 ms instead of a
-plain 500 ms tip on the selected mode only. And the chat pages refused a per-task
+plain 500 ms tip on the selected mode only. A tooltip needs hover or focus,
+which a touch screen never gives, and nobody hovers the button when a chat opens
+already in the mode, at submit time or while a run streams — so the mode could
+be used without the warning ever being shown. Since 2026-11-11
+`DoubleUltracodeNotice` (`mode-hover-guide.tsx`) keeps one line in the composer
+header, above the text area, for as long as the mode is selected: the alert icon
+and the same title, `role="note"`, nothing for Plus Ultracode. The tooltip still
+carries the full text. The title was left as it is although "runs until the task
+is finished" is close to the promise removed from the description. The Run
+limits page says "Double Plus Ultracode ignores all of them except the spend
+cap" (§46). And the chat pages refused a per-task
 model in Plus/Double Plus Ultracode and Democracy ("Subtasks are disabled. Enable
 Ultra mode first.") because the check was `mode === "ultra"`; `modeUsesSubagents`
 in `run-context.ts` is now the one answer, used by `deriveModeContext` too.
@@ -4522,6 +4903,16 @@ stamping and stripping, parent links, delegated roll-up, copy/merge safety),
 `make test` / `pnpm test` / `pnpm test:e2e` and fail loudly, so no checklist row was
 added (CHANGE_CYCLE.md step 4; the table is over its budget). Depth for agents:
 `examples/deerflow-extension-workflows/AGENTS.md` and the extensions guide.
+
+The 2026-11-11 pass is pinned in the same files: `test_ultracode_mode.py` and
+`test_workflow_plugin.py` (queueing, stages, block answers, named limits, record
+overflow, result context, pruning, the step tool, refused launches),
+`test_subagent_limit_middleware.py`
+(`test_only_double_ultracode_is_not_stopped_by_the_per_run_total`),
+`test_run_inputs.py` (`test_a_queued_input_keeps_its_plugin_options`) and the
+frontend `mode-hover-guide.dom.test.tsx`. Not run in that pass: the e2e spec,
+whose `plugin_options` expectation changed; `verify_browser.mjs`; and the
+Docker-gated `test_workflow_gateway_acceptance.py`.
 
 ### 45. Books that are not PDFs, and requests that do not fit the window
 
@@ -4677,6 +5068,32 @@ the config. Delivery counts a busy conversation as waiting, not as a failed
 attempt, up to `BUSY_WAIT_SECONDS` (24 h). The result note now asks the lead to
 finish unfinished work or launch one smaller follow-up, never the same workflow.
 
+**What the page says about Double Plus, and what changed around it
+(2026-11-11).** The page description now ends "Double Plus Ultracode ignores all
+of them except the spend cap." — the spend cap is set on that same page and
+still applies, so a bare "ignores these limits" would have been false. Several
+of the stops in *Why* above moved again in that pass; §44 has the detail:
+
+- The user's agents, parallelism and minutes (Settings → Subagents) now reach
+  the result turn and a message queued behind an active run. Both used to lose
+  them, so a Plus follow-up workflow ran on the operator's limits and a queued
+  Plus or Double Plus message ran as a different kind of run.
+- The agents and the result turn inherit the conversation's model and a
+  switched-off internet.
+- The unanswerable clarifying question: in the two Ultracode modes a child that
+  needs input fails only its own step.
+- The 12,000-byte cap: the brief and the launch tool now state it, an oversized
+  script result names the limit, and `inspect_workflow_step` reads the finished
+  steps of a run that hit it.
+- A result run the spend cap refuses is waited out like a busy conversation
+  (24 h at most) instead of being dropped.
+- The result note also tells the lead to launch a planned next phase as a new
+  workflow. "Never relaunch the same workflow unless the user asks" stays.
+
+The page still cannot lift what §44 lists under *Still applied*: those are the
+workflow's own limits, provider stops and the spend cap, not `run_limits`
+sections.
+
 **Defaults move up, chosen values stay.** The example ships the extension's
 ceilings; config v67 (`raise_shipped_workflow_limits`) raises only values equal
 to the v66 shipped ones. The browser does the same: a stored `{64, 8}` without
@@ -4731,7 +5148,11 @@ says:
 
 Result on the stock config and a synced 32K entry, as the guard sends it: Flash
 7,395 tokens (14,723 left for the conversation), Pro 7,730, Ultra 10,121, Plus
-Ultracode 11,354, Double Plus Ultracode 11,434 (10,684 left).
+Ultracode 11,653, Double Plus Ultracode 11,779 (10,339 left). The two Ultracode
+figures were 11,354 and 11,434 until 2026-11-11, when the brief gained the
+limits the lead was never told and the extension a seventh tool (§44); 221
+tokens of the allowance remain in Double Plus, so new brief text has to replace
+old text. Measured with `shared_workspace: off`.
 
 **The refusal says what is true.** It states the room the guard really allows,
 how it is derived (window, reply reservation, 10% estimating margin), how much of
