@@ -4401,13 +4401,14 @@ them — no SDK retry, no fallback chain, no run-level watchdog.
   ask for an unbounded wait, and there is still no config key. ChatGPT
   subscription models are a different class (`CodexChatModel`) and were not
   changed.
-- **One retry, then a visible message.** A stalled request raises
-  `openai.APITimeoutError`, already classified transient. It joins `ReadTimeout`
-  and `StreamChunkTimeoutError` in `_RETRY_BUDGET_OVERRIDES` with two attempts,
-  so the worst case is 2 × 240 s of dead air and then the ordinary error
-  message, not three attempts. The override is keyed by class name, so it
-  applies to every OpenAI-SDK-based provider: a short connect timeout there now
-  also gets one retry instead of two.
+- **The usual retries, then a visible message.** A stalled request raises
+  `openai.APITimeoutError`, already classified transient, and uses the
+  configured `llm_call.retry_max_attempts` like every other OpenAI network
+  error — three attempts by default, so up to 3 × 240 s of dead air before the
+  ordinary error message. This change first gave it a tighter two-attempt
+  budget; the 2026-11-10 upstream sync pins the configured budget for SDK
+  timeouts (`test_sync_openai_network_errors_exhaust_the_configured_budget`),
+  so the override was dropped when the two met in the merge.
 - **Grok reasoning is shown.** `reasoning_content` deltas were extracted for
   Kimi only, so a Grok reasoning model looked idle for its whole thinking phase.
   The extraction moved into the shared base class. It is display only: Kimi

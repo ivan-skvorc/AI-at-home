@@ -1384,13 +1384,13 @@ def test_read_timeout_is_retried_and_exhaustion_returns_marked_fallback(
     assert result.additional_kwargs["error_type"] == "ReadTimeout"
 
 
-def test_a_stalled_subscription_request_is_retried_once_then_reported(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_a_stalled_subscription_request_ends_in_a_visible_error(monkeypatch: pytest.MonkeyPatch) -> None:
     """A subscription proxy that accepts the request and never answers.
 
     The transport timeout reaches the middleware as the SDK's
-    ``APITimeoutError``. Each attempt has already cost the whole read timeout,
-    so it gets the same single retry as a raw ``ReadTimeout`` and then a
-    visible message, instead of three silent waits.
+    ``APITimeoutError``, which uses the configured retry budget like every
+    other OpenAI network error, and then ends in a visible message. Before the
+    subscription models had a timeout, the request never returned at all.
     """
     from deerflow.models import subscription_providers as providers
 
@@ -1415,7 +1415,7 @@ def test_a_stalled_subscription_request_is_retried_once_then_reported(monkeypatc
 
     result = asyncio.run(middleware.awrap_model_call(SimpleNamespace(), handler))
 
-    assert sent == 2
+    assert sent == 3
     assert result.additional_kwargs["error_reason"] == "transient"
     assert result.additional_kwargs["error_type"] == "APITimeoutError"
     assert result.content

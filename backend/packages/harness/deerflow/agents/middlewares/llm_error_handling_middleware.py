@@ -89,8 +89,6 @@ _RETRY_BUDGET_OVERRIDES: dict[str, int] = {
     "EmptyModelResponseError": 2,
     "StreamChunkTimeoutError": 2,
     "ReadTimeout": 2,
-    # The OpenAI SDK's wrapper around the same httpx timeouts.
-    "APITimeoutError": 2,
 }
 
 # Per-reason retry budget overrides, applied in addition to the per-exception
