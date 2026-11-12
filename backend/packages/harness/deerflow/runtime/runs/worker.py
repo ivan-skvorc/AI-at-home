@@ -2092,6 +2092,10 @@ async def run_agent(
                 # crash window where a terminal run could otherwise outlive its receipt.
                 # A fenced worker leaves receipt recovery to the peer that claimed it.
                 if not record.ownership_lost and journal is not None:
+                    # A run that ended before its first model call never wrote
+                    # its user message; without this the question exists in the
+                    # checkpoint only and the next compaction removes it.
+                    journal.record_unjournaled_human_input()
                     if record.status == RunStatus.interrupted and partial_assistant_response is not None:
                         journal.record_interrupted_ai_responses(partial_assistant_response.messages())
                     try:

@@ -1,7 +1,7 @@
 import type { Message } from "@langchain/langgraph-sdk";
 import { afterEach, beforeEach, expect, rs, test } from "@rstest/core";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, renderHook } from "@testing-library/react";
+import { act, renderHook, waitFor } from "@testing-library/react";
 import { createElement, type ReactNode } from "react";
 
 import { I18nContext } from "@/core/i18n/context";
@@ -1220,4 +1220,46 @@ test("keeps history stable when the stream errors after the human was confirmed"
     `${submittedId}__user`,
     "new-step",
   ]);
+});
+
+// The chat is opened while the Gateway restarts: the first history page fails.
+// With no page loaded there is no "next page", so nothing offered a way to
+// fetch it again and the older turns stayed out of reach.
+test("reports a failed first history page and loads it on the next request", async () => {
+  let gatewayUp = false;
+  const consoleError = rs
+    .spyOn(console, "error")
+    .mockImplementation(() => undefined);
+  const { result } = await renderSeededThread({
+    historyRows: () => {
+      if (!gatewayUp) {
+        throw new Error("Gateway restarting");
+      }
+      return seededHistoryRows();
+    },
+  });
+
+  // Real timers: the query's state reaches the hook on a later timer turn.
+  await waitFor(() => expect(result.current.historyLoadFailed).toBe(true));
+  // Not folded into `hasMoreHistory`: that flag also decides the "thread does
+  // not exist" redirect and would auto-retry through the scroll sentinel.
+  expect(result.current.hasMoreHistory).toBe(false);
+  expect(result.current.isHistoryLoading).toBe(false);
+  expect(visibleMessageIds(result.current.thread.messages)).toEqual([]);
+
+  gatewayUp = true;
+  await act(async () => {
+    await result.current.loadMoreHistory();
+  });
+
+  await waitFor(() =>
+    expect(visibleMessageIds(result.current.thread.messages)).toEqual([
+      "earlier-answer",
+      "old-human",
+      "recent-human",
+      "recent-answer",
+    ]),
+  );
+  expect(result.current.historyLoadFailed).toBe(false);
+  consoleError.mockRestore();
 });

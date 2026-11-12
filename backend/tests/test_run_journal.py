@@ -13,8 +13,9 @@ from unittest.mock import MagicMock
 from uuid import uuid4
 
 import pytest
-from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_core.outputs import ChatGeneration, LLMResult
+from langgraph.types import Command
 
 from deerflow.runtime.events.store.base import RunEventStoreNotCommittedError
 from deerflow.runtime.events.store.memory import MemoryRunEventStore
@@ -1874,15 +1875,47 @@ class TestBufferFlush:
     async def test_flush_threshold(self, journal_setup):
         j, store = journal_setup
         j._flush_threshold = 2
-        # Each on_llm_end emits 1 event
-        usage = {"input_tokens": 1, "output_tokens": 1, "total_tokens": 2}
-        j.on_llm_end(_make_llm_response("A", usage=usage), run_id=uuid4(), parent_run_id=None, tags=["lead_agent"])
+        # Trace rows are batched; message rows do not wait (see the next test).
+        j.record_middleware("first", name="FirstMiddleware", hook="after_model", action="record", changes={})
         assert len(j._buffer) == 1
-        j.on_llm_end(_make_llm_response("B", usage=usage), run_id=uuid4(), parent_run_id=None, tags=["lead_agent"])
+        j.record_middleware("second", name="SecondMiddleware", hook="after_model", action="record", changes={})
         # At threshold the buffer should have been flushed asynchronously
         await asyncio.sleep(0.1)
         events = await store.list_events("t1", "r1")
         assert len(events) >= 2
+
+    @pytest.mark.anyio
+    async def test_message_rows_reach_the_store_without_waiting_for_the_threshold(self):
+        """A message row must not sit in process memory until a batch fills.
+
+        The checkpoint holds the same messages only until the next compaction,
+        so a row still buffered when the Gateway is killed is lost from the
+        transcript for good. No ``flush()`` is called here: each message row
+        starts its own write, carrying the trace rows ahead of it, and a row
+        buffered while a write is in flight follows as soon as that one settles.
+        """
+        gate = asyncio.Event()
+        store = _GatedRunEventStore({"middleware:before": gate})
+        j = RunJournal("r1", "t1", store, flush_threshold=100)
+        usage = {"input_tokens": 1, "output_tokens": 1, "total_tokens": 2}
+
+        j.record_middleware("before", name="BeforeMiddleware", hook="before_model", action="record", changes={})
+        assert store.calls == []
+        j.on_chat_model_start({}, [[HumanMessage(content="question", id="h1")]], run_id=uuid4(), tags=["lead_agent"])
+        await _pump_loop()
+        assert store.calls == ["middleware:before"]
+
+        # Both arrive while the first write is still in flight.
+        j.on_llm_end(_make_llm_response("answer", usage=usage), run_id=uuid4(), parent_run_id=None, tags=["lead_agent"])
+        j.on_tool_end(ToolMessage(content="tool output", tool_call_id="call-1", name="search", id="t1"), run_id=uuid4())
+        gate.set()
+        await _pump_loop()
+
+        events = await store.list_events("t1", "r1")
+        assert [event["event_type"] for event in events] == ["middleware:before", "llm.human.input", "llm.ai.response", "llm.tool.result"]
+        assert [event["seq"] for event in events] == sorted(event["seq"] for event in events)
+        assert j._buffer == []
+        await j.close()
 
     @pytest.mark.anyio
     async def test_pending_response_counts_toward_flush_threshold(self, journal_setup):
@@ -3173,6 +3206,72 @@ class TestChatModelStartHumanMessage:
         await j.flush()
         assert j._first_human_msg is None
 
+    @staticmethod
+    async def _human_input_events(store) -> list[dict]:
+        return [event for event in await store.list_events("t1", "r1") if event["event_type"] == "llm.human.input"]
+
+    @pytest.mark.anyio
+    @pytest.mark.parametrize("as_dict", [False, True], ids=["message", "dict"])
+    async def test_run_ending_before_the_first_model_call_keeps_its_human_message(self, journal_setup, as_dict):
+        """A run stopped or failed before the lead agent's first model call.
+
+        ``on_chat_model_start`` never fires for it, so without the worker's
+        explicit fallback the question exists in the checkpoint only, and the
+        next compaction removes it from the transcript for good.
+        """
+        j, store = journal_setup
+        human = {"type": "human", "id": "h1", "content": "my question"} if as_dict else HumanMessage(content="my question", id="h1")
+        j.on_chain_start({"name": "graph"}, {"messages": [AIMessage(content="older answer", id="a0"), human]}, run_id=uuid4())
+        # A later root invocation of the same run (a goal continuation) does
+        # not carry the user's input and must not replace it.
+        j.on_chain_start({"name": "graph"}, {"messages": [HumanMessage(content="continuation", id="h-later")]}, run_id=uuid4())
+
+        assert j.record_unjournaled_human_input() is True
+        assert j.record_unjournaled_human_input() is False
+        await j.flush()
+
+        human_events = await self._human_input_events(store)
+        assert [event["content"]["id"] for event in human_events] == ["h1"]
+        assert human_events[0]["content"]["content"] == "my question"
+        assert human_events[0]["category"] == "message"
+        assert human_events[0]["metadata"]["caller"] == "lead_agent"
+        assert j.get_completion_data()["first_human_message"] == "my question"
+        assert j.get_completion_data()["message_count"] == 1
+
+    @pytest.mark.anyio
+    async def test_human_message_captured_by_the_model_call_is_not_written_again(self, journal_setup):
+        j, store = journal_setup
+        human = HumanMessage(content="my question", id="h1")
+        j.on_chain_start({"name": "graph"}, {"messages": [human]}, run_id=uuid4())
+        j.on_chat_model_start({}, [[human]], run_id=uuid4(), tags=["lead_agent"])
+
+        assert j.record_unjournaled_human_input() is False
+        await j.flush()
+
+        assert [event["content"]["id"] for event in await self._human_input_events(store)] == ["h1"]
+        assert j.get_completion_data()["message_count"] == 1
+
+    @pytest.mark.anyio
+    @pytest.mark.parametrize(
+        "inputs",
+        [
+            pytest.param(None, id="resume-without-input"),
+            pytest.param(Command(resume="approved"), id="resume-command"),
+            # Steer inputs have their own writer; journaling one here would write it twice.
+            pytest.param({"messages": [HumanMessage(content="steer", id="s1", additional_kwargs={"run_input_id": "input-1"})]}, id="steer-input"),
+            pytest.param({"messages": [HumanMessage(content="context", id="c1", additional_kwargs={"hide_from_ui": True})]}, id="hidden-context"),
+        ],
+    )
+    async def test_root_input_without_a_user_message_records_nothing(self, journal_setup, inputs):
+        j, store = journal_setup
+        j.on_chain_start({"name": "graph"}, inputs, run_id=uuid4())
+
+        assert j.record_unjournaled_human_input() is False
+        await j.flush()
+
+        assert await self._human_input_events(store) == []
+        assert j.get_completion_data()["message_count"] == 0
+
 
 @pytest.mark.anyio
 @pytest.mark.parametrize("mode", ["full", "delta"])
@@ -3211,6 +3310,49 @@ async def test_image_input_is_journaled_once_across_graph_model_calls(mode):
     assert journal.get_completion_data()["message_count"] == 3
     snapshot = await accessor.aget(config)
     assert [message.id for message in snapshot.values["messages"]] == ["h1", "a1", "a2"]
+    await journal.close()
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("mode", ["full", "delta"])
+async def test_graph_run_failing_before_any_model_call_still_journals_its_input(mode):
+    """The feed must hold every user message the checkpoint holds.
+
+    The input has no id on purpose: the reducer assigns one, and the feed row
+    has to carry that same id or the client cannot align the two copies.
+    """
+    from langgraph.checkpoint.memory import InMemorySaver
+    from langgraph.graph import StateGraph
+
+    from deerflow.agents.thread_state import get_thread_state_schema
+    from deerflow.runtime.checkpoint_state import CheckpointStateAccessor
+
+    store = MemoryRunEventStore()
+    journal = RunJournal("failed-run", "failed-thread", store)
+
+    async def fails_before_model(state):
+        raise RuntimeError("sandbox did not start")
+
+    builder = StateGraph(get_thread_state_schema(mode))
+    builder.add_node("first", fails_before_model)
+    builder.set_entry_point("first")
+    builder.set_finish_point("first")
+    saver = InMemorySaver()
+    graph = builder.compile(checkpointer=saver)
+    accessor = CheckpointStateAccessor.bind(graph, saver, mode=mode)
+    config = {"configurable": {"thread_id": "failed-thread"}, "callbacks": [journal]}
+
+    with pytest.raises(RuntimeError, match="sandbox did not start"):
+        await graph.ainvoke({"messages": [HumanMessage(content="my question")]}, config)
+    assert journal.record_unjournaled_human_input() is True
+    await journal.flush()
+
+    events = await store.list_messages("failed-thread")
+    snapshot = await accessor.aget(config)
+    checkpoint_ids = [message.id for message in snapshot.values["messages"]]
+    assert len(checkpoint_ids) == 1 and checkpoint_ids[0]
+    assert [event["content"]["id"] for event in events] == checkpoint_ids
+    assert events[0]["event_type"] == "llm.human.input"
     await journal.close()
 
 

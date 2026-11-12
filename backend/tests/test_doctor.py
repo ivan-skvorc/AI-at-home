@@ -317,6 +317,30 @@ class TestCheckRunEventsDurable:
         cfg.write_text("database:\n  backend: memory\nrun_events:\n  backend: memory\n")
         assert doctor.check_run_events_durable(cfg).status == "skip"
 
+    @pytest.mark.parametrize("checkpointer_type", ["sqlite", "postgres"])
+    def test_legacy_checkpointer_without_a_database_section_warns(self, tmp_path, checkpointer_type):
+        # DatabaseConfig defaults to memory, so the feed lives in process memory
+        # while the legacy checkpointer section keeps the checkpoints durable.
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text(f"checkpointer:\n  type: {checkpointer_type}\n")
+        result = doctor.check_run_events_durable(cfg)
+        assert result.status == "warn"
+        assert result.fix is not None
+        # run_events is already db here; the missing piece is the database section.
+        assert "backend: sqlite" in result.fix
+        assert "run_events.backend: db" not in result.fix
+
+    def test_an_absent_database_section_is_not_reported_durable(self, tmp_path):
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text("config_version: 1\n")
+        assert doctor.check_run_events_durable(cfg).status == "skip"
+
+    def test_legacy_checkpointer_with_a_jsonl_feed_is_not_warned(self, tmp_path):
+        # JSONL needs no session factory, so this feed does survive a restart.
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text("checkpointer:\n  type: sqlite\nrun_events:\n  backend: jsonl\n")
+        assert doctor.check_run_events_durable(cfg).status != "warn"
+
     def test_missing_config_skipped(self, tmp_path):
         assert doctor.check_run_events_durable(tmp_path / "config.yaml").status == "skip"
 

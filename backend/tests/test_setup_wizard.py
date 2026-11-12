@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import re
 
+import sandbox_toggle
 import yaml
 from wizard import ui as wizard_ui
 from wizard.providers import (
@@ -510,10 +511,20 @@ class TestBuildMinimalConfig:
             env_var="OPENAI_API_KEY",
             sandbox_use="deerflow.community.aio_sandbox:AioSandboxProvider",
             include_bash_tool=True,
+            # What `make setup` really starts from: config.example.yaml's
+            # active sandbox block, which carries the host-local 600 s budget.
+            base_config={"sandbox": {"bash_command_timeout": 600}},
         )
         data = yaml.safe_load(content)
         assert data["sandbox"]["use"] == "deerflow.community.aio_sandbox:AioSandboxProvider"
         assert "allow_host_bash" not in data["sandbox"]
+        # The debug-session timeouts match what `make config` and
+        # `make sandbox-enable MODE=container` write. Without them a wizard
+        # install alone reclaimed a warm container (and the dev server or VM in
+        # it) ten minutes after a turn, and cut every command at 600 s.
+        toggle_block = yaml.safe_load("\n".join(sandbox_toggle.build_enabled_container_section(None)))["sandbox"]
+        assert data["sandbox"]["bash_command_timeout"] == toggle_block["bash_command_timeout"] == 1800
+        assert data["sandbox"]["idle_timeout"] == toggle_block["idle_timeout"] == 3600
         # A working image is pinned so the container sandbox bash works out of the
         # box rather than falling back to the provider's broken :latest default.
         assert data["sandbox"]["image"] == "ghcr.io/agent-infra/sandbox:1.11.0"

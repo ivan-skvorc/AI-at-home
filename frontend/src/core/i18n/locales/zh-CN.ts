@@ -560,7 +560,7 @@ export const zhCN: Translations = {
       "把任务规划成工作流脚本，由多个智能体在后台执行，结果会自动回到本对话。灵感来自 Claude Code 的 ultracode。工具调用上限仍然生效。Token 消耗极高。",
     doubleUltracodeMode: "Double Plus Ultracode",
     doubleUltracodeModeDescription:
-      "消耗 Token 的风险很高。只适合极大的任务，让它一直跑到做完、中途不要被打断。与 Plus Ultracode 相同的工作流脚本，但关闭了所有自动限制：没有步数上限、工具调用上限、Token 预算或时间上限，只有模型完成任务才会结束运行。你设置的花费上限仍然生效。",
+      "消耗 Token 的风险很高。只适合极大的任务，让它中途不被打断地运行。与 Plus Ultracode 相同的工作流脚本，但关闭了自动限制：没有步数上限，没有循环或工具调用上限（包括每次运行的子任务数量），没有 Token 预算，也没有时间上限。工作流自身的智能体数量和大小上限仍然生效。花费上限只有在设置后才生效，默认未设置。",
     doubleUltracodeWarningTitle: "Token 风险高：会一直运行到任务完成",
     ultracodeUnavailable:
       "Plus Ultracode 与 Double Plus Ultracode 需要“脚本工作流”扩展，但它未启用。本对话已改用 Ultra。",
@@ -2439,7 +2439,7 @@ export const zhCN: Translations = {
     runLimits: {
       title: "运行限制",
       description:
-        "这些限制可能让一次运行在任务完成前结束。每一项默认取自 config.yaml；在这里保存的修改会替代它，作用于本服务器上的所有运行，直到你切换回去。",
+        "这些限制可能让一次运行在任务完成前结束。每一项默认取自 config.yaml；在这里保存的修改会替代它，作用于本服务器上的所有运行，直到你切换回去。Double Plus Ultracode 会忽略其中除花费上限以外的所有限制。",
       adminOnly: "只有管理员可以修改运行限制。",
       loadError: "无法加载运行限制。",
       retry: "重试",

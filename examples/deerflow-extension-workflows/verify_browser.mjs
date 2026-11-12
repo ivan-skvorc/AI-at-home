@@ -58,9 +58,9 @@ try{
   await page.evaluate(()=>window.state='running');
   await page.locator('nav button').first().click();
 
-  // Double Plus Ultracode details: the mode, the phase heading above its steps,
+  // Ultracode details: the mode by its own name (the fixture is a Plus run), the phase heading above its steps,
   // the result's delivery state and each step's attempt/model/workspace facts.
-  await page.getByText('Double Plus Ultracode run',{exact:true}).waitFor();
+  await page.getByText('Plus Ultracode run',{exact:true}).waitFor();
   await page.getByText('Result to conversation: waiting to post · Waiting for the conversation to finish its current turn',{exact:true}).waitFor();
   await page.getByRole('heading',{name:'Phase 1 · Verify <img src=x onerror=alert(1)>',exact:true}).waitFor();
   assert.match(await page.locator('main').textContent(),/check · lead_agent · running · attempt 2 · local-small · workspace: merge · merged 3, conflicts 1/);
@@ -152,7 +152,7 @@ try{
   await page.evaluate(()=>view.dispose());
   assert.equal(await page.locator('.script-workflows').count(),0);
   assert.deepEqual(errors,[]);
-  console.log('Browser checks passed: launch retries, saved versions, exact-output review, approval, resume, child navigation, cancellation, escaped output, Double Plus Ultracode details, deletion and disposal.');
+  console.log('Browser checks passed: launch retries, saved versions, exact-output review, approval, resume, child navigation, cancellation, escaped output, Ultracode details, deletion and disposal.');
 }finally{
   await browser.close();await new Promise(resolve=>server.close(resolve));
 }

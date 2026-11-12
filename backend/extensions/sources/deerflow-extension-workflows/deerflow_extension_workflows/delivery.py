@@ -4,7 +4,8 @@ Exactly once per workflow run. The host admits at most one run per idempotency
 key (``workflow-result:<run>``, namespaced to this plugin), so two deliverers
 racing (a retry, a second Gateway) get the same run back; the delivery row
 leaves ``pending`` once and never regresses. A busy conversation (an active run,
-an open question, an interrupt) is retried later, never interrupted.
+an open question, an interrupt) is retried later, never interrupted; a start the
+spend cap refuses (402) is waited out the same way.
 
 The message is posted through the plugin-scoped AgentRuns handle, so the host
 stamps it as extension output (``deerflow_extension_origin``): the conversation
@@ -21,9 +22,10 @@ import asyncio
 import json
 import logging
 
-from deerflow_extension_api import AgentRunError
+from deerflow_extension_api import PLUGIN_OPTIONS_CONTEXT_KEY, AgentRunError
 
-from .ultracode import MODE_DOUBLE, RESULT_MESSAGE_PREFIX
+from .constants import NAMESPACE
+from .ultracode import MODE, MODE_DOUBLE, MODES, RESULT_MESSAGE_PREFIX
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +40,7 @@ MAX_ATTEMPTS = 60
 #: result give up, so these waits do not count as failed attempts.
 BUSY_WAIT_SECONDS = 24 * 3600
 BUSY = "Waiting for the conversation to finish its current turn"
+SPEND_CAP = "Spend cap reached; the result is posted once a new run is allowed"
 
 
 def open_question(messages):
@@ -58,7 +61,8 @@ def result_message(record):
     steps = record.get("steps", [])
     finished = sum(step["status"] == "completed" for step in steps)
     lines = [
-        f"[Workflow result] {name} ({run_id[:12]}) ended: {record['status']}.",
+        # The whole ID: it is what inspect_workflow_step takes.
+        f"[Workflow result] {name} ({run_id}) ended: {record['status']}.",
         "Posted automatically by the Script workflows extension when the workflow launched from this conversation ended; the user did not type this message.",
         f"Agents: {finished} of {len(steps)} completed.",
     ]
@@ -71,10 +75,39 @@ def result_message(record):
         ]
     else:
         lines.append(f"Error: {record.get('error') or 'none recorded'}")
-        unfinished = [f"{step['step_id']} ({step['status']})" for step in steps if step["status"] != "completed"][:20]
+        unfinished = [step for step in steps if step["status"] != "completed"]
         if unfinished:
-            lines.append("Unfinished steps: " + ", ".join(unfinished))
+            shown = [f"{step['step_id']} ({step['status']})" + (f": {str(step['error'])[:160]}" if step.get("error") else "") for step in unfinished[:20]]
+            lines.append("Unfinished steps: " + "; ".join(shown) + (f" (+{len(unfinished) - 20} more)" if len(unfinished) > 20 else ""))
     return "\n".join(lines)
+
+
+def result_context(record):
+    """Run context of the result turn. Derived from the record: every retry sends the same start.
+
+    The turn gets the launching run's options back (the limits as the record
+    clamped them), so a follow-up workflow the lead launches from it keeps the
+    mode, the user's limits, the model and the internet switch; and it runs on
+    the conversation's model with the conversation's internet switch itself.
+    """
+    context, options = {}, {}
+    mode = record.get("mode")
+    if mode in MODES:
+        limits = record["limits"]
+        options.update(mode=mode, max_agents=limits["max_calls"], max_parallel=limits["concurrency"])
+        # Double Plus has no wall clock to pass on.
+        if mode == MODE:
+            options["max_minutes"] = max(1, limits["timeout_seconds"] // 60)
+    if record.get("model"):
+        context["model_name"] = options["model"] = record["model"]
+    if record.get("internet_enabled") is False:
+        context["internet_enabled"] = options["internet_enabled"] = False
+    # The host lifts its automatic limits only for a run whose context says so.
+    if mode == MODE_DOUBLE:
+        context["mode"] = MODE_DOUBLE
+    if options:
+        context[PLUGIN_OPTIONS_CONTEXT_KEY] = {NAMESPACE: options}
+    return context or None
 
 
 class Delivery:
@@ -146,16 +179,27 @@ class Delivery:
             if state.get("next") or state.get("interrupts") or open_question(state.get("values", {}).get("messages", [])):
                 await asyncio.to_thread(self.store.delivery_note, owner, run_id, BUSY)
                 return "busy"
-            async with asyncio.timeout(self.config["admission_timeout_seconds"]):
-                run = await runs.start(
-                    thread_id=thread_id,
-                    input={"messages": [{"role": "user", "id": f"{RESULT_MESSAGE_PREFIX}{run_id[:32]}", "content": result_message(record)}]},
-                    # The lead finishing a Double Plus Ultracode task keeps the
-                    # mode's missing limits; derived from the record, so every
-                    # retry sends the same start.
-                    context={"mode": MODE_DOUBLE} if record.get("mode") == MODE_DOUBLE else None,
-                    idempotency_key=f"workflow-result:{run_id}",
-                )
+            while True:
+                try:
+                    async with asyncio.timeout(self.config["admission_timeout_seconds"]):
+                        run = await runs.start(
+                            thread_id=thread_id,
+                            input={"messages": [{"role": "user", "id": f"{RESULT_MESSAGE_PREFIX}{run_id[:32]}", "content": result_message(record)}]},
+                            context=result_context(record),
+                            idempotency_key=f"workflow-result:{run_id}",
+                        )
+                    break
+                except AgentRunError as exc:
+                    if exc.status_code not in (400, 422) or not record.get("model"):
+                        raise
+                    # The conversation's model is a default: when the host refuses it
+                    # (removed or renamed since launch) the result is posted on the
+                    # server's. Stored first so every retry sends the same start; a
+                    # clustered store retired the ended record's lease, so there the
+                    # drop is repeated per attempt and the idempotency key keeps one run.
+                    record["model"] = None
+                    if not self.clustered:
+                        await self.save(owner, record)
         except AgentRunError as exc:
             if exc.status_code == 409:
                 await asyncio.to_thread(self.store.delivery_note, owner, run_id, BUSY)
@@ -167,8 +211,10 @@ class Delivery:
                 await asyncio.to_thread(self.store.delivery_note, owner, run_id, "Sign in again to post this result")
                 return "stop"
             if exc.status_code == 402:
-                await asyncio.to_thread(self.store.delivery_note, owner, run_id, "Spend cap reached; the result is posted once a new run is allowed")
-                return "stop"
+                # The cap's window reopens without any owner action, so this is
+                # waited out like a busy conversation rather than abandoned.
+                await asyncio.to_thread(self.store.delivery_note, owner, run_id, SPEND_CAP)
+                return "busy"
             await asyncio.to_thread(self.store.delivery_note, owner, run_id, f"Delivery deferred ({exc.status_code})")
             return "retry"
         except TimeoutError:

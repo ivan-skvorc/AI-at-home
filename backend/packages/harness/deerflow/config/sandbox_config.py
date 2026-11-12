@@ -6,6 +6,28 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validat
 
 from deerflow.config._boolean_guards import reject_boolean
 
+# Host device nodes `sandbox.devices` may forward into a per-thread container.
+# A device node is a direct line into the host kernel, so this is an allowlist
+# of exact paths rather than a pattern: /dev/kvm is what hardware-accelerated
+# virtual machines need, and nothing else has been reviewed.
+ALLOWED_SANDBOX_DEVICES = frozenset({"/dev/kvm"})
+
+
+def validate_sandbox_devices(devices: list[str]) -> list[str]:
+    """Return ``devices`` deduplicated, refusing anything off the allowlist.
+
+    Exact string match on purpose: Docker's ``host:container:perm`` spelling
+    would let a config file map a different host device onto an allowed name.
+    """
+    validated: list[str] = []
+    for device in devices:
+        if device not in ALLOWED_SANDBOX_DEVICES:
+            raise ValueError(f"sandbox.devices accepts only {sorted(ALLOWED_SANDBOX_DEVICES)} (exact path, no host:container:perm form); got {device!r}")
+        if device not in validated:
+            validated.append(device)
+    return validated
+
+
 SandboxOwnershipType = Literal["memory", "redis"]
 SandboxOverflowPolicy = Literal["wait", "reject", "burst"]
 SandboxNetworkMode = Literal["open", "isolated", "allowlist"]
@@ -220,6 +242,7 @@ class SandboxConfig(BaseModel):
         provisioner_url: Delegate sandbox lifecycle to the provisioner service (remote/K8s mode)
         expose_ports: Extra container ports published 1:1 to the host loopback (local container mode only)
         extra_capabilities: Additional Linux capabilities for the sandbox container, e.g. SYS_PTRACE for gdb attach (local container mode, Docker runtime only)
+        devices: Host device nodes forwarded into the sandbox container; only /dev/kvm is accepted (local container mode, Docker runtime only)
         thread_data_mounts: Override whether thread data is already visible to
             the sandbox through shared mounts. Omit to auto-detect from the backend.
 
@@ -374,6 +397,20 @@ class SandboxConfig(BaseModel):
             '(e.g. ["SYS_PTRACE"] so gdb/strace can attach to running processes). Ignored (with a warning) in external base_url and provisioner modes and on non-Docker runtimes.'
         ),
     )
+    devices: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Host device nodes forwarded into the sandbox container via `--device <d>:<d>:rw` in AIO local container mode with the Docker runtime. "
+            'Only ["/dev/kvm"] is accepted (hardware-accelerated virtual machines); every other value is rejected. The container is never run `--privileged`. '
+            "The host must have the device, or every sandbox start fails. Ignored (with a warning) in external base_url and provisioner modes and on non-Docker runtimes."
+        ),
+    )
+
+    @field_validator("devices")
+    @classmethod
+    def _validate_devices(cls, value: list[str]) -> list[str]:
+        return validate_sandbox_devices(value)
+
     network: SandboxNetworkConfig = Field(
         default_factory=SandboxNetworkConfig,
         description="AioSandboxProvider outbound network isolation and approval policy.",

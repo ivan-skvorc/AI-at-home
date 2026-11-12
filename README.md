@@ -7,7 +7,7 @@
 > - 🔓 **Passwordless on your own network** — `make dev` / `make start` come up with no login wall, so your phone and laptop reach it over the LAN or [Tailscale](https://tailscale.com/) immediately. Opt out with `DEER_FLOW_AUTH_DISABLED=0`; auth stays on in production regardless.
 > - 🦙 **Auto-populated Ollama models** — `config.yaml` syncs from your `ollama pull` list on every launch, with capabilities detected and each model's context window sized to your GPU instead of Ollama's 2048-token default. The GPU is detected on its own (an NVIDIA or AMD card beside the daemon). When Ollama runs on another machine, enter its GPU memory in **Settings → Models**: updates and syncs never reset it, and it wins over `ollama.vram_gb`. Local models are **free** — you pay for electricity.
 > - 🔑 **API-key model auto-config** — drop a cloud key in `.env` and the matching models uncomment themselves in `config.yaml` on the next launch. Anthropic, OpenAI, xAI, Gemini, DeepSeek, Moonshot, Qwen, Mistral, MiniMax, Z.ai direct, plus a routed set via OpenRouter — one flagship per lab, except Anthropic and OpenAI, whose top tier is really two models a factor of two or more apart in price, so both halves are routed (Fable 5.1 + Opus 5.5, GPT-6 Astra + GPT-6.1 Sol).
-> - 🎟️ **Subscription models from Settings → Models** — connect a ChatGPT plan in your browser, sign in to Grok with a device code, or add a Kimi Code subscription key. Available models populate the picker automatically, with encrypted server-side credentials and refresh/disconnect controls. ChatGPT uses a manual return-URL handoff for LAN/Tailscale access; Kimi is restricted to personal interactive chats.
+> - 🎟️ **Subscription models from Settings → Models** — connect a ChatGPT plan in your browser, sign in to Grok with a device code, or add a Kimi Code subscription key. Available models populate the picker automatically, with encrypted server-side credentials and refresh/disconnect controls. ChatGPT uses a manual return-URL handoff for LAN/Tailscale access; Kimi is restricted to personal interactive chats. A Grok or Kimi plan request that is accepted and then never answered now times out and, after the usual retries, ends in a visible error instead of showing "Working" for ever.
 > - 🎨 **Grok Imagine, X search and voice on your Grok plan** — once Grok is connected, an administrator can switch on image generation and editing, short video clips, X (Twitter) search and Grok voice (read answers aloud, transcribe speech), all paid for by the Grok subscription instead of API billing. **Every switch starts off**, a feature xAI refuses for your plan stays locked (image and video run on the plan's own Imagine quota, so the plan is checked on their first request), and each one says it sends your prompt (and, for edits, your images) to xAI; the internet switch turns them all off for a chat. Costs nothing to turn on beyond the plan you already have.
 > - 🔎 **Self-hosted search, no API key** — a bundled SearXNG is provisioned at startup (an existing instance is reused) and backs the default `web_search`.
 > - 🦊 **A local browser for page fetching, no API key** — Camoufox replaces the Jina cloud reader as the default `web_fetch`, and installs itself on every launch path.
@@ -17,8 +17,8 @@
 > **Using it every day**
 >
 > - ➕ **Plus Ultracode — the plan becomes a script** — inspired by Claude Code's *ultracode* (this is the mode that used to be called Double Plus Ultracode). In this composer mode the agent answers a substantive request by writing an inspectable workflow script that many agents run in the background (understand, change, verify, with findings checked by a second agent), and the result **comes back to the same chat on its own**, exactly once. The Script workflows extension it runs on is bundled and on by default. Agent and time limits live under **Settings → Subagents**, one failed agent no longer ends the whole workflow, and the usual **tool-call limits still apply** — a runaway tool loop is still told to wrap up.
-> - 🧬 **Double Plus Ultracode — the same script, with no automatic limits** — the same workflow as Plus Ultracode, but **only the model finishing ends the run**: no step limit (not even the 1,000-step ceiling), no tool-call limits, no token budgets and no workflow time limit, for the lead, every workflow agent, every subagent it delegates to and the turn that receives the result. Hover or focus the option in the mode menu, before you pick it, and a **warning** pops up: **token-risky**, meant for **extremely large tasks that should run until they finish, without interruptions**. Your **spend cap still applies** (set one under Settings → Run limits), and so do the workflow's agent count and parallelism under **Settings → Subagents**. Do not leave this selected for ordinary chat.
-> - 🎚️ **Run limits you can change or switch off in Settings** — the spend cap, the tool-call limits that tell an agent to "wrap up" after 30 calls to one tool, the token budgets and the step limit for background runs all live under **Settings → Run limits**, so a long merge or refactor — in Plus Ultracode or any other mode — no longer stops halfway because of a number buried in `config.yaml`. Double Plus Ultracode already runs with every limit but the spend cap off for that one run. Each limit shows whether it comes from `config.yaml` or was set on the page, and **one click goes back to `config.yaml`**. Administrators only; changes apply from the next run, with no restart.
+> - 🧬 **Double Plus Ultracode — the same script, with the automatic limits lifted** — the same workflow as Plus Ultracode with **no step limit** (not even the 1,000-step ceiling), **no loop or tool-call limits** (including the number of subtasks per run), **no token budgets and no workflow time limit**, for the lead, every workflow agent, every subagent it delegates to and the turn that receives the result. That is not "nothing stops it": the workflow's **agent count and size limits** still apply (**Settings → Subagents**), a **spend cap applies only if you set one** (Settings → Run limits; it is off by default, and agents running in parallel can overshoot it), a configuration change mid-run ends the workflow, and the model provider's own stops (output length, safety, failed retries) still end a turn. A **warning line stays in the composer** for as long as the mode is selected — **token-risky**, meant for **extremely large tasks** — with the full text on hover or focus. Do not leave this selected for ordinary chat.
+> - 🎚️ **Run limits you can change or switch off in Settings** — the spend cap, the tool-call limits that tell an agent to "wrap up" after 30 calls to one tool, the token budgets and the step limit for background runs all live under **Settings → Run limits**, so a long merge or refactor — in Plus Ultracode or any other mode — no longer stops halfway because of a number buried in `config.yaml`. Double Plus Ultracode already ignores every limit on that page but the spend cap, for that one run (the workflow's own limits are not on the page and still apply). Each limit shows whether it comes from `config.yaml` or was set on the page, and **one click goes back to `config.yaml`**. Administrators only; changes apply from the next run, with no restart.
 > - 🔀 **Independent model per conversation, remembered by the conversation** — every chat keeps its own model, subagent model, mode and reasoning effort, recorded on the chat itself rather than in one browser. Switching conversations switches the picker to *that* chat's model instead of leaving the last one selected — on your phone and after a site-data clear too — and a brand-new chat no longer forgets its model the moment it is created.
 > - 🚦 **Concurrent chats** — leaving a chat used to cancel its run. Now a chat you leave mid-answer keeps streaming in the background and notifies you when it lands; come back and the answer is already there.
 > - 🗃️ **Folders in the sidebar, with subfolders** — the chat list is a tree. A conversation you file is **inside its folder and gone from the list outside it**, the way a file manager works, and folders nest up to five levels. Drag chats and folders around, or use the **⋯** menus. Deleting a folder never deletes the chats in it. Stored per user on the server; nothing to configure.
@@ -30,7 +30,8 @@
 > - 🧱 **No request bigger than the window** — before every model call the whole request (system prompt, tool schemas, conversation) is measured against the serving model's window. If it does not fit, the oldest tool results are dropped from that request — never your messages or the instructions — and if it still does not fit it is **not sent**: the chat says why, instead of Ollama silently cutting off the start of the prompt. On a local model the request is also **built to fit from the first message**: tools are described in short form, skills are listed by name and MCP tools wait behind a search, so a synced 32K Ollama model keeps about 15K tokens for the conversation in Flash mode (it had about 7K). Compaction fires before the window fills, and a refusal states the real limit and what is using it. Nothing to turn on; a model whose window is unknown is left alone.
 > - 🎯 **A drift check for long documents** — `make drift-eval` gives a model a large PDF with facts planted at known pages, then has a *second* model judge whether the answer still addresses the question that was asked or quietly became "summarise this document". The planted facts grade the judge too, so a judge that waves through a wrong answer is reported as the judge failing. Runs offline against the document path, or end to end through the running agent with `MODE=agent`.
 > - 🐳 **Full clone-and-debug sandbox runs** — one-command per-thread containers, host-reachable ports, native debuggers (`gdb` / `strace`), and a `repo-runner` skill that encodes clone → install → run → debug.
-> - 📜 **Scroll-back that survives a restart** — history is served by the run-event store, which now defaults to `db` rather than process memory. Older messages keep loading after the Gateway restarts.
+> - 🖥️ **Hardware-accelerated virtual machines in the sandbox, opt-in** — set `sandbox.devices: [/dev/kvm]` and a QEMU guest the agent starts inside its per-conversation container runs on the host's KVM instead of slow software emulation; the `repo-runner` skill carries the recipe (headless QEMU, a cloud-init seed, SSH on a loopback port). What you would not expect: it is **off by default**, it needs a sandbox image that **already contains QEMU** (none is shipped, and the agent cannot `apt-get` one in), and **it has not been run end to end** — it was written without Docker or KVM at hand. Switching it on costs one config key and a larger attack surface: the host kernel's KVM interface is handed to everything the agent runs.
+> - 📜 **Scroll-back that survives a restart** — history is served by the run-event store, which now defaults to `db` rather than process memory. Older messages keep loading after the Gateway restarts, an edited version of a conversation keeps the whole history instead of starting at the last compaction, and a message whose run was stopped before the model answered is kept too. It needs the default SQL database, and history lost before these fixes does not come back.
 >
 > **Knowing what it costs**
 >
@@ -746,7 +747,7 @@ Camoufox reuses a single headless browser across requests, renders JS-heavy page
 
 #### Clone-and-run a repo in the sandbox
 
-To have the agent take a GitHub link, clone it, install its requirements, and run or debug the program with admin rights, use the containerized sandbox in **per-thread container mode** (the agent runs as root inside a Docker container per conversation, with `/mnt/user-data` host-backed so files and outputs surface normally):
+To have the agent take a GitHub link, clone it, install its requirements, and run or debug the program away from your host, use the containerized sandbox in **per-thread container mode** (the agent gets its own Docker container per conversation, with `/mnt/user-data` host-backed so files and outputs surface normally). The agent installs a project's dependencies inside the workspace (a venv, `node_modules`, cargo). It does **not** have admin rights by default: the hardened container blocks `sudo`, so `apt-get` works only when the image's shell runs as root, and a system package the project needs otherwise belongs in a custom `sandbox.image`. Earlier versions of this page promised root and `apt`; that was wrong for the pinned image.
 
 ```fish
 make sandbox-enable MODE=container   # writes an AioSandboxProvider block (no base_url)
@@ -757,9 +758,19 @@ Then restart the app. For a private repo, set `GITHUB_TOKEN` in `.env` (scoped t
 - `bash_command_timeout` — raise it for long installs and builds (a big `pip install` or `cargo build` no longer stops at the old 600s ceiling). Each command now carries its own bounded request budget, so `request_timeout` no longer has to be raised alongside it; it governs the calls that budget does not reach — session creation and the file/list operations.
 - `expose_ports: [8000]` — publish a port so a dev server the agent starts is reachable at `localhost:8000` from your own browser.
 - `extra_capabilities: [SYS_PTRACE]` — allow `gdb`/`strace` to attach for native debugging.
-- `idle_timeout` — keep a warmed-up debug environment alive longer between the agent's turns.
+- `idle_timeout` — keep a warmed-up debug environment alive longer between the agent's turns. `make config`, `make sandbox-enable MODE=container` and `make setup` all write `idle_timeout: 3600` and `bash_command_timeout: 1800`.
+- `devices: [/dev/kvm]` — forward the host's KVM device so a virtual machine inside the sandbox is hardware-accelerated. Off by default; `/dev/kvm` is the only value accepted, anything else fails config validation, and the container is never run `--privileged`. Read the next paragraphs before setting it.
+- `image` — a custom sandbox image, built `FROM` the pinned tag, for system packages the agent cannot install at run time (QEMU, for one). `make sandbox-enable MODE=container` rewrites the sandbox section and resets `image:` and `devices:`, so set them again afterwards.
 
-The bundled **`repo-runner` skill** walks the agent through the whole loop (clone → detect toolchain → install in an isolated venv → run/debug → report the exact commands). Invoke it with `/repo-runner <github-url and what to do>`.
+The bundled **`repo-runner` skill** walks the agent through the whole loop (clone → detect toolchain → install in an isolated venv → run/debug → report the exact commands). Invoke it with `/repo-runner <github-url and what to do>`. It checks `id -u` first and carries on as an unprivileged user, skipping `apt-get` and `sudo`; it stops only when the sandbox has host bash disabled.
+
+**Running a virtual machine in the sandbox.** When a project needs a VM (an OS image to boot, a kernel module to test), the skill's *When the project needs a virtual machine* section gives the agent a recipe: probe what the container has, start a headless QEMU guest in the background from files kept under `/mnt/user-data/workspace/vm/`, seed it with cloud-init, reach it over SSH on `127.0.0.1:2222`, and check at the start of each later turn whether it is still running. Three things decide whether that works for you:
+
+- **The image must already contain QEMU.** Whether the stock image ships it was not checked, and the agent cannot install it (no `sudo`). Build your own image `FROM ghcr.io/agent-infra/sandbox:1.11.0` with `qemu-system-x86` (or `qemu-system-arm`), `qemu-utils`, `genisoimage` and `openssh-client`, and name it in `sandbox.image`. A ready-made image and a `make` target for it were proposed and are **not shipped yet**. Without QEMU the skill stops and tells you this.
+- **Without `devices: [/dev/kvm]` the guest is software-emulated** (QEMU's TCG): it works with no extra permission and is slow. With it, the guest uses KVM, provided the Docker host has `/dev/kvm` at all — where it does not (Docker Desktop on macOS, a cloud VM without nested virtualization) **every** sandbox start fails with an error naming `sandbox.devices`. On Debian and Ubuntu the device is `0660 root:kvm`, which the sandbox's unprivileged user cannot open until the host has the udev rule quoted beside the key in `config.example.yaml`. Guest memory counts against the container's 2 GB limit; raise `DEER_FLOW_SANDBOX_MEMORY` for a larger guest. The key is ignored, with a warning, on Apple Container and in external or provisioner sandbox mode.
+- **The security cost is real.** `/dev/kvm` hands the host kernel's KVM interface to everything the agent runs, in a container that already runs without a seccomp filter, so a KVM bug becomes a way out to the host, and commands run inside the guest are not seen by the bash audit. Leave it off unless you need fast VMs.
+
+**None of this has been run end to end.** The key, the container flags and the recipe's commands are covered by tests, but the change was made on a machine with no Docker daemon, no `/dev/kvm` and no QEMU: whether the pinned image's user can open the forwarded device, which QEMU tools the image ships and whether the recipe boots a guest are unverified. [FORK.md](FORK.md#full-sandbox-runs-clone-a-repo-and-rundebug-it) lists what is unverified and gives one `docker run` command that checks the first of those on a Linux host with KVM.
 
 Custom blob storage backends accept `blob_storage.backend: module.Class` or
 `module:Class`, including a single `.py` module importable by the Gateway.
@@ -936,7 +947,23 @@ nothing logged. `db` writes into the database configured above, so it needs no
 extra setup; on `database.backend: memory` the Gateway falls back to the
 in-memory event store automatically. Existing installs pick the durable value up
 through `make config-upgrade`, and `make doctor` reports the combination
-directly.
+directly — including a config that keeps its checkpoints through the deprecated
+`checkpointer` section and has no `database` section, which runs the in-memory
+event store and used to be reported as fine.
+
+A durable store keeps only what is written to it, and four paths used to skip
+the write. An edited version of a conversation is now seeded from the parent's
+whole visible history rather than from the checkpoint, so editing a message in a
+long, compacted conversation no longer produces a version that starts at the
+compaction point. A message whose run ended before the model was called (Stop
+during a long compaction, a sandbox that did not start) is recorded. `/compact`
+fills an empty history from the checkpoint before it removes anything. And
+message rows are written as they arrive instead of in batches of 20 events, so a
+killed Gateway loses at most the row being written. If the first history page
+fails to load, the **Load more** button stays as a manual retry. What remains:
+history that was never written before these fixes does not come back, an edit
+falls back to the checkpoint when the parent's history is empty or unreadable,
+and an edit can reach back only 400 checkpoints.
 Gateway startup automatically repairs the missing run-change schema affecting
 some existing databases (#5516). The repair preserves run history and existing
 change positions; downgrading the repair to its predecessor also retains the
@@ -2137,6 +2164,17 @@ models never silently fall back to separately billed API models.
 subscription key, rather than impersonating Kimi CLI's OAuth client. Scheduled,
 webhook, and other autonomous runs are refused before contacting Kimi; use a
 normal paid API model for unattended work. Client identity stays DeerFlow.
+
+**A plan request that never answers now times out.** Grok and Kimi subscription
+models had no network timeout: a request the provider accepted and then left
+unanswered showed "Working" indefinitely. They now wait at most 10 seconds to
+connect and 240 seconds for each read, retry like any other network error
+(three attempts by default), and then show the ordinary error message — up to
+about twelve minutes in the worst case. A long answer that
+keeps streaming is not affected. There is no setting for it, because these
+models come from the discovered catalog rather than `config.yaml`. Grok
+reasoning models also show their thinking text while they think, when the
+provider sends it. Neither change was tested against the live Grok service.
 
 Provider plans, account eligibility, model capabilities, quotas, and regional
 availability still apply. Models come from each account's catalog; listing a
@@ -3687,18 +3725,33 @@ script, and only the final answer comes back to the conversation.
 **Two modes, one script.** *Plus Ultracode* is that workflow with the usual
 tool-call limits still on (wrap up after repeated calls to one tool, then a
 forced stop). *Double Plus Ultracode* is the same run — same brief, same agent
-count and parallelism — with **no automatic limits**: no step limit (the
-1,000-step `max_recursion_limit` ceiling does not apply to it), no tool-call
-limits, no token budgets and no workflow time limit, for the lead, every agent
-the workflow starts, every `task` subagent it delegates to, and the turn that
-receives the result. Only the model finishing ends it. The spend cap still
-applies, so set one under **Settings → Run limits** before a large run.
-Hover or focus it in the mode menu, before you pick it, and a warning pops up:
-it is token-risky and meant only for extremely large tasks that should run until
-they finish, without interruptions. The same warning shows on the mode button
-while it is selected. A chat that already had the old
-Double Plus Ultracode name keeps Plus Ultracode, so it does not silently lose
-its limits. Do not leave Double Plus Ultracode selected for ordinary chat.
+count and parallelism — with **the automatic limits lifted**: no step limit (the
+1,000-step `max_recursion_limit` ceiling does not apply to it), no loop or
+tool-call limits (including the number of `task` subtasks per run), no token
+budgets and no workflow time limit, for the lead, every agent the workflow
+starts, every `task` subagent it delegates to, and the turn that receives the
+result. A follow-up workflow launched from that result keeps the mode.
+
+That is not the same as "nothing stops it". These still end a Double Plus run or
+its workflow on their own:
+
+| Still applies | What happens |
+| --- | --- |
+| **The spend cap, if you set one** | Off by default, so a stock install has no money limit on this mode: set one under **Settings → Run limits** before a large run. Agents that run in parallel each check their own spend, so together they can end somewhat above the cap. |
+| **Agents per workflow and at once** | Your **Settings → Subagents** numbers. Calls past the parallel limit wait; a call past the total fails the workflow. |
+| **Size limits** | A task (16,000 bytes), an agent's answer (12,000 bytes) and the script's final result (12,000 bytes, about 8,000 characters) are capped, and so are progress lines, phases and the workflow's stored record. Errors name the limit. |
+| **A configuration change during the run** | Editing `config.yaml`, or switching a skill or an MCP server on or off in Settings, fails a running workflow at its next agent. |
+| **Workflows at once** | Two active per user and four in all by default. With no time limit, two long Double Plus workflows block that user's next launch until one ends. |
+| **The model provider** | An answer cut off at the model's output limit, a safety stop, a model call that keeps failing after its retries, or a request that cannot fit the model's window still end a turn. |
+| **`/goal`** | Its continuation caps are unchanged. |
+
+**A warning line stays in the composer** for as long as Double Plus Ultracode is
+selected ("Token-risky: runs until the task is finished"), so it is visible on a
+phone, in a chat that opens already in the mode, and while a run streams. Hover
+or focus the option in the mode menu, or the mode button, for the full text. A
+chat that already had the old Double Plus Ultracode name keeps Plus Ultracode,
+so it does not silently lose its limits. Do not leave Double Plus Ultracode
+selected for ordinary chat.
 
 **What a run looks like.** You pick *Plus Ultracode* or *Double Plus Ultracode* in the composer's mode
 menu and ask. The agent plans the work in phases (usually understand, change,
@@ -3716,12 +3769,33 @@ nothing. After a Gateway restart a pending result is posted the next time you op
 checkpoints, a script can group its work with `phase(title)` (the progress page
 shows steps under each phase), fan out over a long list with
 `pipeline(items, fn, {concurrency})` (one lazy agent per item, never more than the
-window in flight), require an agent's answer to match a JSON `schema` (a mismatch
+window in flight), run each item through several stages with
+`pipeline(items, stage1, stage2, ...)` (later stages get the previous result),
+require an agent's answer to match a JSON `schema` (a mismatch
 is re-asked up to twice, on the same child conversation, under new attempt
 identities), and run a step on a different `model`, so a fan-out can use a cheap or
 local model while the organizer stays strong. The model choice goes through the
 same `model:use` permission check as any other run. `Date` and `Math.random` stay
-unavailable, so a recovered workflow replays exactly.
+unavailable, so a recovered workflow replays exactly. A wide fan-out no longer
+fails for being wide: `parallel()` takes up to 1,000 calls, and calls beyond the
+64 the host holds at once wait their turn.
+
+**Agents use the conversation's model and its internet switch.** A workflow's
+agents and the turn that receives the result are runs of their own. They now
+start on the model the conversation is on, unless a step names another, and
+with web tools off when the conversation's internet switch is off. Before, they
+used the server's default model and kept their web tools.
+
+**Inspired by Claude Code's ultracode, not the same thing.** The shape matches:
+a script in an isolated worker, a background run, only the final value comes
+back. These parts of the original are not here: a script has no `budget` object
+to read or divide, it cannot start another workflow with a nested `workflow()`
+(the agent can launch a follow-up after reading a result), there is no `meta`
+header, the chat shows **no progress tree** while a workflow runs (steps, phases
+and logs are on the **Script workflows** page only), and a failed workflow
+cannot be resumed or replayed from the chat. What the agent does get for a
+failed or oversized run is a tool that reads the output of each step that
+finished, so that work is not redone.
 
 **Shared workspaces are opt-in.** By default every agent works in its own empty
 workspace. With `shared_workspace: read` in the extension's operator config a step
@@ -3749,12 +3823,16 @@ launching one that large.
 
 **One failed agent does not end the workflow.** The agent is told to catch each
 agent's failure in its script, so an agent that errors is reported in the result
-instead of cancelling the others. Agents are told they run unattended (a question
-from one would stop the workflow) and to keep their answer under the 12,000-byte
-limit. When a workflow still fails or leaves steps unfinished, the agent finishes
+instead of cancelling the others. Agents are told they run unattended and to keep
+their answer under the 12,000-byte limit; an agent that asks a question anyway
+fails only its own step. When a workflow still fails or leaves steps unfinished,
+the failure message names the unfinished steps and why, and the agent finishes
 the rest itself or launches one smaller workflow for just that part, instead of
-stopping at a failure report. A result waits up to a day for a busy chat to finish
-its turn before it falls back to being posted on your next workflow action.
+stopping at a failure report. A launch that is refused (too many active
+workflows, a script that is too large) comes back to the agent with the reason,
+so it can fix it rather than report a generic error. A result waits up to a day
+for a busy chat to finish its turn, or for a spend cap that refused it, before it
+falls back to being posted on your next workflow action.
 
 **What it costs.** It is very token-heavy: every agent is a full run. Each agent
 runs in its own conversation linked to yours, so the chat header's cost dropdown
@@ -3762,7 +3840,10 @@ shows a **Workflow agents** row with their combined spend. It is kept outside th
 chat's own total and chart, because none of it is a turn of this chat. Your
 `spend_budget` caps still apply: when a cap refuses a new agent the workflow fails
 cleanly ("Spend cap reached; no new agents were started") instead of waiting on a
-reconciliation. There is no hard per-workflow money budget.
+reconciliation. There is no hard per-workflow money budget, and the cap is not
+exact for a workflow: each agent checks its own spend against the total that
+stood when it started, so agents started together can each use the remaining
+allowance before a later one is refused.
 
 **It is on by default.** The Script workflows extension ships bundled: a locked
 snapshot in `backend/extensions/sources/deerflow-extension-workflows` that every
@@ -3827,6 +3908,12 @@ and win until you switch back. A change applies from the next run, with no
 restart; runs already going keep the limits they started with. Anyone signed in
 can read the effective limits through `GET /api/settings/run-limits`; only an
 administrator can change them.
+
+**Double Plus Ultracode ignores all of them except the spend cap**, and the page
+says so. It does not ignore what is not on this page: the workflow's own agent
+and size limits, a configuration change mid-run, and the model provider's stops
+still apply to it (see the table under
+[Plus Ultracode and Double Plus Ultracode](#plus-ultracode-and-double-plus-ultracode--the-plan-becomes-a-script)).
 
 ### Generating Agents From Your History
 
@@ -5482,7 +5569,7 @@ same tools and parameters, shorter descriptions), skills are listed by name and
 read on demand, and MCP tools wait behind `tool_search` until they are needed,
 whatever `skills.deferred_discovery` and `tool_search.enabled` say. On a synced
 32K Ollama model a new chat's instructions and tools take about 7.4K tokens in
-Flash and 11.4K in Double Plus Ultracode, leaving 10–15K for the conversation;
+Flash and 11.8K in Double Plus Ultracode, leaving 10–15K for the conversation;
 before, Double Plus Ultracode left 74. Compaction also fires earlier: below what
 the guard leaves after those fixed tokens — 10,118 tokens on a synced 32K model —
 and at half the prompt space on larger ones, with the configured

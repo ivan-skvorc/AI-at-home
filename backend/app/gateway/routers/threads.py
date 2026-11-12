@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langgraph.checkpoint.base import empty_checkpoint
 from langgraph.types import Overwrite
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -38,6 +39,7 @@ from app.gateway.checkpoint_lineage import (
     resolve_history_versions,
     resolve_stamp_candidate_versions,
 )
+from app.gateway.conversation_reader import read_visible_message_page
 from app.gateway.deps import get_checkpointer, get_run_event_store, get_run_manager, get_run_store
 from app.gateway.history_seed import reserve_history_seed, write_history_seed
 from app.gateway.hitl_approval import find_pending_interrupts
@@ -48,7 +50,9 @@ from app.gateway.services import (
     build_thread_checkpoint_state_accessor,
     build_thread_checkpoint_state_mutation_accessor,
     custom_agent_name,
+    ensure_checkpoint_history_seeded,
     reserve_checkpoint_write,
+    resolve_thread_assistant_id,
     strip_server_owned_state_metadata,
 )
 from app.gateway.utils import sanitize_log_param
@@ -78,6 +82,7 @@ from deerflow.runtime.context_compaction import (
     compact_thread_context,
 )
 from deerflow.runtime.context_keys import checkpoint_agent_binding_metadata
+from deerflow.runtime.events.message_identity import message_identity
 from deerflow.runtime.events.message_seq import stamp_messages_with_seq
 from deerflow.runtime.goal import (
     DEFAULT_MAX_GOAL_CONTINUATIONS,
@@ -89,7 +94,7 @@ from deerflow.runtime.goal import (
     read_thread_goal,
     write_thread_goal,
 )
-from deerflow.runtime.journal import build_branch_history_seed_events
+from deerflow.runtime.journal import _coerce_seed_message, _should_persist_human_input_message, build_branch_history_seed_events
 from deerflow.runtime.run_origin import DEERFLOW_ORIGIN_KEY, DEERFLOW_PARENT_THREAD_KEY, admit_origin
 from deerflow.runtime.runs.manager import ConflictError
 from deerflow.runtime.runs.worker import RUN_MESSAGE_IDS_METADATA_KEY, valid_duration_entry, valid_run_message_id_entry
@@ -159,6 +164,10 @@ _BRANCH_EXCLUDED_CHANNELS = frozenset({"sandbox", "thread_data", "task_history"}
 _BRANCH_GOAL_CHANNELS = frozenset({"goal", GOAL_OUTCOME_CHANNEL})
 _BRANCH_HISTORY_SCAN_LIMIT = 200
 _BRANCH_HISTORY_RAW_SCAN_LIMIT = _BRANCH_HISTORY_SCAN_LIMIT * 2
+_BRANCH_SEED_FEED_PAGE_SIZE = 200
+# One lookup takes one OR-ed term per identity, and SQLite refuses an
+# expression deeper than 1000; a long thread's checkpoint holds more messages.
+_BRANCH_SEED_IDENTITY_CHUNK_SIZE = 400
 _BRANCH_TITLE_MAX_LENGTH = 256
 _BRANCH_TITLE_SEQUENCE_MAX = 9_007_199_254_740_991
 _BRANCH_SIBLING_PAGE_SIZE = 100
@@ -306,6 +315,140 @@ def _rewrite_branch_answer(messages: list[Any], message_id: str, text: str) -> l
             raise HTTPException(status_code=500, detail="Failed to apply the edited answer")
         rewritten.append(copier(update={"content": text}))
     return rewritten
+
+
+def _branch_seed_row_key(message: Any) -> tuple[str, str] | None:
+    """Return the kind and feed identity of the row the seed writes for ``message``.
+
+    ``None`` for a message the seed builder writes no row for: a system
+    reminder, a hidden user message, a summary. Such a message can share its
+    identity with a feed row (DynamicContextMiddleware gives its reminder the
+    question's id and re-keys the question), so it must never stand in for one.
+    """
+    coerced = _coerce_seed_message(message)
+    if isinstance(coerced, HumanMessage):
+        if not _should_persist_human_input_message(coerced):
+            return None
+        kind = "human"
+    elif isinstance(coerced, AIMessage):
+        kind = "ai"
+    elif isinstance(coerced, ToolMessage):
+        kind = "tool"
+    else:
+        return None
+    identity = message_identity({"id": coerced.id, "type": kind})
+    return (kind, identity) if identity is not None else None
+
+
+def _merge_branch_seed(feed_rows: list[dict[str, Any]], checkpoint_messages: list[Any]) -> list[Any]:
+    """Lay the branch checkpoint's messages over the parent's feed rows.
+
+    The feed's order is the transcript's, so it is kept. A message in both is
+    taken from the checkpoint: that copy is what the branch runs on, and it
+    carries an answer rewrite. A checkpoint-only message (hidden context, or
+    one the feed never received) stays behind the checkpoint message it
+    follows.
+    """
+    seed: list[Any] = []
+    position: dict[tuple[str, str], int] = {}
+    for row in feed_rows:
+        message = row.get("content")
+        identity = _branch_seed_row_key(message)
+        if identity is not None:
+            # The journal writes the last user message again on every resume
+            # and regenerate run, and a steered answer again with its
+            # correction. Keep one row, as the feed's readers do: the newest
+            # copy, where the message first appeared. The seed builder opens a
+            # new synthetic turn at every human row.
+            if identity in position:
+                seed[position[identity]] = message
+                continue
+            position[identity] = len(seed)
+        seed.append(message)
+
+    following: dict[int, list[Any]] = {}
+    leading: list[Any] = []
+    anchor: int | None = None
+    first_anchor: int | None = None
+    for message in checkpoint_messages:
+        identity = _branch_seed_row_key(message)
+        index = position.get(identity) if identity is not None else None
+        if index is not None:
+            seed[index] = message
+            anchor = index
+            if first_anchor is None:
+                first_anchor = index
+        elif anchor is None:
+            leading.append(message)
+        else:
+            following.setdefault(anchor, []).append(message)
+
+    merged: list[Any] = []
+    for index, message in enumerate(seed):
+        if index == first_anchor:
+            merged.extend(leading)
+        merged.append(message)
+        merged.extend(following.get(index, ()))
+    if first_anchor is None:
+        # No shared message is visible in the feed; every row read precedes the branch point.
+        merged.extend(leading)
+    return merged
+
+
+async def _branch_seed_messages(request: Request, parent_thread_id: str, checkpoint_messages: list[Any]) -> list[Any]:
+    """Return the messages a branch's feed is seeded with.
+
+    The branch checkpoint alone is not the conversation: compaction removes
+    older turns from it, and a partial answer kept after Stop never enters it.
+    Only the parent's feed still holds those, so a version seeded from the
+    checkpoint would start at the compaction point with nothing to page back
+    to. The seed is therefore the parent's visible feed up to the branch point,
+    merged with the checkpoint by ``_merge_branch_seed``.
+
+    Falls back to ``checkpoint_messages`` when the parent feed holds none of
+    them (a legacy or empty feed) or cannot be read. That is the seed every
+    branch got before, and a branch must not fail on its history copy.
+    """
+    from app.gateway.routers.thread_runs import _run_scope_user_id
+
+    try:
+        event_store = get_run_event_store(request)
+        # The data filter of GET /messages/page: copy what the user can page through.
+        user_id = await _run_scope_user_id(request, parent_thread_id)
+        identities = [key[1] for message in checkpoint_messages if (key := _branch_seed_row_key(message)) is not None]
+        seqs: list[int] = []
+        for start in range(0, len(identities), _BRANCH_SEED_IDENTITY_CHUNK_SIZE):
+            chunk = identities[start : start + _BRANCH_SEED_IDENTITY_CHUNK_SIZE]
+            seqs.extend((await event_store.get_message_seqs(parent_thread_id, chunk, user_id=user_id)).values())
+        if not seqs:
+            return checkpoint_messages
+        # The branch point is the newest feed row among the checkpoint's
+        # messages, wherever that message sits in the checkpoint: a compacted
+        # one can keep a protected early input ahead of the recent tail.
+        before_seq = max(seqs) + 1
+        run_manager = get_run_manager(request)
+        rows: list[dict[str, Any]] = []
+        while True:
+            page, has_more = await read_visible_message_page(
+                event_store=event_store,
+                run_manager=run_manager,
+                thread_id=parent_thread_id,
+                user_id=user_id,
+                limit=_BRANCH_SEED_FEED_PAGE_SIZE,
+                before_seq=before_seq,
+            )
+            rows[:0] = page
+            if not has_more or not page:
+                break
+            before_seq = page[0]["seq"]
+    except Exception:
+        logger.warning(
+            "Failed to read the parent feed for the branch seed of thread %s; seeding from the checkpoint only",
+            sanitize_log_param(parent_thread_id),
+            exc_info=True,
+        )
+        return checkpoint_messages
+    return _merge_branch_seed(rows, checkpoint_messages)
 
 
 def _branch_target_human_message(messages: list[Any], target_message_ids: set[str]) -> Any | None:
@@ -1393,14 +1536,17 @@ async def _branch_thread_with_reservation(
     # store, not checkpoints, and a fresh branch has no run_events — so the
     # inherited history would vanish from the UI as soon as the branch's
     # first run refreshes the feed (#4380 problem 2). Seed the branch's
-    # run_events from the same checkpoint snapshot the branch was created
-    # from. Best-effort: on failure the branch stays usable, with history
-    # visible only through the checkpoint overlay until it is re-branched.
+    # run_events from the parent's feed up to the branch point, laid under
+    # the checkpoint snapshot the branch was created from (see
+    # _branch_seed_messages). Best-effort: on failure the branch stays usable,
+    # with history visible only through the checkpoint overlay until it is
+    # re-branched.
     try:
         async with reserve_history_seed(request, new_thread_id) as reservation:
             seed_messages = _checkpoint_messages(snapshot)
             if answer_rewrite is not None:
                 seed_messages = _rewrite_branch_answer(seed_messages, *answer_rewrite)
+            seed_messages = await _branch_seed_messages(request, thread_id, seed_messages)
             seed_events = build_branch_history_seed_events(
                 seed_messages,
                 thread_id=new_thread_id,
@@ -1737,6 +1883,23 @@ async def compact_thread(thread_id: ThreadId, body: ThreadCompactRequest, reques
         raise _checkpoint_mode_http_error(exc, thread_id) from exc
     keep = body.keep.to_tuple() if body.keep is not None else None
     try:
+        # Compaction removes messages from the checkpoint, and the feed is the
+        # only other place they live. Back-fill an empty feed first, as a run
+        # start does, or those turns would exist nowhere afterwards. This must
+        # finish before the checkpoint-write reservation: both take the thread
+        # operation and the non-reentrant goal lock. A failed seed aborts.
+        if getattr(request.app.state, "run_event_store", None) is not None:
+            # Only a database feed's seed reserves the thread itself. Ask for
+            # the reservation once up front, so a request a run in flight will
+            # refuse writes nothing before it is refused.
+            async with reserve_checkpoint_write(request, thread_id, user_id=get_effective_user_id()):
+                pass
+            async with goal_thread_lock(thread_id):
+                await ensure_checkpoint_history_seeded(
+                    request,
+                    thread_id=thread_id,
+                    assistant_id=await resolve_thread_assistant_id(request, thread_id),
+                )
         async with reserve_checkpoint_write(request, thread_id, user_id=get_effective_user_id()):
             result = await compact_thread_context(
                 accessor,

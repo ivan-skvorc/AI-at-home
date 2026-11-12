@@ -1,6 +1,6 @@
 import type { Message } from "@langchain/langgraph-sdk";
 import { afterEach, describe, expect, it, rs } from "@rstest/core";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import type { ReactNode } from "react";
 
 import { MessageList } from "@/components/workspace/messages/message-list";
@@ -87,7 +87,16 @@ function view(
   messages: Message[],
   isLoading: boolean,
   scheduledTaskEvents?: ScheduledTaskEvent[],
-  { goalSet = false }: { goalSet?: boolean } = {},
+  {
+    goalSet = false,
+    history,
+  }: {
+    goalSet?: boolean;
+    history?: Pick<
+      React.ComponentProps<typeof MessageList>,
+      "hasMoreHistory" | "historyLoadFailed" | "loadMoreHistory"
+    >;
+  } = {},
 ) {
   return (
     <I18nContext.Provider
@@ -99,6 +108,7 @@ function view(
         canEdit={!goalSet}
         editLockedByGoal={goalSet}
         onEditMessage={async () => true}
+        {...history}
         thread={
           {
             messages,
@@ -276,5 +286,74 @@ describe("MessageList with schedule event lines", () => {
   it("renders no line without events", () => {
     render(view(chatThreadWithRuns(), false, []));
     expect(screen.queryByTestId("scheduled-task-event-line")).toBeNull();
+  });
+});
+
+describe("MessageList history pager", () => {
+  /** Counts the scroll sentinels the pager arms; that is what loads by itself. */
+  function stubSentinel() {
+    const observe = rs.fn();
+    rs.stubGlobal(
+      "IntersectionObserver",
+      class {
+        observe = observe;
+        disconnect() {
+          return undefined;
+        }
+      },
+    );
+    return observe;
+  }
+
+  afterEach(() => {
+    rs.unstubAllGlobals();
+  });
+
+  it("offers a manual retry, not an automatic one, when the first history page failed", () => {
+    const observe = stubSentinel();
+    const loadMoreHistory = rs.fn();
+    render(
+      view(runThread(), false, undefined, {
+        history: {
+          hasMoreHistory: false,
+          historyLoadFailed: true,
+          loadMoreHistory,
+        },
+      }),
+    );
+
+    const retry = screen.getByRole<HTMLButtonElement>("button", {
+      name: enUS.common.loadMore,
+    });
+    expect(retry.disabled).toBe(false);
+    // Armed, the sentinel would re-request (and toast) for as long as the
+    // Gateway stays down.
+    expect(observe).not.toHaveBeenCalled();
+
+    fireEvent.click(retry);
+    expect(loadMoreHistory).toHaveBeenCalledTimes(1);
+  });
+
+  it("arms the sentinel while older pages remain and shows nothing once complete", () => {
+    const observe = stubSentinel();
+    const { unmount } = render(
+      view(runThread(), false, undefined, {
+        history: { hasMoreHistory: true, loadMoreHistory: rs.fn() },
+      }),
+    );
+    expect(
+      screen.getByRole("button", { name: enUS.common.loadMore }),
+    ).toBeDefined();
+    expect(observe).toHaveBeenCalledTimes(1);
+    unmount();
+
+    render(
+      view(runThread(), false, undefined, {
+        history: { hasMoreHistory: false, loadMoreHistory: rs.fn() },
+      }),
+    );
+    expect(
+      screen.queryByRole("button", { name: enUS.common.loadMore }),
+    ).toBeNull();
   });
 });

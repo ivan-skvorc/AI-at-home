@@ -353,6 +353,7 @@ function ChatInstanceContent({
     isUploading,
     isHistoryLoading,
     hasMoreHistory,
+    historyLoadFailed,
     loadMoreHistory,
     approvalRequests,
     hasPendingApproval,
@@ -856,6 +857,7 @@ function ChatInstanceContent({
                   enableConversationOutline
                   paddingBottom={MESSAGE_LIST_DEFAULT_PADDING_BOTTOM}
                   hasMoreHistory={hasMoreHistory}
+                  historyLoadFailed={historyLoadFailed}
                   loadMoreHistory={loadMoreHistory}
                   isHistoryLoading={isHistoryLoading}
                   tokenUsageInlineMode={tokenUsageInlineMode}

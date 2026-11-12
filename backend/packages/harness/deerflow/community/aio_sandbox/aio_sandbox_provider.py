@@ -382,7 +382,7 @@ class AioSandboxProvider(WarmPoolLifecycleMixin[SandboxInfo], SandboxProvider):
             logger.info(f"Using external sandbox backend at {base_url}")
             self._warn_ignored_mounts("external base_url", "docker/docker-compose.sandbox.yml `volumes:`")
             self._warn_external_environment()
-            self._warn_ignored_container_options("external base_url", "docker/docker-compose.sandbox.yml (`ports:` / `cap_add:`)")
+            self._warn_ignored_container_options("external base_url", "docker/docker-compose.sandbox.yml (`ports:` / `cap_add:` / `devices:`)")
             return ExternalSandboxBackend(base_url=base_url)
 
         logger.info("Using local container sandbox backend")
@@ -394,12 +394,13 @@ class AioSandboxProvider(WarmPoolLifecycleMixin[SandboxInfo], SandboxProvider):
             environment=self._config["environment"],
             expose_ports=self._config.get("expose_ports") or [],
             extra_capabilities=self._config.get("extra_capabilities") or [],
+            devices=self._config.get("devices") or [],
             network_config=self._config["network"],
             required_shell_sessions=self._config.get("required_shell_sessions", 0),
         )
 
     def _warn_ignored_container_options(self, backend_label: str, where_to_declare: str) -> None:
-        """Warn that expose_ports / extra_capabilities only apply in local container mode.
+        """Warn that expose_ports / extra_capabilities / devices only apply in local container mode.
 
         The external and provisioner backends do not create containers, so these
         run-time docker options would be silently dropped without this notice.
@@ -409,6 +410,8 @@ class AioSandboxProvider(WarmPoolLifecycleMixin[SandboxInfo], SandboxProvider):
             ignored.append(f"expose_ports={self._config['expose_ports']}")
         if self._config.get("extra_capabilities"):
             ignored.append(f"extra_capabilities={self._config['extra_capabilities']}")
+        if self._config.get("devices"):
+            ignored.append(f"devices={self._config['devices']}")
         if not ignored:
             return
         logger.warning(
@@ -539,6 +542,7 @@ class AioSandboxProvider(WarmPoolLifecycleMixin[SandboxInfo], SandboxProvider):
             # Extra debug ports / capabilities (applied in local container mode only)
             "expose_ports": list(getattr(sandbox_config, "expose_ports", None) or []),
             "extra_capabilities": list(getattr(sandbox_config, "extra_capabilities", None) or []),
+            "devices": list(getattr(sandbox_config, "devices", None) or []),
             "skills_container_path": _normalize_skills_container_path(
                 configured_skills_path,
             ),

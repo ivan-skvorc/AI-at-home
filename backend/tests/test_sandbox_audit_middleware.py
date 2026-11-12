@@ -1,6 +1,8 @@
 """Tests for SandboxAuditMiddleware - command classification and audit logging."""
 
+import re
 import unittest.mock
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -1184,3 +1186,34 @@ def test_fork_bomb_pattern_matches_static_scan_gate():
     from deerflow.skills.skillscan.orchestrator import _FORK_BOMB_PATTERN
 
     assert any(pattern.pattern == _FORK_BOMB_PATTERN for pattern in _HIGH_RISK_PATTERNS)
+
+
+_REPO_RUNNER_SKILL = Path(__file__).resolve().parents[2] / "skills" / "public" / "repo-runner" / "SKILL.md"
+_VM_SECTION_HEADING = "## When the project needs a virtual machine"
+
+
+def _repo_runner_vm_commands() -> list[str]:
+    """Every fenced ``bash`` command in the repo-runner skill's VM section."""
+    text = _REPO_RUNNER_SKILL.read_text(encoding="utf-8-sig")
+    start = text.index(_VM_SECTION_HEADING)
+    end = text.find("\n## ", start + len(_VM_SECTION_HEADING))
+    section = text[start : end if end != -1 else len(text)]
+    return [match.group(1).strip() for match in re.finditer(r"```bash\n(.*?)```", section, re.DOTALL)]
+
+
+def test_repo_runner_vm_recipe_commands_are_not_blocked():
+    """The VM recipe the skill hands the agent must survive this audit.
+
+    The recipe exists because the obvious improvisations are refused here
+    (``dd``/``mkfs`` for the seed disk, ``LD_LIBRARY_PATH=`` for an unpacked
+    QEMU). A recipe step that is itself refused would send the agent straight
+    back to improvising, and the skill text and these rules live in different
+    trees, so nothing else notices when one drifts into the other.
+    """
+    commands = _repo_runner_vm_commands()
+    assert commands, "the VM section lost its fenced bash commands"
+
+    candidates = [candidate for command in commands for candidate in (command, *command.splitlines())]
+    blocked = [candidate for candidate in candidates if _classify_command(candidate) == "block"]
+
+    assert blocked == []

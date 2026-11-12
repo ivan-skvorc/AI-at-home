@@ -339,6 +339,67 @@ async def test_http_input_admission_and_status_are_owner_scoped(input_store, mon
 
 
 @pytest.mark.asyncio
+async def test_a_queued_input_keeps_its_plugin_options(input_store, monkeypatch):
+    """A message queued behind a Plus/Double Plus run must stay that mode.
+
+    ``mode`` alone lifts the host's limits; the extension reads the workflow
+    choice from ``plugin_options``, so dropping it ran an unlimited plain turn.
+    """
+    from types import SimpleNamespace
+
+    from fastapi import HTTPException
+
+    from app.gateway import run_inputs
+    from app.gateway.routers.thread_runs import RunResponse
+    from deerflow.runtime.runs.manager import RunManager
+
+    async def current_user(_):
+        return USER_ID
+
+    request = SimpleNamespace(state=SimpleNamespace(run_origin=None))
+    manager = RunManager(store=input_store)
+    monkeypatch.setattr(run_inputs, "get_run_manager", lambda _: manager)
+    monkeypatch.setattr(run_inputs, "get_current_user", current_user)
+    monkeypatch.setattr(run_inputs, "get_run_context", lambda _: SimpleNamespace(agent_runs=object()))
+    await RunInputs(input_store, "run", USER_ID, "worker").reopen()
+
+    options = {"community.workflows": {"mode": "double_ultracode", "limits": {"max_agents": 40}}}
+    context = {"mode": "double_ultracode", "plugin_options": options, "github_token": "never-stored"}
+    item = await run_inputs.submit_run_input("thread", "run", run_inputs.RunInputRequest(request_id="q", text="Then add tests", mode="queue", context=context), request)
+    assert item["context"] == {"mode": "double_ultracode", "plugin_options": options}
+
+    # The same boundary as a new run: a malformed value is refused, never
+    # stored for a dispatch that would then fail after the user has left.
+    for malformed in ("double_ultracode", {"a:b": {}}, {"plugin": "not-an-object"}):
+        with pytest.raises(HTTPException) as refused:
+            await run_inputs.submit_run_input("thread", "run", run_inputs.RunInputRequest(request_id="bad", text="x", mode="queue", context={"plugin_options": malformed}), request)
+        assert refused.value.status_code == 400
+
+    # No options is not a malformed value: an explicit null is stored as absent.
+    unset = await run_inputs.submit_run_input("thread", "run", run_inputs.RunInputRequest(request_id="null", text="x", mode="queue", context={"mode": "ultracode", "plugin_options": None}), request)
+    assert unset["context"] == {"mode": "ultracode"}
+    # A steer input joins the running turn and starts no run, so the key is
+    # neither validated nor stored for it.
+    steer = await run_inputs.submit_run_input("thread", "run", run_inputs.RunInputRequest(request_id="steer", text="x", mode="steer", context={"plugin_options": "double_ultracode"}), request)
+    assert "plugin_options" not in steer["context"]
+
+    await input_store.update_status("run", "success")
+    admitted = []
+
+    async def admit(thread_id, body, _request, idempotency_key=None):
+        admitted.append(body)
+        return RunResponse(thread_id=thread_id, run_id="next", assistant_id=body.assistant_id, status="pending")
+
+    async def assistant_id(*_, **__):
+        return "lead_agent"
+
+    monkeypatch.setattr("app.gateway.routers.thread_runs.create_run", admit)
+    monkeypatch.setattr("app.gateway.services.resolve_thread_assistant_id", assistant_id)
+    await run_inputs.dispatch_one_input("thread", "run", "q", request)
+    assert admitted[0].context == {"mode": "double_ultracode", "plugin_options": options}
+
+
+@pytest.mark.asyncio
 async def test_list_thread_inputs_keeps_retryable_inputs_ahead_of_terminal_receipts(monkeypatch):
     """Regression for #7972: 32 recent receipts must not hide an older retryable input."""
     from app.gateway import run_inputs as gateway_run_inputs

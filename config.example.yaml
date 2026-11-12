@@ -20,7 +20,7 @@
 # ============================================================================
 # Bump this number when the config schema changes.
 # Run `make config-upgrade` to merge new fields into your local config.yaml.
-config_version: 69
+config_version: 70
 
 # Optional operator-owned literal prompt extensions (see CONFIGURATION.md):
 # lead_prompt_overlay:
@@ -3455,9 +3455,13 @@ sandbox:
   bash_command_timeout: 600
 
 # Option 2: Container-based AIO Sandbox
-# Executes commands in isolated containers (Docker or Apple Container) where the
-# agent has root and can install packages, so it is the mode for "clone a repo
-# and run/debug it" workflows. Two sub-modes:
+# Executes commands in isolated containers (Docker or Apple Container), away
+# from the host, so it is the mode for "clone a repo and run/debug it"
+# workflows. The agent installs a project's dependencies inside the workspace
+# (venv, node_modules, cargo). System packages (apt) work only when the image's
+# shell runs as root: the hardened Docker container blocks sudo
+# (`no-new-privileges`), so otherwise build them into a custom `image:`.
+# Two sub-modes:
 #   - Local container mode (no base_url): DeerFlow spawns one container per thread
 #     and mounts that thread's user-data dirs, so /mnt/user-data is host-backed
 #     (uploads, outputs, and present_files all work). Best for clone-and-debug.
@@ -3484,14 +3488,16 @@ sandbox:
 #   # base_url: http://localhost:8091
 #   # request_timeout: 120.0        # HTTP client timeout for the sandbox API (default: 600)
 #
-#   # Optional: Per-command budget for bash inside the sandbox (seconds). Reused
-#   # for both AIO paths: the idle (no-new-output) timeout on the persistent
-#   # shell and the wall-clock hard timeout on the env-bearing bash.exec path.
-#   # Raise it for long installs/builds (e.g. `pip install torch`, `cargo build`)
-#   # — and raise request_timeout to at least the same value, or the HTTP client
-#   # aborts the command first (DeerFlow logs a one-shot warning when it would).
+#   # Optional: Per-command deadline for bash inside the sandbox (seconds). It
+#   # is a wall-clock limit on both AIO paths (the persistent shell and the
+#   # env-bearing bash.exec path): a foreground command is ended at the
+#   # deadline even while it is still printing output, so a long wait belongs
+#   # in a background process that is polled. Raise it for long installs/builds
+#   # (e.g. `pip install torch`, `cargo build`). Each command carries its own
+#   # HTTP request budget derived from this value, so request_timeout does not
+#   # have to follow it: request_timeout only governs session creation and the
+#   # file/list calls.
 #   # bash_command_timeout: 1800
-#   # request_timeout: 1800.0
 #
 #   # Optional: Publish extra container ports 1:1 to the host loopback so a
 #   # program you run inside the sandbox is reachable from your own browser
@@ -3507,11 +3513,42 @@ sandbox:
 #   # external/provisioner modes and on Apple Container.
 #   # extra_capabilities: [SYS_PTRACE]
 #
+#   # Optional: Forward a host device into the sandbox container (Docker
+#   # runtime, local container mode only). The only accepted value is /dev/kvm,
+#   # so a virtual machine started inside the sandbox is hardware-accelerated
+#   # instead of software-emulated. Any other value fails config validation,
+#   # and the container is never run --privileged.
+#   # SECURITY: /dev/kvm hands the host kernel's KVM interface to everything
+#   # the agent runs — a larger attack surface than the default container.
+#   # Leave it off unless you need fast VMs.
+#   #   - The Docker host must HAVE /dev/kvm. Where it does not (Docker Desktop
+#   #     on macOS, a cloud VM without nested virtualization) EVERY sandbox
+#   #     start fails, with an error naming `sandbox.devices`. DeerFlow cannot
+#   #     check first: under Docker-outside-of-Docker it does not see the
+#   #     host's /dev.
+#   #   - The node keeps the host's mode and group inside the container. On
+#   #     Debian/Ubuntu that is 0660 root:kvm, which the sandbox's unprivileged
+#   #     shell user cannot open, so QEMU still falls back to slow emulation.
+#   #     Open it on the host with a udev rule (this lets every local host user
+#   #     use KVM, the default on several other distributions):
+#   #       echo 'KERNEL=="kvm", MODE="0666"' | sudo tee /etc/udev/rules.d/99-deerflow-kvm.rules
+#   #       sudo udevadm control --reload-rules && sudo udevadm trigger --name-match=kvm
+#   #   - Guest RAM counts against the container's memory limit (2g by
+#   #     default); raise DEER_FLOW_SANDBOX_MEMORY in the Gateway environment
+#   #     for a larger guest.
+#   # Read only by the AIO container provider. There it is ignored (with a
+#   # warning) in external/provisioner modes and on Apple Container; under
+#   # any other `use:` (the local sandbox, for one) it does nothing and
+#   # nothing is logged. A VM also needs an image that contains QEMU — see
+#   # `image:`.
+#   # devices: [/dev/kvm]
+#
 #   # Optional: Keep released containers warm longer before idle reclaim
 #   # (seconds; default 600). A longer window keeps an installed/built debug
-#   # environment alive between the agent's turns. Note: packages installed
-#   # OUTSIDE the mounted workspace (apt, global pip) are still lost when a
-#   # container is finally recycled — keep a project's deps in a workspace venv.
+#   # environment alive between the agent's turns. Note: anything installed
+#   # OUTSIDE the mounted workspace (global or user-level pip/npm, and system
+#   # packages where the image allows them) is still lost when a container is
+#   # finally recycled — keep a project's deps in a workspace venv.
 #   # idle_timeout: 3600
 #
 #   # Optional: Container image to use (works with both Docker and Apple Container)
@@ -3523,6 +3560,12 @@ sandbox:
 #   # and `make sandbox-enable MODE=container` pin). Custom images should extend the
 #   # default image or implement the same AIO sandbox HTTP API used by agent-sandbox.
 #   # See backend/docs/CONFIGURATION.md.
+#   # Running a virtual machine in the sandbox needs an image that ALREADY
+#   # contains QEMU: the hardened container blocks sudo (`no-new-privileges`),
+#   # so system packages cannot be installed at run time. Build your own image
+#   # FROM the pinned tag, name it here, and rebuild it when the pin moves.
+#   # `make sandbox-enable MODE=container` rewrites this section and resets
+#   # `image:` to the stock tag, so set it again afterwards.
 #   # image: ghcr.io/agent-infra/sandbox:1.11.0
 #
 #   # Optional: Base port for sandbox containers (default: 8080)

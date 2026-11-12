@@ -251,3 +251,33 @@ def test_the_critical_checks_come_first_and_include_the_local_model_window() -> 
     assert "Critical" in first_gate, "the critical checks are no longer the first lines the sync script parses"
     assert "tests/test_context_fit_critical.py" in first_gate, "the local-model context-size check is no longer a critical check"
     assert (REPO_ROOT / "backend" / "tests" / "test_context_fit_critical.py").is_file()
+
+
+def test_no_check_is_run_twice_on_one_tree() -> None:
+    """One tree, one run: the rule, and the two ways it used to be broken.
+
+    A second run of a test a suite already collected proves nothing, and it is
+    silent: the cycle just gets slower. Pinned on the rule's own lead-in, on the
+    critical files staying where `make test` collects them, and on no whole
+    test file being run by two checklist items.
+    """
+    cycle = CHANGE_CYCLE.read_text(encoding="utf-8")
+    fork = FORK_MD.read_text(encoding="utf-8")
+
+    assert "**One tree, one run.**" in cycle, "CHANGE_CYCLE.md step 5 lost the run-each-check-once rule"
+
+    checklist = fork[fork.index("### Post-sync feature checklist") :]
+    checklist = checklist[: re.search(r"^## ", checklist, re.MULTILINE).start()]
+    owners: dict[str, set[int]] = {}
+    for number, line in enumerate(checklist.splitlines()):
+        if not (line.lstrip().startswith("- [ ]") or line.startswith("|")):
+            continue
+        for command in re.findall(r"`cd backend && uv run pytest ([^`]+)`", line):
+            if " -k " in f" {command} ":
+                continue  # a -k selection is a slice of the file, not the file
+            for path in re.findall(r"tests/[\w/]+\.py(?!::)", command):
+                owners.setdefault(path, set()).add(number)
+                if "Critical —" in line:
+                    assert not path.startswith("tests/blocking_io/"), f"{path}: `make test` ignores tests/blocking_io, so it would stop running this critical check"
+    twice = sorted(path for path, rows in owners.items() if len(rows) > 1)
+    assert not twice, f"run whole by two checklist items; name the first row in the second instead: {twice}"

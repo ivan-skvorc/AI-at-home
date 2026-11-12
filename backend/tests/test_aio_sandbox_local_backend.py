@@ -2053,6 +2053,114 @@ def test_start_container_no_extra_ports_or_caps_by_default(monkeypatch):
     # Only the single sandbox API port is published; no --cap-add flags.
     assert len(_pairs(captured_cmd, "-p")) == 1
     assert "--cap-add" not in captured_cmd
+    assert "--device" not in captured_cmd
+    assert "--privileged" not in captured_cmd
+
+
+def test_start_container_forwards_only_allowlisted_devices_on_docker(monkeypatch):
+    """`sandbox.devices` reaches Docker as one `--device`, and nothing wider.
+
+    A device node is a direct line into the host kernel, so the opt-in is an
+    allowlist of exactly `/dev/kvm`: it must never widen into `--privileged`,
+    and the config boundary must refuse every other path, including Docker's
+    own `host:container:perm` spelling, which would let a config file remap a
+    different host device onto the allowed name.
+    """
+    from pydantic import ValidationError
+
+    from deerflow.config.sandbox_config import SandboxConfig
+
+    backend = LocalContainerBackend(
+        image="sandbox:latest",
+        base_port=8080,
+        container_prefix="sandbox",
+        config_mounts=[],
+        environment={},
+        devices=["/dev/kvm"],
+    )
+
+    captured_cmd = _capture_start_container_command(monkeypatch, backend, runtime="docker")
+
+    assert _pairs(captured_cmd, "--device") == ["/dev/kvm:/dev/kvm:rw"]
+    assert "--privileged" not in captured_cmd
+
+    use = "deerflow.community.aio_sandbox:AioSandboxProvider"
+    assert SandboxConfig(use=use, devices=["/dev/kvm", "/dev/kvm"]).devices == ["/dev/kvm"]
+    assert SandboxConfig(use=use).devices == []
+    for rejected in ("/dev/sda", "/dev/sda:/dev/kvm:rw", "/dev/kvm:/dev/kvm:rwm", "/dev/kvm ", "/dev/../dev/kvm"):
+        with pytest.raises(ValidationError, match="sandbox.devices"):
+            SandboxConfig(use=use, devices=[rejected])
+    # The backend is constructible without the config model, so it refuses too.
+    with pytest.raises(ValueError, match="sandbox.devices"):
+        LocalContainerBackend(
+            image="sandbox:latest",
+            base_port=8080,
+            container_prefix="sandbox",
+            config_mounts=[],
+            environment={},
+            devices=["/dev/sda"],
+        )
+
+
+def test_start_container_skips_devices_on_apple_container(monkeypatch, caplog):
+    backend = LocalContainerBackend(
+        image="sandbox:latest",
+        base_port=8080,
+        container_prefix="sandbox",
+        config_mounts=[],
+        environment={},
+        devices=["/dev/kvm"],
+    )
+
+    with caplog.at_level(logging.WARNING):
+        captured_cmd = _capture_start_container_command(monkeypatch, backend, runtime="container")
+
+    assert "--device" not in captured_cmd
+    assert "sandbox.devices is Docker-only" in caplog.text
+
+
+def test_start_failure_caused_by_a_forwarded_device_names_the_config_key(monkeypatch):
+    """A host without the device fails every start; the error must say why.
+
+    `docker run --device /dev/kvm` fails outright on a host with no KVM
+    (Docker Desktop on macOS, a VM without nested virtualization), and under
+    Docker-outside-of-Docker the Gateway cannot see the host's /dev to check
+    first. Docker's text names only the device, so without the key the
+    operator has no pointer back to the one line of config that caused it.
+    """
+    backend = LocalContainerBackend(
+        image="sandbox:latest",
+        base_port=8080,
+        container_prefix="sandbox",
+        config_mounts=[],
+        environment={},
+        devices=["/dev/kvm"],
+    )
+    monkeypatch.setattr(backend, "_runtime", "docker")
+    stderr = 'docker: Error response from daemon: error gathering device information while adding custom device "/dev/kvm": no such file or directory.'
+
+    def failing_run(cmd, **kwargs):
+        raise subprocess.CalledProcessError(125, cmd, output="", stderr=stderr)
+
+    monkeypatch.setattr("subprocess.run", failing_run)
+
+    with pytest.raises(RuntimeError) as excinfo:
+        backend._start_container("sandbox-test", 18080)
+
+    assert stderr in str(excinfo.value)
+    assert "sandbox.devices" in str(excinfo.value)
+
+    # An unrelated failure keeps Docker's text untouched: the port-conflict
+    # retry in create() matches on it.
+    def port_conflict(cmd, **kwargs):
+        raise subprocess.CalledProcessError(125, cmd, output="", stderr="Bind for 127.0.0.1:18080 failed: port is already allocated")
+
+    monkeypatch.setattr("subprocess.run", port_conflict)
+
+    with pytest.raises(RuntimeError) as excinfo:
+        backend._start_container("sandbox-test", 18080)
+
+    assert "sandbox.devices" not in str(excinfo.value)
 
 
 @pytest.mark.parametrize("runtime", ["docker", "container"])

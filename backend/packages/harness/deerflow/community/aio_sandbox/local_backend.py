@@ -25,6 +25,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
+from deerflow.config.sandbox_config import validate_sandbox_devices
 from deerflow.utils.network import get_free_port, release_port
 
 from .backend import SandboxBackend, wait_for_sandbox_ready
@@ -647,6 +648,7 @@ class LocalContainerBackend(SandboxBackend):
         environment: dict[str, str],
         expose_ports: list[int] | None = None,
         extra_capabilities: list[str] | None = None,
+        devices: list[str] | None = None,
         network_config: dict[str, object] | None = None,
         required_shell_sessions: int = 0,
     ):
@@ -662,6 +664,8 @@ class LocalContainerBackend(SandboxBackend):
                 (fixed host ports — only one concurrent container can hold each).
             extra_capabilities: Additional Linux capabilities (`--cap-add`) for the
                 container; Docker runtime only (warned and skipped on Apple Container).
+            devices: Host device nodes forwarded with `--device` (allowlist: /dev/kvm);
+                Docker runtime only (warned and skipped on Apple Container).
             required_shell_sessions: Minimum usable capacity, independent of image environment overrides.
         """
         self._image = image
@@ -671,6 +675,10 @@ class LocalContainerBackend(SandboxBackend):
         self._environment = environment
         self._expose_ports = list(expose_ports or [])
         self._extra_capabilities = list(extra_capabilities or [])
+        # Re-checked here, not only in SandboxConfig: this is where the value
+        # becomes a `docker run` argument, and the backend can be built
+        # without the config model.
+        self._devices = validate_sandbox_devices(list(devices or []))
         self._required_shell_sessions = required_shell_sessions
         self._network_config = network_config or {"mode": "open"}
         self._network_mode = str(self._network_config.get("mode", "open"))
@@ -2250,6 +2258,18 @@ class LocalContainerBackend(SandboxBackend):
             else:
                 logger.warning(f"sandbox.extra_capabilities is Docker-only; ignoring {self._extra_capabilities} on runtime '{self._runtime}'")
 
+        # Host devices (sandbox.devices), i.e. /dev/kvm so a VM inside the
+        # sandbox is hardware-accelerated. One `--device` per allowlisted
+        # node, read-write without mknod — never `--privileged`, which would
+        # hand over every host device and undo the capability drop above.
+        # Docker-only: Apple Container already runs each container in its own VM.
+        if self._devices:
+            if self._runtime == "docker":
+                for device in self._devices:
+                    cmd.extend(["--device", f"{device}:{device}:rw"])
+            else:
+                logger.warning(f"sandbox.devices is Docker-only; ignoring {self._devices} on runtime '{self._runtime}'")
+
         # Environment variables
         environment = dict(self._environment)
         if self._runtime == "docker":
@@ -2315,7 +2335,13 @@ class LocalContainerBackend(SandboxBackend):
             raise
         except subprocess.CalledProcessError as e:
             logger.error(f"Failed to start container using {self._runtime}: {e.stderr}")
-            raise RuntimeError(f"Failed to start sandbox container: {e.stderr}")
+            # `docker run --device` fails outright when the host lacks the
+            # node, and Docker names only the device. Point back at the config
+            # key, after Docker's own text so create()'s substring matches hold.
+            device_hint = ""
+            if self._runtime == "docker" and any(device in (e.stderr or "") for device in self._devices):
+                device_hint = f" (sandbox.devices forwards {self._devices}: the Docker host must provide each device; remove it from sandbox.devices in config.yaml if this host has none)"
+            raise RuntimeError(f"Failed to start sandbox container: {e.stderr}{device_hint}")
 
         container_id = result.stdout.strip()
         logger.info(f"Started container {container_name} (ID: {container_id}) using {self._runtime}")

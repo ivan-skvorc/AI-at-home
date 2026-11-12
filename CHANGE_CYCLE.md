@@ -18,13 +18,14 @@ Stop and ask only when a material decision cannot be resolved from the request
 or repository. Report unavailable tools or access honestly; do not claim an
 unfinished check or unopened PR is complete.
 
-**The shape, end to end:** run the **critical checks** → run relevant existing
-tests → make the change → reuse coverage, add missing tests, and remove
-unnecessary tests in the affected area →
-maintain FORK.md's checklist → run the critical checks again, then the required
-checks at the scope in step 5, including new or changed tests → run the model audit **only if you were told
-to** → land the docs, and a **new feature owes `README.md` its bullet** → commit,
-push, and **open the pull request**. The cycle is
+**The shape, end to end:** run the **critical checks** and the focused existing
+tests for the area as a baseline → make the change → reuse coverage, add missing
+tests, and remove unnecessary tests in the affected area → maintain FORK.md's
+checklist → land the docs, and a **new feature owes `README.md` its bullet** →
+format → run the required checks at the scope in step 5 **once, on that final
+tree**, the critical checks read first and new or changed tests included → run
+the model audit **only if you were told to** → commit, push, and **open the
+pull request**. The cycle is
 not finished when the tests pass; it is finished when the PR is open. Nobody has
 to ask for that PR separately — it is step 9, not a follow-up request.
 
@@ -65,10 +66,24 @@ commands live at the top of FORK.md's checklist,
 
 The rules that make them critical rather than just more tests:
 
-- **Every change that touches code, configuration or a prompt runs all of them**,
-  whatever step 5's table selects: first as part of the baseline in step 1, and
-  again on the final tree before anything else in step 5. A docs-only change
-  skips them unless it edits a command they run.
+- **Every change that touches code, configuration or a prompt is gated by all of
+  them**, whatever step 5's table selects, and each runs **once per tree**: once
+  on the base tree as the baseline in step 1, once on the final tree in step 5.
+  Every test file they name is collected by `make test`. So when step 5 selects
+  `make test`, that run *is* their final run: read their files' results out of
+  it before anything else and do not run them a second time (only
+  `scripts/check_config_version.sh` runs beside it). They are green there when
+  all four shards ran to completion and no `FAILED` or `ERROR` line names one of
+  their files. When step 5 does not select `make test`, run their commands by
+  themselves, first.
+- **A change that cannot move them does not run them.** That is a change in step
+  5's first row (docs, comments, formatting, agent guidance) unless it edits a
+  command they run, and a change confined to `frontend/`: none of them reads a
+  file there. Write "not affected — <why>" on the report line; the PR's backend
+  CI job runs them regardless. The one hand-kept link: the mode contexts in
+  `frontend/src/core/threads/run-context.ts` are mirrored in
+  `backend/tests/test_context_fit_critical.py`, so a change to them updates the
+  mirror — which makes it a backend change, and the checks run.
 - **Red stops the change.** Fix it or take the change back out. Never skip,
   loosen, or raise a threshold to make one pass — a critical check that fails
   after your change *is* the bug report. Raising a budget it pins is a product
@@ -97,12 +112,18 @@ gates in [`.agent/skills/engineer-system-change`](.agent/skills/engineer-system-
 first — they are what keeps a real problem from turning into an oversized fix.
 
 Inspect the working tree, the root and applicable nested `AGENTS.md` files, and
-existing tests for the affected behavior. Run the [critical
-checks](#critical-checks--before-everything-else), then choose the checks using
-step 5 and run the relevant existing tests before editing to establish a
-baseline. Give delegated
-agents the same instructions and scope; the lead agent remains responsible for
-the final combined checks and the PR. Preserve unrelated user changes.
+existing tests for the affected behavior. Before editing, establish a baseline:
+run the [critical checks](#critical-checks--before-everything-else) when the
+change owes them, then the existing test files that cover the behavior you are
+about to change. The baseline is focused on purpose — never `make test`,
+`pnpm test` or the E2E suite. CI already ran those on the base revision, and a
+failure they show later is classified by reproducing that one test on the base
+revision (step 5). A run already recorded on this same commit in this same
+environment — the previous cycle's final run, or the lead agent's baseline — is
+the baseline; do not repeat it. Give delegated agents the same instructions,
+their scope and that baseline: they run the focused tests for their own piece,
+and the lead agent alone runs the critical checks and step 5 on the final
+combined tree and opens the PR. Preserve unrelated user changes.
 
 ## 2. Implement the smallest sufficient change
 
@@ -136,8 +157,9 @@ Where they go: `backend/tests/` for Python (TDD for new behavioral coverage),
 workflow. Then:
 
 - **Prove new behavioral coverage detects the regression.** Run it before the
-  fix, or safely reproduce the old behavior in isolation, then run the final
-  version after the change. Explain when a failing reproduction is impractical.
+  fix, or safely reproduce the old behavior in isolation; step 5's run on the
+  final tree is the run that shows the final version green. Explain when a
+  failing reproduction is impractical.
 - **Pin the property, not the implementation** — assert the thing a future
   refactor would quietly "simplify" away.
 
@@ -158,8 +180,8 @@ regression, security, ownership, and concurrency checks. A slow or flaky test ne
 investigation; failure, age, test count, or runtime alone never justifies deletion.
 Never delete, weaken, skip, or quarantine a test just to make a failing run green.
 
-Update shared fixtures, FORK.md rows, and other references in the same change set,
-then run the remaining affected suite. Record tests reviewed, added/reused,
+Update shared fixtures, FORK.md rows, and other references in the same change set;
+step 5's run on the final tree is what proves the remaining suite. Record tests reviewed, added/reused,
 removed/consolidated, and the reason in the PR's **Test maintenance** section.
 "None removed — <what was reviewed and why it remains useful>" is a valid outcome;
 there is no quota for adding or removing tests.
@@ -219,17 +241,22 @@ skip:
 
 Always run relevant **existing** tests, as well as any tests added or changed.
 Use the baseline from step 1 to distinguish pre-existing failures from regressions.
-After all edits (including docs and formatting), run the [critical
-checks](#critical-checks--before-everything-else) first, then the checks below and
-the affected rows in the [post-sync checklist](FORK.md#post-sync-feature-checklist):
+This step runs **last and once**, whatever its number says: finish every edit
+first — tests (step 3), FORK.md rows (step 4), docs (step 7) and the formatter
+(step 8) — because a check that ran before the prose or the formatter landed
+proved nothing about the tree you commit. Then, on that final tree, the
+[critical checks](#critical-checks--before-everything-else) come first — read
+out of `make test` when the table selects it, run by themselves otherwise —
+followed by the checks below and whatever the affected rows in the [post-sync
+checklist](FORK.md#post-sync-feature-checklist) add to them:
 
 | Change | Required final checks |
 | ------ | --------------------- |
 | Docs, comments, formatting, or agent guidance only | Relevant existing documentation/contract tests and link checks; for any `AGENTS.md` edit, run `python3 scripts/check_agent_guidance.py` and `backend/tests/test_agent_guidance_check.py`; for this procedure, run `backend/tests/test_change_cycle_doc.py`. No application-wide suites for prose alone. |
-| Backend code | `cd backend && make lint && make test`; also `make test-blocking-io` for async, runtime, or I/O changes. |
+| Backend code | `cd backend && make lint && make test` — also the final run of the critical checks; also `make test-blocking-io` for async, runtime, or I/O changes. |
 | Frontend code | `cd frontend && pnpm check && pnpm test`; run affected `pnpm test:e2e <pattern>` workflows for UI behavior. Shared UI controls, navigation, or streaming changes require the full E2E suite. |
 | Scripts, config, build, or CI | Existing tests for the changed commands/contracts and affected consumers; add module gates when their behavior can change. |
-| Upstream merge, changes whose effects cannot be bounded to named areas, or explicit full-cycle validation request | Whole post-sync checklist: mechanical gates, then every feature row. |
+| Upstream merge, changes whose effects cannot be bounded to named areas, or explicit full-cycle validation request | Whole post-sync checklist: mechanical gates, then every feature row — ticked from a gate's result where the row's command is a subset of that gate, run separately where it is not. |
 
 The reminder phrase alone uses this table; it does not request unrelated suites.
 For a complete cross-module pass, the wide gates include:
@@ -241,12 +268,37 @@ cd frontend && pnpm check && pnpm test
 cd frontend && pnpm test:e2e            # no filter — a shared control's specs are not in the file you edited
 ```
 
-Run each check once on the final tree. When a selected suite already executes a
-checklist row or a new test, record that coverage instead of repeating the same
-command; run separately only what the suite omits. Broaden or repeat checks when
-failures, new edits, or unresolved impact justify it. A test written and never executed in
-its final form is the most common way this cycle ships red: it passed while you
-were iterating, then a rename, a fixture edit, or a formatter pass moved under it.
+**One tree, one run.** Run each check once on the final tree. Importance buys a
+check its place at the front of the report, never a second run — this covers the
+critical checks, checklist rows and new tests alike:
+
+- **A suite that ran covers everything it collects.** `make test` runs every
+  `uv run pytest tests/…` command in FORK.md's checklist, the critical checks
+  included; `pnpm test` runs every `pnpm test <pattern>` and `rstest run`
+  command; an unfiltered `pnpm test:e2e` runs every `pnpm test:e2e <spec>`.
+  Record the suite's result against the row or the new test instead of repeating
+  the command, and run separately only what no selected suite collects:
+  `make test-blocking-io`, E2E specs, scripts, dry runs and manual checks.
+- **Outside the table's own gates, a check runs only if it can read the diff.**
+  Before running a row or a focused file, name a changed path it reads; if you
+  cannot, record "not affected" rather than a green tick that proves nothing. A
+  row with a backend and a frontend command owes the half whose module changed.
+- **Repeat only for a reason you can write down**: a failure being diagnosed, an
+  edit made after the run, or impact you could not bound. If the tree changes
+  after this step, rerun the checks that read the changed files, not the step.
+
+A test written and never executed in its final form is the most common way this
+cycle ships red: it passed while you were iterating, then a rename, a fixture
+edit, or a formatter pass moved under it. Running last prevents that; running
+twice does not.
+
+**Keeping it that way.** Before adding a critical check, a checklist row or a
+line to the table above, see what its command selects
+(`uv run pytest --collect-only -q <files>`). If a command this step already runs
+on the same tree collects it, say so in the row — "runs inside the Backend gate",
+"runs inside the first critical check" — instead of adding a second run. Two
+rows never run the same whole test file: the second names the first (disjoint
+`-k` slices of one file are fine).
 
 **Environmental failures are reported, never patched away.** FORK.md names the
 known ones — chiefly a sandbox whose pre-baked Playwright browsers are older
@@ -346,8 +398,12 @@ belongs inside that subsection.
 
 ## 8. Format, commit, push
 
-Format only the affected code, then rerun any checks affected by formatting.
-For backend code use `make format`; for frontend code use `pnpm check`.
+Formatting happens before step 5's run, not after it: `make format` for backend
+code, `pnpm format:write` for frontend code (`pnpm check` only reports — it is
+the gate step 5 runs, not a formatter). `make lint` and `pnpm check` in step 5
+then prove the formatting, so nothing is formatted or rerun here. If a formatter
+still changes a file at this point, step 5 ran on a different tree: rerun the
+checks that read that file.
 Stage only files belonging to this change; preserve unrelated work.
 
 ```bash
@@ -393,7 +449,8 @@ Last thing you output, in this shape:
 
 ```text
 Change:           <the one sentence from step 1>
-Critical checks:  <each one and its result; any failure, and the base-revision evidence>
+Critical checks:  <each one, where it ran (inside make test | by itself | not affected — why) and its
+                  result; any failure, and the base-revision evidence>
 Tests added:      <paths, or "none — <reason>">
 Tests reviewed:   <existing coverage reused and scope>
 Tests removed:    <paths and retained coverage/retired behavior, or "none — <reason>">
@@ -406,7 +463,7 @@ Model audit:      <run — logged <date> | not run (not asked) — last pass <da
 PR:               <url>
 ```
 
-**Done means:** the critical checks are green, the checks required by step 5 ran,
+**Done means:** the critical checks are green or recorded as not affected, the checks required by step 5 ran once on the final tree,
 test maintenance was reviewed, the checklist matches the code, the docs landed in
 the same change set, and
 **the PR is open with its URL in the report** (unless the user explicitly narrowed

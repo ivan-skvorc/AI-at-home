@@ -182,8 +182,9 @@ def build_enabled_container_section(environment: list[str] | None) -> list[str]:
         "  # Pinned image (matches docker/docker-compose.sandbox.yml); do NOT drop to",
         "  # :latest — that mirror tag lacks the /v1/bash/* routes the agent needs.",
         f"  image: {AIO_SANDBOX_IMAGE}",
-        "  # Per-command budget for bash in the sandbox; raise both together for",
-        "  # long installs/builds (the HTTP client must outlive the command).",
+        "  # Wall-clock deadline for one bash command in the sandbox; raise it for",
+        "  # long installs/builds. Each command carries its own request budget, so",
+        "  # request_timeout only covers session creation and the file/list calls.",
         "  bash_command_timeout: 1800",
         "  request_timeout: 1800.0",
         "  # Keep debug sessions warm for an hour before idle reclaim.",
@@ -193,6 +194,9 @@ def build_enabled_container_section(environment: list[str] | None) -> list[str]:
         "  # expose_ports: [8000, 3000]",
         "  # Grant extra capabilities, e.g. so gdb/strace can attach:",
         "  # extra_capabilities: [SYS_PTRACE]",
+        "  # Hardware-accelerated VMs: forward the host's /dev/kvm (the host must",
+        "  # have it; read the `devices:` note in config.example.yaml first):",
+        "  # devices: [/dev/kvm]",
     ]
     lines.extend(environment if environment is not None else DEFAULT_ENVIRONMENT)
     return lines

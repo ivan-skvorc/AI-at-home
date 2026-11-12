@@ -424,6 +424,12 @@ export function buildRunContext({
   // Settings applies to the very next Double Plus Ultracode message.
   const modeContext = deriveModeContext({
     ...settings,
+    // The model this run is sent with: a one-turn choice replaces the saved one
+    // below, and a workflow's agents must inherit the same one.
+    model_name:
+      typeof extraContext?.model_name === "string"
+        ? extraContext.model_name
+        : settings.model_name,
     ultracode_limits: getLocalSettings().ultracode,
   });
   // Fork: the thread's Ultra-mode subagent dropdown shares this key with
@@ -2206,6 +2212,7 @@ export function useThreadStream({
     hasMore: hasMoreHistory,
     loadMore: loadMoreHistory,
     loading: isHistoryLoading,
+    loadFailed: historyLoadFailed,
   } = useThreadHistory(onStreamThreadId ?? "", {
     enabled: !isMock,
     pendingSupersededRunIds,
@@ -3892,6 +3899,7 @@ export function useThreadStream({
     isUploading,
     isHistoryLoading,
     hasMoreHistory,
+    historyLoadFailed,
     loadMoreHistory,
     sendInput,
     runInputs: (inputQuery.data?.items ?? []).map((item) =>
@@ -4021,7 +4029,13 @@ export function useThreadHistory(
     messages,
     loading: historyQuery.isLoading || historyQuery.isFetchingNextPage,
     hasMore: Boolean(historyQuery.hasNextPage),
+    // With no page loaded, `fetchNextPage` requests the first one again.
     loadMore: historyQuery.fetchNextPage,
+    // The first page failed, so there is no "next page" and `hasMore` is false.
+    // Kept apart from it on purpose: `hasMore` also arms the scroll sentinel
+    // (which would retry in a loop) and holds back the "this thread does not
+    // exist" redirect. A failed older page keeps its data and stays `hasMore`.
+    loadFailed: historyQuery.isError && historyQuery.data === undefined,
   };
 }
 

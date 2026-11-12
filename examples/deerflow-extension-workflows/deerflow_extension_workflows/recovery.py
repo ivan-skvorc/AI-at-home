@@ -11,6 +11,10 @@ import json
 from deerflow_extension_api.plugins import ToolContext
 
 RECOVERY_VERSION = 1
+#: The record stores every task and answer twice (journal and steps), so the
+#: journal must fail cleanly well before the store's 8 MiB record limit.
+JOURNAL_BYTES = 3 * 1024 * 1024
+JOURNAL_LIMIT = "Recovery journal limit (3 MiB of tasks and answers); use fewer agents or shorter tasks and answers"
 
 
 class Recovery:
@@ -87,8 +91,8 @@ class Recovery:
         else:
             item = {"frame": copy.deepcopy(frame), "responses": None}
             size = len(json.dumps(item).encode())
-            if record.get("journal_bytes", 0) + size > 4 * 1024 * 1024:
-                raise ValueError("Recovery journal limit (4 MiB)")
+            if record.get("journal_bytes", 0) + size > JOURNAL_BYTES:
+                raise ValueError(JOURNAL_LIMIT)
             record["journal_bytes"] = record.get("journal_bytes", 0) + size
             record["journal"].append(item)
             await self.save(entry["owner"], record)
@@ -104,8 +108,8 @@ class Recovery:
         record = entry["record"]
         record["remaining_seconds"] = max(0, entry["deadline"].when() - asyncio.get_running_loop().time())
         size = len(json.dumps(responses).encode())
-        if record.get("journal_bytes", 0) + size > 4 * 1024 * 1024:
-            raise ValueError("Recovery journal limit (4 MiB)")
+        if record.get("journal_bytes", 0) + size > JOURNAL_BYTES:
+            raise ValueError(JOURNAL_LIMIT)
         record["journal_bytes"] = record.get("journal_bytes", 0) + size
         record["journal"][entry["frame_index"] - 1]["responses"] = copy.deepcopy(responses)
         await self.save(entry["owner"], record)

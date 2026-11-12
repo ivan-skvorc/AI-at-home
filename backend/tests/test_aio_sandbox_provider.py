@@ -3989,10 +3989,12 @@ def test_load_config_reads_expose_ports_and_capabilities():
         network=SimpleNamespace(model_dump=lambda: {"mode": "open"}),
         expose_ports=[8000, 3000],
         extra_capabilities=["SYS_PTRACE"],
+        devices=["/dev/kvm"],
     )
     config = _load_config_for(sandbox_cfg)
     assert config["expose_ports"] == [8000, 3000]
     assert config["extra_capabilities"] == ["SYS_PTRACE"]
+    assert config["devices"] == ["/dev/kvm"]
 
 
 def test_load_config_defaults_ports_and_capabilities_to_empty():
@@ -4012,6 +4014,7 @@ def test_load_config_defaults_ports_and_capabilities_to_empty():
     config = _load_config_for(sandbox_cfg)
     assert config["expose_ports"] == []
     assert config["extra_capabilities"] == []
+    assert config["devices"] == []
 
 
 def test_create_backend_forwards_ports_and_capabilities_to_local_backend(monkeypatch):
@@ -4027,6 +4030,7 @@ def test_create_backend_forwards_ports_and_capabilities_to_local_backend(monkeyp
         "base_url": "",
         "expose_ports": [8000],
         "extra_capabilities": ["SYS_PTRACE"],
+        "devices": ["/dev/kvm"],
         "network": {"mode": "open"},
     }
     captured = {}
@@ -4041,6 +4045,7 @@ def test_create_backend_forwards_ports_and_capabilities_to_local_backend(monkeyp
 
     assert captured["expose_ports"] == [8000]
     assert captured["extra_capabilities"] == ["SYS_PTRACE"]
+    assert captured["devices"] == ["/dev/kvm"]
 
 
 def test_create_backend_warns_when_ports_ignored_in_external_mode(monkeypatch, caplog):
@@ -4053,6 +4058,7 @@ def test_create_backend_warns_when_ports_ignored_in_external_mode(monkeypatch, c
         "environment": {},
         "expose_ports": [8000],
         "extra_capabilities": ["SYS_PTRACE"],
+        "devices": ["/dev/kvm"],
     }
     monkeypatch.setattr(aio_mod, "ExternalSandboxBackend", lambda **kwargs: SimpleNamespace())
 
@@ -4061,6 +4067,7 @@ def test_create_backend_warns_when_ports_ignored_in_external_mode(monkeypatch, c
 
     assert "expose_ports" in caplog.text
     assert "extra_capabilities" in caplog.text
+    assert "devices=['/dev/kvm']" in caplog.text
     assert "external base_url" in caplog.text
 
 

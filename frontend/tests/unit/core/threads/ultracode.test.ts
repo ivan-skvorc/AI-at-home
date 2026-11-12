@@ -57,6 +57,68 @@ describe("Double Plus Ultracode run context", () => {
     });
   });
 
+  it("carries the conversation's model and a switched-off internet to the extension", () => {
+    // Workflow agents and the result turn are separate runs: without these two
+    // keys they fall back to the server's default model with web tools on.
+    for (const mode of ["ultracode", "double_ultracode"] as const) {
+      const derived = deriveModeContext({
+        mode,
+        model_name: "chosen-model",
+        internet_enabled: false,
+        ultracode_limits: { maxAgents: 12, maxParallel: 3, maxMinutes: 30 },
+      });
+      expect(derived.plugin_options).toEqual({
+        [ULTRACODE_NAMESPACE]: {
+          mode,
+          max_agents: 12,
+          max_parallel: 3,
+          max_minutes: 30,
+          model: "chosen-model",
+          internet_enabled: false,
+        },
+      });
+    }
+  });
+
+  it("omits the model without an explicit one and the internet key while it is on", () => {
+    // Absent means "no opinion" to the extension; `internet_enabled: true` or an
+    // empty model would be a value it has to interpret.
+    for (const internet_enabled of [true, undefined, "false"]) {
+      for (const model_name of [undefined, ""]) {
+        const options = deriveModeContext({
+          mode: "double_ultracode",
+          model_name,
+          internet_enabled,
+        }).plugin_options?.[ULTRACODE_NAMESPACE];
+        expect(options).toBeDefined();
+        expect("model" in options!).toBe(false);
+        expect("internet_enabled" in options!).toBe(false);
+      }
+    }
+    expect(
+      ultracodePluginOptions({}, "ultracode", { internetEnabled: false })[
+        ULTRACODE_NAMESPACE
+      ],
+    ).toEqual({
+      mode: "ultracode",
+      max_agents: DEFAULT_ULTRACODE_LIMITS.maxAgents,
+      max_parallel: DEFAULT_ULTRACODE_LIMITS.maxParallel,
+      max_minutes: DEFAULT_ULTRACODE_LIMITS.maxMinutes,
+      internet_enabled: false,
+    });
+    expect(
+      ultracodePluginOptions({}, "ultracode", { model: "chosen-model" })[
+        ULTRACODE_NAMESPACE
+      ],
+    ).toEqual({
+      mode: "ultracode",
+      max_agents: DEFAULT_ULTRACODE_LIMITS.maxAgents,
+      max_parallel: DEFAULT_ULTRACODE_LIMITS.maxParallel,
+      max_minutes: DEFAULT_ULTRACODE_LIMITS.maxMinutes,
+      model: "chosen-model",
+    });
+  });
+
   it("never sends the option on any other mode", () => {
     for (const mode of [
       "flash",

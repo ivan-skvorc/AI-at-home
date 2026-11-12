@@ -67,3 +67,10 @@ services:
     # config `extra_capabilities` key is ignored in external base_url mode):
     # cap_add:
     #   - SYS_PTRACE
+    #
+    # Hardware-accelerated VMs inside the sandbox (the config `devices` key is
+    # ignored in external base_url mode). The host must have /dev/kvm or the
+    # container will not start, and the node keeps the host's mode and group —
+    # see the `devices:` note in config.example.yaml for the udev rule:
+    # devices:
+    #   - /dev/kvm:/dev/kvm:rw

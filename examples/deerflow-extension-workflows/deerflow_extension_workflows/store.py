@@ -17,6 +17,10 @@ TERMINAL = {
 }
 
 
+class RecordLimit(ValueError):
+    """One workflow record (journal, steps, logs) outgrew the store's 8 MiB."""
+
+
 class Store:
     def __init__(self, path):
         self.path = Path(path)
@@ -205,8 +209,7 @@ class Store:
                 if old[0] != record["fingerprint"]:
                     raise ValueError("request_id already used with different script or arguments")
                 return json.loads(old[1]), False
-            if db.execute("SELECT count(*) FROM workflows WHERE owner=?", (owner,)).fetchone()[0] >= 100:
-                raise ValueError("Retained workflow limit (100); delete finished records")
+            self._make_room(db, owner)
             db.execute(
                 "INSERT INTO workflows (id,owner,request_id,fingerprint,status,data) VALUES (?,?,?,?,?,?)",
                 (
@@ -225,7 +228,7 @@ class Store:
         updated = {**record, "revision": revision + 1}
         raw = json.dumps(updated)
         if len(raw.encode()) > 8 * 1024 * 1024:
-            raise ValueError("Workflow recovery journal limit (8 MiB)")
+            raise RecordLimit("Workflow record limit (8 MiB)")
         with closing(self.connect()) as db, db:
             changed = db.execute(
                 "UPDATE workflows SET status=?,data=?,revision=revision+1 WHERE owner=? AND id=? AND revision=?",
@@ -266,12 +269,41 @@ class Store:
             row = db.execute("SELECT status FROM workflows WHERE owner=? AND id=?", (owner, run_id)).fetchone()
             if not row or row[0] not in TERMINAL:
                 raise ValueError("Only finished workflow records can be deleted")
-            db.execute(
-                "DELETE FROM workflow_artifacts WHERE owner=? AND workflow=?",
-                (owner, run_id),
-            )
-            db.execute("DELETE FROM workflow_deliveries WHERE owner=? AND workflow=?", (owner, run_id))
-            db.execute("DELETE FROM workflows WHERE owner=? AND id=?", (owner, run_id))
+            self._discard(db, owner, run_id)
+
+    def _discard(self, db, owner, run_id):
+        db.execute(
+            "DELETE FROM workflow_artifacts WHERE owner=? AND workflow=?",
+            (owner, run_id),
+        )
+        db.execute("DELETE FROM workflow_deliveries WHERE owner=? AND workflow=?", (owner, run_id))
+        db.execute("DELETE FROM workflows WHERE owner=? AND id=?", (owner, run_id))
+
+    def _held(self, db, run_id):
+        """Why a finished record may not go yet, or None. PostgresStore has reasons."""
+        return None
+
+    def _make_room(self, db, owner):
+        """At the retained limit, drop the owner's oldest record that is finished for good.
+
+        One record is stored per launch, so without this the 101st launch fails
+        until the owner deletes records by hand. Only completed, failed and
+        cancelled records go: the other terminal states are kept for recovery
+        or reconciliation, and a result still waiting to be posted keeps its
+        record. The launch is refused only when nothing can go.
+        """
+        if db.execute("SELECT count(*) FROM workflows WHERE owner=?", (owner,)).fetchone()[0] < 100:
+            return
+        finished = db.execute(
+            "SELECT w.id FROM workflows w WHERE w.owner=? AND w.status IN ('completed','failed','cancelled') AND NOT EXISTS "
+            "(SELECT 1 FROM workflow_deliveries d WHERE d.owner=w.owner AND d.workflow=w.id AND d.status='pending') ORDER BY w.rowid",
+            (owner,),
+        ).fetchall()
+        for (run_id,) in finished:
+            if self._held(db, run_id) is None:
+                self._discard(db, owner, run_id)
+                return
+        raise ValueError("Retained workflow limit (100) and no finished record can be removed; delete records on the Script workflows page")
 
     def interrupt_unfinished(self):
         with closing(self.connect()) as db, db:

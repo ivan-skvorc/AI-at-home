@@ -12,6 +12,7 @@ from collections.abc import AsyncIterator, Iterator
 from copy import deepcopy
 from typing import Any, ClassVar
 
+import httpx
 from langchain_core.callbacks import AsyncCallbackManagerForLLMRun, CallbackManagerForLLMRun
 from langchain_core.language_models import LanguageModelInput
 from langchain_core.language_models.chat_models import BaseChatModel, agenerate_from_stream, generate_from_stream
@@ -27,6 +28,11 @@ from deerflow.models.openai_codex_provider import CodexChatModel
 USER_AGENT = "DeerFlow/subscription-models"
 _TOOL_NAMESPACE = "deerflow"
 _REASONING_ITEMS = "deerflow_subscription_reasoning"
+# A read timeout is per read, not per response, so a long generation that keeps
+# sending bytes is unaffected. It equals the factory's default chunk timeout
+# (``_DEFAULT_STREAM_CHUNK_TIMEOUT_SECONDS``), which only starts once the
+# stream is open; this one covers the wait for the response headers before it.
+_DEFAULT_TRANSPORT_TIMEOUT = httpx.Timeout(240.0, connect=10.0)
 
 
 def get_access_token(provider: str) -> str:
@@ -139,6 +145,13 @@ class _SubscriptionChatOpenAI(ChatOpenAI):
             # follow-up only as the encrypted items replayed with the history.
             kwargs.update(store=False, include=["reasoning.encrypted_content"])
             kwargs.setdefault("output_version", "responses/v1")
+        # These models come from a discovered catalog, so there is no
+        # config.yaml entry to carry a timeout. With none, langchain passes
+        # ``timeout=None`` to the SDK, which switches off the SDK's own default
+        # and waits forever on a proxy that accepted the request and went quiet.
+        if kwargs.get("timeout") is None and kwargs.get("request_timeout") is None:
+            kwargs.pop("request_timeout", None)
+            kwargs["timeout"] = _DEFAULT_TRANSPORT_TIMEOUT
         super().__init__(**kwargs)
 
     def _check_subscription_use(self) -> None:
@@ -154,6 +167,14 @@ class _SubscriptionChatOpenAI(ChatOpenAI):
         if result is not None and result.generation_info and "model_name" in result.generation_info:
             # Keep subscription usage separate from separately billed API aliases.
             result.generation_info["model_name"] = subscription_model_name(self.subscription_provider, self.model_name)
+        # langchain-openai drops this field. Without it a reasoning model shows
+        # nothing for its whole thinking phase. Display only: sending it back
+        # is a per-provider choice (Kimi's payload override below).
+        choices = chunk.get("choices") or []
+        if result is not None and choices:
+            reasoning = (choices[0].get("delta") or {}).get("reasoning_content")
+            if reasoning is not None:
+                result.message.additional_kwargs["reasoning_content"] = reasoning
         return result
 
     def _stream(self, messages: list[BaseMessage], stop: list[str] | None = None, run_manager: CallbackManagerForLLMRun | None = None, **kwargs: Any) -> Iterator[ChatGenerationChunk]:
@@ -267,12 +288,3 @@ class KimiSubscriptionChatModel(_SubscriptionChatOpenAI):
 
         restore_assistant_payloads(payload.get("messages", []), messages, restore)
         return payload
-
-    def _convert_chunk_to_generation_chunk(self, chunk: dict, default_chunk_class: type, base_generation_info: dict | None) -> ChatGenerationChunk | None:
-        result = super()._convert_chunk_to_generation_chunk(chunk, default_chunk_class, base_generation_info)
-        choices = chunk.get("choices") or []
-        if result is not None and choices:
-            reasoning = (choices[0].get("delta") or {}).get("reasoning_content")
-            if reasoning is not None:
-                result.message.additional_kwargs["reasoning_content"] = reasoning
-        return result

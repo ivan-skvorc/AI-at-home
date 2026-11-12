@@ -98,7 +98,19 @@ In chat, ask the lead to write an inspectable workflow script and launch it with
 `launch_workflow`, retaining a stable `request_id`. Host tool names are derived
 from the namespace. Use `inspect_workflow` on demand to inspect outcomes and
 `cancel_workflow` to request cancellation; do not ask the lead to poll continuously.
-The plugin page refreshes active progress every two seconds.
+`inspect_workflow` leaves step outputs out; `inspect_workflow_step` returns one
+completed step's `{step_id, status, attempt, output}` (at most the 12,000-byte
+answer limit), so the finished work of a failed workflow can be reused. It does not
+resume or replay anything. A refusal (an unknown run ID, a step that did not complete)
+comes back as `{"found": false, "error": "<reason>"}`; the result message carries the
+whole run ID the tool takes.
+A launch the service refuses (the active or retained workflow limit, a script or
+arguments over their size limit, a `request_id` reused with a different script)
+comes back from the tool as `{"launched": false, "error": "<reason>"}` (at most 240
+characters) and starts nothing; the browser's launch action reports an error as before.
+The plugin page refreshes active progress every two seconds and names an Ultracode
+run by its mode: `Plus Ultracode run` for `ultracode`, `Double Plus Ultracode run`
+for `double_ultracode`.
 
 ## Script API
 
@@ -118,19 +130,26 @@ return checks.map(check => check.output);
 
 `agent()` resolves to `{output, threadId, runId, status: 'success', artifactVersion, attempts}`
 (plus `workspace` after a merge). `output` is the last attributable non-tool assistant
-answer: parsed JSON if valid, otherwise text or content blocks. Pass `schema` (a JSON
+answer: parsed JSON if valid, otherwise text. An answer delivered as content blocks
+is the joined text of its text blocks (thinking is left out). Pass `schema` (a JSON
 Schema object, at most 4,000 bytes) to have the host validate the output: a mismatch
 is re-asked on the same child thread up to twice, each under a new attempt identity
 persisted before admission, and still failing after three attempts fails the step.
 Pass `model` to run that step on a configured model; the host enforces `model:use`
-for it exactly as for any run. Every Agent call must be awaited, including fan-out
+for it exactly as for any run. A step without one runs on the launching
+conversation's model when the launching run's options name it (`model`, below), and
+otherwise on the server's default. Every Agent call must be awaited, including fan-out
 calls. Returning while child promises are outstanding fails the workflow and
 interrupts tracked children.
 
 `phase(title)` starts a named group; the steps admitted after it are shown under it
 on the progress page (at most 64 phases). `pipeline(items, fn, {concurrency})` calls
 `fn(item, index)` for each of up to 1,000 items with at most `concurrency` (default
-16, at most 64) calls pending, and resolves to the results in order. The service's
+16, at most 64) items in flight, and resolves to the results in order. Several stage
+functions may be given before the optional options object, `pipeline(items, stage1,
+stage2, {concurrency})`: each item flows through them in order, a later stage is
+called as `stage(previousResult, item, index)`, and the item's result is the last
+stage's. A stage that throws rejects the whole pipeline. The service's
 slots still bound how many children actually run.
 
 `workspace` chooses where a step works: `'isolated'` (the default, an empty
@@ -148,21 +167,48 @@ When a workflow launched from a conversation ends (completed, failed, waiting fo
 input, uncertain or interrupted; not cancelled), its result or failure is posted into
 that conversation as a new message, exactly once: the host admits one run per
 `workflow-result:<run>` idempotency key, and the message is marked as posted by this
-extension. A busy conversation is retried, never interrupted. After a restart, a
+extension. A busy conversation is retried, never interrupted, and a result run the
+host's spend cap refuses (HTTP 402) is retried the same way until a run is allowed
+again. Either wait lasts at most 24 hours; after that, and after a restart, a
 pending result is posted on the owner's next authenticated workflow action. Turn it
 off with `deliver_results: false`.
+
+The run that receives the result is started with the launching run's options rebuilt
+from the workflow record (the mode and the limits as the record clamped them, plus
+`model` and `internet_enabled: false` when they were sent), so a follow-up workflow
+launched from that turn keeps the mode, the user's limits, the model and the internet
+switch. The same record gives that run, and every agent the workflow starts, the
+conversation's model (`context.model_name`) and its switched-off internet
+(`context.internet_enabled = false`). That model is a default, not a requirement:
+when the host refuses it (removed or renamed since launch, HTTP 400, 403 or 422) the
+agent is started without it, the record forgets it, and later agents and the result
+turn run on the server's default. A step's own `model` is never replaced.
 
 Agent task inputs allow 16,000 serialized JSON bytes, including wrapping fields
 and file references; step outputs allow 12,000. This leaves room to pass a saved
 output to the next Agent with a short task instruction. JSON escaping counts
 toward these limits. Larger material must use the file workflow described below.
 
-`parallel()` takes lazy thunks and preserves order. The service, independently of
+`parallel()` takes up to 1,000 lazy thunks and preserves order. At most 64 `agent()`
+calls are outstanding at the host at once; further calls (up to 1,000 more) wait in
+the worker and are issued in call order as earlier ones resolve, so a fan-out wider
+than 64 queues instead of failing. The service, independently of
 JavaScript promises, bounds admitted children per workflow and globally. A rejected
 call rejects its promise; failures are not silently converted to null. Scripts may
 catch ordinary failures and use explicit bounded revisions with **new** step IDs.
 Limit faults, human-input waits, and uncertain admissions stop the supervisor even
-if script code catches their promise rejection.
+if script code catches their promise rejection. Plus and Double Plus Ultracode runs
+are the exception for human-input waits: nobody can answer a child there, so a child
+that asks a question or hits an approval prompt fails only its own step (shown as
+`waiting_input`; the call rejects) and a script that catches it keeps its other
+agents and their outputs. Uncaught, it fails the workflow like any other error.
+
+A script that throws ends the workflow with its own error, also while other agents
+are still running (they are cancelled), and a script that does not parse reports the
+syntax error. A child run that did not succeed rejects with `Agent run did not
+succeed`, followed by the run's stop reason when the host gives one. The posted
+failure message lists up to 20 unfinished steps as `<step> (<status>): <error>` and
+says how many more it left out.
 
 Step IDs contain 1–80 ASCII letters, digits, underscores or hyphens and cannot
 repeat within a workflow. Attempts are 1 unless a `schema` mismatch is re-asked. `task` is JSON and
@@ -275,8 +321,52 @@ A Plus or Double Plus Ultracode run (the composer modes in the web app) may lowe
 `max_calls` and `concurrency` for itself through the run's `plugin_options`, the
 user's Settings → Subagents limits; values above the operator's are ignored, so a
 user can make a run smaller but never larger. Plus Ultracode may also shorten its
-wall time; Double Plus Ultracode has none, so only the model finishing ends it. Such a launch, or any launch whose
+wall time; Double Plus Ultracode has none. Such a launch, or any launch whose
 call limit exceeds 25, returns an `advisory` naming the possible size.
+
+For a Double Plus run the host lifts the step limit, the loop and tool-call limits,
+the token budgets and the time limit, for the lead, every agent the workflow starts
+and the run that receives the result. That is not the absence of every automatic
+stop. In both modes these still end a workflow, or refuse it, on their own:
+
+| Stop | Limit | Outcome |
+| --- | --- | --- |
+| Agents | `max_calls` in total, `concurrency` at once (the user's lower values) | a call past the total fails the workflow, caught or not |
+| Script result | 12,000 bytes as JSON: about 8,000 characters, 1,500 if mostly non-Latin | failed; completed step outputs stay readable with `inspect_workflow_step` |
+| Task, agent answer | 16,000 and 12,000 bytes | that call rejects; a script that catches it continues |
+| Progress | `max_logs` lines, 64 phases, 128 `log()`/`phase()` calls without an `await` | failed |
+| Unresolved calls | 64 at the host plus 1,000 waiting in the worker | the call past 1,064 rejects |
+| Record | 3 MiB of tasks and answers; 8 MiB in all | failed with the limit named; the result is still posted |
+| Worker | 10,000 turns, `cpu_seconds`, `memory_bytes` | failed |
+| Configuration | `config.yaml`, `extensions_config.json` or an allowed agent's config changes during the run, for example a skill or MCP server toggled in Settings | failed at the next agent start, caught or not (the *declarative configuration revision* above) |
+| Workspace copy | 1,000 files, 16 MiB per file, 64 MiB in total | failed, caught or not |
+| Launch | `max_workflows_per_owner` (2) and `max_workflows` (4) active; 100 retained records with nothing removable | refused: `{launched: false, error}` |
+| Spend cap | when the host has one | a refused agent fails the workflow; a refused result run waits |
+
+A child that needs input no longer belongs in that list for these modes: it fails
+only its own step (Script API above).
+
+What the lead is told comes from the operator's configuration. On an Ultracode turn
+the brief (`ultracode.py`) names the allowed agent references from `agents`, says what
+an agent can reach of the conversation's files under `shared_workspace` (`off`: its
+own empty workspace, so the lead applies file changes itself; `read`: `workspace:
+'snapshot'`; `write`: also `'merge'`; both with the 1,000-file and 64 MiB cap), the
+user's agent, parallelism and time limits, the result-size limit with
+`inspect_workflow_step` as the way back to finished steps, and that progress, cancel
+and recovery after a restart are on the Script workflows page. It also allows a later
+phase to be a new workflow launched after reading a result, asks for several
+independent verifiers and a completeness check, and exempts trivial edits. Double Plus
+adds one item saying which limits are lifted and that the agent count, the size
+limits and a spend cap still apply. The `launch_workflow` description repeats the
+size and count limits. This text is part of every Ultracode request: with the tools it
+brings the fixed request of a 32K local model to about 11,650 tokens (Plus) and 11,780
+(Double Plus) of the 12,000 that `backend/tests/test_context_fit_critical.py` allows,
+so new brief text has to replace old text.
+The same options may carry two optional keys describing the conversation: `model`
+(a model name of up to 200 characters from `[A-Za-z0-9._:/@+-]`) and
+`internet_enabled: false`. They are stored on the workflow record and inherited as
+described under the Script API; any other value is ignored, and the host still
+authorizes the model for every run.
 
 Each JS engine entry has a 50 ms CPU interruption limit; stack is 256 KiB. The
 isolated worker additionally has a cumulative POSIX CPU limit, no core dumps,
@@ -288,14 +378,32 @@ sandbox or a guarantee against native engine vulnerabilities.
 Wall time (`timeout_seconds`) is the only clock bound on a run. A separate cap
 of 10,000 worker turns stops scripts that spin the JS job queue; idle waits on
 pending Agent calls do not exchange frames with the worker and do not consume
-turns, so long child runs are limited only by the wall deadline.
+turns, so long child runs are limited only by the wall deadline. A script whose
+job queue drains while no call is outstanding (`await new Promise(() => {})`, a
+deadlocked hand-written pool) can never continue: it fails at once with `Script is
+waiting on something no agent call can resolve` instead of exchanging empty frames.
 The local wait checks worker exits every 20 ms alongside cancellation and faults;
-an exit triggers prompt failure handling and cleanup of pending child runs.
+an exit triggers prompt failure handling and cleanup of pending child runs. Each
+running child's status is polled through the host with a backoff, from 20 ms up to
+once a second per attempt, and a stopping workflow wakes the wait at once.
 
-IPC frames are bounded to 128 KiB (128 messages per frame). Script JSON encoding is at most 16,000 bytes,
-arguments 4,000 bytes, task 8,000 bytes, each captured Agent output/final result
-12,000 bytes. Progress messages are 160 JSON bytes each (`max_logs` of them) and
-100 workflows are retained per owner. Inspect responses are bounded to 60 KiB; a
+IPC frames are bounded to 2 MiB (192 messages per frame: 128 progress messages and
+64 calls), which holds 64 pending calls with 16,000-byte tasks issued in one JavaScript turn. Script JSON encoding is at most 16,000 bytes,
+arguments 4,000 bytes, task 16,000 bytes, each captured Agent output/final result
+12,000 bytes; a larger return value fails the workflow with `Script result exceeded
+the 12,000-byte limit; return a summary`. A `log()` line keeps 160 bytes of
+ASCII-escaped JSON (about 26 CJK characters) and a `phase()` title 80 UTF-8 bytes:
+longer text is cut and marked with `...`, and empty text is skipped, so neither ends
+a run. Their counts stay limits whose errors name them: `max_logs` lines, 64 phases,
+and 128 `log()`/`phase()` calls without an `await` in between. Also,
+100 workflows are retained per owner. At that limit a launch first removes the
+owner's oldest record that is completed, failed or cancelled and whose result is not
+still waiting to be posted, together with its captured files; a later retry with the
+removed record's `request_id` starts a new workflow. Records kept for recovery or
+reconciliation (waiting_input, needs_reconciliation, recoverable, interrupted) are
+never removed automatically, nor, in PostgreSQL mode, one with a live execution owner
+or retained child reservations. The launch is refused only when nothing can be
+removed. Inspect responses are bounded to 60 KiB; a
 larger record drops its oldest steps and messages from the response and says how
 many (`steps_omitted`, `logs_omitted`). Unicode
 limits apply to the JSON encoding too, including escapes. Oversized results fail
@@ -305,7 +413,8 @@ keep a workflow run ID to inspect older retained records.
 There is **no hard dollar-cost limit**. Call/time/CPU limits and ordinary host token
 policies do not constitute a shared workflow currency budget. A host spend cap that
 refuses a child's admission (HTTP 402) fails the workflow cleanly and releases the
-slot; it is never treated as an uncertain admission. Child threads are linked to the
+slot; it is never treated as an uncertain admission. The same refusal of the run that
+would post the result is not a failure: the result waits for the cap (see above). Child threads are linked to the
 launching conversation, whose cost header reports their spend as a separate
 *Workflow agents* row. Unknown configuration
 keys such as `max_cost_usd` are rejected. Add a generic, authoritative host budget
@@ -318,7 +427,7 @@ reservation/enforcement contract before advertising that guarantee.
 | failed | Script, resource limit (including wall deadline), attribution, child execution or observation failed |
 | cancelled | Stop requested and known active children interrupted or already terminal |
 | paused / waiting_approval | Live worker retained at an explicit script checkpoint; occupies an active workflow slot |
-| waiting_input | Child has a graph interrupt or human-input artifact; downstream stopped |
+| waiting_input | Child has a graph interrupt or human-input artifact; downstream stopped (in an Ultracode run only that step fails) |
 | needs_reconciliation | Admission/cancellation outcome uncertain; inspect child identities before new work |
 | recoverable | Restart/shutdown retained a compatible execution; sign in and select Recover workflow |
 | interrupted | Legacy record, cancelled startup record, or externally interrupted supervisor; inspect child effects |
@@ -413,8 +522,17 @@ verifies its request frames against that journal, and feeds back recorded respon
 in their original order. Confirmed Agent results are reused rather than dispatched
 again. It reconstructs script variables without serializing a JS heap. `Date` and
 `Math.random` are unavailable; pass timestamps/random values in `args`. A divergent
-history stops before issuing new effects. The journal is bounded at 4 MiB and the complete record at
-8 MiB per run; the worker has a 10,000-round limit.
+history stops before issuing new effects. The journal is bounded at 3 MiB and the complete record at
+8 MiB per run; the worker has a 10,000-round limit. The record stores every task and
+answer twice (journal and steps), so the journal limit is the one a large run meets:
+it fails the workflow with an error that names it, about 12 KB of task plus answer
+per agent at 256 agents. A `merge` step keeps its base (up to 1,000 file hashes) in
+the record only until its merge is applied. Should the record itself still reach
+8 MiB, the run fails with that limit named, and the supervisor drops what an ended
+run no longer needs until the end state fits: the journal (it is never replayed),
+then each step's merge base and host evidence, then the steps' tasks and last their
+answers. It always posts the result; a run that would have been left `recoverable`
+ends `failed`.
 
 Crash boundaries have explicit outcomes:
 

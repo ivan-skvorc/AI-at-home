@@ -181,6 +181,7 @@ export function SidecarPanel({ className }: { className?: string }) {
     isUploading,
     isHistoryLoading,
     hasMoreHistory,
+    historyLoadFailed,
     loadMoreHistory,
     approvalRequests,
     hasPendingApproval,
@@ -602,6 +603,7 @@ export function SidecarPanel({ className }: { className?: string }) {
             thread={thread}
             paddingBottom={MESSAGE_LIST_DEFAULT_PADDING_BOTTOM / 2}
             hasMoreHistory={hasMoreHistory}
+            historyLoadFailed={historyLoadFailed}
             loadMoreHistory={loadMoreHistory}
             isHistoryLoading={isHistoryLoading}
             tokenUsageInlineMode={tokenUsageInlineMode}

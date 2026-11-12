@@ -8,6 +8,7 @@ from langchain.agents.middleware import AgentMiddleware
 from langgraph.runtime import Runtime
 
 from deerflow.agents.middlewares.tool_call_metadata import clone_ai_message_with_tool_calls
+from deerflow.config.run_limit_overrides import run_limits_suspended
 from deerflow.config.subagents_config import (
     DEFAULT_MAX_TOTAL_SUBAGENTS_PER_RUN,
     MAX_CONCURRENT_SUBAGENT_CALLS,
@@ -102,6 +103,10 @@ class SubagentLimitMiddleware(AgentMiddleware[AgentState]):
     planning checkpoints in one run cannot keep launching more legal-sized
     batches indefinitely. This is more reliable than prompt-based limits.
 
+    Double Plus Ultracode (``run_limits_suspended``) has no per-run total: only
+    the per-response truncation applies there, because that one is execution
+    capacity rather than a limit on how long the run may go on.
+
     Args:
         max_concurrent: Maximum number of concurrent subagent calls allowed.
             Defaults to MAX_CONCURRENT_SUBAGENTS (3). Callers pass the value
@@ -144,7 +149,11 @@ class SubagentLimitMiddleware(AgentMiddleware[AgentState]):
             logger.warning("Subagent limit middleware received no run_id; counting all thread delegations as prior usage. Pass run_id in runtime context to enforce the total cap per run.")
         prior_delegation_count = _count_prior_delegations(state.get("delegations"), run_id=run_id)
         remaining_total = max(0, self.max_total - prior_delegation_count)
-        allowed_task_calls = min(self.max_concurrent, remaining_total)
+        # Double Plus tells the user that only the model finishing ends the
+        # run, so the total neither strips a call nor stops the run there.
+        limits_suspended = run_limits_suspended(getattr(runtime, "context", None))
+        total_exhausted = remaining_total == 0 and not limits_suspended
+        allowed_task_calls = self.max_concurrent if limits_suspended else min(self.max_concurrent, remaining_total)
 
         if len(task_indices) <= allowed_task_calls:
             return None
@@ -164,11 +173,11 @@ class SubagentLimitMiddleware(AgentMiddleware[AgentState]):
         # Stamp stop_reason when the total per-run cap is exhausted so the
         # worker surfaces this capped completion alongside loop_capped /
         # token_capped / safety_capped (#4176).
-        if remaining_total == 0 and isinstance(getattr(runtime, "context", None), dict):
+        if total_exhausted and isinstance(getattr(runtime, "context", None), dict):
             runtime.context["stop_reason"] = "subagent_limit_capped"
 
         # Replace the AIMessage with truncated tool_calls (same id triggers replacement)
-        content = _append_text(last_msg.content, _TOTAL_LIMIT_STOP_MSG) if remaining_total == 0 else None
+        content = _append_text(last_msg.content, _TOTAL_LIMIT_STOP_MSG) if total_exhausted else None
         updated_msg = clone_ai_message_with_tool_calls(last_msg, truncated_tool_calls, content=content)
         return {"messages": [updated_msg]}
 

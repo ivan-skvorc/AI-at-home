@@ -109,13 +109,30 @@ export interface UltracodePluginOptions {
     max_agents: number;
     max_parallel: number;
     max_minutes: number;
+    /** The conversation's selected model; absent without an explicit one. */
+    model?: string;
+    /** Only ever `false` (the conversation is offline); absent while it is on. */
+    internet_enabled?: false;
   };
+}
+
+/**
+ * What the workflow's own runs inherit from the conversation. Its agents and
+ * the turn that receives the result are separate runs the extension starts, so
+ * without these they use the server's default model and keep their web tools.
+ */
+export interface UltracodeConversation {
+  /** The model the launching run is sent with (`context.model_name`). */
+  model?: string;
+  /** The conversation's internet switch; only `false` is sent. */
+  internetEnabled?: boolean;
 }
 
 /** The run's `plugin_options`: the one key that makes an Ultra run this mode. */
 export function ultracodePluginOptions(
   limits: unknown,
   mode: WorkflowScriptMode = ULTRACODE_MODE,
+  conversation: UltracodeConversation = {},
 ): UltracodePluginOptions {
   const { maxAgents, maxParallel, maxMinutes } =
     normalizeUltracodeLimits(limits);
@@ -125,6 +142,12 @@ export function ultracodePluginOptions(
       max_agents: maxAgents,
       max_parallel: Math.min(maxParallel, maxAgents),
       max_minutes: maxMinutes,
+      // Both keys are omitted rather than sent empty: the extension reads an
+      // absent key as "no opinion", like the host does for the run context.
+      ...(conversation.model ? { model: conversation.model } : {}),
+      ...(conversation.internetEnabled === false
+        ? { internet_enabled: false as const }
+        : {}),
     },
   };
 }

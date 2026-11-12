@@ -1,4 +1,8 @@
-"""In-memory RunEventStore. Used when run_events.backend=memory (default) and in tests.
+"""In-memory RunEventStore.
+
+Used when run_events.backend=memory, as the fallback of the default
+run_events.backend=db when database.backend=memory provides no session
+factory, and in tests. Its rows do not survive a Gateway restart.
 
 Thread-safe for single-process async usage (no threading locks needed
 since all mutations happen within the same event loop).

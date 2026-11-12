@@ -25,28 +25,41 @@ from .delivery import Delivery
 from .lifecycle import Lifecycle
 from .postgres import LeaseLost
 from .recovery import RECOVERY_VERSION, Recovery
-from .store import TERMINAL, Store
+from .store import TERMINAL, RecordLimit, Store
 from .ultracode import MODE_DOUBLE, MODES, SIZE_WARNING_AGENTS, run_limits
 
-FRAME = 128 * 1024
+#: Keep equal to worker.MAX_FRAME.
+FRAME = 2 * 1024 * 1024
 TURN_LIMIT = 10000
 AGENT_TASK_BYTES = 16000
 AGENT_OUTPUT_BYTES = 12000
+#: The script's return value, as JSON.
+RESULT_BYTES = 12000
 SCHEMA_BYTES = 4000
 #: Re-asks after a schema mismatch, each under a new attempt identity.
 MAX_REASKS = 2
 PHASE_LIMIT = 64
-FRAME_MESSAGES = 128
+#: One frame: the worker's 128 log()/phase() messages plus its 64 outstanding calls.
+FRAME_MESSAGES = 128 + 64
+#: A log() line, measured as ASCII-escaped JSON; a phase() title, in UTF-8.
+LOG_BYTES = 160
+PHASE_BYTES = 80
+#: Shape of a model name, for agent({model}) and the conversation's own model.
+MODEL_NAME = re.compile(r"[A-Za-z0-9._:/@+-]{1,200}")
 #: Sent with every Plus and Double Plus Ultracode agent task. Children cannot answer an
-#: interrupt (a question fails the workflow) and an answer over
+#: interrupt (a question fails the step) and an answer over
 #: AGENT_OUTPUT_BYTES fails the step.
 RUN_NOTE = (
     "You run unattended inside a background workflow: nobody can answer questions, so never ask for clarification; "
     "make reasonable assumptions and state them. Keep your final answer under 8,000 characters (1,500 if it is mostly "
     "non-Latin text such as Chinese): summarize instead of pasting raw logs or whole files."
 )
+#: First and longest wait between two status polls of one running child.
+POLL_SECONDS = (0.02, 1.0)
 #: Copies and merges of a conversation's workspace are bounded file IO, not admission.
 WORKSPACE_SECONDS = 120
+#: Appended to the store's record-limit error wherever it ends a workflow.
+RECORD_ADVICE = "use fewer agents or shorter tasks and answers"
 WORKSPACE_MODES = {"off": ("isolated",), "read": ("isolated", "snapshot"), "write": ("isolated", "snapshot", "merge")}
 logger = logging.getLogger(__name__)
 
@@ -66,6 +79,21 @@ def text(value, limit):
     if not isinstance(value, str) or not value.strip() or len(value.encode("utf-8")) > limit:
         raise ValueError("Invalid text or UTF-8 byte limit")
     return value
+
+
+def clipped(value, limit, size):
+    """Progress text within `limit` as `size` measures it, cut with '...' when longer; None when there is none.
+
+    Progress is advisory: a long or empty log() or phase() must never end a workflow.
+    """
+    if not isinstance(value, str) or not value.strip():
+        return None
+    if size(value) <= limit:
+        return value
+    value = value[:limit]
+    while size(value + "...") > limit:
+        value = value[:-1]
+    return value + "..."
 
 
 def pending_input(messages):
@@ -284,13 +312,21 @@ class Workflows(Cluster, Recovery, Lifecycle, Artifacts, Delivery):
             definition = await self.get_definition(definition, context)
             script = definition.pop("script")
         else:
-            script = text(payload.get("script"), 16000)
-        encoded(script, 16000)
+            script = payload.get("script")
+        # These reasons reach the lead (the launch tool returns a refusal as its
+        # result), so they name the field and the limit it has to fit.
+        try:
+            encoded(text(script, 16000), 16000)
+        except ValueError:
+            raise ValueError("script must be non-empty text of at most 16,000 bytes once JSON-encoded (quotes, newlines and non-ASCII characters take extra bytes)") from None
         request_id = text(payload.get("request_id"), 128)
         args = copy.deepcopy(payload.get("args", {}))
         if not isinstance(args, dict):
             raise ValueError("args must be a JSON object")
-        encoded(args, 4000)
+        try:
+            encoded(args, 4000)
+        except ValueError:
+            raise ValueError("args must be valid JSON of at most 4,000 bytes") from None
         limits = {
             k: self.config[k]
             for k in (
@@ -310,9 +346,15 @@ class Workflows(Cluster, Recovery, Lifecycle, Artifacts, Delivery):
         # user's Settings); run_limits clamps them to the operator values above,
         # and drops the wall clock for Double Plus.
         tool_launch = isinstance(context, ToolContext)
-        per_run = run_limits(context.run_options, self.config) if tool_launch else None
+        options = context.run_options if tool_launch else {}
+        per_run = run_limits(options, self.config) if tool_launch else None
         if per_run is not None:
             limits.update(per_run)
+        # What the conversation chose, sent by the composer with the same
+        # options (a tool sees nothing else of its run). Browser input: a value
+        # that does not fit is ignored, and the host still authorizes the model.
+        model = options.get("model")
+        model = model if isinstance(model, str) and MODEL_NAME.fullmatch(model) else None
         script_hash = hashlib.sha256(script.encode()).hexdigest()
         args_hash = identity(args)
         fingerprint = identity(
@@ -347,7 +389,11 @@ class Workflows(Cluster, Recovery, Lifecycle, Artifacts, Delivery):
             "steps": [],
             "logs": [],
             "result": None,
-            "mode": context.run_options.get("mode") if per_run is not None else None,
+            "mode": options.get("mode") if per_run is not None else None,
+            # Defaults for every run started on this workflow's behalf: its
+            # agents (step) and the result turn (delivery.py).
+            "model": model,
+            "internet_enabled": False if options.get("internet_enabled") is False else None,
             "phases": [],
             # The conversation that launched it: where the result is posted, the
             # workspace a step may copy, and the parent its child threads link to.
@@ -518,7 +564,7 @@ class Workflows(Cluster, Recovery, Lifecycle, Artifacts, Delivery):
             # The host authorizes model:use for this name at child admission,
             # exactly as for task(model=...); this only bounds the string.
             model = payload.get("model")
-            if model is not None and (not isinstance(model, str) or not re.fullmatch(r"[A-Za-z0-9._:/@+-]{1,200}", model)):
+            if model is not None and (not isinstance(model, str) or not MODEL_NAME.fullmatch(model)):
                 raise ValueError("model must be a configured model name")
             workspace = payload.get("workspace", "isolated")
             if workspace not in ("isolated", "snapshot", "merge"):
@@ -572,15 +618,6 @@ class Workflows(Cluster, Recovery, Lifecycle, Artifacts, Delivery):
                     }
                 ]
             }
-            run_context_body = {}
-            if model:
-                run_context_body["model_name"] = model
-            # Double Plus Ultracode children must carry the mode: the host
-            # lifts its automatic limits only when runtime context says so.
-            # Plus Ultracode and plain workflows stay limited.
-            if record.get("mode") == MODE_DOUBLE:
-                run_context_body["mode"] = MODE_DOUBLE
-            run_context = {"context": run_context_body} if run_context_body else {}
             existing = next((s for s in record["steps"] if s["step_id"] == step_id), None) if replay else None
             if existing:
                 row = existing
@@ -664,14 +701,7 @@ class Workflows(Cluster, Recovery, Lifecycle, Artifacts, Delivery):
                         raise ValueError("Workflow stopping")
                     row["status"] = "admitting"
                     await self.save(owner, record)
-                    async with asyncio.timeout(self.config["admission_timeout_seconds"]):
-                        run = await runs.start(
-                            thread_id=thread_id,
-                            input=input,
-                            idempotency_key=row["idempotency_key"],
-                            **run_context,
-                            **self.dispatch_fence(record),
-                        )
+                    run = await self.start_child(entry, row, input, model)
                     row.update(
                         run_id=run.run_id,
                         status="running",
@@ -681,6 +711,9 @@ class Workflows(Cluster, Recovery, Lifecycle, Artifacts, Delivery):
                 else:
                     run = await runs.get(thread_id=thread_id, run_id=row["run_id"])
                 while True:
+                    # Each poll is a fully authorized host call: back off per attempt,
+                    # quick for short agents and at most once a second for long ones.
+                    delay = POLL_SECONDS[0]
                     while True:
                         if entry["cancel"].is_set() or entry["fault"]:
                             if not entry.get("lease_lost"):
@@ -690,18 +723,29 @@ class Workflows(Cluster, Recovery, Lifecycle, Artifacts, Delivery):
                             run = await runs.get(thread_id=thread_id, run_id=run.run_id)
                         if run.status not in ("pending", "running"):
                             break
-                        await asyncio.sleep(0.02)
+                        # A stopping workflow sets cancel: wake for it at once instead
+                        # of sleeping the whole (longer) interval.
+                        try:
+                            async with asyncio.timeout(delay):
+                                await entry["cancel"].wait()
+                        except TimeoutError:
+                            pass
+                        delay = min(POLL_SECONDS[1], delay * 1.5)
                     row.update(child_status=run.status, stop_reason=run.stop_reason)
                     async with asyncio.timeout(5):
                         state = await runs.get_state(thread_id=thread_id)
                     messages = state.get("values", {}).get("messages", [])
                     if state.get("next") or state.get("interrupts") or pending_input(messages):
                         row["status"] = "waiting_input"
-                        entry["fault"] = "waiting_input"
+                        # A plain workflow stops for a person. An Ultracode run is
+                        # unattended: only this step fails, so a script that catches
+                        # the rejection keeps its other agents and their outputs.
+                        if record.get("mode") not in MODES:
+                            entry["fault"] = "waiting_input"
                         raise ValueError("Child requires input; workflow resume cannot answer child interrupts")
                     if run.status != "success":
                         row["status"] = "failed"
-                        raise ValueError("Agent run did not succeed")
+                        raise ValueError("Agent run did not succeed" + (f": {run.stop_reason}" if run.stop_reason else ""))
                     # Dynamic context keeps X on a hidden system reminder and moves
                     # the visible human input to X__user. Never anchor on the reminder
                     # or hidden memory; genuinely later human messages still conflict.
@@ -722,6 +766,10 @@ class Workflows(Cluster, Recovery, Lifecycle, Artifacts, Delivery):
                     if not answers:
                         raise ValueError("Agent completed without an answer")
                     content = answers[-1].get("content")
+                    # A model that thinks or has tools answers in blocks: the answer
+                    # is their text, never the thinking or its signature.
+                    if isinstance(content, list):
+                        content = "".join(b if isinstance(b, str) else b["text"] if isinstance(b, dict) and b.get("type") == "text" and isinstance(b.get("text"), str) else "" for b in content)
                     if isinstance(content, str):
                         try:
                             output = json.loads(content)
@@ -764,14 +812,7 @@ class Workflows(Cluster, Recovery, Lifecycle, Artifacts, Delivery):
                     }
                     row.update(status="admitting", run_id=None, message_id=message_id, idempotency_key=f"{record['id']}:{message_id}:{row['attempt']}")
                     await self.save(owner, record)
-                    async with asyncio.timeout(self.config["admission_timeout_seconds"]):
-                        run = await runs.start(
-                            thread_id=thread_id,
-                            input=reask,
-                            idempotency_key=row["idempotency_key"],
-                            **run_context,
-                            **self.dispatch_fence(record),
-                        )
+                    run = await self.start_child(entry, row, reask, model)
                     row.update(run_id=run.run_id, status="running")
                     await self.save(owner, record)
                 # Evidence comes from the run's completed host assembly, never a
@@ -798,6 +839,9 @@ class Workflows(Cluster, Recovery, Lifecycle, Artifacts, Delivery):
                         "conflict_count": len(merged.conflicts),
                         "skipped_count": len(merged.skipped),
                     }
+                    # Only the merge needed the base: a wide merge fan-out must not
+                    # carry every finished step's file hashes to the record limit.
+                    base["files"] = {}
                 # Capture before any later turn can alter the thread checkpoint.
                 row.update(
                     status="completed",
@@ -826,6 +870,14 @@ class Workflows(Cluster, Recovery, Lifecycle, Artifacts, Delivery):
                 row["status"] = "failed" if definitive else "needs_reconciliation"
             response["error"] = "Spend cap reached; no new agents were started" if exc.status_code == 402 else f"AgentRuns rejected operation ({exc.status_code})"
             entry["fault"] = response["error"]
+        except RecordLimit as exc:
+            # A full record is not an uncertain admission: every save leaves the
+            # row saying whether a child run exists, so nothing needs inspecting.
+            if row:
+                row["status"] = "failed"
+                if row.get("run_id") is None:
+                    row["admission_rejected"] = True
+            response["error"] = entry["fault"] = f"{exc}; {RECORD_ADVICE}"
         except Exception as exc:
             if row and row["status"] in ("creating_thread", "admitting"):
                 row["status"] = "needs_reconciliation"
@@ -842,6 +894,48 @@ class Workflows(Cluster, Recovery, Lifecycle, Artifacts, Delivery):
                 row["error"] = response["error"]
             await self.save(owner, record)
         return response
+
+    async def start_child(self, entry, row, input, model):
+        """Admit one child run on the step's own model, else the conversation's.
+
+        A child is its own run: without the conversation's choices it would use
+        the server's default model, and web tools in a conversation switched
+        offline. The conversation's model is a default, not a requirement: when
+        the host refuses it (removed or renamed since launch, a stale browser
+        tab) and admits the child without it, the record forgets it, so every
+        later child and the result turn start the same way.
+        """
+        record = entry["record"]
+
+        async def start(name):
+            context = {"model_name": name} if name else {}
+            if record.get("internet_enabled") is False:
+                context["internet_enabled"] = False
+            # Double Plus Ultracode children must carry the mode: the host
+            # lifts its automatic limits only when runtime context says so.
+            # Plus Ultracode and plain workflows stay limited.
+            if record.get("mode") == MODE_DOUBLE:
+                context["mode"] = MODE_DOUBLE
+            async with asyncio.timeout(self.config["admission_timeout_seconds"]):
+                return await entry["runs"].start(
+                    thread_id=row["thread_id"],
+                    input=input,
+                    idempotency_key=row["idempotency_key"],
+                    **({"context": context} if context else {}),
+                    **self.dispatch_fence(record),
+                )
+
+        if model or not record.get("model"):
+            return await start(model)
+        try:
+            return await start(record["model"])
+        except AgentRunError as exc:
+            # Definitive refusals: no run was admitted under this key.
+            if exc.status_code not in (400, 403, 422):
+                raise
+        run = await start(None)
+        record["model"] = None
+        return run
 
     @staticmethod
     def step_result(row):
@@ -927,7 +1021,7 @@ class Workflows(Cluster, Recovery, Lifecycle, Artifacts, Delivery):
                     frame = json.loads(raw)
                     messages = frame["messages"]
                     if not isinstance(messages, list) or len(messages) > FRAME_MESSAGES:
-                        raise ValueError("Worker message limit")
+                        raise ValueError(f"Worker message limit ({FRAME_MESSAGES} per frame)")
                     replayed = await self.begin_frame(entry, frame)
                     if replayed is not None:
                         await self.send(process, {"responses": replayed})
@@ -951,9 +1045,10 @@ class Workflows(Cluster, Recovery, Lifecycle, Artifacts, Delivery):
                             if log_id in record.get("log_ids", []):
                                 continue
                             if len(record["logs"]) >= self.config["max_logs"]:
-                                raise ValueError("Log limit")
-                            log = text(message.get("text"), 160)
-                            encoded(log, 160)
+                                raise ValueError(f"Log limit: a workflow may log at most {self.config['max_logs']} lines")
+                            log = clipped(message.get("text"), LOG_BYTES, lambda value: len(json.dumps(value)))
+                            if log is None:
+                                continue
                             record["logs"].append(log)
                             record.setdefault("log_ids", []).append(log_id)
                             await self.save(owner, record)
@@ -964,8 +1059,10 @@ class Workflows(Cluster, Recovery, Lifecycle, Artifacts, Delivery):
                                 entry["phase"] = record["phase_ids"].index(phase_id)
                                 continue
                             if len(record["phases"]) >= PHASE_LIMIT:
-                                raise ValueError("Phase limit")
-                            title = text(message.get("title"), 80)
+                                raise ValueError(f"Phase limit: a workflow may start at most {PHASE_LIMIT} phases")
+                            title = clipped(message.get("title"), PHASE_BYTES, lambda value: len(value.encode("utf-8")))
+                            if title is None:
+                                continue
                             record["phases"].append({"title": title, "first_step": len(record["steps"])})
                             record.setdefault("phase_ids", []).append(phase_id)
                             entry["phase"] = len(record["phases"]) - 1
@@ -987,12 +1084,20 @@ class Workflows(Cluster, Recovery, Lifecycle, Artifacts, Delivery):
                             raise ValueError("Unsupported worker message")
                     if frame["outcome"] is not None:
                         outcome = frame["outcome"]
-                        if entry["tasks"]:
-                            raise ValueError("Script returned before awaiting Agent calls")
+                        # The script's own error comes first: a throw while other
+                        # agents still run is not a script that forgot to await.
                         if outcome.get("type") != "result":
                             message = outcome.get("message")
                             raise ValueError(message[:240] if isinstance(message, str) else "Script failed or exceeded limits")
-                        encoded(outcome["value"], 12000)
+                        if entry["tasks"]:
+                            raise ValueError("Script returned before awaiting Agent calls")
+                        if "value" not in outcome:
+                            raise ValueError("Script returned a value JSON cannot hold")
+                        try:
+                            encoded(outcome["value"], RESULT_BYTES)
+                        except ValueError:
+                            # Named, so the result turn can relaunch with a smaller return value.
+                            raise ValueError(f"Script result exceeded the {RESULT_BYTES:,}-byte limit; return a summary") from None
                         final_state.update(status="completed", result=outcome["value"])
                         break
                     # Poll cancel/fault/worker exit while a response is pending. An idle worker can only progress
@@ -1008,6 +1113,11 @@ class Workflows(Cluster, Recovery, Lifecycle, Artifacts, Delivery):
                                 raise ValueError("Worker exited while waiting for Agent calls")
                             if finished or not frame.get("idle", False) or entry["cancel"].is_set() or entry["fault"]:
                                 break
+                    elif frame.get("idle", False):
+                        # The job queue drained with no call outstanding: nothing can ever
+                        # resolve what the script awaits. Fail now instead of exchanging
+                        # (and journaling) empty frames up to the turn limit.
+                        raise ValueError("Script is waiting on something no agent call can resolve")
                     else:
                         await asyncio.sleep(0.002)
                     finished = [t for t in entry["tasks"] if t.done()]
@@ -1071,10 +1181,38 @@ class Workflows(Cluster, Recovery, Lifecycle, Artifacts, Delivery):
                         status="needs_reconciliation",
                         error="Gateway stopped with unfinished child effects; inspect child runs",
                     )
-            await self.save(owner, record)
-            self.entries.pop(record["id"], None)
-            if record.get("origin_thread_id"):
-                self.schedule_delivery(owner, record["id"], runs)
+            try:
+                await self.save(owner, record)
+            except RecordLimit as exc:
+                await self.save_ended(owner, record, exc)
+            finally:
+                # A last save that fails must not also keep the result from being scheduled.
+                self.entries.pop(record["id"], None)
+                if record.get("origin_thread_id"):
+                    self.schedule_delivery(owner, record["id"], runs)
+
+    async def save_ended(self, owner, record, limit):
+        """Store an ended record that is over the store's size limit.
+
+        An ended workflow is never replayed or merged again, so the end is stored
+        and reported instead of the run staying "running". What only a replay or a
+        merge needs goes first: the journal (every task and answer a second time),
+        then each step's merge base and host evidence. A record still too large
+        loses its steps' tasks, and last their answers.
+        """
+        record.update(journal=[], journal_bytes=0)
+        if record["status"] in ("failed", "recoverable"):
+            record.update(status="failed", error=f"{limit}; {RECORD_ADVICE}")
+        stages = ((), ("workspace_base", "configuration_evidence"), ("input", "schema", "input_artifacts", "workspace_merge"), ("output",))
+        for dropped in stages:
+            for row in record["steps"]:
+                for key in dropped:
+                    row.pop(key, None)
+            try:
+                return await self.save(owner, record)
+            except RecordLimit:
+                if dropped is stages[-1]:
+                    raise
 
     async def send(self, process, message):
         process.stdin.write((encoded(message) + "\n").encode())
