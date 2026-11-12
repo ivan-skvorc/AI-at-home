@@ -254,7 +254,6 @@ auto-update-uninstall:
 # every local launch path (dev/start, foreground/daemon) shares one code path.
 dev:
 	@$(PYTHON) ./scripts/check.py
-	@mkdir -p .deer-flow/nginx-tmp
 	@$(RUN_SHELL_SCRIPT) ./scripts/serve.sh --dev
 
 # Start all services in production mode (with optimizations).

@@ -11,8 +11,36 @@ This section accumulates work toward the **2.3.0** milestone
 ([2.3.0](https://github.com/bytedance/deer-flow/milestone/4)).
 
 ### Added
+- **hitl:** Optional human-in-the-loop approval for high-risk tool calls.
+  `hitl_approval.tools` (host-owned) pauses matching calls via LangGraph
+  `interrupt()`; the run enters `waiting_for_input` and the Web UI shows an
+  approval card with per-field argument summaries. Approve executes the call,
+  reject returns the reason to the model without executing. IM channels,
+  GitHub runs, and scheduled tasks follow `hitl_approval.non_interactive`
+  (`deny` by default, `allow` opt-in). Subagents and runtimes without resume
+  support always reject matching calls regardless of that setting.
+  `hitl_approval.max_actions` configures the approval-batch count limit
+  (default 32; 0 disables it). HITL is disabled by default; `config_version` 65.
 
-- **sandbox:** `sandbox.devices: [/dev/kvm]` forwards the host's KVM device into the per-conversation Docker sandbox, so a virtual machine started there is hardware-accelerated instead of software-emulated. It is off by default and `/dev/kvm` is the only value accepted: anything else fails config validation, and the container is never run `--privileged`. Read the cost first: it hands the host kernel's KVM interface to everything the agent runs, the Docker host must have `/dev/kvm` or every sandbox start fails, and a VM also needs a sandbox image that already contains QEMU, which is not shipped. Not exercised against Docker, KVM or QEMU in this change (FORK.md, *Full sandbox runs*, lists what is unverified). `config_version` moves to 69. The key ships commented out, so for a config already at 68 `make config-upgrade` only rewrites the version line and keeps your comments; a `.bak` is taken first.
+- **knowledge:** The WeKnora retrieval extension offers opt-in shared read-only
+  access for authenticated users, without maintaining a per-user allowlist.
+  Exact-user allowlists remain the default; shared access requires matching
+  host-verified identity and grants no management permissions. ([#7944](https://github.com/bytedance/deer-flow/pull/7944))
+
+- **community:** New SpecStream `web_search` and `web_fetch` provider. Search returns
+  ranked results with a direct answer when the sources agree on one, and fetch
+  returns a page or document as markdown. ([#7968](https://github.com/bytedance/deer-flow/pull/7968))
+
+- **subagents:** Durable batch items can wait for explicitly named prerequisites.
+  An optional, once-only lead-Agent follow-up completes a previously requested
+  summary or delivery after the batch ends, with persisted admission, cancellation
+  and authorization checks. Active Goals retain continuation ownership. ([#7839](https://github.com/bytedance/deer-flow/pull/7839))
+
+- **models:** Mistral Large 4 (`mistral-large-4-0`, `$0.70/$2.10`, cache `$0.07`) replaces Large 3 and Medium 3.5, which Mistral deprecated (retiring 2027-04-30), at home and on OpenRouter. MiniMax M3.1 Flash (`$0.15/$0.60`) replaces M2.7, which retires on 2026-11-18, and M3 drops to `$0.30/$1.20`, the 50% cut MiniMax made permanent. The routed DeepSeek V4 Pro moves from the pre-release `0423` build to `deepseek/deepseek-v4-pro-0813` at `$1.32/$3.96`, routed Llama 4 Maverick is `$0.35/$1.00`, and routed Gemini 3.8 Flash shows its 50% discount. Claude Fable 5.2 is not rolled yet: it rejects any edited history on every account, and this fork's conversation compaction edits history. Existing `config.yaml` files keep their old entries until edited.
+
+- **upstream:** merged `upstream/main` (127 commits since 2026-11-03). Brings optional approval of high-risk tool calls before they run (`hitl_approval`, off by default), error hints on failed tool calls (`harness_guard`, on by default), importing models from a provider's catalog in Settings → Models, the SpecStream search/fetch provider, the StepFun preset, batch prerequisites and follow-ups, and over a hundred fixes. The agent now asks fewer clarifying questions: upstream's #7986 policy (continue independent work, make reversible assumptions, ask when an essential decision or authorization is missing) replaces the fork's shortened clarify-first block. The tenth Alembic merge revision (`0053_merge_prefs_batch_cont`) rejoins this fork's migration head with upstream's. `config_version` moves to 69 so existing installs receive the two new sections. `make config-upgrade` delivers them and rewrites `config.yaml`, dropping comments; a `.bak` is kept and hand-edited values survive.
+
+- **sandbox:** `sandbox.devices: [/dev/kvm]` forwards the host's KVM device into the per-conversation Docker sandbox, so a virtual machine started there is hardware-accelerated instead of software-emulated. It is off by default and `/dev/kvm` is the only value accepted: anything else fails config validation, and the container is never run `--privileged`. Read the cost first: it hands the host kernel's KVM interface to everything the agent runs, the Docker host must have `/dev/kvm` or every sandbox start fails, and a VM also needs a sandbox image that already contains QEMU, which is not shipped. Not exercised against Docker, KVM or QEMU in this change (FORK.md, *Full sandbox runs*, lists what is unverified). `config_version` moves to 70. The key ships commented out, so for a config already at 69 `make config-upgrade` only rewrites the version line and keeps your comments; a `.bak` is taken first.
 
 - **skills:** The `repo-runner` skill has a recipe for a project that needs a virtual machine: probe the container, start a headless QEMU guest in the background from files kept in the workspace, seed it with cloud-init, reach it over SSH on a loopback port, and check on each later turn that it is still running. It stops and says so when the sandbox image has no QEMU. The bash audit is checked to let the recipe's commands through; the recipe itself has never been run.
 
@@ -44,6 +72,10 @@ This section accumulates work toward the **2.3.0** milestone
   waits for the next turn; Steer lets the main Agent handle updates while
   native subagents pause and resume. Unconfirmed messages can be retried
   after a Gateway restart. ([#7729])
+
+- **models:** Administrators can select StepFun in **Settings → Models** and
+  connect an ordinary StepFun API account with an API key and model ID.
+  ([#7988](https://github.com/bytedance/deer-flow/pull/7988))
 
 ### Changed
 
@@ -81,6 +113,12 @@ This section accumulates work toward the **2.3.0** milestone
 
 - **models:** Grok and Kimi subscription models no longer wait for ever on a request the provider accepted and never answered. They time out (10 seconds to connect, 240 seconds per read), retry once and then show the usual error. Grok reasoning models show their thinking text when the provider sends it. Not tested against the live Grok service.
 
+- **dev:** Running the backend suite no longer writes a `config.yaml` into the checkout. `make docker-start` upgraded the config of the checkout `config-upgrade.sh` sits in rather than the project it was started for, so `test_compose_credentials_key.py` seeded one, which then turned a later config-resolver test into a skip.
+
+- **spend:** A to-do completion reminder can no longer resume a run the money cap has just stopped. Upstream's new rule that reminders stand down after a hard stop (#7955) named only the loop and token caps; the spend cap's `spend_capped` is on it now.
+
+- **spend:** A run paused for tool-call approval (upstream's new `waiting_for_input` status) counts in the conversation's cost header, matching what the spend cap already charges for it.
+
 - **ultracode:** Double Plus Ultracode no longer stops at `recursion_limit=1000`. It is now Plus Ultracode with no automatic limits: no step limit (the `max_recursion_limit` ceiling does not apply), no tool-call limits, no token budgets and no workflow time limit, for the lead, each workflow agent, each `task` subagent and the turn that receives the result. The spend cap and the workflow's agent count and parallelism still apply. Plus Ultracode is unchanged.
 
 - **models:** Hybrid local models get a context window sized to the GPU instead of the flat 32K. Qwen3.5/3.6, Qwen3-Next and Nemotron-H keep a KV cache only on their attention layers, and the launch sync either could not read their layout or costed every layer as if it had one. On a 24 GiB card with a q8_0 cache, qwen3.6:27b now gets about 188K tokens and qwen3.6:35b about 122K.
@@ -96,6 +134,221 @@ This section accumulates work toward the **2.3.0** milestone
 - **chat:** Choosing a model for subtasks no longer fails with "Enable Ultra mode first" in Plus Ultracode, Double Plus Ultracode or Democracy, which all delegate.
 
 - **ci:** Backend unit-test shards no longer get cancelled after passing: each runs 13–14.5 minutes on a hosted runner, against a 15-minute job limit that is now 25. The OpenViking owner-key test no longer flakes on a busy runner (its loopback health check had 1 second).
+
+- **agents:** A high-risk tool call without a usable id no longer wedges the
+  thread when `hitl_approval` is enabled. A provider that omits a tool-call id
+  (`None`) or repeats one within a response made the middleware pause with an
+  approval payload the Gateway can never validate: every resume answered 422
+  and every new run stayed 409-blocked, all-reject included. An empty id was
+  technically resumable but is denied as well, since strict providers reject it
+  when the conversation is replayed. Such calls are now removed from the model
+  response with a visible rejection note instead of pausing, and deny paths no
+  longer build an invalid `ToolMessage` for a null id. A call whose id an
+  ordinary call also carries is stripped before it can be answered by result,
+  so the next request cannot advertise the id twice with two results.
+  A pause stored before
+  this change stays unresolvable; in-place recovery is tracked in [#8071].
+  ([#8069])
+
+- **runtime:** A HITL rejection, including the all-reject escape after approval is
+  disabled or the gated tools change during a pause, now reaches the thread's
+  message history under the resume run instead of existing only in checkpoint
+  state. ([#8073](https://github.com/bytedance/deer-flow/pull/8073))
+  
+- **summarization:** vLLM compaction counts reasoning tokens replayed to the
+  model when checking the trigger and estimating how much history to keep.
+  ([#8077](https://github.com/bytedance/deer-flow/pull/8077))
+
+- **gateway:** Posting feedback twice for the same run now returns a 409
+  instead of a 500. `POST /api/threads/{id}/runs/{run_id}/feedback` allows one
+  feedback row per user and run; a retry, or feedback on another message of the
+  same run, hit that unique key and the Gateway failed with an unhandled
+  database error. The 409 points callers at `PUT` on the same route, which
+  updates the existing feedback. ([#8064])
+  
+- **sandbox:** AIO commands from independent subagents now run concurrently when
+  they carry per-call environment variables, including Lark CLI commands.
+  Commands within one subagent remain ordered and client cleanup drains them.
+
+- **sandbox:** BoxLite VMs recovered at startup now run health checks, commands,
+  and cleanup on the provider's event loop, avoiding sync/async SDK mismatches
+  that made healthy recovered VMs fail their first command. ([#8072])
+
+- **uploads:** Re-uploading a file whose name collides with a compound archive
+  suffix no longer inserts the dedupe counter inside the suffix. A second
+  `report.tar.gz` is now named `report_1.tar.gz` (matching `report_1.tar` and
+  `report_1.txt`), instead of `report.tar_1.gz`, so the extension stays intact
+  for file-type detection. ([#8042](https://github.com/bytedance/deer-flow/pull/8042))
+
+- **gateway:** Deleting a thread no longer reports success while its
+  conversation stays readable. When the checkpoint store failed during
+  `DELETE /api/threads/{id}`, the route logged it at DEBUG, removed the
+  thread's metadata row and returned success; any signed-in user could then
+  read the leftover title and messages through `GET /threads/{id}`, `/state`,
+  `/history` and `/goal`, and the owner could not retry. The delete now
+  returns a 500 and keeps the thread, so the owner can delete it again.
+  ([#7992])
+
+- **gateway:** Creating a thread with a caller-supplied `thread_id` that
+  already belongs to another user now returns a non-disclosing 404
+  (`Thread not found`) instead of a 500. The duplicate-key recovery path reads
+  the surviving row back bypassing the owner scope so the cross-owner case
+  mirrors `ThreadOwnershipConflictError`; a duplicate key with no surviving row
+  is still surfaced as a 500. ([#8057])
+
+- **middleware:** With PII redaction enabled, a long run of text without
+  spaces (such as a pasted hex dump) no longer stalls the Gateway. The email
+  detector was quadratic in the length of such a run, and redaction re-scans
+  every user message on every model call, so one 100 KB paste blocked every
+  thread for about 6 s per model call. The scan is now linear, and it redacts
+  exactly the same addresses as before. ([#8006])
+
+- **agents:** Token budgets count separate accepted model calls even when a
+  provider reuses message IDs, so repeated IDs no longer bypass the configured
+  cap. Hard stops preserve already-completed structured-output tool results.
+  ([#8050](https://github.com/bytedance/deer-flow/pull/8050))
+  
+- **subagents:** Managed subagent creation now rejects Windows reserved device
+  names (`CON`, `PRN`, `AUX`, `NUL`, `COM1-9`, `LPT1-9`) at the shared
+  `normalize_managed_subagent_name(..., for_creation=True)` validator and
+  Gateway `/api/subagents` boundary before attempting filesystem writes,
+  preventing `OSError` failures on Windows hosts while keeping existing
+  read and delete operations permissive.
+
+- **scheduler:** A stored `schedule_spec` that is JSON null, a list or a string
+  no longer aborts the scheduler poll. `stored_next_run_at` caught the value
+  errors from a dropped zone or a newer cron parser, but a non-object spec
+  fails on `.get`; the launch-failure handler recomputed it again, so the
+  `AttributeError` escaped `run_once`'s claimed-task loop. Such a task is now
+  paused with the reason, like the other unusable schedules. The poll loop also
+  isolates one task's dispatch failure from the rest of its claimed batch, so a
+  future per-record raise costs one tick instead of every other claimed task.
+  ([#7998])
+
+- **scheduler:** One scheduled task whose saved schedule can no longer be
+  computed no longer stops every other task. When a stored timezone or cron
+  expression stopped working (a zone missing from the time zone database
+  after an upgrade, a cron expression a newer croniter rejects), recomputing
+  its next run raised inside the scheduler poll; once its launch lease
+  expired, every later poll failed before admitting any due task. That task
+  is now paused with the reason as its last error, and resuming it reports
+  the problem until the schedule is fixed. ([#7993])
+  
+- **community:** A search or fetch API key that ends in a newline no longer
+  leaks into the conversation. GroundRoute (`GROUNDROUTE_API_KEY`), InfoQuest,
+  Tavily, Exa, Jina, Firecrawl, fastCRW and Crawl4AI put the key into an HTTP
+  header as read, so a key from a file (a Kubernetes Secret created with
+  `--from-file`) made the transport fail with `Illegal header value b'Bearer
+  <key>\n'`. That message, key included, became the tool result the model and
+  the conversation history kept, and four of them also logged it. Keys now go
+  through `provider_credentials.resolve_api_key` like the other providers', and
+  a blank configured key falls back to the environment for Tavily, Exa,
+  Firecrawl and fastCRW. fastCRW without a key of its own no longer lets the
+  Firecrawl SDK send `FIRECRAWL_API_KEY` to the fastCRW endpoint, and a blank
+  `TAVILY_API_KEY`, `EXA_API_KEY` or `FIRECRAWL_API_KEY` now counts as missing
+  instead of reaching the SDK as is. ([#7981])
+  
+- **community:** Browserless is the last search/fetch provider that read its
+  token raw. A `BROWSERLESS_TOKEN` or configured `token` from a file kept its
+  trailing newline and became the auth query parameter, so every `web_fetch`
+  and `web_capture` request failed authentication while the key was correct.
+  Both now go through `provider_credentials.resolve_api_key`, and only an
+  omitted `token` key falls back to the environment: an explicit `""` or
+  `null` keeps opting a self-hosted capture endpoint out of authentication.
+  ([#8043])
+  
+- **docker:** Images built from a checkout no longer contain its local
+  configuration. `.dockerignore` did not exclude `config.yaml`,
+  `config.yaml.bak`, `extensions_config.json` or `mcp_config.json`, so a
+  checkout that keeps them in the legacy `backend/` location baked its model
+  API keys and MCP credentials into every gateway image layer through
+  `COPY backend ./backend`. `frontend/.env.local` reached the frontend image the
+  same way. They are now excluded at the root and in `backend/`, along with
+  `.env*.local` at any depth, `frontend/*.pem`, and the credential files the
+  extension manager refuses inside extension snapshots. A locally built
+  frontend image no longer inlines `NEXT_PUBLIC_*` values from
+  `frontend/.env.local`; the Docker stack's single nginx origin needs none of
+  them. Published CI images were not affected; rebuild local images that were
+  pushed or shared. ([#7958])
+  
+- **agents:** Unfinished todos no longer trigger additional model calls or
+  tool execution after a loop-detection, run token-budget, provider-safety, or
+  model output-length stop. Todo state is preserved so users can continue in a
+  later run. ([#7953])
+
+- **runtime:** A thread can accept new runs and mutations after a transient
+  database failure leaves a completed operation's reservation in place. The
+  next request for the thread on the same Gateway worker retries the release,
+  including in single-worker deployments with lease heartbeats disabled.
+  ([#8068](https://github.com/bytedance/deer-flow/pull/8068))
+
+- **channels:** Long Feishu/Lark answers are no longer lost. Card text was
+  unbounded and ASCII-escaped, so an answer of about 4,400 CJK characters made
+  the card request exceed Feishu's 30 KB limit (`230025`); the final patch and
+  its reply fallback were both rejected, and the running card stayed on its
+  last streamed text or a bare `▉`. Cards now send CJK unescaped and are
+  budgeted by the bytes they add to the request. A streamed update shows what
+  fits, and a longer final answer continues in up to 10 cards replied to the
+  same message, split at line breaks; a retry resumes after the cards already
+  delivered. ([#7798])
+  
+- **channels:** WeCom group messages now have their own conversation. Every
+  message used the sender's userid as both chat and topic ID, so a member's
+  private chat and every group they wrote in shared one DeerFlow thread
+  wherever no group binding kept them apart: in auth-disabled mode, with
+  `require_bound_identity: false`, and under legacy group bindings. A group
+  reply could then draw on the member's private chat or another group, and a
+  reply sent without its frame went to the private chat. Groups are now keyed
+  by `chatid` with one thread per member, and private chats keep their
+  threads. A group bound with its own `/connect` keeps its thread; a legacy
+  group binding, which covers every group of the bot, starts a new one in
+  each group. ([#7794])
+  
+- **memory:** An agent-scoped memory write whose `agent_name` is a Windows
+  reserved device name (`NUL`, `CON`, `COM1`, ...) is now rejected with a `422`
+  on the two routes that create that scope, `POST /memory/facts` and
+  `POST /memory/import`. DeerMem resolves the scope to
+  `{storage}/users/{uid}/agents/{name}/facts` and creates it on the first write;
+  the character-class check admitted such names, so the write raised
+  `FileNotFoundError` and the endpoint answered an opaque `500`. The check reuses
+  `windows_incompatible_segment()` and applies on every platform. Read and delete
+  routes stay permissive, so a scope with a reserved-name identifier that an
+  older release stored on a Linux host can still be exported and cleared.
+  ([#7941])
+
+- **skills:** A custom skill name that is a Windows reserved device name
+  (`nul`, `con`, `com1`, ...) is now rejected when the skill is created —
+  `skill_manage` `create` and `.skill` archive install — on every platform. The
+  hyphen-case grammar admitted such names, and the skill name becomes a
+  directory under `custom/`, so creating one "succeeded" on Windows without
+  producing a directory and the first write inside it failed with
+  `FileNotFoundError`; on Linux the install succeeded but could never be
+  copied, mounted or exported to a Windows host. The archive path also refuses
+  member path segments that cannot be created on every host, matching support
+  file writes. Reading and deleting an existing skill stay permissive, so a
+  skill an older release created on a Linux host can still be inspected and
+  removed. ([#7945])
+
+- **sandbox:** Fresh lazy AIO runs with an explicit authorized skill view no
+  longer create or acquire a sandbox before the first sandbox-backed tool
+  call. Existing sandbox bindings and providers that require skill uploads
+  retain their eager synchronization behavior. ([#7782])
+
+- **parsing:** Follow-up suggestions and the `/goal` evaluator keep a literal
+  `<think>` tag that appears inside a JSON string value, such as an answer
+  quoting the tag, while reasoning around the JSON is still removed. An
+  unclosed literal tag inside a string no longer truncates the document and
+  fails parsing, and reasoning outside the payload still strips and truncates
+  as before. ([#7907])
+
+- **gateway:** A caller-supplied thread ID that is a Windows reserved device
+  name (`NUL`, `CON`, `COM1`, ...) is now rejected at the shared
+  `validate_thread_id()` boundary. Such IDs previously passed validation but
+  failed workspace creation on Windows hosts with `FileNotFoundError`. The
+  check reuses `windows_incompatible_segment()` and applies on every platform,
+  so threads with reserved-name IDs created on Linux hosts will fail
+  validation on read/resume/upload routes after upgrade (deletion still
+  works). ([#7892])
 
 - **extensions:** Context-compaction observers now learn which task a
   compaction happened in. Inside a lead run or subagent they receive that
@@ -148,6 +401,9 @@ This section accumulates work toward the **2.3.0** milestone
   path but walked the unresolved tree, so no document matched and every
   original older than 24 hours was removed as an orphan, at Gateway startup
   and from `GET /api/trash/documents`. ([#7732])
+
+- **chat:** Cancelling a queued input after dispatch starts no longer
+  prevents subsequent queued inputs from executing. ([#7746])
 
 - **dev:** `scripts/dev_multi_instance.sh logs all` now prints the nginx logs
   as well as both Gateway logs; it printed only the Gateway logs, the same as
@@ -17767,8 +18023,29 @@ with **180 merged pull requests** since the first 2.0 milestone tag.
 [#7727]: https://github.com/bytedance/deer-flow/pull/7727
 [#7729]: https://github.com/bytedance/deer-flow/pull/7729
 [#7732]: https://github.com/bytedance/deer-flow/pull/7732
+[#7746]: https://github.com/bytedance/deer-flow/pull/7746
 [#7762]: https://github.com/bytedance/deer-flow/pull/7762
 [#7772]: https://github.com/bytedance/deer-flow/pull/7772
 [#7781]: https://github.com/bytedance/deer-flow/pull/7781
+[#7782]: https://github.com/bytedance/deer-flow/pull/7782
 [#7792]: https://github.com/bytedance/deer-flow/pull/7792
+[#7794]: https://github.com/bytedance/deer-flow/pull/7794
+[#7798]: https://github.com/bytedance/deer-flow/pull/7798
 [#7831]: https://github.com/bytedance/deer-flow/pull/7831
+[#7892]: https://github.com/bytedance/deer-flow/pull/7892
+[#7907]: https://github.com/bytedance/deer-flow/pull/7907
+[#7941]: https://github.com/bytedance/deer-flow/pull/7941
+[#7945]: https://github.com/bytedance/deer-flow/issues/7945
+[#7953]: https://github.com/bytedance/deer-flow/issues/7953
+[#7958]: https://github.com/bytedance/deer-flow/pull/7958
+[#7981]: https://github.com/bytedance/deer-flow/pull/7981
+[#7992]: https://github.com/bytedance/deer-flow/pull/7992
+[#7993]: https://github.com/bytedance/deer-flow/pull/7993
+[#7998]: https://github.com/bytedance/deer-flow/issues/7998
+[#8006]: https://github.com/bytedance/deer-flow/pull/8006
+[#8043]: https://github.com/bytedance/deer-flow/pull/8043
+[#8057]: https://github.com/bytedance/deer-flow/pull/8057
+[#8064]: https://github.com/bytedance/deer-flow/pull/8064
+[#8069]: https://github.com/bytedance/deer-flow/issues/8069
+[#8071]: https://github.com/bytedance/deer-flow/issues/8071
+[#8072]: https://github.com/bytedance/deer-flow/pull/8072

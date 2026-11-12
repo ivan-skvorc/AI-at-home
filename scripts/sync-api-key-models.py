@@ -11,7 +11,7 @@ in ``config.yaml`` so the models light up on first start with no manual editing.
     OPENROUTER_API_KEY -> Claude Fable 5.1 / Claude Opus 5.5 / Grok 4.7 /
                           GPT-6 Astra / GPT-6.1 Sol / GPT-5.3 Codex /
                           MiniMax M3 / Qwen3.8 Max / Kimi K3.1 Pro /
-                          Mistral Large 3 / Gemini 3.8 Flash /
+                          Mistral Large 4 / Gemini 3.8 Flash /
                           DeepSeek V4 Pro / GLM-5.3 / Llama 4 Maverick /
                           Nemotron 3 Ultra (all via OpenRouter)
 
@@ -25,10 +25,10 @@ OpenRouter:
     XAI_API_KEY        -> Grok 4.7 / Grok 4.3 (xAI)
     GEMINI_API_KEY     -> Gemini 3.8 Flash / 3.5 Flash-Lite / 4 Argon (Google)
     DEEPSEEK_API_KEY   -> DeepSeek V4 Pro / V4.1 Flash (DeepSeek)
-    MISTRAL_API_KEY    -> Mistral Large 3 / Medium 3.5 / Small 4 (Mistral)
+    MISTRAL_API_KEY    -> Mistral Large 4 / Small 4 (Mistral)
     MOONSHOT_API_KEY   -> Kimi K3.1 Pro / Kimi K2.6 (Moonshot)
     DASHSCOPE_API_KEY  -> Qwen3.8 Max / Qwen3.7 Plus (Qwen)
-    MINIMAX_API_KEY    -> MiniMax M3 / MiniMax M2.7 (MiniMax)
+    MINIMAX_API_KEY    -> MiniMax M3 / MiniMax M3.1 Flash (MiniMax)
     ZAI_API_KEY        -> GLM-5.3 / GLM-5.3 Flash (z-ai)
 
 Idempotent and bounded: the script only ever *uncomments* the model entries

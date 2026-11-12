@@ -98,6 +98,7 @@ def _build_tool(source, plugin, declaration):
                 ExtensionPrincipal(resolve_runtime_user_id(runtime)),
                 MappingProxyType(settings),
                 context.get("thread_id"),
+                run_id=context.get("run_id"),
                 agent_runs=runs.for_plugin(plugin.namespace) if runs is not None else None,
                 # Only this plugin's slice, detached from the run context (the
                 # Gateway bounded it in sanitize_plugin_options).

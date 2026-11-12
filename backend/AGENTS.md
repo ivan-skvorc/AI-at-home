@@ -37,15 +37,12 @@ result-publishing rules — the DeerMem eviction evaluation's commands, and the
 and pytest are offline) — live beside the code in
 [scripts/benchmark/AGENTS.md](scripts/benchmark/AGENTS.md).
 
-`scripts/benchmark/concurrency/` measures multi-process contention on the
-`users` table (N separate OS processes, not asyncio tasks) for SQLite vs
-Postgres -- the scenario `CONFIGURATION.md` requires Postgres for. `worker.py`
-connects directly via SQLAlchemy (skipping the ~8.5s Alembic bootstrap the
-orchestrator already ran once) and mirrors the app's per-connection SQLite
-PRAGMAs; `run_concurrency_bench.py` seeds a disposable per-run Postgres schema,
-synchronises workers on a READY/GO barrier before timing, and exits non-zero on
-any crash, short op count, or `errors > 0`. Postgres runs need a throwaway
-database via `--pg-url`; nothing here touches `public`. Run from `backend/`:
+`scripts/benchmark/concurrency/` compares SQLite and Postgres contention on
+`users` with separate OS processes. `worker.py` connects via SQLAlchemy with
+the app's SQLite PRAGMAs after the orchestrator runs Alembic once.
+`run_concurrency_bench.py` uses a disposable schema outside `public` in the
+throwaway database supplied via `--pg-url`. It starts timing after a READY/GO
+barrier and fails on a crash, short op count, or any errors. Run from `backend/`.
 
 ```bash
 uv run python scripts/benchmark/concurrency/run_concurrency_bench.py \
@@ -92,8 +89,11 @@ Read the nearest scoped `AGENTS.md` for subsystem ownership.
 
 Read-only knowledge: [contract](docs/KNOWLEDGE.md) covers independent retrieval
 tools, scope intersection and extension-owned providers.
-RAGFlow/LightRAG clients offload HTTPX construction (synchronous TLS trust loading)
-with `asyncio.to_thread`; keep request execution and session cleanup on the loop.
+HTTPX clients for several community providers, including RAGFlow, LightRAG,
+You.com, GroundRoute, Webz, Crawl4AI, Browserless, InfoQuest, Jsonify, SearXNG
+and Jina, use `asyncio.to_thread` for synchronous TLS setup; requests and cleanup
+stay on-loop, and Browserless and Jsonify own construction as a task so
+cancellation during setup still closes the client it builds.
 
 ### Harness / App Split
 
@@ -148,6 +148,10 @@ and an explicit invalid/null top-level value clears a legacy preference. Treat
 `disable_clarification` like `non_interactive`. Before run/state writes,
 `_normalize_input_messages` rejects canonical external system/developer roles;
 only `AUTH_SOURCE_INTERNAL` run input may retain them.
+`_normalize_external_todos` rejects invalid caller todos with HTTP 400: entries
+must be objects with string content and a known status (default `pending`). Todo
+and token-usage readers normalize malformed stored/direct-integration values so
+model calls remain usable.
 
 `contracts/ui_locales.v1.json` pins the UI/Gateway locale allowlists in tests;
 DeerMem's portable map stays separate. Scheduled/MCP notification runs omit
@@ -252,13 +256,12 @@ multi-step tasks: one `in_progress` task, real-time updates. See
 
 ### Run Interaction Policy
 
-Interaction-sensitive changes must follow [policy](docs/RUN_INTERACTION_POLICY.md).
+Interaction/HITL rules: [policy](docs/RUN_INTERACTION_POLICY.md).
 
 ### Context Summarization
 
-Automatic conversation summarization when approaching token limits, configured
-under the `summarization` key in `config.yaml` (triggers: tokens, messages, or
-fraction of max input); recent messages are kept while older ones are summarized.
+`summarization` in `config.yaml` triggers on tokens, messages or max-input fraction.
+Keep recent messages; summarize older ones.
 - Manual compaction uses `POST /api/threads/{id}/compact`, reuses the same `DeerFlowSummarizationMiddleware`, writes a new checkpoint with updated `messages`/`summary_text`, and bumps only those channel versions. The route uses the shared `reserve_checkpoint_write()` boundary (also used by manual state updates); its short-lived `checkpoint_write` operation shares the durable active-thread uniqueness constraint with run admission, preventing worker-local and cross-worker checkpoint-write races.
 - Cache only first-candidate no-ops; never suppress primary retries with fallback results. See [reuse and telemetry](docs/summarization.md#reuse-and-telemetry) for cache and counter contracts.
 

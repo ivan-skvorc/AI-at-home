@@ -27,6 +27,9 @@ See the sandbox benchmark README for supported options and tests.
 `scripts/benchmark/context_snapshot/`: explicit `run-live` needs provider env
 vars; `summarize` and pytest are offline. See its README for the protocol.
 
+`scripts/benchmark/context_memory_comparison/` runs Gateway offline with SQLite.
+Report original- and fresh-thread results separately.
+
 `scripts/benchmark/deermem_eviction/` evaluates the production
 `select_facts_for_capacity()` implementation used by DeerMem. It compares only
 the historical `confidence` policy and PR #4789's opt-in `hybrid-v1`; do not add

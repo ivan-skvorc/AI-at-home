@@ -334,8 +334,9 @@ OPENROUTER_BUNDLE_MODELS: list[dict] = [
     _openrouter_model("openrouter-minimax-m3", "MiniMax M3 (OpenRouter) (p)", "minimax/minimax-m3", supports_vision=True, max_tokens=16000, temperature=1.0),
     _openrouter_model("openrouter-qwen3.8-max", "Qwen3.8 Max (OpenRouter) (p)", "qwen/qwen3.8-max-0902"),
     _openrouter_model("openrouter-kimi-k3.1-pro", "Kimi K3.1 Pro (OpenRouter) (p)", "moonshotai/kimi-k3.1-pro", supports_vision=True),
-    _openrouter_model("openrouter-mistral-large-3", "Mistral Large 3 (OpenRouter) (p)", "mistralai/mistral-large-2512", supports_vision=True, supports_thinking=False),
-    _openrouter_model("openrouter-deepseek-v4-pro", "DeepSeek V4 Pro (OpenRouter) (p)", "deepseek/deepseek-v4-pro"),
+    _openrouter_model("openrouter-mistral-large-4", "Mistral Large 4 (OpenRouter) (p)", "mistralai/mistral-large-4-0", supports_vision=True, supports_thinking=False),
+    # The GA build DeepSeek's own API serves as `deepseek-v4-pro`; bare `deepseek/deepseek-v4-pro` is the 0423 pre-GA build.
+    _openrouter_model("openrouter-deepseek-v4-pro", "DeepSeek V4 Pro (OpenRouter) (p)", "deepseek/deepseek-v4-pro-0813"),
     _openrouter_model("openrouter-glm-5.3", "GLM-5.3 (OpenRouter) (p)", "z-ai/glm-5.3", max_tokens=16000),
     _openrouter_model("openrouter-nemotron-3-ultra", "Nemotron 3 Ultra (OpenRouter) (p)", "nvidia/nemotron-3-ultra-550b-a55b", max_tokens=16000),
 ]
@@ -515,17 +516,16 @@ DEEPSEEK_HOME_BUNDLE_MODELS: list[dict] = [
     _home_deepseek_style_model("deepseek-v4.1-flash", "DeepSeek V4.1 Flash (DeepSeek)", "deepseek-flash", api_key_env="DEEPSEEK_API_KEY", api_base="https://api.deepseek.com", supports_vision=False, max_tokens=8192),
 ]
 
-# Mistral: Large 3 (flagship) + Medium 3.5 + Small. Mistral Large is not a reasoning
-# model (matching the OpenRouter entry), so the family ships without thinking.
-# Medium is pinned to an explicit version rather than `mistral-medium-latest`: an
-# alias re-points silently, so the name, the slug and the price drift apart with
-# nothing raising.
+# Mistral: Large 4 (flagship, GA 2026-11-05) + Small 4. Mistral deprecated Large 3
+# and Medium 3.5 on 2026-10-31 (retiring 2027-04-30) and named Large 4 the
+# replacement for both. Mistral's model page lists no reasoning control for Large
+# 4, so the family ships without thinking (matching the OpenRouter entry). Ids are
+# pinned versions (`mistral-large-4-0`, `mistral-small-2603`), never a `*-latest`
+# alias: an alias re-points silently, so the name, the slug and the price drift
+# apart with nothing raising.
 MISTRAL_HOME_BUNDLE_MODELS: list[dict] = [
-    _home_openai_compat_model("mistral-large-3", "Mistral Large 3 (Mistral)", "mistral-large-2512", api_key_env="MISTRAL_API_KEY", base_url="https://api.mistral.ai/v1", supports_vision=True, supports_thinking=False),
-    _home_openai_compat_model("mistral-medium-3.5", "Mistral Medium 3.5 (Mistral)", "mistral-medium-3-5", api_key_env="MISTRAL_API_KEY", base_url="https://api.mistral.ai/v1", supports_vision=True, supports_thinking=False),
-    _home_openai_compat_model(
-        "mistral-small-4", "Mistral Small 4 (Mistral)", "mistral-small-2603", api_key_env="MISTRAL_API_KEY", base_url="https://api.mistral.ai/v1", supports_vision=True, supports_thinking=False, max_tokens=16000
-    ),
+    _home_openai_compat_model("mistral-large-4", "Mistral Large 4 (Mistral)", "mistral-large-4-0", api_key_env="MISTRAL_API_KEY", base_url="https://api.mistral.ai/v1", supports_vision=True, supports_thinking=False),
+    _home_openai_compat_model("mistral-small-4", "Mistral Small 4 (Mistral)", "mistral-small-2603", api_key_env="MISTRAL_API_KEY", base_url="https://api.mistral.ai/v1", supports_vision=True, supports_thinking=False, max_tokens=16000),
 ]
 
 # Moonshot/Kimi: K3.1 Pro (flagship, 2026-10-23) + K2.6 (cheaper), via the
@@ -551,10 +551,12 @@ QWEN_HOME_BUNDLE_MODELS: list[dict] = [
     _home_openai_compat_model("qwen-3.7-plus", "Qwen3.7 Plus (Qwen)", "qwen3.7-plus", api_key_env="DASHSCOPE_API_KEY", base_url="https://dashscope-intl.aliyuncs.com/compatible-mode/v1", supports_vision=False, max_tokens=16000),
 ]
 
-# MiniMax (international endpoint): M3 (flagship, vision) + M2.7 (cheaper, text-only).
+# MiniMax (international endpoint): M3 (flagship) + M3.1 Flash (cheaper), both
+# multimodal. M3.1 Flash replaced M2.7, which MiniMax closed to new users on
+# 2026-10-19 and retires on 2026-11-18.
 MINIMAX_HOME_BUNDLE_MODELS: list[dict] = [
     _home_openai_compat_model("minimax-m3", "MiniMax M3 (MiniMax)", "MiniMax-M3", api_key_env="MINIMAX_API_KEY", base_url="https://api.minimax.io/v1", supports_vision=True, max_tokens=16000, temperature=1.0),
-    _home_openai_compat_model("minimax-m2.7", "MiniMax M2.7 (MiniMax)", "MiniMax-M2.7", api_key_env="MINIMAX_API_KEY", base_url="https://api.minimax.io/v1", supports_vision=False, max_tokens=16000, temperature=1.0),
+    _home_openai_compat_model("minimax-m3.1-flash", "MiniMax M3.1 Flash (MiniMax)", "MiniMax-M3.1-Flash", api_key_env="MINIMAX_API_KEY", base_url="https://api.minimax.io/v1", supports_vision=True, max_tokens=16000, temperature=1.0),
 ]
 
 # Zhipu / z.ai: GLM-5.3 (flagship) + GLM-5.3 Flash (cheaper; replaced GLM-4.5 Air
@@ -628,10 +630,11 @@ MODEL_PRICES: dict[str, dict] = {
     # The standard rate: Google's $2/$10 introductory rate through 2026-11-30 is a
     # discount that could not be read off Google's own page, so it is not shipped.
     "google-gemini-4-argon": {"price": {"currency": "USD", "input": 4.0, "output": 20.0}},
-    "minimax-m3": {"price": {"currency": "USD", "input": 0.6, "output": 2.4}},
-    "minimax-m2.7": {"price": {"currency": "USD", "input": 0.3, "output": 1.2}},
-    "mistral-large-3": {"price": {"currency": "USD", "input": 0.5, "output": 1.5}},
-    "mistral-medium-3.5": {"price": {"currency": "USD", "input": 1.5, "output": 7.5}},
+    # MiniMax made M3's 50% cut permanent (pricing page, 2026-11-10): this is the
+    # <=512K-token rate, now its standard price; longer prompts bill $0.60/$2.40.
+    "minimax-m3": {"price": {"currency": "USD", "input": 0.3, "output": 1.2}},
+    "minimax-m3.1-flash": {"price": {"currency": "USD", "input": 0.15, "output": 0.6, "cache_hit": 0.015}},
+    "mistral-large-4": {"price": {"currency": "USD", "input": 0.7, "output": 2.1, "cache_hit": 0.07}},
     "mistral-small-4": {"price": {"currency": "USD", "input": 0.15, "output": 0.6}},
     "moonshot-kimi-k3.1-pro": {"price": {"currency": "USD", "input": 2.0, "output": 10.0, "cache_hit": 0.2}},
     "moonshot-kimi-k2.6": {"price": {"currency": "USD", "input": 0.95, "output": 4.0}},
@@ -646,13 +649,19 @@ MODEL_PRICES: dict[str, dict] = {
     "openrouter-gpt-6-astra": {"price": {"currency": "USD", "input": 10.0, "output": 50.0}},
     "openrouter-gpt-6.1-sol": {"price": {"currency": "USD", "input": 2.0, "output": 10.0}},
     "openrouter-gpt-5.3-codex": {"price": {"currency": "USD", "input": 1.75, "output": 14.0}},
-    "openrouter-gemini-3.8-flash": {"price": {"currency": "USD", "input": 1.5, "output": 7.5}},
-    "openrouter-llama-4-maverick": {"price": {"currency": "USD", "input": 0.2, "output": 0.8}},
-    "openrouter-minimax-m3": {"price": {"currency": "USD", "input": 0.6, "output": 2.4}, "discount": {"input": 0.24, "output": 0.96}},
+    # OpenRouter shows 50% off on every endpoint for this model, all of them Google's
+    # own, and no end date; the `until` is inherited from the home entry's
+    # Google-announced window for the same introductory rate.
+    "openrouter-gemini-3.8-flash": {"price": {"currency": "USD", "input": 1.5, "output": 7.5}, "discount": {"input": 0.75, "output": 3.75, "until": date(2026, 12, 31)}},
+    "openrouter-llama-4-maverick": {"price": {"currency": "USD", "input": 0.35, "output": 1.0}},
+    # MiniMax's permanent rate; the old 60%-off OpenRouter promotion ended.
+    "openrouter-minimax-m3": {"price": {"currency": "USD", "input": 0.3, "output": 1.2}},
     "openrouter-qwen3.8-max": {"price": {"currency": "USD", "input": 2.0, "output": 6.0}},
     "openrouter-kimi-k3.1-pro": {"price": {"currency": "USD", "input": 2.0, "output": 10.0, "cache_hit": 0.2}},
-    "openrouter-mistral-large-3": {"price": {"currency": "USD", "input": 0.5, "output": 1.5}},
-    "openrouter-deepseek-v4-pro": {"price": {"currency": "USD", "input": 0.44, "output": 0.87}},
+    "openrouter-mistral-large-4": {"price": {"currency": "USD", "input": 0.7, "output": 2.1, "cache_hit": 0.07}},
+    # DeepSeek's own endpoint on the 0813 listing bills its peak/off-peak schedule;
+    # this is the peak (upper-bound) rate, the same as the home block.
+    "openrouter-deepseek-v4-pro": {"price": {"currency": "USD", "input": 1.32, "output": 3.96}},
     "openrouter-glm-5.3": {"price": {"currency": "USD", "input": 1.4, "output": 4.4}},
     "openrouter-nemotron-3-ultra": {"price": {"currency": "USD", "input": 0.5, "output": 2.2}},
     "qwen-3.8-max": {"price": {"currency": "USD", "input": 2.0, "output": 6.0}},
@@ -1041,7 +1050,7 @@ LLM_PROVIDERS: list[LLMProvider] = [
     LLMProvider(
         name="minimax",
         display_name="MiniMax",
-        description="MiniMax M3 + M2.7 (international OpenAI-compatible endpoint)",
+        description="MiniMax M3 + M3.1 Flash (international OpenAI-compatible endpoint)",
         use="langchain_openai:ChatOpenAI",
         models=[entry["model"] for entry in MINIMAX_HOME_BUNDLE_MODELS],
         default_model=MINIMAX_HOME_BUNDLE_MODELS[0]["model"],
@@ -1124,7 +1133,7 @@ LLM_PROVIDERS: list[LLMProvider] = [
     LLMProvider(
         name="mistral",
         display_name="Mistral",
-        description="Mistral Large 3 + Medium 3.5 + Small 4 (direct Mistral API)",
+        description="Mistral Large 4 + Small 4 (direct Mistral API)",
         use="langchain_openai:ChatOpenAI",
         models=[entry["model"] for entry in MISTRAL_HOME_BUNDLE_MODELS],
         default_model=MISTRAL_HOME_BUNDLE_MODELS[0]["model"],
@@ -1445,6 +1454,14 @@ SEARCH_PROVIDERS: list[SearchProvider] = [
         env_var=None,
         extra_config={"max_results": 5},
     ),
+    SearchProvider(
+        name="specstream",
+        display_name="SpecStream",
+        description="Answers from the live web with a source for each result, API key required",
+        use="deerflow.community.specstream.tools:web_search_tool",
+        env_var="SPECSTREAM_API_KEY",
+        extra_config={"max_results": 5},
+    ),
 ]
 
 WEB_FETCH_PROVIDERS: list[WebProvider] = [
@@ -1531,5 +1548,13 @@ WEB_FETCH_PROVIDERS: list[WebProvider] = [
         env_var=None,
         tool_name="web_fetch",
         extra_config={"base_url": "http://localhost:11235", "timeout": 30},
+    ),
+    WebProvider(
+        name="specstream",
+        display_name="SpecStream",
+        description="Page text as markdown, also PDF, Word and Excel, API key required",
+        use="deerflow.community.specstream.tools:web_fetch_tool",
+        env_var="SPECSTREAM_API_KEY",
+        tool_name="web_fetch",
     ),
 ]

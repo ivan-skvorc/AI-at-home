@@ -323,10 +323,16 @@ class TestInternalConsistency:
         A weekly issue for a condition the maintainer cannot resolve is how this
         job becomes one people learn to ignore, which costs more than the drift
         it detects. FORK.md's checklist covers the human review instead.
+
+        Built on the synthetic block rather than the shipped config: the bundle
+        stopped carrying an open-ended discount on 2026-11-10 (MiniMax M3's
+        promotion became its permanent price), and the rule must not depend on
+        whichever promotions happen to be live.
         """
-        entries = audit.parse_marker_blocks((REPO_ROOT / "config.example.yaml").read_text(encoding="utf-8"))
+        text = CONFIG_BLOCK.replace("  #     until: 2099-12-31\n", "")
+        entries = audit.parse_marker_blocks(text)
         open_ended = [e for e in entries if e.promo_input_per_million is not None and not e.discount_until]
-        assert open_ended, "fixture assumption: the bundle still ships an open-ended discount"
+        assert [e.name for e in open_ended] == ["openrouter-beta"]
         assert audit.check_internal_consistency(entries) == []
 
     def test_the_two_synced_sources_agree_today(self):
