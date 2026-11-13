@@ -10,6 +10,7 @@ rather than followed, and the owner check plus the per-user storage bucket.
 
 import asyncio
 import os
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -333,6 +334,101 @@ def test_symlink_that_stays_inside_user_data_can_be_listed_through(client, user_
     body = through.json()
     assert body["path"] == "/mnt/user-data/workspace/results"
     assert [(entry["name"], entry["path"]) for entry in body["entries"]] == [("chart.png", "/mnt/user-data/workspace/results/chart.png")]
+
+
+@pytest.mark.skipif(os.name == "nt", reason="Windows has no descriptor-relative opens and lists by path")
+@pytest.mark.parametrize("swapped", ["listed", "ancestor"])
+@pytest.mark.parametrize(("moment", "expected_status"), [("after-resolution", 404), ("before-scan", 200)])
+def test_a_directory_swapped_for_an_outside_link_after_the_check_is_never_listed(client, user_data, tmp_path, monkeypatch, swapped, moment, expected_status):
+    # The sandbox can write below user-data, so it can replace a directory the
+    # route has already confined with a link to any host directory.
+    outside = tmp_path / "outside"
+    (outside / "sub").mkdir(parents=True)
+    (outside / "SECRET-TOP.txt").write_text("host", encoding="utf-8")
+    (outside / "sub" / "SECRET-SUB.txt").write_text("host", encoding="utf-8")
+    workspace = user_data / "workspace"
+    (workspace / "x" / "sub").mkdir(parents=True)
+    (workspace / "x" / "inside-top.txt").write_text("x", encoding="utf-8")
+    (workspace / "x" / "sub" / "inside-sub.txt").write_text("x", encoding="utf-8")
+    _symlink_or_skip(workspace / "x-link", outside, target_is_directory=True)
+    listed = "/mnt/user-data/workspace/x" if swapped == "listed" else "/mnt/user-data/workspace/x/sub"
+    swaps: list[str] = []
+
+    def swap() -> None:
+        if not swaps:
+            (workspace / "x").rename(workspace / "x-moved")
+            (workspace / "x-link").rename(workspace / "x")
+            swaps.append(moment)
+
+    if moment == "after-resolution":
+        real_resolve = thread_files_router.resolve_thread_virtual_path
+
+        def resolve_then_swap(thread_id, virtual_path, user_id=None):
+            resolved = real_resolve(thread_id, virtual_path, user_id=user_id)
+            if virtual_path == listed:
+                swap()
+            return resolved
+
+        monkeypatch.setattr(thread_files_router, "resolve_thread_virtual_path", resolve_then_swap)
+    else:
+        real_scandir = os.scandir
+
+        def swap_then_scan(target):
+            swap()
+            return real_scandir(target)
+
+        monkeypatch.setattr(thread_files_router.os, "scandir", swap_then_scan)
+
+    response = _list(client, listed)
+
+    assert swaps == [moment]
+    assert "SECRET" not in response.text
+    assert response.status_code == expected_status
+    if expected_status == 200:
+        # The directory that was checked, now beside the link, is what is listed.
+        assert _names(response) == (["sub", "inside-top.txt"] if swapped == "listed" else ["inside-sub.txt"])
+
+
+def test_a_link_that_changes_while_the_path_resolves_is_not_a_server_error(client, user_data, monkeypatch):
+    (user_data / "outputs").mkdir(parents=True)
+    workspace = user_data / "workspace"
+    workspace.mkdir()
+    link = workspace / "results"
+    _symlink_or_skip(link, Path("..") / "outputs", target_is_directory=True)
+    real_readlink = os.readlink
+    swaps: list[str] = []
+
+    def readlink_after_swap(path, *args, **kwargs):
+        # The link turns into a directory between the resolver's lstat and readlink.
+        if os.fspath(path) == os.fspath(link) and not swaps:
+            link.unlink()
+            link.mkdir()
+            swaps.append(os.fspath(path))
+        return real_readlink(path, *args, **kwargs)
+
+    monkeypatch.setattr(os, "readlink", readlink_after_swap)
+
+    response = _list(client, "/mnt/user-data/workspace/results")
+
+    assert swaps == [os.fspath(link)]
+    # Python 3.12's resolver raises when a link changes under it; 3.13 resolves
+    # to the directory now in its place. Neither is a server error.
+    if sys.version_info < (3, 13):
+        assert response.status_code == 404
+    else:
+        assert _names(response) == []
+
+
+def test_hosts_without_descriptor_walks_list_by_path(client, user_data, monkeypatch):
+    # Windows has neither dir_fd opens nor descriptor scans, so it keeps the
+    # by-path listing; the statuses must match the descriptor walk's.
+    monkeypatch.setattr(thread_files_router, "_LISTS_BY_DESCRIPTOR", False)
+    (user_data / "workspace" / "src").mkdir(parents=True)
+    (user_data / "workspace" / "app.py").write_text("x", encoding="utf-8")
+
+    assert _names(_list(client, "/mnt/user-data/workspace")) == ["src", "app.py"]
+    assert _list(client, "/mnt/user-data/workspace/app.py").status_code == 400
+    assert _list(client, "/mnt/user-data/workspace/missing").status_code == 404
 
 
 def test_looping_and_dangling_symlinks_are_listed_but_cannot_be_entered(client, user_data):

@@ -10,9 +10,14 @@ Confinement mirrors ``get_artifact``. The requested path is normalized
 lexically before the prefix check, because an encoded ``..`` reaches the
 route already decoded; ``resolve_thread_virtual_path`` then resolves symlinks
 and confines the result to the thread's ``user-data`` directory (403 on an
-escape). Entries are classified without following links, so a symlink is
-reported as ``"symlink"`` and is only entered by a new request that is
-confined again.
+escape). The sandbox can still write below ``user-data`` after that check, so
+the checked directory is opened one component at a time from the user-data
+root, each relative to its parent's descriptor without following a link, and
+is scanned through that descriptor: a component swapped for a link fails the
+request (404) instead of leading the scan out of the thread. Windows has no
+descriptor-relative opens and lists by path. Entries are classified without
+following links, so a symlink is reported as ``"symlink"`` and is only
+entered by a new request that is confined again.
 
 Fork-owned module with no upstream counterpart, so upstream syncs stay
 conflict-free.
@@ -23,6 +28,7 @@ import os
 import posixpath
 import stat
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, HTTPException, Query, Request
@@ -47,10 +53,15 @@ MAX_LISTED_ENTRIES = 500
 MAX_SCANNED_ENTRIES = 10_000
 
 _USER_DATA_PREFIX = VIRTUAL_PATH_PREFIX.lstrip("/")
-# lstat failures meaning no directory can exist at the path: a missing
-# component, a file used as a directory, an unresolvable link chain, or a
-# name too long for the filesystem.
+# Failures meaning no directory can be reached at the path: a missing
+# component, a file used as a directory, a link where the walk follows none
+# (ENOTDIR on Linux, ELOOP elsewhere), or a name too long for the filesystem.
 _MISSING_ERRNOS = frozenset({errno.ENOENT, errno.ENOTDIR, errno.ELOOP, errno.ENAMETOOLONG})
+# Descriptor-relative opens and a descriptor scan keep the listing on the
+# directory that was checked. Windows has neither and lists by path.
+_LISTS_BY_DESCRIPTOR = hasattr(os, "O_DIRECTORY") and hasattr(os, "O_NOFOLLOW") and {os.open, os.stat} <= os.supports_dir_fd and os.scandir in os.supports_fd
+_DIRECTORY_FLAGS = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+_NO_FOLLOW_DIRECTORY_FLAGS = _DIRECTORY_FLAGS | getattr(os, "O_NOFOLLOW", 0)
 
 EntryKind = Literal["directory", "file", "symlink", "other"]
 
@@ -168,47 +179,76 @@ def _missing_directory(virtual_path: str) -> ThreadDirectoryListing:
     raise _not_found(virtual_path)
 
 
+def _require_directory(mode: int, virtual_path: str) -> None:
+    if stat.S_ISLNK(mode):
+        # A link survives resolution only when it loops (newer Pythons no
+        # longer raise for that) or when it was swapped in after the check.
+        raise _not_found(virtual_path)
+    if not stat.S_ISDIR(mode):
+        raise HTTPException(status_code=400, detail=f"Path is not a directory: {virtual_path}")
+
+
+def _open_checked_directory(base: Path, directory: Path, virtual_path: str) -> int:
+    """Open *directory*, already confined below *base*, without following a link.
+
+    Each component opens relative to its parent's descriptor, so a component
+    replaced by a link after the check raises instead of leading outside the
+    thread's user-data. The caller closes the returned descriptor.
+    """
+    names = (base.name, *directory.relative_to(base).parts)
+    parent = os.open(base.parent, _DIRECTORY_FLAGS)
+    try:
+        for name in names[:-1]:
+            child = os.open(name, _NO_FOLLOW_DIRECTORY_FLAGS, dir_fd=parent)
+            os.close(parent)
+            parent = child
+        _require_directory(os.stat(names[-1], dir_fd=parent, follow_symlinks=False).st_mode, virtual_path)
+        return os.open(names[-1], _NO_FOLLOW_DIRECTORY_FLAGS, dir_fd=parent)
+    finally:
+        os.close(parent)
+
+
 def _list_directory(thread_id: str, virtual_path: str, user_id: str | None) -> ThreadDirectoryListing:
     """Worker-thread body of ``list_thread_files``: resolve, check and scan.
 
-    Like ``get_artifact``, confinement is decided when the path is resolved;
-    the scan then reads the resolved directory and classifies its entries
-    without following them.
+    Like ``get_artifact``, confinement is decided when the path is resolved.
+    The scan then reads the directory that was checked, through a descriptor
+    walked down from the user-data root, and classifies its entries without
+    following them.
     """
     try:
+        base = resolve_thread_virtual_path(thread_id, VIRTUAL_PATH_PREFIX, user_id=user_id)
         directory = resolve_thread_virtual_path(thread_id, virtual_path, user_id=user_id)
-    except RuntimeError:
-        # Python 3.12's Path.resolve() raises RuntimeError on a symlink loop;
-        # no directory can be reached through one.
+    except (RuntimeError, OSError):
+        # Python 3.12's Path.resolve() raises RuntimeError on a symlink loop,
+        # and OSError when a link changes while it is being resolved; no
+        # directory can be reached through either.
         raise _not_found(virtual_path) from None
 
     try:
-        directory_stat = os.lstat(directory)
+        if not _LISTS_BY_DESCRIPTOR:
+            _require_directory(os.lstat(directory).st_mode, virtual_path)
+            return _scan(directory, virtual_path)
+        directory_fd = _open_checked_directory(base, directory, virtual_path)
+        try:
+            # DirEntry.stat() reads through this descriptor, so it stays open
+            # until every entry is built.
+            return _scan(directory_fd, virtual_path)
+        finally:
+            os.close(directory_fd)
     except PermissionError:
         raise _permission_denied(virtual_path) from None
     except OSError as exc:
+        # Missing, or removed or replaced while it was opened or scanned.
         if exc.errno in _MISSING_ERRNOS:
             return _missing_directory(virtual_path)
         raise
-    if stat.S_ISLNK(directory_stat.st_mode):
-        # Resolution leaves a link in place only when it loops (newer Pythons
-        # no longer raise for that); it leads nowhere.
-        raise _not_found(virtual_path)
-    if not stat.S_ISDIR(directory_stat.st_mode):
-        raise HTTPException(status_code=400, detail=f"Path is not a directory: {virtual_path}")
 
+
+def _scan(directory: int | Path, virtual_path: str) -> ThreadDirectoryListing:
     visible: list[tuple[EntryKind, os.DirEntry[str], str]] = []
     scan_capped = False
-    try:
-        scan = os.scandir(directory)
-    except PermissionError:
-        raise _permission_denied(virtual_path) from None
-    except OSError as exc:
-        # Removed or replaced between the lstat and the scan.
-        if exc.errno in _MISSING_ERRNOS:
-            return _missing_directory(virtual_path)
-        raise
-    with scan:
+    with os.scandir(directory) as scan:
         for entry in scan:
             if _is_transient_internal_file(entry.name):
                 continue
