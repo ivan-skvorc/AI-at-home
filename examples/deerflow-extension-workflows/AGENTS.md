@@ -1,152 +1,105 @@
-# Script workflow extension
+# Script workflow extension (`examples/deerflow-extension-workflows/`)
 
-Keep workflow business logic in this packaged extension. Import only public
-`deerflow_extension_api` contracts, standard library and the declared QuickJS,
-jsonschema and LangChain (middleware base) dependencies; never import private
-`app.*` or `deerflow.*` runtime modules.
+An installable extension that runs a generated script as a workflow over public
+AgentRuns, with human approval, crash recovery and an optional PostgreSQL cluster
+mode. The workflow logic stays in this package.
 
-Generated script runs only in worker.py's isolated, capability-free JS context.
-Never pass host callables, capability handles, credentials or ambient environment
-into it. Keep every IPC and stored/public payload bounded. Parent lifecycle must
-kill and reap the worker and explicitly observe child cancellation.
-Agent tasks allow 16,000 serialized JSON bytes and outputs 12,000; preserve enough
-input room for a retained output plus task wrapping. Test sequential handoff with
-both ASCII and escaped Unicode, and reject oversized inputs before admission.
-The worker turn cap counts worker frames only; while the worker is idle (its job
-queue drained) and Agent calls are pending, wait locally with bounded cancellation,
-fault and worker-exit polls instead of round-tripping empty frames, so wall time stays the only clock bound.
-An idle worker with no call outstanding can never continue: fail it at once.
+## Verify
 
-Persist stable child thread, input message, attempt and idempotency identity before
-admission. Workflow cancel is a supervisor signal; do not cancel an admission task
-and lose an already-created child. Timeout/unknown outcomes require reconciliation,
-never automatic retries. Distinguish admission uncertainty from post-admission
-observation timeout: interrupt/observe known runs and escalate only uncertain cleanup.
-Keep the workflow deadline handler outside asyncio.timeout and test external cancellation
-separately. Hash the Agent allowlist in canonical sorted order. Owner scope applies
-to every public read and mutation.
-Own persistence through supervisor publication even if the launching caller cancels.
-Serialize launch admission and shutdown. After artifact IO, validate call limits
-and step uniqueness together with await-free reservation. In SQLite mode hold the process lock across service life;
-do not recover live records while another Gateway owns the file.
+```bash
+cd backend
+python -m pytest tests/test_workflow_plugin.py tests/test_workflow_recovery.py -q
+python -m pytest tests/test_ultracode_mode.py tests/test_bundled_workflows_extension.py -q
+make test-blocking-io
+```
 
-Anchor results on the visible human input, including canonical __user rewrites;
-never use hidden system/memory IDs. Retain UI launch identity across refresh failures.
-Thread latest state is not immutable run output. Check message/run attribution,
-interrupts and pending human input before copying output. Agent success is never
-human approval. Live checkpoints retain the worker. On restart, versioned bridge-journal replay
-requires an authenticated recovery action; reuse committed outputs and decisions.
-Legacy records are inspection-only. Never resubmit uncertain admissions. Bind human decisions to source output hash, step/attempt and authenticated
-session ActionContext, never ToolContext. Persist before waking; fence duplicate
-resume by checkpoint ID. Config revision is a declarative preflight guard. Store actual host assembly
-evidence per child run; never expose raw credentials. File checkpoints bind
-append-only captured bytes and SHA-256; preview and approved consumption read
-that exact version. Never claim hard currency limits or freeze external state. Do not serialize capability handles.
+Then run `verify_browser.mjs`. The cluster tests need
+`DEERFLOW_TEST_WORKFLOW_POSTGRES`, and the deployed acceptance test needs
+`DEERFLOW_WORKFLOW_ACCEPTANCE=1` with Docker. The browser fixture and the
+acceptance entry point are test-only and must never become a deployed
+authentication or admission bypass.
 
-Tests live in backend/tests/test_workflow_plugin.py. Run the backend offline and
-blocking-I/O targets plus verify_browser.mjs. The browser fixture is loopback-only
-and synthetic; it must never become a deployed authentication bypass.
+## Boundaries
 
-Phase 3: recovery.py owns session reattachment, exact bridge replay and admission
-reconciliation classification. Store.put uses conditional revisions; drain SQLite
-writes through repeated cancellation before releasing the write lock. Service-own
-recovered-run cancellation through child cleanup and the terminal write, and drain
-it during shutdown even if its caller disconnects. Log failed service-owned actions
-at error level even after caller disconnection; omit raw exception payloads as for
-supervisor failures. Persist bridge intent
-before host effects and responses before worker delivery. Include worker/supervisor
-source and engine version in compatibility checks; Date/random are unavailable.
-Preserve original wait expiry and remaining execution budget. Read captured files
-by stored step/version after crashes, never overwrite them from mutable sources.
-PostgreSQL mode uses postgres.py/cluster.py: the host and extension must share
-one database/schema. Database-clock leases use monotonically increasing epochs.
-Every supervisor write, file capture, child admission and child cancellation is
-fenced. Host admission/cancel lock the lease row in their transaction; never replace
-this with a preflight check. Durable controls are immutable and consumed by the
-owner. Lease loss kills only the local JS worker; never clean up successor children.
-Unknown child reservations retain cluster capacity. Takeover requires a fresh
-session and matching runtime/config; there is no unattended authority reattachment.
-Keep the SQLite flock default. Cluster tests use DEERFLOW_TEST_WORKFLOW_POSTGRES
-and disposable schemas, including real process kill and a host row-lock race.
-Recovery tests: backend/tests/test_workflow_recovery.py, including real process kill.
+- **Import only `deerflow_extension_api`, the standard library and the declared
+  QuickJS, jsonschema and LangChain (middleware base) dependencies.** Host
+  `app.*` and `deerflow.*` modules are private.
+- **The generated script runs only in the worker's isolated JavaScript context.**
+  Never pass it a host callable, a capability handle, a credential or the
+  environment. `Date` and random values are unavailable there.
+- **The parent kills and reaps the worker**, and every IPC, stored and public
+  payload is bounded. An idle worker with no call outstanding can never
+  continue, so fail it at once.
+- **Never serialize a capability handle**, and never rebuild authority from a
+  stored user ID. Recovery binds a fresh authenticated session.
+- **Owner scope applies to every public read and mutation.**
 
-AgentRuns.configuration_revision(durable=True) uses a purpose-separated HMAC
-under the persisted host signing secret for restart comparison. Default revisions
-remain process-local. Rotation invalidates comparisons; no raw config or secret is
-returned. Recovery callers must bind a fresh authenticated session capability;
-never serialize handles or reconstruct authority from a stored user ID alone.
+## Admission, cancellation and results
 
-Deployed acceptance: `backend/tests/test_workflow_gateway_acceptance.py` opts in
-with DEERFLOW_WORKFLOW_ACCEPTANCE=1 and disposable Docker PostgreSQL/Redis/nginx.
-The support/workflow_gateway.py entrypoint is test-only: deterministic model and
-barriers around real operations, never a deployed auth/admission bypass. Use real
-SIGKILL/SIGSTOP, login/CSRF, host runs and persisted assertions. Preserve uncertain
-reservations; there is no supported reconciliation attestation/release API yet.
+- **Persist the child thread, input message, attempt and idempotency identity
+  before admission.**
+- **A timeout or an unknown admission outcome is reconciled, never retried.** An admission that was provably rejected
+  releases its capacity; an unknown one keeps it.
+- **Workflow cancel is a signal to the supervisor.** Do not cancel the admission
+  task itself, which would lose a child that already exists.
+- **Keep admission uncertainty apart from an observation timeout after
+  admission.** A known run is interrupted and observed.
+- **Agent success is never human approval.** A human decision is bound to the
+  output hash, the step and attempt, and the authenticated session.
+- **A thread's latest state is not an immutable run output.** Check message and
+  run attribution, interrupts and pending human input before you copy an output.
+  Anchor a result on the visible human input.
+- **Keep the supervisor outcome private until child tasks and fenced cleanup
+  finish.** Publishing the terminal status early retires the PostgreSQL lease
+  before the reservations are released.
+- **This extension gives no hard currency limit and does not freeze external
+  state.** Do not claim either.
 
-Keep the plugin registration and execution-lease namespace in constants.py as a
-single declaration. Include that module in the recovery runtime signature.
+## Recovery
 
-Project expired cancelling as recoverable for cancel cleanup; never permit replay
-of stored cancelling. Cancel claims persist cancelling and bypass admission caps.
-Inspection/list reads use read-only, lock-free transactions and a single joined
-record/lease snapshot. Keep write serialization and fencing intact; pooling remains
-future work. Cover killed cancellation takeover and saturated cancellation cleanup.
+- **Persist the bridge intent before a host effect, and the response before it is
+  delivered to the worker.** Replay reuses committed outputs and decisions.
+- **Replay after a restart needs an authenticated recovery action.** Legacy
+  records are for inspection only.
+- **A captured file is read by its stored step and version.** Do not overwrite it
+  from a mutable source.
+- **Compatibility checks include the worker source, the supervisor source and
+  the engine version.** `constants.py` holds the registration and lease
+  namespace as one declaration and is part of that signature.
+- **A stored `cancelling` state is never replayed.** An expired one is
+  recoverable for cancel cleanup only.
 
-Keep the supervisor outcome private until child tasks and fenced cleanup finish.
-Child saves share the workflow record; publishing terminal status early retires
-the PostgreSQL lease before reservation release. Pin cancellation ordering with
-a barrier-based cluster regression.
+## Storage modes
 
-Proven pre-admission rejection releases child capacity before retiring the lease;
-unknown admission errors retain it. Share the slot-release predicate across cleanup paths.
-Acceptance routing counts final Gateway ports, not nginx retry-history strings.
+- **SQLite mode holds the process lock for the life of the service.** Do not
+  recover live records while another Gateway owns the file.
+- **PostgreSQL mode shares one database and schema with the host.** Every
+  supervisor write, file capture, child admission and child cancellation is
+  fenced by a lease epoch on the database clock. Host admission and cancel lock
+  the lease row inside their transaction; a preflight check is not a
+  replacement.
+- **Lease loss kills only the local worker.** Do not clean up children that a
+  successor now owns. A takeover needs a fresh session and a matching runtime
+  and configuration.
+- **Drain a SQLite write through repeated cancellation** before you release the
+  write lock.
 
-Bundled (FORK.md §44): edit examples/deerflow-extension-workflows, then copy it
-over the committed snapshot uv installs, backend/extensions/sources/deerflow-
-extension-workflows (test_bundled_workflows_extension.py). A relative
-storage_path resolves under DEER_FLOW_HOME; keep pyproject.toml's uv cache-keys.
+## Fork: bundled install and Ultracode (FORK.md §44, §46)
 
-Plus Ultracode and Double Plus Ultracode (FORK.md §44) live here: ultracode.py, delivery.py.
-Read limits only from `ToolContext.run_options`/`plugin_run_options` and clamp to
-operator config; never let run options raise a limit. Both `ultracode` and
-`double_ultracode` get the brief; only the double mode gets the no-automatic-limits
-note and no wall clock (`NO_WALL_CLOCK_SECONDS` in `run_limits`), and only its
-children and its result run are started with `context.mode = "double_ultracode"`
-so the host lifts the step limit, tool-call limits and token budgets for them.
-A Plus or plain workflow must not carry that mode. The result run also gets the run
-options back, rebuilt from the record (`result_context`: mode, clamped limits,
-`max_minutes` for Plus only), so a follow-up workflow launched from it keeps them;
-on that turn skip the brief and keep the result note plus, for Double, the
-limits-off line. The record's `model` and `internet_enabled: false` come only from
-the launching run's options (anything malformed is ignored, never an error); every
-child and the result run default to them, and a step's own `model` wins. An inherited
-model the host refuses is dropped from the record, never fatal (`start_child`, `deliver_once`).
-Keep the brief behind the mode option and the result note behind the host-stamped
-`EXTENSION_MESSAGE_ORIGIN_KEY` for this namespace only. Delivery is exactly once:
-idempotency key `workflow-result:<run>`, deterministic message text, state in
-`workflow_deliveries` (never the lease-fenced record), busy threads retried, never
-interrupted; cancelled runs are skipped. Schema re-asks persist the new attempt
-identity before admission; an uncertain re-ask needs reconciliation. A 402 is a
-definitive pre-admission rejection for a child; on the result run it is waited out
-like a busy conversation. Workspace copy/merge only through AgentRuns,
-gated by `shared_workspace`; merge results stay bounded in the row.
-`max_minutes` (Plus only) clamps to `timeout_seconds` into the record's limits; the supervisor
-reads the record, never the config, for wall time. `RUN_NOTE` (unattended, bounded
-answer) goes on ultracode children only, so plain tasks stay byte-identical. A busy
-conversation is waiting, not a failed delivery attempt (bounded by BUSY_WAIT_SECONDS).
-The host shows the model one fixed sentence for anything a tool raises, so the
-`launch_workflow` tool returns a refusal as `{launched: false, error}`; the browser
-action still raises. `inspect_workflow_step` returns only `{step_id, status, attempt,
-output}` of a completed agent step, a refusal as `{found: false, error}`; never expose `get_step` as a tool (its row holds
-evidence and file hashes). At 100 retained records `create` drops the owner's oldest
-completed, failed or cancelled record with no pending delivery, never another
-terminal state; PostgreSQL also skips what delete refuses (shared `_held`/`_discard`).
-The brief names the allowed `agents` and the `shared_workspace` rule (read both with
-`.get`; tests build the middleware without them) and the 12,000-byte result limit.
-Double Plus lifts host limits only: the workflow's stops (README, Limits and status)
-still end a run, so `DOUBLE_LIMITS` says what still applies and promises no ending.
-Brief and tool-description text spends the 12,000-token fixed request pinned by
-backend/tests/test_context_fit_critical.py (run it with this source first on
-PYTHONPATH); cut brief words to pay for new ones. A small window sees only a tool
-description's opening sentences (280 characters), so limits belong in the brief too.
-Tests: backend/tests/test_ultracode_mode.py (FORK.md §46 covers the run limits).
+- **Edit this directory, then copy it over
+  `backend/extensions/sources/deerflow-extension-workflows/`**, the snapshot uv
+  installs from. A relative `storage_path` resolves under `DEER_FLOW_HOME`; keep
+  the uv `cache-keys` in `pyproject.toml`.
+- **Run options can only lower a limit.** Read them from
+  `ToolContext.run_options` or `plugin_run_options` and clamp them to the
+  operator config.
+- **Only Double Plus Ultracode's children and result run carry
+  `context.mode = "double_ultracode"`**, which lifts the host limits. A Plus or
+  plain workflow must not carry it.
+- **Result delivery is exactly once**, keyed `workflow-result:<run>`, with its
+  state in `workflow_deliveries` and never in the lease-fenced record.
+- **Brief and tool-description text spends the fixed request** that
+  `test_context_fit_critical.py` pins. Cut words to pay for new ones.
+
+The rest of the Ultracode contract (`ultracode.py`, `delivery.py`) is in
+[FORK_NOTES.md](FORK_NOTES.md).

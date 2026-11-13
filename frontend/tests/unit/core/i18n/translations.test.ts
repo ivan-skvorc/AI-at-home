@@ -23,3 +23,16 @@ describe("core copy loading", () => {
     expect(chinese.knowledge.scope.title).toBe("知识库范围");
   });
 });
+
+describe("artifacts and files labels", () => {
+  it("names the Files view differently from the Artifacts view in every locale", async () => {
+    // The two panel tabs and the two header buttons sit side by side; the same
+    // word on both left Chinese readers with two identical "文件" tabs.
+    for (const locale of ["en-US", "zh-CN"] as const) {
+      const copy = await loadTranslations(locale);
+      expect(copy.threadFiles.title).not.toBe(copy.common.artifacts);
+      expect(copy.threadFiles.showFiles).not.toBe(copy.common.showArtifacts);
+      expect(copy.threadFiles.treeLabel).not.toBe(copy.common.showArtifacts);
+    }
+  });
+});

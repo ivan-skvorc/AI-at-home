@@ -6,6 +6,7 @@ import type { ReactNode } from "react";
 import { MessageList } from "@/components/workspace/messages/message-list";
 import { I18nContext } from "@/core/i18n/context";
 import { enUS } from "@/core/i18n/locales/en-US";
+import { formatRunStartTime } from "@/core/messages/run-duration";
 import type { MessageGroup } from "@/core/messages/utils";
 
 rs.mock("@/components/workspace/messages/message-group", () => ({
@@ -121,11 +122,45 @@ function activity() {
   return screen.getByTestId("run-activity").textContent;
 }
 
+/**
+ * The focusable elapsed time, found by the explanation it is described by. Its
+ * accessible name carries the value, which role=timer cannot take from content.
+ */
+function elapsedTime(description: string) {
+  const timer = screen.getByRole("timer", { description });
+  const shown = timer.textContent ?? "";
+  expect(timer.getAttribute("aria-label")).toBe(
+    `${enUS.runDuration.elapsed}: ${shown.replace(/^\(|\)$/g, "")}`,
+  );
+  return shown;
+}
+
+function serverStart(startTime: number) {
+  return enUS.runDuration.serverStart(
+    formatRunStartTime(startTime, { locale: "en-US", now: Date.now() }),
+  );
+}
+
 describe("MessageList live run timer", () => {
   it("counts from the run's server start when mounted mid-run", () => {
     render(view({ isLoading: true, activeRunStartedAt: NOW - 42_000 }));
 
     expect(activity()).toContain("(42s)");
+    expect(elapsedTime(serverStart(NOW - 42_000))).toBe("(42s)");
+  });
+
+  it("says a start this page observed may be later than the run's", () => {
+    const { rerender } = render(view({ isLoading: false }));
+    rerender(view({ isLoading: true }));
+    act(() => {
+      rs.advanceTimersByTime(3_000);
+    });
+
+    expect(elapsedTime(enUS.runDuration.localStart)).toBe("(3s)");
+
+    rerender(view({ isLoading: true, activeRunStartedAt: NOW - 60_000 }));
+
+    expect(elapsedTime(serverStart(NOW - 60_000))).toBe("(1m 3s)");
   });
 
   it("keeps counting the same run when it becomes active in this view again", () => {
@@ -147,6 +182,8 @@ describe("MessageList live run timer", () => {
     rerender(view({ isLoading: true, activeRunStartedAt: NOW + 400 }));
 
     expect(activity()).toContain("(5s)");
+    // The server knows the run now, so a reload keeps counting.
+    expect(elapsedTime(serverStart(NOW))).toBe("(5s)");
   });
 
   it("records the completed duration from the corrected start", () => {

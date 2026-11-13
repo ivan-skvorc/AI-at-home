@@ -253,7 +253,6 @@ class TestRealExampleConfig:
             "x-ai/grok-4.7",
             "openai/gpt-6-astra",
             "openai/gpt-6.1-sol",
-            "openai/gpt-5.3-codex",
             "google/gemini-3.8-flash",
             "meta-llama/llama-4-maverick",
             "minimax/minimax-m3",
@@ -344,22 +343,24 @@ class TestHomeApiBlocks:
         out = sync_api.sync(self.text, all_slugs)
         names = [m["name"] for m in yaml.safe_load(out)["models"]]
         assert len(names) == len(set(names)), "model names collide when every key is set"
-        # 6 Anthropic + 15 OpenRouter + 22 home = 43 distinct models.
+        # 6 Anthropic + 14 OpenRouter + 21 home = 41 distinct models.
         # OpenRouter gained Opus 5 and GPT-6 Astra (the two paired labs of
         # FORK.md step 3); the OpenAI home block gained Astra's direct twin.
         # Mistral's home block lost Medium 3.5 on 2026-11-10 (deprecated, with
-        # Large 4 as its replacement).
-        assert len(names) == 43
+        # Large 4 as its replacement), and GPT-5.3 Codex left both blocks on
+        # 2026-11-13 (deprecated for GPT-6 Sol).
+        assert len(names) == 41
 
     def test_openai_home_and_openrouter_gpt_are_distinct_entries(self):
         """The GPT flagship is doubled: a direct OpenAI entry AND the OpenRouter
-        Sol + Codex double both survive with distinct names."""
+        Astra + Sol pair both survive with distinct names."""
         out = sync_api.sync(self.text, {"openai", "openrouter"})
         by_name = {m["name"]: m for m in yaml.safe_load(out)["models"]}
         assert by_name["openai-gpt-6.1-sol"]["model"] == "gpt-6.1-sol"
         assert by_name["openai-gpt-6.1-sol"]["api_key"] == "$OPENAI_API_KEY"
         assert by_name["openrouter-gpt-6.1-sol"]["model"] == "openai/gpt-6.1-sol"
-        assert by_name["openrouter-gpt-5.3-codex"]["model"] == "openai/gpt-5.3-codex"
+        assert by_name["openrouter-gpt-6-astra"]["model"] == "openai/gpt-6-astra"
+        assert "openrouter-gpt-5.3-codex" not in by_name, "GPT-5.3 Codex is deprecated and left the bundle"
 
 
 class TestFirstPartyKeyCoverage:

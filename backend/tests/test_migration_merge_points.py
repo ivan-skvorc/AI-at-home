@@ -75,6 +75,12 @@ ORIGINAL_PARENTS = {
     # 0052_merge_prefs_run_inputs had already claimed, splitting the tree a
     # tenth time — joined by 0053_merge_prefs_batch_cont.
     "0052_batch_continuation": ("0051_merge_run_inputs_fencing",),
+    # Upstream's tool-approval revision. It hangs off 0052_batch_continuation,
+    # which 0053_merge_prefs_batch_cont had already claimed, splitting the tree
+    # an eleventh time — joined (with its child 0054_project_memory) by
+    # 0055_merge_prefs_project_mem.
+    "0053_tool_approvals": ("0052_batch_continuation",),
+    "0054_project_memory": ("0053_tool_approvals",),
 }
 
 # Every leaf the merge points must keep reachable: one per branch tip that
@@ -100,6 +106,8 @@ MERGED_TIPS = (
     "0051_merge_run_inputs_fencing",
     # Upstream's tip at the 2026-11-10 sync, joined by 0053_merge_prefs_batch_cont.
     "0052_batch_continuation",
+    # Upstream's tip at the 2026-11-13 sync, joined by 0055_merge_prefs_project_mem.
+    "0054_project_memory",
 )
 
 

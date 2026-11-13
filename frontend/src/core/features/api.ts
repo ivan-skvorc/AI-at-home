@@ -3,6 +3,11 @@ import { getBackendBaseURL } from "@/core/config";
 
 export interface FeaturesResponse {
   run_inputs?: boolean;
+  tool_approval?: {
+    enabled: boolean;
+    default_mode: "ask" | "auto" | "full";
+    allowed_modes: ("ask" | "auto" | "full")[];
+  };
   agents_api: { enabled: boolean };
   // Fork: the operator master switch for automatic conversation renaming
   // (config.yaml -> title). Optional so an older Gateway degrades to "on".

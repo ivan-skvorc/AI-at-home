@@ -41,6 +41,7 @@ import { ThreadArchiveStatus } from "@/components/workspace/thread-archive-statu
 import { ThreadAutoRename } from "@/components/workspace/thread-auto-rename";
 import { ThreadBackgroundTasks } from "@/components/workspace/thread-background-tasks";
 import { ThreadExtensionActions } from "@/components/workspace/thread-extension-actions";
+import { ThreadFilesTrigger } from "@/components/workspace/thread-files";
 import { ThreadRunInputs } from "@/components/workspace/thread-run-inputs";
 import { ThreadSubagentBatches } from "@/components/workspace/thread-subagent-batches";
 import { ThreadTitle } from "@/components/workspace/thread-title";
@@ -151,6 +152,10 @@ export default function AgentChatPage() {
   const { showNotification } = useNotification();
   const selectorVisible =
     scopeSelectionEnabled && env.NEXT_PUBLIC_STATIC_WEBSITE_ONLY !== "true";
+  // The file explorer lists a thread the Gateway has; mock threads and the
+  // static demo have none.
+  const threadFilesEnabled =
+    !isNewThread && !isMock && env.NEXT_PUBLIC_STATIC_WEBSITE_ONLY !== "true";
   const agentKnowledgeEnabled =
     agent !== null &&
     (agent.tool_groups == null || agent.tool_groups.includes("knowledge"));
@@ -517,7 +522,11 @@ export default function AgentChatPage() {
         context={{ ...settings.context, agent_name }}
         isMock={isMock}
       >
-        <ChatBox threadId={threadId} browserEnabled={browserEnabled}>
+        <ChatBox
+          threadId={threadId}
+          browserEnabled={browserEnabled}
+          filesEnabled={threadFilesEnabled}
+        >
           <div className="relative flex size-full min-h-0 justify-between">
             <header
               className={cn(
@@ -607,6 +616,7 @@ export default function AgentChatPage() {
                 <ExportTrigger threadId={threadId} />
                 <ThreadExtensionActions threadId={threadId} />
                 <ArtifactTrigger />
+                {threadFilesEnabled && <ThreadFilesTrigger />}
               </div>
             </header>
 
@@ -792,6 +802,7 @@ export default function AgentChatPage() {
                       (!isNewThread && isHistoryLoading) ||
                       hasPendingApproval
                     }
+                    inputLocked={hasPendingApproval}
                     onContextChange={(context, options) => {
                       if (options?.automatic)
                         resolveThreadContext(threadId, context);

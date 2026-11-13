@@ -408,7 +408,7 @@ export function MessageList({
   /** Alternative versions of an edited turn, keyed by `editVersionGroupKey`. */
   editVersionSwitchers?: ReadonlyMap<string, EditVersionSwitcher>;
   onSelectEditVersion?: (versionThreadId: string) => void;
-  approvalRequests?: HitlApprovalRequest[];
+  approvalRequests?: readonly HitlApprovalRequest[];
   approvalMetadataLoading?: boolean;
   approvalMetadataError?: boolean;
   onReloadApprovalMetadata?: () => unknown;
@@ -1786,7 +1786,7 @@ export function MessageList({
           />
           {approvalRequests.map((request) => (
             <ToolApprovalCard
-              disabled={thread.isLoading}
+              disabled={thread.isLoading && request.transport !== "live"}
               key={request.request_id}
               request={request}
               onSubmit={onSubmitApproval}
@@ -1828,7 +1828,10 @@ export function MessageList({
           {renderTaskEventLines(placedTaskEvents?.tail)}
           {thread.isLoading && !hasActiveAssistantText && (
             <div className="w-full">
-              <RunActivity startTime={turnStartTime} />
+              <RunActivity
+                startTime={turnStartTime}
+                startSource={activeRunStartedAt !== null ? "server" : "local"}
+              />
             </div>
           )}
           <div style={{ height: `${paddingBottom}px` }} />

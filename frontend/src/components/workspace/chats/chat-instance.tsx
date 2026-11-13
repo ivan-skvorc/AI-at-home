@@ -32,6 +32,7 @@ import { ThreadArchiveStatus } from "@/components/workspace/thread-archive-statu
 import { ThreadAutoRename } from "@/components/workspace/thread-auto-rename";
 import { ThreadBackgroundTasks } from "@/components/workspace/thread-background-tasks";
 import { ThreadExtensionActions } from "@/components/workspace/thread-extension-actions";
+import { ThreadFilesTrigger } from "@/components/workspace/thread-files";
 import { ThreadRunInputs } from "@/components/workspace/thread-run-inputs";
 import { ThreadScheduledTasksButton } from "@/components/workspace/thread-scheduled-tasks-button";
 import { ThreadSubagentBatches } from "@/components/workspace/thread-subagent-batches";
@@ -307,6 +308,10 @@ function ChatInstanceContent({
   const { scopeSelectionEnabled } = useKnowledgeBaseEnabled();
   const selectorVisible =
     scopeSelectionEnabled && env.NEXT_PUBLIC_STATIC_WEBSITE_ONLY !== "true";
+  // The file explorer lists a thread the Gateway has; mock threads and the
+  // static demo have none.
+  const threadFilesEnabled =
+    !isNewThread && !isMock && env.NEXT_PUBLIC_STATIC_WEBSITE_ONLY !== "true";
   const [knowledgeScope, setKnowledgeScope] =
     useState<KnowledgeScopeSelection | null>(null);
   const previousConversationRef = useRef({ threadId, isNewThread });
@@ -766,7 +771,11 @@ function ChatInstanceContent({
         context={settings.context}
         isMock={isMock}
       >
-        <ChatBox threadId={threadId} browserEnabled={browserEnabled}>
+        <ChatBox
+          threadId={threadId}
+          browserEnabled={browserEnabled}
+          filesEnabled={threadFilesEnabled}
+        >
           <div className="relative flex size-full min-h-0 justify-between">
             <header
               className={cn(
@@ -839,6 +848,7 @@ function ChatInstanceContent({
                 <ExportTrigger threadId={threadId} />
                 <ThreadExtensionActions threadId={threadId} />
                 <ArtifactTrigger />
+                {threadFilesEnabled && <ThreadFilesTrigger />}
               </div>
             </header>
             <main className="flex min-h-0 max-w-full grow flex-col">
@@ -1016,6 +1026,7 @@ function ChatInstanceContent({
                           (!isNewThread && isHistoryLoading) ||
                           hasPendingApproval
                         }
+                        inputLocked={hasPendingApproval}
                         onContextChange={(context, options) => {
                           if (options?.automatic)
                             resolveThreadContext(threadId, context);

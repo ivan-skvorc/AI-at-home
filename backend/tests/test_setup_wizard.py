@@ -371,7 +371,7 @@ class TestHomeApiBundleProviders:
             return False
 
         assert "deepseek/deepseek-v4-pro-0813" in openrouter_ids
-        for flagship in ("gpt-6.1-sol", "gpt-5.3-codex", "grok-4.7", "gemini-3.8-flash", "deepseek-v4-pro", "mistral-large-4-0", "kimi-k3.1-pro", "MiniMax-M3", "glm-5.3"):
+        for flagship in ("gpt-6.1-sol", "gpt-6-astra", "grok-4.7", "gemini-3.8-flash", "deepseek-v4-pro", "mistral-large-4-0", "kimi-k3.1-pro", "MiniMax-M3", "glm-5.3"):
             assert flagship in home_ids, f"{flagship} missing from a home block"
             assert routed(flagship), f"{flagship} not doubled on OpenRouter"
         # OpenRouter 308s the bare `qwen/qwen3.8-max` slug to this dated snapshot.

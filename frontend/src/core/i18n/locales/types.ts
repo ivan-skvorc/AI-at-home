@@ -102,6 +102,7 @@ export interface Translations {
       refreshHint: string;
     };
     catalog: Record<
+      | "officePreview"
       | "workflows"
       | "reportSections"
       | "agentTeams"
@@ -296,6 +297,12 @@ export interface Translations {
     minutes: (value: number) => string;
     seconds: (value: number) => string;
     separator: string;
+    /** Accessible name of the live elapsed time. */
+    elapsed: string;
+    /** Hover text when the time counts from the run's server-recorded start. */
+    serverStart: (time: string) => string;
+    /** Hover text when only this page's own start of following the run is known. */
+    localStart: string;
   };
 
   home: {
@@ -338,6 +345,12 @@ export interface Translations {
   };
 
   artifactPreview: {
+    preparingDownload: string;
+    retryDownload: string;
+    downloadFailed: string;
+    downloadRequested: string;
+    retry: string;
+    unavailable: string;
     loadingPreview: string;
     resourcesUnavailable: string;
     limited: (previewSize: string, totalSize?: string) => string;
@@ -423,6 +436,27 @@ export interface Translations {
     truncatedUnavailable: string;
     symlinkUnavailable: string;
     truncatedSummary: string;
+  };
+
+  // Thread file explorer
+  threadFiles: {
+    title: string;
+    showFiles: string;
+    treeLabel: string;
+    refresh: string;
+    loading: string;
+    loadingFolder: string;
+    emptyTitle: string;
+    emptyDescription: string;
+    emptyFolder: string;
+    loadFailed: string;
+    folderLoadFailed: string;
+    folderMissing: string;
+    accessDenied: string;
+    retry: string;
+    moreNotShown: (count: number) => string;
+    symlink: string;
+    specialFile: string;
   };
 
   // Input Box
@@ -720,7 +754,15 @@ export interface Translations {
     viewTrash: string;
     documentsLoadFailed: string;
     threadFilesLoadFailed: string;
-    interimMemoryNotice: string;
+    memoryTitle: string;
+    memoryAutoExtract: string;
+    memoryDescription: string;
+    memoryEmpty: string;
+    memoryPromote: string;
+    memoryPromoted: string;
+    memorySaveFirst: string;
+    memoryLoadFailed: string;
+    memoryActionFailed: string;
   };
 
   // Trash view (Projects Phase 2)
@@ -1851,6 +1893,21 @@ export interface Translations {
     selectPlaceholder: string;
     answeredValue: (value: string) => string;
     approval: {
+      modeLabel: string;
+      modeAsk: string;
+      modeAuto: string;
+      modeFull: string;
+      askDescription: string;
+      autoDescription: string;
+      fullDescription: string;
+      approveThread: string;
+      grantScope: string;
+      editArguments: string;
+      fullArguments: string;
+      invalidArguments: string;
+      revokeGrants: string;
+      grantsRevoked: string;
+      childApproval: string;
       title: string;
       description: string;
       waiting: string;
@@ -1873,6 +1930,19 @@ export interface Translations {
 
   // Uploads
   uploads: {
+    status: {
+      pending: string;
+      uploading: string;
+      uploaded: string;
+      failed: string;
+      cancelled: string;
+    };
+    cancelUpload: string;
+    retryUpload: string;
+    notReady: string;
+    attachment: string;
+    image: string;
+    removeAttachment: (filename: string) => string;
     uploading: string;
     uploadingFiles: string;
     limitsHint: (

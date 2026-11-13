@@ -1,320 +1,76 @@
-# AGENTS.md
+# Backend (`backend/`)
 
-## Project Overview
+The Python backend: the publishable harness in `packages/harness/deerflow/`, the
+public extension contract in `packages/extension-api/`, and the unpublished
+Gateway and IM channels in `app/`. In every deployment the agent runtime runs
+inside the Gateway. Design docs are in [docs/](docs/); start with
+[ARCHITECTURE.md](docs/ARCHITECTURE.md) and [API.md](docs/API.md).
 
-The LangGraph backend provides sandbox execution, persistent memory, subagent delegation, and extensible tools, isolated per thread.
+## Guides by area
 
-Service roles and ports: [root service topology](../AGENTS.md#service-topology).
+Read the guide for an area before you change it.
 
-**Voice input**: server-side speech-to-text lives in `packages/harness/deerflow/community/speech/` (see its `AGENTS.md`); the cloud tier is off by default and Tailscale CGNAT counts as local.
+| Area | Guide |
+| --- | --- |
+| Run streaming, checkpoints, run ownership | [runtime](packages/harness/deerflow/runtime/AGENTS.md) |
+| Repositories, leases, scheduled tasks, schema changes | [persistence](packages/harness/deerflow/persistence/AGENTS.md), [migrations](packages/harness/deerflow/persistence/migrations/AGENTS.md) |
+| `config.yaml`, `extensions_config.json` | [config](packages/harness/deerflow/config/AGENTS.md) |
+| Lead agent, prompt, thread state, middleware chain | [agents](packages/harness/deerflow/agents/AGENTS.md), [middlewares](packages/harness/deerflow/agents/middlewares/AGENTS.md) |
+| Memory, subagents, skills, tools | [memory](packages/harness/deerflow/agents/memory/AGENTS.md), [subagents](packages/harness/deerflow/subagents/AGENTS.md), [skills](packages/harness/deerflow/skills/AGENTS.md), [tools](packages/harness/deerflow/tools/AGENTS.md) |
+| Sandbox, uploads, MCP, models, extensions | [sandbox](packages/harness/deerflow/sandbox/AGENTS.md), [uploads](packages/harness/deerflow/uploads/AGENTS.md), [mcp](packages/harness/deerflow/mcp/AGENTS.md), [models](packages/harness/deerflow/models/AGENTS.md), [extensions](packages/harness/deerflow/extensions/AGENTS.md) |
+| Trace ID, embedded client, other root modules | [harness package](packages/harness/deerflow/AGENTS.md) |
+| Search, fetch and sandbox providers | [community](packages/harness/deerflow/community/AGENTS.md), then the provider's own guide |
+| Gateway, routers, IM channels | [gateway](app/gateway/AGENTS.md), [routers](app/gateway/routers/AGENTS.md), [channels](app/channels/AGENTS.md) |
+| Tests, benchmarks | [tests](tests/AGENTS.md), [benchmarks](scripts/benchmark/AGENTS.md) |
 
-**Runtime**: the run path (RunManager + `run_agent()` + StreamBridge), stream
-frames and subgraph namespacing, subagent identity, scheduled-task dispatch and
-occurrence states, the MCP durable task runtime, and the `extensions_config.json`
-write path each carry invariants that are silent when broken. They are reference
-material rather than orientation, so they live in
-[docs/RUNTIME.md](docs/RUNTIME.md) — read it before changing any of them.
-
-**Layout:** [Repository map](../AGENTS.md#repository-map). Tests: `tests/`;
-docs: `docs/`; benchmarks: `scripts/benchmark/`. Read module-local `AGENTS.md`
-for implementation boundaries.
-
-## Important Development Guidelines
-
-### Documentation Update Policy
-Every code change must keep docs accurate and current: update `README.md` for
-user-facing behavior and the relevant `AGENTS.md` for development changes.
-`CLAUDE.md` imports `AGENTS.md`; do not edit the shim.
-
-Image result URL policy: [image search guide](packages/harness/deerflow/community/image_search/AGENTS.md).
-
-### Backend Benchmarks
-
-`scripts/benchmark/` holds standalone, reproducible measurements of production
-backend behavior. The dataset-pinning, secret-handling, determinism and
-result-publishing rules — the DeerMem eviction evaluation's commands, and the
-`context_snapshot/` protocol (`run-live` needs provider env vars; `summarize`
-and pytest are offline) — live beside the code in
-[scripts/benchmark/AGENTS.md](scripts/benchmark/AGENTS.md).
-
-`scripts/benchmark/concurrency/` compares SQLite and Postgres contention on
-`users` with separate OS processes. `worker.py` connects via SQLAlchemy with
-the app's SQLite PRAGMAs after the orchestrator runs Alembic once.
-`run_concurrency_bench.py` uses a disposable schema outside `public` in the
-throwaway database supplied via `--pg-url`. It starts timing after a READY/GO
-barrier and fails on a crash, short op count, or any errors. Run from `backend/`.
+## Verify
 
 ```bash
-uv run python scripts/benchmark/concurrency/run_concurrency_bench.py \
-  --backend sqlite --workers 2,4,8,16 --ops-per-worker 50 --read-ratio 0.7
-uv run pytest tests/test_bench_concurrency.py tests/test_bench_worker.py -q
+make test               # offline suite in parallel shards
+make test-blocking-io   # strict blocking-I/O suite
+make lint
+make format
+make test-live          # calls real APIs; needs DEER_FLOW_RUN_LIVE_TESTS=1
 ```
 
-## Commands
-
-Root orchestration and extension commands live in the
-[root guide](../AGENTS.md#commands-root-vs-module); run them from the repo root.
-`make detect-thread-boundaries` inventories backend executor, thread and event-loop
-boundaries.
-
-**Backend directory** (for backend development only):
-```bash
-make install            # Install backend dependencies
-make dev                # Gateway API, reload (port 8001)
-make gateway            # Gateway API only (port 8001)
-make test               # four offline workers; TEST_JOBS=1 for serial
-make test-live          # live tests (real APIs)
-make test-blocking-io   # strict Blockbuster gate on tests/blocking_io/
-make test-shard SPLITS=4 GROUP=2  # one duration-aware shard
-make test-shard-durations  # refresh baseline
-make lint               # ruff lint
-make format             # ruff format
-make migrate-rev MSG="..."  # Autogenerate a new alembic revision (see Schema Migrations section)
-```
-
-The backend `make dev` target pre-creates and excludes `DEER_FLOW_HOME`
-(default: `backend/.deer-flow`) and `backend/sandbox` from Uvicorn's reload
-watcher. Do not replace it with a bare `uvicorn --reload`: agent tasks write
-Python and other runtime files below `DEER_FLOW_HOME`, which would otherwise
-restart the Gateway during an active run.
-
-Configuration checks and operator migration scripts reuse the installed backend
-environment with `uv run --no-sync --project backend` from the repository root.
-`--project` preserves the caller's working directory and relative runtime/config
-selectors; `--no-sync` retains installed extras such as PostgreSQL drivers.
-
-Read the nearest scoped `AGENTS.md` for subsystem ownership.
-
-## Architecture
-
-Read-only knowledge: [contract](docs/KNOWLEDGE.md) covers independent retrieval
-tools, scope intersection and extension-owned providers.
-HTTPX clients for several community providers, including RAGFlow, LightRAG,
-You.com, GroundRoute, Webz, Crawl4AI, Browserless, InfoQuest, Jsonify, SearXNG
-and Jina, use `asyncio.to_thread` for synchronous TLS setup; requests and cleanup
-stay on-loop, and Browserless and Jsonify own construction as a task so
-cancellation during setup still closes the client it builds.
-
-### Harness / App Split
-
-The backend is split into two layers with a strict dependency direction:
-
-- **Harness** (`packages/harness/deerflow/`): Publishable agent framework package (`deerflow-harness`). Import prefix: `deerflow.*`. Contains agent orchestration, tools, sandbox, models, MCP, skills, config — everything needed to build and run agents.
-- **App** (`app/`): Unpublished application code. Import prefix: `app.*`. Contains the FastAPI Gateway API and IM channel integrations (Feishu, Slack, Telegram, DingTalk). Feishu option clarifications can render as interactive button cards behind `channels.feishu.card_interaction_enabled` (default off); see `app/channels/AGENTS.md`.
-
-Channel credential staging (`app/channels/credential_staging.py`) is swept on worker-thread state loads, including SQL legacy import. Only owned regular files older than 24h are removed; leave anonymous temporary files alone and keep WeChat constructors IO-free.
-
-**Dependency rule**: App imports deerflow, but deerflow never imports app. This boundary is enforced by `tests/test_harness_boundary.py` which runs in CI.
-
-**Import conventions**:
-```python
-# Harness internal
-from deerflow.agents import make_lead_agent
-from deerflow.models import create_chat_model
-
-# App internal
-from app.gateway.app import app
-from app.channels.service import start_channel_service
-
-# App → Harness (allowed)
-from deerflow.config import get_app_config
-
-# Harness → App (FORBIDDEN — enforced by test_harness_boundary.py)
-# from app.gateway.routers.uploads import ...  # ← will fail CI
-```
-
-Package import hygiene: the `deerflow.agents` and `deerflow.subagents` package
-roots expose heavyweight graph/executor entrypoints lazily. The
-`deerflow.agents:make_lead_agent` LangGraph Server entrypoint is a concrete thin
-module-level function because the server resolves graph factories directly from
-the module dictionary; the wrapper keeps the lead-agent and skill-cache imports
-inside the function so importing the package remains lightweight. Internal
-modules that only need lightweight types, config, or registries should import
-the concrete submodule instead of adding eager package-root imports that pull in
-the tool graph or subagent executor during state/schema imports.
-
-`ThreadMetaStore.search()` keeps JSON filter semantics identical across memory,
-SQLite, and PostgreSQL: missing differs from null, bool differs from int, and
-float filters accept integer or real JSON numbers through `json_value_matches`.
-
-### Gateway Run-Context Trust Boundary
-
-Gate server-owned run context on both client feeds (`body.context` and
-`body.config`): `merge_run_context_overrides` admits it only for `internal=True`,
-while `strip_internal_context_keys` scrubs both destinations. A validated
-`context.locale` (`en-US` / `zh-CN`) is a runtime-only language preference for
-replies and memory writes; it never persists into checkpoint `configurable`,
-and an explicit invalid/null top-level value clears a legacy preference. Treat
-`disable_clarification` like `non_interactive`. Before run/state writes,
-`_normalize_input_messages` rejects canonical external system/developer roles;
-only `AUTH_SOURCE_INTERNAL` run input may retain them.
-`_normalize_external_todos` rejects invalid caller todos with HTTP 400: entries
-must be objects with string content and a known status (default `pending`). Todo
-and token-usage readers normalize malformed stored/direct-integration values so
-model calls remain usable.
-
-`contracts/ui_locales.v1.json` pins the UI/Gateway locale allowlists in tests;
-DeerMem's portable map stays separate. Scheduled/MCP notification runs omit
-locale; persisted owner locale is used for scheduled IM notices only.
-
-`start_run` assigns IDs to ID-less messages before recording input or invoking
-the graph; keyed retries keep those IDs stable, while the pre-stamp input
-remains the idempotency identity. The record and checkpoint share IDs so
-frontend reconnect can deduplicate the user's message.
-
-## Development Workflow
-
-### Behavioral testing and TDD
-
-Follow [CHANGE_CYCLE.md](../CHANGE_CYCLE.md) for test scope, test hygiene, and
-reporting. Reuse existing coverage first; add or extend tests only for uncovered
-behavior. For uncovered executable regressions or new behavior, write a failing behavioral
-test before implementation (TDD).
-
-- Write tests in `backend/tests/` following the existing naming convention `test_<feature>.py`
-- Run relevant existing tests as a baseline before edits; after backend code changes,
-  run `make test`, plus `make test-blocking-io` when async, runtime, or I/O paths change.
-  Docs-only changes use focused documentation/guidance checks from the cycle.
-- Tests must pass before a feature is considered complete
-- For lightweight config/utility modules, prefer pure unit tests with no external dependencies
-- If a module causes circular import issues in tests, add a `sys.modules` mock in `tests/conftest.py` (see existing example for `deerflow.subagents.executor`)
-
-Keep live tests opt-in via `DEER_FLOW_RUN_LIVE_TESTS=1`; guard POSIX-only
-markers with `os.name` for Windows collection.
-
-Jina logging tests use dummy keys; the Jina redirect regression runs offline via `httpx.MockTransport` and keeps POST across temporary redirects; InfoQuest connect/read timeout is 30s, separate from crawl timeouts (`tests/test_jina_client.py`, `tests/test_infoquest_http_timeout.py`).
-
-### Running the Full Application
-
-Run `make dev` from the repo root to start all services at `http://localhost:2026`.
-
-**All startup modes:**
-
-| | **Local Foreground** | **Local Daemon** | **Docker Dev** | **Docker Prod** |
-|---|---|---|---|---|
-| **Dev** | `./scripts/serve.sh --dev`<br/>`make dev` | `./scripts/serve.sh --dev --daemon`<br/>`make dev-daemon` | `./scripts/docker.sh start`<br/>`make docker-start` | — |
-| **Prod** | `./scripts/serve.sh --prod`<br/>`make start` | `./scripts/serve.sh --prod --daemon`<br/>`make start-daemon` | — | `./scripts/deploy.sh`<br/>`make up` |
-
-| Action | Local | Docker Dev | Docker Prod |
-|---|---|---|---|
-| **Stop** | `./scripts/serve.sh --stop`<br/>`make stop` | `./scripts/docker.sh stop`<br/>`make docker-stop` | `./scripts/deploy.sh down`<br/>`make down` |
-| **Restart** | `./scripts/serve.sh --restart [flags]` | `./scripts/docker.sh restart` | — |
-
-### Running Backend Services Separately
-
-From the **backend** directory:
-
-```bash
-# Gateway API
-make gateway
-```
-
-Direct access (without nginx):
-- Gateway: `http://localhost:8001`
-
-### Frontend Configuration
-
-The frontend uses environment variables to connect to backend services:
-- `NEXT_PUBLIC_LANGGRAPH_BASE_URL` - Defaults to `/api/langgraph` (through nginx)
-- `NEXT_PUBLIC_BACKEND_BASE_URL` - Defaults to empty string (through nginx)
-
-When using `make dev` from root, the frontend automatically connects through nginx.
-
-## Key Features
-
-### Web Search Recency
-
-Optional `web_search` `time_range=day|week|month|year` mappings:
-DDG → `d|w|m|y`; Brave → `pd|pw|pm|py`; Tavily/SearXNG → unchanged;
-Sofya → unchanged in `freshness`; Serper → `qdr:d|w|m|y` in `tbs`.
-Omission preserves request shape; Serper null also omits `tbs`. Image search is unchanged.
-DDGS 9.14.1 recency uses only enabled Brave/DuckDuckGo/Yahoo engines honoring
-`timelimit`: `auto`/`all` selects this set; drop incompatible engines and fall back
-to this set if empty. Re-check on DDGS upgrades.
-
-### Tavily Fetch
-
-Title fallback: result URL, then request URL.
-
-### File Upload
-
-Outlines use ATX syntax (1–6 hashes, space/tab separator, ≤3 leading spaces), strip closing hashes and skip fenced code; closing markers use a linear suffix scan — never unanchored whitespace regex on unbounded headings.
-- Endpoint: `POST /api/threads/{thread_id}/uploads`; PDF/PPT/Excel/Word via `pymupdf4llm`/`markitdown`, one conversion worker per request; directories rejected, keeping uploads all-or-nothing; duplicate filenames in one request get `_N` suffixes.
-- Files live in thread-isolated `users/{user_id}/threads/{thread_id}/user-data/uploads` (IM channels thread the owner via the `user_id=` kwarg — see IM Channels → Owner-scoped file storage; HTTP/embedded callers resolve `get_effective_user_id()`); per-thread `upload-companions/` holds source mtime/ctime.
-- Gateway HTTP uploads stage `.upload-*.part` files hidden from upload listings, agent context, and sandbox listings/searches; publication is atomic after size validation. Startup sweep keeps lone `.part` files under 24h (possibly in flight on another replica); `st_nlink > 1` means a published alias, removed at any age so the multi-link check can still replace the file.
-- Upload/list/delete handlers offload filesystem work through `deerflow.utils.file_io.run_file_io` (ContextVar-preserving); non-mounted sandbox uploads use `SandboxProvider.acquire_async()` and offload `read_bytes()` + `sandbox.update_file()` together. Mounted uploads skip acquire/sync; AIO remote/provisioner requires accurate `sandbox.thread_data_mounts: true`, omission keeps backend auto-detection.
-- `UploadsMiddleware` caps outline titles at 200 characters and previews at 2000 including markers. Titles use `original_user_content`; attachment-only titles use a sanitized, bounded filename or count.
-- Long docs, scanned PDFs: [documents/AGENTS.md](packages/harness/deerflow/documents/AGENTS.md)
-
-See [docs/FILE_UPLOAD.md](docs/FILE_UPLOAD.md) for details.
-
-### Plan Mode
-
-`config.configurable.is_plan_mode=True` enables TodoList `write_todos` for
-multi-step tasks: one `in_progress` task, real-time updates. See
-[usage](docs/plan_mode_usage.md).
-
-### Run Interaction Policy
-
-Interaction/HITL rules: [policy](docs/RUN_INTERACTION_POLICY.md).
-
-### Context Summarization
-
-`summarization` in `config.yaml` triggers on tokens, messages or max-input fraction.
-Keep recent messages; summarize older ones.
-- Manual compaction uses `POST /api/threads/{id}/compact`, reuses the same `DeerFlowSummarizationMiddleware`, writes a new checkpoint with updated `messages`/`summary_text`, and bumps only those channel versions. The route uses the shared `reserve_checkpoint_write()` boundary (also used by manual state updates); its short-lived `checkpoint_write` operation shares the durable active-thread uniqueness constraint with run admission, preventing worker-local and cross-worker checkpoint-write races.
-- Cache only first-candidate no-ops; never suppress primary retries with fallback results. See [reuse and telemetry](docs/summarization.md#reuse-and-telemetry) for cache and counter contracts.
-
-See [docs/summarization.md](docs/summarization.md) for details.
-
-### Vision Support
-
-For models with `supports_vision: true`: `ViewImageMiddleware` processes images and adds `view_image_tool`. Images reach the model as base64 in a hidden message carrying a reserved ID prefix plus a server-owned metadata marker (Gateway strips the marker from untrusted input; the middleware requires both to recognize its own message). The injection happens inside `wrap_model_call`, so payloads never enter graph state — checkpoints keep only lightweight `viewed_images` metadata, and client-chosen IDs survive; the middleware also sweeps its own message out of every request before rebuilding it, so a payload stranded in an older checkpoint by an interrupted run stops being resent.
-
-## Code Style
-
-- Uses `ruff` for linting and formatting
-- Line length: 240 characters
-- Python 3.12+ with type hints
-- Double quotes, space indentation
-
-## Documentation
-
-See `docs/` directory for detailed documentation:
-- [CONFIGURATION.md](docs/CONFIGURATION.md) - Configuration options
-- [ARCHITECTURE.md](docs/ARCHITECTURE.md) - Architecture details
-- [API.md](docs/API.md) - API reference
-- [SETUP.md](docs/SETUP.md) - Setup guide
-- [FILE_UPLOAD.md](docs/FILE_UPLOAD.md) - File upload feature
-- [PATH_EXAMPLES.md](docs/PATH_EXAMPLES.md) - Path types and usage
-- [summarization.md](docs/summarization.md) - Context summarization
-- [plan_mode_usage.md](docs/plan_mode_usage.md) - Plan mode with TodoList
-
-## Agent Generation (`app/gateway/routers/agent_generation.py`)
-
-`POST /api/agent-generation/analyze` asks one model whether a user's own
-conversations / scheduled tasks warrant a NEW custom agent. Read-only by design:
-it returns a draft, never an agent. Invariants live in
-[`deerflow/agents/generation/AGENTS.md`](packages/harness/deerflow/agents/generation/AGENTS.md).
-
-## Fork-specific backend features
-
-This fork adds backend behaviour upstream does not have: durable auxiliary token
-counters, currency spend caps (`SpendBudgetMiddleware`, HTTP 402 at admission),
-the spend attribution endpoint, cost-aware subagent routing, model fallback
-chains, explicit `price:`/`discount:` model fields with a self-expiring
-discount, Web Push delivery, multi-user mode, the per-user UI-state store, and an
-editable lead-agent system prompt (`lead_agent/system_prompt_store.py`; the
-invariants live in `packages/harness/deerflow/agents/AGENTS.md`).
-
-Local image/video generation through a ComfyUI service — with its GPU
-residency arbiter and self-critiquing refine loop — lives in
-`packages/harness/deerflow/community/comfyui/`; its invariants are in that
-package's own `AGENTS.md`.
-
-Each is documented in **[FORK.md](../FORK.md)** with its rationale, its
-invariants, and a row in the post-sync feature checklist naming the tests that
-pin it. Read that file before changing any of them — several carry properties
-that are silent when broken (token attribution on a fallback, the expiry rule on
-a discount, the factory exclude set). Code-adjacent notes also live beside the
-code, e.g. `packages/harness/deerflow/models/AGENTS.md` for pricing and fallback.
+[CHANGE_CYCLE.md](../CHANGE_CYCLE.md) sets the test scope: `make lint` and
+`make test` after a code change, plus `make test-blocking-io` for async, runtime
+or I/O changes. Live tests stay opt-in, so the default suite needs no network
+and no API key.
+
+## Rules
+
+- **The harness never imports `app`.** `app.*` imports `deerflow.*`, and not the
+  reverse, because the harness is published on its own.
+  `tests/test_harness_boundary.py` enforces this in CI.
+- **Start the Gateway with `make dev` or `make gateway`.** `make dev` excludes
+  `DEER_FLOW_HOME` and `backend/sandbox` from the reload watcher. A bare
+  `uvicorn --reload` restarts the Gateway during a run, because agent tasks write
+  Python files below `DEER_FLOW_HOME`.
+- **From the repository root, run backend tools with
+  `uv run --no-sync --project backend`.** `--project` keeps the caller's working
+  directory, so relative config paths still resolve. `--no-sync` keeps installed
+  extras such as the PostgreSQL drivers.
+- **Run Python through `uv run` inside `backend/`**, without `--no-sync`, so the
+  environment matches the lock.
+- **Guard POSIX-only test markers with `os.name`.** Windows collects the same
+  files.
+- **Tool approvals need addressable calls.** Strip missing, empty and duplicate
+  tool-call IDs before creating a pause or a tool result. See the
+  [run interaction policy](docs/RUN_INTERACTION_POLICY.md#hitl-tool-approval).
+- **Add a schema change with `make migrate-rev MSG="..."`** and follow the
+  migrations guide.
+
+## Fork-specific backend
+
+The fork adds durable auxiliary token counters, currency spend caps
+(`SpendBudgetMiddleware`, HTTP 402 at admission), spend attribution, cost-aware
+subagent routing, model fallback chains, `price:`/`discount:` model fields, Web
+Push, multi-user mode, the per-user UI-state store, an editable system prompt
+and ComfyUI generation. Read the feature's [FORK.md](../FORK.md) section before
+you change it, because several fail silently: token attribution on a fallback,
+discount expiry, the factory exclude set. Runtime invariants are in
+[docs/RUNTIME.md](docs/RUNTIME.md). Fork guides in `packages/harness/deerflow/`:
+`models/` (pricing, fallback), `agents/lead_agent/`, `agents/generation/`
+(returns a draft, never an agent), `community/speech/` (cloud tier off by
+default; Tailscale CGNAT counts as local), `community/comfyui/` and `documents/`.

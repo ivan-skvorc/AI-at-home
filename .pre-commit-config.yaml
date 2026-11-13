@@ -36,7 +36,7 @@ repos:
         entry: python3 scripts/check_agent_guidance.py
         language: system
         pass_filenames: false
-        files: (^|/)AGENTS\.md$
+        files: (^|/)AGENTS\.md$|^README\.md$
 
   # Frontend: eslint + prettier (must run from frontend/ for node_modules resolution)
   - repo: local

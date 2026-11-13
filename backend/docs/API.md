@@ -188,6 +188,11 @@ only letters, digits and hyphens; any other value is rejected with `422`.
 Branches preserve valid stored IDs, including their original spelling. If a
 legacy source has an invalid ID, its new branch stores `null` and uses the lead agent.
 
+`metadata` is stored on the thread as sent and copied into its first
+checkpoint, except for the keys the server owns there: `step`, `source`,
+`writes`, `parents`, `created_at`, `counters_since_delta_snapshot` and
+`deerflow_agent_name`.
+
 **Response:**
 ```json
 {
@@ -1716,6 +1721,20 @@ GET /api/threads/{thread_id}/artifacts/{path}
 - `download` (boolean): If `true`, force download with Content-Disposition header
 
 **Response:** File content with appropriate Content-Type. HTML and XML documents (`.html`, `.xml`, `.xhtml`, `.svg`, and other `+xml` types) are always returned as attachments, regardless of `download`, so generated markup never renders in the application origin.
+
+#### List Thread Files
+
+List one directory of the thread's sandbox user-data tree for the file explorer. Open a listed file with Get Artifact.
+
+```http
+GET /api/threads/{thread_id}/files?path=/mnt/user-data/workspace
+```
+
+**Query Parameters:** `path` (default `/mnt/user-data`): a directory at or below `/mnt/user-data`, with or without the leading slash. `.`/`..` segments are collapsed before the prefix check.
+
+**Response:** `{"path", "exists", "entries": [{"name", "path", "kind": "directory"|"file"|"symlink"|"other", "size", "modified_at"}], "truncated", "total"}`. `path` values are virtual and not URL-encoded. `size` is bytes for regular files and `null` otherwise; `modified_at` is the entry's own mtime in ISO-8601 UTC to the second, or `null`. Directories sort first, then everything else, each by case-insensitive name and then exact name. Links are classified without being followed. At most 500 entries are returned, and a scan stops after 10,000 visible entries, after which `total` is a lower bound; `truncated` reports either cut. Upload staging (`.upload-*.part`) and artifact-edit temporary files are hidden; other dotfiles are listed. `exists` is `false` only when the root is requested before the thread's user-data directory exists.
+
+**Errors:** `400` for a path outside `/mnt/user-data` or one that is not a directory; `403` when a symlink would escape the thread's user-data directory, or the Gateway may not read the directory; `404` for any other missing directory, and for a thread the caller may not read.
 
 ---
 

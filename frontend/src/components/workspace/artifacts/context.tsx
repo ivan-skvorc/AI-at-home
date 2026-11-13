@@ -17,6 +17,9 @@ import type { ArtifactDraftState } from "@/core/artifacts/editing";
 import { useAuth } from "@/core/auth/AuthProvider";
 import { env } from "@/env";
 
+/** What the panel lists when no file is open. */
+export type ArtifactsPanelView = "artifacts" | "files";
+
 export interface ArtifactsContextType {
   artifacts: string[];
   setArtifacts: (artifacts: string[]) => void;
@@ -29,6 +32,16 @@ export interface ArtifactsContextType {
   open: boolean;
   autoOpen: boolean;
   setOpen: (open: boolean) => void;
+
+  view: ArtifactsPanelView;
+  setView: (view: ArtifactsPanelView) => void;
+  /** Open the panel on the file explorer, closing any open file. */
+  showFiles: () => void;
+  /**
+   * Close a preview opened in the Files view: back to the explorer, and no
+   * more write_file previews over it (the explorer refreshes while a run works).
+   */
+  returnToFiles: () => void;
 
   drafts: Record<string, ArtifactDraftState>;
   setDrafts: Dispatch<SetStateAction<Record<string, ArtifactDraftState>>>;
@@ -46,6 +59,7 @@ type PersistedArtifactsState = {
   artifacts: string[];
   selectedArtifact: string | null;
   open: boolean;
+  view: ArtifactsPanelView;
 };
 
 function storageKey(pathname: string) {
@@ -74,6 +88,8 @@ function readPersistedState(pathname: string): PersistedArtifactsState | null {
       artifacts: parsed.artifacts,
       selectedArtifact: parsed.selectedArtifact,
       open: parsed.open,
+      // State saved before the Files view existed has no view: the list.
+      view: parsed.view === "files" ? "files" : "artifacts",
     };
   } catch {
     return null;
@@ -100,6 +116,7 @@ export function ArtifactsProvider({
     env.NEXT_PUBLIC_STATIC_WEBSITE_ONLY === "true",
   );
   const [autoOpen, setAutoOpen] = useState(true);
+  const [view, setView] = useState<ArtifactsPanelView>("artifacts");
   const [editingPath, setEditingPath] = useState<string | null>(null);
   const { setOpen: setSidebarOpen } = useSidebar();
   const pathname = usePathname();
@@ -124,6 +141,7 @@ export function ArtifactsProvider({
     setArtifacts(persisted?.artifacts ?? []);
     setSelectedArtifact(persisted?.selectedArtifact ?? null);
     setOpen(persisted?.open ?? env.NEXT_PUBLIC_STATIC_WEBSITE_ONLY === "true");
+    setView(persisted?.view ?? "artifacts");
     setAutoOpen(true);
     setAutoSelect(!persisted?.selectedArtifact);
     setEditingPath(null);
@@ -137,12 +155,12 @@ export function ArtifactsProvider({
     try {
       window.sessionStorage.setItem(
         storageKey(scope),
-        JSON.stringify({ artifacts, selectedArtifact, open }),
+        JSON.stringify({ artifacts, selectedArtifact, open, view }),
       );
     } catch {
       // Browser storage can be disabled or full; panel state must keep working.
     }
-  }, [artifacts, open, scope, selectedArtifact]);
+  }, [artifacts, open, scope, selectedArtifact, view]);
 
   const select = useCallback(
     (artifact: string, autoSelect = false) => {
@@ -160,7 +178,23 @@ export function ArtifactsProvider({
   const deselect = useCallback(() => {
     setSelectedArtifact(null);
     setAutoSelect(true);
+    // Closing the panel ends a Files session (see setOpen below).
+    setView("artifacts");
     setOpen(false);
+  }, []);
+
+  const showFiles = useCallback(() => {
+    setView("files");
+    setSelectedArtifact(null);
+    setOpen(true);
+  }, []);
+
+  const returnToFiles = useCallback(() => {
+    setAutoOpen(false);
+    setAutoSelect(false);
+    setSelectedArtifact(null);
+    setView("files");
+    setOpen(true);
   }, []);
 
   const value: ArtifactsContextType = {
@@ -175,8 +209,19 @@ export function ArtifactsProvider({
         setAutoOpen(false);
         setAutoSelect(false);
       }
+      if (!isOpen) {
+        // Closing the panel ends a Files session, so a file opened later from
+        // the chat closes the panel again instead of falling back to the
+        // explorer.
+        setView("artifacts");
+      }
       setOpen(isOpen);
     },
+
+    view,
+    setView,
+    showFiles,
+    returnToFiles,
 
     selectedArtifact,
     select,

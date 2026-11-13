@@ -86,13 +86,16 @@ class ChatGPTSubscriptionChatModel(CodexChatModel):
             input_items.extend(items)
         return "\n\n".join(instructions) or "You are a helpful assistant.", input_items
 
-    def _call_codex_api(self, messages: list[BaseMessage], tools: list[dict] | None = None, tool_choice: str | dict | bool | None = None) -> dict:
+    def _prepare_request(self, messages: list[BaseMessage], tools: list[dict] | None, tool_choice: str | dict | bool | None) -> tuple[dict, dict]:
+        # Both base call paths build their request here (sync `_call_codex_api`
+        # and, since upstream #8053, async `_acall_codex_api`), so overriding
+        # this one method keeps either path off the private Codex endpoint.
         instructions, input_items = self._convert_messages(messages)
         # Build an allowlisted payload: the subscription preview rejects many
         # ordinary Responses API controls, including output limits/temperature.
-        # `tool_choice` is accepted because the base class now passes it
-        # (upstream #6898) but stays off the wire: it is not on the allowlist,
-        # and a named choice has no verified form for namespaced tools.
+        # `tool_choice` is accepted because the base class passes it (upstream
+        # #6898) but stays off the wire: it is not on the allowlist, and a
+        # named choice has no verified form for namespaced tools.
         payload = {
             "model": self.model,
             "instructions": instructions,
@@ -111,7 +114,15 @@ class ChatGPTSubscriptionChatModel(CodexChatModel):
             "Accept": "text/event-stream",
             "User-Agent": USER_AGENT,
         }
-        return self._stream_response(headers, payload)
+        return headers, payload
+
+    async def _acall_codex_api(self, messages: list[BaseMessage], tools: list[dict] | None = None, tool_choice: str | dict | bool | None = None) -> dict:
+        # Resolving the token reads (and may refresh) stored credentials, so the
+        # request is built off the event loop; the stream itself stays on it so
+        # cancellation still closes the owned HTTP stream. No retry: a
+        # subscription limit is reported, never retried (retry_max_attempts=1).
+        headers, payload = await asyncio.to_thread(self._prepare_request, messages, tools, tool_choice)
+        return await self._astream_response(headers, payload)
 
     def _parse_response(self, response: dict) -> ChatResult:
         for item in response.get("output", []):

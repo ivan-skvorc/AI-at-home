@@ -61,10 +61,9 @@ for (const viewport of [
           // Check reachability before click(), which would auto-scroll and
           // hide the missing user-scrollable region on the old layout.
           await expect(lastFile).toBeInViewport({ ratio: 1 });
+          // The view tabs head the list and must not scroll away with it.
           await expect(
-            panel
-              .getByRole("heading", { name: "Artifacts", exact: true })
-              .last(),
+            panel.getByRole("tab", { name: "Artifacts", exact: true }),
           ).toBeInViewport({ ratio: 1 });
         } finally {
           const screenshot = testInfo.outputPath(

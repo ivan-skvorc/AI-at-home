@@ -103,6 +103,10 @@ export const THREAD_SCOPED_CONTEXT_KEYS = [
   // an offline chat and a browsing chat are two different workflows the user is
   // running side by side.
   "internet_enabled",
+  // Upstream's Ask/Auto/Full tool permission control. Per conversation, so
+  // "Full" in one chat never grants unattended execution in another, and
+  // because the per-thread setter drops any context key not listed here.
+  "tool_approval_mode",
 ] as const;
 
 export type ThreadContextOverride = Partial<
@@ -213,6 +217,7 @@ export interface LocalSettings {
   > & {
     model_name?: string | undefined;
     subagent_model_name?: string | undefined;
+    tool_approval_mode?: "ask" | "auto" | "full";
     mode:
       | "flash"
       | "thinking"

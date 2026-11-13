@@ -1,7 +1,7 @@
 import type { Message } from "@langchain/langgraph-sdk";
 import { afterEach, beforeEach, describe, expect, it, rs } from "@rstest/core";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, render } from "@testing-library/react";
+import { cleanup, fireEvent, render } from "@testing-library/react";
 import type { PropsWithChildren } from "react";
 
 const mocks = rs.hoisted(() => ({
@@ -17,6 +17,11 @@ const mocks = rs.hoisted(() => ({
     loadFullContent: rs.fn(),
     isLoading: false,
     error: undefined as unknown,
+  },
+  panel: {
+    view: "artifacts" as "artifacts" | "files",
+    setOpen: rs.fn(),
+    returnToFiles: rs.fn(),
   },
 }));
 
@@ -41,7 +46,9 @@ rs.mock("@/components/workspace/artifacts/context", () => ({
     deselect: rs.fn(),
     open: true,
     autoOpen: false,
-    setOpen: rs.fn(),
+    setOpen: mocks.panel.setOpen,
+    view: mocks.panel.view,
+    returnToFiles: mocks.panel.returnToFiles,
     drafts: {},
     setDrafts: rs.fn(),
     editingPath: null,
@@ -98,6 +105,7 @@ beforeEach(() => {
   mocks.messages = [];
   mocks.artifactContent.content = undefined;
   mocks.artifactContent.sha256 = undefined;
+  mocks.panel.view = "artifacts";
 });
 
 describe("ArtifactFileDetail leading tabular write results", () => {
@@ -156,6 +164,44 @@ describe("ArtifactFileDetail extensionless source files", () => {
   });
 });
 
+describe("ArtifactFileDetail files opened from the explorer", () => {
+  it.each(["workspace", "uploads"])(
+    "previews a %s source file without offering an edit the Gateway refuses",
+    (folder) => {
+      mocks.artifactContent.content = "print('hi')\n";
+      mocks.artifactContent.sha256 = "a".repeat(64);
+
+      const view = renderDetail(`/mnt/user-data/${folder}/main.py`);
+
+      expect(view.getByTestId("artifact-source").textContent).toBe(
+        "print('hi')\n",
+      );
+      expect(view.queryByRole("button", { name: "Edit" })).toBeNull();
+    },
+  );
+
+  it.each([
+    ["files", "returnToFiles"],
+    ["artifacts", "setOpen"],
+  ] as const)(
+    "closes back to the %s view through %s",
+    (panelView, expectedCall) => {
+      mocks.panel.view = panelView;
+      const view = renderDetail("/mnt/user-data/workspace/notes.txt");
+
+      fireEvent.click(view.getByRole("button", { name: "Close" }));
+
+      if (expectedCall === "returnToFiles") {
+        expect(mocks.panel.returnToFiles).toHaveBeenCalledTimes(1);
+        expect(mocks.panel.setOpen).not.toHaveBeenCalled();
+      } else {
+        expect(mocks.panel.setOpen).toHaveBeenCalledWith(false);
+        expect(mocks.panel.returnToFiles).not.toHaveBeenCalled();
+      }
+    },
+  );
+});
+
 describe("ArtifactFileDetail unknown file types", () => {
   it.each(["constructor", "data.constructor", "__proto__", "data.__proto__"])(
     "keeps %s on the download fallback instead of passing an invalid language to the editor",
@@ -168,10 +214,8 @@ describe("ArtifactFileDetail unknown file types", () => {
       expect(view.queryByTestId("artifact-source")).toBeNull();
       expect(view.queryByRole("button", { name: "Edit" })).toBeNull();
       expect(
-        view.getByRole("link", { name: "Download" }).getAttribute("href"),
-      ).toBe(
-        `/backend/api/threads/${THREAD_ID}/artifacts/mnt/user-data/outputs/${filename}?download=true`,
-      );
+        view.getAllByRole("button", { name: `Download ${filename}` }),
+      ).toHaveLength(2);
     },
   );
 });

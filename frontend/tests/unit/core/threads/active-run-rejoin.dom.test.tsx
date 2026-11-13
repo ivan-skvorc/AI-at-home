@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, renderHook } from "@testing-library/react";
 import { createElement, type ReactNode } from "react";
 
+import { AuthQueryScopeContext } from "@/core/auth/query-scope";
 import { I18nContext } from "@/core/i18n/context";
 import { enUS } from "@/core/i18n/locales/en-US";
 import { DEFAULT_LOCAL_SETTINGS } from "@/core/settings/local";
@@ -67,7 +68,7 @@ const ACTIVE_RUN_META = {
   run_id: "run-active",
 };
 
-function createWrapper(queryClient: QueryClient) {
+function createWrapper(queryClient: QueryClient, account?: string) {
   return function ActiveRunRejoinTestWrapper({
     children,
   }: {
@@ -77,15 +78,19 @@ function createWrapper(queryClient: QueryClient) {
       QueryClientProvider,
       { client: queryClient },
       createElement(
-        I18nContext.Provider,
-        {
-          value: {
-            locale: "en-US",
-            setLocale: () => undefined,
-            t: enUS,
+        AuthQueryScopeContext.Provider,
+        { value: account },
+        createElement(
+          I18nContext.Provider,
+          {
+            value: {
+              locale: "en-US",
+              setLocale: () => undefined,
+              t: enUS,
+            },
           },
-        },
-        children,
+          children,
+        ),
       ),
     );
   };
@@ -99,7 +104,7 @@ async function flushFrames() {
   }
 }
 
-function renderThread(threadId = "thread-1") {
+function renderThread(threadId = "thread-1", account?: string) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
@@ -111,10 +116,30 @@ function renderThread(threadId = "thread-1") {
       }),
     {
       initialProps: { activeThreadId: threadId },
-      wrapper: createWrapper(queryClient),
+      wrapper: createWrapper(queryClient, account),
     },
   );
   return { queryClient, ...rendered };
+}
+
+/**
+ * Report `runId` as the thread's active run through Run inputs, the way its
+ * poll does once a run starts outside this page (another tab, a channel or a
+ * schedule). Seeds the query cache rather than the network so the test does
+ * not depend on fetch timing.
+ */
+function reportActiveRunThroughRunInputs(
+  queryClient: QueryClient,
+  runId: string,
+  account: string,
+) {
+  act(() => {
+    queryClient.setQueryData(["features", "run_inputs"], true);
+    queryClient.setQueryData(["threads", "thread-1", "inputs", account], {
+      items: [],
+      active_run_id: runId,
+    });
+  });
 }
 
 function failActiveRecoveredStream() {
@@ -531,5 +556,49 @@ test("exposes the active run's server start until that run finishes", async () =
   rerender({ activeThreadId: "thread-1" });
 
   expect(result.current.activeRunStartedAt).toBeNull();
+  unmount();
+});
+
+test("rereads the runs list for an active run that Run inputs reported first", async () => {
+  // The list was read before the run existed (a run started from another tab,
+  // a channel or a schedule); it is not refetched on focus.
+  apiMockState.listRuns
+    .mockResolvedValueOnce([])
+    .mockResolvedValue([
+      { ...ACTIVE_RUN, created_at: "2026-11-04T08:00:00.250000+00:00" },
+    ]);
+  const { queryClient, result, unmount } = renderThread(
+    "thread-1",
+    "account-1",
+  );
+  await flushFrames();
+  expect(result.current.activeRunStartedAt).toBeNull();
+
+  reportActiveRunThroughRunInputs(queryClient, "run-active", "account-1");
+  await flushFrames();
+
+  expect(result.current.activeRunId).toBe("run-active");
+  expect(result.current.activeRunStartedAt).toBe(
+    Date.UTC(2026, 10, 4, 8, 0, 0, 250),
+  );
+  expect(apiMockState.listRuns).toHaveBeenCalledTimes(2);
+  unmount();
+});
+
+test("rereads the runs list once for a run it does not list", async () => {
+  apiMockState.listRuns.mockResolvedValue([]);
+  const { queryClient, result, unmount } = renderThread(
+    "thread-1",
+    "account-1",
+  );
+  await flushFrames();
+
+  reportActiveRunThroughRunInputs(queryClient, "run-active", "account-1");
+  await flushFrames();
+  await flushFrames();
+
+  expect(result.current.activeRunId).toBe("run-active");
+  expect(result.current.activeRunStartedAt).toBeNull();
+  expect(apiMockState.listRuns).toHaveBeenCalledTimes(2);
   unmount();
 });
