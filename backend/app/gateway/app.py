@@ -59,6 +59,7 @@ from app.gateway.routers import (
     suggestions,
     system_prompt,
     thread_activity,
+    thread_files,
     thread_runs,
     threads,
     trash,
@@ -1388,6 +1389,9 @@ This gateway provides runtime endpoints for agent runs plus custom endpoints for
 
     # Artifacts API is mounted at /api/threads/{thread_id}/artifacts
     app.include_router(artifacts.router)
+
+    # Fork feature: read-only file explorer listing at /api/threads/{thread_id}/files
+    app.include_router(thread_files.router)
 
     # Browser API is mounted at /api/threads/{thread_id}/browser
     app.include_router(browser.router)
