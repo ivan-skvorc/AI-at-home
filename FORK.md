@@ -113,8 +113,10 @@ once you know to look. The 2026-09-09 sync hit all three at once:
   upstream grew `0049_run_inputs` and `0049_run_producer_fencing` off `0048` and joined them at
   `0051_merge_run_inputs_fencing`, so the fork's head and that tip were two heads again, rejoined
   by `0052_merge_prefs_run_inputs`. The 2026-11-10 sync made it ten (`0052_batch_continuation` off
-  `0051`, joined by `0053_merge_prefs_batch_cont`). The depth is in
-  [`persistence/migrations/AGENTS.md`](backend/packages/harness/deerflow/persistence/migrations/AGENTS.md).
+  `0051`, joined by `0053_merge_prefs_batch_cont`), and the 2026-11-13 sync eleven
+  (`0053_tool_approvals` → `0054_project_memory` off `0052_batch_continuation`, joined by
+  `0055_merge_prefs_project_mem`). The depth is in
+  [`persistence/migrations/FORK_NOTES.md`](backend/packages/harness/deerflow/persistence/migrations/FORK_NOTES.md).
 - **Both sides adding a function of the same name to the same module.** Git merges two
   non-overlapping additions cleanly, so `frontend/src/core/threads/api.ts` came out of
   this sync with two exported `createThread`s of different signatures. TypeScript catches
@@ -251,6 +253,26 @@ once you know to look. The 2026-09-09 sync hit all three at once:
   `test_skill_review_waivers.py`, on `main` in its own PR first, then merge `main` into the
   sync branch so the check re-runs against the new base. On each sync, look for the manifest
   in upstream's diff before opening the PR.
+- **Upstream giving a method the fork overrides an async twin.** The 2026-11-13 sync's #8053
+  gave `CodexChatModel` its own async request path (`_acall_codex_api` → `_prepare_request` →
+  `_astream_response`), so `ainvoke` stopped reaching the fork's ChatGPT-subscription override
+  of `_call_codex_api` (§41): every async subscription call would have sent the Codex payload to
+  the private Codex endpoint, with no conflict in either file. The subclass now overrides
+  `_prepare_request`, which both paths call, and builds it off the event loop; both stream paths
+  post to `_responses_url`. The async case of `test_subscription_providers.py` caught it, and
+  its off-loop token test now covers ChatGPT too. On each sync, grep upstream's diff for a new
+  async twin of any method the fork overrides.
+- **Upstream shrinking the guidance budgets the fork's docs are written against.** The same
+  sync's #8113 cut every `AGENTS.md` to scope, verification, traps and decisions, moved its
+  README's reference detail verbatim into `docs/guide/`, and made `check_agent_guidance.py`
+  cap a guide at 8 KiB, a chain at 32 KiB and the root README at 16 KiB (AG003). The fork takes
+  the guide and chain budgets — fork rules that no longer fit moved into `FORK_NOTES.md` files
+  beside their guides — and keeps its own README budget (224/256 KiB in the checker), because
+  CHANGE_CYCLE.md step 7 makes the README the fork's feature list. README sections upstream had
+  moved and the fork had not edited became links to their guide (522 KB → 224 KB); sections the
+  fork had edited stayed. `test_agent_guidance_check.py` runs the real tree through the checker
+  and fails on errors only. On a sync, take upstream's guide first, then re-add the fork's rules,
+  sending anything long to the sibling notes file.
 
 **It also runs itself weekly.** `.github/workflows/upstream-sync.yml` fetches
 upstream every Monday, merges (never rebases) onto a dated

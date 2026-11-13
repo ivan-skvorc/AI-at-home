@@ -99,6 +99,7 @@ export interface AgentThreadContext extends Record<string, unknown> {
   // How the organizer grades each panelist per turn; absent = no grading.
   democracy_grading?: "five_point" | "boolean";
   reasoning_effort?: ReasoningEffortValue;
+  tool_approval_mode?: "ask" | "auto" | "full";
   agent_name?: string;
   // Per-user long-term memory opt-in. When false the backend skips memory
   // injection/extraction/tools for this run; when omitted the backend falls back

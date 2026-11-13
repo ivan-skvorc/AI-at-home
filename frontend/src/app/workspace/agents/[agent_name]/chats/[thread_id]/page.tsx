@@ -792,6 +792,7 @@ export default function AgentChatPage() {
                       (!isNewThread && isHistoryLoading) ||
                       hasPendingApproval
                     }
+                    inputLocked={hasPendingApproval}
                     onContextChange={(context, options) => {
                       if (options?.automatic)
                         resolveThreadContext(threadId, context);

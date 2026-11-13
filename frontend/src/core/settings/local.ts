@@ -213,6 +213,7 @@ export interface LocalSettings {
   > & {
     model_name?: string | undefined;
     subagent_model_name?: string | undefined;
+    tool_approval_mode?: "ask" | "auto" | "full";
     mode:
       | "flash"
       | "thinking"

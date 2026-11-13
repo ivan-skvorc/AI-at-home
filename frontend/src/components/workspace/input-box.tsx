@@ -50,7 +50,6 @@ import {
   PromptInputActionMenuContent,
   PromptInputActionMenuItem,
   PromptInputActionMenuTrigger,
-  PromptInputAttachment,
   PromptInputAttachments,
   PromptInputButton,
   PromptInputFooter,
@@ -149,6 +148,7 @@ import {
   type UploadLimits,
   type UploadLimitViolation,
 } from "@/core/uploads";
+import { AttachmentUploadSession } from "@/core/uploads/attachment-upload-session";
 import {
   startRecording,
   type ActiveRecording,
@@ -194,6 +194,7 @@ import {
   DropdownMenuTrigger,
 } from "../ui/dropdown-menu";
 
+import { InputAttachment } from "./input-attachment";
 import {
   abortGoalRequest,
   beginGoalRequest,
@@ -247,6 +248,7 @@ import {
   ModelPickerRow,
 } from "./model-picker-controls";
 import { ReferenceAttachmentSummary, useMaybeSidecar } from "./sidecar";
+import { ToolApprovalMode } from "./tool-approval-mode";
 import { Tooltip } from "./tooltip";
 import {
   normalizeGoalStatusRead,
@@ -307,6 +309,7 @@ function escapeXmlAttribute(value: string) {
 }
 
 export type InputBoxSubmitOptions = {
+  attachmentUploads?: AttachmentUploadSession;
   additionalKwargs?: Record<string, unknown>;
   additionalInputMessages?: Message[];
   /** Thread IDs attached through the conversation picker; sent as run context. */
@@ -394,6 +397,7 @@ export function InputBox({
   onStop,
   canStopStreaming = true,
   canCreateRuns = true,
+  inputLocked = false,
   agentSkillNames,
   agentSkillsLoading = false,
   ...props
@@ -401,6 +405,8 @@ export function InputBox({
   assistantId?: string | null;
   status?: ChatStatus;
   disabled?: boolean;
+  /** Prevent new input while retaining cancellation of a live run. */
+  inputLocked?: boolean;
   context: Omit<
     AgentThreadContext,
     "thread_id" | "is_plan_mode" | "thinking_enabled" | "subagent_enabled"
@@ -414,6 +420,7 @@ export function InputBox({
       | "ultracode"
       | "double_ultracode"
       | undefined;
+    tool_approval_mode?: "ask" | "auto" | "full";
     reasoning_effort?: ReasoningEffortValue;
   };
   extraHeader?: React.ReactNode;
@@ -1000,6 +1007,16 @@ export function InputBox({
       }),
     [context.agent_name, draftAgentName, draftThreadId, user?.id],
   );
+  // A different draft owns a fresh cache, even when its files have the same names.
+  const attachmentUploads = useMemo(
+    () => new AttachmentUploadSession(),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [draftKey],
+  );
+  useLayoutEffect(() => {
+    attachmentUploads.activate();
+    return () => attachmentUploads.deactivate();
+  }, [attachmentUploads]);
   const agentScopedSkills = useMemo(
     () =>
       agentSkillsLoading ? [] : filterSkillsForAgent(skills, agentSkillNames),
@@ -1693,6 +1710,7 @@ export function InputBox({
         ...(stagedFiles.length > 0 ? { files: stagedFiles } : {}),
       };
       const submitOptions: InputBoxSubmitOptions = {
+        attachmentUploads,
         ...(Object.keys(additionalKwargs).length ? { additionalKwargs } : {}),
         ...(quotes.length
           ? {
@@ -1772,6 +1790,7 @@ export function InputBox({
       textInput.value,
       conversationReferences,
       draftKey,
+      attachmentUploads,
       invalidateDraftSaveTimer,
       onContextChange,
       onSubmit,
@@ -2039,7 +2058,11 @@ export function InputBox({
   const isComposerDisabled = disabled === true;
   const isMockThread = isMock === true;
   const composerLocked =
-    isComposerDisabled || polishingInput || mentionBusy || runInputSending;
+    isComposerDisabled ||
+    inputLocked ||
+    polishingInput ||
+    mentionBusy ||
+    runInputSending;
   const showMentions =
     !disabled &&
     !polishingInput &&
@@ -3421,7 +3444,10 @@ export function InputBox({
           <PromptInputAttachments className="contents p-0">
             {(attachment) => (
               <div className="max-w-60">
-                <PromptInputAttachment data={attachment} />
+                <InputAttachment
+                  data={attachment}
+                  uploadSession={attachmentUploads}
+                />
               </div>
             )}
           </PromptInputAttachments>
@@ -3637,6 +3663,14 @@ export function InputBox({
                 )}
               </PromptInputButton>
             </Tooltip>
+            <ToolApprovalMode
+              value={context.tool_approval_mode}
+              onChange={(mode) =>
+                onContextChange?.({ tool_approval_mode: mode })
+              }
+              threadId={isWelcomeMode ? undefined : threadId}
+              disabled={composerLocked}
+            />
             <PromptInputActionMenu>
               <ModeHoverGuide
                 mode={
@@ -4205,7 +4239,12 @@ export function InputBox({
             <PromptInputSubmit
               className="rounded-full"
               disabled={
-                composerLocked ||
+                (status === "streaming"
+                  ? isComposerDisabled ||
+                    polishingInput ||
+                    mentionBusy ||
+                    runInputSending
+                  : composerLocked) ||
                 stopDenied ||
                 sendDenied ||
                 (status !== "streaming" && conversationReferencesUnavailable)

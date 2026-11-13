@@ -231,7 +231,10 @@ async def test_kimi_blocks_unattended_context_before_auth(wire, mode, config_sou
 
 
 @pytest.mark.asyncio
-async def test_async_token_refresh_runs_off_the_event_loop(wire, monkeypatch):
+@pytest.mark.parametrize(("cls_name", "model_name"), [("GrokSubscriptionChatModel", "grok-code"), ("ChatGPTSubscriptionChatModel", "account-model")])
+async def test_async_token_refresh_runs_off_the_event_loop(wire, monkeypatch, cls_name, model_name):
+    # ChatGPT: upstream #8053 gave CodexChatModel its own async request path, so
+    # the subscription subclass must build that request off the event loop too.
     event_loop_thread = __import__("threading").get_ident()
     refresh_threads = []
 
@@ -240,7 +243,7 @@ async def test_async_token_refresh_runs_off_the_event_loop(wire, monkeypatch):
         return "refresh-secret"
 
     monkeypatch.setattr(providers, "get_access_token", token)
-    await providers.GrokSubscriptionChatModel(model="grok-code").ainvoke("Hello")
+    await getattr(providers, cls_name)(model=model_name).ainvoke("Hello")
     assert refresh_threads and all(thread != event_loop_thread for thread in refresh_threads)
 
 
