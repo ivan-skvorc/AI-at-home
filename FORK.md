@@ -273,6 +273,14 @@ once you know to look. The 2026-09-09 sync hit all three at once:
   fork had edited stayed. `test_agent_guidance_check.py` runs the real tree through the checker
   and fails on errors only. On a sync, take upstream's guide first, then re-add the fork's rules,
   sending anything long to the sibling notes file.
+- **Upstream adding a composer key the fork's per-thread store drops.** The same sync's #8033
+  added `tool_approval_mode` (the Ask / Auto / Full control) to the run context. The fork's
+  `updateThreadSettings` keeps only `THREAD_SCOPED_CONTEXT_KEYS` from a composer edit, so the
+  choice was discarded and the menu snapped back to Ask — no conflict, every unit test green,
+  and only upstream's `tool-approval.spec.ts` in CI noticed. It is now a per-conversation key
+  (so Full in one chat grants nothing in another), pinned by
+  `thread-context-isolation.dom.test.ts`. On each sync, grep upstream's diff for new `context`
+  keys a composer control edits.
 
 **It also runs itself weekly.** `.github/workflows/upstream-sync.yml` fetches
 upstream every Monday, merges (never rebases) onto a dated

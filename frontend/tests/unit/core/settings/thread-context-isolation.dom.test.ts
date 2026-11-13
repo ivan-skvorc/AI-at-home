@@ -142,3 +142,17 @@ test("copying onto the same thread id is a no-op", () => {
     model_name: "ollama:llama3",
   });
 });
+
+test("a composer's tool permission choice stays with its own conversation", async () => {
+  // Upstream's Ask/Auto/Full control edits `tool_approval_mode` through the
+  // per-thread setter, which keeps only THREAD_SCOPED_CONTEXT_KEYS: a key left
+  // off that list is silently dropped and the menu snaps back to Ask.
+  const { updateThreadSettings } = await import("@/core/settings/store");
+  updateThreadSettings("thread-a", "context", { tool_approval_mode: "auto" });
+
+  expect(getThreadContextOverride("thread-a")).toEqual({
+    tool_approval_mode: "auto",
+  });
+  // Full in one chat must not hand another chat unattended execution.
+  expect(getThreadContextOverride("thread-b")).toEqual({});
+});
