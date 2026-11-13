@@ -386,37 +386,7 @@ First, the mechanical gates:
   TEST_POSTGRES_URI="postgresql://postgres@127.0.0.1:5432/deerflow_test?sslmode=disable" make test
   ```
 
-- [ ] **`AGENTS.md` byte budgets — two different checks, and the second is the one that bites.** `backend/tests/test_agent_guidance_check.py` asserts every guidance file against its own **hard** budget (20/32/48 KiB); the standalone CI job (`scripts/check_agent_guidance.py`, run without `--strict-warnings`) warns at the soft ones (16/28/40 KiB) and errors at the same hard ones, so per-file the two agree. **The job is stricter about one thing: the effective chain.** A leaf inherits root + module + every guide down to it, and that sum has budgets of its own (80 KiB soft, **96 KiB hard**) — the hard one is a job _error_, not a warning, and so fails CI on its own. Most chains sit above the soft limit already, so only the hard one is a gate. The root file runs close to the line, so _documenting a feature can fail CI on its own_.
-
-  When a section does not fit, push the depth down to a guide that **sits beside the code and has no children** — a leaf directory's own `AGENTS.md` (40 KiB budget) or, failing that, a plain reference doc outside the guidance tree — and leave a one-line pointer behind. **A directory with subdirectories is not a leaf**, and parking depth there is the trap: it costs the chain of _every_ package underneath. Observed live on the 2026-08-30 sync — the fork's editable-system-prompt notes sat in `agents/AGENTS.md`, one level above the code they describe, so every sibling package inherited them and `agents/middlewares/AGENTS.md` (pure upstream, untouched by the fork) reached 99508 bytes against the 98304 hard limit. Moving them into `agents/lead_agent/AGENTS.md`, beside `prompt.py`, took them out of three sibling chains at once.
-
-  **It has now happened twice.** The second time (2026-08-31, ComfyUI-on-by-default) was not a sync: a **six-line service-topology row** in the root file put `agents/middlewares/AGENTS.md` 564 bytes over the hard limit, failing both the job and `make test` on a module the change never touched. Note what did _not_ save it: the backend suite had been run — before the documentation edits. **A commit that touches any `AGENTS.md` now runs the checker through pre-commit** (`.pre-commit-config.yaml`, hook `agent-guidance`, repo-wide with `pass_filenames: false`, exiting 1 on errors and letting the soft-budget warnings through), so this is caught at the commit rather than in CI. That hook is pinned by `test_editing_guidance_is_gated_locally_before_ci_sees_it`; if it disappears, the trap is CI's problem again.
-
-  **Three times now.** The 2026-09-05 sync put the same chain 635 bytes over and `subagents/AGENTS.md` 537 over. Both were paid the way this note predicted: root prose moved to pointers (the root is an ancestor of _every_ chain, so bytes out of it relieve all 29), and the leaf's 11.7 KB `acceptance_checks.py` paragraph moved beside the code as `subagents/ACCEPTANCE_CHECKS.md` — which is also how the 2026-09-12 sync absorbed upstream's expansion of it.
-
-  **Current headroom is 528 bytes on the worst chain** (`agents/middlewares/`, 97776 of 98304) and 1190 on `subagents/AGENTS.md` (31578 of 32768). Upstream's own files account for most of the chain, so a sync of ordinary size lands here again and the fork is the only side that can give ground. Next candidates, in order: the root's repository-map comments, then `backend/AGENTS.md` (29180 bytes, the chain's largest fork-editable file). Check before pushing:
-
-  ```bash
-  # per-file soft budgets *and* the real repository's chains, in one run
-  cd backend && uv run pytest tests/test_agent_guidance_check.py -q
-  # what the agent-guidance job actually runs — chain errors show up here
-  # (also wired as the `agent-guidance` pre-commit hook, on any AGENTS.md edit)
-  python3 scripts/check_agent_guidance.py
-  ```
-
-  Run them **after** the documentation edits, not before. Both read the worktree,
-  so a suite that ran while the prose was still being written proves nothing about
-  the prose — which is how this was missed the second time.
-
-  Run **both** — the pytest half is already done when the Backend gate ran after the
-  last `AGENTS.md` edit. `test_repository_guidance_has_no_checker_errors` puts the real
-  worktree through the same `analyze()` the job calls and fails on any error it
-  reports, so `make test` now catches a chain overflow too. It was added because
-  nothing did: the file's other chain tests build synthetic files in a `tmp_path`,
-  which proves the _checker_ works and says nothing about this repository — so the
-  2026-08-30 sync went green locally and red in CI. Keep the standalone command in
-  the loop anyway: it is the job verbatim, and it prints the warnings pytest
-  deliberately does not fail on.
+- [ ] **`AGENTS.md` and README byte budgets** (upstream #8113, 2026-11-13): `cd backend && uv run pytest tests/test_agent_guidance_check.py -q` (runs inside the Backend gate) and `python3 scripts/check_agent_guidance.py` (the CI job verbatim, also the `agent-guidance` pre-commit hook on any `AGENTS.md` or root `README.md` edit). A guide may hold 8 KiB and the chain a leaf inherits (root + module + every guide down to it) 32 KiB; the fork's README has its own 256 KiB budget. CI applies them as a ratchet against the PR base, while `test_repository_guidance_has_no_checker_errors` puts the real worktree through `analyze()` with no base, so any guide or chain over a hard limit fails `make test`. **The chain is the one that bites**: a few lines in the root file are inherited by every guide, so documenting a feature can fail a module the change never touched. Run both **after** the documentation edits. When text does not fit, move it to the `FORK_NOTES.md` beside the guide (a sibling doc, never inherited) and leave a one-line pointer; trim the nearest shared ancestor first.
 
 - [ ] **Prettier checks `frontend/`'s Markdown too — `frontend/src/AGENTS.md` included.** The
       `lint-frontend` job runs `cd frontend && pnpm format`, which is `prettier --check .` over the
