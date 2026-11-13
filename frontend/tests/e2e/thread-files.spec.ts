@@ -107,6 +107,16 @@ test("browses the thread's files and previews one from the header", async ({
   ).toBeVisible();
   await expect(panel).toBeVisible();
 
+  // From the keyboard, focus comes back to the row that opened the preview.
+  await tree.getByRole("treeitem", { name: "analysis.py" }).focus();
+  await page.keyboard.press("Enter");
+  await expect(panel.locator(".cm-content")).toHaveText(SCRIPT_SOURCE);
+  await panel.getByRole("button", { name: "Close", exact: true }).focus();
+  await page.keyboard.press("Enter");
+  await expect(
+    tree.getByRole("treeitem", { name: "analysis.py" }),
+  ).toBeFocused();
+
   await panel.getByRole("tab", { name: "Artifacts" }).click();
   await expect(panel.getByText("No artifact selected")).toBeVisible();
 });

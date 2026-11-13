@@ -21,7 +21,7 @@ const mocks = rs.hoisted(() => ({
   panel: {
     view: "artifacts" as "artifacts" | "files",
     setOpen: rs.fn(),
-    showFiles: rs.fn(),
+    returnToFiles: rs.fn(),
   },
 }));
 
@@ -48,7 +48,7 @@ rs.mock("@/components/workspace/artifacts/context", () => ({
     autoOpen: false,
     setOpen: mocks.panel.setOpen,
     view: mocks.panel.view,
-    showFiles: mocks.panel.showFiles,
+    returnToFiles: mocks.panel.returnToFiles,
     drafts: {},
     setDrafts: rs.fn(),
     editingPath: null,
@@ -181,7 +181,7 @@ describe("ArtifactFileDetail files opened from the explorer", () => {
   );
 
   it.each([
-    ["files", "showFiles"],
+    ["files", "returnToFiles"],
     ["artifacts", "setOpen"],
   ] as const)(
     "closes back to the %s view through %s",
@@ -191,12 +191,12 @@ describe("ArtifactFileDetail files opened from the explorer", () => {
 
       fireEvent.click(view.getByRole("button", { name: "Close" }));
 
-      if (expectedCall === "showFiles") {
-        expect(mocks.panel.showFiles).toHaveBeenCalledTimes(1);
+      if (expectedCall === "returnToFiles") {
+        expect(mocks.panel.returnToFiles).toHaveBeenCalledTimes(1);
         expect(mocks.panel.setOpen).not.toHaveBeenCalled();
       } else {
         expect(mocks.panel.setOpen).toHaveBeenCalledWith(false);
-        expect(mocks.panel.showFiles).not.toHaveBeenCalled();
+        expect(mocks.panel.returnToFiles).not.toHaveBeenCalled();
       }
     },
   );

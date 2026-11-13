@@ -409,14 +409,16 @@ function ThreadFileRows({
   return (
     <>
       {listing.entries.length === 0 ? (
-        <StatusRow level={level}>{t.threadFiles.emptyFolder}</StatusRow>
+        <StatusRow level={level} announce>
+          {t.threadFiles.emptyFolder}
+        </StatusRow>
       ) : (
         listing.entries.map((entry) => (
           <ThreadFileItem key={entry.path} entry={entry} level={level} />
         ))
       )}
       {hidden > 0 && (
-        <StatusRow level={level}>
+        <StatusRow level={level} announce>
           {t.threadFiles.moreNotShown(hidden)}
         </StatusRow>
       )}
@@ -473,10 +475,17 @@ function ThreadFileGroup({ path, level }: { path: string; level: number }) {
 function StatusRow({
   level,
   tone,
+  announce = false,
   children,
 }: {
   level: number;
   tone?: "error";
+  /**
+   * Arrow keys move between treeitems only, so a screen reader never lands on
+   * this row: announce it politely when it appears instead, or an empty or cut
+   * listing would sound like a complete one.
+   */
+  announce?: boolean;
   children: ReactNode;
 }) {
   return (
@@ -490,7 +499,7 @@ function StatusRow({
       )}
       style={{ paddingInlineStart: rowIndent(level) + STATUS_OFFSET_PX }}
     >
-      {children}
+      {announce ? <span role="status">{children}</span> : children}
     </li>
   );
 }

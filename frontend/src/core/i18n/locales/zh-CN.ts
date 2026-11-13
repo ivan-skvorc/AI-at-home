@@ -485,9 +485,9 @@ export const zhCN: Translations = {
 
   // Thread file explorer
   threadFiles: {
-    title: "文件",
-    showFiles: "显示文件",
-    treeLabel: "此对话中的文件",
+    title: "全部文件",
+    showFiles: "浏览此对话的全部文件",
+    treeLabel: "此对话的全部文件",
     refresh: "刷新文件",
     loading: "正在加载文件…",
     loadingFolder: "正在加载…",

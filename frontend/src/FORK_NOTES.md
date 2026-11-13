@@ -68,4 +68,8 @@ The **Files** view of the artifacts panel lists `/mnt/user-data` through
 artifacts context's `select(path)`, so previews and downloads stay in the
 artifacts viewer; do not add a second file reader. The panel's view choice is
 persisted with the rest of the panel state, and older persisted state without it
-reads as the Artifacts view.
+reads as the Artifacts view. Closing the panel ends a Files session (the view
+resets), and closing a preview inside the Files view calls `returnToFiles()`,
+which also turns off write_file auto-open so a running agent cannot keep
+covering the explorer (`context-view.dom.test.tsx`,
+`files-view-auto-open.dom.test.tsx`).

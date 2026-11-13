@@ -28,7 +28,7 @@ const STORAGE_KEY = `deerflow:artifacts:v1:${encodeURIComponent(
 const FILE = "/mnt/user-data/workspace/notes.md";
 
 function Probe() {
-  const { view, open, selectedArtifact, select, setView, showFiles } =
+  const { view, open, selectedArtifact, select, setOpen, setView, showFiles } =
     useArtifacts();
   return (
     <>
@@ -38,6 +38,16 @@ function Probe() {
       <button onClick={() => select(FILE)}>Open file</button>
       <button onClick={showFiles}>Show files</button>
       <button onClick={() => setView("artifacts")}>Show artifacts</button>
+      <button onClick={() => setOpen(false)}>Close panel</button>
+      <button
+        onClick={() => {
+          // What a file card in the conversation does.
+          select(FILE);
+          setOpen(true);
+        }}
+      >
+        Open from chat
+      </button>
     </>
   );
 }
@@ -122,5 +132,17 @@ describe("artifacts panel view", () => {
       open: true,
       selectedArtifact: null,
     });
+  });
+
+  it("ends a Files session when the panel closes, so a file opened from the chat closes the panel again", () => {
+    renderProvider();
+    fireEvent.click(screen.getByRole("button", { name: "Show files" }));
+    fireEvent.click(screen.getByRole("button", { name: "Close panel" }));
+    fireEvent.click(screen.getByRole("button", { name: "Open from chat" }));
+
+    // The detail's Close falls back to the explorer only in the Files view.
+    expect(JSON.parse(screen.getByTestId("state").textContent ?? "{}")).toEqual(
+      { view: "artifacts", open: true, selectedArtifact: FILE },
+    );
   });
 });

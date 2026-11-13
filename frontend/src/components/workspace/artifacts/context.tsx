@@ -37,6 +37,11 @@ export interface ArtifactsContextType {
   setView: (view: ArtifactsPanelView) => void;
   /** Open the panel on the file explorer, closing any open file. */
   showFiles: () => void;
+  /**
+   * Close a preview opened in the Files view: back to the explorer, and no
+   * more write_file previews over it (the explorer refreshes while a run works).
+   */
+  returnToFiles: () => void;
 
   drafts: Record<string, ArtifactDraftState>;
   setDrafts: Dispatch<SetStateAction<Record<string, ArtifactDraftState>>>;
@@ -173,12 +178,22 @@ export function ArtifactsProvider({
   const deselect = useCallback(() => {
     setSelectedArtifact(null);
     setAutoSelect(true);
+    // Closing the panel ends a Files session (see setOpen below).
+    setView("artifacts");
     setOpen(false);
   }, []);
 
   const showFiles = useCallback(() => {
     setView("files");
     setSelectedArtifact(null);
+    setOpen(true);
+  }, []);
+
+  const returnToFiles = useCallback(() => {
+    setAutoOpen(false);
+    setAutoSelect(false);
+    setSelectedArtifact(null);
+    setView("files");
     setOpen(true);
   }, []);
 
@@ -194,12 +209,19 @@ export function ArtifactsProvider({
         setAutoOpen(false);
         setAutoSelect(false);
       }
+      if (!isOpen) {
+        // Closing the panel ends a Files session, so a file opened later from
+        // the chat closes the panel again instead of falling back to the
+        // explorer.
+        setView("artifacts");
+      }
       setOpen(isOpen);
     },
 
     view,
     setView,
     showFiles,
+    returnToFiles,
 
     selectedArtifact,
     select,

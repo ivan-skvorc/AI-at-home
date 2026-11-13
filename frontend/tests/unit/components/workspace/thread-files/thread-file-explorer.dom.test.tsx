@@ -205,6 +205,11 @@ describe("ThreadFileExplorer", () => {
     renderExplorer();
 
     expect(await screen.findByText("500 more not shown")).toBeTruthy();
+    // Arrow keys never reach this row, so a screen reader hears it as it
+    // appears; otherwise a cut listing sounds like a complete one.
+    expect(
+      screen.getByText("500 more not shown").closest('[role="status"]'),
+    ).not.toBeNull();
   });
 
   it("shows the empty state for a root the sandbox has not created", async () => {

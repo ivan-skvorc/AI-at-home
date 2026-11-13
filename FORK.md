@@ -5316,6 +5316,15 @@ core, in a separate module so upstream merges stay conflict-free.
   `resolve_thread_virtual_path`. Entries are classified without following
   links: a link is listed as a link, and entering it is a new request that is
   confined again.
+- **The scan reads the directory that was checked, not the path again.** The
+  agent can write below `user-data` between the check and the scan, so the
+  listed directory is opened one component at a time from the user-data root,
+  each relative to its parent's descriptor with `O_NOFOLLOW`, and scanned through
+  that descriptor; a component swapped for a link is a 404, never a listing of
+  the host. A review reproduced the leak with a path-based scan (25 of 300 racing
+  requests listed an outside directory);
+  `test_a_directory_swapped_for_an_outside_link_after_the_check_is_never_listed`
+  pins it. `get_artifact` still reads by path after resolving (pre-existing).
 - **Listings are bounded on both sides**: 500 entries returned and a 10,000-entry
   scan, so a `node_modules` folder neither floods the browser nor pins a file-IO
   worker. `truncated` and `total` say so; the UI shows "N more not shown".

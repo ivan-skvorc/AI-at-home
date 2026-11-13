@@ -100,7 +100,7 @@ export function ArtifactFileDetail({
     artifacts,
     setOpen,
     view: panelView,
-    showFiles,
+    returnToFiles,
     select,
     drafts,
     setDrafts,
@@ -662,9 +662,10 @@ export function ArtifactFileDetail({
                 ) {
                   setDrafts({});
                   setEditingPath(null);
-                  // A file opened from the explorer closes back to it.
+                  // A preview shown in the Files view closes back to the
+                  // explorer and stops write_file previews from covering it.
                   if (panelView === "files") {
-                    showFiles();
+                    returnToFiles();
                   } else {
                     setOpen(false);
                   }

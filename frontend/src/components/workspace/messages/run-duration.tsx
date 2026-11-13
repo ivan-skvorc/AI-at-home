@@ -63,7 +63,9 @@ export function RunActivity({
           <span
             role="timer"
             tabIndex={0}
-            aria-label={t.runDuration.elapsed}
+            // role=timer takes its name only from the author, so the value
+            // has to be in it; the role is aria-live=off, so it is not re-read.
+            aria-label={`${t.runDuration.elapsed}: ${formatted}`}
             aria-describedby={descriptionId}
             className="cursor-help rounded-sm underline decoration-dotted underline-offset-4 focus-visible:outline-2 focus-visible:outline-offset-2"
           >
@@ -71,7 +73,8 @@ export function RunActivity({
           </span>
         </Tooltip>
       )}
-      <span id={descriptionId} className="sr-only">
+      {/* Hidden: referenced by aria-describedby, kept out of the reading order. */}
+      <span id={descriptionId} hidden>
         {description}
       </span>
     </div>

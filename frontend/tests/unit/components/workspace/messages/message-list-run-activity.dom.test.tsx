@@ -122,12 +122,17 @@ function activity() {
   return screen.getByTestId("run-activity").textContent;
 }
 
-/** The focusable elapsed time, found by the explanation it is described by. */
+/**
+ * The focusable elapsed time, found by the explanation it is described by. Its
+ * accessible name carries the value, which role=timer cannot take from content.
+ */
 function elapsedTime(description: string) {
-  return screen.getByRole("timer", {
-    name: enUS.runDuration.elapsed,
-    description,
-  }).textContent;
+  const timer = screen.getByRole("timer", { description });
+  const shown = timer.textContent ?? "";
+  expect(timer.getAttribute("aria-label")).toBe(
+    `${enUS.runDuration.elapsed}: ${shown.replace(/^\(|\)$/g, "")}`,
+  );
+  return shown;
 }
 
 function serverStart(startTime: number) {
