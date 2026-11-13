@@ -11,6 +11,7 @@ This section accumulates work toward the **2.3.0** milestone
 ([2.3.0](https://github.com/bytedance/deer-flow/milestone/4)).
 
 ### Added
+- **workspace:** A **Files** button in the chat header browses the conversation's sandbox folders (`workspace/`, `uploads/`, `outputs/` and anything a run creates) as a tree, with previews and downloads, including files the agent never presented. It reads a new read-only `GET /api/threads/{thread_id}/files` listing that keeps the artifacts endpoint's ownership check and path confinement, never follows a link, and caps a directory at 500 entries.
 - **summarization:** The built-in compaction prompt guides the summarizer to
   preserve active user requirements, literal approval phrases, action conditions,
   and explicit revisions. Explicit `summarization.summary_prompt` configurations
@@ -49,6 +50,7 @@ This section accumulates work toward the **2.3.0** milestone
   summary or delivery after the batch ends, with persisted admission, cancellation
   and authorization checks. Active Goals retain continuation ownership. ([#7839](https://github.com/bytedance/deer-flow/pull/7839))
 
+- **models:** GPT-5.3 Codex leaves the OpenAI home block and OpenRouter: OpenAI deprecated it for GPT-6 Sol (shutdown 2027-04-01). Kimi K3 (`kimi-k3`, `$3/$15`, cache `$0.30`) replaces Kimi K2.6, which Moonshot closed to accounts registered after 2026-11-01. Every other price was re-read on 2026-11-13 and is unchanged; Claude Fable 5.2 is still not rolled. Existing `config.yaml` files keep their old entries until edited.
 - **models:** Mistral Large 4 (`mistral-large-4-0`, `$0.70/$2.10`, cache `$0.07`) replaces Large 3 and Medium 3.5, which Mistral deprecated (retiring 2027-04-30), at home and on OpenRouter. MiniMax M3.1 Flash (`$0.15/$0.60`) replaces M2.7, which retires on 2026-11-18, and M3 drops to `$0.30/$1.20`, the 50% cut MiniMax made permanent. The routed DeepSeek V4 Pro moves from the pre-release `0423` build to `deepseek/deepseek-v4-pro-0813` at `$1.32/$3.96`, routed Llama 4 Maverick is `$0.35/$1.00`, and routed Gemini 3.8 Flash shows its 50% discount. Claude Fable 5.2 is not rolled yet: it rejects any edited history on every account, and this fork's conversation compaction edits history. Existing `config.yaml` files keep their old entries until edited.
 
 - **upstream:** merged `upstream/main` (127 commits since 2026-11-03). Brings optional approval of high-risk tool calls before they run (`hitl_approval`, off by default), error hints on failed tool calls (`harness_guard`, on by default), importing models from a provider's catalog in Settings → Models, the SpecStream search/fetch provider, the StepFun preset, batch prerequisites and follow-ups, and over a hundred fixes. The agent now asks fewer clarifying questions: upstream's #7986 policy (continue independent work, make reversible assumptions, ask when an essential decision or authorization is missing) replaces the fork's shortened clarify-first block. The tenth Alembic merge revision (`0053_merge_prefs_batch_cont`) rejoins this fork's migration head with upstream's. `config_version` moves to 69 so existing installs receive the two new sections. `make config-upgrade` delivers them and rewrites `config.yaml`, dropping comments; a `.bak` is kept and hand-edited values survive.
@@ -111,6 +113,8 @@ This section accumulates work toward the **2.3.0** milestone
   of skipping. ([#8139])
 
 ### Fixed
+
+- **frontend:** The live "Working…" timer keeps counting from the run's real start after the page is opened mid-run in more cases: it rereads the runs list when Run inputs reports a run the list predates, and the sidecar and New-agent chats now pass the server start. Hovering or focusing the time says whether it counts from the server's start or only from when the page began following the run.
 
 - **chat:** An edited version of a long conversation keeps its whole history. Editing a message after the conversation had been compacted produced a version that began at the compaction point, with nothing older to scroll back to; the new version is now seeded from the parent's visible history. Each edit copies that history into the new version.
 

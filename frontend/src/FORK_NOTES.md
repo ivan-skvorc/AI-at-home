@@ -60,3 +60,12 @@ remote server cannot receive that callback. Keep return URLs only in component
 memory; clear them on close, restart and success. The helper download and JSON
 import remain an advanced fallback. Kimi uses a subscription-key field with an
 explicit interactive-use limit.
+
+## Conversation file explorer (FORK.md §49)
+
+The **Files** view of the artifacts panel lists `/mnt/user-data` through
+`core/thread-files/` (`GET /api/threads/{id}/files`) and opens a file with the
+artifacts context's `select(path)`, so previews and downloads stay in the
+artifacts viewer; do not add a second file reader. The panel's view choice is
+persisted with the rest of the panel state, and older persisted state without it
+reads as the Artifacts view.

@@ -22,6 +22,7 @@
 > - 🔀 **Independent model per conversation, remembered by the conversation** — every chat keeps its own model, subagent model, mode and reasoning effort, recorded on the chat itself rather than in one browser. Switching conversations switches the picker to *that* chat's model instead of leaving the last one selected — on your phone and after a site-data clear too — and a brand-new chat no longer forgets its model the moment it is created.
 > - 🚦 **Concurrent chats** — leaving a chat used to cancel its run. Now a chat you leave mid-answer keeps streaming in the background and notifies you when it lands; come back and the answer is already there.
 > - 🗃️ **Folders in the sidebar, with subfolders** — the chat list is a tree. A conversation you file is **inside its folder and gone from the list outside it**, the way a file manager works, and folders nest up to five levels. Drag chats and folders around, or use the **⋯** menus. Deleting a folder never deletes the chats in it. Stored per user on the server; nothing to configure.
+> - 🗂️ **A file explorer for each conversation** — a **Files** button in the chat header browses the folders the agent created in that chat: its `workspace`, your `uploads` and the `outputs`, as a tree you open folder by folder, with sizes and times. Any file opens in the preview panel or downloads, including the scratch files the agent never presented, and open folders refresh while a run is working. Read-only; nothing to configure.
 > - 🕯️ **Gaslight mode** — edit **either half of a turn**. Edit your own message and it replays from there; edit the assistant's answer and your text simply *becomes* what it said. Both versions are kept behind a `‹ 2/2 ›` switcher, and one conversation stays **one** sidebar entry however many times you edit it.
 > - 🌐 **An internet switch on the composer** — a globe takes *this* conversation offline: search, fetching, browser control, MCP and external agents are left out of the run, and subagents inherit it. Per chat, not a global setting.
 > - 📄 **PDF / Office uploads that just work** — `pymupdf4llm` is bundled, so PDF / DOCX / PPTX / XLSX uploads are reliably readable by the agent (`uploads.auto_convert_documents: true`).
@@ -161,6 +162,7 @@ DeerFlow has newly integrated the intelligent search and crawling toolset indepe
     - [Containerized sandbox as a one-command capability](#containerized-sandbox-as-a-one-command-capability)
     - [Host-run Ollama from inside the sandbox](#host-run-ollama-from-inside-the-sandbox)
     - [Private GitHub repositories](#private-github-repositories)
+  - [Files in a Conversation](#files-in-a-conversation)
   - [System Prompt](#system-prompt)
   - [Internet Access Switch](#internet-access-switch)
   - [Concurrent Chats](#concurrent-chats)
@@ -2013,6 +2015,33 @@ git clone https://github.com/owner/repo.git    # works; token never touches .git
 ```
 
 The token never appears in remote URLs, `.git/config`, tool output, logs (container-run env values are redacted), or history. Scope the token to the repos you need (Contents: read).
+
+### Files in a Conversation
+
+Everything a run writes lands in the conversation's sandbox folder,
+`/mnt/user-data`: the agent's scratch work in `workspace/` (a cloned repository,
+a virtual environment, intermediate data), your attachments in `uploads/`, and
+deliverables in `outputs/`. The artifacts panel lists only the files the agent
+chose to present, so the rest used to be reachable only by asking the agent. The
+**Files** button in the chat header opens the same right-hand panel on a
+**Files** tab: a tree of that folder, opened one directory at a time, with each
+file's size and when it last changed. Select a file to preview it with the
+artifacts viewer, or download it. While a run is working, open folders refresh
+every few seconds.
+
+- **Read-only, and confined to the conversation.** The listing comes from
+  `GET /api/threads/{thread_id}/files?path=…`, which applies the artifacts
+  endpoint's owner check and path confinement: nothing outside the
+  conversation's own folder is listed, and a symbolic link is shown as a link,
+  never followed. Editing stays where it was, for text files in `outputs/`.
+- **Large folders say they were cut.** A listing returns at most 500 entries (a
+  `node_modules` folder ends with "N more not shown"), and in-flight upload and
+  edit temporary files are hidden.
+- **The folder has to be on the host.** With the local sandbox and in
+  per-conversation container mode it is, so the explorer sees everything. A
+  shared external sandbox container (`make sandbox-up`) keeps the workspace
+  inside the container, where the explorer, like the artifacts panel, cannot
+  see it.
 
 ### System Prompt
 

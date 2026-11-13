@@ -324,6 +324,7 @@ First, the mechanical gates:
 - [ ] **Scroll-back history survives a restart** (§28): `cd backend && uv run pytest tests/test_run_history_durability.py tests/test_doctor.py::TestCheckRunEventsDurable -q` (migration 50: third critical check). The failure this defends is silent in every log: with `run_events.backend: memory` the page endpoint's store is process state, so after a Gateway restart a long conversation still opens and still renders its recent turns from the checkpoint, and merely stops loading older messages when the reader scrolls up. `test_older_messages_still_page_backwards_after_a_restart` is the claim, across a real engine teardown and rebuild; `test_the_memory_store_is_what_loses_it` is the other direction, so the file goes red if durability gets "fixed" in the memory store instead of the default. **All three default sources must survive a sync independently** — `test_the_schema_default_persists_run_events` (a `config.yaml` with no `run_events:` section, and the Helm chart), `test_the_shipped_example_persists_run_events` (fresh installs copy the example verbatim, so upstream restoring `memory` there overrides the schema default), and migration 50 in `test_run_events_memory_is_migrated_but_other_memory_backends_are_not` (existing installs, which keep whatever value they were created with). An upstream merge that reverts any one of them re-breaks a different population and nothing else notices. `TestCheckRunEventsDurable` keeps `make doctor` reporting the combination for installs that never run `make config-upgrade`.
 - [ ] **A reply keeps the price it was billed at** (§17): `cd backend && uv run pytest tests/test_run_pricing_snapshot.py tests/test_thread_token_usage.py tests/test_run_repository.py -q`. Cost is read from `runs.pricing_snapshot`, not recomputed from the live config, and every way that can regress is silent. `test_a_model_dropped_from_the_roster_keeps_its_cost` is the motivating case and asserts **both** directions in one test — with the snapshot the spend survives, without it the run prices to `None` — so deleting the snapshot path fails loudly instead of just making conversations cheaper. `test_a_later_price_change_does_not_rewrite_an_old_run` is the other half. Three guards exist because each is a way the fix could be worse than the bug: `test_a_currency_switch_re_prices_rather_than_summing_two_currencies`, `test_a_snapshot_cannot_switch_cost_reporting_back_on`, `test_a_discount_is_not_re_expired_on_replay`. `TestSnapshotPersistence` is the plumbing: it round-trips the SQL store, the memory store and `_with_pricing_snapshot`, and pins that a completion **retry** without a snapshot does not erase the stored value. Keep `test_the_headers_stated_relation_still_holds_across_an_edit` too: `sum(steps) + superseded_cost == total_cost` is what the cost dropdown tells the reader, and per-run pricing is what makes it an identity. A store with no `by_run` must still price its `by_model` aggregate (`tests/test_thread_token_usage.py` covers it).
 - [ ] **CI's pnpm bootstrap stays retried and pinned**: `cd backend && uv run pytest tests/test_ci_pnpm_bootstrap.py -q`. A transient registry abort while corepack fetches pnpm crashes Node's undici parser (`AssertionError: assert(!this.paused)`) before any test runs and reads like a broken branch (PR #106). `test_the_pnpm_download_is_retried` asserts the retry on the step's *shape*, so it can be rewritten but not removed, across every workflow that prepares pnpm (four today); `test_there_is_a_pnpm_bootstrap_to_check` exists because a renamed step would otherwise leave that parametrized test iterating an empty list and passing green. `test_every_workflow_prepares_the_version_the_repo_pins` is the drift guard: the version lives in five places (`frontend/package.json`'s `packageManager` plus one `corepack prepare` per workflow) and moves out of one at a time, and a mismatch means CI silently exercises a different pnpm than contributors run. Bumping pnpm is one change that touches all five.
+- [ ] **A file explorer for each conversation** (§49): `cd backend && uv run pytest tests/test_thread_files_router.py tests/blocking_io/test_thread_files_router.py -q` (the first inside the Backend gate) and `cd frontend && pnpm test thread-files`, plus `pnpm test:e2e thread-files`. Silent when broken: `test_symlink_escaping_user_data_is_listed_as_a_link_and_never_entered` and `test_dot_dot_traversal_never_lists_outside_user_data` (the route must keep `get_artifact`'s confinement: normalize, then `resolve_thread_virtual_path`, never follow a link), and `test_hides_only_gateway_transient_files` (dotfiles such as `.git` are content, not hidden).
 - [ ] Frontend: `pnpm check && pnpm test`. **`pnpm check` now includes the formatting gate** (`prettier --check .`, then eslint, then `tsc --noEmit`) — it used to be eslint + tsc only, which meant the command every guide tells you to run before committing was not the command CI gates on, and an eslint/type-clean change could still fail `lint-frontend` on formatting alone. That discrepancy was documented right here and was still walked into twice, so it was removed instead of re-warned about (see the Prettier row below). `pnpm format:write` fixes what the check reports; `eslint --fix` normalizes imports and optional-chains but not Prettier whitespace.
 - [ ] **Changed a shared UI control? Run the whole e2e suite, not the one spec you thought of.** `pnpm test:e2e` with no filter. A control's _specs_ are not the specs in the file you edited: they are every spec that clicks that control anywhere in the app, and nothing in `pnpm check` or `pnpm test` knows the difference. Observed live on the model-picker unification — the composer's picker was swapped into five screens, the Democracy spec was found and fixed by hand, and `suggestions-settings.spec.ts` was missed entirely because it drives the _same control_ from a different page. It failed only in CI. Two rules fell out of it, both now pinned by `frontend/tests/unit/components/workspace/model-picker-sites.test.ts`: a spec must locate a shared control by that control's **own** `data-slot`, never by the ARIA role of the primitive underneath (swap the primitive and the locator silently matches nothing), and a fast unit test should assert the contract so a six-minute e2e job is not the thing that tells you.
 
@@ -5280,3 +5281,49 @@ model and run; a total without its split), `frontend/tests/unit/core/usage/`
 `dashboard.dom.test.tsx` and `runs.dom.test.tsx` for the tile, bar, model row
 and run row) and `frontend/tests/e2e/usage-dashboard.spec.ts`. Reporting
 contract: `frontend/docs/token-usage-dashboard.md`.
+
+
+### 49. A file explorer for each conversation, and a live timer that keeps the run's start
+
+**What.** A **Files** button in the chat header opens the right-hand artifacts
+panel on a **Files** tab: a tree of the conversation's sandbox folder
+(`/mnt/user-data` — `workspace/`, `uploads/`, `outputs/` and whatever a run
+creates), opened one directory at a time. Files open in the artifacts viewer or
+download. The backend half is one fork-owned router,
+`app/gateway/routers/thread_files.py` (`GET /api/threads/{id}/files?path=…`);
+files keep opening through `get_artifact`, so the explorer adds a listing, not a
+second way to read a file.
+
+**Why core, not an extension.** The explorer needs the chat's right-hand panel
+and the thread's ownership check, and plugin surfaces cannot add a panel to the
+chat yet (right-side panels are a follow-up design in
+`docs/full-stack-plugins.md`). It extends the artifacts surface that is already
+core, in a separate module so upstream merges stay conflict-free.
+
+**What a refactor must not simplify away.**
+
+- **Confinement is `get_artifact`'s, step for step.** The same `threads:read`
+  owner check and trusted-internal owner override, `posixpath.normpath` before
+  the prefix check (an encoded `..` arrives decoded), then
+  `resolve_thread_virtual_path`. Entries are classified without following
+  links: a link is listed as a link, and entering it is a new request that is
+  confined again.
+- **Listings are bounded on both sides**: 500 entries returned and a 10,000-entry
+  scan, so a `node_modules` folder neither floods the browser nor pins a file-IO
+  worker. `truncated` and `total` say so; the UI shows "N more not shown".
+- **Only transient Gateway files are hidden** (upload staging and artifact-edit
+  temporaries). A dotfile the agent wrote is content.
+- The scan runs off the event loop (`run_file_io`), pinned by
+  `tests/blocking_io/test_thread_files_router.py`.
+
+**The live timer.** "Working… (1m 4s)" counts from the active run's
+server-recorded start (upstream #8007), so reopening the page mid-run keeps the
+real elapsed time. Two gaps fell back to the moment the page joined the run and
+are closed: Run inputs can report an active run the cached runs list predates
+(started from another tab, a channel or a schedule), so the list is read again —
+once per run (`active-run-rejoin.dom.test.tsx`); and the sidecar and New-agent
+chats now pass the start too. The time is a focusable `role="timer"` whose hover
+and accessible description say where it counts from: the server's start ("Running
+since 14:32"), or, until the server reports it, when this page began following
+the run (`message-list-run-activity.dom.test.tsx`,
+`tests/e2e/run-timer-reopen.spec.ts`).

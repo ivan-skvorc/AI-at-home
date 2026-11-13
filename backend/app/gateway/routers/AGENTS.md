@@ -50,3 +50,8 @@ make test-blocking-io                            # after adding any file, config
   skill name, file name) is validated when it is created, including Windows
   reserved device names. Read and delete routes stay permissive so that data
   stored by an older release can still be exported and removed.
+- **Thread file listings follow `get_artifact`.** `thread_files.py` (a fork
+  route) normalizes the path before the prefix check, resolves it with
+  `resolve_thread_virtual_path` and never follows a link while listing. Change
+  both routes together, because the explorer lists what the artifacts route
+  serves (FORK.md §49).
