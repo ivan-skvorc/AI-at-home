@@ -2819,6 +2819,37 @@ export function useThreadStream({
       ? parseRunStartTime(knownActiveRun.created_at)
       : null;
 
+  // Run inputs can name an active run the cached list predates (a run started
+  // from another tab, a channel or a schedule after this list was read; it is
+  // not refetched on focus). Without its record the live timer would count
+  // from when this page joined the run instead of when the run started, so
+  // read the list again — once per run, so a run the list never shows cannot
+  // keep refetching it.
+  const refetchRuns = runsQuery.refetch;
+  const runsListLacksKnownActiveRun =
+    !!knownActiveRunId &&
+    runsQuery.data !== undefined &&
+    !runsQuery.isFetching &&
+    knownActiveRun === undefined &&
+    !completedRunIdsRef.current.has(knownActiveRunId);
+  const rereadRunsForRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!runsListLacksKnownActiveRun || !knownActiveRunId) {
+      return;
+    }
+    const key = `${onStreamThreadId ?? ""}:${knownActiveRunId}`;
+    if (rereadRunsForRef.current === key) {
+      return;
+    }
+    rereadRunsForRef.current = key;
+    void refetchRuns();
+  }, [
+    knownActiveRunId,
+    onStreamThreadId,
+    refetchRuns,
+    runsListLacksKnownActiveRun,
+  ]);
+
   // reconnectOnMount only knows the run id stored in this tab's
   // sessionStorage. A reopened browser or a new tab has no pointer, so recover
   // the newest active run from the server and join its resumable SSE stream.

@@ -297,6 +297,12 @@ export interface Translations {
     minutes: (value: number) => string;
     seconds: (value: number) => string;
     separator: string;
+    /** Accessible name of the live elapsed time. */
+    elapsed: string;
+    /** Hover text when the time counts from the run's server-recorded start. */
+    serverStart: (time: string) => string;
+    /** Hover text when only this page's own start of following the run is known. */
+    localStart: string;
   };
 
   home: {

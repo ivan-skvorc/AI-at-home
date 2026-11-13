@@ -331,6 +331,11 @@ export const zhCN: Translations = {
     minutes: (value) => `${value} 分`,
     seconds: (value) => `${value} 秒`,
     separator: " ",
+    elapsed: "任务已运行时间",
+    serverStart: (time) =>
+      `自 ${time} 起运行。从任务在服务器上开始的时间计算，刷新或重新打开页面后仍会继续计时。`,
+    localStart:
+      "从此页面开始跟踪该任务时计算。任务可能更早开始；服务器报告开始时间后会自动校正。",
   },
 
   // Home

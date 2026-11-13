@@ -1828,7 +1828,10 @@ export function MessageList({
           {renderTaskEventLines(placedTaskEvents?.tail)}
           {thread.isLoading && !hasActiveAssistantText && (
             <div className="w-full">
-              <RunActivity startTime={turnStartTime} />
+              <RunActivity
+                startTime={turnStartTime}
+                startSource={activeRunStartedAt !== null ? "server" : "local"}
+              />
             </div>
           )}
           <div style={{ height: `${paddingBottom}px` }} />

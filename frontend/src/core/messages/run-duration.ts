@@ -94,6 +94,36 @@ export function parseRunStartTime(createdAt: unknown): number | null {
   return Number.isFinite(time) ? time : null;
 }
 
+/**
+ * Where a live run's elapsed time is counted from: the run's own start as the
+ * server recorded it, or the moment this page began following the run, which
+ * is later for a run that was already going.
+ */
+export type RunStartSource = "server" | "local";
+
+/**
+ * The wall-clock time a live run started, for "Running since …". A run that
+ * crossed midnight where it is viewed also shows its date.
+ */
+export function formatRunStartTime(
+  startTime: number,
+  { locale, now, timeZone }: { locale: string; now: number; timeZone?: string },
+): string {
+  const day = new Intl.DateTimeFormat(locale, {
+    year: "numeric",
+    month: "numeric",
+    day: "numeric",
+    timeZone,
+  });
+  const sameDay = day.format(startTime) === day.format(now);
+  return new Intl.DateTimeFormat(locale, {
+    ...(sameDay ? {} : { month: "short", day: "numeric" }),
+    hour: "numeric",
+    minute: "2-digit",
+    timeZone,
+  }).format(startTime);
+}
+
 export function formatRunDuration(
   value: number,
   formatter: RunDurationFormatter,

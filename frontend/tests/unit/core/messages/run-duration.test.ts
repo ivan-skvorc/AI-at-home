@@ -5,6 +5,7 @@ import { enUS } from "@/core/i18n/locales/en-US";
 import { zhCN } from "@/core/i18n/locales/zh-CN";
 import {
   formatRunDuration,
+  formatRunStartTime,
   getRunDurationDisplaysByGroupIndex,
   parseRunStartTime,
 } from "@/core/messages/run-duration";
@@ -158,5 +159,34 @@ describe("run start time parsing", () => {
     expect(parseRunStartTime(undefined)).toBeNull();
     expect(parseRunStartTime("")).toBeNull();
     expect(parseRunStartTime("not a time")).toBeNull();
+  });
+});
+
+describe("live run start time", () => {
+  const start = Date.UTC(2026, 10, 13, 23, 30);
+
+  test("shows the clock time of a run that started today", () => {
+    const now = start + 20 * 60_000;
+    expect(
+      formatRunStartTime(start, { locale: "en-US", now, timeZone: "UTC" }),
+    ).toMatch(/^11:30\sPM$/);
+    expect(
+      formatRunStartTime(start, { locale: "zh-CN", now, timeZone: "UTC" }),
+    ).toBe("23:30");
+  });
+
+  test("adds the date once the run has crossed midnight where it is viewed", () => {
+    const now = start + 40 * 60_000;
+    expect(
+      formatRunStartTime(start, { locale: "en-US", now, timeZone: "UTC" }),
+    ).toMatch(/^Nov 13, 11:30\sPM$/);
+    // Both instants fall on 14 November in Shanghai.
+    expect(
+      formatRunStartTime(start, {
+        locale: "en-US",
+        now,
+        timeZone: "Asia/Shanghai",
+      }),
+    ).toMatch(/^7:30\sAM$/);
   });
 });

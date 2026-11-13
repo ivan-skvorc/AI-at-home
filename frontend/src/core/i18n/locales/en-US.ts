@@ -346,6 +346,11 @@ export const enUS: Translations = {
     minutes: (value) => `${value}m`,
     seconds: (value) => `${value}s`,
     separator: " ",
+    elapsed: "Time this task has been running",
+    serverStart: (time) =>
+      `Running since ${time}. Counted from when the task started on the server, so it keeps counting after you reload or reopen the page.`,
+    localStart:
+      "Counted from when this page started following the task. It may have started earlier; the time corrects itself once the server reports its start.",
   },
 
   // Home

@@ -187,6 +187,7 @@ export function SidecarPanel({ className }: { className?: string }) {
     hasPendingApproval,
     submitHitlApproval,
     waitingForInputRunIds,
+    activeRunStartedAt,
   } = useThreadStream({
     threadId: sidecar.sidecarThreadId ?? undefined,
     displayThreadId: sidecar.sidecarThreadId ?? undefined,
@@ -601,6 +602,7 @@ export function SidecarPanel({ className }: { className?: string }) {
             testId="sidecar-message-list"
             threadId={sidecar.sidecarThreadId}
             thread={thread}
+            activeRunStartedAt={activeRunStartedAt}
             paddingBottom={MESSAGE_LIST_DEFAULT_PADDING_BOTTOM / 2}
             hasMoreHistory={hasMoreHistory}
             historyLoadFailed={historyLoadFailed}
