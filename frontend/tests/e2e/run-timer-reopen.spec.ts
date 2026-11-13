@@ -117,7 +117,9 @@ test("says where the live timer counts from on hover and keyboard focus", async 
     await elapsed.hover();
     await expect(page.getByRole("tooltip")).toHaveText(explanation);
 
-    await page.mouse.move(0, 0);
+    // Radix closes once the pointer has left the trigger's grace area, which
+    // takes pointer movement outside it, not a single jump.
+    await page.mouse.move(0, 0, { steps: 10 });
     await expect(page.getByRole("tooltip")).toHaveCount(0);
     await elapsed.focus();
     await expect(page.getByRole("tooltip")).toHaveText(explanation);
