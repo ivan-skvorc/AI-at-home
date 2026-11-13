@@ -483,6 +483,27 @@ export const zhCN: Translations = {
     truncatedSummary: "部分变更已被截断。",
   },
 
+  // Thread file explorer
+  threadFiles: {
+    title: "文件",
+    showFiles: "显示文件",
+    treeLabel: "此对话中的文件",
+    refresh: "刷新文件",
+    loading: "正在加载文件…",
+    loadingFolder: "正在加载…",
+    emptyTitle: "暂无文件",
+    emptyDescription: "智能体尚未在此对话中创建任何文件。",
+    emptyFolder: "空文件夹",
+    loadFailed: "无法加载此对话的文件。",
+    folderLoadFailed: "无法加载此文件夹。",
+    folderMissing: "此文件夹已不存在。",
+    accessDenied: "无法打开此文件夹。",
+    retry: "重试",
+    moreNotShown: (count) => `另有 ${count} 项未显示`,
+    symlink: "链接",
+    specialFile: "特殊文件",
+  },
+
   // Input Box
   inputBox: {
     mentionPicker: "添加引用",

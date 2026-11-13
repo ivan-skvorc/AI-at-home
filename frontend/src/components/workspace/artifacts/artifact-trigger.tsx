@@ -10,7 +10,13 @@ import { useArtifacts } from "./context";
 
 export const ArtifactTrigger = () => {
   const { t } = useI18n();
-  const { artifacts, setOpen: setArtifactsOpen } = useArtifacts();
+  const {
+    artifacts,
+    deselect,
+    setOpen: setArtifactsOpen,
+    view,
+    setView: setArtifactsView,
+  } = useArtifacts();
   const sidecar = useMaybeSidecar();
 
   if (!artifacts || artifacts.length === 0) {
@@ -25,6 +31,11 @@ export const ArtifactTrigger = () => {
         data-testid="artifact-trigger"
         onClick={() => {
           sidecar?.close();
+          if (view === "files") {
+            // A file left open from the explorer is not an artifact list.
+            deselect();
+          }
+          setArtifactsView("artifacts");
           setArtifactsOpen(true);
         }}
       >

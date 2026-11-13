@@ -438,6 +438,27 @@ export interface Translations {
     truncatedSummary: string;
   };
 
+  // Thread file explorer
+  threadFiles: {
+    title: string;
+    showFiles: string;
+    treeLabel: string;
+    refresh: string;
+    loading: string;
+    loadingFolder: string;
+    emptyTitle: string;
+    emptyDescription: string;
+    emptyFolder: string;
+    loadFailed: string;
+    folderLoadFailed: string;
+    folderMissing: string;
+    accessDenied: string;
+    retry: string;
+    moreNotShown: (count: number) => string;
+    symlink: string;
+    specialFile: string;
+  };
+
   // Input Box
   inputBox: {
     mentionPicker: string;

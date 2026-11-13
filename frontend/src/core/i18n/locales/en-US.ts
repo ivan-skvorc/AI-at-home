@@ -508,6 +508,27 @@ export const enUS: Translations = {
     truncatedSummary: "Some changes were truncated.",
   },
 
+  // Thread file explorer
+  threadFiles: {
+    title: "Files",
+    showFiles: "Show files",
+    treeLabel: "Files in this chat",
+    refresh: "Refresh files",
+    loading: "Loading files…",
+    loadingFolder: "Loading…",
+    emptyTitle: "No files yet",
+    emptyDescription: "The agent has not created any files in this chat.",
+    emptyFolder: "Empty folder",
+    loadFailed: "Could not load the files of this chat.",
+    folderLoadFailed: "Could not load this folder.",
+    folderMissing: "This folder no longer exists.",
+    accessDenied: "This folder cannot be opened.",
+    retry: "Retry",
+    moreNotShown: (count) => `${count} more not shown`,
+    symlink: "Link",
+    specialFile: "Special file",
+  },
+
   // Input Box
   inputBox: {
     mentionPicker: "Add a reference",

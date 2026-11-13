@@ -39,8 +39,9 @@ describe("interaction-only bundle boundaries", () => {
     const chatBox = read("src/components/workspace/chats/chat-box.tsx");
     expect(chatBox).toContain('import dynamic from "next/dynamic"');
     expect(chatBox).not.toMatch(
-      /import \{ (?:ArtifactFileDetail|ArtifactFileList|BrowserViewPanel|SidecarPanel)/,
+      /import \{ (?:ArtifactFileDetail|ArtifactFileList|BrowserViewPanel|SidecarPanel|ThreadFileExplorer)/,
     );
-    expect(chatBox.match(/dynamic\(/g)?.length).toBeGreaterThanOrEqual(4);
+    expect(chatBox).toContain('import("../thread-files/thread-file-explorer")');
+    expect(chatBox.match(/dynamic\(/g)?.length).toBeGreaterThanOrEqual(5);
   });
 });

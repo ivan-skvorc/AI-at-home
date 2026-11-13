@@ -99,6 +99,8 @@ export function ArtifactFileDetail({
   const {
     artifacts,
     setOpen,
+    view: panelView,
+    showFiles,
     select,
     drafts,
     setDrafts,
@@ -660,7 +662,12 @@ export function ArtifactFileDetail({
                 ) {
                   setDrafts({});
                   setEditingPath(null);
-                  setOpen(false);
+                  // A file opened from the explorer closes back to it.
+                  if (panelView === "files") {
+                    showFiles();
+                  } else {
+                    setOpen(false);
+                  }
                 }
               }}
               tooltip={t.common.close}

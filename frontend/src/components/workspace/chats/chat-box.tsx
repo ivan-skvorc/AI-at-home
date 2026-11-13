@@ -22,11 +22,16 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   areStringArraysEqual,
   collectThreadArtifactPaths,
 } from "@/core/artifacts/utils";
 import { useI18n } from "@/core/i18n/hooks";
+import {
+  EMPTY_THREAD_FILE_TREE,
+  type ThreadFileTreeState,
+} from "@/core/thread-files/types";
 import { env } from "@/env";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { cn } from "@/lib/utils";
@@ -64,6 +69,13 @@ const ArtifactFileList = dynamic(
     ),
   { loading: RightPanelLoading },
 );
+const ThreadFileExplorer = dynamic(
+  () =>
+    import("../thread-files/thread-file-explorer").then(
+      (module) => module.ThreadFileExplorer,
+    ),
+  { loading: RightPanelLoading },
+);
 const BrowserViewPanel = dynamic(
   () =>
     import("../browser-view/browser-view-panel").then(
@@ -94,6 +106,11 @@ interface ChatBoxProps {
   children: React.ReactNode;
   threadId: string;
   browserEnabled?: boolean;
+  /**
+   * Offer the Files view: only for a thread the Gateway has, outside mock
+   * mode and the static demo.
+   */
+  filesEnabled?: boolean;
 }
 
 function ChatBox(props: ChatBoxProps) {
@@ -117,6 +134,7 @@ const ChatBoxContent: React.FC<ChatBoxProps> = ({
   children,
   threadId,
   browserEnabled = true,
+  filesEnabled = false,
 }) => {
   const { t } = useI18n();
   const messageDetails = useMaybeMessageDetails();
@@ -133,7 +151,14 @@ const ChatBoxContent: React.FC<ChatBoxProps> = ({
     select: selectArtifact,
     deselect,
     selectedArtifact,
+    view: artifactsView,
+    setView: setArtifactsView,
   } = useArtifacts();
+  const panelView = filesEnabled ? artifactsView : "artifacts";
+  // Kept here rather than in the explorer, which unmounts while a file is open.
+  const [fileTree, setFileTree] = useState<ThreadFileTreeState>(
+    EMPTY_THREAD_FILE_TREE,
+  );
   const sidecar = useMaybeSidecar();
   const sidecarOpen = sidecar?.open ?? false;
   const browserView = useMaybeBrowserView();
@@ -363,6 +388,13 @@ const ChatBoxContent: React.FC<ChatBoxProps> = ({
     messageDetails,
   ]);
 
+  const openThreadFile = useCallback(
+    (path: string) => {
+      selectArtifact(path);
+    },
+    [selectArtifact],
+  );
+
   const rightPanelContent = useMemo(() => {
     if (renderedRightPanel === "details") {
       return <MessageDetailsPanel />;
@@ -383,12 +415,45 @@ const ChatBoxContent: React.FC<ChatBoxProps> = ({
       );
     }
     if (renderedRightPanel === "artifacts") {
+      const artifactList =
+        artifacts.length === 0 ? (
+          <ConversationEmptyState
+            icon={<FilesIcon />}
+            title="No artifact selected"
+            description="Select an artifact to view its details"
+          />
+        ) : (
+          <div
+            className={cn(
+              "flex size-full max-w-(--container-width-sm) flex-col justify-center",
+              filesEnabled ? "px-4" : "p-4 pt-8",
+            )}
+          >
+            {/* With the view tabs, the Artifacts tab names this list. */}
+            {!filesEnabled && (
+              <header className="shrink-0">
+                <h2 className="text-lg font-medium">Artifacts</h2>
+              </header>
+            )}
+            <ScrollArea className="min-h-0 grow">
+              <ArtifactFileList
+                className={cn(
+                  "max-w-(--container-width-sm) p-4",
+                  !filesEnabled && "pt-12",
+                )}
+                files={artifacts}
+                threadId={threadId}
+              />
+            </ScrollArea>
+          </div>
+        );
       return (
-        <div className="relative flex size-full justify-center">
+        <div className="relative flex size-full min-h-0 flex-col">
           <div className="absolute top-1 right-1 z-30">
             <Button
               size="icon-sm"
               variant="ghost"
+              aria-label={t.common.close}
               onClick={() => {
                 setArtifactsOpen(false);
               }}
@@ -396,25 +461,39 @@ const ChatBoxContent: React.FC<ChatBoxProps> = ({
               <XIcon />
             </Button>
           </div>
-          {artifacts.length === 0 ? (
-            <ConversationEmptyState
-              icon={<FilesIcon />}
-              title="No artifact selected"
-              description="Select an artifact to view its details"
-            />
-          ) : (
-            <div className="flex size-full max-w-(--container-width-sm) flex-col justify-center p-4 pt-8">
-              <header className="shrink-0">
-                <h2 className="text-lg font-medium">Artifacts</h2>
-              </header>
-              <ScrollArea className="min-h-0 grow">
-                <ArtifactFileList
-                  className="max-w-(--container-width-sm) p-4 pt-12"
-                  files={artifacts}
+          {filesEnabled ? (
+            <Tabs
+              value={panelView}
+              onValueChange={(value) => {
+                setArtifactsView(value === "files" ? "files" : "artifacts");
+              }}
+              className="min-h-0 flex-1 gap-3"
+            >
+              <TabsList className="shrink-0">
+                <TabsTrigger value="artifacts">
+                  {t.common.artifacts}
+                </TabsTrigger>
+                <TabsTrigger value="files">{t.threadFiles.title}</TabsTrigger>
+              </TabsList>
+              <TabsContent
+                value="artifacts"
+                className="flex min-h-0 justify-center"
+              >
+                {artifactList}
+              </TabsContent>
+              <TabsContent value="files" className="flex min-h-0 flex-col">
+                <ThreadFileExplorer
+                  className="min-h-0 flex-1"
                   threadId={threadId}
+                  isRunning={thread.isLoading}
+                  tree={fileTree}
+                  onTreeChange={setFileTree}
+                  onOpenFile={openThreadFile}
                 />
-              </ScrollArea>
-            </div>
+              </TabsContent>
+            </Tabs>
+          ) : (
+            <div className="flex size-full justify-center">{artifactList}</div>
           )}
         </div>
       );
@@ -426,6 +505,13 @@ const ChatBoxContent: React.FC<ChatBoxProps> = ({
     threadId,
     artifacts,
     setArtifactsOpen,
+    filesEnabled,
+    panelView,
+    setArtifactsView,
+    t,
+    thread.isLoading,
+    fileTree,
+    openThreadFile,
   ]);
 
   if (isMobile) {
@@ -464,7 +550,9 @@ const ChatBoxContent: React.FC<ChatBoxProps> = ({
                     ? "Browser"
                     : renderedRightPanel === "details"
                       ? (messageDetails?.selectedDetail?.title ?? t.common.more)
-                      : "Artifacts"}
+                      : panelView === "files"
+                        ? t.threadFiles.title
+                        : "Artifacts"}
               </SheetTitle>
               <SheetDescription>
                 Browse the side panel for this conversation.

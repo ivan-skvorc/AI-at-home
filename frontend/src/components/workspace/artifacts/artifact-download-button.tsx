@@ -6,7 +6,7 @@ import {
   LoaderIcon,
   RotateCwIcon,
 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { type ComponentProps, useEffect, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { prepareArtifactDownload } from "@/core/artifacts/download";
@@ -21,9 +21,20 @@ type Props = {
   isMock?: boolean;
   compact?: boolean;
   label?: string;
+  size?: ComponentProps<typeof Button>["size"];
+  /** -1 keeps the button out of the tab order inside a composite widget. */
+  tabIndex?: number;
 };
 
-function DownloadAction({ filepath, threadId, isMock, compact, label }: Props) {
+function DownloadAction({
+  filepath,
+  threadId,
+  isMock,
+  compact,
+  label,
+  size,
+  tabIndex,
+}: Props) {
   const { t } = useI18n();
   const [state, setState] = useState<
     "idle" | "preparing" | "failed" | "requested"
@@ -57,6 +68,8 @@ function DownloadAction({ filepath, threadId, isMock, compact, label }: Props) {
       <Button
         type="button"
         variant={compact ? "ghost" : "outline"}
+        size={size}
+        tabIndex={tabIndex}
         disabled={state === "preparing"}
         aria-label={`${text} ${filename}`}
         title={`${text} ${filename}`}
