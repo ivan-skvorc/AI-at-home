@@ -328,7 +328,6 @@ OPENROUTER_BUNDLE_MODELS: list[dict] = [
     _openrouter_model("openrouter-grok-4.7", "Grok 4.7 (OpenRouter) (p)", "x-ai/grok-4.7", supports_vision=True),
     _openrouter_model("openrouter-gpt-6-astra", "GPT-6 Astra (OpenRouter) (p)", "openai/gpt-6-astra", supports_vision=True),
     _openrouter_model("openrouter-gpt-6.1-sol", "GPT-6.1 Sol (OpenRouter) (p)", "openai/gpt-6.1-sol", supports_vision=True),
-    _openrouter_model("openrouter-gpt-5.3-codex", "GPT-5.3 Codex (OpenRouter) (p)", "openai/gpt-5.3-codex", supports_vision=True),
     _openrouter_model("openrouter-gemini-3.8-flash", "Gemini 3.8 Flash (OpenRouter) (p)", "google/gemini-3.8-flash", supports_vision=True),
     _openrouter_model("openrouter-llama-4-maverick", "Llama 4 Maverick (OpenRouter) (p)", "meta-llama/llama-4-maverick", supports_vision=True, supports_thinking=False),
     _openrouter_model("openrouter-minimax-m3", "MiniMax M3 (OpenRouter) (p)", "minimax/minimax-m3", supports_vision=True, max_tokens=16000, temperature=1.0),
@@ -480,15 +479,14 @@ def _home_gemini_model(name: str, display_name: str, model: str, *, max_tokens: 
 
 
 # OpenAI: GPT-6 Astra (flagship) + GPT-6.1 Sol (the cheaper half of the routed
-# pair) + GPT-5.3 Codex (the acclaimed agentic-coding variant — the same double
-# kept on OpenRouter) + the two cheaper tiers. The tiers ship as Sol / Terra /
+# pair) + the two cheaper tiers. GPT-5.3 Codex left both blocks on 2026-11-13:
+# OpenAI deprecated it for GPT-6 Sol. The tiers ship as Sol / Terra /
 # Luna rather than a `-mini`/`-nano` pair, so `gpt-5.6-mini` never existed —
 # Terra is the tier that took `mini`'s place and Luna the one below it.
 # GPT-6.1 Terra (2026-10-26) replaced GPT-5.6 Terra in that tier.
 OPENAI_HOME_BUNDLE_MODELS: list[dict] = [
     _home_openai_compat_model("openai-gpt-6-astra", "GPT-6 Astra (OpenAI)", "gpt-6-astra", api_key_env="OPENAI_API_KEY", base_url="https://api.openai.com/v1", supports_vision=True, responses_api=True),
     _home_openai_compat_model("openai-gpt-6.1-sol", "GPT-6.1 Sol (OpenAI)", "gpt-6.1-sol", api_key_env="OPENAI_API_KEY", base_url="https://api.openai.com/v1", supports_vision=True, responses_api=True),
-    _home_openai_compat_model("openai-gpt-5.3-codex", "GPT-5.3 Codex (OpenAI)", "gpt-5.3-codex", api_key_env="OPENAI_API_KEY", base_url="https://api.openai.com/v1", supports_vision=True),
     _home_openai_compat_model("openai-gpt-6.1-terra", "GPT-6.1 Terra (OpenAI)", "gpt-6.1-terra", api_key_env="OPENAI_API_KEY", base_url="https://api.openai.com/v1", supports_vision=True, responses_api=True),
     _home_openai_compat_model("openai-gpt-6-luna", "GPT-6 Luna (OpenAI)", "gpt-6-luna", api_key_env="OPENAI_API_KEY", base_url="https://api.openai.com/v1", supports_vision=True, max_tokens=16000, responses_api=True),
 ]
@@ -528,8 +526,10 @@ MISTRAL_HOME_BUNDLE_MODELS: list[dict] = [
     _home_openai_compat_model("mistral-small-4", "Mistral Small 4 (Mistral)", "mistral-small-2603", api_key_env="MISTRAL_API_KEY", base_url="https://api.mistral.ai/v1", supports_vision=True, supports_thinking=False, max_tokens=16000),
 ]
 
-# Moonshot/Kimi: K3.1 Pro (flagship, 2026-10-23) + K2.6 (cheaper), via the
-# international endpoint. K3.1 Pro always thinks and rejects the thinking switch.
+# Moonshot/Kimi: K3.1 Pro (flagship, 2026-10-23) + K3 (the previous generation,
+# still widely used), via the international endpoint. Both always think and
+# reject the thinking switch. K3 replaced K2.6 on 2026-11-13: K2.6 is closed to
+# new Moonshot accounts and retires in late December 2026.
 MOONSHOT_HOME_BUNDLE_MODELS: list[dict] = [
     _home_deepseek_style_model(
         "moonshot-kimi-k3.1-pro",
@@ -541,7 +541,16 @@ MOONSHOT_HOME_BUNDLE_MODELS: list[dict] = [
         max_tokens=32768,
         thinking_toggle=False,
     ),
-    _home_deepseek_style_model("moonshot-kimi-k2.6", "Kimi K2.6 (Moonshot)", "kimi-k2.6", api_key_env="MOONSHOT_API_KEY", api_base="https://api.moonshot.ai/v1", supports_vision=False, max_tokens=32768),
+    _home_deepseek_style_model(
+        "moonshot-kimi-k3",
+        "Kimi K3 (Moonshot)",
+        "kimi-k3",
+        api_key_env="MOONSHOT_API_KEY",
+        api_base="https://api.moonshot.ai/v1",
+        supports_vision=True,
+        max_tokens=32768,
+        thinking_toggle=False,
+    ),
 ]
 
 # Qwen (Alibaba DashScope, international OpenAI-compatible endpoint): 3.8 Max
@@ -637,10 +646,9 @@ MODEL_PRICES: dict[str, dict] = {
     "mistral-large-4": {"price": {"currency": "USD", "input": 0.7, "output": 2.1, "cache_hit": 0.07}},
     "mistral-small-4": {"price": {"currency": "USD", "input": 0.15, "output": 0.6}},
     "moonshot-kimi-k3.1-pro": {"price": {"currency": "USD", "input": 2.0, "output": 10.0, "cache_hit": 0.2}},
-    "moonshot-kimi-k2.6": {"price": {"currency": "USD", "input": 0.95, "output": 4.0}},
+    "moonshot-kimi-k3": {"price": {"currency": "USD", "input": 3.0, "output": 15.0, "cache_hit": 0.3}},
     "openai-gpt-6-astra": {"price": {"currency": "USD", "input": 10.0, "output": 50.0}},
     "openai-gpt-6.1-sol": {"price": {"currency": "USD", "input": 2.0, "output": 10.0}},
-    "openai-gpt-5.3-codex": {"price": {"currency": "USD", "input": 1.75, "output": 14.0}},
     "openai-gpt-6.1-terra": {"price": {"currency": "USD", "input": 1.0, "output": 5.0}},
     "openai-gpt-6-luna": {"price": {"currency": "USD", "input": 0.1, "output": 0.5}},
     "openrouter-fable-5-1": {"price": {"currency": "USD", "input": 10.0, "output": 50.0}},
@@ -648,7 +656,6 @@ MODEL_PRICES: dict[str, dict] = {
     "openrouter-grok-4.7": {"price": {"currency": "USD", "input": 2.0, "output": 6.0}},
     "openrouter-gpt-6-astra": {"price": {"currency": "USD", "input": 10.0, "output": 50.0}},
     "openrouter-gpt-6.1-sol": {"price": {"currency": "USD", "input": 2.0, "output": 10.0}},
-    "openrouter-gpt-5.3-codex": {"price": {"currency": "USD", "input": 1.75, "output": 14.0}},
     # OpenRouter shows 50% off on every endpoint for this model, all of them Google's
     # own, and no end date; the `until` is inherited from the home entry's
     # Google-announced window for the same introductory rate.
@@ -844,7 +851,7 @@ LLM_PROVIDERS: list[LLMProvider] = [
     LLMProvider(
         name="openai",
         display_name="OpenAI",
-        description="GPT-6 Astra + GPT-6.1 Sol + GPT-5.3 Codex + GPT-6.1 Terra + GPT-6 Luna (direct OpenAI API)",
+        description="GPT-6 Astra + GPT-6.1 Sol + GPT-6.1 Terra + GPT-6 Luna (direct OpenAI API)",
         use="langchain_openai:ChatOpenAI",
         models=[entry["model"] for entry in OPENAI_HOME_BUNDLE_MODELS],
         default_model=OPENAI_HOME_BUNDLE_MODELS[0]["model"],
@@ -1009,7 +1016,7 @@ LLM_PROVIDERS: list[LLMProvider] = [
     LLMProvider(
         name="kimi",
         display_name="Moonshot Kimi",
-        description="Kimi K3.1 Pro + K2.6 (direct Moonshot API; K3.1 Pro always thinks)",
+        description="Kimi K3.1 Pro + K3 (direct Moonshot API; both always think)",
         use="deerflow.models.patched_deepseek:PatchedChatDeepSeek",
         models=[entry["model"] for entry in MOONSHOT_HOME_BUNDLE_MODELS],
         default_model=MOONSHOT_HOME_BUNDLE_MODELS[0]["model"],
@@ -1024,9 +1031,11 @@ LLM_PROVIDERS: list[LLMProvider] = [
             **OPENAI_COMPAT_THINKING_CONFIG,
         },
         bundle_models=MOONSHOT_HOME_BUNDLE_MODELS,
-        # K3.1 Pro rejects the thinking switch. K2.6 still uses it.
-        model_omitted_config={"kimi-k3.1-pro": ("when_thinking_enabled", "when_thinking_disabled")},
-        model_vision_overrides={"kimi-k2.6": False},
+        # K3.1 Pro and K3 always think and reject the thinking switch.
+        model_omitted_config={
+            "kimi-k3.1-pro": ("when_thinking_enabled", "when_thinking_disabled"),
+            "kimi-k3": ("when_thinking_enabled", "when_thinking_disabled"),
+        },
     ),
     LLMProvider(
         name="novita",

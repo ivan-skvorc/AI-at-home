@@ -11,6 +11,111 @@ Newest first. Append a pass; never rewrite one. A dated line is what tells the
 next person whether the roster was checked last week or last year, and _which_
 providers that pass could actually reach.
 
+- **2026-11-13 (branch `claude/bold-hopper-fgx0x5`) — tier 1 for every lab and for OpenRouter's
+  pages; Google's home block read off Google's Cloud pricing page. No price edits. Two roster
+  changes: GPT-5.3 Codex leaves both blocks (deprecated) and Kimi K3 replaces K2.6 (closed to new
+  accounts). Claude Fable 5.2 stays deferred, and its blocker turned out wider.** Requested in
+  words with the upstream sync of 42 commits, three days after the 2026-11-10 pass.
+
+  **Machine half.** `uv run --no-sync python ../scripts/audit_models.py` reached OpenRouter: 22
+  findings — four list-price moves and 18 `new_candidate` rows, no retired slug, no promo change;
+  ten catalog-less providers skipped. All four price moves are headline artifacts, not drift:
+  Gemini 3.8 Flash's `$0.825/$4.125` is the `google-vertex/us` endpoint (50% off Google's
+  `$1.65/$8.25` regional list), which standard routing does not use — every routed endpoint still
+  shows 50% off, `$0.75/$3.75`; DeepSeek V4 Pro (`-0813`) and GLM-5.3 headlines are fp4-class
+  third-party hosts while each lab's own host matches the bundle; Nemotron 3 Ultra's `$0.60/$2.40`
+  is Baseten (there is no NVIDIA host; the page headline `$0.50/$2.20` matches).
+
+  **What the network reached.** 200 from `openrouter.ai` (catalog, model pages, `/endpoints`,
+  `/rankings` and its trending, top-weekly and newest views), `platform.claude.com` (pricing,
+  models overview, deprecations, the Fable 5.2 what's-new and migration guide, the
+  preserved-thinking and thinking-troubleshooting pages), `developers.openai.com` (pricing,
+  models, the GPT-5.3 Codex page, deprecations), `docs.x.ai`, `api-docs.deepseek.com`,
+  `docs.mistral.ai` (`mistral.ai/pricing` loads its table by script), `platform.kimi.ai`,
+  `alibabacloud.com` (Model Studio), `platform.minimax.io`, `docs.z.ai` and
+  `cloud.google.com` (Vertex pricing, after redirects). Refused by the proxy: `ai.google.dev`
+  (301, then 403), `developers.googleblog.com`, `blog.google`, `deepmind.google`,
+  `platform.openai.com`, `platform.moonshot.ai` and `docs.anthropic.com`.
+
+  **Anthropic — tier 1, unchanged.** Fable 5.1 `$10/$50` (cache `$0.25`), Opus 5.5 `$4/$20`
+  (`$0.20`), Opus 5 `$5/$25` (`$0.50`), Sonnet 5.5 `$2/$10` (`$0.10`), Sonnet 5 `$2/$10`
+  (`$0.20`), Haiku 5.5 `$0.10/$0.50` (`$0.01`, prompts up to 100K); both routed copies match on
+  OpenRouter with no discount. All six are Active — Fable 5.1 is not Legacy, as the last entry
+  said, and retires no earlier than 2027-09-01; the earliest retirement in the bundle is Sonnet 5
+  on 2027-06-30.
+
+  **Claude Fable 5.2 — deferred again; the blocker is real and wider than the last pass said.**
+  Anthropic's docs: Fable 5.2 returns 400 "bound to a different conversation" when anything before
+  a returned thinking block has changed, retrying does not clear it, and thinking-troubleshooting
+  names client-side compaction that keeps recent turns and their thinking verbatim as a cause. The
+  remedy is to strip the kept turns' thinking or to send `drop_block` (beta
+  `thinking-binding-controls-2026-08-01`, which the migration guide calls a stopgap). In this
+  code, compaction keeps the recent AI messages and langchain-anthropic sends their `thinking` and
+  `signature` back; `DurableContextMiddleware` puts `summary_text` at the front of every request
+  and that block changes mid-run (a subagent delegation, a `SKILL.md` read, an artifact, a goal);
+  and the system-message coalescing moves the midnight date update into `system`. So a Fable 5.2
+  run would 400 in the first tool loop that reads a skill, not only after compaction. Smallest
+  unblock, untested against the live API: `betas: [thinking-binding-controls-2026-08-01]` plus
+  `thinking.block_binding.prefix_mismatch_behavior: drop_block` in both thinking states; the real
+  fix is append-only requests. **Already affected:** Fable 5.1, Opus 5.5, Sonnet 5.5 and Haiku 5.5
+  run the same check — a failed one may 400 or silently bill stale reasoning — and the docs no
+  longer limit it to newer accounts; Opus 5 and Sonnet 5 do not run it. If rolled: `claude-fable-5-2`
+  and `anthropic/claude-fable-5.2`, `$8/$40`, cache `$0.20`, both together.
+
+  **OpenAI, xAI, DeepSeek, Mistral, Moonshot, Qwen, MiniMax, z.ai — tier 1, prices unchanged.**
+  GPT-6 Astra `$10/$50`, GPT-6.1 Sol `$2/$10`, GPT-6.1 Terra `$1/$5`, GPT-6 Luna `$0.10/$0.50`;
+  Grok 4.7 `$2/$6`, Grok 4.3 `$1.25/$2.50`; DeepSeek V4 Pro `$1.32/$3.96` and `deepseek-flash`
+  `$0.30/$1.20` (peak, serving V4-Pro-0813 and V4.1-Flash-1017); Mistral Large 4 `$0.70/$2.10`,
+  Small 4 `$0.15/$0.60`; Kimi K3.1 Pro `$2/$10`; Qwen3.8 Max `$2/$6`, Qwen3.7 Plus `$0.40/$1.60`
+  (the alias also carries a limited-time 20% off, not shipped); MiniMax M3 `$0.30/$1.20`
+  ("permanent 50% off"), M3.1 Flash `$0.15/$0.60`; GLM-5.3 `$1.40/$4.40`, GLM-5.3 Flash
+  `$0.15/$0.50`. No new flagship from these labs: nothing of theirs entered OpenRouter's catalog
+  after 2026-11-02, and Alibaba's `qwen4-max-preview` exists only on its Token Plan subscription
+  (credits, preview) — watch.
+
+  **Google — tier 1 via Google's Cloud pricing page** (the Gemini API page is still refused, and
+  OpenRouter's AI Studio host agrees exactly): 3.8 Flash `$1.50/$7.50` with the intro
+  `$0.75/$3.75` to 2026-12-31, 3.5 Flash-Lite `$0.30/$2.50`, 4 Argon `$4/$20`. Argon's `$2/$10`
+  promotion to 2026-11-30 appears on the Vertex page; it is **not shipped**, because the home
+  block bills the Gemini API, whose own page could not be read, and a discount needs the
+  provider's own page. Gemini 4 Carbon (2026-11-10, "a frontier Gemini 4 model", `$4/$20`, #5 on
+  New & Trending, ~95B tokens a day against Argon's ~143B) and Gemini 4 Hydrogen (2026-11-12, the
+  "workhorse", `$1.50/$7.50`, 12.8B tokens on its first day): watch both; Carbon takes Argon's slot
+  once its usage passes Argon's or Google names it the successor.
+
+  **Roster changes.**
+  - **GPT-5.3 Codex leaves both blocks.** OpenAI deprecated it on 2026-10-01 (shutdown
+    2027-04-01) and names `gpt-6-sol` as the replacement, whose successor GPT-6.1 Sol is already
+    bundled twice; no GPT-6 Codex exists; and the acclaim that earned it a routed slot is gone —
+    #227 on OpenRouter for 2026-11-06..12 (~0.008T tokens) against GPT-6.1 Sol at #9 (4.23T). The
+    bundle drops from 43 to 41 priced models. An existing `config.yaml` keeps its entries until
+    edited, and they answer until the shutdown.
+  - **Kimi K3 replaces K2.6 in the Moonshot block.** K2.6 is closed to accounts registered after
+    2026-11-01, with deprecation expected late December 2026, so it already fails for the new
+    installs the example reaches. No cheaper K3-family model exists; `kimi-k3` (`$3/$15`, cache
+    `$0.30`, configured like K3.1 Pro: always thinks, vision on) is still chosen — #29 on
+    OpenRouter (1.13T) — which is the previous-generation rule. The cost: the Moonshot block loses
+    its cheap pick; the cost spread holds through the other labs' cheap entries.
+
+  **Synced in every copy, and step 8.** `config.example.yaml` (entries, QUICK START and block
+  comments), `scripts/wizard/providers.py` (bundles, `MODEL_PRICES`, `description=`, and the
+  Moonshot thinking override, which now covers both always-thinking Kimis), the sync script's
+  QUICK START docstring, `.env.example`, FORK.md (roster prose, key table, the 41-model count), the
+  bundle tests and the stale fixture (its Codex entry dropped). `sync-api-key-models.py --dry-run`
+  exits 0; `test_sync_api_key_models.py`, `test_setup_wizard.py`, `test_config_integrity.py`,
+  `test_audit_models.py`, `test_model_price_fields.py` and `test_pricing.py` are green (306
+  passed); the stale fixture still yields exactly four findings, one per kind. The README names
+  neither model.
+
+  **Discovery** (OpenRouter rankings, "Usage data through Nov 12, 2026"). DeepSeek V4.1 Flash 1017
+  is #1 in every window for a second pass; Tencent Hy4 is #2; Fable 5.2 is #2 on New & Trending;
+  the 2026-11-10 declines hold.
+
+  **Still owed**: Claude Fable 5.2, and the thinking-history fix for the bundled adaptive Claudes
+  (a dedicated change, verified with a live key); Tencent Hy4 (its own change, Tencent's own page);
+  Meta's flagship and API; Gemini 4 Carbon against Argon; the routed cheap-sibling question
+  (DeepSeek V4.1 Flash first).
+
 - **2026-11-10 (branch `claude/zealous-shannon-skhckw`) — tier 1 for every lab but Google, and
   for OpenRouter's pages. Three roll-forwards: Mistral Large 4 replaces Large 3 (home and routed)
   and Medium 3.5 leaves, MiniMax M3.1 Flash replaces M2.7, and the routed DeepSeek V4 Pro moves
