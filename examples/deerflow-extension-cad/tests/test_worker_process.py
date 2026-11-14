@@ -10,6 +10,7 @@ import asyncio
 import json
 import os
 import signal
+import tempfile
 import time
 from pathlib import Path
 
@@ -18,6 +19,14 @@ import pytest
 from deerflow_extension_cad import tool
 
 pytestmark = pytest.mark.skipif(os.name != "posix", reason="process groups and signals are POSIX")
+
+
+@pytest.fixture(autouse=True)
+def own_build_directory(tmp_path, monkeypatch):
+    """Builds of this test only: another build on the machine must not read as a leftover."""
+    builds = tmp_path / "builds"
+    builds.mkdir()
+    monkeypatch.setattr(tempfile, "tempdir", str(builds))
 
 
 def _stand_in(tmp_path: Path, monkeypatch, body: str) -> Path:
@@ -40,8 +49,6 @@ def _gone(pid_file: Path) -> bool:
 
 
 def _leftovers() -> set[str]:
-    import tempfile
-
     return {name for name in os.listdir(tempfile.gettempdir()) if name.startswith("deerflow-cad-")}
 
 
@@ -128,6 +135,18 @@ async def test_an_oversized_or_malformed_answer_is_not_trusted(tmp_path, monkeyp
     assert (await tool.run_worker("x = 1", timeout_seconds=5, memory_mb=4096))["status"] == "failed"
     _stand_in(tmp_path, monkeypatch, "open('result.json', 'w').write('not json')")
     assert (await tool.run_worker("x = 1", timeout_seconds=5, memory_mb=4096))["status"] == "failed"
+
+
+def test_the_real_worker_answers_for_a_fault_of_its_own_instead_of_dying_silently(tmp_path):
+    # Without an answer the parent can only guess ("it may have run out of memory"), which sends a model the wrong way.
+    import subprocess
+    import sys
+
+    (tmp_path / "request.json").write_text("{}", encoding="utf-8")
+    worker = Path(tool.__file__).with_name("worker.py")
+    subprocess.run([sys.executable, "-I", str(worker)], cwd=tmp_path, check=False, timeout=60, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    answer = json.loads((tmp_path / "result.json").read_text(encoding="utf-8"))
+    assert answer["status"] == "failed" and "KeyError" in answer["message"] and "could not finish" in answer["message"]
 
 
 def test_the_real_worker_applies_the_memory_ceiling_before_it_reads_the_script():

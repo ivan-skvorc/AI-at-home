@@ -84,4 +84,9 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception as exc:
+        # A fault of this module or an error the kernel raised outside a build step.
+        # Said as what it is: without an answer the parent can only guess at memory.
+        _answer({"status": "failed", "message": f"the CAD module could not finish this part ({type(exc).__name__}: {str(exc)[:200]}). Try building the same shape another way."})

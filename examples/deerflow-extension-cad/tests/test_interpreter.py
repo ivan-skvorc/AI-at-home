@@ -85,6 +85,25 @@ def test_the_part_is_result_then_the_shown_object_then_the_last_part_assigned():
     assert compile_script("result = " + two[4:] + "show_object(b)\n").result_name == "result"
 
 
+def test_the_part_is_what_was_built_not_what_its_name_holds_later():
+    box, sphere = "cq.Workplane('XY').box(1, 1, 1)", "cq.Workplane('XY').sphere(3)"
+
+    def built(script: str) -> str:
+        program = compile_script(script)
+        return program.operations[program.result].method
+
+    # A name reused for a number does not take the part with it.
+    assert built(f"plate = {box}\nplate = 6\n") == "box"
+    # show_object shows what the name held when it was called, as it does in Python.
+    assert built(f"a = {box}\nshow_object(a)\na = {sphere}\n") == "box"
+    assert built(f"a = {box}\nshow_object(a)\na = 5\n") == "box"
+    # `result` is the part by name, so it has to end as one.
+    for last in ("None", "6", "(1, 2)"):
+        with pytest.raises(ScriptRefused) as refused:
+            compile_script(f"result = {box}\nresult = {last}\n")
+        assert (refused.value.construct, refused.value.line) == ("result", 2)
+
+
 REFUSED = [
     # (script, construct the refusal names, line)
     ("import os\n", "import", 1),
@@ -110,8 +129,8 @@ REFUSED = [
     ("x = '{0.__class__}'.format(cq)\n", "attribute", 1),
     ("x = ', '.join(['a'])\n", "attribute", 1),
     ("r = cq.Workplane('XY').box(1, 1, 1).val()\n", "method", 1),
-    ("r = cq.Workplane('XY').box(1, 1, 1).exportSvg('/tmp/x.svg')\n", "method", 1),
-    ("r = cq.Workplane('XY').box(1, 1, 1).export('/tmp/x.step')\n", "method", 1),
+    ("r = cq.Workplane('XY').box(1, 1, 1).exportSvg('/tmp/x.svg')\n", "export", 1),
+    ("r = cq.Workplane('XY').box(1, 1, 1).export('/tmp/x.step')\n", "export", 1),
     ("r = cq.Workplane('XY').text('hi', 10, 1, fontPath='/etc/passwd')\n", "method", 1),
     ("r = cq.Workplane('XY').box(1, 1, 1).each(lambda s: s)\n", "lambda", 1),
     ("r = cq.Workplane('XY').box(1, 1, 1).eachpoint(cq.Workplane('XY'))\n", "method", 1),
@@ -196,6 +215,26 @@ REFUSED = [
     ("r = cq.Workplane('XY').box(10 ** 9, 1, 1)\n", "argument", 1),
     ("r = cq.Workplane('XY').box(1, 1, 1).faces('>Z').workplane().rarray(1, 1, 1000, 1000).hole(0.5)\n", "pattern", 1),
     ("r = cq.Workplane('XY').box(1, 1, 1).faces('>Z').workplane().polarArray(10, 0, 360, 10 ** 6).hole(0.5)\n", "argument", 1),
+    # A regular polygon is not a way to put ten thousand points on the stack.
+    ("r = cq.Workplane('XY').polygon(10000, 150, forConstruction=True).vertices()\n", "argument", 1),
+    ("r = cq.Workplane('XY').polygon(101, 150).extrude(1)\n", "argument", 1),
+    # The usual last line of a CadQuery script: the tool writes the files, the script does not.
+    ("result = cq.Workplane('XY').box(1, 1, 1)\ncq.exporters.export(result, 'plate.step')\n", "export", 2),
+    ("result = cq.Workplane('XY').box(1, 1, 1)\nresult.export('plate.step')\n", "export", 2),
+    ("result = cq.Workplane('XY').box(1, 1, 1)\nx = cq.exporters.export(result, 'plate.step')\n", "export", 2),
+    ("result = cq.Workplane('XY').box(1, 1, 1).toSvg()\n", "export", 1),
+    ("a = cq.Assembly()\n", "call", 1),
+    ("result = cq.Workplane('XY').box(1, 1, 1)\nresult.val().exportStep('plate.step')\n", "export", 2),
+    ("result = cq.Workplane('XY').box(1, 1, 1)\nresult.faces('>Z')\n", "expression statement", 2),
+    # The line is the one a reader would point at, inside a call that spans several.
+    ("result = (\n    cq.Workplane('XY')\n    .box(1, 1, 1)\n    .objects\n)\n", "attribute", 4),
+    ("result = cq.Workplane('XY').box(\n    1, 1, 1,\n    centered=True,\n    bogus=1,\n)\n", "argument", 4),
+    ("result = cq.Workplane('XY').box(\n    1,\n    'wide',\n    1,\n)\n", "argument", 3),
+    ("p = [\n    (0, 0),\n    (1, 1),\n    'a',\n]\n", "sequence", 4),
+    # centered takes one flag per axis of the thing it centres.
+    ("r = cq.Workplane('XY').box(1, 1, 1, centered=(True, False))\n", "argument", 1),
+    ("r = cq.Workplane('XY').rect(1, 1, centered=(True, False, True)).extrude(1)\n", "argument", 1),
+    ("x = (-8) ** 0.5\n", "arithmetic", 1),
     ("x = 1\n\x00y = 2\n", "syntax", None),
     # What a viewer shows as one line must be what the parser reads as one line.
     ("x = 1\n\x0cy = 2\n", "syntax", None),
@@ -228,6 +267,38 @@ def test_everything_else_is_refused_with_its_construct_and_line(script, construc
     assert construct in refused.value.construct
     assert refused.value.line == line
     assert refused.value.message
+
+
+def test_a_refusal_says_what_to_do_next():
+    def message(script: str) -> str:
+        with pytest.raises(ScriptRefused) as refused:
+            compile_script(script)
+        return refused.value.message
+
+    box = "result = cq.Workplane('XY').box(1, 1, 1)\n"
+    assert "Delete this line" in message(box + "cq.exporters.export(result, 'plate.step')\n")
+    grid = "r{i} = cq.Workplane('XY').box(100, 100, 2).faces('>Z').workplane().rarray(1, 1, 10, 10).hole(0.5)\n"
+    assert "201 in the script" in message(grid.format(i=0) + grid.format(i=1) + grid.format(i=2).replace("10, 10", "1, 1"))
+    assert "fractional power" in message("x = (-8) ** 0.5\n")
+    assert "starts with a letter" in message("_t = 2\n")
+    assert message("from cadquery import Workplane\n") == message("import os\n")
+    assert "an if statement" in message("if 1:\n    x = 1\n") and "a loop" in message("for i in (1, 2):\n    x = i\n")
+    assert "split" in message("result = cq.Workplane('XY')" + ".close()" * 98 + "\n")
+    # What a script wrote is quoted back in part, never in full.
+    for long in ("x = " + "a" * 30000 + "\n", box + "y = result." + "a" * 30000 + "()\n", box + "y = result.box(1, 1, 1, " + "a" * 30000 + "=1)\n"):
+        assert len(message(long)) < 1000
+
+
+def test_the_export_refusal_shadows_no_allow_listed_method():
+    from deerflow_extension_cad import interpreter
+
+    assert not [name for name in allowlist.METHODS if name.lower().startswith(interpreter._EXPORTS)]
+
+
+def test_centered_takes_one_flag_per_axis():
+    assert compile_script("r = cq.Workplane('XY').box(1, 1, 1, centered=(True, True, False))\n")
+    assert compile_script("r = cq.Workplane('XY').rect(1, 1, centered=(True, False)).extrude(1)\n")
+    assert compile_script("r = cq.Workplane('XY').box(9, 9, 1).faces('>Z').workplane().rarray(2, 2, 2, 2, center=(True, False)).hole(0.5)\n")
 
 
 def test_a_script_without_a_part_is_refused():

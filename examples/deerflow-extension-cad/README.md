@@ -77,11 +77,14 @@ and a blind hole with a domed floor reads as through.
   result.
 
 The part is the variable `result`, else the object passed to `show_object`, else
-the last part assigned. Units are millimetres.
+the last part assigned. A script that uses the name `result` must leave a part
+in it. Units are millimetres.
 
 Everything else is refused with the construct and its line: other imports,
 attribute access, any other call, `def`, `lambda`, `class`, loops, `if`,
 comprehensions, `with`, `try`, f-strings, subscripts, comparisons, dunder names.
+An export line such as `cq.exporters.export(result, "plate.step")` is refused
+with its reason: the tool writes the files, after its checks.
 
 Control characters and invisible Unicode (zero-width characters, direction
 overrides, line separators) are refused anywhere in the text, comments included:
@@ -119,13 +122,17 @@ with an example that builds and a signature check against the kernel
 | --- | --- | --- |
 | Script size | 32 KiB, 2,000 syntax nodes, nesting 200, 300 operations | `interpreter.py` |
 | Numbers | at most 1e12; sizes and coordinates from 0.0001 to 100,000 mm | `interpreter.py`, `allowlist.py` |
-| Pattern points | 100 per call, 200 per script | `allowlist.py` |
+| Pattern points | `pushPoints`, `rarray`, `polarArray`: 100 per call, 200 per script; a polygon has at most 100 sides | `allowlist.py` |
 | Build time | 20 seconds wall clock, then the process group is killed | `timeout_seconds` |
 | Build memory | 4,096 MiB of address space, where the operating system enforces it (Linux) | `memory_mb` |
 | Exported file | 16 MiB read back, then the host's `plugin_outputs` caps apply | `tool.py` |
 
 Pattern cost grows faster than the count. `circle().cutThruAll()` on a pattern is
-far slower than `hole()`: 100 circles take about 7 seconds on four cores.
+far slower than `hole()`: 100 circles take about 7 seconds on four cores. The
+pattern caps keep the ordinary idioms inside the build time; they do not bound
+every script. `vertices()` on construction geometry multiplies the points on
+the stack, and what stops such a build is the wall clock: it is killed and the
+model is told to simplify.
 
 The host's own plugin limits stay as they are: 256 KiB of input, 64 KiB of
 result, 30 seconds. File bytes do not count against the result cap.

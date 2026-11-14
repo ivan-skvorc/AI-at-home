@@ -62,7 +62,9 @@ here as one.
   the child sets memory, CPU and file-size limits where the operating system
   offers them.
 - **Resource use is bounded before the kernel starts**: script size, syntax
-  nodes, nesting, number magnitude, exponent size and pattern instances.
+  nodes, nesting, number magnitude, exponent size and pattern instances. What an
+  accepted script can still cost the kernel is stopped by the parent's wall
+  clock and the child's memory ceiling, not by the reading.
 - **The kept script reads the way it was read.** Control characters and
   invisible Unicode (zero-width characters, direction overrides, line
   separators) are refused anywhere in the text, so a statement cannot hide from

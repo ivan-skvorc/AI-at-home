@@ -5496,9 +5496,12 @@ README holds the user's half: the allow-list, the limits, the install.
 - **Arguments are typed by the table, not by the kernel.** CadQuery accepts
   `centered="abc"` and reads `extrude(True)` as 1. Non-finite numbers hang or
   crash it. Every argument is checked against its kind first.
-- **Pattern caps are sized for the slow idiom.** `circle().cutThruAll()` on a
-  pattern is about 55 times slower than `hole()`. The caps (100 per call, 200 per
-  script) keep the worst accepted script inside the wall clock.
+- **Pattern caps are sized for the slow idiom, and the wall clock is the
+  bound.** `circle().cutThruAll()` on a pattern is about 55 times slower than
+  `hole()`; the caps (100 per call, 200 per script) keep the ordinary idioms
+  inside the build time. They cannot bound every script: `vertices()` on
+  construction geometry multiplies the points on the stack, which no reading of
+  the text can count. The parent's kill of the process group is what holds.
 - **The shape is exported, not the Workplane.** Exporting a Workplane after
   `shell()` writes bare shells and the STEP holds no solid.
 - **A hole is decided by geometry**, by the rule at the top of `measure.py`.

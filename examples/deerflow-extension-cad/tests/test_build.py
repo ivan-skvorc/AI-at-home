@@ -95,7 +95,7 @@ HOSTILE = [
     ("another import", "import os\nresult = cq.Workplane('XY').box(1, 1, 1)\n", "import"),
     ("a dunder attribute", "result = cq.Workplane('XY').box(1, 1, 1).__class__.__mro__\n", "attribute"),
     ("a lambda", "f = lambda: 1\nresult = cq.Workplane('XY').box(1, 1, 1)\n", "lambda"),
-    ("a method that takes a path", "result = cq.Workplane('XY').box(1, 1, 1).exportSvg('/tmp/deerflow-cad-canary.svg')\n", "method"),
+    ("a method that takes a path", "result = cq.Workplane('XY').box(1, 1, 1).exportSvg('/tmp/deerflow-cad-canary.svg')\n", "export"),
     ("a builtin that opens a file", "x = open('/tmp/deerflow-cad-canary', 'w')\nresult = cq.Workplane('XY').box(1, 1, 1)\n", "call"),
     ("a pattern of a million instances", "result = cq.Workplane('XY').box(9, 9, 1).faces('>Z').workplane().rarray(1, 1, 1000, 1000).hole(0.5)\n", "pattern"),
     ("a deeply nested expression", "x = " + "(" * 3000 + "1" + ")" * 3000 + "\nresult = cq.Workplane('XY').box(1, 1, 1)\n", "syntax"),

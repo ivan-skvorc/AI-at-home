@@ -166,11 +166,26 @@ _CONSTRUCTS: dict[type, str] = {
 }
 
 _POSITIONED = (ast.stmt, ast.expr, ast.keyword, ast.alias)
+_ONLY_IMPORT = "the only import a script may contain is: import cadquery as cq"
 _ALLOWED_SUMMARY = "A script may contain: import cadquery as cq, assignments to names, numbers, strings, tuples, lists, arithmetic, cq.Workplane(...) and the allow-listed methods of a part."
+
+
+#: Attribute names that mean "write a file": the tool does that itself, after its checks.
+_EXPORTS = ("export", "save", "tosvg")
+MAX_ECHO = 60
 
 
 def _refuse(construct: str, line: int | None, message: str):
     raise ScriptRefused(construct, line, message)
+
+
+def _short(text: str) -> str:
+    """What a script wrote, cut for quoting back: a refusal is not a way to fill the answer."""
+    return text if len(text) <= MAX_ECHO else text[: MAX_ECHO - 3] + "..."
+
+
+def _article(noun: str) -> str:
+    return f"an {noun}" if noun[:1] in "aeiou" else f"a {noun}"
 
 
 def _check_tree(tree: ast.Module) -> None:
@@ -188,11 +203,13 @@ def _check_tree(tree: ast.Module) -> None:
         if count > MAX_NODES:
             _refuse("script length", line, f"the script is too long: more than {MAX_NODES} syntax nodes")
         if depth > MAX_DEPTH:
-            _refuse("nesting", line, f"the expression is nested deeper than {MAX_DEPTH} levels")
+            _refuse("nesting", line, f"the expression is nested deeper than {MAX_DEPTH} levels; split a long chain of calls across two assignments")
         kind = type(node)
+        if kind is ast.ImportFrom:
+            _refuse("import", line, _ONLY_IMPORT)
         if kind not in _ALLOWED:
             construct = _CONSTRUCTS.get(kind, kind.__name__.lower())
-            _refuse(construct, line, f"a script may not contain a {construct}. {_ALLOWED_SUMMARY}")
+            _refuse(construct, line, f"a script may not contain {_article(construct)}. {_ALLOWED_SUMMARY}")
         if kind is ast.keyword and node.arg is None:
             _refuse("keyword unpacking", line, "arguments may not be unpacked with **; name each argument")
         children = list(ast.iter_child_nodes(node))
@@ -233,23 +250,27 @@ class _Reader:
         self.names: dict[str, object] = {}
         self.operations: list[Operation] = []
         self.instances = 0
-        self.shown: str | None = None
-        self.last_part: str | None = None
+        #: (name, slot) pairs: the part a name held at that moment, whatever the name holds later.
+        self.shown: tuple[str, int] | None = None
+        self.last_part: tuple[str, int] | None = None
+        self.result_line: int | None = None
 
     # Statements
 
     def statement(self, node: ast.stmt) -> None:
         if isinstance(node, ast.Import):
             if len(node.names) != 1 or node.names[0].name != "cadquery" or node.names[0].asname != "cq":
-                _refuse("import", node.lineno, "the only import a script may contain is: import cadquery as cq")
+                _refuse("import", node.lineno, _ONLY_IMPORT)
         elif isinstance(node, ast.Assign):
             if len(node.targets) != 1 or not isinstance(node.targets[0], ast.Name):
                 _refuse("assignment target", node.lineno, "assign one value to one plain name, for example: width = 40")
             name = self.target(node.targets[0].id, node.lineno)
             value = self.value(node.value)
             self.names[name] = value
+            if name == "result":
+                self.result_line = node.lineno
             if isinstance(value, Ref):
-                self.last_part = name
+                self.last_part = (name, value.slot)
         elif isinstance(node, ast.Expr):
             self.expression_statement(node)
         else:  # pragma: no cover - _check_tree refuses every other statement first
@@ -257,7 +278,7 @@ class _Reader:
 
     def target(self, name: str, line: int) -> str:
         if name in ("cq", "show_object") or "__" in name or not _NAME.fullmatch(name):
-            _refuse("name", line, f"{name!r} cannot be assigned: use a plain name of letters, digits and single underscores, and not cq")
+            _refuse("name", line, f"{_short(name)!r} cannot be assigned: use a name that starts with a letter and holds letters, digits and single underscores, at most 64 characters, and not cq")
         return name
 
     def expression_statement(self, node: ast.Expr) -> None:
@@ -266,13 +287,15 @@ class _Reader:
             return  # a docstring
         if isinstance(value, ast.Call) and isinstance(value.func, ast.Name):
             if value.func.id != "show_object":
-                _refuse("call", node.lineno, f"{value.func.id}() cannot be called. A script may call cq.Workplane(...) and the methods of a part.")
+                _refuse("call", node.lineno, f"{_short(value.func.id)}() cannot be called. A script may call cq.Workplane(...) and the methods of a part.")
             shown = value.args[0] if len(value.args) == 1 else None
             keywords_ok = all(keyword.arg == "name" and isinstance(keyword.value, ast.Constant) for keyword in value.keywords)
             if not isinstance(shown, ast.Name) or not keywords_ok or not isinstance(self.names.get(shown.id), Ref):
                 _refuse("show_object", node.lineno, "show_object takes the name of one part built earlier, for example: show_object(result)")
-            self.shown = shown.id
+            self.shown = (shown.id, self.names[shown.id].slot)
             return
+        if isinstance(value, ast.Call):
+            self.value(value)  # what is wrong with the call itself is the more useful answer
         _refuse("expression statement", node.lineno, "this line computes a value and drops it: assign it to a name")
 
     # Expressions
@@ -284,7 +307,7 @@ class _Reader:
             if node.id == "cq":
                 _refuse("name", node.lineno, "cq can only be used as cq.Workplane(...)")
             if node.id not in self.names:
-                _refuse("name", node.lineno, f"{node.id!r} is not defined earlier in the script")
+                _refuse("name", node.lineno, f"{_short(node.id)!r} is not defined earlier in the script")
             return self.names[node.id]
         if isinstance(node, (ast.Tuple, ast.List)):
             return self.sequence(node)
@@ -298,7 +321,8 @@ class _Reader:
         if isinstance(node, ast.Call):
             return self.call(node)
         if isinstance(node, ast.Attribute):
-            _refuse("attribute", node.lineno, f".{node.attr} cannot be read: a script may only call the allow-listed methods of a part")
+            # The attribute's own line: a chain starts on the line of its first name.
+            _refuse("attribute", node.end_lineno or node.lineno, f".{_short(node.attr)} cannot be read: a script may only call the allow-listed methods of a part")
         _refuse("expression", node.lineno, _ALLOWED_SUMMARY)  # pragma: no cover - _check_tree refuses these first
 
     def constant(self, node: ast.Constant) -> object:
@@ -319,10 +343,10 @@ class _Reader:
         if len(node.elts) > table.MAX_SEQUENCE_ITEMS:
             _refuse("sequence", node.lineno, f"a list or tuple holds at most {table.MAX_SEQUENCE_ITEMS} items")
         items = tuple(self.value(element) for element in node.elts)
-        for item in items:
+        for element, item in zip(node.elts, items):
             nested = isinstance(item, tuple)
             if not (nested or isinstance(item, bool) or _is_number(item)) or (nested and any(isinstance(inner, tuple) for inner in item)):
-                _refuse("sequence", node.lineno, "a list or tuple holds numbers, booleans, or points made of numbers")
+                _refuse("sequence", element.lineno, "a list or tuple holds numbers, booleans, or points made of numbers")
         return items
 
     def arithmetic(self, node: ast.BinOp) -> object:
@@ -351,6 +375,8 @@ class _Reader:
             _refuse("arithmetic", node.lineno, "division by zero")
         except OverflowError:
             _refuse("arithmetic", node.lineno, "the result is too large")
+        if isinstance(result, complex):
+            _refuse("arithmetic", node.lineno, "a negative number cannot be raised to a fractional power")
         if not _in_range(result):
             _refuse("arithmetic", node.lineno, f"the result must be a finite number no larger than {MAX_NUMBER:g}")
         return result
@@ -360,21 +386,24 @@ class _Reader:
     def call(self, node: ast.Call) -> Ref:
         function = node.func
         if isinstance(function, ast.Name):
-            _refuse("call", node.lineno, f"{function.id}() cannot be called. A script may call cq.Workplane(...) and the methods of a part.")
+            _refuse("call", node.lineno, f"{_short(function.id)}() cannot be called. A script may call cq.Workplane(...) and the methods of a part.")
         if not isinstance(function, ast.Attribute):
             _refuse("call", node.lineno, "only cq.Workplane(...) and the methods of a part can be called")
         # A chained call starts on the chain's first line; the method's own name is where it reads.
         line = function.end_lineno or node.lineno
+        if function.attr.lower().startswith(_EXPORTS):
+            # The usual last line of a CadQuery script. Nothing here writes a file for it.
+            _refuse("export", line, "a script does not export: the tool writes the STEP, STL and GLB files itself once the part passes its checks. Delete this line.")
         if isinstance(function.value, ast.Name) and function.value.id == "cq":
             if function.attr != "Workplane":
-                _refuse("call", line, f"cq.{function.attr} is not available: the only thing a script may use on cq is cq.Workplane(...)")
+                _refuse("call", line, f"cq.{_short(function.attr)} is not available: the only thing a script may use on cq is cq.Workplane(...)")
             return self.operation(node, line, None, "Workplane", table.CONSTRUCTOR)
         receiver = self.value(function.value)
         if not isinstance(receiver, Ref):
-            _refuse("attribute", line, f".{function.attr}() cannot be called on {_describe(receiver)}: only a part has methods")
+            _refuse("attribute", line, f".{_short(function.attr)}() cannot be called on {_describe(receiver)}: only a part has methods")
         method = table.METHODS.get(function.attr)
         if method is None:
-            _refuse("method", line, f".{function.attr}() is not on the allow-list. Available: {', '.join(sorted(table.METHODS))}")
+            _refuse("method", line, f".{_short(function.attr)}() is not on the allow-list. Available: {', '.join(sorted(table.METHODS))}")
         return self.operation(node, line, receiver.slot, function.attr, method)
 
     def operation(self, node: ast.Call, line: int, receiver: int | None, name: str, method: table.Method) -> Ref:
@@ -385,9 +414,9 @@ class _Reader:
         supplied: dict[str, ast.expr] = {param.name: argument for param, argument in zip(method.params, node.args)}
         for keyword in node.keywords:
             if keyword.arg not in params:
-                _refuse("argument", line, f"{label}() has no argument {keyword.arg!r}. It takes: {', '.join(params) or 'no arguments'}")
+                _refuse("argument", keyword.lineno, f"{label}() has no argument {_short(keyword.arg)!r}. It takes: {', '.join(params) or 'no arguments'}")
             if keyword.arg in supplied:
-                _refuse("argument", line, f"{label}() got {keyword.arg!r} twice")
+                _refuse("argument", keyword.lineno, f"{label}() got {keyword.arg!r} twice")
             supplied[keyword.arg] = keyword.value
         arguments = []
         bound: dict[str, object] = {}
@@ -396,14 +425,17 @@ class _Reader:
                 if param.required:
                     _refuse("argument", line, f"{label}() needs {param.name!r}")
                 continue
-            value = self.fit(label, param, self.value(supplied[param.name]), line)
+            # An argument on its own line is refused on that line, not on the method's.
+            value = self.fit(label, param, self.value(supplied[param.name]), max(line, supplied[param.name].lineno))
             bound[param.name] = value
             arguments.append((param.name, value))
         if method.instances:
             points = math.prod(len(bound[key]) if isinstance(bound[key], list) else bound[key] for key in method.instances)
             self.instances += points
             if points > table.MAX_INSTANCES_PER_CALL or self.instances > table.MAX_INSTANCES_PER_SCRIPT:
-                _refuse("pattern", line, f"{label}() would make {points} points: at most {table.MAX_INSTANCES_PER_CALL} per call and {table.MAX_INSTANCES_PER_SCRIPT} per script")
+                _refuse(
+                    "pattern", line, f"{label}() would make {points} point{'' if points == 1 else 's'}, {self.instances} in the script so far: at most {table.MAX_INSTANCES_PER_CALL} per call and {table.MAX_INSTANCES_PER_SCRIPT} per script"
+                )
         if len(self.operations) >= MAX_OPERATIONS:
             _refuse("script length", line, f"a script may perform at most {MAX_OPERATIONS} operations")
         self.operations.append(Operation(line, receiver, name, tuple(arguments)))
@@ -426,11 +458,12 @@ _EXPECTED = {
     table.NUMBER: f"a number between -{table.MAX_MAGNITUDE:g} and {table.MAX_MAGNITUDE:g}",
     table.ANGLE: f"an angle in degrees between -{table.MAX_ANGLE:g} and {table.MAX_ANGLE:g}",
     table.COUNT: f"a whole number from 1 to {MAX_COUNT}",
-    table.SIDES: "a whole number of at least 3",
+    table.SIDES: f"a whole number from 3 to {table.MAX_SIDES}",
     table.BOOL: "True or False",
     table.POINT: "a point of two or three numbers, for example (10, 0)",
     table.POINTS: "a list of points, for example [(0, 0), (10, 0)]",
-    table.CENTERED: "True, False, or a tuple of them such as (True, True, False)",
+    table.CENTERED_2D: "True, False, or one of them per axis such as (True, False)",
+    table.CENTERED_3D: "True, False, or one of them per axis such as (True, True, False)",
     table.PLANE: "one of " + ", ".join(repr(name) for name in table.PLANE_NAMES),
     table.SELECTOR: "a CadQuery selector such as '>Z' or '|Z and >Y'",
     table.TAG: "a label of letters, digits and underscores",
@@ -438,10 +471,16 @@ _EXPECTED = {
 }
 
 
-def _whole(value: object, minimum: int) -> object:
+def _whole(value: object, minimum: int, maximum: int = MAX_COUNT) -> object:
     if isinstance(value, float) and value.is_integer():
         value = int(value)
-    return value if type(value) is int and minimum <= value <= MAX_COUNT else _UNFIT
+    return value if type(value) is int and minimum <= value <= maximum else _UNFIT
+
+
+def _flags(value: object, axes: int) -> object:
+    if isinstance(value, bool) or (isinstance(value, tuple) and len(value) == axes and all(isinstance(item, bool) for item in value)):
+        return value
+    return _UNFIT
 
 
 def _point(value: object) -> object:
@@ -462,7 +501,7 @@ def _fit(kind: str | tuple[str, ...], value: object) -> object:
     if kind == table.COUNT:
         return _whole(value, 1)
     if kind == table.SIDES:
-        return _whole(value, 3)
+        return _whole(value, 3, table.MAX_SIDES)
     if kind == table.BOOL:
         return value if isinstance(value, bool) else _UNFIT
     if kind == table.POINT:
@@ -471,10 +510,10 @@ def _fit(kind: str | tuple[str, ...], value: object) -> object:
         if isinstance(value, tuple) and value and all(_point(item) is not _UNFIT for item in value):
             return list(value)
         return _UNFIT
-    if kind == table.CENTERED:
-        if isinstance(value, bool) or (isinstance(value, tuple) and len(value) in (2, 3) and all(isinstance(item, bool) for item in value)):
-            return value
-        return _UNFIT
+    if kind == table.CENTERED_2D:
+        return _flags(value, 2)
+    if kind == table.CENTERED_3D:
+        return _flags(value, 3)
     if kind == table.PLANE:
         return value if isinstance(value, str) and value in table.PLANE_NAMES else _UNFIT
     if kind == table.SELECTOR:
@@ -521,7 +560,14 @@ def compile_script(source: str) -> Program:
             reader.statement(statement)
     except RecursionError:
         _refuse("nesting", None, "the script is nested too deeply to read")
-    name = "result" if isinstance(reader.names.get("result"), Ref) else reader.shown or reader.last_part
-    if name is None:
+    # The part is chosen by what was built: a name that held it may hold a number by now.
+    if "result" in reader.names:
+        held = reader.names["result"]
+        if not isinstance(held, Ref):
+            _refuse("result", reader.result_line, f"result must be the part, and it ends as {_describe(held)}")
+        chosen = ("result", held.slot)
+    else:
+        chosen = reader.shown or reader.last_part
+    if chosen is None:
         _refuse("result", None, "the script builds no part: assign one to a name, for example result = cq.Workplane('XY').box(10, 10, 10)")
-    return Program(tuple(reader.operations), reader.names[name].slot, name)
+    return Program(tuple(reader.operations), chosen[1], chosen[0])

@@ -22,11 +22,12 @@ LENGTH = "length"  # a number greater than zero, in millimetres
 NUMBER = "number"  # any number within the magnitude cap
 ANGLE = "angle"  # a number of degrees
 COUNT = "count"  # a whole number of at least one
-SIDES = "sides"  # a whole number of at least three
+SIDES = "sides"  # a whole number from three to MAX_SIDES
 BOOL = "bool"
 POINT = "point"  # two or three numbers
 POINTS = "points"  # a list or tuple of points
-CENTERED = "centered"  # a bool, or two or three bools
+CENTERED_2D = "centered2"  # a bool, or one bool per axis of an outline
+CENTERED_3D = "centered3"  # a bool, or one bool per axis of a solid
 PLANE = "plane"  # one of PLANE_NAMES
 SELECTOR = "selector"  # a CadQuery selector string, see SELECTOR_PATTERN
 TAG = "tag"  # a label, see TAG_PATTERN
@@ -51,9 +52,13 @@ MAX_ANGLE = 3600.0
 #: Points one pattern call may create, and all pattern calls of a script together.
 #: Cost grows faster than the count, and the common idiom circle().cutThruAll() is far
 #: slower than hole(): 100 circles cut in about 7 seconds on four cores, 225 in about a
-#: minute. With these caps the worst accepted script still fits the worker's wall clock.
+#: minute. The caps keep the ordinary idioms inside the worker's wall clock. They are
+#: not a bound on every script: vertices() on construction geometry multiplies the
+#: points on the stack, and what stops that is the parent's wall clock.
 MAX_INSTANCES_PER_CALL = 100
 MAX_INSTANCES_PER_SCRIPT = 200
+#: Sides of one regular polygon: past this it is a circle, and each side is a point.
+MAX_SIDES = 100
 #: Elements one list or tuple may hold.
 MAX_SEQUENCE_ITEMS = 400
 
@@ -99,11 +104,13 @@ CONSTRUCTOR = Method(
 
 METHODS: dict[str, Method] = {
     # Primitives
-    "box": Method((_req("length", LENGTH), _req("width", LENGTH), _req("height", LENGTH), _opt("centered", CENTERED), _COMBINE, _CLEAN), "A box, centred on the workplane origin unless centered says otherwise.", f"{_BASE}.box(60, 40, 6)"),
-    "cylinder": Method((_req("height", LENGTH), _req("radius", LENGTH), _opt("direct", POINT), _opt("angle", ANGLE), _opt("centered", CENTERED), _COMBINE, _CLEAN), "A cylinder along the workplane normal.", f"{_BASE}.cylinder(20, 5)"),
+    "box": Method(
+        (_req("length", LENGTH), _req("width", LENGTH), _req("height", LENGTH), _opt("centered", CENTERED_3D), _COMBINE, _CLEAN), "A box, centred on the workplane origin unless centered says otherwise.", f"{_BASE}.box(60, 40, 6)"
+    ),
+    "cylinder": Method((_req("height", LENGTH), _req("radius", LENGTH), _opt("direct", POINT), _opt("angle", ANGLE), _opt("centered", CENTERED_3D), _COMBINE, _CLEAN), "A cylinder along the workplane normal.", f"{_BASE}.cylinder(20, 5)"),
     "sphere": Method((_req("radius", LENGTH),), "A sphere.", f"{_BASE}.sphere(10)"),
     # Two-dimensional outlines, to extrude or to cut
-    "rect": Method((_req("xLen", LENGTH), _req("yLen", LENGTH), _opt("centered", CENTERED), _CONSTRUCTION), "A rectangle on the workplane, one per point on the stack.", f"{_BASE}.rect(30, 20).extrude(5)"),
+    "rect": Method((_req("xLen", LENGTH), _req("yLen", LENGTH), _opt("centered", CENTERED_2D), _CONSTRUCTION), "A rectangle on the workplane, one per point on the stack.", f"{_BASE}.rect(30, 20).extrude(5)"),
     "circle": Method((_req("radius", LENGTH), _CONSTRUCTION), "A circle on the workplane, one per point on the stack.", f"{_BASE}.circle(10).extrude(5)"),
     "ellipse": Method((_req("x_radius", LENGTH), _req("y_radius", LENGTH), _opt("rotation_angle", ANGLE), _CONSTRUCTION), "An ellipse on the workplane.", f"{_BASE}.ellipse(20, 10).extrude(5)"),
     "polygon": Method((_req("nSides", SIDES), _req("diameter", LENGTH), _CONSTRUCTION, _opt("circumscribed", BOOL)), "A regular polygon.", f"{_BASE}.polygon(6, 20).extrude(5)"),
@@ -147,7 +154,7 @@ METHODS: dict[str, Method] = {
     # Points to repeat the next outline or hole on
     "pushPoints": Method((_req("pntList", POINTS),), "Put points on the stack.", f"{_BASE}.box(60, 40, 6).faces('>Z').workplane().pushPoints([(-15, 0), (15, 0)]).hole(4)", instances=("pntList",)),
     "rarray": Method(
-        (_req("xSpacing", LENGTH), _req("ySpacing", LENGTH), _req("xCount", COUNT), _req("yCount", COUNT), _opt("center", CENTERED)),
+        (_req("xSpacing", LENGTH), _req("ySpacing", LENGTH), _req("xCount", COUNT), _req("yCount", COUNT), _opt("center", CENTERED_2D)),
         "A rectangular grid of points.",
         f"{_BASE}.box(60, 40, 6).faces('>Z').workplane().rarray(20, 20, 2, 2).hole(4)",
         instances=("xCount", "yCount"),
