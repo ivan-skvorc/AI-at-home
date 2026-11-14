@@ -1,9 +1,10 @@
-"""The example's five deliberately small contribution implementations."""
+"""The example's six deliberately small contribution implementations."""
 
 from __future__ import annotations
 
+import re
 from asyncio import CancelledError
-from collections.abc import Awaitable, Callable, Generator, Sequence
+from collections.abc import Awaitable, Callable, Generator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from threading import Lock
@@ -15,13 +16,17 @@ from deerflow_extension_api import (
     AgentScope,
     ExtensionData,
     ExtensionRuntimeDeps,
+    HostCapabilityError,
     MiddlewarePlacement,
+    ModelTool,
     Placement,
+    PluginContribution,
     SystemModelRequest,
     SystemModelResult,
     SystemOperationKind,
     TaskInfo,
     TaskOutcome,
+    ToolContext,
     task_store_from_runtime,
 )
 from fastapi import APIRouter, Depends, HTTPException
@@ -220,3 +225,46 @@ def build_router(service: ExampleService) -> APIRouter:
         }
 
     return router
+
+
+async def save_note(payload: Mapping[str, Any], context: ToolContext) -> dict[str, str]:
+    """Write the note as a Markdown file into the calling conversation's outputs.
+
+    The tool names a file and hands over bytes. The host decides where the
+    conversation's outputs are, checks the name and the operator's size caps,
+    and returns the path it used, which differs when the name was taken.
+    """
+    title = " ".join(str(payload["title"]).split())
+    name = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-") or "note"
+    content = f"# {title}\n\n{str(payload['text']).rstrip()}\n".encode()
+    try:
+        return {"saved": await context.write_output(f"{name}.md", content)}
+    except HostCapabilityError as exc:
+        # The codes are stable: UNSUPPORTED, INVALID_NAME, LIMIT_EXCEEDED, ...
+        return {"error": f"The note was not saved ({exc.code})."}
+
+
+def build_notes_plugin() -> PluginContribution:
+    """One model tool, on by default once the operator installed the package."""
+    return PluginContribution(
+        namespace="example.notes",
+        title="Example notes",
+        description="Saves a short note as a Markdown file in the conversation's outputs.",
+        enabled=True,
+        tools=(
+            ModelTool(
+                "save_note",
+                "Save a short note as a Markdown file in this conversation's outputs. Returns the file's path.",
+                {
+                    "type": "object",
+                    "properties": {
+                        "title": {"type": "string", "minLength": 1, "maxLength": 80, "description": "Title of the note; also names the file."},
+                        "text": {"type": "string", "maxLength": 20000, "description": "Body of the note, as Markdown."},
+                    },
+                    "required": ["title", "text"],
+                    "additionalProperties": False,
+                },
+                save_note,
+            ),
+        ),
+    )

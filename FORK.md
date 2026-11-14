@@ -333,7 +333,8 @@ First, the mechanical gates:
 - [ ] **A reply keeps the price it was billed at** (§17): `cd backend && uv run pytest tests/test_run_pricing_snapshot.py tests/test_thread_token_usage.py tests/test_run_repository.py -q`. Cost is read from `runs.pricing_snapshot`, not recomputed from the live config, and every way that can regress is silent. `test_a_model_dropped_from_the_roster_keeps_its_cost` is the motivating case and asserts **both** directions in one test — with the snapshot the spend survives, without it the run prices to `None` — so deleting the snapshot path fails loudly instead of just making conversations cheaper. `test_a_later_price_change_does_not_rewrite_an_old_run` is the other half. Three guards exist because each is a way the fix could be worse than the bug: `test_a_currency_switch_re_prices_rather_than_summing_two_currencies`, `test_a_snapshot_cannot_switch_cost_reporting_back_on`, `test_a_discount_is_not_re_expired_on_replay`. `TestSnapshotPersistence` is the plumbing: it round-trips the SQL store, the memory store and `_with_pricing_snapshot`, and pins that a completion **retry** without a snapshot does not erase the stored value. Keep `test_the_headers_stated_relation_still_holds_across_an_edit` too: `sum(steps) + superseded_cost == total_cost` is what the cost dropdown tells the reader, and per-run pricing is what makes it an identity. A store with no `by_run` must still price its `by_model` aggregate (`tests/test_thread_token_usage.py` covers it).
 - [ ] **CI's pnpm bootstrap stays retried and pinned**: `cd backend && uv run pytest tests/test_ci_pnpm_bootstrap.py -q`. A transient registry abort while corepack fetches pnpm crashes Node's undici parser (`AssertionError: assert(!this.paused)`) before any test runs and reads like a broken branch (PR #106). `test_the_pnpm_download_is_retried` asserts the retry on the step's *shape*, so it can be rewritten but not removed, across every workflow that prepares pnpm (four today); `test_there_is_a_pnpm_bootstrap_to_check` exists because a renamed step would otherwise leave that parametrized test iterating an empty list and passing green. `test_every_workflow_prepares_the_version_the_repo_pins` is the drift guard: the version lives in five places (`frontend/package.json`'s `packageManager` plus one `corepack prepare` per workflow) and moves out of one at a time, and a mismatch means CI silently exercises a different pnpm than contributors run. Bumping pnpm is one change that touches all five.
 - [ ] **A file explorer for each conversation** (§49): `cd backend && uv run pytest tests/test_thread_files_router.py tests/blocking_io/test_thread_files_router.py -q` (the first inside the Backend gate) and `cd frontend && pnpm test thread-files`, plus `pnpm test:e2e thread-files`. Silent when broken: `test_symlink_escaping_user_data_is_listed_as_a_link_and_never_entered` and `test_dot_dot_traversal_never_lists_outside_user_data` (the route must keep `get_artifact`'s confinement: normalize, then `resolve_thread_virtual_path`, never follow a link), and `test_hides_only_gateway_transient_files` (dotfiles such as `.git` are content, not hidden).
-- [ ] Frontend: `pnpm check && pnpm test`. **`pnpm check` now includes the formatting gate** (`prettier --check .`, then eslint, then `tsc --noEmit`) — it used to be eslint + tsc only, which meant the command every guide tells you to run before committing was not the command CI gates on, and an eslint/type-clean change could still fail `lint-frontend` on formatting alone. That discrepancy was documented right here and was still walked into twice, so it was removed instead of re-warned about (see the Prettier row below). `pnpm format:write` fixes what the check reports; `eslint --fix` normalizes imports and optional-chains but not Prettier whitespace.
+- [ ] **A plugin tool's file output** (§50): `tests/test_plugin_tools.py` runs inside the Backend gate; also `make test-blocking-io`. Untested: upstream owns `API_VERSION`. If the merge brings its own 0.2.12, move the fork's floor past it (the example's `@extension` marker and requirement, `docs/full-stack-plugins.md`, `test_example_extension_requires_a_host_with_file_output`).
+- [ ] Frontend: `pnpm check && pnpm test`. **`pnpm check` includes the formatting gate** (`prettier --check .`, eslint, `tsc --noEmit`). `pnpm format:write` fixes what the check reports; `eslint --fix` normalizes imports and optional-chains but not Prettier whitespace.
 - [ ] **Changed a shared UI control? Run the whole e2e suite, not the one spec you thought of.** `pnpm test:e2e` with no filter. A control's _specs_ are not the specs in the file you edited: they are every spec that clicks that control anywhere in the app, and nothing in `pnpm check` or `pnpm test` knows the difference. Observed live on the model-picker unification — the composer's picker was swapped into five screens, the Democracy spec was found and fixed by hand, and `suggestions-settings.spec.ts` was missed entirely because it drives the _same control_ from a different page. It failed only in CI. Two rules fell out of it, both now pinned by `frontend/tests/unit/components/workspace/model-picker-sites.test.ts`: a spec must locate a shared control by that control's **own** `data-slot`, never by the ARIA role of the primitive underneath (swap the primitive and the locator silently matches nothing), and a fast unit test should assert the contract so a six-minute e2e job is not the thing that tells you.
 
   ```bash
@@ -5344,3 +5345,90 @@ and accessible description say where it counts from: the server's start ("Runnin
 since 14:32"), or, until the server reports it, when this page began following
 the run (`message-list-run-activity.dom.test.tsx`,
 `tests/e2e/run-timer-reopen.spec.ts`).
+
+### 50. A plugin tool can hand a file to its conversation
+
+**Why.** "Evaluate an extension first" had a gap. The extension contract could
+place at most 2 MiB into an *idle* thread's uploads (`AgentRuns.import_artifact`),
+so a tool that produces a file in the middle of a run could not be an extension.
+That is why ComfyUI (§23) and the Grok media tools (§43) live in core and write
+through `write_output`. A tool with no credential to protect should not need core.
+
+**What.** Extension API 0.2.12 adds `ToolContext.write_output(name, content)`. A
+model tool supplies a file name and bytes; the host writes the file into the
+outputs of the conversation that called the tool and returns its virtual path.
+The write happens in the Gateway, so it works under every sandbox provider,
+including the default `LocalSandboxProvider` with no shell. The contract, limits
+and error codes are in
+[docs/full-stack-plugins.md](docs/full-stack-plugins.md#files-a-tool-writes-into-its-conversation);
+the host side is `extensions/plugin_tools.py`.
+
+**The decisions, and what was rejected.**
+
+- **One method on `ToolContext`, errors as `HostCapabilityError` codes.** The
+  host binds a per-call writer (`output_writer`); a host that binds none answers
+  `UNSUPPORTED`. Rejected: returning files in the tool result (the tool could not
+  learn the path the host chose), a new error type, and a filesystem-like object
+  with read or delete.
+- **Caps are `plugin_outputs.max_file_bytes` (8 MiB) and `max_call_bytes`
+  (32 MiB) in `config.yaml`.** The UI never rewrites that file, and the writer
+  takes the caps only from the `AppConfig` the worker pinned, or from the file.
+  Rejected: an environment variable (invisible to `make config-upgrade`), a
+  per-plugin `host_access` grant (the capability would be off until an operator
+  hand-edited the managed `plugins:` block), and a plugin setting or run option
+  (the plugin or the client could raise its own cap).
+- **The API moves 0.2.11 → 0.2.12, additively.** An extension declares the floor
+  with `@extension(api="0.2.12")` and its package requirement. An older host
+  refuses it when the install resolves (the harness pins the contract exactly) or
+  at startup (the loader names both versions). Rejected: a registration-time
+  capability query, a second mechanism beside the floor.
+- **The destination is the run's own thread, checked at each write.** The writer
+  derives the outputs directory from the server-owned run context (thread id and
+  resolved user) and requires the run state's `thread_data.outputs_path` to name
+  the same directory; otherwise it writes nothing (`FORBIDDEN`). A delegated
+  subagent runs with the lead's thread id and thread data, so its files land in
+  the lead's shared outputs with no extra rule. Rejected: the `AgentRuns` handle
+  as authority. `import_artifact` uses it for an idle thread, but subagent,
+  channel and scheduled runs deliberately carry no handle, and the capability
+  would not work there while the built-in media tools do.
+
+**What must not be simplified away.**
+
+- **The tool names no thread, user or directory.** `write_output` has two
+  parameters. A third one is how a file ends up in another conversation. The
+  writer also ends with its call, so a handle an extension kept writes nothing.
+- **Refused before the first byte.** The name check and both caps run before
+  anything is written, and the per-call total is reserved in the same step, so
+  concurrent writes of one call cannot pass the cap together.
+- **Separators and `..` are refused, not rewritten.** `write_output` in
+  `community/comfyui/service.py` replaces unsafe characters, which is right for
+  a name core minted and wrong for one a model influenced.
+- **Never replace, never follow.** The plugin path calls the shared writer with
+  `exclusive=True`: an existing file, or a link the sandbox planted in outputs,
+  makes the host take the next free name. The built-in callers keep the default
+  and their timestamped names.
+- **A returned path is in both places.** A sandbox that does not mount thread
+  data gets the same bytes through the run's own sandbox (`update_file`, as the
+  upload and artifact-edit routes do). If that copy fails, the host copy is
+  removed and the write fails. `import_artifact`'s remote publisher is not
+  reused: it is bound to uploads and 2 MiB, moves 48 KiB per command, and is left
+  unchanged.
+- **Artifacts are registered only for a call that returns.** The wrapper returns
+  a `Command` with the tool message and the paths, as the built-in tools do.
+  Files written before a handler raised or timed out stay listed in the Files
+  view and are not presented as results. As with built-in tools, a subagent's
+  registration stays in the subagent's state; its files are still in the shared
+  outputs.
+- **The write stays off the event loop** (`tests/blocking_io/test_extension_artifacts.py`).
+
+**On an upstream sync.** `plugins.py`, `plugin_tools.py`, `app_config.py` and the
+example extension are upstream files; the fork's parts are additive blocks.
+Upstream also owns the API version. If upstream ships its own 0.2.12, the fork's
+capability moves to the merged version, floor and documentation included; the
+checklist row says where.
+
+Coverage: `backend/tests/test_plugin_tools.py` (the write and its artifact, an
+unsafe name, both caps and the look-alike config, no replacement, another
+conversation, a subagent, the non-mounted sandbox, an older host, the example's
+tool through a real `ToolNode`), the blocking-I/O test above, and the example
+package's own tests.

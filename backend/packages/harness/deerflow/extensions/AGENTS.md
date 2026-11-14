@@ -112,6 +112,6 @@ recorded here with the reason.
 
 ## Fork
 
-The generic hooks added for Double Plus Ultracode (run-only `plugin_options`,
-the posted-message marker, `parent_thread_id` links, `copy_workspace` and
-`merge_workspace`) keep their invariants in FORK.md §44.
+FORK.md holds the invariants: §44 for the Double Plus Ultracode hooks
+(`plugin_options`, message marker, `parent_thread_id`, `copy_workspace`,
+`merge_workspace`), §50 for `ToolContext.write_output`.

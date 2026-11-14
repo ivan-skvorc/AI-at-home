@@ -109,6 +109,68 @@ artifact support does not grant citation trust or change native RAGFlow tool-nam
 checks. See the [local retrieval example](../examples/deerflow-extension-retrieval/README.md)
 for a small, default-disabled plugin without a knowledge-management service.
 
+### Files a tool writes into its conversation
+
+Since extension API 0.2.12 a model tool can hand a file to the conversation that
+called it, during the run:
+
+```python
+from deerflow_extension_api import HostCapabilityError, ModelTool
+
+async def export(payload, context):
+    try:
+        path = await context.write_output("report.csv", b"name,total\n")
+    except HostCapabilityError as exc:
+        return {"error": exc.code}
+    return {"saved": path}  # "/mnt/user-data/outputs/report.csv"
+```
+
+`ToolContext.write_output(name, content)` takes a file name and `bytes` and returns
+the virtual path the host used. The host binds the destination to the thread the
+run executes in; the tool supplies no thread, user or directory, and a call from a
+delegated subagent lands in its lead's shared outputs, as the subagent's file
+tools do. The file is written by the Gateway, so it works under every sandbox
+provider, including the default `LocalSandboxProvider` with no shell. It shows up
+in the Files view at once, and when the handler returns normally the host
+registers it as an artifact the way a built-in tool does. A sandbox that does not
+mount the host's thread data receives the same bytes through the run's own
+sandbox; if that copy fails the host copy is removed, so a returned path is in
+both places.
+
+It is a write-only capability, not a filesystem API: no read, delete, overwrite
+or directory creation.
+
+- **Name.** A bare file name of at most 255 bytes. A path separator, `..`, a
+  control character or an empty name is refused, never rewritten. Other unsafe
+  characters become `-`. An existing file or link is never replaced or followed:
+  a taken name gets a `-1`, `-2`, … suffix, so use the returned path, and give
+  files that belong together a stem of their own.
+- **Size.** `plugin_outputs.max_file_bytes` (default 8 MiB) per file and
+  `plugin_outputs.max_call_bytes` (default 32 MiB) across one tool call, in
+  `config.yaml`. The operator sets them there and nowhere else. A file over
+  either cap is refused before a byte is written. File bytes never reach the
+  model, so they do not count against the 64 KiB result cap; the 256 KiB input
+  cap and the 30-second limit are unchanged.
+- **Errors.** `HostCapabilityError.code` is `UNSUPPORTED`, `INVALID_NAME`,
+  `INVALID_CONTENT` (not `bytes`), `LIMIT_EXCEEDED`, `FORBIDDEN` (the call is not
+  bound to its conversation's outputs, or it has ended: a writer kept after the
+  handler returned writes nothing) or `UNAVAILABLE` (the write or the sandbox
+  copy failed). A refused write leaves no file behind. An error the handler does
+  not catch reaches the model as the usual sanitized tool error.
+- **A failed call registers nothing.** Files written before a handler raised or
+  timed out stay in outputs and in the Files view, but are not registered as
+  artifacts.
+
+**API floor.** Declare `@extension(api="0.2.12")` and depend on
+`deerflow-extension-api>=0.2.12,<0.3`. An older host then says so instead of
+offering a tool whose file never appears: its exact pin on the contract package
+makes the install fail to resolve, and with dependency checks skipped the loader
+refuses the extension at startup and names both versions. Where the newer
+contract package runs on a host that binds no writer, `context.output_writer` is
+`None` and `write_output` raises `UNSUPPORTED`. The
+[example extension](../examples/deerflow-extension-example/README.md) has a
+`save_note` tool that uses the capability.
+
 A plugin can also contribute tools alone. The
 [text classification example](../examples/deerflow-extension-jev-classify/README.md)
 registers one model tool and a status action, no browser code: the agent labels a

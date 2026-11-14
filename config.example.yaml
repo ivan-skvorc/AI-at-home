@@ -20,7 +20,7 @@
 # ============================================================================
 # Bump this number when the config schema changes.
 # Run `make config-upgrade` to merge new fields into your local config.yaml.
-config_version: 71
+config_version: 72
 
 # Optional operator-owned literal prompt extensions (see CONFIGURATION.md):
 # lead_prompt_overlay:
@@ -5509,7 +5509,8 @@ authorization:
 #
 # Plugins can contribute semantically placed middleware, task-lifecycle hooks,
 # system-model observers, Gateway-lifetime services, and eager FastAPI HTTP routers.
-# See examples/deerflow-extension-example for a package that exercises all five.
+# See examples/deerflow-extension-example for a package that exercises all five,
+# plus a model tool that writes a file into its conversation.
 #
 # plugins:
 #   - name: example                       # PEP 621 entry-point name
@@ -5551,6 +5552,14 @@ authorization:
 #                                         # also match a host-owned table name.
 #     config:
 #       label: example                    # extension-private values, if any
+
+# A plugin's model tool can write files into the outputs of the conversation
+# that called it (FORK.md §50). These caps bound every such tool. They are read
+# from this file only: no Gateway API, plugin setting or run option raises them.
+# Applies to the next tool call; no restart.
+plugin_outputs:
+  max_file_bytes: 8388608    # largest single file, in bytes (8 MiB)
+  max_call_bytes: 33554432   # all files of one tool call together (32 MiB)
 
 # Bundled and on by default: Script workflows, the engine behind the composer's
 # Double Plus Ultracode mode. Its source is examples/deerflow-extension-workflows,

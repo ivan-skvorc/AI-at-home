@@ -178,12 +178,27 @@ class WrittenOutput:
     virtual_path: str
 
 
-def write_output(outputs_dir: Path, name: str, content: bytes, *, subdir: str | None = None) -> WrittenOutput:
-    """Write bytes under the thread's outputs directory and return both paths."""
+def write_output(outputs_dir: Path, name: str, content: bytes, *, subdir: str | None = None, exclusive: bool = False) -> WrittenOutput:
+    """Write bytes under the thread's outputs directory and return both paths.
+
+    ``exclusive`` is for a name the caller did not mint itself (a plugin tool's,
+    ``extensions/plugin_tools.py``): the file must be new, so an existing file
+    or a link the sandbox planted raises ``FileExistsError`` instead of being
+    replaced or followed, and a failed write leaves nothing behind.
+    """
     safe_name = _SAFE_NAME_RE.sub("-", name).strip("-") or "output"
     directory = Path(outputs_dir) if subdir is None else Path(outputs_dir) / _SAFE_NAME_RE.sub("-", subdir).strip("-")
     directory.mkdir(parents=True, exist_ok=True)
     path = directory / safe_name
-    path.write_bytes(content)
+    if exclusive:
+        target = path.open("xb")
+        try:
+            with target:
+                target.write(content)
+        except BaseException:
+            path.unlink(missing_ok=True)
+            raise
+    else:
+        path.write_bytes(content)
     relative = path.relative_to(Path(outputs_dir)).as_posix()
     return WrittenOutput(path=path, virtual_path=f"{OUTPUTS_VIRTUAL_PREFIX}/{relative}")
