@@ -201,7 +201,9 @@ Repo conventions that are not optional:
   DEER_FLOW_ENV/ENVIRONMENT is prod. Follow the pattern in
   backend/app/gateway/auth_disabled.py.
 
-Work on a feature branch. Do not open a PR unless asked.
+Follow CHANGE_CYCLE.md for the change itself; where this block and that file differ, that
+file wins. Work on a branch, never on main, and open the pull request when the change is
+done. That step does not wait to be asked for.
 ```
 
 </details>
@@ -1538,11 +1540,6 @@ whose sketch and pad are editable in FreeCAD.
 ---
 
 ## Deliberately not on this roadmap
-
-**More model providers, more IM channels.** The model bundle is
-curated to a documented shape and FORK.md is explicit that a long list dilutes both the
-picker and the auto-config. Breadth there adds work to every pass of the model and
-pricing audit (`scripts/audit_models.py`) and buys a single-user deployment nothing.
 
 **GPU passthrough into the sandbox container.** The shipped media work (FORK.md §23)
 deliberately runs ComfyUI as its own long-lived service instead. `LocalContainerBackend._start_container` builds its
