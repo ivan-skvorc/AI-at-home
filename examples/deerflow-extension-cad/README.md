@@ -15,7 +15,7 @@ agent no shell, and why installing it does not weaken that decision. It also
 works with the conversation's internet switch off.
 
 **The tool decides pass or fail, not the model.** STEP, STL and GLB files are
-written only when every check passed. A STEP file in a conversation's outputs
+written only when every check passed. A STEP file listed in a `cad_build` answer
 therefore means a part that passed.
 
 It depends on the public `deerflow-extension-api` contract (0.2.12 or newer) and
@@ -45,7 +45,9 @@ writes no STEP and no STL. A script that is refused, or that the kernel cannot
 build, leaves the script and the report only.
 
 A second build of the same name never replaces the first: its files are
-`mounting-plate-1.*`, as a set.
+`mounting-plate-1.*`, as a set. So a STEP file from an earlier build that
+passed stays beside a later build that failed; the report of each build says
+which is which.
 
 ## What the tool checks
 
@@ -62,9 +64,28 @@ does not get a vote.
 A hole is a full-circle, concave cylindrical wall with air inside that is open at
 one end or both. A counterbore or countersink counts once, with its drill
 diameter. Fillets, rounded pocket corners, the ends of a slot, a boss and the
-outside of a cylinder are not holes. Two limits are known and stated in
-`measure.py`: the inside of a shelled cylinder (a cup) reads as one blind hole,
-and a blind hole with a domed floor reads as through.
+outside of a cylinder are not holes, and neither is an opening whose walls are
+all sloped (a tapered cut, a countersink deeper than the sheet). Two limits are
+known and stated in `measure.py`: the inside of a shelled cylinder (a cup) reads
+as one blind hole, and a blind hole with a domed floor reads as through.
+
+Two things fail the build itself, with the line of the operation, before any
+check runs. With only a bounding box to meet, both would otherwise pass as the
+part before the operation:
+
+- an operation that removes the whole part (a hole wider than the part, an
+  intersection of parts that do not meet);
+- a cut, a hole, an intersection or a shell that changes nothing (a pocket cut
+  away from the part, a hole drilled beside it, a wall thicker than the part).
+
+What the checks do not decide is said in the answer's `notes`: an outline the
+script drew and never extruded or cut, a cavity sealed inside the part, a mesh
+written coarser than usual. The hole check compares diameters; holes that stop
+inside the part are listed with their depths (`blind_depths_mm`).
+
+A failed answer ends with what to do next, by cause: fix the script, call again
+(every build slot was taken), or stop and tell the user (the server has no
+kernel, or a file could not be stored).
 
 ## What a script may contain
 
@@ -86,8 +107,10 @@ comprehensions, `with`, `try`, f-strings, subscripts, comparisons, dunder names.
 An export line such as `cq.exporters.export(result, "plate.step")` is refused
 with its reason: the tool writes the files, after its checks.
 
-Control characters and invisible Unicode (zero-width characters, direction
-overrides, line separators) are refused anywhere in the text, comments included:
+Control and format characters (form feed, lone carriage return, zero-width
+characters, direction overrides, line separators) are refused anywhere in the
+text, comments included, so no character changes where a line starts or the
+order it is drawn in. With one statement per line and the limit on line length,
 the script kept beside the part reads the way the tool read it. Visible
 characters of any language are fine in comments.
 
@@ -120,12 +143,15 @@ with an example that builds and a signature check against the kernel
 
 | Limit | Value | Where |
 | --- | --- | --- |
-| Script size | 32 KiB, 2,000 syntax nodes, nesting 200, 300 operations | `interpreter.py` |
-| Numbers | at most 1e12; sizes and coordinates from 0.0001 to 100,000 mm | `interpreter.py`, `allowlist.py` |
+| Script size | 32 KiB, 2,000 syntax nodes, nesting 200 (about 97 chained calls), 300 operations | `interpreter.py` |
+| Lines | one statement per line, at most 1,000 characters | `interpreter.py` |
+| Numbers | at most 1e12; sizes from 0.0001 to 100,000 mm; coordinates within ±100,000 mm | `interpreter.py`, `allowlist.py` |
 | Pattern points | `pushPoints`, `rarray`, `polarArray`: 100 per call, 200 per script; a polygon has at most 100 sides | `allowlist.py` |
 | Build time | 20 seconds wall clock, then the process group is killed | `timeout_seconds` |
 | Build memory | 4,096 MiB of address space, where the operating system enforces it (Linux) | `memory_mb` |
-| Exported file | 16 MiB read back, then the host's `plugin_outputs` caps apply | `tool.py` |
+| Builds at once | half the processor cores, at least one; a call waits 3 seconds for a slot, then is told to call again | `parallel_builds` |
+| Mesh | 0.1 mm and 0.3 rad, in proportion to the size for a part over a metre; coarser (twice, then four times) until the STL is under 6 MiB | `build.py` |
+| Exported file | 16 MiB read back, then the host's `plugin_outputs` caps apply (8 MiB per file by default) | `tool.py` |
 
 Pattern cost grows faster than the count. `circle().cutThruAll()` on a pattern is
 far slower than `hole()`: 100 circles take about 7 seconds on four cores. The
@@ -141,9 +167,11 @@ result, 30 seconds. File bytes do not count against the result cap.
 
 The interpreter is a security boundary and is written to be audited:
 
-- `ast.parse` is the only reader of script text. `exec`, `eval` and `compile`
-  never touch it; a test searches the package for them, and another watches
-  audit events while hostile scripts are read.
+- No code object is ever made from script text. `ast.parse` is its one reader
+  (CPython's `compile()` with the flag that stops at the syntax tree), and
+  `exec` and `eval` never receive it. A test searches the package for calls to
+  `exec`, `eval` and `compile`, and another watches audit events while hostile
+  scripts are read.
 - The syntax tree is checked against a whitelist of node types before anything
   is evaluated, with an iterative walk and caps on size and depth.
 - A script has no loops, branches or functions, so every number is known before
@@ -183,13 +211,14 @@ plugins:
     config: {}
 ```
 
-`config` accepts three values, all optional:
+`config` accepts four values, all optional:
 
 | Key | Default | Meaning |
 | --- | --- | --- |
 | `enabled` | `true` | `false` registers nothing |
 | `timeout_seconds` | `20` | Wall clock for one build, 5 to 25 |
 | `memory_mb` | `4096` | Address space for one build, 3,072 to 65,536 |
+| `parallel_builds` | half the cores | Builds at once, 1 to 16; each holds several hundred MiB |
 
 Then check it:
 
@@ -205,6 +234,8 @@ names the library.
 
 The kernel links three OpenGL dispatch libraries that its wheels do not carry:
 `libGL.so.1`, `libGLX.so.0` and `libGLdispatch.so.0`. It never renders with them.
+It also loads the system's `libX11.so.6`, which a desktop and the Gateway image
+already have.
 
 - **The Gateway image** (`make up`) unpacks them at build time, about 1.5 MB.
 - **A desktop Linux** usually has them. On a minimal Debian or Ubuntu host:

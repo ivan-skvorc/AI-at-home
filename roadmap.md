@@ -1270,17 +1270,20 @@ Ultracode workflow, the part passes or fails on measured numbers. The subagent's
 summary is not evidence.
 
 **Why it fits** — `acceptance_checks.py` already decides lead-supplied criteria in code on
-the `task` tool's completed branch. The CAD module writes `part.step` only for a part that
-passed its checks, so the file leaf that exists today is enough, and it needs no shell.
+the `task` tool's completed branch. The CAD module writes `<name>.step` only for a part that
+passed its checks and `<name>.report.json`, with `passed`, for every build, and it needs no
+shell. The file leaf that exists today is a start and not proof by itself: a STEP from an
+earlier build that passed stays when a later build of the same name fails (its files are
+`<name>-1.*`), and a subagent with file tools can write a `.step` itself.
 
 **Depends on** — nothing open. The CAD module shipped (FORK.md §51).
 
 **Scope**
 
-- The lead's criteria name the STEP file with the existing file leaf. Confirm the leaf's
-  path form for the outputs directory in `ACCEPTANCE_CHECKS.md` before writing the skill
-  text.
-- No new leaf and no CAD-specific code in core. If the file leaf proves too weak, the
+- The lead's criteria name the build's files with the existing file leaf, and read `passed`
+  from the build's own report. Confirm the leaf's path form for the outputs directory in
+  `ACCEPTANCE_CHECKS.md` before writing the skill text.
+- No CAD-specific code in core. Where the existing leaves cannot read the report, the
   addition is a generic leaf that reads a JSON report, usable by any tool.
 - A short recipe for Plus Ultracode in the skill's references: several candidate scripts
   from child agents, each built and measured, a second agent checking the findings, the

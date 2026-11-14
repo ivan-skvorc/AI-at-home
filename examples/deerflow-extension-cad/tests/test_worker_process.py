@@ -11,6 +11,7 @@ import json
 import os
 import signal
 import tempfile
+import threading
 import time
 from pathlib import Path
 
@@ -75,7 +76,10 @@ async def test_a_cancelled_tool_call_does_not_leave_a_kernel_running(tmp_path, m
 
 async def test_a_child_that_ignores_the_polite_signal_is_still_killed(tmp_path, monkeypatch):
     pid_file = _stand_in(tmp_path, monkeypatch, "signal.signal(signal.SIGTERM, signal.SIG_IGN)\ntime.sleep(60)")
+    started = time.monotonic()
     result = await tool.run_worker("x = 1", timeout_seconds=1, memory_mb=4096)
+    # Within seconds: a signal the child may ignore would return only when its own sleep ends.
+    assert time.monotonic() - started < 10
     assert result["status"] == "failed" and _gone(pid_file)
 
 
@@ -83,15 +87,88 @@ async def test_a_grandchild_is_killed_with_the_worker(tmp_path, monkeypatch):
     grandchild = tmp_path / "grandchild.pid"
     body = f"import subprocess\np = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'])\nopen({str(grandchild)!r}, 'w').write(str(p.pid))\ntime.sleep(60)"
     _stand_in(tmp_path, monkeypatch, body)
+    started = time.monotonic()
     await tool.run_worker("x = 1", timeout_seconds=1, memory_mb=4096)
+    assert time.monotonic() - started < 10
     await asyncio.sleep(0.2)
     assert _gone(grandchild)
+
+
+async def test_a_grandchild_does_not_outlive_a_worker_that_finished_by_itself(tmp_path, monkeypatch):
+    # The worker starts no process of its own; one that exists means the kernel was made to, and it is not left running.
+    grandchild = tmp_path / "grandchild.pid"
+    body = (
+        f"import subprocess\np = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'])\nopen({str(grandchild)!r}, 'w').write(str(p.pid))\n"
+        "json.dump({'status': 'built', 'measured': {}, 'files': {}}, open('result.json', 'w'))"
+    )
+    _stand_in(tmp_path, monkeypatch, body)
+    result = await tool.run_worker("x = 1", timeout_seconds=10, memory_mb=4096)
+    assert result["status"] == "built"
+    await asyncio.sleep(0.2)
+    assert _gone(grandchild)
+
+
+async def test_a_second_cancellation_still_removes_the_script_from_disk(tmp_path, monkeypatch):
+    pid_file = _stand_in(tmp_path, monkeypatch, "time.sleep(60)")
+    task = asyncio.ensure_future(tool.run_worker("x = 1", timeout_seconds=25, memory_mb=4096))
+    while not pid_file.exists():
+        await asyncio.sleep(0.05)
+    task.cancel()
+    await asyncio.sleep(0)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    await asyncio.sleep(0.5)
+    assert _gone(pid_file) and _leftovers() == set()
+
+
+async def test_a_call_cancelled_while_its_directory_is_being_made_leaves_none(tmp_path, monkeypatch):
+    real_prepare = tool._prepare
+
+    def slow_prepare(*arguments):
+        time.sleep(0.3)
+        return real_prepare(*arguments)
+
+    monkeypatch.setattr(tool, "_prepare", slow_prepare)
+    _stand_in(tmp_path, monkeypatch, "time.sleep(60)")
+    with pytest.raises(TimeoutError):
+        await asyncio.wait_for(tool.run_worker("x = 1", timeout_seconds=25, memory_mb=4096), 0.1)
+    await asyncio.sleep(0.8)
+    assert _leftovers() == set()
+
+
+async def test_builds_beyond_the_parallel_limit_are_told_to_call_again_and_the_slot_comes_back(tmp_path, monkeypatch):
+    monkeypatch.setattr(tool, "QUEUE_SECONDS", 0.3)
+    _stand_in(tmp_path, monkeypatch, "time.sleep(2)\njson.dump({'status': 'built', 'measured': {}, 'files': {}}, open('result.json', 'w'))")
+    slots = threading.BoundedSemaphore(1)
+    first = asyncio.ensure_future(tool.run_worker("x = 1", timeout_seconds=10, memory_mb=4096, slots=slots))
+    await asyncio.sleep(0.2)
+    started = time.monotonic()
+    second = await tool.run_worker("x = 1", timeout_seconds=10, memory_mb=4096, slots=slots)
+    # Not a timeout that blames the part: the second build never started.
+    assert second["status"] == "busy" and time.monotonic() - started < 1.5
+    assert (await first)["status"] == "built"
+    # The slot is back after a finished build and after a cancelled one.
+    assert (await tool.run_worker("x = 1", timeout_seconds=10, memory_mb=4096, slots=slots))["status"] == "built"
+    with pytest.raises(TimeoutError):
+        await asyncio.wait_for(tool.run_worker("x = 1", timeout_seconds=10, memory_mb=4096, slots=slots), 0.5)
+    await asyncio.sleep(0.5)
+    assert (await tool.run_worker("x = 1", timeout_seconds=10, memory_mb=4096, slots=slots))["status"] == "built"
+
+
+async def test_the_processor_backstop_cannot_fire_before_the_wall_clock(tmp_path, monkeypatch):
+    # The kernel works on several cores at once: a backstop counted in processor seconds of one core
+    # stopped honest builds well inside their time and blamed memory.
+    _stand_in(tmp_path, monkeypatch, "request = json.load(open('request.json'))\njson.dump({'status': 'built', 'measured': request, 'files': {}}, open('result.json', 'w'))")
+    request = (await tool.run_worker("x = 1", timeout_seconds=7, memory_mb=4096))["measured"]
+    assert request["cpu_seconds"] > 7 * (os.cpu_count() or 1)
 
 
 async def test_a_crashed_kernel_is_an_answer_not_an_exception(tmp_path, monkeypatch):
     _stand_in(tmp_path, monkeypatch, "os.kill(os.getpid(), signal.SIGSEGV)")
     result = await tool.run_worker("x = 1", timeout_seconds=5, memory_mb=4096)
-    assert result == {"status": "failed", "message": f"the CAD kernel stopped without an answer (signal {int(signal.SIGSEGV)}); it may have run out of memory"}
+    assert result["status"] == "failed"
+    assert f"stopped without an answer (signal {int(signal.SIGSEGV)})" in result["message"] and "memory or processor time" in result["message"]
 
 
 async def test_the_child_sees_the_script_but_nothing_of_the_gateways_environment(tmp_path, monkeypatch):
@@ -129,7 +206,8 @@ async def test_only_bounded_files_from_the_childs_own_directory_are_read(tmp_pat
 
 
 async def test_an_oversized_or_malformed_answer_is_not_trusted(tmp_path, monkeypatch):
-    _stand_in(tmp_path, monkeypatch, f"open('result.json', 'w').write('[' + '0,' * {tool.MAX_RESULT_BYTES} + '0]')")
+    # Well-formed and claiming success, but larger than the Gateway reads.
+    _stand_in(tmp_path, monkeypatch, f"json.dump({{'status': 'built', 'measured': {{'pad': 'x' * {tool.MAX_RESULT_BYTES}}}, 'files': {{}}}}, open('result.json', 'w'))")
     assert (await tool.run_worker("x = 1", timeout_seconds=5, memory_mb=4096))["status"] == "failed"
     _stand_in(tmp_path, monkeypatch, "open('result.json', 'w').write('[1, 2]')")
     assert (await tool.run_worker("x = 1", timeout_seconds=5, memory_mb=4096))["status"] == "failed"
@@ -151,5 +229,15 @@ def test_the_real_worker_answers_for_a_fault_of_its_own_instead_of_dying_silentl
 
 def test_the_real_worker_applies_the_memory_ceiling_before_it_reads_the_script():
     source = (Path(tool.__file__).with_name("worker.py")).read_text(encoding="utf-8")
-    assert source.index("_limit(") < source.index("compile_script(request")
-    assert json.dumps({"memory_mb": 1}) and tool.MIN_MEMORY_MB >= 2048
+    main = source[source.index("def main()") :]
+    assert 0 < main.index("_limit(int(request") < main.index("compile_script(request")
+
+
+def test_a_mesh_file_cut_short_is_recognised(tmp_path):
+    from deerflow_extension_cad import build
+
+    triangle = bytes(50)
+    whole, cut = tmp_path / "whole.stl", tmp_path / "cut.stl"
+    whole.write_bytes(bytes(80) + (2).to_bytes(4, "little") + triangle * 2)
+    cut.write_bytes(bytes(80) + (2).to_bytes(4, "little") + triangle)
+    assert build.whole_stl(whole) and not build.whole_stl(cut) and not build.whole_stl(tmp_path / "missing.stl")

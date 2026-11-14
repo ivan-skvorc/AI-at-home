@@ -157,6 +157,8 @@ def _group_by_axis(records):
 def _cylinder_segments(faces):
     """Axial intervals where cylinder faces of one radius cover 360 degrees."""
     segments = []
+    if not faces:
+        return segments  # an axis that carries cones only: a countersink through thin sheet, a tapered cut
     faces = sorted(faces, key=lambda f: f["r0"])
     cluster = []
     for f in faces + [None]:

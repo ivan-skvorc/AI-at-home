@@ -48,9 +48,12 @@ here as one.
 - **The script is read, never executed.** It is parsed into a syntax tree. A
   whitelist of node types is checked before anything is evaluated; every other
   construct is refused with its line: imports other than `import cadquery as cq`,
-  attribute access, any call other than `cq.Workplane(...)` and an allow-listed
-  method, definitions, loops, branches, comprehensions, f-strings, subscripts.
-  `exec`, `eval` and `compile` never receive script text.
+  attribute access, any call other than `cq.Workplane(...)`, an allow-listed
+  method and `show_object(name)` (read only as naming the result), definitions,
+  loops, branches, comprehensions, f-strings, subscripts. No code object is ever
+  made from script text: `ast.parse` (CPython's `compile()` with the flag that
+  stops at the syntax tree) is its one reader, and `exec` and `eval` never
+  receive it.
 - **The allow-list is data** (`allowlist.py`): method names with the kind of
   each argument. A method that takes a file path, a callable, a font or a raw
   kernel object is not on it. The one attribute lookup a script can cause is for
@@ -65,10 +68,14 @@ here as one.
   nodes, nesting, number magnitude, exponent size and pattern instances. What an
   accepted script can still cost the kernel is stopped by the parent's wall
   clock and the child's memory ceiling, not by the reading.
-- **The kept script reads the way it was read.** Control characters and
-  invisible Unicode (zero-width characters, direction overrides, line
-  separators) are refused anywhere in the text, so a statement cannot hide from
-  a person who opens the `.py` file beside the part.
+- **The kept script reads the way it was read.** Control and format characters
+  (form feed, lone carriage return, zero-width characters, direction overrides,
+  line separators) are refused anywhere in the text, so no character changes
+  where a line starts or the order it is drawn in. A script holds one statement
+  per line and no line longer than 1,000 characters, so a second statement
+  cannot sit off-screen to the right of the one a person reads. Blank-looking
+  characters that are ordinary letters to Unicode are still accepted in
+  comments; they cannot start a line or a statement.
 
 What it is not: a sandbox for the geometry kernel. A defect in the kernel that
 an allow-listed operation can reach is contained by the child process and its

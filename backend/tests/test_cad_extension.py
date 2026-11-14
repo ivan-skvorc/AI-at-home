@@ -100,7 +100,7 @@ def test_loading_the_module_registers_one_tool_and_does_not_load_the_kernel(cad)
 
 def test_operator_settings_are_validated_at_startup(monkeypatch):
     monkeypatch.syspath_prepend(str(PACKAGE))
-    for config in ({"timeout_seconds": 26}, {"timeout_seconds": True}, {"memory_mb": 100}, {"timeout_seconds": "20"}):
+    for config in ({"timeout_seconds": 26}, {"timeout_seconds": True}, {"memory_mb": 100}, {"timeout_seconds": "20"}, {"parallel_builds": 0}, {"parallel_builds": 17}):
         loaded, diagnostics = load_extensions([ExtensionSpec(use="deerflow_extension_cad:install", config=config)])
         assert not loaded.plugins and "install() failed" in diagnostics[0].message
     loaded, diagnostics = load_extensions([ExtensionSpec(use="deerflow_extension_cad:install", config={"enabled": False})])
@@ -144,8 +144,12 @@ async def test_a_part_that_passes_every_check_is_handed_over_with_its_step_file(
     assert report["passed"] is True and report["measured"]["bbox_mm"] == [60.0, 40.0, 6.0]
     assert sorted(state["artifacts"]) == sorted(f"/mnt/user-data/outputs/{name}" for name in _files(outputs))
     assert answer["files"] and "next" not in answer
-    # The Gateway only starts the child: the script reaches it untouched, with the operator's limits.
-    assert seen == [(PLATE, {"timeout_seconds": 20, "memory_mb": 4096})]
+    # The Gateway only starts the child: the script reaches it untouched, with the operator's limits
+    # and the slots that bound how many builds run at once.
+    ((script, limits),) = seen
+    assert script == PLATE
+    assert {key: value for key, value in limits.items() if key != "slots"} == {"timeout_seconds": 20, "memory_mb": 4096}
+    assert limits["slots"].acquire(blocking=False)
 
 
 @pytest.mark.asyncio
@@ -156,7 +160,7 @@ async def test_a_part_that_fails_a_check_leaves_no_step_file(cad, outputs, monke
     assert answer["passed"] is False
     holes = next(check for check in answer["checks"] if check["check"] == "holes")
     assert (holes["passed"], holes["expected"], holes["measured"]) == (False, [4, 4], [4.0])
-    # No STEP and no STL: a STEP file in the outputs means a part that passed. The failed shape can still be looked at.
+    # No STEP and no STL: a STEP file this tool wrote means a part that passed. The failed shape can still be looked at.
     assert _files(outputs) == ["mounting-plate.failed.glb", "mounting-plate.py", "mounting-plate.report.json"]
     assert "Do not present" in answer["next"]
     assert json.loads((outputs / "mounting-plate.report.json").read_text(encoding="utf-8"))["passed"] is False
@@ -191,6 +195,43 @@ async def test_a_refused_script_is_reported_with_its_construct_and_line_and_buil
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("worker_result", "arguments", "says", "not_says"),
+    [
+        # The server cannot build at all: trying again with another script is wasted rounds.
+        ({"status": "unavailable", "message": "the CAD kernel could not be loaded: libGL.so.1: cannot open shared object file"}, {}, "Do not call cad_build again", "Fix the script"),
+        # Every slot is taken: nothing is wrong with the script.
+        ({"status": "busy", "message": "the server is building other parts"}, {}, "same arguments", "Fix the script"),
+        ({"status": "failed", "line": 3, "operation": "fillet", "message": "fillet() failed"}, {}, "Fix the script", "same arguments"),
+    ],
+    ids=["no kernel on the server", "every build slot taken", "a build error"],
+)
+async def test_what_to_do_next_follows_the_cause(cad, outputs, monkeypatch, worker_result, arguments, says, not_says):
+    answer, _, _ = await _call(cad, outputs, monkeypatch, worker_result, **arguments)
+    assert answer["passed"] is False
+    assert says in answer["next"] and not_says not in answer["next"]
+    # A build that never started leaves nothing behind, not even the script.
+    assert (_files(outputs) == []) is (worker_result["status"] == "busy")
+
+
+@pytest.mark.asyncio
+async def test_what_the_checks_do_not_cover_reaches_the_model(cad, outputs, monkeypatch):
+    holes = [{"diameter_mm": 4.0, "through": True, "depth_mm": 6.0}, {"diameter_mm": 4.0, "through": False, "depth_mm": 0.5}]
+    measured = {**MEASURED, "enclosed_voids": 1, "unused_outline": True, "mesh": {"tolerance_mm": 0.4, "angular_rad": 0.8}, "holes": holes}
+    answer, _, _ = await _call(cad, outputs, monkeypatch, {**BUILT, "measured": measured}, hole_diameters_mm=[4, 4])
+    assert answer["passed"] is True
+    notes = " ".join(answer["notes"])
+    assert "sealed" in notes and "outline" in notes and "coarser" in notes
+    solid = next(check for check in answer["checks"] if check["check"] == "one closed solid")
+    assert "1 sealed cavity" in solid["measured"]
+    holes = next(check for check in answer["checks"] if check["check"] == "holes")
+    assert holes["blind_depths_mm"] == [0.5]
+    # A plain part carries none of it.
+    plain, _, _ = await _call(cad, outputs, monkeypatch, {**BUILT, "measured": {**MEASURED, "mesh": {"tolerance_mm": 0.1, "angular_rad": 0.3}}}, hole_diameters_mm=[4, 4])
+    assert "notes" not in plain and "blind_depths_mm" not in next(check for check in plain["checks"] if check["check"] == "holes")
+
+
+@pytest.mark.asyncio
 async def test_a_rebuild_keeps_its_files_together_under_one_new_stem(cad, outputs, monkeypatch):
     await _call(cad, outputs, monkeypatch, BUILT)
     answer, _, _ = await _call(cad, outputs, monkeypatch, BUILT)
@@ -221,8 +262,37 @@ async def test_a_part_the_host_would_not_store_is_not_presented_as_delivered(cad
     answer = json.loads(state["messages"][-1].content)
     # The checks passed, the operator's cap refused the STL: no STEP is written after it.
     assert answer["passed"] is False
-    assert any("plate.stl was not saved (LIMIT_EXCEEDED)" in problem for problem in answer["problems"])
+    assert any("plate.stl (4 KB) was not saved (LIMIT_EXCEEDED)" in problem for problem in answer["problems"])
     assert _files(outputs) == ["plate.glb", "plate.py", "plate.report.json"]
+    # The script is not at fault, and the answer does not say it is.
+    assert "could not all be stored" in answer["next"] and "Fix the script" not in answer["next"]
+
+
+@pytest.mark.asyncio
+async def test_a_build_whose_script_cannot_be_stored_stores_nothing(cad, outputs, monkeypatch):
+    import deerflow_extension_cad.tool as cad_tool
+
+    from deerflow.config.app_config import AppConfig, PluginOutputsConfig
+    from deerflow.config.sandbox_config import SandboxConfig
+
+    async def worker(script, **limits):
+        return {"status": "built", "measured": MEASURED, "files": {"step": b"S", "stl": b"L", "glb": b"g"}}
+
+    monkeypatch.setattr(cad_tool, "run_worker", worker)
+    (tool,) = build_plugin_tools(cad)
+    graph = StateGraph(_State)
+    graph.add_node("tools", ToolNode([tool]))
+    graph.add_edge(START, "tools")
+    graph.add_edge("tools", END)
+    # The script is the first file and names the set: a cap below its size refuses it and lets the small files through.
+    config = AppConfig(sandbox=SandboxConfig(use="deerflow.sandbox.local:LocalSandboxProvider"), plugin_outputs=PluginOutputsConfig(max_file_bytes=len(PLATE) - 1, max_call_bytes=1024 * 1024))
+    state = await graph.compile().ainvoke(
+        {"messages": [AIMessage(content="", tool_calls=[{"id": "cad-call", "name": tool.name, "args": {"name": "plate", "script": PLATE, "bbox_xyz_mm": [60, 40, 6]}}])], "thread_data": {"outputs_path": str(outputs)}},
+        context={"user_id": "alice", "thread_id": "thread-a", "app_config": config},
+    )
+    answer = json.loads(state["messages"][-1].content)
+    assert answer["passed"] is False and answer["files"] == []
+    assert _files(outputs) == []
 
 
 @pytest.mark.asyncio
@@ -253,6 +323,11 @@ async def test_the_tool_does_not_start_a_build_it_could_not_hand_over(cad, monke
         ({"hole_diameters_mm": [4, 0]}, "hole_diameters_mm must list one positive diameter"),
         ({"script": "   "}, "script is empty"),
         ({"name": ""}, "name must be 1 to 60 characters"),
+        # Valid for the schema, and fatal later: a number no float can hold, a character no file can.
+        ({"bbox_xyz_mm": [10**400, 40, 6]}, "bbox_xyz_mm must be three positive numbers"),
+        ({"volume_min_max_mm3": [0, 10**400]}, "volume_min_max_mm3 must be [min, max]"),
+        ({"name": "plate \ud83d"}, "name contains a character"),
+        ({"script": PLATE + "# \ud83d\n"}, "script contains a character"),
     ],
 )
 async def test_unusable_arguments_are_answered_before_any_build(cad, monkeypatch, arguments, says):

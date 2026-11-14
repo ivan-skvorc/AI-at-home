@@ -51,7 +51,9 @@ def main() -> None:
     # -I leaves this file's directory off sys.path; the package is one level up.
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
     request = json.loads(Path(REQUEST_FILE).read_text(encoding="utf-8"))
-    _limit(int(request["memory_mb"]), int(request["max_export_bytes"]), int(request["cpu_seconds"]))
+    max_export_bytes = int(request["max_export_bytes"])
+    # One byte over the cap: a file the operating system cuts off is then over it, not exactly at it.
+    _limit(int(request["memory_mb"]), max_export_bytes + 1, int(request["cpu_seconds"]))
 
     from deerflow_extension_cad.interpreter import ScriptRefused, compile_script
 
@@ -71,9 +73,12 @@ def main() -> None:
         return
 
     try:
-        shape = build.solid_of(build.run_program(program, cq))
-        files = build.export(shape, cq, Path.cwd())
+        part = build.run_program(program, cq)
+        files, mesh = build.export(build.solid_of(part), cq, Path.cwd(), max_export_bytes)
         measured = measure.measure_step(Path(files["step"]), cq)
+        measured["mesh"] = mesh
+        if build.unused_outline(part):
+            measured["unused_outline"] = True
     except build.BuildFailed as failed:
         _answer({"status": "failed", "line": failed.line, "operation": failed.operation, "message": failed.message})
         return

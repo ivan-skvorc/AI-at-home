@@ -50,6 +50,9 @@ def test_a_failed_unpack_cannot_stop_the_image_everything_else_runs_in():
 
 
 def test_the_unpack_follows_the_install_that_brings_libx11():
-    # libX11 is the kernel's other system library; it arrives with libgtk-3-0.
-    stage = _runtime_stage()
-    assert stage.index("libgtk-3-0") < stage.index("dpkg-deb -x")
+    # libX11 is the kernel's other system library; it arrives with libgtk-3-0. The
+    # instructions are compared, not the text: a comment that names the package is not an install.
+    instructions = _instructions(_runtime_stage())
+    install = next(index for index, instruction in enumerate(instructions) if re.search(r"apt-get install\b.*\blibgtk-3-0\b", instruction))
+    unpack = next(index for index, instruction in enumerate(instructions) if "dpkg-deb -x" in instruction)
+    assert install < unpack

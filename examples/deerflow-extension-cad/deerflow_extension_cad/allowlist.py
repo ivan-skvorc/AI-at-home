@@ -51,8 +51,8 @@ MIN_LENGTH = 0.0001
 MAX_ANGLE = 3600.0
 #: Points one pattern call may create, and all pattern calls of a script together.
 #: Cost grows faster than the count, and the common idiom circle().cutThruAll() is far
-#: slower than hole(): 100 circles cut in about 7 seconds on four cores, 225 in about a
-#: minute. The caps keep the ordinary idioms inside the worker's wall clock. They are
+#: slower than hole(): 100 circles cut in about 7 seconds on four cores, 225 in 30 to 60
+#: seconds. The caps keep the ordinary idioms inside the worker's wall clock. They are
 #: not a bound on every script: vertices() on construction geometry multiplies the
 #: points on the stack, and what stops that is the parent's wall clock.
 MAX_INSTANCES_PER_CALL = 100

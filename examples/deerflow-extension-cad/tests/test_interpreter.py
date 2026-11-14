@@ -235,6 +235,11 @@ REFUSED = [
     ("r = cq.Workplane('XY').box(1, 1, 1, centered=(True, False))\n", "argument", 1),
     ("r = cq.Workplane('XY').rect(1, 1, centered=(True, False, True)).extrude(1)\n", "argument", 1),
     ("x = (-8) ** 0.5\n", "arithmetic", 1),
+    # One statement per line, and no line so long that its end is off the screen: a second
+    # statement far to the right of the visible one would otherwise decide the part.
+    ("a = 1; b = 2\nr = cq.Workplane('XY').box(1, 1, 1)\n", "syntax", 1),
+    ("result = cq.Workplane('XY').box(10, 10, 10)" + " " * 300 + "; result = cq.Workplane('XY').box(99, 99, 99)\n", "syntax", 1),
+    ("r = cq.Workplane('XY').box(1, 1, 1)\nx = " + "1 + " * 300 + "1\n", "syntax", 2),
     ("x = 1\n\x00y = 2\n", "syntax", None),
     # What a viewer shows as one line must be what the parser reads as one line.
     ("x = 1\n\x0cy = 2\n", "syntax", None),
@@ -285,8 +290,9 @@ def test_a_refusal_says_what_to_do_next():
     assert "an if statement" in message("if 1:\n    x = 1\n") and "a loop" in message("for i in (1, 2):\n    x = i\n")
     assert "split" in message("result = cq.Workplane('XY')" + ".close()" * 98 + "\n")
     # What a script wrote is quoted back in part, never in full.
-    for long in ("x = " + "a" * 30000 + "\n", box + "y = result." + "a" * 30000 + "()\n", box + "y = result.box(1, 1, 1, " + "a" * 30000 + "=1)\n"):
-        assert len(message(long)) < 1000
+    for long in ("x = " + "a" * 900 + "\n", box + "y = result." + "a" * 900 + "()\n", box + "y = result.box(1, 1, 1, " + "a" * 900 + "=1)\n"):
+        assert "aaa..." in message(long) and len(message(long)) < 700
+    assert "break it" in message("x = " + "1 + " * 300 + "1\n")
 
 
 def test_the_export_refusal_shadows_no_allow_listed_method():
@@ -335,10 +341,11 @@ def test_size_nesting_and_node_caps_refuse_before_any_evaluation():
         compile_script("x = 1\n" + "# pad\n" * (MAX_SCRIPT_BYTES // 6 + 1))
     assert too_long.value.construct == "script size"
 
-    for hostile in ("x = " + "(" * 5000 + "1" + ")" * 5000, "x = " + "-" * 5000 + "1", "x = " + "+".join(["1"] * 5000), "x = " + "[" * 500 + "]" * 500):
+    # One token per line, so the limit on line length is not what refuses them.
+    for hostile in ("x = " + "(\n" * 5000 + "1" + "\n)" * 5000, "x = (" + "-\n" * 5000 + "1)", "x = (" + "+\n".join(["1"] * 5000) + ")", "x = " + "[\n" * 500 + "]" * 500):
         with pytest.raises(ScriptRefused) as nested:
             compile_script(hostile)
-        assert nested.value.construct in ("nesting", "script length", "syntax")
+        assert nested.value.construct in ("nesting", "script length") or (nested.value.construct == "syntax" and "longer than" not in nested.value.message)
 
     statements = "\n".join(f"v{i} = {i}" for i in range(MAX_NODES))
     with pytest.raises(ScriptRefused) as many:

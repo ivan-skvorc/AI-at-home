@@ -98,8 +98,8 @@ HOSTILE = [
     ("a method that takes a path", "result = cq.Workplane('XY').box(1, 1, 1).exportSvg('/tmp/deerflow-cad-canary.svg')\n", "export"),
     ("a builtin that opens a file", "x = open('/tmp/deerflow-cad-canary', 'w')\nresult = cq.Workplane('XY').box(1, 1, 1)\n", "call"),
     ("a pattern of a million instances", "result = cq.Workplane('XY').box(9, 9, 1).faces('>Z').workplane().rarray(1, 1, 1000, 1000).hole(0.5)\n", "pattern"),
-    ("a deeply nested expression", "x = " + "(" * 3000 + "1" + ")" * 3000 + "\nresult = cq.Workplane('XY').box(1, 1, 1)\n", "syntax"),
-    ("a long operator chain", "x = " + "-" * 2500 + "1\nresult = cq.Workplane('XY').box(1, 1, 1)\n", "nesting"),
+    ("a deeply nested expression", "x = " + "(\n" * 3000 + "1" + "\n)" * 3000 + "\nresult = cq.Workplane('XY').box(1, 1, 1)\n", "syntax"),
+    ("a long operator chain", "x = (" + "-\n" * 2500 + "1)\nresult = cq.Workplane('XY').box(1, 1, 1)\n", "nesting"),
     ("a number the size of a planet", "result = cq.Workplane('XY').box(10 ** 9, 1, 1)\n", "argument"),
 ]
 
@@ -136,6 +136,102 @@ async def test_two_separate_bodies_are_not_one_part():
     assert answer["passed"] is False
     assert [check["check"] for check in answer["checks"] if not check["passed"]] == ["one closed solid"]
     assert "part.step" not in files and "part.failed.glb" in files
+
+
+BLOCK = 'cq.Workplane("XY").box(60, 40, 6)'
+EMPTIED = [
+    ("an intersection of parts that do not meet", 'a = cq.Workplane("XY").box(40, 40, 20)\nb = cq.Workplane("XY").sphere(22).translate((100, 0, 0))\nresult = a.intersect(b)\n', [40, 40, 20], 3, "intersect"),
+    ("a hole wider than the part", 'result = (\n    cq.Workplane("XY").box(10, 10, 10)\n    .faces(">Z").workplane()\n    .hole(50)\n)\n', [10, 10, 10], 4, "hole"),
+    ("a cut by a body that swallows the part", 'a = cq.Workplane("XY").box(4, 4, 4)\nresult = a.cut(cq.Workplane("XY").sphere(50))\n', [4, 4, 4], 2, "cut"),
+]
+
+
+@pytest.mark.parametrize(("label", "script", "bbox", "line", "operation"), EMPTIED, ids=[item[0] for item in EMPTIED])
+async def test_an_operation_that_removes_the_whole_part_fails_instead_of_passing_as_the_part_before_it(label, script, bbox, line, operation):
+    # CadQuery leaves an empty compound, and looking for the solid then walks back to the untouched part.
+    answer, files = await _build(script, bbox_xyz_mm=bbox)
+    assert answer["passed"] is False
+    assert (answer["error"]["line"], answer["error"]["operation"]) == (line, operation)
+    assert "nothing remains" in answer["error"]["message"]
+    assert sorted(files) == ["part.py", "part.report.json"]
+
+
+UNCHANGED = [
+    ("a pocket cut away from the part", f'result = {BLOCK}.faces(">Z").workplane().rect(20, 10).cutBlind(3)\n', "cutBlind", "negative distance"),
+    ("a hole drilled beside the part", f'result = {BLOCK}.faces(">Z").workplane().center(100, 0).hole(4)\n', "hole", "off the part"),
+    ("a cut by a body that does not touch", f'a = {BLOCK}\nresult = a.cut(cq.Workplane("XY").sphere(5).translate((100, 0, 0)))\n', "cut", "do not overlap"),
+    ("a wall thicker than the part", 'result = cq.Workplane("XY").box(60, 40, 30).faces(">Z").shell(-25)\n', "shell", "thicker"),
+]
+
+
+@pytest.mark.parametrize(("label", "script", "operation", "says"), UNCHANGED, ids=[item[0] for item in UNCHANGED])
+async def test_a_cut_that_removes_nothing_fails_instead_of_passing_on_the_untouched_block(label, script, operation, says):
+    # With only a bounding box to meet, the plain block would pass every check.
+    answer, files = await _build(script, bbox_xyz_mm=[60, 40, 30] if operation == "shell" else [60, 40, 6])
+    assert answer["passed"] is False
+    assert answer["error"]["operation"] == operation and says in answer["error"]["message"]
+    assert "part.step" not in files
+
+
+async def test_what_the_checks_do_not_cover_is_said_in_the_answer():
+    # An outline nobody extruded or cut: the part is the plain block and still meets its bounding box.
+    answer, _ = await _build(f'result = {BLOCK}.faces(">Z").workplane().circle(5)\n', bbox_xyz_mm=[60, 40, 6])
+    assert answer["passed"] is True and any("outline" in note for note in answer["notes"])
+    # A cavity sealed inside the part.
+    answer, _ = await _build('result = cq.Workplane("XY").box(20, 20, 20).shell(-2)\n', bbox_xyz_mm=[20, 20, 20])
+    assert answer["passed"] is True and any("sealed" in note for note in answer["notes"])
+    # A hole that barely scratches the surface counts as a hole of its diameter, so its depth is given.
+    answer, _ = await _build(f'result = {BLOCK}.faces(">Z").workplane().hole(4, 0.5)\n', bbox_xyz_mm=[60, 40, 6], hole_diameters_mm=[4])
+    holes = next(check for check in answer["checks"] if check["check"] == "holes")
+    assert holes["passed"] is True and holes["blind_depths_mm"] == [0.5]
+    # A plain passing part says nothing extra.
+    answer, _ = await _build(PLATE)
+    assert "notes" not in answer and "blind_depths_mm" not in next(check for check in answer["checks"] if check["check"] == "holes")
+
+
+@pytest.mark.parametrize(
+    "script",
+    [
+        'result = cq.Workplane("XY").box(40, 20, 1).faces(">Z").workplane().cskHole(3.2, 6.3, 90)\n',
+        'result = cq.Workplane("XY").box(40, 20, 6).faces(">Z").workplane().circle(5).cutBlind(-3, taper=10)\n',
+        'result = cq.Workplane("XY").box(40, 20, 6).faces(">Z").workplane().circle(2).cutThruAll(taper=5)\n',
+    ],
+    ids=["a countersink deeper than the sheet", "a tapered pocket", "a tapered through cut"],
+)
+async def test_a_round_opening_with_sloped_walls_is_measured_not_crashed_on(script):
+    answer, files = await _build(script, bbox_xyz_mm=[40, 20, 1 if "cskHole" in script else 6], hole_diameters_mm=[])
+    assert answer["passed"] is True, answer
+    assert "part.step" in files
+
+
+async def test_a_dense_part_gets_a_coarser_mesh_instead_of_a_file_the_host_refuses():
+    # At the default tolerance this STL is about 10 MB, over the host's default 8 MiB per file.
+    script = 'result = cq.Workplane("XY").box(40, 40, 3).faces(">Z").workplane().rarray(3, 3, 10, 10).hole(2).edges().fillet(0.2)\n'
+    answer, files = await _build(script, bbox_xyz_mm=[40, 40, 3], hole_diameters_mm=[2] * 100)
+    assert answer["passed"] is True, answer
+    assert len(files["part.stl"]) <= build.MESH_TARGET_BYTES
+    assert int.from_bytes(files["part.stl"][80:84], "little") * 50 + 84 == len(files["part.stl"])
+    report = json.loads(files["part.report.json"])
+    assert report["measured"]["mesh"]["tolerance_mm"] > build.MESH_STEPS[0][0]
+    assert any("coarser" in note for note in answer["notes"])
+
+
+async def test_a_part_of_several_metres_is_meshed_in_proportion_to_its_size():
+    # At a tenth of a millimetre this sphere is 17 MB of triangles, cut off by the file limit and once delivered as passed.
+    started = time.monotonic()
+    answer, files = await _build('result = cq.Workplane("XY").sphere(3400)\n', bbox_xyz_mm=[6800, 6800, 6800])
+    assert answer["passed"] is True, answer
+    assert time.monotonic() - started < 15
+    assert int.from_bytes(files["part.stl"][80:84], "little") * 50 + 84 == len(files["part.stl"]) <= build.MESH_TARGET_BYTES
+
+
+async def test_an_export_over_the_size_limit_is_a_failed_build_not_a_cut_off_file(monkeypatch):
+    from deerflow_extension_cad import tool
+
+    monkeypatch.setattr(tool, "MAX_EXPORT_BYTES", 20_000)  # the plate's STEP is about 25 kB
+    answer, files = await _build(PLATE)
+    assert answer["passed"] is False and "larger than" in answer["error"]["message"]
+    assert sorted(files) == ["part.py", "part.report.json"]
 
 
 async def test_a_rebuild_does_not_touch_the_first_build():

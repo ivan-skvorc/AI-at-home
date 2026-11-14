@@ -12,9 +12,9 @@ uv run --no-project pytest -q                        # the kernel tests skip wit
 cd ../../backend && python -m pytest tests/test_cad_extension.py tests/test_cad_runtime_deps.py -q   # the host half, no kernel
 ```
 
-- **The interpreter is a security boundary.** `exec`, `eval`, `compile` and a
-  second `getattr` do not belong in this package, and `ast.parse` has one call
-  site. A change that lets a value from a script reach a lookup, a file path or
+- **The interpreter is a security boundary.** Calls to `exec`, `eval` and
+  `compile` and a second script-driven `getattr` do not belong in this package,
+  and `ast.parse` has one call site. A change that lets a value from a script reach a lookup, a file path or
   a subprocess argument needs its own review.
 - **A new method is a table row with typed arguments, an example that builds and
   a signature that matches the kernel.** Methods that take a path, a callable, a
@@ -29,8 +29,14 @@ cd ../../backend && python -m pytest tests/test_cad_extension.py tests/test_cad_
 - **Kernel calls hold the GIL.** Only the parent's wall clock and a kill of the
   process group stop a build; a timeout inside the child does nothing.
 - **Pass or fail is decided on the re-imported STEP, by `decide()`.** STEP is
-  written last and only for a part that passed every check, so its presence
-  means a checked part.
+  written last and only for a part that passed every check, so a STEP listed in
+  an answer means a checked part.
+- **`findSolid()` walks back to the parent.** After an operation that empties
+  the part it returns the part as it was before, which then passes. `build.py`
+  fails an operation that leaves no solid, and a cut that changes no volume.
+- **The kernel works on several cores and keeps a mesh on the shape.** The
+  processor backstop is counted per core, builds take slots, and a coarser mesh
+  needs the finer one cleared first.
 - **The tool description is paid on every request.** The context-fit critical
   check has about ten tokens to spare with this tool installed: shorten
   elsewhere before adding a word, and keep parameter meaning in the names.

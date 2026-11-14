@@ -6,8 +6,8 @@ back measured numbers, compares them with what the model said the part must
 meet, and writes files through the host (``ToolContext.write_output``).
 
 The tool decides pass or fail, not the model: STEP, STL and GLB are written
-only when every check passed, so a STEP file in a conversation's outputs means
-a part that passed.
+only when every check passed, so a STEP file listed in a ``cad_build`` answer
+means a part that passed.
 """
 
 from __future__ import annotations
@@ -20,11 +20,15 @@ import shutil
 import signal
 import sys
 import tempfile
+import threading
+import time
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
 from deerflow_extension_api import HostCapabilityError, ToolContext
+
+from deerflow_extension_cad.build import MESH_STEPS
 
 WORKER = Path(__file__).with_name("worker.py")
 REQUEST_FILE = "request.json"
@@ -34,11 +38,18 @@ DEFAULT_TIMEOUT_SECONDS = 20
 #: The host stops a plugin tool at 30 seconds; the build and the file writes must fit inside.
 MAX_TIMEOUT_SECONDS = 25
 DEFAULT_MEMORY_MB = 4096
-#: The kernel needs over 1.1 GiB of address space just to load, and dies on a signal when a build runs out.
+#: The kernel needs about 1 GiB of address space just to load, and dies on a signal when a build runs out.
 MIN_MEMORY_MB = 3072
+#: Builds at once. Each holds several hundred MiB and works on several cores, so more of
+#: them than the machine can carry all run out of time together and blame the part.
+DEFAULT_PARALLEL_BUILDS = max(1, (os.cpu_count() or 2) // 2)
+#: How long a call waits for a free slot before it is told to call again. With the
+#: longest build it still ends inside the host's 30 seconds.
+QUEUE_SECONDS = 3
 #: The worker's answer and each exported file are read into Gateway memory, so both are bounded here.
 MAX_RESULT_BYTES = 256 * 1024
-#: If the Gateway dies mid-build nobody is left to stop the worker; the operating system does, this much later.
+#: If the Gateway dies mid-build nobody is left to stop the worker; the operating system does,
+#: this many processor seconds after the most a build could use inside its wall clock.
 CPU_BACKSTOP_SECONDS = 10
 MAX_EXPORT_BYTES = 16 * 1024 * 1024
 
@@ -49,7 +60,7 @@ LENGTH_TOLERANCE_RATIO = 0.001
 
 # Every character here is paid on every request of every conversation, and a
 # small local model gets only the opening sentences within 280 characters (the
-# host's short tool form). So the first four sentences stand on their own, the
+# host's short tool form). So the opening sentences stand on their own, the
 # parameter names say what they hold instead of carrying descriptions, and the
 # handler checks the values itself (``_problem_with``). The context-fit critical
 # check pins the cost (backend/tests/test_context_fit_critical.py).
@@ -80,6 +91,13 @@ EXPECTATIONS = ("bbox_xyz_mm", "volume_min_max_mm3", "hole_diameters_mm")
 
 MAX_NAME_CHARS = 60
 MAX_HOLES = 400
+#: No expected number may exceed what a script itself may state.
+MAX_EXPECTED = 1e12
+
+NEXT_FIX = "Fix the script or the expected numbers and call cad_build again. Do not present this part as finished."
+NEXT_UNAVAILABLE = "The CAD kernel cannot run on this server, so another script will not help. Do not call cad_build again; tell the user, and that `make doctor` on the server names what is missing."
+NEXT_BUSY = "Nothing is wrong with the script. Call cad_build again with the same arguments."
+NEXT_UNSTORED = "The part met its checks but its files could not all be stored, so it is not delivered. Tell the user which file was refused; a part with fewer small fillets and holes gives smaller files."
 
 
 def _problem_with(payload: Mapping[str, Any]) -> str | None:
@@ -87,7 +105,8 @@ def _problem_with(payload: Mapping[str, Any]) -> str | None:
 
     def numbers(key: str, count: int | None) -> bool:
         value = payload.get(key)
-        return isinstance(value, (list, tuple)) and (count is None or len(value) == count) and all(type(item) in (int, float) and item == item and abs(item) != float("inf") for item in value)
+        # Bounded as well as finite: an integer too large for a float passes the schema and breaks the arithmetic.
+        return isinstance(value, (list, tuple)) and (count is None or len(value) == count) and all(type(item) in (int, float) and abs(item) <= MAX_EXPECTED for item in value)
 
     unknown = sorted(set(payload) - set(INPUT_SCHEMA["properties"]))
     if unknown:
@@ -97,6 +116,11 @@ def _problem_with(payload: Mapping[str, Any]) -> str | None:
         return f"name must be 1 to {MAX_NAME_CHARS} characters"
     if not payload["script"].strip():
         return "script is empty"
+    for key in ("name", "script"):
+        try:
+            payload[key].encode("utf-8")
+        except UnicodeEncodeError:
+            return f"{key} contains a character that cannot be stored in a file (half of a surrogate pair)"
     if not numbers("bbox_xyz_mm", 3) or any(side <= 0 for side in payload["bbox_xyz_mm"]):
         return "bbox_xyz_mm must be three positive numbers: the expected size along x, y and z in millimetres"
     if "volume_min_max_mm3" in payload and (not numbers("volume_min_max_mm3", 2) or not 0 <= payload["volume_min_max_mm3"][0] <= payload["volume_min_max_mm3"][1]):
@@ -115,11 +139,15 @@ def settings_from(config: Mapping[str, Any]) -> dict[str, int]:
             raise ValueError(f"cad: {key} must be a whole number from {low} to {high}")
         return value
 
-    return {"timeout_seconds": whole("timeout_seconds", DEFAULT_TIMEOUT_SECONDS, 5, MAX_TIMEOUT_SECONDS), "memory_mb": whole("memory_mb", DEFAULT_MEMORY_MB, MIN_MEMORY_MB, 65536)}
+    return {
+        "timeout_seconds": whole("timeout_seconds", DEFAULT_TIMEOUT_SECONDS, 5, MAX_TIMEOUT_SECONDS),
+        "memory_mb": whole("memory_mb", DEFAULT_MEMORY_MB, MIN_MEMORY_MB, 65536),
+        "parallel_builds": whole("parallel_builds", DEFAULT_PARALLEL_BUILDS, 1, 16),
+    }
 
 
 def slug(name: str) -> str:
-    return re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")[:40] or "part"
+    return re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")[:40].strip("-") or "part"
 
 
 # --- Deciding ---------------------------------------------------------------
@@ -131,11 +159,12 @@ def _close(expected: float, measured: float) -> bool:
 
 def decide(measured: Mapping[str, Any], payload: Mapping[str, Any]) -> list[dict[str, Any]]:
     """Compare what was measured on the re-imported STEP with what the part must meet."""
+    voids = measured.get("enclosed_voids") or 0
     checks: list[dict[str, Any]] = [
         {
             "check": "one closed solid",
             "expected": "exactly one valid, closed solid",
-            "measured": f"{measured['solids']} solid(s), valid={measured['valid']}, closed={measured['closed']}",
+            "measured": f"{measured['solids']} solid(s), valid={measured['valid']}, closed={measured['closed']}" + (f", {voids} sealed {'cavity' if voids == 1 else 'cavities'} inside" if voids else ""),
             "passed": measured["solids"] == 1 and measured["valid"] and measured["closed"],
         },
     ]
@@ -148,8 +177,27 @@ def decide(measured: Mapping[str, Any], payload: Mapping[str, Any]) -> list[dict
     if "hole_diameters_mm" in payload:
         expected = sorted(payload["hole_diameters_mm"])
         found = sorted(hole["diameter_mm"] for hole in measured["holes"])
-        checks.append({"check": "holes", "expected": expected, "measured": found, "passed": len(expected) == len(found) and all(_close(e, m) for e, m in zip(expected, found))})
+        check = {"check": "holes", "expected": expected, "measured": found, "passed": len(expected) == len(found) and all(_close(e, m) for e, m in zip(expected, found))}
+        # The check compares diameters. A hole that stops inside the part is said, with how deep it goes.
+        blind = sorted(hole["depth_mm"] for hole in measured["holes"] if hole.get("through") is False)
+        if blind:
+            check["blind_depths_mm"] = blind
+        checks.append(check)
     return checks
+
+
+def notes_on(measured: Mapping[str, Any]) -> list[str]:
+    """What the checks do not decide and a reader of the answer should still know."""
+    notes = []
+    if measured.get("unused_outline"):
+        notes.append("The script draws an outline that is never extruded or cut; it is not part of the result.")
+    voids = measured.get("enclosed_voids") or 0
+    if voids:
+        notes.append(f"The part has {voids} sealed {'cavity' if voids == 1 else 'cavities'} inside that cannot be reached from outside.")
+    tolerance = (measured.get("mesh") or {}).get("tolerance_mm")
+    if isinstance(tolerance, (int, float)) and tolerance > MESH_STEPS[0][0]:
+        notes.append(f"The STL and GLB meshes are coarser than usual ({tolerance:g} mm) to keep the files small; the STEP file is exact.")
+    return notes
 
 
 # --- Running the worker -----------------------------------------------------
@@ -157,7 +205,9 @@ def decide(measured: Mapping[str, Any], payload: Mapping[str, Any]) -> list[dict
 
 def _prepare(script: str, memory_mb: int, timeout_seconds: int) -> str:
     directory = tempfile.mkdtemp(prefix="deerflow-cad-")
-    request = {"script": script, "memory_mb": memory_mb, "max_export_bytes": MAX_EXPORT_BYTES, "cpu_seconds": timeout_seconds + CPU_BACKSTOP_SECONDS}
+    # The kernel works on several cores at once, so processor time runs ahead of the clock.
+    cpu_seconds = timeout_seconds * (os.cpu_count() or 1) + CPU_BACKSTOP_SECONDS
+    request = {"script": script, "memory_mb": memory_mb, "max_export_bytes": MAX_EXPORT_BYTES, "cpu_seconds": cpu_seconds}
     Path(directory, REQUEST_FILE).write_text(json.dumps(request), encoding="utf-8")
     return directory
 
@@ -192,22 +242,62 @@ def _worker_environment(directory: str) -> dict[str, str]:
 
 
 def _stop(process: asyncio.subprocess.Process) -> None:
-    if process.returncode is not None:
-        return
     try:
         if os.name == "posix":
-            os.killpg(process.pid, signal.SIGKILL)  # the worker leads its own session
-        else:
+            # The worker leads its own session, so this is its whole group, and it is sent
+            # even when the worker has already finished: anything it left running goes too.
+            # Process ids are handed out in sequence, so the group's id cannot have been
+            # given to another process in the instant since the worker was collected.
+            os.killpg(process.pid, signal.SIGKILL)
+        elif process.returncode is None:
             process.kill()
-    except ProcessLookupError:
+    except (ProcessLookupError, PermissionError):
         pass
 
 
-async def run_worker(script: str, *, timeout_seconds: int, memory_mb: int) -> dict[str, Any]:
-    """Build *script* in a child interpreter and return its answer, or a failure it could not report itself."""
-    directory = await asyncio.to_thread(_prepare, script, memory_mb, timeout_seconds)
-    process = None
+async def _acquire(slots: threading.BoundedSemaphore, wait_seconds: float) -> bool:
+    # A thread semaphore polled from the loop: tools may run on more than one event loop.
+    deadline = time.monotonic() + wait_seconds
+    while not slots.acquire(blocking=False):
+        if time.monotonic() >= deadline:
+            return False
+        await asyncio.sleep(0.05)
+    return True
+
+
+async def _clean_up(process: asyncio.subprocess.Process | None, directory: str | None, slots: threading.BoundedSemaphore | None) -> None:
     try:
+        if process is not None:
+            _stop(process)
+            await process.wait()
+    finally:
+        try:
+            if directory is not None:
+                await asyncio.to_thread(shutil.rmtree, directory, True)
+        finally:
+            if slots is not None:
+                slots.release()
+
+
+def _discard(preparing: asyncio.Future) -> None:
+    """Remove a directory whose call was cancelled while a thread was still making it."""
+    if not preparing.cancelled() and preparing.exception() is None:
+        asyncio.get_running_loop().run_in_executor(None, shutil.rmtree, preparing.result(), True)
+
+
+async def run_worker(script: str, *, timeout_seconds: int, memory_mb: int, slots: threading.BoundedSemaphore | None = None) -> dict[str, Any]:
+    """Build *script* in a child interpreter and return its answer, or a failure it could not report itself."""
+    if slots is not None and not await _acquire(slots, QUEUE_SECONDS):
+        return {"status": "busy", "message": "the server is building other parts right now and has no free slot for this one"}
+    process = None
+    directory = None
+    try:
+        preparing = asyncio.ensure_future(asyncio.to_thread(_prepare, script, memory_mb, timeout_seconds))
+        try:
+            directory = await asyncio.shield(preparing)
+        except asyncio.CancelledError:
+            preparing.add_done_callback(_discard)
+            raise
         # -I: no PYTHONPATH, no user site, no current directory on sys.path. The
         # environment carries nothing from the Gateway: no credentials, no proxy.
         process = await asyncio.create_subprocess_exec(
@@ -233,13 +323,11 @@ async def run_worker(script: str, *, timeout_seconds: int, memory_mb: int) -> di
         if result.get("status"):
             return result
         reason = f"signal {-code}" if code < 0 else f"exit code {code}"
-        return {"status": "failed", "message": f"the CAD kernel stopped without an answer ({reason}); it may have run out of memory"}
+        return {"status": "failed", "message": f"the CAD kernel stopped without an answer ({reason}); it most likely ran out of memory or processor time. Simplify the part."}
     finally:
-        # Also on cancellation: the host's 30 second limit or a stopped run must not leave a kernel running.
-        if process is not None:
-            _stop(process)
-            await asyncio.shield(process.wait())
-        await asyncio.to_thread(shutil.rmtree, directory, True)
+        # Also on cancellation: the host's 30 second limit or a stopped run must not leave a kernel
+        # running, a script on disk or a slot taken. Shielded, so a second cancellation cannot skip it.
+        await asyncio.shield(asyncio.ensure_future(_clean_up(process, directory, slots)))
 
 
 # --- The handler ------------------------------------------------------------
@@ -249,13 +337,16 @@ async def _save(context: ToolContext, name: str, content: bytes, saved: list[str
     try:
         path = await context.write_output(name, content)
     except HostCapabilityError as exc:
-        problems.append(f"{name} was not saved ({exc.code})")
+        size = f"{len(content) / (1024 * 1024):.1f} MB" if len(content) >= 1024 * 1024 else f"{max(1, len(content) // 1024)} KB"
+        problems.append(f"{name} ({size}) was not saved ({exc.code})")
         return None
     saved.append(path)
     return path
 
 
 def make_handler(settings: Mapping[str, int]):
+    slots = threading.BoundedSemaphore(settings.get("parallel_builds", DEFAULT_PARALLEL_BUILDS))
+
     async def cad_build(payload: Mapping[str, Any], context: ToolContext) -> dict[str, Any]:
         if context.output_writer is None:
             return {"passed": False, "error": "This conversation cannot receive files, so no part was built."}
@@ -263,14 +354,20 @@ def make_handler(settings: Mapping[str, int]):
         if problem:
             return {"passed": False, "error": {"message": problem}, "next": "Correct the arguments and call cad_build again."}
         script = payload["script"]
-        result = await run_worker(script, timeout_seconds=settings["timeout_seconds"], memory_mb=settings["memory_mb"])
+        result = await run_worker(script, timeout_seconds=settings["timeout_seconds"], memory_mb=settings["memory_mb"], slots=slots)
+        if result.get("status") == "busy":
+            return {"passed": False, "error": {"message": result["message"]}, "next": NEXT_BUSY}
         saved: list[str] = []
         problems: list[str] = []
         # The script is saved first: the name the host gives it is this build's stem, so
         # a rebuild of the same part gets plate-1.* as a set instead of a mix.
         script_path = await _save(context, f"{slug(payload['name'])}.py", script.encode("utf-8"), saved, problems)
-        stem = Path(script_path).stem if script_path else slug(payload["name"])
+        if script_path is None:
+            # Without the script there is no stem for the set, and files under a guessed one would mix with another build's.
+            return {"passed": False, "error": {"message": "the script could not be stored, so nothing was"}, "problems": problems, "files": [], "next": NEXT_UNSTORED}
+        stem = Path(script_path).stem
         answer: dict[str, Any] = {"passed": False}
+        next_step = NEXT_FIX
         report: dict[str, Any] = {"name": payload["name"], "passed": False, "expected": {key: payload[key] for key in EXPECTATIONS if key in payload}}
         files = result.get("files") or {}
         if result.get("status") == "built":
@@ -278,6 +375,9 @@ def make_handler(settings: Mapping[str, int]):
             passed = all(check["passed"] for check in checks)
             answer.update(passed=passed, checks=checks)
             report.update(passed=passed, checks=checks, measured=result["measured"])
+            notes = notes_on(result["measured"])
+            if notes:
+                answer["notes"] = report["notes"] = notes
             if passed:
                 # STEP goes last: a STEP file in the outputs means the whole set was handed over.
                 for kind in ("glb", "stl", "step"):
@@ -287,12 +387,15 @@ def make_handler(settings: Mapping[str, int]):
                         continue
                     # A part that passed but could not be handed over in full is not presented as delivered.
                     answer["passed"] = report["passed"] = False
+                    next_step = NEXT_UNSTORED
                     break
             elif "glb" in files:
                 await _save(context, f"{stem}.failed.glb", files["glb"], saved, problems)
         else:
             error = {key: result[key] for key in ("construct", "line", "operation", "message") if result.get(key) is not None}
             answer["error"] = report["error"] = error or {"message": "the build failed"}
+            if result.get("status") == "unavailable":
+                next_step = NEXT_UNAVAILABLE
         if problems:
             report["problems"] = list(problems)
         await _save(context, f"{stem}.report.json", json.dumps(report, indent=2, ensure_ascii=False).encode("utf-8"), saved, problems)
@@ -300,7 +403,7 @@ def make_handler(settings: Mapping[str, int]):
             answer["problems"] = problems
         answer["files"] = saved
         if not answer["passed"]:
-            answer["next"] = "Fix the script or the expected numbers and call cad_build again. Do not present this part as finished."
+            answer["next"] = next_step
         return answer
 
     return cad_build

@@ -25,6 +25,9 @@ from dataclasses import dataclass
 from deerflow_extension_cad import allowlist as table
 
 MAX_SCRIPT_BYTES = 32 * 1024
+#: Characters on one line. With one statement per line, nothing that decides the part
+#: sits far to the right of what a viewer shows.
+MAX_LINE = 1_000
 MAX_NODES = 2_000
 MAX_DEPTH = 200
 MAX_OPERATIONS = 300
@@ -547,6 +550,10 @@ def compile_script(source: str) -> Program:
         # not for a viewer, and a direction override reorders what a viewer draws: the
         # script kept beside the part must read the way it was read here.
         _refuse("syntax", None, f"the script contains an invisible or control character (U+{ord(hidden):04X}); use plain text with ordinary line breaks")
+    # After the gate above only a line feed ends a line, so these are the parser's lines.
+    for number, text in enumerate(source.split("\n"), 1):
+        if len(text) > MAX_LINE:
+            _refuse("syntax", number, f"this line is longer than {MAX_LINE} characters: break it into shorter lines")
     try:
         tree = ast.parse(source, filename="<script>", mode="exec")
     except SyntaxError as exc:
@@ -554,6 +561,11 @@ def compile_script(source: str) -> Program:
     except (ValueError, RecursionError, MemoryError):
         _refuse("nesting", None, "the script is nested too deeply to read")
     _check_tree(tree)
+    previous_end = 0
+    for statement in tree.body:
+        if statement.lineno <= previous_end:
+            _refuse("syntax", statement.lineno, "one statement per line: start this one on its own line")
+        previous_end = statement.end_lineno or statement.lineno
     reader = _Reader()
     try:
         for statement in tree.body:

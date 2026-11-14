@@ -22,7 +22,7 @@
     },
     "en-US": {
       "title": "CAD parts",
-      "description": "Build a mechanical part from a short CadQuery script. The script is read, never run; the result is measured and saved as STEP, STL and GLB files.",
+      "description": "Build a mechanical part from a short CadQuery script. The script is read, never run; the result is measured, checked and saved as STEP, STL and GLB files.",
       "usage": [
         {
           "title": "Describe the part with its dimensions",

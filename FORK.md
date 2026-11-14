@@ -5451,9 +5451,10 @@ itself. CadQuery is the input because models already write it.
 manager and off until then. One tool, `cad_build`: a part name, the script and the
 numbers the part must meet go in; pass or fail per check with measured values
 comes out, or the refusal with its construct and line. Files go through
-`ToolContext.write_output` (§50): the script and a report always, STEP, STL and
-GLB only when every check passed, `<name>.failed.glb` otherwise. The package
-README holds the user's half: the allow-list, the limits, the install.
+`ToolContext.write_output` (§50): the script and a report for every build, STEP,
+STL and GLB only when every check passed, and `<name>.failed.glb` when the part
+built and a check failed. The package README holds the user's half: the
+allow-list, the limits, the install.
 
 **The decisions, and what was rejected.**
 
@@ -5470,8 +5471,11 @@ README holds the user's half: the allow-list, the limits, the install.
   inside the child can interrupt it.
 - **The tool decides.** The STEP that was written is imported again and measured:
   one valid closed solid, bounding box, volume, holes. Measuring the file, not the
-  object in memory, is what makes "a STEP in the outputs means a part that passed"
-  true. Expected holes are one list of diameters, which carries the count.
+  object in memory, is what makes "a STEP listed in a `cad_build` answer means a
+  part that passed" true. It is not a statement about every `.step` in the
+  outputs: an earlier build's STEP stays when a later one fails, and an agent
+  with file tools can write one itself. Expected holes are one list of
+  diameters, which carries the count.
 - **One named offline group.** `local_extensions` joins
   `OFFLINE_ALLOWED_TOOL_GROUPS` and `cad_build` declares it. `media` is not
   reused: it means the local ComfyUI service.
@@ -5489,16 +5493,24 @@ README holds the user's half: the allow-list, the limits, the install.
 - **The node whitelist runs before evaluation, iteratively.** A recursive walk
   overflows on a legal but deep tree, and `ast.parse` itself fails three ways on
   hostile nesting; all are refusals, not crashes.
-- **Hidden characters are refused in the whole text, comments included.** A
-  form feed, a lone carriage return or a line separator starts a line for the
-  parser and not for a viewer, and a direction override reorders what a viewer
-  draws; the `.py` file kept beside the part must read as it was read.
+- **Hidden characters are refused in the whole text, comments included, and a
+  script holds one statement per line.** A form feed, a lone carriage return or
+  a line separator starts a line for the parser and not for a viewer, a
+  direction override reorders what a viewer draws, and a second statement after
+  a semicolon far to the right decides the part unseen. The `.py` file kept
+  beside the part must read as it was read.
+- **An operation that empties the part, or a cut that changes nothing, fails
+  the build.** CadQuery leaves an empty compound after a cut that removes
+  everything, and `findSolid()` then walks back to the part as it was before:
+  the untouched block passed every check (found in review). A pocket cut away
+  from the part or a hole drilled beside it passed the same way on a bounding
+  box alone. `build.py` checks both after each operation.
 - **Arguments are typed by the table, not by the kernel.** CadQuery accepts
   `centered="abc"` and reads `extrude(True)` as 1. Non-finite numbers hang or
   crash it. Every argument is checked against its kind first.
 - **Pattern caps are sized for the slow idiom, and the wall clock is the
-  bound.** `circle().cutThruAll()` on a pattern is about 55 times slower than
-  `hole()`; the caps (100 per call, 200 per script) keep the ordinary idioms
+  bound.** `circle().cutThruAll()` on a pattern is about 25 times slower than
+  `hole()` at 100 points and worse above; the caps (100 per call, 200 per script) keep the ordinary idioms
   inside the build time. They cannot bound every script: `vertices()` on
   construction geometry multiplies the points on the stack, which no reading of
   the text can count. The parent's kill of the process group is what holds.
@@ -5507,7 +5519,22 @@ README holds the user's half: the allow-list, the limits, the install.
 - **A hole is decided by geometry**, by the rule at the top of `measure.py`.
   Counting cylindrical faces counts fillets and bosses.
 - **STEP is written last.** A part whose files the host would not store in full
-  is not presented as delivered.
+  is not presented as delivered. The script is written first and names the set;
+  when it cannot be stored, nothing is.
+- **The mesh is sized for the host's file cap.** A part dense with small fillets
+  gives a 10 MB STL at 0.1 mm, over the default 8 MiB per file, so a correct
+  part failed with advice to fix its script. The worker meshes coarser until
+  the STL is under 6 MiB, clears the finer mesh first (the kernel would reuse
+  it), and checks the triangle count against the file size: the kernel's writer
+  does not report a write the operating system cut short.
+- **The kernel works on several cores.** A processor-time limit of the wall
+  clock plus ten seconds stopped honest builds at nine seconds and the answer
+  blamed memory. The backstop is the wall clock times the cores, so only the
+  parent's clock stops a build while the parent lives. Builds also take slots
+  (`parallel_builds`): more of them than the machine carries all time out
+  together, each told to simplify a part that was fine.
+- **The whole process group is killed, also after a worker that finished.** The
+  worker starts no process; one that exists means the kernel was made to.
 - **The description is paid on every request.** `cad_build` costs 175 tokens in
   the short tool form and the heaviest composer mode had 186 to spare on a 32K
   model. Parameter names say what they hold instead of carrying descriptions.
@@ -5518,7 +5545,11 @@ extension tool in the default `extensions` group is still offered offline, the
 HTTP-calling examples included. Closing that would also remove the workflow tools
 from offline chats, so it is its own change. The image's library step was
 rehearsed on Ubuntu 24.04 with the real `apt-get`, not built on bookworm. The dev
-image stage (`make docker-start`) does not get the libraries.
+image stage (`make docker-start`) does not get the libraries. A pattern of which
+some instances miss the part still passes unless the holes are declared, since
+the volume changed. An outline nobody used is a note in the answer, not a
+failure: the sloppy idiom `rect(...).vertices().hole(...)` leaves one behind on
+a correct part. Windows gets neither the process-group kill nor the limits.
 
 **On an upstream sync.** The package is fork-only. `internet_access.py`,
 `doctor.py`, `backend/Dockerfile` and the frontend catalog carry additive blocks.
