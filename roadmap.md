@@ -69,6 +69,16 @@ machines they already run on, and the look they should share are in
 [docs/companion-apps.md](docs/companion-apps.md). They do not pull training into
 this fork; that decision stays under *Deliberately not*.
 
+Items **43–50** came from wanting mechanical parts out of the same chat: describe a
+bracket, get a script that can be edited, a STEP file for a CAD program and an STL for the
+printer, on whichever model the conversation already uses. A separate desktop app was
+planned first and dropped, because the models, the three subscription sign-ins, the agent
+loop and the artifact panel already live here. The constraint that shapes all eight is the
+default install: `LocalSandboxProvider` with `allow_host_bash: false` gives the agent no
+shell, so "write a script and run it" is not available where most people start. The CAD
+module therefore builds a part **without running what the model wrote**, as an installed
+extension, and the files it writes are ordinary outputs that the Files view lists.
+
 ---
 
 ## At a glance
@@ -112,6 +122,23 @@ Open items, one line each. The full orchestrator prompts follow.
   an empty chat, in the light and dark themes, and not from the marketing landing page.
 - **42. One card, one turn** — Ollama and training stay on the daily PC; the home server
   only serves the pages; a training run and a chat take turns on the 3090.
+- **43. A plugin tool can hand a file to its conversation** — a bounded, host-checked write
+  into the calling conversation's outputs, so a tool that produces files can be a module.
+- **44. A CAD module that builds a part without running the model's code** — an
+  allow-listed CadQuery script goes in; STEP, STL, GLB and measured numbers come out, on
+  the default sandbox, with the internet switch off.
+- **45. A CAD skill** — the prompt: ask what is missing, write the numbers down, call the
+  tool, read the numbers back, and never present a part that failed.
+- **46. 3D files open in the artifact panel** — GLB and STL rotate in the panel and the
+  reader, on a phone too; STEP after that.
+- **47. Geometry decides a delegated part** — a subagent's part passes on the existing
+  acceptance checklist or not at all.
+- **48. A CAD eval** — one command says which configured model can make the part, what it
+  cost, and which operations it reached for that the module does not have.
+- **49. Ollama models from Settings** — find, size against the card, pull and delete
+  without a terminal; the daemon downloads, under operator limits.
+- **50. Full scripts where a container exists** — unrestricted build123d and CadQuery, and
+  a native FreeCAD file, for the parts the allow-list cannot express.
 
 **Suggested order for 19–25.** Voice first (19), since it is the one missing modality and it
 closes a live privacy leak. Then the injection boundary (23), *before* anything widens the
@@ -133,6 +160,14 @@ the integration. 42 before the first night FrontalRobotomy trains on the PC whil
 else wants the card. 41 last of the three, once the URLs it opens are real; its look is
 specified in [docs/companion-apps.md](docs/companion-apps.md), not designed again in the
 change.
+
+**Suggested order for 43–50.** 43 first, because it decides whether CAD is a module or a
+recorded exception in core; item 44 says what happens if it is declined. Then 44 and 45
+together: they are the first version that works. 46 next, since a part nobody can look at
+is half delivered. 47 before CAD is used in Ultra or Plus Ultracode, where subagents report
+on their own work. 48 once 44 is stable, and again after every change to the allow-list.
+49 is independent of the rest. 50 only if 48 shows that the allow-list, and not the model,
+is what stops real parts.
 
 ---
 
@@ -1135,9 +1170,376 @@ insider's matching gate, `ollama.gpu_lock_file`. In FrontalRobotomy:
 
 ---
 
+## 43. A plugin tool can hand a file to its conversation
+
+**Goal** — An extension's model tool can write a bounded file into the outputs of the
+conversation that called it, during the run. The file opens in the artifact panel and is
+listed in the Files view exactly as one written by a built-in tool.
+
+**Why it fits** — "Evaluate an extension first" has a gap here. The contract's
+`import_artifact` places at most 2 MiB in an *idle* thread's uploads, so a tool that
+produces a file in the middle of a run cannot be an extension today. That is why ComfyUI
+and the Grok media tools live in core and write through `write_output` on the host outputs
+path. Grok had a second reason, the credential; a tool with no credential should not need
+core at all. The write happens in the Gateway, so it works on every sandbox provider,
+including the default one with no shell.
+
+**Depends on** — nothing.
+
+**Scope**
+
+- A capability on `ToolContext`, bound by the host to the calling thread and run. The tool
+  supplies a file name and bytes. It never names a thread, a user or a directory.
+- The host sanitizes the name, refuses path separators and `..`, resolves collisions,
+  enforces a per-file and a per-call size cap from operator config, and returns the
+  virtual path. It registers the file as an artifact the way a built-in tool's `Command`
+  does, and synchronizes remote sandboxes the way `import_artifact` already does.
+- Authority is the run's own thread-write authority, checked at the write. A delegated
+  subagent writes into the lead's shared outputs, as its file tools do.
+- The plugin tool limits stay as they are: 256 KiB of input, 64 KiB of result, 30 seconds.
+  File bytes do not count against the result cap, because they never reach the model.
+- An older host answers that the capability is unsupported, per the contract's rule that
+  unsupported registration returns False. The extension API version moves, and
+  `docs/full-stack-plugins.md` documents the floor.
+- It is not a filesystem API. No read, no delete, no directory creation, no path outside
+  outputs.
+
+**Key files** — `backend/packages/extension-api/deerflow_extension_api/plugins.py`,
+`backend/packages/harness/deerflow/extensions/plugin_tools.py`,
+`backend/packages/harness/deerflow/community/comfyui/service.py` (`write_output`, the
+writer to reuse rather than copy), `docs/full-stack-plugins.md`,
+`examples/deerflow-extension-example/`, `backend/tests/test_plugin_tools.py`.
+
+**Done when** — the example extension's tool writes a file that appears in the artifact
+panel and the Files view under `LocalSandboxProvider` and under the container provider; a
+name containing a separator or `..` and a file over the cap are each refused before a byte
+is written; a tool cannot make a file appear in another conversation, and a test proves
+it; and an older host reports the capability as unsupported instead of ignoring it.
+
+---
+
+## 44. A CAD module that builds a part without running the model's code
+
+**Goal** — With the CAD extension installed, any model in any mode turns a short CadQuery
+script into `part.step`, `part.stl`, `part.glb` and a measured report in the conversation's
+outputs. It works on the default `LocalSandboxProvider` with `allow_host_bash: false`, and
+with the internet switch off.
+
+**Why it fits** — The default install gives the agent no shell, on purpose, so a part
+cannot be made by writing a script and running it. The module reads the script as a syntax
+tree and performs only an allow-list of CadQuery operations itself. Nothing the model wrote
+is executed, so the default sandbox decision stays intact. CadQuery is the input because
+models already write it: benchmarks found code in a known Python library clearly ahead of
+purpose-built command formats, and the published CAD fine-tunes of local models emit it.
+The kernel is CPU-only, so it stays out of the GPU residency question. It is a module
+because the kernel is a large dependency that only its users should pay for.
+
+**Depends on** — 43. If 43 is declined, the same package content ships as
+`deerflow/community/cad/` under a recorded extension-first exception, writing through
+`write_output` as ComfyUI does. Nothing else in this item changes.
+
+**Scope**
+
+- A packaged extension, `examples/deerflow-extension-cad/`, installed through the
+  extension manager. `cadquery` is the package's own pinned dependency. Off until
+  installed; the Gateway starts and lists no CAD tool without it.
+- One tool, `cad_build`. Input: a part name, the script text, and the numbers the part
+  must meet (bounding box, volume range, hole count and diameters). Output to the model:
+  pass or fail per check with the measured values, or the error with its line.
+- **The script is never executed.** It is parsed with `ast` and walked by an interpreter
+  that accepts `import cadquery as cq`, assignments to plain names, numbers, strings,
+  tuples, lists, arithmetic, and calls to allow-listed `Workplane` methods. Anything else
+  is refused with the construct and the line: other imports, attributes off the list,
+  `def`, `lambda`, `class`, loops, comprehensions, `with`, `try`, dunder names. Methods
+  that take a file path, a callable or a font are not on the list. `exec`, `eval` and
+  `compile` never touch model text; a test searches the package for them, and behaviour
+  tests try the escapes.
+- The allow-list starts with what simple parts need: primitives, sketch and extrude, cut,
+  holes (through, blind, counterbore, countersink), fillet, chamfer, shell, rectangular
+  and polar point patterns, mirror, union, cut and intersect, with CadQuery's own selector
+  strings. It grows one method at a time, each with a test and a case in item 48.
+- The build runs in a child process with a wall-clock limit inside the plugin tool's 30
+  seconds, a memory ceiling where the OS offers one, and caps on syntax nodes, pattern
+  instances and output bytes. The event loop never waits on it (`make test-blocking-io`).
+- Checks happen in the same call. The STEP that was just written is imported again; it
+  must be exactly one valid, closed solid; bounding box, volume, and the count and
+  diameters of cylindrical holes are compared with the expected numbers. The tool decides
+  pass or fail, not the model.
+- Files, through item 43's capability: the script as given (`part.py`) and
+  `part.report.json` always. `part.step`, `part.stl` and `part.glb` **only when every
+  check passed**; a failed build writes `part.failed.glb` so it can still be looked at. A
+  STEP file in the outputs therefore means a part that passed.
+- The internet switch drops every tool group that is not on its allowlist, and plugin
+  tools default to `extensions`, which is not on it. Add one named group for local-only
+  extension tools to `OFFLINE_ALLOWED_TOOL_GROUPS`, put `cad_build` in it, and pin both.
+  Do not reuse `media`.
+- The gateway image gets the system OpenGL library the kernel loads, unconditionally: it
+  is small, the kernel is not. Camoufox taught the lesson already, that presence is not
+  proof, so `make doctor` builds a one-millimetre cube through the real tool.
+- The tool description stays short enough for the context-fit critical check, and the
+  kernel's installed size is measured and stated in the docs.
+- Confirm before pinning: kernel wheels for Python 3.12 on arm64 Linux, which the home
+  server may need.
+- Not in scope: assemblies, drawings, slicing, OpenSCAD, arbitrary Python (item 50).
+
+**Key files** — `examples/deerflow-extension-cad/` (new: the interpreter, the tool, the
+worker, its tests), `scripts/check_extension.py`, `examples/README.md`,
+`backend/packages/harness/deerflow/tools/internet_access.py`, `backend/Dockerfile`,
+`scripts/doctor.py`, `SECURITY.md` (the interpreter is a boundary and is described as
+one).
+
+**Done when**
+
+- On a fresh default install, with the internet switch off, a 60 × 40 × 6 mm plate with
+  two 4 mm holes is built, its five files are listed in the Files view, and the report
+  passes with the measured numbers.
+- The same script with one hole removed fails the hole check and leaves no `part.step`. A
+  test pins both halves.
+- `import os`, a dunder attribute, a `lambda`, a method that takes a path, a pattern of a
+  million instances and a deeply nested expression are each refused with the reason. None
+  is executed and none stalls the Gateway.
+- Without the extension the Gateway starts as before. With it, and the system library
+  missing, `make doctor` names the library.
+- The context-fit critical check is green with the tool present.
+
+---
+
+## 45. A CAD skill
+
+**Goal** — A request for a part follows the same short procedure on every model: ask for
+what is missing, write the numbers down, write the script, call the tool, read the numbers
+back, repair, hand over the files.
+
+**Why it fits** — The tool can build and measure. It cannot decide what to build, and a
+model left alone presents its first attempt. A skill is where this fork keeps a procedure;
+it is listed by name on a local model, so it costs the window nothing until it is used; and
+it is read with the file tools, so it needs no shell.
+
+**Depends on** — 44.
+
+**Scope**
+
+- `skills/public/cad-modeling/`: `SKILL.md` and `references/`. No scripts.
+- The procedure: at most three questions when a dimension is missing; millimetres; every
+  dimension a named variable at the top of the script; the expected numbers passed to
+  `cad_build` with the script; at most three repair rounds unless the user raises it; a
+  failed part is reported as failed with its numbers, never presented; assumptions stated.
+- `references/` holds the allow-listed operations with one example each, and the common
+  failures with their fixes. It is generated from the module's allow-list, and a test
+  fails when the two differ.
+- Without `cad_build` in the tool list, the skill says the CAD module is not installed and
+  stops. It does not imitate the tool.
+- With item 50 present, it names the container route for parts the allow-list refuses.
+
+**Key files** — `skills/public/cad-modeling/` (new), `tests/skills/` (the offline test
+that the reference matches the allow-list), `skills/AGENTS.md` (one sentence, if a skill
+that depends on an extension's tool needs a rule).
+
+**Done when** — a plate with holes, an L-bracket and an enclosure with a lid each pass on
+one cloud model and on one local model at a 32K window; a conversation without the module
+ends with the install instruction and no invented geometry; and the reference cannot drift
+from the allow-list without a red test.
+
+---
+
+## 46. 3D files open in the artifact panel
+
+**Goal** — Selecting `part.glb` or `part.stl` in the artifact panel, the reader or the
+Files view shows a model that can be rotated, on the desktop and on a phone. The original
+file still downloads unchanged.
+
+**Why it fits** — The `artifactPreviews` contract exists for exactly this, and the Office
+preview is the worked example: a packaged, operator-installed browser contribution, files
+read through the authenticated artifact route, no public viewer service. It runs in the
+user's own browser, so the WebGL failures that desktop webviews have on Linux with NVIDIA
+cards do not arise.
+
+**Depends on** — nothing in code. It is useful as soon as 44 produces files.
+
+**Scope**
+
+- A second packaged extension, `examples/deerflow-extension-cad-preview/`, modelled on
+  `examples/deerflow-extension-office-preview/`. It registers `glb` and `stl` first. It is
+  separate from item 44's package so that viewing a model does not require the kernel.
+- The renderer and its parsers ship inside the trusted package and are served by content
+  hash. Parsing runs in a Worker with a deadline, as the Office preview does.
+- Limits stated in the README and enforced: the host's 25 MiB read cap, a triangle cap,
+  and the download fallback with a reason when either is exceeded.
+- Orbit, fit to view, bounding-box dimensions on screen, light and dark themes. No
+  automatic rotation, since reduced motion is this fork's default.
+- `dispose()` releases the WebGL context; opening twenty files in a row must not exhaust
+  contexts.
+- A second step adds `step` and `stp` through an OpenCascade WebAssembly reader in the
+  same Worker, under the same limits. Until then the GLB is the preview and the STEP is
+  the download.
+- Off until an operator installs it, like every extension. Third-party notices included.
+
+**Key files** — `examples/deerflow-extension-cad-preview/` (new, the Office preview's
+layout: `ui/`, the Python package with `ui_manifest.json` and `deerflow-extension.json`,
+`tests/test_registration.py`), `scripts/check_extension.py`, `examples/README.md`,
+`frontend/tests/e2e/` (a GLB fixture, following the Office fixtures).
+`docs/full-stack-plugins.md` should not need to change; if it does, the contract was the
+wrong shape and that is its own change.
+
+**Done when** — the GLB and STL from item 44, and a `part.failed.glb`, render in the panel
+and the reader at desktop width and at 390px; an oversize file falls back to download and
+says why; twenty consecutive previews leave no leaked context; the E2E spec is green; and
+with the extension removed the files behave exactly as they do today.
+
+---
+
+## 47. Geometry decides a delegated part
+
+**Goal** — When the lead hands a part to a `task` subagent, in Ultra or in a Plus
+Ultracode workflow, the part passes or fails on measured numbers. The subagent's own
+summary is not evidence.
+
+**Why it fits** — `acceptance_checks.py` already decides lead-supplied criteria in code on
+the `task` tool's completed branch. Item 44 writes `part.step` only for a part that passed
+its checks, so the file leaf that exists today is enough, and it needs no shell.
+
+**Depends on** — 44.
+
+**Scope**
+
+- The lead's criteria name the STEP file with the existing file leaf. Confirm the leaf's
+  path form for the outputs directory in `ACCEPTANCE_CHECKS.md` before writing the skill
+  text.
+- No new leaf and no CAD-specific code in core. If the file leaf proves too weak, the
+  addition is a generic leaf that reads a JSON report, usable by any tool.
+- A short recipe for Plus Ultracode in the skill's references: several candidate scripts
+  from child agents, each built and measured, a second agent checking the findings, the
+  first passing candidate returned. Local dispatch already runs children one at a time
+  when the card holds one model.
+- Repair rounds count against the existing run limits and the spend cap. No new limit.
+
+**Key files** —
+`backend/packages/harness/deerflow/subagents/acceptance_checks.py` and
+`ACCEPTANCE_CHECKS.md` beside it (read; edit only for a generic leaf),
+`skills/public/cad-modeling/references/`.
+
+**Done when** — a subagent whose part fails produces a failed checklist that the lead sees
+and acts on; a passing part passes; and a search of `backend/packages/harness/` finds
+nothing specific to CAD.
+
+---
+
+## 48. A CAD eval
+
+**Goal** — One command scores any configured model on a fixed set of part specs and prints
+pass rate, repair rounds, tokens, cost, and the operations the model asked for that the
+allow-list refused.
+
+**Why it fits** — The thesis is local models worth preferring rather than tolerating, and
+for CAD nobody knows which ones are until it is measured. `make drift-eval` is the
+precedent: opt-in, out of CI, end to end through the running agent. Unlike drift it needs
+no judge model, because the checks are numbers. The refused-operation count is what tells
+item 44 which method to add next, and item 50 whether it is needed at all.
+
+**Depends on** — 44 and 45. It does not wait for item 25, but belongs in that suite once
+it exists.
+
+**Scope**
+
+- Fifteen to twenty specs in three bands: prismatic parts; holes, patterns and pockets;
+  fillets, shells and two-part fits. Each has the request text and the expected numbers.
+- Runs against the running agent on the default sandbox, per model, under the run limits
+  and spend cap already configured, and reports the spend.
+- A dated results table in the docs. The table is evidence, so a row carries the model,
+  its quantisation and window, the module version and the skill version.
+- Out of CI. Re-run after any change to the allow-list or the skill.
+
+**Key files** — a runner under `scripts/` and its `Makefile` target, following the layout
+`drift-eval` uses; fixtures beside it; a results page under `docs/`.
+
+**Done when** — the table has at least one local model and one subscription model; two
+runs of the same model agree within a stated tolerance; and the command refuses to start
+when the CAD module is not installed.
+
+---
+
+## 49. Ollama models from Settings
+
+**Goal** — A local model is found, sized against the card, pulled and deleted from
+Settings → Models. It appears in the picker with its window sized, without a terminal.
+
+**Why it fits** — The README's promise is that the model list follows `ollama pull`.
+Acquiring the model is the half still done by hand. Item 16 set the rule for downloads in
+this fork: limits an operator sets, not limits the agent chooses. The download itself is
+done by the Ollama daemon through its own API, on whichever machine runs it, so the
+Gateway never writes weights to disk.
+
+**Depends on** — nothing shipped. It reuses the VRAM sizing behind `ollama.vram_gb`.
+
+**Scope**
+
+- Admin-only. Pull with streamed progress, cancel, delete.
+- A fit indicator before the download: fits, tight, or too large for the configured card,
+  from the same sizing the sync uses.
+- Finding a model: a short curated list committed in the repo (name, size, tool calling,
+  vision, window), plus pulling by exact name. No scraping of the Ollama website; Ollama
+  documents no library-search endpoint.
+- A size cap and the registry host are operator config, in `config.yaml`, not in anything
+  the API can write.
+- After a pull, run the existing sync so the new entry gets its `num_ctx`.
+- Not an agent tool. A model in a conversation cannot start a download.
+- It does not touch ComfyUI checkpoints; item 16 owns those.
+
+**Key files** — `scripts/sync-ollama-models.py`,
+`backend/app/gateway/routers/models.py`,
+`frontend/src/components/workspace/settings/model-settings-page.tsx`, the `ollama:` block
+of `config.example.yaml`, `SECURITY.md`.
+
+**Done when** — a model over the cap and a name outside the registry are each refused with
+the reason; a permitted pull shows progress, survives a page reload and ends with the
+model selectable and sized; a non-admin cannot start one; and the context-fit critical
+check passes for the newly synced entry.
+
+---
+
+## 50. Full scripts where a container exists
+
+**Goal** — With the container sandbox configured, a part the allow-list cannot express is
+built from an unrestricted build123d or CadQuery script run inside the conversation's
+container, and judged by the same checks.
+
+**Why it fits** — The allow-list is a floor, not a ceiling. Lofts, sweeps along curves,
+text and anything that needs a loop are refused by item 44, correctly. The container is
+the place this fork already has for code a model wrote, and the best public results for
+CAD by agents come from full scripts inside a measuring loop.
+
+**Depends on** — 44 and 45, and the container sandbox (`AioSandboxProvider`, local
+container mode). It adds nothing to the default install.
+
+**Scope**
+
+- An image layer under `docker/`, built from the supported AIO image line, with pinned
+  build123d and CadQuery, and a make target beside the `sandbox-*` targets that builds it
+  and writes the sandbox `image:` value. Nothing is installed at run time, so an offline
+  conversation still builds.
+- The checker from item 44 packaged as a command inside that image, so a script's STEP is
+  measured by the same code and reported in the same format. One checker, two entry
+  points.
+- The skill chooses: `cad_build` first; the container only when the tool refused a
+  construct and a container is configured. It never asks the user to enable host bash.
+- An optional image variant with FreeCAD, for a native `.FCStd` with a feature tree beside
+  the STEP: FreeCAD Python run with `freecadcmd`, headless, judged on its exported STEP.
+- No `--gpus`, no extra capability, no published port.
+
+**Key files** — `docker/` (the image layer), `Makefile` (`sandbox-*` targets),
+`examples/deerflow-extension-cad/` (the shared checker), `skills/public/cad-modeling/`,
+`backend/docs/CONFIGURATION.md`.
+
+**Done when** — a lofted part that `cad_build` refuses is built in the container and
+passes the same report; the same conversation on the default sandbox ends with the refusal
+and its reason, not an attempt; and the FreeCAD variant, when present, produces a file
+whose sketch and pad are editable in FreeCAD.
+
+---
+
 ## Deliberately not on this roadmap
 
-**More model providers, more IM channels, more bundled skills.** The model bundle is
+**More model providers, more IM channels.** The model bundle is
 curated to a documented shape and FORK.md is explicit that a long list dilutes both the
 picker and the auto-config. Breadth there adds work to every pass of the model and
 pricing audit (`scripts/audit_models.py`) and buys a single-user deployment nothing.
@@ -1190,3 +1592,28 @@ agent would make the opposite the default.
 found reliability falling with input length even inside the window. A bigger window moves
 the cliff; the reading in parts that FORK.md §45 extended, and item 35, remove the need to
 stand at it.
+
+**A downloadable desktop app.** An installer for Windows, macOS and Linux was the first
+shape of the CAD idea behind items 43–50. This fork is a server reached from a browser,
+the Script workflows extension does not run on a Windows Gateway, and packaging a geometry
+kernel for three systems is a project of its own. The items give up the installer and keep
+everything else.
+
+**A CAD tool that executes what the model wrote.** On the default sandbox the shortcut is
+obvious: `exec` the script in the Gateway with a trimmed set of builtins. A trimmed `exec`
+is not a boundary, and the default sandbox has no shell because `LocalSandboxProvider` is
+not an isolation boundary either. Item 44 interprets an allow-list instead, and item 50
+runs real scripts where a container exists. There is no third route; a Gateway-side MCP
+server that runs scripts is the same shortcut under another name.
+
+**A CAD model trained here.** Tuning a small model on CAD code is plausible on one 24 GB
+card, and it is still training. It stays with FrontalRobotomy under the fine-tuning entry
+above. Item 48's eval and the passed parts from item 44 are what this fork can hand it.
+
+**Driving a desktop CAD program.** SolidWorks, or any other program operated through its
+window, is the computer-use surface this file already declines.
+
+**OpenSCAD.** Models write it easily and it rebuilds quickly, but it has no true fillets or
+chamfers, exports meshes rather than STEP by default, and fails silently where CadQuery
+fails loudly. If it is ever wanted it is one more input format for item 44, argued on its
+own.
