@@ -1786,3 +1786,95 @@ class TestMainConfigResolution:
             assert exit_code == 1
             assert "✗ config.yaml found" in output
             assert str(Path("~/cfg.yaml")) in output
+
+
+class TestCheckCadExtension:
+    """`make doctor` builds a one-millimetre cube through the real CAD tool (FORK.md §51).
+
+    Presence is not proof: the kernel imports only when its system libraries
+    are there, and that is discovered by building, never by looking.
+    """
+
+    _INSTALLED = "plugins:\n  - name: cad\n    package: deerflow-extension-cad\n    use: deerflow_extension_cad:install\n    enabled: true\n"
+
+    @staticmethod
+    def _config(tmp_path, body: str):
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text(f"config_version: 72\n{body}")
+        return cfg
+
+    @staticmethod
+    def _ran(returncode=0, stdout="", stderr=""):
+        import subprocess
+
+        return lambda: subprocess.CompletedProcess(["python"], returncode, stdout, stderr)
+
+    @staticmethod
+    def _must_not_run():
+        raise AssertionError("the self-test must not run when the extension is not installed")
+
+    def test_skipped_without_running_anything_when_the_extension_is_not_installed(self, tmp_path):
+        for body in ("", "plugins: []\n", "plugins:\n  - name: workflows\n    use: deerflow_extension_workflows:install\n    enabled: true\n"):
+            results = doctor.check_cad_extension(self._config(tmp_path, body), run=self._must_not_run)
+            assert [r.status for r in results] == ["skip"]
+        assert doctor.check_cad_extension(tmp_path / "missing.yaml", run=self._must_not_run)[0].status == "skip"
+
+    def test_a_disabled_entry_is_skipped(self, tmp_path):
+        cfg = self._config(tmp_path, self._INSTALLED.replace("enabled: true", "enabled: false"))
+        assert doctor.check_cad_extension(cfg, run=self._must_not_run)[0].status == "skip"
+
+    def test_a_built_cube_is_ok_with_its_measured_size(self, tmp_path):
+        answer = json.dumps({"ok": True, "bbox_mm": [1.0, 1.0, 1.0], "volume_mm3": 1.0, "seconds": 4.2})
+        (result,) = doctor.check_cad_extension(self._config(tmp_path, self._INSTALLED), run=self._ran(0, f"noise\n{answer}\n"))
+        assert result.status == "ok"
+        assert "1 x 1 x 1 mm" in result.detail and "4.2 s" in result.detail
+
+    def test_exit_code_zero_without_measured_numbers_is_not_ok(self, tmp_path):
+        (result,) = doctor.check_cad_extension(self._config(tmp_path, self._INSTALLED), run=self._ran(0, "all good\n"))
+        assert result.status == "warn"
+
+    def test_a_missing_system_library_is_named(self, tmp_path):
+        answer = json.dumps({"ok": False, "error": "the CAD kernel could not be loaded: libGL.so.1: cannot open shared object file: No such file or directory"})
+        (result,) = doctor.check_cad_extension(self._config(tmp_path, self._INSTALLED), run=self._ran(1, answer))
+        assert result.status == "warn"
+        assert "libGL.so.1" in result.detail
+        assert "libGL.so.1" in result.fix
+        # The same when the interpreter itself reports it, before the self-test can answer.
+        (result,) = doctor.check_cad_extension(self._config(tmp_path, self._INSTALLED), run=self._ran(1, "", "ImportError: libXrender.so.1: cannot open shared object file: No such file or directory"))
+        assert "libXrender.so.1" in result.detail
+
+    def test_a_crashed_or_slow_kernel_is_a_row_not_an_exception(self, tmp_path):
+        import subprocess
+
+        cfg = self._config(tmp_path, self._INSTALLED)
+        (crashed,) = doctor.check_cad_extension(cfg, run=self._ran(-11))
+        assert crashed.status == "warn" and "signal 11" in crashed.detail
+
+        def too_slow():
+            raise subprocess.TimeoutExpired(["python"], doctor.CAD_SELFTEST_TIMEOUT_SECONDS)
+
+        (slow,) = doctor.check_cad_extension(cfg, run=too_slow)
+        assert slow.status == "warn" and str(doctor.CAD_SELFTEST_TIMEOUT_SECONDS) in slow.detail
+
+        def cannot_start():
+            raise OSError("no interpreter")
+
+        assert doctor.check_cad_extension(cfg, run=cannot_start)[0].status == "warn"
+
+    def test_the_build_runs_in_a_child_interpreter(self, tmp_path, monkeypatch):
+        import subprocess
+
+        calls = []
+
+        def fake_run(cmd, **kwargs):
+            calls.append((cmd, kwargs))
+            return subprocess.CompletedProcess(cmd, 0, json.dumps({"ok": True, "bbox_mm": [1, 1, 1], "volume_mm3": 1, "seconds": 1}), "")
+
+        monkeypatch.setattr(doctor.subprocess, "run", fake_run)
+        (result,) = doctor.check_cad_extension(self._config(tmp_path, self._INSTALLED))
+        assert result.status == "ok"
+        ((cmd, kwargs),) = calls
+        # A missing library is an ImportError, but a broken kernel can end the process: never import it into doctor.
+        assert cmd == [sys.executable, "-m", "deerflow_extension_cad.selftest"]
+        assert kwargs["shell"] is False and kwargs["check"] is False
+        assert kwargs["timeout"] == doctor.CAD_SELFTEST_TIMEOUT_SECONDS < 30

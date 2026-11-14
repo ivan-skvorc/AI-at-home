@@ -48,6 +48,13 @@ INTERNET_ENABLED_CONTEXT_KEY = "internet_enabled"
 # whether that shell has a route to the internet is a property of the sandbox
 # container, not of this switch. The offline notice tells the model not to use
 # it as a network workaround.
+#
+# ``LOCAL_EXTENSION_TOOL_GROUP`` is the name an extension's model tool declares
+# when it works on this machine only (the CAD module, FORK.md §51). The plugin
+# default ``extensions`` is deliberately absent, and ``media`` is not reused:
+# that one means the local ComfyUI service.
+LOCAL_EXTENSION_TOOL_GROUP = "local_extensions"
+
 OFFLINE_ALLOWED_TOOL_GROUPS: frozenset[str] = frozenset(
     {
         "file:read",
@@ -58,6 +65,7 @@ OFFLINE_ALLOWED_TOOL_GROUPS: frozenset[str] = frozenset(
         "media",
         # Self-hosted knowledge base (RAGFlow); reads an operator-run index.
         "knowledge",
+        LOCAL_EXTENSION_TOOL_GROUP,
     }
 )
 

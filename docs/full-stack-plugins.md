@@ -61,6 +61,10 @@ the existing positional rollback and source attribution.
   an async handler with a `ToolContext` that additionally carries the thread ID.
   Object schemas must be inline: reference resolution is rejected. Tools enter the
   ordinary host tool assembly, including group filtering and later authorization.
+  A tool that works on this machine only declares `group="local_extensions"`, the
+  group the internet switch keeps; `media` means the local ComfyUI service and is
+  not reused. A custom agent with a tool-group list offers a plugin tool only
+  when the list names its group.
 - `SettingsField` describes a non-secret deployment value. There is no online override
   store or settings write API. Browser clients see only `enabled` and explicitly
   listed public fields. Plugin code remains responsible for business authorization.

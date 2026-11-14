@@ -80,7 +80,11 @@ module therefore builds a part **without running what the model wrote**, as an i
 extension, and the files it writes are ordinary outputs that the Files view lists. Item
 **43** — a plugin tool can write a bounded, host-checked file into the outputs of the
 conversation that called it (`ToolContext.write_output`, extension API 0.2.12) — landed:
-see [FORK.md §50](./FORK.md). Its number stays retired like 12–15.
+see [FORK.md §50](./FORK.md). Item **44** — the CAD module itself, an installable
+extension whose `cad_build` tool reads a CadQuery script, performs an allow-list of
+operations in a child process and hands over STEP, STL and GLB only for a part that
+measured right — landed: see [FORK.md §51](./FORK.md). Both numbers stay retired like
+12–15.
 
 ---
 
@@ -125,9 +129,6 @@ Open items, one line each. The full orchestrator prompts follow.
   an empty chat, in the light and dark themes, and not from the marketing landing page.
 - **42. One card, one turn** — Ollama and training stay on the daily PC; the home server
   only serves the pages; a training run and a chat take turns on the 3090.
-- **44. A CAD module that builds a part without running the model's code** — an
-  allow-listed CadQuery script goes in; STEP, STL, GLB and measured numbers come out, on
-  the default sandbox, with the internet switch off.
 - **45. A CAD skill** — the prompt: ask what is missing, write the numbers down, call the
   tool, read the numbers back, and never present a part that failed.
 - **46. 3D files open in the artifact panel** — GLB and STL rotate in the panel and the
@@ -162,10 +163,11 @@ else wants the card. 41 last of the three, once the URLs it opens are real; its 
 specified in [docs/companion-apps.md](docs/companion-apps.md), not designed again in the
 change.
 
-**Suggested order for 44–50.** 43 landed (FORK.md §50), so CAD is a module and not a
-recorded exception in core. 44 and 45 first, together: they are the first version that
-works. 46 next, since a part nobody can look at is half delivered. 47 before CAD is used in Ultra or Plus Ultracode, where subagents report
-on their own work. 48 once 44 is stable, and again after every change to the allow-list.
+**Suggested order for 45–50.** 43 and 44 landed (FORK.md §50 and §51): the module builds
+and checks a part on the default sandbox. 45 first: the module can build and measure, and
+a model left alone still presents its first attempt. 46 next, since a part nobody can look
+at is half delivered. 47 before CAD is used in Ultra or Plus Ultracode, where subagents
+report on their own work. 48 after 45, and again after every change to the allow-list.
 49 is independent of the rest. 50 only if 48 shows that the allow-list, and not the model,
 is what stops real parts.
 
@@ -1172,97 +1174,6 @@ insider's matching gate, `ollama.gpu_lock_file`. In FrontalRobotomy:
 
 ---
 
-## 44. A CAD module that builds a part without running the model's code
-
-**Goal** — With the CAD extension installed, any model in any mode turns a short CadQuery
-script into `part.step`, `part.stl`, `part.glb` and a measured report in the conversation's
-outputs. It works on the default `LocalSandboxProvider` with `allow_host_bash: false`, and
-with the internet switch off.
-
-**Why it fits** — The default install gives the agent no shell, on purpose, so a part
-cannot be made by writing a script and running it. The module reads the script as a syntax
-tree and performs only an allow-list of CadQuery operations itself. Nothing the model wrote
-is executed, so the default sandbox decision stays intact. CadQuery is the input because
-models already write it: benchmarks found code in a known Python library clearly ahead of
-purpose-built command formats, and the published CAD fine-tunes of local models emit it.
-The kernel is CPU-only, so it stays out of the GPU residency question. It is a module
-because the kernel is a large dependency that only its users should pay for.
-
-**Depends on** — nothing open. The capability it writes through shipped as
-`ToolContext.write_output` (extension API 0.2.12, FORK.md §50; the contract, limits and
-error codes are in `docs/full-stack-plugins.md`), so the module does not need a recorded
-extension-first exception in core.
-
-**Scope**
-
-- A packaged extension, `examples/deerflow-extension-cad/`, installed through the
-  extension manager. `cadquery` is the package's own pinned dependency. Off until
-  installed; the Gateway starts and lists no CAD tool without it.
-- One tool, `cad_build`. Input: a part name, the script text, and the numbers the part
-  must meet (bounding box, volume range, hole count and diameters). Output to the model:
-  pass or fail per check with the measured values, or the error with its line.
-- **The script is never executed.** It is parsed with `ast` and walked by an interpreter
-  that accepts `import cadquery as cq`, assignments to plain names, numbers, strings,
-  tuples, lists, arithmetic, and calls to allow-listed `Workplane` methods. Anything else
-  is refused with the construct and the line: other imports, attributes off the list,
-  `def`, `lambda`, `class`, loops, comprehensions, `with`, `try`, dunder names. Methods
-  that take a file path, a callable or a font are not on the list. `exec`, `eval` and
-  `compile` never touch model text; a test searches the package for them, and behaviour
-  tests try the escapes.
-- The allow-list starts with what simple parts need: primitives, sketch and extrude, cut,
-  holes (through, blind, counterbore, countersink), fillet, chamfer, shell, rectangular
-  and polar point patterns, mirror, union, cut and intersect, with CadQuery's own selector
-  strings. It grows one method at a time, each with a test and a case in item 48.
-- The build runs in a child process with a wall-clock limit inside the plugin tool's 30
-  seconds, a memory ceiling where the OS offers one, and caps on syntax nodes, pattern
-  instances and output bytes. The event loop never waits on it (`make test-blocking-io`).
-- Checks happen in the same call. The STEP that was just written is imported again; it
-  must be exactly one valid, closed solid; bounding box, volume, and the count and
-  diameters of cylindrical holes are compared with the expected numbers. The tool decides
-  pass or fail, not the model.
-- Files, through `ToolContext.write_output`, one call per file, under the operator's
-  `plugin_outputs` caps (8 MiB per file and 32 MiB per tool call by default). The package
-  declares the 0.2.12 API floor. The host never replaces an existing file and suffixes a
-  taken name per file, so each build uses a stem of its own and reports the returned
-  paths. The files: the script as given (`part.py`) and
-  `part.report.json` always. `part.step`, `part.stl` and `part.glb` **only when every
-  check passed**; a failed build writes `part.failed.glb` so it can still be looked at. A
-  STEP file in the outputs therefore means a part that passed.
-- The internet switch drops every tool group that is not on its allowlist, and plugin
-  tools default to `extensions`, which is not on it. Add one named group for local-only
-  extension tools to `OFFLINE_ALLOWED_TOOL_GROUPS`, put `cad_build` in it, and pin both.
-  Do not reuse `media`.
-- The gateway image gets the system OpenGL library the kernel loads, unconditionally: it
-  is small, the kernel is not. Camoufox taught the lesson already, that presence is not
-  proof, so `make doctor` builds a one-millimetre cube through the real tool.
-- The tool description stays short enough for the context-fit critical check, and the
-  kernel's installed size is measured and stated in the docs.
-- Confirm before pinning: kernel wheels for Python 3.12 on arm64 Linux, which the home
-  server may need.
-- Not in scope: assemblies, drawings, slicing, OpenSCAD, arbitrary Python (item 50).
-
-**Key files** — `examples/deerflow-extension-cad/` (new: the interpreter, the tool, the
-worker, its tests), `scripts/check_extension.py`, `examples/README.md`,
-`backend/packages/harness/deerflow/tools/internet_access.py`, `backend/Dockerfile`,
-`scripts/doctor.py`, `SECURITY.md` (the interpreter is a boundary and is described as
-one).
-
-**Done when**
-
-- On a fresh default install, with the internet switch off, a 60 × 40 × 6 mm plate with
-  two 4 mm holes is built, its five files are listed in the Files view, and the report
-  passes with the measured numbers.
-- The same script with one hole removed fails the hole check and leaves no `part.step`. A
-  test pins both halves.
-- `import os`, a dunder attribute, a `lambda`, a method that takes a path, a pattern of a
-  million instances and a deeply nested expression are each refused with the reason. None
-  is executed and none stalls the Gateway.
-- Without the extension the Gateway starts as before. With it, and the system library
-  missing, `make doctor` names the library.
-- The context-fit critical check is green with the tool present.
-
----
-
 ## 45. A CAD skill
 
 **Goal** — A request for a part follows the same short procedure on every model: ask for
@@ -1274,7 +1185,11 @@ model left alone presents its first attempt. A skill is where this fork keeps a 
 it is listed by name on a local model, so it costs the window nothing until it is used; and
 it is read with the file tools, so it needs no shell.
 
-**Depends on** — 44.
+**Depends on** — nothing open. The module shipped (FORK.md §51,
+`examples/deerflow-extension-cad`); its allow-list is data, one summary and one example
+per method in `allowlist.py`, which is what `references/` is generated from. The tool
+takes `name`, `script`, `bbox_xyz_mm`, and optionally `volume_min_max_mm3` and
+`hole_diameters_mm` (one diameter per expected hole).
 
 **Scope**
 
@@ -1313,13 +1228,14 @@ read through the authenticated artifact route, no public viewer service. It runs
 user's own browser, so the WebGL failures that desktop webviews have on Linux with NVIDIA
 cards do not arise.
 
-**Depends on** — nothing in code. It is useful as soon as 44 produces files.
+**Depends on** — nothing in code. The CAD module (FORK.md §51) already produces the files.
 
 **Scope**
 
 - A second packaged extension, `examples/deerflow-extension-cad-preview/`, modelled on
   `examples/deerflow-extension-office-preview/`. It registers `glb` and `stl` first. It is
-  separate from item 44's package so that viewing a model does not require the kernel.
+  separate from the CAD module's package so that viewing a model does not require the
+  kernel.
 - The renderer and its parsers ship inside the trusted package and are served by content
   hash. Parsing runs in a Worker with a deadline, as the Office preview does.
 - Limits stated in the README and enforced: the host's 25 MiB read cap, a triangle cap,
@@ -1340,7 +1256,7 @@ layout: `ui/`, the Python package with `ui_manifest.json` and `deerflow-extensio
 `docs/full-stack-plugins.md` should not need to change; if it does, the contract was the
 wrong shape and that is its own change.
 
-**Done when** — the GLB and STL from item 44, and a `part.failed.glb`, render in the panel
+**Done when** — the GLB and STL from the CAD module, and a `part.failed.glb`, render in the panel
 and the reader at desktop width and at 390px; an oversize file falls back to download and
 says why; twenty consecutive previews leave no leaked context; the E2E spec is green; and
 with the extension removed the files behave exactly as they do today.
@@ -1354,10 +1270,10 @@ Ultracode workflow, the part passes or fails on measured numbers. The subagent's
 summary is not evidence.
 
 **Why it fits** — `acceptance_checks.py` already decides lead-supplied criteria in code on
-the `task` tool's completed branch. Item 44 writes `part.step` only for a part that passed
-its checks, so the file leaf that exists today is enough, and it needs no shell.
+the `task` tool's completed branch. The CAD module writes `part.step` only for a part that
+passed its checks, so the file leaf that exists today is enough, and it needs no shell.
 
-**Depends on** — 44.
+**Depends on** — nothing open. The CAD module shipped (FORK.md §51).
 
 **Scope**
 
@@ -1393,9 +1309,10 @@ allow-list refused.
 for CAD nobody knows which ones are until it is measured. `make drift-eval` is the
 precedent: opt-in, out of CI, end to end through the running agent. Unlike drift it needs
 no judge model, because the checks are numbers. The refused-operation count is what tells
-item 44 which method to add next, and item 50 whether it is needed at all.
+the CAD module which method to add next, and item 50 whether it is needed at all.
 
-**Depends on** — 44 and 45. It does not wait for item 25, but belongs in that suite once
+**Depends on** — 45, on top of the CAD module (FORK.md §51). It does not wait for item 25,
+but belongs in that suite once
 it exists.
 
 **Scope**
@@ -1463,11 +1380,11 @@ built from an unrestricted build123d or CadQuery script run inside the conversat
 container, and judged by the same checks.
 
 **Why it fits** — The allow-list is a floor, not a ceiling. Lofts, sweeps along curves,
-text and anything that needs a loop are refused by item 44, correctly. The container is
+text and anything that needs a loop are refused by the CAD module, correctly. The container is
 the place this fork already has for code a model wrote, and the best public results for
 CAD by agents come from full scripts inside a measuring loop.
 
-**Depends on** — 44 and 45, and the container sandbox (`AioSandboxProvider`, local
+**Depends on** — 45, the CAD module (FORK.md §51), and the container sandbox (`AioSandboxProvider`, local
 container mode). It adds nothing to the default install.
 
 **Scope**
@@ -1476,7 +1393,8 @@ container mode). It adds nothing to the default install.
   build123d and CadQuery, and a make target beside the `sandbox-*` targets that builds it
   and writes the sandbox `image:` value. Nothing is installed at run time, so an offline
   conversation still builds.
-- The checker from item 44 packaged as a command inside that image, so a script's STEP is
+- The CAD module's checker (`measure.py`) packaged as a command inside that image, so a
+  script's STEP is
   measured by the same code and reported in the same format. One checker, two entry
   points.
 - The skill chooses: `cad_build` first; the container only when the tool refused a

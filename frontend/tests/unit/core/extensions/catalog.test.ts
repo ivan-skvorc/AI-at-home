@@ -278,3 +278,23 @@ test("documentation matches language tags by case-insensitive exact match then l
     ).toBe(title);
   }
 });
+
+test("the CAD module is listed before installation and links to this fork's guide", () => {
+  for (const [copy, title] of [
+    [enUS.extensions.catalog, "CAD parts"],
+    [zhCN.extensions.catalog, "CAD 零件"],
+  ] as const) {
+    const entry = extensionDirectory([], copy).find(
+      (item) => item.package === "deerflow-extension-cad",
+    );
+    expect(entry).toMatchObject({
+      id: "cad",
+      title,
+      // Upstream has no such example: its default link would be a 404.
+      guide:
+        "https://github.com/ivan-skvorc/AI-at-home/tree/main/examples/deerflow-extension-cad#readme",
+    });
+    expect(entry?.requirements?.length).toBe(2);
+    expect(entry?.loaded).toBeUndefined();
+  }
+});

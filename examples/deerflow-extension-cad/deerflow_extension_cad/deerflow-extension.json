@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "id": "cad",
+  "locales": {
+    "zh-CN": {
+      "title": "CAD 零件",
+      "description": "根据一段 CadQuery 脚本生成机械零件：脚本只被读取、不会被执行，结果经过测量校验后保存为 STEP、STL 和 GLB 文件。",
+      "usage": [
+        {
+          "title": "描述零件并给出尺寸",
+          "description": "在对话中说明零件的外形和以毫米为单位的尺寸，例如“60 × 40 × 6 的底板，两个直径 4 的通孔”。"
+        },
+        {
+          "title": "查看校验结果和文件",
+          "description": "助手调用 cad_build 后会给出包围盒、体积和孔径的实测值。全部通过时，STEP、STL 和 GLB 会出现在产物面板和文件视图中；未通过的零件不会生成 STEP。"
+        }
+      ],
+      "requirements": [
+        "安装本扩展会同时安装 CadQuery 几何内核，占用约 1.7 GB 磁盘空间。",
+        "仅支持允许清单内的建模操作；循环、函数和其他 import 会被拒绝。"
+      ]
+    },
+    "en-US": {
+      "title": "CAD parts",
+      "description": "Build a mechanical part from a short CadQuery script. The script is read, never run; the result is measured and saved as STEP, STL and GLB files.",
+      "usage": [
+        {
+          "title": "Describe the part with its dimensions",
+          "description": "Say what the part looks like and give sizes in millimetres, for example \"a 60 x 40 x 6 plate with two 4 mm through holes\"."
+        },
+        {
+          "title": "Read the checks and open the files",
+          "description": "After the assistant calls cad_build it reports the measured bounding box, volume and hole diameters. When every check passes, the STEP, STL and GLB files appear in the artifact panel and the Files view. A part that fails gets no STEP file."
+        }
+      ],
+      "requirements": [
+        "Installing this extension installs the CadQuery geometry kernel, about 1.7 GB on disk.",
+        "Only allow-listed modelling operations are available; loops, functions and other imports are refused."
+      ]
+    }
+  },
+  "docs_url": "https://github.com/ivan-skvorc/AI-at-home/tree/main/examples/deerflow-extension-cad#readme"
+}

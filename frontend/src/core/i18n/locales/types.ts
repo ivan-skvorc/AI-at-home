@@ -117,7 +117,8 @@ export interface Translations {
       | "knowledgeCenter"
       | "weknora"
       | "lightrag"
-      | "example",
+      | "example"
+      | "cad",
       {
         title: string;
         description: string;

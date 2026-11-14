@@ -2954,7 +2954,11 @@ opinion.
 
 **3. The classification fails closed.** `OFFLINE_ALLOWED_TOOL_GROUPS` is an
 allowlist of groups that cannot reach the internet (`file:read`, `file:write`,
-`bash`, `media`, `knowledge`); a group that is not on it is dropped. Rewriting
+`bash`, `media`, `knowledge`, `local_extensions`); a group that is not on it is
+dropped. `local_extensions` is what an extension's local-only tool declares (§51).
+The filter covers `config.yaml` tools: plugin tools are assembled apart from it
+and are offered offline whatever their group, so that name classifies a tool
+without yet changing what is offered. Rewriting
 this as a blocklist of `{"web", "browser"}` passes every test that names a
 shipped group and silently ships the next provider group anyone adds — which, in
 a repo that merges upstream weekly, is a matter of time.
@@ -5432,3 +5436,94 @@ unsafe name, both caps and the look-alike config, no replacement, another
 conversation, a subagent, the non-mounted sandbox, an older host, the example's
 tool through a real `ToolNode`), the blocking-I/O test above, and the example
 package's own tests.
+
+### 51. A CAD module that builds a part without running the model's code
+
+**Why.** Mechanical parts were wanted out of the same chat: a script that can be
+edited, a STEP file for a CAD program, an STL for the printer. The default install
+gives the agent no shell on purpose (`LocalSandboxProvider`, `allow_host_bash:
+false`), so "write a script and run it" is not available where most people start,
+and an `exec` with trimmed builtins in the Gateway is not a boundary. The module
+therefore **reads** a CadQuery script and performs an allow-list of operations
+itself. CadQuery is the input because models already write it.
+
+**What.** `examples/deerflow-extension-cad`, installed through the extension
+manager and off until then. One tool, `cad_build`: a part name, the script and the
+numbers the part must meet go in; pass or fail per check with measured values
+comes out, or the refusal with its construct and line. Files go through
+`ToolContext.write_output` (§50): the script and a report always, STEP, STL and
+GLB only when every check passed, `<name>.failed.glb` otherwise. The package
+README holds the user's half: the allow-list, the limits, the install.
+
+**The decisions, and what was rejected.**
+
+- **Read, then perform.** `interpreter.compile_script` turns the text into a flat
+  list of allow-listed operations with plain-data arguments; `build.run_program`
+  performs them. A script has no loops, branches or functions, so every number is
+  known before the kernel starts and a refusal costs no geometry. Rejected:
+  `exec` with restricted builtins, a Gateway-side MCP server that runs scripts
+  (the same shortcut), and a purpose-built command format (models write CadQuery).
+- **Everything in a child process.** Parsing included: the Gateway neither parses
+  hostile text nor loads a 450 MiB kernel, and starts as fast with the module as
+  without it. The parent holds the wall clock and kills the process group,
+  because a kernel call holds the interpreter for its whole duration and nothing
+  inside the child can interrupt it.
+- **The tool decides.** The STEP that was written is imported again and measured:
+  one valid closed solid, bounding box, volume, holes. Measuring the file, not the
+  object in memory, is what makes "a STEP in the outputs means a part that passed"
+  true. Expected holes are one list of diameters, which carries the count.
+- **One named offline group.** `local_extensions` joins
+  `OFFLINE_ALLOWED_TOOL_GROUPS` and `cad_build` declares it. `media` is not
+  reused: it means the local ComfyUI service.
+- **Three libraries, not `libgl1`.** The kernel links `libGL.so.1`, `libGLX.so.0`
+  and `libGLdispatch.so.0` and never renders. `apt-get install libgl1` satisfies
+  that and brings Mesa and LLVM behind `libglx0` (183 MiB on Ubuntu 24.04,
+  measured), so the Gateway image unpacks the three dispatch packages alone,
+  about 1.5 MB, and a failure there only warns.
+
+**What must not be simplified away.**
+
+- **No value from a script reaches a lookup.** The interpreter contains no
+  `getattr`; the one in `build.py` takes a name that is a key of the table. A
+  second one is how an allow-list stops being one.
+- **The node whitelist runs before evaluation, iteratively.** A recursive walk
+  overflows on a legal but deep tree, and `ast.parse` itself fails three ways on
+  hostile nesting; all are refusals, not crashes.
+- **Hidden characters are refused in the whole text, comments included.** A
+  form feed, a lone carriage return or a line separator starts a line for the
+  parser and not for a viewer, and a direction override reorders what a viewer
+  draws; the `.py` file kept beside the part must read as it was read.
+- **Arguments are typed by the table, not by the kernel.** CadQuery accepts
+  `centered="abc"` and reads `extrude(True)` as 1. Non-finite numbers hang or
+  crash it. Every argument is checked against its kind first.
+- **Pattern caps are sized for the slow idiom.** `circle().cutThruAll()` on a
+  pattern is about 55 times slower than `hole()`. The caps (100 per call, 200 per
+  script) keep the worst accepted script inside the wall clock.
+- **The shape is exported, not the Workplane.** Exporting a Workplane after
+  `shell()` writes bare shells and the STEP holds no solid.
+- **A hole is decided by geometry**, by the rule at the top of `measure.py`.
+  Counting cylindrical faces counts fillets and bosses.
+- **STEP is written last.** A part whose files the host would not store in full
+  is not presented as delivered.
+- **The description is paid on every request.** `cad_build` costs 175 tokens in
+  the short tool form and the heaviest composer mode had 186 to spare on a 32K
+  model. Parameter names say what they hold instead of carrying descriptions.
+  The critical check pins it.
+
+**Known gaps.** The internet switch does not filter plugin tools at all: an
+extension tool in the default `extensions` group is still offered offline, the
+HTTP-calling examples included. Closing that would also remove the workflow tools
+from offline chats, so it is its own change. The image's library step was
+rehearsed on Ubuntu 24.04 with the real `apt-get`, not built on bookworm. The dev
+image stage (`make docker-start`) does not get the libraries.
+
+**On an upstream sync.** The package is fork-only. `internet_access.py`,
+`doctor.py`, `backend/Dockerfile` and the frontend catalog carry additive blocks.
+`cadquery` is pinned; a bump owes a pass of the package's kernel tests, which
+check every allow-listed method against the kernel's own signature.
+
+Coverage: the package's tests (`test_interpreter.py`, `test_worker_process.py`,
+`test_build.py`, `test_measure.py`; the last two need the kernel),
+`backend/tests/test_cad_extension.py`, `test_cad_runtime_deps.py`,
+`blocking_io/test_cad_extension.py`, `TestCheckCadExtension` in `test_doctor.py`,
+and the CAD case in `test_context_fit_critical.py`.

@@ -156,6 +156,7 @@ export const enUS: Translations = {
       lightrag: bundledCopy("deerflow-extension-lightrag", "en-US"),
       weknora: bundledCopy("deerflow-extension-weknora", "en-US"),
       example: bundledCopy("deerflow-extension-example", "en-US"),
+      cad: bundledCopy("deerflow-extension-cad", "en-US"),
     },
     pageUnavailable: "Extension page unavailable",
     pageUnavailableHint:
