@@ -75,7 +75,11 @@ export const extensionCatalog = [
   },
   { key: "lightrag", package: "deerflow-extension-lightrag", namespace: null },
   { key: "weknora", package: "deerflow-extension-weknora", namespace: null },
-  { key: "example", package: "deerflow-extension-example", namespace: null },
+  {
+    key: "example",
+    package: "deerflow-extension-example",
+    namespace: "example.notes",
+  },
 ] as const;
 
 export interface ExtensionCatalogEntry {

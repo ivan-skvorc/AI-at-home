@@ -1,4 +1,4 @@
-"""A compact, standalone DeerFlow extension exercising five contribution kinds."""
+"""A compact, standalone DeerFlow extension exercising six contribution kinds."""
 
 from __future__ import annotations
 
@@ -12,15 +12,17 @@ from deerflow_extension_example.plugin import (
     ExampleService,
     ExampleSystemObserver,
     ExampleTaskLifecycle,
+    build_notes_plugin,
     build_router,
 )
 
 __all__ = ["install"]
 
 
-@extension(api="0.2.0", name="example")
+# 0.2.12 is the first API whose ToolContext can write a file into a conversation.
+@extension(api="0.2.12", name="example")
 def install(registry: ExtensionRegistry, config: Mapping[str, Any]) -> None:
-    """Register one middleware, task lifecycle, system-model observer, service, and router."""
+    """Register one middleware, task lifecycle, system-model observer, service, router, and plugin tool."""
     if config.get("enabled", True) is False:
         return
 
@@ -30,6 +32,8 @@ def install(registry: ExtensionRegistry, config: Mapping[str, Any]) -> None:
     registry.system_model_observer(ExampleSystemObserver())
     registry.service(service)
     registry.routers((build_router(service),))
+    # False means this host has no plugin support; the other five still work.
+    registry.plugin(build_notes_plugin())
 
 
 _entry_point: ExtensionInstall = install

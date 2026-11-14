@@ -135,6 +135,23 @@ missing, partially written or invalid file keeps the previously loaded configura
 until a complete revision lands, including when it disappears during a reload;
 the Gateway logs one warning per such revision.
 
+### Plugin tool file outputs
+
+A plugin's model tool can write files into the outputs of the conversation that
+called it ([full-stack plugins](../../docs/full-stack-plugins.md#files-a-tool-writes-into-its-conversation)).
+Two caps bound every such tool:
+
+```yaml
+plugin_outputs:
+  max_file_bytes: 8388608    # largest single file, in bytes (default 8 MiB)
+  max_call_bytes: 33554432   # all files of one tool call together (default 32 MiB)
+```
+
+Both are positive integers, read from `config.yaml` only: no Gateway API, plugin
+setting or run option can raise them. A file over either cap is refused before
+anything is written. An edit applies to the next tool call of a new run; a run
+in progress keeps the values it started with.
+
 ### Recursion Limits
 
 Gateway runs use the top-level `recursion_limit` as their LangGraph super-step

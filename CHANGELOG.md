@@ -11,6 +11,7 @@ This section accumulates work toward the **2.3.0** milestone
 ([2.3.0](https://github.com/bytedance/deer-flow/milestone/4)).
 
 ### Added
+- **extensions:** A plugin's model tool can write a file into the conversation that called it (`ToolContext.write_output(name, content)`, extension API 0.2.12). The file lands in that conversation's outputs under every sandbox provider, opens in the artifact panel and is listed in the Files view. The tool names no thread, user or directory, an unsafe name is refused, and an existing file is never replaced. New `plugin_outputs.max_file_bytes` (default 8 MiB) and `plugin_outputs.max_call_bytes` (default 32 MiB) in `config.yaml` cap it; `config_version` moves 71 → 72. The example extension gains a `save_note` tool. (fork feature; FORK.md §50, roadmap item 43)
 - **workspace:** A **Files** button in the chat header browses the conversation's sandbox folders (`workspace/`, `uploads/`, `outputs/` and anything a run creates) as a tree, with previews and downloads, including files the agent never presented. It reads a new read-only `GET /api/threads/{thread_id}/files` listing that keeps the artifacts endpoint's ownership check and path confinement, never follows a link, and caps a directory at 500 entries.
 - **summarization:** The built-in compaction prompt guides the summarizer to
   preserve active user requirements, literal approval phrases, action conditions,

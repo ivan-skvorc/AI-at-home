@@ -10,19 +10,23 @@ from deerflow_extension_api import (
     AgentBuildContext,
     AgentScope,
     ExtensionData,
+    ExtensionPrincipal,
     ExtensionRegistry,
     ExtensionRuntimeDeps,
+    HostCapabilityError,
     HostPolicySnapshot,
     SystemModelRequest,
     SystemModelResult,
     SystemOperationKind,
     TaskInfo,
     TaskOutcome,
+    ToolContext,
 )
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
 from deerflow_extension_example import install
+from deerflow_extension_example.plugin import save_note
 
 
 class FakeRegistry:
@@ -77,7 +81,7 @@ class FakeToolRequest:
     runtime: FakeRuntime
 
 
-def test_install_registers_the_five_demonstrated_contribution_kinds() -> None:
+def test_install_registers_the_six_demonstrated_contribution_kinds() -> None:
     registry = FakeRegistry()
 
     install(registry, {})
@@ -92,9 +96,9 @@ def test_install_registers_the_five_demonstrated_contribution_kinds() -> None:
     assert registry.agent_assembly_observers == []
     assert registry.context_compaction_observers == []
     assert registry.knowledge_providers == []
-    assert registry.plugins == []
+    assert [(plugin.namespace, plugin.enabled, [tool.name for tool in plugin.tools]) for plugin in registry.plugins] == [("example.notes", True, ["save_note"])]
     assert [route.path for route in registry.contributed_routers[0].routes] == ["/api/extension-example/stats"]
-    assert install.__deerflow_api__ == "0.2.0"
+    assert install.__deerflow_api__ == "0.2.12"
     assert install.__deerflow_name__ == "example"
 
 
@@ -108,6 +112,34 @@ def test_disabled_extension_registers_nothing() -> None:
     assert registry.system_model_observers == []
     assert registry.services == []
     assert registry.contributed_routers == []
+    assert registry.plugins == []
+
+
+def _tool_context(writer: Any = None) -> ToolContext:
+    return ToolContext(ExtensionPrincipal("alice"), {"enabled": True}, "thread-1", output_writer=writer)
+
+
+def test_save_note_hands_the_host_a_file_name_and_bytes() -> None:
+    written: list[tuple[str, bytes]] = []
+
+    async def host_writer(name: str, content: bytes) -> str:
+        written.append((name, content))
+        # The host answers with the path it used; here the name was taken.
+        return "/mnt/user-data/outputs/shopping-list-1.md"
+
+    result = asyncio.run(save_note({"title": " Shopping  list ", "text": "eggs\nflour\n\n"}, _tool_context(host_writer)))
+
+    assert written == [("shopping-list.md", b"# Shopping list\n\neggs\nflour\n")]
+    assert result == {"saved": "/mnt/user-data/outputs/shopping-list-1.md"}
+
+
+def test_save_note_reports_a_refused_write_instead_of_claiming_a_file() -> None:
+    async def over_the_cap(name: str, content: bytes) -> str:
+        raise HostCapabilityError("LIMIT_EXCEEDED", "a file may hold 8 bytes")
+
+    assert asyncio.run(save_note({"title": "Big", "text": "x" * 64}, _tool_context(over_the_cap))) == {"error": "The note was not saved (LIMIT_EXCEEDED)."}
+    # A host that predates the capability binds no writer: the answer is UNSUPPORTED.
+    assert asyncio.run(save_note({"title": "Old host", "text": "x"}, _tool_context())) == {"error": "The note was not saved (UNSUPPORTED)."}
 
 
 def test_registered_contributions_publish_one_shared_stats_snapshot() -> None:

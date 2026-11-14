@@ -14,6 +14,7 @@ from typing import Any, Literal
 
 from deerflow_extension_api.agent_runs import AgentRuns
 from deerflow_extension_api.auth import ExtensionPrincipal
+from deerflow_extension_api.host_capabilities import HostCapabilityError
 from deerflow_extension_api.settings import FrontendBinding, SettingsContribution, SettingsField, SettingValue
 
 #: Run-context key carrying per-run options a client addresses to plugins by
@@ -70,6 +71,33 @@ class ToolContext(ActionContext):
     run_options: Mapping[str, Any] = field(default=_EMPTY_OPTIONS, kw_only=True)
     # Host-stamped execution identity, never supplied by tool arguments.
     run_id: str | None = field(default=None, kw_only=True)
+    # Host-bound writer behind write_output() (API 0.2.12). None when the host
+    # predates the capability or the call has no conversation.
+    output_writer: Callable[[str, bytes], Awaitable[str]] | None = field(default=None, kw_only=True, repr=False, compare=False)
+
+    async def write_output(self, name: str, content: bytes) -> str:
+        """Write one file into the calling conversation's outputs (API 0.2.12).
+
+        Returns the file's virtual path, ``/mnt/user-data/outputs/<name>``. The
+        host binds the destination to the thread of the run that called the
+        tool; a delegated subagent writes into its lead's outputs. The host
+        replaces unsafe characters in ``name`` and never replaces an existing
+        file: a taken name gets a ``-1``, ``-2``, ... suffix, so use the
+        returned path. Files written by a call that returns normally open in
+        the artifact panel; their bytes do not count against the result cap.
+
+        This is write-only. Raises :class:`HostCapabilityError` with ``code``:
+        ``UNSUPPORTED`` (no writer on this host or outside a conversation),
+        ``INVALID_NAME`` (empty, longer than 255 bytes, a path separator,
+        ``..`` or a control character), ``INVALID_CONTENT`` (not ``bytes``),
+        ``LIMIT_EXCEEDED`` (the operator's per-file or per-call byte cap),
+        ``FORBIDDEN`` (the call is not bound to its conversation's outputs, or
+        it has ended) or ``UNAVAILABLE`` (the write or the sandbox copy
+        failed). A refused write leaves no file behind.
+        """
+        if self.output_writer is None:
+            raise HostCapabilityError("UNSUPPORTED", "this host cannot write files into a conversation")
+        return await self.output_writer(name, content)
 
 
 @dataclass(frozen=True)

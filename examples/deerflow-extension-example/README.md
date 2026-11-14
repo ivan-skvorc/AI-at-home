@@ -3,17 +3,19 @@
 For the shared edit → test → packaging check → install workflow, see the
 [existing-example guide](../README.md).
 
-This directory is a compact, standalone Python package showing five of the
+This directory is a compact, standalone Python package showing six of the
 nine DeerFlow extension contribution kinds: middleware, task lifecycle,
-system-model observer, service, and router. It depends on the public
-`deerflow-extension-api` contract and never imports `deerflow.*` or `app.*`.
+system-model observer, service, router, and a plugin with one model tool. It
+depends on the public `deerflow-extension-api` contract (0.2.12 or newer) and
+never imports `deerflow.*` or `app.*`.
 
 It does not register an agent-assembly observer, a context-compaction observer,
-a knowledge provider, or a full-stack plugin. The observers are covered in the
+or a knowledge provider, and its plugin has no browser code. The observers are
+covered in the
 [Lifecycle and Observers](../../frontend/src/content/en/harness/extensions/observers.mdx)
 guide, [`deerflow-extension-knowledge`](../deerflow-extension-knowledge/) shows
 a knowledge provider, and [`deerflow-extension-bookmarks`](../deerflow-extension-bookmarks/)
-shows a plugin.
+shows a plugin with a page and backend actions.
 
 The contract package intentionally has no framework dependencies. An extension
 must therefore declare every framework it imports itself; this example explicitly
@@ -28,12 +30,35 @@ depends on FastAPI, LangChain, and LangGraph in `pyproject.toml`.
 | System-model observer | Counts DeerFlow-owned model calls, including failures |
 | Service | Binds `ExtensionRuntimeDeps` only while the Gateway is running |
 | Router | Eagerly declares `GET /api/extension-example/stats` during `install()` |
+| Plugin tool | `save_note` writes a Markdown file into the calling conversation's outputs |
 
 The middleware reads task scope only through `task_store_from_runtime()`. It
 passes through unchanged when no task store exists. The router and service use
 the same `ExampleService` object: its FastAPI dependency returns `503` before
 `start()`, after `stop()`, or when no app store was bound. This keeps the route
 topology stable while runtime capabilities arrive later.
+
+### A tool that hands a file to its conversation
+
+`save_note` takes a title and a text and calls
+`await context.write_output("<title>.md", content)`. The tool names a file and
+supplies bytes; it never names a thread, a user or a directory. The host writes
+the file into the outputs of the conversation that called the tool, so the note
+opens in the artifact panel and is listed in the Files view, also on the default
+sandbox with no shell. The host returns the path it used: an existing file is
+never replaced, so a second "Shopping list" is saved as `shopping-list-1.md`.
+
+A refused write raises `HostCapabilityError`, and the tool answers with its
+`code` instead of claiming a file: `LIMIT_EXCEEDED` for the operator's size caps
+(`plugin_outputs` in `config.yaml`), `INVALID_NAME`, `FORBIDDEN`, `UNAVAILABLE`,
+or `UNSUPPORTED` on a host without the capability. The package declares
+`@extension(api="0.2.12")` and `deerflow-extension-api>=0.2.12`, so an older
+host refuses it at install or at startup and names the version it needs. The
+contract is described in
+[full-stack plugins](../../docs/full-stack-plugins.md#files-a-tool-writes-into-its-conversation).
+
+To try it after installing the package (below), ask in any conversation:
+"Save a note titled Shopping list with eggs and flour."
 
 ### Tool statistics
 
@@ -197,7 +222,7 @@ name or the `module:install` value.
 ```text
 deerflow_extension_example/
 ├── __init__.py  # version-stamped install() entry point
-└── plugin.py    # state plus the five demonstrated contribution implementations
+└── plugin.py    # state plus the six demonstrated contribution implementations
 tests/
 ├── test_entry_point.py
 ├── test_plugin.py

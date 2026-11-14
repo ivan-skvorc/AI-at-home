@@ -77,7 +77,10 @@ loop and the artifact panel already live here. The constraint that shapes all ei
 default install: `LocalSandboxProvider` with `allow_host_bash: false` gives the agent no
 shell, so "write a script and run it" is not available where most people start. The CAD
 module therefore builds a part **without running what the model wrote**, as an installed
-extension, and the files it writes are ordinary outputs that the Files view lists.
+extension, and the files it writes are ordinary outputs that the Files view lists. Item
+**43** — a plugin tool can write a bounded, host-checked file into the outputs of the
+conversation that called it (`ToolContext.write_output`, extension API 0.2.12) — landed:
+see [FORK.md §50](./FORK.md). Its number stays retired like 12–15.
 
 ---
 
@@ -122,8 +125,6 @@ Open items, one line each. The full orchestrator prompts follow.
   an empty chat, in the light and dark themes, and not from the marketing landing page.
 - **42. One card, one turn** — Ollama and training stay on the daily PC; the home server
   only serves the pages; a training run and a chat take turns on the 3090.
-- **43. A plugin tool can hand a file to its conversation** — a bounded, host-checked write
-  into the calling conversation's outputs, so a tool that produces files can be a module.
 - **44. A CAD module that builds a part without running the model's code** — an
   allow-listed CadQuery script goes in; STEP, STL, GLB and measured numbers come out, on
   the default sandbox, with the internet switch off.
@@ -161,10 +162,9 @@ else wants the card. 41 last of the three, once the URLs it opens are real; its 
 specified in [docs/companion-apps.md](docs/companion-apps.md), not designed again in the
 change.
 
-**Suggested order for 43–50.** 43 first, because it decides whether CAD is a module or a
-recorded exception in core; item 44 says what happens if it is declined. Then 44 and 45
-together: they are the first version that works. 46 next, since a part nobody can look at
-is half delivered. 47 before CAD is used in Ultra or Plus Ultracode, where subagents report
+**Suggested order for 44–50.** 43 landed (FORK.md §50), so CAD is a module and not a
+recorded exception in core. 44 and 45 first, together: they are the first version that
+works. 46 next, since a part nobody can look at is half delivered. 47 before CAD is used in Ultra or Plus Ultracode, where subagents report
 on their own work. 48 once 44 is stable, and again after every change to the allow-list.
 49 is independent of the rest. 50 only if 48 shows that the allow-list, and not the model,
 is what stops real parts.
@@ -1172,54 +1172,6 @@ insider's matching gate, `ollama.gpu_lock_file`. In FrontalRobotomy:
 
 ---
 
-## 43. A plugin tool can hand a file to its conversation
-
-**Goal** — An extension's model tool can write a bounded file into the outputs of the
-conversation that called it, during the run. The file opens in the artifact panel and is
-listed in the Files view exactly as one written by a built-in tool.
-
-**Why it fits** — "Evaluate an extension first" has a gap here. The contract's
-`import_artifact` places at most 2 MiB in an *idle* thread's uploads, so a tool that
-produces a file in the middle of a run cannot be an extension today. That is why ComfyUI
-and the Grok media tools live in core and write through `write_output` on the host outputs
-path. Grok had a second reason, the credential; a tool with no credential should not need
-core at all. The write happens in the Gateway, so it works on every sandbox provider,
-including the default one with no shell.
-
-**Depends on** — nothing.
-
-**Scope**
-
-- A capability on `ToolContext`, bound by the host to the calling thread and run. The tool
-  supplies a file name and bytes. It never names a thread, a user or a directory.
-- The host sanitizes the name, refuses path separators and `..`, resolves collisions,
-  enforces a per-file and a per-call size cap from operator config, and returns the
-  virtual path. It registers the file as an artifact the way a built-in tool's `Command`
-  does, and synchronizes remote sandboxes the way `import_artifact` already does.
-- Authority is the run's own thread-write authority, checked at the write. A delegated
-  subagent writes into the lead's shared outputs, as its file tools do.
-- The plugin tool limits stay as they are: 256 KiB of input, 64 KiB of result, 30 seconds.
-  File bytes do not count against the result cap, because they never reach the model.
-- An older host answers that the capability is unsupported, per the contract's rule that
-  unsupported registration returns False. The extension API version moves, and
-  `docs/full-stack-plugins.md` documents the floor.
-- It is not a filesystem API. No read, no delete, no directory creation, no path outside
-  outputs.
-
-**Key files** — `backend/packages/extension-api/deerflow_extension_api/plugins.py`,
-`backend/packages/harness/deerflow/extensions/plugin_tools.py`,
-`backend/packages/harness/deerflow/community/comfyui/service.py` (`write_output`, the
-writer to reuse rather than copy), `docs/full-stack-plugins.md`,
-`examples/deerflow-extension-example/`, `backend/tests/test_plugin_tools.py`.
-
-**Done when** — the example extension's tool writes a file that appears in the artifact
-panel and the Files view under `LocalSandboxProvider` and under the container provider; a
-name containing a separator or `..` and a file over the cap are each refused before a byte
-is written; a tool cannot make a file appear in another conversation, and a test proves
-it; and an older host reports the capability as unsupported instead of ignoring it.
-
----
-
 ## 44. A CAD module that builds a part without running the model's code
 
 **Goal** — With the CAD extension installed, any model in any mode turns a short CadQuery
@@ -1236,9 +1188,10 @@ purpose-built command formats, and the published CAD fine-tunes of local models 
 The kernel is CPU-only, so it stays out of the GPU residency question. It is a module
 because the kernel is a large dependency that only its users should pay for.
 
-**Depends on** — 43. If 43 is declined, the same package content ships as
-`deerflow/community/cad/` under a recorded extension-first exception, writing through
-`write_output` as ComfyUI does. Nothing else in this item changes.
+**Depends on** — nothing open. The capability it writes through shipped as
+`ToolContext.write_output` (extension API 0.2.12, FORK.md §50; the contract, limits and
+error codes are in `docs/full-stack-plugins.md`), so the module does not need a recorded
+extension-first exception in core.
 
 **Scope**
 
@@ -1267,7 +1220,11 @@ because the kernel is a large dependency that only its users should pay for.
   must be exactly one valid, closed solid; bounding box, volume, and the count and
   diameters of cylindrical holes are compared with the expected numbers. The tool decides
   pass or fail, not the model.
-- Files, through item 43's capability: the script as given (`part.py`) and
+- Files, through `ToolContext.write_output`, one call per file, under the operator's
+  `plugin_outputs` caps (8 MiB per file and 32 MiB per tool call by default). The package
+  declares the 0.2.12 API floor. The host never replaces an existing file and suffixes a
+  taken name per file, so each build uses a stem of its own and reports the returned
+  paths. The files: the script as given (`part.py`) and
   `part.report.json` always. `part.step`, `part.stl` and `part.glb` **only when every
   check passed**; a failed build writes `part.failed.glb` so it can still be looked at. A
   STEP file in the outputs therefore means a part that passed.

@@ -179,6 +179,24 @@ class LlmCallConfig(BaseModel):
         return reject_boolean(value, info, kind="an integer")
 
 
+class PluginOutputsConfig(BaseModel):
+    """Byte caps on files a plugin tool writes into its conversation's outputs (fork feature).
+
+    Operator-owned: set here in ``config.yaml`` only. No Gateway API, plugin
+    setting or run option can raise them (FORK.md §50).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    max_file_bytes: int = Field(default=8 * 1024 * 1024, gt=0, description="Largest single file one plugin tool call may write, in bytes.")
+    max_call_bytes: int = Field(default=32 * 1024 * 1024, gt=0, description="Total bytes one plugin tool call may write across all its files.")
+
+    @field_validator("max_file_bytes", "max_call_bytes", mode="before")
+    @classmethod
+    def _reject_boolean_plugin_output_caps(cls, value: object, info: ValidationInfo) -> object:
+        return reject_boolean(value, info, kind="an integer")
+
+
 class LoggingEnhanceConfig(BaseModel):
     """Request trace logging enhancement settings.
 
@@ -277,6 +295,7 @@ class AppConfig(BaseModel):
             ),
         ),
     )
+    plugin_outputs: PluginOutputsConfig = Field(default_factory=PluginOutputsConfig, description="Byte caps on files a plugin tool writes into its conversation's outputs (fork feature).")
     recursion_limit: int = Field(
         # 250, not upstream's 100: this fork's agentic sessions (clone a repo,
         # then many bash / read_file / write_file / str_replace turns, each a
