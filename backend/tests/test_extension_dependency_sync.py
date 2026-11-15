@@ -33,7 +33,9 @@ def test_extensions_dependency_group_is_part_of_the_default_sync() -> None:
     project = tomllib.loads((BACKEND_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
 
     assert isinstance(project["dependency-groups"]["extensions"], list)
-    assert set(project["tool"]["uv"]["default-groups"]) == {"dev", "extensions"}
+    # Fork: `cad` is the bundled CAD module's own group (FORK.md §51), so a host
+    # its kernel has no wheels for can leave out that one group and nothing else.
+    assert set(project["tool"]["uv"]["default-groups"]) == {"dev", "extensions", "cad"}
 
 
 def test_the_app_layer_declares_the_contract_package_it_imports_directly() -> None:

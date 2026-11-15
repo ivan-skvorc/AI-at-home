@@ -20,7 +20,7 @@
 # ============================================================================
 # Bump this number when the config schema changes.
 # Run `make config-upgrade` to merge new fields into your local config.yaml.
-config_version: 72
+config_version: 73
 
 # Optional operator-owned literal prompt extensions (see CONFIGURATION.md):
 # lead_prompt_overlay:
@@ -5585,3 +5585,21 @@ plugins:
       timeout_seconds: 14400     # wall time per workflow (ceiling 14400 = 4 h)
       shared_workspace: "off"    # "off" | "read" | "write" (quoted: YAML reads off as false)
       deliver_results: true      # post a finished result back into its chat
+  # Bundled and on by default: the CAD module (FORK.md §51). Ask any model for a
+  # mechanical part and it calls `cad_build`, which reads a CadQuery script
+  # without running it, measures the result and saves STEP, STL and GLB files into
+  # the conversation. Its source is examples/deerflow-extension-cad, installed from
+  # the locked snapshot in backend/extensions/sources on Linux and Apple-silicon
+  # Macs (Windows and Intel Macs have no kernel and skip it). The kernel is about
+  # 1.7 GB on disk and loads only while a part is being built. Turn it off with
+  # `make extension-disable NAME=cad`, which keeps this record.
+  - name: cad
+    package: deerflow-extension-cad
+    use: deerflow_extension_cad:install
+    enabled: true
+    required: false
+    config:
+      enabled: true
+      # timeout_seconds: 20      # wall clock for one build, 5 to 25
+      # memory_mb: 4096          # address space for one build, 3072 to 65536
+      # parallel_builds: 2       # builds at once, 1 to 16 (default: half the cores)

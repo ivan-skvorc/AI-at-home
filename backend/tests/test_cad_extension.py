@@ -54,7 +54,7 @@ def outputs(tmp_path, monkeypatch):
     return paths.get_paths().sandbox_outputs_dir("thread-a", user_id="alice")
 
 
-async def _call(loaded, outputs, monkeypatch, worker_result, **arguments):
+async def _call(loaded, outputs, monkeypatch, worker_result, *, conversation="thread-a", **arguments):
     import deerflow_extension_cad.tool as cad_tool
 
     seen = []
@@ -72,7 +72,7 @@ async def _call(loaded, outputs, monkeypatch, worker_result, **arguments):
     payload = {"name": "Mounting plate", "script": PLATE, "bbox_xyz_mm": [60, 40, 6], **arguments}
     state = await graph.compile().ainvoke(
         {"messages": [AIMessage(content="", tool_calls=[{"id": "cad-call", "name": tool.name, "args": payload}])], "thread_data": {"outputs_path": str(outputs)}},
-        context={"user_id": "alice", "thread_id": "thread-a"},
+        context={"user_id": "alice", "thread_id": conversation},
     )
     message = state["messages"][-1]
     assert message.status == "success", message.content
@@ -226,16 +226,41 @@ async def test_a_refused_script_is_reported_with_its_construct_and_line_and_buil
         ({"status": "unavailable", "message": "the CAD kernel could not be loaded: libGL.so.1: cannot open shared object file"}, {}, "Do not call cad_build again", "Fix the script"),
         # Every slot is taken: nothing is wrong with the script.
         ({"status": "busy", "message": "the server is building other parts"}, {}, "same arguments", "Fix the script"),
+        # The first build after an install or update ran out of time loading the kernel.
+        ({"status": "loading", "message": "the CAD kernel was still loading when the time ran out"}, {}, "same arguments", "Fix the script"),
         ({"status": "failed", "line": 3, "operation": "fillet", "message": "fillet() failed"}, {}, "Fix the script", "same arguments"),
     ],
-    ids=["no kernel on the server", "every build slot taken", "a build error"],
+    ids=["no kernel on the server", "every build slot taken", "the kernel still loading", "a build error"],
 )
 async def test_what_to_do_next_follows_the_cause(cad, outputs, monkeypatch, worker_result, arguments, says, not_says):
     answer, _, _ = await _call(cad, outputs, monkeypatch, worker_result, **arguments)
     assert answer["passed"] is False
     assert says in answer["next"] and not_says not in answer["next"]
     # A build that never started leaves nothing behind, not even the script.
-    assert (_files(outputs) == []) is (worker_result["status"] == "busy")
+    assert (_files(outputs) == []) is (worker_result["status"] in ("busy", "loading"))
+
+
+@pytest.mark.asyncio
+async def test_a_kernel_that_never_finishes_loading_does_not_keep_a_model_calling(cad, outputs, monkeypatch):
+    # "Call again" is right for a fresh install, where each attempt leaves more of the kernel compiled.
+    # Where nothing can be kept (a read-only environment), it would be an endless loop.
+    loading = {"status": "loading", "message": "the CAD kernel was still loading when the time ran out"}
+    refused = {"status": "refused", "construct": "import", "line": 1, "message": "the only import a script may contain is: import cadquery as cq"}
+    first, _, _ = await _call(cad, outputs, monkeypatch, loading)
+    second, _, _ = await _call(cad, outputs, monkeypatch, loading)
+    assert "same arguments" in first["next"] and "next build is quick" in second["next"]
+    # A refused script never loads the kernel, so it says nothing about whether the kernel can.
+    await _call(cad, outputs, monkeypatch, refused)
+    third, _, _ = await _call(cad, outputs, monkeypatch, loading)
+    assert "Do not call cad_build again" in third["next"] and "make doctor" in third["next"]
+    assert "quick" not in third["next"] and "quick" not in third["error"]["message"]
+    # The count is this conversation's: someone else asking after the same restart is on a first attempt.
+    other, _, _ = await _call(cad, outputs, monkeypatch, loading, conversation="thread-b")
+    assert "same arguments" in other["next"]
+    # A build that got past loading clears the count.
+    await _call(cad, outputs, monkeypatch, BUILT)
+    again, _, _ = await _call(cad, outputs, monkeypatch, loading)
+    assert "same arguments" in again["next"]
 
 
 @pytest.mark.asyncio
@@ -379,6 +404,10 @@ async def test_the_tool_does_not_start_a_build_it_could_not_hand_over(cad, monke
         # Valid for the schema, and fatal later: a number no float can hold, a character no file can.
         ({"bbox_xyz_mm": [10**400, 40, 6]}, "bbox_xyz_mm must be three positive numbers"),
         ({"volume_min_max_mm3": [0, 10**400]}, "volume_min_max_mm3 must be [min, max]"),
+        # Not numbers. The schema leaves the items untyped to keep the tool small, so this is where they are caught.
+        ({"hole_diameters_mm": ["4"]}, "hole_diameters_mm must list one positive diameter"),
+        ({"bbox_xyz_mm": [60, 40, True]}, "bbox_xyz_mm must be three positive numbers"),
+        ({"volume_min_max_mm3": ["1", "2"]}, "volume_min_max_mm3 must be [min, max]"),
         ({"name": "plate \ud83d"}, "name contains a character"),
         ({"script": PLATE + "# \ud83d\n"}, "script contains a character"),
     ],
@@ -405,7 +434,8 @@ def test_the_schema_the_model_sees_is_structure_only_and_requires_the_size(cad):
     validator = Draft202012Validator(schema)
     good = {"name": "plate", "script": PLATE, "bbox_xyz_mm": [60, 40, 6]}
     assert validator.is_valid(good) and validator.is_valid({**good, "volume_min_max_mm3": [1, 2], "hole_diameters_mm": []})
-    for bad in ({"name": "plate", "script": PLATE}, {**good, "bbox_xyz_mm": "60x40x6"}, {**good, "script": 5}, {**good, "hole_diameters_mm": ["4"]}, {**good, "bbox_xyz_mm": [60, 40, True]}):
+    for bad in ({"name": "plate", "script": PLATE}, {**good, "bbox_xyz_mm": "60x40x6"}, {**good, "script": 5}, {**good, "hole_diameters_mm": 4}):
         assert not validator.is_valid(bad)
-    # Descriptions cost every request of every conversation; the parameter names carry the meaning.
-    assert all("description" not in spec for spec in schema["properties"].values())
+    # Descriptions and item types cost every request of every conversation; the parameter
+    # names carry the meaning and the handler checks the numbers.
+    assert all(set(spec) == {"type"} for spec in schema["properties"].values())

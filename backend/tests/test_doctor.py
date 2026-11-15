@@ -1821,7 +1821,8 @@ class TestCheckCadExtension:
 
     def test_a_disabled_entry_is_skipped(self, tmp_path):
         cfg = self._config(tmp_path, self._INSTALLED.replace("enabled: true", "enabled: false"))
-        assert doctor.check_cad_extension(cfg, run=self._must_not_run)[0].status == "skip"
+        (result,) = doctor.check_cad_extension(cfg, run=self._must_not_run)
+        assert result.status == "skip" and "turned off" in result.detail
 
     def test_a_built_cube_is_ok_with_its_measured_size(self, tmp_path):
         answer = json.dumps({"ok": True, "bbox_mm": [1.0, 1.0, 1.0], "volume_mm3": 1.0, "seconds": 4.2})
@@ -1877,4 +1878,28 @@ class TestCheckCadExtension:
         # A missing library is an ImportError, but a broken kernel can end the process: never import it into doctor.
         assert cmd == [sys.executable, "-m", "deerflow_extension_cad.selftest"]
         assert kwargs["shell"] is False and kwargs["check"] is False
-        assert kwargs["timeout"] == doctor.CAD_SELFTEST_TIMEOUT_SECONDS < 30
+        # Long enough for the self-test's load (25 s) and build (20 s), and short enough
+        # that doctor as a whole stays inside what the support bundle allows it.
+        import re
+
+        assert 50 <= kwargs["timeout"] == doctor.CAD_SELFTEST_TIMEOUT_SECONDS <= 60
+        source = (Path(doctor.__file__).parent / "support_bundle.py").read_text(encoding="utf-8")
+        allowed = int(re.search(r'"doctor\.py"\)\], cwd=cwd, timeout_s=(\d+)\)', source).group(1))
+        assert allowed >= 2 * doctor.CAD_SELFTEST_TIMEOUT_SECONDS
+
+    def test_a_host_without_the_package_is_told_to_turn_the_record_off_not_to_reinstall(self, tmp_path):
+        # Windows, an Intel Mac, or a Linux the kernel has no wheels for: the record ships on and the package is absent.
+        stderr = "/usr/bin/python: Error while finding module specification for 'deerflow_extension_cad.selftest' (ModuleNotFoundError: No module named 'deerflow_extension_cad')"
+        (result,) = doctor.check_cad_extension(self._config(tmp_path, self._INSTALLED), run=self._ran(1, "", stderr))
+        assert result.status == "warn" and "not installed on this host" in result.detail
+        assert "make extension-disable NAME=cad" in result.fix and "extension-install" not in result.fix
+
+    def test_a_kernel_still_loading_is_a_row_that_says_to_run_doctor_again(self, tmp_path):
+        answer = json.dumps({"ok": False, "error": "the CAD kernel was still loading when the time ran out. The first build after an install, an update or a restart takes longer.", "seconds": 20.0})
+        (result,) = doctor.check_cad_extension(self._config(tmp_path, self._INSTALLED), run=self._ran(1, answer))
+        assert result.status == "warn" and "still loading" in result.detail and "make doctor again" in result.fix
+
+    def test_the_fix_for_a_bundled_module_is_a_sync_not_the_extension_manager(self, tmp_path):
+        # `make extension-install` refuses a source that is already installed, which a bundled module always is.
+        (result,) = doctor.check_cad_extension(self._config(tmp_path, self._INSTALLED), run=self._ran(1, json.dumps({"ok": False, "error": "the cube did not pass its own checks"})))
+        assert result.status == "warn" and "uv sync --locked" in result.fix and "extension-install" not in result.fix

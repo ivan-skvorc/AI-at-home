@@ -298,6 +298,28 @@ async def test_an_export_over_the_size_limit_is_a_failed_build_not_a_cut_off_fil
     assert sorted(files) == ["part.py", "part.report.json"]
 
 
+async def test_the_real_worker_says_it_is_loading_while_it_imports_the_kernel():
+    # One second is less than the kernel takes to import even when everything is compiled,
+    # so the clock runs out in the same place a fresh install's first build does.
+    from deerflow_extension_cad import tool
+
+    result = await tool.run_worker(PLATE, timeout_seconds=1, memory_mb=4096)
+    assert result["status"] == "loading", result
+
+
+def test_the_self_test_loads_the_kernel_first_and_then_builds_its_cube():
+    # What `make doctor` and the image build run. Loading has its own, longer limit, so a
+    # fresh install's first run is not a time-out.
+    import subprocess
+    import sys
+
+    run = subprocess.run([sys.executable, "-m", "deerflow_extension_cad.selftest"], capture_output=True, text=True, timeout=300, check=False)
+    answer = json.loads(run.stdout.strip().splitlines()[-1])
+    assert run.returncode == 0 and answer["ok"] is True and answer["bbox_mm"] == [1.0, 1.0, 1.0]
+    # The kernel takes over a second to import even when everything is cached: a zero means it was not loaded here.
+    assert 0.5 < answer["load_seconds"] < 60
+
+
 async def test_a_rebuild_does_not_touch_the_first_build():
     outputs = Outputs()
     await _build(PLATE, outputs)

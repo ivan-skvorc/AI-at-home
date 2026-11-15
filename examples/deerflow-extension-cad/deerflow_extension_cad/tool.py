@@ -73,8 +73,8 @@ LENGTH_TOLERANCE_RATIO = 0.001
 # handler checks the values itself (``_problem_with``). The context-fit critical
 # check pins the cost (backend/tests/test_context_fit_critical.py).
 DESCRIPTION = (
-    "Build a part from a CadQuery script and check it. The script is read, not run: only `import cadquery as cq`, "
-    "assignments, arithmetic and allow-listed Workplane methods. Millimetres. Assign the part to `result`. "
+    "Build and check a part from a CadQuery script. It is read, not run: only assignments, arithmetic and "
+    "allow-listed Workplane methods. Millimetres. Assign the part to result. "
     "No loops, functions or other imports. Methods: box, cylinder, sphere, rect, circle, ellipse, polygon, slot2D, polyline, "
     "moveTo, move, lineTo, line, hLine, vLine, hLineTo, vLineTo, threePointArc, close, center, extrude, cutBlind, cutThruAll, "
     "hole, cboreHole, cskHole, fillet, chamfer, shell, pushPoints, rarray, polarArray, faces, edges, vertices, workplane, tag, "
@@ -89,9 +89,10 @@ INPUT_SCHEMA: dict[str, Any] = {
     "properties": {
         "name": {"type": "string"},
         "script": {"type": "string"},
-        "bbox_xyz_mm": {"type": "array", "items": {"type": "number"}},
-        "volume_min_max_mm3": {"type": "array", "items": {"type": "number"}},
-        "hole_diameters_mm": {"type": "array", "items": {"type": "number"}},
+        # No item types: they cost twenty tokens of every request, and the handler checks each number itself.
+        "bbox_xyz_mm": {"type": "array"},
+        "volume_min_max_mm3": {"type": "array"},
+        "hole_diameters_mm": {"type": "array"},
     },
     "required": ["name", "script", "bbox_xyz_mm"],
 }
@@ -108,6 +109,14 @@ NEXT_BUSY = "Nothing is wrong with the script. Call cad_build again with the sam
 NEXT_UNSTORED = "The part met its checks but its files could not all be stored, so it is not delivered. Tell the user which file was refused; a part with fewer small fillets and holes gives smaller files."
 NEXT_NO_FILES = "Nothing could be stored in this conversation, so nothing is delivered. Tell the user which file was refused."
 NEXT_ARGUMENTS = "Correct the arguments and call cad_build again."
+NEXT_STILL_LOADING = "Nothing is wrong with the script. Call cad_build again with the same arguments: the next build is quick."
+NEXT_NOT_LOADING = "The CAD kernel does not finish loading on this server. Do not call cad_build again; tell the user to run `make doctor`, which loads it once and names what is wrong."
+#: Builds in a row, in one conversation, that may end while the kernel is still loading before the
+#: answer stops saying "call again". Each attempt leaves more of the kernel in the disk cache, so two
+#: are enough on a fresh install; on a host too slow to ever load it, calling again would never end.
+MAX_LOADING_ANSWERS = 3
+#: Conversations whose count is kept. A count is a few bytes; the cap only keeps the table from growing for ever.
+MAX_COUNTED_CONVERSATIONS = 1000
 #: What a timed-out worker was doing, in the words of the answer.
 _PHASES = {
     "exporting": "The part was built, and writing its files did not finish in time. Simplify the part: fewer small fillets and holes.",
@@ -383,7 +392,12 @@ async def run_worker(script: str, *, timeout_seconds: int, memory_mb: int, slots
             async with asyncio.timeout(timeout_seconds):
                 code = await process.wait()
         except TimeoutError:
-            advice = _PHASES.get(await asyncio.to_thread(_phase_of, directory), "Simplify the part: fewer pattern points, fewer fillets, and hole() instead of circle().cutThruAll() for round holes.")
+            phase = await asyncio.to_thread(_phase_of, directory)
+            if phase == "loading":
+                # Nothing was built yet, so nothing can be said about the part. The modules Python
+                # compiled before it was stopped stay compiled, which is why calling again works.
+                return {"status": "loading", "message": "the CAD kernel was still loading when the time ran out. The first build after an install, an update or a restart takes longer."}
+            advice = _PHASES.get(phase, "Simplify the part: fewer pattern points, fewer fillets, and hole() instead of circle().cutThruAll() for round holes.")
             return {"status": "failed", "message": f"the build did not finish within {timeout_seconds} seconds and was stopped. {advice}"}
         # At once, before its files are read: whatever the worker left running goes with it.
         _stop(process)
@@ -421,6 +435,9 @@ async def _save(context: ToolContext, name: str, content: bytes, saved: list[str
 
 def make_handler(settings: Mapping[str, int]):
     slots = threading.BoundedSemaphore(settings.get("parallel_builds") or default_parallel_builds())
+    # Builds in a row that never got past loading the kernel, by conversation: three people
+    # asking at once after a restart are each on their first attempt.
+    still_loading: dict[str, int] = {}
 
     async def cad_build(payload: Mapping[str, Any], context: ToolContext) -> dict[str, Any]:
         if context.output_writer is None:
@@ -430,8 +447,17 @@ def make_handler(settings: Mapping[str, int]):
             return {"passed": False, "error": {"message": problem}, "files": [], "next": NEXT_ARGUMENTS}
         script = payload["script"]
         result = await run_worker(script, timeout_seconds=settings["timeout_seconds"], memory_mb=settings["memory_mb"], slots=slots)
-        if result.get("status") == "busy":
+        status = result.get("status")
+        conversation = str(context.thread_id or "")
+        if status == "loading":
+            if conversation not in still_loading and len(still_loading) >= MAX_COUNTED_CONVERSATIONS:
+                still_loading.clear()
+            still_loading[conversation] = still_loading.get(conversation, 0) + 1
+            return {"passed": False, "error": {"message": result["message"]}, "files": [], "next": NEXT_NOT_LOADING if still_loading[conversation] >= MAX_LOADING_ANSWERS else NEXT_STILL_LOADING}
+        if status == "busy":
             return {"passed": False, "error": {"message": result["message"]}, "files": [], "next": NEXT_BUSY}
+        if status != "refused":
+            still_loading.pop(conversation, None)  # the kernel loaded, or failed to: either way not "still loading"
         saved: list[str] = []
         problems: list[str] = []
         # The script is saved first: the name the host gives it is this build's stem, so

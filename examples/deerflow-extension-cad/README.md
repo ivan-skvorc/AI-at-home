@@ -207,15 +207,19 @@ child process, its limits and its clean environment, not by the interpreter.
 
 ## Install
 
+**In this fork the module ships installed and on**, on Linux (x86-64 and arm64,
+glibc 2.31 or newer) and Apple-silicon Macs. A new install gets it with
+`make install` or `make up`; an existing one gets it on its next update, when
+the config upgrade adds the record below once. The backend installs it from a
+committed copy of this directory,
+`backend/extensions/sources/deerflow-extension-cad`, which a test keeps
+identical to it. The kernel has no wheels for Windows, Intel Macs or a Linux
+with an older C library: those hosts install everything else, the record stays,
+and `make doctor` says to turn it off.
+
 The kernel is large: `cadquery` and its dependencies take about 1.7 GB on disk
-(`vtk` 640 MB, `casadi` 270 MB, the OpenCascade bindings 260 MB). Only an install
-that wants CAD pays for it.
-
-```bash
-make extension-install SOURCE="$PWD/examples/deerflow-extension-cad"
-```
-
-Restart DeerFlow afterwards. The manager adds this entry to `config.yaml`:
+(`vtk` 640 MB, `casadi` 270 MB, the OpenCascade bindings 260 MB). It is loaded
+only in a child process while a part is being built, never into the Gateway.
 
 ```yaml
 plugins:
@@ -224,7 +228,33 @@ plugins:
     use: deerflow_extension_cad:install
     enabled: true
     required: false
-    config: {}
+    config:
+      enabled: true
+```
+
+Turn it off and keep the record, then restart:
+
+```bash
+make extension-disable NAME=cad
+```
+
+That stops the tool; the kernel stays on disk. Do not use
+`make extension-remove` on it: the module is part of the repository's own
+dependency files, so removing it leaves them modified and the next `git pull`
+stops on them.
+
+**The first build after an install or a restart can be slow.** Loading the
+kernel reads about 1.2 GB of libraries from disk; warm that takes two seconds,
+on a slow or busy disk it can take longer than a build may. The tool then
+answers that the kernel was still loading and to call again, and the next call
+is quick. After three such answers in a row in one conversation it says to stop
+and run `make doctor`, which loads the kernel once and names what is wrong.
+
+In upstream DeerFlow, or any tree without the bundled copy, install it by hand
+and restart:
+
+```bash
+make extension-install SOURCE="$PWD/examples/deerflow-extension-cad"
 ```
 
 `config` accepts four values, all optional:
@@ -242,8 +272,8 @@ Then check it:
 make doctor
 ```
 
-With the extension installed, `make doctor` builds a one-millimetre cube through
-the real tool. If the kernel cannot load because a system library is missing, it
+`make doctor` loads the kernel and then builds a one-millimetre cube through the
+real tool. If the kernel cannot load because a system library is missing, it
 names the library.
 
 ### System libraries
@@ -253,12 +283,15 @@ The kernel links three OpenGL dispatch libraries that its wheels do not carry:
 It also loads the system's `libX11.so.6`, which a desktop and the Gateway image
 already have.
 
-- **The Gateway image** (`make up`) unpacks them at build time, about 1.5 MB.
+- **The Gateway image** (`make up`) unpacks them at build time, about 1.5 MB,
+  and the dev image (`make docker-start`) does the same with `libX11`.
 - **A desktop Linux** usually has them. On a minimal Debian or Ubuntu host:
   `apt-get install libgl1`.
 
-Wheels of the kernel exist for Python 3.12 on x86-64 and arm64 Linux, macOS and
-Windows. This package is tested on Linux only.
+Wheels of the kernel exist for Python 3.12 to 3.14 on Linux x86-64 and arm64
+(glibc 2.31 or newer) and Apple-silicon macOS; there are none for Intel macOS.
+Windows wheels exist, but the worker is POSIX-only. This package is tested on
+Linux only.
 
 ## Run the package tests
 

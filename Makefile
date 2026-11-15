@@ -151,7 +151,9 @@ check-agent-guidance:
 # Install all dependencies
 install:
 	@echo "Installing backend dependencies..."
-	@cd backend && uv sync --locked
+	@# Fork: the bundled CAD kernel (uv group `cad`) has no wheels for a C library older than
+	@# glibc 2.31; such a host installs everything else (FORK.md §51).
+	@cd backend && uv sync --locked || (echo "Retrying without the CAD kernel (uv group 'cad')" && uv sync --locked --no-group cad)
 	@echo "Installing frontend dependencies..."
 	@cd frontend && $(FRONTEND_PNPM) install
 	@echo "Installing pre-commit hooks..."

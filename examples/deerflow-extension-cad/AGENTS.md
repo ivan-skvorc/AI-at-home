@@ -12,6 +12,10 @@ uv run --no-project pytest -q                        # the kernel tests skip wit
 cd ../../backend && python -m pytest tests/test_cad_extension.py tests/test_cad_runtime_deps.py -q   # the host half, no kernel
 ```
 
+- **This directory is the source; `backend/extensions/sources/deerflow-extension-cad`
+  is what every install runs.** After any edit here, copy the directory over the
+  snapshot (without `__pycache__`); `test_bundled_cad_extension.py` fails until
+  the two are identical.
 - **The interpreter is a security boundary.** Calls to `exec`, `eval` and
   `compile` and a second script-driven `getattr` do not belong in this package,
   and `ast.parse` has one call site. A change that lets a value from a script reach a lookup, a file path or
@@ -43,5 +47,6 @@ cd ../../backend && python -m pytest tests/test_cad_extension.py tests/test_cad_
   before its first step does nothing, and the host also runs tools on loops
   that end at once: the kill is direct and the release is a done callback.
 - **The tool description is paid on every request.** The context-fit critical
-  check has about ten tokens to spare with this tool installed: shorten
-  elsewhere before adding a word, and keep parameter meaning in the names.
+  check has about forty tokens to spare with this tool on every request,
+  fourteen with a workflows option on: shorten elsewhere before adding a word,
+  and keep parameter meaning in the names.

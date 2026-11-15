@@ -392,6 +392,74 @@ class TestBundledPluginDelivery:
 
         assert config.read_text(encoding="utf-8") == original
 
+
+class TestBundledCadPluginDelivery:
+    """Migration 73 hands existing installs the CAD module a fresh one ships enabled (FORK.md §51)."""
+
+    WORKFLOWS = TestBundledPluginDelivery.RECORD
+    CAD = {"name": "cad", "package": "deerflow-extension-cad", "use": "deerflow_extension_cad:install", "enabled": True, "required": False, "config": {"enabled": True}}
+    BASE = TestBundledPluginDelivery.BASE
+
+    def _example(self, tmp_path: Path) -> Path:
+        example = _write_example(tmp_path, version=73)
+        with example.open("a", encoding="utf-8") as handle:
+            yaml.safe_dump({"plugins": [self.WORKFLOWS, self.CAD]}, handle, sort_keys=False)
+        return example
+
+    def _plugins(self, config: Path) -> list:
+        return yaml.safe_load(config.read_text(encoding="utf-8"))["plugins"]
+
+    def test_an_install_on_the_previous_version_gets_the_record_after_its_own(self, tmp_path):
+        config = tmp_path / "config.yaml"
+        config.write_text(f"config_version: 72\n{self.BASE}" + yaml.safe_dump({"plugins": [self.WORKFLOWS]}, sort_keys=False), encoding="utf-8")
+
+        assert config_upgrade.upgrade(config, self._example(tmp_path), REPO_ROOT) == 0
+
+        assert self._plugins(config) == [self.WORKFLOWS, self.CAD]
+
+    def test_a_workflows_record_the_operator_removed_does_not_come_back_with_it(self, tmp_path):
+        # Each migration names the plugins it delivers. Delivering "whatever the example
+        # lists" would undo a removal the operator made after migration 66.
+        config = tmp_path / "config.yaml"
+        config.write_text(f"config_version: 72\n{self.BASE}plugins: []\n", encoding="utf-8")
+
+        assert config_upgrade.upgrade(config, self._example(tmp_path), REPO_ROOT) == 0
+
+        assert self._plugins(config) == [self.CAD]
+
+    def test_a_module_installed_by_hand_keeps_its_own_record(self, tmp_path):
+        """`make extension-install` wrote a record with the operator's limits; the upgrade leaves it alone."""
+        mine = {"name": "cad", "package": "deerflow-extension-cad", "use": "deerflow_extension_cad:install", "enabled": False, "config": {"timeout_seconds": 10}}
+        config = tmp_path / "config.yaml"
+        config.write_text(f"config_version: 72\n{self.BASE}" + yaml.safe_dump({"plugins": [mine]}, sort_keys=False), encoding="utf-8")
+
+        assert config_upgrade.upgrade(config, self._example(tmp_path), REPO_ROOT) == 0
+
+        assert self._plugins(config) == [mine]
+
+    def test_an_install_many_versions_behind_gets_both_bundled_plugins(self, tmp_path):
+        config = tmp_path / "config.yaml"
+        config.write_text(f"config_version: 65\n{self.BASE}", encoding="utf-8")
+
+        assert config_upgrade.upgrade(config, self._example(tmp_path), REPO_ROOT) == 0
+
+        assert self._plugins(config) == [self.WORKFLOWS, self.CAD]
+
+    def test_it_runs_once_so_removing_the_record_sticks(self, tmp_path):
+        config = tmp_path / "config.yaml"
+        original = f"config_version: 73\n{self.BASE}plugins: []\n"
+        config.write_text(original, encoding="utf-8")
+
+        assert config_upgrade.upgrade(config, self._example(tmp_path), REPO_ROOT) == 0
+
+        assert config.read_text(encoding="utf-8") == original
+
+    def test_the_real_example_holds_the_record_the_migration_delivers(self):
+        example = yaml.safe_load((REPO_ROOT / "config.example.yaml").read_text(encoding="utf-8"))
+        assert example["config_version"] >= 73
+        assert [entry["name"] for entry in example["plugins"]] == ["workflows", "cad"]
+        assert config_upgrade.MIGRATIONS[73]["plugins_from_example"] == ("cad",)
+
     @pytest.mark.parametrize(
         ("launcher", "gateway_start"),
         [

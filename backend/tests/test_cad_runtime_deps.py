@@ -49,6 +49,32 @@ def test_a_failed_unpack_cannot_stop_the_image_everything_else_runs_in():
     assert re.search(r"\)\s*\|\|\s*echo \"WARNING", unpack)
 
 
+def test_the_image_builds_the_test_cube_once_and_cannot_fail_on_it():
+    # The step proves the kernel loads in the image and leaves its compiled modules there. It comes
+    # after the libraries the kernel links, and the module is optional: the whole step is one
+    # parenthesised either-or, so nothing after the warning can fail the build.
+    instructions = _instructions(_runtime_stage())
+    unpack = next(index for index, instruction in enumerate(instructions) if "dpkg-deb -x" in instruction)
+    (warm,) = [index for index, instruction in enumerate(instructions) if "deerflow_extension_cad.selftest" in instruction]
+    assert warm > unpack
+    assert re.fullmatch(r"RUN cd backend && \(uv run --no-sync python -m deerflow_extension_cad\.selftest\s+\|\| echo \"WARNING[^\"]*\" >&2\)", instructions[warm].strip())
+    copied = next(index for index, instruction in enumerate(_runtime_stage().splitlines()) if instruction.startswith("COPY --from=builder /app/backend"))
+    assert copied < next(index for index, line in enumerate(_runtime_stage().splitlines()) if "deerflow_extension_cad.selftest" in line)
+
+
+def test_the_dev_container_gets_the_kernels_libraries_too():
+    # The dev stage is the builder, not the runtime stage: it inherits none of the libraries
+    # above, and the module is on there as well. What the kernel maps beyond the base image is
+    # libX11 (with its own dependencies) and the three dispatch libraries.
+    stages = DOCKERFILE.read_text(encoding="utf-8").split("\nFROM ")
+    (dev,) = [stage for stage in stages if stage.startswith("builder AS dev")]
+    (libraries,) = [instruction for instruction in _instructions(dev) if "dpkg-deb -x" in instruction]
+    assert re.search(r"apt-get install -y --no-install-recommends libx11-6\b", libraries)
+    assert all(package in libraries for package in DISPATCH_PACKAGES) and "ldconfig" in libraries
+    assert not re.search(r"apt-get install\b[^&;]*\blibgl1\b", libraries)
+    assert re.search(r"\)\s*\|\|\s*echo \"WARNING", libraries)
+
+
 def test_the_unpack_follows_the_install_that_brings_libx11():
     # libX11 is the kernel's other system library; it arrives with libgtk-3-0. The
     # instructions are compared, not the text: a comment that names the package is not an install.

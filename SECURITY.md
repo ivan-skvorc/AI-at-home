@@ -39,7 +39,7 @@ is built for that purpose — not a backup archive.
 
 ## The CAD module's script interpreter (fork feature)
 
-The optional CAD extension (`examples/deerflow-extension-cad`, FORK.md §51) takes
+The bundled CAD extension (`examples/deerflow-extension-cad`, FORK.md §51) takes
 a CadQuery script written by a language model. Model text is untrusted input,
 and the default install gives the agent no shell on purpose, so the extension
 does not run the script. Its interpreter is a security boundary and is described
@@ -80,8 +80,9 @@ here as one.
 
 What it is not: a sandbox for the geometry kernel. A defect in the kernel that
 an allow-listed operation can reach is contained by the child process and its
-limits, not by the interpreter. The extension is operator-installed code like
-any other and runs with Gateway privileges; its files are written through the
+limits, not by the interpreter. The extension ships with this fork, installed
+and enabled (`make extension-disable NAME=cad` turns it off); like any extension
+it runs with Gateway privileges, and its files are written through the
 host's bounded writer (`ToolContext.write_output`), into the calling
 conversation only.
 

@@ -80,7 +80,7 @@ module therefore builds a part **without running what the model wrote**, as an i
 extension, and the files it writes are ordinary outputs that the Files view lists. Item
 **43** — a plugin tool can write a bounded, host-checked file into the outputs of the
 conversation that called it (`ToolContext.write_output`, extension API 0.2.12) — landed:
-see [FORK.md §50](./FORK.md). Item **44** — the CAD module itself, an installable
+see [FORK.md §50](./FORK.md). Item **44** — the CAD module itself, a bundled
 extension whose `cad_build` tool reads a CadQuery script, performs an allow-list of
 operations in a child process and hands over STEP, STL and GLB only for a part that
 measured right — landed: see [FORK.md §51](./FORK.md). Both numbers stay retired like

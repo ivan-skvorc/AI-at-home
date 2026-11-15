@@ -97,7 +97,7 @@ def stock_config(tmp_path, monkeypatch):
     reset_app_config()
 
 
-def _workflow_additions(mode: str) -> tuple[list[str], list[dict]]:
+def _workflow_additions(mode: str, shared_workspace: str = "off") -> tuple[list[str], list[dict]]:
     """The bundled workflows extension's brief and tools on an Ultracode run.
 
     The plugin host loads them at Gateway start, which a bare assembly does not;
@@ -124,7 +124,10 @@ def _workflow_additions(mode: str) -> tuple[list[str], list[dict]]:
             contributed["contributor"] = contributor
 
     # The operator ceilings config.example.yaml ships (FORK.md §46).
-    install(Registry(), {"enabled": True, "storage_path": "workflows/workflows.sqlite", "agents": ["lead_agent"], "concurrency": 16, "global_concurrency": 32, "max_calls": 256, "timeout_seconds": 14400})
+    install(
+        Registry(),
+        {"enabled": True, "storage_path": "workflows/workflows.sqlite", "agents": ["lead_agent"], "concurrency": 16, "global_concurrency": 32, "max_calls": 256, "timeout_seconds": 14400, "shared_workspace": shared_workspace},
+    )
     plugin = contributed["plugin"]
     tools = [{"type": "function", "function": {"name": plugin_tool_name(plugin.namespace, tool.name), "description": tool.description, "parameters": _model_facing_schema(tool.input_schema)}} for tool in plugin.tools]
     from deerflow_extension_workflows.ultracode import UltracodeMode
@@ -158,7 +161,7 @@ def _assemble(mode: str, model_name: str = MODEL_NAME) -> dict:
     return captured
 
 
-def _fresh_request(mode: str) -> ModelRequest:
+def _fresh_request(mode: str, shared_workspace: str = "off") -> ModelRequest:
     """The first model request of a new chat in *mode*, as the context guard receives it."""
     captured = _assemble(mode)
     system = [captured["system_prompt"]]
@@ -169,9 +172,11 @@ def _fresh_request(mode: str) -> ModelRequest:
             system.append(middleware.system_prompt)
         tools.extend(getattr(middleware, "tools", None) or [])
     if mode in ("ultracode", "double_ultracode"):
-        notes, workflow_tools = _workflow_additions(mode)
+        notes, workflow_tools = _workflow_additions(mode, shared_workspace)
         system.extend(notes)
         tools.extend(workflow_tools)
+    # Fork: the CAD module ships installed and enabled (FORK.md §51), so its tool rides every request.
+    tools.extend(_cad_tools())
     model = SimpleNamespace(model="qwen3:8b", num_ctx=32_768, num_predict=8_192)
     return ModelRequest(model=model, messages=[HumanMessage("Summarise what you can do for me.")], system_message=SystemMessage(content="\n\n".join(system)), tools=tools, state={})
 
@@ -264,20 +269,26 @@ def _cad_tools() -> list[dict]:
     return [{"type": "function", "function": {"name": plugin_tool_name(plugin.namespace, tool.name), "description": tool.description, "parameters": _model_facing_schema(tool.input_schema)}} for tool in plugin.tools]
 
 
+@pytest.mark.parametrize("shared_workspace", ["read", "write"])
+def test_the_heaviest_mode_fits_with_every_workflows_option_the_example_documents(stock_config, shared_workspace):
+    # config.example.yaml offers shared_workspace "read" and "write"; each lengthens the Ultracode brief.
+    # With the CAD tool on every request, "read" went 17 tokens over the allowance while the stock check,
+    # which only measures the shipped "off", stayed green.
+    fixed = _fixed_tokens(_fresh_request("double_ultracode", shared_workspace))
+    assert fixed <= FIXED_REQUEST_ALLOWANCE_TOKENS, f"double_ultracode with shared_workspace={shared_workspace}: ~{fixed:,} fixed tokens, over the {FIXED_REQUEST_ALLOWANCE_TOKENS:,} a 32K local model can spare"
+
+
 @pytest.mark.parametrize("mode", list(MODES))
-def test_a_fresh_request_still_fits_with_the_cad_module_installed(stock_config, monkeypatch, mode):
-    # The module is off until an operator installs it, so the stock request above
-    # does not carry its tool. Installing it must not cost a 32K model its first message.
-    monkeypatch.syspath_prepend(str(REPO_ROOT / "examples" / "deerflow-extension-cad"))
+def test_the_bundled_cad_tool_stays_cheap_on_every_request(stock_config, mode):
+    # The module ships installed, so the stock request above carries its tool in every mode
+    # and on every model. What it costs is what a 32K model loses of its conversation.
     request = _fresh_request(mode)
-    cad = _cad_tools()
+    cad = [tool for tool in request.tools if isinstance(tool, dict) and tool.get("function", {}).get("name", "").startswith("ext_cad")]
     assert [tool["function"]["name"].split("_cad_build_")[0] for tool in cad] == ["ext_cad"]
-    with_cad = request.override(tools=[*request.tools, *cad])
-    fixed = _fixed_tokens(with_cad)
-    cost = fixed - _fixed_tokens(request)
+    without_cad = request.override(tools=[tool for tool in request.tools if tool not in cad])
+    cost = _fixed_tokens(request) - _fixed_tokens(without_cad)
     # The heaviest mode has under 200 tokens to spare on a 32K model, so the tool may not grow.
-    assert 0 < cost <= 180, f"cad_build costs ~{cost:,} tokens of every request; keep its description and schema short"
-    assert fixed <= FIXED_REQUEST_ALLOWANCE_TOKENS, f"{mode}: with the CAD module installed the fixed part of a request is ~{fixed:,} tokens, over the {FIXED_REQUEST_ALLOWANCE_TOKENS:,} a 32K local model can spare"
+    assert 0 < cost <= 150, f"cad_build costs ~{cost:,} tokens of every request; keep its description and schema short"
 
 
 def test_compaction_fires_before_the_guard_would_refuse_a_long_chat(stock_config, monkeypatch):

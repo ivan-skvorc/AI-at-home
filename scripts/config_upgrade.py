@@ -239,6 +239,12 @@ MIGRATIONS = {
         "description": "Raise the bundled workflows plugin's untouched limits to the extension's ceilings",
         "data_transform": raise_shipped_workflow_limits,
     },
+    73: {
+        # The CAD module is bundled (backend/extensions/sources) and enabled in
+        # the example; an existing install gets its record once (FORK.md §51).
+        "description": "Add the bundled CAD plugin that builds mechanical parts from a chat",
+        "plugins_from_example": ("cad",),
+    },
     # Future migrations go here:
     # 60: {
     #     'description': '...',

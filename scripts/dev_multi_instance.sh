@@ -490,7 +490,12 @@ cmd_up() {
         echo "Syncing backend dependencies ($extras)..."
         # Intentionally unquoted: splats validated `--extra NAME` pairs.
         # shellcheck disable=SC2086
-        (cd "$BACKEND_DIR" && uv sync --locked --quiet --all-packages $extras) || die "Backend dependency sync failed."
+        # Fork: same fallback as scripts/serve.sh for a host the bundled CAD kernel has no wheels for.
+        # shellcheck disable=SC2086
+        (cd "$BACKEND_DIR" && uv sync --locked --quiet --all-packages $extras) || {
+            echo "Dependency sync failed; retrying without the CAD kernel (uv group 'cad')"
+            (cd "$BACKEND_DIR" && uv sync --locked --quiet --all-packages --no-group cad $extras) || die "Backend dependency sync failed."
+        }
     fi
 
     run_helper secrets --out "$SECRETS_FILE" || die "Could not create $SECRETS_FILE."
