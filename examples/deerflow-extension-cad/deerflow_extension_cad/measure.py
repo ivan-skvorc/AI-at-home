@@ -25,8 +25,11 @@ cones that touch a cylinder) that
 
 Faces are grouped by axis line. On one axis, segments that touch are one hole
 (a counterbore step, a countersink cone, a chamfered mouth). Segments with a
-gap between them are one hole only when the gap is air and both sides have the
-same diameter: one drill pass through both walls of an enclosure.
+gap between them are one hole only when the whole gap is air, from the end of
+one wall to the start of the next, and both sides have the same diameter: one
+drill pass through both walls of an enclosure. Such a hole reports how many
+walls it crosses. Two blind holes that face each other across a cavity each end
+in material, so they stay two.
 
 A hole's diameter is the smallest cylinder diameter of its chain, the drill
 diameter. A chain without a cylinder (a pure taper or a dimple) is not counted.
@@ -50,7 +53,9 @@ from OCP.BRepClass3d import BRepClass3d_SolidClassifier
 from OCP.BRepGProp import BRepGProp_Face
 from OCP.BRepTools import BRepTools
 from OCP.GeomAbs import GeomAbs_Cone, GeomAbs_Cylinder
-from OCP.gp import gp_Pnt, gp_Vec
+from OCP.gp import gp_Dir, gp_Lin, gp_Pnt, gp_Vec
+from OCP.IntCurvesFace import IntCurvesFace_ShapeIntersector
+from OCP.IntCurveSurface import IntCurveSurface_Tangent
 from OCP.TopAbs import TopAbs_IN
 
 # Tolerances, millimetres unless noted.
@@ -61,6 +66,13 @@ AXIAL_TOL = 1e-5  # two axial coordinates are the same
 ARC_TOL = 1e-3  # radians short of 2*pi that still counts as a full circle
 PROBE_EPS = 1e-3  # how far beyond a hole end the axis is probed
 CLASSIFY_TOL = 1e-7
+# Material or air at a point is decided by counting surface crossings along a ray. These
+# directions are generic on purpose: a ray along a grid of holes runs through the seam of
+# every wall in its row, and the kernel's own classifier, which picks its rays from the
+# faces, then retries hundreds of times (0.4 s a point on a part with half holes on an edge).
+_RAYS = ((0.3411, 0.5873, 0.7340), (-0.6229, 0.2671, 0.7354), (0.7112, -0.6377, 0.2954))
+_RAY_LENGTH = 1e7  # past any part: sizes are capped at 1e5
+_RAY_NEAR = 1e-6  # a crossing this close to the start means the point is on a surface
 _SWEEP = (0.3711, 0.5373, 0.7577)  # generic direction for the grouping sweep
 
 
@@ -206,8 +218,9 @@ def _cone_segments(faces):
 
 
 class _Classifier:
-    def __init__(self, classifier, direction, anchor):
+    def __init__(self, classifier, rays, direction, anchor):
         self._c = classifier
+        self._rays = rays
         self._d = direction
         self._o = anchor
         # two unit vectors perpendicular to the axis
@@ -229,8 +242,26 @@ class _Classifier:
         return tuple(self._o[k] + a * self._d[k] + ru * self._u[k] + rv * self._v[k] for k in range(3))
 
     def in_material(self, a, ru=0.0, rv=0.0):
-        self._c.Perform(gp_Pnt(*self.point(a, ru, rv)), CLASSIFY_TOL)
+        point = gp_Pnt(*self.point(a, ru, rv))
+        counted = self._by_ray(point)
+        if counted is not None:
+            return counted
+        # No clean ray: the point is on a surface, or every ray grazed an edge. The kernel decides.
+        self._c.Perform(point, CLASSIFY_TOL)
         return self._c.State() == TopAbs_IN
+
+    def _by_ray(self, point):
+        """True or False from an odd or even number of clean crossings, None when no ray is clean."""
+        for direction in _RAYS:
+            self._rays.Perform(gp_Lin(point, gp_Dir(*direction)), 0.0, _RAY_LENGTH)
+            if not self._rays.IsDone():
+                continue
+            crossings = self._rays.NbPnt()
+            # Clean: every crossing passes through the inside of a face, not along an edge
+            # (two faces would both report it) and not tangent to it (no crossing at all).
+            if all(self._rays.State(i) == TopAbs_IN and self._rays.Transition(i) != IntCurveSurface_Tangent and self._rays.WParameter(i) > _RAY_NEAR for i in range(1, crossings + 1)):
+                return crossings % 2 == 1
+        return None
 
     def air_inside(self, seg):
         return not self.in_material(0.5 * (seg["a0"] + seg["a1"]))
@@ -252,9 +283,12 @@ def measure_holes(solid, ndigits: int = 4) -> list[dict]:
     records = [record for record in (_face_record(face.wrapped) for face in solid.Faces()) if record is not None]
     holes = []
     classifier = BRepClass3d_SolidClassifier(solid.wrapped) if records else None
+    rays = IntCurvesFace_ShapeIntersector()
+    if records:
+        rays.Load(solid.wrapped, CLASSIFY_TOL)
     for group in _group_by_axis(records):
         direction, anchor = group[0]["dir"], group[0]["anchor"]
-        probe = _Classifier(classifier, direction, anchor)
+        probe = _Classifier(classifier, rays, direction, anchor)
         segments = _cylinder_segments([f for f in group if not f["cone"]])
         segments += _cone_segments([f for f in group if f["cone"]])
         segments = _drop_recess_walls([s for s in segments if probe.air_inside(s)])
@@ -267,7 +301,17 @@ def measure_holes(solid, ndigits: int = 4) -> list[dict]:
                 continue
             last = max(chain, key=lambda s: s["a1"])
             gap = seg["a0"] - last["a1"]
-            same_drill = not last["cone"] and not seg["cone"] and abs(last["r1"] - seg["r0"]) <= RADIUS_TOL and not probe.in_material(0.5 * (seg["a0"] + last["a1"]))
+            # Air at both ends of the gap as well as in its middle: a blind hole ends in
+            # material, and two of them facing each other across a cavity are not one pass.
+            same_drill = (
+                gap > AXIAL_TOL
+                and not last["cone"]
+                and not seg["cone"]
+                and abs(last["r1"] - seg["r0"]) <= RADIUS_TOL
+                and not any(probe.in_material(a) for a in (last["a1"] + PROBE_EPS, 0.5 * (seg["a0"] + last["a1"]), seg["a0"] - PROBE_EPS))
+            )
+            if same_drill:
+                seg = {**seg, "new_wall": True}
             if gap <= AXIAL_TOL or same_drill:
                 chain.append(seg)
             else:
@@ -295,6 +339,9 @@ def measure_holes(solid, ndigits: int = 4) -> list[dict]:
             hole = {"diameter_mm": diameter, "through": open_lo and open_hi, "depth_mm": round(a1 - a0, ndigits)}
             if larger is not None:
                 hole["larger_diameter_mm"], hole["larger_kind"] = larger, larger_kind
+            walls = 1 + sum(1 for s in chain if s.get("new_wall"))
+            if walls > 1:
+                hole["walls"] = walls
             holes.append((probe.point(a0), hole))
     holes.sort(key=lambda item: (item[1]["diameter_mm"], item[0]))
     return [hole for _, hole in holes]

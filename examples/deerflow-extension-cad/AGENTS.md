@@ -37,6 +37,11 @@ cd ../../backend && python -m pytest tests/test_cad_extension.py tests/test_cad_
 - **The kernel works on several cores and keeps a mesh on the shape.** The
   processor backstop is counted per core, builds take slots, and a coarser mesh
   needs the finer one cleared first.
+- **The kernel's point classifier is the fallback, not the way.** On a grid of
+  holes it takes 0.4 s a point; `measure.py` counts crossings on generic rays.
+- **Clean-up must not depend on a task getting to run.** A task cancelled
+  before its first step does nothing, and the host also runs tools on loops
+  that end at once: the kill is direct and the release is a done callback.
 - **The tool description is paid on every request.** The context-fit critical
   check has about ten tokens to spare with this tool installed: shorten
   elsewhere before adding a word, and keep parameter meaning in the names.

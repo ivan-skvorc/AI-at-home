@@ -118,6 +118,11 @@ CASES = [
         lambda: cq.Workplane("XY").box(40, 30, 20).faces("<Z").shell(-2).faces(">X").workplane().hole(6, 3).faces("<X").workplane().hole(3, 3),
         [(3.0, None, T), (6.0, None, T)],
     ),
+    (
+        "two blind holes facing each other across the cavity of a shelled box (not one through hole)",
+        lambda: cq.Workplane("XY").box(80, 60, 30).faces(">Z").shell(-3).faces(">X").workplane().hole(6, 1.5).faces("<X").workplane().hole(6, 1.5),
+        [(6.0, None, B)] * 2,
+    ),
     ("hole with a chamfered mouth", lambda: top(plate()).hole(4).faces(">Z").edges("%CIRCLE").chamfer(0.5), [(4.0, 5.0, T)]),
     ("hole on a side face (axis along X)", lambda: plate().faces(">X").workplane().hole(3, 10), [(3.0, None, B)]),
     ("hole on a tilted workplane", lambda: cq.Workplane("XY").box(30, 30, 30).faces(">Z").workplane().transformed(rotate=(30, 20, 0)).hole(4), [(4.0, None, T)]),
@@ -148,6 +153,70 @@ def test_holes_are_counted_on_the_reimported_step(case, tmp_path):
     if faces_wanted:
         # A precondition: the split-face cases really reach the measurement as split faces.
         assert concave_cylinder_faces(solids[0]) == faces_wanted[0]
+
+
+def _reimported(part, tmp_path):
+    path = tmp_path / "part.step"
+    exporters.export(part.findSolid(), str(path))
+    (solid,) = [solid for value in importers.importStep(str(path)).vals() for solid in value.Solids()]
+    return solid
+
+
+def test_a_hole_through_two_walls_says_so(tmp_path):
+    # One drill pass through an enclosure counts once. A model that meant one wall, or
+    # listed one hole per wall, has to be able to see why the count is what it is.
+    (through_both,) = measure.measure_holes(_reimported(two_walls(), tmp_path))
+    assert (through_both["diameter_mm"], through_both["through"], through_both["walls"]) == (4.0, True, 2)
+    (plain,) = measure.measure_holes(_reimported(top(plate()).hole(4), tmp_path))
+    assert "walls" not in plain
+
+
+def test_measuring_stays_fast_when_holes_break_out_of_an_edge(tmp_path):
+    # A wall pattern that slid down to the floor: twenty half holes on the bottom edge. The kernel's
+    # own point classifier then took 0.4 s per point and the measurement 28 s, past the build's wall clock.
+    import time
+
+    body = cq.Workplane("XY").box(150, 100, 40).edges("|Z").fillet(8).faces(">Z").shell(-2)
+    body = body.faces("<Z").workplane().rarray(7, 7, 10, 10).hole(4)
+    solid = _reimported(body.faces(">Y").workplane().rarray(6, 6, 20, 5).hole(3), tmp_path)
+    started = time.monotonic()
+    holes = measure.measure_holes(solid)
+    assert time.monotonic() - started < 5
+    assert sorted({hole["diameter_mm"] for hole in holes}) == [3.0, 4.0] and len([hole for hole in holes if hole["diameter_mm"] == 4.0]) == 100
+
+
+def test_the_fast_point_test_agrees_with_the_kernels_classifier(tmp_path):
+    # Material or air is decided by counting surface crossings along a ray. The kernel's classifier
+    # is the reference: on every point the measurement asks about, both must say the same.
+    from OCP.BRepClass3d import BRepClass3d_SolidClassifier
+    from OCP.gp import gp_Pnt
+    from OCP.TopAbs import TopAbs_IN
+
+    asked = []
+    real = measure._Classifier.in_material
+
+    def recording(self, a, ru=0.0, rv=0.0):
+        answer = real(self, a, ru, rv)
+        asked.append((self.point(a, ru, rv), answer))
+        return answer
+
+    parts = [case[1]() for case in CASES if "split" not in case[0]]
+    try:
+        measure._Classifier.in_material = recording
+        for index, built in enumerate(parts):
+            asked.clear()
+            directory = tmp_path / str(index)
+            directory.mkdir()
+            solid = _reimported(built, directory) if isinstance(built, cq.Workplane) else None
+            if solid is None:
+                continue
+            measure.measure_holes(solid)
+            reference = BRepClass3d_SolidClassifier(solid.wrapped)
+            for point, answer in asked:
+                reference.Perform(gp_Pnt(*point), measure.CLASSIFY_TOL)
+                assert answer == (reference.State() == TopAbs_IN), (index, point)
+    finally:
+        measure._Classifier.in_material = real
 
 
 def test_the_written_step_is_measured_as_one_valid_closed_solid(tmp_path):

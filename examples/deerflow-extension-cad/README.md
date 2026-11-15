@@ -65,9 +65,12 @@ A hole is a full-circle, concave cylindrical wall with air inside that is open a
 one end or both. A counterbore or countersink counts once, with its drill
 diameter. Fillets, rounded pocket corners, the ends of a slot, a boss and the
 outside of a cylinder are not holes, and neither is an opening whose walls are
-all sloped (a tapered cut, a countersink deeper than the sheet). Two limits are
-known and stated in `measure.py`: the inside of a shelled cylinder (a cup) reads
-as one blind hole, and a blind hole with a domed floor reads as through.
+all sloped (a tapered cut, a countersink deeper than the sheet). One drill pass
+through two walls of an enclosure, with air between, is one hole, and the answer
+says how many walls it crosses; two blind holes that face each other across a
+cavity are two. Two limits are known and stated in `measure.py`: the inside of
+a shelled cylinder or boss (a cup) reads as one blind hole, and a blind hole
+with a domed floor reads as through.
 
 Two things fail the build itself, with the line of the operation, before any
 check runs. With only a bounding box to meet, both would otherwise pass as the
@@ -76,12 +79,22 @@ part before the operation:
 - an operation that removes the whole part (a hole wider than the part, an
   intersection of parts that do not meet);
 - a cut, a hole, an intersection or a shell that changes nothing (a pocket cut
-  away from the part, a hole drilled beside it, a wall thicker than the part).
+  away from the part, a hole drilled beside it, a wall thicker than the part);
+- an extrusion, a union or a primitive that adds nothing (posts drawn inside the
+  floor, a boss extruded the wrong way).
 
-What the checks do not decide is said in the answer's `notes`: an outline the
-script drew and never extruded or cut, a cavity sealed inside the part, a mesh
-written coarser than usual. The hole check compares diameters; holes that stop
-inside the part are listed with their depths (`blind_depths_mm`).
+Only operations the result is made of are held to this; a trial cut the part
+never uses is not. A harmless repeat is refused with them, because nothing can
+tell it from a miss: the same hole drilled again from the other side, a trim to
+a build volume the part already fits. The message says to delete the line.
+
+What the checks do not decide is said in the answer. `notes` names an outline
+the script drew and never extruded or cut, a cavity sealed inside the part, a
+hole that crosses more than one wall, and a mesh written coarser than usual.
+`unchecked` gives the measured volume and hole diameters when the call did not
+state them, under the names of the arguments that would check them. The hole
+check compares diameters; holes that stop inside the part are listed with the
+depth of their cylindrical wall (`blind_depths_mm`).
 
 A failed answer ends with what to do next, by cause: fix the script, call again
 (every build slot was taken), or stop and tell the user (the server has no
@@ -99,7 +112,8 @@ kernel, or a file could not be stored).
 
 The part is the variable `result`, else the object passed to `show_object`, else
 the last part assigned. A script that uses the name `result` must leave a part
-in it. Units are millimetres.
+in it, and `result` and `show_object` may not name two different parts. Units
+are millimetres.
 
 Everything else is refused with the construct and its line: other imports,
 attribute access, any other call, `def`, `lambda`, `class`, loops, `if`,
@@ -107,12 +121,14 @@ comprehensions, `with`, `try`, f-strings, subscripts, comparisons, dunder names.
 An export line such as `cq.exporters.export(result, "plate.step")` is refused
 with its reason: the tool writes the files, after its checks.
 
-Control and format characters (form feed, lone carriage return, zero-width
-characters, direction overrides, line separators) are refused anywhere in the
-text, comments included, so no character changes where a line starts or the
-order it is drawn in. With one statement per line and the limit on line length,
-the script kept beside the part reads the way the tool read it. Visible
-characters of any language are fine in comments.
+Control characters, line separators and text-direction marks (form feed, lone
+carriage return, direction overrides) are refused anywhere in the text, comments
+included, so no character changes where a line starts or the order it is drawn
+in. A script holds one statement per line, and padding that pushes code out of
+sight is refused: more than 40 blanks in a row inside a line, more than 40 blank
+lines in a row. These rules are what "the script kept beside the part reads the
+way the tool read it" rests on; a line may still be up to 1,000 characters long.
+Characters of any language are fine in comments.
 
 The allow-list (`allowlist.py`, 46 methods plus the constructor):
 
@@ -144,13 +160,13 @@ with an example that builds and a signature check against the kernel
 | Limit | Value | Where |
 | --- | --- | --- |
 | Script size | 32 KiB, 2,000 syntax nodes, nesting 200 (about 97 chained calls), 300 operations | `interpreter.py` |
-| Lines | one statement per line, at most 1,000 characters | `interpreter.py` |
+| Lines | one statement per line, at most 1,000 characters, at most 40 blanks or blank lines in a row | `interpreter.py` |
 | Numbers | at most 1e12; sizes from 0.0001 to 100,000 mm; coordinates within ±100,000 mm | `interpreter.py`, `allowlist.py` |
 | Pattern points | `pushPoints`, `rarray`, `polarArray`: 100 per call, 200 per script; a polygon has at most 100 sides | `allowlist.py` |
 | Build time | 20 seconds wall clock, then the process group is killed | `timeout_seconds` |
 | Build memory | 4,096 MiB of address space, where the operating system enforces it (Linux) | `memory_mb` |
 | Builds at once | half the processor cores, at least one; a call waits 3 seconds for a slot, then is told to call again | `parallel_builds` |
-| Mesh | 0.1 mm and 0.3 rad, in proportion to the size for a part over a metre; coarser (twice, then four times) until the STL is under 6 MiB | `build.py` |
+| Mesh | STL: 0.1 mm off the surface and 0.3 rad between facets, in proportion to the size for a part over a metre; coarser (twice, then four times) until it is under 6 MiB. GLB: a mesh for viewing, bounded by the same angle | `build.py` |
 | Exported file | 16 MiB read back, then the host's `plugin_outputs` caps apply (8 MiB per file by default) | `tool.py` |
 
 Pattern cost grows faster than the count. `circle().cutThruAll()` on a pattern is

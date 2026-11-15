@@ -25,15 +25,25 @@ MESH_FULL_DETAIL_MM = 1000.0
 
 #: Operations whose whole point is to change the solid. One that changes nothing is a
 #: script that missed the part, and with only a bounding box to meet it would pass.
+#: A harmless repeat (the same hole drilled twice) is refused with it: the line is not
+#: needed, and nothing here can tell the two apart.
+_REDUNDANT = " Delete this line if the part is right without it."
+_OFF_THE_PART = "removed no material: it is off the part, or the material there is already gone." + _REDUNDANT
+_INSIDE_THE_PART = "added no material: the new body lies inside the part, so check its position and direction." + _REDUNDANT
 _MUST_CHANGE = {
-    "cutBlind": "removed no material: a positive distance cuts away from the part, so use a negative distance to cut into it, and check that the outline lies on the part",
-    "cutThruAll": "removed no material: the outline is probably off the part",
-    "hole": "removed no material: the point is probably off the part",
-    "cboreHole": "removed no material: the point is probably off the part",
-    "cskHole": "removed no material: the point is probably off the part",
-    "cut": "removed no material: the two parts do not overlap",
-    "intersect": "changed nothing: the other part contains this one",
-    "shell": "changed nothing: the wall is probably thicker than the part allows",
+    "cutBlind": "removed no material: a positive distance cuts away from the part, so use a negative distance to cut into it, and check that the outline lies on the part." + _REDUNDANT,
+    "cutThruAll": _OFF_THE_PART,
+    "hole": _OFF_THE_PART,
+    "cboreHole": _OFF_THE_PART,
+    "cskHole": _OFF_THE_PART,
+    "cut": "removed no material: the two parts do not overlap." + _REDUNDANT,
+    "intersect": "changed nothing: the other part contains this one." + _REDUNDANT,
+    "shell": "changed nothing: the wall is probably thicker than the part allows.",
+    "extrude": _INSIDE_THE_PART,
+    "union": _INSIDE_THE_PART,
+    "box": _INSIDE_THE_PART,
+    "cylinder": _INSIDE_THE_PART,
+    "sphere": _INSIDE_THE_PART,
 }
 
 _HINTS = {
@@ -57,41 +67,63 @@ class BuildFailed(Exception):
         self.message = message
 
 
-def _volume(part) -> float | None:
+def _state(part) -> tuple[float, int] | None:
+    """Volume and face count of the solid a workplane stands for."""
     try:
-        return part.findSolid().Volume()
+        solid = part.findSolid()
     except Exception:
         return None  # no solid yet: an outline, or an empty workplane
+    return solid.Volume(), len(solid.Faces())
 
 
-def _check_effect(operation, before: float | None, made, cq) -> None:
+def _check_effect(operation, before: tuple[float, int] | None, made, cq) -> None:
     """Refuse an operation that emptied the part or, where it had to change it, changed nothing."""
     # A cut or an intersection that leaves nothing puts an empty compound on the stack, and
     # looking for the solid then walks back to the part as it was before the operation.
     if any(isinstance(item, (cq.Solid, cq.Compound)) and not item.Solids() for item in made.objects):
         raise BuildFailed(operation.line, operation.method, f"{operation.method}() left no solid: nothing remains of the part after this operation")
     effect = _MUST_CHANGE.get(operation.method)
-    if effect is None or before is None:
-        return
-    after = _volume(made)
-    if after is not None and abs(after - before) <= 1e-12 * max(before, 1.0):
+    if effect is None or before is None or dict(operation.arguments).get("combine") is False:
+        return  # combine=False makes a body of its own: it is not meant to change this one
+    after = _state(made)
+    # The faces as well as the volume: a real cut of a millimetre in a part of metres is
+    # below any tolerance on the volume, and it still adds faces.
+    if after is not None and after[1] == before[1] and abs(after[0] - before[0]) <= 1e-12 * max(before[0], 1.0):
         raise BuildFailed(operation.line, operation.method, f"{operation.method}() {effect}")
+
+
+def _used_by_result(program: Program) -> set[int]:
+    """The operations the result is made of. A trial cut the part never uses is not held to account."""
+    used: set[int] = set()
+    pending = [program.result]
+    while pending:
+        slot = pending.pop()
+        if slot in used:
+            continue
+        used.add(slot)
+        operation = program.operations[slot]
+        if operation.receiver is not None:
+            pending.append(operation.receiver)
+        pending.extend(value.slot for _, value in operation.arguments if isinstance(value, Ref))
+    return used
 
 
 def run_program(program: Program, cq):
     """Return the Workplane the script's result names. *cq* is the imported cadquery module."""
     parts: list = []
-    for operation in program.operations:
+    used = _used_by_result(program)
+    for slot, operation in enumerate(program.operations):
         arguments = {name: parts[value.slot] if isinstance(value, Ref) else value for name, value in operation.arguments}
         try:
             if operation.receiver is None:
                 parts.append(cq.Workplane(**arguments))
             elif operation.method in table.METHODS:
                 receiver = parts[operation.receiver]
-                before = _volume(receiver) if operation.method in _MUST_CHANGE else None
+                before = _state(receiver) if slot in used and operation.method in _MUST_CHANGE else None
                 # The one attribute lookup driven by a script, and only for a name in the table.
                 made = getattr(receiver, operation.method)(**arguments)
-                _check_effect(operation, before, made, cq)
+                if slot in used:
+                    _check_effect(operation, before, made, cq)
                 parts.append(made)
             else:
                 raise BuildFailed(operation.line, operation.method, "this operation is not on the allow-list")

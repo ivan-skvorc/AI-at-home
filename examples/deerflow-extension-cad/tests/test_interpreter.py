@@ -82,7 +82,11 @@ def test_the_part_is_result_then_the_shown_object_then_the_last_part_assigned():
     two = 'a = cq.Workplane("XY").box(1, 1, 1)\nb = cq.Workplane("XY").box(2, 2, 2)\n'
     assert compile_script(two).result_name == "b"
     assert compile_script(two + "show_object(a)\n").result_name == "a"
-    assert compile_script("result = " + two[4:] + "show_object(b)\n").result_name == "result"
+    assert compile_script("result = " + two[4:] + "show_object(result)\n").result_name == "result"
+    # Two answers to "which is the part" are refused: `result` held the blank, show_object the drilled one.
+    with pytest.raises(ScriptRefused) as two_answers:
+        compile_script("result = " + two[4:] + "show_object(b)\n")
+    assert (two_answers.value.construct, two_answers.value.line) == ("result", 3)
 
 
 def test_the_part_is_what_was_built_not_what_its_name_holds_later():
@@ -240,21 +244,23 @@ REFUSED = [
     ("a = 1; b = 2\nr = cq.Workplane('XY').box(1, 1, 1)\n", "syntax", 1),
     ("result = cq.Workplane('XY').box(10, 10, 10)" + " " * 300 + "; result = cq.Workplane('XY').box(99, 99, 99)\n", "syntax", 1),
     ("r = cq.Workplane('XY').box(1, 1, 1)\nx = " + "1 + " * 300 + "1\n", "syntax", 2),
-    ("x = 1\n\x00y = 2\n", "syntax", None),
+    ("x = 1\n\x00y = 2\n", "syntax", 2),
     # What a viewer shows as one line must be what the parser reads as one line.
-    ("x = 1\n\x0cy = 2\n", "syntax", None),
-    ("x = 1\n# a comment\ry = cq.Workplane('XY').box(1, 1, 1)\n", "syntax", None),
-    ("x = 1\x0b\n", "syntax", None),
-    ("x = 1  # \x7f\n", "syntax", None),
-    ("x = 1  # \x1b[31m\n", "syntax", None),
-    # The same for characters a viewer does not draw, reorders, or breaks a line on.
-    ("# a plate \u202e 4 mm holes\nr = cq.Workplane('XY').box(1, 1, 1)\n", "syntax", None),
-    ("# a\u200bb\nr = cq.Workplane('XY').box(1, 1, 1)\n", "syntax", None),
-    ("# a comment\u2028r = cq.Workplane('XY').box(2, 2, 2)\nr = cq.Workplane('XY').box(1, 1, 1)\n", "syntax", None),
-    ("# a\u2029b\nr = cq.Workplane('XY').box(1, 1, 1)\n", "syntax", None),
-    ("# a\u0085b\nr = cq.Workplane('XY').box(1, 1, 1)\n", "syntax", None),
-    ("\ufeffr = cq.Workplane('XY').box(1, 1, 1)\n", "syntax", None),
-    ("# \ud800\nr = cq.Workplane('XY').box(1, 1, 1)\n", "syntax", None),
+    ("x = 1\n\x0cy = 2\n", "syntax", 2),
+    ("x = 1\n# a comment\ry = cq.Workplane('XY').box(1, 1, 1)\n", "syntax", 2),
+    ("x = 1\x0b\n", "syntax", 1),
+    ("x = 1  # \x7f\n", "syntax", 1),
+    ("x = 1  # \x1b[31m\n", "syntax", 1),
+    # The same for characters that reorder what a viewer draws, or break a line for it.
+    ("x = 1\n# a plate \u202e 4 mm holes\nr = cq.Workplane('XY').box(1, 1, 1)\n", "syntax", 2),
+    ("# \u2067 right to left\nr = cq.Workplane('XY').box(1, 1, 1)\n", "syntax", 1),
+    ("# a comment\u2028r = cq.Workplane('XY').box(2, 2, 2)\nr = cq.Workplane('XY').box(1, 1, 1)\n", "syntax", 1),
+    ("# a\u2029b\nr = cq.Workplane('XY').box(1, 1, 1)\n", "syntax", 1),
+    ("# a\u0085b\nr = cq.Workplane('XY').box(1, 1, 1)\n", "syntax", 1),
+    ("# \ud800\nr = cq.Workplane('XY').box(1, 1, 1)\n", "syntax", 1),
+    # Padding that pushes code out of sight: sideways within a line, or down past a screenful of blank lines.
+    ("result = cq.Workplane('XY').box(10, 10, 10)" + " " * 60 + ".union(cq.Workplane('XY').box(99, 99, 99))\n", "syntax", 1),
+    ("r = cq.Workplane('XY').box(1, 1, 1)\n" + "\n" * 60 + "r = cq.Workplane('XY').box(9, 9, 9)\n", "syntax", 2),
     ("x = (1\n", "syntax", 1),
     ("x = 1\n  y = 2\n", "syntax", 2),
     ("async def f():\n    await g()\n", "function definition", 1),
@@ -325,12 +331,19 @@ def test_identifiers_python_would_normalise_into_forbidden_names_are_refused():
 def test_a_comment_may_use_any_visible_character():
     program = compile_script("# 60 × 40 mm, ±0.1°, Ø4, 安装板, plaque de montage — µm\nresult = cq.Workplane('XY').box(60, 40, 6)\n")
     assert [operation.method for operation in program.operations] == ["Workplane", "box"]
+    # Joiners are ordinary spelling in Persian and Hindi and part of many emoji; they move no line and reorder nothing.
+    for comment in ("# می\u200cخواهم یک صفحه", "# क्\u200dष", "# a\u200bb", "# 👩\u200d🔧 bracket"):
+        assert compile_script(f"{comment}\nresult = cq.Workplane('XY').box(60, 40, 6)\n")
+    # A byte order mark at the very start is how some editors save a file.
+    assert compile_script("\ufeffresult = cq.Workplane('XY').box(60, 40, 6)\n")
+    # Indentation inside a call and a column of aligned comments are ordinary.
+    assert compile_script("result = (\n" + " " * 48 + "cq.Workplane('XY')\n" + " " * 48 + ".box(60, 40, 6)" + " " * 30 + "# the plate\n)\n")
 
 
 def test_a_refusal_for_a_hidden_character_names_it():
     with pytest.raises(ScriptRefused) as refused:
         compile_script("# plate\u202e\nresult = cq.Workplane('XY').box(1, 1, 1)\n")
-    assert "U+202E" in refused.value.message
+    assert "U+202E" in refused.value.message and refused.value.line == 1
     with pytest.raises(ScriptRefused) as not_text:
         compile_script(b"result = 1")
     assert "text" in not_text.value.message

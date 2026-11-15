@@ -5493,18 +5493,31 @@ allow-list, the limits, the install.
 - **The node whitelist runs before evaluation, iteratively.** A recursive walk
   overflows on a legal but deep tree, and `ast.parse` itself fails three ways on
   hostile nesting; all are refusals, not crashes.
-- **Hidden characters are refused in the whole text, comments included, and a
-  script holds one statement per line.** A form feed, a lone carriage return or
-  a line separator starts a line for the parser and not for a viewer, a
-  direction override reorders what a viewer draws, and a second statement after
-  a semicolon far to the right decides the part unseen. The `.py` file kept
-  beside the part must read as it was read.
-- **An operation that empties the part, or a cut that changes nothing, fails
-  the build.** CadQuery leaves an empty compound after a cut that removes
+- **Characters that move a line or reorder it are refused in the whole text,
+  comments included; a script holds one statement per line and no padding.** A
+  form feed, a lone carriage return or a line separator starts a line for the
+  parser and not for a viewer, a direction override reorders what a viewer
+  draws, and a second statement after a semicolon, or a chained call behind
+  nine hundred blanks, decides the part unseen. The `.py` file kept beside the
+  part must read as it was read. Joiners (Persian, Hindi, emoji) stay allowed:
+  they can occur only in a comment and move nothing.
+- **An operation that empties the part, or one that changes nothing, fails the
+  build.** CadQuery leaves an empty compound after a cut that removes
   everything, and `findSolid()` then walks back to the part as it was before:
   the untouched block passed every check (found in review). A pocket cut away
-  from the part or a hole drilled beside it passed the same way on a bounding
-  box alone. `build.py` checks both after each operation.
+  from the part, a hole drilled beside it, or posts drawn inside the floor
+  passed the same way on a bounding box alone. `build.py` checks the volume and
+  the face count after each operation the result is made of. A harmless repeat
+  (the same hole drilled twice) is refused with them, on purpose: nothing can
+  tell it from a miss, and the message says to delete the line.
+- **Material or air is decided by counting crossings on generic rays.** The
+  kernel's point classifier picks its rays from the faces; on a grid of holes
+  they run through the seam of every wall in a row and it retries hundreds of
+  times (0.4 s a point, 28 s for one enclosure, past the wall clock). The
+  classifier is kept as the fallback and as the reference in the tests.
+- **A gap between two hole walls is air from end to end, or they are two
+  holes.** Probing only the middle of the gap read two blind holes facing each
+  other across a cavity as one through hole.
 - **Arguments are typed by the table, not by the kernel.** CadQuery accepts
   `centered="abc"` and reads `extrude(True)` as 1. Non-finite numbers hang or
   crash it. Every argument is checked against its kind first.
@@ -5549,7 +5562,11 @@ image stage (`make docker-start`) does not get the libraries. A pattern of which
 some instances miss the part still passes unless the holes are declared, since
 the volume changed. An outline nobody used is a note in the answer, not a
 failure: the sloppy idiom `rect(...).vertices().hole(...)` leaves one behind on
-a correct part. Windows gets neither the process-group kill nor the limits.
+a correct part. A hole's position and a pocket's depth are not checked at all;
+`unchecked` in the answer shows what was measured and not asked about. A loop
+that is stopped and closed without cancelling its tasks leaves the worker to
+the processor backstop and its directory behind. Windows gets neither the
+process-group kill nor the limits.
 
 **On an upstream sync.** The package is fork-only. `internet_access.py`,
 `doctor.py`, `backend/Dockerfile` and the frontend catalog carry additive blocks.

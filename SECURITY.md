@@ -68,14 +68,15 @@ here as one.
   nodes, nesting, number magnitude, exponent size and pattern instances. What an
   accepted script can still cost the kernel is stopped by the parent's wall
   clock and the child's memory ceiling, not by the reading.
-- **The kept script reads the way it was read.** Control and format characters
-  (form feed, lone carriage return, zero-width characters, direction overrides,
-  line separators) are refused anywhere in the text, so no character changes
-  where a line starts or the order it is drawn in. A script holds one statement
-  per line and no line longer than 1,000 characters, so a second statement
-  cannot sit off-screen to the right of the one a person reads. Blank-looking
-  characters that are ordinary letters to Unicode are still accepted in
-  comments; they cannot start a line or a statement.
+- **The kept script reads the way it was read.** Control characters, line
+  separators and text-direction marks are refused anywhere in the text, so no
+  character changes where a line starts or the order it is drawn in. A script
+  holds one statement per line, and padding that pushes code out of sight is
+  refused (more than 40 blanks in a row inside a line, more than 40 blank lines
+  in a row). Other invisible characters, such as the joiners of Persian and
+  Hindi, can occur only in a comment, where they start no line and no
+  statement. A line may be up to 1,000 characters long: what a viewer shows of
+  a long line is the viewer's choice.
 
 What it is not: a sandbox for the geometry kernel. A defect in the kernel that
 an allow-listed operation can reach is contained by the child process and its

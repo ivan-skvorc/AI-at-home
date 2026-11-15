@@ -33,6 +33,7 @@ from deerflow_extension_cad.build import MESH_STEPS
 WORKER = Path(__file__).with_name("worker.py")
 REQUEST_FILE = "request.json"
 RESULT_FILE = "result.json"
+PHASE_FILE = "phase"
 
 DEFAULT_TIMEOUT_SECONDS = 20
 #: The host stops a plugin tool at 30 seconds; the build and the file writes must fit inside.
@@ -42,7 +43,14 @@ DEFAULT_MEMORY_MB = 4096
 MIN_MEMORY_MB = 3072
 #: Builds at once. Each holds several hundred MiB and works on several cores, so more of
 #: them than the machine can carry all run out of time together and blame the part.
-DEFAULT_PARALLEL_BUILDS = max(1, (os.cpu_count() or 2) // 2)
+MAX_PARALLEL_BUILDS = 16
+
+
+def default_parallel_builds() -> int:
+    """Half the processors, inside the range an operator may set."""
+    return min(MAX_PARALLEL_BUILDS, max(1, (os.cpu_count() or 2) // 2))
+
+
 #: How long a call waits for a free slot before it is told to call again. With the
 #: longest build it still ends inside the host's 30 seconds.
 QUEUE_SECONDS = 3
@@ -98,6 +106,13 @@ NEXT_FIX = "Fix the script or the expected numbers and call cad_build again. Do 
 NEXT_UNAVAILABLE = "The CAD kernel cannot run on this server, so another script will not help. Do not call cad_build again; tell the user, and that `make doctor` on the server names what is missing."
 NEXT_BUSY = "Nothing is wrong with the script. Call cad_build again with the same arguments."
 NEXT_UNSTORED = "The part met its checks but its files could not all be stored, so it is not delivered. Tell the user which file was refused; a part with fewer small fillets and holes gives smaller files."
+NEXT_NO_FILES = "Nothing could be stored in this conversation, so nothing is delivered. Tell the user which file was refused."
+NEXT_ARGUMENTS = "Correct the arguments and call cad_build again."
+#: What a timed-out worker was doing, in the words of the answer.
+_PHASES = {
+    "exporting": "The part was built, and writing its files did not finish in time. Simplify the part: fewer small fillets and holes.",
+    "measuring": "The part was built, and measuring it did not finish in time. Reduce the number of holes and fillets.",
+}
 
 
 def _problem_with(payload: Mapping[str, Any]) -> str | None:
@@ -142,7 +157,7 @@ def settings_from(config: Mapping[str, Any]) -> dict[str, int]:
     return {
         "timeout_seconds": whole("timeout_seconds", DEFAULT_TIMEOUT_SECONDS, 5, MAX_TIMEOUT_SECONDS),
         "memory_mb": whole("memory_mb", DEFAULT_MEMORY_MB, MIN_MEMORY_MB, 65536),
-        "parallel_builds": whole("parallel_builds", DEFAULT_PARALLEL_BUILDS, 1, 16),
+        "parallel_builds": whole("parallel_builds", default_parallel_builds(), 1, MAX_PARALLEL_BUILDS),
     }
 
 
@@ -196,8 +211,22 @@ def notes_on(measured: Mapping[str, Any]) -> list[str]:
         notes.append(f"The part has {voids} sealed {'cavity' if voids == 1 else 'cavities'} inside that cannot be reached from outside.")
     tolerance = (measured.get("mesh") or {}).get("tolerance_mm")
     if isinstance(tolerance, (int, float)) and tolerance > MESH_STEPS[0][0]:
-        notes.append(f"The STL and GLB meshes are coarser than usual ({tolerance:g} mm) to keep the files small; the STEP file is exact.")
+        notes.append(f"The STL mesh is coarser than usual ({tolerance:g} mm off the surface at most) to keep the file small; the STEP file is exact.")
+    crossing = [hole for hole in measured.get("holes") or [] if isinstance(hole.get("walls"), int) and hole["walls"] > 1]
+    if crossing:
+        most = max(hole["walls"] for hole in crossing)
+        notes.append(f"{len(crossing)} hole{'' if len(crossing) == 1 else 's'} pass{'es' if len(crossing) == 1 else ''} through {most} walls with air between and count{'s' if len(crossing) == 1 else ''} once: one drill pass is one hole.")
     return notes
+
+
+def unchecked(measured: Mapping[str, Any], payload: Mapping[str, Any]) -> dict[str, Any]:
+    """What was measured and not asked about, under the name of the argument that would check it."""
+    extra: dict[str, Any] = {}
+    if "volume_min_max_mm3" not in payload:
+        extra["volume_mm3"] = measured["volume_mm3"]
+    if "hole_diameters_mm" not in payload:
+        extra["hole_diameters_mm"] = sorted(hole["diameter_mm"] for hole in measured["holes"])[:MAX_HOLES]
+    return extra
 
 
 # --- Running the worker -----------------------------------------------------
@@ -208,8 +237,42 @@ def _prepare(script: str, memory_mb: int, timeout_seconds: int) -> str:
     # The kernel works on several cores at once, so processor time runs ahead of the clock.
     cpu_seconds = timeout_seconds * (os.cpu_count() or 1) + CPU_BACKSTOP_SECONDS
     request = {"script": script, "memory_mb": memory_mb, "max_export_bytes": MAX_EXPORT_BYTES, "cpu_seconds": cpu_seconds}
-    Path(directory, REQUEST_FILE).write_text(json.dumps(request), encoding="utf-8")
+    try:
+        Path(directory, REQUEST_FILE).write_text(json.dumps(request), encoding="utf-8")
+    except BaseException:
+        shutil.rmtree(directory, True)  # a full disk must not leave one directory per call
+        raise
     return directory
+
+
+class _Preparation:
+    """A directory made in a thread for a caller that may be cancelled before it gets the name.
+
+    A cancelled wait does not stop the thread. Whoever comes second removes the
+    directory: the thread when the caller has already left, the caller when the
+    thread has already finished. Neither depends on the event loop still running.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._abandoned = False
+        self._directory: str | None = None
+
+    def make(self, script: str, memory_mb: int, timeout_seconds: int) -> str | None:
+        directory = _prepare(script, memory_mb, timeout_seconds)
+        with self._lock:
+            if not self._abandoned:
+                self._directory = directory
+                return directory
+        shutil.rmtree(directory, True)
+        return None
+
+    def abandon(self) -> None:
+        with self._lock:
+            self._abandoned = True
+            directory, self._directory = self._directory, None
+        if directory is not None:
+            shutil.rmtree(directory, True)
 
 
 def _collect(directory: str) -> dict[str, Any]:
@@ -265,24 +328,28 @@ async def _acquire(slots: threading.BoundedSemaphore, wait_seconds: float) -> bo
     return True
 
 
-async def _clean_up(process: asyncio.subprocess.Process | None, directory: str | None, slots: threading.BoundedSemaphore | None) -> None:
+async def _clean_up(process: asyncio.subprocess.Process | None, directory: str | None) -> None:
     try:
         if process is not None:
-            _stop(process)
             await process.wait()
     finally:
-        try:
-            if directory is not None:
-                await asyncio.to_thread(shutil.rmtree, directory, True)
-        finally:
-            if slots is not None:
-                slots.release()
+        if directory is not None:
+            await asyncio.to_thread(shutil.rmtree, directory, True)
 
 
-def _discard(preparing: asyncio.Future) -> None:
-    """Remove a directory whose call was cancelled while a thread was still making it."""
-    if not preparing.cancelled() and preparing.exception() is None:
-        asyncio.get_running_loop().run_in_executor(None, shutil.rmtree, preparing.result(), True)
+def _finish(cleaning: asyncio.Future, directory: str | None, slots: threading.BoundedSemaphore | None) -> None:
+    """Runs once whatever became of the clean-up task, also when it was cancelled before its first step."""
+    if directory is not None and cleaning.cancelled():
+        shutil.rmtree(directory, True)  # the loop is ending: there is no thread to hand this to
+    if slots is not None:
+        slots.release()
+
+
+def _phase_of(directory: str) -> str:
+    try:
+        return Path(directory, PHASE_FILE).read_text(encoding="utf-8")[:32]
+    except OSError:
+        return ""
 
 
 async def run_worker(script: str, *, timeout_seconds: int, memory_mb: int, slots: threading.BoundedSemaphore | None = None) -> dict[str, Any]:
@@ -291,12 +358,13 @@ async def run_worker(script: str, *, timeout_seconds: int, memory_mb: int, slots
         return {"status": "busy", "message": "the server is building other parts right now and has no free slot for this one"}
     process = None
     directory = None
+    stopped = False
     try:
-        preparing = asyncio.ensure_future(asyncio.to_thread(_prepare, script, memory_mb, timeout_seconds))
+        preparation = _Preparation()
         try:
-            directory = await asyncio.shield(preparing)
+            directory = await asyncio.to_thread(preparation.make, script, memory_mb, timeout_seconds)
         except asyncio.CancelledError:
-            preparing.add_done_callback(_discard)
+            preparation.abandon()
             raise
         # -I: no PYTHONPATH, no user site, no current directory on sys.path. The
         # environment carries nothing from the Gateway: no credentials, no proxy.
@@ -315,10 +383,11 @@ async def run_worker(script: str, *, timeout_seconds: int, memory_mb: int, slots
             async with asyncio.timeout(timeout_seconds):
                 code = await process.wait()
         except TimeoutError:
-            return {
-                "status": "failed",
-                "message": f"the build did not finish within {timeout_seconds} seconds and was stopped. Simplify the part: fewer pattern points, fewer fillets, and hole() instead of circle().cutThruAll() for round holes.",
-            }
+            advice = _PHASES.get(await asyncio.to_thread(_phase_of, directory), "Simplify the part: fewer pattern points, fewer fillets, and hole() instead of circle().cutThruAll() for round holes.")
+            return {"status": "failed", "message": f"the build did not finish within {timeout_seconds} seconds and was stopped. {advice}"}
+        # At once, before its files are read: whatever the worker left running goes with it.
+        _stop(process)
+        stopped = True
         result = await asyncio.to_thread(_collect, directory)
         if result.get("status"):
             return result
@@ -326,8 +395,14 @@ async def run_worker(script: str, *, timeout_seconds: int, memory_mb: int, slots
         return {"status": "failed", "message": f"the CAD kernel stopped without an answer ({reason}); it most likely ran out of memory or processor time. Simplify the part."}
     finally:
         # Also on cancellation: the host's 30 second limit or a stopped run must not leave a kernel
-        # running, a script on disk or a slot taken. Shielded, so a second cancellation cannot skip it.
-        await asyncio.shield(asyncio.ensure_future(_clean_up(process, directory, slots)))
+        # running, a script on disk or a slot taken. The kill is not left to a task, because a task
+        # cancelled before its first step never runs. The rest is shielded, so a second cancellation
+        # leaves it running off the loop; the callback covers a loop that ends first.
+        if process is not None and not stopped:
+            _stop(process)
+        cleaning = asyncio.ensure_future(_clean_up(process, directory))
+        cleaning.add_done_callback(lambda done: _finish(done, directory, slots))
+        await asyncio.shield(cleaning)
 
 
 # --- The handler ------------------------------------------------------------
@@ -345,26 +420,37 @@ async def _save(context: ToolContext, name: str, content: bytes, saved: list[str
 
 
 def make_handler(settings: Mapping[str, int]):
-    slots = threading.BoundedSemaphore(settings.get("parallel_builds", DEFAULT_PARALLEL_BUILDS))
+    slots = threading.BoundedSemaphore(settings.get("parallel_builds") or default_parallel_builds())
 
     async def cad_build(payload: Mapping[str, Any], context: ToolContext) -> dict[str, Any]:
         if context.output_writer is None:
-            return {"passed": False, "error": "This conversation cannot receive files, so no part was built."}
+            return {"passed": False, "error": {"message": "This conversation cannot receive files, so no part was built."}, "files": [], "next": "Tell the user; calling cad_build again will not help."}
         problem = _problem_with(payload)
         if problem:
-            return {"passed": False, "error": {"message": problem}, "next": "Correct the arguments and call cad_build again."}
+            return {"passed": False, "error": {"message": problem}, "files": [], "next": NEXT_ARGUMENTS}
         script = payload["script"]
         result = await run_worker(script, timeout_seconds=settings["timeout_seconds"], memory_mb=settings["memory_mb"], slots=slots)
         if result.get("status") == "busy":
-            return {"passed": False, "error": {"message": result["message"]}, "next": NEXT_BUSY}
+            return {"passed": False, "error": {"message": result["message"]}, "files": [], "next": NEXT_BUSY}
         saved: list[str] = []
         problems: list[str] = []
         # The script is saved first: the name the host gives it is this build's stem, so
         # a rebuild of the same part gets plate-1.* as a set instead of a mix.
         script_path = await _save(context, f"{slug(payload['name'])}.py", script.encode("utf-8"), saved, problems)
         if script_path is None:
-            # Without the script there is no stem for the set, and files under a guessed one would mix with another build's.
-            return {"passed": False, "error": {"message": "the script could not be stored, so nothing was"}, "problems": problems, "files": [], "next": NEXT_UNSTORED}
+            # Without the script there is no stem for the set, and files under a guessed one would mix with
+            # another build's. What the build itself said still reaches the model: a refusal stays a refusal.
+            status = result.get("status")
+            error = {key: result[key] for key in ("construct", "line", "operation", "message") if result.get(key) is not None}
+            if status == "built":
+                error = {"message": "the part was built, but its script could not be stored, so nothing was"}
+            return {
+                "passed": False,
+                "error": error or {"message": "the build failed"},
+                "problems": problems,
+                "files": [],
+                "next": NEXT_NO_FILES if status == "built" else NEXT_UNAVAILABLE if status == "unavailable" else NEXT_FIX,
+            }
         stem = Path(script_path).stem
         answer: dict[str, Any] = {"passed": False}
         next_step = NEXT_FIX
@@ -378,6 +464,9 @@ def make_handler(settings: Mapping[str, int]):
             notes = notes_on(result["measured"])
             if notes:
                 answer["notes"] = report["notes"] = notes
+            extra = unchecked(result["measured"], payload)
+            if extra:
+                answer["unchecked"] = extra
             if passed:
                 # STEP goes last: a STEP file in the outputs means the whole set was handed over.
                 for kind in ("glb", "stl", "step"):

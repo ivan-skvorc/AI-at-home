@@ -173,6 +173,64 @@ async def test_a_cut_that_removes_nothing_fails_instead_of_passing_on_the_untouc
     assert "part.step" not in files
 
 
+ADDS_NOTHING = [
+    ("an extrusion down into the block", f'result = {BLOCK}.faces(">Z").workplane().rect(20, 10).extrude(-3)\n', "extrude"),
+    ("a cylinder placed inside the plate", f"result = {BLOCK}.cylinder(4, 3)\n", "cylinder"),
+    ("a body joined where the part already is", f'a = {BLOCK}\nresult = a.union(cq.Workplane("XY").box(10, 10, 2))\n', "union"),
+]
+
+
+@pytest.mark.parametrize(("label", "script", "operation"), ADDS_NOTHING, ids=[item[0] for item in ADDS_NOTHING])
+async def test_a_feature_that_adds_nothing_fails_instead_of_passing_on_the_untouched_block(label, script, operation):
+    # Posts drawn inside the floor, a boss extruded the wrong way: the block still meets its bounding box.
+    answer, files = await _build(script, bbox_xyz_mm=[60, 40, 6])
+    assert answer["passed"] is False
+    assert answer["error"]["operation"] == operation and "added no material" in answer["error"]["message"]
+    assert "part.step" not in files
+
+
+async def test_only_what_the_result_is_made_of_is_held_to_account():
+    # A clash test and a trial cut that the part never uses: both do nothing, and neither is the part.
+    script = f'a = {BLOCK}\nb = cq.Workplane("XY").sphere(5).translate((100, 0, 0))\nclash = a.intersect(b)\ntrial = a.cut(b)\nresult = a.faces(">Z").workplane().hole(4)\n'
+    answer, _ = await _build(script, bbox_xyz_mm=[60, 40, 6], hole_diameters_mm=[4])
+    assert answer["passed"] is True, answer
+    # A body built apart and then cut away: extrude(combine=False) makes the tool, it does not add to the part.
+    script = f'a = {BLOCK}\ntool = a.faces(">Z").workplane().rect(20, 10).extrude(-3, combine=False)\nresult = a.cut(tool)\n'
+    answer, _ = await _build(script, bbox_xyz_mm=[60, 40, 6], volume_min_max_mm3=[13700, 13900])
+    assert answer["passed"] is True, answer
+
+
+async def test_a_redundant_operation_is_refused_with_a_reason_that_fits():
+    # The same hole drilled again from the other side removes nothing. The point is on the part.
+    answer, _ = await _build(f'result = {BLOCK}.faces(">Z").workplane().hole(4).faces("<Z").workplane().hole(4)\n', bbox_xyz_mm=[60, 40, 6])
+    assert answer["passed"] is False and answer["error"]["operation"] == "hole"
+    assert "already gone" in answer["error"]["message"] and "Delete this line" in answer["error"]["message"]
+
+
+async def test_a_real_cut_is_never_too_small_to_count():
+    # One millimetre in a ten metre cube: far below any tolerance on the volume, and still a cut.
+    answer, _ = await _build('result = cq.Workplane("XY").box(10000, 10000, 10000).faces(">Z").workplane().hole(1, 1)\n', bbox_xyz_mm=[10000, 10000, 10000])
+    assert answer["passed"] is True, answer
+
+
+async def test_the_stl_follows_the_surface_within_a_tenth_of_a_millimetre():
+    # Not a fraction of each edge, which is how the kernel's exporter reads a tolerance by default.
+    answer, files = await _build('result = cq.Workplane("XY").sphere(100)\n', bbox_xyz_mm=[200, 200, 200])
+    assert answer["passed"] is True
+    triangles = int.from_bytes(files["part.stl"][80:84], "little")
+    assert triangles > 5000, triangles
+
+
+async def test_a_mesh_the_file_limit_cuts_off_is_written_coarser_not_delivered(monkeypatch):
+    from deerflow_extension_cad import tool
+
+    monkeypatch.setattr(tool, "MAX_EXPORT_BYTES", 300_000)  # the finest mesh of this sphere is about 500 kB
+    answer, files = await _build('result = cq.Workplane("XY").sphere(100)\n', bbox_xyz_mm=[200, 200, 200])
+    assert answer["passed"] is True, answer
+    assert int.from_bytes(files["part.stl"][80:84], "little") * 50 + 84 == len(files["part.stl"]) <= 300_000
+    assert any("coarser" in note for note in answer["notes"])
+
+
 async def test_what_the_checks_do_not_cover_is_said_in_the_answer():
     # An outline nobody extruded or cut: the part is the plain block and still meets its bounding box.
     answer, _ = await _build(f'result = {BLOCK}.faces(">Z").workplane().circle(5)\n', bbox_xyz_mm=[60, 40, 6])
@@ -184,9 +242,15 @@ async def test_what_the_checks_do_not_cover_is_said_in_the_answer():
     answer, _ = await _build(f'result = {BLOCK}.faces(">Z").workplane().hole(4, 0.5)\n', bbox_xyz_mm=[60, 40, 6], hole_diameters_mm=[4])
     holes = next(check for check in answer["checks"] if check["check"] == "holes")
     assert holes["passed"] is True and holes["blind_depths_mm"] == [0.5]
-    # A plain passing part says nothing extra.
+    # One drill pass through both walls of an enclosure is one hole, and the answer says why.
+    answer, _ = await _build('result = cq.Workplane("XY").box(80, 60, 30).faces(">Z").shell(-2).faces(">X").workplane().hole(8)\n', bbox_xyz_mm=[80, 60, 30], hole_diameters_mm=[8])
+    assert answer["passed"] is True and any("2 walls" in note for note in answer["notes"])
+    # What was measured and not asked about is given, so a model can compare it with what it meant.
+    answer, _ = await _build(PLATE, bbox_xyz_mm=[60, 40, 6])
+    assert answer["unchecked"]["hole_diameters_mm"] == [4.0, 4.0] and 14200 < answer["unchecked"]["volume_mm3"] < 14300
+    # A plain passing part with every expectation given says nothing extra.
     answer, _ = await _build(PLATE)
-    assert "notes" not in answer and "blind_depths_mm" not in next(check for check in answer["checks"] if check["check"] == "holes")
+    assert "notes" not in answer and "unchecked" not in answer and "blind_depths_mm" not in next(check for check in answer["checks"] if check["check"] == "holes")
 
 
 @pytest.mark.parametrize(

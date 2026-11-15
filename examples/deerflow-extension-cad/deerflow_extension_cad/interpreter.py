@@ -42,9 +42,17 @@ _TAG = re.compile(table.TAG_PATTERN)
 _NAME = re.compile(r"[A-Za-z][A-Za-z0-9_]{0,63}")
 #: Every control character but tab, line feed and the carriage return of a CRLF pair.
 _CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]|\r(?!\n)")
-#: Beyond ASCII: controls, format characters (zero-width, direction overrides),
-#: lone surrogates, and the line and paragraph separators.
-_HIDDEN_CATEGORIES = frozenset({"Cc", "Cf", "Cs", "Zl", "Zp"})
+#: Beyond ASCII: controls, lone surrogates, and the line and paragraph separators,
+#: which move where a line starts for a viewer...
+_HIDDEN_CATEGORIES = frozenset({"Cc", "Cs", "Zl", "Zp"})
+#: ...and the direction marks and overrides, which reorder what a viewer draws. Other
+#: format characters (joiners in Persian, Hindi and emoji) can only occur in a comment,
+#: where they move no line and reorder nothing.
+_DIRECTION_MARKS = frozenset("\u061c\u200e\u200f\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069")
+#: Blanks in a row after a line's first character, and blank lines in a row: more is padding
+#: that pushes code out of sight, sideways or down.
+MAX_BLANK_RUN = 40
+_PADDING = re.compile(rf"\S[ \t]{{{MAX_BLANK_RUN + 1},}}\S")
 
 
 class ScriptRefused(Exception):
@@ -255,6 +263,7 @@ class _Reader:
         self.instances = 0
         #: (name, slot) pairs: the part a name held at that moment, whatever the name holds later.
         self.shown: tuple[str, int] | None = None
+        self.shown_line: int | None = None
         self.last_part: tuple[str, int] | None = None
         self.result_line: int | None = None
 
@@ -296,6 +305,7 @@ class _Reader:
             if not isinstance(shown, ast.Name) or not keywords_ok or not isinstance(self.names.get(shown.id), Ref):
                 _refuse("show_object", node.lineno, "show_object takes the name of one part built earlier, for example: show_object(result)")
             self.shown = (shown.id, self.names[shown.id].slot)
+            self.shown_line = node.lineno
             return
         if isinstance(value, ast.Call):
             self.value(value)  # what is wrong with the call itself is the more useful answer
@@ -528,14 +538,15 @@ def _fit(kind: str | tuple[str, ...], value: object) -> object:
     return _UNFIT
 
 
-def _hidden_character(source: str) -> str | None:
-    """The first character a viewer and the parser would not agree on, if any."""
+def _hidden_character(source: str) -> int | None:
+    """Where the first character is that a viewer and the parser would not agree on, if any."""
     control = _CONTROL.search(source)
-    if control:
-        return control.group()[0]
-    if source.isascii():
-        return None
-    return next((character for character in source if character > "\x7f" and unicodedata.category(character) in _HIDDEN_CATEGORIES), None)
+    first = control.start() if control else None
+    if not source.isascii():
+        for index, character in enumerate(source[:first]):
+            if character > "\x7f" and (character in _DIRECTION_MARKS or unicodedata.category(character) in _HIDDEN_CATEGORIES):
+                return index
+    return first
 
 
 def compile_script(source: str) -> Program:
@@ -544,16 +555,24 @@ def compile_script(source: str) -> Program:
         _refuse("script size", None, "the script must be text")
     if len(source.encode("utf-8", "replace")) > MAX_SCRIPT_BYTES:
         _refuse("script size", None, f"the script is larger than {MAX_SCRIPT_BYTES // 1024} KiB")
+    source = source.removeprefix("\ufeff")  # a byte order mark, as some editors save a file
     hidden = _hidden_character(source)
     if hidden is not None:
         # A form feed or a lone carriage return starts a new line for the parser and
         # not for a viewer, and a direction override reorders what a viewer draws: the
         # script kept beside the part must read the way it was read here.
-        _refuse("syntax", None, f"the script contains an invisible or control character (U+{ord(hidden):04X}); use plain text with ordinary line breaks")
+        line = source.count("\n", 0, hidden) + 1  # nothing before it breaks a line any other way
+        _refuse("syntax", line, f"the script contains a control or text-direction character (U+{ord(source[hidden]):04X}); use plain text with ordinary line breaks")
     # After the gate above only a line feed ends a line, so these are the parser's lines.
+    blank = 0
     for number, text in enumerate(source.split("\n"), 1):
         if len(text) > MAX_LINE:
             _refuse("syntax", number, f"this line is longer than {MAX_LINE} characters: break it into shorter lines")
+        if _PADDING.search(text):
+            _refuse("syntax", number, f"this line holds more than {MAX_BLANK_RUN} blanks in a row: remove the padding")
+        blank = 0 if text.strip() else blank + 1
+        if blank > MAX_BLANK_RUN:
+            _refuse("syntax", number - blank + 1, f"more than {MAX_BLANK_RUN} blank lines in a row: remove them")
     try:
         tree = ast.parse(source, filename="<script>", mode="exec")
     except SyntaxError as exc:
@@ -577,6 +596,8 @@ def compile_script(source: str) -> Program:
         held = reader.names["result"]
         if not isinstance(held, Ref):
             _refuse("result", reader.result_line, f"result must be the part, and it ends as {_describe(held)}")
+        if reader.shown is not None and reader.shown[1] != held.slot:
+            _refuse("result", reader.shown_line, f"result and show_object({reader.shown[0]}) name different parts: keep the one that is the part")
         chosen = ("result", held.slot)
     else:
         chosen = reader.shown or reader.last_part

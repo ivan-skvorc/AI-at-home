@@ -19,6 +19,12 @@ from pathlib import Path
 
 REQUEST_FILE = "request.json"
 RESULT_FILE = "result.json"
+PHASE_FILE = "phase"
+
+
+def _phase(name: str) -> None:
+    # Read by the parent only when it stops this process, to say which step ran out of time.
+    Path(PHASE_FILE).write_text(name, encoding="utf-8")
 
 
 def _answer(value: dict) -> None:
@@ -73,8 +79,11 @@ def main() -> None:
         return
 
     try:
+        _phase("building")
         part = build.run_program(program, cq)
+        _phase("exporting")
         files, mesh = build.export(build.solid_of(part), cq, Path.cwd(), max_export_bytes)
+        _phase("measuring")
         measured = measure.measure_step(Path(files["step"]), cq)
         measured["mesh"] = mesh
         if build.unused_outline(part):

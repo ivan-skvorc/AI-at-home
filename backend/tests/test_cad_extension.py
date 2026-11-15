@@ -107,6 +107,30 @@ def test_operator_settings_are_validated_at_startup(monkeypatch):
     assert not loaded.plugins and not diagnostics
 
 
+def test_the_module_loads_on_a_server_with_many_processors(monkeypatch):
+    # The default number of builds at once is half the processors; it has to stay inside what an operator may set.
+    import os
+
+    monkeypatch.syspath_prepend(str(PACKAGE))
+    monkeypatch.setattr(os, "cpu_count", lambda: 64)
+    loaded, diagnostics = load_extensions([ExtensionSpec(use="deerflow_extension_cad:install", config={})])
+    assert loaded.plugins and not diagnostics
+    from deerflow_extension_cad.tool import settings_from
+
+    assert settings_from({})["parallel_builds"] == 16
+    monkeypatch.setattr(os, "cpu_count", lambda: None)
+    assert settings_from({})["parallel_builds"] == 1
+
+
+@pytest.mark.asyncio
+async def test_as_many_builds_run_at_once_as_the_operator_set(outputs, monkeypatch):
+    monkeypatch.syspath_prepend(str(PACKAGE))
+    loaded, _ = load_extensions([ExtensionSpec(use="deerflow_extension_cad:install", config={"parallel_builds": 3})])
+    _, _, seen = await _call(loaded, outputs, monkeypatch, BUILT)
+    slots = seen[0][1]["slots"]
+    assert [slots.acquire(blocking=False) for _ in range(4)] == [True, True, True, False]
+
+
 def test_cad_build_is_declared_in_the_group_that_survives_the_internet_switch(cad):
     ((_, plugin),) = cad.plugins
     (tool,) = plugin.tools
@@ -226,9 +250,23 @@ async def test_what_the_checks_do_not_cover_reaches_the_model(cad, outputs, monk
     assert "1 sealed cavity" in solid["measured"]
     holes = next(check for check in answer["checks"] if check["check"] == "holes")
     assert holes["blind_depths_mm"] == [0.5]
+    # A hole that crosses two walls is one hole, and the answer says why the count is what it is.
+    through_both = {**MEASURED, "holes": [{"diameter_mm": 8.0, "through": True, "depth_mm": 80.0, "walls": 2}]}
+    answer, _, _ = await _call(cad, outputs, monkeypatch, {**BUILT, "measured": through_both}, hole_diameters_mm=[8])
+    assert any("1 hole passes through 2 walls" in note for note in answer["notes"])
     # A plain part carries none of it.
-    plain, _, _ = await _call(cad, outputs, monkeypatch, {**BUILT, "measured": {**MEASURED, "mesh": {"tolerance_mm": 0.1, "angular_rad": 0.3}}}, hole_diameters_mm=[4, 4])
-    assert "notes" not in plain and "blind_depths_mm" not in next(check for check in plain["checks"] if check["check"] == "holes")
+    plain, _, _ = await _call(cad, outputs, monkeypatch, {**BUILT, "measured": {**MEASURED, "mesh": {"tolerance_mm": 0.1, "angular_rad": 0.3}}}, volume_min_max_mm3=[14000, 14400], hole_diameters_mm=[4, 4])
+    assert "notes" not in plain and "unchecked" not in plain and "blind_depths_mm" not in next(check for check in plain["checks"] if check["check"] == "holes")
+
+
+@pytest.mark.asyncio
+async def test_what_was_measured_and_not_asked_about_is_given(cad, outputs, monkeypatch):
+    # With only a bounding box to meet, a missing hole passes. The model is at least shown what is there.
+    answer, _, _ = await _call(cad, outputs, monkeypatch, BUILT)
+    assert answer["passed"] is True
+    assert answer["unchecked"] == {"volume_mm3": 14249.2, "hole_diameters_mm": [4.0, 4.0]}
+    answer, _, _ = await _call(cad, outputs, monkeypatch, BUILT, hole_diameters_mm=[4, 4])
+    assert answer["unchecked"] == {"volume_mm3": 14249.2}
 
 
 @pytest.mark.asyncio
@@ -293,6 +331,20 @@ async def test_a_build_whose_script_cannot_be_stored_stores_nothing(cad, outputs
     answer = json.loads(state["messages"][-1].content)
     assert answer["passed"] is False and answer["files"] == []
     assert _files(outputs) == []
+    assert "could not be stored" in answer["error"]["message"] and "Tell the user" in answer["next"]
+
+    # The same refusal by the host, for a script the reader refused: the model still learns why, and what to fix.
+    async def refusing(script, **limits):
+        return {"status": "refused", "construct": "import", "line": 1, "message": "the only import a script may contain is: import cadquery as cq"}
+
+    monkeypatch.setattr(cad_tool, "run_worker", refusing)
+    state = await graph.compile().ainvoke(
+        {"messages": [AIMessage(content="", tool_calls=[{"id": "cad-call-2", "name": tool.name, "args": {"name": "plate", "script": PLATE, "bbox_xyz_mm": [60, 40, 6]}}])], "thread_data": {"outputs_path": str(outputs)}},
+        context={"user_id": "alice", "thread_id": "thread-a", "app_config": config},
+    )
+    answer = json.loads(state["messages"][-1].content)
+    assert answer["error"] == {"construct": "import", "line": 1, "message": "the only import a script may contain is: import cadquery as cq"}
+    assert "Fix the script" in answer["next"] and "met its checks" not in answer["next"] and answer["files"] == []
 
 
 @pytest.mark.asyncio
@@ -306,7 +358,8 @@ async def test_the_tool_does_not_start_a_build_it_could_not_hand_over(cad, monke
     (tool,) = build_plugin_tools(cad)
     runtime = SimpleNamespace(context={"user_id": "alice"}, config={"configurable": {"user_id": "alice"}}, state={}, tool_call_id="c")
     answer = json.loads(await tool.coroutine(runtime=runtime, name="plate", script=PLATE, bbox_xyz_mm=[60, 40, 6]))
-    assert answer["passed"] is False and "cannot receive files" in answer["error"]
+    assert answer["passed"] is False and "cannot receive files" in answer["error"]["message"]
+    assert answer["files"] == [] and answer["next"]
 
 
 @pytest.mark.asyncio
@@ -341,6 +394,7 @@ async def test_unusable_arguments_are_answered_before_any_build(cad, monkeypatch
     runtime = SimpleNamespace(context={"user_id": "alice", "thread_id": "thread-a"}, config={"configurable": {"user_id": "alice"}}, state={"thread_data": {"outputs_path": "/nowhere"}}, tool_call_id="c")
     answer = json.loads(await tool.coroutine(runtime=runtime, **{"name": "plate", "script": PLATE, "bbox_xyz_mm": [60, 40, 6], **arguments}))
     assert answer["passed"] is False and says in answer["error"]["message"]
+    assert answer["files"] == [] and "Correct the arguments" in answer["next"]
 
 
 def test_the_schema_the_model_sees_is_structure_only_and_requires_the_size(cad):

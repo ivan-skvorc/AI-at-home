@@ -113,13 +113,40 @@ async def test_a_second_cancellation_still_removes_the_script_from_disk(tmp_path
     task = asyncio.ensure_future(tool.run_worker("x = 1", timeout_seconds=25, memory_mb=4096))
     while not pid_file.exists():
         await asyncio.sleep(0.05)
-    task.cancel()
-    await asyncio.sleep(0)
-    task.cancel()
+    # Three in a row: the first reaches the wait, the second the clean-up, the third the shield around it.
+    for _ in range(3):
+        task.cancel()
+        await asyncio.sleep(0)
     with pytest.raises(asyncio.CancelledError):
         await task
     await asyncio.sleep(0.5)
     assert _gone(pid_file) and _leftovers() == set()
+
+
+def test_a_loop_that_ends_right_after_a_cancellation_leaves_no_kernel_no_script_and_no_taken_slot(tmp_path, monkeypatch):
+    # The host runs tools on short-lived loops too. Clean-up left to a task alone never ran there:
+    # a task cancelled before its first step does nothing.
+    pid_file = _stand_in(tmp_path, monkeypatch, "time.sleep(60)")
+    slots = threading.BoundedSemaphore(1)
+
+    async def main():
+        task = asyncio.ensure_future(tool.run_worker("x = 1", timeout_seconds=25, memory_mb=4096, slots=slots))
+        while not pid_file.exists():
+            await asyncio.sleep(0.05)
+        task.cancel()
+
+    thread = threading.Thread(target=lambda: asyncio.run(main()))
+    thread.start()
+    thread.join(30)
+    time.sleep(0.3)
+    assert _gone(pid_file) and _leftovers() == set()
+    assert slots.acquire(blocking=False)
+
+
+async def test_a_build_stopped_while_measuring_is_not_told_to_simplify_its_pattern(tmp_path, monkeypatch):
+    _stand_in(tmp_path, monkeypatch, "open('phase', 'w').write('measuring')\ntime.sleep(60)")
+    result = await tool.run_worker("x = 1", timeout_seconds=1, memory_mb=4096)
+    assert result["status"] == "failed" and "measuring it did not finish" in result["message"] and "pattern points" not in result["message"]
 
 
 async def test_a_call_cancelled_while_its_directory_is_being_made_leaves_none(tmp_path, monkeypatch):
@@ -134,6 +161,34 @@ async def test_a_call_cancelled_while_its_directory_is_being_made_leaves_none(tm
     with pytest.raises(TimeoutError):
         await asyncio.wait_for(tool.run_worker("x = 1", timeout_seconds=25, memory_mb=4096), 0.1)
     await asyncio.sleep(0.8)
+    assert _leftovers() == set()
+
+
+def test_a_directory_being_made_when_its_loop_ends_is_removed_by_the_thread_that_made_it(tmp_path, monkeypatch):
+    # No callback on a loop that is gone: the thread finds the call abandoned and cleans up after itself.
+    real_prepare = tool._prepare
+
+    def slow_prepare(*arguments):
+        time.sleep(0.5)
+        return real_prepare(*arguments)
+
+    monkeypatch.setattr(tool, "_prepare", slow_prepare)
+    _stand_in(tmp_path, monkeypatch, "time.sleep(60)")
+
+    async def main():
+        task = asyncio.ensure_future(tool.run_worker("x = 1", timeout_seconds=25, memory_mb=4096))
+        await asyncio.sleep(0.1)
+        task.cancel()
+
+    asyncio.run(main())
+    time.sleep(1.0)
+    assert _leftovers() == set()
+
+
+def test_a_request_that_cannot_be_written_leaves_no_directory(tmp_path, monkeypatch):
+    monkeypatch.setattr(tool.json, "dumps", lambda request: (_ for _ in ()).throw(OSError("No space left on device")))
+    with pytest.raises(OSError):
+        tool._prepare("x = 1", 4096, 20)
     assert _leftovers() == set()
 
 
