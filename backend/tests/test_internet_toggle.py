@@ -194,6 +194,16 @@ class TestCatalogFilter:
         # survive, or an offline conversation cannot even ask a question.
         assert "ask_clarification" in _names(internet_enabled=False)
 
+    def test_the_local_extension_group_survives_and_the_plugin_default_does_not(self):
+        from deerflow.tools.internet_access import LOCAL_EXTENSION_TOOL_GROUP
+
+        # A named group for extension tools that run on this machine (FORK.md §51).
+        # The plugin default stays unclassified: an extension tool is assumed to
+        # reach the internet until its author says otherwise.
+        assert LOCAL_EXTENSION_TOOL_GROUP == "local_extensions"
+        assert is_offline_safe_group(LOCAL_EXTENSION_TOOL_GROUP) is True
+        assert is_offline_safe_group("extensions") is False
+
     def test_group_classification_is_an_allowlist(self):
         assert is_offline_safe_group("file:read") is True
         assert is_offline_safe_group("web") is False

@@ -246,6 +246,40 @@ def test_a_fresh_request_leaves_room_for_the_conversation_on_a_32k_model(stock_c
     assert sent, f"{mode}: the context guard refused a new chat's first message: {getattr(result, 'content', result)}"
 
 
+def _cad_tools() -> list[dict]:
+    """The CAD module's tool as a model sees it, taken from the extension itself (roadmap item 44)."""
+    from deerflow_extension_cad import install
+
+    from deerflow.extensions.plugin_tools import _model_facing_schema, plugin_tool_name
+
+    contributed: dict = {}
+
+    class Registry:
+        def plugin(self, contribution):
+            contributed["plugin"] = contribution
+            return True
+
+    install(Registry(), {})
+    plugin = contributed["plugin"]
+    return [{"type": "function", "function": {"name": plugin_tool_name(plugin.namespace, tool.name), "description": tool.description, "parameters": _model_facing_schema(tool.input_schema)}} for tool in plugin.tools]
+
+
+@pytest.mark.parametrize("mode", list(MODES))
+def test_a_fresh_request_still_fits_with_the_cad_module_installed(stock_config, monkeypatch, mode):
+    # The module is off until an operator installs it, so the stock request above
+    # does not carry its tool. Installing it must not cost a 32K model its first message.
+    monkeypatch.syspath_prepend(str(REPO_ROOT / "examples" / "deerflow-extension-cad"))
+    request = _fresh_request(mode)
+    cad = _cad_tools()
+    assert [tool["function"]["name"].split("_cad_build_")[0] for tool in cad] == ["ext_cad"]
+    with_cad = request.override(tools=[*request.tools, *cad])
+    fixed = _fixed_tokens(with_cad)
+    cost = fixed - _fixed_tokens(request)
+    # The heaviest mode has under 200 tokens to spare on a 32K model, so the tool may not grow.
+    assert 0 < cost <= 180, f"cad_build costs ~{cost:,} tokens of every request; keep its description and schema short"
+    assert fixed <= FIXED_REQUEST_ALLOWANCE_TOKENS, f"{mode}: with the CAD module installed the fixed part of a request is ~{fixed:,} tokens, over the {FIXED_REQUEST_ALLOWANCE_TOKENS:,} a 32K local model can spare"
+
+
 def test_compaction_fires_before_the_guard_would_refuse_a_long_chat(stock_config, monkeypatch):
     """Messages past the trigger are compacted; the guard refuses past LIMIT - fixed.
 

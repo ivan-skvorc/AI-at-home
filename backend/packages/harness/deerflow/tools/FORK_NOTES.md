@@ -14,8 +14,11 @@ Four invariants, all silent when broken:
   key and must keep the configured tools. `"false"` and `0` are not opt-outs; the
   frontend normalizes before sending.
 - **The group classification is an allowlist** (`OFFLINE_ALLOWED_TOOL_GROUPS`:
-  `file:read`, `file:write`, `bash`, `media`, `knowledge`). An unrecognized group
-  is dropped. Do not rewrite it as a blocklist of `web`/`browser`: that passes the
+  `file:read`, `file:write`, `bash`, `media`, `knowledge`, `local_extensions`).
+  An unrecognized group is dropped. `local_extensions` is the name an
+  extension's local-only tool declares (the CAD module, FORK.md §51). The switch
+  filters `config.yaml` tools; it does not yet filter plugin tools, so this name
+  records the classification without changing what is offered. Do not rewrite it as a blocklist of `web`/`browser`: that passes the
   next provider group anyone adds. MCP and ACP tools are dropped wholesale.
 - **Filter here, not at call time.** Removing the tool from the catalog is what
   keeps deferred tool search, skill `allowed-tools` policy and the bound tool

@@ -80,6 +80,14 @@ export const extensionCatalog = [
     package: "deerflow-extension-example",
     namespace: "example.notes",
   },
+  {
+    key: "cad",
+    package: "deerflow-extension-cad",
+    namespace: "cad",
+    // A fork package: upstream has no such example to link to.
+    guide:
+      "https://github.com/ivan-skvorc/AI-at-home/tree/main/examples/deerflow-extension-cad#readme",
+  },
 ] as const;
 
 export interface ExtensionCatalogEntry {
@@ -103,7 +111,10 @@ export function extensionDirectory(
     id: item.namespace ?? `catalog/${item.key}`,
     ...copy[item.key],
     package: item.package,
-    guide: `https://github.com/bytedance/deer-flow/tree/main/examples/${item.package}#readme`,
+    guide:
+      "guide" in item
+        ? item.guide
+        : `https://github.com/bytedance/deer-flow/tree/main/examples/${item.package}#readme`,
     icon: "icon" in item ? item.icon : undefined,
     loaded: loaded.find((entry) => entry.namespace === item.namespace),
   }));

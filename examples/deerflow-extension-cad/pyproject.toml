@@ -1,0 +1,47 @@
+[project]
+name = "deerflow-extension-cad"
+version = "0.1.0"
+description = "A CAD module for DeerFlow that builds a part from a CadQuery script without running the script"
+readme = "README.md"
+requires-python = ">=3.12"
+license = "MIT"
+dependencies = [
+    "deerflow-extension-api>=0.2.12,<0.3",
+    # The kernel. Pinned: the allow-list is checked against this release's signatures.
+    "cadquery==2.8.0",
+]
+
+[project.entry-points."deerflow.extensions"]
+cad = "deerflow_extension_cad:install"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=9,<10",
+    "pytest-asyncio>=1,<2",
+    "ruff>=0.14,<1",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["deerflow_extension_cad"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+
+[tool.ruff]
+line-length = 240
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["deerflow_extension_cad"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"

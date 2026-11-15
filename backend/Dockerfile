@@ -153,6 +153,23 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libxtst6 \
     && rm -rf /var/lib/apt/lists/*
 
+# The CAD module's kernel (examples/deerflow-extension-cad, FORK.md §51) links
+# libGL.so.1, libGLX.so.0 and libGLdispatch.so.0 and never renders with them.
+# `apt-get install libgl1` would satisfy that and pull Mesa and LLVM in behind
+# libglx0: well over a hundred megabytes the kernel never loads. So the three
+# dispatch packages are unpacked without their dependencies, about 1.5 MB.
+# libX11, the kernel's other system library, came in with libgtk-3-0 above.
+# Optional on purpose: a failure here must not stop the image everything else
+# runs in. `cad_build` and `make doctor` name the missing library instead.
+# `&&` throughout: `set -e` does not apply on the left of `||`.
+RUN (cd /tmp \
+     && apt-get update \
+     && apt-get download libglvnd0 libglx0 libgl1 \
+     && for deb in libglvnd0_*.deb libglx0_*.deb libgl1_*.deb; do dpkg-deb -x "$deb" / || exit 1; done \
+     && ldconfig) \
+    || echo "WARNING: the OpenGL dispatch libraries were not unpacked; the CAD module cannot load its kernel in this image" >&2; \
+    rm -f /tmp/*.deb; rm -rf /var/lib/apt/lists/*
+
 # Camoufox browser binaries baked in the builder (an empty dir when the camoufox
 # extra was not selected). INSTALL_DIR = /root/.cache/camoufox at runtime (root),
 # so the camoufox web_fetch backend works without a runtime download.

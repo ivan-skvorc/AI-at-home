@@ -33,7 +33,9 @@ jobs:
   check-packages:
     if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # Fork: the CAD package installs its geometry kernel (1.7 GB) and builds real
+    # parts, about five minutes of this job by itself.
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6

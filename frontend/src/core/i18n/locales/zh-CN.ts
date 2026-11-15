@@ -149,6 +149,7 @@ export const zhCN: Translations = {
       lightrag: bundledCopy("deerflow-extension-lightrag", "zh-CN"),
       weknora: bundledCopy("deerflow-extension-weknora", "zh-CN"),
       example: bundledCopy("deerflow-extension-example", "zh-CN"),
+      cad: bundledCopy("deerflow-extension-cad", "zh-CN"),
     },
     pageUnavailable: "扩展页面不可用",
     pageUnavailableHint: "此页面未注册，或插件已停用、未能加载。",

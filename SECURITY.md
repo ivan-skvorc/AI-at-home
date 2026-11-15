@@ -36,3 +36,56 @@ is treated as a potential credential-exposure path rather than as plain data:
 
 For redacted diagnostics intended for sharing, use `make support-bundle`, which
 is built for that purpose — not a backup archive.
+
+## The CAD module's script interpreter (fork feature)
+
+The optional CAD extension (`examples/deerflow-extension-cad`, FORK.md §51) takes
+a CadQuery script written by a language model. Model text is untrusted input,
+and the default install gives the agent no shell on purpose, so the extension
+does not run the script. Its interpreter is a security boundary and is described
+here as one.
+
+- **The script is read, never executed.** It is parsed into a syntax tree. A
+  whitelist of node types is checked before anything is evaluated; every other
+  construct is refused with its line: imports other than `import cadquery as cq`,
+  attribute access, any call other than `cq.Workplane(...)`, an allow-listed
+  method and `show_object(name)` (read only as naming the result), definitions,
+  loops, branches, comprehensions, f-strings, subscripts. No code object is ever
+  made from script text: `ast.parse` (CPython's `compile()` with the flag that
+  stops at the syntax tree) is its one reader, and `exec` and `eval` never
+  receive it.
+- **The allow-list is data** (`allowlist.py`): method names with the kind of
+  each argument. A method that takes a file path, a callable, a font or a raw
+  kernel object is not on it. The one attribute lookup a script can cause is for
+  a name that is a key of that table.
+- **Reading and building happen in a child process**, started in isolated mode
+  in an empty temporary directory with an environment that carries no Gateway
+  credentials. The Gateway process neither parses the script nor loads the
+  geometry kernel. The parent enforces a wall clock and kills the process group;
+  the child sets memory, CPU and file-size limits where the operating system
+  offers them.
+- **Resource use is bounded before the kernel starts**: script size, syntax
+  nodes, nesting, number magnitude, exponent size and pattern instances. What an
+  accepted script can still cost the kernel is stopped by the parent's wall
+  clock and the child's memory ceiling, not by the reading.
+- **The kept script reads the way it was read.** Control characters, line
+  separators and text-direction marks are refused anywhere in the text, so no
+  character changes where a line starts or the order it is drawn in. A script
+  holds one statement per line, and padding that pushes code out of sight is
+  refused (more than 40 blanks in a row inside a line, more than 40 blank lines
+  in a row). Other invisible characters, such as the joiners of Persian and
+  Hindi, can occur only in a comment, where they start no line and no
+  statement. A line may be up to 1,000 characters long: what a viewer shows of
+  a long line is the viewer's choice.
+
+What it is not: a sandbox for the geometry kernel. A defect in the kernel that
+an allow-listed operation can reach is contained by the child process and its
+limits, not by the interpreter. The extension is operator-installed code like
+any other and runs with Gateway privileges; its files are written through the
+host's bounded writer (`ToolContext.write_output`), into the calling
+conversation only.
+
+A change that widens the allow-list, adds a string parameter, or lets any value
+from a script reach `getattr`, a file path or a subprocess argument is a change
+to this boundary and needs its own review. `tests/test_interpreter.py` in the
+package holds the refused constructs; a new one belongs there.
