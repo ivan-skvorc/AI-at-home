@@ -5569,7 +5569,9 @@ the processor backstop and its directory behind. Windows gets neither the
 process-group kill nor the limits.
 
 **On an upstream sync.** The package is fork-only. `internet_access.py`,
-`doctor.py`, `backend/Dockerfile` and the frontend catalog carry additive blocks.
+`doctor.py`, `backend/Dockerfile` and the frontend catalog carry additive blocks,
+and `extension-package-check.yml` a 20 minute limit: the job installs the kernel
+and builds real parts.
 `cadquery` is pinned; a bump owes a pass of the package's kernel tests, which
 check every allow-listed method against the kernel's own signature.
 
