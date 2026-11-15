@@ -7,10 +7,11 @@ prints one JSON line: ``{"ok": true, "bbox_mm": ...}`` or
 ``{"ok": false, "error": ...}``. A missing system library shows up in the error
 text by name. Exit status is 0 only for a cube that was built and measured.
 
-The kernel is loaded once first, with a limit of its own. Python compiles the
-kernel's modules the first time they are imported, which takes longer than a
-build may; done here, a model's first build after an install is not the one
-that pays for it.
+The kernel is loaded once first, with a limit of its own. Its first load after
+an install or a restart reads over a gigabyte of libraries from disk and
+compiles about six hundred modules, which on a slow or busy disk outlasts the
+time a build may take; done here, a model's first build is not the one that
+pays for it.
 """
 
 from __future__ import annotations
@@ -28,7 +29,8 @@ from deerflow_extension_cad.tool import _worker_environment, make_handler, setti
 
 CUBE = 'import cadquery as cq\nresult = cq.Workplane("XY").box(1, 1, 1)\n'
 #: How long loading the kernel may take here. A build has 20 seconds for everything.
-LOAD_TIMEOUT_SECONDS = 90
+#: A load stopped at this limit still leaves the libraries in the disk cache.
+LOAD_TIMEOUT_SECONDS = 25
 
 
 def load_kernel() -> float:

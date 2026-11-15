@@ -70,7 +70,7 @@ def main() -> None:
         return
 
     try:
-        _phase("loading")  # seconds on a warm machine; far longer the first time after an install
+        _phase("loading")  # two seconds when the libraries are in the disk cache, far longer when they are not
         import cadquery as cq
 
         from deerflow_extension_cad import build, measure

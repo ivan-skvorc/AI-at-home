@@ -4761,9 +4761,10 @@ non-Latin figure, the step tool, where progress and cancel live, that a later
 phase may be a new workflow), and the Script workflows page labels a run with
 its real mode — a Plus run used to be labelled "Double Plus Ultracode run". The
 price is context: the fixed request of an Ultracode run on a 32K model is now
-11,653 tokens (Plus) and 11,779 (Double Plus) of the 12,000 that §47 allows,
-measured with `shared_workspace: off`; the `read` and `write` sentences are
-about 25 and 15 tokens longer. Two operational notes: `worker.py`, `service.py`,
+11,832 tokens (Plus) and 11,958 (Double Plus) of the 12,000 that §47 allows,
+measured with `shared_workspace: off` and with the bundled CAD tool (§51) on
+every request; the `read` and `write` sentences are about 25 and 15 tokens
+longer, which the critical check now measures too. Two operational notes: `worker.py`, `service.py`,
 `lifecycle.py`, `recovery.py` and `postgres.py` are hashed into
 `runtime_version`, so a workflow left `recoverable` by the previous build cannot
 be recovered after this update (it stays inspectable); and the backend venv
@@ -5193,12 +5194,14 @@ says:
   `REQUEST_FIT_SHARE` × prompt space − `FIXED_REQUEST_ALLOWANCE_TOKENS` (12,000).
 
 Result on the stock config and a synced 32K entry, as the guard sends it: Flash
-7,395 tokens (14,723 left for the conversation), Pro 7,730, Ultra 10,121, Plus
-Ultracode 11,653, Double Plus Ultracode 11,779 (10,339 left). The two Ultracode
+7,574 tokens (14,544 left for the conversation), Pro 7,909, Ultra 10,299, Plus
+Ultracode 11,832, Double Plus Ultracode 11,958 (10,160 left). The two Ultracode
 figures were 11,354 and 11,434 until 2026-11-11, when the brief gained the
-limits the lead was never told and the extension a seventh tool (§44); 221
-tokens of the allowance remain in Double Plus, so new brief text has to replace
-old text. Measured with `shared_workspace: off`.
+limits the lead was never told and the extension a seventh tool (§44), and each
+figure rose by 144 on 2026-11-15, when the CAD module's tool began to ride every
+request (§51). 42 tokens of the allowance remain in Double Plus, 14 with
+`shared_workspace: read`, so new brief or tool text has to replace old text.
+Measured with `shared_workspace: off` unless said otherwise.
 
 **The refusal says what is true.** It states the room the guard really allows,
 how it is derived (window, reply reservation, 10% estimating margin), how much of
@@ -5460,19 +5463,37 @@ allow-list, the limits, the install.
 and after an update, not after a command nobody knows about. The module ships the
 way the workflows extension does (§46): a committed snapshot in
 `backend/extensions/sources/deerflow-extension-cad` (the Docker build context
-excludes `examples/`), an `extensions` group entry marked `sys_platform !=
-'win32'` (the worker's process group and limits are POSIX), `cache-keys` over the
-package files so a `git pull` that changed only code rebuilds the installed
-copy, and an enabled, not required `plugins:` record in `config.example.yaml`.
+excludes `examples/`), `cache-keys` over the package files so a `git pull` that
+changed only code rebuilds the installed copy, and an enabled, not required
+`plugins:` record in `config.example.yaml`. The dependency differs: it sits in
+a default group of its own, `cad`, because the kernel has wheels for fewer hosts
+than everything else in the lock. Its marker names the hosts that have them
+(Linux on x86-64 and arm64, Apple-silicon macOS); Windows and Intel Macs skip
+it. A Linux older than glibc 2.31 (RHEL 8, Debian 10) has no wheel either, and
+no marker can say so, while every start path syncs with `--locked`, which fails
+whole on one package without a wheel: the first version of this change stopped
+those installs from starting (found in review). `scripts/serve.sh`,
+`scripts/dev_multi_instance.sh` and `make install` therefore retry once with
+`--no-group cad`, which drops this module and nothing else. On a host without
+the package the record stays, the Gateway starts, and `make doctor` says to
+turn the record off.
 Existing installs get the record once from `config_upgrade.py` migration 73,
 which names `cad` alone: delivering "whatever the example lists" would bring back
 a workflows record an operator removed. A record that matches by name, module or
 package is left alone, so a module installed by hand keeps its settings.
-`config_version` is 73 for that migration; the chart copies follow. What it
-costs every install: about 1.7 GB of disk for the kernel (1.64 GB of the 2.6 GB
-environment in the Gateway image, measured), and 175 tokens of every request,
-which leaves a 32K local model 11 tokens of the fixed-request allowance in the
-heaviest composer mode. The critical check now carries the tool in every mode.
+`config_version` is 73 for that migration; the chart copies follow. Like every
+structural migration, it rewrites `config.yaml` without its comments and keeps
+the original as `config.yaml.bak`. What it costs every install: about 1.7 GB of
+disk for the kernel (1.64 GB of the 2.6 GB environment the image's own sync
+line builds on `python:3.12-slim-bookworm`, measured), and 144 tokens of every
+request on a window up to 64K, where the short tool form applies. That leaves a
+32K local model 42 tokens of the fixed-request allowance in the heaviest
+composer mode and 14 with the workflows option `shared_workspace: read`; the
+first version of the tool cost 175 and put that option 17 tokens over, which
+the critical check did not measure (found in review). It now carries the tool
+in every mode and measures both documented options. The module can be turned
+off, not removed: `make extension-remove` edits tracked files (the manager's
+own group, the lock), and the next `git pull` then stops on them.
 After editing the example, refresh the snapshot with a plain copy that leaves
 out `__pycache__`; `make extension-upgrade` re-runs `uv add`, which appends a
 second, unmarked group entry that Windows would then try to install.
@@ -5481,21 +5502,29 @@ re-lock with the pinned version rewrites the revision and moves `boxlite`, so
 re-lock with a current uv, keep unrelated packages where they were, and check
 with the pinned one (`uv lock --check`).
 
-**The first build after an install.** Python compiles a module the first time
-it is imported, and the kernel is thousands of them: on a fresh environment the
-import alone outlasts the build's 20 seconds, and the answer said to simplify
-the part. Three things, in the order they were found to be needed: the worker
-marks the phase it is in, and a build stopped while still loading answers that
-the kernel was loading and to call again (what was compiled stays, so the second
-call is quick); the self-test loads the kernel first, with 90 seconds of its
-own, so `make doctor` warms a new install; and the Gateway image runs that
-self-test once while it is built, after the libraries the kernel links, because
-in a container the compiled files are otherwise lost with the container and
-every start would pay again. Checked on `python:3.12-slim-bookworm` with uv
-0.11.1: the locked install succeeds, and without the libraries the step prints
-its warning and the build goes on. The library step and a passing self-test
-inside the image were not run there (the build sandbox could not reach the
-Debian mirror); both pass on Ubuntu 24.04.
+**The first build after an install or a restart.** Loading the kernel means
+reading about 1.2 GB of libraries from disk and, the first time, compiling
+about six hundred modules. Warm, that is two seconds. Seen once here, right
+after the packages were installed: the first build ran out of its 20 seconds
+still loading, the second took 12, the third under 3; the answer to the first
+said to simplify the part. A reviewer could not make compilation alone cost
+more than two seconds, so the disk is the larger part, and a slow or busy one
+is where this happens. What was done, in the order it was found to be needed:
+the worker marks the phase it is in, and a build stopped while still loading
+answers that the kernel was loading and to call again (what was read and
+compiled stays, so the next call is quick); after three such answers in a row
+in one conversation it says to stop and run `make doctor`, because on a host
+that can never load the kernel in time "call again" would not end; the
+self-test loads the kernel first, with 25 seconds of its own, so `make doctor`
+warms an install; and the Gateway image builds the test cube once while it is
+built, which proves there that the kernel loads and leaves the compiled modules
+in the image (the Helm Gateway runs as a user that cannot write them).
+Checked on `python:3.12-slim-bookworm` with uv 0.11.1: the locked install
+succeeds, and without the libraries the step prints its warning and the build
+goes on. The library steps and a passing test cube inside an image were not run
+(the build sandbox could not reach the Debian mirror); both pass on Ubuntu
+24.04, where the kernel maps exactly libX11 with its dependencies and the three
+dispatch libraries beyond the base system.
 
 **The decisions, and what was rejected.**
 
@@ -5589,19 +5618,22 @@ Debian mirror); both pass on Ubuntu 24.04.
   together, each told to simplify a part that was fine.
 - **The whole process group is killed, also after a worker that finished.** The
   worker starts no process; one that exists means the kernel was made to.
-- **The description is paid on every request.** `cad_build` costs 175 tokens in
-  the short tool form and the heaviest composer mode had 186 to spare on a 32K
-  model. Parameter names say what they hold instead of carrying descriptions.
+- **The description is paid on every request.** `cad_build` costs 144 tokens in
+  the short tool form and the heaviest composer mode has 42 to spare on a 32K
+  model, 14 with a workflows option on. The array parameters carry no item
+  types for that reason; the handler checks each number. Parameter names say what they hold instead of carrying descriptions.
   The critical check pins it.
 
 **Known gaps.** The internet switch does not filter plugin tools at all: an
 extension tool in the default `extensions` group is still offered offline, the
 HTTP-calling examples included. Closing that would also remove the workflow tools
 from offline chats, so it is its own change. The dev image stage
-(`make docker-start`) installs the module with everything else and does not get
-the libraries, so there the tool answers that the kernel cannot be loaded. A
-Kubernetes install from the chart has no `plugins:` block and so does not turn
-the module on, as with workflows. A pattern of which
+(`make docker-start`) gets the same libraries by a step of its own, written and
+not built. A Kubernetes install from the chart has no `plugins:` block and so
+does not turn the module on, as with workflows. An install that added the
+module by hand before it was bundled has local changes in `backend/pyproject.toml`
+and `backend/uv.lock` and an untracked snapshot, and `git pull` stops on them;
+the CHANGELOG entry carries the three commands that clear it. A pattern of which
 some instances miss the part still passes unless the holes are declared, since
 the volume changed. An outline nobody used is a note in the answer, not a
 failure: the sloppy idiom `rect(...).vertices().hole(...)` leaves one behind on
@@ -5615,9 +5647,11 @@ process-group kill nor the limits.
 `doctor.py`, `backend/Dockerfile` (two blocks: the libraries, the load step) and
 the frontend catalog carry additive blocks, and `extension-package-check.yml` a
 20 minute limit: the job installs the kernel and builds real parts. The bundling
-adds one line each to the `extensions` group and `[tool.uv.sources]` in
-`backend/pyproject.toml`, the lock entries, the `plugins:` record and migration
-73. A sync that touches the example fails `test_bundled_cad_extension.py` until
+adds the `cad` group, its name in `default-groups` and one line in
+`[tool.uv.sources]` of `backend/pyproject.toml`, the lock entries, the `plugins:`
+record, migration 73, the `--no-group cad` retry in `scripts/serve.sh`,
+`scripts/dev_multi_instance.sh` and the `install` target, a third Dockerfile
+block in the dev stage, and a longer doctor limit in `scripts/support_bundle.py`. A sync that touches the example fails `test_bundled_cad_extension.py` until
 the snapshot is refreshed.
 `cadquery` is pinned; a bump owes a pass of the package's kernel tests, which
 check every allow-listed method against the kernel's own signature.

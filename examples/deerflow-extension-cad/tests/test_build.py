@@ -316,7 +316,8 @@ def test_the_self_test_loads_the_kernel_first_and_then_builds_its_cube():
     run = subprocess.run([sys.executable, "-m", "deerflow_extension_cad.selftest"], capture_output=True, text=True, timeout=300, check=False)
     answer = json.loads(run.stdout.strip().splitlines()[-1])
     assert run.returncode == 0 and answer["ok"] is True and answer["bbox_mm"] == [1.0, 1.0, 1.0]
-    assert answer["load_seconds"] >= 0
+    # The kernel takes over a second to import even when everything is cached: a zero means it was not loaded here.
+    assert 0.5 < answer["load_seconds"] < 60
 
 
 async def test_a_rebuild_does_not_touch_the_first_build():

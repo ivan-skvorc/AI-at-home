@@ -47,5 +47,6 @@ cd ../../backend && python -m pytest tests/test_cad_extension.py tests/test_cad_
   before its first step does nothing, and the host also runs tools on loops
   that end at once: the kill is direct and the release is a done callback.
 - **The tool description is paid on every request.** The context-fit critical
-  check has about ten tokens to spare with this tool installed: shorten
-  elsewhere before adding a word, and keep parameter meaning in the names.
+  check has about forty tokens to spare with this tool on every request,
+  fourteen with a workflows option on: shorten elsewhere before adding a word,
+  and keep parameter meaning in the names.

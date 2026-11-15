@@ -31,7 +31,7 @@ TOOL_GROUP = "local_extensions"
 # 0.2.12 is the first API whose ToolContext can write a file into a conversation.
 @extension(api="0.2.12", name="cad")
 def install(registry: ExtensionRegistry, config: Mapping[str, Any]) -> None:
-    """Register the ``cad_build`` tool, on once the operator installed the package."""
+    """Register the ``cad_build`` tool. In this fork the package ships installed and its record enabled."""
     if config.get("enabled", True) is False:
         return
     settings = settings_from(config)

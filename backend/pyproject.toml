@@ -65,9 +65,14 @@ memory-zh = ["deerflow-harness[memory-zh]"]
 # the same locked runtime set without promoting those packages to core deps.
 extensions = [
     "deerflow-extension-workflows ; sys_platform != 'win32'",
-    # Fork: the CAD module ships installed (FORK.md §51). Its worker is POSIX-only
-    # (process group, resource limits), so a Windows `uv sync` skips it.
-    "deerflow-extension-cad ; sys_platform != 'win32'",
+]
+# Fork: the CAD module ships installed (FORK.md §51). It has a group of its own
+# because its geometry kernel has wheels for fewer hosts than everything else
+# here: the marker names the platforms that have them, and a Linux with a C
+# library older than glibc 2.31 (which no marker can name) starts without it,
+# the launch scripts retrying the sync with `--no-group cad`.
+cad = [
+    "deerflow-extension-cad ; (sys_platform == 'linux' and (platform_machine == 'x86_64' or platform_machine == 'aarch64')) or (sys_platform == 'darwin' and platform_machine == 'arm64')",
 ]
 dev = [
     # Direct SDK use in Claude provider serialization tests.
@@ -105,7 +110,7 @@ markers = [
 
 [tool.uv]
 index-url = "https://pypi.org/simple"
-default-groups = ["dev", "extensions"]
+default-groups = ["dev", "extensions", "cad"]
 # langgraph-sdk 0.4.2 (pulled in by langgraph 1.2.9 for DeltaChannel) pins
 # `websockets<16,>=14`, silently downgrading websockets 16.0 -> 15.0.1. The
 # pin is not grounded in any API incompatibility: websockets 16's only

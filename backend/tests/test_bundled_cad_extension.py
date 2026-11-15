@@ -59,18 +59,38 @@ def test_the_installed_snapshot_matches_the_example_source():
     assert not stale, f"{hint}; stale: {stale}"
 
 
-def test_the_backend_installs_it_from_the_snapshot_everywhere_but_windows():
+def test_the_backend_installs_it_from_the_snapshot_only_where_the_kernel_has_wheels():
     project = tomllib.loads((BACKEND / "pyproject.toml").read_text(encoding="utf-8"))
-    entries = [Requirement(entry) for entry in project["dependency-groups"]["extensions"]]
-    (cad,) = [entry for entry in entries if entry.name == "deerflow-extension-cad"]
+    (cad,) = [Requirement(entry) for entry in project["dependency-groups"]["cad"]]
+    assert cad.name == "deerflow-extension-cad" and cad.marker is not None
 
-    # The worker is POSIX-only (process group, resource limits): a Windows
-    # `uv sync` must skip the module and its 1.7 GB kernel rather than install it.
-    assert cad.marker is not None and not cad.marker.evaluate({"sys_platform": "win32"})
-    assert cad.marker.evaluate({"sys_platform": "linux"}) and cad.marker.evaluate({"sys_platform": "darwin"})
+    def installs(sys_platform: str, platform_machine: str) -> bool:
+        return cad.marker.evaluate({"sys_platform": sys_platform, "platform_machine": platform_machine})
+
+    assert installs("linux", "x86_64") and installs("linux", "aarch64") and installs("darwin", "arm64")
+    # The kernel has no wheel for an Intel Mac, and its worker is POSIX-only. A locked sync that
+    # names a package without a wheel for the host fails whole, and the install stops starting.
+    assert not installs("darwin", "x86_64") and not installs("win32", "AMD64") and not installs("linux", "armv7l")
+    # In a group of its own, in the default set: installed without being asked for, and droppable alone.
+    assert "cad" in project["tool"]["uv"]["default-groups"]
+    assert not [entry for entry in project["dependency-groups"]["extensions"] if "cad" in entry]
     assert project["tool"]["uv"]["sources"]["deerflow-extension-cad"] == {"path": "extensions/sources/deerflow-extension-cad"}
     # The stock image build copies backend/ only; the lock must not point outside it.
     _validate_locked_local_sources(BACKEND / "uv.lock", BACKEND)
+
+
+def test_a_host_the_kernel_cannot_be_installed_on_still_installs_everything_else():
+    # glibc older than 2.31 has no wheel either, and no marker can say so. Every local path that
+    # syncs with --locked retries once without the group instead of leaving the install unable to start.
+    serve = (REPO_ROOT / "scripts" / "serve.sh").read_text(encoding="utf-8")
+    multi = (REPO_ROOT / "scripts" / "dev_multi_instance.sh").read_text(encoding="utf-8")
+    makefile = (REPO_ROOT / "Makefile").read_text(encoding="utf-8")
+    for text, first in ((serve, "uv sync --locked --quiet --all-packages $UV_EXTRAS_FLAGS"), (multi, "uv sync --locked --quiet --all-packages $extras"), (makefile, "cd backend && uv sync --locked ||")):
+        retry = text.index("--no-group cad")
+        assert 0 <= text.index(first) < retry, first
+    # The retry drops this group only: the workflows extension stays installed.
+    assert "--no-group extensions" not in serve and "--no-group extensions" not in multi
+    assert "uv sync --locked --no-group cad" in makefile
 
 
 def test_a_pull_that_changes_only_code_rebuilds_the_installed_copy():

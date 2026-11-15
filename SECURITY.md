@@ -39,7 +39,7 @@ is built for that purpose — not a backup archive.
 
 ## The CAD module's script interpreter (fork feature)
 
-The optional CAD extension (`examples/deerflow-extension-cad`, FORK.md §51) takes
+The bundled CAD extension (`examples/deerflow-extension-cad`, FORK.md §51) takes
 a CadQuery script written by a language model. Model text is untrusted input,
 and the default install gives the agent no shell on purpose, so the extension
 does not run the script. Its interpreter is a security boundary and is described

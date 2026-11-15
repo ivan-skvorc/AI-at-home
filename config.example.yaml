@@ -5589,9 +5589,10 @@ plugins:
   # mechanical part and it calls `cad_build`, which reads a CadQuery script
   # without running it, measures the result and saves STEP, STL and GLB files into
   # the conversation. Its source is examples/deerflow-extension-cad, installed from
-  # the locked snapshot in backend/extensions/sources (not on Windows). The kernel
-  # is about 1.7 GB on disk and loads only while a part is being built. Turn it off
-  # with `make extension-disable NAME=cad`, which keeps this record.
+  # the locked snapshot in backend/extensions/sources on Linux and Apple-silicon
+  # Macs (Windows and Intel Macs have no kernel and skip it). The kernel is about
+  # 1.7 GB on disk and loads only while a part is being built. Turn it off with
+  # `make extension-disable NAME=cad`, which keeps this record.
   - name: cad
     package: deerflow-extension-cad
     use: deerflow_extension_cad:install
