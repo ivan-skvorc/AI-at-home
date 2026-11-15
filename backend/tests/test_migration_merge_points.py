@@ -81,6 +81,10 @@ ORIGINAL_PARENTS = {
     # 0055_merge_prefs_project_mem.
     "0053_tool_approvals": ("0052_batch_continuation",),
     "0054_project_memory": ("0053_tool_approvals",),
+    # Upstream's conversation-share revision. It hangs off 0054_project_memory,
+    # which 0055_merge_prefs_project_mem had already claimed, splitting the tree
+    # a twelfth time — joined by 0056_merge_prefs_thread_shares.
+    "0055_thread_shares": ("0054_project_memory",),
 }
 
 # Every leaf the merge points must keep reachable: one per branch tip that
@@ -108,6 +112,8 @@ MERGED_TIPS = (
     "0052_batch_continuation",
     # Upstream's tip at the 2026-11-13 sync, joined by 0055_merge_prefs_project_mem.
     "0054_project_memory",
+    # Upstream's tip at the 2026-11-15 sync, joined by 0056_merge_prefs_thread_shares.
+    "0055_thread_shares",
 )
 
 

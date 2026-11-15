@@ -6,7 +6,7 @@ For the shared edit → test → packaging check → install workflow, see the
 This directory is a compact, standalone Python package showing six of the
 nine DeerFlow extension contribution kinds: middleware, task lifecycle,
 system-model observer, service, router, and a plugin with one model tool. It
-depends on the public `deerflow-extension-api` contract (0.2.12 or newer) and
+depends on the public `deerflow-extension-api` contract (0.2.13 or newer) and
 never imports `deerflow.*` or `app.*`.
 
 It does not register an agent-assembly observer, a context-compaction observer,
@@ -52,7 +52,7 @@ A refused write raises `HostCapabilityError`, and the tool answers with its
 `code` instead of claiming a file: `LIMIT_EXCEEDED` for the operator's size caps
 (`plugin_outputs` in `config.yaml`), `INVALID_NAME`, `FORBIDDEN`, `UNAVAILABLE`,
 or `UNSUPPORTED` on a host without the capability. The package declares
-`@extension(api="0.2.12")` and `deerflow-extension-api>=0.2.12`, so an older
+`@extension(api="0.2.13")` and `deerflow-extension-api>=0.2.13`, so an older
 host refuses it at install or at startup and names the version it needs. The
 contract is described in
 [full-stack plugins](../../docs/full-stack-plugins.md#files-a-tool-writes-into-its-conversation).

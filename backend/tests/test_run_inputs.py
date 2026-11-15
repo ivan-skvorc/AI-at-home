@@ -316,7 +316,7 @@ async def test_http_input_admission_and_status_are_owner_scoped(input_store, mon
     app.include_router(router)
     app.state.run_manager = RunManager(store=input_store)
     await RunInputs(input_store, "run", USER_ID, "worker").reopen()
-    monkeypatch.setattr("app.gateway.run_inputs.get_run_context", lambda _: SimpleNamespace(agent_runs=object()))
+    monkeypatch.setattr("app.gateway.run_inputs.get_agent_runs", lambda _: object())
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         url = "/api/threads/thread/runs/run/inputs"
         body = {"request_id": "one", "text": "Add the appendix", "mode": "queue"}
@@ -360,7 +360,7 @@ async def test_a_queued_input_keeps_its_plugin_options(input_store, monkeypatch)
     manager = RunManager(store=input_store)
     monkeypatch.setattr(run_inputs, "get_run_manager", lambda _: manager)
     monkeypatch.setattr(run_inputs, "get_current_user", current_user)
-    monkeypatch.setattr(run_inputs, "get_run_context", lambda _: SimpleNamespace(agent_runs=object()))
+    monkeypatch.setattr(run_inputs, "get_agent_runs", lambda _: object())
     await RunInputs(input_store, "run", USER_ID, "worker").reopen()
 
     options = {"community.workflows": {"mode": "double_ultracode", "limits": {"max_agents": 40}}}

@@ -6,7 +6,8 @@ the durable store rather than only in process memory.
 
 The registry covers four sinks: **memory** extraction, follow-up
 **suggestions**, the composer's **input_polish** draft rewrite, and the
-per-turn **goal** completion check. The rule they exist to enforce is that
+**goal** sink: the per-turn completion check and the ``/goal from-chat``
+objective synthesis. The rule they exist to enforce is that
 anything a conversation spends is priced against that conversation — an
 unrecorded sink is not free, it is invisible, and the header simply reports a
 number lower than the money that left the account.
@@ -15,6 +16,7 @@ number lower than the money that left the account.
 from __future__ import annotations
 
 import asyncio
+import json
 from types import SimpleNamespace
 from unittest import mock
 
@@ -24,7 +26,8 @@ from langchain_core.messages import AIMessage
 from app.gateway.routers.suggestions import _record_suggestions_usage
 from deerflow.agents.memory.manager import _host_default_extraction_callback
 from deerflow.runtime import aux_usage
-from deerflow.utils.oneshot_llm import OneshotResult
+from deerflow.utils import oneshot_llm
+from deerflow.utils.oneshot_llm import OneshotLLMResult, OneshotResult
 
 
 @pytest.fixture(autouse=True)
@@ -271,6 +274,58 @@ def test_goal_evaluator_billed_by_the_run_journal_is_not_also_aux_usage():
 
     assert [record["total_tokens"] for record in journal_records] == [940]
     assert "goal" not in aux_usage.get_thread_aux_usage("t-journal")
+
+
+def _fake_synthesis_model(text: str, *, thread_id: str):
+    """A provider answer for ``/goal from-chat``, served one layer below synthesis.
+
+    Faked at ``run_oneshot_llm_detailed``, which every one-shot wrapper calls,
+    so the test pins the outcome (a goal row for the thread) rather than which
+    wrapper synthesis happens to use.
+    """
+
+    async def fake(**kwargs):
+        assert kwargs["thread_id"] == thread_id
+        message = AIMessage(
+            content=text,
+            response_metadata={"model_name": "synth-model-20260115"},
+            usage_metadata={"input_tokens": 3000, "output_tokens": 60, "total_tokens": 3060, "input_token_details": {"cache_read": 1200}},
+        )
+        return OneshotLLMResult(text=text, message=message)
+
+    return fake
+
+
+def test_goal_synthesis_records_usage_against_its_thread():
+    """``/goal from-chat`` sends up to a 12k-character conversation slice to the
+    default model. It is not a graph run, so an unrecorded call is missing from
+    the header's cost and from the spend cap's window."""
+    from deerflow.runtime.goal_synthesis import synthesize_goal_objective
+
+    verdict = json.dumps({"objective": "Reconcile the invoices.", "unclear": False, "reason": ""})
+    with mock.patch.object(oneshot_llm, "run_oneshot_llm_detailed", _fake_synthesis_model(verdict, thread_id="t-syn")):
+        objective = asyncio.run(synthesize_goal_objective(context="User: reconcile the invoices", app_config=SimpleNamespace(pii_redaction=None), thread_id="t-syn"))
+
+    assert objective == "Reconcile the invoices."
+    assert aux_usage.get_thread_aux_usage("t-syn")["goal"]["synth-model-20260115"] == {
+        "input_tokens": 3000,
+        "output_tokens": 60,
+        "total_tokens": 3060,
+        "cache_read_tokens": 1200,
+        "calls": 1,
+    }
+
+
+def test_goal_synthesis_bills_an_unclear_verdict_too():
+    """The tokens are spent before the verdict is read, so a refusal still costs money."""
+    from deerflow.runtime.goal_synthesis import GoalSynthesisUnclear, synthesize_goal_objective
+
+    verdict = json.dumps({"objective": "", "unclear": True, "reason": "no task"})
+    with mock.patch.object(oneshot_llm, "run_oneshot_llm_detailed", _fake_synthesis_model(verdict, thread_id="t-syn-unclear")):
+        with pytest.raises(GoalSynthesisUnclear):
+            asyncio.run(synthesize_goal_objective(context="User: hi", app_config=SimpleNamespace(pii_redaction=None), thread_id="t-syn-unclear"))
+
+    assert aux_usage.get_thread_aux_usage("t-syn-unclear")["goal"]["synth-model-20260115"]["calls"] == 1
 
 
 def test_every_chat_aux_sink_survives_a_gateway_restart():

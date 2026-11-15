@@ -227,6 +227,14 @@ make install
 make dev
 ```
 
+The local commands use the pnpm version pinned in `frontend/package.json`. If a
+different global pnpm is on `PATH`, they use Corepack when available; otherwise
+they report the version mismatch before installing frontend dependencies.
+
+Run `make doctor` after setting model credentials. It reports obvious placeholder
+API keys as incomplete configuration; replace them with real keys before testing
+model calls.
+
 Open http://localhost:2026.
 
 - All configuration options, providers and manual setup: [Configuration](#configuration) below; upstream's reference is the [Configuration](docs/guide/configuration.md) guide
@@ -2625,6 +2633,7 @@ The refresh takes a few minutes, so the button starts it and the page polls: eac
 - [Install.md](Install.md) - Setup instructions written for coding agents
 - [Configuration Reference](backend/docs/CONFIGURATION.md) - Every `config.yaml` option
 - [Backend Architecture](backend/README.md) - Backend architecture and API reference
+- [Conversation Sharing](docs/guide/sharing.md) - Expiring read-only snapshots, artifact previews and workspace copies
 - [Architecture Overview](docs/ARCHITECTURE.md) - How the services fit together
 - [Contributing Guide](CONTRIBUTING.md) - Development environment, workflow and tests
 - [The Code Change Cycle](CHANGE_CYCLE.md) - The procedure every change follows: test, checklist row, full run, docs, PR

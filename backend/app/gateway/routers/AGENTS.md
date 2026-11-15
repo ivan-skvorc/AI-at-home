@@ -55,3 +55,6 @@ make test-blocking-io                            # after adding any file, config
   `resolve_thread_virtual_path` and never follows a link while listing. Change
   both routes together, because the explorer lists what the artifacts route
   serves (FORK.md §49).
+- **Search results use the latest owner-visible message.** A historical jump
+  resolves only the requested thread. Use the shared history seed path for
+  legacy checkpoints so it keeps its existing write reservation.

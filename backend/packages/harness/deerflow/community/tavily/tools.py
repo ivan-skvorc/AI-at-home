@@ -61,10 +61,12 @@ def resolve_tavily_api_key() -> str | None:
     extras = _web_search_extras()
     for key in ("api_key", "fallback_api_key"):
         value = extras.get(key)
-        if isinstance(value, str) and value.strip():
-            return value.strip()
-    env_value = os.getenv(API_KEY_ENV_VAR, "").strip()
-    return env_value or None
+        # resolve_api_key reads an .env.example placeholder as no key, so an
+        # install copied from the template does not turn the fallback on.
+        resolved = resolve_api_key(value) if isinstance(value, str) else None
+        if resolved:
+            return resolved
+    return resolve_api_key(os.getenv(API_KEY_ENV_VAR))
 
 
 def tavily_api_key_present() -> bool:

@@ -25,12 +25,14 @@ merge is a no-op revision; none re-parents a branch.
 | `0049_merge_prefs_ext_leases` | `0048_merge_prefs_oauth_tokens` | `0048_extension_execution_leases` |
 | `0052_merge_prefs_run_inputs` | `0049_merge_prefs_ext_leases` | `0051_merge_run_inputs_fencing` |
 | `0053_merge_prefs_batch_cont` | `0052_merge_prefs_run_inputs` | `0052_batch_continuation` |
-| `0055_merge_prefs_project_mem` (head) | `0053_merge_prefs_batch_cont` | `0054_project_memory` |
+| `0055_merge_prefs_project_mem` | `0053_merge_prefs_batch_cont` | `0054_project_memory` |
+| `0056_merge_prefs_thread_shares` (head) | `0055_merge_prefs_project_mem` | `0055_thread_shares` |
 
 `0051_merge_run_inputs_fencing` is upstream's own merge of `0049_run_inputs` and
 the `0049_run_producer_fencing` → `0050_history_seed_authority` branch. Upstream
 reached `0054_project_memory` through `0053_tool_approvals`, off
-`0052_batch_continuation`.
+`0052_batch_continuation`, and then added `0055_thread_shares` off
+`0054_project_memory`.
 
 ## Adding the next merge point
 

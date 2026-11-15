@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid
 from datetime import UTC, datetime
@@ -172,7 +173,7 @@ class ThreadMetaRepository(ThreadMetaStore):
         *,
         user_id: str | None | _AutoSentinel = AUTO,
     ) -> dict | None:
-        resolved_user_id = resolve_owner_scope(user_id, method_name="ThreadMetaRepository.get")
+        resolved_user_id = await asyncio.to_thread(resolve_owner_scope, user_id, method_name="ThreadMetaRepository.get")
         async with self._sf() as session:
             row = await session.get(ThreadMetaRow, thread_id)
             if row is None:
@@ -213,7 +214,7 @@ class ThreadMetaRepository(ThreadMetaStore):
             # Multi-user mode OFF: one shared workspace — any existing thread is
             # accessible regardless of owner. ``require_existing`` still holds
             # (the row must exist), so a deleted thread cannot be re-targeted.
-            if not is_multi_user_mode_enabled():
+            if not await asyncio.to_thread(is_multi_user_mode_enabled):
                 return True
             return row.user_id == user_id
 
@@ -221,6 +222,7 @@ class ThreadMetaRepository(ThreadMetaStore):
         self,
         *,
         metadata: dict[str, Any] | None = None,
+        query: str | None = None,
         status: str | None = None,
         archived: bool | None = None,
         project_id: str | None | _ProjectFilterUnset = PROJECT_FILTER_UNSET,
@@ -233,7 +235,7 @@ class ThreadMetaRepository(ThreadMetaStore):
         Owner filter is enforced by default: caller must be in a user
         context. Pass ``user_id=None`` to bypass (migration/CLI).
         """
-        resolved_user_id = resolve_owner_scope(user_id, method_name="ThreadMetaRepository.search")
+        resolved_user_id = await asyncio.to_thread(resolve_owner_scope, user_id, method_name="ThreadMetaRepository.search")
         pinned_order = case(
             (json_match(ThreadMetaRow.metadata_json, THREAD_PINNED_METADATA_KEY, True), 1),
             else_=0,
@@ -274,10 +276,31 @@ class ThreadMetaRepository(ThreadMetaStore):
             else:
                 stmt = stmt.where(ThreadMetaRow.project_id == project_id)
 
-        stmt = stmt.limit(limit).offset(offset)
+        needle = query.strip().casefold() if query else ""
         async with self._sf() as session:
-            result = await session.execute(stmt)
-            return [self._row_to_dict(r) for r in result.scalars()]
+            if not needle:
+                result = await session.execute(stmt.limit(limit).offset(offset))
+                return [self._row_to_dict(r) for r in result.scalars()]
+            # Casefold is dialect-independent (including ß -> ss). Scan bounded
+            # metadata batches and stop as soon as the requested page is full.
+            matches = []
+            scanned, skipped = 0, 0
+            while len(matches) < limit:
+                result = await session.execute(stmt.limit(200).offset(scanned))
+                batch = list(result.scalars())
+                for row in batch:
+                    if needle not in (row.display_name or "").casefold():
+                        continue
+                    if skipped < offset:
+                        skipped += 1
+                    else:
+                        matches.append(self._row_to_dict(row))
+                        if len(matches) == limit:
+                            break
+                if len(batch) < 200:
+                    break
+                scanned += len(batch)
+            return matches
 
     async def _check_ownership(self, session: AsyncSession, thread_id: str, resolved_user_id: str | None) -> bool:
         """Return True if the row exists and is owned (or filter bypassed)."""
@@ -295,7 +318,7 @@ class ThreadMetaRepository(ThreadMetaStore):
         user_id: str | None | _AutoSentinel = AUTO,
     ) -> None:
         """Update the display name and remove caller-selected stale metadata atomically."""
-        resolved_user_id = resolve_owner_scope(user_id, method_name="ThreadMetaRepository.update_display_name")
+        resolved_user_id = await asyncio.to_thread(resolve_owner_scope, user_id, method_name="ThreadMetaRepository.update_display_name")
         async with self._sf() as session:
             if session.get_bind().dialect.name == "sqlite":
                 await session.execute(text("BEGIN IMMEDIATE"))
@@ -320,7 +343,7 @@ class ThreadMetaRepository(ThreadMetaStore):
         *,
         user_id: str | None | _AutoSentinel = AUTO,
     ) -> None:
-        resolved_user_id = resolve_owner_scope(user_id, method_name="ThreadMetaRepository.update_status")
+        resolved_user_id = await asyncio.to_thread(resolve_owner_scope, user_id, method_name="ThreadMetaRepository.update_status")
         async with self._sf() as session:
             if not await self._check_ownership(session, thread_id, resolved_user_id):
                 return
@@ -346,7 +369,7 @@ class ThreadMetaRepository(ThreadMetaStore):
         ``touch`` refreshes ``updated_at`` (default); pass ``touch=False`` to
         preserve recency ordering for metadata-only changes such as pin/unpin.
         """
-        resolved_user_id = resolve_owner_scope(user_id, method_name="ThreadMetaRepository.update_metadata")
+        resolved_user_id = await asyncio.to_thread(resolve_owner_scope, user_id, method_name="ThreadMetaRepository.update_metadata")
         async with self._sf() as session:
             if session.get_bind().dialect.name == "sqlite":
                 # A deferred SQLite transaction does not reserve the writer
@@ -383,7 +406,7 @@ class ThreadMetaRepository(ThreadMetaStore):
         user_id: str | None | _AutoSentinel = AUTO,
     ) -> None:
         """Move a thread metadata row to ``owner_user_id``."""
-        resolved_user_id = resolve_owner_scope(user_id, method_name="ThreadMetaRepository.update_owner")
+        resolved_user_id = await asyncio.to_thread(resolve_owner_scope, user_id, method_name="ThreadMetaRepository.update_owner")
         async with self._sf() as session:
             if session.get_bind().dialect.name == "sqlite":
                 await session.execute(text("BEGIN IMMEDIATE"))
@@ -402,7 +425,7 @@ class ThreadMetaRepository(ThreadMetaStore):
         *,
         user_id: str | None | _AutoSentinel = AUTO,
     ) -> None:
-        resolved_user_id = resolve_owner_scope(user_id, method_name="ThreadMetaRepository.delete")
+        resolved_user_id = await asyncio.to_thread(resolve_owner_scope, user_id, method_name="ThreadMetaRepository.delete")
         async with self._sf() as session:
             if session.get_bind().dialect.name == "sqlite":
                 await session.execute(text("BEGIN IMMEDIATE"))

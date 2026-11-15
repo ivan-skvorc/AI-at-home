@@ -231,7 +231,8 @@ AUX_CATEGORY_MEMORY = "memory"
 AUX_CATEGORY_SUGGESTIONS = "suggestions"
 #: The composer's "polish this draft" rewrite (``input_polish.enabled``, on by default).
 AUX_CATEGORY_INPUT_POLISH = "input_polish"
-#: The goal evaluator's per-run completion check, while a goal is active.
+#: The goal evaluator's per-run completion check, while a goal is active, and
+#: the ``/goal from-chat`` objective synthesis (fork, FORK.md §7).
 AUX_CATEGORY_GOAL = "goal"
 #: The chat header's "Auto rename" button, one call per press (fork, FORK.md §38).
 AUX_CATEGORY_TITLE = "title"

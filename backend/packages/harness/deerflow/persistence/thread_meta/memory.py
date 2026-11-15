@@ -7,6 +7,7 @@ router for thread records.
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from typing import Any
 
@@ -35,7 +36,7 @@ class MemoryThreadMetaStore(ThreadMetaStore):
         method_name: str,
     ) -> dict | None:
         """Fetch a record and verify ownership. Returns a mutable copy, or None."""
-        resolved = resolve_owner_scope(user_id, method_name=method_name)
+        resolved = await asyncio.to_thread(resolve_owner_scope, user_id, method_name=method_name)
         item = await self._store.aget(THREADS_NS, thread_id)
         if item is None:
             return None
@@ -107,6 +108,7 @@ class MemoryThreadMetaStore(ThreadMetaStore):
         self,
         *,
         metadata: dict[str, Any] | None = None,
+        query: str | None = None,
         status: str | None = None,
         archived: bool | None = None,
         project_id: str | None | _ProjectFilterUnset = PROJECT_FILTER_UNSET,
@@ -120,7 +122,7 @@ class MemoryThreadMetaStore(ThreadMetaStore):
         it can mirror SQL's pinned-first ordering. Use the SQL store for
         scalable paginated I/O.
         """
-        resolved_user_id = resolve_owner_scope(user_id, method_name="MemoryThreadMetaStore.search")
+        resolved_user_id = await asyncio.to_thread(resolve_owner_scope, user_id, method_name="MemoryThreadMetaStore.search")
         if not isinstance(project_id, _ProjectFilterUnset) and project_id is not None:
             # Memory mode has no projects backend: no thread can be a member.
             return []
@@ -151,6 +153,9 @@ class MemoryThreadMetaStore(ThreadMetaStore):
             records = [record for record in records if isinstance(record.get("metadata"), dict) and all(json_value_matches(record["metadata"], key, value) for key, value in metadata.items())]
         if archived is not None:
             records = [record for record in records if ((record.get("metadata") or {}).get(THREAD_ARCHIVED_METADATA_KEY) is True) == archived]
+        if query and query.strip():
+            needle = query.strip().casefold()
+            records = [record for record in records if needle in (record.get("display_name") or "").casefold()]
         records.sort(key=self._sort_key, reverse=True)
         return records[offset : offset + limit]
 
@@ -163,7 +168,7 @@ class MemoryThreadMetaStore(ThreadMetaStore):
             return True
         # Multi-user mode OFF: one shared workspace — any existing thread is
         # accessible regardless of owner (require_existing still holds above).
-        if not is_multi_user_mode_enabled():
+        if not await asyncio.to_thread(is_multi_user_mode_enabled):
             return True
         return record_user_id == user_id
 

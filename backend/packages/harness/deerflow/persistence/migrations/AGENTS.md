@@ -44,8 +44,8 @@ Set `TEST_POSTGRES_URI` to run the same cases against PostgreSQL. Test both
 
 The fork's own revision `0019_runs_pricing_snapshot` (FORK.md §17) branches off
 `0018_oauth_identity_pg_partial`, and no-op merge revisions rejoin it to
-upstream's chain. The head is `0055_merge_prefs_project_mem`, joining
-`0053_merge_prefs_batch_cont` and upstream's `0054_project_memory`. Every merge
+upstream's chain. The head is `0056_merge_prefs_thread_shares`, joining
+`0055_merge_prefs_project_mem` and upstream's `0055_thread_shares`. Every merge
 point and the steps for the next one: [FORK_NOTES.md](FORK_NOTES.md).
 
 - **Join two heads with a no-op merge revision that names both parents.** A sync

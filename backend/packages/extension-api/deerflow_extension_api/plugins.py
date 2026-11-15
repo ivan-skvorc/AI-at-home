@@ -71,12 +71,12 @@ class ToolContext(ActionContext):
     run_options: Mapping[str, Any] = field(default=_EMPTY_OPTIONS, kw_only=True)
     # Host-stamped execution identity, never supplied by tool arguments.
     run_id: str | None = field(default=None, kw_only=True)
-    # Host-bound writer behind write_output() (API 0.2.12). None when the host
+    # Host-bound writer behind write_output() (API 0.2.13). None when the host
     # predates the capability or the call has no conversation.
     output_writer: Callable[[str, bytes], Awaitable[str]] | None = field(default=None, kw_only=True, repr=False, compare=False)
 
     async def write_output(self, name: str, content: bytes) -> str:
-        """Write one file into the calling conversation's outputs (API 0.2.12).
+        """Write one file into the calling conversation's outputs (API 0.2.13).
 
         Returns the file's virtual path, ``/mnt/user-data/outputs/<name>``. The
         host binds the destination to the thread of the run that called the

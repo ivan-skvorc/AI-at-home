@@ -424,7 +424,7 @@ def test_invalid_response_format_rejects_whole_plugin_before_registration(instal
     assert not registry.build().plugins
 
 
-# --- A tool hands a file to its conversation (extension API 0.2.12) ----------
+# --- A tool hands a file to its conversation (extension API 0.2.13) ----------
 
 
 class _OutputsState(MessagesState):
@@ -678,7 +678,7 @@ async def test_host_without_the_capability_answers_unsupported():
     from deerflow_extension_api import ExtensionPrincipal, HostCapabilityError
     from deerflow_extension_api.plugins import ToolContext
 
-    # What a host that predates API 0.2.12 constructs: no writer is bound.
+    # What a host that predates API 0.2.13 constructs: no writer is bound.
     context = ToolContext(ExtensionPrincipal("alice"), MappingProxyType({"enabled": True}), "thread-a", run_id="run-1")
     assert context.output_writer is None
     with pytest.raises(HostCapabilityError) as refused:
@@ -704,7 +704,7 @@ def _registry_with(plugin, handler):
     return registry.build()
 
 
-@pytest.mark.parametrize("host_version", ["0.2.11", "0.2.12"])
+@pytest.mark.parametrize("host_version", ["0.2.12", "0.2.13"])
 def test_example_extension_requires_a_host_with_file_output(monkeypatch, host_version):
     from pathlib import Path
 
@@ -713,10 +713,10 @@ def test_example_extension_requires_a_host_with_file_output(monkeypatch, host_ve
     monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[2] / "examples/deerflow-extension-example"))
     monkeypatch.setattr("deerflow.extensions.loader.API_VERSION", host_version)
     loaded, diagnostics = load_extensions([ExtensionSpec(use="deerflow_extension_example:install", config={})])
-    if host_version == "0.2.11":
+    if host_version == "0.2.12":
         # An older host says so at load, instead of offering a tool whose file never appears.
         assert not loaded.plugins
-        assert "requires extension-api 0.2.12, host provides 0.2.11" in diagnostics[0].message
+        assert "requires extension-api 0.2.13, host provides 0.2.12" in diagnostics[0].message
     else:
         assert not diagnostics
         assert [plugin.namespace for _, plugin in loaded.plugins] == ["example.notes"]
