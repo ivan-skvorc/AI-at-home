@@ -12,6 +12,10 @@ uv run --no-project pytest -q                        # the kernel tests skip wit
 cd ../../backend && python -m pytest tests/test_cad_extension.py tests/test_cad_runtime_deps.py -q   # the host half, no kernel
 ```
 
+- **This directory is the source; `backend/extensions/sources/deerflow-extension-cad`
+  is what every install runs.** After any edit here, copy the directory over the
+  snapshot (without `__pycache__`); `test_bundled_cad_extension.py` fails until
+  the two are identical.
 - **The interpreter is a security boundary.** Calls to `exec`, `eval` and
   `compile` and a second script-driven `getattr` do not belong in this package,
   and `ast.parse` has one call site. A change that lets a value from a script reach a lookup, a file path or

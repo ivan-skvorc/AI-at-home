@@ -172,6 +172,8 @@ def _fresh_request(mode: str) -> ModelRequest:
         notes, workflow_tools = _workflow_additions(mode)
         system.extend(notes)
         tools.extend(workflow_tools)
+    # Fork: the CAD module ships installed and enabled (FORK.md §51), so its tool rides every request.
+    tools.extend(_cad_tools())
     model = SimpleNamespace(model="qwen3:8b", num_ctx=32_768, num_predict=8_192)
     return ModelRequest(model=model, messages=[HumanMessage("Summarise what you can do for me.")], system_message=SystemMessage(content="\n\n".join(system)), tools=tools, state={})
 
@@ -265,19 +267,16 @@ def _cad_tools() -> list[dict]:
 
 
 @pytest.mark.parametrize("mode", list(MODES))
-def test_a_fresh_request_still_fits_with_the_cad_module_installed(stock_config, monkeypatch, mode):
-    # The module is off until an operator installs it, so the stock request above
-    # does not carry its tool. Installing it must not cost a 32K model its first message.
-    monkeypatch.syspath_prepend(str(REPO_ROOT / "examples" / "deerflow-extension-cad"))
+def test_the_bundled_cad_tool_stays_cheap_on_every_request(stock_config, mode):
+    # The module ships installed, so the stock request above carries its tool in every mode
+    # and on every model. What it costs is what a 32K model loses of its conversation.
     request = _fresh_request(mode)
-    cad = _cad_tools()
+    cad = [tool for tool in request.tools if isinstance(tool, dict) and tool.get("function", {}).get("name", "").startswith("ext_cad")]
     assert [tool["function"]["name"].split("_cad_build_")[0] for tool in cad] == ["ext_cad"]
-    with_cad = request.override(tools=[*request.tools, *cad])
-    fixed = _fixed_tokens(with_cad)
-    cost = fixed - _fixed_tokens(request)
+    without_cad = request.override(tools=[tool for tool in request.tools if tool not in cad])
+    cost = _fixed_tokens(request) - _fixed_tokens(without_cad)
     # The heaviest mode has under 200 tokens to spare on a 32K model, so the tool may not grow.
     assert 0 < cost <= 180, f"cad_build costs ~{cost:,} tokens of every request; keep its description and schema short"
-    assert fixed <= FIXED_REQUEST_ALLOWANCE_TOKENS, f"{mode}: with the CAD module installed the fixed part of a request is ~{fixed:,} tokens, over the {FIXED_REQUEST_ALLOWANCE_TOKENS:,} a 32K local model can spare"
 
 
 def test_compaction_fires_before_the_guard_would_refuse_a_long_chat(stock_config, monkeypatch):

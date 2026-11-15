@@ -108,6 +108,11 @@ NEXT_BUSY = "Nothing is wrong with the script. Call cad_build again with the sam
 NEXT_UNSTORED = "The part met its checks but its files could not all be stored, so it is not delivered. Tell the user which file was refused; a part with fewer small fillets and holes gives smaller files."
 NEXT_NO_FILES = "Nothing could be stored in this conversation, so nothing is delivered. Tell the user which file was refused."
 NEXT_ARGUMENTS = "Correct the arguments and call cad_build again."
+NEXT_NOT_LOADING = "The CAD kernel does not finish loading on this server. Do not call cad_build again; tell the user to run `make doctor`, which loads it once and names what is wrong."
+#: Builds in a row that may end while the kernel is still loading before the answer stops saying
+#: "call again". Each attempt on a fresh install leaves more of the kernel compiled, so two are
+#: enough there; where nothing can be kept, calling again would never end.
+MAX_LOADING_ANSWERS = 3
 #: What a timed-out worker was doing, in the words of the answer.
 _PHASES = {
     "exporting": "The part was built, and writing its files did not finish in time. Simplify the part: fewer small fillets and holes.",
@@ -383,7 +388,12 @@ async def run_worker(script: str, *, timeout_seconds: int, memory_mb: int, slots
             async with asyncio.timeout(timeout_seconds):
                 code = await process.wait()
         except TimeoutError:
-            advice = _PHASES.get(await asyncio.to_thread(_phase_of, directory), "Simplify the part: fewer pattern points, fewer fillets, and hole() instead of circle().cutThruAll() for round holes.")
+            phase = await asyncio.to_thread(_phase_of, directory)
+            if phase == "loading":
+                # Nothing was built yet, so nothing can be said about the part. The modules Python
+                # compiled before it was stopped stay compiled, which is why calling again works.
+                return {"status": "loading", "message": "the CAD kernel was still loading when the time ran out. The first build after an install or an update takes longer; the next one is quick."}
+            advice = _PHASES.get(phase, "Simplify the part: fewer pattern points, fewer fillets, and hole() instead of circle().cutThruAll() for round holes.")
             return {"status": "failed", "message": f"the build did not finish within {timeout_seconds} seconds and was stopped. {advice}"}
         # At once, before its files are read: whatever the worker left running goes with it.
         _stop(process)
@@ -421,6 +431,7 @@ async def _save(context: ToolContext, name: str, content: bytes, saved: list[str
 
 def make_handler(settings: Mapping[str, int]):
     slots = threading.BoundedSemaphore(settings.get("parallel_builds") or default_parallel_builds())
+    still_loading = 0  # builds in a row, in this process, that never got past loading the kernel
 
     async def cad_build(payload: Mapping[str, Any], context: ToolContext) -> dict[str, Any]:
         if context.output_writer is None:
@@ -430,8 +441,13 @@ def make_handler(settings: Mapping[str, int]):
             return {"passed": False, "error": {"message": problem}, "files": [], "next": NEXT_ARGUMENTS}
         script = payload["script"]
         result = await run_worker(script, timeout_seconds=settings["timeout_seconds"], memory_mb=settings["memory_mb"], slots=slots)
+        nonlocal still_loading
+        if result.get("status") == "loading":
+            still_loading += 1
+            return {"passed": False, "error": {"message": result["message"]}, "files": [], "next": NEXT_NOT_LOADING if still_loading >= MAX_LOADING_ANSWERS else NEXT_BUSY}
         if result.get("status") == "busy":
             return {"passed": False, "error": {"message": result["message"]}, "files": [], "next": NEXT_BUSY}
+        still_loading = 0
         saved: list[str] = []
         problems: list[str] = []
         # The script is saved first: the name the host gives it is this build's stem, so

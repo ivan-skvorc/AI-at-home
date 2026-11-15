@@ -1599,7 +1599,9 @@ def _gpu_residency_result(stats: Mapping[str, Any], nvidia_used=None) -> CheckRe
 CAD_EXTENSION_ENTRY = "deerflow_extension_cad:"
 CAD_SELFTEST_MODULE = "deerflow_extension_cad.selftest"
 # A cold kernel import takes a few seconds; this stays well inside the support bundle's budget.
-CAD_SELFTEST_TIMEOUT_SECONDS = 25
+# The self-test loads the kernel first (up to 90 seconds on a fresh install, when
+# Python compiles its modules), then builds for at most 25.
+CAD_SELFTEST_TIMEOUT_SECONDS = 130
 _MISSING_LIBRARY_RE = re.compile(r"(lib[\w.+-]+\.so[\w.]*): cannot open shared object file")
 
 

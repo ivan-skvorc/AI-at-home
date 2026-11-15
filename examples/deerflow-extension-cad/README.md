@@ -207,15 +207,16 @@ child process, its limits and its clean environment, not by the interpreter.
 
 ## Install
 
+**In this fork the module ships installed and on**, everywhere but Windows. A
+new install gets it with `make install` or `make up`; an existing one gets it
+on its next update, when the config upgrade adds the record below once. The
+backend installs it from a committed copy of this directory,
+`backend/extensions/sources/deerflow-extension-cad`, which a test keeps
+identical to it.
+
 The kernel is large: `cadquery` and its dependencies take about 1.7 GB on disk
-(`vtk` 640 MB, `casadi` 270 MB, the OpenCascade bindings 260 MB). Only an install
-that wants CAD pays for it.
-
-```bash
-make extension-install SOURCE="$PWD/examples/deerflow-extension-cad"
-```
-
-Restart DeerFlow afterwards. The manager adds this entry to `config.yaml`:
+(`vtk` 640 MB, `casadi` 270 MB, the OpenCascade bindings 260 MB). It is loaded
+only in a child process while a part is being built, never into the Gateway.
 
 ```yaml
 plugins:
@@ -224,7 +225,27 @@ plugins:
     use: deerflow_extension_cad:install
     enabled: true
     required: false
-    config: {}
+    config:
+      enabled: true
+```
+
+Turn it off and keep the record:
+
+```bash
+make extension-disable NAME=cad
+```
+
+**The first build after an install or an update is slow.** Python compiles the
+kernel's modules the first time they are loaded, which can take longer than a
+build may. The tool then answers that the kernel was still loading and to call
+again; the second call is quick. `make doctor` does that loading for you, and
+the Gateway image does it while it is built.
+
+Anywhere else (upstream DeerFlow, or after `make extension-remove NAME=cad`),
+install it by hand and restart:
+
+```bash
+make extension-install SOURCE="$PWD/examples/deerflow-extension-cad"
 ```
 
 `config` accepts four values, all optional:
@@ -242,8 +263,8 @@ Then check it:
 make doctor
 ```
 
-With the extension installed, `make doctor` builds a one-millimetre cube through
-the real tool. If the kernel cannot load because a system library is missing, it
+`make doctor` loads the kernel and then builds a one-millimetre cube through the
+real tool. If the kernel cannot load because a system library is missing, it
 names the library.
 
 ### System libraries
@@ -254,6 +275,8 @@ It also loads the system's `libX11.so.6`, which a desktop and the Gateway image
 already have.
 
 - **The Gateway image** (`make up`) unpacks them at build time, about 1.5 MB.
+  The dev image (`make docker-start`) does not, so the tool answers there that
+  the kernel cannot be loaded.
 - **A desktop Linux** usually has them. On a minimal Debian or Ubuntu host:
   `apt-get install libgl1`.
 

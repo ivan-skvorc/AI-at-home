@@ -170,6 +170,12 @@ RUN (cd /tmp \
     || echo "WARNING: the OpenGL dispatch libraries were not unpacked; the CAD module cannot load its kernel in this image" >&2; \
     rm -f /tmp/*.deb; rm -rf /var/lib/apt/lists/*
 
+# Fork: load the bundled CAD kernel once, so its compiled modules are part of the
+# image. Python compiles them on first import; left to the running container, that
+# work is redone after every start and the first build runs out of time on it.
+RUN cd backend && (uv run --no-sync python -m deerflow_extension_cad.selftest \
+    || echo "WARNING: the CAD module's self-test did not pass in this image; make doctor names the cause" >&2)
+
 # Camoufox browser binaries baked in the builder (an empty dir when the camoufox
 # extra was not selected). INSTALL_DIR = /root/.cache/camoufox at runtime (root),
 # so the camoufox web_fetch backend works without a runtime download.

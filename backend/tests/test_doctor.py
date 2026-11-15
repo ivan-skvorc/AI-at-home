@@ -1877,4 +1877,5 @@ class TestCheckCadExtension:
         # A missing library is an ImportError, but a broken kernel can end the process: never import it into doctor.
         assert cmd == [sys.executable, "-m", "deerflow_extension_cad.selftest"]
         assert kwargs["shell"] is False and kwargs["check"] is False
-        assert kwargs["timeout"] == doctor.CAD_SELFTEST_TIMEOUT_SECONDS < 30
+        # Bounded, and long enough for a fresh install: the self-test loads the kernel (up to 90 s) before it builds.
+        assert 115 <= kwargs["timeout"] == doctor.CAD_SELFTEST_TIMEOUT_SECONDS <= 150

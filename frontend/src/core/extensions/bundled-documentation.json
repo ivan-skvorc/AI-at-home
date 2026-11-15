@@ -101,7 +101,7 @@
           }
         ],
         "requirements": [
-          "安装本扩展会同时安装 CadQuery 几何内核，占用约 1.7 GB 磁盘空间。",
+          "它使用的 CadQuery 几何内核占用约 1.7 GB 磁盘空间，仅在生成零件时加载。",
           "仅支持允许清单内的建模操作；循环、函数和其他 import 会被拒绝。"
         ]
       },
@@ -119,7 +119,7 @@
           }
         ],
         "requirements": [
-          "Installing this extension installs the CadQuery geometry kernel, about 1.7 GB on disk.",
+          "The CadQuery geometry kernel it uses takes about 1.7 GB on disk and is loaded only while a part is being built.",
           "Only allow-listed modelling operations are available; loops, functions and other imports are refused."
         ]
       }

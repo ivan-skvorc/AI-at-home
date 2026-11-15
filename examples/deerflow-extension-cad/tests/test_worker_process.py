@@ -143,6 +143,14 @@ def test_a_loop_that_ends_right_after_a_cancellation_leaves_no_kernel_no_script_
     assert slots.acquire(blocking=False)
 
 
+async def test_a_kernel_still_loading_at_the_time_limit_is_not_blamed_on_the_part(tmp_path, monkeypatch):
+    # The first build after an install or an update: Python is still compiling the kernel's
+    # modules when the clock runs out. What it compiled stays, so the next call is quick.
+    _stand_in(tmp_path, monkeypatch, "open('phase', 'w').write('loading')\ntime.sleep(60)")
+    result = await tool.run_worker("x = 1", timeout_seconds=1, memory_mb=4096)
+    assert result["status"] == "loading" and "still loading" in result["message"] and "Simplify" not in result["message"]
+
+
 async def test_a_build_stopped_while_measuring_is_not_told_to_simplify_its_pattern(tmp_path, monkeypatch):
     _stand_in(tmp_path, monkeypatch, "open('phase', 'w').write('measuring')\ntime.sleep(60)")
     result = await tool.run_worker("x = 1", timeout_seconds=1, memory_mb=4096)

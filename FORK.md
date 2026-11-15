@@ -5447,14 +5447,55 @@ and an `exec` with trimmed builtins in the Gateway is not a boundary. The module
 therefore **reads** a CadQuery script and performs an allow-list of operations
 itself. CadQuery is the input because models already write it.
 
-**What.** `examples/deerflow-extension-cad`, installed through the extension
-manager and off until then. One tool, `cad_build`: a part name, the script and the
+**What.** `examples/deerflow-extension-cad`, bundled and on by default (below).
+One tool, `cad_build`: a part name, the script and the
 numbers the part must meet go in; pass or fail per check with measured values
 comes out, or the refusal with its construct and line. Files go through
 `ToolContext.write_output` (§50): the script and a report for every build, STEP,
 STL and GLB only when every check passed, and `<name>.failed.glb` when the part
 built and a check failed. The package README holds the user's half: the
 allow-list, the limits, the install.
+
+**Bundled and on by default.** Asking for a part should work on a fresh install
+and after an update, not after a command nobody knows about. The module ships the
+way the workflows extension does (§46): a committed snapshot in
+`backend/extensions/sources/deerflow-extension-cad` (the Docker build context
+excludes `examples/`), an `extensions` group entry marked `sys_platform !=
+'win32'` (the worker's process group and limits are POSIX), `cache-keys` over the
+package files so a `git pull` that changed only code rebuilds the installed
+copy, and an enabled, not required `plugins:` record in `config.example.yaml`.
+Existing installs get the record once from `config_upgrade.py` migration 73,
+which names `cad` alone: delivering "whatever the example lists" would bring back
+a workflows record an operator removed. A record that matches by name, module or
+package is left alone, so a module installed by hand keeps its settings.
+`config_version` is 73 for that migration; the chart copies follow. What it
+costs every install: about 1.7 GB of disk for the kernel (1.64 GB of the 2.6 GB
+environment in the Gateway image, measured), and 175 tokens of every request,
+which leaves a 32K local model 11 tokens of the fixed-request allowance in the
+heaviest composer mode. The critical check now carries the tool in every mode.
+After editing the example, refresh the snapshot with a plain copy that leaves
+out `__pycache__`; `make extension-upgrade` re-runs `uv add`, which appends a
+second, unmarked group entry that Windows would then try to install.
+`uv.lock` is written by a newer uv than CI's pinned 0.11.1 (lock revision 5): a
+re-lock with the pinned version rewrites the revision and moves `boxlite`, so
+re-lock with a current uv, keep unrelated packages where they were, and check
+with the pinned one (`uv lock --check`).
+
+**The first build after an install.** Python compiles a module the first time
+it is imported, and the kernel is thousands of them: on a fresh environment the
+import alone outlasts the build's 20 seconds, and the answer said to simplify
+the part. Three things, in the order they were found to be needed: the worker
+marks the phase it is in, and a build stopped while still loading answers that
+the kernel was loading and to call again (what was compiled stays, so the second
+call is quick); the self-test loads the kernel first, with 90 seconds of its
+own, so `make doctor` warms a new install; and the Gateway image runs that
+self-test once while it is built, after the libraries the kernel links, because
+in a container the compiled files are otherwise lost with the container and
+every start would pay again. Checked on `python:3.12-slim-bookworm` with uv
+0.11.1: the locked install succeeds, and without the libraries the step prints
+its warning and the build goes on. The library step and a passing self-test
+inside the image were not run there (the build sandbox could not reach the
+Debian mirror); both pass on Ubuntu 24.04.
 
 **The decisions, and what was rejected.**
 
@@ -5556,9 +5597,11 @@ allow-list, the limits, the install.
 **Known gaps.** The internet switch does not filter plugin tools at all: an
 extension tool in the default `extensions` group is still offered offline, the
 HTTP-calling examples included. Closing that would also remove the workflow tools
-from offline chats, so it is its own change. The image's library step was
-rehearsed on Ubuntu 24.04 with the real `apt-get`, not built on bookworm. The dev
-image stage (`make docker-start`) does not get the libraries. A pattern of which
+from offline chats, so it is its own change. The dev image stage
+(`make docker-start`) installs the module with everything else and does not get
+the libraries, so there the tool answers that the kernel cannot be loaded. A
+Kubernetes install from the chart has no `plugins:` block and so does not turn
+the module on, as with workflows. A pattern of which
 some instances miss the part still passes unless the holes are declared, since
 the volume changed. An outline nobody used is a note in the answer, not a
 failure: the sloppy idiom `rect(...).vertices().hole(...)` leaves one behind on
@@ -5569,14 +5612,19 @@ the processor backstop and its directory behind. Windows gets neither the
 process-group kill nor the limits.
 
 **On an upstream sync.** The package is fork-only. `internet_access.py`,
-`doctor.py`, `backend/Dockerfile` and the frontend catalog carry additive blocks,
-and `extension-package-check.yml` a 20 minute limit: the job installs the kernel
-and builds real parts.
+`doctor.py`, `backend/Dockerfile` (two blocks: the libraries, the load step) and
+the frontend catalog carry additive blocks, and `extension-package-check.yml` a
+20 minute limit: the job installs the kernel and builds real parts. The bundling
+adds one line each to the `extensions` group and `[tool.uv.sources]` in
+`backend/pyproject.toml`, the lock entries, the `plugins:` record and migration
+73. A sync that touches the example fails `test_bundled_cad_extension.py` until
+the snapshot is refreshed.
 `cadquery` is pinned; a bump owes a pass of the package's kernel tests, which
 check every allow-listed method against the kernel's own signature.
 
 Coverage: the package's tests (`test_interpreter.py`, `test_worker_process.py`,
 `test_build.py`, `test_measure.py`; the last two need the kernel),
-`backend/tests/test_cad_extension.py`, `test_cad_runtime_deps.py`,
+`backend/tests/test_cad_extension.py`, `test_bundled_cad_extension.py`,
+`test_config_upgrade_script.py -k BundledCadPluginDelivery`, `test_cad_runtime_deps.py`,
 `blocking_io/test_cad_extension.py`, `TestCheckCadExtension` in `test_doctor.py`,
 and the CAD case in `test_context_fit_critical.py`.

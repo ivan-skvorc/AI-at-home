@@ -49,6 +49,19 @@ def test_a_failed_unpack_cannot_stop_the_image_everything_else_runs_in():
     assert re.search(r"\)\s*\|\|\s*echo \"WARNING", unpack)
 
 
+def test_the_image_loads_the_kernel_once_at_build_time():
+    # Python compiles the kernel's modules on first import. In a container that work is lost with
+    # the container, so without this step the first build after every start spends its whole time
+    # limit compiling. The step comes after the libraries the kernel links, and cannot fail the build.
+    instructions = _instructions(_runtime_stage())
+    unpack = next(index for index, instruction in enumerate(instructions) if "dpkg-deb -x" in instruction)
+    (warm,) = [index for index, instruction in enumerate(instructions) if "deerflow_extension_cad.selftest" in instruction]
+    assert warm > unpack
+    assert re.search(r"\|\|\s*echo \"WARNING", instructions[warm])
+    copied = next(index for index, instruction in enumerate(_runtime_stage().splitlines()) if instruction.startswith("COPY --from=builder /app/backend"))
+    assert copied < next(index for index, line in enumerate(_runtime_stage().splitlines()) if "deerflow_extension_cad.selftest" in line)
+
+
 def test_the_unpack_follows_the_install_that_brings_libx11():
     # libX11 is the kernel's other system library; it arrives with libgtk-3-0. The
     # instructions are compared, not the text: a comment that names the package is not an install.

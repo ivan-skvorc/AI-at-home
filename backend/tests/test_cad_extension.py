@@ -226,16 +226,34 @@ async def test_a_refused_script_is_reported_with_its_construct_and_line_and_buil
         ({"status": "unavailable", "message": "the CAD kernel could not be loaded: libGL.so.1: cannot open shared object file"}, {}, "Do not call cad_build again", "Fix the script"),
         # Every slot is taken: nothing is wrong with the script.
         ({"status": "busy", "message": "the server is building other parts"}, {}, "same arguments", "Fix the script"),
+        # The first build after an install or update ran out of time loading the kernel.
+        ({"status": "loading", "message": "the CAD kernel was still loading when the time ran out"}, {}, "same arguments", "Fix the script"),
         ({"status": "failed", "line": 3, "operation": "fillet", "message": "fillet() failed"}, {}, "Fix the script", "same arguments"),
     ],
-    ids=["no kernel on the server", "every build slot taken", "a build error"],
+    ids=["no kernel on the server", "every build slot taken", "the kernel still loading", "a build error"],
 )
 async def test_what_to_do_next_follows_the_cause(cad, outputs, monkeypatch, worker_result, arguments, says, not_says):
     answer, _, _ = await _call(cad, outputs, monkeypatch, worker_result, **arguments)
     assert answer["passed"] is False
     assert says in answer["next"] and not_says not in answer["next"]
     # A build that never started leaves nothing behind, not even the script.
-    assert (_files(outputs) == []) is (worker_result["status"] == "busy")
+    assert (_files(outputs) == []) is (worker_result["status"] in ("busy", "loading"))
+
+
+@pytest.mark.asyncio
+async def test_a_kernel_that_never_finishes_loading_does_not_keep_a_model_calling(cad, outputs, monkeypatch):
+    # "Call again" is right for a fresh install, where each attempt leaves more of the kernel compiled.
+    # Where nothing can be kept (a read-only environment), it would be an endless loop.
+    loading = {"status": "loading", "message": "the CAD kernel was still loading when the time ran out"}
+    first, _, _ = await _call(cad, outputs, monkeypatch, loading)
+    second, _, _ = await _call(cad, outputs, monkeypatch, loading)
+    third, _, _ = await _call(cad, outputs, monkeypatch, loading)
+    assert "same arguments" in first["next"] and "same arguments" in second["next"]
+    assert "Do not call cad_build again" in third["next"] and "make doctor" in third["next"]
+    # A build that got past loading clears the count.
+    await _call(cad, outputs, monkeypatch, BUILT)
+    again, _, _ = await _call(cad, outputs, monkeypatch, loading)
+    assert "same arguments" in again["next"]
 
 
 @pytest.mark.asyncio

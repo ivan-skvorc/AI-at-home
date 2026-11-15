@@ -65,6 +65,9 @@ memory-zh = ["deerflow-harness[memory-zh]"]
 # the same locked runtime set without promoting those packages to core deps.
 extensions = [
     "deerflow-extension-workflows ; sys_platform != 'win32'",
+    # Fork: the CAD module ships installed (FORK.md §51). Its worker is POSIX-only
+    # (process group, resource limits), so a Windows `uv sync` skips it.
+    "deerflow-extension-cad ; sys_platform != 'win32'",
 ]
 dev = [
     # Direct SDK use in Claude provider serialization tests.
@@ -127,3 +130,4 @@ members = ["packages/harness", "packages/extension-api"]
 deerflow-harness = { workspace = true }
 deerflow-extension-api = { workspace = true }
 deerflow-extension-workflows = { path = "extensions/sources/deerflow-extension-workflows" }
+deerflow-extension-cad = { path = "extensions/sources/deerflow-extension-cad" }
