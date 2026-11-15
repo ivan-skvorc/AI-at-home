@@ -33,19 +33,36 @@ class GatewaySearchCorpus:
         self.run_manager = run_manager
         self.user_id = user_id
         self.request = request
+        # Fork (§18): Gaslight-mode edit versions stay in the corpus, because an
+        # edited message exists only in its version, but thread hits list a
+        # conversation once, as its root, which opens the active version.
+        self.edit_version_ids: set[str] = set()
+        self.active_edit_versions: dict[str, str] = {}
 
     async def threads(self) -> tuple[SearchThread, ...]:
         result = []
         offset = 0
+        edit_versions, active_versions = set(), {}
         while True:
             rows = await self.thread_store.search(user_id=self.user_id, limit=200, offset=offset)
             for row in rows:
                 metadata = row.get("metadata") or {}
                 if metadata.get("deerflow_sidecar") is True:
                     continue
+                # Fork (§18): metadata is client-writable, so only a non-empty
+                # string is a candidate for the active version.
+                if metadata.get("deerflow_edit_version") is True:
+                    edit_versions.add(row["thread_id"])
+                elif isinstance(active := metadata.get("deerflow_edit_active_version"), str) and active:
+                    active_versions[row["thread_id"]] = active
                 result.append(self.project_thread(row))
             offset += len(rows)
             if len(rows) < 200:
+                # Fork (§18): a root opens only a version this user can see; the
+                # version may sit on a later page than its root.
+                visible = {thread.thread_id for thread in result}
+                self.edit_version_ids = edit_versions
+                self.active_edit_versions = {root: active for root, active in active_versions.items() if active in visible}
                 return tuple(result)
 
     @staticmethod

@@ -244,6 +244,44 @@ async def test_http_search_and_jump_are_owner_bound_and_keep_title_contract(inde
         assert not (await client.post("/api/search", json={"query": "报告"})).json()["items"]
 
 
+@pytest.mark.anyio
+async def test_edit_versions_list_once_as_their_root_and_open_the_active_version(index):
+    # Fork (§18): a Gaslight-mode edit version is part of its root's
+    # conversation, so the palette lists the family once, as the sidebar does,
+    # and the root opens the version the user last switched to. The edited text
+    # exists only in the version, so its message hits stay.
+    from types import SimpleNamespace
+
+    from _router_auth_helpers import make_authed_test_app
+    from httpx import ASGITransport, AsyncClient
+
+    from app.gateway.auth.models import User
+    from app.gateway.routers import search
+
+    user = User(email="versions@example.com")
+    app = make_authed_test_app(user_factory=lambda: user, bind_current_user=True)
+    app.include_router(search.router)
+    app.state.thread_store = MemoryThreadMetaStore(InMemoryStore())
+    app.state.run_event_store = MemoryRunEventStore()
+    app.state.run_manager = manager()
+    app.state.extensions = SimpleNamespace(workspace_search_providers=(("test", index),))
+    owner = str(user.id)
+    await app.state.thread_store.create("root", user_id=owner, display_name="Trip plan", metadata={"deerflow_edit_active_version": "v2"})
+    await app.state.thread_store.create("v2", user_id=owner, display_name="Trip plan (2)", metadata={"deerflow_edit_version": True, "edit_root_thread_id": "root"})
+    await app.state.thread_store.create("dangling", user_id=owner, display_name="Trip notes", metadata={"deerflow_edit_active_version": "foreign"})
+    await app.state.thread_store.create("foreign", user_id="bob", display_name="Bob's trip")
+    await put(app.state.run_event_store, "root", "original", "An itinerary for Osaka")
+    await put(app.state.run_event_store, "v2", "edited", "Trip plan for Kyoto")
+    await put(app.state.run_event_store, "dangling", "notes", "Packing list")
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        recent = (await client.post("/api/search", json={"query": ""})).json()["items"]
+        assert sorted(h["thread_id"] for h in recent) == ["dangling", "root"]
+        assert {h["thread_id"]: h["open_thread_id"] for h in recent} == {"dangling": "dangling", "root": "v2"}
+        hits = (await client.post("/api/search", json={"query": "Trip plan"})).json()["items"]
+        assert [(h["type"], h["thread_id"]) for h in hits] == [("thread", "root"), ("message", "v2")]
+        assert "open_thread_id" not in hits[1]
+
+
 def test_provider_registration_rolls_back_and_rejects_duplicates():
     from deerflow.extensions.registry import ExtensionRegistry
 

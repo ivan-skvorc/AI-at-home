@@ -97,11 +97,14 @@ async def search_workspace(body: WorkspaceSearchRequest, request: Request):
             title = thread.title.casefold()
             return (2 if query and title == query.casefold() else 1, thread.updated_at, thread.thread_id)
 
-        matches = sorted((t for t in threads if not query or query.casefold() in t.title.casefold()), key=key, reverse=True)
+        # Fork (§18): hidden edit versions are not separate conversations; the
+        # root hit opens the version the user last switched to, as the sidebar
+        # entry does. Message hits keep the version that holds the message.
+        matches = sorted((t for t in threads if t.thread_id not in corpus.edit_version_ids and (not query or query.casefold() in t.title.casefold())), key=key, reverse=True)
         if position is not None:
             matches = [t for t in matches if key(t) < tuple(position)]
         selected = matches[: body.limit]
-        response["items"].extend(thread_hit(t) for t in selected)
+        response["items"].extend({**thread_hit(t), "open_thread_id": corpus.active_edit_versions.get(t.thread_id, t.thread_id)} for t in selected)
         if len(matches) > body.limit:
             response["cursor"] = _encode_cursor(scope, "thread", key(selected[-1]))
             return response

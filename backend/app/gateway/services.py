@@ -2592,7 +2592,9 @@ async def start_run(
     # admission and in-run enforcement agree on the same number. Inactive
     # (feature off / nothing priced / no SQL backend) is always "do not
     # enforce", never "block everything".
-    spend_budget_status = await resolve_run_spend_budget(request, owner_user_id=owner_user_id)
+    # Fork: pass the run's snapshot so admission checks the config the run
+    # executes under and never reloads it on the event loop (FORK.md §10).
+    spend_budget_status = await resolve_run_spend_budget(request, owner_user_id=owner_user_id, app_config=app_config)
     exhausted = spend_budget_status.exceeded
     if exhausted is not None:
         raise HTTPException(status_code=402, detail=exhausted_message(exhausted, spend_budget_status.currency))

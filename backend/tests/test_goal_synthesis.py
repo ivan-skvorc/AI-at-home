@@ -1,7 +1,7 @@
 """Tests for goal synthesis from conversation (``/goal from-chat``).
 
 The synthesis module is harness-level and LLM-shaped: every test mocks
-``run_oneshot_llm`` so the suite stays offline. The pins here are the
+``run_oneshot_llm_with_usage`` so the suite stays offline. The pins here are the
 contracts the Gateway route and the IM manager rely on:
 
 * the context builder keeps the summary plus the newest visible messages
@@ -36,6 +36,7 @@ from deerflow.runtime.goal_synthesis import (
     synthesize_goal_objective,
 )
 from deerflow.utils.goal_objective import MAX_GOAL_OBJECTIVE_CHARS
+from deerflow.utils.oneshot_llm import OneshotResult
 
 _PII = PiiRedactionConfig(enabled=True, token_secret="unit-test-deployment-secret-0123456789")
 _PII_CONFIG = AppConfig(sandbox=SandboxConfig(use="test"), pii_redaction=_PII)
@@ -53,8 +54,10 @@ _INVOICE_MESSAGES = [
 
 
 def _mock_llm(monkeypatch, response_text: str) -> AsyncMock:
-    mock = AsyncMock(return_value=response_text)
-    monkeypatch.setattr(goal_synthesis, "run_oneshot_llm", mock)
+    # Fork (FORK.md §7): synthesis calls the usage-returning helper so it can
+    # bill the thread; usage=None records nothing here.
+    mock = AsyncMock(return_value=OneshotResult(text=response_text, usage=None, model_name=None))
+    monkeypatch.setattr(goal_synthesis, "run_oneshot_llm_with_usage", mock)
     return mock
 
 
@@ -346,7 +349,7 @@ async def test_synthesize_unusable_objective_raises_synthesis_error(monkeypatch,
 @pytest.mark.asyncio
 async def test_synthesize_llm_failure_propagates_as_synthesis_error(monkeypatch):
     mock = AsyncMock(side_effect=RuntimeError("provider down"))
-    monkeypatch.setattr(goal_synthesis, "run_oneshot_llm", mock)
+    monkeypatch.setattr(goal_synthesis, "run_oneshot_llm_with_usage", mock)
     with pytest.raises(GoalSynthesisError):
         await synthesize_goal_objective(context="c", guidance="", app_config=_PLAIN_CONFIG)
 

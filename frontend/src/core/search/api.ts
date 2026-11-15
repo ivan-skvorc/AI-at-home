@@ -13,6 +13,8 @@ export type WorkspaceSearchHit = {
   archived: boolean;
   updated_at: string;
   project_id: string | null;
+  // Fork: the edit version a root thread hit opens (§18).
+  open_thread_id?: string;
   message_id?: string;
   seq?: number;
   role?: "user" | "assistant";
@@ -52,7 +54,14 @@ export async function searchWorkspace(
 }
 
 export function pathOfSearchHit(hit: WorkspaceSearchHit): string {
-  const path = pathOfThread(hit.thread_id, {
+  // Fork: a conversation hit opens the edit version the user last switched to,
+  // as its sidebar entry does; a message hit stays on the version that holds
+  // the message (§18).
+  const threadId =
+    hit.type === "thread"
+      ? (hit.open_thread_id ?? hit.thread_id)
+      : hit.thread_id;
+  const path = pathOfThread(threadId, {
     agent_name: hit.agent_name ?? undefined,
   });
   if (hit.type === "thread" || !hit.message_id) return path;

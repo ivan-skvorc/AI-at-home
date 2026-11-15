@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -83,11 +84,16 @@ async def _start(agent_runs, thread_id: str, **kwargs) -> None:
     assert (await agent_runs.wait(thread_id=thread, run_id=run.run_id, timeout=5)).status == "success"
 
 
-async def test_run_start_reads_the_config_off_the_loop(runs) -> None:
+async def test_run_start_reads_the_config_off_the_loop(runs, caplog: pytest.LogCaptureFixture) -> None:
     agent_runs, built, _ = runs
-    await _start(agent_runs, "config-read-plain")
+    with caplog.at_level(logging.WARNING, logger="app.gateway.spend_budget"):
+        await _start(agent_runs, "config-read-plain")
 
     assert {config["recursion_limit"] for config in built} == {37}
+    # Fork: the spend cap admission (FORK.md §10) degrades to "not enforcing"
+    # on any error, so a BlockingError from an inline config read there would
+    # be logged and swallowed rather than fail this anchor.
+    assert not [record for record in caplog.records if "spend budget: failed to resolve" in record.getMessage()]
 
 
 async def test_run_start_with_a_model_reads_the_allowlist_off_the_loop(runs) -> None:

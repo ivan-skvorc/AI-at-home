@@ -72,6 +72,12 @@ async def capture_share(request: Request, thread_id: str, expected_checkpoint: s
     record = await get_thread_store(request).get(thread_id, user_id=owner)
     if record is None:
         raise HTTPException(404, "Thread not found")
+    # Fork: shared-workspace mode (FORK.md §6) lets any login open any thread,
+    # but a share resolves only while owner_id is the row's user_id, so another
+    # login's (or a NULL-owner legacy) thread would get a dead link. A no-op in
+    # multi-user mode, where get() above already filtered by owner.
+    if record.get("user_id") != owner:
+        raise HTTPException(403, "Only the conversation's owner can share it")
     accessor, config = await build_thread_checkpoint_state_accessor(request, thread_id=thread_id, fail_closed=True)
     state = await accessor.aget(config)
     checkpoint_id = (state.config or {}).get("configurable", {}).get("checkpoint_id")

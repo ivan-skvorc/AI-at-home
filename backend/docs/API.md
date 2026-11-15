@@ -2322,7 +2322,10 @@ threads. Blank queries return recent titles. The response is
 `{items, cursor, indexing, messages_available}`. Each item carries `type`,
 `thread_id`, `title`, `agent_name`, `archived`, `project_id`, `updated_at` and
 `snippet` (plain-text `{text, matched?}` segments). Message hits also carry the
-canonical `message_id`, thread-global `seq` and `role`. Preserve the query and
+canonical `message_id`, thread-global `seq` and `role`. Thread hits also carry
+`open_thread_id` (fork, FORK.md §18): the root's active Gaslight edit version when
+the caller can see it, otherwise `thread_id`. Hidden edit-version threads are not
+listed as thread hits; their message hits are. Preserve the query and
 filters with each opaque cursor; invalid cursors return 400. When `indexing` is
 true, retry the current page until historical backfill completes. Provider errors
 return 503; without a provider, title search stays available.

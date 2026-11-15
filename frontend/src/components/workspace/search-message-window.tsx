@@ -21,7 +21,15 @@ export function SearchableMessageList(
   props: ComponentProps<typeof MessageList>,
 ) {
   const params = useSearchParams();
-  const messageId = params.get("message");
+  const pathname = usePathname();
+  // Fork: every live chat slot (FORK.md §9) reads this page-wide URL, so only
+  // the routed thread opens the window. A hidden slot that reacted too would
+  // fetch another thread's message and remount its own list, losing its state.
+  const routeThreadId = decodeURIComponent(
+    pathname?.split("/").filter(Boolean).at(-1) ?? "",
+  );
+  const messageId =
+    routeThreadId === props.threadId ? params.get("message") : null;
   const seq = Number(params.get("message_seq"));
   if (!messageId) return <MessageList {...props} />;
   return (

@@ -14,7 +14,7 @@ import pytest_asyncio
 from fastapi import FastAPI, HTTPException, Request
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langgraph.checkpoint.memory import InMemorySaver
-from sqlalchemy import text
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from support.postgres import asyncpg_test_url
 
@@ -25,12 +25,14 @@ from app.gateway.auth_middleware import AuthMiddleware, _is_public
 from app.gateway.csrf_middleware import CSRFMiddleware
 from app.gateway.routers import shares, threads
 from app.gateway.services import build_checkpoint_state_mutation_accessor
+from deerflow.config import runtime_settings
 from deerflow.config.authorization_config import AuthorizationConfig
 from deerflow.config.paths import Paths
 from deerflow.persistence.base import Base
 from deerflow.persistence.postgres_schema import build_asyncpg_connect_args
 from deerflow.persistence.run.sql import RunRepository
 from deerflow.persistence.thread_meta import ThreadMetaRepository
+from deerflow.persistence.thread_shares.model import ThreadShareRow
 from deerflow.runtime import ConflictError, RunManager, ThreadOperationKind
 from deerflow.runtime.events.store.db import DbRunEventStore
 from deerflow.runtime.events.store.memory import MemoryRunEventStore
@@ -174,6 +176,28 @@ async def test_share_mutations_require_owner_and_csrf(share_app):
     assert (await ctx.client.get(public)).status_code == 404
     assert (await ctx.client.get(public + "/artifacts/report.html")).status_code == 404
     assert (await ctx.client.post(public + "/fork", json={"request_id": str(uuid4())}, headers=headers("bob"))).status_code == 404
+
+
+async def test_shared_workspace_refuses_sharing_another_logins_thread(share_app, monkeypatch, tmp_path):
+    # Fork (FORK.md §6): with multi-user mode off any login can open any thread,
+    # but a public share only resolves while its owner_id is the thread row's
+    # user_id, so a non-owner's share would be a dead link (or a 422 from the
+    # wrong artifact bucket). It is refused before anything is stored.
+    ctx = share_app
+    monkeypatch.setattr(runtime_settings, "_settings_path", lambda: tmp_path / "runtime_settings.json")
+    runtime_settings.reset_cache_for_tests()
+    try:
+        runtime_settings.set_multi_user_mode(False)
+        await ctx.app.state.thread_store.create("legacy", user_id=None)
+        for thread_id in ("source", "legacy"):
+            response = await ctx.client.post(f"/api/threads/{thread_id}/shares", json={}, headers=headers("bob"))
+            assert response.status_code == 403, response.text
+        async with ctx.factory() as session:
+            assert await session.scalar(select(func.count()).select_from(ThreadShareRow)) == 0
+        share = await make_share(ctx)
+        assert (await ctx.client.get(f"/api/shares/{share['token']}")).status_code == 200
+    finally:
+        runtime_settings.reset_cache_for_tests()
 
 
 async def test_pdf_preview_uses_browser_viewer_without_sandbox(share_app):

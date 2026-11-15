@@ -196,7 +196,9 @@ async def resolve_spend_budget_status(
     if app_config is None:
         from deerflow.config import get_app_config
 
-        app_config = get_app_config()
+        # Loading the live config stats and hashes config.yaml and reparses it
+        # after an edit, so it runs in a worker, never on the event loop.
+        app_config = await asyncio.to_thread(get_app_config)
     # Settings → Run limits may replace the YAML cap (FORK.md §46). Reading the
     # override stats a file, so keep it off the event loop.
     config: SpendBudgetConfig = await asyncio.to_thread(effective_spend_budget, app_config.spend_budget)
@@ -272,24 +274,30 @@ async def resolve_spend_budget_status(
     )
 
 
-async def resolve_run_spend_budget(request, *, owner_user_id: str | None) -> SpendBudgetStatus:
+async def resolve_run_spend_budget(request, *, owner_user_id: str | None, app_config: AppConfig | None = None) -> SpendBudgetStatus:
     """Spend-cap status for a run-creation request. Never raises.
 
     A failure to resolve the budget (a database hiccup, a malformed config) must
     not take down run creation: a broken cost counter refusing every message is
     worse than a cap that misses one turn, so this degrades to "inactive".
+
+    ``start_run`` passes the run's own config snapshot, so admission checks the
+    config the run executes under; without one the live config is loaded in a
+    worker.
     """
     from app.gateway.deps import get_current_user
 
     try:
         user_id = owner_user_id or await get_current_user(request)
-        return await resolve_spend_budget_status(user_id=user_id)
+        return await resolve_spend_budget_status(app_config=app_config, user_id=user_id)
     except Exception:  # noqa: BLE001 - defensive: the cap must not break run admission
         logger.warning("spend budget: failed to resolve status for run admission; not enforcing for this run", exc_info=True)
         from deerflow.config import get_app_config
 
         try:
-            config = get_app_config().spend_budget
+            if app_config is None:
+                app_config = await asyncio.to_thread(get_app_config)
+            config = app_config.spend_budget
         except Exception:  # noqa: BLE001 - config already failed; fall back to defaults
             config = SpendBudgetConfig()
         return inactive_status(config, DISABLED_NOT_CONFIGURED)

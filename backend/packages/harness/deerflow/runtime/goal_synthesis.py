@@ -25,11 +25,12 @@ from collections.abc import Mapping
 from typing import Any
 
 from deerflow.agents.human_input import read_human_input_response
+from deerflow.runtime.aux_usage import AUX_CATEGORY_GOAL, arecord_aux_usage_metadata
 from deerflow.runtime.goal import GOAL_CARD_ANSWER_PREFIX, _additional_kwargs, _is_visible_message, _message_type
 from deerflow.utils.goal_objective import normalize_goal_objective
 from deerflow.utils.llm_text import strip_markdown_code_fence, strip_think_blocks_outside_json_strings
 from deerflow.utils.messages import message_to_text
-from deerflow.utils.oneshot_llm import run_oneshot_llm
+from deerflow.utils.oneshot_llm import run_oneshot_llm_with_usage
 
 logger = logging.getLogger(__name__)
 
@@ -252,7 +253,8 @@ async def synthesize_goal_objective(
     user_parts.append("Draft the goal objective now.")
 
     try:
-        raw = await run_oneshot_llm(
+        # Fork (FORK.md §7): the usage-returning variant, so the call is billed below.
+        result = await run_oneshot_llm_with_usage(
             system_instruction=_SYSTEM_INSTRUCTION,
             user_content="\n\n".join(user_parts),
             run_name=_SYNTHESIS_RUN_NAME,
@@ -262,4 +264,12 @@ async def synthesize_goal_objective(
         )
     except Exception as exc:
         raise GoalSynthesisError("Goal synthesis model call failed.") from exc
-    return _parse_synthesis_response(raw)
+    # Fork (FORK.md §7, §10): this call is not a graph run, so unless it is
+    # recorded here the conversation's cost header and the spend cap never see
+    # it. Recorded before parsing: an unclear or malformed verdict was paid for
+    # too. Best-effort, so a broken counter never fails the synthesis.
+    try:
+        await arecord_aux_usage_metadata(thread_id, AUX_CATEGORY_GOAL, model_name=result.model_name, usage=result.usage)
+    except Exception:
+        logger.warning("Failed to record goal synthesis aux usage", exc_info=True)
+    return _parse_synthesis_response(result.text)
