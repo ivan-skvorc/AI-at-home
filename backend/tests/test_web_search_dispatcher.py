@@ -15,6 +15,7 @@ queries off the machine — silently, with the suite still green.
 from __future__ import annotations
 
 import json
+import types
 
 import pytest
 
@@ -202,6 +203,28 @@ class TestFallbackKeyGate:
         assert tavily_tools.tavily_api_key_present() is False
         monkeypatch.setenv("TAVILY_API_KEY", "tvly-something")
         assert tavily_tools.tavily_api_key_present() is True
+
+    @pytest.mark.parametrize("source", ["env", "api_key", "fallback_api_key"])
+    def test_the_env_example_placeholder_is_not_a_key(self, monkeypatch, source):
+        """An install copied from .env.example still holds `your-tavily-api-key`.
+
+        Reading it as a key turns the fallback on and sends the placeholder to
+        Tavily, which answers 401 on every search the primary could not serve.
+        """
+        import deerflow.community.tavily.tools as tavily_tools
+
+        placeholder = "your-tavily-api-key"
+        extras = {} if source == "env" else {source: placeholder}
+
+        class _AppConfig:
+            def get_tool_config(self, name):
+                return types.SimpleNamespace(model_extra=extras)
+
+        monkeypatch.setattr(tavily_tools, "get_app_config", lambda: _AppConfig())
+        if source == "env":
+            monkeypatch.setenv("TAVILY_API_KEY", placeholder)
+        assert tavily_tools.resolve_tavily_api_key() is None
+        assert tavily_tools.tavily_api_key_present() is False
 
     def test_the_key_gate_survives_an_unresolvable_config(self, monkeypatch):
         """A config error must not take down web_search via the fallback gate.

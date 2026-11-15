@@ -7,6 +7,7 @@ router for thread records.
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from typing import Any
 
@@ -35,7 +36,7 @@ class MemoryThreadMetaStore(ThreadMetaStore):
         method_name: str,
     ) -> dict | None:
         """Fetch a record and verify ownership. Returns a mutable copy, or None."""
-        resolved = resolve_owner_scope(user_id, method_name=method_name)
+        resolved = await asyncio.to_thread(resolve_owner_scope, user_id, method_name=method_name)
         item = await self._store.aget(THREADS_NS, thread_id)
         if item is None:
             return None
@@ -121,7 +122,7 @@ class MemoryThreadMetaStore(ThreadMetaStore):
         it can mirror SQL's pinned-first ordering. Use the SQL store for
         scalable paginated I/O.
         """
-        resolved_user_id = resolve_owner_scope(user_id, method_name="MemoryThreadMetaStore.search")
+        resolved_user_id = await asyncio.to_thread(resolve_owner_scope, user_id, method_name="MemoryThreadMetaStore.search")
         if not isinstance(project_id, _ProjectFilterUnset) and project_id is not None:
             # Memory mode has no projects backend: no thread can be a member.
             return []
@@ -167,7 +168,7 @@ class MemoryThreadMetaStore(ThreadMetaStore):
             return True
         # Multi-user mode OFF: one shared workspace — any existing thread is
         # accessible regardless of owner (require_existing still holds above).
-        if not is_multi_user_mode_enabled():
+        if not await asyncio.to_thread(is_multi_user_mode_enabled):
             return True
         return record_user_id == user_id
 

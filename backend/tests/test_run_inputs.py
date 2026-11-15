@@ -360,7 +360,7 @@ async def test_a_queued_input_keeps_its_plugin_options(input_store, monkeypatch)
     manager = RunManager(store=input_store)
     monkeypatch.setattr(run_inputs, "get_run_manager", lambda _: manager)
     monkeypatch.setattr(run_inputs, "get_current_user", current_user)
-    monkeypatch.setattr(run_inputs, "get_run_context", lambda _: SimpleNamespace(agent_runs=object()))
+    monkeypatch.setattr(run_inputs, "get_agent_runs", lambda _: object())
     await RunInputs(input_store, "run", USER_ID, "worker").reopen()
 
     options = {"community.workflows": {"mode": "double_ultracode", "limits": {"max_agents": 40}}}

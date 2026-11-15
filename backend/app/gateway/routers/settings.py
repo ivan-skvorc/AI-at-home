@@ -68,7 +68,7 @@ class MultiUserModeUpdate(BaseModel):
 @router.get("/multi-user-mode", response_model=MultiUserModeResponse)
 async def get_multi_user_mode_setting() -> MultiUserModeResponse:
     """Return whether per-user thread isolation is active (default true)."""
-    return MultiUserModeResponse(multi_user_mode=is_multi_user_mode_enabled())
+    return MultiUserModeResponse(multi_user_mode=await asyncio.to_thread(is_multi_user_mode_enabled))
 
 
 @router.put("/multi-user-mode", response_model=MultiUserModeResponse)
@@ -81,7 +81,7 @@ async def update_multi_user_mode_setting(body: MultiUserModeUpdate, request: Req
     """
     await require_admin_user(request, detail="Only an admin can change multi-user mode.")
     await asyncio.to_thread(set_multi_user_mode, body.enabled)
-    return MultiUserModeResponse(multi_user_mode=is_multi_user_mode_enabled())
+    return MultiUserModeResponse(multi_user_mode=await asyncio.to_thread(is_multi_user_mode_enabled))
 
 
 class ChatFolder(BaseModel):

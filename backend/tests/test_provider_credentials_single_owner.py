@@ -147,7 +147,10 @@ def test_placeholders_are_exactly_the_values_env_example_ships() -> None:
     template = (COMMUNITY_ROOT.parents[4] / ".env.example").read_text(encoding="utf-8")
     shipped = set(re.findall(r"=(your-[a-z0-9-]+)", template))
     assert shipped, "found no example values in .env.example"
-    assert shipped == owner.ENV_TEMPLATE_PLACEHOLDERS
+    # Fork: the template shows a `github_pat_` example where upstream ships
+    # `your-github-token`; the set keeps that value for installs copied from an
+    # older template. Every other value must match exactly.
+    assert shipped | {"your-github-token"} == owner.ENV_TEMPLATE_PLACEHOLDERS
     for value in shipped:
         assert owner.is_template_placeholder(value)
         assert owner.resolve_api_key(value) is None

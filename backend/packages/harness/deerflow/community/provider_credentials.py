@@ -34,11 +34,16 @@ URL_USERINFO_ERROR = "base_url must not contain username or password information
 # that guesses at the shape would also drop a token an operator chose, such as a
 # self-hosted Browserless ``TOKEN`` named ``your-review-team-token``.
 # ``tests/test_provider_credentials_single_owner.py`` keeps this set equal to the
-# template's values.
+# template's values. Fork: the template also ships the fork's model-provider keys
+# (Anthropic, DashScope, Mistral, Moonshot, OpenRouter, xAI, Z.ai), and the set
+# keeps upstream's ``your-github-token`` for installs copied from an older
+# template, although the fork's template now shows a ``github_pat_`` example.
 ENV_TEMPLATE_PLACEHOLDERS = frozenset(
     {
+        "your-anthropic-api-key",
         "your-anthropic-auth-token",
         "your-claude-code-oauth-token",
+        "your-dashscope-api-key",
         "your-deepseek-api-key",
         "your-dingtalk-client-id",
         "your-dingtalk-client-secret",
@@ -57,8 +62,11 @@ ENV_TEMPLATE_PLACEHOLDERS = frozenset(
         "your-langsmith-api-key",
         "your-langsmith-project",
         "your-minimax-api-key",
+        "your-mistral-api-key",
+        "your-moonshot-api-key",
         "your-novita-api-key",
         "your-openai-api-key",
+        "your-openrouter-api-key",
         "your-openviking-user-api-key",
         "your-opper-api-key",
         "your-provisioner-api-key",
@@ -78,6 +86,8 @@ ENV_TEMPLATE_PLACEHOLDERS = frozenset(
         "your-webz-api-key",
         "your-wecom-bot-id",
         "your-wecom-bot-secret",
+        "your-xai-api-key",
+        "your-zai-api-key",
     }
 )
 

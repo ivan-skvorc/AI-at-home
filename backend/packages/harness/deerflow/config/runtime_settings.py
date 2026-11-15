@@ -146,6 +146,10 @@ def resolve_owner_scope(value: Any, *, method_name: str = "repository read") -> 
     clause / bypass ownership check" value — so shared-workspace reads see every
     conversation. Write/stamp paths must keep calling :func:`resolve_user_id`
     directly so new rows still record their real owner.
+
+    It stats (and after a change re-reads) ``runtime_settings.json``, so a
+    coroutine calls it, and :func:`is_multi_user_mode_enabled`, through
+    ``asyncio.to_thread`` (``tests/blocking_io/test_run_start_config_reads.py``).
     """
     if not is_multi_user_mode_enabled():
         return None

@@ -282,6 +282,16 @@ once you know to look. The 2026-09-09 sync hit all three at once:
   (so Full in one chat grants nothing in another), pinned by
   `thread-context-isolation.dom.test.ts`. On each sync, grep upstream's diff for new `context`
   keys a composer control edits.
+- **Upstream claiming a version or a registry the fork had already filled.** The 2026-11-15
+  sync hit three, none with a conflict. Its extension API 0.2.12 is workspace search, the same
+  number the fork had given `ToolContext.write_output` (§50), so the fork's floor moved to
+  0.2.13. Its `ENV_TEMPLATE_PLACEHOLDERS` must equal `.env.example`'s `your-...` values, and the
+  fork's template ships seven more (model-provider keys); the fork's Tavily fallback gate (§39)
+  also read `TAVILY_API_KEY` raw, so an install copied from the template turned the fallback on
+  with the placeholder (`test_web_search_dispatcher.py::TestFallbackKeyGate::test_the_env_example_placeholder_is_not_a_key`).
+  And its new strict event-loop tests drive run start through the thread-metadata store, where the
+  fork's multi-user mode (§6) stat'ed a file inline. On each sync, grep upstream's diff for a
+  bumped `API_VERSION` and for new `tests/blocking_io/` files.
 
 **It also runs itself weekly.** `.github/workflows/upstream-sync.yml` fetches
 upstream every Monday, merges (never rebases) onto a dated
@@ -1012,6 +1022,8 @@ Upstream scopes every conversation to an owner `user_id`, so each login only see
 - **Where it lives.** Settings → Account, as a switch (admin-only; in passwordless mode the built-in `default` user is admin). Turning it OFF pops a confirmation explaining it will combine all histories; turning it back ON is immediate and restores isolation. It is a **server-wide** setting (not a per-browser preference) — that's what makes it actually merge phone + PC — persisted as JSON under the DeerFlow home dir (`runtime_settings.json`), read hot (no restart), never touching the operator's `config.yaml`.
 - **How it's wired.** `deerflow/config/runtime_settings.py` owns the setting plus `resolve_owner_scope()` — a read/access resolver that returns `None` (no owner filter) when the mode is OFF and otherwise defers to the normal `resolve_user_id`. The thread-metadata store (`search`/`get`/`check_access`) and run-store read helpers use it, so the sidebar lists everything and any thread can be opened/continued; `check_access` returning True covers every `owner_check` route guard in one place. **Writes still stamp the real owner**, so re-enabling isolation cleanly restores each login's own view. Gateway `GET`/`PUT /api/settings/multi-user-mode` reads/toggles it (PUT admin-gated).
 - **Security.** With it OFF, anyone who can reach the server sees all conversations — the same trust model as passwordless. Leave it ON on any shared/public deployment.
+
+- **Off the event loop.** Reading the mode stats `runtime_settings.json` (and re-reads it after a change, so a sibling worker's toggle is seen), so the async repositories call `resolve_owner_scope` and `is_multi_user_mode_enabled` through `asyncio.to_thread`. Upstream's strict gate in `tests/blocking_io/test_run_start_config_reads.py` and `test_goal_from_chat.py` fails on any inline call.
 
 Pinned by `backend/tests/test_multi_user_mode.py` (setting round-trip, owner-scope bypass, thread isolation ON vs OFF, admin-gated API) and `frontend/tests/unit/core/settings/multi-user-mode.test.ts`.
 
@@ -4239,7 +4251,8 @@ makes that change.
 
 **A key-bearing backend is inert without its key, in either slot.**
 `_backend_is_available` asks the provider, and Tavily answers from tool config
-or `TAVILY_API_KEY`. In the *fallback* slot that means a stack naming
+or `TAVILY_API_KEY`, each through `resolve_api_key`, so the `.env.example`
+placeholder counts as no key. In the *fallback* slot that means a stack naming
 `fallback: tavily` without a key behaves as if the fallback were absent: it is
 skipped and **the primary's own failure is reported verbatim**, because a Tavily
 credentials error would bury the failure the user actually needs to read. That
