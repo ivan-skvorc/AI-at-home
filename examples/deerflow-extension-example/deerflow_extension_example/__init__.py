@@ -19,8 +19,8 @@ from deerflow_extension_example.plugin import (
 __all__ = ["install"]
 
 
-# 0.2.12 is the first API whose ToolContext can write a file into a conversation.
-@extension(api="0.2.12", name="example")
+# 0.2.13 is the first API whose ToolContext can write a file into a conversation.
+@extension(api="0.2.13", name="example")
 def install(registry: ExtensionRegistry, config: Mapping[str, Any]) -> None:
     """Register one middleware, task lifecycle, system-model observer, service, router, and plugin tool."""
     if config.get("enabled", True) is False:

@@ -85,10 +85,10 @@ def _files(outputs):
 
 def test_an_older_host_refuses_the_module_and_names_the_api_it_needs(monkeypatch):
     monkeypatch.syspath_prepend(str(PACKAGE))
-    monkeypatch.setattr("deerflow.extensions.loader.API_VERSION", "0.2.11")
+    monkeypatch.setattr("deerflow.extensions.loader.API_VERSION", "0.2.12")
     loaded, diagnostics = load_extensions([ExtensionSpec(use="deerflow_extension_cad:install", config={})])
     assert not loaded.plugins
-    assert "requires extension-api 0.2.12, host provides 0.2.11" in diagnostics[0].message
+    assert "requires extension-api 0.2.13, host provides 0.2.12" in diagnostics[0].message
 
 
 def test_loading_the_module_registers_one_tool_and_does_not_load_the_kernel(cad):

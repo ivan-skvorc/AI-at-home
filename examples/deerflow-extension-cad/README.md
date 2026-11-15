@@ -18,7 +18,7 @@ works with the conversation's internet switch off.
 written only when every check passed. A STEP file listed in a `cad_build` answer
 therefore means a part that passed.
 
-It depends on the public `deerflow-extension-api` contract (0.2.12 or newer) and
+It depends on the public `deerflow-extension-api` contract (0.2.13 or newer) and
 on `cadquery` 2.8.0, pinned. It never imports `deerflow.*` or `app.*`.
 
 ## What you get

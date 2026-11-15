@@ -33,6 +33,7 @@ class FakeRegistry:
     def __init__(self) -> None:
         self.plugins: list[Any] = []
         self.knowledge_providers: list[tuple[str, Any]] = []
+        self.workspace_search_providers: list[Any] = []
         self.middleware_contributors: list[Any] = []
         self.task_lifecycle_contributors: list[Any] = []
         self.system_model_observers: list[Any] = []
@@ -47,6 +48,10 @@ class FakeRegistry:
 
     def knowledge_provider(self, name: str, provider: Any) -> bool:
         self.knowledge_providers.append((name, provider))
+        return True
+
+    def workspace_search(self, provider: Any) -> bool:
+        self.workspace_search_providers.append(provider)
         return True
 
     def middlewares(self, contributor: Any) -> None:
@@ -96,9 +101,10 @@ def test_install_registers_the_six_demonstrated_contribution_kinds() -> None:
     assert registry.agent_assembly_observers == []
     assert registry.context_compaction_observers == []
     assert registry.knowledge_providers == []
+    assert registry.workspace_search_providers == []
     assert [(plugin.namespace, plugin.enabled, [tool.name for tool in plugin.tools]) for plugin in registry.plugins] == [("example.notes", True, ["save_note"])]
     assert [route.path for route in registry.contributed_routers[0].routes] == ["/api/extension-example/stats"]
-    assert install.__deerflow_api__ == "0.2.12"
+    assert install.__deerflow_api__ == "0.2.13"
     assert install.__deerflow_name__ == "example"
 
 

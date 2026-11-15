@@ -12,7 +12,7 @@ This section accumulates work toward the **2.3.0** milestone
 
 ### Added
 - **cad:** A CAD module, `examples/deerflow-extension-cad`, bundled and on by default on Linux (x86-64 and arm64, glibc 2.31 or newer) and Apple-silicon Macs (about 1.7 GB with its geometry kernel; `make extension-disable NAME=cad` turns it off). Windows, Intel Macs and older Linux hosts install everything else and go without it. A new install gets it from `config.example.yaml`; an existing one gets its `plugins:` record once from config migration 73 on the next update, and `config_version` is now 73. That migration rewrites `config.yaml` without its comments and keeps the original as `config.yaml.bak`. If you installed the module by hand before, `git pull` stops on your local copy; clear it first with `git checkout -- backend/pyproject.toml backend/uv.lock` and `rm -rf backend/extensions/sources/deerflow-extension-cad`, then pull. Your `plugins:` record is kept. Its one tool, `cad_build`, turns a short CadQuery script into STEP, STL and GLB files in the conversation's outputs, on any model, on the default sandbox and with the internet switch off. **The script is read, never run:** an interpreter performs an allow-list of 46 operations in a child process and refuses everything else with its line. The tool measures the written STEP and decides pass or fail against the expected bounding box, volume and hole diameters; a part that fails gets no STEP file, and an operation that removes the whole part or a cut that changes nothing fails the build with its line. `make doctor` builds a test cube through the real tool and names a missing system library; the Gateway image carries the three small OpenGL dispatch libraries the kernel links. New offline-safe tool group `local_extensions`. No new `config.yaml` key. (fork feature; FORK.md §51, roadmap item 44)
-- **extensions:** A plugin's model tool can write a file into the conversation that called it (`ToolContext.write_output(name, content)`, extension API 0.2.12). The file lands in that conversation's outputs under every sandbox provider, opens in the artifact panel and is listed in the Files view. The tool names no thread, user or directory, an unsafe name is refused, and an existing file is never replaced. New `plugin_outputs.max_file_bytes` (default 8 MiB) and `plugin_outputs.max_call_bytes` (default 32 MiB) in `config.yaml` cap it; `config_version` moves 71 → 72. The example extension gains a `save_note` tool. (fork feature; FORK.md §50, roadmap item 43)
+- **extensions:** A plugin's model tool can write a file into the conversation that called it (`ToolContext.write_output(name, content)`, extension API 0.2.13; upstream's 0.2.12 is workspace search). The file lands in that conversation's outputs under every sandbox provider, opens in the artifact panel and is listed in the Files view. The tool names no thread, user or directory, an unsafe name is refused, and an existing file is never replaced. New `plugin_outputs.max_file_bytes` (default 8 MiB) and `plugin_outputs.max_call_bytes` (default 32 MiB) in `config.yaml` cap it; `config_version` moves 71 → 72. The example extension gains a `save_note` tool. (fork feature; FORK.md §50, roadmap item 43)
 - **workspace:** A **Files** button in the chat header browses the conversation's sandbox folders (`workspace/`, `uploads/`, `outputs/` and anything a run creates) as a tree, with previews and downloads, including files the agent never presented. It reads a new read-only `GET /api/threads/{thread_id}/files` listing that keeps the artifacts endpoint's ownership check and path confinement, never follows a link, and caps a directory at 500 entries.
 - **summarization:** The built-in compaction prompt guides the summarizer to
   preserve active user requirements, literal approval phrases, action conditions,
@@ -96,6 +96,8 @@ This section accumulates work toward the **2.3.0** milestone
 
 ### Changed
 
+- **upstream:** merged `upstream/main` (31 commits since 2026-11-13). Brings conversation search with jump-to-message, revocable read-only conversation snapshots, per-agent MCP credentials (`mcp_agent_auth`, empty by default), a scroll-to-bottom button and send-pins-to-top in the message list, `/goal from-chat` for IM channels, and a batch of gateway, scheduler and sandbox fixes. The twelfth Alembic merge revision (`0056_merge_prefs_thread_shares`) rejoins this fork's migration head with upstream's. Upstream's extension API 0.2.12 is workspace search, so the fork's `ToolContext.write_output` floor moves to 0.2.13 (the bundled example and CAD extensions declare it). `config_version` moves to 74 so existing installs receive the `mcp_agent_auth` section; `make config-upgrade` delivers it and rewrites `config.yaml`, dropping comments; a `.bak` is kept and hand-edited values survive.
+
 - **ultracode:** Double Plus Ultracode is no longer described as having no automatic limits at all. The composer, README and FORK.md list what is lifted (the step limit, loop and tool-call limits, token budgets, the time limit) and what still applies: the workflow's agent count and size limits, a configuration change during the run, the active-workflow limits, the model provider's own stops, and a spend cap only if one is set, which parallel workflow agents can overshoot. Settings → Run limits says Double Plus Ultracode ignores all of its limits except the spend cap.
 
 - **ultracode:** Double Plus Ultracode no longer counts `task` subtasks per run (6 by default); reaching the total used to drop further subtasks and end the run. The limit per response still applies, and Plus Ultracode and every other mode keep the total. The lead's instructions still mention the per-run total in this mode, although nothing enforces it there.
@@ -157,6 +159,15 @@ This section accumulates work toward the **2.3.0** milestone
 - **chat:** Choosing a model for subtasks no longer fails with "Enable Ultra mode first" in Plus Ultracode, Double Plus Ultracode or Democracy, which all delegate.
 
 - **ci:** Backend unit-test shards no longer get cancelled after passing: each runs 13–14.5 minutes on a hosted runner, against a 15-minute job limit that is now 25. The OpenViking owner-key test no longer flakes on a busy runner (its loopback health check had 1 second).
+
+- **frontend:** Cron presets in the task form now require minute 0-59, hour
+  0-23 and day of month 1-31, so an out-of-range expression such as
+  `0 24 * * *` stays a custom schedule and keeps its original text. Previously,
+  it was parsed as a preset and could be clamped to a different time when
+  serialized for submission. Creating or duplicating a task with an invalid
+  expression, or updating its schedule configuration while the expression is
+  invalid, returns the Gateway's `422`; edits to other fields do not revalidate
+  an unchanged schedule. ([#8020])
 
 - **gateway:** Creating a thread with checkpoint-owned keys such as `step`,
   `parents` or `counters_since_delta_snapshot` in its metadata no longer
@@ -326,6 +337,14 @@ This section accumulates work toward the **2.3.0** milestone
   isolates one task's dispatch failure from the rest of its claimed batch, so a
   future per-record raise costs one tick instead of every other claimed task.
   ([#7998])
+
+- **scheduler:** Exceptions escaping the queue-timeout sweep or the
+  queued-occurrence drain are now contained to that occurrence. The
+  scheduler logs the failed row and continues with the remaining queue
+  and the tasks claimed in the same poll. Expired rows are excluded before
+  owner ranking and the batch limit, and a launch claim enforces the same
+  cutoff, so a row left queued by a failed sweep neither starts nor crowds
+  healthy work out of the queue while timeout recovery retries it. ([#7998])
 
 - **scheduler:** One scheduled task whose saved schedule can no longer be
   computed no longer stops every other task. When a stored timezone or cron
@@ -18181,6 +18200,7 @@ with **180 merged pull requests** since the first 2.0 milestone tag.
 [#7998]: https://github.com/bytedance/deer-flow/issues/7998
 [#8006]: https://github.com/bytedance/deer-flow/pull/8006
 [#8019]: https://github.com/bytedance/deer-flow/pull/8019
+[#8020]: https://github.com/bytedance/deer-flow/pull/8020
 [#8043]: https://github.com/bytedance/deer-flow/pull/8043
 [#8046]: https://github.com/bytedance/deer-flow/pull/8046
 [#8057]: https://github.com/bytedance/deer-flow/pull/8057

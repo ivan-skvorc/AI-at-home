@@ -45,9 +45,7 @@ async def test_bootstrap_upgrades_tool_approvals_database_without_losing_data(tm
             await conn.execute(text("INSERT INTO tool_approvals (request_id,user_id,thread_id,incarnation,run_id,fingerprint,kind,status,payload,created_at) VALUES ('r1','u','t','i','run','fingerprint','audit','consumed','{}',1)"))
         await bootstrap.bootstrap_schema(engine, backend="sqlite")
         async with engine.connect() as conn:
-            # Fork: the merge revision joining the fork's head to upstream's tip
-            # is the single head (test_migration_merge_points.py).
-            assert (await conn.execute(text("SELECT version_num FROM alembic_version"))).scalars().all() == ["0055_merge_prefs_project_mem"]
+            assert (await conn.execute(text("SELECT version_num FROM alembic_version"))).scalars().all() == [bootstrap._get_head_revision()]
             assert (await conn.execute(text("SELECT instructions, memory FROM projects WHERE id='p1'"))).one() == ("Keep this instruction", None)
             assert (await conn.execute(text("SELECT status FROM tool_approvals WHERE request_id='r1'"))).scalar_one() == "consumed"
     finally:

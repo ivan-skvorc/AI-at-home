@@ -115,7 +115,8 @@ once you know to look. The 2026-09-09 sync hit all three at once:
   by `0052_merge_prefs_run_inputs`. The 2026-11-10 sync made it ten (`0052_batch_continuation` off
   `0051`, joined by `0053_merge_prefs_batch_cont`), and the 2026-11-13 sync eleven
   (`0053_tool_approvals` → `0054_project_memory` off `0052_batch_continuation`, joined by
-  `0055_merge_prefs_project_mem`). The depth is in
+  `0055_merge_prefs_project_mem`), and the 2026-11-15 sync twelve (`0055_thread_shares` off
+  `0054_project_memory`, joined by `0056_merge_prefs_thread_shares`). The depth is in
   [`persistence/migrations/FORK_NOTES.md`](backend/packages/harness/deerflow/persistence/migrations/FORK_NOTES.md).
 - **Both sides adding a function of the same name to the same module.** Git merges two
   non-overlapping additions cleanly, so `frontend/src/core/threads/api.ts` came out of
@@ -333,7 +334,7 @@ First, the mechanical gates:
 - [ ] **A reply keeps the price it was billed at** (§17): `cd backend && uv run pytest tests/test_run_pricing_snapshot.py tests/test_thread_token_usage.py tests/test_run_repository.py -q`. Cost is read from `runs.pricing_snapshot`, not recomputed from the live config, and every way that can regress is silent. `test_a_model_dropped_from_the_roster_keeps_its_cost` is the motivating case and asserts **both** directions in one test — with the snapshot the spend survives, without it the run prices to `None` — so deleting the snapshot path fails loudly instead of just making conversations cheaper. `test_a_later_price_change_does_not_rewrite_an_old_run` is the other half. Three guards exist because each is a way the fix could be worse than the bug: `test_a_currency_switch_re_prices_rather_than_summing_two_currencies`, `test_a_snapshot_cannot_switch_cost_reporting_back_on`, `test_a_discount_is_not_re_expired_on_replay`. `TestSnapshotPersistence` is the plumbing: it round-trips the SQL store, the memory store and `_with_pricing_snapshot`, and pins that a completion **retry** without a snapshot does not erase the stored value. Keep `test_the_headers_stated_relation_still_holds_across_an_edit` too: `sum(steps) + superseded_cost == total_cost` is what the cost dropdown tells the reader, and per-run pricing is what makes it an identity. A store with no `by_run` must still price its `by_model` aggregate (`tests/test_thread_token_usage.py` covers it).
 - [ ] **CI's pnpm bootstrap stays retried and pinned**: `cd backend && uv run pytest tests/test_ci_pnpm_bootstrap.py -q`. A transient registry abort while corepack fetches pnpm crashes Node's undici parser (`AssertionError: assert(!this.paused)`) before any test runs and reads like a broken branch (PR #106). `test_the_pnpm_download_is_retried` asserts the retry on the step's *shape*, so it can be rewritten but not removed, across every workflow that prepares pnpm (four today); `test_there_is_a_pnpm_bootstrap_to_check` exists because a renamed step would otherwise leave that parametrized test iterating an empty list and passing green. `test_every_workflow_prepares_the_version_the_repo_pins` is the drift guard: the version lives in five places (`frontend/package.json`'s `packageManager` plus one `corepack prepare` per workflow) and moves out of one at a time, and a mismatch means CI silently exercises a different pnpm than contributors run. Bumping pnpm is one change that touches all five.
 - [ ] **A file explorer for each conversation** (§49): `cd backend && uv run pytest tests/test_thread_files_router.py tests/blocking_io/test_thread_files_router.py -q` (the first inside the Backend gate) and `cd frontend && pnpm test thread-files`, plus `pnpm test:e2e thread-files`. Silent when broken: `test_symlink_escaping_user_data_is_listed_as_a_link_and_never_entered` and `test_dot_dot_traversal_never_lists_outside_user_data` (the route must keep `get_artifact`'s confinement: normalize, then `resolve_thread_virtual_path`, never follow a link), and `test_hides_only_gateway_transient_files` (dotfiles such as `.git` are content, not hidden).
-- [ ] **A plugin tool's file output** (§50): `tests/test_plugin_tools.py` runs inside the Backend gate; also `make test-blocking-io`. Untested: upstream owns `API_VERSION`. If the merge brings its own 0.2.12, move the fork's floor past it (the example's `@extension` marker and requirement, `docs/full-stack-plugins.md`, `test_example_extension_requires_a_host_with_file_output`).
+- [ ] **A plugin tool's file output** (§50): `tests/test_plugin_tools.py` runs inside the Backend gate; also `make test-blocking-io`. Untested: upstream owns `API_VERSION`. If the merge brings its own 0.2.13, move the fork's floor past it (the example's `@extension` marker and requirement, `docs/full-stack-plugins.md`, `test_example_extension_requires_a_host_with_file_output`).
 - [ ] Frontend: `pnpm check && pnpm test`. **`pnpm check` includes the formatting gate** (`prettier --check .`, eslint, `tsc --noEmit`). `pnpm format:write` fixes what the check reports; `eslint --fix` normalizes imports and optional-chains but not Prettier whitespace.
 - [ ] **Changed a shared UI control? Run the whole e2e suite, not the one spec you thought of.** `pnpm test:e2e` with no filter. A control's _specs_ are not the specs in the file you edited: they are every spec that clicks that control anywhere in the app, and nothing in `pnpm check` or `pnpm test` knows the difference. Observed live on the model-picker unification — the composer's picker was swapped into five screens, the Democracy spec was found and fixed by hand, and `suggestions-settings.spec.ts` was missed entirely because it drives the _same control_ from a different page. It failed only in CI. Two rules fell out of it, both now pinned by `frontend/tests/unit/components/workspace/model-picker-sites.test.ts`: a spec must locate a shared control by that control's **own** `data-slot`, never by the ARIA role of the primitive underneath (swap the primitive and the locator silently matches nothing), and a fast unit test should assert the contract so a six-minute e2e job is not the thing that tells you.
 
@@ -5361,7 +5362,7 @@ so a tool that produces a file in the middle of a run could not be an extension.
 That is why ComfyUI (§23) and the Grok media tools (§43) live in core and write
 through `write_output`. A tool with no credential to protect should not need core.
 
-**What.** Extension API 0.2.12 adds `ToolContext.write_output(name, content)`. A
+**What.** Extension API 0.2.13 adds `ToolContext.write_output(name, content)`. A
 model tool supplies a file name and bytes; the host writes the file into the
 outputs of the conversation that called the tool and returns its virtual path.
 The write happens in the Gateway, so it works under every sandbox provider,
@@ -5384,8 +5385,10 @@ the host side is `extensions/plugin_tools.py`.
   per-plugin `host_access` grant (the capability would be off until an operator
   hand-edited the managed `plugins:` block), and a plugin setting or run option
   (the plugin or the client could raise its own cap).
-- **The API moves 0.2.11 → 0.2.12, additively.** An extension declares the floor
-  with `@extension(api="0.2.12")` and its package requirement. An older host
+- **The API floor is 0.2.13, additively.** The fork shipped it as 0.2.12; the
+  2026-11-15 sync brought upstream's own 0.2.12 (workspace search, no
+  `write_output`), so the floor moved past it. An extension declares the floor
+  with `@extension(api="0.2.13")` and its package requirement. An older host
   refuses it when the install resolves (the harness pins the contract exactly) or
   at startup (the loader names both versions). Rejected: a registration-time
   capability query, a second mechanism beside the floor.
@@ -5430,7 +5433,7 @@ the host side is `extensions/plugin_tools.py`.
 
 **On an upstream sync.** `plugins.py`, `plugin_tools.py`, `app_config.py` and the
 example extension are upstream files; the fork's parts are additive blocks.
-Upstream also owns the API version. If upstream ships its own 0.2.12, the fork's
+Upstream also owns the API version. If upstream ships its own 0.2.13, the fork's
 capability moves to the merged version, floor and documentation included; the
 checklist row says where.
 

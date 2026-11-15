@@ -31,7 +31,7 @@ async def test_import_retained_artifact_does_not_block_event_loop(tmp_path, monk
 
 @pytest.mark.asyncio
 async def test_plugin_tool_file_output_does_not_block_event_loop(tmp_path, monkeypatch):
-    """The in-run write (API 0.2.12) reads its caps, writes and copies off the loop."""
+    """The in-run write (API 0.2.13) reads its caps, writes and copies off the loop."""
     monkeypatch.setenv("DEER_FLOW_HOME", str(tmp_path))
     monkeypatch.setattr(paths, "_paths", None)
     copied = []

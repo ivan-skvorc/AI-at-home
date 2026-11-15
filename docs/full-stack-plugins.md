@@ -116,7 +116,7 @@ for a small, default-disabled plugin without a knowledge-management service.
 
 ### Files a tool writes into its conversation
 
-Since extension API 0.2.12 a model tool can hand a file to the conversation that
+Since extension API 0.2.13 a model tool can hand a file to the conversation that
 called it, during the run:
 
 ```python
@@ -166,8 +166,8 @@ or directory creation.
   timed out stay in outputs and in the Files view, but are not registered as
   artifacts.
 
-**API floor.** Declare `@extension(api="0.2.12")` and depend on
-`deerflow-extension-api>=0.2.12,<0.3`. An older host then says so instead of
+**API floor.** Declare `@extension(api="0.2.13")` and depend on
+`deerflow-extension-api>=0.2.13,<0.3`. An older host then says so instead of
 offering a tool whose file never appears: its exact pin on the contract package
 makes the install fail to resolve, and with dependency checks skipped the loader
 refuses the extension at startup and names both versions. Where the newer
