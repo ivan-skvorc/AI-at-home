@@ -8,12 +8,13 @@ from __future__ import annotations
 
 import ast
 import re
+import time
 from pathlib import Path
 
 import pytest
 
 from deerflow_extension_cad import allowlist
-from deerflow_extension_cad.interpreter import MAX_LOOP_DEPTH, MAX_LOOP_PASSES, MAX_NODES, MAX_OPERATIONS, MAX_SCRIPT_BYTES, Ref, ScriptRefused, compile_script
+from deerflow_extension_cad.interpreter import MAX_INDENT, MAX_LOOP_DEPTH, MAX_LOOP_PASSES, MAX_NODES, MAX_OPERATIONS, MAX_SCRIPT_BYTES, MAX_WORK, Ref, ScriptRefused, compile_script
 
 PLATE = """\
 import cadquery as cq
@@ -189,7 +190,14 @@ REFUSED = [
     ("for i in range(3):\n    continue\n", "continue", 2),
     ("for i in range(3):\n    if i:\n        x = 1\n", "if statement", 2),
     ("for i in range(2.5):\n    x = i\n", "loop", 1),
-    ("n = 10 / 2\nfor i in range(n):\n    x = i\n", "loop", 2),
+    ("n = 15 / 2\nfor i in range(n):\n    x = i\n", "loop", 2),
+    ("for i in range(True):\n    x = i\n", "loop", 1),
+    ("for () in [(1, 2)]:\n    x = 1\n", "loop", 1),
+    ("for i in (range(2)\n): x = i\n", "syntax", 2),
+    ("for i in range(2) \\\n: x = i\n", "syntax", 2),
+    ("for i in range(2):\\\nx = i\n", "syntax", 2),
+    ("for i in range(2):\n    x = i\n    \\\ny = i\n", "syntax", 4),
+    ("x = (1 +\n 2); y = 3\n", "syntax", 2),
     ("for i in range():\n    x = i\n", "loop", 1),
     ("for i in range(1, 2, 3, 4):\n    x = i\n", "loop", 1),
     ("for i in range(stop=3):\n    x = i\n", "loop", 1),
@@ -396,6 +404,7 @@ def test_a_loop_is_the_same_program_as_its_statements_written_out():
         ("for v in range(3, 0, -1):", [3, 2, 1]),
         ("for v in range(-2, 2):", [-2, -1, 0, 1]),
         ("for v in range(count // 2):", [0, 1]),
+        ("for v in range(count / 2):", [0, 1]),
         ("for v in [5, 7.5, -1]:", [5, 7.5, -1]),
         ("for v in (4, 2):", [4, 2]),
         ("for v in sizes:", [10, 20]),
@@ -455,6 +464,105 @@ def test_loops_are_bounded_in_passes_depth_and_operations():
     assert "no larger than" in refusal("x = 10\nfor i in range(20):\n    x = x * x\n").message
     points = refusal("result = cq.Workplane('XY').box(99, 99, 1)\nfor i in range(30):\n    result = result.faces('>Z').workplane().rarray(1, 1, 3, 3).hole(0.2)\n")
     assert (points.construct, "in the script" in points.message) == ("pattern", True)
+
+
+def test_reading_is_bounded_in_work_and_not_only_in_passes():
+    """A thousand passes of a body that walks long lists took fifteen seconds to read; the cap on passes did not bound it."""
+
+    def wrapped(name: str, item: str, count: int) -> str:
+        rows = [", ".join([item] * 100) for _ in range(count // 100)] + ([", ".join([item] * (count % 100))] if count % 100 else [])
+        return f"{name} = [\n" + ",\n".join(rows) + "\n]\n"
+
+    body = "".join("    " + line + "\n" for line in (wrapped("a", "p", 390) + wrapped("b", "p", 390)).splitlines())
+    slow = wrapped("p", "1", 400).replace("[", "(", 1).replace("]", ")") + "for i in range(1000):\n" + body + "result = cq.Workplane('XY').box(1, 1, 1)\n"
+    started = time.perf_counter()
+    with pytest.raises(ScriptRefused) as refused:
+        compile_script(slow)
+    assert time.perf_counter() - started < 3
+    assert refused.value.construct == "script length" and "more work" in refused.value.message
+    # The same holds without a loop: what is counted is what the reader walks.
+    assert MAX_WORK >= 100_000
+    # An ordinary long loop is nowhere near it: 74 passes of four operations, 296 of the 300 a script may perform.
+    long_loop = "result = cq.Workplane('XY').box(900, 20, 4)\nfor i in range(74):\n    result = result.faces('>Z').workplane().pushPoints([(-440 + i * 12, 0)]).hole(3)\n"
+    assert len(compile_script(long_loop).operations) == 2 + 74 * 4
+    grid = "points = [\n" + ",\n".join(", ".join(f"({x}, {y})" for x in range(20)) for y in range(20)) + "\n]\nresult = cq.Workplane('XY').box(9, 9, 9)\nfor x, y in points:\n    total = x + y\n"
+    assert compile_script(grid)
+
+
+def test_a_pass_clause_is_short_and_says_its_numbers_exactly():
+    def message(script: str) -> str:
+        with pytest.raises(ScriptRefused) as refused:
+            compile_script(script)
+        return refused.value.message
+
+    # Whole numbers as they are and decimals in full: six digits named a value the loop never held.
+    assert message("for i in range(1234567, 1234570):\n    y = 1 / (i - 1234568)\n").endswith("(in pass 2 of the loop on line 1 (i = 1234568))")
+    assert message("for x in [0.30000001, 0.30000002]:\n    y = 1 / (x - 0.30000002)\n").endswith("(x = 0.30000002))")
+    # A long point is cut, however many loops hold one and however many names take it apart.
+    long_point = "p = (\n" + ",\n".join(", ".join(["-1.23456e-05"] * 50) for _ in range(8)) + "\n)\n"
+    nested = long_point + "".join(" " * 4 * level + f"for v{level} in [p]:\n" for level in range(4)) + " " * 16 + "y = 1 / 0\n"
+    assert len(message(nested)) < 400 and "400 numbers" in message(nested)
+    assert len(message(long_point + "for a, b in [p]:\n    x = 1\n")) < 200
+    names = ", ".join(f"n{index:03d}_{'x' * 58}" for index in range(180))
+    many = "for " + names.replace(", ", ",\n    ") + " in [(\n" + ",\n".join(", ".join(["1"] * 90) for _ in range(2)) + "\n)]:\n    y = 1 / 0\n"
+    assert len(message(many)) < 200
+    # The worst ordinary case: four loops deep, two names each, a method that is not on the list.
+    deep = "result = cq.Workplane('XY').box(1, 1, 1)\n" + "".join(" " * 4 * level + f"for a{level}, b{level} in [(1, 2)]:\n" for level in range(4)) + " " * 16 + "result = result.revolve()\n"
+    assert len(message(deep)) < 700 and message(deep).count("pass 1 of the loop") == 4
+
+
+def test_a_count_for_a_loop_is_a_whole_number_however_it_was_computed():
+    def passes(header: str) -> int:
+        script = f"spine = 50\npitch = 3.5\nresult = cq.Workplane('XY').box(9, 9, 9)\n{header}\n    result = result.translate((1, 0, 0))\n"
+        return len(compile_script(script).operations) - 2
+
+    # Whole division keeps the decimal point when either number has one: 50 // 3.5 is 14.0.
+    assert (passes("for i in range(spine // pitch):"), passes("for i in range(10 / 2):"), passes("for i in range(2.0, 8.0, 2.0):")) == (14, 5, 3)
+    with pytest.raises(ScriptRefused) as refused:
+        compile_script("for i in range(15 / 2):\n    x = i\n")
+    assert "got 7.5" in refused.value.message and "whole" in refused.value.message
+
+
+def test_a_sign_alternates_over_any_number_of_passes():
+    # The usual way to say "every other one" without a branch. A base of one or less cannot grow, so its exponent is not capped.
+    script = "result = cq.Workplane('XY').box(9, 9, 9)\nfor i in range(200):\n    side = (-1) ** i\n    shrink = 0.5 ** i\n"
+    assert compile_script(script)
+    for bad in ("x = 2 ** 65\n", "x = 1.5 ** 65\n", "x = 0.5 ** -2000\n", "x = (-1) ** 0.5\n", "x = 0 ** -1\n"):
+        with pytest.raises(ScriptRefused) as refused:
+            compile_script(bad)
+        assert refused.value.construct == "arithmetic"
+
+
+def test_a_loop_body_reads_the_way_its_indentation_shows():
+    """With loops, indentation decides what a line belongs to, so nothing may sit where a viewer does not look for it."""
+
+    def refusal(script: str) -> ScriptRefused:
+        with pytest.raises(ScriptRefused) as refused:
+            compile_script(script)
+        return refused.value
+
+    box = "result = cq.Workplane('XY').box(60, 40, 6)\n"
+    hole = "result = result.faces('>Z').workplane().hole(30)\n"
+    # Far to the right: a viewer shows the line as blank.
+    assert "indented" in refusal(box + "for i in range(1):\n" + " " * 950 + hole).message
+    assert "indented" in refusal(box + "for i in range(1):\n" + "\t" * 120 + hole).message
+    assert "indented" in refusal("result = (\n" + " " * (MAX_INDENT + 1) + "cq.Workplane('XY').box(1, 1, 1)\n)\n").message
+    assert compile_script("result = (\n" + " " * MAX_INDENT + "cq.Workplane('XY').box(1, 1, 1)\n)\n")
+    # A tab is as wide as a viewer draws it: six in a row are 48 blanks.
+    assert "blanks in a row" in refusal(box + "x = 1" + "\t" * 6 + "# note\n").message
+    assert compile_script(box + "for i in range(2):\n\tresult = result.translate((1, 0, 0))\n")
+    # Beside the end of a header that runs over two lines.
+    assert refusal(box + "for i in (range(2)\n): " + hole).line == 3
+    assert refusal(box + "for i in range(2) \\\n: " + hole).line == 3
+    # A backslash carries a line into a loop that its indentation says it is not in.
+    assert "indented" in refusal(box + "for i in range(2):\\\n" + hole).message
+    after = refusal(box + "for i in range(3):\n    result = result.translate((1, 0, 0))\n    \\\nresult = result.translate((0, 0, 5))\n")
+    assert (after.line, "loop on line 2" in after.message) == (5, True)
+    # A backslash on a line of its own leaves the next line where its indentation puts it: in the body, once per pass.
+    carried = compile_script(box + "for i in range(3):\n    result = result.translate((1, 0, 0))\n\\\n    result = result.translate((0, 0, 5))\n")
+    assert [op.where[:6] for op in carried.operations if op.line == 5] == ["pass 1", "pass 2", "pass 3"]
+    # A long chain may still be continued with a backslash, inside a loop and outside one.
+    assert compile_script("result = cq.Workplane('XY') \\\n    .box(1, 1, 1)\nfor i in range(2):\n    result = result \\\n        .translate((1, 0, 0))\n")
 
 
 def test_centered_takes_one_flag_per_axis():

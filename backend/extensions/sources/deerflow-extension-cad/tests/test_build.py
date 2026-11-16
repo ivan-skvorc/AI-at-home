@@ -180,6 +180,58 @@ async def test_bodies_a_loop_builds_and_never_joins_are_said_in_the_answer():
     assert answer["passed"] is True and not any("not part of the result" in note for note in answer.get("notes", [])), answer
 
 
+async def test_passes_of_a_loop_whose_outcome_is_dropped_are_said_in_the_answer():
+    # The other usual slip: every pass starts from the plate, so only the last slot is in the result.
+    # With a bounding box to meet, a plate asked for with six slots passed with one, and nothing said so.
+    dropped = 'plate = cq.Workplane("XY").box(100, 30, 5)\nfor i in range(6):\n    result = plate.faces(">Z").workplane().pushPoints([(-30 + i * 12, 0)]).slot2D(12, 3, 90).cutThruAll()\n'
+    answer, _ = await _build(dropped, bbox_xyz_mm=[100, 30, 5])
+    assert answer["passed"] is True
+    (note,) = [note for note in answer["notes"] if "loop on line 2" in note]
+    assert note.startswith("5 passes of the loop on line 2 work on the part and their outcome is not in the result") and "result = result" in note
+    # Carried through the loop, all six are there and there is nothing to say.
+    carried = dropped.replace('plate = cq.Workplane("XY")', 'result = cq.Workplane("XY")').replace("result = plate.faces", "result = result.faces")
+    answer, files = await _build(carried, bbox_xyz_mm=[100, 30, 5])
+    assert answer["passed"] is True and "notes" not in answer, answer
+    assert json.loads(files["part.report.json"])["measured"]["volume_mm3"] < 14000
+    # A selection made in every pass and never used did no work on the part.
+    looking = 'result = cq.Workplane("XY").box(20, 20, 4)\nfor i in range(3):\n    top = result.faces(">Z")\n'
+    answer, _ = await _build(looking, bbox_xyz_mm=[20, 20, 4])
+    assert answer["passed"] is True and "notes" not in answer, answer
+
+
+async def test_a_body_left_out_is_counted_once_and_named_where_it_starts():
+    # One spare body with two selections on it is one body, built on line 2: not two, on the lines of the selections.
+    spare = f'result = {BLOCK}\nspare = cq.Workplane("XY").box(5, 5, 5).translate((0, 0, 50))\ntop = spare.faces(">Z")\nside = spare.edges("|Z")\n'
+    answer, _ = await _build(spare, bbox_xyz_mm=[60, 40, 6])
+    assert [note for note in answer["notes"] if "not part of the result" in note] == ["The script builds 1 body (built on line 2) that is not part of the result: join it with union(), or delete the lines."]
+    # Bodies dropped on different lines are each located, however many a loop drops on one line.
+    many = f'for i in range(7):\n    link = cq.Workplane("XY").box(4, 4, 4).translate((i * 9, 0, 0))\nextra = cq.Workplane("XY").sphere(3)\nresult = {BLOCK}\n'
+    answer, _ = await _build(many, bbox_xyz_mm=[60, 40, 6])
+    (note,) = [note for note in answer["notes"] if "not part of the result" in note]
+    assert note.startswith("The script builds 8 bodies (built on line 2, 3)")
+
+
+async def test_a_pass_that_repeats_another_is_told_to_leave_the_pass_out_not_the_line():
+    # The last point closes the ring on the first. The line is all five holes; deleting it would remove them all.
+    ring = 'result = cq.Workplane("XY").box(60, 60, 4)\nfor x, y in [(20, 0), (0, 20), (-20, 0), (0, -20), (20, 0)]:\n    result = result.faces(">Z").workplane().pushPoints([(x, y)]).hole(4)\n'
+    answer, _ = await _build(ring, bbox_xyz_mm=[60, 60, 4])
+    message = answer["error"]["message"]
+    assert "Delete this line" not in message and "Leave this pass out if the part is right without it." in message
+    assert message.endswith("(in pass 5 of the loop on line 2 (x = 20, y = 0))")
+
+
+async def test_a_blind_cut_into_air_names_the_cause_that_fits_its_distance():
+    # A lip added first: the highest face is now the top of the lip, and a cut of 4 below it meets no material.
+    lip = f'result = {BLOCK}.union(cq.Workplane("XY").box(60, 6, 20).translate((0, 17, 13)))\nresult = result.faces(">Z").workplane().center(0, -20).rect(40, 6).cutBlind(-4)\n'
+    answer, _ = await _build(lip, bbox_xyz_mm=[60, 40, 26])
+    message = answer["error"]["message"]
+    assert answer["error"]["operation"] == "cutBlind" and "highest face" in message and "use a negative distance" not in message
+    # A positive distance still gets the sentence about the sign.
+    away = f'result = {BLOCK}.faces(">Z").workplane().rect(20, 10).cutBlind(3)\n'
+    answer, _ = await _build(away, bbox_xyz_mm=[60, 40, 6])
+    assert "use a negative distance" in answer["error"]["message"]
+
+
 async def test_a_part_is_rebuilt_until_it_passes_and_each_answer_says_what_comes_next():
     """The loop the agent runs, against the real kernel: build, read what failed, repair, build again."""
     outputs = Outputs()

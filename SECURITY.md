@@ -73,14 +73,17 @@ here as one.
   offers them.
 - **Resource use is bounded before the kernel starts**: script size, syntax
   nodes, nesting, number magnitude, exponent size, pattern instances, loop
-  passes (1,000 in a script, nested four deep) and operations after unrolling
-  (300). What an
+  passes (1,000 in a script, nested four deep), operations after unrolling
+  (300) and the values read while unrolling (200,000, so reading takes well
+  under a second whatever a loop repeats). What an
   accepted script can still cost the kernel is stopped by the parent's wall
   clock and the child's memory ceiling, not by the reading.
 - **The kept script reads the way it was read.** Control characters, line
   separators and text-direction marks are refused anywhere in the text, so no
   character changes where a line starts or the order it is drawn in. A script
-  holds one statement per line, inside a loop as well, and padding that pushes code out of sight is
+  holds one statement per line, a loop's body is indented as one block under
+  its `for` (a backslash cannot carry a line into a loop from the margin), a
+  line is indented at most 80 columns with a tab counted as eight, and padding that pushes code out of sight is
   refused (more than 40 blanks in a row inside a line, more than 40 blank lines
   in a row). Other invisible characters, such as the joiners of Persian and
   Hindi, can occur only in a comment, where they start no line and no

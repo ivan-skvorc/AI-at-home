@@ -102,12 +102,15 @@ state them, under the names of the arguments that would check them. The hole
 check compares diameters; holes that stop inside the part are listed with the
 depth of their cylindrical wall (`blind_depths_mm`).
 
-Two more notes come from loops. A script that builds bodies and never joins
-them to its result is told how many and on which line: the usual slip is a loop
-whose every pass builds a body, with the last one alone as the result. A result
-made of several loose bodies is told that the tool delivers one solid, so a
-model does not spend its attempts on a check that no change of that kind can
-pass.
+Three more notes come from loops, where a part can pass its bounding box with
+most of its features missing. A script that builds bodies and never joins them
+to its result is told how many and on which line they start: the usual slip is
+a loop whose every pass builds a body, with the last one alone as the result.
+A loop whose every pass starts from the same part keeps only the last pass's
+work; the answer says how many passes were dropped and that each must start
+from the outcome of the one before. A result made of several loose bodies is
+said to be that, and `next` gives both ways out: join them, or tell the user
+that the tool delivers one solid.
 
 ## Building until it passes
 
@@ -140,9 +143,13 @@ loop inside the tool: one call is one build.
   were refused are not counted. Their answers say to call again with the same
   arguments, or to stop and tell the user.
 
-Parts are counted by the name their files get, per conversation, in memory: a
-Gateway restart starts the counts over. The procedure a model follows around
-these answers is the `cad-modeling` skill (`skills/public/cad-modeling`).
+Parts are counted by name, per conversation, in memory: case, spacing and
+punctuation aside, and not by the file name, which is ASCII and cut at forty
+characters. A new name is a new part with a new count, which is why every
+failed answer says to build again under the same name. A Gateway restart
+starts the counts over, and the table holds a thousand parts: the one built
+longest ago makes room. The procedure a model follows around these answers is
+the `cad-modeling` skill (`skills/public/cad-modeling`).
 
 ## What a script may contain
 
@@ -152,7 +159,9 @@ these answers is the `cad-modeling` skill (`skills/public/cad-modeling`).
   parts. `name += value` and its relatives are the arithmetic they stand for.
 - `for` loops over `range(...)` or over a list of numbers or points that the
   script states, with one name or one name per number of a point
-  (`for x, y in [(0, 0), (10, 0)]:`). Loops may be nested four deep.
+  (`for x, y in [(0, 0), (10, 0)]:`). Loops may be nested four deep. A count
+  for `range` is a whole number however it was worked out: `50 // 3.5` is
+  `14.0` and counts as 14.
 - `cq.Workplane(...)` and the methods below, chained or held in variables.
 - Comments and a docstring. `show_object(name)` is accepted as a way to name the
   result.
@@ -166,8 +175,11 @@ A loop is read, not run. Its range or list is known when the script is read,
 so the reader goes through the body once per pass, exactly as if the script had
 written the statements out, and the program it hands to the kernel is the same
 flat list of operations. A failure in a loop names the pass and the value of
-the loop variable, because one line now stands for many operations. A loop
-that would not run once is refused: it is a count that came out as zero.
+the loop variable, exactly and in a few words however long the value, because
+one line now stands for many operations. A loop that would not run once is
+refused: it is a count that came out as zero. An exponent is capped at 64
+unless its base is one or less, which cannot grow: `(-1) ** i` alternates a
+sign over any number of passes.
 
 Everything else is refused with the construct and its line: other imports,
 attribute access, any other call, `def`, `lambda`, `class`, `while`, `if`,
@@ -182,8 +194,13 @@ carriage return, direction overrides) are refused anywhere in the text, comments
 included, so no character changes where a line starts or the order it is drawn
 in. A script holds one statement per line, and padding that pushes code out of
 sight is refused: more than 40 blanks in a row inside a line, more than 40 blank
-lines in a row. These rules are what "the script kept beside the part reads the
-way the tool read it" rests on; a line may still be up to 1,000 characters long.
+lines in a row, a line indented more than 80 columns. A tab counts as the eight
+columns a viewer draws. A loop's body is indented as one block under its
+`for`: a statement beside the end of a header, or one a backslash carries into
+a loop from the margin, is refused, because the reader would take it as part
+of the loop and a person would not. These rules are what "the script kept
+beside the part reads the way the tool read it" rests on; a line may still be
+up to 1,000 characters long.
 Characters of any language are fine in comments.
 
 The allow-list (`allowlist.py`, 46 methods plus the constructor):
@@ -217,6 +234,7 @@ with an example that builds and a signature check against the kernel
 | --- | --- | --- |
 | Script size | 32 KiB, 2,000 syntax nodes, nesting 200 (about 97 chained calls), 300 operations | `interpreter.py` |
 | Loops | 1,000 passes in a script, all loops together; nested four deep. The 300 operations are counted after unrolling | `interpreter.py` |
+| Reading | 200,000 values read and list items walked, loops unrolled: a script is read in well under a second | `interpreter.py` |
 | Attempts | 8 builds of one part in one run, then the answer says to stop and report | `tool.py` |
 | Lines | one statement per line, at most 1,000 characters, at most 40 blanks or blank lines in a row | `interpreter.py` |
 | Numbers | at most 1e12; sizes from 0.0001 to 100,000 mm; coordinates within ±100,000 mm | `interpreter.py`, `allowlist.py` |

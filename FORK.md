@@ -5701,7 +5701,27 @@ dispatch libraries beyond the base system.
   apart from the 300 operations, because a loop of arithmetic performs none.
 - **One line of a loop is many operations, so a failure names the pass.**
   Without it the model is told that line 11 failed and cannot tell the first
-  hole from the sixth.
+  hole from the sixth. The clause is exact and short: a whole number as it is,
+  a decimal in full, a long point cut, at most 240 characters for every loop
+  around the failure. A loop value of 400 numbers once made a refusal of 22,000
+  characters. A repeated pass is told to leave the pass out, not to delete the
+  line, which is every pass.
+- **Passes do not bound reading; the work budget does.** A body that walked
+  long lists a thousand times took fifteen seconds to read inside every other
+  cap. `MAX_WORK` counts values read and list items walked.
+- **Indentation is checked, because with loops it carries meaning.** Every
+  statement starts its own line, a body is one block under its `for`, and a
+  line is indented at most 80 columns with a tab counted as eight. Without
+  these a statement could sit beside the end of a header, be carried into a
+  loop from the margin by a backslash, or lie 950 columns to the right.
+- **A loop can pass with its work dropped, so the answer says so.** Each pass
+  starting from the same part keeps the last pass only, and a bounding box does
+  not notice: a plate asked for with six slots passed with one. `build.left_out`
+  counts those passes and the bodies never joined; both are notes, because a
+  trial cut outside a loop is legitimate.
+- **Parts are counted by name, not by file stem.** The stem is ASCII and cut at
+  forty characters: every Chinese or Cyrillic name was the same part, and the
+  first build of a lid was told to stop after seven builds of a bracket.
 - **Every answer ends with what to do next, and the sentences are pinned.**
   They are the loop's control. `test_builds_of_a_part_are_counted_and_the_answer_says_when_to_stop`
   and its neighbours fix each sentence to its state; the skill's test quotes
@@ -5732,9 +5752,14 @@ design of loose bodies cannot be delivered; the answer says so in a note instead
 of counting attempts against it. Threads, sweeps, lofts and revolved shapes are
 not on the allow-list. The attempt count and the held numbers live in Gateway
 memory, by part name: a restart forgets them, and a model that renames the part
-on every attempt starts a new count each time. The skill has not been run on a
+on every attempt starts a new count each time. The tool measures no positions:
+a feature on the wrong face passes every check, which is why the skill has
+every feature placed from the centre of its face. A build that runs out of
+time is told what it was doing when the clock ran out, which is not always
+what took the time. The skill has not been run on a
 real model here: roadmap item 45's acceptance (a plate, an L-bracket and an
-enclosure on one cloud model and one local 32K model) is still open.
+enclosure on one cloud model and one local 32K model) is still open; a
+reviewer agent following the skill built six parts, each within the limit.
 
 **On an upstream sync.** The package is fork-only. `internet_access.py`,
 `doctor.py`, `backend/Dockerfile` (two blocks: the libraries, the load step) and

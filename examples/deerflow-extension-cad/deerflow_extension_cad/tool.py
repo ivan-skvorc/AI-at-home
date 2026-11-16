@@ -22,6 +22,7 @@ import sys
 import tempfile
 import threading
 import time
+import unicodedata
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -116,9 +117,16 @@ NEXT_FIX = "Attempt {attempt} of {limit}. Read what failed, change the script an
 #: For a build whose script could not be stored: without its files it is not one of the part's attempts.
 NEXT_FIX_UNSTORED = "Fix the script and call cad_build again. Do not present this part as finished."
 NEXT_SAME = " This is the same failure as the attempt before, so that change did not reach its cause: change something else."
+#: "The last one did not pass": an earlier build of the run may have, and its files stand.
 NEXT_STOP = (
-    "{attempt} builds of this part in this run and it has not passed. Stop building. Tell the user what still fails, with the measured numbers, "
+    "{attempt} builds of this part in this run and the last one did not pass. Stop building. Tell the user what still fails, with the measured numbers, "
     "and what you would change next. Do not present this part as finished; build again only when the user asks."
+)
+#: For a result of several bodies. No change of one kind passes it, so both ways out are said in the field a model follows.
+NEXT_LOOSE = (
+    "Attempt {attempt} of {limit}. The result is several separate bodies and cad_build delivers one solid. If they are meant to be one part, "
+    "make them overlap or share a face and call cad_build again with the same name. If the design is loose bodies, such as a print-in-place hinge, "
+    "stop: tell the user that this tool cannot deliver it. Do not present this part as finished."
 )
 NEXT_REVIEW = "Every check passed. Before you present the part, go through what the user asked for that these numbers do not cover; if something is missing or wrong, change the script and build again."
 NEXT_PRESENT = "Every check passed. Present the part, and say which of the user's requirements these numbers do not cover."
@@ -193,6 +201,15 @@ def slug(name: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")[:40].strip("-") or "part"
 
 
+def part_key(name: str) -> str:
+    """One part, however its name is written between attempts: case, spacing and punctuation aside.
+
+    Not the file stem: that is ASCII and cut at forty characters, so every name without
+    a Latin letter would be the same part, and so would two long names that start alike.
+    """
+    return re.sub(r"[\W_]+", " ", unicodedata.normalize("NFKC", name).casefold()).strip() or name
+
+
 # --- Deciding ---------------------------------------------------------------
 
 
@@ -234,16 +251,20 @@ def notes_on(measured: Mapping[str, Any]) -> list[str]:
     notes = []
     solids = measured.get("solids")
     if isinstance(solids, int) and solids > 1:
-        # Otherwise a loop that builds links spends every attempt on a check no script change of its kind can pass.
-        notes.append(
-            f"The result is {solids} separate bodies, and cad_build delivers one solid. Bodies meant to be one part must overlap or share a face before union() joins them. "
-            "A design made of loose bodies, such as a print-in-place hinge, cannot be delivered by this tool: tell the user that instead of building again."
-        )
+        notes.append(f"The result is {solids} separate bodies. Bodies become one part only where they overlap or share a face, and a cut that goes right through a part leaves two.")
     bodies = measured.get("unused_bodies") or 0
     if bodies:
         lines = sorted({line for line in measured.get("unused_body_lines") or [] if isinstance(line, int)})
         where = f" (built on line {', '.join(map(str, lines))})" if lines else ""
         notes.append(f"The script builds {bodies} bod{'y' if bodies == 1 else 'ies'}{where} that {'is' if bodies == 1 else 'are'} not part of the result: join {'it' if bodies == 1 else 'them'} with union(), or delete the lines.")
+    for dropped in measured.get("dropped_passes") or []:
+        count, line = dropped.get("passes"), dropped.get("loop_line")
+        if isinstance(count, int) and isinstance(line, int):
+            one = count == 1
+            notes.append(
+                f"{count} pass{'' if one else 'es'} of the loop on line {line} work{'s' if one else ''} on the part and {'its' if one else 'their'} outcome is not in the result: "
+                "each pass must start from the outcome of the one before it, for example result = result.hole(...)."
+            )
     if measured.get("unused_outline"):
         notes.append("The script draws an outline that is never extruded or cut; it is not part of the result.")
     voids = measured.get("enclosed_voids") or 0
@@ -288,16 +309,21 @@ class Attempts:
     def record(self, conversation: str, part: str, run: str | None, expected: Mapping[str, Any], passed: bool, failure: str) -> tuple[int, dict[str, Any], bool]:
         """Count one build. Returns its number in this run, the expected numbers that changed, and whether it failed as the last one did."""
         key = (conversation, part)
+        # The holes are checked in any order and printed sorted, so they are held sorted.
+        expected = {name: sorted(value) if name == "hole_diameters_mm" else list(value) for name, value in expected.items()}
         with self._lock:
-            entry = self._parts.get(key)
+            # Taken out and put back last: the table is kept in the order parts were last built.
+            entry = self._parts.pop(key, None)
             # A new run is the user speaking again: the count starts over. What the part is held
             # to starts over only after a pass, because "keep going" does not change the request.
             # A host that stamps no run cannot tell runs apart, so there a pass ends the count.
             if entry is None or (entry["run"] != run if run is not None else entry["passed"]):
-                if entry is None and len(self._parts) >= MAX_COUNTED_PARTS:
-                    self._parts.clear()
                 first = dict(expected) if entry is None or entry["passed"] else entry["first"]
-                entry = self._parts[key] = {"run": run, "builds": 0, "first": first, "failure": None, "passed": False}
+                entry = {"run": run, "builds": 0, "first": first, "failure": None, "passed": False}
+            while len(self._parts) >= MAX_COUNTED_PARTS:
+                # The part built longest ago makes room, not every loop in progress.
+                del self._parts[next(iter(self._parts))]
+            self._parts[key] = entry
             entry["builds"] += 1
             same = not passed and failure == entry["failure"]
             entry["failure"] = None if passed else failure
@@ -308,11 +334,13 @@ class Attempts:
             return entry["builds"], changed, same
 
 
-def _next_after(passed: bool, attempt: int, changed: Mapping[str, Any], same: bool) -> str:
+def _next_after(passed: bool, attempt: int, changed: Mapping[str, Any], same: bool, loose: bool) -> str:
     if passed:
         step = NEXT_REVIEW if attempt < MAX_ATTEMPTS else NEXT_PRESENT
     elif attempt >= MAX_ATTEMPTS:
         step = NEXT_STOP.format(attempt=attempt)
+    elif loose:
+        step = NEXT_LOOSE.format(attempt=attempt, limit=MAX_ATTEMPTS)
     else:
         step = NEXT_FIX.format(attempt=attempt, limit=MAX_ATTEMPTS) + (NEXT_SAME if same else "")
     return step + (NEXT_CHANGED if changed else "")
@@ -599,11 +627,12 @@ def make_handler(settings: Mapping[str, int]):
                 next_step = NEXT_UNAVAILABLE
         if next_step is None:
             # A build the script answers for: counted, and held to the numbers the part started with.
-            attempt, changed, same = attempts.record(conversation, slug(payload["name"]), context.run_id, expected, answer["passed"], failure)
+            attempt, changed, same = attempts.record(conversation, part_key(payload["name"]), context.run_id, expected, answer["passed"], failure)
             answer["attempt"] = report["attempt"] = attempt
             if changed:
                 answer["expected_changed"] = report["expected_changed"] = changed
-            next_step = _next_after(answer["passed"], attempt, changed, same)
+            solids = (result.get("measured") or {}).get("solids")
+            next_step = _next_after(answer["passed"], attempt, changed, same, isinstance(solids, int) and solids > 1)
         if problems:
             report["problems"] = list(problems)
         await _save(context, f"{stem}.report.json", json.dumps(report, indent=2, ensure_ascii=False).encode("utf-8"), saved, problems)

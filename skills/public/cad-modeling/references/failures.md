@@ -16,7 +16,7 @@ Nothing was built. The answer's `error` has the construct and the line.
 | … a comprehension | A list built in one line | Write the list out, or build the feature in a `for` loop |
 | … a subscript | `point[0]` | Take the point apart in the loop header: `for x, y in points:` |
 | the only import a script may contain is: import cadquery as cq | `import math` | Write the value: sin 30° is `0.5`, a square root is `** 0.5` |
-| range() takes whole numbers | A count that is not whole, such as 7.5 | Round it down with whole division (two slashes) |
+| range() takes whole numbers | A count that is not whole, such as 7.5 | Round it down with whole division (two slashes); a whole count is accepted with or without a decimal point |
 | this loop would not run once | A count that came out as 0 | Check the arithmetic of the count |
 | a loop runs over range(...) or over a list | `enumerate`, `zip`, a part | `for i in range(n):` and compute the rest from `i` |
 | .name() is not on the allow-list | A method the tool does not have | Build the shape from the methods in `operations.md`; if it cannot be done, tell the user |
@@ -30,7 +30,9 @@ for a line inside a loop the pass and the loop variable's value.
 
 | The message says | Cause | Change |
 | --- | --- | --- |
-| removed no material | The cut or hole is beside the part, or repeats an earlier one | Check its position. `cutBlind` cuts into the part with a negative distance. In a loop, `center()` carries over to the next pass: use `pushPoints([(x, y)])` |
+| removed no material | The cut or hole is beside the part, or repeats an earlier one | Check its position: a plain `workplane()` keeps the origin of the last one, and `center()` moves it for every pass after. Start with `workplane(centerOption="CenterOfBoundBox")`. `cutBlind` cuts into the part with a negative distance |
+| removed no material: the outline is not on material | A blind cut started from the highest face after a boss or a lip moved it | Cut from the face the pocket belongs to, or cut the pocket before adding the boss |
+| Leave this pass out | One pass of a loop repeats an earlier one, such as a ring of points that ends on its first point | Remove that item from the list, not the line |
 | added no material | The new body lies inside the part | Check its position and the direction of the extrusion |
 | left no solid | The operation removed the whole part | The cut or hole is larger than the part, or two parts that were intersected do not meet |
 | fillet() or chamfer() failed | The radius is too large for an edge, or no edge is selected | A smaller radius, or a narrower selector such as `"\|Z"`; fillet before cutting small features |
@@ -44,10 +46,10 @@ The part was built and measured. Each check gives `expected` and `measured`.
 
 | Check | Usual cause | Change |
 | --- | --- | --- |
-| one closed solid, with several solids | Bodies that do not touch | Make them overlap or share a face, then `union()`. A design of loose bodies, such as a print-in-place hinge, cannot be delivered: tell the user |
-| bounding box | A feature that sticks out, a body that is not centred, axes in another order | Compare axis by axis. `box()` is centred on the origin unless `centered` says otherwise; a part drawn on `"XZ"` has its height along y |
-| volume | A cut that is missing or made twice, a body that was never joined | Read `notes` for bodies left out of the result, and compare the measured volume with your arithmetic |
-| holes | A hole missing, doubled or of another diameter | One entry per hole. A counterbore or countersink counts once, with its drill diameter. One pass through two walls is one hole. Slots are not holes |
+| one closed solid, with several solids | Bodies that do not touch, or a cut that goes right through the part | Make them overlap or share a face, then `union()`. A design of loose bodies, such as a print-in-place hinge, cannot be delivered: tell the user |
+| bounding box | A feature that sticks out, a body that is not centred, axes in another order, a cut that removes the outermost points | Compare axis by axis. `box()` is centred on the origin unless `centered` says otherwise; a part drawn on `"XZ"` has its height along y; notches at 0° and 90° of a round part make it narrower |
+| volume | A cut that is missing or made twice, a body that was never joined, a loop whose passes each start from the same part | Read `notes`: they name bodies left out of the result and passes of a loop whose outcome was dropped. Carry the part through the loop: `result = result.hole(...)` |
+| holes | A hole missing, doubled or of another diameter | One entry per hole. A counterbore or countersink counts once, with its drill diameter. One pass through two walls is one hole. Slots are not holes. The inside of a round pot or a hollow boss counts as one blind hole of its inner diameter: list it. A hole that breaks out through an edge is not counted: check its position |
 
 ## Not a failure of the script
 
@@ -55,4 +57,4 @@ The part was built and measured. Each check gives `expected` and `measured`.
 | --- | --- |
 | Call cad_build again with the same arguments | Exactly that: the server was busy, or the kernel was still loading |
 | Do not call cad_build again | Stop and tell the user what the answer says: the server cannot build |
-| N builds of this part in this run and it has not passed | Stop. Report what fails with its numbers and what you would try next |
+| N builds of this part in this run and the last one did not pass | Stop. Report what fails with its numbers and what you would try next |

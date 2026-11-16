@@ -31,6 +31,8 @@ cd ../../backend && python -m pytest tests/test_cad_extension.py tests/test_cad_
   the flat list the written-out statements give. A construct whose outcome
   depends on a build (`if` on a measurement, `while`) does not fit that and
   stays refused; every construct added to the reader widens the boundary.
+  Passes do not bound reading time, `MAX_WORK` does: count there whatever a
+  new construct makes the reader walk.
 - **The tool's answers are the loop's control.** A model repairs and rebuilds on
   what `next` says, and a host test pins each sentence to its state. Reword one
   only together with `skills/public/cad-modeling`, whose test quotes them.

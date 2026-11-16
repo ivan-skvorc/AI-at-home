@@ -44,27 +44,37 @@ If a dimension that decides the shape is missing, ask: at most three questions,
 in one message. Otherwise choose a sensible value and list it as an assumption.
 
 Then work out the expected numbers from the requirements, by arithmetic: the
-overall size, a volume range (the solid volume minus what is cut away, give or
-take 5 %), and one diameter per hole. They are the numbers of the request. Do
-not read them off a build.
+overall size, the volume (the solid volume minus what is cut away), and one
+diameter per hole. Pass the volume as a narrow range around your number: no
+wider than the smallest feature on your list, so that one slot too few falls
+outside it. Widen it only for a shape whose volume you cannot work out, and
+say so. These are the numbers of the request. Do not read them off a build.
 
 ### Step 2: Write the script
 
 - Start with `import cadquery as cq`. Units are millimetres. Put every
   dimension in a named variable at the top. Assign the part to `result`.
-- A script may contain assignments, numbers, arithmetic with Python's
-  operators (and `+=`), lists of numbers or points, `for` loops over
-  `range(...)` or over a list, `cq.Workplane(...)` and the methods in
+- A script may contain assignments of one value to one name, numbers,
+  arithmetic (`+`, `-`, `*`, `%`, `**`, division with one slash or two, and
+  `+=`), lists of numbers or points written out whole, `for` loops over
+  `range(...)` or over such a list, `cq.Workplane(...)` and the methods in
   `references/operations.md`.
 - It may not contain `if`, `while`, functions, comprehensions, `import math`,
-  f-strings or indexing (`p[0]`). Write a choice as arithmetic (`(-1) ** i`
-  alternates the sign), take a point apart in the loop header
-  (`for x, y in points:`), write a sine as its number and a square root as
-  `** 0.5`.
+  built-in calls (`int`, `round`, `abs`, `min`, `max`, `len`), comparisons,
+  f-strings or indexing (`p[0]`), and a list cannot be added to. Write a choice
+  as arithmetic (`(-1) ** i` alternates the sign), take a point apart in the
+  loop header (`for x, y in points:`), write a sine as its number and a square
+  root as `** 0.5`.
 - The part is **one solid**. Bodies must overlap or share a face and be joined
   with `union()`.
-- In a loop, `center()` moves the origin for every pass after it. Give absolute
-  positions with `pushPoints([(x, y)])`.
+- **Say where every feature goes from the centre of its face.** Start it with
+  `faces(selector).workplane(centerOption="CenterOfBoundBox")` and give
+  positions with `pushPoints([(x, y)])`. A plain `workplane()` keeps the origin
+  of the plane the part was last worked on, and `center()` moves it for
+  everything after, so a feature lands somewhere else and every check still
+  passes. Do not use `center()`.
+- `cutThruAll()` cuts through every wall in its way. To cut one wall of a
+  hollow part, use `cutBlind(-wall)`.
 
 Read `references/operations.md` when you need a method's arguments. Threads,
 sweeps, lofts, revolved shapes, text and assemblies of loose bodies are not
@@ -102,6 +112,14 @@ Step 1 and give every requirement one line: met, not met, or not checked, with
 its evidence (a check, a measured number, a line of the script). A requirement
 you cannot point to evidence for is not met yet.
 
+- The volume is evidence for a feature only when the measured volume and your
+  arithmetic differ by less than that feature.
+- The tool measures no positions. A position is met when the script says it
+  from the centre of the right face (Step 2), not because the build passed.
+- Read `notes` before anything else: passes of a loop whose outcome was
+  dropped, or bodies that were never joined, mean features are missing from a
+  part that passed.
+
 ### Step 6: Change the script and build again
 
 - Say the cause in one sentence before you change anything, and change that.
@@ -130,12 +148,13 @@ Its earlier files are not the part.
 ## What a good loop looks like
 
 ```
-requirements: 1 plate 80 × 30 × 5   2 six slots 12 × 3, pitch 12, along x   3 two M4 holes (4.3) at the ends
-expected:     bbox [80, 30, 5]   volume 10,300 to 11,400   holes [4.3, 4.3]
+requirements: 1 plate 80 × 30 × 5   2 six slots 3 wide and 12 long across the plate, 12 apart along x
+              3 two M4 holes (4.3) at the ends
+expected:     bbox [80, 30, 5]   volume 10,750 to 10,915 (10,833 by arithmetic; one slot is 170)   holes [4.3, 4.3]
 
 1  refused, line 9: an if statement                 → the alternation becomes (-1) ** i
-2  failed, line 11, pass 3 (i = 2): removed nothing → center() carried over between passes; pushPoints([(x, y)])
-3  passed; unchecked: nothing; six slots at line 11 → 1 met (bbox), 2 met (script, volume), 3 met (holes)
+2  failed, line 11, pass 2 (i = 1): removed nothing → center() carried over; workplane(centerOption="CenterOfBoundBox") and pushPoints
+3  passed, volume 10,832.7, no notes                → 1 met (bbox), 2 met (volume within one slot of the arithmetic), 3 met (holes)
 ```
 
 Three attempts, one cause each, and every requirement has its evidence.

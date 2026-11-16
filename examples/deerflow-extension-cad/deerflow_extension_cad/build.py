@@ -28,6 +28,8 @@ MESH_FULL_DETAIL_MM = 1000.0
 #: A harmless repeat (the same hole drilled twice) is refused with it: the line is not
 #: needed, and nothing here can tell the two apart.
 _REDUNDANT = " Delete this line if the part is right without it."
+#: The same for a line inside a loop, where the line is every pass and only this pass does nothing.
+_REDUNDANT_PASS = " Leave this pass out if the part is right without it."
 _OFF_THE_PART = "removed no material: it is off the part, or the material there is already gone." + _REDUNDANT
 _INSIDE_THE_PART = "added no material: the new body lies inside the part, so check its position and direction." + _REDUNDANT
 _MUST_CHANGE = {
@@ -67,9 +69,17 @@ class BuildFailed(Exception):
         self.message = message
 
 
+#: A blind cut whose distance already points into the part: the sign is not what went wrong.
+_CUT_INTO_AIR = "removed no material: the outline is not on material. faces('>Z') is the highest face of the part as it is now, which a boss or a lip added earlier has moved; cut from the face the pocket belongs to." + _REDUNDANT
+#: Operations that make or reshape a solid: a branch of a script that holds one did work on the part.
+_SHAPING = frozenset(_MUST_CHANGE) | {"fillet", "chamfer", "translate", "rotate", "mirror"}
+
+
 def _failed(operation, message: str) -> BuildFailed:
     """A failure of one operation; inside a loop, with the pass it happened in, since the line alone names them all."""
-    return BuildFailed(operation.line, operation.method, f"{message} (in {operation.where})" if operation.where else message)
+    if not operation.where:
+        return BuildFailed(operation.line, operation.method, message)
+    return BuildFailed(operation.line, operation.method, f"{message.replace(_REDUNDANT, _REDUNDANT_PASS)} (in {operation.where})")
 
 
 def _state(part) -> tuple[float, int] | None:
@@ -94,6 +104,9 @@ def _check_effect(operation, before: tuple[float, int] | None, made, cq) -> None
     # The faces as well as the volume: a real cut of a millimetre in a part of metres is
     # below any tolerance on the volume, and it still adds faces.
     if after is not None and after[1] == before[1] and abs(after[0] - before[0]) <= 1e-12 * max(before[0], 1.0):
+        distance = dict(operation.arguments).get("until")
+        if operation.method == "cutBlind" and type(distance) in (int, float) and distance < 0:
+            effect = _CUT_INTO_AIR
         raise _failed(operation, f"{operation.method}() {effect}")
 
 
@@ -148,26 +161,36 @@ def build_parts(program: Program, cq) -> list:
     return parts
 
 
-def unused_bodies(program: Program, parts: list) -> list[int]:
-    """Lines of the bodies a script builds and never joins to its result, one per body.
+def left_out(program: Program, parts: list) -> tuple[list[int], dict[int, int]]:
+    """What a script built and left out of its result: whole bodies, and passes of a loop.
 
-    The usual slip in a loop: each pass builds a body and the last one alone is the
-    result. A branch off the result (a trial cut) is not a body of its own and is not
-    counted, and neither is an outline or a selection that holds no solid.
+    Returns the line each left-out body starts on, one entry per body, and for each
+    loop, by its line, how many of its passes worked on the part without their outcome
+    reaching the result. Both are the usual slips in a loop: each pass builds a body
+    and the last one alone is the result, or each pass starts from the same part, so
+    only the last pass's work is kept. Outside a loop a branch off the result is a
+    trial and is not counted, and neither is an outline or a selection.
     """
     used = _used_by_result(program)
     consumed = {operation.receiver for operation in program.operations if operation.receiver is not None}
     consumed.update(value.slot for operation in program.operations for _, value in operation.arguments if isinstance(value, Ref))
-    lines = []
+    bodies: dict[int, int] = {}
+    passes: dict[int, set[str]] = {}
     for slot, operation in enumerate(program.operations):
         if slot in used or slot in consumed:
             continue
+        chain = [slot]
         ancestor = operation.receiver
         while ancestor is not None and ancestor not in used:
+            chain.append(ancestor)
             ancestor = program.operations[ancestor].receiver
-        if ancestor is None and _state(parts[slot]) is not None:
-            lines.append(operation.line)
-    return lines
+        if ancestor is None:
+            # A body of its own, however many selections were made on it: counted once, where it starts.
+            if chain[-1] not in bodies and _state(parts[slot]) is not None:
+                bodies[chain[-1]] = program.operations[chain[-1]].line
+        elif operation.loop and any(program.operations[index].method in _SHAPING for index in chain):
+            passes.setdefault(operation.loop, set()).add(operation.where)
+    return sorted(bodies.values()), {line: len(dropped) for line, dropped in sorted(passes.items())}
 
 
 def solid_of(part):

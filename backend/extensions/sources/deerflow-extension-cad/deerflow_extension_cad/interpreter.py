@@ -39,11 +39,18 @@ MAX_STRING = 80
 MAX_NUMBER = 1e12
 MAX_EXPONENT = 64
 MAX_COUNT = 10_000
-#: Passes of every loop in a script, added up. The operations a script may perform are
-#: capped apart from this; the cap here bounds a loop that only does arithmetic.
+#: Passes of every loop in a script, added up: past any part's features, and few enough
+#: that a failure can name its pass. What reading costs is bounded by MAX_WORK below.
 MAX_LOOP_PASSES = 1_000
 #: Loops inside loops. Each level adds a clause to where a failure is said to be.
 MAX_LOOP_DEPTH = 4
+#: Values read and list items walked, loops unrolled. Passes alone do not bound reading: a
+#: body that walks long lists a thousand times took fifteen seconds. An ordinary script
+#: spends a few thousand.
+MAX_WORK = 200_000
+#: How much of one pass a failure quotes, and of all the passes around it together.
+MAX_PASS_SAID = 60
+MAX_WHERE = 240
 
 _SELECTOR = re.compile(table.SELECTOR_PATTERN)
 _TAG = re.compile(table.TAG_PATTERN)
@@ -60,7 +67,11 @@ _DIRECTION_MARKS = frozenset("\u061c\u200e\u200f\u202a\u202b\u202c\u202d\u202e\u
 #: Blanks in a row after a line's first character, and blank lines in a row: more is padding
 #: that pushes code out of sight, sideways or down.
 MAX_BLANK_RUN = 40
-_PADDING = re.compile(rf"\S[ \t]{{{MAX_BLANK_RUN + 1},}}\S")
+_PADDING = re.compile(rf"\S {{{MAX_BLANK_RUN + 1},}}\S")
+#: Columns a line may be indented, a tab counted as a viewer draws it. Further right, a
+#: narrow viewer shows the line as blank; a loop body is a whole statement that could sit there.
+MAX_INDENT = 80
+TAB_WIDTH = 8
 
 
 class ScriptRefused(Exception):
@@ -93,6 +104,8 @@ class Operation:
     arguments: tuple[tuple[str, object], ...]
     #: For an operation inside a loop, which pass it belongs to: one line of a loop stands for many operations.
     where: str = ""
+    #: The line of the innermost loop the operation is in; 0 outside a loop.
+    loop: int = 0
 
 
 @dataclass(frozen=True)
@@ -207,9 +220,9 @@ def _refuse(construct: str, line: int | None, message: str):
     raise ScriptRefused(construct, line, message)
 
 
-def _short(text: str) -> str:
+def _short(text: str, limit: int = MAX_ECHO) -> str:
     """What a script wrote, cut for quoting back: a refusal is not a way to fill the answer."""
-    return text if len(text) <= MAX_ECHO else text[: MAX_ECHO - 3] + "..."
+    return text if len(text) <= limit else text[: limit - 3] + "..."
 
 
 def _article(noun: str) -> str:
@@ -217,20 +230,33 @@ def _article(noun: str) -> str:
 
 
 def _show(value: object) -> str:
-    """A loop variable's value, as it is said beside a failure."""
+    """A loop variable's value, as it is said beside a failure: exact, and short however long the value."""
     if isinstance(value, tuple):
+        if len(value) > 3:
+            return f"({_show(value[0])}, {_show(value[1])}, ... {len(value)} numbers)"
         return "(" + ", ".join(_show(item) for item in value) + ")"
-    return f"{value:g}" if _is_number(value) else str(value)
+    # A whole number as it is and a decimal in full: six digits would name a value the loop never held.
+    return repr(value) if type(value) is float else str(value)
 
 
-def _check_lines(statements: list[ast.stmt], previous_end: int) -> None:
-    """One statement per line, also inside a loop: nothing sits beside what a viewer reads as the line."""
+def _check_lines(statements: list[ast.stmt], lines: list[bytes], loop: ast.For | None = None) -> None:
+    """Every statement starts its own line, and a loop's body is indented as one block under it.
+
+    With loops, indentation decides what a line belongs to. A statement beside the end
+    of a header, or one that a backslash carries into a loop from the margin, would be
+    read here as part of the loop and by a person as not.
+    """
+    column = None
     for statement in statements:
-        if statement.lineno <= previous_end:
+        # The parser counts columns in bytes of UTF-8, so the line is cut in bytes.
+        if lines[statement.lineno - 1][: statement.col_offset].strip():
             _refuse("syntax", statement.lineno, "one statement per line: start this one on its own line")
+        if loop is not None:
+            column = statement.col_offset if column is None else column
+            if statement.col_offset <= loop.col_offset or statement.col_offset != column:
+                _refuse("syntax", statement.lineno, f"this line belongs to the loop on line {loop.lineno} and is not indented like the rest of its body: indent it under the loop, or end the loop first")
         if isinstance(statement, ast.For):
-            _check_lines(statement.body, statement.iter.end_lineno or statement.lineno)
-        previous_end = statement.end_lineno or statement.lineno
+            _check_lines(statement.body, lines, statement)
 
 
 def _check_tree(tree: ast.Module) -> None:
@@ -296,8 +322,9 @@ class _Reader:
         self.operations: list[Operation] = []
         self.instances = 0
         self.passes = 0
-        #: The loop passes being read, outermost first.
-        self.loops: list[str] = []
+        self.work = 0
+        #: The loop passes being read, outermost first: the loop's line and how the pass is said.
+        self.loops: list[tuple[int, str]] = []
         #: (name, slot) pairs: the part a name held at that moment, whatever the name holds later.
         self.shown: tuple[str, int] | None = None
         self.shown_line: int | None = None
@@ -337,8 +364,16 @@ class _Reader:
         else:  # pragma: no cover - _check_tree refuses every other statement first
             _refuse("statement", node.lineno, _ALLOWED_SUMMARY)
 
+    def spend(self, amount: int, line: int) -> None:
+        """Count what reading costs, so no script is read for longer than a moment."""
+        self.work += amount
+        if self.work > MAX_WORK:
+            _refuse("script length", line, "the script asks for more work than a script may: its loops repeat long lists too often. Shorten the lists or the loops.")
+
     def target(self, name: str, line: int) -> str:
-        if name in _RESERVED or "__" in name or not _NAME.fullmatch(name):
+        if name in _RESERVED:
+            _refuse("name", line, f"{name!r} is a name the script is given and cannot be assigned: use another name")
+        if "__" in name or not _NAME.fullmatch(name):
             _refuse("name", line, f"{_short(name)!r} cannot be assigned: use a name that starts with a letter and holds letters, digits and single underscores, at most 64 characters, and not cq")
         return name
 
@@ -352,7 +387,7 @@ class _Reader:
         if len(self.loops) >= MAX_LOOP_DEPTH:
             _refuse("loop", line, f"loops may be nested at most {MAX_LOOP_DEPTH} deep")
         elements = node.target.elts if isinstance(node.target, ast.Tuple) else [node.target]
-        if not all(isinstance(element, ast.Name) for element in elements):
+        if not elements or not all(isinstance(element, ast.Name) for element in elements):
             _refuse("loop", line, "a loop counts with a plain name, or with one name per number of a point, for example: for x, y in [(0, 0), (10, 0)]:")
         names = [self.target(element.id, line) for element in elements]
         items = self.loop_items(node.iter)
@@ -360,11 +395,12 @@ class _Reader:
             _refuse("loop", line, "this loop would not run once: its range or list is empty")
         for number, item in enumerate(items, 1):
             self.passes += 1
+            self.spend(1, line)
             if self.passes > MAX_LOOP_PASSES:
                 _refuse("loop", line, f"the loops of a script may run at most {MAX_LOOP_PASSES} passes in total")
             if isinstance(node.target, ast.Tuple):
                 if not isinstance(item, tuple) or len(item) != len(names):
-                    _refuse("loop", line, f"this loop takes {len(names)} names per item, and item {number} is {_show(item)}")
+                    _refuse("loop", line, f"this loop takes {len(names)} names per item, and item {number} is {_short(_show(item))}")
                 values = item
             else:
                 values = (item,)
@@ -372,8 +408,8 @@ class _Reader:
                 self.names[name] = value
                 if name == "result":
                     self.result_line = line
-            said = ", ".join(f"{name} = {_show(value)}" for name, value in zip(names, values))
-            self.loops.append(f"pass {number} of the loop on line {line} ({said})")
+            said = ", ".join(f"{name} = {_show(value)}" for name, value in list(zip(names, values))[:3]) + (", ..." if len(names) > 3 else "")
+            self.loops.append((line, f"pass {number} of the loop on line {line} ({_short(said, MAX_PASS_SAID)})"))
             try:
                 for statement in node.body:
                     self.statement(statement)
@@ -395,9 +431,13 @@ class _Reader:
             if node.keywords or not 1 <= len(node.args) <= 3:
                 _refuse("loop", node.lineno, "range() takes one to three whole numbers, for example range(5) or range(0, 50, 10)")
             bounds = [self.value(argument) for argument in node.args]
-            for bound in bounds:
+            for index, bound in enumerate(bounds):
+                # 50 // 3.5 is 14.0: a count worked out from a decimal is whole and still has its point.
+                if type(bound) is float and bound.is_integer():
+                    bound = bounds[index] = int(bound)
                 if type(bound) is not int:
-                    _refuse("loop", node.lineno, f"range() takes whole numbers, got {_describe(bound)}: divide with // to get one, for example range(length // pitch)")
+                    said = repr(bound) if type(bound) is float else _describe(bound)
+                    _refuse("loop", node.lineno, f"range() takes whole numbers, got {said}: round a count down with //, for example range(length // pitch)")
             if len(bounds) == 3 and bounds[2] == 0:
                 _refuse("loop", node.lineno, "range() cannot step by zero")
             steps = range(*bounds)
@@ -410,8 +450,14 @@ class _Reader:
         return items
 
     def where(self) -> str:
-        """The passes being read, innermost first; empty outside a loop."""
-        return ", ".join(reversed(self.loops))
+        """The passes being read, innermost first and no longer than a sentence; empty outside a loop."""
+        said: list[str] = []
+        for _, clause in reversed(self.loops):
+            if said and sum(map(len, said)) + len(clause) > MAX_WHERE:
+                said.append(f"and {len(self.loops) - len(said)} more around it")
+                break
+            said.append(clause)
+        return ", ".join(said)
 
     def expression_statement(self, node: ast.Expr) -> None:
         value = node.value
@@ -434,6 +480,7 @@ class _Reader:
     # Expressions
 
     def value(self, node: ast.expr) -> object:
+        self.spend(1, node.lineno)
         if isinstance(node, ast.Constant):
             return self.constant(node)
         if isinstance(node, ast.Name):
@@ -476,6 +523,8 @@ class _Reader:
         if len(node.elts) > table.MAX_SEQUENCE_ITEMS:
             _refuse("sequence", node.lineno, f"a list or tuple holds at most {table.MAX_SEQUENCE_ITEMS} items")
         items = tuple(self.value(element) for element in node.elts)
+        # A name may stand for a long tuple, and the check below walks each one.
+        self.spend(sum(len(item) for item in items if isinstance(item, tuple)), node.lineno)
         for element, item in zip(node.elts, items):
             nested = isinstance(item, tuple)
             if not (nested or isinstance(item, bool) or _is_number(item)) or (nested and any(isinstance(inner, tuple) for inner in item)):
@@ -503,7 +552,8 @@ class _Reader:
             elif isinstance(operator, ast.Mod):
                 result = left % right
             else:
-                if abs(right) > MAX_EXPONENT:
+                # A base of one or less cannot grow, so (-1) ** i may alternate a sign over any number of passes.
+                if abs(right) > MAX_EXPONENT and abs(left) > 1:
                     _refuse("arithmetic", line, f"an exponent may not exceed {MAX_EXPONENT}")
                 result = left**right
         except ZeroDivisionError:
@@ -575,7 +625,7 @@ class _Reader:
                 )
         if len(self.operations) >= MAX_OPERATIONS:
             _refuse("script length", line, f"a script may perform at most {MAX_OPERATIONS} operations")
-        self.operations.append(Operation(line, receiver, name, tuple(arguments), self.where()))
+        self.operations.append(Operation(line, receiver, name, tuple(arguments), self.where(), self.loops[-1][0] if self.loops else 0))
         return Ref(len(self.operations) - 1)
 
     def fit(self, label: str, param: table.Param, value: object, line: int) -> object:
@@ -689,11 +739,16 @@ def compile_script(source: str) -> Program:
         _refuse("syntax", line, f"the script contains a control or text-direction character (U+{ord(source[hidden]):04X}); use plain text with ordinary line breaks")
     # After the gate above only a line feed ends a line, so these are the parser's lines.
     blank = 0
-    for number, text in enumerate(source.split("\n"), 1):
+    lines = source.split("\n")
+    for number, text in enumerate(lines, 1):
         if len(text) > MAX_LINE:
             _refuse("syntax", number, f"this line is longer than {MAX_LINE} characters: break it into shorter lines")
-        if _PADDING.search(text):
+        # A tab is as wide as a viewer draws it.
+        drawn = text.expandtabs(TAB_WIDTH)
+        if _PADDING.search(drawn):
             _refuse("syntax", number, f"this line holds more than {MAX_BLANK_RUN} blanks in a row: remove the padding")
+        if drawn.strip() and len(drawn) - len(drawn.lstrip()) > MAX_INDENT:
+            _refuse("syntax", number, f"this line is indented more than {MAX_INDENT} columns: move it left")
         blank = 0 if text.strip() else blank + 1
         if blank > MAX_BLANK_RUN:
             _refuse("syntax", number - blank + 1, f"more than {MAX_BLANK_RUN} blank lines in a row: remove them")
@@ -704,7 +759,7 @@ def compile_script(source: str) -> Program:
     except (ValueError, RecursionError, MemoryError):
         _refuse("nesting", None, "the script is nested too deeply to read")
     _check_tree(tree)
-    _check_lines(tree.body, 0)
+    _check_lines(tree.body, [text.encode("utf-8") for text in lines])
     reader = _Reader()
     try:
         for statement in tree.body:
