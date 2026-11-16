@@ -102,12 +102,19 @@ class Operation:
     method: str
     #: Keyword arguments in CadQuery's parameter order; values are plain data or Ref.
     arguments: tuple[tuple[str, object], ...]
-    #: For an operation inside a loop, which pass it belongs to: one line of a loop stands for many operations.
+    #: For an operation inside a loop, which pass it belongs to, in words: one line of a loop stands for many operations.
     where: str = ""
-    #: The line of the innermost loop the operation is in; 0 outside a loop.
-    loop: int = 0
-    #: True in the last pass of that loop: what a script makes ready there for a next pass is not work dropped.
+    #: The same as data: (line of the loop, number of the pass) for each loop around the operation, outermost first.
+    passes: tuple[tuple[int, int], ...] = ()
+    #: True in the last pass of the innermost loop.
     last: bool = False
+    #: Which call of the script this is, the same in every pass: where the call ends (line, column).
+    site: tuple[int, int] = (0, 0)
+
+    @property
+    def loop(self) -> int:
+        """The line of the innermost loop the operation is in; 0 outside a loop."""
+        return self.passes[-1][0] if self.passes else 0
 
 
 @dataclass(frozen=True)
@@ -326,8 +333,8 @@ class _Reader:
         self.instances = 0
         self.passes = 0
         self.work = 0
-        #: The loop passes being read, outermost first: the loop's line, how the pass is said, whether it is the last.
-        self.loops: list[tuple[int, str, bool]] = []
+        #: The loop passes being read, outermost first: the loop's line, the pass's number, how it is said, whether it is the last.
+        self.loops: list[tuple[int, int, str, bool]] = []
         #: (name, slot) pairs: the part a name held at that moment, whatever the name holds later.
         self.shown: tuple[str, int] | None = None
         self.shown_line: int | None = None
@@ -413,7 +420,7 @@ class _Reader:
                 if name == "result":
                     self.result_line = line
             said = ", ".join(f"{name} = {_show(value)}" for name, value in list(zip(names, values))[:3]) + (", ..." if len(names) > 3 else "")
-            self.loops.append((line, f"pass {number} of the loop on line {line} ({_short(said, MAX_PASS_SAID)})", number == len(items)))
+            self.loops.append((line, number, f"pass {number} of the loop on line {line} ({_short(said, MAX_PASS_SAID)})", number == len(items)))
             try:
                 for statement in node.body:
                     self.statement(statement)
@@ -456,7 +463,7 @@ class _Reader:
     def where(self) -> str:
         """The passes being read, innermost first and no longer than a sentence; empty outside a loop."""
         said: list[str] = []
-        for _, clause, _ in reversed(self.loops):
+        for _, _, clause, _ in reversed(self.loops):
             if said and sum(map(len, said)) + len(clause) > MAX_WHERE:
                 said.append(f"and {len(self.loops) - len(said)} more around it")
                 break
@@ -629,8 +636,9 @@ class _Reader:
                 )
         if len(self.operations) >= MAX_OPERATIONS:
             _refuse("script length", line, f"a script may perform at most {MAX_OPERATIONS} operations")
-        loop, _, last = self.loops[-1] if self.loops else (0, "", False)
-        self.operations.append(Operation(line, receiver, name, tuple(arguments), self.where(), loop, last))
+        passes = tuple((loop, number) for loop, number, _, _ in self.loops)
+        site = (node.end_lineno or node.lineno, node.end_col_offset or 0)
+        self.operations.append(Operation(line, receiver, name, tuple(arguments), self.where(), passes, bool(self.loops) and self.loops[-1][3], site))
         return Ref(len(self.operations) - 1)
 
     def fit(self, label: str, param: table.Param, value: object, line: int) -> object:

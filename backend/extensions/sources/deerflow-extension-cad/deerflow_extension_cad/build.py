@@ -33,7 +33,12 @@ _REDUNDANT_PASS = " Leave this pass out if the part is right without it."
 _OFF_THE_PART = "removed no material: it is off the part, or the material there is already gone." + _REDUNDANT
 _INSIDE_THE_PART = "added no material: the new body lies inside the part, so check its position and direction." + _REDUNDANT
 _MUST_CHANGE = {
-    "cutBlind": "removed no material: a positive distance cuts away from the part, so use a negative distance to cut into it, and check that the outline lies on the part." + _REDUNDANT,
+    # One sentence for every way a blind cut removes nothing: the wrong way, beside the part, or twice.
+    "cutBlind": (
+        "removed no material: the cut ran away from the material, started beside it, or the material there is already gone. "
+        "A blind cut runs against the workplane's normal for a negative distance (into the part from a face it was taken from) and along it for a positive one. "
+        "Check the face it starts from: faces('>Z') is the highest face of the part as it is now, which a boss or a lip added earlier has moved." + _REDUNDANT
+    ),
     "cutThruAll": _OFF_THE_PART,
     "hole": _OFF_THE_PART,
     "cboreHole": _OFF_THE_PART,
@@ -69,11 +74,6 @@ class BuildFailed(Exception):
         self.message = message
 
 
-#: A blind cut whose distance already points into the part: the sign is not what went wrong.
-_CUT_INTO_AIR = (
-    "removed no material: the cut starts where there is no material, or the material there is already gone. Check the outline's position and the face "
-    "it starts from: faces('>Z') is the highest face of the part as it is now, which a boss or a lip added earlier has moved." + _REDUNDANT
-)
 #: Operations that make or reshape a solid: a branch of a script that holds one did work on the part.
 _SHAPING = frozenset(_MUST_CHANGE) | {"fillet", "chamfer", "translate", "rotate", "mirror"}
 
@@ -107,9 +107,6 @@ def _check_effect(operation, before: tuple[float, int] | None, made, cq) -> None
     # The faces as well as the volume: a real cut of a millimetre in a part of metres is
     # below any tolerance on the volume, and it still adds faces.
     if after is not None and after[1] == before[1] and abs(after[0] - before[0]) <= 1e-12 * max(before[0], 1.0):
-        distance = dict(operation.arguments).get("until")
-        if operation.method == "cutBlind" and type(distance) in (int, float) and distance < 0:
-            effect = _CUT_INTO_AIR
         raise _failed(operation, f"{operation.method}() {effect}")
 
 
@@ -182,24 +179,41 @@ def left_out(program: Program, parts: list) -> tuple[list[int], dict[int, int]]:
     last one alone is the result, or each pass starts from the same part, so only the
     last pass's work is kept.
 
-    Not counted: an outline or a selection, which is no work; a branch off the result
-    outside a loop, which is a trial; and a tool made ready in the last pass for a
-    pass that never came (a cutter moved on after its last cut).
+    Not counted, because nothing is missing from the part:
+    - an outline or a selection, which is no work, and a branch off the result
+      outside a loop, which is a trial;
+    - a tool made ready for a pass that never came (a cutter moved on after its last
+      cut): left over in the last pass, where the same call's outcome was used in
+      every pass before;
+    - a part put together again in every pass (result = body.union(lid) inside the
+      loop): dropped in the earlier passes, where the same call's outcome in the
+      last pass is in the result and stands on what that pass carried.
     """
+    operations = program.operations
     used = _used_by_result(program)
-    # The part itself, as opposed to the bodies it was cut with or joined to: the result and what it was called on, all the way back.
-    spine: set[int] = set()
-    slot: int | None = program.result
-    while slot is not None:
-        spine.add(slot)
-        slot = program.operations[slot].receiver
-    consumed = {operation.receiver for operation in program.operations if operation.receiver is not None}
-    consumed.update(value.slot for operation in program.operations for _, value in operation.arguments if isinstance(value, Ref))
-    #: By the line of the loop it was built in, 0 outside one: the body's first operation, with its line and whether in a last pass.
-    bodies: dict[int, dict[int, tuple[int, bool]]] = {}
-    #: By loop line: the passes that dropped work.
-    passes: dict[int, set[str]] = {}
-    for slot, operation in enumerate(program.operations):
+    consumed = {operation.receiver for operation in operations if operation.receiver is not None}
+    consumed.update(value.slot for operation in operations for _, value in operation.arguments if isinstance(value, Ref))
+    #: The passes of each call, by the run of its innermost loop: {(call, passes around that loop): {pass number: operation}}.
+    runs: dict[tuple, dict[int, int]] = {}
+    for slot, operation in enumerate(operations):
+        if operation.passes:
+            runs.setdefault((operation.site, operation.passes[:-1], operation.loop), {})[operation.passes[-1][1]] = slot
+
+    def same_call(slot: int) -> dict[int, int]:
+        operation = operations[slot]
+        return runs[(operation.site, operation.passes[:-1], operation.loop)]
+
+    def made_ready(slot: int) -> bool:
+        earlier = [other for number, other in same_call(slot).items() if number < operations[slot].passes[-1][1]]
+        return operations[slot].last and bool(earlier) and all(other in used for other in earlier)
+
+    def put_together_again(slot: int, ancestor: int) -> bool:
+        final = max(same_call(slot).items())[1]
+        return not operations[slot].last and final in used and operations[ancestor].passes == operations[slot].passes
+
+    bodies: dict[int, int] = {}
+    passes: dict[int, set[tuple]] = {}
+    for slot, operation in enumerate(operations):
         if slot in used or slot in consumed:
             continue
         chain = [slot]
@@ -207,17 +221,18 @@ def left_out(program: Program, parts: list) -> tuple[list[int], dict[int, int]]:
         # A workplane the result also started from is not the part until it holds a solid.
         while ancestor is not None and not (ancestor in used and _holds_solid(parts[ancestor])):
             chain.append(ancestor)
-            ancestor = program.operations[ancestor].receiver
+            ancestor = operations[ancestor].receiver
         if ancestor is None:
             # A body of its own, however many selections were made on it: counted once, where it starts.
             start = next((index for index in reversed(chain) if index not in used), chain[-1])
-            first = program.operations[start]
-            if start not in bodies.get(first.loop, {}) and _holds_solid(parts[slot]):
-                bodies.setdefault(first.loop, {})[start] = (first.line, first.last)
-        elif operation.loop and any(program.operations[index].method in _SHAPING for index in chain) and not (operation.last and ancestor not in spine):
-            passes.setdefault(operation.loop, set()).add(operation.where)
-    lines = sorted(line for loop, found in bodies.items() for line, last in found.values() if not loop or not all(last for _, last in found.values()))
-    return lines, {loop: len(dropped) for loop, dropped in sorted(passes.items())}
+            if start not in bodies and _holds_solid(parts[slot]) and not (operation.passes and made_ready(slot)):
+                bodies[start] = operations[start].line
+        elif operation.passes and not made_ready(slot) and not put_together_again(slot, ancestor):
+            # Every pass the dropped chain did work in, not only the one it ends in.
+            worked = {operations[index].passes for index in chain if operations[index].loop == operation.loop and operations[index].method in _SHAPING}
+            if worked:
+                passes.setdefault(operation.loop, set()).update(worked | {operation.passes})
+    return sorted(bodies.values()), {loop: len(dropped) for loop, dropped in sorted(passes.items())}
 
 
 def solid_of(part):

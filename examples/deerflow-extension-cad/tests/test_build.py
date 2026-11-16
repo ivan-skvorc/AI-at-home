@@ -196,7 +196,22 @@ async def test_passes_of_a_loop_whose_outcome_is_dropped_are_said_in_the_answer(
     # Rows lost one level up: the inner loop carries its row, and the outer loop starts every row from the bare plate.
     rows = 'base = cq.Workplane("XY").box(50, 50, 4)\nfor row in range(3):\n    result = base\n    for column in range(3):\n        result = result.faces(">Z").workplane().pushPoints([(-15 + column * 15, -15 + row * 15)]).hole(4)\n'
     answer, _ = await _build(rows, bbox_xyz_mm=[50, 50, 4])
-    assert answer["passed"] is True and [note[:32] for note in answer["notes"]] == ["2 passes of the loop on line 4 d"], answer
+    # Counted by every pass that did the work: three holes in each of the two rows that were lost.
+    assert answer["passed"] is True and [note[:32] for note in answer["notes"]] == ["6 passes of the loop on line 4 d"], answer
+    # Work on a body after it was joined is lost the same way, whichever side of union() the body stood on.
+    after = 'frame = cq.Workplane("XY").box(110, 40, 2)\nlid = cq.Workplane("XY").box(100, 30, 5).translate((0, 0, 3.5))\nresult = frame.union(lid)\n'
+    after += 'for i in range(6):\n    lid = lid.faces(">Z").workplane().pushPoints([(-30 + i * 12, 0)]).slot2D(12, 3, 90).cutThruAll()\n'
+    answer, _ = await _build(after, bbox_xyz_mm=[110, 40, 7])
+    assert answer["passed"] is True and [note[:32] for note in answer["notes"]] == ["6 passes of the loop on line 4 d"], answer
+    # A part put together again in every pass loses nothing: the last time is the result.
+    again = 'body = cq.Workplane("XY").box(60, 40, 6)\nlid = cq.Workplane("XY").box(60, 40, 2).translate((0, 0, 4))\n'
+    again += 'for i in range(3):\n    body = body.faces("<Z").workplane().pushPoints([(-20 + i * 20, 0)]).hole(3, 2)\n    result = body.union(lid)\n'
+    answer, _ = await _build(again, bbox_xyz_mm=[60, 40, 8])
+    assert answer["passed"] is True and "notes" not in answer, answer
+    # A loop of one pass has no pass before it to show that its leftover is a tool made ready.
+    once = f'result = {BLOCK}\nfor x, y in [(0, 0)]:\n    boss = cq.Workplane("XY").cylinder(10, 4).translate((x, y, 8))\n'
+    answer, _ = await _build(once, bbox_xyz_mm=[60, 40, 6])
+    assert [note[:26] for note in answer["notes"]] == ["The script builds 1 body ("], answer
     # A selection made in every pass and never used did no work on the part.
     looking = 'result = cq.Workplane("XY").box(20, 20, 4)\nfor i in range(3):\n    top = result.faces(">Z")\n'
     answer, _ = await _build(looking, bbox_xyz_mm=[20, 20, 4])
@@ -256,15 +271,19 @@ async def test_a_blind_cut_into_air_names_the_cause_that_fits_its_distance():
     lip = f'result = {BLOCK}.union(cq.Workplane("XY").box(60, 6, 20).translate((0, 17, 13)))\nresult = result.faces(">Z").workplane().center(0, -20).rect(40, 6).cutBlind(-4)\n'
     answer, _ = await _build(lip, bbox_xyz_mm=[60, 40, 26])
     message = answer["error"]["message"]
-    assert answer["error"]["operation"] == "cutBlind" and "highest face" in message and "use a negative distance" not in message
-    # The same sentence has to be true of the same pocket cut twice: there the material is already gone.
+    assert answer["error"]["operation"] == "cutBlind" and "highest face" in message
+    # The sentence is the same for every blind cut that removes nothing, so it has to be true of each:
+    # the same pocket cut twice (the material is gone), and a workplane that points into the part (the direction).
     twice = f'result = {BLOCK}.faces(">Z").workplane().rect(20, 10).cutBlind(-3)\nresult = result.faces(">Z").workplane().rect(20, 10).cutBlind(-3)\n'
-    answer, _ = await _build(twice, bbox_xyz_mm=[60, 40, 6])
-    assert "already gone" in answer["error"]["message"] and "use a negative distance" not in answer["error"]["message"]
+    inverted = f'result = {BLOCK}.faces(">Z").workplane(invert=True).rect(20, 10).cutBlind(-3)\n'
+    for script in (twice, inverted):
+        answer, _ = await _build(script, bbox_xyz_mm=[60, 40, 6])
+        message = answer["error"]["message"]
+        assert "ran away from the material" in message and "already gone" in message and "against the workplane's normal for a negative distance" in message
     # A positive distance still gets the sentence about the sign.
     away = f'result = {BLOCK}.faces(">Z").workplane().rect(20, 10).cutBlind(3)\n'
     answer, _ = await _build(away, bbox_xyz_mm=[60, 40, 6])
-    assert "use a negative distance" in answer["error"]["message"]
+    assert "along it for a positive one" in answer["error"]["message"]
 
 
 async def test_a_part_is_rebuilt_until_it_passes_and_each_answer_says_what_comes_next():

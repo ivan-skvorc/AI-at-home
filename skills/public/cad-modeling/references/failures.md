@@ -30,8 +30,8 @@ for a line inside a loop the pass and the loop variable's value.
 
 | The message says | Cause | Change |
 | --- | --- | --- |
-| removed no material | The cut or hole is beside the part, or repeats an earlier one | Check its position: a plain `workplane()` keeps the origin of the last one, and `center()` moves it for every pass after. Start with `workplane(centerOption="CenterOfBoundBox")`. `cutBlind` cuts into the part with a negative distance |
-| removed no material: the cut starts where there is no material | A blind cut started from the highest face after a boss or a lip moved it, or the pocket is already there | Cut from the face the pocket belongs to, or cut the pocket before adding the boss |
+| removed no material | The cut or hole is beside the part, or repeats an earlier one | Check its position: a plain `workplane()` keeps the origin of the last one, and `center()` moves it for every pass after. Start with `workplane(origin=(0, 0, 0))` |
+| removed no material: the cut ran away from the material | A blind cut with the wrong sign, one that started from the top of a boss or a lip, or a pocket that is already there | `cutBlind` cuts into the part with a negative distance from a face of the part. Cut the pocket before adding the boss |
 | Leave this pass out | One pass of a loop repeats an earlier one, such as a ring of points that ends on its first point | Remove that item from the list, not the line |
 | added no material | The new body lies inside the part | Check its position and the direction of the extrusion |
 | left no solid | The operation removed the whole part | The cut or hole is larger than the part, or two parts that were intersected do not meet |
@@ -48,7 +48,8 @@ The part was built and measured. Each check gives `expected` and `measured`.
 | --- | --- | --- |
 | one closed solid, with several solids | Bodies that do not touch, or a cut that goes right through the part | Make them overlap or share a face, then `union()`. A design of loose bodies, such as a print-in-place hinge, cannot be delivered: tell the user |
 | bounding box | A feature that sticks out, a body that is not centred, axes in another order, a cut that removes the outermost points | Compare axis by axis. `box()` is centred on the origin unless `centered` says otherwise; a part drawn on `"XZ"` has its height along y; notches at 0° and 90° of a round part make it narrower |
-| volume | A cut that is missing or made twice, a body that was never joined, a loop whose passes each start from the same part | Read `notes`: they name bodies left out of the result and passes of a loop whose outcome was dropped. Carry the part through the loop: `result = result.hole(...)` |
+| volume | A cut that is missing or made twice, a body that was never joined, a loop whose passes each start from the same part, a feature in the wrong place | Read `notes`: they name bodies left out of the result and passes of a loop whose work is not in it. Carry the part through the loop: `result = result.hole(...)`. A countersink cut from the top of a peg removes its drill and not its head; a slot placed from a face that an earlier slot split lands elsewhere: place it from the origin |
+| holes, with "not measured" | The result is several bodies, and holes are measured on one solid | Join the bodies first; the holes are then measured |
 | holes | A hole missing, doubled or of another diameter | One entry per hole. A counterbore or countersink counts once, with its drill diameter. One pass through two walls is one hole. Slots are not holes. The inside of a round pot or a hollow boss counts as one blind hole of its inner diameter: list it. A hole that breaks out through an edge is not counted: check its position |
 
 ## Not a failure of the script

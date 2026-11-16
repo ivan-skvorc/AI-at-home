@@ -112,7 +112,7 @@ MAX_EXPECTED = 1e12
 MAX_ATTEMPTS = 8
 #: Parts whose builds are counted. An entry is a few hundred bytes; the cap only keeps the table from growing for ever.
 MAX_COUNTED_PARTS = 1000
-#: Lines of left-out bodies one note names.
+#: Lines of left-out bodies one note names, and loops that drop work one answer names.
 MAX_LINES_SAID = 5
 
 NEXT_FIX = "Attempt {attempt} of {limit}. Read what failed, change the script and call cad_build again with the same name. Keep the expected numbers: change one only if it was worked out wrongly. Do not present this part as finished."
@@ -204,18 +204,15 @@ def slug(name: str) -> str:
 
 
 def part_key(name: str) -> str:
-    """One part, however its name is written between attempts: case, spacing and punctuation aside.
+    """One part, however its name is typed between attempts: case, width, spacing and invisible characters aside.
 
-    Not the file stem: that is ASCII and cut at forty characters, so every name without
-    a Latin letter would be the same part, and so would two long names that start alike.
+    Everything else is kept, signs and punctuation included: two parts told apart by
+    "+0.1" and "-0.1" must not share a count, and a model that is told to keep the name
+    keeps its punctuation. Not the file stem either: that is ASCII and cut at forty
+    characters, so every name without a Latin letter would be the same part.
     """
-    kept = []
-    for character in unicodedata.normalize("NFKC", name).casefold():
-        kind = unicodedata.category(character)
-        # Letters, digits and the marks that belong to a letter (a vowel sign is part of its word) make
-        # the name; what cannot be seen (a zero-width space) is dropped; everything else separates words.
-        kept.append(character if kind[0] in "LNM" else "" if kind == "Cf" else " ")
-    return " ".join("".join(kept).split()) or name
+    visible = "".join(character for character in unicodedata.normalize("NFKC", name).casefold() if unicodedata.category(character) != "Cf")
+    return " ".join(visible.split()) or name
 
 
 # --- Deciding ---------------------------------------------------------------
@@ -246,6 +243,9 @@ def decide(measured: Mapping[str, Any], payload: Mapping[str, Any]) -> list[dict
         expected = sorted(payload["hole_diameters_mm"])
         found = sorted(hole["diameter_mm"] for hole in measured["holes"])
         check = {"check": "holes", "expected": expected, "measured": found, "passed": len(expected) == len(found) and all(_close(e, m) for e, m in zip(expected, found))}
+        if measured["solids"] != 1:
+            # Holes are measured on one solid. An empty list would read as "your holes are gone".
+            check.update(measured="not measured: the result is not one solid", passed=False)
         # The check compares diameters. A hole that stops inside the part is said, with how deep it goes.
         blind = sorted(hole["depth_mm"] for hole in measured["holes"] if hole.get("through") is False)
         if blind:
@@ -265,13 +265,16 @@ def notes_on(measured: Mapping[str, Any]) -> list[str]:
         lines = sorted({line for line in measured.get("unused_body_lines") or [] if isinstance(line, int)})
         where = f" (built on line {', '.join(map(str, lines[:MAX_LINES_SAID]))}{' and more' if len(lines) > MAX_LINES_SAID else ''})" if lines else ""
         notes.append(f"The script builds {bodies} bod{'y' if bodies == 1 else 'ies'}{where} that {'is' if bodies == 1 else 'are'} not part of the result: join {'it' if bodies == 1 else 'them'} with union(), or delete the lines.")
-    for dropped in measured.get("dropped_passes") or []:
+    loops = [dropped for dropped in measured.get("dropped_passes") or [] if isinstance(dropped, Mapping)]
+    for dropped in loops[:MAX_LINES_SAID]:
         count, line = dropped.get("passes"), dropped.get("loop_line")
         if isinstance(count, int) and isinstance(line, int):
             notes.append(
                 f"{count} pass{'' if count == 1 else 'es'} of the loop on line {line} do{'es' if count == 1 else ''} work on the part that is not in the result: "
                 "carry the part through the loop, for example result = result.hole(...), or delete the work."
             )
+    if len(loops) > MAX_LINES_SAID:
+        notes.append("More loops than these do work that is not in the result.")
     if measured.get("unused_outline"):
         notes.append("The script draws an outline that is never extruded or cut; it is not part of the result.")
     voids = measured.get("enclosed_voids") or 0
@@ -337,13 +340,9 @@ class Attempts:
             entry["passed"] = passed
             # A check added later makes the part harder to pass, not easier: it is held from then on and not reported.
             entry["first"].update({name: expected[name] for name in expected if name not in entry["first"]})
-            changed = {name: {"first": entry["first"][name], "now": expected.get(name)} for name in EXPECTATIONS if name in entry["first"] and not _same_numbers(entry["first"][name], expected.get(name))}
+            # Compared exactly: a tolerance here would let a band move by a feature's worth without a word.
+            changed = {name: {"first": entry["first"][name], "now": expected.get(name)} for name in EXPECTATIONS if name in entry["first"] and entry["first"][name] != expected.get(name)}
             return entry["builds"], changed, same
-
-
-def _same_numbers(first: list, now: list | None) -> bool:
-    """The same expectation, within what the checks themselves let pass: a model copies numbers back from "measured"."""
-    return now is not None and len(first) == len(now) and all(_close(one, other) for one, other in zip(first, now))
 
 
 def _next_after(passed: bool, attempt: int, changed: Mapping[str, Any], same: bool, loose: bool) -> str:

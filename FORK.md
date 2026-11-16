@@ -5718,12 +5718,19 @@ dispatch libraries beyond the base system.
   starting from the same part keeps the last pass only, and a bounding box does
   not notice: a plate asked for with six slots passed with one. `build.left_out`
   counts those passes and the bodies never joined; both are notes, because a
-  trial cut outside a loop is legitimate. It tells the part from its tools: a
-  cutter moved on after its last cut is not work dropped, and seventeen such
-  idioms are checked to stay quiet.
+  trial cut outside a loop is legitimate. A cutter moved on after its last cut
+  is not work dropped, and neither is a part put together again in every pass:
+  the rule compares one call's outcome across the passes of its loop. Over the
+  71 loop scripts the reviewers wrote, 37 correct ones stay quiet and 32 of 34
+  lossy ones are reported; the two it misses cannot be told from a tool made
+  ready (a fencepost, and a single pass used by a trial).
 - **Parts are counted by name, not by file stem.** The stem is ASCII and cut at
   forty characters: every Chinese or Cyrillic name was the same part, and the
-  first build of a lid was told to stop after seven builds of a bracket.
+  first build of a lid was told to stop after seven builds of a bracket. Only
+  case, width, spacing and invisible characters are set aside: a key that drops
+  punctuation makes "+0.1" and "-0.1" one part.
+- **Moved numbers are compared exactly.** A tolerance there, however small,
+  is the size of some feature on some part.
 - **Every answer ends with what to do next, and the sentences are pinned.**
   They are the loop's control. `test_builds_of_a_part_are_counted_and_the_answer_says_when_to_stop`
   and its neighbours fix each sentence to its state; the skill's test quotes
@@ -5756,12 +5763,16 @@ not on the allow-list. The attempt count and the held numbers live in Gateway
 memory, by part name: a restart forgets them, and a model that renames the part
 on every attempt starts a new count each time. The tool measures no positions:
 a feature on the wrong face passes every check, which is why the skill has
-every feature placed from the centre of its face. A build that runs out of
+every feature placed from the part's origin (`workplane(origin=(0, 0, 0))`;
+the centre of a face moves when a cut splits it). Nor does it count what a
+selector took: a fillet on `edges("|Z")` after a rim was added rounds the rim
+too, and the volume comes out as worked out. A build that runs out of
 time is told what it was doing when the clock ran out, which is not always
 what took the time. The skill has not been run on a
 real model here: roadmap item 45's acceptance (a plate, an L-bracket and an
-enclosure on one cloud model and one local 32K model) is still open; a
-reviewer agent following the skill built six parts, each within the limit.
+enclosure on one cloud model and one local 32K model) is still open; reviewer
+agents following the skill built eleven parts, each within the limit, with
+positions checked by geometry on four of them.
 
 **On an upstream sync.** The package is fork-only. `internet_access.py`,
 `doctor.py`, `backend/Dockerfile` (two blocks: the libraries, the load step) and

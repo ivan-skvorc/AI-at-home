@@ -287,9 +287,10 @@ async def test_a_check_added_later_is_held_and_not_reported_as_a_change(cad, out
     # The same numbers written as floats are the same numbers.
     same, _, _ = await _call(cad, outputs, monkeypatch, ONE_HOLE, run="run-1", bbox_xyz_mm=[60.0, 40.0, 6.0], volume_min_max_mm3=[14000.0, 14400], hole_diameters_mm=[4.0, 4])
     assert "expected_changed" not in same
-    # And numbers closer than the tool's own tolerance, which a model copies back from "measured".
-    close, _, _ = await _call(cad, outputs, monkeypatch, ONE_HOLE, run="run-1", bbox_xyz_mm=[60.0000001, 40, 6], volume_min_max_mm3=[14000, 14400], hole_diameters_mm=[4.000001, 4])
-    assert "expected_changed" not in close
+    # A number moved by less than a check's tolerance is still a number moved: a volume band shifted by
+    # a thousandth is a pocket's worth on a large part, and it passed without a word.
+    shifted, _, _ = await _call(cad, outputs, monkeypatch, ONE_HOLE, run="run-1", volume_min_max_mm3=[14010, 14410], hole_diameters_mm=[4, 4])
+    assert shifted["expected_changed"] == {"volume_min_max_mm3": {"first": [14000, 14400], "now": [14010, 14410]}}
     # So are the same holes in another order: the check sorts them, and the answer prints them sorted.
     await _call(cad, outputs, monkeypatch, ONE_HOLE, run="run-1", name="two sizes", hole_diameters_mm=[6, 4])
     sorted_back, _, _ = await _call(cad, outputs, monkeypatch, ONE_HOLE, run="run-1", name="two sizes", hole_diameters_mm=[4, 6])
@@ -308,16 +309,18 @@ async def test_each_part_and_each_conversation_is_counted_apart(cad, outputs, mo
     for first, second in (("支架", "盖子"), ("Кронштейн", "Крышка"), ("Mounting plate for the left side of the frame", "Mounting plate for the left side of the door")):
         one, _, _ = await _call(cad, outputs, monkeypatch, ONE_HOLE, run="run-9", hole_diameters_mm=[4, 4], name=first)
         two, _, _ = await _call(cad, outputs, monkeypatch, ONE_HOLE, run="run-9", hole_diameters_mm=[4, 4], bbox_xyz_mm=[30, 30, 2], name=second)
-        again, _, _ = await _call(cad, outputs, monkeypatch, ONE_HOLE, run="run-9", hole_diameters_mm=[4, 4], name=f" {first.upper()}! ")
+        again, _, _ = await _call(cad, outputs, monkeypatch, ONE_HOLE, run="run-9", hole_diameters_mm=[4, 4], name=f"  {first.upper()} ")
         assert (one["attempt"], two["attempt"], again["attempt"]) == (1, 1, 2), (first, second)
         assert "expected_changed" not in two
     from deerflow_extension_cad.tool import part_key
 
-    # A vowel sign is part of a word: a screw and a punch are two parts. What cannot be seen is not part of a name.
-    assert part_key("पेंच") != part_key("पंच") and part_key("किला") != part_key("कुला")
-    assert part_key("plate\u200b") == part_key("ｐｌａｔｅ") == part_key("Plate") == "plate"
-    assert part_key("Hook rack") == part_key("hook-rack") == part_key(" HOOK_RACK! ")
-    assert part_key("Lid 1") != part_key("Lid 2") and part_key("!!!") == "!!!"
+    # Case, width, spacing and what cannot be seen are not part of a name. Everything else is.
+    assert part_key("plate\u200b") == part_key("ｐｌａｔｅ") == part_key("  Plate ") == "plate"
+    assert part_key("Hook  rack") == part_key("hook rack") != part_key("hook-rack")
+    # A vowel sign, a sign before a number and a separator each tell two parts apart: a screw from a punch,
+    # the two halves of a fit test, a quarter from one point four.
+    for one, other in (("पेंच", "पंच"), ("hole gauge +0.1", "hole gauge -0.1"), ("spacer 1/4", "spacer 1.4"), ("Lid 1", "Lid 2"), ("clip ←", "clip →")):
+        assert part_key(one) != part_key(other), (one, other)
     from deerflow.config import paths
 
     elsewhere = paths.get_paths().sandbox_outputs_dir("thread-b", user_id="alice")
@@ -356,6 +359,14 @@ async def test_a_result_of_several_loose_bodies_says_what_this_tool_cannot_deliv
     assert answer["next"].startswith("Attempt 1 of 8. The result is several separate bodies")
     assert "call cad_build again with the same name" in answer["next"] and "print-in-place" in answer["next"] and "tell the user" in answer["next"]
     assert "Read what failed, change the script" not in answer["next"]
+    # Holes are measured on one solid. An empty list would say the holes are gone, and send the model after the one thing that was right.
+    holes, _, _ = await _call(cad, outputs, monkeypatch, {**BUILT, "measured": {**MEASURED, "solids": 4, "holes": []}}, run="run-1", name="pegs off", hole_diameters_mm=[4, 4])
+    check = next(check for check in holes["checks"] if check["check"] == "holes")
+    assert (check["passed"], check["measured"]) == (False, "not measured: the result is not one solid")
+    # More loops that drop work than an answer names are said to be more.
+    dropped = [{"loop_line": line, "passes": 2} for line in (3, 5, 7, 9, 11, 13)]
+    many, _, _ = await _call(cad, outputs, monkeypatch, {**BUILT, "measured": {**MEASURED, "dropped_passes": dropped}}, run="run-1", name="six loops")
+    assert [note[:33] for note in many["notes"]] == [f"2 passes of the loop on line {line} do"[:33] for line in (3, 5, 7, 9, 11)] + ["More loops than these do work tha"]
     one, _, _ = await _call(cad, outputs, monkeypatch, BUILT, run="run-1", name="one body")
     assert "notes" not in one and "separate bodies" not in one["next"]
 
@@ -380,7 +391,8 @@ def test_the_table_of_counted_parts_does_not_grow_for_ever(monkeypatch):
     [
         ({"bbox_mm": [60.0, 40.0, 6.5]}, "bounding box"),
         ({"volume_mm3": 9000.0}, "volume"),
-        ({"solids": 2}, "one closed solid"),
+        # Several bodies: the real worker measures no holes on them, and that check then says so instead of "none found".
+        ({"solids": 2, "holes": []}, "one closed solid, holes"),
         ({"valid": False}, "one closed solid"),
         ({"closed": False}, "one closed solid"),
         ({"holes": [{"diameter_mm": 4.0}, {"diameter_mm": 4.5}]}, "holes"),
@@ -388,7 +400,7 @@ def test_the_table_of_counted_parts_does_not_grow_for_ever(monkeypatch):
 )
 async def test_each_check_decides_on_its_own(cad, outputs, monkeypatch, measured, failing):
     answer, _, _ = await _call(cad, outputs, monkeypatch, {**BUILT, "measured": {**MEASURED, **measured}}, volume_min_max_mm3=[14000, 14400], hole_diameters_mm=[4, 4])
-    assert [check["check"] for check in answer["checks"] if not check["passed"]] == [failing]
+    assert [check["check"] for check in answer["checks"] if not check["passed"]] == failing.split(", ")
     assert not [name for name in _files(outputs) if name.endswith((".step", ".stl"))]
 
 

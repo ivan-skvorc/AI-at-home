@@ -98,7 +98,7 @@ def main() -> None:
             # One more than an answer names, so it can say that there are more.
             measured["unused_body_lines"] = sorted(set(bodies))[: MAX_UNUSED_SAID + 1]
         if passes:
-            measured["dropped_passes"] = [{"loop_line": line, "passes": count} for line, count in passes.items()][:MAX_UNUSED_SAID]
+            measured["dropped_passes"] = [{"loop_line": line, "passes": count} for line, count in passes.items()][: MAX_UNUSED_SAID + 1]
     except build.BuildFailed as failed:
         _answer({"status": "failed", "line": failed.line, "operation": failed.operation, "message": failed.message})
         return

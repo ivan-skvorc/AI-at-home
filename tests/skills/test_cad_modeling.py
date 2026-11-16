@@ -97,7 +97,8 @@ QUOTED = [
     "Call cad_build again with the same arguments",
     "Do not call cad_build again",
     "builds of this part in this run and the last one did not pass",
-    "the cut starts where there is no material",
+    "the cut ran away from the material",
+    "not measured",
     "Leave this pass out",
 ]
 
@@ -111,7 +112,7 @@ def test_a_message_the_failures_page_quotes_is_one_the_module_gives(phrase):
 ALLOWED = {
     "a loop with arithmetic for the choice": "result = cq.Workplane('XY').box(80, 30, 5)\nfor i in range(6):\n    side = (-1) ** i\n    result = result.faces('>Z').workplane().pushPoints([(-30 + i * 12, side * 5)]).hole(3)\n",
     "a sign that alternates over a long loop": "result = cq.Workplane('XY').box(9, 9, 9)\nfor i in range(120):\n    side = (-1) ** i\n",
-    "a feature placed from the centre of its face": "result = cq.Workplane('XY').box(80, 60, 30)\nresult = result.faces('>X').workplane(centerOption='CenterOfBoundBox').pushPoints([(0, 5)]).slot2D(12, 6).cutBlind(-2)\n",
+    "a feature placed from the part's origin": "result = cq.Workplane('XY').box(80, 60, 30)\nresult = result.faces('>X').workplane(origin=(0, 0, 0)).pushPoints([(0, 5)]).slot2D(12, 6).cutBlind(-2)\n",
     "a count worked out with a decimal pitch": "result = cq.Workplane('XY').box(9, 9, 9)\nfor i in range(50 // 3.5):\n    total = i\n",
     "a point taken apart in the loop header": "points = [(-10, 0), (10, 0)]\nresult = cq.Workplane('XY').box(40, 10, 2)\nfor x, y in points:\n    result = result.faces('>Z').workplane().pushPoints([(x, y)]).hole(3)\n",
     "an augmented assignment and a square root": "side = 2 ** 0.5\nside += 9\nside *= 2\nresult = cq.Workplane('XY').box(side, side, side)\n",

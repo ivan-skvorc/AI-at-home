@@ -67,12 +67,19 @@ say so. These are the numbers of the request. Do not read them off a build.
   root as `** 0.5`.
 - The part is **one solid**. Bodies must overlap or share a face and be joined
   with `union()`.
-- **Say where every feature goes from the centre of its face.** Start it with
-  `faces(selector).workplane(centerOption="CenterOfBoundBox")` and give
-  positions with `pushPoints([(x, y)])`. A plain `workplane()` keeps the origin
-  of the plane the part was last worked on, and `center()` moves it for
-  everything after, so a feature lands somewhere else and every check still
-  passes. Do not use `center()`.
+- **Say where every feature goes from the part's own origin.** Build the part
+  centred on the origin (`box()` does that by default), start each feature
+  with `faces(selector).workplane(origin=(0, 0, 0))` and give its positions
+  with `pushPoints([(x, y)])`: (0, 0) is then the middle of that face. A plain
+  `workplane()` keeps the origin of the plane the part was last worked on,
+  `center()` moves it for everything after, and the centre of a face moves
+  when a cut splits the face. A feature then lands somewhere else and every
+  check still passes. Do not use `center()`.
+- **A selector takes everything that matches on the part as it is at that
+  line.** After a boss, a peg or a rim is added, `faces(">Z")` is its top and
+  `edges("|Z")` includes its edges. Cut the holes and pockets of a face, and
+  round the corners of a body, before you add anything to it; add several
+  bosses in one `pushPoints` call.
 - `cutThruAll()` cuts through every wall in its way. To cut one wall of a
   hollow part, use `cutBlind(-wall)`.
 
@@ -115,7 +122,8 @@ you cannot point to evidence for is not met yet.
 - The volume is evidence for a feature only when the measured volume and your
   arithmetic differ by less than that feature.
 - The tool measures no positions. A position is met when the script says it
-  from the centre of the right face (Step 2), not because the build passed.
+  from the part's origin on the right face (Step 2), not because the build
+  passed.
 - Read `notes` before anything else: passes of a loop whose outcome was
   dropped, or bodies that were never joined, mean features are missing from a
   part that passed.
@@ -153,7 +161,7 @@ requirements: 1 plate 80 × 30 × 5   2 six slots 3 wide and 12 long across the 
 expected:     bbox [80, 30, 5]   volume 10,750 to 10,915 (10,833 by arithmetic; one slot is 170)   holes [4.3, 4.3]
 
 1  refused, line 9: an if statement                 → the alternation becomes (-1) ** i
-2  failed, line 11, pass 2 (i = 1): removed nothing → center() carried over; workplane(centerOption="CenterOfBoundBox") and pushPoints
+2  failed, line 11, pass 2 (i = 1): removed nothing → center() carried over; workplane(origin=(0, 0, 0)) and pushPoints
 3  passed, volume 10,832.7, no notes                → 1 met (bbox), 2 met (volume within one slot of the arithmetic), 3 met (holes)
 ```
 

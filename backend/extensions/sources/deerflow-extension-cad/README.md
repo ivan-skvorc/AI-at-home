@@ -107,11 +107,13 @@ most of its features missing. A script that builds bodies and never joins them
 to its result is told how many and on which line they start: the usual slip is
 a loop whose every pass builds a body, with the last one alone as the result.
 A loop whose every pass starts from the same part keeps only the last pass's
-work; the answer says how many passes did work that is not in the result. A
-tool made ready for a next pass that never came (a cutter moved on after its
-last cut) is not counted, and neither is a trial cut outside a loop. A result
-made of several loose bodies is said to be that, and `next` gives both ways
-out: join them, or tell the user that the tool delivers one solid.
+work; the answer says how many passes did work that is not in the result. Not
+counted, because nothing is missing: a tool made ready for a pass that never
+came (a cutter moved on after its last cut), a part put together again in
+every pass, and a trial cut outside a loop. A result made of several loose
+bodies is said to be that, its holes are reported as not measured instead of
+as none, and `next` gives both ways out: join the bodies, or tell the user
+that the tool delivers one solid.
 
 ## Building until it passes
 
@@ -134,10 +136,10 @@ loop inside the tool: one call is one build.
   other numbers passes or fails on its own numbers, and its answer and report
   carry `expected_changed` with an instruction to tell the user which changed
   and why. A number stated for the first time on a later build is a check
-  added, not a number moved: it is held from then on and not reported. Numbers
-  closer than the checks' own tolerance, and the same holes in another order,
-  are the same numbers. The hold ends when the part passes and the user speaks
-  again.
+  added, not a number moved: it is held from then on and not reported. The
+  same holes in another order are the same numbers; anything else is compared
+  exactly, because a volume range moved by a thousandth is a pocket's worth on
+  a large part. The hold ends when the part passes and the user speaks again.
 - **A change that did nothing is said to have done nothing.** When a build
   fails exactly as the one before it, the answer says the change did not reach
   the cause.
@@ -146,9 +148,9 @@ loop inside the tool: one call is one build.
   were refused are not counted. Their answers say to call again with the same
   arguments, or to stop and tell the user.
 
-Parts are counted by name, per conversation, in memory: case, spacing,
-punctuation and invisible characters aside, and not by the file name, which is
-ASCII and cut at forty characters. A new name is a new part with a new count, which is why every
+Parts are counted by name, per conversation, in memory: case, spacing and
+invisible characters aside, signs and punctuation kept, and not by the file
+name, which is ASCII and cut at forty characters. A new name is a new part with a new count, which is why every
 failed answer says to build again under the same name. A Gateway restart
 starts the counts over, and the table holds a thousand parts: the one built
 longest ago makes room. The procedure a model follows around these answers is
