@@ -14,6 +14,13 @@ LAN/Tailscale address both reach the same server). Persisting server-side makes
 the tree survive a machine restart and follow the user across browsers and
 devices, with ``localStorage`` demoted to a first-paint cache.
 
+**Automatic conversation titles** (fork feature, FORK.md §33). Settings ->
+Conversation titles is a per-user opt-out. It used to travel only in the run
+context of the browser that held the switch, so runs from anywhere else (an IM
+channel, another device or origin, an extension's child thread) fell back to
+``config.yaml`` and kept renaming. Stored here, it is applied at run admission
+for every run the user owns.
+
 A ``chat_tabs`` key left by the removed keep-alive tab strip is simply never
 read: writes merge into the existing document, so an old install keeps an inert
 entry rather than needing a migration.
@@ -37,6 +44,7 @@ logger = logging.getLogger(__name__)
 UI_STATE_FILENAME = "ui_state.json"
 CHAT_FOLDERS_KEY = "chat_folders"
 PUSH_SUBSCRIPTIONS_KEY = "push_subscriptions"
+AUTO_TITLE_KEY = "auto_title"
 
 MAX_ID_CHARS = 128
 
@@ -63,6 +71,11 @@ MAX_ENDPOINT_CHARS = 1024
 MAX_KEY_CHARS = 256
 # A device label the user typed; a display hint only.
 MAX_TITLE_CHARS = 200
+
+# Automatic conversation titles (fork feature). The model name is checked
+# against the configured catalog when a run applies it, not here: the catalog
+# changes under a stored preference, and an unknown name is dropped at run time.
+MAX_AUTO_TITLE_MODEL_CHARS = 200
 
 # Per-user cache keyed by the file's (mtime, size) so a sibling worker's write or
 # an out-of-band edit is picked up without a restart, matching how
@@ -268,6 +281,59 @@ def set_chat_folders(user_id: str, folders: Any) -> list[dict[str, Any]]:
     normalized = normalize_chat_folders(folders)
     _write_state(user_id, {CHAT_FOLDERS_KEY: normalized})
     return normalized
+
+
+# ---------------------------------------------------------------------------
+# Automatic conversation titles (fork feature)
+# ---------------------------------------------------------------------------
+
+
+def normalize_auto_title_preference(raw: Any) -> dict[str, Any]:
+    """Validate a stored or incoming auto-title preference.
+
+    The shape mirrors the run-context keys (``auto_title_enabled`` /
+    ``auto_title_model_name``):
+
+    * ``enabled`` — ``False`` opts the user out of automatic renaming. Anything
+      that is not a boolean reads as the never-set default, ``True``: an
+      unreadable value must not invent an opt-out, and ``True`` changes nothing
+      because the preference can only ever switch renaming off.
+    * ``model_name`` — **absent** means "follow ``config.yaml`` ->
+      ``title.model_name``", ``""`` means "rename without a model call", and a
+      name picks that model. The three states are distinct, so an unusable
+      value (not a string, blank, or longer than
+      :data:`MAX_AUTO_TITLE_MODEL_CHARS`) drops the key rather than collapsing
+      into ``""``, and a name is never truncated into a different name.
+    """
+    if not isinstance(raw, dict):
+        return {"enabled": True}
+    enabled = raw.get("enabled")
+    preference: dict[str, Any] = {"enabled": enabled if isinstance(enabled, bool) else True}
+    model_name = raw.get("model_name")
+    if model_name == "":
+        preference["model_name"] = ""
+    elif isinstance(model_name, str):
+        cleaned = model_name.strip()
+        if cleaned and len(cleaned) <= MAX_AUTO_TITLE_MODEL_CHARS:
+            preference["model_name"] = cleaned
+    return preference
+
+
+def get_auto_title_preference(user_id: str) -> dict[str, Any]:
+    """The user's auto-title preference; ``{"enabled": True}`` when never set."""
+    return normalize_auto_title_preference(_read_state(user_id).get(AUTO_TITLE_KEY))
+
+
+def set_auto_title_preference(user_id: str, preference: Any) -> dict[str, Any]:
+    """Replace the user's auto-title preference; returns the stored value.
+
+    A replace, not a patch: a body without ``model_name`` stores "follow the
+    operator's model", which is how the user picks the server default again.
+    """
+    normalized = normalize_auto_title_preference(preference)
+    _write_state(user_id, {AUTO_TITLE_KEY: normalized})
+    # The stored dict is also the cache entry; hand the caller its own copy.
+    return dict(normalized)
 
 
 # ---------------------------------------------------------------------------

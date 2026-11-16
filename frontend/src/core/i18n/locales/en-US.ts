@@ -581,6 +581,8 @@ export const enUS: Translations = {
     moreNotShown: (count) => `${count} more not shown`,
     symlink: "Link",
     specialFile: "Special file",
+    ownFolderNote:
+      "This chat's own folder, /mnt/user-data, is deleted together with the chat.",
   },
 
   // Input Box
@@ -1210,6 +1212,8 @@ export const enUS: Translations = {
     running: "Renaming…",
     success: (title) => `Renamed to "${title}"`,
     failed: "Failed to rename the conversation.",
+    manualOnly:
+      "Automatic renaming is off in Settings → Conversation titles. This renames this conversation once, now, and leaves the setting off.",
   },
   backgroundTasks: {
     label: "Background tasks",
@@ -1998,7 +2002,7 @@ export const enUS: Translations = {
   chats: {
     deleteChat: "Delete chat",
     deleteConfirm: (title) =>
-      `Delete “${title}”? This will delete the conversation and its files. This action cannot be undone.`,
+      `Delete “${title}”? This deletes the conversation and its own folder (/mnt/user-data) with every file in it. This action cannot be undone.`,
     deleteFailed: "Failed to delete chat. Please try again.",
     noActiveChats: "No recent chats",
     activeChats: "Recent chats",
@@ -2042,6 +2046,73 @@ export const enUS: Translations = {
       depthLimitReached: (max) =>
         `Folders can be nested ${max} levels deep at most.`,
       moveFailed: "Failed to move the chat",
+    },
+    selection: {
+      select: "Select",
+      deselect: "Deselect",
+      done: "Done",
+      toolbarLabel: "Selected chats",
+      count: (count) => `${count} selected`,
+      selectAll: "Select all",
+      selectAllHint: "Select every chat shown in the sidebar",
+      emptyHint: "Pick chats to move, archive or delete them.",
+      selectChat: (title) => `Select “${title}”`,
+      moveTo: "Move",
+      newFolderFromSelection: "New folder from selection…",
+      newFolderFromSelectionDescription: (count) =>
+        count === 1
+          ? "The selected chat moves into the new folder."
+          : `The ${count} selected chats move into the new folder.`,
+      archive: "Archive",
+      delete: "Delete…",
+      cleanUp: "Clean up…",
+      cleanUpAll: "Clean up all…",
+      moved: (count, folder) =>
+        count === 1
+          ? `Moved 1 chat to “${folder}”`
+          : `Moved ${count} chats to “${folder}”`,
+      movedToRoot: (count) =>
+        count === 1
+          ? "Took 1 chat out of its folder"
+          : `Took ${count} chats out of their folders`,
+      moveFailed: (count) =>
+        count === 1
+          ? "1 chat could not be moved. It is still selected."
+          : `${count} chats could not be moved. They are still selected.`,
+      movedProjectChatsHint: (count) =>
+        count === 1
+          ? "1 of them belongs to a project, so it still shows under that project while chats are grouped by project."
+          : `${count} of them belong to a project, so they still show under their project while chats are grouped by project.`,
+      archived: (count) =>
+        count === 1 ? "Archived 1 chat" : `Archived ${count} chats`,
+      restored: (count) =>
+        count === 1 ? "Restored 1 chat" : `Restored ${count} chats`,
+      archiveFailed: (count) =>
+        count === 1
+          ? "1 chat could not be archived. It is still selected."
+          : `${count} chats could not be archived. They are still selected.`,
+      deleteTitle: (count) =>
+        count === 1 ? "Delete 1 chat?" : `Delete ${count} chats?`,
+      deleteDescription:
+        "This deletes the conversations and their files. This cannot be undone.",
+      deleteIncludesOpenChat:
+        "This includes the chat that is open now; you will be taken to a new chat.",
+      deleteMore: (count) => `and ${count} more`,
+      deleteConfirm: (count) =>
+        count === 1 ? "Delete 1 chat" : `Delete ${count} chats`,
+      deleting: (done, total) => `Deleting… ${done} of ${total}`,
+      deleted: (count) =>
+        count === 1 ? "Deleted 1 chat" : `Deleted ${count} chats`,
+      deleteFailedTitle: (count) =>
+        count === 1
+          ? "1 chat could not be deleted"
+          : `${count} chats could not be deleted`,
+      deleteFailedDescription:
+        "They are still selected. Nothing was retried; try again when you are ready.",
+      failedBusy: "A run is still in progress",
+      failedForbidden: "You do not have permission",
+      failedOther: "The request failed",
+      retry: "Try again",
     },
   },
 
@@ -2454,6 +2525,7 @@ export const enUS: Translations = {
     inputPolish: "Prompt polish",
     goal: "Goal check",
     autoRenameCost: "Chat rename",
+    organizeCost: "Chat clean-up",
     auxCallCount: (count: number) =>
       count === 1 ? "1 call" : `${count} calls`,
     chartTitle: "Cost per step",
@@ -2515,6 +2587,237 @@ export const enUS: Translations = {
       "Navigate DeerFlow faster with keyboard shortcuts.",
     openCommandPalette: "Open Command Palette",
     toggleSidebar: "Toggle Sidebar",
+  },
+
+  // Folder ledger: shared mount folders a conversation created or edited
+  folderLedger: {
+    sharedTitle: "Shared folders",
+    sharedDescription:
+      "Folders in shared mounts this chat worked in. They are kept when the chat is deleted.",
+    sharedLoading: "Loading shared folders…",
+    sharedLoadFailed: "Could not load the shared folders of this chat.",
+    roleCreated: "Created here",
+    roleEdited: "Edited here",
+    roleInherited: "Inherited",
+    lastEdit: (ago) => `Last edit ${ago}`,
+    otherChats: (count) =>
+      count === 1
+        ? "Also used by 1 other chat"
+        : `Also used by ${count} other chats`,
+    onlyThisChat: "Only this chat uses it",
+    hostHidden: "Managed outside this server",
+    showDetails: (name) => `Show details of ${name}`,
+    detailsDescription: (path) => `Shared folder ${path}`,
+    detailsLoadFailed: "Could not load this folder.",
+    attribution: {
+      observed_create: "A conversation created it.",
+      preexisting: "It existed before any conversation used it.",
+      inferred_shell:
+        "A shell command in a conversation most likely created it.",
+    },
+    activity: (writes, edits, shellOps) => {
+      const parts = [
+        writes === 1 ? "1 write" : `${writes} writes`,
+        edits === 1 ? "1 edit" : `${edits} edits`,
+      ];
+      if (shellOps > 0) {
+        parts.push(
+          shellOps === 1 ? "1 shell command" : `${shellOps} shell commands`,
+        );
+      }
+      return parts.join(" · ");
+    },
+    conversations: "Conversations",
+    thisChat: "This chat",
+    untitledChat: "Untitled chat",
+    otherUserChat: "Another user's conversation",
+    deletedChat: "Deleted",
+    editLog: "Edit log",
+    editLogEmpty: "No edits recorded.",
+    ops: {
+      write: "Wrote",
+      append: "Appended",
+      edit: "Edited",
+      shell: "Shell",
+    },
+    deleteDialogKept: "Shared folders it used outside /mnt/user-data are kept.",
+    deleteDialogKeptNamed: (names, more) =>
+      more > 0
+        ? `It used these shared folders, which are kept: ${names.join(", ")} and ${more} more.`
+        : `It used these shared folders, which are kept: ${names.join(", ")}.`,
+    deleteDialogOffer:
+      "If no other conversation still uses one, you will be offered to delete it.",
+    orphanTitle: (count) =>
+      count === 1
+        ? "A shared folder is no longer used"
+        : `${count} shared folders are no longer used`,
+    orphanDescription:
+      "No remaining conversation uses these folders. Select the ones to delete; the rest are kept.",
+    orphanWarning:
+      "Deleting removes the folder and everything in it from the disk. This cannot be undone. Changes made outside DeerFlow are not tracked.",
+    orphanKept: "Kept",
+    orphanSelect: (name) => `Delete ${name}`,
+    orphanStats: (changes, ago) => {
+      const count = changes === 1 ? "1 change" : `${changes} changes`;
+      return ago ? `${count} · last change ${ago}` : count;
+    },
+    reasons: {
+      preexisting:
+        "Existed before a conversation used it, so it is never deleted from here.",
+      not_creator: "Only its creator or an admin can delete it.",
+      unsupported_platform: "Deleting folders is not supported on this server.",
+      mount_unavailable: "Its mount is no longer configured as writable.",
+      host_not_visible: "Managed outside this server.",
+      unknown: "It cannot be deleted from here.",
+    },
+    deleteSelected: (count) =>
+      count === 1 ? "Delete 1 folder" : `Delete ${count} folders`,
+    deleting: "Deleting…",
+    dismissing: "Saving…",
+    keep: "Keep",
+    dismiss: "Don't ask again for these",
+    deletedStatus: "Deleted",
+    dismissedStatus: "Won't ask again",
+    inUse: "A conversation uses it again, so it was not deleted.",
+    deleteFailed: (message) => `Not deleted: ${message}`,
+    dismissFailed: (message) => `Could not stop asking: ${message}`,
+    deletedToast: (count) =>
+      count === 1 ? "Deleted 1 folder." : `Deleted ${count} folders.`,
+  },
+
+  // Chat clean-up mode
+  chatCleanup: {
+    title: "Clean up conversations",
+    description:
+      "A model reads each conversation and suggests a clearer title and a folder. You review the result; nothing changes until you apply it.",
+    scopeSelected: (count: number) =>
+      count === 1
+        ? "1 selected conversation"
+        : `${count} selected conversations`,
+    scopeAll: (count: number) =>
+      count === 1 ? "Your 1 conversation" : `All ${count} conversations`,
+    scopeLoading: "Loading conversations…",
+    scopeFailed: "Couldn't load the conversations.",
+    scopeRetry: "Try again",
+    scopeCapped: (max: number) =>
+      `Only the ${max} most recent conversations are included.`,
+    scopeSelectionCapped: (max: number) =>
+      `Only the first ${max} selected conversations are included.`,
+    scopeMissing: (count: number) =>
+      count === 1
+        ? "1 conversation could not be found and is skipped."
+        : `${count} conversations could not be found and are skipped.`,
+    scopeEmpty: "There are no conversations to clean up yet.",
+    costHint:
+      "One model call per conversation, counted in that conversation's cost.",
+    modelLabel: "Model",
+    serverDefault: "Server default",
+    serverDefaultHint: "The model the server uses for conversation titles.",
+    localPaceHint: "Local model: conversations are read one at a time.",
+    renameLabel: "Rename conversations",
+    renameHint: "Suggest a clearer title for each conversation.",
+    renameDisabled: "Renaming is turned off on this server.",
+    foldersLabel: "Folders",
+    folderModeNone: "Don't file",
+    folderModeNoneHint: "Leave every conversation where it is.",
+    folderModeTargets: "Into my folders",
+    folderModeTargetsHint:
+      "The model picks one of the folders you choose or name here.",
+    folderModeAuto: "Auto-generate folders",
+    folderModeAutoHint:
+      "The model groups conversations into folders and reuses your folders when they fit.",
+    targetsExisting: "Your folders",
+    targetsNoExisting:
+      "You have no folders yet. Name the folders to create below.",
+    targetsNewLabel: "New folders",
+    targetsNewPlaceholder: "Folder name…",
+    targetsAdd: "Add",
+    targetsRemove: (name: string) => `Remove “${name}”`,
+    targetsNone: "Choose or name at least one folder.",
+    targetsLimit: (max: number) => `Up to ${max} folders.`,
+    maxNewFoldersLabel: "Most new folders",
+    maxNewFoldersHint: "Conversations that fit no folder stay where they are.",
+    nothingToDo: "Turn on renaming or choose how to file the conversations.",
+    start: "Analyze",
+    analyzing: (done: number, total: number) =>
+      `Analyzing ${done} of ${total}…`,
+    consolidating: "Grouping into folders…",
+    runningHint: "Nothing has been changed yet. Cancel stops the analysis.",
+    stopped: (message: string) => `The analysis stopped: ${message}`,
+    foldersSkipped:
+      "Folders were not generated because the analysis stopped early.",
+    consolidateFailed: (message: string) =>
+      `Couldn't generate folders: ${message}`,
+    nothingAnalyzed: "None of the conversations could be analyzed.",
+    previewTitle: "Review the changes",
+    previewDescription:
+      "Nothing has been changed yet. Edit titles and folders, untick what should stay as it is, then apply.",
+    selectAll: "Select all",
+    selectNone: "Select none",
+    includeLabel: (title: string) => `Include “${title}”`,
+    newTitleLabel: (title: string) => `New title for “${title}”`,
+    folderLabel: (title: string) => `Folder for “${title}”`,
+    currentFolder: (name: string) => `In ${name}`,
+    keepFolder: "Don't move",
+    newFolderOption: (name: string) => `New: ${name}`,
+    existingFoldersGroup: "Your folders",
+    newFoldersGroup: "New folders",
+    unchanged: "No change",
+    proposedTitle: "New folders",
+    proposedHint: "Rename a folder, or merge it into another one.",
+    proposedNameLabel: (name: string) => `Name of the new folder “${name}”`,
+    proposedCount: (count: number) =>
+      count === 1 ? "1 conversation" : `${count} conversations`,
+    mergeInto: "Merge into…",
+    mergeIntoLabel: (name: string) => `Merge “${name}” into another folder`,
+    mergeUnfile: "Don't file these",
+    noChanges: "No changes to apply.",
+    noChangesHint:
+      "The model kept every title and placement. Go back to try another model or folder option.",
+    failuresTitle: (count: number) =>
+      count === 1
+        ? "1 conversation could not be analyzed"
+        : `${count} conversations could not be analyzed`,
+    apply: (count: number) =>
+      count === 1
+        ? "Apply to 1 conversation"
+        : `Apply to ${count} conversations`,
+    applying: (done: number, total: number) => `Applying ${done} of ${total}…`,
+    applyingHint: "Keep this dialog open until the changes are written.",
+    back: "Back",
+    resultTitle: "Clean-up applied",
+    resultRenamed: (count: number) =>
+      count === 1 ? "1 conversation renamed" : `${count} conversations renamed`,
+    resultMoved: (count: number) =>
+      count === 1 ? "1 conversation moved" : `${count} conversations moved`,
+    resultFoldersCreated: (count: number) =>
+      count === 1 ? "1 folder created" : `${count} folders created`,
+    resultFailed: (count: number) =>
+      count === 1
+        ? "1 conversation was not fully updated"
+        : `${count} conversations were not fully updated`,
+    resultFailedHint:
+      "Nothing was retried. Those rows stay ticked, so you can review them and apply again.",
+    reviewAgain: "Review again",
+    done: "Done",
+    renameFailed: (reason: string) => `Not renamed: ${reason}`,
+    moveFailed: (reason: string) => `Not moved: ${reason}`,
+    foldersUnavailable:
+      "Couldn't read your folders, so nothing was changed. Try again.",
+    foldersSaveFailed:
+      "The new folders could not be created; the conversations meant for them were not moved.",
+    reasons: {
+      busy: "a run is in progress; try again when it finishes",
+      notFound: "the conversation no longer exists",
+      empty: "it has nothing to organize yet",
+      timeout: "the model did not answer in time",
+      unusable: "the model's answer could not be used",
+      forbidden: "you can't change this conversation",
+      folderMissing: "its folder no longer exists",
+      folderNotCreated: "its new folder could not be created",
+      folderLimit: "the folder limit was reached",
+      other: "something went wrong",
+    },
   },
 
   // Settings
@@ -3405,6 +3708,10 @@ export const enUS: Translations = {
         "The rename happens once the answer is finished, not while it is being written — the same moment you get manual renaming back.",
       serverDisabledHint:
         "Automatic titles are disabled by the server configuration (title.enabled in config.yaml). Enable it there to use this toggle.",
+      accountHint:
+        "Saved to your account: it applies to every device and browser you sign in from, and to conversations started from IM channels and extensions.",
+      saveFailed:
+        "Couldn't save the conversation-title setting to your account. Try again.",
     },
     systemPrompt: {
       title: "System prompt",

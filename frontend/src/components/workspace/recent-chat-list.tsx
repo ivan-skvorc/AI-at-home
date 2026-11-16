@@ -2,11 +2,14 @@
 
 import {
   Archive,
+  CheckSquare,
   Download,
   FileJson,
   FileText,
   FolderInput,
   FolderPlus,
+  FolderTree,
+  ListChecks,
   MoreHorizontal,
   Pencil,
   Pin,
@@ -30,6 +33,7 @@ import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -79,6 +83,7 @@ import { exportThread, type ThreadExportFormat } from "@/core/threads/export";
 import {
   fetchThreadExportMessages,
   useInfiniteThreads,
+  useMoveThreadsToFolder,
   useMoveThreadToFolder,
   useMoveThreadToProject,
   usePinThread,
@@ -90,6 +95,7 @@ import {
   type ThreadBranchEntry,
 } from "@/core/threads/thread-branch-tree";
 import { buildThreadListModel } from "@/core/threads/thread-list-model";
+import { recentListSelectionOrder } from "@/core/threads/thread-selection";
 import type { AgentThread, AgentThreadState } from "@/core/threads/types";
 import { useChatFolders } from "@/core/threads/use-chat-folders";
 import {
@@ -105,6 +111,16 @@ import { cn } from "@/lib/utils";
 
 import { ChatFolderRow, type FolderMoveTarget } from "./chat-folder-row";
 import { MoveToProjectMenu, NewProjectDialog } from "./move-to-project-menu";
+import {
+  useRegisterSelectionOrder,
+  useSidebarSelection,
+  useSidebarSelectionActive,
+  useThreadSelectionStatus,
+} from "./sidebar-selection";
+import {
+  SidebarSelectionToolbar,
+  type SelectionFolderTarget,
+} from "./sidebar-selection-toolbar";
 import {
   ThreadOriginIcon,
   ThreadUnreadDot,
@@ -157,10 +173,22 @@ const EMPTY_BRANCH_LIST: BranchList = {
  * row's **New subfolder**, absent for a top-level folder — for the same reason:
  * naming a subfolder and getting a sibling would be the same silent
  * half-failure.
+ *
+ * Opened from the selection toolbar's **New folder from selection…** it
+ * carries every selected chat instead (`threadIds`), and all of them are filed
+ * into the new folder in one bulk move.
  */
 type FolderDialogState =
-  | { mode: "create"; threadId?: string; parentId?: string }
+  | {
+      mode: "create";
+      threadId?: string;
+      threadIds?: readonly string[];
+      parentId?: string;
+    }
   | { mode: "rename"; folder: ChatFolder };
+
+/** Where `RecentChatList` sits among the selectable sections (after projects). */
+const RECENT_LIST_SELECTION_RANK = [1] as const;
 
 /**
  * A single thread row: link + hover action menu (pin, rename, share, export,
@@ -174,6 +202,13 @@ type FolderDialogState =
  * The folder affordances (FORK.md §32) ride in as an optional `folderMenu`
  * node rather than being rebuilt here: a project group has no folder drop
  * targets, so it passes nothing and the submenu does not render.
+ *
+ * Multi-select rides in the same way, from `SidebarSelectionProvider` rather
+ * than a prop: while selecting, the row shows a checkbox as a **sibling** of
+ * the link inside the `<li>` — never wrapping it, which would break the
+ * `a[data-sidebar="menu-button"]` selectors and the link's-parent locator the
+ * e2e suites use — and a click on the link toggles the row instead of
+ * navigating. Without a provider nothing here changes.
  */
 export function ThreadSidebarItem({
   thread,
@@ -218,6 +253,13 @@ export function ThreadSidebarItem({
     [moveThreadToProject, thread.thread_id],
   );
   const archiveAction = useThreadArchiveAction();
+  const selectionApi = useSidebarSelection();
+  const selectionStatus = useThreadSelectionStatus(thread.thread_id);
+  const selecting = selectionStatus !== "off";
+  const selected = selectionStatus === "selected";
+  // Shift+Space on the checkbox: the click a key press synthesizes does not
+  // reliably carry the modifier, so remember it from the key itself.
+  const keyboardRangeRef = useRef(false);
 
   const [renameDialogOpen, setRenameDialogOpen] = useState(false);
   const [renameValue, setRenameValue] = useState("");
@@ -307,8 +349,35 @@ export function ThreadSidebarItem({
     : branchLabel;
 
   return (
-    <SidebarMenuItem className="group/side-menu-item">
-      <SidebarMenuButton isActive={isActive} asChild>
+    <SidebarMenuItem
+      className="group/side-menu-item"
+      data-selected={selected ? "true" : undefined}
+    >
+      {selecting && (
+        <input
+          aria-label={t.chats.selection.selectChat(title)}
+          checked={selected}
+          className="accent-primary absolute top-2 left-2 z-10 size-4 cursor-pointer"
+          data-testid="thread-select-checkbox"
+          type="checkbox"
+          onChange={(event) => {
+            const range =
+              keyboardRangeRef.current ||
+              ("shiftKey" in event.nativeEvent &&
+                event.nativeEvent.shiftKey === true);
+            keyboardRangeRef.current = false;
+            selectionApi?.store.toggle(thread.thread_id, { range });
+          }}
+          onKeyDown={(event) => {
+            keyboardRangeRef.current = event.key === " " && event.shiftKey;
+          }}
+        />
+      )}
+      <SidebarMenuButton
+        isActive={isActive}
+        asChild
+        className={cn(selecting && "pl-7", selected && "bg-sidebar-accent/60")}
+      >
         <Link
           aria-label={rowLabel}
           className="text-muted-foreground min-w-0 whitespace-nowrap group-hover/side-menu-item:overflow-hidden"
@@ -317,6 +386,10 @@ export function ThreadSidebarItem({
             branchEntry && branchEntry.depth > 0 ? branchEntry.depth : undefined
           }
           data-branch-parent-id={branchEntry?.parentThread?.thread_id}
+          // The mobile drawer closes on any link click in its capture phase,
+          // before this row could cancel it; this marker tells it a selecting
+          // row's click is a toggle, not a navigation.
+          data-thread-selecting={selecting ? "true" : undefined}
           href={pathOfThread(thread)}
           // Always draggable: the same payload files the chat into a sidebar
           // folder and pins it as a folder's expanded area, so one drag serves
@@ -327,6 +400,19 @@ export function ThreadSidebarItem({
             event.dataTransfer.setData("text/plain", title);
             event.dataTransfer.effectAllowed = "copyMove";
           }}
+          onClick={
+            selecting
+              ? (event) => {
+                  // A click toggles while selecting; Shift extends a range.
+                  // Next's Link leaves modified clicks to the browser (new
+                  // tab, new window), so every variant is cancelled here.
+                  event.preventDefault();
+                  selectionApi?.store.toggle(thread.thread_id, {
+                    range: event.shiftKey,
+                  });
+                }
+              : undefined
+          }
           title={branchLabel}
         >
           {branchEntry && branchEntry.depth > 0 && (
@@ -384,6 +470,19 @@ export function ThreadSidebarItem({
               context={{ thread }}
               placement="menu"
             />
+            {/* The conversation's own folder (workspace, uploads, outputs):
+                the chat page opens its side panel on the Files tab and drops
+                the parameter. A second way in besides the header icon, which
+                is the first control a narrow header clips. */}
+            <DropdownMenuItem asChild>
+              <Link
+                data-testid="thread-show-files"
+                href={`${pathOfThread(thread)}?panel=files`}
+              >
+                <FolderTree className="text-muted-foreground" />
+                <span>{t.threadFiles.showFiles}</span>
+              </Link>
+            </DropdownMenuItem>
             <DropdownMenuItem onSelect={handleTogglePin}>
               {pinned ? (
                 <PinOff className="text-muted-foreground" />
@@ -445,6 +544,27 @@ export function ThreadSidebarItem({
               onNewProject={() => setNewProjectDialogOpen(true)}
               onMoveProject={handleMoveProject}
             />
+            {/* The keyboard way into multi-select: the header's Select button
+                starts with nothing ticked, this starts with this row. */}
+            {selectionApi && (
+              <DropdownMenuItem
+                data-testid="thread-select-menu-item"
+                onSelect={() => {
+                  if (selecting) {
+                    selectionApi.store.toggle(thread.thread_id);
+                  } else {
+                    selectionApi.store.enter(thread.thread_id);
+                  }
+                }}
+              >
+                <CheckSquare className="text-muted-foreground" />
+                <span>
+                  {selected
+                    ? t.chats.selection.deselect
+                    : t.chats.selection.select}
+                </span>
+              </DropdownMenuItem>
+            )}
             {canDeleteThreads && (
               <>
                 <DropdownMenuSeparator />
@@ -652,6 +772,45 @@ export function RecentChatList() {
     walk(folderTree, 1);
     return depths;
   }, [folderTree]);
+  // The rows exactly as rendered below — folders depth-first, an open folder's
+  // subfolders before its own chats, then the root list — so a shift-click
+  // range is drawn over what the user sees. The DOM cannot answer this: past
+  // 60 rows most of them are not mounted.
+  const selectionOrder = useMemo(
+    () =>
+      recentListSelectionOrder({
+        tree: folderTree,
+        expandedFolderIds,
+        folderThreadIds: new Map(
+          [...folderBranchLists].map(([folderId, list]) => [
+            folderId,
+            list.threads.map((thread) => thread.thread_id),
+          ]),
+        ),
+        rootThreadIds: rootList.threads.map((thread) => thread.thread_id),
+      }),
+    [expandedFolderIds, folderBranchLists, folderTree, rootList.threads],
+  );
+  useRegisterSelectionOrder(
+    "recent-chat-list",
+    RECENT_LIST_SELECTION_RANK,
+    selectionOrder,
+  );
+  const selectionApi = useSidebarSelection();
+  // Only the mode, not the ticks: a tick re-renders its own row (and the
+  // toolbar), never this whole list.
+  const selectionActive = useSidebarSelectionActive();
+  // A ticked chat that left the loaded list — deleted, archived or moved away
+  // from another tab — must not stay in a count the user is about to act on.
+  // Skipped while the list has no data (a reset after archiving): an empty
+  // list then means "loading", not "everything is gone".
+  useEffect(() => {
+    if (!selectionApi || !infiniteThreads) {
+      return;
+    }
+    selectionApi.store.prune((threadId) => threadListModel.byId.has(threadId));
+  }, [infiniteThreads, selectionApi, threadListModel.byId]);
+
   // Every folder row's **Move folder to ▸** list, built once for the whole tree
   // rather than once per rendered row. `canMoveFolderUnder` walks the list to
   // answer each pair, so asking it inside each row's render is cubic in the
@@ -677,6 +836,14 @@ export function RecentChatList() {
     }
     return targets;
   }, [flatFolderNodes, folderDepths, folders]);
+  const selectionFolderTargets = useMemo<SelectionFolderTarget[]>(
+    () =>
+      flatFolderNodes.map(({ folder }) => ({
+        folder,
+        depth: folderDepths.get(folder.id) ?? 1,
+      })),
+    [flatFolderNodes, folderDepths],
+  );
 
   const sentinelRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
@@ -742,6 +909,81 @@ export function RecentChatList() {
     ],
   );
 
+  const { mutateAsync: moveThreadsToFolder, isPending: isMovingThreads } =
+    useMoveThreadsToFolder();
+
+  /**
+   * File the selected chats into `folder` (or back to the root list). Chats
+   * already there are skipped rather than re-written; whatever fails stays
+   * ticked so the user can see what is left and try again.
+   */
+  const handleMoveSelection = useCallback(
+    async (threadIds: readonly string[], folder: ChatFolder | null) => {
+      const folderId = folder?.id ?? null;
+      const toMove = threadIds.filter((threadId) => {
+        const current = threadListModel.byId.get(threadId);
+        return !current || folderIdOfThread(current) !== folderId;
+      });
+      if (folderId) {
+        expandFolder(folderId);
+      }
+      if (toMove.length === 0) {
+        selectionApi?.store.replace([]);
+        return;
+      }
+      let failedIds: string[];
+      try {
+        const result = await moveThreadsToFolder({
+          threadIds: toMove,
+          folderId,
+        });
+        failedIds = result.failed.map((failure) => failure.threadId);
+        const moved = result.succeeded.length;
+        if (moved > 0) {
+          // Grouped by project, a project's chat keeps rendering in its project
+          // group whatever folder it is filed in, so the move looks like it did
+          // nothing there. Say so instead of leaving the user to guess.
+          const stayInProjects =
+            folderId && projectGrouped && knownProjectIds
+              ? result.succeeded.filter((threadId) => {
+                  const current = threadListModel.byId.get(threadId);
+                  const projectId = current ? projectIdOfThread(current) : null;
+                  return projectId !== null && knownProjectIds.has(projectId);
+                }).length
+              : 0;
+          toast.success(
+            folder
+              ? t.chats.selection.moved(moved, folder.name)
+              : t.chats.selection.movedToRoot(moved),
+            stayInProjects > 0
+              ? {
+                  description:
+                    t.chats.selection.movedProjectChatsHint(stayInProjects),
+                }
+              : undefined,
+          );
+        }
+        if (failedIds.length > 0) {
+          toast.error(t.chats.selection.moveFailed(failedIds.length));
+        }
+      } catch (error) {
+        console.error("Failed to move chats:", error);
+        toast.error(t.chats.folders.moveFailed);
+        return;
+      }
+      selectionApi?.store.replace(failedIds);
+    },
+    [
+      expandFolder,
+      knownProjectIds,
+      moveThreadsToFolder,
+      projectGrouped,
+      selectionApi,
+      t,
+      threadListModel.byId,
+    ],
+  );
+
   const handleFolderDialogSubmit = useCallback(() => {
     const name = folderNameValue.trim();
     if (!folderDialog || !name) {
@@ -756,6 +998,12 @@ export function RecentChatList() {
       if (folderDialog.threadId) {
         handleMoveToFolder(folderDialog.threadId, folderId);
       }
+      if (folderDialog.threadIds && folderDialog.threadIds.length > 0) {
+        void handleMoveSelection(folderDialog.threadIds, {
+          id: folderId,
+          name,
+        });
+      }
     } else {
       renameChatFolder(folderDialog.folder.id, name);
     }
@@ -765,6 +1013,7 @@ export function RecentChatList() {
     createFolder,
     folderDialog,
     folderNameValue,
+    handleMoveSelection,
     handleMoveToFolder,
     renameChatFolder,
     t.chats.folders,
@@ -1049,8 +1298,52 @@ export function RecentChatList() {
               <span>{t.chats.folders.new}</span>
             </button>
           )}
+          {/* Labelled for the same reason as New folder: it is how a reader
+              finds out multi-select exists at all. */}
+          {!isStaticWebsite && selectionApi && (
+            <button
+              className="text-sidebar-foreground/80 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground border-sidebar-border ring-sidebar-ring data-[active=true]:bg-sidebar-accent data-[active=true]:text-sidebar-accent-foreground flex h-5 shrink-0 items-center gap-1 rounded-md border px-1.5 text-[11px] font-medium outline-hidden transition-colors focus-visible:ring-2"
+              data-active={selectionActive}
+              data-testid="chat-selection-toggle"
+              onClick={() => {
+                if (selectionActive) {
+                  selectionApi.store.exit();
+                } else {
+                  selectionApi.store.enter();
+                }
+              }}
+              title={
+                selectionActive
+                  ? t.chats.selection.done
+                  : t.chats.selection.select
+              }
+              type="button"
+            >
+              <ListChecks className="size-3.5 shrink-0" />
+              <span>
+                {selectionActive
+                  ? t.chats.selection.done
+                  : t.chats.selection.select}
+              </span>
+            </button>
+          )}
         </SidebarGroupLabel>
         <SidebarGroupContent className="group-data-[collapsible=icon]:pointer-events-none group-data-[collapsible=icon]:-mt-8 group-data-[collapsible=icon]:opacity-0">
+          {selectionActive && !isStaticWebsite && (
+            <SidebarSelectionToolbar
+              folderTargets={selectionFolderTargets}
+              isMoving={isMovingThreads}
+              onMoveToFolder={(threadIds, folder) =>
+                void handleMoveSelection(threadIds, folder)
+              }
+              onNewFolderFromSelection={(threadIds) => {
+                setFolderNameValue("");
+                setFolderDialog({ mode: "create", threadIds });
+              }}
+              recentThreadId={threads[0]?.thread_id}
+              threadsById={threadListModel.byId}
+            />
+          )}
           <SidebarMenu>
             {folderTree.length > 0 && (
               <div
@@ -1131,6 +1424,13 @@ export function RecentChatList() {
                 ? t.chats.folders.rename
                 : t.chats.folders.new}
             </DialogTitle>
+            {folderDialog?.mode === "create" && folderDialog.threadIds && (
+              <DialogDescription>
+                {t.chats.selection.newFolderFromSelectionDescription(
+                  folderDialog.threadIds.length,
+                )}
+              </DialogDescription>
+            )}
           </DialogHeader>
           <div className="py-4">
             <Input

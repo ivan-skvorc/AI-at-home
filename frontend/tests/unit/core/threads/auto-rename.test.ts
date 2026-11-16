@@ -128,14 +128,8 @@ describe("the picker", () => {
     expect(source).toContain("ModelSelect");
     expect(source).not.toContain("SelectItem");
   });
-
-  it("shares the stored model preference with the automatic rename", () => {
-    // One preference, two entry points. A separate key here would mean picking
-    // a model in the dialog leaves Settings → Conversation titles disagreeing
-    // with it, and neither screen showing the model that will actually run.
-    const source = read("src/components/workspace/thread-auto-rename.tsx");
-
-    expect(source).toContain('"autoTitle"');
-    expect(source).toContain("settings.autoTitle.modelName");
-  });
+  // Sharing the one `autoTitle.modelName` preference with Settings (read and
+  // write) is pinned by behaviour in thread-auto-rename.dom.test.tsx: "the
+  // remembered model is where the picker starts" and "the picked model is the
+  // model that runs, and is remembered for both entry points".
 });

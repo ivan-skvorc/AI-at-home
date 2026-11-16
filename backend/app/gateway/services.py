@@ -60,6 +60,8 @@ from deerflow.config.agents_config import load_agent_config
 from deerflow.config.app_config import AppConfig, get_app_config
 from deerflow.config.database_config import resolve_checkpoint_graph_cache_max
 from deerflow.config.run_limit_overrides import UNLIMITED_STEPS, effective_recursion_limit, run_limits_suspended
+from deerflow.config.title_config import AUTO_TITLE_ENABLED_CONTEXT_KEY, AUTO_TITLE_MODEL_CONTEXT_KEY
+from deerflow.config.user_ui_state import get_auto_title_preference
 from deerflow.knowledge_scope import KNOWLEDGE_SCOPE_KEY, KNOWLEDGE_SCOPE_RUNTIME_KEY
 from deerflow.mcp_scope import (
     THREAD_INCARNATION_METADATA_GUARD_KEY,
@@ -1161,7 +1163,9 @@ _CONTEXT_CONFIGURABLE_KEYS: frozenset[str] = frozenset(
         # ("" = no model call, the local fallback title). Both are one-way
         # layers on top of ``config.yaml -> title``: a client can never switch
         # renaming on when the operator disabled it, and a model name outside
-        # the configured catalog is dropped rather than honored.
+        # the configured catalog is dropped rather than honored. ``start_run``
+        # then layers the owner's stored preference on top
+        # (``apply_stored_auto_title_preference``): a stored opt-out wins.
         "auto_title_enabled",
         "auto_title_model_name",
         # Fork: the composer's per-conversation internet switch (FORK.md §27).
@@ -1518,6 +1522,63 @@ def inject_authenticated_user_context(
         runtime_context["user_role"] = getattr(user, "system_role", None)
         runtime_context["oauth_provider"] = getattr(user, "oauth_provider", None)
         runtime_context["oauth_id"] = getattr(user, "oauth_id", None)
+
+
+def merge_stored_auto_title_preference(config: dict[str, Any], stored: Mapping[str, Any]) -> None:
+    """Layer the user's stored auto-title preference onto a run config.
+
+    Settings -> Conversation titles (FORK.md §33) is stored per user, so runs
+    that do not come from the browser holding the switch (IM channels, the
+    scheduler, extension child threads, another device or origin) still honor
+    it. The request's own keys are read the way the lead agent reads them, with
+    ``context`` over ``configurable``:
+
+    * ``auto_title_enabled`` — AND semantics: a stored opt-out wins over an
+      explicit ``True`` in the request, because a stale browser cache must not
+      re-enable what the user switched off elsewhere. An opt-out in the request
+      stays. ``True`` is never written: the harness preference is a one-way
+      opt-out, and an explicit ``True`` changes nothing there.
+    * ``auto_title_model_name`` — the request's choice when it carries the key
+      (``""`` included), otherwise the stored one when the user picked one.
+
+    Both sections are written, as :func:`merge_run_context_overrides` does.
+    """
+    configurable = config.get("configurable")
+    runtime_context = config.get("context")
+    requested: dict[str, Any] = {}
+    for section in (configurable, runtime_context):
+        if isinstance(section, dict):
+            requested.update(section)
+
+    updates: dict[str, Any] = {}
+    if stored.get("enabled") is False:
+        updates[AUTO_TITLE_ENABLED_CONTEXT_KEY] = False
+    stored_model = stored.get("model_name")
+    if AUTO_TITLE_MODEL_CONTEXT_KEY not in requested and isinstance(stored_model, str):
+        updates[AUTO_TITLE_MODEL_CONTEXT_KEY] = stored_model
+    if not updates:
+        return
+    for name in ("configurable", "context"):
+        section = config.setdefault(name, {})
+        if isinstance(section, dict):
+            section.update(updates)
+
+
+async def apply_stored_auto_title_preference(config: dict[str, Any], owner_user_id: str | None) -> None:
+    """Read the run owner's stored auto-title preference and merge it in.
+
+    A preference is not a reason to refuse a run: when the store cannot be
+    read, the run keeps its request context (and so the operator's
+    ``config.yaml``) and the failure is logged.
+    """
+    if not owner_user_id:
+        return
+    try:
+        stored = await asyncio.to_thread(get_auto_title_preference, owner_user_id)
+    except Exception:
+        logger.warning("Could not read the stored auto-title preference for %s; the run keeps its request context", sanitize_log_param(owner_user_id), exc_info=True)
+        return
+    merge_stored_auto_title_preference(config, stored)
 
 
 def resolve_agent_factory(assistant_id: str | None):
@@ -2834,6 +2895,11 @@ async def start_run(
             internal_owner_user=internal_owner_user,
             request_context=getattr(body, "context", None),
         )
+        # Fork: the owner's stored Settings -> Conversation titles preference
+        # (FORK.md §33). Every run start passes here (HTTP, IM channels, the
+        # scheduler, extension child runs), so one read covers the runs that
+        # never saw the browser holding the switch.
+        await apply_stored_auto_title_preference(config, owner_user_id or (str(user.id) if user is not None else None))
         # Server-owned: ``build_run_config`` strips caller-supplied ``__`` keys,
         # so a client cannot seed a fake low baseline to widen its own cap.
         if spend_budget_status.active:

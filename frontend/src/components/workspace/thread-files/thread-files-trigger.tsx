@@ -9,9 +9,13 @@ import { useMaybeSidecar } from "../sidecar/context";
 
 /**
  * Header button that opens the side panel on the thread's file explorer.
- * Icon-only: the chat header has no width to spare (the title shrinks first, and
- * an open side panel narrows the column below the viewport breakpoints), and the
- * aria-label and tooltip name it.
+ *
+ * It carries a visible "Files" label so people can find it: an unlabelled
+ * folder icon at the end of the header was both overlooked and the first
+ * control the header clipped. The label follows the header's own width (the
+ * `chat-header` container), not the viewport, because an open side panel
+ * narrows the chat column without changing the viewport. The aria-label stays
+ * "Show files", which is the accessible name tests and assistive tech use.
  */
 export function ThreadFilesTrigger() {
   const { t } = useI18n();
@@ -23,7 +27,6 @@ export function ThreadFilesTrigger() {
         aria-label={t.threadFiles.showFiles}
         className="text-muted-foreground hover:text-foreground"
         variant="ghost"
-        size="icon"
         data-testid="thread-files-trigger"
         onClick={() => {
           sidecar?.close();
@@ -31,6 +34,12 @@ export function ThreadFilesTrigger() {
         }}
       >
         <FolderTreeIcon />
+        <span
+          data-testid="thread-files-trigger-label"
+          className="hidden @[32rem]/chat-header:inline"
+        >
+          {t.threadFiles.title}
+        </span>
       </Button>
     </Tooltip>
   );

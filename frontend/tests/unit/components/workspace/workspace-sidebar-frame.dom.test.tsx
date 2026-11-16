@@ -50,6 +50,14 @@ function Contents() {
       <Link href="/workspace/chats" onClick={(event) => event.preventDefault()}>
         Chats
       </Link>
+      {/* A chat row in sidebar selection mode: its click toggles a checkbox. */}
+      <Link
+        data-thread-selecting="true"
+        href="/workspace/chats/selected-chat"
+        onClick={(event) => event.preventDefault()}
+      >
+        Selecting row
+      </Link>
       {expanded && <p>Projects and recent chats</p>}
     </>
   );
@@ -136,6 +144,21 @@ describe("workspace mobile sidebar", () => {
         screen.getByRole("textbox", { name: "Search chats" }),
       ),
     );
+  });
+
+  it("stays open when a selecting chat row is clicked, and closes for a plain link", async () => {
+    render(<Harness />);
+    fireEvent.click(screen.getByRole("button", { name: "Toggle navigation" }));
+    const dialog = await screen.findByRole("dialog");
+
+    fireEvent.click(
+      within(dialog).getByRole("link", { name: "Selecting row" }),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(screen.queryByRole("dialog")).not.toBeNull();
+
+    fireEvent.click(within(dialog).getByRole("link", { name: "Chats" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   });
 
   it("uses the standard mobile drawer width with a collapsed desktop preference", async () => {

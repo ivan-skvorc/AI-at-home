@@ -27,7 +27,6 @@ from langgraph.types import Overwrite
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy.exc import IntegrityError
 
-import deerflow.utils.llm_text as llm_text
 from app.gateway.authz import _is_internal_caller, authorize_model_use, require_permission
 from app.gateway.checkpoint_lineage import (
     CheckpointLineageError,
@@ -115,7 +114,7 @@ from deerflow.utils.file_io import await_drained, run_file_io
 from deerflow.utils.oneshot_llm import run_oneshot_llm_with_usage
 from deerflow.utils.thread_id import ThreadId, resolve_thread_id, validate_thread_id
 from deerflow.utils.time import coerce_iso, now_iso
-from deerflow.utils.title_transcript import DEFAULT_EXCHANGE_LIMIT, VisibleExchange, extract_visible_exchanges, render_exchanges
+from deerflow.utils.title_transcript import DEFAULT_EXCHANGE_LIMIT, VisibleExchange, clean_title, extract_visible_exchanges, render_exchanges
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/threads", tags=["threads"])
@@ -825,6 +824,10 @@ class ThreadStateUpdateRequest(BaseModel):
     checkpoint_id: str | None = Field(default=None, description="Checkpoint to branch from")
     checkpoint: dict[str, Any] | None = Field(default=None, description="Full checkpoint object")
     as_node: str | None = Field(default=None, description="Node identity for the update")
+    # Fork: a rename that is housekeeping, not activity (a bulk organize pass),
+    # keeps the thread's place in the recency-sorted sidebar. Only the
+    # display-name sync honors it; the checkpoint write is the same either way.
+    preserve_recency: bool = Field(default=False, description="Keep the thread's updated_at when this update renames it")
 
 
 class ThreadGoalRequest(BaseModel):
@@ -1160,6 +1163,17 @@ async def _delete_thread_data_with_reservation(thread_id: str, request: Request)
         await thread_store.delete(thread_id, user_id=user_id)
     except Exception:
         logger.debug("Could not delete thread_meta for %s (not critical)", sanitize_log_param(thread_id))
+
+    # Fork: tombstone the thread's folder-ledger touches (best-effort), so a
+    # shared mount folder only this thread used can be offered for deletion.
+    # The orphan query also treats a touch whose thread_meta row is gone as
+    # deleted, so a failure here does not keep the folder in use.
+    try:
+        from app.gateway.routers.folder_ledger import tombstone_thread_touches
+
+        await tombstone_thread_touches(thread_id)
+    except Exception:
+        logger.debug("Could not tombstone folder ledger touches for %s (not critical)", sanitize_log_param(thread_id))
 
     # Remove the chat's scheduled-task lifecycle lines (best-effort). They are
     # display-only history of this chat; the tasks themselves are untouched.
@@ -1597,6 +1611,15 @@ async def _branch_thread_with_reservation(
         workspace_clone_mode = await _copy_branch_user_data(thread_id, new_thread_id)
     else:
         workspace_clone_mode = "skipped_historical_turn"
+    # Fork: the branch keeps using the shared mount folders its parent used
+    # (folder ledger, best-effort), also for a historical-turn branch: errs
+    # toward keeping a folder in use longer, never shorter.
+    try:
+        from app.gateway.routers.folder_ledger import inherit_thread_touches
+
+        await inherit_thread_touches(parent_thread_id=thread_id, child_thread_id=new_thread_id, user_id=get_effective_user_id())
+    except Exception:
+        logger.debug("Could not inherit folder ledger touches for %s (not critical)", sanitize_log_param(new_thread_id))
     return ThreadBranchResponse(
         thread_id=new_thread_id,
         parent_thread_id=thread_id,
@@ -2148,20 +2171,6 @@ def _title_suggest_prompt(config: AppConfig, exchanges: list[VisibleExchange]) -
     return f"Generate a concise title (max {config.title.max_words} words) for this conversation.\n\n{render_exchanges(exchanges)}\n\nReturn ONLY the title, no quotes, no explanation."
 
 
-def _clean_suggested_title(text: str, *, max_chars: int) -> str:
-    # Same normalization as TitleMiddleware._parse_title: a model asked for a
-    # bare title still returns one fenced, quoted, or preceded by its reasoning
-    # often enough that skipping any of these steps shows up as a thread named
-    # `"Fix the flaky test"` -- quotes included.
-    candidate = llm_text.strip_think_blocks(text, truncate_unclosed=True)
-    candidate = llm_text.strip_markdown_code_fence(candidate)
-    candidate = candidate.strip().strip('"').strip("'").strip()
-    # A chatty model can answer with several lines; the title is the first
-    # non-empty one, not the essay under it.
-    first_line = next((line.strip() for line in candidate.splitlines() if line.strip()), "")
-    return first_line[:max_chars]
-
-
 @router.post("/{thread_id}/title/suggest", response_model=ThreadTitleSuggestResponse)
 # ``runs:create`` rather than ``threads:read``: the route reads no more than
 # ``GET /{thread_id}/state`` already hands the same caller, but it spends a
@@ -2233,7 +2242,8 @@ async def suggest_thread_title(thread_id: ThreadId, body: ThreadTitleSuggestRequ
     # the conversation cost by exactly the amount the user chose to spend.
     await arecord_aux_usage_metadata(thread_id, AUX_CATEGORY_TITLE, model_name=result.model_name, usage=result.usage)
 
-    title = _clean_suggested_title(result.text, max_chars=config.title.max_chars)
+    # The cleaner is shared with the chat clean-up pass (title_transcript.clean_title).
+    title = clean_title(result.text, max_chars=config.title.max_chars)
     if not title:
         raise HTTPException(status_code=503, detail="Failed to generate a title")
 
@@ -2391,6 +2401,7 @@ async def update_thread_state(thread_id: ThreadId, body: ThreadStateUpdateReques
                     thread_id,
                     new_title,
                     remove_metadata_keys=(_BRANCH_TITLE_SEQUENCE_METADATA_KEY,),
+                    touch=not body.preserve_recency,
                 )
             except Exception:
                 logger.debug("Failed to sync title to thread_meta for %s (non-fatal)", sanitize_log_param(thread_id))

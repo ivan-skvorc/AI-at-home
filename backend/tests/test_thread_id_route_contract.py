@@ -72,7 +72,9 @@ def _collect_thread_id_routes():
     from app.gateway.routers import (
         artifacts,
         browser,
+        chat_organize,
         feedback,
+        folder_ledger,
         mcp_tasks,
         project_documents,
         runs,
@@ -91,7 +93,9 @@ def _collect_thread_id_routes():
     routers = [
         artifacts,
         browser,
+        chat_organize,
         feedback,
+        folder_ledger,
         mcp_tasks,
         project_documents,
         runs,

@@ -4,11 +4,20 @@ import path from "node:path";
 import { afterEach, describe, expect, it, rs } from "@rstest/core";
 
 import {
+  autoTitlePreferenceBody,
+  parseAutoTitlePreference,
+} from "@/core/settings/auto-title-api";
+import {
   DEFAULT_LOCAL_SETTINGS,
   LOCAL_SETTINGS_KEY,
+  getLocalSettings,
   mergeLocalSettings,
   saveLocalSettings,
 } from "@/core/settings/local";
+import {
+  getBaseSettingsSnapshot,
+  updateLocalSettings,
+} from "@/core/settings/store";
 import { autoTitleRunContext } from "@/core/threads/run-context";
 
 /**
@@ -23,19 +32,32 @@ const FRONTEND_ROOT = path.resolve(__dirname, "../../../..");
 const read = (relativePath: string) =>
   readFileSync(path.join(FRONTEND_ROOT, relativePath), "utf8");
 
-function withStoredSettings(autoTitle: Record<string, unknown>) {
+/**
+ * Set the preference the way the Settings switch and picker do: through the
+ * settings store, whose snapshot is what they render. Both keys every time —
+ * the store merges, and a model left over from an earlier case would leak in.
+ */
+function withPreference(autoTitle: {
+  enabled: boolean;
+  modelName: string | undefined;
+}) {
+  updateLocalSettings("autoTitle", autoTitle);
+}
+
+/** A browser whose localStorage refuses writes (quota, blocked site data). */
+function withStorageThatRejectsWrites() {
   const store = new Map<string, string>();
   rs.stubGlobal("window", {
     localStorage: {
       getItem: (key: string) => store.get(key) ?? null,
-      setItem: (key: string, value: string) => void store.set(key, value),
+      setItem: () => {
+        throw new DOMException("Quota exceeded", "QuotaExceededError");
+      },
       removeItem: (key: string) => void store.delete(key),
     },
+    addEventListener: () => undefined,
   });
-  store.set(
-    LOCAL_SETTINGS_KEY,
-    JSON.stringify({ ...DEFAULT_LOCAL_SETTINGS, autoTitle }),
-  );
+  return store;
 }
 
 afterEach(() => {
@@ -50,10 +72,10 @@ describe("what reaches the backend", () => {
     // them — sending "" for both, or omitting for both — silently either starts
     // paying for a title model the user declined, or ignores the one they
     // configured server-side.
-    withStoredSettings({ enabled: true, modelName: undefined });
+    withPreference({ enabled: true, modelName: undefined });
     expect(autoTitleRunContext()).toEqual({ auto_title_enabled: true });
 
-    withStoredSettings({ enabled: true, modelName: "" });
+    withPreference({ enabled: true, modelName: "" });
     expect(autoTitleRunContext()).toEqual({
       auto_title_enabled: true,
       auto_title_model_name: "",
@@ -61,7 +83,7 @@ describe("what reaches the backend", () => {
   });
 
   it("sends a chosen model by name", () => {
-    withStoredSettings({ enabled: true, modelName: "cheap-model" });
+    withPreference({ enabled: true, modelName: "cheap-model" });
     expect(autoTitleRunContext()).toEqual({
       auto_title_enabled: true,
       auto_title_model_name: "cheap-model",
@@ -71,7 +93,21 @@ describe("what reaches the backend", () => {
   it("sends no model key at all when renaming is off", () => {
     // Nothing is going to write a title, so naming a model for it is noise the
     // backend would have to reason about.
-    withStoredSettings({ enabled: false, modelName: "cheap-model" });
+    withPreference({ enabled: false, modelName: "cheap-model" });
+    expect(autoTitleRunContext()).toEqual({ auto_title_enabled: false });
+  });
+
+  it("sends what the switch shows even when the browser cannot store it", () => {
+    // The switch renders the in-memory settings snapshot. A run that read
+    // localStorage instead sent the stale stored "on" after a write failed
+    // without a sound (quota, blocked site data) — the switch said off, and
+    // the conversation was renamed anyway.
+    const stored = withStorageThatRejectsWrites();
+    withPreference({ enabled: true, modelName: undefined });
+    withPreference({ enabled: false, modelName: undefined });
+
+    expect(getBaseSettingsSnapshot().autoTitle.enabled).toBe(false);
+    expect(stored.has(LOCAL_SETTINGS_KEY)).toBe(false);
     expect(autoTitleRunContext()).toEqual({ auto_title_enabled: false });
   });
 
@@ -109,12 +145,61 @@ describe("where the preference is stored", () => {
     ).toBe(false);
   });
 
-  it("survives a round trip through localStorage", () => {
-    withStoredSettings({ enabled: true, modelName: undefined });
+  it("survives a round trip through this browser's cache", () => {
+    // The local copy is what a reload renders before the account answers, and
+    // what a static demo has instead of an account.
+    const store = new Map<string, string>();
+    rs.stubGlobal("window", {
+      localStorage: {
+        getItem: (key: string) => store.get(key) ?? null,
+        setItem: (key: string, value: string) => void store.set(key, value),
+        removeItem: (key: string) => void store.delete(key),
+      },
+    });
     saveLocalSettings(
       mergeLocalSettings({ autoTitle: { enabled: false, modelName: "" } }),
     );
-    expect(autoTitleRunContext()).toEqual({ auto_title_enabled: false });
+    expect(getLocalSettings().autoTitle).toEqual({
+      enabled: false,
+      modelName: "",
+    });
+  });
+});
+
+describe("what the account stores", () => {
+  it("keeps 'server default' and 'no model call' apart on the account too", () => {
+    // Same distinction as the run context: an omitted `model_name` follows
+    // config.yaml, `""` renames without a model call. Collapsing them on the
+    // way to the account would hand every other device the wrong one.
+    expect(
+      autoTitlePreferenceBody({ enabled: true, modelName: undefined }),
+    ).toEqual({ enabled: true });
+    expect(autoTitlePreferenceBody({ enabled: true, modelName: "" })).toEqual({
+      enabled: true,
+      model_name: "",
+    });
+    expect(parseAutoTitlePreference({ enabled: true })).toEqual({
+      enabled: true,
+      modelName: undefined,
+    });
+    expect(parseAutoTitlePreference({ enabled: true, model_name: "" })).toEqual(
+      { enabled: true, modelName: "" },
+    );
+    expect(
+      parseAutoTitlePreference({ enabled: false, model_name: "cheap-model" }),
+    ).toEqual({ enabled: false, modelName: "cheap-model" });
+  });
+
+  it.each([
+    ["no body", null],
+    ["an error body", { detail: "Not Found" }],
+    ["a non-boolean switch", { enabled: "false" }],
+    ["a non-string model", { enabled: true, model_name: 3 }],
+  ])("reads %s as unknown, never as a setting", (_label, body) => {
+    // An answer that is not a preference must not be adopted as one: reading
+    // it as the default would switch renaming back on for someone who turned
+    // it off, and reading it as "off" would do the opposite.
+    expect(parseAutoTitlePreference(body)).toBeNull();
   });
 });
 

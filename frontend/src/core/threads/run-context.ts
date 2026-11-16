@@ -1,5 +1,5 @@
 import type { InputMode, ReasoningEffortValue } from "../models/reasoning";
-import { getLocalSettings } from "../settings/local";
+import { getBaseSettingsSnapshot } from "../settings/store";
 
 import {
   type DemocracyGrading,
@@ -164,7 +164,13 @@ export function resolveInternetEnabled(context: {
  * The automatic-rename keys for the run context (fork feature, FORK.md §33).
  *
  * Read at submit time rather than at hook-render time so a preference changed
- * in Settings applies to the very next message, with no remount.
+ * in Settings applies to the very next message, with no remount. Read from the
+ * in-memory settings snapshot the Settings switch renders, not from
+ * localStorage: a storage write can fail (quota, blocked site data) without a
+ * sound, and the switch would then show "off" while every run still sent the
+ * stale stored "on". The account copy the Gateway also applies is kept in step
+ * by `core/settings/auto-title-sync.ts`; this request value can only narrow it
+ * (an opt-out on either side wins).
  *
  * Three states, and the difference between the last two is the whole point of
  * the model picker:
@@ -182,7 +188,7 @@ export function autoTitleRunContext(): {
   auto_title_enabled: boolean;
   auto_title_model_name?: string;
 } {
-  const { enabled, modelName } = getLocalSettings().autoTitle;
+  const { enabled, modelName } = getBaseSettingsSnapshot().autoTitle;
   if (!enabled) {
     return { auto_title_enabled: false };
   }

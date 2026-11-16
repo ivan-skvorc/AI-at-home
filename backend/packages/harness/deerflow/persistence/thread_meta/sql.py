@@ -315,9 +315,14 @@ class ThreadMetaRepository(ThreadMetaStore):
         display_name: str,
         *,
         remove_metadata_keys: tuple[str, ...] = (),
+        touch: bool = True,
         user_id: str | None | _AutoSentinel = AUTO,
     ) -> None:
-        """Update the display name and remove caller-selected stale metadata atomically."""
+        """Update the display name and remove caller-selected stale metadata atomically.
+
+        ``touch=False`` keeps ``updated_at``, so the rename does not reorder
+        recency-sorted lists (see :meth:`update_metadata`).
+        """
         resolved_user_id = await asyncio.to_thread(resolve_owner_scope, user_id, method_name="ThreadMetaRepository.update_display_name")
         async with self._sf() as session:
             if session.get_bind().dialect.name == "sqlite":
@@ -333,7 +338,13 @@ class ThreadMetaRepository(ThreadMetaStore):
             for key in remove_metadata_keys:
                 metadata.pop(key, None)
             row.metadata_json = metadata
-            row.updated_at = datetime.now(UTC)
+            if touch:
+                row.updated_at = datetime.now(UTC)
+            else:
+                # ``updated_at``'s ``onupdate`` hook fires on any row UPDATE
+                # without an explicit SET value; marking the current value
+                # dirty emits it in SET and skips the hook.
+                flag_modified(row, "updated_at")
             await session.commit()
 
     async def update_status(

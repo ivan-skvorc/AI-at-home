@@ -28,6 +28,7 @@ import { fetch } from "../api/fetcher";
 import { AuthQueryScopeContext } from "../auth/query-scope";
 import { getBackendBaseURL } from "../config";
 import { useRunInputsEnabled } from "../features";
+import { notifyThreadsDeleted } from "../folder-ledger/events";
 import { useI18n } from "../i18n/hooks";
 import type { Locale } from "../i18n/locale";
 import type { Translations } from "../i18n/locales";
@@ -68,6 +69,15 @@ import {
   searchThreadsByArchive,
   type ThreadMetadataPatch,
 } from "./api";
+import {
+  BULK_THREAD_CONCURRENCY,
+  httpStatusOf,
+  partitionBulkResults,
+  settleWithConcurrency,
+  uniqueThreadIds,
+  type BulkThreadFailure,
+  type BulkThreadResult,
+} from "./bulk";
 import { THREAD_FOLDER_METADATA_KEY } from "./chat-folders";
 import {
   addEditVersionToGroups,
@@ -4849,6 +4859,62 @@ export function useMoveThreadToFolder() {
   });
 }
 
+/**
+ * File several conversations into one sidebar folder (or back to the root
+ * list) — the bulk form of {@link useMoveThreadToFolder}.
+ *
+ * Each PATCH carries **only** `deerflow_folder`, the placement-only shape the
+ * Gateway exempts from bumping `updated_at`, so filing fifty chats does not
+ * reshuffle the recency-ordered sidebar. Writes run a few at a time, each
+ * success lands in the caches as it arrives, and the lists are invalidated
+ * once at the end: N single-item mutations would restart the infinite refetch
+ * N times, every loaded page with it. A failed item is reported, never
+ * retried.
+ */
+export function useMoveThreadsToFolder() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      threadIds,
+      folderId,
+    }: {
+      threadIds: readonly string[];
+      folderId: string | null;
+    }): Promise<BulkThreadResult> => {
+      const ids = uniqueThreadIds(threadIds);
+      // A list read that started before the first write must not land after
+      // the cache update and put the old placement back.
+      await Promise.all([
+        queryClient.cancelQueries({
+          queryKey: INFINITE_THREADS_QUERY_KEY_PREFIX,
+        }),
+        queryClient.cancelQueries({ queryKey: ["threads", "search"] }),
+      ]);
+      const results = await settleWithConcurrency(
+        ids,
+        BULK_THREAD_CONCURRENCY,
+        async (threadId) => {
+          const response = await patchThreadMetadata(threadId, {
+            [THREAD_FOLDER_METADATA_KEY]: folderId,
+          });
+          setThreadMetadataInCaches(queryClient, threadId, {
+            ...(response.metadata ?? {}),
+            [THREAD_FOLDER_METADATA_KEY]: folderId,
+          });
+          return response;
+        },
+      );
+      return partitionBulkResults(ids, results);
+    },
+    onSettled() {
+      void queryClient.invalidateQueries({ queryKey: ["threads", "search"] });
+      void queryClient.invalidateQueries({
+        queryKey: INFINITE_THREADS_QUERY_KEY_PREFIX,
+      });
+    },
+  });
+}
+
 export function useRunDetail(threadId: string, runId: string) {
   const apiClient = getAPIClient();
   return useQuery<AppRun>({
@@ -5025,6 +5091,9 @@ export function useDeleteThread() {
             (t) => !deletedThreadIds.has(t.thread_id),
           ),
       );
+      // The folder ledger offers to delete shared folders these conversations
+      // leave unused (FolderOrphanOfferHost).
+      notifyThreadsDeleted([...deletedThreadIds]);
     },
 
     onSettled() {
@@ -5034,6 +5103,100 @@ export function useDeleteThread() {
       });
       // Deleting a thread changes membership of project thread lists
       // ([...PROJECTS_QUERY_KEY, "threads", id, ...]).
+      void queryClient.invalidateQueries({
+        queryKey: [...PROJECTS_QUERY_KEY, "threads"],
+      });
+    },
+  });
+}
+
+export type BulkDeleteThreadsResult = {
+  /** The selected conversations that are gone, in the order they went. */
+  deleted: string[];
+  /** Side Chat threads removed along with them (never shown in the lists). */
+  deletedSidecarIds: string[];
+  failed: BulkThreadFailure[];
+};
+
+/**
+ * Delete several conversations — the bulk form of {@link useDeleteThread}.
+ *
+ * One at a time, each through the same cascade as a single delete (its Side
+ * Chat threads first, then the remote thread, then the Gateway's local data),
+ * so a bulk delete removes exactly what N single deletes would. A failure — a
+ * 409 while a run is in flight, a 403 — is recorded and the loop moves on; it
+ * is never retried. `onDeleted` fires after each conversation is fully gone,
+ * which is when the open chat may navigate away. The caches are filtered and
+ * invalidated once at the end, and the folder ledger hears about the whole
+ * batch in one notification, so its orphan check runs once rather than per
+ * chat.
+ */
+export function useDeleteThreads() {
+  const queryClient = useQueryClient();
+  const apiClient = getAPIClient() as ThreadDeleteClient;
+  return useMutation({
+    mutationFn: async ({
+      threadIds,
+      onDeleted,
+      onProgress,
+    }: {
+      threadIds: readonly string[];
+      onDeleted?: (threadId: string) => void;
+      /** After each conversation, deleted or failed: how many are done. */
+      onProgress?: (done: number, total: number) => void;
+    }): Promise<BulkDeleteThreadsResult> => {
+      const ids = uniqueThreadIds(threadIds);
+      const deleted: string[] = [];
+      const deletedSidecarIds: string[] = [];
+      const failed: BulkThreadFailure[] = [];
+      for (const [index, threadId] of ids.entries()) {
+        try {
+          deletedSidecarIds.push(
+            ...(await deleteSidecarThreadsForParent(apiClient, threadId)),
+          );
+          await deleteThreadEverywhere(apiClient, threadId);
+          deleted.push(threadId);
+        } catch (error) {
+          failed.push({ threadId, error, status: httpStatusOf(error) });
+        }
+        try {
+          if (deleted.at(-1) === threadId) {
+            onDeleted?.(threadId);
+          }
+          onProgress?.(index + 1, ids.length);
+        } catch (error) {
+          // The conversation is gone either way; a navigation hiccup must not
+          // report it as a failed delete or stop the rest of the batch.
+          console.error("Failed to handle a deleted chat:", error);
+        }
+      }
+      return { deleted, deletedSidecarIds, failed };
+    },
+    onSuccess({ deleted, deletedSidecarIds }) {
+      const deletedThreadIds = new Set([...deleted, ...deletedSidecarIds]);
+      if (deletedThreadIds.size === 0) {
+        return;
+      }
+      queryClient.setQueriesData(
+        { queryKey: ["threads", "search"], exact: false },
+        (oldData: Array<AgentThread> | undefined) =>
+          oldData?.filter((t) => !deletedThreadIds.has(t.thread_id)),
+      );
+      queryClient.setQueriesData(
+        { queryKey: INFINITE_THREADS_QUERY_KEY_PREFIX, exact: false },
+        (oldData: InfiniteThreadsData | undefined) =>
+          filterInfiniteThreadsCache(
+            oldData,
+            (t) => !deletedThreadIds.has(t.thread_id),
+          ),
+      );
+      notifyThreadsDeleted([...deletedThreadIds]);
+    },
+    onSettled() {
+      void queryClient.invalidateQueries({ queryKey: ["threads", "search"] });
+      void queryClient.invalidateQueries({
+        queryKey: INFINITE_THREADS_QUERY_KEY_PREFIX,
+      });
       void queryClient.invalidateQueries({
         queryKey: [...PROJECTS_QUERY_KEY, "threads"],
       });

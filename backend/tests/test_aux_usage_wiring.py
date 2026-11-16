@@ -363,6 +363,14 @@ def test_every_chat_aux_sink_survives_a_gateway_restart():
             usage={"input_tokens": 90, "output_tokens": 5, "total_tokens": 95},
         )
     )
+    asyncio.run(
+        aux_usage.arecord_aux_usage_metadata(
+            "t-all",
+            aux_usage.AUX_CATEGORY_ORGANIZE,
+            model_name="organize-model",
+            usage={"input_tokens": 700, "output_tokens": 40, "total_tokens": 740},
+        )
+    )
     before = aux_usage.get_thread_aux_usage("t-all")
     assert set(before) == set(aux_usage.CHAT_AUX_CATEGORIES)
 

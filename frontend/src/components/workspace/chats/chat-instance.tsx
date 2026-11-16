@@ -30,7 +30,10 @@ import { ThreadArchiveStatus } from "@/components/workspace/thread-archive-statu
 import { ThreadAutoRename } from "@/components/workspace/thread-auto-rename";
 import { ThreadBackgroundTasks } from "@/components/workspace/thread-background-tasks";
 import { ThreadExtensionActions } from "@/components/workspace/thread-extension-actions";
-import { ThreadFilesTrigger } from "@/components/workspace/thread-files";
+import {
+  ThreadFilesDeepLink,
+  ThreadFilesTrigger,
+} from "@/components/workspace/thread-files";
 import { ThreadRunInputs } from "@/components/workspace/thread-run-inputs";
 import { ThreadScheduledTasksButton } from "@/components/workspace/thread-scheduled-tasks-button";
 import { ThreadSubagentBatches } from "@/components/workspace/thread-subagent-batches";
@@ -780,6 +783,10 @@ function ChatInstanceContent({
         context={settings.context}
         isMock={isMock}
       >
+        <ThreadFilesDeepLink
+          threadId={threadId}
+          enabled={threadFilesEnabled && isActive}
+        />
         <ChatBox
           threadId={threadId}
           browserEnabled={browserEnabled}
@@ -788,7 +795,9 @@ function ChatInstanceContent({
           <div className="relative flex size-full min-h-0 justify-between">
             <header
               className={cn(
-                "absolute top-0 right-0 left-0 flex h-12 shrink-0 items-center gap-2 px-2 sm:px-4",
+                // A named container: header labels (Files) follow the chat
+                // column's width, which an open side panel narrows.
+                "@container/chat-header absolute top-0 right-0 left-0 flex h-12 shrink-0 items-center gap-2 px-2 sm:px-4",
                 isWelcomeMode
                   ? "bg-background/0 z-40 backdrop-blur-none"
                   : "bg-background/80 z-30 shadow-xs backdrop-blur",
@@ -852,12 +861,15 @@ function ChatInstanceContent({
                 ) : (
                   <ContextUsageBadge contextUsage={contextUsage} />
                 )}
+                {/* Ahead of the icon-only triggers: the row cannot shrink, so
+                the last controls are the ones clipped. The Files panel also
+                holds the Artifacts tab. */}
+                {threadFilesEnabled && <ThreadFilesTrigger />}
                 <SidecarTrigger />
                 {browserEnabled && <BrowserTrigger />}
                 <ExportTrigger threadId={threadId} />
                 <ThreadExtensionActions threadId={threadId} />
                 <ArtifactTrigger />
-                {threadFilesEnabled && <ThreadFilesTrigger />}
               </div>
             </header>
             <main className="flex min-h-0 max-w-full grow flex-col">

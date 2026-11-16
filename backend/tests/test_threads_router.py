@@ -5060,6 +5060,40 @@ def test_branch_thread_from_historical_turn_skips_workspace_clone(tmp_path) -> N
     assert not target_user_data.exists()
 
 
+def test_branch_and_delete_hand_the_folder_ledger_its_thread_lifecycle(tmp_path) -> None:
+    """A branch inherits its parent's shared-folder touches; a delete tombstones them (fork, folder ledger)."""
+    paths = Paths(tmp_path)
+    app, _store, checkpointer = _build_thread_app()
+    source_thread_id = "source-ledger"
+    user_id = "ledger-user"
+    human = HumanMessage(id="human-ledger", content="Make a folder")
+    ai = AIMessage(id="ai-ledger", content="Done")
+    inherit = AsyncMock(return_value=1)
+    tombstone = AsyncMock(return_value=1)
+
+    async def _seed(parent_config: dict) -> None:
+        after_human = await _write_checkpoint(checkpointer, source_thread_id, str(uuid6()), [human], step=1, parent_config=parent_config)
+        await _write_checkpoint(checkpointer, source_thread_id, str(uuid6()), [human, ai], step=2, parent_config=after_human)
+
+    with (
+        patch("app.gateway.routers.threads.get_paths", return_value=paths),
+        patch("app.gateway.routers.threads.get_effective_user_id", return_value=user_id),
+        patch("app.gateway.routers.folder_ledger.inherit_thread_touches", inherit),
+        patch("app.gateway.routers.folder_ledger.tombstone_thread_touches", tombstone),
+        TestClient(app) as client,
+    ):
+        assert client.post("/api/threads", json={"thread_id": source_thread_id, "metadata": {}}).status_code == 200
+        initial = asyncio.run(checkpointer.aget_tuple({"configurable": {"thread_id": source_thread_id, "checkpoint_ns": ""}}))
+        asyncio.run(_seed(initial.config))
+        branched = client.post(f"/api/threads/{source_thread_id}/branches", json={"message_id": "ai-ledger", "message_ids": ["ai-ledger"]})
+        assert branched.status_code == 200, branched.text
+        deleted = client.delete(f"/api/threads/{source_thread_id}")
+
+    assert deleted.status_code == 200, deleted.text
+    inherit.assert_awaited_once_with(parent_thread_id=source_thread_id, child_thread_id=branched.json()["thread_id"], user_id=user_id)
+    tombstone.assert_awaited_once_with(source_thread_id)
+
+
 # ── Metadata filter validation at API boundary ────────────────────────────────
 
 
@@ -5411,6 +5445,52 @@ def test_update_thread_state_root_title_syncs_metadata(monkeypatch, mode, select
     entry = next(row for row in search_response.json() if row["thread_id"] == thread_id)
     assert entry["values"]["title"] == "Renamed root"
     assert "branch_title_sequence" not in entry["metadata"]
+
+
+@pytest.mark.parametrize("backend", ["memory", "sql"])
+@pytest.mark.parametrize(
+    ("preserve_recency", "bumps_recency"),
+    [(None, True), (False, True), (True, False)],
+    ids=["default", "explicit-false", "preserve"],
+)
+def test_update_thread_state_rename_preserves_recency_only_when_asked(monkeypatch, tmp_path, backend, preserve_recency, bumps_recency) -> None:
+    """A rename is activity by default and moves the chat to the top of the
+    recency-sorted sidebar. A bulk organize pass renames dozens of chats at
+    once, which would reshuffle the whole list under the user's cursor, so it
+    opts out with ``preserve_recency``. The display name syncs either way."""
+    if backend == "memory":
+        app, _store, _checkpointer = _build_thread_app()
+    else:
+        app = _build_project_threads_app(tmp_path)
+
+    async def mutation_boundary(request, *, thread_id, as_node, checkpoint_id=None, checkpoint_ns=""):
+        return gateway_services.build_checkpoint_state_mutation_accessor(request, thread_id=thread_id, as_node=as_node, checkpoint_id=checkpoint_id, checkpoint_ns=checkpoint_ns)
+
+    monkeypatch.setattr(threads, "build_thread_checkpoint_state_mutation_accessor", mutation_boundary)
+    with TestClient(app) as client:
+        created = client.post("/api/threads", json={"metadata": {"branch_title_sequence": 2}})
+        assert created.status_code == 200, created.text
+        thread_id = created.json()["thread_id"]
+        before = client.get(f"/api/threads/{thread_id}").json()["updated_at"]
+        body: dict = {"values": {"title": "Organized title"}}
+        if preserve_recency is not None:
+            body["preserve_recency"] = preserve_recency
+        response = client.post(f"/api/threads/{thread_id}/state", json=body)
+        after = client.get(f"/api/threads/{thread_id}").json()["updated_at"]
+
+    assert response.status_code == 200, response.text
+    assert response.json()["values"]["title"] == "Organized title"
+
+    async def _stored() -> dict | None:
+        return await app.state.thread_store.get(thread_id, user_id=None)
+
+    record = anyio.run(_stored)
+    assert record["display_name"] == "Organized title"
+    assert "branch_title_sequence" not in record["metadata"]
+    if bumps_recency:
+        assert after != before
+    else:
+        assert after == before
 
 
 def test_update_thread_state_rejects_nonexistent_namespace_without_checkpoint_id(monkeypatch) -> None:

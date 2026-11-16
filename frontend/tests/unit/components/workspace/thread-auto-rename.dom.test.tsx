@@ -17,13 +17,15 @@ import {
  *   in flight" rule onto a route that cannot enforce it;
  * * the model the user picked is the model that reaches the Gateway, and it is
  *   remembered in the same `autoTitle.modelName` preference the automatic
- *   rename reads. A dialog that keeps its own copy leaves the two screens
- *   disagreeing about which model will actually run.
+ *   rename reads — saved to the account like a pick made in Settings. A dialog
+ *   that keeps its own copy leaves the two screens disagreeing about which
+ *   model will actually run.
  */
 
 const autoRename = rs.fn();
-const setLocalSettings = rs.fn();
+const setAutoTitlePreference = rs.fn();
 let storedModelName: string | undefined;
+let automaticRenaming = true;
 let renamingEnabled = true;
 
 rs.mock("@/core/features", () => ({
@@ -50,12 +52,17 @@ rs.mock("@/core/models/hooks", () => ({
 rs.mock("@/core/settings", () => ({
   useLocalSettings: () => [
     {
-      autoTitle: { enabled: true, modelName: storedModelName },
+      autoTitle: { enabled: automaticRenaming, modelName: storedModelName },
       // The picker reads and writes the one shared `modelPicker` preference.
       modelPicker: DEFAULT_MODEL_PICKER_PREFS,
     },
-    setLocalSettings,
+    rs.fn(),
   ],
+}));
+
+rs.mock("@/core/settings/auto-title-sync", () => ({
+  setAutoTitlePreference: (...args: unknown[]) =>
+    setAutoTitlePreference(...args),
 }));
 
 const toastCalls: Array<["success" | "error", string]> = [];
@@ -82,6 +89,7 @@ rs.mock("@/core/i18n/hooks", () => ({
         running: "Renaming…",
         success: (title: string) => `Renamed to "${title}"`,
         failed: "Failed to rename the conversation.",
+        manualOnly: "Automatic renaming is off. This renames once, now.",
       },
       inputBox: {
         searchModels: "Search models...",
@@ -107,9 +115,10 @@ import { DEFAULT_MODEL_PICKER_PREFS } from "@/core/models/sorting";
 afterEach(() => {
   cleanup();
   autoRename.mockReset();
-  setLocalSettings.mockReset();
+  setAutoTitlePreference.mockReset();
   toastCalls.length = 0;
   storedModelName = undefined;
+  automaticRenaming = true;
   renamingEnabled = true;
 });
 
@@ -147,7 +156,7 @@ test("running with no pick sends no model, leaving the operator's choice alone",
   });
   // Nothing to remember: the user did not choose a model, so the stored
   // preference must not be overwritten with one.
-  expect(setLocalSettings).not.toHaveBeenCalled();
+  expect(setAutoTitlePreference).not.toHaveBeenCalled();
   expect(toastCalls).toEqual([["success", 'Renamed to "A better name"']]);
 });
 
@@ -163,9 +172,56 @@ test("the picked model is the model that runs, and is remembered for both entry 
     threadId: "thread-1",
     modelName: "big-model",
   });
-  expect(setLocalSettings).toHaveBeenCalledWith("autoTitle", {
+  // The write-through path, so the pick reaches the account (and with it the
+  // automatic rename of runs from every device), not only this browser.
+  expect(setAutoTitlePreference).toHaveBeenCalledWith({
     modelName: "big-model",
   });
+});
+
+test("the remembered model is where the picker starts", () => {
+  // One preference, two entry points: Settings → Conversation titles and this
+  // dialog must agree on the model that will run.
+  storedModelName = "big-model";
+  openDialog();
+
+  expect(screen.getByTestId("auto-rename-model-select").textContent).toContain(
+    "Big",
+  );
+});
+
+test("with automatic renaming off, the button stays and says it renames once", async () => {
+  // FORK.md §38: on demand is exactly what is left when the automatic rename is
+  // off. Without saying so, a sparkles "Auto rename" in every header reads as
+  // the setting being ignored.
+  automaticRenaming = false;
+  render(<ThreadAutoRename threadId="thread-1" />);
+  const trigger = screen.getByTestId("auto-rename-trigger");
+
+  await act(async () => {
+    fireEvent.focus(trigger);
+  });
+  expect(screen.getByRole("tooltip").textContent).toContain(
+    "Automatic renaming is off. This renames once, now.",
+  );
+
+  fireEvent.click(trigger);
+  expect(screen.getByTestId("auto-rename-manual-only").textContent).toBe(
+    "Automatic renaming is off. This renames once, now.",
+  );
+});
+
+test("with automatic renaming on, the button and dialog carry no 'off' note", async () => {
+  render(<ThreadAutoRename threadId="thread-1" />);
+  const trigger = screen.getByTestId("auto-rename-trigger");
+
+  await act(async () => {
+    fireEvent.focus(trigger);
+  });
+  expect(screen.queryByRole("tooltip")).toBeNull();
+
+  fireEvent.click(trigger);
+  expect(screen.queryByTestId("auto-rename-manual-only")).toBeNull();
 });
 
 test("a model the operator has since removed does not preselect a name the Gateway refuses", () => {

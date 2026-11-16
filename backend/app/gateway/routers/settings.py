@@ -10,6 +10,9 @@ here:
 * **chat folders** — the sidebar's folder registry (id, name, parent, display
   order). Per-user UI state, so it is scoped to the caller and needs no admin
   gate.
+* **automatic conversation titles** — Settings -> Conversation titles
+  (FORK.md §33): the caller's opt-out and title model. Per-user, like chat
+  folders, and applied at run admission to every run the user owns.
 * **dependency updates** — an on-demand refresh of the Camoufox browser and the
   bundled SearXNG image. This runs commands on the host, so it is admin-gated
   like multi-user mode, and takes no input from the caller at all.
@@ -31,6 +34,7 @@ from pydantic import BaseModel, Field
 
 from app.gateway.dependency_update import get_dependency_updater
 from app.gateway.deps import require_admin_user
+from app.gateway.persistent_writes import run_drained_write
 from deerflow.config.ollama_config import MAX_VRAM_GB, effective_vram_gb, get_saved_vram_gb, set_saved_vram_gb
 from deerflow.config.run_limit_overrides import (
     RunLimitOverrides,
@@ -44,8 +48,11 @@ from deerflow.config.run_limit_overrides import (
 )
 from deerflow.config.runtime_settings import is_multi_user_mode_enabled, set_multi_user_mode
 from deerflow.config.user_ui_state import (
+    MAX_AUTO_TITLE_MODEL_CHARS,
     MAX_CHAT_FOLDERS,
+    get_auto_title_preference,
     get_chat_folders,
+    set_auto_title_preference,
     set_chat_folders,
 )
 from deerflow.runtime.user_context import get_effective_user_id
@@ -137,6 +144,48 @@ async def update_chat_folders_setting(body: ChatFoldersUpdate) -> ChatFoldersRes
     payload = [folder.model_dump() for folder in body.chat_folders[: MAX_CHAT_FOLDERS * 4]]
     folders = await asyncio.to_thread(set_chat_folders, get_effective_user_id(), payload)
     return ChatFoldersResponse(chat_folders=[ChatFolder(**folder) for folder in folders])
+
+
+class AutoTitlePreference(BaseModel):
+    """The caller's automatic-rename preference (Settings -> Conversation titles).
+
+    ``model_name`` has three states, and the wire keeps them apart: the key
+    **absent** follows ``config.yaml -> title.model_name``, ``""`` renames
+    without a model call, and a name picks that model. A name is checked against
+    the model catalog when a run applies it, not here, because the catalog can
+    change under a stored preference. ``null`` in a request reads as absent.
+
+    ``enabled: false`` only ever switches renaming off: the operator's
+    ``title.enabled: false`` still wins over ``true``.
+    """
+
+    enabled: bool = True
+    model_name: str | None = Field(default=None, max_length=MAX_AUTO_TITLE_MODEL_CHARS)
+
+
+@router.get("/auto-title", response_model=AutoTitlePreference, response_model_exclude_none=True)
+async def get_auto_title_setting() -> AutoTitlePreference:
+    """Return the caller's auto-title preference; ``{"enabled": true}`` when never set."""
+    preference = await asyncio.to_thread(get_auto_title_preference, get_effective_user_id())
+    return AutoTitlePreference(**preference)
+
+
+@router.put("/auto-title", response_model=AutoTitlePreference, response_model_exclude_none=True)
+async def update_auto_title_setting(body: AutoTitlePreference) -> AutoTitlePreference:
+    """Replace the caller's auto-title preference; returns the stored value.
+
+    A replace, not a patch: leaving ``model_name`` out stores "follow the
+    operator's model". Applies from the next run the caller owns, whichever
+    browser, device, IM channel or extension starts it.
+    """
+    stored = await run_drained_write(
+        "Save auto-title preference",
+        set_auto_title_preference,
+        (),
+        get_effective_user_id(),
+        body.model_dump(exclude_none=True),
+    )
+    return AutoTitlePreference(**stored)
 
 
 class DependencyUpdateResponse(BaseModel):

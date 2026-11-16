@@ -548,6 +548,17 @@ def _build_runtime_middlewares(
 
         tail.append(ToolProgressMiddleware.from_config(tool_progress_config))
 
+    # FolderLedgerMiddleware records writes into shared writable mounts (fork,
+    # CHAIN.md 14b). Inner of every gate above, so a blocked or short-circuited
+    # call never reaches it, and outer of ToolErrorHandling, so it reads the
+    # normalized result. Only assembled when a writable mount is configured for
+    # a provider that honors mounts.
+    from deerflow.agents.middlewares.folder_ledger_middleware import FolderLedgerMiddleware
+
+    folder_ledger = FolderLedgerMiddleware(app_config=app_config)
+    if folder_ledger.tracks_anything:
+        tail.append(folder_ledger)
+
     tail.append(ToolErrorHandlingMiddleware(app_config=app_config, skill_authorization=skill_authorization, user_id=user_id))
     # Artifact capture is a `before_model` hook that reads state messages, so
     # its position in the tool-execution wrap chain is functionally irrelevant:

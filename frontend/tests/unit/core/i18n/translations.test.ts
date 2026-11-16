@@ -35,4 +35,13 @@ describe("artifacts and files labels", () => {
       expect(copy.threadFiles.treeLabel).not.toBe(copy.common.showArtifacts);
     }
   });
+
+  it("does not label Artifacts with the Chinese word for files", async () => {
+    // The Artifacts button read 文件 ("Files") beside the unlabelled Files
+    // button, so Chinese readers who looked for their files opened Artifacts.
+    const chinese = await loadTranslations("zh-CN");
+    expect(chinese.common.artifacts).not.toContain("文件");
+    expect(chinese.common.showArtifacts).not.toContain("文件");
+    expect(chinese.threadFiles.title).toContain("文件");
+  });
 });

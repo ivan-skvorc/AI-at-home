@@ -51,7 +51,11 @@ function Presentation({
           if (
             !link ||
             link.hasAttribute("download") ||
-            (link.target && link.target !== "_self")
+            (link.target && link.target !== "_self") ||
+            // A chat row in selection mode toggles its checkbox on click and
+            // cancels the navigation, but only in its own bubble-phase
+            // handler — too late to stop this capture-phase close.
+            link.closest("[data-thread-selecting]")
           )
             return;
           const destination = new URL(link.href, window.location.href);

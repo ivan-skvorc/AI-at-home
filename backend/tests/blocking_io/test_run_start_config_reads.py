@@ -154,3 +154,31 @@ async def test_blocking_probe_inline_run_config_read_actually_trips_the_gate(run
     """Meta-check: loading the same config inline on the loop is caught by the gate."""
     with pytest.raises(BlockingError):
         get_app_config()
+
+
+async def test_run_start_reads_the_stored_auto_title_preference_off_the_loop(runs, host, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:  # noqa: F811
+    """Admission swallows a failed preference read, because a UI preference is
+    never a reason to refuse a run. An inline read would therefore only log a
+    warning here; asserting that the stored opt-out reached the run is what
+    turns a blocking read back into a failure (FORK.md §33)."""
+    from deerflow.config import paths as paths_module
+    from deerflow.config import user_ui_state
+
+    agent_runs, built, _ = runs
+    _, request, _ = host
+    monkeypatch.setenv("DEER_FLOW_HOME", str(tmp_path / "ui-state-home"))
+    monkeypatch.setattr(paths_module, "_paths", None)
+    # The suite-wide conftest fixture stubs the admission read; use the real one.
+    monkeypatch.setattr(services, "get_auto_title_preference", user_ui_state.get_auto_title_preference)
+    user_ui_state.reset_cache_for_tests()
+    try:
+        await asyncio.to_thread(user_ui_state.set_auto_title_preference, str(request.state.user.id), {"enabled": False})
+        user_ui_state.reset_cache_for_tests()
+
+        await _start(agent_runs, "config-read-auto-title", context={"auto_title_enabled": True})
+    finally:
+        monkeypatch.setattr(paths_module, "_paths", None)
+        user_ui_state.reset_cache_for_tests()
+
+    # The run's own config carries the key; later internal reads build theirs without it.
+    assert [config["context"]["auto_title_enabled"] for config in built if "auto_title_enabled" in config.get("context", {})] == [False]

@@ -189,6 +189,12 @@ export type MockAPIOptions = {
   };
   /** Sidebar chat folders the per-user store already holds. */
   chatFolders?: Array<{ id: string; name: string; parentId?: string }>;
+  /**
+   * Settings → Conversation titles as the account already stores it
+   * (`/api/settings/auto-title`); the never-set `{ enabled: true }` when
+   * omitted. An absent `model_name` follows config.yaml, `""` is no model call.
+   */
+  autoTitlePreference?: { enabled: boolean; model_name?: string };
   runStreamHandler?: (route: Route) => Promise<void>;
   /**
    * Keep the thread's existing messages in front of the ones a run produces.
@@ -2853,6 +2859,58 @@ export function mockLangGraphAPI(
       });
     }
     return route.fallback();
+  });
+
+  // Settings → Conversation titles, stored per user like the folders above. A
+  // PUT replaces the whole value: leaving `model_name` out stores "follow
+  // config.yaml", as the real Gateway does.
+  let autoTitlePreference: { enabled: boolean; model_name?: string } = {
+    enabled: true,
+    ...options?.autoTitlePreference,
+  };
+  void page.route("**/api/settings/auto-title", (route) => {
+    const method = route.request().method();
+    if (method === "GET") {
+      return route.fulfill({ json: autoTitlePreference });
+    }
+    if (method === "PUT") {
+      const body = route.request().postDataJSON() as {
+        enabled?: unknown;
+        model_name?: unknown;
+      };
+      autoTitlePreference = {
+        enabled: body.enabled !== false,
+        ...(typeof body.model_name === "string"
+          ? { model_name: body.model_name }
+          : {}),
+      };
+      return route.fulfill({ json: autoTitlePreference });
+    }
+    return route.fallback();
+  });
+
+  // Folder ledger: by default the deployment tracks no shared folders, the
+  // way a Gateway without SQL persistence answers. Specs that exercise the
+  // ledger (folder-ledger.spec.ts) route these paths themselves, after this.
+  void page.route(/\/api\/folder-ledger\//, (route) => {
+    const request = route.request();
+    const { pathname } = new URL(request.url());
+    if (
+      request.method() === "GET" &&
+      /\/api\/folder-ledger\/threads\/[^/]+\/folders$/.test(pathname)
+    ) {
+      return route.fulfill({ json: { available: false, folders: [] } });
+    }
+    if (
+      request.method() === "POST" &&
+      pathname.endsWith("/api/folder-ledger/orphans")
+    ) {
+      return route.fulfill({ json: { available: false, orphans: [] } });
+    }
+    return route.fulfill({
+      status: 503,
+      json: { detail: "The folder ledger requires SQL persistence." },
+    });
   });
 
   void page.route("**/api/threads/*/suggestions", (route) => {

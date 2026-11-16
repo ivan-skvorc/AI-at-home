@@ -85,6 +85,10 @@ ORIGINAL_PARENTS = {
     # which 0055_merge_prefs_project_mem had already claimed, splitting the tree
     # a twelfth time — joined by 0056_merge_prefs_thread_shares.
     "0055_thread_shares": ("0054_project_memory",),
+    # The fork's folder-ledger revision chains onto the fork's merge head. The
+    # next sync that leaves two heads joins this tip with a merge revision; it
+    # must not be moved onto upstream's new tip instead.
+    "0057_folder_ledger": ("0056_merge_prefs_thread_shares",),
 }
 
 # Every leaf the merge points must keep reachable: one per branch tip that

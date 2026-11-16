@@ -27,6 +27,7 @@ from deerflow.runtime import aux_usage
 from deerflow.utils import oneshot_llm
 from deerflow.utils.title_transcript import (
     DEFAULT_EXCHANGE_LIMIT,
+    clean_title,
     extract_visible_exchanges,
     render_exchanges,
 )
@@ -309,6 +310,8 @@ class TestTheEndpoint:
 
 
 class TestTitleCleaning:
+    """``clean_title`` is shared by this button and the chat clean-up pass."""
+
     @pytest.mark.parametrize(
         ("raw", "expected"),
         [
@@ -316,10 +319,32 @@ class TestTitleCleaning:
             ("```\nFixing the flaky test\n```", "Fixing the flaky test"),
             ("<think>the user wants...</think>Fixing the flaky test", "Fixing the flaky test"),
             ("Fixing the flaky test\n\nI chose this because it is short.", "Fixing the flaky test"),
+            # A quoted first line followed by an explanation: the closing quote
+            # is on the first line, not at the end of the whole reply.
+            ('"Fixing the flaky test"\n\nShort and specific.', "Fixing the flaky test"),
+            ("**Fixing the flaky test**", "Fixing the flaky test"),
+            ("# Fixing the flaky test", "Fixing the flaky test"),
+            ("\u201cFixing the flaky test\u201d", "Fixing the flaky test"),
+            ("\u300c\u4fee\u590d\u4e0d\u7a33\u5b9a\u7684\u6d4b\u8bd5\u300d", "\u4fee\u590d\u4e0d\u7a33\u5b9a\u7684\u6d4b\u8bd5"),
+            ("Fixing   the\tflaky test", "Fixing the flaky test"),
+            ("C# generics", "C# generics"),
         ],
     )
     def test_a_chatty_model_still_yields_a_bare_title(self, raw, expected):
-        assert threads._clean_suggested_title(raw, max_chars=60) == expected
+        assert clean_title(raw, max_chars=60) == expected
 
     def test_the_title_honours_max_chars(self):
-        assert len(threads._clean_suggested_title("x" * 200, max_chars=60)) == 60
+        assert len(clean_title("x" * 200, max_chars=60)) == 60
+
+    def test_nothing_usable_is_an_empty_title(self):
+        assert clean_title("<think>only reasoning", max_chars=60) == ""
+        assert clean_title('""', max_chars=60) == ""
+
+    def test_the_button_uses_the_shared_cleaner(self, monkeypatch):
+        """The route must not keep a private copy that drifts from the clean-up pass."""
+        _install_route_stubs(monkeypatch, messages=[HumanMessage(content="hi"), AIMessage(content="hello")], config=_config(), response_content='**"Fixing the flaky test"**\n\nBecause it is short.')
+
+        result = _call(threads.ThreadTitleSuggestRequest())
+
+        assert result.title == "Fixing the flaky test"
+        assert not hasattr(threads, "_clean_suggested_title")

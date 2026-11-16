@@ -344,3 +344,79 @@ def test_a_small_window_lists_skills_by_name_and_keeps_mcp_schemas_behind_tool_s
     else:
         assert "<available_skills>" in captured["system_prompt"]
         assert "tool_search" not in names and not deferred
+
+
+# ---------------------------------------------------------------------------
+# The chat clean-up pass (deerflow.utils.chat_organize)
+# ---------------------------------------------------------------------------
+#
+# Its two one-shot calls bypass ContextWindowGuardMiddleware (they call the model
+# directly), so their size limit is built into the prompt builders. These pin
+# the worst case a request can carry on the same synced 32K entry: the longest
+# folder names the registry allows, the most folders, the longest digest, and
+# CJK text, which the estimate prices at ~1.25 tokens a character.
+
+_CJK = "整理对话文件夹分类标题摘要"
+
+
+def _cjk(length: int, seed: int = 0) -> str:
+    text = f"{seed:03d}" + _CJK * (length // len(_CJK) + 1)
+    return text[:length]
+
+
+def _worst_case_conversation(text) -> list:
+    messages: list = []
+    for index in range(12):
+        messages.append(HumanMessage(content=text(2_000, index)))
+        messages.append(AIMessage(content=text(2_000, index + 100)))
+    return messages
+
+
+@pytest.mark.parametrize("script", ["ascii", "cjk"])
+@pytest.mark.parametrize("mode", ["targets", "auto"])
+def test_the_organize_suggest_prompt_fits_a_32k_model_at_its_worst(script, mode):
+    from deerflow.config.user_ui_state import MAX_CHAT_FOLDERS, MAX_FOLDER_NAME_CHARS
+    from deerflow.utils import chat_organize as organize
+
+    text = _cjk if script == "cjk" else (lambda length, seed=0: (f"{seed:03d} " + "lorem ipsum " * length)[:length])
+    digest = organize.build_conversation_digest(
+        _worst_case_conversation(text),
+        summary_text=text(5_000, 999),
+        current_title=text(500, 998),
+        max_chars=organize.digest_char_budget(BUDGET),
+    )
+    folders = [organize.FolderChoice(id=f"f{index}", name=text(MAX_FOLDER_NAME_CHARS, index)) for index in range(MAX_CHAT_FOLDERS)]
+
+    system, user = organize.build_suggest_messages(
+        digest,
+        mode=mode,
+        rename=True,
+        max_words=20,
+        targets=folders if mode == "targets" else (),
+        existing=folders if mode == "auto" else (),
+        budget=BUDGET,
+    )
+
+    tokens = estimate_tokens(system) + estimate_tokens(user)
+    assert tokens <= LIMIT, f"{script}/{mode}: the organize prompt costs ~{tokens:,} tokens, over the {LIMIT:,} a 32K model takes"
+    assert digest.text in user, f"{script}/{mode}: the digest had to be cut to fit; a 32K model should read all of it"
+
+
+@pytest.mark.parametrize("script", ["ascii", "cjk"])
+def test_the_organize_consolidation_prompt_fits_a_32k_model_at_its_worst(script):
+    from deerflow.config.user_ui_state import MAX_CHAT_FOLDERS, MAX_FOLDER_NAME_CHARS
+    from deerflow.utils import chat_organize as organize
+
+    text = _cjk if script == "cjk" else (lambda length, seed=0: (f"{seed:03d} " + "lorem ipsum " * length)[:length])
+    items = [organize.ConsolidationItem(thread_id=f"t{index}", category=text(organize.MAX_CATEGORY_CHARS, index), title=text(1_000, index), summary=text(1_000, index)) for index in range(organize.MAX_CONSOLIDATE_ITEMS)]
+    groups, _ = organize.group_categories(items, [])
+    assert len(groups) == organize.MAX_CONSOLIDATE_ITEMS, "every label must be distinct for the worst case"
+    existing = [organize.FolderChoice(id=f"f{index}", name=text(MAX_FOLDER_NAME_CHARS, 500 + index)) for index in range(MAX_CHAT_FOLDERS)]
+
+    prompt = organize.build_consolidate_messages(groups, existing, new_folder_cap=organize.MAX_NEW_FOLDERS_LIMIT, budget=BUDGET)
+
+    tokens = estimate_tokens(prompt.system) + estimate_tokens(prompt.user)
+    assert tokens <= LIMIT, f"{script}: the consolidation prompt costs ~{tokens:,} tokens, over the {LIMIT:,} a 32K model takes"
+    assert f"{organize.MAX_CONSOLIDATE_ITEMS}. " in prompt.user, "every label must be in the prompt"
+    if script == "ascii":
+        assert "e.g." in prompt.user, "ASCII examples fit a 32K model and should not have been dropped"

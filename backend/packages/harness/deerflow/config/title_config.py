@@ -82,9 +82,11 @@ def reset_title_config() -> None:
 # --- Fork: per-run automatic-rename preference -------------------------------
 #
 # The Web UI sends a per-user auto-rename preference in the run context
-# (Settings -> Conversation titles). Both keys are optional; a caller that sends
-# neither (IM channels, TUI, scheduler, the embedded runtime) gets the operator
-# config unchanged.
+# (Settings -> Conversation titles). Both keys are optional; a run whose context
+# carries neither gets the operator config unchanged. The Gateway also stores
+# the preference per user and fills it in at run admission, so IM channel,
+# scheduler and extension runs carry it too; the TUI and the embedded runtime
+# do not go through the Gateway and keep the operator config.
 AUTO_TITLE_ENABLED_CONTEXT_KEY = "auto_title_enabled"
 AUTO_TITLE_MODEL_CONTEXT_KEY = "auto_title_model_name"
 

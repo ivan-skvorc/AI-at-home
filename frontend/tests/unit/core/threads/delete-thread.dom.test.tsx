@@ -7,6 +7,7 @@ const mocks = rs.hoisted(() => ({
   remove: rs.fn(),
   search: rs.fn(),
   fetch: rs.fn(),
+  notifyThreadsDeleted: rs.fn(),
 }));
 rs.mock("@/core/api", () => ({
   getAPIClient: () => ({
@@ -14,6 +15,9 @@ rs.mock("@/core/api", () => ({
   }),
 }));
 rs.mock("@/core/api/fetcher", () => ({ fetch: mocks.fetch }));
+rs.mock("@/core/folder-ledger/events", () => ({
+  notifyThreadsDeleted: mocks.notifyThreadsDeleted,
+}));
 
 import { useDeleteThread } from "@/core/threads/hooks";
 
@@ -23,6 +27,7 @@ beforeEach(() => {
   mocks.fetch
     .mockReset()
     .mockImplementation(async () => new Response(null, { status: 204 }));
+  mocks.notifyThreadsDeleted.mockReset();
 });
 afterEach(cleanup);
 
@@ -58,6 +63,9 @@ test("cleanup failure does not invoke completion and a remote 404 retry finishes
   });
   expect(mocks.fetch).toHaveBeenCalledTimes(2);
   expect(onDeleted).toHaveBeenCalledTimes(1);
+  // Only the completed delete reaches the folder ledger's orphan offer.
+  expect(mocks.notifyThreadsDeleted).toHaveBeenCalledTimes(1);
+  expect(mocks.notifyThreadsDeleted).toHaveBeenCalledWith(["parent"]);
 });
 
 for (const status of [403, 500]) {
@@ -72,6 +80,7 @@ for (const status of [403, 500]) {
     });
     expect(mocks.fetch).not.toHaveBeenCalled();
     expect(onDeleted).not.toHaveBeenCalled();
+    expect(mocks.notifyThreadsDeleted).not.toHaveBeenCalled();
   });
 }
 
@@ -99,4 +108,10 @@ test("already-deleted sidecars still receive local cleanup", async () => {
     expect.stringContaining("/api/threads/parent"),
     { method: "DELETE" },
   );
+  // One notification for the conversation and its Side Chat threads.
+  expect(mocks.notifyThreadsDeleted).toHaveBeenCalledTimes(1);
+  expect(mocks.notifyThreadsDeleted).toHaveBeenCalledWith([
+    "parent",
+    "sidecar",
+  ]);
 });

@@ -54,6 +54,17 @@ export const DEFAULT_LOCAL_SETTINGS: LocalSettings = {
   memory: {
     enabled: false,
   },
+  // The sidebar's chat clean-up dialog remembers its last setup here, per
+  // browser: the model (`undefined` = the operator's title model), whether to
+  // rename, how to file, and the cap on new folders in auto mode. Nothing here
+  // is sent with a run; the dialog reads it through `readCleanupPreferences`,
+  // which repairs a stale or hand-edited value.
+  chatCleanup: {
+    modelName: undefined,
+    rename: true,
+    folderMode: "auto",
+    maxNewFolders: 8,
+  },
   // Double Plus Ultracode's limits (Settings → Subagents). The Script
   // workflows extension clamps each to the operator's limits.
   ultracode: DEFAULT_ULTRACODE_LIMITS,
@@ -197,6 +208,17 @@ export interface LocalSettings {
     // operator master switch `memory.enabled` in config.yaml.
     enabled: boolean;
   };
+  // Chat clean-up (fork feature): the dialog's last setup, per browser.
+  chatCleanup: {
+    // `undefined` = the operator's `title.model_name`, then the default model.
+    modelName?: string | undefined;
+    rename: boolean;
+    // "none" = don't file; "targets" = into folders the user picks or names;
+    // "auto" = the model proposes folders, reusing existing ones that fit.
+    folderMode: "none" | "targets" | "auto";
+    // Auto mode's cap on new folders (1-20; the Gateway enforces the range).
+    maxNewFolders: number;
+  };
   // Double Plus Ultracode limits (fork feature, FORK.md §44, §46): most agents
   // one workflow may start, how many at once, and its wall time in minutes.
   // Sent with each run in that mode.
@@ -259,6 +281,10 @@ export function mergeLocalSettings(
     memory: {
       ...DEFAULT_LOCAL_SETTINGS.memory,
       ...settings?.memory,
+    },
+    chatCleanup: {
+      ...DEFAULT_LOCAL_SETTINGS.chatCleanup,
+      ...settings?.chatCleanup,
     },
     // Normalized from the stored value alone: it fills each missing field, and
     // it must see whether `maxMinutes` was stored to upgrade old defaults.

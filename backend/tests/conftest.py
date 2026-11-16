@@ -201,6 +201,25 @@ def _isolate_run_limit_overrides(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _isolate_stored_auto_title_preference(monkeypatch):
+    """Keep the developer's saved Settings → Conversation titles out of run admission.
+
+    ``start_run`` reads the run owner's stored preference from ``ui_state.json``
+    under the DeerFlow home, the same ``backend/.deer-flow`` a local ``make dev``
+    writes. In auth-disabled mode that owner is ``default``, which many tests
+    use too, so a switch the developer turned off would change what admission
+    assembles. Patched only once the Gateway services module is loaded (every
+    module that starts a run imports it at collection); importing it here would
+    disturb the suites that pin lazy imports. Tests of the stored preference
+    re-bind the real reader.
+    """
+    services = sys.modules.get("app.gateway.services")
+    if services is not None and hasattr(services, "get_auto_title_preference"):
+        monkeypatch.setattr(services, "get_auto_title_preference", lambda user_id: {"enabled": True})
+    yield
+
+
+@pytest.fixture(autouse=True)
 def _isolate_trace_context():
     """Give every test an unbound request trace context.
 
