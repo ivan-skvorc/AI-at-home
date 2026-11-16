@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 
 from deerflow_extension_cad import allowlist
-from deerflow_extension_cad.interpreter import MAX_NODES, MAX_SCRIPT_BYTES, Ref, ScriptRefused, compile_script
+from deerflow_extension_cad.interpreter import MAX_LOOP_DEPTH, MAX_LOOP_PASSES, MAX_NODES, MAX_OPERATIONS, MAX_SCRIPT_BYTES, Ref, ScriptRefused, compile_script
 
 PLATE = """\
 import cadquery as cq
@@ -64,6 +64,8 @@ def test_the_plate_becomes_a_list_of_allow_listed_operations():
         'import cadquery as cq\n"""A bracket."""\nt = 2 ** 2 + 10 % 3 - 7 // 2\nresult = cq.Workplane("XY").polyline([(0, 0), (40, 0), (40, t), (t, t), (t, 30), (0, 30)]).close().extrude(20)',
         'import cadquery as cq\nresult = cq.Workplane("XY").box(30, 30, 30).faces(">Z").shell(-2, kind="intersection")\n',
         'import cadquery as cq\r\nresult = cq.Workplane("XY").box(1, 1, 1)  # Ø, ° and other signs are fine in a comment\r\n',
+        'import cadquery as cq\nw = 10\nw += 5\nw -= 1\nw *= 2\nw /= 4\nw //= 2\nw **= 2\nw %= 7\nresult = cq.Workplane("XY").box(w, w, w)\n',
+        'import cadquery as cq\nresult = cq.Workplane("XY").box(40, 10, 2)\nfor x, y in [(-10, 0), (10, 0)]:\n    # one hole per point\n    result = (\n        result.faces(">Z")\n        .workplane()\n        .pushPoints([(x, y)])\n        .hole(3)\n    )\n',
     ],
 )
 def test_ordinary_scripts_are_accepted(script):
@@ -181,8 +183,44 @@ REFUSED = [
     ("x = {'a': 1}\n", "dict", 1),
     ("def f():\n    return 1\n", "function definition", 1),
     ("class A:\n    pass\n", "class definition", 1),
-    ("for i in (1, 2):\n    x = i\n", "loop", 1),
-    ("while True:\n    x = 1\n", "loop", 1),
+    ("while True:\n    x = 1\n", "while loop", 1),
+    ("for i in range(3):\n    x = i\nelse:\n    y = 1\n", "loop", 4),
+    ("for i in range(3):\n    break\n", "break", 2),
+    ("for i in range(3):\n    continue\n", "continue", 2),
+    ("for i in range(3):\n    if i:\n        x = 1\n", "if statement", 2),
+    ("for i in range(2.5):\n    x = i\n", "loop", 1),
+    ("n = 10 / 2\nfor i in range(n):\n    x = i\n", "loop", 2),
+    ("for i in range():\n    x = i\n", "loop", 1),
+    ("for i in range(1, 2, 3, 4):\n    x = i\n", "loop", 1),
+    ("for i in range(stop=3):\n    x = i\n", "loop", 1),
+    ("for i in range(0, 5, 0):\n    x = i\n", "loop", 1),
+    ("for i in range(0):\n    x = i\n", "loop", 1),
+    ("for i in range(5, 0):\n    x = i\n", "loop", 1),
+    ("for i in []:\n    x = i\n", "loop", 1),
+    ("for i in 5:\n    x = i\n", "loop", 1),
+    ("for i in 'abc':\n    x = i\n", "loop", 1),
+    ("for i in enumerate([1, 2]):\n    x = i\n", "loop", 1),
+    ("for i, j in zip([1], [2]):\n    x = i\n", "loop", 1),
+    ("p = cq.Workplane('XY').box(1, 1, 1)\nfor i in p:\n    x = i\n", "loop", 2),
+    ("for i in p.vals():\n    x = i\n", "name", 1),
+    ("for x, y in [1, 2]:\n    z = x\n", "loop", 1),
+    ("for x, y in [(1, 2, 3)]:\n    z = x\n", "loop", 1),
+    ("for (a, b), c in [(1, 2)]:\n    z = c\n", "loop", 1),
+    ("for x[0] in [1, 2]:\n    z = 1\n", "subscript", 1),
+    ("for cq in range(2):\n    z = 1\n", "name", 1),
+    ("for range in [1, 2]:\n    z = 1\n", "name", 1),
+    ("for __x__ in range(2):\n    z = 1\n", "name", 1),
+    ("for i in range(2): x = i\n", "syntax", 1),
+    ("for i in range(2):\n    x = i; y = i\n", "syntax", 2),
+    ("async def f():\n    async for i in x:\n        y = 1\n", "function definition", 1),
+    ("x = range(3)\n", "call", 1),
+    ("range = 3\n", "name", 1),
+    ("x = [i for i in range(3)]\n", "comprehension", 1),
+    ("x += 1\n", "name", 1),
+    ("p = cq.Workplane('XY').box(1, 1, 1)\np += 1\n", "arithmetic", 2),
+    ("x = 1\nx |= 1\n", "operator", 2),
+    ("x = [1]\nx[0] += 1\n", "subscript", 2),
+    ("x = 1\nx /= 0\n", "arithmetic", 2),
     ("if True:\n    x = 1\n", "if statement", 1),
     ("with cq as x:\n    y = 1\n", "with statement", 1),
     ("try:\n    x = 1\nexcept Exception:\n    x = 2\n", "try statement", 1),
@@ -191,7 +229,6 @@ REFUSED = [
     ("x = 1\ndel x\n", "del", 2),
     ("global x\n", "global", 1),
     ("pass\n", "pass", 1),
-    ("x = 1\nx += 1\n", "augmented assignment", 2),
     ("x: int = 1\n", "annotated assignment", 1),
     ("a, b = 1, 2\n", "assignment target", 1),
     ("a = b = 1\n", "assignment target", 1),
@@ -293,7 +330,12 @@ def test_a_refusal_says_what_to_do_next():
     assert "fractional power" in message("x = (-8) ** 0.5\n")
     assert "starts with a letter" in message("_t = 2\n")
     assert message("from cadquery import Workplane\n") == message("import os\n")
-    assert "an if statement" in message("if 1:\n    x = 1\n") and "a loop" in message("for i in (1, 2):\n    x = i\n")
+    assert "an if statement" in message("if 1:\n    x = 1\n") and "a while loop" in message("while 1:\n    x = 1\n")
+    # A loop that cannot be read says what one may run over, and what to write instead.
+    assert "for i in range(5):" in message("for i in enumerate([1, 2]):\n    x = i\n")
+    assert "range(length // pitch)" in message("for i in range(7.5):\n    x = i\n")
+    assert "for i in range(5):" in message("x = range(3)\n")
+    assert "union" in message(box + "result += result\n")
     assert "split" in message("result = cq.Workplane('XY')" + ".close()" * 98 + "\n")
     # What a script wrote is quoted back in part, never in full.
     for long in ("x = " + "a" * 900 + "\n", box + "y = result." + "a" * 900 + "()\n", box + "y = result.box(1, 1, 1, " + "a" * 900 + "=1)\n"):
@@ -305,6 +347,113 @@ def test_the_export_refusal_shadows_no_allow_listed_method():
     from deerflow_extension_cad import interpreter
 
     assert not [name for name in allowlist.METHODS if name.lower().startswith(interpreter._EXPORTS)]
+
+
+LOOP = """\
+import cadquery as cq
+
+pitch = 12
+x = -18
+result = cq.Workplane("XY").box(60, 20, 4)
+for i in range(4):
+    result = result.faces(">Z").workplane().pushPoints([(x, 0)]).hole(3)
+    x += pitch
+"""
+WRITTEN_OUT = """\
+import cadquery as cq
+
+result = cq.Workplane("XY").box(60, 20, 4)
+result = result.faces(">Z").workplane().pushPoints([(-18, 0)]).hole(3)
+result = result.faces(">Z").workplane().pushPoints([(-6, 0)]).hole(3)
+result = result.faces(">Z").workplane().pushPoints([(6, 0)]).hole(3)
+result = result.faces(">Z").workplane().pushPoints([(18, 0)]).hole(3)
+"""
+
+
+def _shape(program):
+    """What the kernel is asked to do, without where the script said it."""
+    return [(op.receiver, op.method, op.arguments) for op in program.operations], program.result
+
+
+def test_a_loop_is_the_same_program_as_its_statements_written_out():
+    """The whole guarantee: a loop adds nothing a script could not already say line by line."""
+    loop, flat = compile_script(LOOP), compile_script(WRITTEN_OUT)
+    assert _shape(loop) == _shape(flat)
+    assert len(loop.operations) == 2 + 4 * 4 <= MAX_OPERATIONS
+    # One line now stands for four operations, so each says which pass it belongs to.
+    holes = [op for op in loop.operations if op.method == "hole"]
+    assert [op.line for op in holes] == [7, 7, 7, 7]
+    assert [op.where for op in holes] == [f"pass {number} of the loop on line 6 (i = {number - 1})" for number in (1, 2, 3, 4)]
+    assert [op.where for op in loop.operations[:2]] == ["", ""] and not any(op.where for op in flat.operations)
+
+
+@pytest.mark.parametrize(
+    ("header", "values"),
+    [
+        ("for v in range(3):", [0, 1, 2]),
+        ("for v in range(2, 5):", [2, 3, 4]),
+        ("for v in range(0, 50, 20):", [0, 20, 40]),
+        ("for v in range(3, 0, -1):", [3, 2, 1]),
+        ("for v in range(-2, 2):", [-2, -1, 0, 1]),
+        ("for v in range(count // 2):", [0, 1]),
+        ("for v in [5, 7.5, -1]:", [5, 7.5, -1]),
+        ("for v in (4, 2):", [4, 2]),
+        ("for v in sizes:", [10, 20]),
+        ("for unused, v in [(0, 1), (0, 2)]:", [1, 2]),
+        ("for v, unused in points:", [3, 5]),
+    ],
+)
+def test_a_loop_runs_over_a_range_or_a_list_the_script_states(header, values):
+    script = f"count = 4\nsizes = [10, 20]\npoints = [(3, 4), (5, 6)]\nresult = cq.Workplane('XY')\n{header}\n    result = result.box(1 + v % 2, 1, 1).translate((v, 0, 0))\n"
+    moves = [dict(op.arguments)["vec"] for op in compile_script(script).operations if op.method == "translate"]
+    assert moves == [(value, 0, 0) for value in values]
+
+
+def test_loops_nest_and_a_name_set_in_a_loop_is_still_set_after_it():
+    script = "total = 0\nresult = cq.Workplane('XY').box(50, 50, 2)\nfor row in range(2):\n    for column in range(3):\n        total += 1\n        result = result.translate((row, column, 0))\nresult = result.translate((total, row, column))\n"
+    moves = [dict(op.arguments)["vec"] for op in compile_script(script).operations if op.method == "translate"]
+    assert moves == [(0, 0, 0), (0, 1, 0), (0, 2, 0), (1, 0, 0), (1, 1, 0), (1, 2, 0), (6, 1, 2)]
+    inner = compile_script(script).operations[2]
+    # Innermost first: the pass that failed, then the passes around it.
+    assert inner.where == "pass 1 of the loop on line 4 (column = 0), pass 1 of the loop on line 3 (row = 0)"
+
+
+def test_a_refusal_inside_a_loop_says_which_pass():
+    script = "result = cq.Workplane('XY').box(9, 9, 9)\nfor i in range(5):\n    gap = 12 / (i - 3)\n"
+    with pytest.raises(ScriptRefused) as refused:
+        compile_script(script)
+    assert (refused.value.construct, refused.value.line) == ("arithmetic", 3)
+    assert refused.value.message == "division by zero (in pass 4 of the loop on line 2 (i = 3))"
+    nested = "for a in range(2):\n    for b in [(1, 2)]:\n        c = b.x\n"
+    with pytest.raises(ScriptRefused) as refused:
+        compile_script(nested)
+    # Said once, with every loop around it, innermost first.
+    assert refused.value.message.count("(in ") == 1
+    assert refused.value.message.endswith("(in pass 1 of the loop on line 2 (b = (1, 2)), pass 1 of the loop on line 1 (a = 0))")
+
+
+def test_loops_are_bounded_in_passes_depth_and_operations():
+    def refusal(script: str) -> ScriptRefused:
+        with pytest.raises(ScriptRefused) as refused:
+            compile_script(script)
+        return refused.value
+
+    assert compile_script(f"result = cq.Workplane('XY').box(1, 1, 1)\nfor i in range({MAX_LOOP_PASSES}):\n    x = i\n")
+    assert "passes in total" in refusal(f"for i in range({MAX_LOOP_PASSES + 1}):\n    x = i\n").message
+    # A range of a billion is refused from its length: nothing is counted out first.
+    assert "passes in total" in refusal("for i in range(10 ** 9):\n    x = i\n").message
+    # Added up over the script, nested and one after another.
+    assert "passes in total" in refusal("for i in range(40):\n    for j in range(40):\n        x = i\n").message
+    assert "passes in total" in refusal("for i in range(600):\n    x = i\nfor j in range(600):\n    y = j\n").message
+    deep = "".join(" " * 4 * level + f"for v{level} in range(1):\n" for level in range(MAX_LOOP_DEPTH + 1)) + " " * 4 * (MAX_LOOP_DEPTH + 1) + "x = 1\n"
+    assert f"at most {MAX_LOOP_DEPTH} deep" in refusal(deep).message
+    # A loop multiplies operations, and the cap on them is the same one.
+    many = refusal("result = cq.Workplane('XY').box(1, 1, 1)\nfor i in range(200):\n    result = result.translate((1, 0, 0)).translate((0, 1, 0))\n")
+    assert (many.construct, "at most 300 operations" in many.message, "pass 150" in many.message) == ("script length", True, True)
+    # Numbers stay capped inside a loop: it cannot grow one past what a single line may hold.
+    assert "no larger than" in refusal("x = 10\nfor i in range(20):\n    x = x * x\n").message
+    points = refusal("result = cq.Workplane('XY').box(99, 99, 1)\nfor i in range(30):\n    result = result.faces('>Z').workplane().rarray(1, 1, 3, 3).hole(0.2)\n")
+    assert (points.construct, "in the script" in points.message) == ("pattern", True)
 
 
 def test_centered_takes_one_flag_per_axis():
@@ -464,6 +613,7 @@ def test_reading_a_hostile_script_raises_no_audit_event_but_the_parsers_own():
             with pytest.raises(ScriptRefused):
                 compile_script(script)
         compile_script(PLATE)
+        compile_script(LOOP)
     finally:
         watching[0] = False
     assert events == []

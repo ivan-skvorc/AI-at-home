@@ -67,6 +67,11 @@ class BuildFailed(Exception):
         self.message = message
 
 
+def _failed(operation, message: str) -> BuildFailed:
+    """A failure of one operation; inside a loop, with the pass it happened in, since the line alone names them all."""
+    return BuildFailed(operation.line, operation.method, f"{message} (in {operation.where})" if operation.where else message)
+
+
 def _state(part) -> tuple[float, int] | None:
     """Volume and face count of the solid a workplane stands for."""
     try:
@@ -81,7 +86,7 @@ def _check_effect(operation, before: tuple[float, int] | None, made, cq) -> None
     # A cut or an intersection that leaves nothing puts an empty compound on the stack, and
     # looking for the solid then walks back to the part as it was before the operation.
     if any(isinstance(item, (cq.Solid, cq.Compound)) and not item.Solids() for item in made.objects):
-        raise BuildFailed(operation.line, operation.method, f"{operation.method}() left no solid: nothing remains of the part after this operation")
+        raise _failed(operation, f"{operation.method}() left no solid: nothing remains of the part after this operation")
     effect = _MUST_CHANGE.get(operation.method)
     if effect is None or before is None or dict(operation.arguments).get("combine") is False:
         return  # combine=False makes a body of its own: it is not meant to change this one
@@ -89,7 +94,7 @@ def _check_effect(operation, before: tuple[float, int] | None, made, cq) -> None
     # The faces as well as the volume: a real cut of a millimetre in a part of metres is
     # below any tolerance on the volume, and it still adds faces.
     if after is not None and after[1] == before[1] and abs(after[0] - before[0]) <= 1e-12 * max(before[0], 1.0):
-        raise BuildFailed(operation.line, operation.method, f"{operation.method}() {effect}")
+        raise _failed(operation, f"{operation.method}() {effect}")
 
 
 def _used_by_result(program: Program) -> set[int]:
@@ -110,6 +115,11 @@ def _used_by_result(program: Program) -> set[int]:
 
 def run_program(program: Program, cq):
     """Return the Workplane the script's result names. *cq* is the imported cadquery module."""
+    return build_parts(program, cq)[program.result]
+
+
+def build_parts(program: Program, cq) -> list:
+    """Perform every operation of the script; the part each one made, by its position."""
     parts: list = []
     used = _used_by_result(program)
     for slot, operation in enumerate(program.operations):
@@ -126,16 +136,38 @@ def run_program(program: Program, cq):
                     _check_effect(operation, before, made, cq)
                 parts.append(made)
             else:
-                raise BuildFailed(operation.line, operation.method, "this operation is not on the allow-list")
+                raise _failed(operation, "this operation is not on the allow-list")
         except BuildFailed:
             raise
         except MemoryError:
-            raise BuildFailed(operation.line, operation.method, "the kernel ran out of memory on this operation") from None
+            raise _failed(operation, "the kernel ran out of memory on this operation") from None
         except Exception as exc:
             detail = " ".join(str(exc).split())[:300] or type(exc).__name__
             hint = _HINTS.get(operation.method)
-            raise BuildFailed(operation.line, operation.method, f"{operation.method}() failed: {detail}" + (f". Likely cause: {hint}." if hint else "")) from None
-    return parts[program.result]
+            raise _failed(operation, f"{operation.method}() failed: {detail}" + (f". Likely cause: {hint}." if hint else "")) from None
+    return parts
+
+
+def unused_bodies(program: Program, parts: list) -> list[int]:
+    """Lines of the bodies a script builds and never joins to its result, one per body.
+
+    The usual slip in a loop: each pass builds a body and the last one alone is the
+    result. A branch off the result (a trial cut) is not a body of its own and is not
+    counted, and neither is an outline or a selection that holds no solid.
+    """
+    used = _used_by_result(program)
+    consumed = {operation.receiver for operation in program.operations if operation.receiver is not None}
+    consumed.update(value.slot for operation in program.operations for _, value in operation.arguments if isinstance(value, Ref))
+    lines = []
+    for slot, operation in enumerate(program.operations):
+        if slot in used or slot in consumed:
+            continue
+        ancestor = operation.receiver
+        while ancestor is not None and ancestor not in used:
+            ancestor = program.operations[ancestor].receiver
+        if ancestor is None and _state(parts[slot]) is not None:
+            lines.append(operation.line)
+    return lines
 
 
 def solid_of(part):

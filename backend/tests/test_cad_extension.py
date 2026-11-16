@@ -54,7 +54,7 @@ def outputs(tmp_path, monkeypatch):
     return paths.get_paths().sandbox_outputs_dir("thread-a", user_id="alice")
 
 
-async def _call(loaded, outputs, monkeypatch, worker_result, *, conversation="thread-a", **arguments):
+async def _call(loaded, outputs, monkeypatch, worker_result, *, conversation="thread-a", run=None, **arguments):
     import deerflow_extension_cad.tool as cad_tool
 
     seen = []
@@ -72,7 +72,7 @@ async def _call(loaded, outputs, monkeypatch, worker_result, *, conversation="th
     payload = {"name": "Mounting plate", "script": PLATE, "bbox_xyz_mm": [60, 40, 6], **arguments}
     state = await graph.compile().ainvoke(
         {"messages": [AIMessage(content="", tool_calls=[{"id": "cad-call", "name": tool.name, "args": payload}])], "thread_data": {"outputs_path": str(outputs)}},
-        context={"user_id": "alice", "thread_id": conversation},
+        context={"user_id": "alice", "thread_id": conversation, **({"run_id": run} if run else {})},
     )
     message = state["messages"][-1]
     assert message.status == "success", message.content
@@ -167,7 +167,8 @@ async def test_a_part_that_passes_every_check_is_handed_over_with_its_step_file(
     report = json.loads((outputs / "mounting-plate.report.json").read_text(encoding="utf-8"))
     assert report["passed"] is True and report["measured"]["bbox_mm"] == [60.0, 40.0, 6.0]
     assert sorted(state["artifacts"]) == sorted(f"/mnt/user-data/outputs/{name}" for name in _files(outputs))
-    assert answer["files"] and "next" not in answer
+    # A pass is not the end of the work: the numbers cover a part of what was asked for.
+    assert answer["files"] and answer["attempt"] == 1 and answer["next"].startswith("Every check passed. Before you present the part")
     # The Gateway only starts the child: the script reaches it untouched, with the operator's limits
     # and the slots that bound how many builds run at once.
     ((script, limits),) = seen
@@ -188,6 +189,142 @@ async def test_a_part_that_fails_a_check_leaves_no_step_file(cad, outputs, monke
     assert _files(outputs) == ["mounting-plate.failed.glb", "mounting-plate.py", "mounting-plate.report.json"]
     assert "Do not present" in answer["next"]
     assert json.loads((outputs / "mounting-plate.report.json").read_text(encoding="utf-8"))["passed"] is False
+
+
+ONE_HOLE = {**BUILT, "measured": {**MEASURED, "holes": MEASURED["holes"][:1]}}
+REFUSED = {"status": "refused", "construct": "while loop", "line": 3, "message": "a script may not contain a while loop."}
+
+
+@pytest.mark.asyncio
+async def test_builds_of_a_part_are_counted_and_the_answer_says_when_to_stop(cad, outputs, monkeypatch):
+    """The agent runs the loop; the tool keeps the count a model loses over a long one."""
+    from deerflow_extension_cad.tool import MAX_ATTEMPTS
+
+    answers = []
+    for number in range(1, MAX_ATTEMPTS + 2):
+        # A different failure every time, so only the count decides what the answer says.
+        measured = {**MEASURED, "bbox_mm": [60.0, 40.0, 6.0 + number]}
+        answer, _, _ = await _call(cad, outputs, monkeypatch, {**BUILT, "measured": measured}, run="run-1")
+        answers.append(answer)
+    assert [answer["attempt"] for answer in answers] == list(range(1, MAX_ATTEMPTS + 2))
+    for number, answer in enumerate(answers[: MAX_ATTEMPTS - 1], 1):
+        assert answer["next"].startswith(f"Attempt {number} of {MAX_ATTEMPTS}. Read what failed, change the script and call cad_build again")
+        assert "Do not present" in answer["next"] and "same failure" not in answer["next"]
+    for answer in answers[MAX_ATTEMPTS - 1 :]:
+        # Not a refusal to build: the user may ask for more. What changes is what the model is told to do.
+        assert answer["next"].startswith(f"{answer['attempt']} builds of this part in this run and it has not passed. Stop building.")
+        assert "Tell the user what still fails" in answer["next"] and "call cad_build again" not in answer["next"]
+    assert json.loads((outputs / "mounting-plate.report.json").read_text(encoding="utf-8"))["attempt"] == 1
+    assert json.loads((outputs / "mounting-plate-3.report.json").read_text(encoding="utf-8"))["attempt"] == 4
+
+    # The user answering is a new run: the count starts over.
+    answer, _, _ = await _call(cad, outputs, monkeypatch, ONE_HOLE, run="run-2", hole_diameters_mm=[4, 4])
+    assert answer["attempt"] == 1 and answer["next"].startswith("Attempt 1 of")
+    # A part that passes at the limit is presented, not sent round again.
+    for _ in range(MAX_ATTEMPTS - 2):
+        await _call(cad, outputs, monkeypatch, ONE_HOLE, run="run-2", hole_diameters_mm=[4, 4])
+    answer, _, _ = await _call(cad, outputs, monkeypatch, BUILT, run="run-2", hole_diameters_mm=[4, 4])
+    assert (answer["passed"], answer["attempt"]) == (True, MAX_ATTEMPTS)
+    assert answer["next"].startswith("Every check passed. Present the part") and "build again" not in answer["next"]
+
+
+@pytest.mark.asyncio
+async def test_a_change_that_did_not_touch_the_failure_is_said_to_have_done_nothing(cad, outputs, monkeypatch):
+    first, _, _ = await _call(cad, outputs, monkeypatch, ONE_HOLE, run="run-1", hole_diameters_mm=[4, 4])
+    again, _, _ = await _call(cad, outputs, monkeypatch, ONE_HOLE, run="run-1", hole_diameters_mm=[4, 4], script=PLATE + "# moved the hole\n")
+    assert "same failure" not in first["next"]
+    assert again["attempt"] == 2 and "This is the same failure as the attempt before" in again["next"]
+    # A different failure is progress of a kind, and is not called a repeat. Neither is the same one two attempts apart.
+    other, _, _ = await _call(cad, outputs, monkeypatch, REFUSED, run="run-1", hole_diameters_mm=[4, 4])
+    back, _, _ = await _call(cad, outputs, monkeypatch, ONE_HOLE, run="run-1", hole_diameters_mm=[4, 4])
+    assert "same failure" not in other["next"] and "same failure" not in back["next"]
+    twice, _, _ = await _call(cad, outputs, monkeypatch, REFUSED, run="run-1", hole_diameters_mm=[4, 4])
+    refused, _, _ = await _call(cad, outputs, monkeypatch, REFUSED, run="run-1", hole_diameters_mm=[4, 4])
+    assert "same failure" not in twice["next"] and "same failure" in refused["next"]
+
+
+@pytest.mark.asyncio
+async def test_a_part_cannot_pass_by_moving_its_expected_numbers_without_it_being_said(cad, outputs, monkeypatch):
+    """The numbers of the first build stand for what the user asked for."""
+    wrong_height = {**BUILT, "measured": {**MEASURED, "bbox_mm": [60.0, 40.0, 8.0]}}
+    failed, _, _ = await _call(cad, outputs, monkeypatch, wrong_height, run="run-1", hole_diameters_mm=[4, 4])
+    assert failed["passed"] is False and "expected_changed" not in failed and "first built against" not in failed["next"]
+
+    # The script is the same; the expectation was moved to where the part already is.
+    moved, _, _ = await _call(cad, outputs, monkeypatch, wrong_height, run="run-1", bbox_xyz_mm=[60, 40, 8])
+    assert moved["passed"] is True
+    assert moved["expected_changed"] == {"bbox_xyz_mm": {"first": [60, 40, 6], "now": [60, 40, 8]}, "hole_diameters_mm": {"first": [4, 4], "now": None}}
+    assert moved["next"].startswith("Every check passed.") and "tell the user which changed and why" in moved["next"]
+    report = json.loads((outputs / "mounting-plate-1.report.json").read_text(encoding="utf-8"))
+    assert report["expected_changed"] == moved["expected_changed"] and report["passed"] is True
+
+    # Still said while the part is being rebuilt in this run, pass or fail.
+    still, _, _ = await _call(cad, outputs, monkeypatch, ONE_HOLE, run="run-1", bbox_xyz_mm=[60, 40, 8], hole_diameters_mm=[4, 4])
+    assert still["passed"] is False and set(still["expected_changed"]) == {"bbox_xyz_mm"} and "first built against" in still["next"]
+    # "Keep going" is a new run and not a new request: the part is still held to its first numbers.
+    kept, _, _ = await _call(cad, outputs, monkeypatch, ONE_HOLE, run="run-2", bbox_xyz_mm=[60, 40, 8], hole_diameters_mm=[4, 4])
+    assert kept["attempt"] == 1 and set(kept["expected_changed"]) == {"bbox_xyz_mm"}
+    # Back on the first numbers there is nothing to say.
+    back, _, _ = await _call(cad, outputs, monkeypatch, BUILT, run="run-2", hole_diameters_mm=[4, 4])
+    assert back["passed"] is True and "expected_changed" not in back and "first built against" not in back["next"]
+    # After a pass, the user's next message may ask for a different part under the same name.
+    new, _, _ = await _call(cad, outputs, monkeypatch, wrong_height, run="run-3", bbox_xyz_mm=[60, 40, 8])
+    assert (new["passed"], new["attempt"]) == (True, 1) and "expected_changed" not in new
+
+
+@pytest.mark.asyncio
+async def test_each_part_and_each_conversation_is_counted_apart(cad, outputs, monkeypatch, tmp_path):
+    await _call(cad, outputs, monkeypatch, ONE_HOLE, run="run-1", hole_diameters_mm=[4, 4])
+    same, _, _ = await _call(cad, outputs, monkeypatch, ONE_HOLE, run="run-1", hole_diameters_mm=[4, 4], name="mounting  PLATE")
+    lid, _, _ = await _call(cad, outputs, monkeypatch, ONE_HOLE, run="run-1", hole_diameters_mm=[4, 4], bbox_xyz_mm=[60, 40, 2], name="Lid")
+    # Counted by the name its files get, so a change of case or spacing is the same part.
+    assert (same["attempt"], lid["attempt"]) == (2, 1) and "expected_changed" not in lid
+    from deerflow.config import paths
+
+    elsewhere = paths.get_paths().sandbox_outputs_dir("thread-b", user_id="alice")
+    other, _, _ = await _call(cad, elsewhere, monkeypatch, ONE_HOLE, conversation="thread-b", run="run-1", hole_diameters_mm=[4, 4], bbox_xyz_mm=[1, 2, 3])
+    assert other["attempt"] == 1 and "expected_changed" not in other
+
+
+@pytest.mark.asyncio
+async def test_only_a_build_the_script_answers_for_is_an_attempt(cad, outputs, monkeypatch):
+    for uncounted in ({"status": "busy", "message": "every build slot is taken"}, {"status": "loading", "message": "still loading"}, {"status": "unavailable", "message": "libGL.so.1 is missing"}):
+        answer, _, _ = await _call(cad, outputs, monkeypatch, uncounted, run="run-1")
+        assert answer["passed"] is False and "attempt" not in answer and "Attempt" not in answer["next"]
+    answer, _, _ = await _call(cad, outputs, monkeypatch, BUILT, run="run-1", bbox_xyz_mm=[60, 40])
+    assert "attempt" not in answer and "Correct the arguments" in answer["next"]
+    counted, _, _ = await _call(cad, outputs, monkeypatch, REFUSED, run="run-1")
+    assert counted["attempt"] == 1 and counted["next"].startswith("Attempt 1 of")
+
+
+@pytest.mark.asyncio
+async def test_a_host_that_stamps_no_run_still_counts_and_a_pass_ends_the_count(cad, outputs, monkeypatch):
+    first, _, _ = await _call(cad, outputs, monkeypatch, ONE_HOLE, hole_diameters_mm=[4, 4])
+    second, _, _ = await _call(cad, outputs, monkeypatch, BUILT, hole_diameters_mm=[4, 4])
+    third, _, _ = await _call(cad, outputs, monkeypatch, ONE_HOLE, hole_diameters_mm=[4, 4], bbox_xyz_mm=[60, 40, 9])
+    assert [answer["attempt"] for answer in (first, second, third)] == [1, 2, 1]
+    assert "expected_changed" not in third
+
+
+@pytest.mark.asyncio
+async def test_a_result_of_several_loose_bodies_says_what_this_tool_cannot_deliver(cad, outputs, monkeypatch):
+    # What a loop over links builds when the links do not touch. No change to such a script passes, so the answer says so.
+    answer, _, _ = await _call(cad, outputs, monkeypatch, {**BUILT, "measured": {**MEASURED, "solids": 4}}, run="run-1")
+    assert answer["passed"] is False
+    (note,) = [note for note in answer["notes"] if "separate bodies" in note]
+    assert note.startswith("The result is 4 separate bodies") and "print-in-place" in note and "tell the user" in note
+    one, _, _ = await _call(cad, outputs, monkeypatch, BUILT, run="run-1", name="one body")
+    assert "notes" not in one
+
+
+def test_the_table_of_counted_parts_does_not_grow_for_ever(monkeypatch):
+    monkeypatch.syspath_prepend(str(PACKAGE))
+    from deerflow_extension_cad import tool
+
+    attempts = tool.Attempts()
+    for index in range(tool.MAX_COUNTED_PARTS + 5):
+        assert attempts.record(f"thread-{index}", "part", "run", {"bbox_xyz_mm": [1, 1, 1]}, False, "x")[0] == 1
+    assert len(attempts._parts) <= tool.MAX_COUNTED_PARTS
 
 
 @pytest.mark.asyncio
@@ -228,7 +365,7 @@ async def test_a_refused_script_is_reported_with_its_construct_and_line_and_buil
         ({"status": "busy", "message": "the server is building other parts"}, {}, "same arguments", "Fix the script"),
         # The first build after an install or update ran out of time loading the kernel.
         ({"status": "loading", "message": "the CAD kernel was still loading when the time ran out"}, {}, "same arguments", "Fix the script"),
-        ({"status": "failed", "line": 3, "operation": "fillet", "message": "fillet() failed"}, {}, "Fix the script", "same arguments"),
+        ({"status": "failed", "line": 3, "operation": "fillet", "message": "fillet() failed"}, {}, "change the script and call cad_build again", "same arguments"),
     ],
     ids=["no kernel on the server", "every build slot taken", "the kernel still loading", "a build error"],
 )

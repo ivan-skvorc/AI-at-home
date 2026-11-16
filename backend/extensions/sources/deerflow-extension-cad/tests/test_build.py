@@ -130,6 +130,77 @@ async def test_a_kernel_error_names_the_line_and_the_operation():
     assert sorted(files) == ["part.py", "part.report.json"]
 
 
+LOOPED = """\
+import cadquery as cq
+
+result = cq.Workplane("XY").box(60, 20, 4)
+for x in [-18, -6, {third}, 18]:
+    result = (
+        result.faces(">Z")
+        .workplane()
+        .pushPoints([(x, 0)])
+        .hole(3)
+    )
+"""
+
+
+async def test_a_loop_builds_what_its_statements_written_out_build():
+    looped, _ = await _build(LOOPED.format(third=6), bbox_xyz_mm=[60, 20, 4], hole_diameters_mm=[3, 3, 3, 3])
+    assert looped["passed"] is True, looped
+    written_out = 'result = cq.Workplane("XY").box(60, 20, 4)\n' + "".join(f'result = result.faces(">Z").workplane().pushPoints([({x}, 0)]).hole(3)\n' for x in (-18, -6, 6, 18))
+    flat, files = await _build(written_out, bbox_xyz_mm=[60, 20, 4], hole_diameters_mm=[3, 3, 3, 3])
+    assert flat["passed"] is True, flat
+    volume = json.loads(files["part.report.json"])["measured"]["volume_mm3"]
+    assert volume == pytest.approx(60 * 20 * 4 - 4 * 3.14159265 * 1.5**2 * 4, rel=1e-4)
+
+
+async def test_a_failure_inside_a_loop_names_the_pass_as_well_as_the_line():
+    # The third hole is drilled beside the plate. All four holes are line 9 of the script.
+    answer, files = await _build(LOOPED.format(third=40), bbox_xyz_mm=[60, 20, 4], hole_diameters_mm=[3, 3, 3, 3])
+    assert answer["passed"] is False
+    assert (answer["error"]["line"], answer["error"]["operation"]) == (9, "hole")
+    assert "removed no material" in answer["error"]["message"]
+    assert answer["error"]["message"].endswith("(in pass 3 of the loop on line 4 (x = 40))")
+    assert json.loads(files["part.report.json"])["error"] == answer["error"]
+
+
+async def test_bodies_a_loop_builds_and_never_joins_are_said_in_the_answer():
+    # The usual slip: each pass builds a link, and the result is the last one alone. Its box even matches one link.
+    links = 'for i in range(3):\n    link = cq.Workplane("XY").box(10, 4, 2).translate((i * 12, 0, 0))\nresult = link\n'
+    answer, _ = await _build(links, bbox_xyz_mm=[10, 4, 2])
+    assert answer["passed"] is True
+    assert [note for note in answer["notes"] if "not part of the result" in note] == ["The script builds 2 bodies (built on line 2) that are not part of the result: join them with union(), or delete the lines."]
+    # Joined, there is nothing to say.
+    joined = 'result = cq.Workplane("XY").box(10, 4, 2)\nfor i in range(1, 3):\n    link = cq.Workplane("XY").box(10, 4, 2).translate((i * 9, 0, 0))\n    result = result.union(link)\n'
+    answer, _ = await _build(joined, bbox_xyz_mm=[28, 4, 2])
+    assert answer["passed"] is True and "notes" not in answer, answer
+    # A trial cut is a branch off the part and a cutting tool is used up: neither is a body left over.
+    spare = f'a = {BLOCK}\ntrial = a.faces(">Z").workplane().hole(3)\ntool = cq.Workplane("XY").box(10, 10, 20)\nsketch = cq.Workplane("XY").rect(5, 5)\nresult = a.cut(tool)\n'
+    answer, _ = await _build(spare, bbox_xyz_mm=[60, 40, 6])
+    assert answer["passed"] is True and not any("not part of the result" in note for note in answer.get("notes", [])), answer
+
+
+async def test_a_part_is_rebuilt_until_it_passes_and_each_answer_says_what_comes_next():
+    """The loop the agent runs, against the real kernel: build, read what failed, repair, build again."""
+    outputs = Outputs()
+    context = ToolContext(ExtensionPrincipal("alice"), {"enabled": True}, "thread-a", run_id="run-1", output_writer=outputs.write)
+    handler = make_handler(settings_from({}))
+
+    refused = await handler({"name": "part", "script": PLATE.replace("result = (", "while True:\n    pass\nresult = ("), **EXPECT}, context)
+    assert (refused["passed"], refused["attempt"], refused["error"]["construct"]) == (False, 1, "while loop")
+    assert refused["next"].startswith("Attempt 1 of 8.")
+
+    failed = await handler({"name": "part", "script": ONE_HOLE, **EXPECT}, context)
+    assert (failed["passed"], failed["attempt"]) == (False, 2)
+    assert failed["next"].startswith("Attempt 2 of 8.") and "same failure" not in failed["next"]
+
+    passed = await handler({"name": "part", "script": PLATE, **EXPECT}, context)
+    assert (passed["passed"], passed["attempt"]) == (True, 3)
+    assert passed["next"].startswith("Every check passed.") and "expected_changed" not in passed
+    assert [json.loads(outputs.files[name])["attempt"] for name in ("part.report.json", "part-1.report.json", "part-2.report.json")] == [1, 2, 3]
+    assert "part-2.step" in outputs.files and "part.step" not in outputs.files and "part-1.step" not in outputs.files
+
+
 async def test_two_separate_bodies_are_not_one_part():
     script = 'a = cq.Workplane("XY").box(10, 10, 10)\nb = cq.Workplane("XY").box(10, 10, 10).translate((30, 0, 0))\nresult = a.union(b)\n'
     answer, files = await _build(script, bbox_xyz_mm=[40, 10, 10])

@@ -2,16 +2,19 @@
 
 ``compile_script`` parses the text into a syntax tree and walks it. The walk
 accepts ``import cadquery as cq``, assignments to plain names, numbers,
-strings, tuples, lists, arithmetic on numbers, ``cq.Workplane(...)`` and calls
-to the methods in :mod:`allowlist`. Everything else is refused with the
-construct and its line. The outcome is a :class:`Program`: a flat list of
-allow-listed operations with plain-data arguments, which ``build.run_program``
-performs against the kernel.
+strings, tuples, lists, arithmetic on numbers, ``for`` loops over ``range(...)``
+or a list, ``cq.Workplane(...)`` and calls to the methods in :mod:`allowlist`.
+Everything else is refused with the construct and its line. The outcome is a
+:class:`Program`: a flat list of allow-listed operations with plain-data
+arguments, which ``build.run_program`` performs against the kernel.
 
 Nothing here executes script text. ``ast.parse`` builds a tree and runs
 nothing; no value from the script is ever used to look up an attribute. A
-script has no loops, branches or functions, so every number is known before
-the kernel starts: a refusal costs no geometry and needs no CadQuery.
+``for`` loop is unrolled here, pass by pass: what it runs over is a range or a
+list the script states, so the loop is the same statements written out, and
+the program stays flat. A script has no branches, functions or ``while``, so
+every number is known before the kernel starts: a refusal costs no geometry
+and needs no CadQuery.
 """
 
 from __future__ import annotations
@@ -36,6 +39,11 @@ MAX_STRING = 80
 MAX_NUMBER = 1e12
 MAX_EXPONENT = 64
 MAX_COUNT = 10_000
+#: Passes of every loop in a script, added up. The operations a script may perform are
+#: capped apart from this; the cap here bounds a loop that only does arithmetic.
+MAX_LOOP_PASSES = 1_000
+#: Loops inside loops. Each level adds a clause to where a failure is said to be.
+MAX_LOOP_DEPTH = 4
 
 _SELECTOR = re.compile(table.SELECTOR_PATTERN)
 _TAG = re.compile(table.TAG_PATTERN)
@@ -63,6 +71,8 @@ class ScriptRefused(Exception):
         self.construct = construct
         self.line = line
         self.message = message
+        #: True once the message says which loop pass it happened in.
+        self.placed = False
 
 
 @dataclass(frozen=True)
@@ -81,6 +91,8 @@ class Operation:
     method: str
     #: Keyword arguments in CadQuery's parameter order; values are plain data or Ref.
     arguments: tuple[tuple[str, object], ...]
+    #: For an operation inside a loop, which pass it belongs to: one line of a loop stands for many operations.
+    where: str = ""
 
 
 @dataclass(frozen=True)
@@ -99,6 +111,8 @@ _ALLOWED = frozenset(
         ast.Import,
         ast.alias,
         ast.Assign,
+        ast.AugAssign,
+        ast.For,
         ast.Expr,
         ast.Name,
         ast.Load,
@@ -143,9 +157,10 @@ _CONSTRUCTS: dict[type, str] = {
     ast.FunctionDef: "function definition",
     ast.AsyncFunctionDef: "function definition",
     ast.ClassDef: "class definition",
-    ast.For: "loop",
-    ast.AsyncFor: "loop",
-    ast.While: "loop",
+    ast.AsyncFor: "async loop",
+    ast.While: "while loop",
+    ast.Break: "break",
+    ast.Continue: "continue",
     ast.If: "if statement",
     ast.With: "with statement",
     ast.AsyncWith: "with statement",
@@ -157,7 +172,6 @@ _CONSTRUCTS: dict[type, str] = {
     ast.Global: "global",
     ast.Nonlocal: "global",
     ast.Pass: "pass",
-    ast.AugAssign: "augmented assignment",
     ast.AnnAssign: "annotated assignment",
     ast.Match: "match statement",
     ast.TypeAlias: "type alias",
@@ -178,7 +192,10 @@ _CONSTRUCTS: dict[type, str] = {
 
 _POSITIONED = (ast.stmt, ast.expr, ast.keyword, ast.alias)
 _ONLY_IMPORT = "the only import a script may contain is: import cadquery as cq"
-_ALLOWED_SUMMARY = "A script may contain: import cadquery as cq, assignments to names, numbers, strings, tuples, lists, arithmetic, cq.Workplane(...) and the allow-listed methods of a part."
+_ALLOWED_SUMMARY = "A script may contain: import cadquery as cq, assignments to names, numbers, strings, tuples, lists, arithmetic, for loops over range(...) or a list, cq.Workplane(...) and the allow-listed methods of a part."
+_LOOP_OVER = "a loop runs over range(...) or over a list of numbers or points, for example: for i in range(5):"
+#: Names a script reads and may not assign: the module, the viewer's call, and what a loop counts with.
+_RESERVED = ("cq", "show_object", "range")
 
 
 #: Attribute names that mean "write a file": the tool does that itself, after its checks.
@@ -197,6 +214,23 @@ def _short(text: str) -> str:
 
 def _article(noun: str) -> str:
     return f"an {noun}" if noun[:1] in "aeiou" else f"a {noun}"
+
+
+def _show(value: object) -> str:
+    """A loop variable's value, as it is said beside a failure."""
+    if isinstance(value, tuple):
+        return "(" + ", ".join(_show(item) for item in value) + ")"
+    return f"{value:g}" if _is_number(value) else str(value)
+
+
+def _check_lines(statements: list[ast.stmt], previous_end: int) -> None:
+    """One statement per line, also inside a loop: nothing sits beside what a viewer reads as the line."""
+    for statement in statements:
+        if statement.lineno <= previous_end:
+            _refuse("syntax", statement.lineno, "one statement per line: start this one on its own line")
+        if isinstance(statement, ast.For):
+            _check_lines(statement.body, statement.iter.end_lineno or statement.lineno)
+        previous_end = statement.end_lineno or statement.lineno
 
 
 def _check_tree(tree: ast.Module) -> None:
@@ -261,6 +295,9 @@ class _Reader:
         self.names: dict[str, object] = {}
         self.operations: list[Operation] = []
         self.instances = 0
+        self.passes = 0
+        #: The loop passes being read, outermost first.
+        self.loops: list[str] = []
         #: (name, slot) pairs: the part a name held at that moment, whatever the name holds later.
         self.shown: tuple[str, int] | None = None
         self.shown_line: int | None = None
@@ -283,15 +320,98 @@ class _Reader:
                 self.result_line = node.lineno
             if isinstance(value, Ref):
                 self.last_part = (name, value.slot)
+        elif isinstance(node, ast.AugAssign):
+            # x += step is x = x + step: numbers only, like the arithmetic it stands for.
+            if not isinstance(node.target, ast.Name):
+                _refuse("assignment target", node.lineno, "assign one value to one plain name, for example: width = 40")
+            name = self.target(node.target.id, node.lineno)
+            if name not in self.names:
+                _refuse("name", node.lineno, f"{_short(name)!r} is not defined earlier in the script")
+            self.names[name] = self.combine(node.op, self.names[name], self.value(node.value), node.lineno)
+            if name == "result":
+                self.result_line = node.lineno
+        elif isinstance(node, ast.For):
+            self.loop(node)
         elif isinstance(node, ast.Expr):
             self.expression_statement(node)
         else:  # pragma: no cover - _check_tree refuses every other statement first
             _refuse("statement", node.lineno, _ALLOWED_SUMMARY)
 
     def target(self, name: str, line: int) -> str:
-        if name in ("cq", "show_object") or "__" in name or not _NAME.fullmatch(name):
+        if name in _RESERVED or "__" in name or not _NAME.fullmatch(name):
             _refuse("name", line, f"{_short(name)!r} cannot be assigned: use a name that starts with a letter and holds letters, digits and single underscores, at most 64 characters, and not cq")
         return name
+
+    # Loops
+
+    def loop(self, node: ast.For) -> None:
+        """Read the body once per pass, as if the script had written it out that many times."""
+        line = node.lineno
+        if node.orelse:
+            _refuse("loop", node.orelse[0].lineno, "a loop may not have an else block")
+        if len(self.loops) >= MAX_LOOP_DEPTH:
+            _refuse("loop", line, f"loops may be nested at most {MAX_LOOP_DEPTH} deep")
+        elements = node.target.elts if isinstance(node.target, ast.Tuple) else [node.target]
+        if not all(isinstance(element, ast.Name) for element in elements):
+            _refuse("loop", line, "a loop counts with a plain name, or with one name per number of a point, for example: for x, y in [(0, 0), (10, 0)]:")
+        names = [self.target(element.id, line) for element in elements]
+        items = self.loop_items(node.iter)
+        if not items:
+            _refuse("loop", line, "this loop would not run once: its range or list is empty")
+        for number, item in enumerate(items, 1):
+            self.passes += 1
+            if self.passes > MAX_LOOP_PASSES:
+                _refuse("loop", line, f"the loops of a script may run at most {MAX_LOOP_PASSES} passes in total")
+            if isinstance(node.target, ast.Tuple):
+                if not isinstance(item, tuple) or len(item) != len(names):
+                    _refuse("loop", line, f"this loop takes {len(names)} names per item, and item {number} is {_show(item)}")
+                values = item
+            else:
+                values = (item,)
+            for name, value in zip(names, values):
+                self.names[name] = value
+                if name == "result":
+                    self.result_line = line
+            said = ", ".join(f"{name} = {_show(value)}" for name, value in zip(names, values))
+            self.loops.append(f"pass {number} of the loop on line {line} ({said})")
+            try:
+                for statement in node.body:
+                    self.statement(statement)
+            except ScriptRefused as refused:
+                if refused.placed:
+                    raise
+                # Said once, by the innermost loop, which is the one that knows every loop around it.
+                placed = ScriptRefused(refused.construct, refused.line, f"{refused.message} (in {self.where()})")
+                placed.placed = True
+                raise placed from None
+            finally:
+                self.loops.pop()
+
+    def loop_items(self, node: ast.expr) -> tuple:
+        """What a loop runs over, known in full before its first pass."""
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+            if node.func.id != "range":
+                _refuse("loop", node.lineno, f"{_LOOP_OVER} {_short(node.func.id)}() is not available.")
+            if node.keywords or not 1 <= len(node.args) <= 3:
+                _refuse("loop", node.lineno, "range() takes one to three whole numbers, for example range(5) or range(0, 50, 10)")
+            bounds = [self.value(argument) for argument in node.args]
+            for bound in bounds:
+                if type(bound) is not int:
+                    _refuse("loop", node.lineno, f"range() takes whole numbers, got {_describe(bound)}: divide with // to get one, for example range(length // pitch)")
+            if len(bounds) == 3 and bounds[2] == 0:
+                _refuse("loop", node.lineno, "range() cannot step by zero")
+            steps = range(*bounds)
+            if len(steps) > MAX_LOOP_PASSES:
+                _refuse("loop", node.lineno, f"the loops of a script may run at most {MAX_LOOP_PASSES} passes in total")
+            return tuple(steps)
+        items = self.value(node)
+        if not isinstance(items, tuple):
+            _refuse("loop", node.lineno, f"{_LOOP_OVER} This one runs over {_describe(items)}.")
+        return items
+
+    def where(self) -> str:
+        """The passes being read, innermost first; empty outside a loop."""
+        return ", ".join(reversed(self.loops))
 
     def expression_statement(self, node: ast.Expr) -> None:
         value = node.value
@@ -299,7 +419,7 @@ class _Reader:
             return  # a docstring
         if isinstance(value, ast.Call) and isinstance(value.func, ast.Name):
             if value.func.id != "show_object":
-                _refuse("call", node.lineno, f"{_short(value.func.id)}() cannot be called. A script may call cq.Workplane(...) and the methods of a part.")
+                self.call(value)  # refuses, in the words for this name
             shown = value.args[0] if len(value.args) == 1 else None
             keywords_ok = all(keyword.arg == "name" and isinstance(keyword.value, ast.Constant) for keyword in value.keywords)
             if not isinstance(shown, ast.Name) or not keywords_ok or not isinstance(self.names.get(shown.id), Ref):
@@ -363,35 +483,37 @@ class _Reader:
         return items
 
     def arithmetic(self, node: ast.BinOp) -> object:
-        left, right = self.value(node.left), self.value(node.right)
+        return self.combine(node.op, self.value(node.left), self.value(node.right), node.lineno)
+
+    def combine(self, operator: ast.operator, left: object, right: object, line: int) -> object:
         if not _is_number(left) or not _is_number(right):
             hint = " To combine parts, call a.union(b), a.cut(b) or a.intersect(b)." if isinstance(left, Ref) or isinstance(right, Ref) else ""
-            _refuse("arithmetic", node.lineno, f"arithmetic works on numbers only, not on {_describe(left if not _is_number(left) else right)}.{hint}")
+            _refuse("arithmetic", line, f"arithmetic works on numbers only, not on {_describe(left if not _is_number(left) else right)}.{hint}")
         try:
-            if isinstance(node.op, ast.Add):
+            if isinstance(operator, ast.Add):
                 result = left + right
-            elif isinstance(node.op, ast.Sub):
+            elif isinstance(operator, ast.Sub):
                 result = left - right
-            elif isinstance(node.op, ast.Mult):
+            elif isinstance(operator, ast.Mult):
                 result = left * right
-            elif isinstance(node.op, ast.Div):
+            elif isinstance(operator, ast.Div):
                 result = left / right
-            elif isinstance(node.op, ast.FloorDiv):
+            elif isinstance(operator, ast.FloorDiv):
                 result = left // right
-            elif isinstance(node.op, ast.Mod):
+            elif isinstance(operator, ast.Mod):
                 result = left % right
             else:
                 if abs(right) > MAX_EXPONENT:
-                    _refuse("arithmetic", node.lineno, f"an exponent may not exceed {MAX_EXPONENT}")
+                    _refuse("arithmetic", line, f"an exponent may not exceed {MAX_EXPONENT}")
                 result = left**right
         except ZeroDivisionError:
-            _refuse("arithmetic", node.lineno, "division by zero")
+            _refuse("arithmetic", line, "division by zero")
         except OverflowError:
-            _refuse("arithmetic", node.lineno, "the result is too large")
+            _refuse("arithmetic", line, "the result is too large")
         if isinstance(result, complex):
-            _refuse("arithmetic", node.lineno, "a negative number cannot be raised to a fractional power")
+            _refuse("arithmetic", line, "a negative number cannot be raised to a fractional power")
         if not _in_range(result):
-            _refuse("arithmetic", node.lineno, f"the result must be a finite number no larger than {MAX_NUMBER:g}")
+            _refuse("arithmetic", line, f"the result must be a finite number no larger than {MAX_NUMBER:g}")
         return result
 
     # Calls
@@ -399,6 +521,8 @@ class _Reader:
     def call(self, node: ast.Call) -> Ref:
         function = node.func
         if isinstance(function, ast.Name):
+            if function.id == "range":
+                _refuse("call", node.lineno, "range(...) is what a loop runs over, for example: for i in range(5): It cannot be used as a value.")
             _refuse("call", node.lineno, f"{_short(function.id)}() cannot be called. A script may call cq.Workplane(...) and the methods of a part.")
         if not isinstance(function, ast.Attribute):
             _refuse("call", node.lineno, "only cq.Workplane(...) and the methods of a part can be called")
@@ -451,7 +575,7 @@ class _Reader:
                 )
         if len(self.operations) >= MAX_OPERATIONS:
             _refuse("script length", line, f"a script may perform at most {MAX_OPERATIONS} operations")
-        self.operations.append(Operation(line, receiver, name, tuple(arguments)))
+        self.operations.append(Operation(line, receiver, name, tuple(arguments), self.where()))
         return Ref(len(self.operations) - 1)
 
     def fit(self, label: str, param: table.Param, value: object, line: int) -> object:
@@ -580,11 +704,7 @@ def compile_script(source: str) -> Program:
     except (ValueError, RecursionError, MemoryError):
         _refuse("nesting", None, "the script is nested too deeply to read")
     _check_tree(tree)
-    previous_end = 0
-    for statement in tree.body:
-        if statement.lineno <= previous_end:
-            _refuse("syntax", statement.lineno, "one statement per line: start this one on its own line")
-        previous_end = statement.end_lineno or statement.lineno
+    _check_lines(tree.body, 0)
     reader = _Reader()
     try:
         for statement in tree.body:
