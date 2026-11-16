@@ -191,3 +191,80 @@ METHODS: dict[str, Method] = {
     "cut": Method((_req("toCut", WORKPLANE), _CLEAN), "Remove another part from this one.", "block = cq.Workplane('XY').box(40, 40, 20)\npocket = cq.Workplane('XY').box(20, 20, 10).translate((0, 0, 5))\nresult = block.cut(pocket)"),
     "intersect": Method((_req("toIntersect", WORKPLANE), _CLEAN), "Keep what this part shares with another.", "a = cq.Workplane('XY').box(40, 40, 20)\nb = cq.Workplane('XY').sphere(22)\nresult = a.intersect(b)"),
 }
+
+
+# --- The table as a page ----------------------------------------------------
+
+_KIND_WORDS = {
+    LENGTH: "millimetres, above 0",
+    NUMBER: "a number",
+    ANGLE: "degrees",
+    COUNT: "a whole number, 1 or more",
+    SIDES: f"a whole number, 3 to {MAX_SIDES}",
+    BOOL: "True or False",
+    POINT: "a point, (x, y) or (x, y, z)",
+    POINTS: "a list of points",
+    CENTERED_2D: "True, False, or one of them per axis: (True, False)",
+    CENTERED_3D: "True, False, or one of them per axis: (True, True, False)",
+    PLANE: "a plane name",
+    SELECTOR: "a selector string",
+    TAG: "a label of letters, digits and underscores",
+    WORKPLANE: "a part built earlier in the script",
+}
+
+
+def _signature(name: str, method: Method) -> str:
+    return f"{name}({', '.join(param.name if param.required else f'[{param.name}]' for param in method.params)})"
+
+
+def _arguments(method: Method) -> str:
+    """Each parameter with what it takes; parameters of one kind share a line."""
+    by_kind: dict[str, list[str]] = {}
+    for param in method.params:
+        words = _KIND_WORDS[param.kind] if isinstance(param.kind, str) else "one of " + ", ".join(f'"{choice}"' for choice in param.kind)
+        by_kind.setdefault(words + (", or None" if param.nullable else ""), []).append(param.name)
+    return "\n".join(f"- `{'`, `'.join(names)}`: {words}" for words, names in by_kind.items())
+
+
+def reference() -> str:
+    """The table as the page a model reads: ``references/operations.md`` of the cad-modeling skill.
+
+    Generated, so the page says no more and no less than the table. After a change to
+    the table, run this file and write its output over that page (the package's AGENTS.md
+    has the command); ``tests/skills/test_cad_modeling.py`` fails until the two agree.
+    """
+    lines = [
+        "# Operations a script may use",
+        "",
+        "Generated from the CAD module's allow-list. Do not edit: change the table and regenerate.",
+        "",
+        "A part starts with `cq.Workplane(...)` and is shaped by the methods below, each called on a part.",
+        "Arguments are in CadQuery's order and may be given by name; one in `[brackets]` is optional.",
+        "Any other method, and anything else on `cq`, is refused.",
+        "",
+        f"- Plane names: {', '.join(f'`{name}`' for name in PLANE_NAMES)}.",
+        '- Selector strings: CadQuery\'s own, such as `">Z"`, `"<X"`, `"|Z"`, `"#Z"`, `"%CIRCLE"`, `"|Z and >Y"`.',
+        f"- Sizes and coordinates: at most {MAX_MAGNITUDE:g} mm; a length is at least {MIN_LENGTH:g} mm.",
+        f"- Patterns (`pushPoints`, `rarray`, `polarArray`): at most {MAX_INSTANCES_PER_CALL} points in one call and {MAX_INSTANCES_PER_SCRIPT} in a script.",
+        "",
+        f"## {_signature('cq.Workplane', CONSTRUCTOR)}",
+        "",
+        CONSTRUCTOR.summary,
+        "",
+        _arguments(CONSTRUCTOR),
+        "",
+        "```python",
+        f"result = {CONSTRUCTOR.example}.box(10, 10, 10)",
+        "```",
+    ]
+    for name, method in METHODS.items():
+        example = method.example if "result = " in method.example else f"result = {method.example}"
+        lines += ["", f"## {_signature(name, method)}", "", method.summary, ""]
+        if method.params:
+            lines += [_arguments(method), ""]
+        lines += ["```python", example, "```"]
+    return "\n".join(lines) + "\n"
+
+
+if __name__ == "__main__":
+    print(reference(), end="")

@@ -50,10 +50,17 @@ here as one.
   construct is refused with its line: imports other than `import cadquery as cq`,
   attribute access, any call other than `cq.Workplane(...)`, an allow-listed
   method and `show_object(name)` (read only as naming the result), definitions,
-  loops, branches, comprehensions, f-strings, subscripts. No code object is ever
+  `while`, branches, comprehensions, f-strings, subscripts. No code object is ever
   made from script text: `ast.parse` (CPython's `compile()` with the flag that
   stops at the syntax tree) is its one reader, and `exec` and `eval` never
   receive it.
+- **A `for` loop is unrolled by the reader, not run.** It may run over
+  `range(...)` of whole numbers the reader has already checked, or over a list
+  of numbers or points the script states, so what it runs over is known in full
+  before its first pass. The reader goes through the body once per pass and
+  produces the same flat list of allow-listed operations the statements written
+  out would give; a test compares the two. `range` is the reader's own call on
+  those numbers and is not a name a script can assign or use as a value.
 - **The allow-list is data** (`allowlist.py`): method names with the kind of
   each argument. A method that takes a file path, a callable, a font or a raw
   kernel object is not on it. The one attribute lookup a script can cause is for
@@ -65,13 +72,18 @@ here as one.
   the child sets memory, CPU and file-size limits where the operating system
   offers them.
 - **Resource use is bounded before the kernel starts**: script size, syntax
-  nodes, nesting, number magnitude, exponent size and pattern instances. What an
+  nodes, nesting, number magnitude, exponent size, pattern instances, loop
+  passes (1,000 in a script, nested four deep), operations after unrolling
+  (300) and the statements and values read while unrolling (200,000, so
+  reading takes under a second whatever a loop repeats). What an
   accepted script can still cost the kernel is stopped by the parent's wall
   clock and the child's memory ceiling, not by the reading.
 - **The kept script reads the way it was read.** Control characters, line
   separators and text-direction marks are refused anywhere in the text, so no
   character changes where a line starts or the order it is drawn in. A script
-  holds one statement per line, and padding that pushes code out of sight is
+  holds one statement per line, a loop's body is indented as one block under
+  its `for` (a backslash cannot carry a line into a loop from the margin), a
+  line is indented at most 80 columns with a tab counted as eight, and padding that pushes code out of sight is
   refused (more than 40 blanks in a row inside a line, more than 40 blank lines
   in a row). Other invisible characters, such as the joiners of Persian and
   Hindi, can occur only in a comment, where they start no line and no

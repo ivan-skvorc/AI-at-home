@@ -130,6 +130,183 @@ async def test_a_kernel_error_names_the_line_and_the_operation():
     assert sorted(files) == ["part.py", "part.report.json"]
 
 
+LOOPED = """\
+import cadquery as cq
+
+result = cq.Workplane("XY").box(60, 20, 4)
+for x in [-18, -6, {third}, 18]:
+    result = (
+        result.faces(">Z")
+        .workplane()
+        .pushPoints([(x, 0)])
+        .hole(3)
+    )
+"""
+
+
+async def test_a_loop_builds_what_its_statements_written_out_build():
+    looped, _ = await _build(LOOPED.format(third=6), bbox_xyz_mm=[60, 20, 4], hole_diameters_mm=[3, 3, 3, 3])
+    assert looped["passed"] is True, looped
+    written_out = 'result = cq.Workplane("XY").box(60, 20, 4)\n' + "".join(f'result = result.faces(">Z").workplane().pushPoints([({x}, 0)]).hole(3)\n' for x in (-18, -6, 6, 18))
+    flat, files = await _build(written_out, bbox_xyz_mm=[60, 20, 4], hole_diameters_mm=[3, 3, 3, 3])
+    assert flat["passed"] is True, flat
+    volume = json.loads(files["part.report.json"])["measured"]["volume_mm3"]
+    assert volume == pytest.approx(60 * 20 * 4 - 4 * 3.14159265 * 1.5**2 * 4, rel=1e-4)
+
+
+async def test_a_failure_inside_a_loop_names_the_pass_as_well_as_the_line():
+    # The third hole is drilled beside the plate. All four holes are line 9 of the script.
+    answer, files = await _build(LOOPED.format(third=40), bbox_xyz_mm=[60, 20, 4], hole_diameters_mm=[3, 3, 3, 3])
+    assert answer["passed"] is False
+    assert (answer["error"]["line"], answer["error"]["operation"]) == (9, "hole")
+    assert "removed no material" in answer["error"]["message"]
+    assert answer["error"]["message"].endswith("(in pass 3 of the loop on line 4 (x = 40))")
+    assert json.loads(files["part.report.json"])["error"] == answer["error"]
+
+
+async def test_bodies_a_loop_builds_and_never_joins_are_said_in_the_answer():
+    # The usual slip: each pass builds a link, and the result is the last one alone. Its box even matches one link.
+    links = 'for i in range(3):\n    link = cq.Workplane("XY").box(10, 4, 2).translate((i * 12, 0, 0))\nresult = link\n'
+    answer, _ = await _build(links, bbox_xyz_mm=[10, 4, 2])
+    assert answer["passed"] is True
+    assert [note for note in answer["notes"] if "not part of the result" in note] == ["The script builds 2 bodies (built on line 2) that are not part of the result: join them with union(), or delete the lines."]
+    # Joined, there is nothing to say.
+    joined = 'result = cq.Workplane("XY").box(10, 4, 2)\nfor i in range(1, 3):\n    link = cq.Workplane("XY").box(10, 4, 2).translate((i * 9, 0, 0))\n    result = result.union(link)\n'
+    answer, _ = await _build(joined, bbox_xyz_mm=[28, 4, 2])
+    assert answer["passed"] is True and "notes" not in answer, answer
+    # A trial cut is a branch off the part and a cutting tool is used up: neither is a body left over.
+    spare = f'a = {BLOCK}\ntrial = a.faces(">Z").workplane().hole(3)\ntool = cq.Workplane("XY").box(10, 10, 20)\nsketch = cq.Workplane("XY").rect(5, 5)\nresult = a.cut(tool)\n'
+    answer, _ = await _build(spare, bbox_xyz_mm=[60, 40, 6])
+    assert answer["passed"] is True and not any("not part of the result" in note for note in answer.get("notes", [])), answer
+
+
+async def test_passes_of_a_loop_whose_outcome_is_dropped_are_said_in_the_answer():
+    # The other usual slip: every pass starts from the plate, so only the last slot is in the result.
+    # With a bounding box to meet, a plate asked for with six slots passed with one, and nothing said so.
+    dropped = 'plate = cq.Workplane("XY").box(100, 30, 5)\nfor i in range(6):\n    result = plate.faces(">Z").workplane().pushPoints([(-30 + i * 12, 0)]).slot2D(12, 3, 90).cutThruAll()\n'
+    answer, _ = await _build(dropped, bbox_xyz_mm=[100, 30, 5])
+    assert answer["passed"] is True
+    (note,) = [note for note in answer["notes"] if "loop on line 2" in note]
+    assert note == "5 passes of the loop on line 2 do work on the part that is not in the result: carry the part through the loop, for example result = result.hole(...), or delete the work."
+    # Carried through the loop, all six are there and there is nothing to say.
+    carried = dropped.replace('plate = cq.Workplane("XY")', 'result = cq.Workplane("XY")').replace("result = plate.faces", "result = result.faces")
+    answer, files = await _build(carried, bbox_xyz_mm=[100, 30, 5])
+    assert answer["passed"] is True and "notes" not in answer, answer
+    assert json.loads(files["part.report.json"])["measured"]["volume_mm3"] < 14000
+    # Rows lost one level up: the inner loop carries its row, and the outer loop starts every row from the bare plate.
+    rows = 'base = cq.Workplane("XY").box(50, 50, 4)\nfor row in range(3):\n    result = base\n    for column in range(3):\n        result = result.faces(">Z").workplane().pushPoints([(-15 + column * 15, -15 + row * 15)]).hole(4)\n'
+    answer, _ = await _build(rows, bbox_xyz_mm=[50, 50, 4])
+    # Counted by every pass that did the work: three holes in each of the two rows that were lost.
+    assert answer["passed"] is True and [note[:32] for note in answer["notes"]] == ["6 passes of the loop on line 4 d"], answer
+    # Work on a body after it was joined is lost the same way, whichever side of union() the body stood on.
+    after = 'frame = cq.Workplane("XY").box(110, 40, 2)\nlid = cq.Workplane("XY").box(100, 30, 5).translate((0, 0, 3.5))\nresult = frame.union(lid)\n'
+    after += 'for i in range(6):\n    lid = lid.faces(">Z").workplane().pushPoints([(-30 + i * 12, 0)]).slot2D(12, 3, 90).cutThruAll()\n'
+    answer, _ = await _build(after, bbox_xyz_mm=[110, 40, 7])
+    assert answer["passed"] is True and [note[:32] for note in answer["notes"]] == ["6 passes of the loop on line 4 d"], answer
+    # A part put together again in every pass loses nothing: the last time is the result.
+    again = 'body = cq.Workplane("XY").box(60, 40, 6)\nlid = cq.Workplane("XY").box(60, 40, 2).translate((0, 0, 4))\n'
+    again += 'for i in range(3):\n    body = body.faces("<Z").workplane().pushPoints([(-20 + i * 20, 0)]).hole(3, 2)\n    result = body.union(lid)\n'
+    answer, _ = await _build(again, bbox_xyz_mm=[60, 40, 8])
+    assert answer["passed"] is True and "notes" not in answer, answer
+    # A loop of one pass has no pass before it to show that its leftover is a tool made ready.
+    once = f'result = {BLOCK}\nfor x, y in [(0, 0)]:\n    boss = cq.Workplane("XY").cylinder(10, 4).translate((x, y, 8))\n'
+    answer, _ = await _build(once, bbox_xyz_mm=[60, 40, 6])
+    assert [note[:26] for note in answer["notes"]] == ["The script builds 1 body ("], answer
+    # A selection made in every pass and never used did no work on the part.
+    looking = 'result = cq.Workplane("XY").box(20, 20, 4)\nfor i in range(3):\n    top = result.faces(">Z")\n'
+    answer, _ = await _build(looking, bbox_xyz_mm=[20, 20, 4])
+    assert answer["passed"] is True and "notes" not in answer, answer
+
+
+async def test_a_tool_made_ready_for_the_next_pass_is_not_work_dropped():
+    # Cut, then move the cutter on for the next pass. The last move is never used, and nothing is missing.
+    advanced = 'result = cq.Workplane("XY").box(80, 30, 5)\ncutter = cq.Workplane("XY").box(3, 12, 10).translate((-30, 0, 0))\nfor i in range(6):\n    result = result.cut(cutter)\n    cutter = cutter.translate((12, 0, 0))\n'
+    answer, _ = await _build(advanced, bbox_xyz_mm=[80, 30, 5], volume_min_max_mm3=[10900, 10940])
+    assert answer["passed"] is True and "notes" not in answer, answer
+    # A link joined and then moved on is the same idiom with union().
+    joined = 'result = cq.Workplane("XY").box(10, 4, 2)\nlink = cq.Workplane("XY").box(10, 4, 2).translate((9, 0, 0))\nfor i in range(3):\n    result = result.union(link)\n    link = link.translate((9, 0, 0))\n'
+    answer, _ = await _build(joined, bbox_xyz_mm=[37, 4, 2])
+    assert answer["passed"] is True and "notes" not in answer, answer
+    # The same with a fresh cutter built at the end of each pass.
+    fresh = advanced.replace("cutter = cutter.translate((12, 0, 0))", 'cutter = cq.Workplane("XY").box(3, 12, 10).translate((-30 + (i + 1) * 12, 0, 0))')
+    answer, _ = await _build(fresh, bbox_xyz_mm=[80, 30, 5], volume_min_max_mm3=[10900, 10940])
+    assert answer["passed"] is True and "notes" not in answer, answer
+
+
+async def test_a_body_started_on_a_shared_empty_workplane_is_still_a_body_left_out():
+    # Both start from one empty workplane. That workplane is not the part, so the rib is not a branch off it.
+    shared = 'wp = cq.Workplane("XY")\nresult = wp.box(80, 10, 5)\nrib = wp.box(4, 10, 20).translate((0, 0, 12.5))\n'
+    answer, _ = await _build(shared, bbox_xyz_mm=[80, 10, 5])
+    assert [note for note in answer["notes"] if "not part of the result" in note] == ["The script builds 1 body (built on line 3) that is not part of the result: join it with union(), or delete the lines."]
+
+
+async def test_a_body_left_out_is_counted_once_and_named_where_it_starts():
+    # One spare body with two selections on it is one body, built on line 2: not two, on the lines of the selections.
+    spare = f'result = {BLOCK}\nspare = cq.Workplane("XY").box(5, 5, 5).translate((0, 0, 50))\ntop = spare.faces(">Z")\nside = spare.edges("|Z")\n'
+    answer, _ = await _build(spare, bbox_xyz_mm=[60, 40, 6])
+    assert [note for note in answer["notes"] if "not part of the result" in note] == ["The script builds 1 body (built on line 2) that is not part of the result: join it with union(), or delete the lines."]
+    # Bodies dropped on different lines are each located, however many a loop drops on one line.
+    many = f'for i in range(7):\n    link = cq.Workplane("XY").box(4, 4, 4).translate((i * 9, 0, 0))\nextra = cq.Workplane("XY").sphere(3)\nresult = {BLOCK}\n'
+    answer, _ = await _build(many, bbox_xyz_mm=[60, 40, 6])
+    (note,) = [note for note in answer["notes"] if "not part of the result" in note]
+    assert note.startswith("The script builds 8 bodies (built on line 2, 3)")
+    # More lines than an answer names are said to be more.
+    seven = "".join(f'spare{index} = cq.Workplane("XY").box(2, 2, 2)\n' for index in range(7)) + f"result = {BLOCK}\n"
+    answer, _ = await _build(seven, bbox_xyz_mm=[60, 40, 6])
+    (note,) = [note for note in answer["notes"] if "not part of the result" in note]
+    assert note.startswith("The script builds 7 bodies (built on line 1, 2, 3, 4, 5 and more)")
+
+
+async def test_a_pass_that_repeats_another_is_told_to_leave_the_pass_out_not_the_line():
+    # The last point closes the ring on the first. The line is all five holes; deleting it would remove them all.
+    ring = 'result = cq.Workplane("XY").box(60, 60, 4)\nfor x, y in [(20, 0), (0, 20), (-20, 0), (0, -20), (20, 0)]:\n    result = result.faces(">Z").workplane().pushPoints([(x, y)]).hole(4)\n'
+    answer, _ = await _build(ring, bbox_xyz_mm=[60, 60, 4])
+    message = answer["error"]["message"]
+    assert "Delete this line" not in message and "Leave this pass out if the part is right without it." in message
+    assert message.endswith("(in pass 5 of the loop on line 2 (x = 20, y = 0))")
+
+
+async def test_a_blind_cut_into_air_names_the_cause_that_fits_its_distance():
+    # A lip added first: the highest face is now the top of the lip, and a cut of 4 below it meets no material.
+    lip = f'result = {BLOCK}.union(cq.Workplane("XY").box(60, 6, 20).translate((0, 17, 13)))\nresult = result.faces(">Z").workplane().center(0, -20).rect(40, 6).cutBlind(-4)\n'
+    answer, _ = await _build(lip, bbox_xyz_mm=[60, 40, 26])
+    message = answer["error"]["message"]
+    assert answer["error"]["operation"] == "cutBlind" and "highest face" in message
+    # The sentence is the same for every blind cut that removes nothing, so it has to be true of each:
+    # the same pocket cut twice (the material is gone), and a workplane that points into the part (the direction).
+    twice = f'result = {BLOCK}.faces(">Z").workplane().rect(20, 10).cutBlind(-3)\nresult = result.faces(">Z").workplane().rect(20, 10).cutBlind(-3)\n'
+    inverted = f'result = {BLOCK}.faces(">Z").workplane(invert=True).rect(20, 10).cutBlind(-3)\n'
+    for script in (twice, inverted):
+        answer, _ = await _build(script, bbox_xyz_mm=[60, 40, 6])
+        message = answer["error"]["message"]
+        assert "ran away from the material" in message and "already gone" in message and "against the workplane's normal for a negative distance" in message
+    # A positive distance still gets the sentence about the sign.
+    away = f'result = {BLOCK}.faces(">Z").workplane().rect(20, 10).cutBlind(3)\n'
+    answer, _ = await _build(away, bbox_xyz_mm=[60, 40, 6])
+    assert "along it for a positive one" in answer["error"]["message"]
+
+
+async def test_a_part_is_rebuilt_until_it_passes_and_each_answer_says_what_comes_next():
+    """The loop the agent runs, against the real kernel: build, read what failed, repair, build again."""
+    outputs = Outputs()
+    context = ToolContext(ExtensionPrincipal("alice"), {"enabled": True}, "thread-a", run_id="run-1", output_writer=outputs.write)
+    handler = make_handler(settings_from({}))
+
+    refused = await handler({"name": "part", "script": PLATE.replace("result = (", "while True:\n    pass\nresult = ("), **EXPECT}, context)
+    assert (refused["passed"], refused["attempt"], refused["error"]["construct"]) == (False, 1, "while loop")
+    assert refused["next"].startswith("Attempt 1 of 8.")
+
+    failed = await handler({"name": "part", "script": ONE_HOLE, **EXPECT}, context)
+    assert (failed["passed"], failed["attempt"]) == (False, 2)
+    assert failed["next"].startswith("Attempt 2 of 8.") and "same failure" not in failed["next"]
+
+    passed = await handler({"name": "part", "script": PLATE, **EXPECT}, context)
+    assert (passed["passed"], passed["attempt"]) == (True, 3)
+    assert passed["next"].startswith("Every check passed.") and "expected_changed" not in passed
+    assert [json.loads(outputs.files[name])["attempt"] for name in ("part.report.json", "part-1.report.json", "part-2.report.json")] == [1, 2, 3]
+    assert "part-2.step" in outputs.files and "part.step" not in outputs.files and "part-1.step" not in outputs.files
+
+
 async def test_two_separate_bodies_are_not_one_part():
     script = 'a = cq.Workplane("XY").box(10, 10, 10)\nb = cq.Workplane("XY").box(10, 10, 10).translate((30, 0, 0))\nresult = a.union(b)\n'
     answer, files = await _build(script, bbox_xyz_mm=[40, 10, 10])

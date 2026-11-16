@@ -28,10 +28,17 @@ MESH_FULL_DETAIL_MM = 1000.0
 #: A harmless repeat (the same hole drilled twice) is refused with it: the line is not
 #: needed, and nothing here can tell the two apart.
 _REDUNDANT = " Delete this line if the part is right without it."
+#: The same for a line inside a loop, where the line is every pass and only this pass does nothing.
+_REDUNDANT_PASS = " Leave this pass out if the part is right without it."
 _OFF_THE_PART = "removed no material: it is off the part, or the material there is already gone." + _REDUNDANT
 _INSIDE_THE_PART = "added no material: the new body lies inside the part, so check its position and direction." + _REDUNDANT
 _MUST_CHANGE = {
-    "cutBlind": "removed no material: a positive distance cuts away from the part, so use a negative distance to cut into it, and check that the outline lies on the part." + _REDUNDANT,
+    # One sentence for every way a blind cut removes nothing: the wrong way, beside the part, or twice.
+    "cutBlind": (
+        "removed no material: the cut ran away from the material, started beside it, or the material there is already gone. "
+        "A blind cut runs against the workplane's normal for a negative distance (into the part from a face it was taken from) and along it for a positive one. "
+        "Check the face it starts from: faces('>Z') is the highest face of the part as it is now, which a boss or a lip added earlier has moved." + _REDUNDANT
+    ),
     "cutThruAll": _OFF_THE_PART,
     "hole": _OFF_THE_PART,
     "cboreHole": _OFF_THE_PART,
@@ -67,6 +74,17 @@ class BuildFailed(Exception):
         self.message = message
 
 
+#: Operations that make or reshape a solid: a branch of a script that holds one did work on the part.
+_SHAPING = frozenset(_MUST_CHANGE) | {"fillet", "chamfer", "translate", "rotate", "mirror"}
+
+
+def _failed(operation, message: str) -> BuildFailed:
+    """A failure of one operation; inside a loop, with the pass it happened in, since the line alone names them all."""
+    if not operation.where:
+        return BuildFailed(operation.line, operation.method, message)
+    return BuildFailed(operation.line, operation.method, f"{message.replace(_REDUNDANT, _REDUNDANT_PASS)} (in {operation.where})")
+
+
 def _state(part) -> tuple[float, int] | None:
     """Volume and face count of the solid a workplane stands for."""
     try:
@@ -81,7 +99,7 @@ def _check_effect(operation, before: tuple[float, int] | None, made, cq) -> None
     # A cut or an intersection that leaves nothing puts an empty compound on the stack, and
     # looking for the solid then walks back to the part as it was before the operation.
     if any(isinstance(item, (cq.Solid, cq.Compound)) and not item.Solids() for item in made.objects):
-        raise BuildFailed(operation.line, operation.method, f"{operation.method}() left no solid: nothing remains of the part after this operation")
+        raise _failed(operation, f"{operation.method}() left no solid: nothing remains of the part after this operation")
     effect = _MUST_CHANGE.get(operation.method)
     if effect is None or before is None or dict(operation.arguments).get("combine") is False:
         return  # combine=False makes a body of its own: it is not meant to change this one
@@ -89,7 +107,7 @@ def _check_effect(operation, before: tuple[float, int] | None, made, cq) -> None
     # The faces as well as the volume: a real cut of a millimetre in a part of metres is
     # below any tolerance on the volume, and it still adds faces.
     if after is not None and after[1] == before[1] and abs(after[0] - before[0]) <= 1e-12 * max(before[0], 1.0):
-        raise BuildFailed(operation.line, operation.method, f"{operation.method}() {effect}")
+        raise _failed(operation, f"{operation.method}() {effect}")
 
 
 def _used_by_result(program: Program) -> set[int]:
@@ -110,6 +128,11 @@ def _used_by_result(program: Program) -> set[int]:
 
 def run_program(program: Program, cq):
     """Return the Workplane the script's result names. *cq* is the imported cadquery module."""
+    return build_parts(program, cq)[program.result]
+
+
+def build_parts(program: Program, cq) -> list:
+    """Perform every operation of the script; the part each one made, by its position."""
     parts: list = []
     used = _used_by_result(program)
     for slot, operation in enumerate(program.operations):
@@ -126,16 +149,90 @@ def run_program(program: Program, cq):
                     _check_effect(operation, before, made, cq)
                 parts.append(made)
             else:
-                raise BuildFailed(operation.line, operation.method, "this operation is not on the allow-list")
+                raise _failed(operation, "this operation is not on the allow-list")
         except BuildFailed:
             raise
         except MemoryError:
-            raise BuildFailed(operation.line, operation.method, "the kernel ran out of memory on this operation") from None
+            raise _failed(operation, "the kernel ran out of memory on this operation") from None
         except Exception as exc:
             detail = " ".join(str(exc).split())[:300] or type(exc).__name__
             hint = _HINTS.get(operation.method)
-            raise BuildFailed(operation.line, operation.method, f"{operation.method}() failed: {detail}" + (f". Likely cause: {hint}." if hint else "")) from None
-    return parts[program.result]
+            raise _failed(operation, f"{operation.method}() failed: {detail}" + (f". Likely cause: {hint}." if hint else "")) from None
+    return parts
+
+
+def _holds_solid(part) -> bool:
+    """Whether a workplane stands for a solid. Looked up, not measured: measuring every spare body took seconds."""
+    try:
+        part.findSolid()
+    except Exception:
+        return False
+    return True
+
+
+def left_out(program: Program, parts: list) -> tuple[list[int], dict[int, int]]:
+    """What a script built and left out of its result: whole bodies, and passes of a loop.
+
+    Returns the line each left-out body starts on, one entry per body, and for each
+    loop, by its line, how many of its passes did work on the part that did not reach
+    the result. Both are the usual slips in a loop: each pass builds a body and the
+    last one alone is the result, or each pass starts from the same part, so only the
+    last pass's work is kept.
+
+    Not counted, because nothing is missing from the part:
+    - an outline or a selection, which is no work, and a branch off the result
+      outside a loop, which is a trial;
+    - a tool made ready for a pass that never came (a cutter moved on after its last
+      cut): left over in the last pass, where the same call's outcome was used in
+      every pass before;
+    - a part put together again in every pass (result = body.union(lid) inside the
+      loop): dropped in the earlier passes, where the same call's outcome in the
+      last pass is in the result and stands on what that pass carried.
+    """
+    operations = program.operations
+    used = _used_by_result(program)
+    consumed = {operation.receiver for operation in operations if operation.receiver is not None}
+    consumed.update(value.slot for operation in operations for _, value in operation.arguments if isinstance(value, Ref))
+    #: The passes of each call, by the run of its innermost loop: {(call, passes around that loop): {pass number: operation}}.
+    runs: dict[tuple, dict[int, int]] = {}
+    for slot, operation in enumerate(operations):
+        if operation.passes:
+            runs.setdefault((operation.site, operation.passes[:-1], operation.loop), {})[operation.passes[-1][1]] = slot
+
+    def same_call(slot: int) -> dict[int, int]:
+        operation = operations[slot]
+        return runs[(operation.site, operation.passes[:-1], operation.loop)]
+
+    def made_ready(slot: int) -> bool:
+        earlier = [other for number, other in same_call(slot).items() if number < operations[slot].passes[-1][1]]
+        return operations[slot].last and bool(earlier) and all(other in used for other in earlier)
+
+    def put_together_again(slot: int, ancestor: int) -> bool:
+        final = max(same_call(slot).items())[1]
+        return not operations[slot].last and final in used and operations[ancestor].passes == operations[slot].passes
+
+    bodies: dict[int, int] = {}
+    passes: dict[int, set[tuple]] = {}
+    for slot, operation in enumerate(operations):
+        if slot in used or slot in consumed:
+            continue
+        chain = [slot]
+        ancestor = operation.receiver
+        # A workplane the result also started from is not the part until it holds a solid.
+        while ancestor is not None and not (ancestor in used and _holds_solid(parts[ancestor])):
+            chain.append(ancestor)
+            ancestor = operations[ancestor].receiver
+        if ancestor is None:
+            # A body of its own, however many selections were made on it: counted once, where it starts.
+            start = next((index for index in reversed(chain) if index not in used), chain[-1])
+            if start not in bodies and _holds_solid(parts[slot]) and not (operation.passes and made_ready(slot)):
+                bodies[start] = operations[start].line
+        elif operation.passes and not made_ready(slot) and not put_together_again(slot, ancestor):
+            # Every pass the dropped chain did work in, not only the one it ends in.
+            worked = {operations[index].passes for index in chain if operations[index].loop == operation.loop and operations[index].method in _SHAPING}
+            if worked:
+                passes.setdefault(operation.loop, set()).update(worked | {operation.passes})
+    return sorted(bodies.values()), {loop: len(dropped) for loop, dropped in sorted(passes.items())}
 
 
 def solid_of(part):

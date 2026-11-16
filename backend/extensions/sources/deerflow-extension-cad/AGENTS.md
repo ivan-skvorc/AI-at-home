@@ -23,7 +23,19 @@ cd ../../backend && python -m pytest tests/test_cad_extension.py tests/test_cad_
 - **A new method is a table row with typed arguments, an example that builds and
   a signature that matches the kernel.** Methods that take a path, a callable, a
   font or a raw kernel object stay off the list. A new string kind needs a
-  closed pattern, because CadQuery parses selector strings itself.
+  closed pattern, because CadQuery parses selector strings itself. After a
+  change to the table, regenerate the skill's page, which a test compares:
+  `python deerflow_extension_cad/allowlist.py > ../../skills/public/cad-modeling/references/operations.md`.
+- **A loop is unrolled by the reader and never reaches the kernel as a loop.**
+  What it runs over must be known when the script is read, so the program stays
+  the flat list the written-out statements give. A construct whose outcome
+  depends on a build (`if` on a measurement, `while`) does not fit that and
+  stays refused; every construct added to the reader widens the boundary.
+  Passes do not bound reading time, `MAX_WORK` does: count there whatever a
+  new construct makes the reader walk.
+- **The tool's answers are the loop's control.** A model repairs and rebuilds on
+  what `next` says, and a host test pins each sentence to its state. Reword one
+  only together with `skills/public/cad-modeling`, whose test quotes them.
 - **Arguments are checked before the kernel starts.** CadQuery accepts wrong
   types silently and hangs on non-finite numbers, so the table decides, not the
   kernel.
@@ -47,6 +59,7 @@ cd ../../backend && python -m pytest tests/test_cad_extension.py tests/test_cad_
   before its first step does nothing, and the host also runs tools on loops
   that end at once: the kill is direct and the release is a done callback.
 - **The tool description is paid on every request.** The context-fit critical
-  check has about forty tokens to spare with this tool on every request,
-  fourteen with a workflows option on: shorten elsewhere before adding a word,
-  and keep parameter meaning in the names.
+  check has under forty tokens to spare with this tool on every request, nine
+  with a workflows option on: shorten elsewhere before adding a word, and keep
+  parameter meaning in the names. A small model gets the sentences before
+  `Methods:` and nothing after, so what it cannot do without goes first.

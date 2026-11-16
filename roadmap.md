@@ -129,8 +129,8 @@ Open items, one line each. The full orchestrator prompts follow.
   an empty chat, in the light and dark themes, and not from the marketing landing page.
 - **42. One card, one turn** — Ollama and training stay on the daily PC; the home server
   only serves the pages; a training run and a chat take turns on the 3090.
-- **45. A CAD skill** — the prompt: ask what is missing, write the numbers down, call the
-  tool, read the numbers back, and never present a part that failed.
+- **45. The CAD skill, proven on real models** — the skill and the tool's attempt count
+  landed (FORK.md §51); what is open is running them on a cloud model and a local one.
 - **46. 3D files open in the artifact panel** — GLB and STL rotate in the panel and the
   reader, on a phone too; STEP after that.
 - **47. Geometry decides a delegated part** — a subagent's part passes on the existing
@@ -141,6 +141,8 @@ Open items, one line each. The full orchestrator prompts follow.
   without a terminal; the daemon downloads, under operator limits.
 - **50. Full scripts where a container exists** — unrestricted build123d and CadQuery, and
   a native FreeCAD file, for the parts the allow-list cannot express.
+- **51. A part made of several bodies** — a print-in-place hinge is loose bodies with a
+  gap; the tool delivers one solid and says so.
 
 **Suggested order for 19–25.** Voice first (19), since it is the one missing modality and it
 closes a live privacy leak. Then the injection boundary (23), *before* anything widens the
@@ -163,9 +165,10 @@ else wants the card. 41 last of the three, once the URLs it opens are real; its 
 specified in [docs/companion-apps.md](docs/companion-apps.md), not designed again in the
 change.
 
-**Suggested order for 45–50.** 43 and 44 landed (FORK.md §50 and §51): the module builds
-and checks a part on the default sandbox. 45 first: the module can build and measure, and
-a model left alone still presents its first attempt. 46 next, since a part nobody can look
+**Suggested order for 45–51.** 43 and 44 landed (FORK.md §50 and §51): the module builds
+and checks a part on the default sandbox, and the skill and the attempt count of 45 landed
+with it. 45's remainder first: nothing here has seen a real model follow the skill. 51 when
+a request needs it; the first real request did. 46 next, since a part nobody can look
 at is half delivered. 47 before CAD is used in Ultra or Plus Ultracode, where subagents
 report on their own work. 48 after 45, and again after every change to the allow-list.
 49 is independent of the rest. 50 only if 48 shows that the allow-list, and not the model,
@@ -1174,45 +1177,43 @@ insider's matching gate, `ollama.gpu_lock_file`. In FrontalRobotomy:
 
 ---
 
-## 45. A CAD skill
+## 45. The CAD skill, proven on real models
 
 **Goal** — A request for a part follows the same short procedure on every model: ask for
-what is missing, write the numbers down, write the script, call the tool, read the numbers
-back, repair, hand over the files.
+what is missing, write the requirements down, write the script, call the tool, read the
+numbers back, repair, hand over the files. The procedure exists; this item is the proof.
 
-**Why it fits** — The tool can build and measure. It cannot decide what to build, and a
-model left alone presents its first attempt. A skill is where this fork keeps a procedure;
-it is listed by name on a local model, so it costs the window nothing until it is used; and
-it is read with the file tools, so it needs no shell.
+**What landed** (FORK.md §51) — `skills/public/cad-modeling/` with `SKILL.md`,
+`references/operations.md` generated from the allow-list and `references/failures.md`;
+`tests/skills/test_cad_modeling.py`, which fails when the skill and the module differ;
+`for` loops in scripts; and in the tool the attempt count (eight builds of a part in a
+run, then stop and report), the expected numbers held from a part's first build, and an
+answer that always ends with what to do next.
 
-**Depends on** — nothing open. The module shipped (FORK.md §51,
-`examples/deerflow-extension-cad`); its allow-list is data, one summary and one example
-per method in `allowlist.py`, which is what `references/` is generated from. The tool
-takes `name`, `script`, `bbox_xyz_mm`, and optionally `volume_min_max_mm3` and
-`hole_diameters_mm` (one diameter per expected hole).
+**Why it is still open** — None of it has been followed by a real model in this
+repository. The first real request (a print-in-place laptop stand, on a cloud model) hit
+the loop refusal that is now fixed and would next hit item 51. Whether a local 32K model
+finds the skill by name in its index and follows seven steps is not known.
+
+**Depends on** — nothing open.
 
 **Scope**
 
-- `skills/public/cad-modeling/`: `SKILL.md` and `references/`. No scripts.
-- The procedure: at most three questions when a dimension is missing; millimetres; every
-  dimension a named variable at the top of the script; the expected numbers passed to
-  `cad_build` with the script; at most three repair rounds unless the user raises it; a
-  failed part is reported as failed with its numbers, never presented; assumptions stated.
-- `references/` holds the allow-listed operations with one example each, and the common
-  failures with their fixes. It is generated from the module's allow-list, and a test
-  fails when the two differ.
-- Without `cad_build` in the tool list, the skill says the CAD module is not installed and
-  stops. It does not imitate the tool.
-- With item 50 present, it names the container route for parts the allow-list refuses.
+- Run three requests on one cloud model and on one local model at a 32K window: a plate
+  with holes, an L-bracket, an enclosure with a lid. Record attempts, refusals and where
+  the model left the procedure.
+- Change the skill and the tool's `next` sentences from what those runs show, tests
+  first: both are pinned (`test_cad_modeling.py`, `test_cad_extension.py`).
+- A conversation without the module ends with the install instruction and no invented
+  geometry.
+- With item 50 present, the skill names the container route for parts the allow-list
+  refuses.
 
-**Key files** — `skills/public/cad-modeling/` (new), `tests/skills/` (the offline test
-that the reference matches the allow-list), `skills/AGENTS.md` (one sentence, if a skill
-that depends on an extension's tool needs a rule).
+**Key files** — `skills/public/cad-modeling/`, `tests/skills/test_cad_modeling.py`,
+`examples/deerflow-extension-cad/deerflow_extension_cad/tool.py` (the `NEXT_*` sentences).
 
-**Done when** — a plate with holes, an L-bracket and an enclosure with a lid each pass on
-one cloud model and on one local model at a 32K window; a conversation without the module
-ends with the install instruction and no invented geometry; and the reference cannot drift
-from the allow-list without a red test.
+**Done when** — the three parts each pass on both models within the attempt limit, and
+what the runs changed in the skill is recorded in FORK.md §51.
 
 ---
 
@@ -1414,6 +1415,42 @@ container mode). It adds nothing to the default install.
 passes the same report; the same conversation on the default sandbox ends with the refusal
 and its reason, not an attempt; and the FreeCAD variant, when present, produces a file
 whose sketch and pad are editable in FreeCAD.
+
+---
+
+## 51. A part made of several bodies
+
+**Goal** — A design of loose bodies that belong together (a print-in-place hinge, a
+captive nut, a chain) is built, checked and delivered as one file.
+
+**Why it fits** — `cad_build` passes a part only when it is exactly one solid. That is
+right for a bracket and wrong for anything that moves after printing: the first real
+request was a folding laptop stand with an accordion hinge. Today the answer says the
+tool cannot deliver it, so the model stops instead of spending its attempts.
+
+**Depends on** — nothing open. Loops (FORK.md §51) are what make such a script short
+enough to write.
+
+**Scope**
+
+- An expected body count in the call, one by default. It costs tokens of every request:
+  the context-fit critical check has nine to spare in its heaviest documented case, so
+  the description is shortened elsewhere first.
+- The check becomes "the expected number of valid, closed solids". Volume is their sum
+  and the bounding box their union, which the re-import already measures.
+- The smallest gap between two bodies is measured and reported, and may be given as a
+  minimum. Bodies that touch or overlap would have been joined by `union()`, so the gap
+  is the print-in-place property that matters.
+- Hole measurement per body: `measure.py` decides material or air on one solid today.
+- STEP, STL and GLB hold all bodies in their built positions.
+
+**Key files** — `examples/deerflow-extension-cad/deerflow_extension_cad/tool.py`
+(`decide`, the schema), `measure.py`, `build.py` (`solid_of`, `export`), the package
+tests, `skills/public/cad-modeling/`.
+
+**Done when** — a two-link hinge with a 0.3 mm gap passes with a body count of three and
+fails with a gap of zero; a one-body part behaves exactly as before; and the fixed
+request still fits the allowance.
 
 ---
 

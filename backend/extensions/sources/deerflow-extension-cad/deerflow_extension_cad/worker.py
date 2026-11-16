@@ -19,6 +19,8 @@ from pathlib import Path
 
 REQUEST_FILE = "request.json"
 RESULT_FILE = "result.json"
+#: Lines of bodies and of loops left out of the result that an answer names; the counts are said in full.
+MAX_UNUSED_SAID = 5
 PHASE_FILE = "phase"
 
 
@@ -81,7 +83,8 @@ def main() -> None:
 
     try:
         _phase("building")
-        part = build.run_program(program, cq)
+        parts = build.build_parts(program, cq)
+        part = parts[program.result]
         _phase("exporting")
         files, mesh = build.export(build.solid_of(part), cq, Path.cwd(), max_export_bytes)
         _phase("measuring")
@@ -89,6 +92,13 @@ def main() -> None:
         measured["mesh"] = mesh
         if build.unused_outline(part):
             measured["unused_outline"] = True
+        bodies, passes = build.left_out(program, parts)
+        if bodies:
+            measured["unused_bodies"] = len(bodies)
+            # One more than an answer names, so it can say that there are more.
+            measured["unused_body_lines"] = sorted(set(bodies))[: MAX_UNUSED_SAID + 1]
+        if passes:
+            measured["dropped_passes"] = [{"loop_line": line, "passes": count} for line, count in passes.items()][: MAX_UNUSED_SAID + 1]
     except build.BuildFailed as failed:
         _answer({"status": "failed", "line": failed.line, "operation": failed.operation, "message": failed.message})
         return

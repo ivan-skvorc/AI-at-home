@@ -7,6 +7,9 @@ Three places must agree, and none of them drifts loudly on its own:
   uv installs from (the Docker build context excludes ``examples/``);
 - ``config.example.yaml``'s ``plugins:`` record turns it on.
 
+A fourth follows from the first: ``skills/public/cad-modeling/references/operations.md``
+is the allow-list as a model reads it.
+
 An edit to the example that skips the snapshot ships stale code to every
 install while every CAD test stays green against the example. For a module
 whose interpreter is a security boundary, stale is the wrong default.
@@ -57,6 +60,16 @@ def test_the_installed_snapshot_matches_the_example_source():
     assert snapshot.keys() == example.keys(), hint
     stale = sorted(name for name in example if example[name] != snapshot[name])
     assert not stale, f"{hint}; stale: {stale}"
+
+
+def test_the_skills_operations_page_is_the_installed_allow_list():
+    # The cad-modeling skill teaches a model the methods a script may call. Its own test runs in
+    # Skill Review CI, which a change to the allow-list alone does not start: this one runs with it.
+    allowlist = pytest.importorskip("deerflow_extension_cad.allowlist", reason="the CAD module is not installed on this host")
+
+    page = REPO_ROOT / "skills" / "public" / "cad-modeling" / "references" / "operations.md"
+    hint = "regenerate it: python examples/deerflow-extension-cad/deerflow_extension_cad/allowlist.py > skills/public/cad-modeling/references/operations.md"
+    assert page.read_text(encoding="utf-8") == allowlist.reference(), hint
 
 
 def test_the_backend_installs_it_from_the_snapshot_only_where_the_kernel_has_wheels():
