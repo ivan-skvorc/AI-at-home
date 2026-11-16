@@ -29,9 +29,13 @@ from dataclasses import dataclass
 from pathlib import PurePosixPath, PureWindowsPath
 from typing import Any, Literal
 
+from deerflow.constants import DEFAULT_SKILLS_CONTAINER_PATH
+
 USER_DATA_PREFIX = "/mnt/user-data"
 ACP_WORKSPACE_PREFIX = "/mnt/acp-workspace"
-DEFAULT_SKILLS_PREFIX = "/mnt/skills"
+# The skills literal is owned by deerflow.constants
+# (tests/test_skill_container_path_defaults.py).
+DEFAULT_SKILLS_PREFIX = DEFAULT_SKILLS_CONTAINER_PATH
 
 #: Database limits of the ledger columns (see persistence/folder_ledger/model.py).
 MAX_MOUNT_PATH_CHARS = 512
