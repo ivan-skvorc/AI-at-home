@@ -2373,3 +2373,146 @@ provider send. A provider call already started may still complete; it cannot be
 retracted. All Gateway workers must be upgraded to honor the shared preference.
 Migration `0041_im_notice_preferences` adds only a small owner/provider preference
 table; downgrade removes these choices, so subsequent upgrades use defaults.
+
+## Conversation title preference
+
+`GET /api/settings/auto-title` returns the caller's **Settings → Conversation
+titles** preference, `{"enabled": bool, "model_name"?: str}`; never set, it is
+`{"enabled": true}` with no `model_name` key. `PUT /api/settings/auto-title`
+replaces the whole value with the same shape and returns the normalized stored
+value. `model_name` has three states: the key **absent** (or `null` in a request)
+follows `config.yaml -> title.model_name`, `""` renames without a model call, and
+a name picks that model. A name is at most 200 characters (422 above) and is not
+checked against the catalog when stored; a run drops a name the catalog does not
+hold. Stored per user in `ui_state.json` beside the chat folders; per user, no
+admin gate; not reachable with a PAT.
+
+The Gateway applies the stored value when it admits every run the user owns,
+whatever started it (browser, IM channel, scheduler, workflow or extension child
+run). `auto_title_enabled` is AND-ed: a stored `false` overrides a request's
+`true`, a request's `false` stays, and `true` is never written into the run.
+`auto_title_model_name` is the request's when the request carries the key,
+otherwise the stored one. A store that cannot be read is logged and the run is
+admitted with its request context. The operator's `title.enabled: false` still
+wins over everything.
+
+## Renaming without reordering
+
+`POST /api/threads/{thread_id}/state` accepts an optional top-level
+`"preserve_recency": true`. When the update changes the title, the thread's
+`display_name` is synced as usual but `updated_at` is kept, so a bulk rename does
+not move conversations in the recency-ordered sidebar. Without it (the default)
+a rename bumps `updated_at` as before. The 409 for a thread with a run in flight
+is unchanged.
+
+## Chat clean-up
+
+Two read-only routes back the sidebar's clean-up mode. Neither writes a title or
+a folder: the client applies the reviewed plan through the ordinary routes (the
+placement-only `PATCH /api/threads/{thread_id}`, `PUT
+/api/settings/chat-folders`, and `POST .../state` with `preserve_recency`). Both
+require `runs:create`, are browser-only (not on the PAT allowlist), default to
+`config.yaml -> title.model_name` and then the default model when `model_name` is
+omitted, and give the model 180 seconds.
+
+`POST /api/threads/{thread_id}/organize/suggest` (owner-checked) reads one
+conversation and suggests a title and a folder.
+
+```json
+{"model_name": null, "rename": true, "mode": "auto",
+ "targets": [{"id": "f1", "name": "Work"}], "existing": [{"id": "f1", "name": "Work"}]}
+```
+
+`mode` is required: `none` (title only), `targets` (pick one of `targets`, at most
+50) or `auto` (a free `category` plus a one-sentence `summary`; `existing`, at
+most 50, is offered for reuse). The response is `{thread_id, current_title,
+title, title_changed, rename_disabled, target_id, category, summary,
+model_name}`. `title_changed` is false when the model kept the current title,
+ignoring case and spacing; `target_id` is always one of the offered ids or null.
+`rename_disabled` is true when `title.enabled: false`, which turns renaming off
+but not filing; with mode `none` and nothing to rename the route answers without
+reading or calling a model. The model sees the first two and the last visible
+exchange plus a compaction summary, redacted when `pii_redaction.enabled`, and
+the call is billed to the thread under the auxiliary category `organize` before
+its reply is parsed.
+
+`POST /api/chat-organize/consolidate` (auto mode) merges the categories into
+folders.
+
+```json
+{"model_name": null,
+ "items": [{"thread_id": "t1", "category": "Taxes", "title": "2025 return", "summary": "…"}],
+ "existing": [{"id": "f1", "name": "Work"}], "max_new_folders": 8, "min_group_size": 2}
+```
+
+`items` holds 1–200 conversations, every one owned by the caller; `max_new_folders`
+is 1–20 (default 8). The response is `{"folders": [{"name", "existing_folder_id",
+"thread_ids"}], "unfiled": [...], "model_name"}`. Categories that differ only in
+case or punctuation are merged first, and one equal to an existing folder's name
+maps to that folder; the model is called only for labels still apart, and
+`model_name` is null when it was not. A new folder needs `min_group_size`
+conversations, and new folders never exceed `max_new_folders` nor the room left
+under the 50-folder registry limit; the rest are `unfiled`. The call is billed
+under `organize`, split evenly across the real conversations whose labels it
+merged. A reply that cannot be used returns the deterministic plan (200), still
+billed.
+
+**Errors (both):** `400` unknown model; `403` model not allowed for the caller,
+checked before any conversation is read or probed; `402` spend cap exceeded (the
+run-admission check; for consolidate only when a model call is needed); `404`
+thread missing or not the caller's; `409 {"code": "empty"}` nothing to organize
+(suggest); `422 {"code": "no_targets"}` targets mode without targets, `422
+{"code": "too_many_for_model"}` the prompt cannot fit the model's window; `502
+{"code": "model_failed"}` provider error, `502 {"code": "unusable_reply"}`
+(suggest); `504 {"code": "timeout"}`. Coded errors carry `detail: {"code",
+"message"}`.
+
+## Folder ledger
+
+`/api/folder-ledger` reports which conversations created or edited the top-level
+entries of writable custom `sandbox.mounts`, and offers their deletion after the
+last such conversation is deleted. All routes are browser-only (not on the PAT
+allowlist). Without SQL persistence (`database.backend: memory`) the thread list
+and the orphan query answer `{"available": false}` with empty lists, and the
+other routes answer `503`.
+
+- `GET /threads/{thread_id}/folders` (`threads:read`, owner check) →
+  `{"available", "folders": [{"id", "path", "name", "mount_path", "kind":
+  "dir"|"file", "role": "created"|"edited"|"inherited", "created_here",
+  "created_attribution": "observed_create"|"preexisting"|"inferred_shell",
+  "first_at", "last_at", "writes", "edits", "shell_ops", "other_live_threads",
+  "host_visible"}]}`. `path` is the container path (`/mnt/projects/acme`).
+- `GET /folders/{folder_id}` (`threads:read`) → `{"folder": {…same fields, "role":
+  null}, "threads": [{"thread_id", "own", "title", "role", "first_at", "last_at",
+  "deleted"}], "events": [{"thread_id", "run_id", "op":
+  "write"|"append"|"edit"|"shell", "rel_path", "ts"}]}`, events newest first and
+  capped. Visible to the folder's creator and to users with a conversation that
+  touched it, otherwise `404`. Another user's conversation appears under a stable
+  `other-…` pseudonym, with `title` and `run_id` null.
+- `POST /orphans` (`threads:read`), body `{"thread_ids": [...]}` (at most 500;
+  ids of other users' threads select nothing) → `{"available", "orphans": [{"id",
+  "path", "name", "mount_path", "created_by_thread_id", "created_attribution",
+  "last_at", "writes", "edits", "deletable", "reason"}]}`: folders those threads
+  touched that no live conversation of any user still uses, and that are neither
+  deleted nor dismissed. A hidden edit version or Side Chat whose root is gone
+  does not count as live. `reason` is `preexisting`, `not_creator`,
+  `unsupported_platform`, `mount_unavailable` or `host_not_visible` when
+  `deletable` is false. `created_by_thread_id` is set only when one of the
+  caller's conversations created the folder.
+- `DELETE /folders/{folder_id}?confirm_name=<name>` (`threads:delete`) →
+  `{"deleted": true}`. Refusals carry `detail: {"code", "message"}`: `404`
+  invisible or already deleted; `403 preexisting` (it existed before a
+  conversation used it) or `not_creator` (only the user whose conversation created it, or an admin);
+  `422 confirm_name`, `invalid_name`, `mount_unavailable` (no longer configured
+  writable), `host_not_visible`, and from the filesystem step `link`,
+  `unsupported_type`, `protected` (it contains another mount's host directory or
+  DeerFlow's data directory) or `unsupported_platform`; `409 in_use` when a live
+  conversation uses it again. The delete is descriptor-relative, never follows a
+  link, never removes the mount root and is not retried. An entry already gone
+  from disk is marked deleted and answers `{"deleted": true}`.
+- `POST /folders/{folder_id}/dismiss` (`threads:delete`) → `{"dismissed": true}`:
+  keep the folder and stop offering it until it is used again.
+
+`DELETE /api/threads/{thread_id}` marks the thread's ledger entries as deleted,
+and creating a branch copies the parent's live entries to the branch as
+`inherited`; both are best effort and never fail the thread operation.

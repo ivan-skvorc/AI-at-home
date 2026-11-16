@@ -2,7 +2,7 @@
 
 Split out of [`frontend/AGENTS.md`](../../../AGENTS.md) to keep it within its
 guidance budget (`scripts/check_agent_guidance.py`). Every rule here is a fork
-feature (FORK.md §26, §32, §35), and none fails a build when broken.
+feature (FORK.md §26, §32, §35, §52), and none fails a build when broken.
 
 **No image-generation entry in the sidebar.** `workspace-header.tsx` carries
 exactly two entries under _New chat_: Democracy, and nothing else. Image
@@ -21,7 +21,7 @@ back, change the test in the same commit so the decision is visible.
 the fork's folder-aware root list _and_ upstream's per-project groups in
 `projects-section.tsx`, which imports it. Do **not** grow a second copy for one of those
 lists: the row's action menu (pin, move to folder, move to project, rename, share,
-export, archive, delete) is the whole feature, and a copy that is missing an entry still
+export, archive, delete, select, show files) is the whole feature, and a copy that is missing an entry still
 renders perfectly — the action is simply unreachable from that one list, with nothing
 failing. The folder half (FORK.md §32) rides in as an optional `folderMenu` node the
 caller builds, so a project group passes nothing and the submenu does not render, rather
@@ -66,6 +66,47 @@ serves every drop target; every folder action also has a menu path because
 HTML5 DnD is unreachable by keyboard. Tests:
 `tests/unit/core/threads/chat-folders.test.ts`,
 `tests/e2e/sidebar-chat-folders.spec.ts`.
+
+**Multi-select (FORK.md §52)** — `components/workspace/sidebar-selection.tsx`
+(store, provider, hosted dialogs) over the pure model in
+`core/threads/thread-selection.ts`. Five rules, each silent when broken:
+
+- **The checkbox is a sibling of the link, never its parent.** It sits in the
+  `<li>` beside the `Link`, absolutely positioned, and the link gets `pl-7`.
+  Wrapping the link breaks its drag payload (§32) and the e2e locators that
+  climb from it (`thread-delete-confirm.spec`'s `xpath=..`,
+  `a[data-sidebar="menu-button"]`). A selecting link carries
+  `data-thread-selecting`, which the mobile drawer's capture-phase handler skips
+  so a tap ticks the row instead of closing the drawer.
+- **The store is per provider and sits above the sidebar frame**, next to
+  `ThreadDeleteDialogProvider` in `workspace-sidebar.tsx`. The lists unmount
+  when the sidebar collapses and virtualize past 60 rows, so a selection kept in
+  a row or a list vanishes with it; the bulk-delete and clean-up dialogs are
+  hosted by the provider for the same reason. A row reads its own status through
+  `useSyncExternalStore`; a list that only needs to know whether selection is on
+  uses `useSidebarSelectionActive`, because `useSidebarSelectionState`
+  re-renders on every tick.
+- **A range comes from the data order the lists render, never from the DOM.**
+  Each list registers its rendered array (project groups at rank `[0, i]`, the
+  folder tree depth-first then the root list at rank `[1]`, nothing under a
+  collapsed folder) and `combineSelectionOrder` stacks them. Most rows of a long
+  list are not mounted, so a range read off the document skips them.
+- **`notifyThreadsDeleted` fires once per user action**, with every deleted id
+  including Side Chat ids, and not at all when nothing was deleted. Bulk delete
+  calls it once for the batch and must not loop over `useDeleteThread`, which
+  notifies on each call; the folder ledger's deletion offer (§54) keys on it.
+- **Folder creation is one fold.** New folder from selection, and any code that
+  creates several folders, goes through `createFolders(names, parentId)` in
+  `core/threads/use-chat-folders.ts`, which reads the latest list from the query
+  cache and saves under `scope: {id: CHAT_FOLDERS_MUTATION_SCOPE}`. Two
+  `createFolder` calls from a render closure each start from the same stale
+  list and keep only the last folder.
+
+Tests: `tests/unit/core/threads/thread-selection.test.ts`,
+`tests/unit/core/threads/bulk-thread-actions.dom.test.tsx`,
+`tests/unit/core/threads/use-chat-folders.dom.test.tsx`,
+`tests/unit/components/workspace/sidebar-selection.dom.test.tsx`,
+`tests/e2e/sidebar-multi-select.spec.ts`.
 
 **The sidebar's chat lists virtualize inside a scroll container they do not own
 (FORK.md §35).** Past 60 rows `VirtualThreadList` mounts a window, but the
