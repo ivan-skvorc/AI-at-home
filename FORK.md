@@ -4790,7 +4790,7 @@ non-Latin figure, the step tool, where progress and cancel live, that a later
 phase may be a new workflow), and the Script workflows page labels a run with
 its real mode — a Plus run used to be labelled "Double Plus Ultracode run". The
 price is context: the fixed request of an Ultracode run on a 32K model is now
-11,832 tokens (Plus) and 11,958 (Double Plus) of the 12,000 that §47 allows,
+11,838 tokens (Plus) and 11,963 (Double Plus) of the 12,000 that §47 allows,
 measured with `shared_workspace: off` and with the bundled CAD tool (§51) on
 every request; the `read` and `write` sentences are about 25 and 15 tokens
 longer, which the critical check now measures too. Two operational notes: `worker.py`, `service.py`,
@@ -5227,12 +5227,13 @@ says:
   `REQUEST_FIT_SHARE` × prompt space − `FIXED_REQUEST_ALLOWANCE_TOKENS` (12,000).
 
 Result on the stock config and a synced 32K entry, as the guard sends it: Flash
-7,574 tokens (14,544 left for the conversation), Pro 7,909, Ultra 10,299, Plus
-Ultracode 11,832, Double Plus Ultracode 11,958 (10,160 left). The two Ultracode
+7,579 tokens (14,539 left for the conversation), Pro 7,915, Ultra 10,305, Plus
+Ultracode 11,838, Double Plus Ultracode 11,963 (10,155 left). The two Ultracode
 figures were 11,354 and 11,434 until 2026-11-11, when the brief gained the
 limits the lead was never told and the extension a seventh tool (§44), and each
 figure rose by 144 on 2026-11-15, when the CAD module's tool began to ride every
-request (§51). 42 tokens of the allowance remain in Double Plus, 14 with
+request (§51), and by 5 on 2026-11-16 with its loop wording and the `cad-modeling`
+skill's name in the index. 37 tokens of the allowance remain in Double Plus, 9 with
 `shared_workspace: read`, so new brief or tool text has to replace old text.
 Measured with `shared_workspace: off` unless said otherwise.
 
