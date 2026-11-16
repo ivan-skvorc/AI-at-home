@@ -287,6 +287,9 @@ async def test_a_check_added_later_is_held_and_not_reported_as_a_change(cad, out
     # The same numbers written as floats are the same numbers.
     same, _, _ = await _call(cad, outputs, monkeypatch, ONE_HOLE, run="run-1", bbox_xyz_mm=[60.0, 40.0, 6.0], volume_min_max_mm3=[14000.0, 14400], hole_diameters_mm=[4.0, 4])
     assert "expected_changed" not in same
+    # And numbers closer than the tool's own tolerance, which a model copies back from "measured".
+    close, _, _ = await _call(cad, outputs, monkeypatch, ONE_HOLE, run="run-1", bbox_xyz_mm=[60.0000001, 40, 6], volume_min_max_mm3=[14000, 14400], hole_diameters_mm=[4.000001, 4])
+    assert "expected_changed" not in close
     # So are the same holes in another order: the check sorts them, and the answer prints them sorted.
     await _call(cad, outputs, monkeypatch, ONE_HOLE, run="run-1", name="two sizes", hole_diameters_mm=[6, 4])
     sorted_back, _, _ = await _call(cad, outputs, monkeypatch, ONE_HOLE, run="run-1", name="two sizes", hole_diameters_mm=[4, 6])
@@ -308,6 +311,13 @@ async def test_each_part_and_each_conversation_is_counted_apart(cad, outputs, mo
         again, _, _ = await _call(cad, outputs, monkeypatch, ONE_HOLE, run="run-9", hole_diameters_mm=[4, 4], name=f" {first.upper()}! ")
         assert (one["attempt"], two["attempt"], again["attempt"]) == (1, 1, 2), (first, second)
         assert "expected_changed" not in two
+    from deerflow_extension_cad.tool import part_key
+
+    # A vowel sign is part of a word: a screw and a punch are two parts. What cannot be seen is not part of a name.
+    assert part_key("पेंच") != part_key("पंच") and part_key("किला") != part_key("कुला")
+    assert part_key("plate\u200b") == part_key("ｐｌａｔｅ") == part_key("Plate") == "plate"
+    assert part_key("Hook rack") == part_key("hook-rack") == part_key(" HOOK_RACK! ")
+    assert part_key("Lid 1") != part_key("Lid 2") and part_key("!!!") == "!!!"
     from deerflow.config import paths
 
     elsewhere = paths.get_paths().sandbox_outputs_dir("thread-b", user_id="alice")

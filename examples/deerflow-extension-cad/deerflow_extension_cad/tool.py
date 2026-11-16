@@ -112,6 +112,8 @@ MAX_EXPECTED = 1e12
 MAX_ATTEMPTS = 8
 #: Parts whose builds are counted. An entry is a few hundred bytes; the cap only keeps the table from growing for ever.
 MAX_COUNTED_PARTS = 1000
+#: Lines of left-out bodies one note names.
+MAX_LINES_SAID = 5
 
 NEXT_FIX = "Attempt {attempt} of {limit}. Read what failed, change the script and call cad_build again with the same name. Keep the expected numbers: change one only if it was worked out wrongly. Do not present this part as finished."
 #: For a build whose script could not be stored: without its files it is not one of the part's attempts.
@@ -207,7 +209,13 @@ def part_key(name: str) -> str:
     Not the file stem: that is ASCII and cut at forty characters, so every name without
     a Latin letter would be the same part, and so would two long names that start alike.
     """
-    return re.sub(r"[\W_]+", " ", unicodedata.normalize("NFKC", name).casefold()).strip() or name
+    kept = []
+    for character in unicodedata.normalize("NFKC", name).casefold():
+        kind = unicodedata.category(character)
+        # Letters, digits and the marks that belong to a letter (a vowel sign is part of its word) make
+        # the name; what cannot be seen (a zero-width space) is dropped; everything else separates words.
+        kept.append(character if kind[0] in "LNM" else "" if kind == "Cf" else " ")
+    return " ".join("".join(kept).split()) or name
 
 
 # --- Deciding ---------------------------------------------------------------
@@ -255,15 +263,14 @@ def notes_on(measured: Mapping[str, Any]) -> list[str]:
     bodies = measured.get("unused_bodies") or 0
     if bodies:
         lines = sorted({line for line in measured.get("unused_body_lines") or [] if isinstance(line, int)})
-        where = f" (built on line {', '.join(map(str, lines))})" if lines else ""
+        where = f" (built on line {', '.join(map(str, lines[:MAX_LINES_SAID]))}{' and more' if len(lines) > MAX_LINES_SAID else ''})" if lines else ""
         notes.append(f"The script builds {bodies} bod{'y' if bodies == 1 else 'ies'}{where} that {'is' if bodies == 1 else 'are'} not part of the result: join {'it' if bodies == 1 else 'them'} with union(), or delete the lines.")
     for dropped in measured.get("dropped_passes") or []:
         count, line = dropped.get("passes"), dropped.get("loop_line")
         if isinstance(count, int) and isinstance(line, int):
-            one = count == 1
             notes.append(
-                f"{count} pass{'' if one else 'es'} of the loop on line {line} work{'s' if one else ''} on the part and {'its' if one else 'their'} outcome is not in the result: "
-                "each pass must start from the outcome of the one before it, for example result = result.hole(...)."
+                f"{count} pass{'' if count == 1 else 'es'} of the loop on line {line} do{'es' if count == 1 else ''} work on the part that is not in the result: "
+                "carry the part through the loop, for example result = result.hole(...), or delete the work."
             )
     if measured.get("unused_outline"):
         notes.append("The script draws an outline that is never extruded or cut; it is not part of the result.")
@@ -330,8 +337,13 @@ class Attempts:
             entry["passed"] = passed
             # A check added later makes the part harder to pass, not easier: it is held from then on and not reported.
             entry["first"].update({name: expected[name] for name in expected if name not in entry["first"]})
-            changed = {name: {"first": entry["first"][name], "now": expected.get(name)} for name in EXPECTATIONS if name in entry["first"] and entry["first"][name] != expected.get(name)}
+            changed = {name: {"first": entry["first"][name], "now": expected.get(name)} for name in EXPECTATIONS if name in entry["first"] and not _same_numbers(entry["first"][name], expected.get(name))}
             return entry["builds"], changed, same
+
+
+def _same_numbers(first: list, now: list | None) -> bool:
+    """The same expectation, within what the checks themselves let pass: a model copies numbers back from "measured"."""
+    return now is not None and len(first) == len(now) and all(_close(one, other) for one, other in zip(first, now))
 
 
 def _next_after(passed: bool, attempt: int, changed: Mapping[str, Any], same: bool, loose: bool) -> str:

@@ -480,8 +480,12 @@ def test_reading_is_bounded_in_work_and_not_only_in_passes():
         compile_script(slow)
     assert time.perf_counter() - started < 3
     assert refused.value.construct == "script length" and "more work" in refused.value.message
-    # The same holds without a loop: what is counted is what the reader walks.
     assert MAX_WORK >= 100_000
+    # Statements count as well as values: a thousand passes over hundreds of notes are not free.
+    notes = "result = cq.Workplane('XY').box(1, 1, 1)\nfor i in range(1000):\n" + '    "note"\n' * 980
+    with pytest.raises(ScriptRefused) as refused:
+        compile_script(notes)
+    assert "more work" in refused.value.message
     # An ordinary long loop is nowhere near it: 74 passes of four operations, 296 of the 300 a script may perform.
     long_loop = "result = cq.Workplane('XY').box(900, 20, 4)\nfor i in range(74):\n    result = result.faces('>Z').workplane().pushPoints([(-440 + i * 12, 0)]).hole(3)\n"
     assert len(compile_script(long_loop).operations) == 2 + 74 * 4
@@ -498,6 +502,8 @@ def test_a_pass_clause_is_short_and_says_its_numbers_exactly():
     # Whole numbers as they are and decimals in full: six digits named a value the loop never held.
     assert message("for i in range(1234567, 1234570):\n    y = 1 / (i - 1234568)\n").endswith("(in pass 2 of the loop on line 1 (i = 1234568))")
     assert message("for x in [0.30000001, 0.30000002]:\n    y = 1 / (x - 0.30000002)\n").endswith("(x = 0.30000002))")
+    # Twelve digits: every digit a person wrote, without the tail a division leaves behind.
+    assert message("for x in [14.41 * 6.22 - 76]:\n    y = 1 / 0\n").endswith("(x = 13.6302))")
     # A long point is cut, however many loops hold one and however many names take it apart.
     long_point = "p = (\n" + ",\n".join(", ".join(["-1.23456e-05"] * 50) for _ in range(8)) + "\n)\n"
     nested = long_point + "".join(" " * 4 * level + f"for v{level} in [p]:\n" for level in range(4)) + " " * 16 + "y = 1 / 0\n"
@@ -563,6 +569,32 @@ def test_a_loop_body_reads_the_way_its_indentation_shows():
     assert [op.where[:6] for op in carried.operations if op.line == 5] == ["pass 1", "pass 2", "pass 3"]
     # A long chain may still be continued with a backslash, inside a loop and outside one.
     assert compile_script("result = cq.Workplane('XY') \\\n    .box(1, 1, 1)\nfor i in range(2):\n    result = result \\\n        .translate((1, 0, 0))\n")
+
+
+BOX = "result = cq.Workplane('XY').box(60, 40, 6)\n"
+MOVE = "result = result.translate((1, 0, 0))\n"
+ORDINARY_LOOPS = {
+    "a body indented with a tab": BOX + "for i in range(2):\n\t" + MOVE,
+    "a body indented with two spaces": BOX + "for i in range(2):\n  " + MOVE,
+    "a body indented with eight spaces": BOX + "for i in range(2):\n        " + MOVE,
+    "nested loops with different widths": BOX + "for i in range(2):\n  for j in range(2):\n        " + MOVE + "  " + MOVE,
+    "a statement after a nested loop ends": BOX + "for i in range(2):\n    for j in range(2):\n        " + MOVE + "    " + MOVE + MOVE,
+    "comments and blank lines in a body": BOX + "for i in range(2):\n    # move it\n\n    " + MOVE + "\n        # a comment indented further\n    " + MOVE,
+    "a note as the first line of a body": BOX + 'for i in range(2):\n    "each pass moves the part"\n    ' + MOVE,
+    "any language in a comment inside a loop": BOX + "for i in range(2):\n    # Bohrung Ø4, 穴, отверстие, سوراخ\n    " + MOVE,
+    "a statement over several lines first in a body": BOX + "for i in range(2):\n    result = (\n        result.faces('>Z')\n        .workplane()\n        .hole(2 + i)\n    )\n",
+    "a continuation aligned under its bracket": BOX + "for i in range(2):\n    result = result.faces('>Z').workplane().pushPoints([(-10, 0),\n                                                        (10 + i, 0)]).hole(2)\n",
+    "a header over two lines": BOX + "for x, y in [(0, 0),\n             (5, 5)]:\n    " + MOVE,
+    "a parenthesised header": BOX + "for i in (range(2)):\n    " + MOVE,
+    "Windows line endings": (BOX + "for i in range(2):\n    " + MOVE + "    " + MOVE).replace("\n", "\r\n"),
+    "a byte order mark": "\ufeff" + BOX + "for i in range(2):\n    " + MOVE,
+    "an import and show_object in a loop": "for i in range(2):\n    import cadquery as cq\n    part = cq.Workplane('XY').box(1 + i, 1, 1)\n    show_object(part)\n",
+}
+
+
+@pytest.mark.parametrize("script", ORDINARY_LOOPS.values(), ids=ORDINARY_LOOPS.keys())
+def test_the_line_rules_refuse_no_loop_written_the_ordinary_ways(script):
+    assert compile_script(script).operations
 
 
 def test_centered_takes_one_flag_per_axis():

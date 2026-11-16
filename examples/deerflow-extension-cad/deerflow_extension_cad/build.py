@@ -70,7 +70,10 @@ class BuildFailed(Exception):
 
 
 #: A blind cut whose distance already points into the part: the sign is not what went wrong.
-_CUT_INTO_AIR = "removed no material: the outline is not on material. faces('>Z') is the highest face of the part as it is now, which a boss or a lip added earlier has moved; cut from the face the pocket belongs to." + _REDUNDANT
+_CUT_INTO_AIR = (
+    "removed no material: the cut starts where there is no material, or the material there is already gone. Check the outline's position and the face "
+    "it starts from: faces('>Z') is the highest face of the part as it is now, which a boss or a lip added earlier has moved." + _REDUNDANT
+)
 #: Operations that make or reshape a solid: a branch of a script that holds one did work on the part.
 _SHAPING = frozenset(_MUST_CHANGE) | {"fillet", "chamfer", "translate", "rotate", "mirror"}
 
@@ -161,36 +164,60 @@ def build_parts(program: Program, cq) -> list:
     return parts
 
 
+def _holds_solid(part) -> bool:
+    """Whether a workplane stands for a solid. Looked up, not measured: measuring every spare body took seconds."""
+    try:
+        part.findSolid()
+    except Exception:
+        return False
+    return True
+
+
 def left_out(program: Program, parts: list) -> tuple[list[int], dict[int, int]]:
     """What a script built and left out of its result: whole bodies, and passes of a loop.
 
     Returns the line each left-out body starts on, one entry per body, and for each
-    loop, by its line, how many of its passes worked on the part without their outcome
-    reaching the result. Both are the usual slips in a loop: each pass builds a body
-    and the last one alone is the result, or each pass starts from the same part, so
-    only the last pass's work is kept. Outside a loop a branch off the result is a
-    trial and is not counted, and neither is an outline or a selection.
+    loop, by its line, how many of its passes did work on the part that did not reach
+    the result. Both are the usual slips in a loop: each pass builds a body and the
+    last one alone is the result, or each pass starts from the same part, so only the
+    last pass's work is kept.
+
+    Not counted: an outline or a selection, which is no work; a branch off the result
+    outside a loop, which is a trial; and a tool made ready in the last pass for a
+    pass that never came (a cutter moved on after its last cut).
     """
     used = _used_by_result(program)
+    # The part itself, as opposed to the bodies it was cut with or joined to: the result and what it was called on, all the way back.
+    spine: set[int] = set()
+    slot: int | None = program.result
+    while slot is not None:
+        spine.add(slot)
+        slot = program.operations[slot].receiver
     consumed = {operation.receiver for operation in program.operations if operation.receiver is not None}
     consumed.update(value.slot for operation in program.operations for _, value in operation.arguments if isinstance(value, Ref))
-    bodies: dict[int, int] = {}
+    #: By the line of the loop it was built in, 0 outside one: the body's first operation, with its line and whether in a last pass.
+    bodies: dict[int, dict[int, tuple[int, bool]]] = {}
+    #: By loop line: the passes that dropped work.
     passes: dict[int, set[str]] = {}
     for slot, operation in enumerate(program.operations):
         if slot in used or slot in consumed:
             continue
         chain = [slot]
         ancestor = operation.receiver
-        while ancestor is not None and ancestor not in used:
+        # A workplane the result also started from is not the part until it holds a solid.
+        while ancestor is not None and not (ancestor in used and _holds_solid(parts[ancestor])):
             chain.append(ancestor)
             ancestor = program.operations[ancestor].receiver
         if ancestor is None:
             # A body of its own, however many selections were made on it: counted once, where it starts.
-            if chain[-1] not in bodies and _state(parts[slot]) is not None:
-                bodies[chain[-1]] = program.operations[chain[-1]].line
-        elif operation.loop and any(program.operations[index].method in _SHAPING for index in chain):
+            start = next((index for index in reversed(chain) if index not in used), chain[-1])
+            first = program.operations[start]
+            if start not in bodies.get(first.loop, {}) and _holds_solid(parts[slot]):
+                bodies.setdefault(first.loop, {})[start] = (first.line, first.last)
+        elif operation.loop and any(program.operations[index].method in _SHAPING for index in chain) and not (operation.last and ancestor not in spine):
             passes.setdefault(operation.loop, set()).add(operation.where)
-    return sorted(bodies.values()), {line: len(dropped) for line, dropped in sorted(passes.items())}
+    lines = sorted(line for loop, found in bodies.items() for line, last in found.values() if not loop or not all(last for _, last in found.values()))
+    return lines, {loop: len(dropped) for loop, dropped in sorted(passes.items())}
 
 
 def solid_of(part):

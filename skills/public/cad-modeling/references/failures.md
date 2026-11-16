@@ -31,7 +31,7 @@ for a line inside a loop the pass and the loop variable's value.
 | The message says | Cause | Change |
 | --- | --- | --- |
 | removed no material | The cut or hole is beside the part, or repeats an earlier one | Check its position: a plain `workplane()` keeps the origin of the last one, and `center()` moves it for every pass after. Start with `workplane(centerOption="CenterOfBoundBox")`. `cutBlind` cuts into the part with a negative distance |
-| removed no material: the outline is not on material | A blind cut started from the highest face after a boss or a lip moved it | Cut from the face the pocket belongs to, or cut the pocket before adding the boss |
+| removed no material: the cut starts where there is no material | A blind cut started from the highest face after a boss or a lip moved it, or the pocket is already there | Cut from the face the pocket belongs to, or cut the pocket before adding the boss |
 | Leave this pass out | One pass of a loop repeats an earlier one, such as a ring of points that ends on its first point | Remove that item from the list, not the line |
 | added no material | The new body lies inside the part | Check its position and the direction of the extrusion |
 | left no solid | The operation removed the whole part | The cut or hole is larger than the part, or two parts that were intersected do not meet |

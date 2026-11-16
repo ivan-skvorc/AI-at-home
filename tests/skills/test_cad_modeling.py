@@ -97,7 +97,7 @@ QUOTED = [
     "Call cad_build again with the same arguments",
     "Do not call cad_build again",
     "builds of this part in this run and the last one did not pass",
-    "the outline is not on material",
+    "the cut starts where there is no material",
     "Leave this pass out",
 ]
 

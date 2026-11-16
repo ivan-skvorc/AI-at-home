@@ -107,10 +107,11 @@ most of its features missing. A script that builds bodies and never joins them
 to its result is told how many and on which line they start: the usual slip is
 a loop whose every pass builds a body, with the last one alone as the result.
 A loop whose every pass starts from the same part keeps only the last pass's
-work; the answer says how many passes were dropped and that each must start
-from the outcome of the one before. A result made of several loose bodies is
-said to be that, and `next` gives both ways out: join them, or tell the user
-that the tool delivers one solid.
+work; the answer says how many passes did work that is not in the result. A
+tool made ready for a next pass that never came (a cutter moved on after its
+last cut) is not counted, and neither is a trial cut outside a loop. A result
+made of several loose bodies is said to be that, and `next` gives both ways
+out: join them, or tell the user that the tool delivers one solid.
 
 ## Building until it passes
 
@@ -133,8 +134,10 @@ loop inside the tool: one call is one build.
   other numbers passes or fails on its own numbers, and its answer and report
   carry `expected_changed` with an instruction to tell the user which changed
   and why. A number stated for the first time on a later build is a check
-  added, not a number moved: it is held from then on and not reported. The
-  hold ends when the part passes and the user speaks again.
+  added, not a number moved: it is held from then on and not reported. Numbers
+  closer than the checks' own tolerance, and the same holes in another order,
+  are the same numbers. The hold ends when the part passes and the user speaks
+  again.
 - **A change that did nothing is said to have done nothing.** When a build
   fails exactly as the one before it, the answer says the change did not reach
   the cause.
@@ -143,9 +146,9 @@ loop inside the tool: one call is one build.
   were refused are not counted. Their answers say to call again with the same
   arguments, or to stop and tell the user.
 
-Parts are counted by name, per conversation, in memory: case, spacing and
-punctuation aside, and not by the file name, which is ASCII and cut at forty
-characters. A new name is a new part with a new count, which is why every
+Parts are counted by name, per conversation, in memory: case, spacing,
+punctuation and invisible characters aside, and not by the file name, which is
+ASCII and cut at forty characters. A new name is a new part with a new count, which is why every
 failed answer says to build again under the same name. A Gateway restart
 starts the counts over, and the table holds a thousand parts: the one built
 longest ago makes room. The procedure a model follows around these answers is
@@ -234,7 +237,7 @@ with an example that builds and a signature check against the kernel
 | --- | --- | --- |
 | Script size | 32 KiB, 2,000 syntax nodes, nesting 200 (about 97 chained calls), 300 operations | `interpreter.py` |
 | Loops | 1,000 passes in a script, all loops together; nested four deep. The 300 operations are counted after unrolling | `interpreter.py` |
-| Reading | 200,000 values read and list items walked, loops unrolled: a script is read in well under a second | `interpreter.py` |
+| Reading | 200,000 statements and values read and list items walked, loops unrolled: a script is read in under a second | `interpreter.py` |
 | Attempts | 8 builds of one part in one run, then the answer says to stop and report | `tool.py` |
 | Lines | one statement per line, at most 1,000 characters, at most 40 blanks or blank lines in a row | `interpreter.py` |
 | Numbers | at most 1e12; sizes from 0.0001 to 100,000 mm; coordinates within ±100,000 mm | `interpreter.py`, `allowlist.py` |

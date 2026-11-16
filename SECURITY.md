@@ -74,8 +74,8 @@ here as one.
 - **Resource use is bounded before the kernel starts**: script size, syntax
   nodes, nesting, number magnitude, exponent size, pattern instances, loop
   passes (1,000 in a script, nested four deep), operations after unrolling
-  (300) and the values read while unrolling (200,000, so reading takes well
-  under a second whatever a loop repeats). What an
+  (300) and the statements and values read while unrolling (200,000, so
+  reading takes under a second whatever a loop repeats). What an
   accepted script can still cost the kernel is stopped by the parent's wall
   clock and the child's memory ceiling, not by the reading.
 - **The kept script reads the way it was read.** Control characters, line

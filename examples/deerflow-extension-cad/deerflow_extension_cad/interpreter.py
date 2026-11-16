@@ -106,6 +106,8 @@ class Operation:
     where: str = ""
     #: The line of the innermost loop the operation is in; 0 outside a loop.
     loop: int = 0
+    #: True in the last pass of that loop: what a script makes ready there for a next pass is not work dropped.
+    last: bool = False
 
 
 @dataclass(frozen=True)
@@ -235,8 +237,9 @@ def _show(value: object) -> str:
         if len(value) > 3:
             return f"({_show(value[0])}, {_show(value[1])}, ... {len(value)} numbers)"
         return "(" + ", ".join(_show(item) for item in value) + ")"
-    # A whole number as it is and a decimal in full: six digits would name a value the loop never held.
-    return repr(value) if type(value) is float else str(value)
+    # A whole number as it is and a decimal to twelve digits: every digit a person wrote, and
+    # not the tail a division leaves. Six digits named a value the loop never held.
+    return f"{value:.12g}" if type(value) is float else str(value)
 
 
 def _check_lines(statements: list[ast.stmt], lines: list[bytes], loop: ast.For | None = None) -> None:
@@ -323,8 +326,8 @@ class _Reader:
         self.instances = 0
         self.passes = 0
         self.work = 0
-        #: The loop passes being read, outermost first: the loop's line and how the pass is said.
-        self.loops: list[tuple[int, str]] = []
+        #: The loop passes being read, outermost first: the loop's line, how the pass is said, whether it is the last.
+        self.loops: list[tuple[int, str, bool]] = []
         #: (name, slot) pairs: the part a name held at that moment, whatever the name holds later.
         self.shown: tuple[str, int] | None = None
         self.shown_line: int | None = None
@@ -334,6 +337,7 @@ class _Reader:
     # Statements
 
     def statement(self, node: ast.stmt) -> None:
+        self.spend(1, node.lineno)  # a note or an import costs a pass through here too
         if isinstance(node, ast.Import):
             if len(node.names) != 1 or node.names[0].name != "cadquery" or node.names[0].asname != "cq":
                 _refuse("import", node.lineno, _ONLY_IMPORT)
@@ -409,7 +413,7 @@ class _Reader:
                 if name == "result":
                     self.result_line = line
             said = ", ".join(f"{name} = {_show(value)}" for name, value in list(zip(names, values))[:3]) + (", ..." if len(names) > 3 else "")
-            self.loops.append((line, f"pass {number} of the loop on line {line} ({_short(said, MAX_PASS_SAID)})"))
+            self.loops.append((line, f"pass {number} of the loop on line {line} ({_short(said, MAX_PASS_SAID)})", number == len(items)))
             try:
                 for statement in node.body:
                     self.statement(statement)
@@ -452,7 +456,7 @@ class _Reader:
     def where(self) -> str:
         """The passes being read, innermost first and no longer than a sentence; empty outside a loop."""
         said: list[str] = []
-        for _, clause in reversed(self.loops):
+        for _, clause, _ in reversed(self.loops):
             if said and sum(map(len, said)) + len(clause) > MAX_WHERE:
                 said.append(f"and {len(self.loops) - len(said)} more around it")
                 break
@@ -625,7 +629,8 @@ class _Reader:
                 )
         if len(self.operations) >= MAX_OPERATIONS:
             _refuse("script length", line, f"a script may perform at most {MAX_OPERATIONS} operations")
-        self.operations.append(Operation(line, receiver, name, tuple(arguments), self.where(), self.loops[-1][0] if self.loops else 0))
+        loop, _, last = self.loops[-1] if self.loops else (0, "", False)
+        self.operations.append(Operation(line, receiver, name, tuple(arguments), self.where(), loop, last))
         return Ref(len(self.operations) - 1)
 
     def fit(self, label: str, param: table.Param, value: object, line: int) -> object:

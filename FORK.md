@@ -5708,7 +5708,7 @@ dispatch libraries beyond the base system.
   line, which is every pass.
 - **Passes do not bound reading; the work budget does.** A body that walked
   long lists a thousand times took fifteen seconds to read inside every other
-  cap. `MAX_WORK` counts values read and list items walked.
+  cap. `MAX_WORK` counts statements and values read and list items walked.
 - **Indentation is checked, because with loops it carries meaning.** Every
   statement starts its own line, a body is one block under its `for`, and a
   line is indented at most 80 columns with a tab counted as eight. Without
@@ -5718,7 +5718,9 @@ dispatch libraries beyond the base system.
   starting from the same part keeps the last pass only, and a bounding box does
   not notice: a plate asked for with six slots passed with one. `build.left_out`
   counts those passes and the bodies never joined; both are notes, because a
-  trial cut outside a loop is legitimate.
+  trial cut outside a loop is legitimate. It tells the part from its tools: a
+  cutter moved on after its last cut is not work dropped, and seventeen such
+  idioms are checked to stay quiet.
 - **Parts are counted by name, not by file stem.** The stem is ASCII and cut at
   forty characters: every Chinese or Cyrillic name was the same part, and the
   first build of a lid was told to stop after seven builds of a bracket.

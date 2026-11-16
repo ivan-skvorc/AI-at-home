@@ -187,16 +187,42 @@ async def test_passes_of_a_loop_whose_outcome_is_dropped_are_said_in_the_answer(
     answer, _ = await _build(dropped, bbox_xyz_mm=[100, 30, 5])
     assert answer["passed"] is True
     (note,) = [note for note in answer["notes"] if "loop on line 2" in note]
-    assert note.startswith("5 passes of the loop on line 2 work on the part and their outcome is not in the result") and "result = result" in note
+    assert note == "5 passes of the loop on line 2 do work on the part that is not in the result: carry the part through the loop, for example result = result.hole(...), or delete the work."
     # Carried through the loop, all six are there and there is nothing to say.
     carried = dropped.replace('plate = cq.Workplane("XY")', 'result = cq.Workplane("XY")').replace("result = plate.faces", "result = result.faces")
     answer, files = await _build(carried, bbox_xyz_mm=[100, 30, 5])
     assert answer["passed"] is True and "notes" not in answer, answer
     assert json.loads(files["part.report.json"])["measured"]["volume_mm3"] < 14000
+    # Rows lost one level up: the inner loop carries its row, and the outer loop starts every row from the bare plate.
+    rows = 'base = cq.Workplane("XY").box(50, 50, 4)\nfor row in range(3):\n    result = base\n    for column in range(3):\n        result = result.faces(">Z").workplane().pushPoints([(-15 + column * 15, -15 + row * 15)]).hole(4)\n'
+    answer, _ = await _build(rows, bbox_xyz_mm=[50, 50, 4])
+    assert answer["passed"] is True and [note[:32] for note in answer["notes"]] == ["2 passes of the loop on line 4 d"], answer
     # A selection made in every pass and never used did no work on the part.
     looking = 'result = cq.Workplane("XY").box(20, 20, 4)\nfor i in range(3):\n    top = result.faces(">Z")\n'
     answer, _ = await _build(looking, bbox_xyz_mm=[20, 20, 4])
     assert answer["passed"] is True and "notes" not in answer, answer
+
+
+async def test_a_tool_made_ready_for_the_next_pass_is_not_work_dropped():
+    # Cut, then move the cutter on for the next pass. The last move is never used, and nothing is missing.
+    advanced = 'result = cq.Workplane("XY").box(80, 30, 5)\ncutter = cq.Workplane("XY").box(3, 12, 10).translate((-30, 0, 0))\nfor i in range(6):\n    result = result.cut(cutter)\n    cutter = cutter.translate((12, 0, 0))\n'
+    answer, _ = await _build(advanced, bbox_xyz_mm=[80, 30, 5], volume_min_max_mm3=[10900, 10940])
+    assert answer["passed"] is True and "notes" not in answer, answer
+    # A link joined and then moved on is the same idiom with union().
+    joined = 'result = cq.Workplane("XY").box(10, 4, 2)\nlink = cq.Workplane("XY").box(10, 4, 2).translate((9, 0, 0))\nfor i in range(3):\n    result = result.union(link)\n    link = link.translate((9, 0, 0))\n'
+    answer, _ = await _build(joined, bbox_xyz_mm=[37, 4, 2])
+    assert answer["passed"] is True and "notes" not in answer, answer
+    # The same with a fresh cutter built at the end of each pass.
+    fresh = advanced.replace("cutter = cutter.translate((12, 0, 0))", 'cutter = cq.Workplane("XY").box(3, 12, 10).translate((-30 + (i + 1) * 12, 0, 0))')
+    answer, _ = await _build(fresh, bbox_xyz_mm=[80, 30, 5], volume_min_max_mm3=[10900, 10940])
+    assert answer["passed"] is True and "notes" not in answer, answer
+
+
+async def test_a_body_started_on_a_shared_empty_workplane_is_still_a_body_left_out():
+    # Both start from one empty workplane. That workplane is not the part, so the rib is not a branch off it.
+    shared = 'wp = cq.Workplane("XY")\nresult = wp.box(80, 10, 5)\nrib = wp.box(4, 10, 20).translate((0, 0, 12.5))\n'
+    answer, _ = await _build(shared, bbox_xyz_mm=[80, 10, 5])
+    assert [note for note in answer["notes"] if "not part of the result" in note] == ["The script builds 1 body (built on line 3) that is not part of the result: join it with union(), or delete the lines."]
 
 
 async def test_a_body_left_out_is_counted_once_and_named_where_it_starts():
@@ -209,6 +235,11 @@ async def test_a_body_left_out_is_counted_once_and_named_where_it_starts():
     answer, _ = await _build(many, bbox_xyz_mm=[60, 40, 6])
     (note,) = [note for note in answer["notes"] if "not part of the result" in note]
     assert note.startswith("The script builds 8 bodies (built on line 2, 3)")
+    # More lines than an answer names are said to be more.
+    seven = "".join(f'spare{index} = cq.Workplane("XY").box(2, 2, 2)\n' for index in range(7)) + f"result = {BLOCK}\n"
+    answer, _ = await _build(seven, bbox_xyz_mm=[60, 40, 6])
+    (note,) = [note for note in answer["notes"] if "not part of the result" in note]
+    assert note.startswith("The script builds 7 bodies (built on line 1, 2, 3, 4, 5 and more)")
 
 
 async def test_a_pass_that_repeats_another_is_told_to_leave_the_pass_out_not_the_line():
@@ -226,6 +257,10 @@ async def test_a_blind_cut_into_air_names_the_cause_that_fits_its_distance():
     answer, _ = await _build(lip, bbox_xyz_mm=[60, 40, 26])
     message = answer["error"]["message"]
     assert answer["error"]["operation"] == "cutBlind" and "highest face" in message and "use a negative distance" not in message
+    # The same sentence has to be true of the same pocket cut twice: there the material is already gone.
+    twice = f'result = {BLOCK}.faces(">Z").workplane().rect(20, 10).cutBlind(-3)\nresult = result.faces(">Z").workplane().rect(20, 10).cutBlind(-3)\n'
+    answer, _ = await _build(twice, bbox_xyz_mm=[60, 40, 6])
+    assert "already gone" in answer["error"]["message"] and "use a negative distance" not in answer["error"]["message"]
     # A positive distance still gets the sentence about the sign.
     away = f'result = {BLOCK}.faces(">Z").workplane().rect(20, 10).cutBlind(3)\n'
     answer, _ = await _build(away, bbox_xyz_mm=[60, 40, 6])
