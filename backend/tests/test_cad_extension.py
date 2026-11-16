@@ -273,6 +273,22 @@ async def test_a_part_cannot_pass_by_moving_its_expected_numbers_without_it_bein
 
 
 @pytest.mark.asyncio
+async def test_a_check_added_later_is_held_and_not_reported_as_a_change(cad, outputs, monkeypatch):
+    # Stating the volume on the second build makes the part harder to pass, not easier.
+    first, _, _ = await _call(cad, outputs, monkeypatch, ONE_HOLE, run="run-1")
+    added, _, _ = await _call(cad, outputs, monkeypatch, ONE_HOLE, run="run-1", volume_min_max_mm3=[14000, 14400], hole_diameters_mm=[4, 4])
+    assert "expected_changed" not in first and "expected_changed" not in added
+    # From then on it is one of the part's numbers: widening it or dropping it is said.
+    widened, _, _ = await _call(cad, outputs, monkeypatch, ONE_HOLE, run="run-1", volume_min_max_mm3=[1, 99999], hole_diameters_mm=[4, 4])
+    assert widened["expected_changed"] == {"volume_min_max_mm3": {"first": [14000, 14400], "now": [1, 99999]}}
+    dropped, _, _ = await _call(cad, outputs, monkeypatch, ONE_HOLE, run="run-1", volume_min_max_mm3=[14000, 14400])
+    assert dropped["expected_changed"] == {"hole_diameters_mm": {"first": [4, 4], "now": None}}
+    # The same numbers written as floats are the same numbers.
+    same, _, _ = await _call(cad, outputs, monkeypatch, ONE_HOLE, run="run-1", bbox_xyz_mm=[60.0, 40.0, 6.0], volume_min_max_mm3=[14000.0, 14400], hole_diameters_mm=[4.0, 4])
+    assert "expected_changed" not in same
+
+
+@pytest.mark.asyncio
 async def test_each_part_and_each_conversation_is_counted_apart(cad, outputs, monkeypatch, tmp_path):
     await _call(cad, outputs, monkeypatch, ONE_HOLE, run="run-1", hole_diameters_mm=[4, 4])
     same, _, _ = await _call(cad, outputs, monkeypatch, ONE_HOLE, run="run-1", hole_diameters_mm=[4, 4], name="mounting  PLATE")

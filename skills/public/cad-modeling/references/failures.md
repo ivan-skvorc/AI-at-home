@@ -10,13 +10,13 @@ Nothing was built. The answer's `error` has the construct and the line.
 
 | The message says | Cause | Change |
 | --- | --- | --- |
-| a script may not contain an if statement | A choice between two values | Compute it: `(-1) ** i` alternates the sign, `i % 2` alternates 0 and 1, `i // 2` counts pairs |
-| … a while loop | A loop with a condition | A `for` loop over `range(n)`, with `n` worked out by `//` |
+| a script may not contain an if statement | A choice between two values | Compute it: `(-1) ** i` alternates the sign, `i % 2` alternates 0 and 1 |
+| … a while loop | A loop with a condition | A `for` loop over `range(n)`, with `n` worked out beforehand |
 | … a function definition, a lambda | A helper function | A `for` loop over the values the helper was called with |
 | … a comprehension | A list built in one line | Write the list out, or build the feature in a `for` loop |
 | … a subscript | `point[0]` | Take the point apart in the loop header: `for x, y in points:` |
 | the only import a script may contain is: import cadquery as cq | `import math` | Write the value: sin 30° is `0.5`, a square root is `** 0.5` |
-| range() takes whole numbers | A count made with `/` | Divide with `//` |
+| range() takes whole numbers | A count that is not whole, such as 7.5 | Round it down with whole division (two slashes) |
 | this loop would not run once | A count that came out as 0 | Check the arithmetic of the count |
 | a loop runs over range(...) or over a list | `enumerate`, `zip`, a part | `for i in range(n):` and compute the rest from `i` |
 | .name() is not on the allow-list | A method the tool does not have | Build the shape from the methods in `operations.md`; if it cannot be done, tell the user |

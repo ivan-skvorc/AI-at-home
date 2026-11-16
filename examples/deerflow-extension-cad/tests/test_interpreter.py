@@ -65,7 +65,7 @@ def test_the_plate_becomes_a_list_of_allow_listed_operations():
         'import cadquery as cq\nresult = cq.Workplane("XY").box(30, 30, 30).faces(">Z").shell(-2, kind="intersection")\n',
         'import cadquery as cq\r\nresult = cq.Workplane("XY").box(1, 1, 1)  # Ø, ° and other signs are fine in a comment\r\n',
         'import cadquery as cq\nw = 10\nw += 5\nw -= 1\nw *= 2\nw /= 4\nw //= 2\nw **= 2\nw %= 7\nresult = cq.Workplane("XY").box(w, w, w)\n',
-        'import cadquery as cq\nresult = cq.Workplane("XY").box(40, 10, 2)\nfor x, y in [(-10, 0), (10, 0)]:\n    # one hole per point\n    result = (\n        result.faces(">Z")\n        .workplane()\n        .pushPoints([(x, y)])\n        .hole(3)\n    )\n',
+        'result = cq.Workplane("XY").box(40, 10, 2)\nfor x, y in [(-10, 0), (10, 0)]:\n    # one hole per point\n    result = (\n        result.faces(">Z")\n        .workplane()\n        .pushPoints([(x, y)])\n        .hole(3)\n    )\n',
     ],
 )
 def test_ordinary_scripts_are_accepted(script):
@@ -410,7 +410,8 @@ def test_a_loop_runs_over_a_range_or_a_list_the_script_states(header, values):
 
 
 def test_loops_nest_and_a_name_set_in_a_loop_is_still_set_after_it():
-    script = "total = 0\nresult = cq.Workplane('XY').box(50, 50, 2)\nfor row in range(2):\n    for column in range(3):\n        total += 1\n        result = result.translate((row, column, 0))\nresult = result.translate((total, row, column))\n"
+    grid = "for row in range(2):\n    for column in range(3):\n        total += 1\n        result = result.translate((row, column, 0))\n"
+    script = "total = 0\nresult = cq.Workplane('XY').box(50, 50, 2)\n" + grid + "result = result.translate((total, row, column))\n"
     moves = [dict(op.arguments)["vec"] for op in compile_script(script).operations if op.method == "translate"]
     assert moves == [(0, 0, 0), (0, 1, 0), (0, 2, 0), (1, 0, 0), (1, 1, 0), (1, 2, 0), (6, 1, 2)]
     inner = compile_script(script).operations[2]

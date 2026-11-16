@@ -5494,6 +5494,23 @@ STL and GLB only when every check passed, and `<name>.failed.glb` when the part
 built and a check failed. The package README holds the user's half: the
 allow-list, the limits, the install.
 
+**Built until it passes.** A real model's first script for a laptop stand used a
+`for` loop over its hinge links, was refused, and the conversation read as if
+the tool could not be run in a loop at all. Two things were missing. A script
+may now hold `for` loops over `range(...)` or a list it states: the reader
+unrolls them, pass by pass, into the same flat program, so nothing new reaches
+the kernel. And the build, read, repair, build again loop that the agent
+already ran by accident is now steered: `cad_build` counts the builds of a part
+within a run, holds the expected numbers of its first build, says when a change
+did not reach the failure, and ends **every** answer with what to do next,
+after a pass included, because a part that meets its bounding box is not yet
+the part that was asked for. The procedure around those answers is a skill,
+`skills/public/cad-modeling`: requirements written down before the first
+script, expected numbers worked out from them, one cause per repair, and a
+failed part reported as failed. Its operations page is generated from the
+allow-list. This follows the pattern of `image-refine` (§23): a loop the agent
+runs, with the count and the frozen criteria held by the tool.
+
 **Bundled and on by default.** Asking for a part should work on a fresh install
 and after an update, not after a command nobody knows about. The module ships the
 way the workflows extension does (§46): a committed snapshot in
@@ -5565,10 +5582,26 @@ dispatch libraries beyond the base system.
 
 - **Read, then perform.** `interpreter.compile_script` turns the text into a flat
   list of allow-listed operations with plain-data arguments; `build.run_program`
-  performs them. A script has no loops, branches or functions, so every number is
+  performs them. A script has no branches, functions or `while`, and a `for`
+  loop runs over a range or a list the script states, so every number is
   known before the kernel starts and a refusal costs no geometry. Rejected:
   `exec` with restricted builtins, a Gateway-side MCP server that runs scripts
   (the same shortcut), and a purpose-built command format (models write CadQuery).
+- **A loop is unrolled, and `if` stays out.** What a loop runs over is known
+  when the script is read, so unrolling it changes what a script may say in
+  fewer lines and not what it may do. A branch on a number the script states
+  could be read the same way, and was left out: each construct widens the
+  reader, and arithmetic already says the usual cases (`(-1) ** i`). A branch
+  on a measurement cannot be read at all.
+- **The loop is the agent's, the count is the tool's.** One call stays one
+  build inside the host's 30 seconds. A tool that looped inside itself would
+  need the model's judgement between builds, which it does not have. What a
+  model loses over a long loop is state, so that is what the tool holds: the
+  attempt number, the first expected numbers, the last failure. Rejected: a
+  hard refusal after the limit (the user may ask for more, and the next message
+  is a new run) and failing a part whose expected numbers moved (a first number
+  can be worked out wrongly, and then the correction is right). Both are said
+  in the answer instead.
 - **Everything in a child process.** Parsing included: the Gateway neither parses
   hostile text nor loads a 450 MiB kernel, and starts as fast with the module as
   without it. The parent holds the wall clock and kills the process group,
@@ -5653,11 +5686,28 @@ dispatch libraries beyond the base system.
   together, each told to simplify a part that was fine.
 - **The whole process group is killed, also after a worker that finished.** The
   worker starts no process; one that exists means the kernel was made to.
-- **The description is paid on every request.** `cad_build` costs 144 tokens in
-  the short tool form and the heaviest composer mode has 42 to spare on a 32K
-  model, 14 with a workflows option on. The array parameters carry no item
+- **The description is paid on every request.** `cad_build` costs 146 tokens in
+  the short tool form and the heaviest composer mode has 37 to spare on a 32K
+  model, 9 with a workflows option on (the loop wording and the skill's name in
+  the index cost 5). The array parameters carry no item
   types for that reason; the handler checks each number. Parameter names say what they hold instead of carrying descriptions.
-  The critical check pins it.
+  A small model gets the sentences before `Methods:` only, so "assign the part
+  to result" moved behind the method list: the reader falls back to the last
+  part assigned. The critical check pins it.
+- **A loop is the statements written out.** `test_a_loop_is_the_same_program_as_its_statements_written_out`
+  compares the two programs. A loop that could do more than its expansion would
+  be a second language inside the reader. Passes are capped (1,000 in a script)
+  apart from the 300 operations, because a loop of arithmetic performs none.
+- **One line of a loop is many operations, so a failure names the pass.**
+  Without it the model is told that line 11 failed and cannot tell the first
+  hole from the sixth.
+- **Every answer ends with what to do next, and the sentences are pinned.**
+  They are the loop's control. `test_builds_of_a_part_are_counted_and_the_answer_says_when_to_stop`
+  and its neighbours fix each sentence to its state; the skill's test quotes
+  the same words.
+- **The first expected numbers are held until the part passes.** A new run
+  starts the count over and keeps the numbers: "keep going" is not a new
+  request. Only a pass followed by the user speaking again releases them.
 
 **Known gaps.** The internet switch does not filter plugin tools at all: an
 extension tool in the default `extensions` group is still offered offline, the
@@ -5673,10 +5723,17 @@ some instances miss the part still passes unless the holes are declared, since
 the volume changed. An outline nobody used is a note in the answer, not a
 failure: the sloppy idiom `rect(...).vertices().hole(...)` leaves one behind on
 a correct part. A hole's position and a pocket's depth are not checked at all;
-`unchecked` in the answer shows what was measured and not asked about. A loop
-that is stopped and closed without cancelling its tasks leaves the worker to
-the processor backstop and its directory behind. Windows gets neither the
-process-group kill nor the limits.
+`unchecked` in the answer shows what was measured and not asked about. An event
+loop that is stopped and closed without cancelling its tasks leaves the worker
+to the processor backstop and its directory behind. Windows gets neither the
+process-group kill nor the limits. **A part is one solid**, so a print-in-place
+design of loose bodies cannot be delivered; the answer says so in a note instead
+of counting attempts against it. Threads, sweeps, lofts and revolved shapes are
+not on the allow-list. The attempt count and the held numbers live in Gateway
+memory, by part name: a restart forgets them, and a model that renames the part
+on every attempt starts a new count each time. The skill has not been run on a
+real model here: roadmap item 45's acceptance (a plate, an L-bracket and an
+enclosure on one cloud model and one local 32K model) is still open.
 
 **On an upstream sync.** The package is fork-only. `internet_access.py`,
 `doctor.py`, `backend/Dockerfile` (two blocks: the libraries, the load step) and
@@ -5693,6 +5750,8 @@ check every allow-listed method against the kernel's own signature.
 
 Coverage: the package's tests (`test_interpreter.py`, `test_worker_process.py`,
 `test_build.py`, `test_measure.py`; the last two need the kernel),
+`tests/skills/test_cad_modeling.py` (the skill against the module; it runs in
+Skill Review CI, and the operations page is compared again inside the Backend gate),
 `backend/tests/test_cad_extension.py`, `test_bundled_cad_extension.py`,
 `test_config_upgrade_script.py -k BundledCadPluginDelivery`, `test_cad_runtime_deps.py`,
 `blocking_io/test_cad_extension.py`, `TestCheckCadExtension` in `test_doctor.py`,

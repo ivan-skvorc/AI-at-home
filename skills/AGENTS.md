@@ -17,3 +17,8 @@ run in Skill Review CI, independent of package review.
   optional import unavailable, and mock the HTTP transport.
 - **A skill CLI exits non-zero on failure**, with diagnostics on stderr and
   result URLs on stdout.
+- **A skill that drives an extension's tool repeats that tool's contract in
+  prose, so a test ties the two.** `cad-modeling` quotes the arguments, limits
+  and messages of `cad_build`, and its operations page is generated from the
+  module's allow-list. `tests/skills/test_cad_modeling.py` reads both sides;
+  reword a quoted message in the module and on the page together.

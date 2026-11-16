@@ -52,9 +52,10 @@ not read them off a build.
 
 - Start with `import cadquery as cq`. Units are millimetres. Put every
   dimension in a named variable at the top. Assign the part to `result`.
-- A script may contain assignments, numbers, arithmetic (`+ - * / // % **`,
-  `+=`), lists of numbers or points, `for` loops over `range(...)` or over a
-  list, `cq.Workplane(...)` and the methods in `references/operations.md`.
+- A script may contain assignments, numbers, arithmetic with Python's
+  operators (and `+=`), lists of numbers or points, `for` loops over
+  `range(...)` or over a list, `cq.Workplane(...)` and the methods in
+  `references/operations.md`.
 - It may not contain `if`, `while`, functions, comprehensions, `import math`,
   f-strings or indexing (`p[0]`). Write a choice as arithmetic (`(-1) ** i`
   alternates the sign), take a point apart in the loop header

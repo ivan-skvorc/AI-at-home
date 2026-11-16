@@ -18,6 +18,12 @@ works with the conversation's internet switch off.
 written only when every check passed. A STEP file listed in a `cad_build` answer
 therefore means a part that passed.
 
+**A part is built until it passes.** The agent runs the loop: build, read what
+was measured, repair, build again. The tool keeps what a model loses over a
+long one, the count of attempts and the numbers the part was first held to, and
+every answer ends with what to do next. See
+[Building until it passes](#building-until-it-passes).
+
 It depends on the public `deerflow-extension-api` contract (0.2.13 or newer) and
 on `cadquery` 2.8.0, pinned. It never imports `deerflow.*` or `app.*`.
 
@@ -96,16 +102,57 @@ state them, under the names of the arguments that would check them. The hole
 check compares diameters; holes that stop inside the part are listed with the
 depth of their cylindrical wall (`blind_depths_mm`).
 
-A failed answer ends with what to do next, by cause: fix the script, call again
-(every build slot was taken), or stop and tell the user (the server has no
-kernel, or a file could not be stored).
+Two more notes come from loops. A script that builds bodies and never joins
+them to its result is told how many and on which line: the usual slip is a loop
+whose every pass builds a body, with the last one alone as the result. A result
+made of several loose bodies is told that the tool delivers one solid, so a
+model does not spend its attempts on a check that no change of that kind can
+pass.
+
+## Building until it passes
+
+The agent runs the loop, and the tool's answers steer it. Nothing here runs a
+loop inside the tool: one call is one build.
+
+| The answer holds | Meaning |
+| --- | --- |
+| `attempt` | Which build of this part this was, within the run (one user message and the work that follows it) |
+| `next` | What to do now. After a failed build: attempt *N* of 8, read what failed, change the script, build again under the same name. After a pass: go through what the user asked for that the numbers do not cover, and build again if something is missing |
+| `expected_changed` | The expected numbers that differ from those of the part's first build, each with `first` and `now` |
+
+- **The count ends in a report, not in a run limit.** From the eighth build of
+  one part in one run, a failed answer says to stop, tell the user what still
+  fails with the measured numbers, and build again only when asked. The tool
+  still builds: the user may ask for more, and that is a new run with a new
+  count. A pass on the eighth build is presented, not sent round again.
+- **A part cannot pass by moving its numbers unsaid.** The expected numbers of
+  a part's first build stand for what the user asked for. A later build with
+  other numbers passes or fails on its own numbers, and its answer and report
+  carry `expected_changed` with an instruction to tell the user which changed
+  and why. A number stated for the first time on a later build is a check
+  added, not a number moved: it is held from then on and not reported. The
+  hold ends when the part passes and the user speaks again.
+- **A change that did nothing is said to have done nothing.** When a build
+  fails exactly as the one before it, the answer says the change did not reach
+  the cause.
+- **Only a build the script answers for is an attempt.** A busy server, a
+  kernel that is still loading, a server without a kernel and arguments that
+  were refused are not counted. Their answers say to call again with the same
+  arguments, or to stop and tell the user.
+
+Parts are counted by the name their files get, per conversation, in memory: a
+Gateway restart starts the counts over. The procedure a model follows around
+these answers is the `cad-modeling` skill (`skills/public/cad-modeling`).
 
 ## What a script may contain
 
 - `import cadquery as cq` (optional: `cq` is the only name a script is given).
 - `name = value` lines. Values are numbers, strings, `True`, `False`, `None`,
   tuples and lists of numbers, arithmetic on numbers (`+ - * / // % **`), and
-  parts.
+  parts. `name += value` and its relatives are the arithmetic they stand for.
+- `for` loops over `range(...)` or over a list of numbers or points that the
+  script states, with one name or one name per number of a point
+  (`for x, y in [(0, 0), (10, 0)]:`). Loops may be nested four deep.
 - `cq.Workplane(...)` and the methods below, chained or held in variables.
 - Comments and a docstring. `show_object(name)` is accepted as a way to name the
   result.
@@ -115,9 +162,18 @@ the last part assigned. A script that uses the name `result` must leave a part
 in it, and `result` and `show_object` may not name two different parts. Units
 are millimetres.
 
+A loop is read, not run. Its range or list is known when the script is read,
+so the reader goes through the body once per pass, exactly as if the script had
+written the statements out, and the program it hands to the kernel is the same
+flat list of operations. A failure in a loop names the pass and the value of
+the loop variable, because one line now stands for many operations. A loop
+that would not run once is refused: it is a count that came out as zero.
+
 Everything else is refused with the construct and its line: other imports,
-attribute access, any other call, `def`, `lambda`, `class`, loops, `if`,
-comprehensions, `with`, `try`, f-strings, subscripts, comparisons, dunder names.
+attribute access, any other call, `def`, `lambda`, `class`, `while`, `if`,
+`break`, `continue`, a loop's `else`, comprehensions, `with`, `try`, f-strings,
+subscripts, comparisons, dunder names. `range(...)` is what a loop runs over
+and nothing else: it cannot be assigned or used as a value.
 An export line such as `cq.exporters.export(result, "plate.step")` is refused
 with its reason: the tool writes the files, after its checks.
 
@@ -160,6 +216,8 @@ with an example that builds and a signature check against the kernel
 | Limit | Value | Where |
 | --- | --- | --- |
 | Script size | 32 KiB, 2,000 syntax nodes, nesting 200 (about 97 chained calls), 300 operations | `interpreter.py` |
+| Loops | 1,000 passes in a script, all loops together; nested four deep. The 300 operations are counted after unrolling | `interpreter.py` |
+| Attempts | 8 builds of one part in one run, then the answer says to stop and report | `tool.py` |
 | Lines | one statement per line, at most 1,000 characters, at most 40 blanks or blank lines in a row | `interpreter.py` |
 | Numbers | at most 1e12; sizes from 0.0001 to 100,000 mm; coordinates within ±100,000 mm | `interpreter.py`, `allowlist.py` |
 | Pattern points | `pushPoints`, `rarray`, `polarArray`: 100 per call, 200 per script; a polygon has at most 100 sides | `allowlist.py` |
@@ -190,9 +248,12 @@ The interpreter is a security boundary and is written to be audited:
   scripts are read.
 - The syntax tree is checked against a whitelist of node types before anything
   is evaluated, with an iterative walk and caps on size and depth.
-- A script has no loops, branches or functions, so every number is known before
-  the kernel starts. The outcome of reading is a flat list of operations with
-  plain-data arguments (`interpreter.Program`).
+- A script has no branches, functions or `while`, and a `for` loop runs over a
+  range or a list the script states, so every number is known before the
+  kernel starts. The reader unrolls a loop itself, with Python's own `range` on
+  whole numbers it has already checked. The outcome of reading is a flat list
+  of operations with plain-data arguments (`interpreter.Program`), the same
+  list the statements written out would give; a test compares the two.
 - The only attribute lookup driven by a script is in `build.run_program`, for a
   method name that is a key of the allow-list.
 - Reading and building both happen in a child process started with `python -I`,

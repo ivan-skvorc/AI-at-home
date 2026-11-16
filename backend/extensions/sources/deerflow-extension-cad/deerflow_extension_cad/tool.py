@@ -112,10 +112,7 @@ MAX_ATTEMPTS = 8
 #: Parts whose builds are counted. An entry is a few hundred bytes; the cap only keeps the table from growing for ever.
 MAX_COUNTED_PARTS = 1000
 
-NEXT_FIX = (
-    "Attempt {attempt} of {limit}. Read what failed, change the script and call cad_build again with the same name. "
-    "Keep the expected numbers: change one only if it was worked out wrongly. Do not present this part as finished."
-)
+NEXT_FIX = "Attempt {attempt} of {limit}. Read what failed, change the script and call cad_build again with the same name. Keep the expected numbers: change one only if it was worked out wrongly. Do not present this part as finished."
 #: For a build whose script could not be stored: without its files it is not one of the part's attempts.
 NEXT_FIX_UNSTORED = "Fix the script and call cad_build again. Do not present this part as finished."
 NEXT_SAME = " This is the same failure as the attempt before, so that change did not reach its cause: change something else."
@@ -305,7 +302,9 @@ class Attempts:
             same = not passed and failure == entry["failure"]
             entry["failure"] = None if passed else failure
             entry["passed"] = passed
-            changed = {name: {"first": entry["first"].get(name), "now": expected.get(name)} for name in EXPECTATIONS if entry["first"].get(name) != expected.get(name)}
+            # A check added later makes the part harder to pass, not easier: it is held from then on and not reported.
+            entry["first"].update({name: expected[name] for name in expected if name not in entry["first"]})
+            changed = {name: {"first": entry["first"][name], "now": expected.get(name)} for name in EXPECTATIONS if name in entry["first"] and entry["first"][name] != expected.get(name)}
             return entry["builds"], changed, same
 
 
