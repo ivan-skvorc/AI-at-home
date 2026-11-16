@@ -44,8 +44,9 @@ def same_model(model_id: str) -> str:
     one spelling from the other is how an uncallable routed slug shipped.
 
     A trailing date stamp is the same model pinned to a snapshot. OpenRouter
-    308s ``qwen/qwen3.8-max`` to ``qwen/qwen3.8-max-0902`` while DashScope still
-    serves ``qwen3.8-max``; without this strip the home flagship looks undoubled.
+    routes ``deepseek/deepseek-v4-pro-0813``, the build DeepSeek's own API
+    serves as ``deepseek-v4-pro``; without this strip the home flagship looks
+    undoubled.
     """
     normalized = model_id.lower().replace(".", "-")
     return re.sub(r"-\d{4,8}$", "", normalized)
@@ -256,11 +257,14 @@ class TestRealExampleConfig:
             "google/gemini-3.8-flash",
             "meta-llama/llama-4-maverick",
             "minimax/minimax-m3",
-            "qwen/qwen3.8-max-0902",
+            "qwen/qwen4-max",
             "moonshotai/kimi-k3.1-pro",
             "mistralai/mistral-large-4-0",
             # The GA build DeepSeek's own API serves; bare `deepseek/deepseek-v4-pro` is 0423.
             "deepseek/deepseek-v4-pro-0813",
+            # The acclaimed smaller sibling (FORK.md step 2): the snapshot DeepSeek's
+            # own `deepseek-flash` id serves.
+            "deepseek/deepseek-v4.1-flash-1017",
             "z-ai/glm-5.3",
             "nvidia/nemotron-3-ultra-550b-a55b",
         }
@@ -343,13 +347,14 @@ class TestHomeApiBlocks:
         out = sync_api.sync(self.text, all_slugs)
         names = [m["name"] for m in yaml.safe_load(out)["models"]]
         assert len(names) == len(set(names)), "model names collide when every key is set"
-        # 6 Anthropic + 14 OpenRouter + 21 home = 41 distinct models.
+        # 6 Anthropic + 15 OpenRouter + 21 home = 42 distinct models.
         # OpenRouter gained Opus 5 and GPT-6 Astra (the two paired labs of
         # FORK.md step 3); the OpenAI home block gained Astra's direct twin.
         # Mistral's home block lost Medium 3.5 on 2026-11-10 (deprecated, with
-        # Large 4 as its replacement), and GPT-5.3 Codex left both blocks on
-        # 2026-11-13 (deprecated for GPT-6 Sol).
-        assert len(names) == 41
+        # Large 4 as its replacement), GPT-5.3 Codex left both blocks on
+        # 2026-11-13 (deprecated for GPT-6 Sol), and OpenRouter gained DeepSeek
+        # V4.1 Flash on 2026-11-16 (the acclaimed-smaller-sibling rule).
+        assert len(names) == 42
 
     def test_openai_home_and_openrouter_gpt_are_distinct_entries(self):
         """The GPT flagship is doubled: a direct OpenAI entry AND the OpenRouter
@@ -513,9 +518,17 @@ class TestFirstPartyKeyCoverage:
 
     def test_only_meta_and_nvidia_stay_openrouter_only(self):
         """Every other routed lab must own a direct block; when an OpenRouter-only
-        lab ships a first-party API, this fails until it gets a home block."""
+        lab ships a first-party API, this fails until it gets a home block.
+
+        Coverage is per lab: a lab counts as covered when one of its routed
+        models is doubled on its home API. A routed acclaimed sibling need not
+        match a home id by spelling — DeepSeek routes the dated
+        `deepseek-v4.1-flash-1017` that its own API serves as `deepseek-flash`.
+        """
         direct_ids = {same_model(m["model"]) for m in self.models if not m["name"].startswith("openrouter-")}
-        uncovered = {m["model"].split("/", 1)[0] for m in self.models if m["name"].startswith("openrouter-") and "/" in m["model"] and same_model(m["model"].split("/", 1)[1]) not in direct_ids}
+        routed = [m["model"].split("/", 1) for m in self.models if m["name"].startswith("openrouter-") and "/" in m["model"]]
+        doubled = {lab for lab, bare in routed if same_model(bare) in direct_ids}
+        uncovered = {lab for lab, _bare in routed} - doubled
         assert uncovered == self.ROUTED_ONLY_PREFIXES, f"routed-only labs drifted: {sorted(uncovered)}"
 
 

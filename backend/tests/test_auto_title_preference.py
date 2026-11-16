@@ -1,16 +1,23 @@
 """Per-user automatic conversation renaming (fork feature, FORK.md §33).
 
-Three independent properties, each silent when broken:
+Five independent properties, each silent when broken:
 
 * the rename runs from ``after_agent`` (the end of the turn), not
   ``after_model`` — a move back to ``after_model`` still produces titles, so
   nothing else in the suite goes red;
 * the per-run preference is a one-way opt-out layered on ``config.yaml ->
   title``, and an unconfigured model name is dropped rather than dialled;
-* both context keys reach the run config, which is the only way the preference
-  travels from the browser to the middleware.
+* both context keys reach the run config, and the lead agent builds its
+  middleware chain from the resolved preference;
+* the preference is stored per user on the server and applied at run
+  admission, so a run that does not come from the browser holding the switch
+  (an IM channel, another device or origin, an extension's child thread) still
+  honors it — an opt-out is ANDed in, never overridden by the request;
+* the worker's end-of-run fallback title respects an opted-out run, with or
+  without an ``app_config`` on the run context.
 """
 
+import logging
 from types import SimpleNamespace
 
 import pytest
@@ -18,6 +25,8 @@ from langchain.agents.middleware import AgentMiddleware
 from langchain_core.messages import AIMessage, HumanMessage
 
 from deerflow.agents.middlewares.title_middleware import TitleMiddleware
+from deerflow.config import paths as paths_module
+from deerflow.config import user_ui_state
 from deerflow.config.title_config import (
     AUTO_TITLE_ENABLED_CONTEXT_KEY,
     AUTO_TITLE_MODEL_CONTEXT_KEY,
@@ -30,6 +39,18 @@ from deerflow.config.title_config import (
 @pytest.fixture
 def anyio_backend():
     return "asyncio"
+
+
+@pytest.fixture
+def isolated_ui_state(tmp_path, monkeypatch):
+    """A private ``DEER_FLOW_HOME`` so the stored preference never reads a
+    developer's own ``ui_state.json``."""
+    monkeypatch.setenv("DEER_FLOW_HOME", str(tmp_path))
+    monkeypatch.setattr(paths_module, "_paths", None)
+    user_ui_state.reset_cache_for_tests()
+    yield
+    monkeypatch.setattr(paths_module, "_paths", None)
+    user_ui_state.reset_cache_for_tests()
 
 
 def _app_config(*, enabled: bool = True, model_name: str | None = None, models: list[str] | None = ("cheap-model", "big-model")) -> SimpleNamespace:

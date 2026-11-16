@@ -964,9 +964,10 @@ models:
   # ── Google Gemini — auto-enabled when GEMINI_API_KEY is set ───────────────
   # Gemini 3.8 Flash + 3.5 Flash-Lite + Gemini 4 Carbon (the Pro tier, 2026-11-10),
   # via the native Gemini SDK. Carbon took Gemini 4 Argon's slot on 2026-11-16,
-  # once its OpenRouter usage passed Argon's (docs/model-audit-log.md). The native SDK path has no thinking toggle here
-  # (the OpenRouter Gemini copy carries supports_thinking) — use the OpenRouter
-  # entry or a gemini_openai_gateway for Gemini thinking.
+  # once its OpenRouter usage passed Argon's (docs/model-audit-log.md). The
+  # native SDK path has no thinking toggle here (the OpenRouter Gemini copy
+  # carries supports_thinking) — use the OpenRouter entry or a
+  # gemini_openai_gateway for Gemini thinking.
   # The startup auto-config (scripts/sync-api-key-models.py) uncomments the
   # entries below when it finds a real GEMINI_API_KEY in your .env.
   # === BEGIN auto-model-config: google (uncommented at startup when GEMINI_API_KEY is set) ===
