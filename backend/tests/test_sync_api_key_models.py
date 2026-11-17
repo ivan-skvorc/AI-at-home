@@ -516,20 +516,37 @@ class TestFirstPartyKeyCoverage:
                 bare = same_model(slug.split("/", 1)[1])
                 assert bare in direct_ids, f"{lab}: {slug} is routed but has no direct entry — the pair must be doubled, not routed-only"
 
+    #: Routed slugs whose home API spells the same model differently, so
+    #: ``same_model`` cannot pair them. Each entry is an explicit exception: it
+    #: must still be routed and its home id must still exist, so a stale alias
+    #: fails here instead of silently exempting a model.
+    ROUTED_HOME_ALIASES = {
+        # DeepSeek's own API serves this snapshot as `deepseek-flash`.
+        "deepseek/deepseek-v4.1-flash-1017": "deepseek-flash",
+    }
+
     def test_only_meta_and_nvidia_stay_openrouter_only(self):
         """Every other routed lab must own a direct block; when an OpenRouter-only
         lab ships a first-party API, this fails until it gets a home block.
 
-        Coverage is per lab: a lab counts as covered when one of its routed
-        models is doubled on its home API. A routed acclaimed sibling need not
-        match a home id by spelling — DeepSeek routes the dated
-        `deepseek-v4.1-flash-1017` that its own API serves as `deepseek-flash`.
+        Coverage is per model: every routed model of a lab outside
+        ``ROUTED_ONLY_PREFIXES`` needs its direct twin, so a key holder never
+        sees fewer of the lab's models than an OpenRouter user. A routed model
+        whose home id is spelled differently is paired through
+        ``ROUTED_HOME_ALIASES``.
         """
         direct_ids = {same_model(m["model"]) for m in self.models if not m["name"].startswith("openrouter-")}
-        routed = [m["model"].split("/", 1) for m in self.models if m["name"].startswith("openrouter-") and "/" in m["model"]]
-        doubled = {lab for lab, bare in routed if same_model(bare) in direct_ids}
-        uncovered = {lab for lab, _bare in routed} - doubled
+        routed = [m["model"].lower() for m in self.models if m["name"].startswith("openrouter-") and "/" in m["model"]]
+
+        def doubled(slug: str) -> bool:
+            alias = self.ROUTED_HOME_ALIASES.get(slug)
+            return same_model(slug.split("/", 1)[1]) in direct_ids or (alias is not None and same_model(alias) in direct_ids)
+
+        uncovered = {slug.split("/", 1)[0] for slug in routed if not doubled(slug)}
         assert uncovered == self.ROUTED_ONLY_PREFIXES, f"routed-only labs drifted: {sorted(uncovered)}"
+        for slug, home_id in self.ROUTED_HOME_ALIASES.items():
+            assert slug in routed, f"{slug} is no longer routed; drop its alias"
+            assert same_model(home_id) in direct_ids, f"{slug}'s home twin {home_id!r} left its home block"
 
 
 class TestDuplicateTopLevelKeys:

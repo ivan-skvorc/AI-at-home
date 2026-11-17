@@ -13,8 +13,16 @@ the tool calls that write to such a mount:
   host also reads as pre-existing, so it is never offered for deletion).
 - ``bash`` is best effort: literal ``<mount>/<name>`` references in the
   command are checked on the host before and after the call. A referenced
-  entry that appeared is ``inferred_shell``; one that existed is a shell touch.
-  Without a visible host nothing is recorded for bash.
+  entry that appeared is ``inferred_shell`` (never offered for deletion: a
+  ``mv`` of an existing folder also makes a name appear); one that existed is
+  a shell touch; one the command removed retires its ledger row, so a later
+  folder of that name starts a new row with its real creator. Without a
+  visible host nothing is recorded for bash.
+
+Every probe also reads the entry's ``st_dev:st_ino``. The ledger binds a folder
+row to the entry it saw created (and to the entry a recorded write left behind,
+when that write started from the bound one), and the confined delete refuses an
+entry that no longer matches.
 
 The position in the chain is the contract: appended just before
 ``ToolErrorHandlingMiddleware``, so every gate outside it (authorization,
@@ -43,7 +51,7 @@ from langchain_core.messages import ToolMessage
 from langgraph.prebuilt.tool_node import ToolCallRequest
 from langgraph.types import Command
 
-from deerflow.folder_ledger.mounts import EntryState, FolderClassifier, FolderRef, probe_entry
+from deerflow.folder_ledger.mounts import EntryProbe, FolderClassifier, FolderRef, host_root_key, probe_entry
 from deerflow.persistence.folder_ledger.sql import OP_APPEND, OP_EDIT, OP_SHELL, OP_WRITE, FolderLedgerRecorderStore, TouchRecord
 from deerflow.utils.file_io import run_file_io
 
@@ -57,7 +65,7 @@ _MAX_ID_CHARS = 64
 #: in its worker thread either way; the call only stops waiting.
 WRITE_WAIT_SECONDS = 10.0
 
-Probes = dict[tuple[str, str], EntryState | None]
+Probes = dict[tuple[str, str], EntryProbe | None]
 
 
 @dataclass(frozen=True)
@@ -192,14 +200,22 @@ class FolderLedgerMiddleware(AgentMiddleware):
             return text is not None and text.strip() == _SUCCESS
         return text is None or not text.lstrip().startswith("Error:")
 
-    def _records(self, plan: _Plan, before: Probes, after: Probes) -> list[TouchRecord]:
+    def _records(self, plan: _Plan, before: Probes, after: Probes) -> tuple[list[TouchRecord], list[tuple[str, str]]]:
+        """The touches to record, and the ``(mount_path, name)`` entries a shell command removed."""
         records: list[TouchRecord] = []
+        removed: list[tuple[str, str]] = []
         for ref in plan.refs:
-            state_before = before.get(ref.key)
+            probe_before = before.get(ref.key)
+            probe_after = after.get(ref.key)
+            state_before = probe_before.state if probe_before is not None else None
+            state_after = probe_after.state if probe_after is not None else None
             if plan.op == OP_SHELL:
-                state_after = after.get(ref.key)
-                if state_before is None or state_after is None or state_after == "missing":
-                    continue  # host not visible, or nothing there after the command
+                if state_before is None or state_after is None:
+                    continue  # host not visible
+                if state_after == "missing":
+                    if state_before in ("dir", "file"):
+                        removed.append(ref.key)
+                    continue
                 created = state_before == "missing"
                 kind = "dir" if state_after == "dir" else "file"
             else:
@@ -217,9 +233,12 @@ class FolderLedgerMiddleware(AgentMiddleware):
                     thread_id=plan.thread_id,
                     run_id=plan.run_id,
                     tool_call_id=plan.tool_call_id,
+                    host_root=host_root_key(ref.mount),
+                    entry_before=probe_before.identity if probe_before is not None else None,
+                    entry_after=probe_after.identity if probe_after is not None else None,
                 )
             )
-        return records
+        return records, removed
 
     # -- storage (blocking; worker threads only) --------------------------
 
@@ -231,7 +250,7 @@ class FolderLedgerMiddleware(AgentMiddleware):
 
         return FolderLedgerRecorderStore(get_sync_sessionmaker(url))
 
-    def _write(self, records: list[TouchRecord]) -> None:
+    def _write(self, records: list[TouchRecord], removed: list[tuple[str, str]]) -> None:
         if self._store is None:
             if self._store_unavailable:
                 return
@@ -243,7 +262,7 @@ class FolderLedgerMiddleware(AgentMiddleware):
                 logger.warning("folder ledger: the synchronous database engine is unavailable; recording is off for this agent", exc_info=True)
                 return
         if self._store is not None:
-            self._store.record(records)
+            self._store.record(records, removed)
 
     def _safe_plan(self, request: ToolCallRequest) -> _Plan | None:
         try:
@@ -275,10 +294,9 @@ class FolderLedgerMiddleware(AgentMiddleware):
         result = handler(request)
         try:
             if self._succeeded(plan, result):
-                after = self._safe_probe(plan.refs) if plan.op == OP_SHELL else {}
-                records = self._records(plan, before, after)
-                if records:
-                    self._write(records)
+                records, removed = self._records(plan, before, self._safe_probe(plan.refs))
+                if records or removed:
+                    self._write(records, removed)
         except Exception:
             logger.warning("folder ledger: could not record %s; the tool result is unchanged", plan.tool, exc_info=True)
         return result
@@ -300,17 +318,16 @@ class FolderLedgerMiddleware(AgentMiddleware):
         result = await handler(request)
         try:
             if self._succeeded(plan, result):
-                after = await run_file_io(self._safe_probe, plan.refs) if plan.op == OP_SHELL else {}
-                records = self._records(plan, before, after)
-                if records:
-                    await self._await_write(records)
+                records, removed = self._records(plan, before, await run_file_io(self._safe_probe, plan.refs))
+                if records or removed:
+                    await self._await_write(records, removed)
         except Exception:
             logger.warning("folder ledger: could not record %s; the tool result is unchanged", plan.tool, exc_info=True)
         return result
 
-    async def _await_write(self, records: list[TouchRecord]) -> None:
+    async def _await_write(self, records: list[TouchRecord], removed: list[tuple[str, str]]) -> None:
         """Wait (bounded) for the worker-thread write; a slow database only stops the wait."""
-        task = asyncio.ensure_future(asyncio.to_thread(self._write, records))
+        task = asyncio.ensure_future(asyncio.to_thread(self._write, records, removed))
         try:
             await asyncio.wait_for(asyncio.shield(task), timeout=WRITE_WAIT_SECONDS)
         except TimeoutError:

@@ -13,21 +13,30 @@ import os
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 from uuid import UUID
 
 import pytest
 from _router_auth_helpers import make_authed_test_app
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from sqlalchemy import select
+from langchain_core.messages import ToolMessage
+from langgraph.prebuilt.tool_node import ToolCallRequest
+from sqlalchemy import create_engine, select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from sqlalchemy.orm import sessionmaker
 
 from app.gateway.auth.models import User
+from app.gateway.auth_disabled import get_auth_disabled_user
+from app.gateway.auth_middleware import AuthMiddleware
+from app.gateway.authz import Permissions
 from app.gateway.routers import folder_ledger, threads
+from deerflow.agents.middlewares.folder_ledger_middleware import FolderLedgerMiddleware
 from deerflow.config.paths import Paths
 from deerflow.config.sandbox_config import VolumeMountConfig
+from deerflow.folder_ledger.mounts import LedgerMount, host_root_key, probe_entry
 from deerflow.persistence.base import Base
-from deerflow.persistence.folder_ledger import FolderLedgerEventRow, FolderLedgerFolderRow, FolderLedgerRepository, FolderLedgerTouchRow, TouchRecord
+from deerflow.persistence.folder_ledger import FolderLedgerDismissalRow, FolderLedgerEventRow, FolderLedgerFolderRow, FolderLedgerRecorderStore, FolderLedgerRepository, FolderLedgerTouchRow, TouchRecord
 from deerflow.persistence.thread_meta import ThreadMetaRepository
 from deerflow.persistence.thread_meta.model import ThreadMetaRow
 
@@ -36,7 +45,7 @@ BOB = User(id=UUID(int=2), email="bob@example.com", password_hash="x", system_ro
 ADMIN = User(id=UUID(int=3), email="admin@example.com", password_hash="x", system_role="admin")
 A, B = str(ALICE.id), str(BOB.id)
 LOCAL = "deerflow.sandbox.local:LocalSandboxProvider"
-_TABLES = [ThreadMetaRow, FolderLedgerFolderRow, FolderLedgerTouchRow, FolderLedgerEventRow]
+_TABLES = [ThreadMetaRow, FolderLedgerFolderRow, FolderLedgerTouchRow, FolderLedgerEventRow, FolderLedgerDismissalRow]
 posix_only = pytest.mark.skipif(os.name != "posix", reason="descriptor-relative deletes are POSIX-only")
 
 
@@ -68,10 +77,13 @@ def env(tmp_path, monkeypatch):
         repo=FolderLedgerRepository(factory),
         mounts=[VolumeMountConfig(host_path=str(projects), container_path="/mnt/projects")],
         home=tmp_path / "home",
+        db=db,
     )
 
     def config():
-        return SimpleNamespace(sandbox=SimpleNamespace(use=LOCAL, mounts=state.mounts), skills=SimpleNamespace(container_path="/mnt/skills"))
+        return SimpleNamespace(sandbox=SimpleNamespace(use=LOCAL, mounts=state.mounts), skills=SimpleNamespace(container_path="/mnt/skills"), database=None)
+
+    state.config = config
 
     monkeypatch.setattr(folder_ledger, "get_session_factory", lambda: factory)
     monkeypatch.setattr(folder_ledger, "_load_app_config", config)
@@ -89,7 +101,23 @@ def _client(user, *, owner_check_passes=True):
 
 
 def _record(env, thread_id, user_id, *, name="acme", created=True, op="write"):
-    (folder_id,) = asyncio.run(env.repo.record([TouchRecord(mount_path="/mnt/projects", name=name, kind="dir", rel_path=f"{name}/a.txt", op=op, created=created, user_id=user_id, thread_id=thread_id, run_id="run-1")]))
+    """Record a touch bound to the host entry as the recorder binds it (real probe)."""
+    mount = LedgerMount(container_path="/mnt/projects", host_path=str(env.projects), read_only=False)
+    probe = probe_entry(mount, name)
+    record = TouchRecord(
+        mount_path="/mnt/projects",
+        name=name,
+        kind="dir",
+        rel_path=f"{name}/a.txt",
+        op=op,
+        created=created,
+        user_id=user_id,
+        thread_id=thread_id,
+        run_id="run-1",
+        host_root=host_root_key(mount),
+        entry_after=probe.identity if probe is not None else None,
+    )
+    (folder_id,) = asyncio.run(env.repo.record([record]))
     return folder_id
 
 
@@ -264,9 +292,13 @@ def test_orphan_reasons(env):
         rows = client.post("/api/folder-ledger/orphans", json={"thread_ids": ["alice-1"]}).json()["orphans"]
     assert {row["name"]: row["reason"] for row in rows}["made-by-alice"] == "mount_unavailable"
 
-    env.mounts = [VolumeMountConfig(host_path=str(env.projects / "gone"), container_path="/mnt/projects")]
-    with _client(ALICE) as client:
-        rows = client.post("/api/folder-ledger/orphans", json={"thread_ids": ["alice-1"]}).json()["orphans"]
+    env.mounts = [VolumeMountConfig(host_path=str(env.projects), container_path="/mnt/projects")]
+    hidden = env.projects.rename(env.projects.with_name("projects-hidden"))  # same host_path, not visible
+    try:
+        with _client(ALICE) as client:
+            rows = client.post("/api/folder-ledger/orphans", json={"thread_ids": ["alice-1"]}).json()["orphans"]
+    finally:
+        hidden.rename(env.projects)
     assert {row["name"]: row["reason"] for row in rows}["made-by-alice"] == "host_not_visible"
 
 
@@ -353,8 +385,12 @@ def test_delete_refusals(env, tmp_path):
         response = client.delete(f"/api/folder-ledger/folders/{folder_id}", params={"confirm_name": "acme"})
         assert (response.status_code, response.json()["detail"]["code"]) == (422, "mount_unavailable")
 
-        env.mounts = [VolumeMountConfig(host_path=str(tmp_path / "not-here"), container_path="/mnt/projects")]
-        response = client.delete(f"/api/folder-ledger/folders/{folder_id}", params={"confirm_name": "acme"})
+        env.mounts = [VolumeMountConfig(host_path=str(env.projects), container_path="/mnt/projects")]
+        hidden = env.projects.rename(tmp_path / "projects-hidden")  # same host_path, not visible
+        try:
+            response = client.delete(f"/api/folder-ledger/folders/{folder_id}", params={"confirm_name": "acme"})
+        finally:
+            hidden.rename(env.projects)
         assert (response.status_code, response.json()["detail"]["code"]) == (422, "host_not_visible")
 
         # Another mount's host root lives inside the folder: never removed.
@@ -403,3 +439,144 @@ def test_malformed_folder_ids_are_rejected(env):
     with _client(ALICE) as client:
         assert client.get("/api/folder-ledger/folders/..%2F..").status_code in (404, 422)
         assert client.delete("/api/folder-ledger/folders/NOT-HEX", params={"confirm_name": "x"}).status_code == 422
+
+
+# -- what a conversation did not provably create is never deleted -------------
+
+
+@posix_only
+def test_a_renamed_existing_folder_is_listed_but_never_deleted(env):
+    """``mv thesis thesis-old && mkdir thesis`` makes ``thesis-old`` appear; it is the user's data."""
+    (env.projects / "thesis").mkdir()
+    (env.projects / "thesis" / "chapter-1.md").write_text("years of work", encoding="utf-8")
+    engine = create_engine(f"sqlite:///{env.db}")
+    store = FolderLedgerRecorderStore(sessionmaker(engine, expire_on_commit=False))
+    recorder = FolderLedgerMiddleware(app_config=env.config(), store_factory=lambda: store, ledger_available=lambda: True)
+    command = "mv /mnt/projects/thesis /mnt/projects/thesis-old && mkdir /mnt/projects/thesis"
+    request = ToolCallRequest(tool_call={"name": "bash", "args": {"command": command}, "id": "call-1"}, tool=None, state={"messages": []}, runtime=SimpleNamespace(context={"thread_id": "alice-1", "user_id": A}))
+
+    def shell(_request):
+        (env.projects / "thesis").rename(env.projects / "thesis-old")
+        (env.projects / "thesis").mkdir()
+        return ToolMessage(content="", tool_call_id="call-1", name="bash")
+
+    try:
+        recorder.wrap_tool_call(request, shell)
+    finally:
+        engine.dispose()
+    with _client(ALICE) as client:
+        orphans = {row["name"]: row for row in client.post("/api/folder-ledger/orphans", json={"thread_ids": ["alice-1"]}).json()["orphans"]}
+        response = client.delete(f"/api/folder-ledger/folders/{orphans['thesis-old']['id']}", params={"confirm_name": "thesis-old"})
+
+    assert (orphans["thesis-old"]["created_attribution"], orphans["thesis-old"]["deletable"], orphans["thesis-old"]["reason"]) == ("inferred_shell", False, "shell_inferred")
+    assert (response.status_code, response.json()["detail"]["code"]) == (403, "shell_inferred")
+    assert (env.projects / "thesis-old" / "chapter-1.md").read_text(encoding="utf-8") == "years of work"
+
+
+@posix_only
+def test_a_repointed_mount_never_deletes_the_new_directorys_folder(env, tmp_path):
+    folder_id = _orphan_folder(env, "reports")
+    srv_new = tmp_path / "srv-new"
+    (srv_new / "reports").mkdir(parents=True)
+    (srv_new / "reports" / "q3.xlsx").write_text("unrelated", encoding="utf-8")
+    env.mounts = [VolumeMountConfig(host_path=str(srv_new), container_path="/mnt/projects")]
+
+    with _client(ALICE) as client:
+        (orphan,) = client.post("/api/folder-ledger/orphans", json={"thread_ids": ["alice-1"]}).json()["orphans"]
+        response = client.delete(f"/api/folder-ledger/folders/{folder_id}", params={"confirm_name": "reports"})
+
+    assert (orphan["deletable"], orphan["reason"]) == (False, "changed")
+    assert (response.status_code, response.json()["detail"]["code"]) == (422, "changed")
+    assert (srv_new / "reports" / "q3.xlsx").exists()
+
+
+@posix_only
+def test_an_entry_replaced_outside_the_ledger_is_refused(env):
+    folder_id = _orphan_folder(env)
+    (env.projects / "acme").rename(env.projects / "acme-moved")  # the recorded entry lives on elsewhere
+    (env.projects / "acme").mkdir()
+    (env.projects / "acme" / "bobs.txt").write_text("someone else's", encoding="utf-8")
+
+    with _client(ALICE) as client:
+        response = client.delete(f"/api/folder-ledger/folders/{folder_id}", params={"confirm_name": "acme"})
+
+    assert (response.status_code, response.json()["detail"]["code"]) == (422, "changed")
+    assert (env.projects / "acme" / "bobs.txt").exists()
+    assert len(_live_folder_rows(env)) == 1
+
+
+# -- shared workspace (multi-user mode off) ---------------------------------
+
+
+@pytest.fixture
+def shared_workspace(monkeypatch):
+    monkeypatch.setattr("deerflow.config.runtime_settings.is_multi_user_mode_enabled", lambda: False)
+
+
+def test_shared_workspace_lists_and_offers_another_logins_folders(env, shared_workspace):
+    _put_thread(env, "alice-1", A)
+    folder_id = _orphan_folder(env)
+    _record(env, "alice-1", B, created=False, op="edit")  # Bob also worked in Alice's conversation
+
+    with _client(BOB) as client:
+        (folder,) = client.get("/api/folder-ledger/threads/alice-1/folders").json()["folders"]
+        assert client.get(f"/api/folder-ledger/folders/{folder_id}").status_code == 200
+    assert (folder["id"], folder["role"], folder["writes"], folder["edits"], folder["created_here"]) == (folder_id, "created", 1, 1, True)
+
+    _drop_thread(env, "alice-1")
+    with _client(BOB) as client:
+        (orphan,) = client.post("/api/folder-ledger/orphans", json={"thread_ids": ["alice-1"]}).json()["orphans"]
+    # Offered, but deleting stays with the creator (or an admin).
+    assert (orphan["id"], orphan["deletable"], orphan["reason"], orphan["created_by_thread_id"]) == (folder_id, False, "not_creator", None)
+
+
+def test_multi_user_mode_keeps_the_listing_to_the_callers_touches(env, monkeypatch):
+    monkeypatch.setattr("deerflow.config.runtime_settings.is_multi_user_mode_enabled", lambda: True)
+    _record(env, "alice-1", A)
+    with _client(BOB) as client:
+        assert client.get("/api/folder-ledger/threads/alice-1/folders").json()["folders"] == []
+
+
+# -- dismissal is per user ------------------------------------------------------
+
+
+def test_a_non_creators_dismissal_does_not_hide_the_offer_from_the_creator(env):
+    folder_id = _orphan_folder(env)
+    _record(env, "bob-1", B, created=False)
+
+    with _client(BOB) as client:
+        assert client.post(f"/api/folder-ledger/folders/{folder_id}/dismiss").json() == {"dismissed": True}
+        assert client.post("/api/folder-ledger/orphans", json={"thread_ids": ["bob-1"]}).json()["orphans"] == []
+    with _client(ALICE) as client:
+        assert [row["id"] for row in client.post("/api/folder-ledger/orphans", json={"thread_ids": ["alice-1"]}).json()["orphans"]] == [folder_id]
+
+
+# -- the permission gate in front of the destructive routes ---------------------
+
+
+@posix_only
+def test_deleting_or_dismissing_a_folder_needs_threads_delete(env, monkeypatch):
+    monkeypatch.setenv("DEER_FLOW_AUTH_DISABLED", "1")
+    monkeypatch.delenv("DEER_FLOW_ENV", raising=False)
+    monkeypatch.delenv("ENVIRONMENT", raising=False)
+    monkeypatch.setattr("app.gateway.auth_middleware.resolve_route_permissions", AsyncMock(return_value=[Permissions.THREADS_READ]))
+    (env.projects / "acme").mkdir()
+    folder_id = _record(env, "local-1", str(get_auth_disabled_user().id))  # the caller created it: only the gate stands in the way
+    app = FastAPI()
+    app.add_middleware(AuthMiddleware)
+    app.include_router(folder_ledger.router)
+
+    with TestClient(app) as client:
+        deleted = client.delete(f"/api/folder-ledger/folders/{folder_id}", params={"confirm_name": "acme"})
+        dismissed = client.post(f"/api/folder-ledger/folders/{folder_id}/dismiss")
+
+    assert (deleted.status_code, deleted.json()) == (403, {"detail": "Permission denied: threads:delete"})
+    assert (dismissed.status_code, dismissed.json()) == (403, {"detail": "Permission denied: threads:delete"})
+    assert (env.projects / "acme").is_dir()
+    assert len(_live_folder_rows(env)) == 1
+
+    async def _dismissals():
+        async with env.factory() as session:
+            return (await session.execute(select(FolderLedgerDismissalRow))).scalars().all()
+
+    assert asyncio.run(_dismissals()) == []

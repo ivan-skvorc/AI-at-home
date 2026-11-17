@@ -18,16 +18,18 @@
  *
  * One upgrade case is handled on purpose. Before the preference was stored
  * server-side it lived only here, so a browser can hold an opt-out the account
- * has never heard of, while the account reads as the never-set default. The
+ * has never heard of, while the account has never saved a preference. The
  * first hydration in such a browser uploads the local choice instead of
  * replacing it, or the upgrade itself would switch renaming back on for exactly
- * the people who had turned it off.
+ * the people who had turned it off. An account that *has* saved one keeps it,
+ * even when it reads like the never-set default: that "on" may be a choice
+ * made on another device after the upgrade.
  */
 
 import { isStaticWebsiteOnly } from "@/core/static-mode";
 
 import {
-  fetchAutoTitlePreference,
+  fetchAutoTitleAccountState,
   saveAutoTitlePreference,
   type AutoTitlePreference,
 } from "./auto-title-api";
@@ -163,25 +165,27 @@ export async function hydrateAutoTitlePreference(
   const session = ++epoch;
   confirmed = null;
   const editsAtStart = userEdits;
-  const server = await fetchAutoTitlePreference(signal);
+  const account = await fetchAutoTitleAccountState(signal);
   if (session !== epoch || signal?.aborted) {
     return "superseded";
   }
-  if (server === null) {
+  if (account === null) {
     // Unknown, not "on" and not "off": keep what this browser has.
     return "unreachable";
   }
+  const server = account.preference;
   if (userEdits !== editsAtStart) {
     // The user changed the setting while the read was in flight. The read
     // predates that edit, and the edit's own write carries it to the server.
     return "superseded";
   }
   const local = getBaseSettingsSnapshot().autoTitle;
-  if (
-    !hasSyncedBefore() &&
-    isNeverSetDefault(server) &&
-    !isNeverSetDefault(local)
-  ) {
+  // Only an account that never saved a preference takes this browser's
+  // pre-upgrade value. A Gateway that does not send `stored` leaves the shape
+  // as the only guess, and that cannot tell an explicit "on" from "never set".
+  const neverStored =
+    account.stored === null ? isNeverSetDefault(server) : !account.stored;
+  if (!hasSyncedBefore() && neverStored && !isNeverSetDefault(local)) {
     return (await enqueueWrite({ ...local }, session)) === "saved"
       ? "migrated"
       : "migration-failed";

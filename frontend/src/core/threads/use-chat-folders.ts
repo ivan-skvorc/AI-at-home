@@ -11,7 +11,12 @@
  * nothing and cost a merge conflict.
  */
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  type QueryClient,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
@@ -37,6 +42,21 @@ export const CHAT_FOLDERS_QUERY_KEY = ["settings", "chat-folders"] as const;
 export const CHAT_FOLDERS_MUTATION_SCOPE = "chat-folders";
 
 const EMPTY_FOLDERS: readonly ChatFolder[] = [];
+
+/**
+ * The number of the latest folder edit, per query client, shared by every
+ * mounted `useChatFolders`. A write's response is applied only while its edit
+ * is still the latest one. The cache cannot answer that by identity: React
+ * Query structurally shares `setQueryData`, so the cache holds a copy of the
+ * list an edit wrote, never the array itself.
+ */
+const latestFolderEdit = new WeakMap<QueryClient, number>();
+
+function nextFolderEdit(queryClient: QueryClient): number {
+  const edit = (latestFolderEdit.get(queryClient) ?? 0) + 1;
+  latestFolderEdit.set(queryClient, edit);
+  return edit;
+}
 
 /** A random, collision-free folder id, with a fallback for insecure origins. */
 export function newFolderId(): string {
@@ -86,19 +106,25 @@ export function useChatFolders() {
   );
 
   const { mutate: persist } = useMutation({
-    mutationFn: async (next: readonly ChatFolder[]) => saveChatFolders(next),
+    mutationFn: async ({
+      next,
+    }: {
+      next: readonly ChatFolder[];
+      edit: number;
+    }) => saveChatFolders(next),
     // One write at a time, in order. Two whole-list PUTs racing could resolve
     // out of order, and the older response would then overwrite the newer
     // list in `onSuccess` below.
     scope: { id: CHAT_FOLDERS_MUTATION_SCOPE },
-    onSuccess(stored, sent) {
-      // The server's normalized value is authoritative; a failed write (`null`)
-      // leaves the optimistic list in place so the user's edit is not yanked
-      // back on a transient error. Applied only while the cache still holds
-      // the list this write sent: after a newer edit, the response describes
-      // an older list, and showing it would make the newer folder blink out
-      // until its own write lands.
-      if (stored && queryClient.getQueryData(CHAT_FOLDERS_QUERY_KEY) === sent) {
+    onSuccess(stored, { edit }) {
+      // The server's normalized value is authoritative, and it also repairs
+      // the cache when a list read landed on top of the optimistic edit. A
+      // failed write (`null`) leaves the optimistic list in place so the
+      // user's edit is not yanked back on a transient error. Applied only for
+      // the latest edit: after a newer one, the response describes an older
+      // list, and showing it would make the newer folder blink out until its
+      // own write lands.
+      if (stored && edit === latestFolderEdit.get(queryClient)) {
         queryClient.setQueryData(CHAT_FOLDERS_QUERY_KEY, stored);
       }
     },
@@ -109,8 +135,14 @@ export function useChatFolders() {
       if (next === current) {
         return;
       }
+      const edit = nextFolderEdit(queryClient);
+      // A list read already in flight answers with the list before this edit;
+      // landing after it, it would drop the new folder, and the next edit
+      // would then save the list without it. Cancelling reverts that read at
+      // once, so the optimistic write below is the last word.
+      void queryClient.cancelQueries({ queryKey: CHAT_FOLDERS_QUERY_KEY });
       queryClient.setQueryData(CHAT_FOLDERS_QUERY_KEY, next);
-      persist(next);
+      persist({ next, edit });
     },
     [persist, queryClient],
   );

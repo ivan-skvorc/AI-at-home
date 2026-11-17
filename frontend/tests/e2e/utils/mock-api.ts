@@ -2868,10 +2868,15 @@ export function mockLangGraphAPI(
     enabled: true,
     ...options?.autoTitlePreference,
   };
+  // The GET also says whether the account ever stored a value, so a browser
+  // only uploads an old local opt-out into a never-set account.
+  let autoTitleStored = options?.autoTitlePreference !== undefined;
   void page.route("**/api/settings/auto-title", (route) => {
     const method = route.request().method();
     if (method === "GET") {
-      return route.fulfill({ json: autoTitlePreference });
+      return route.fulfill({
+        json: { ...autoTitlePreference, stored: autoTitleStored },
+      });
     }
     if (method === "PUT") {
       const body = route.request().postDataJSON() as {
@@ -2884,6 +2889,7 @@ export function mockLangGraphAPI(
           ? { model_name: body.model_name }
           : {}),
       };
+      autoTitleStored = true;
       return route.fulfill({ json: autoTitlePreference });
     }
     return route.fallback();

@@ -50,7 +50,7 @@ from deerflow.config.runtime_settings import is_multi_user_mode_enabled, set_mul
 from deerflow.config.user_ui_state import (
     MAX_AUTO_TITLE_MODEL_CHARS,
     MAX_CHAT_FOLDERS,
-    get_auto_title_preference,
+    get_auto_title_account_state,
     get_chat_folders,
     set_auto_title_preference,
     set_chat_folders,
@@ -163,11 +163,23 @@ class AutoTitlePreference(BaseModel):
     model_name: str | None = Field(default=None, max_length=MAX_AUTO_TITLE_MODEL_CHARS)
 
 
-@router.get("/auto-title", response_model=AutoTitlePreference, response_model_exclude_none=True)
-async def get_auto_title_setting() -> AutoTitlePreference:
-    """Return the caller's auto-title preference; ``{"enabled": true}`` when never set."""
-    preference = await asyncio.to_thread(get_auto_title_preference, get_effective_user_id())
-    return AutoTitlePreference(**preference)
+class AutoTitleAccountState(AutoTitlePreference):
+    """The GET answer: the preference plus whether the account ever stored one.
+
+    ``stored`` is read-only and GET-only. ``{"enabled": true}`` is both the
+    never-set default and an explicit "on"; a browser holding an opt-out from
+    before the preference moved to the account uploads it only when ``stored``
+    is false, so it never overwrites an "on" saved from another device.
+    """
+
+    stored: bool = False
+
+
+@router.get("/auto-title", response_model=AutoTitleAccountState, response_model_exclude_none=True)
+async def get_auto_title_setting() -> AutoTitleAccountState:
+    """Return the caller's auto-title preference; ``{"enabled": true, "stored": false}`` when never set."""
+    preference, stored = await asyncio.to_thread(get_auto_title_account_state, get_effective_user_id())
+    return AutoTitleAccountState(**preference, stored=stored)
 
 
 @router.put("/auto-title", response_model=AutoTitlePreference, response_model_exclude_none=True)

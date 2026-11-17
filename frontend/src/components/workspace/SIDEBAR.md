@@ -69,15 +69,17 @@ HTML5 DnD is unreachable by keyboard. Tests:
 
 **Multi-select (FORK.md §52)** — `components/workspace/sidebar-selection.tsx`
 (store, provider, hosted dialogs) over the pure model in
-`core/threads/thread-selection.ts`. Five rules, each silent when broken:
+`core/threads/thread-selection.ts`. Six rules, each silent when broken:
 
 - **The checkbox is a sibling of the link, never its parent.** It sits in the
   `<li>` beside the `Link`, absolutely positioned, and the link gets `pl-7`.
   Wrapping the link breaks its drag payload (§32) and the e2e locators that
   climb from it (`thread-delete-confirm.spec`'s `xpath=..`,
   `a[data-sidebar="menu-button"]`). A selecting link carries
-  `data-thread-selecting`, which the mobile drawer's capture-phase handler skips
-  so a tap ticks the row instead of closing the drawer.
+  `THREAD_SELECTING_ATTRIBUTE` (`data-thread-selecting`), which the mobile
+  drawer's capture-phase handler skips so a tap ticks the row instead of closing
+  the drawer. Use the constant on both sides; the handler closes the drawer for
+  any other link whose path or query differs from the page's.
 - **The store is per provider and sits above the sidebar frame**, next to
   `ThreadDeleteDialogProvider` in `workspace-sidebar.tsx`. The lists unmount
   when the sidebar collapses and virtualize past 60 rows, so a selection kept in
@@ -91,6 +93,10 @@ HTML5 DnD is unreachable by keyboard. Tests:
   folder tree depth-first then the root list at rank `[1]`, nothing under a
   collapsed folder) and `combineSelectionOrder` stacks them. Most rows of a long
   list are not mounted, so a range read off the document skips them.
+- **A finished bulk action unticks only what it handled** (`store.remove`).
+  The checkboxes stay live while a move runs, and the archive toast's Undo
+  settles through the same mutation, so replacing the selection with the
+  failures would drop ticks the user made meanwhile.
 - **`notifyThreadsDeleted` fires once per user action**, with every deleted id
   including Side Chat ids, and not at all when nothing was deleted. Bulk delete
   calls it once for the batch and must not loop over `useDeleteThread`, which
@@ -100,7 +106,10 @@ HTML5 DnD is unreachable by keyboard. Tests:
   `core/threads/use-chat-folders.ts`, which reads the latest list from the query
   cache and saves under `scope: {id: CHAT_FOLDERS_MUTATION_SCOPE}`. Two
   `createFolder` calls from a render closure each start from the same stale
-  list and keep only the last folder.
+  list and keep only the last folder. A save's response is applied only for the
+  latest edit, by an edit counter: `setQueryData` structurally shares, so the
+  cache never holds the very array an edit sent. Each edit cancels a folder
+  read in flight, which would otherwise land the old list on top of it.
 
 Tests: `tests/unit/core/threads/thread-selection.test.ts`,
 `tests/unit/core/threads/bulk-thread-actions.dom.test.tsx`,

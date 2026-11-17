@@ -2377,10 +2377,12 @@ table; downgrade removes these choices, so subsequent upgrades use defaults.
 ## Conversation title preference
 
 `GET /api/settings/auto-title` returns the caller's **Settings → Conversation
-titles** preference, `{"enabled": bool, "model_name"?: str}`; never set, it is
-`{"enabled": true}` with no `model_name` key. `PUT /api/settings/auto-title`
-replaces the whole value with the same shape and returns the normalized stored
-value. `model_name` has three states: the key **absent** (or `null` in a request)
+titles** preference, `{"enabled": bool, "model_name"?: str, "stored": bool}`;
+never set, it is `{"enabled": true, "stored": false}` with no `model_name` key.
+`stored` (GET only) says whether the account ever saved a value, which an
+explicit "on" and the default cannot otherwise show. `PUT /api/settings/auto-title`
+replaces the whole value with `{"enabled", "model_name"?}` and returns the
+normalized stored value without `stored`. `model_name` has three states: the key **absent** (or `null` in a request)
 follows `config.yaml -> title.model_name`, `""` renames without a model call, and
 a name picks that model. A name is at most 200 characters (422 above) and is not
 checked against the catalog when stored; a run drops a name the catalog does not
@@ -2448,11 +2450,14 @@ folders.
 `items` holds 1–200 conversations, every one owned by the caller; `max_new_folders`
 is 1–20 (default 8). The response is `{"folders": [{"name", "existing_folder_id",
 "thread_ids"}], "unfiled": [...], "model_name"}`. Categories that differ only in
-case or punctuation are merged first, and one equal to an existing folder's name
-maps to that folder; the model is called only for labels still apart, and
+case or punctuation are merged first, and one equal to an existing folder's whole
+name (up to the registry's 80 characters) maps to that folder; only a name that
+matches none is cut to 40 characters as a new folder's. The model is called only
+for labels still apart, and
 `model_name` is null when it was not. A new folder needs `min_group_size`
 conversations, and new folders never exceed `max_new_folders` nor the room left
-under the 50-folder registry limit; the rest are `unfiled`. The call is billed
+under the 50-folder registry limit, counted from every folder in `existing`
+(also one whose name normalizes to nothing); the rest are `unfiled`. The call is billed
 under `organize`, split evenly across the real conversations whose labels it
 merged. A reply that cannot be used returns the deterministic plan (200), still
 billed.
@@ -2481,38 +2486,51 @@ other routes answer `503`.
   "dir"|"file", "role": "created"|"edited"|"inherited", "created_here",
   "created_attribution": "observed_create"|"preexisting"|"inferred_shell",
   "first_at", "last_at", "writes", "edits", "shell_ops", "other_live_threads",
-  "host_visible"}]}`. `path` is the container path (`/mnt/projects/acme`).
+  "host_visible"}]}`. `path` is the container path (`/mnt/projects/acme`). With
+  multi-user mode off (one shared workspace) every login's entries of the
+  conversation are listed, merged per folder; otherwise only the caller's.
 - `GET /folders/{folder_id}` (`threads:read`) → `{"folder": {…same fields, "role":
   null}, "threads": [{"thread_id", "own", "title", "role", "first_at", "last_at",
   "deleted"}], "events": [{"thread_id", "run_id", "op":
   "write"|"append"|"edit"|"shell", "rel_path", "ts"}]}`, events newest first and
   capped. Visible to the folder's creator and to users with a conversation that
-  touched it, otherwise `404`. Another user's conversation appears under a stable
+  touched it (to every login with multi-user mode off), otherwise `404`. Another user's conversation appears under a stable
   `other-…` pseudonym, with `title` and `run_id` null.
 - `POST /orphans` (`threads:read`), body `{"thread_ids": [...]}` (at most 500;
-  ids of other users' threads select nothing) → `{"available", "orphans": [{"id",
+  ids of other users' threads select nothing, unless multi-user mode is off) →
+  `{"available", "orphans": [{"id",
   "path", "name", "mount_path", "created_by_thread_id", "created_attribution",
   "last_at", "writes", "edits", "deletable", "reason"}]}`: folders those threads
   touched that no live conversation of any user still uses, and that are neither
-  deleted nor dismissed. A hidden edit version or Side Chat whose root is gone
-  does not count as live. `reason` is `preexisting`, `not_creator`,
-  `unsupported_platform`, `mount_unavailable` or `host_not_visible` when
-  `deletable` is false. `created_by_thread_id` is set only when one of the
+  deleted nor dismissed by the caller, at most 200, newest first. A hidden edit
+  version or Side Chat whose root is gone does not count as live. `reason` is
+  `preexisting`, `shell_inferred`, `not_creator`, `unsupported_platform`,
+  `mount_unavailable`, `changed` (the mount now points at another host
+  directory) or `host_not_visible` when `deletable` is false. Only
+  `observed_create` folders are ever deletable: an `inferred_shell` folder
+  appeared during a shell command, which may have been a `mv` of existing data. `created_by_thread_id` is set only when one of the
   caller's conversations created the folder.
 - `DELETE /folders/{folder_id}?confirm_name=<name>` (`threads:delete`) →
   `{"deleted": true}`. Refusals carry `detail: {"code", "message"}`: `404`
   invisible or already deleted; `403 preexisting` (it existed before a
-  conversation used it) or `not_creator` (only the user whose conversation created it, or an admin);
+  conversation used it), `shell_inferred` (it appeared during a shell command) or
+  `not_creator` (only the user whose conversation created it, or an admin);
   `422 confirm_name`, `invalid_name`, `mount_unavailable` (no longer configured
-  writable), `host_not_visible`, and from the filesystem step `link`,
-  `unsupported_type`, `protected` (it contains another mount's host directory or
-  DeerFlow's data directory) or `unsupported_platform`; `409 in_use` when a live
+  writable), `changed` (the mount points at another host directory than when the
+  folder was created, or the entry on disk is no longer the one recorded: its
+  `st_dev:st_ino` differs because it was replaced or recreated since),
+  `host_not_visible`, and from the filesystem step `link`, `unsupported_type`,
+  `protected` (it contains another mount's host directory or DeerFlow's data
+  directory) or `unsupported_platform`; `409 in_use` when a live
   conversation uses it again. The delete is descriptor-relative, never follows a
   link, never removes the mount root and is not retried. An entry already gone
   from disk is marked deleted and answers `{"deleted": true}`.
 - `POST /folders/{folder_id}/dismiss` (`threads:delete`) → `{"dismissed": true}`:
-  keep the folder and stop offering it until it is used again.
+  keep the folder and stop offering it to the caller until it is used again.
+  Dismissal is per user: it never hides the offer from the folder's creator.
 
 `DELETE /api/threads/{thread_id}` marks the thread's ledger entries as deleted,
 and creating a branch copies the parent's live entries to the branch as
-`inherited`; both are best effort and never fail the thread operation.
+`inherited`; both are best effort and never fail the thread operation. A thread
+id that comes back (the same conversation started again) is live again with its
+next write.

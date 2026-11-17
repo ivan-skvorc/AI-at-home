@@ -37,6 +37,7 @@ import {
   combineSelectionOrder,
   EMPTY_THREAD_SELECTION,
   pruneSelection,
+  removeFromSelection,
   replaceSelection,
   selectAll,
   selectRange,
@@ -160,6 +161,18 @@ export class SidebarSelectionStore {
     this.set(
       this.state.active,
       replaceSelection(this.state.selection, threadIds),
+    );
+  }
+
+  /**
+   * Untick the rows an action finished with and keep every other tick. For an
+   * action the user can keep selecting through (a move, an archive): ticks
+   * made, or a failure unticked, while it ran stay as the user left them.
+   */
+  remove(threadIds: Iterable<string>) {
+    this.set(
+      this.state.active,
+      removeFromSelection(this.state.selection, threadIds),
     );
   }
 

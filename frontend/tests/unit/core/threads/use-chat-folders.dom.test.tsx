@@ -146,4 +146,76 @@ describe("useChatFolders in one handler", () => {
     );
     client.clear();
   });
+
+  test("the server's stored list replaces the optimistic one after the latest edit", async () => {
+    // The stored list is authoritative even where it differs from what the
+    // client sent (its own normalization, for one).
+    api.saveChatFolders.mockImplementation(
+      async (folders: readonly ChatFolder[]) =>
+        folders.map((folder) => ({
+          ...folder,
+          name: `${folder.name} (saved)`,
+        })),
+    );
+    const { client, result } = setup();
+    act(() => {
+      result.current.renameFolder("existing", "Renamed");
+    });
+    await waitFor(() =>
+      expect(
+        names(client.getQueryData<ChatFolder[]>(CHAT_FOLDERS_QUERY_KEY)),
+      ).toEqual(["Renamed (saved)"]),
+    );
+    client.clear();
+  });
+
+  test("a list read in flight during an edit cannot drop the new folder", async () => {
+    let answerRead: (folders: ChatFolder[]) => void = () => undefined;
+    const { client, result } = setup();
+    api.fetchChatFolders.mockImplementation(
+      () =>
+        new Promise<ChatFolder[]>((resolve) => {
+          answerRead = resolve;
+        }),
+    );
+    let releaseWrite: () => void = () => undefined;
+    api.saveChatFolders.mockImplementation(
+      (folders: readonly ChatFolder[]) =>
+        new Promise<ChatFolder[]>((resolve) => {
+          releaseWrite = () => resolve([...folders]);
+        }),
+    );
+    act(() => {
+      void client.invalidateQueries({ queryKey: CHAT_FOLDERS_QUERY_KEY });
+    });
+    await waitFor(() => expect(api.fetchChatFolders).toHaveBeenCalled());
+    act(() => {
+      result.current.createFolder("Q3");
+    });
+    // The read started before the edit and answers with the old list.
+    await act(async () => {
+      answerRead([...EXISTING]);
+    });
+    expect(
+      names(client.getQueryData<ChatFolder[]>(CHAT_FOLDERS_QUERY_KEY)),
+    ).toEqual(["Existing", "Q3"]);
+    await waitFor(() => expect(api.saveChatFolders).toHaveBeenCalledTimes(1));
+    await act(async () => {
+      releaseWrite();
+    });
+    expect(
+      names(client.getQueryData<ChatFolder[]>(CHAT_FOLDERS_QUERY_KEY)),
+    ).toEqual(["Existing", "Q3"]);
+    // The next edit starts from a list that still holds Q3.
+    act(() => {
+      result.current.createFolder("Q4");
+    });
+    await waitFor(() => expect(api.saveChatFolders).toHaveBeenCalledTimes(2));
+    expect(names(api.saveChatFolders.mock.calls[1]![0])).toEqual([
+      "Existing",
+      "Q3",
+      "Q4",
+    ]);
+    client.clear();
+  });
 });

@@ -8,6 +8,20 @@ import { useArtifacts } from "../artifacts/context";
 import { useMaybeSidecar } from "../sidecar/context";
 
 /**
+ * The header width from which the label shows, per header. The controls row
+ * cannot shrink and its last controls are cut off, so the word appears only
+ * where the full row still fits with it: the auto-rename label, the token
+ * pill, Side Chat, Browser, Export and Artifacts come to about 47rem on a chat
+ * page, and an agent's page adds its badge and **New chat** (about 59rem).
+ * Below that the button is icon-only and clips nothing it did not clip before.
+ * Literal class names, so Tailwind finds them.
+ */
+const LABEL_CLASS = {
+  chat: "hidden @[48rem]/chat-header:inline",
+  agent: "hidden @[60rem]/chat-header:inline",
+} as const;
+
+/**
  * Header button that opens the side panel on the thread's file explorer.
  *
  * It carries a visible "Files" label so people can find it: an unlabelled
@@ -17,7 +31,12 @@ import { useMaybeSidecar } from "../sidecar/context";
  * narrows the chat column without changing the viewport. The aria-label stays
  * "Show files", which is the accessible name tests and assistive tech use.
  */
-export function ThreadFilesTrigger() {
+export function ThreadFilesTrigger({
+  header = "chat",
+}: {
+  /** Which chat header hosts the button; see {@link LABEL_CLASS}. */
+  header?: keyof typeof LABEL_CLASS;
+} = {}) {
   const { t } = useI18n();
   const { showFiles } = useArtifacts();
   const sidecar = useMaybeSidecar();
@@ -36,7 +55,7 @@ export function ThreadFilesTrigger() {
         <FolderTreeIcon />
         <span
           data-testid="thread-files-trigger-label"
-          className="hidden @[32rem]/chat-header:inline"
+          className={LABEL_CLASS[header]}
         >
           {t.threadFiles.title}
         </span>

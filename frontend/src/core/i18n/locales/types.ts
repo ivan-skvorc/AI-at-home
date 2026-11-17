@@ -2242,6 +2242,8 @@ export interface Translations {
       unsupported_platform: string;
       mount_unavailable: string;
       host_not_visible: string;
+      shell_inferred: string;
+      changed: string;
       unknown: string;
     };
     deleteSelected: (count: number) => string;

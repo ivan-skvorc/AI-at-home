@@ -13,7 +13,8 @@
  * `PUT` takes and returns the same shape. `model_name` has three states and the
  * wire keeps them apart, exactly like the run context: the key **absent**
  * follows `config.yaml -> title.model_name`, `""` renames without a model call,
- * and a name picks that model.
+ * and a name picks that model. The GET may also carry `"stored": bool`, whether
+ * the account has saved a preference at all (see {@link AutoTitleAccountState}).
  *
  * Every call degrades rather than throws, and an unreachable or unusable answer
  * is `null` — "unknown" — never a default. Reading a failed request as
@@ -57,6 +58,34 @@ export function parseAutoTitlePreference(
   return { enabled, modelName };
 }
 
+/**
+ * A GET answer: the preference, and whether the account has ever saved one.
+ *
+ * The never-set default and an explicit "on, with the operator's model" read
+ * alike on the wire (`{"enabled": true}`), and only the first may be replaced
+ * by an opt-out this browser held before the account could store one; taking
+ * the second for it would undo a choice made on another device. `stored`
+ * tells them apart: `false` only for an account that never saved a
+ * preference. It is `null` when the Gateway does not send the flag, and the
+ * caller then has only the shape to go on.
+ */
+export type AutoTitleAccountState = {
+  preference: AutoTitlePreference;
+  stored: boolean | null;
+};
+
+/** Validate a GET answer; `null` when it is not a preference at all. */
+export function parseAutoTitleAccountState(
+  data: unknown,
+): AutoTitleAccountState | null {
+  const preference = parseAutoTitlePreference(data);
+  if (!preference) {
+    return null;
+  }
+  const { stored } = data as Record<string, unknown>;
+  return { preference, stored: typeof stored === "boolean" ? stored : null };
+}
+
 /** The request body: an omitted `model_name` is how "server default" is stored. */
 export function autoTitlePreferenceBody(preference: AutoTitlePreference): {
   enabled: boolean;
@@ -74,15 +103,15 @@ export function autoTitlePreferenceBody(preference: AutoTitlePreference): {
  * Read the caller's stored preference. `null` when the Gateway is unreachable,
  * answers with an error, or answers something that is not a preference.
  */
-export async function fetchAutoTitlePreference(
+export async function fetchAutoTitleAccountState(
   signal?: AbortSignal,
-): Promise<AutoTitlePreference | null> {
+): Promise<AutoTitleAccountState | null> {
   try {
     const res = await fetch(endpoint(), { cache: "no-store", signal });
     if (!res.ok) {
       return null;
     }
-    return parseAutoTitlePreference(await res.json());
+    return parseAutoTitleAccountState(await res.json());
   } catch {
     return null;
   }

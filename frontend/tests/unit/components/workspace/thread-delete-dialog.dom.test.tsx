@@ -142,6 +142,32 @@ describe("thread deletion confirmation copy", () => {
     );
     client.clear();
   });
+
+  for (const [name, answer] of [
+    ["while the ledger loads", () => new Promise<Response>(() => undefined)],
+    [
+      "when the Gateway has no ledger routes",
+      async () => new Response(null, { status: 404 }),
+    ],
+    [
+      "when the ledger fails",
+      async () => new Response("boom", { status: 500 }),
+    ],
+  ] as const) {
+    it(`promises no offer ${name}`, async () => {
+      const ledgerFetch = rs.fn(answer);
+      rs.stubGlobal("fetch", ledgerFetch);
+      const client = renderDialog();
+      await screen.findByRole("dialog");
+      await waitFor(() => expect(ledgerFetch).toHaveBeenCalled());
+      // Let a failed answer settle before reading the copy.
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(
+        screen.getByTestId("thread-delete-shared-folders").textContent,
+      ).toBe("Shared folders it used outside /mnt/user-data are kept.");
+      client.clear();
+    });
+  }
 });
 
 describe("thread deletion failure feedback", () => {

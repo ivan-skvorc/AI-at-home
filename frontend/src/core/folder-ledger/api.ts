@@ -74,6 +74,8 @@ const KEEP_REASONS: ReadonlySet<string> = new Set<OrphanKeepReason>([
   "unsupported_platform",
   "mount_unavailable",
   "host_not_visible",
+  "shell_inferred",
+  "changed",
 ]);
 
 function parseRole(value: unknown): LedgerFolderRole | null {

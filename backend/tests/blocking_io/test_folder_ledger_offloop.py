@@ -27,12 +27,12 @@ from deerflow.agents.middlewares.folder_ledger_middleware import FolderLedgerMid
 from deerflow.config.paths import Paths
 from deerflow.config.sandbox_config import VolumeMountConfig
 from deerflow.persistence.base import Base
-from deerflow.persistence.folder_ledger import FolderLedgerEventRow, FolderLedgerFolderRow, FolderLedgerRecorderStore, FolderLedgerRepository, FolderLedgerTouchRow
+from deerflow.persistence.folder_ledger import FolderLedgerDismissalRow, FolderLedgerEventRow, FolderLedgerFolderRow, FolderLedgerRecorderStore, FolderLedgerRepository, FolderLedgerTouchRow
 from deerflow.persistence.thread_meta.model import ThreadMetaRow
 from deerflow.runtime.user_context import reset_current_user, set_current_user
 
 pytestmark = pytest.mark.asyncio
-_TABLES = [ThreadMetaRow, FolderLedgerFolderRow, FolderLedgerTouchRow, FolderLedgerEventRow]
+_TABLES = [ThreadMetaRow, FolderLedgerFolderRow, FolderLedgerTouchRow, FolderLedgerEventRow, FolderLedgerDismissalRow]
 
 
 def _config(projects):
@@ -84,9 +84,13 @@ async def test_routes_list_offer_and_delete_off_the_loop(tmp_path, monkeypatch):
         await conn.run_sync(lambda sync: Base.metadata.create_all(sync, tables=[model.__table__ for model in _TABLES]))
     factory = async_sessionmaker(engine, expire_on_commit=False)
     repo = FolderLedgerRepository(factory)
+    from deerflow.folder_ledger.mounts import LedgerMount, host_root_key, probe_entry
     from deerflow.persistence.folder_ledger import TouchRecord
 
-    (folder_id,) = await repo.record([TouchRecord(mount_path="/mnt/projects", name="acme", kind="dir", rel_path="acme/a.txt", op="write", created=True, user_id="alice", thread_id="t1")])
+    mount = LedgerMount(container_path="/mnt/projects", host_path=str(projects), read_only=False)
+    probe = await asyncio.to_thread(probe_entry, mount, "acme")
+    record = TouchRecord(mount_path="/mnt/projects", name="acme", kind="dir", rel_path="acme/a.txt", op="write", created=True, user_id="alice", thread_id="t1", host_root=host_root_key(mount), entry_after=probe.identity)
+    (folder_id,) = await repo.record([record])
     monkeypatch.setattr(folder_ledger, "get_session_factory", lambda: factory)
     monkeypatch.setattr(folder_ledger, "_load_app_config", lambda: _config(projects))
     monkeypatch.setattr("deerflow.config.paths.get_paths", lambda: Paths(tmp_path / "home"))

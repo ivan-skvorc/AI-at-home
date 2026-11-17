@@ -347,11 +347,16 @@ export function CleanupPreview({
       counts.set(item.target.key, (counts.get(item.target.key) ?? 0) + 1);
     }
   }
-  const anyChanges = plan.items.some(itemHasChanges);
+  // The empty state means "the model proposed nothing", so it is decided once,
+  // when the preview opens (after a pass, or on Review again after an apply).
+  // An edit that takes back the last change (a cleared title, a merge into
+  // "Don't file these") keeps the rows and the field being typed in on screen,
+  // where it can be undone; otherwise only Back and a paid re-run would help.
+  const [openedWithChanges] = useState(() => plan.items.some(itemHasChanges));
 
   return (
     <div className="flex flex-col gap-4" data-testid="chat-cleanup-preview">
-      {!anyChanges ? (
+      {!openedWithChanges ? (
         <Empty className="border">
           <EmptyHeader>
             <EmptyTitle>{copy.noChanges}</EmptyTitle>

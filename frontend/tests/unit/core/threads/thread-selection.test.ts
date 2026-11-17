@@ -10,6 +10,7 @@ import {
   EMPTY_THREAD_SELECTION,
   pruneSelection,
   recentListSelectionOrder,
+  removeFromSelection,
   replaceSelection,
   selectAll,
   selectRange,
@@ -82,7 +83,7 @@ describe("selectRange", () => {
   });
 });
 
-describe("selectAll, replaceSelection and pruneSelection", () => {
+describe("selectAll, replaceSelection, removeFromSelection and pruneSelection", () => {
   it("selectAll adds the rendered rows and keeps hidden selected ones", () => {
     const next = selectAll(selection(["hidden"], "hidden"), ORDER);
     expect(ids(next)).toEqual(["a", "b", "c", "d", "e", "hidden"]);
@@ -94,6 +95,22 @@ describe("selectAll, replaceSelection and pruneSelection", () => {
     expect(selectAll(all, ORDER)).toBe(all);
     expect(replaceSelection(all, [...ORDER].reverse())).toBe(all);
     expect(pruneSelection(all, () => true)).toBe(all);
+    expect(removeFromSelection(all, ["elsewhere"])).toBe(all);
+  });
+
+  it("removeFromSelection unticks only the given rows, and their anchor", () => {
+    // A finished action unticks what it handled; "c", ticked while it ran,
+    // and "d", left out of it, stay.
+    const next = removeFromSelection(selection(["a", "b", "c", "d"], "c"), [
+      "a",
+      "b",
+      "unticked-meanwhile",
+    ]);
+    expect(ids(next)).toEqual(["c", "d"]);
+    expect(next.anchorId).toBe("c");
+    expect(removeFromSelection(selection(["a", "b"], "a"), ["a"])).toEqual(
+      selection(["b"], null),
+    );
   });
 
   it("replaceSelection keeps the anchor only while it is still selected", () => {

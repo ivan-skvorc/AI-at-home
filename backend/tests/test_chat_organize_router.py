@@ -417,6 +417,15 @@ class TestConsolidate:
         system, _ = _sent_prompt(stubs)
         assert "at most 1 new folder." in system
 
+    def test_a_folder_whose_name_normalizes_away_still_holds_a_registry_slot(self, stubs):
+        """A full registry with a folder named "???" has no room: no plan may propose a new folder."""
+        existing = [{"id": f"e-{n}", "name": f"Existing {n}"} for n in range(organize.MAX_CHAT_FOLDERS - 1)] + [{"id": "e-q", "name": "???"}]
+
+        result = _consolidate({"items": _items(("t-1", "Rust"), ("t-2", "Rust"), ("t-3", "Rust")), "existing": existing})
+
+        assert result.folders == []
+        assert result.unfiled == ["t-1", "t-2", "t-3"]
+
     def test_an_exhausted_spend_cap_refuses_a_merge_that_needs_the_model(self, stubs):
         stubs.spend.return_value = SimpleNamespace(exceeded=SimpleNamespace(period="daily", limit=1.0, spent=2.0), currency=None)
 

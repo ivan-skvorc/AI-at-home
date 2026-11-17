@@ -26,11 +26,11 @@ from deerflow.config.model_config import ModelConfig
 from deerflow.config.sandbox_config import SandboxConfig, VolumeMountConfig
 from deerflow.folder_ledger.mounts import FolderClassifier
 from deerflow.persistence.base import Base
-from deerflow.persistence.folder_ledger import FolderLedgerEventRow, FolderLedgerFolderRow, FolderLedgerRecorderStore, FolderLedgerTouchRow
+from deerflow.persistence.folder_ledger import FolderLedgerDismissalRow, FolderLedgerEventRow, FolderLedgerFolderRow, FolderLedgerRecorderStore, FolderLedgerTouchRow
 from deerflow.persistence.thread_meta.model import ThreadMetaRow
 
 LOCAL = "deerflow.sandbox.local:LocalSandboxProvider"
-_TABLES = [ThreadMetaRow, FolderLedgerFolderRow, FolderLedgerTouchRow, FolderLedgerEventRow]
+_TABLES = [ThreadMetaRow, FolderLedgerFolderRow, FolderLedgerTouchRow, FolderLedgerEventRow, FolderLedgerDismissalRow]
 
 
 @pytest.fixture
@@ -212,7 +212,7 @@ def test_no_thread_id_or_no_ledger_is_a_no_op(hosts, ledger):
 
 def test_ledger_failure_fails_open(hosts, ledger, caplog):
     class BrokenStore:
-        def record(self, records):
+        def record(self, records, removed=()):
             raise RuntimeError("database is locked")
 
     middleware = FolderLedgerMiddleware(app_config=_config(hosts), store_factory=BrokenStore, ledger_available=lambda: True)
@@ -268,6 +268,54 @@ def test_bash_reference_that_appears_is_inferred_shell_and_existing_one_is_a_she
     assert folders["fresh"].created_attribution == "inferred_shell"
     assert folders["old"].created_attribution == "preexisting"
     assert {(touch.role, touch.shell_ops) for touch in ledger.rows(FolderLedgerTouchRow)} == {("created", 1), ("edited", 1)}
+
+
+def _identity(path: Path) -> str:
+    info = os.lstat(path)
+    return f"{info.st_dev}:{info.st_ino}"
+
+
+def test_a_created_folder_is_bound_to_its_host_entry(hosts, ledger):
+    middleware = _middleware(_config(hosts), ledger)
+
+    _arun(middleware, _request("write_file", {"path": "/mnt/projects/acme/index.html", "content": "x"}), _writing_tool(hosts))
+
+    (folder,) = ledger.rows(FolderLedgerFolderRow)
+    assert (folder.host_root, folder.host_entry) == (os.path.normpath(hosts.projects), _identity(hosts.projects / "acme"))
+
+
+@pytest.mark.skipif(os.name != "posix", reason="atomic replace gives the file a new inode")
+def test_the_binding_follows_a_recorded_rewrite_of_a_bare_file(hosts, ledger):
+    middleware = _middleware(_config(hosts), ledger)
+
+    def replacing_tool(request):
+        staged = hosts.projects / ".TODO.md.tmp"
+        staged.write_text(request.tool_call["args"]["content"], encoding="utf-8")
+        os.replace(staged, hosts.projects / "TODO.md")
+        return ToolMessage(content="OK", tool_call_id="call-1", name="write_file")
+
+    _arun(middleware, _request("write_file", {"path": "/mnt/projects/TODO.md", "content": "one"}), replacing_tool)
+    first = _identity(hosts.projects / "TODO.md")
+    _arun(middleware, _request("write_file", {"path": "/mnt/projects/TODO.md", "content": "two"}), replacing_tool)
+
+    (folder,) = ledger.rows(FolderLedgerFolderRow)
+    assert folder.host_entry == _identity(hosts.projects / "TODO.md") != first
+
+
+def test_a_folder_a_command_removed_is_retired_and_the_next_creator_is_credited(hosts, ledger):
+    middleware = _middleware(_config(hosts), ledger)
+    _arun(middleware, _request("write_file", {"path": "/mnt/projects/acme/a.md", "content": "x"}, thread_id="alice-1", user_id="alice"), _writing_tool(hosts))
+
+    def remove(request):
+        (hosts.projects / "acme" / "a.md").unlink()
+        (hosts.projects / "acme").rmdir()
+        return ToolMessage(content="", tool_call_id="call-1", name="bash")
+
+    _arun(middleware, _request("bash", {"command": "rm -rf /mnt/projects/acme"}, thread_id="alice-1", user_id="alice"), remove)
+    _arun(middleware, _request("write_file", {"path": "/mnt/projects/acme/b.md", "content": "x"}, thread_id="bob-1", user_id="bob"), _writing_tool(hosts))
+
+    live = [row for row in ledger.rows(FolderLedgerFolderRow) if row.deleted_at is None]
+    assert [(row.name, row.created_attribution, row.created_by_user_id, row.created_by_thread_id) for row in live] == [("acme", "observed_create", "bob", "bob-1")]
 
 
 def test_mounts_ignored_by_the_provider_track_nothing(hosts):

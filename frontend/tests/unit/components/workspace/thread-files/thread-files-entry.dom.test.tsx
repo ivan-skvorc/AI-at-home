@@ -89,6 +89,21 @@ describe("Files header button", () => {
       "Files",
     );
   });
+
+  it("shows the word only from a header width where the whole row fits", () => {
+    // The controls row cannot shrink: a label shown any earlier would push
+    // the last header controls (Artifacts first) off the edge.
+    const view = renderChat(<ThreadFilesTrigger />);
+    expect(
+      screen.getByTestId("thread-files-trigger-label").className.split(" "),
+    ).toEqual(["hidden", "@[48rem]/chat-header:inline"]);
+    view.unmount();
+    // An agent's header also carries its badge and New chat.
+    renderChat(<ThreadFilesTrigger header="agent" />);
+    expect(
+      screen.getByTestId("thread-files-trigger-label").className.split(" "),
+    ).toEqual(["hidden", "@[60rem]/chat-header:inline"]);
+  });
 });
 
 describe("?panel=files", () => {

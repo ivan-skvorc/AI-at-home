@@ -57,7 +57,25 @@ def test_get_defaults_to_on_with_no_model_key(client):
     would read as a different value to a client that checks ``in``."""
     response = client.get("/api/settings/auto-title")
     assert response.status_code == 200
-    assert response.json() == {"enabled": True}
+    assert response.json() == {"enabled": True, "stored": False}
+
+
+def test_get_tells_a_never_set_account_from_an_explicit_on(client):
+    """``{"enabled": true}`` is both the default and a saved "on". A browser
+    that still holds an opt-out from before the preference moved to the
+    account uploads it only into a never-set account; without ``stored`` it
+    would overwrite an "on" another device saved."""
+    assert client.get("/api/settings/auto-title").json()["stored"] is False
+
+    client.put("/api/settings/auto-title", json={"enabled": True})
+    user_ui_state.reset_cache_for_tests()
+
+    assert client.get("/api/settings/auto-title").json() == {"enabled": True, "stored": True}
+
+
+def test_put_does_not_echo_the_get_only_stored_flag(client):
+    response = client.put("/api/settings/auto-title", json={"enabled": False, "stored": False})
+    assert response.json() == {"enabled": False}
 
 
 @pytest.mark.parametrize(
@@ -77,7 +95,7 @@ def test_put_then_get_round_trips_each_state(client, preference):
 
     # Cold cache: the "reopened on another device" read.
     user_ui_state.reset_cache_for_tests()
-    assert client.get("/api/settings/auto-title").json() == preference
+    assert client.get("/api/settings/auto-title").json() == {**preference, "stored": True}
 
 
 def test_a_null_model_name_means_follow_the_operator(client):
@@ -86,7 +104,7 @@ def test_a_null_model_name_means_follow_the_operator(client):
     response = client.put("/api/settings/auto-title", json={"enabled": True, "model_name": None})
 
     assert response.json() == {"enabled": True}
-    assert client.get("/api/settings/auto-title").json() == {"enabled": True}
+    assert client.get("/api/settings/auto-title").json() == {"enabled": True, "stored": True}
 
 
 def test_put_is_a_replace_not_a_patch(client):
@@ -115,7 +133,7 @@ def test_an_over_long_model_name_is_rejected_not_truncated(client):
     response = client.put("/api/settings/auto-title", json={"enabled": True, "model_name": too_long})
 
     assert response.status_code == 422
-    assert client.get("/api/settings/auto-title").json() == {"enabled": True}
+    assert client.get("/api/settings/auto-title").json() == {"enabled": True, "stored": False}
 
 
 def test_the_write_leaves_the_chat_folders_alone(client):
@@ -137,13 +155,13 @@ async def test_the_preference_is_scoped_to_the_calling_user():
 
     token = user_context._current_user.set(_User("bob"))
     try:
-        assert (await get_auto_title_setting()).model_dump(exclude_none=True) == {"enabled": True}
+        assert (await get_auto_title_setting()).model_dump(exclude_none=True) == {"enabled": True, "stored": False}
     finally:
         user_context._current_user.reset(token)
 
     token = user_context._current_user.set(_User("alice"))
     try:
-        assert (await get_auto_title_setting()).model_dump(exclude_none=True) == {"enabled": False, "model_name": ""}
+        assert (await get_auto_title_setting()).model_dump(exclude_none=True) == {"enabled": False, "model_name": "", "stored": True}
     finally:
         user_context._current_user.reset(token)
     assert user_ui_state.get_auto_title_preference("alice") == {"enabled": False, "model_name": ""}

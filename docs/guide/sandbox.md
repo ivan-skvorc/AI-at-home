@@ -526,9 +526,13 @@ sandbox:
   creator; if it existed, or the Gateway cannot see the mount's host directory,
   the folder counts as pre-existing. `bash` is best effort: a literal
   `<mount>/<name>` path in the command is checked before and after the call; with
-  no visible host nothing is recorded. Writes outside DeerFlow, through MCP
-  filesystem servers or via paths built at run time are not seen. Recording never
-  changes a tool's result; a ledger failure is logged and ignored.
+  no visible host nothing is recorded. A folder that appears during a command is
+  recorded but never offered for deletion, because `mv` or `cp` of existing data
+  makes a name appear just as `mkdir` does. A folder the command removes leaves
+  the ledger, so a later folder of that name is credited to whoever creates it.
+  Writes outside DeerFlow, through MCP filesystem servers or via paths built at
+  run time are not seen. Recording never changes a tool's result; a ledger
+  failure is logged and ignored.
 - **Where it applies.** The local sandbox and AIO in per-conversation container
   mode, the providers that honour custom mounts. An external AIO `base_url` or a
   provisioner ignores the mounts and records nothing. The ledger needs the SQL
@@ -537,18 +541,22 @@ sandbox:
 - **Where you see it.** The **Files** tab of a conversation lists its shared
   folders with their role, last edit and other users, and opens the edit log.
   Another user's conversation appears without its title, under a pseudonymous id.
+  With multi-user mode off, every login sees every conversation's folders, as
+  it sees the conversations.
 - **Deletion is offered, never automatic.** After you delete conversations, the
   folders they touched that no live conversation of any user still uses are
   offered for deletion in a dialog with nothing pre-ticked. A hidden edit version
   or Side Chat of a deleted conversation does not count as a user. A folder can
-  be deleted only if a conversation was seen creating it, by the user who
-  created it or an administrator, while its mount is still configured writable
-  and its host directory is visible to the Gateway. The delete is refused with
-  409 if a conversation uses the folder again, never follows a link, never
-  removes the mount itself, and refuses a folder that contains another mount's
-  host directory or DeerFlow's own data directory.
-  **Don't ask again** keeps the folder and stops the offer until it is used
-  again.
+  be deleted only if a `write_file` or `str_replace` call was seen creating it,
+  by the user who created it or an administrator, while its mount is still
+  configured writable, still points at the same host directory and is visible
+  to the Gateway, and while the entry on disk is still the one that was created
+  (a folder replaced or recreated outside the conversation is kept). The delete
+  is refused with 409 if a conversation uses the folder again, never follows a
+  link, never removes the mount itself, and refuses a folder that contains
+  another mount's host directory or DeerFlow's own data directory.
+  **Don't ask again** keeps the folder and stops offering it to you until it is
+  used again; it does not hide the offer from anyone else.
 
 No configuration keys of its own. The routes are documented in
 [API.md](../../backend/docs/API.md#folder-ledger).

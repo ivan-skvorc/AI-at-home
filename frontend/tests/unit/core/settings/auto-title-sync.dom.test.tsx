@@ -140,19 +140,44 @@ describe("hydration", () => {
   });
 
   it("uploads an opt-out this browser held before the account could store it", async () => {
-    // The upgrade case. The account reads as the never-set default, and this
+    // The upgrade case. The account has never saved a preference, and this
     // browser was the only place the opt-out existed. Adopting the default
     // would switch renaming back on for exactly the people who turned it off.
+    // A Gateway without the `stored` flag gets the same, from the shape.
+    for (const server of [
+      { enabled: true, stored: false },
+      { enabled: true },
+    ]) {
+      localStorage.clear();
+      mocks.fetch.mockReset();
+      setLocal(false, undefined);
+      serve(server);
+
+      await expect(hydrateAutoTitlePreference()).resolves.toBe("migrated");
+
+      expect(calls()).toEqual([
+        { method: "GET", body: undefined },
+        { method: "PUT", body: { enabled: false } },
+      ]);
+      expect(local().enabled).toBe(false);
+      expect(
+        localStorage.getItem(AUTO_TITLE_SYNCED_STORAGE_KEY),
+      ).not.toBeNull();
+    }
+  });
+
+  it("keeps an 'on' the account stored over a stale opt-out in a new origin", async () => {
+    // Origin A uploaded its opt-out, then the user turned renaming back on
+    // there. Origin B, opened for the first time since the upgrade, still
+    // holds the old opt-out. The account's explicit "on" reads exactly like
+    // the never-set default, so only `stored` keeps B from reverting it.
     setLocal(false, undefined);
-    serve({ enabled: true });
+    serve({ enabled: true, stored: true });
 
-    await expect(hydrateAutoTitlePreference()).resolves.toBe("migrated");
+    await expect(hydrateAutoTitlePreference()).resolves.toBe("adopted");
 
-    expect(calls()).toEqual([
-      { method: "GET", body: undefined },
-      { method: "PUT", body: { enabled: false } },
-    ]);
-    expect(local().enabled).toBe(false);
+    expect(calls().map((call) => call.method)).toEqual(["GET"]);
+    expect(local()).toEqual({ enabled: true, modelName: undefined });
     expect(localStorage.getItem(AUTO_TITLE_SYNCED_STORAGE_KEY)).not.toBeNull();
   });
 

@@ -324,6 +324,19 @@ def get_auto_title_preference(user_id: str) -> dict[str, Any]:
     return normalize_auto_title_preference(_read_state(user_id).get(AUTO_TITLE_KEY))
 
 
+def get_auto_title_account_state(user_id: str) -> tuple[dict[str, Any], bool]:
+    """The preference plus whether the account has ever stored one.
+
+    ``{"enabled": True}`` is both the never-set default and an explicit "on",
+    and a browser that still holds an opt-out from before the preference moved
+    to the account must tell them apart: it uploads its old choice only into a
+    never-set account, never over an "on" another device saved. One read, so
+    the flag and the value describe the same file.
+    """
+    state = _read_state(user_id)
+    return normalize_auto_title_preference(state.get(AUTO_TITLE_KEY)), AUTO_TITLE_KEY in state
+
+
 def set_auto_title_preference(user_id: str, preference: Any) -> dict[str, Any]:
     """Replace the user's auto-title preference; returns the stored value.
 

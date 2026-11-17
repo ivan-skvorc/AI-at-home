@@ -95,7 +95,10 @@ import {
   type ThreadBranchEntry,
 } from "@/core/threads/thread-branch-tree";
 import { buildThreadListModel } from "@/core/threads/thread-list-model";
-import { recentListSelectionOrder } from "@/core/threads/thread-selection";
+import {
+  recentListSelectionOrder,
+  THREAD_SELECTING_ATTRIBUTE,
+} from "@/core/threads/thread-selection";
 import type { AgentThread, AgentThreadState } from "@/core/threads/types";
 import { useChatFolders } from "@/core/threads/use-chat-folders";
 import {
@@ -389,7 +392,7 @@ export function ThreadSidebarItem({
           // The mobile drawer closes on any link click in its capture phase,
           // before this row could cancel it; this marker tells it a selecting
           // row's click is a toggle, not a navigation.
-          data-thread-selecting={selecting ? "true" : undefined}
+          {...{ [THREAD_SELECTING_ATTRIBUTE]: selecting ? "true" : undefined }}
           href={pathOfThread(thread)}
           // Always draggable: the same payload files the chat into a sidebar
           // folder and pins it as a folder's expanded area, so one drag serves
@@ -915,7 +918,9 @@ export function RecentChatList() {
   /**
    * File the selected chats into `folder` (or back to the root list). Chats
    * already there are skipped rather than re-written; whatever fails stays
-   * ticked so the user can see what is left and try again.
+   * ticked so the user can see what is left and try again. Only the chats
+   * this move handled are unticked: the checkboxes stay live while it runs,
+   * and a tick made meanwhile belongs to the next action.
    */
   const handleMoveSelection = useCallback(
     async (threadIds: readonly string[], folder: ChatFolder | null) => {
@@ -928,16 +933,16 @@ export function RecentChatList() {
         expandFolder(folderId);
       }
       if (toMove.length === 0) {
-        selectionApi?.store.replace([]);
+        selectionApi?.store.remove(threadIds);
         return;
       }
-      let failedIds: string[];
+      let failedIds: Set<string>;
       try {
         const result = await moveThreadsToFolder({
           threadIds: toMove,
           folderId,
         });
-        failedIds = result.failed.map((failure) => failure.threadId);
+        failedIds = new Set(result.failed.map((failure) => failure.threadId));
         const moved = result.succeeded.length;
         if (moved > 0) {
           // Grouped by project, a project's chat keeps rendering in its project
@@ -963,15 +968,17 @@ export function RecentChatList() {
               : undefined,
           );
         }
-        if (failedIds.length > 0) {
-          toast.error(t.chats.selection.moveFailed(failedIds.length));
+        if (failedIds.size > 0) {
+          toast.error(t.chats.selection.moveFailed(failedIds.size));
         }
       } catch (error) {
         console.error("Failed to move chats:", error);
         toast.error(t.chats.folders.moveFailed);
         return;
       }
-      selectionApi?.store.replace(failedIds);
+      selectionApi?.store.remove(
+        threadIds.filter((threadId) => !failedIds.has(threadId)),
+      );
     },
     [
       expandFolder,

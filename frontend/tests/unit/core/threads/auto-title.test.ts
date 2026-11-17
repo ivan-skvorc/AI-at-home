@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, rs } from "@rstest/core";
 
 import {
   autoTitlePreferenceBody,
+  parseAutoTitleAccountState,
   parseAutoTitlePreference,
 } from "@/core/settings/auto-title-api";
 import {
@@ -188,6 +189,25 @@ describe("what the account stores", () => {
     expect(
       parseAutoTitlePreference({ enabled: false, model_name: "cheap-model" }),
     ).toEqual({ enabled: false, modelName: "cheap-model" });
+  });
+
+  it("reads whether the account has stored a preference, unknown when not said", () => {
+    const on = { enabled: true, modelName: undefined };
+    expect(
+      parseAutoTitleAccountState({ enabled: true, stored: false }),
+    ).toEqual({ preference: on, stored: false });
+    expect(parseAutoTitleAccountState({ enabled: true, stored: true })).toEqual(
+      {
+        preference: on,
+        stored: true,
+      },
+    );
+    // An older Gateway sends no flag: unknown, never "never set".
+    expect(parseAutoTitleAccountState({ enabled: true })).toEqual({
+      preference: on,
+      stored: null,
+    });
+    expect(parseAutoTitleAccountState({ stored: false })).toBeNull();
   });
 
   it.each([

@@ -6,7 +6,7 @@ Create Date: 2026-11-16
 
 A fork revision (FORK_NOTES.md). It chains onto the fork's merge head, so the
 next upstream sync that adds a revision joins this tip with another no-op merge
-point instead of re-parenting either branch. Three new tables, no change to an
+point instead of re-parenting either branch. Four new tables, no change to an
 existing one; an older binary sharing the database never reads them.
 """
 
@@ -43,7 +43,8 @@ def upgrade() -> None:
             sa.Column("first_seen_at", sa.DateTime(timezone=True), nullable=False),
             sa.Column("last_touched_at", sa.DateTime(timezone=True), nullable=False),
             sa.Column("deleted_at", sa.DateTime(timezone=True), nullable=True),
-            sa.Column("dismissed_at", sa.DateTime(timezone=True), nullable=True),
+            sa.Column("host_root", sa.String(1024), nullable=True),
+            sa.Column("host_entry", sa.String(64), nullable=True),
         )
         # Both predicates: one alone builds a full unique index on the other
         # dialect, which would forbid recreating a name after a ledger delete.
@@ -82,9 +83,17 @@ def upgrade() -> None:
             sa.Column("ts", sa.DateTime(timezone=True), nullable=False),
         )
         op.create_index("ix_folder_ledger_events_folder", "folder_ledger_events", ["folder_id", "id"])
+    if not _has_table("folder_ledger_dismissals"):
+        op.create_table(
+            "folder_ledger_dismissals",
+            sa.Column("folder_id", sa.String(32), sa.ForeignKey("folder_ledger_folders.id", ondelete="CASCADE"), nullable=False),
+            sa.Column("user_id", sa.String(64), nullable=False),
+            sa.Column("dismissed_at", sa.DateTime(timezone=True), nullable=False),
+            sa.PrimaryKeyConstraint("folder_id", "user_id", name="pk_folder_ledger_dismissals"),
+        )
 
 
 def downgrade() -> None:
-    for table in ("folder_ledger_events", "folder_ledger_touches", "folder_ledger_folders"):
+    for table in ("folder_ledger_dismissals", "folder_ledger_events", "folder_ledger_touches", "folder_ledger_folders"):
         if _has_table(table):
             op.drop_table(table)

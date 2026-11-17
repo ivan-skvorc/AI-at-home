@@ -346,6 +346,23 @@ class TestDeterministicMerge:
 
         assert organize.needs_model_merge(groups) is True
 
+    def test_an_existing_folder_longer_than_a_category_still_matches_whole(self):
+        """The registry allows 80 characters; a category cut at 40 first would never match it."""
+        long_name = "Kubernetes cluster administration and debugging"  # 47 characters
+        assert organize.MAX_CATEGORY_CHARS < len(long_name) <= organize.MAX_FOLDER_NAME_CHARS
+        category = organize.parse_suggest_reply(json.dumps({"category": long_name}), mode="auto", rename=False, max_title_chars=80).category
+
+        groups, _ = organize.group_categories(_items(("t1", category), ("t2", long_name.lower())), _choices(long_name))
+        plan = organize.finalize_plan(groups, existing_count=1)
+
+        assert [(folder.name, folder.existing_folder_id, folder.thread_ids) for folder in plan.folders] == [(long_name, "f1", ["t1", "t2"])]
+
+    def test_two_long_new_categories_sharing_the_cut_stay_one_folder(self):
+        groups, _ = organize.group_categories(_items(("t1", "Kubernetes cluster administration and debugging"), ("t2", "Kubernetes cluster administration and deployment")), [])
+
+        assert [(group.label, group.thread_ids) for group in groups] == [("Kubernetes cluster administration and de", ["t1", "t2"])]
+        assert len(groups[0].label) <= organize.MAX_CATEGORY_CHARS
+
 
 class TestConsolidateReply:
     def test_unknown_and_repeated_label_numbers_are_dropped(self):
@@ -380,6 +397,13 @@ class TestModelMerge:
 
         target = next(group for group in merged if group.thread_ids == ["t3", "t4"])
         assert target.existing_id == "f1" and target.label == "Finances"
+
+    def test_a_merge_into_a_long_existing_folder_name_files_into_it(self):
+        long_name = "Personal finances, taxes and yearly tax returns"  # 47 characters
+        merged = organize.apply_model_merges(self._unmatched(), [(long_name, [3, 4])], _choices(long_name))
+
+        target = next(group for group in merged if group.thread_ids == ["t3", "t4"])
+        assert (target.existing_id, target.label) == ("f1", long_name)
 
     def test_a_redacted_label_echoed_back_takes_the_real_label(self):
         """A placeholder token must never become a folder name."""

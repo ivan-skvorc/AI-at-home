@@ -57,10 +57,13 @@ function sharedFoldersNote(
           Math.max(folders.length - NAMED_SHARED_FOLDERS, 0),
         )
       : t.folderLedger.deleteDialogKept;
-  // Without the ledger nothing is tracked, so nothing will be offered.
-  return ledger?.available === false
-    ? kept
-    : `${kept} ${t.folderLedger.deleteDialogOffer}`;
+  // Promise the offer only once the ledger has said it tracks this account's
+  // folders. While it loads, and where it failed (a Gateway without the
+  // ledger routes, an error), the orphan check after the delete would fail
+  // the same way and the offer would never come.
+  return ledger?.available === true
+    ? `${kept} ${t.folderLedger.deleteDialogOffer}`
+    : kept;
 }
 
 export function useThreadDeleteDialog() {

@@ -347,7 +347,7 @@ First, the mechanical gates:
 - [ ] **Scroll-back history survives a restart** (§28): `cd backend && uv run pytest tests/test_run_history_durability.py tests/test_doctor.py::TestCheckRunEventsDurable -q` (migration 50: third critical check). The failure this defends is silent in every log: with `run_events.backend: memory` the page endpoint's store is process state, so after a Gateway restart a long conversation still opens and still renders its recent turns from the checkpoint, and merely stops loading older messages when the reader scrolls up. `test_older_messages_still_page_backwards_after_a_restart` is the claim, across a real engine teardown and rebuild; `test_the_memory_store_is_what_loses_it` is the other direction, so the file goes red if durability gets "fixed" in the memory store instead of the default. **All three default sources must survive a sync independently** — `test_the_schema_default_persists_run_events` (a `config.yaml` with no `run_events:` section, and the Helm chart), `test_the_shipped_example_persists_run_events` (fresh installs copy the example verbatim, so upstream restoring `memory` there overrides the schema default), and migration 50 in `test_run_events_memory_is_migrated_but_other_memory_backends_are_not` (existing installs, which keep whatever value they were created with). An upstream merge that reverts any one of them re-breaks a different population and nothing else notices. `TestCheckRunEventsDurable` keeps `make doctor` reporting the combination for installs that never run `make config-upgrade`.
 - [ ] **A reply keeps the price it was billed at** (§17): `cd backend && uv run pytest tests/test_run_pricing_snapshot.py tests/test_thread_token_usage.py tests/test_run_repository.py -q`. Cost is read from `runs.pricing_snapshot`, not recomputed from the live config, and every way that can regress is silent. `test_a_model_dropped_from_the_roster_keeps_its_cost` is the motivating case and asserts **both** directions in one test — with the snapshot the spend survives, without it the run prices to `None` — so deleting the snapshot path fails loudly instead of just making conversations cheaper. `test_a_later_price_change_does_not_rewrite_an_old_run` is the other half. Three guards exist because each is a way the fix could be worse than the bug: `test_a_currency_switch_re_prices_rather_than_summing_two_currencies`, `test_a_snapshot_cannot_switch_cost_reporting_back_on`, `test_a_discount_is_not_re_expired_on_replay`. `TestSnapshotPersistence` is the plumbing: it round-trips the SQL store, the memory store and `_with_pricing_snapshot`, and pins that a completion **retry** without a snapshot does not erase the stored value. Keep `test_the_headers_stated_relation_still_holds_across_an_edit` too: `sum(steps) + superseded_cost == total_cost` is what the cost dropdown tells the reader, and per-run pricing is what makes it an identity. A store with no `by_run` must still price its `by_model` aggregate (`tests/test_thread_token_usage.py` covers it).
 - [ ] **CI's pnpm bootstrap stays retried and pinned**: `cd backend && uv run pytest tests/test_ci_pnpm_bootstrap.py -q`. A transient registry abort while corepack fetches pnpm crashes Node's undici parser (`AssertionError: assert(!this.paused)`) before any test runs and reads like a broken branch (PR #106). `test_the_pnpm_download_is_retried` asserts the retry on the step's *shape*, so it can be rewritten but not removed, across every workflow that prepares pnpm (four today); `test_there_is_a_pnpm_bootstrap_to_check` exists because a renamed step would otherwise leave that parametrized test iterating an empty list and passing green. `test_every_workflow_prepares_the_version_the_repo_pins` is the drift guard: the version lives in five places (`frontend/package.json`'s `packageManager` plus one `corepack prepare` per workflow) and moves out of one at a time, and a mismatch means CI silently exercises a different pnpm than contributors run. Bumping pnpm is one change that touches all five.
-- [ ] **A file explorer for each conversation, and shared folders** (§49, §54): `cd backend && uv run pytest tests/test_thread_files_router.py tests/test_folder_ledger_middleware.py tests/test_folder_ledger_router.py -q` (inside the Backend gate), `make test-blocking-io`, `cd frontend && pnpm test thread-files folder-ledger`, plus `pnpm test:e2e thread-files folder-ledger`. Silent when broken: `test_symlink_escaping_user_data_is_listed_as_a_link_and_never_entered` and `test_dot_dot_traversal_never_lists_outside_user_data` (`get_artifact`'s confinement: normalize, `resolve_thread_virtual_path`, never follow a link), `test_hides_only_gateway_transient_files`; `test_shared_chain_places_it_just_outside_tool_error_handling` (moved, the recorder sees nothing and no deletion is ever offered) and `test_orphans_are_not_offered_while_another_users_conversation_is_live`.
+- [ ] **A file explorer for each conversation, and shared folders** (§49, §54): `cd backend && uv run pytest tests/test_thread_files_router.py tests/test_folder_ledger_middleware.py tests/test_folder_ledger_router.py -q` (inside the Backend gate), `make test-blocking-io`, `cd frontend && pnpm test thread-files folder-ledger`, plus `pnpm test:e2e thread-files folder-ledger`. Silent when broken: `test_symlink_escaping_user_data_is_listed_as_a_link_and_never_entered` and `test_dot_dot_traversal_never_lists_outside_user_data` (`get_artifact`'s confinement: normalize, `resolve_thread_virtual_path`, never follow a link), `test_hides_only_gateway_transient_files`; `test_shared_chain_places_it_just_outside_tool_error_handling` (moved, the recorder sees nothing and no deletion is ever offered), `test_orphans_are_not_offered_while_another_users_conversation_is_live`, and the guards against deleting data no conversation provably created, `test_a_renamed_existing_folder_is_listed_but_never_deleted` (a `mv` makes a name appear like `mkdir`) and `test_an_entry_replaced_outside_the_ledger_is_refused`.
 - [ ] **A plugin tool's file output** (§50): `tests/test_plugin_tools.py` runs inside the Backend gate; also `make test-blocking-io`. Untested: upstream owns `API_VERSION`. If the merge brings its own 0.2.13, move the fork's floor past it (the example's `@extension` marker and requirement, `docs/full-stack-plugins.md`, `test_example_extension_requires_a_host_with_file_output`).
 - [ ] Frontend: `pnpm check && pnpm test`. **`pnpm check` includes the formatting gate** (`prettier --check .`, eslint, `tsc --noEmit`). `pnpm format:write` fixes what the check reports; `eslint --fix` normalizes imports and optional-chains but not Prettier whitespace.
 - [ ] **Changed a shared UI control? Run the whole e2e suite, not the one spec you thought of.** `pnpm test:e2e` with no filter. A control's _specs_ are not the specs in the file you edited: they are every spec that clicks that control anywhere in the app, and nothing in `pnpm check` or `pnpm test` knows the difference. Observed live on the model-picker unification — the composer's picker was swapped into five screens, the Democracy spec was found and fixed by hand, and `suggestions-settings.spec.ts` was missed entirely because it drives the _same control_ from a different page. It failed only in CI. Two rules fell out of it, both now pinned by `frontend/tests/unit/components/workspace/model-picker-sites.test.ts`: a spec must locate a shared control by that control's **own** `data-slot`, never by the ARIA role of the primitive underneath (swap the primitive and the locator silently matches nothing), and a fast unit test should assert the contract so a six-minute e2e job is not the thing that tells you.
@@ -3697,7 +3697,7 @@ The side list was one flat, recency-ordered column: pinning kept a handful of co
 - **Deleting a folder deletes its subfolders, and never a conversation.** The subtree goes, the way a file manager works — leaving a subfolder behind would make it an orphan that only reappears because the normalizer promotes it, which is a repair, not a behaviour anyone asked for. Every loaded chat filed **anywhere in the subtree** has its `deerflow_folder` cleared, not just the direct members, and anything not loaded is caught by the unknown-folder fallback.
 - **The registry and the membership are stored in two different places, on purpose.** The folder list — id, name, display order — is per-user server state in `{base_dir}/users/{user_id}/ui_state.json`, exposed as `GET`/`PUT /api/settings/chat-folders`, ungated for the same reason: it is per-user UI state, not a server-wide setting. *Which* conversation is in *which* folder rides on that conversation's own thread metadata (`deerflow_folder`). Renaming a folder is therefore one small write instead of one write per conversation inside it, and a conversation carries its filing with it wherever the thread record goes. Do not "simplify" this by storing member ids in the registry: a rename is the cheap operation, and a membership list would need reconciling against every delete, branch and edit-version the thread list already performs.
 - **Filing a chat must not reorder the sidebar.** The list is recency-ordered, so a PATCH that bumped `updated_at` would shove the conversation the user just dragged to the top and reshuffle everything under their cursor mid-gesture. The Gateway's `PATCH /api/threads/{id}` therefore recognizes a **narrow placement-only patch** — `deerflow_pinned` and/or `deerflow_folder`, nothing else — and skips the touch. It is the same exemption pin/unpin already had, generalized. It is **shape-guarded per key**, not granted on the key name: a patch smuggling a non-string folder value, or mixing a placement key with ordinary metadata, falls back to the endpoint's normal recency contract rather than silently buying the exemption.
-- **Two folder edits in one handler must both land.** Every edit in `use-chat-folders.ts` reads the latest list from the query cache rather than the render closure, and `createFolders(names, parentId)` makes several folders in **one** write, answering each new id (or `null` for a refused name); `createFolder` is built on it. The save mutation runs under `scope: {id: CHAT_FOLDERS_MUTATION_SCOPE}` (`"chat-folders"`), so whole-list PUTs go one at a time, and a response is adopted only while the cache still holds the list that request sent. Without these, *New folder from selection* (§52) and clean-up mode (§53) create a folder and then lose it: the second write starts from the stale list, or an older response lands last and the newer folder blinks out. Any other writer of the folder list uses the same scope; clean-up's apply does its fresh read **and** its write inside it.
+- **Two folder edits in one handler must both land.** Every edit in `use-chat-folders.ts` reads the latest list from the query cache rather than the render closure, and `createFolders(names, parentId)` makes several folders in **one** write, answering each new id (or `null` for a refused name); `createFolder` is built on it. The save mutation runs under `scope: {id: CHAT_FOLDERS_MUTATION_SCOPE}` (`"chat-folders"`), so whole-list PUTs go one at a time, and a response is adopted only for the latest edit, by an edit counter per query client: the cache cannot answer that by identity, because `setQueryData` structurally shares and holds a copy, never the array an edit wrote. Each edit also cancels a folder-list read in flight, which would otherwise land the pre-edit list on top of it and make the next edit save the new folder away. Without these, *New folder from selection* (§52) and clean-up mode (§53) create a folder and then lose it: the second write starts from the stale list, or an older response lands last and the newer folder blinks out. Any other writer of the folder list uses the same scope; clean-up's apply does its fresh read **and** its write inside it.
 - **One drag, one payload.** A sidebar chat row advertises its thread id under `application/x-deerflow-thread-id` (`core/threads/dnd.ts`), which is what files the chat into a folder. Rows are **always** draggable. A folder row is a drag source too, advertising its own id under a **separate** `application/x-deerflow-folder-id` MIME — separate because a target decides what it accepts by reading the type list, and that is what lets a folder accept a chat while refusing a folder it cannot take. Drop targets are explicit and disjoint: a folder header (a chat, or a folder to nest), a folder's expanded child area (a chat), and the root list container (a chat out of its folder, or a folder back to the top level — without it a nested folder could only ever be promoted through its own menu). Nothing else accepts a drop, so there is no ambiguous middle ground where a drag silently does nothing or does the wrong thing.
 - **Drag-and-drop is the fast path, never the only path.** Native HTML5 DnD is unusable by keyboard and by screen readers, so every folder operation also exists in a menu: **Move to folder ▸** in a chat's row menu (with the folder tree indented one step per level, a **No folder** entry, and a **New folder** shortcut), and **New subfolder**, **Move folder to ▸** (with a **Top level** entry), rename and delete in the folder's own menu. The group header's control is a real button, it sits **beside the heading rather than at the sidebar's right edge**, and it is **labelled "New folder" rather than drawn as a bare `+`**. Two passes were needed to learn the same lesson twice: an unlabelled icon a sidebar-width from the words it belongs to is in the DOM without being findable, and moved next to those words it is *still* only findable by a reader who already knows folders exist — a 16px glyph against a 12px muted heading reads as part of the title. The words are what turn it into an invitation, so they are rendered, not hidden in an `sr-only` span that satisfies a text assertion while showing the reader nothing. The header is also rendered **whether or not anything is under it** — a workspace with no conversations is exactly where the first folder gets made, and a group that returns nothing until a chat exists takes the only control that creates one with it.
 - **Expanded/collapsed is per browser; the folders themselves are not.** Which folders are open lives in `localStorage` under one key — the same tree can reasonably be open on a desktop and collapsed on a laptop, and it is the one piece of this feature nobody would miss after a data clear. A folder the user *just created* is opened automatically, so the drop they are about to make has a visible target — and so is the folder it was created **inside**, or a new subfolder would appear in a collapsed row and read as nothing having happened. Re-parenting a folder opens its new parent for the same reason. Everything else — names, order, membership — is server state that follows the user across browsers and devices.
@@ -3867,7 +3867,12 @@ undoing the feature, not optimizing it.
   hydration in a browser without the per-browser marker
   `deerflow.auto-title.server-synced` uploads a non-default local value when the
   account still reads as the default; after any successful sync the account
-  wins. The run context reads the in-memory settings snapshot the switch renders,
+  wins. The GET answer carries `"stored": bool` (`get_auto_title_account_state`,
+  pinned by `test_get_tells_a_never_set_account_from_an_explicit_on`), and the
+  client (`parseAutoTitleAccountState`) uploads only on `stored: false`, so an
+  origin first opened after the upgrade never overwrites an explicit "on" saved
+  from another device; both would otherwise read as `{"enabled": true}`. A
+  Gateway without the flag falls back to the shape check. The run context reads the in-memory settings snapshot the switch renders,
   not `localStorage`, so a browser whose storage throws still sends its opt-out.
 
 **Where it's wired.**
@@ -5463,9 +5468,12 @@ core, in a separate module so upstream merges stay conflict-free.
   shows **Files** (`t.threadFiles.title`) right after the token indicator, in
   both chat headers. The label follows the **header's** width, not the
   viewport's — an open side panel narrows the chat without changing the
-  viewport — so both headers are named containers (`@container/chat-header`) and
-  the label shows from `@[32rem]/chat-header`; without that ancestor the button
-  is icon-only. The aria-label stays "Show files", which the e2e locators use.
+  viewport — so both headers are named containers (`@container/chat-header`).
+  The controls row cannot shrink and cuts off its last controls, so the label
+  shows only where the full row still fits with it: from `@[48rem]/chat-header`
+  on a chat page and `@[60rem]` on an agent's (`header="agent"`: its badge and
+  **New chat** come first). Earlier, the word pushed Artifacts off the edge.
+  Without that ancestor the button is icon-only. The aria-label stays "Show files", which the e2e locators use.
   In Chinese, *Artifacts* became 产物 so the two buttons no longer share 文件.
 - **`?panel=files` opens one commit after it is seen, and only for its own
   chat.** `ThreadFilesDeepLink` closes Side Chat, calls `showFiles()`, then
@@ -5920,8 +5928,9 @@ apply per chat unchanged. `settleWithConcurrency` keeps at most four moves or
 archives in flight (`BULK_THREAD_CONCURRENCY`), each success is written into the
 caches, and the caches are invalidated **once** at the end, not per chat. A failure is
 reported per chat with its HTTP status (busy for 409, no permission for 403);
-failed chats stay ticked, the rest are cleared, and **nothing retries on its
-own**. Delete stays a hard delete with a destructive confirmation that names the
+failed chats stay ticked, the chats the action handled are unticked
+(`store.remove`, not a replace: the checkboxes stay live while a move runs, so a
+tick made or removed meanwhile is kept), and **nothing retries on its own**. Delete stays a hard delete with a destructive confirmation that names the
 count and up to five titles and says it cannot be undone.
 
 **What a refactor must not simplify away.**
@@ -5932,8 +5941,11 @@ count and up to five titles and says it cannot be undone.
   (`thread-delete-confirm.spec`'s `xpath=..`, `a[data-sidebar="menu-button"]`)
   keep working. While selecting, a click, Ctrl/Cmd-click or Shift-click on the
   row toggles and calls `preventDefault`; the link carries
-  `data-thread-selecting`, and the mobile drawer's capture-phase close handler
-  skips such links, so ticking a row on a phone does not close the drawer.
+  `data-thread-selecting` (`THREAD_SELECTING_ATTRIBUTE`, one constant for the
+  row and the drawer), and the mobile drawer's capture-phase close handler
+  skips such links, so ticking a row on a phone does not close the drawer. For
+  any other link it closes when the path **or the query** changes: the row
+  menu's **Show files** on the open chat only adds `?panel=files`.
 - **The selection lives in a store per provider that sits above the sidebar
   frame.** The chat lists unmount when the sidebar collapses and virtualize past
   60 rows (§35), so a selection held in a row or a list would vanish with it.
@@ -5969,7 +5981,9 @@ count and up to five titles and says it cannot be undone.
   text field or a Radix menu, dialog or the mobile drawer is open.
 - **Archive is one toast with one Undo** for the whole batch
   (`useThreadsArchiveAction`); N single archives would stack N toasts, each
-  undoing one chat.
+  undoing one chat. The Undo restores exactly the archived chats through the
+  same mutation, and the toolbar ignores that restore's settle, so it never
+  rewrites the selection the user has built since.
 
 **Where it's wired.**
 
@@ -5997,8 +6011,11 @@ nothing was deleted; placement-only move bodies), `use-chat-folders.dom.test.tsx
 a still-draggable link, a Shift-click run from a folder into the root list, Move,
 New folder from selection, Archive, Delete including the open chat, a failed
 delete staying for **Try again**, Delete gated on `threads:delete`, Clean up
-passing the ids or `null`), `workspace-sidebar-frame.dom.test.tsx` (the drawer
-stays open for a selecting row) and `frontend/tests/e2e/sidebar-multi-select.spec.ts`.
+passing the ids or `null`, the row's selecting marker, ticks changed during a
+move kept, one archive toast whose Undo restores exactly the archived chats and
+leaves the selection alone), `workspace-sidebar-frame.dom.test.tsx` (the drawer
+stays open for a selecting row and closes for a query-only link) and
+`frontend/tests/e2e/sidebar-multi-select.spec.ts`.
 
 ### 53. Clean-up mode: a model you pick renames and files conversations
 
@@ -6037,6 +6054,10 @@ placement-only `PATCH`, and `POST /state` with the new `preserve_recency`.
   `scope: {id: CHAT_FOLDERS_MUTATION_SCOPE}`, so they queue behind the sidebar's
   own folder writes (§32). Moves go only into ids the stored response contains;
   an unreadable folder list writes nothing at all.
+- **The preview's "No changes" state means the model proposed nothing.** It is
+  decided when the preview opens, not from the live plan: an edit that takes
+  back the last change (a cleared title, a merge into *Don't file these*) keeps
+  the rows and the focused field, or only *Back* and a paid re-run could undo it.
 - **Every write skips a no-op** (a chat already in its folder, a title that is
   already the title), so applying the same plan twice writes nothing. A rename
   and a move are independent: a refused rename (409, run in flight) does not
@@ -6112,7 +6133,9 @@ cases in `test_context_fit_critical.py`, `blocking_io/test_chat_organize_offloop
 on the frontend `tests/unit/core/threads/chat-organize.test.ts` (one PUT, moves
 only into stored ids, re-applying writes nothing, the read and write in the
 serialized slot, the placement-only PATCH body, `preserve_recency`, the 402 stop),
-`chat-cleanup/chat-cleanup-dialog.dom.test.tsx`, `token-usage-aux-labels.test.ts`,
+`chat-cleanup/chat-cleanup-dialog.dom.test.tsx` (including Apply's folder read
+and write waiting behind a sidebar folder PUT still in flight, which fails
+without the scope), `chat-cleanup/cleanup-preview.dom.test.tsx`, `token-usage-aux-labels.test.ts`,
 `model-picker-sites.test.ts` (the setup uses the shared `ModelSelect`, §8) and
 `tests/e2e/chat-cleanup.spec.ts`.
 
@@ -6136,27 +6159,38 @@ the normalized result is exactly `"OK"`; before the call the host entry is
 checked with `lstat` in a worker thread: missing means this conversation created
 it (`observed_create`), present or an invisible host means `preexisting`. `bash`
 is best effort: literal `<mount>/<name>` references are probed before and after,
-an entry that appeared is `inferred_shell`, and an invisible host records
-nothing. Read-only mounts, `/mnt/user-data`, the ACP workspace and the skills
-root are never tracked, and the longest matching mount wins. Rows live in three
-tables (`folder_ledger_folders`, `_touches`, `_events`; migration
-`0057_folder_ledger`): a folder is unique per (mount, name) among live rows, a
-touch is per (folder, user, thread) with a tombstone, and events are capped at
-200 per folder.
+an entry that appeared is `inferred_shell`, an entry the command removed retires
+its row (so the next creator of that name is credited), and an invisible host
+records nothing. Read-only mounts, `/mnt/user-data`, the ACP workspace and the
+skills root are never tracked, and the longest matching mount wins. Rows live in
+four tables (`folder_ledger_folders`, `_touches`, `_events`, `_dismissals`;
+migration `0057_folder_ledger`): a folder is unique per (mount, name) among live
+rows and bound to its host entry (`host_root`, `host_entry` = `st_dev:st_ino`),
+a touch is per (folder, user, thread) with a tombstone, events are capped at 200
+per folder, and a dismissal is per (folder, user).
 
 **What a refactor must not simplify away.**
 
 - **Offered, never automatic, and narrow.** Deletion needs, in order: the folder
-  is visible to the caller (404 otherwise, no existence oracle); it was seen
-  being created (`observed_create` or `inferred_shell`, 403 `preexisting`
-  otherwise); the caller's conversation created it, or the caller is an admin
-  (403 `not_creator`); `confirm_name` equals its name; the name is one path
-  segment; the mount is still configured **writable** and its host directory is
-  visible to the Gateway (422 `mount_unavailable` / `host_not_visible`; an
-  unreadable config counts as unavailable, never as default); and no live
-  conversation uses it (409 `in_use`). The orphan dialog ticks nothing, lists
-  non-deletable folders under *Kept* with their reason, and **Don't ask again**
-  dismisses on the server until new activity.
+  is visible to the caller (404 otherwise, no existence oracle); a tool write saw
+  it being created (`observed_create` only: 403 `shell_inferred` or
+  `preexisting` otherwise, because a `mv` of existing data makes a name appear
+  during a command just as `mkdir` does); the caller's conversation created it,
+  or the caller is an admin (403 `not_creator`); `confirm_name` equals its name;
+  the name is one path segment; the mount is still configured **writable**,
+  still points at the recorded host directory and is visible to the Gateway (422
+  `mount_unavailable` / `changed` / `host_not_visible`; an unreadable config
+  counts as unavailable, never as default); no live conversation uses it (409
+  `in_use`); and the entry on disk is still the recorded one (422 `changed`).
+  The orphan dialog ticks nothing, lists non-deletable folders under *Kept* with
+  their reason, and **Don't ask again** dismisses for the caller only, until new
+  activity.
+- **The row is bound to the entry, not just the name.** A recorded call that
+  saw the bound entry before it ran moves the binding to the entry it left (a
+  bare file rewritten by an atomic replace gets a new inode); nothing else
+  moves it. A repointed mount or a folder replaced outside the ledger therefore
+  stops matching, and the delete refuses it rather than remove data DeerFlow
+  never saw created.
 - **The delete is confined.** `deerflow.folder_ledger.fs` opens the mount root as
   a directory descriptor, checks the entry without following links, then
   `rmtree(name, dir_fd=…)` or `unlink`; it refuses a link, a special file, a
@@ -6166,12 +6200,15 @@ touch is per (folder, user, thread) with a tombstone, and events are capped at
 - **Liveness is computed at query time, across every user.** A touch is live
   when it is not tombstoned, its `threads_meta` row exists, and it is not a
   hidden edit version (§18) or Side Chat whose root or parent row is gone.
-  Orphans are selected only through the caller's own touches, but any other
-  user's live conversation keeps the folder. `DELETE /api/threads/{id}`
+  Orphans are selected only through the caller's own touches (every login's
+  with multi-user mode off, matching the thread routes' owner scope), but any
+  other user's live conversation keeps the folder, and liveness is checked on
+  every candidate before the answer is capped. `DELETE /api/threads/{id}`
   tombstones the thread's touches and a branch inherits the parent's live
   touches as `inherited`, both best effort (`routers/threads.py`); a missed
   tombstone is harmless because a missing `threads_meta` row already reads as
-  deleted.
+  deleted. A write clears its thread's tombstone, because thread ids come back
+  (a stale tab, an IM binding) and the recreated conversation uses the folder.
 - **The recorder's chain position is its contract.** It is appended just before
   `ToolErrorHandlingMiddleware`, only when a writable mount is configured, so
   every gate outside it (authorization, audit, read-before-write, the harness
@@ -6185,7 +6222,8 @@ touch is per (folder, user, thread) with a tombstone, and events are capped at
   ledger error never changes a tool result.
 - **Other users stay anonymous.** The folder detail shows another user's
   conversation as a stable `other-<16 hex>` pseudonym with no title or run id;
-  the detail is visible only to the creator and to users with a touch.
+  the detail is visible only to the creator and to users with a touch (to every
+  login with multi-user mode off).
 - **Only providers that honour mounts record anything**: the local provider and
   AIO in local-container mode. An external AIO `base_url` or a provisioner
   ignores the mounts, so the recorder does too. Without a SQL session factory
@@ -6193,7 +6231,8 @@ touch is per (folder, user, thread) with a tombstone, and events are capped at
   `available: false` (lists) or 503.
 - **The frontend's offer hangs on one notice per user action.** Every delete path
   calls `notifyThreadsDeleted(ids)` exactly once, Side Chat ids included
-  (`useDeleteThread` on success, `useDeleteThreads` per batch, §52);
+  (`useDeleteThread` on success, and with the Side Chat ids alone when the
+  parent's delete fails after they went; `useDeleteThreads` per batch, §52);
   `FolderOrphanOfferHost` (mounted in `workspace-content.tsx`) coalesces notices
   for 300 ms, asks `POST /orphans` once (in chunks of 500 ids), and opens the
   dialog only when something comes back. A failed lookup only logs.
@@ -6205,8 +6244,12 @@ a dialog that starts with nothing ticked (the client sends `confirm_name`; it
 guards against a wrong id, not a typo). Read-only shell commands that name a
 folder count as touches, which only keeps folders longer. Under AIO with
 Docker-out-of-Docker, a `host_path` that happens to exist inside the Gateway
-container as a different directory would be judged against the wrong directory. A delete racing a brand-new first write has a small
-window between the live check and the removal.
+container as a different directory would be judged against the wrong directory.
+A delete racing a brand-new first write has a small window between the live
+check and the removal. A folder removed outside DeerFlow and recreated by
+another conversation keeps its first creator until the delete refuses it, and a
+filesystem that hands the recreated folder the old inode number defeats the
+binding check.
 
 **On an upstream sync.** `0057_folder_ledger` chains onto
 `0056_merge_prefs_thread_shares` and is the fork's migration head, so the next
@@ -6234,11 +6277,15 @@ blocks, so `config_version` is not bumped.
 Pinned by `backend/tests/test_folder_ledger_middleware.py` (attribution, only an
 exact OK counts, untracked paths, fail-open, the chain position
 `test_shared_chain_places_it_just_outside_tool_error_handling`, providers that
-ignore mounts), `test_folder_ledger_repository.py` (first-writer races, the
-tombstone surviving a straggling write, liveness across users and for hidden
-dependents; its PostgreSQL half needs `TEST_POSTGRES_URI`),
-`test_folder_ledger_router.py` (scoping, pseudonyms, every refusal, the data-root
-protection, 409 when used again, dismiss),
+ignore mounts, the entry binding, a removed folder retiring its row),
+`test_folder_ledger_repository.py` (first-writer races, a straggling write
+not keeping a folder, a reused thread id keeping it, liveness across users and
+for hidden dependents, live folders never crowding out an orphan, per-user
+dismissal, the binding; its PostgreSQL half needs `TEST_POSTGRES_URI`),
+`test_folder_ledger_router.py` (scoping, the shared workspace, pseudonyms, every
+refusal including a renamed folder, a repointed mount and a replaced entry, the
+data-root protection, 409 when used again, per-user dismiss, the
+`threads:delete` gate),
 `test_migration_0057_folder_ledger.py`, `blocking_io/test_folder_ledger_offloop.py`,
 `test_threads_router.py::test_branch_and_delete_hand_the_folder_ledger_its_thread_lifecycle`,
 and on the frontend `tests/unit/core/folder-ledger/{api,events}.test.ts`,

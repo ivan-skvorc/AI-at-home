@@ -8,20 +8,28 @@ when the last conversation that used a folder is deleted, deleting the folder
 is *offered* here, never done automatically.
 
 - ``GET /threads/{thread_id}/folders``: the folders one conversation created,
-  edited or inherited (threads:read, owner check).
+  edited or inherited (threads:read, owner check). With multi-user mode off
+  (one shared workspace) every login's touches of the conversation count, as
+  every login can open it.
 - ``GET /folders/{folder_id}``: one folder, the conversations that touched it
   and its capped edit log. Visible to its creator and to anyone with a touch on
   it; other users' conversations appear under a pseudonymous id, untitled.
 - ``POST /orphans``: after a delete, the folders the caller's given threads
   touched that no live conversation of any user still uses. Ids of other
-  users' threads select nothing, so they are ignored.
+  users' threads select nothing, so they are ignored (in a shared workspace
+  every login's touches select).
 - ``DELETE /folders/{folder_id}?confirm_name=``: the confined delete
-  (``deerflow.folder_ledger.fs``). Only folders a conversation was seen
-  creating, by their creator or an admin, on a mount that is still configured
-  writable and whose host directory the Gateway sees; 409 when a live
-  conversation uses the folder again.
+  (``deerflow.folder_ledger.fs``). Only folders a ``write_file`` or
+  ``str_replace`` call was seen creating (``observed_create``), by their
+  creator or an admin, on a mount that is still configured writable, still
+  points at the host directory it pointed at then and whose host directory the
+  Gateway sees, and only while the entry on disk is still the one recorded;
+  409 when a live conversation uses the folder again. A folder that appeared
+  during a shell command (``inferred_shell``) is never deleted from here: a
+  ``mv`` or ``cp`` of existing data makes a name appear just like ``mkdir``.
 - ``POST /folders/{folder_id}/dismiss``: keep the folder and stop offering it
-  (until new activity on it).
+  to the caller (until new activity on it). Dismissal is per user, so it never
+  hides the offer from the folder's creator.
 
 Without a SQL session factory (``database.backend: memory``) every read answers
 ``available: false`` with empty lists and the writes answer 503.
@@ -44,8 +52,9 @@ from pydantic import BaseModel, Field, StringConstraints
 from app.gateway.authz import require_permission
 from app.gateway.deps import is_admin_user
 from app.gateway.internal_auth import get_trusted_internal_owner_user_id
+from deerflow.config.runtime_settings import resolve_owner_scope
 from deerflow.folder_ledger.fs import FolderDeleteRefused, delete_folder_entry, delete_supported, is_single_segment
-from deerflow.folder_ledger.mounts import LedgerMount, configured_mounts, find_mount, host_root_visible
+from deerflow.folder_ledger.mounts import LedgerMount, configured_mounts, find_mount, host_root_key, host_root_visible
 from deerflow.persistence.engine import get_session_factory
 from deerflow.persistence.folder_ledger import ATTRIBUTION_OBSERVED, ATTRIBUTION_SHELL, FolderLedgerRepository
 from deerflow.runtime.user_context import get_effective_user_id
@@ -62,7 +71,10 @@ MAX_ORPHAN_THREAD_IDS = 500
 FolderId = Annotated[str, Path(pattern=r"^[0-9a-f]{32}$")]
 ThreadIdItem = Annotated[str, StringConstraints(min_length=1, max_length=64)]
 
-_DELETABLE_ATTRIBUTIONS = frozenset({ATTRIBUTION_OBSERVED, ATTRIBUTION_SHELL})
+#: Only a tool write that saw the entry missing proves a conversation created
+#: it. ``inferred_shell`` is listed but kept: a rename or move of existing data
+#: makes a name appear during a command exactly as ``mkdir`` does.
+_DELETABLE_ATTRIBUTIONS = frozenset({ATTRIBUTION_OBSERVED})
 
 
 # ---------------------------------------------------------------------------
@@ -134,7 +146,7 @@ class OrphanFolder(BaseModel):
     writes: int
     edits: int
     deletable: bool
-    reason: str | None = Field(description="Why it cannot be deleted: preexisting, not_creator, unsupported_platform, mount_unavailable, host_not_visible.")
+    reason: str | None = Field(description="Why it cannot be deleted: preexisting, shell_inferred, not_creator, unsupported_platform, mount_unavailable, changed, host_not_visible.")
 
 
 class OrphansResponse(BaseModel):
@@ -170,6 +182,17 @@ def _require_repository() -> FolderLedgerRepository:
 def _caller_user_id(request: Request) -> str:
     """The caller, or the owner a trusted internal caller acts for."""
     return get_trusted_internal_owner_user_id(request) or get_effective_user_id()
+
+
+async def _touch_scope(user_id: str) -> str | None:
+    """Whose touches a read selects: the caller's, or everyone's (None) in a shared workspace.
+
+    Mirrors the thread routes' owner scope: with multi-user mode off every
+    login opens and deletes every conversation, so the ledger of a
+    conversation must not depend on which login wrote it. Creator checks keep
+    the real caller id. Off-loop: it stats ``runtime_settings.json``.
+    """
+    return await asyncio.to_thread(resolve_owner_scope, user_id, method_name="folder ledger read")
 
 
 def _iso(value: datetime | None) -> str | None:
@@ -248,15 +271,27 @@ def _folder_payload(folder: dict[str, Any], *, role: str | None, created_here: b
     )
 
 
+def _keep_reason(attribution: str) -> str:
+    return "shell_inferred" if attribution == ATTRIBUTION_SHELL else "preexisting"
+
+
+def _same_host_root(folder: dict[str, Any], mount: LedgerMount) -> bool:
+    """The mount still points at the host directory the folder was recorded under."""
+    recorded = folder.get("host_root")
+    return recorded is not None and recorded == host_root_key(mount)
+
+
 def _deletability(folder: dict[str, Any], *, user_id: str, is_admin: bool, state: _MountState | None) -> tuple[bool, str | None]:
     if folder["created_attribution"] not in _DELETABLE_ATTRIBUTIONS:
-        return False, "preexisting"
+        return False, _keep_reason(folder["created_attribution"])
     if folder.get("created_by_user_id") != user_id and not is_admin:
         return False, "not_creator"
     if not delete_supported():
         return False, "unsupported_platform"
-    if state is None or not state.writable:
+    if state is None or not state.writable or state.mount is None:
         return False, "mount_unavailable"
+    if not _same_host_root(folder, state.mount):
+        return False, "changed"
     if not state.host_visible:
         return False, "host_not_visible"
     return True, None
@@ -267,7 +302,7 @@ async def _visible_folder(repo: FolderLedgerRepository, folder_id: str, *, user_
     folder = await repo.get_folder(folder_id)
     if folder is None or folder["deleted_at"] is not None:
         raise HTTPException(status_code=404, detail="Folder not found")
-    if not is_admin and not await repo.user_can_view(folder_id=folder_id, user_id=user_id):
+    if not is_admin and not await repo.user_can_view(folder_id=folder_id, user_id=await _touch_scope(user_id)):
         raise HTTPException(status_code=404, detail="Folder not found")
     return folder
 
@@ -306,7 +341,7 @@ async def list_thread_folders(thread_id: ThreadId, request: Request) -> ThreadFo
     if repo is None:
         return ThreadFoldersResponse(available=False, folders=[])
     user_id = _caller_user_id(request)
-    entries = await repo.list_thread_folders(thread_id=thread_id, user_id=user_id)
+    entries = await repo.list_thread_folders(thread_id=thread_id, user_id=await _touch_scope(user_id))
     _config, states = await _mount_states([entry["folder"]["mount_path"] for entry in entries])
     folders = []
     for entry in entries:
@@ -393,7 +428,7 @@ async def find_orphans(body: OrphansRequest, request: Request) -> OrphansRespons
     if repo is None:
         return OrphansResponse(available=False, orphans=[])
     user_id = _caller_user_id(request)
-    rows = await repo.find_orphans(thread_ids=body.thread_ids, user_id=user_id)
+    rows = await repo.find_orphans(thread_ids=body.thread_ids, user_id=await _touch_scope(user_id), viewer_id=user_id)
     if not rows:
         return OrphansResponse(available=True, orphans=[])
     is_admin = await is_admin_user(request)
@@ -431,8 +466,8 @@ def _protected_paths(app_config: Any, mount: LedgerMount) -> list[str]:
     return protected
 
 
-def _delete_entry_sync(app_config: Any, mount: LedgerMount, name: str) -> str:
-    return delete_folder_entry(mount.host_path, name, protected_paths=_protected_paths(app_config, mount))
+def _delete_entry_sync(app_config: Any, mount: LedgerMount, name: str, expected_entry: str | None) -> str:
+    return delete_folder_entry(mount.host_path, name, expected_entry=expected_entry, protected_paths=_protected_paths(app_config, mount))
 
 
 @router.delete("/folders/{folder_id}", response_model=DeletedResponse)
@@ -446,6 +481,8 @@ async def delete_folder(folder_id: FolderId, request: Request, confirm_name: Ann
     user_id = _caller_user_id(request)
     is_admin = await is_admin_user(request)
     folder = await _visible_folder(repo, folder_id, user_id=user_id, is_admin=is_admin)
+    if folder["created_attribution"] == ATTRIBUTION_SHELL:
+        raise _refusal(403, "shell_inferred", "This folder appeared during a shell command, which may have renamed or moved existing data, so it is never deleted from here.")
     if folder["created_attribution"] not in _DELETABLE_ATTRIBUTIONS:
         raise _refusal(403, "preexisting", "This folder existed before a conversation used it, so it is never deleted from here.")
     if folder["created_by_user_id"] != user_id and not is_admin:
@@ -459,6 +496,8 @@ async def delete_folder(folder_id: FolderId, request: Request, confirm_name: Ann
     state = states.get(folder["mount_path"])
     if state is None or not state.writable or state.mount is None:
         raise _refusal(422, "mount_unavailable", "The folder's mount is no longer configured as writable.")
+    if not _same_host_root(folder, state.mount):
+        raise _refusal(422, "changed", "The folder's mount now points at a different host directory than when the folder was created.")
     if not state.host_visible:
         raise _refusal(422, "host_not_visible", "The mount's host directory is not visible from the Gateway.")
     if await repo.live_thread_ids(folder_id):
@@ -467,7 +506,7 @@ async def delete_folder(folder_id: FolderId, request: Request, confirm_name: Ann
     mount = state.mount
 
     async def remove_and_mark() -> str:
-        outcome = await run_file_io(_delete_entry_sync, app_config, mount, name)
+        outcome = await run_file_io(_delete_entry_sync, app_config, mount, name, folder["host_entry"])
         await repo.mark_deleted(folder_id)
         return outcome
 
@@ -487,9 +526,9 @@ async def delete_folder(folder_id: FolderId, request: Request, confirm_name: Ann
 @router.post("/folders/{folder_id}/dismiss", response_model=DismissedResponse)
 @require_permission("threads", "delete")
 async def dismiss_folder(folder_id: FolderId, request: Request) -> DismissedResponse:
-    """Keep the folder and stop offering it for deletion (until it is used again)."""
+    """Keep the folder and stop offering it to the caller (until it is used again)."""
     repo = _require_repository()
     user_id = _caller_user_id(request)
     await _visible_folder(repo, folder_id, user_id=user_id, is_admin=await is_admin_user(request))
-    await await_drained(repo.mark_dismissed(folder_id))
+    await await_drained(repo.mark_dismissed(folder_id, user_id=user_id))
     return DismissedResponse(dismissed=True)

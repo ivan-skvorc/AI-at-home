@@ -10,6 +10,14 @@
  * built on it can skip a notification and its subscribers skip a re-render.
  */
 
+/**
+ * Set on a chat row's link while the sidebar is selecting. The mobile drawer
+ * closes on a link click in its capture phase, before the row could cancel the
+ * navigation; this attribute tells it the click is a toggle. One constant for
+ * the row that sets it and the drawer that reads it.
+ */
+export const THREAD_SELECTING_ATTRIBUTE = "data-thread-selecting";
+
 export type ThreadSelection = {
   readonly ids: ReadonlySet<string>;
   /**
@@ -108,6 +116,27 @@ export function replaceSelection(
       selection.anchorId !== null && ids.has(selection.anchorId)
         ? selection.anchorId
         : null,
+  };
+}
+
+/**
+ * Untick these rows and leave every other tick as it is — what a finished bulk
+ * action does with the rows it acted on. Unlike {@link replaceSelection}, a
+ * row the user ticked or unticked while the action ran keeps that choice.
+ */
+export function removeFromSelection(
+  selection: ThreadSelection,
+  threadIds: Iterable<string>,
+): ThreadSelection {
+  const removed = new Set(threadIds);
+  const anchorRemoved =
+    selection.anchorId !== null && removed.has(selection.anchorId);
+  if (!anchorRemoved && ![...selection.ids].some((id) => removed.has(id))) {
+    return selection;
+  }
+  return {
+    ids: new Set([...selection.ids].filter((id) => !removed.has(id))),
+    anchorId: anchorRemoved ? null : selection.anchorId,
   };
 }
 

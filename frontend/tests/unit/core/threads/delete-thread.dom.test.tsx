@@ -115,3 +115,30 @@ test("already-deleted sidecars still receive local cleanup", async () => {
     "sidecar",
   ]);
 });
+
+test("Side Chat threads deleted before a refused parent delete still reach the folder ledger", async () => {
+  mocks.search.mockResolvedValueOnce([
+    {
+      thread_id: "sidecar",
+      metadata: { deerflow_sidecar: true, parent_thread_id: "parent" },
+    },
+  ]);
+  mocks.remove.mockImplementation(async (threadId: string) => {
+    if (threadId === "parent") {
+      throw Object.assign(new Error("Thread has work in flight"), {
+        status: 409,
+      });
+    }
+  });
+  const onDeleted = rs.fn();
+  const { result } = setup();
+  await act(async () => {
+    await expect(
+      result.current.mutateAsync({ threadId: "parent", onDeleted }),
+    ).rejects.toThrow("Thread has work in flight");
+  });
+  expect(onDeleted).not.toHaveBeenCalled();
+  // The retry will not find the sidecar again, so its folders are offered now.
+  expect(mocks.notifyThreadsDeleted).toHaveBeenCalledTimes(1);
+  expect(mocks.notifyThreadsDeleted).toHaveBeenCalledWith(["sidecar"]);
+});

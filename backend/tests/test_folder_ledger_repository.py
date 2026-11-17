@@ -19,14 +19,14 @@ from sqlalchemy.orm import sessionmaker
 from support.postgres import asyncpg_test_url
 
 from deerflow.persistence.base import Base
-from deerflow.persistence.folder_ledger import FolderLedgerEventRow, FolderLedgerFolderRow, FolderLedgerRecorderStore, FolderLedgerRepository, FolderLedgerTouchRow, TouchRecord
-from deerflow.persistence.folder_ledger.sql import MAX_EVENTS_PER_FOLDER
+from deerflow.persistence.folder_ledger import FolderLedgerDismissalRow, FolderLedgerEventRow, FolderLedgerFolderRow, FolderLedgerRecorderStore, FolderLedgerRepository, FolderLedgerTouchRow, TouchRecord
+from deerflow.persistence.folder_ledger.sql import MAX_EVENTS_PER_FOLDER, MAX_FOLDERS_PER_QUERY
 from deerflow.persistence.postgres_schema import build_asyncpg_connect_args
 from deerflow.persistence.thread_meta.model import ThreadMetaRow
 
 ALICE = "alice"
 BOB = "bob"
-_TABLES = [ThreadMetaRow, FolderLedgerFolderRow, FolderLedgerTouchRow, FolderLedgerEventRow]
+_TABLES = [ThreadMetaRow, FolderLedgerFolderRow, FolderLedgerTouchRow, FolderLedgerEventRow, FolderLedgerDismissalRow]
 pytestmark = pytest.mark.asyncio
 
 
@@ -73,8 +73,8 @@ async def drop_thread(sf, thread_id):
         await session.commit()
 
 
-def touch(thread_id, *, user_id=ALICE, name="acme", created=False, op="write", mount="/mnt/projects", rel=None):
-    return TouchRecord(mount_path=mount, name=name, kind="dir", rel_path=rel or f"{name}/file.txt", op=op, created=created, user_id=user_id, thread_id=thread_id, run_id="run-1")
+def touch(thread_id, *, user_id=ALICE, name="acme", created=False, op="write", mount="/mnt/projects", rel=None, **binding):
+    return TouchRecord(mount_path=mount, name=name, kind="dir", rel_path=rel or f"{name}/file.txt", op=op, created=created, user_id=user_id, thread_id=thread_id, run_id="run-1", **binding)
 
 
 async def rows(sf, model, *where):
@@ -145,17 +145,38 @@ async def test_events_are_capped_per_folder_newest_kept(tmp_path, backend):
         assert detail["events"][-1]["rel_path"] == "acme/5.txt"
 
 
-async def test_tombstone_survives_a_straggling_write(tmp_path, backend):
+async def test_a_straggling_write_of_a_deleted_thread_does_not_keep_the_folder(tmp_path, backend):
     async with database(tmp_path, backend) as (sf, repo):
         await put_thread(sf, "thread-a")
-        await repo.record([touch("thread-a", created=True)])
+        (folder_id,) = await repo.record([touch("thread-a", created=True)])
 
+        await drop_thread(sf, "thread-a")  # the thread delete removes thread_meta first
         assert await repo.tombstone_thread("thread-a") == 1
         await repo.record([touch("thread-a")])
 
         (row,) = await rows(sf, FolderLedgerTouchRow)
-        assert row.thread_deleted_at is not None
         assert row.writes == 2
+        assert await repo.live_thread_ids(folder_id) == set()
+        assert [orphan["id"] for orphan in await repo.find_orphans(thread_ids=["thread-a"], user_id=ALICE)] == [folder_id]
+
+
+async def test_a_recreated_thread_id_keeps_using_its_folder(tmp_path, backend):
+    """Thread ids come back (a stale tab, an IM binding); the new thread's writes count."""
+    async with database(tmp_path, backend) as (sf, repo):
+        await put_thread(sf, "x")
+        await put_thread(sf, "y")
+        folder_id, _same = await repo.record([touch("x", created=True), touch("y")])
+        await drop_thread(sf, "x")
+        await repo.tombstone_thread("x")
+
+        await put_thread(sf, "x")  # start_run recreates the thread_meta row under the same id
+        await repo.record([touch("x")])
+        assert await repo.live_thread_ids(folder_id) == {"x", "y"}
+
+        await drop_thread(sf, "y")
+        await repo.tombstone_thread("y")
+        assert await repo.live_thread_ids(folder_id) == {"x"}
+        assert await repo.find_orphans(thread_ids=["y"], user_id=ALICE) == []
 
 
 async def test_branch_inherits_only_live_touches_of_live_folders(tmp_path, backend):
@@ -199,11 +220,70 @@ async def test_orphans_ignore_other_users_thread_ids(tmp_path, backend):
 async def test_orphans_skip_dismissed_until_new_activity(tmp_path, backend):
     async with database(tmp_path, backend) as (sf, repo):
         (folder_id,) = await repo.record([touch("alice-1", created=True)])
-        await repo.mark_dismissed(folder_id)
+        assert await repo.mark_dismissed(folder_id, user_id=ALICE) is True
         assert await repo.find_orphans(thread_ids=["alice-1"], user_id=ALICE) == []
 
         await repo.record([touch("alice-2")])
         assert [row["id"] for row in await repo.find_orphans(thread_ids=["alice-1"], user_id=ALICE)] == [folder_id]
+
+
+async def test_dismissal_is_per_user(tmp_path, backend):
+    async with database(tmp_path, backend) as (sf, repo):
+        folder_id, _same = await repo.record([touch("alice-1", created=True), touch("bob-1", user_id=BOB)])
+
+        assert await repo.mark_dismissed(folder_id, user_id=BOB) is True
+        assert await repo.mark_dismissed(folder_id, user_id=BOB) is True  # idempotent
+
+        assert await repo.find_orphans(thread_ids=["bob-1"], user_id=BOB) == []
+        assert [row["id"] for row in await repo.find_orphans(thread_ids=["alice-1"], user_id=ALICE)] == [folder_id]
+        await repo.mark_deleted(folder_id)
+        assert await repo.mark_dismissed(folder_id, user_id=ALICE) is False
+
+
+async def test_live_folders_never_crowd_an_orphan_out_of_the_answer(tmp_path, backend):
+    async with database(tmp_path, backend) as (sf, repo):
+        (orphan_id,) = await repo.record([touch("gone", name="old-orphan", created=True)])
+        await put_thread(sf, "keep")
+        busy = [f"busy-{n:03d}" for n in range(MAX_FOLDERS_PER_QUERY + 1)]
+        await repo.record([touch("gone", name=name, created=True) for name in busy] + [touch("keep", name=name) for name in busy])
+        await repo.tombstone_thread("gone")
+
+        assert [row["id"] for row in await repo.find_orphans(thread_ids=["gone"], user_id=ALICE)] == [orphan_id]
+
+
+async def test_the_binding_follows_writes_that_started_from_the_bound_entry(tmp_path, backend):
+    async with database(tmp_path, backend) as (sf, repo):
+        root = "/srv/projects"
+        (folder_id,) = await repo.record([touch("t", created=True, host_root=root, entry_after="1:10")])
+        # A recorded rewrite of the bound entry (a bare file replaced atomically).
+        await repo.record([touch("t", host_root=root, entry_before="1:10", entry_after="1:11")])
+        assert (await repo.get_folder(folder_id))["host_entry"] == "1:11"
+        # A write that started from some other entry, or under another root, moves nothing.
+        await repo.record([touch("t", host_root=root, entry_before="1:99", entry_after="1:12")])
+        await repo.record([touch("t", host_root="/srv/elsewhere", entry_before="1:11", entry_after="1:13")])
+        assert (await repo.get_folder(folder_id))["host_entry"] == "1:11"
+        assert (await repo.get_folder(folder_id))["host_root"] == root
+
+
+async def test_an_upgraded_creation_takes_the_new_entrys_binding(tmp_path, backend):
+    async with database(tmp_path, backend) as (sf, repo):
+        (folder_id,) = await repo.record([touch("t", host_root="/srv/a", entry_after="1:10")])  # pre-existing
+        await repo.record([touch("u", user_id=BOB, created=True, host_root="/srv/a", entry_after="1:20")])  # seen recreated
+
+        folder = await repo.get_folder(folder_id)
+        assert (folder["created_attribution"], folder["created_by_user_id"], folder["host_entry"]) == ("observed_create", BOB, "1:20")
+
+
+async def test_a_removed_entry_retires_its_row_so_the_next_creator_is_credited(tmp_path, backend):
+    async with database(tmp_path, backend) as (sf, repo):
+        (old_id,) = await repo.record([touch("alice-1", created=True)])
+        await repo.record([], removed=[("/mnt/projects", "acme")])
+        (new_id,) = await repo.record([touch("bob-1", user_id=BOB, created=True)])
+
+        assert new_id != old_id
+        folder = await repo.get_folder(new_id)
+        assert (folder["created_by_user_id"], folder["created_by_thread_id"]) == (BOB, "bob-1")
+        assert (await repo.get_folder(old_id))["deleted_at"] is not None
 
 
 @pytest.mark.parametrize(
@@ -241,6 +321,15 @@ async def test_thread_listing_counts_other_live_conversations(tmp_path, backend)
         assert listing["solo"]["other_live_threads"] == 0
         assert listing["acme"]["touch"]["role"] == "created"
         assert await repo.list_thread_folders(thread_id="a", user_id=BOB) == []
+
+
+async def test_shared_workspace_listing_merges_every_users_touch_of_the_thread(tmp_path, backend):
+    async with database(tmp_path, backend) as (sf, repo):
+        await repo.record([touch("a", op="edit"), touch("a", user_id=BOB, created=True), touch("a", user_id=BOB)])
+
+        (entry,) = await repo.list_thread_folders(thread_id="a", user_id=None)
+
+        assert (entry["touch"]["role"], entry["touch"]["writes"], entry["touch"]["edits"]) == ("created", 2, 1)
 
 
 async def test_sync_recorder_store_and_async_repository_share_one_database(tmp_path):

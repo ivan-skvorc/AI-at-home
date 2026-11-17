@@ -12,6 +12,16 @@ so a deployment-wide ledger records who wrote there:
   deletion sets ``thread_deleted_at`` instead of dropping the row, so the
   record of who worked on the folder outlives the conversation.
 - ``folder_ledger_events`` is the capped edit log, newest kept.
+- ``folder_ledger_dismissals`` holds one row per (folder, user) who chose to
+  keep the folder and stop being offered its deletion. Dismissal is per user:
+  one user's "don't ask again" never hides the offer from the folder's creator.
+  New activity on the folder clears every dismissal of it.
+
+A folder row is bound to the host entry it describes: ``host_root`` is the
+mount's host directory and ``host_entry`` the entry's ``st_dev:st_ino`` as the
+recorder saw them. The confined delete refuses an entry that no longer matches,
+so a repointed mount or a folder recreated outside the ledger is never removed
+on the strength of an older row.
 """
 
 from __future__ import annotations
@@ -49,7 +59,11 @@ class FolderLedgerFolderRow(Base):
     first_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_now)
     last_touched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_now)
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    dismissed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Normalized host directory of the mount when the entry was recorded.
+    host_root: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    # "st_dev:st_ino" of the entry the ledger last saw a conversation create or
+    # change; None when the Gateway could not see it.
+    host_entry: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
     __table_args__ = (
         # One live row per (mount, name). Both dialect predicates are set: a
@@ -110,3 +124,13 @@ class FolderLedgerEventRow(Base):
     ts: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_now)
 
     __table_args__ = (Index("ix_folder_ledger_events_folder", "folder_id", "id"),)
+
+
+class FolderLedgerDismissalRow(Base):
+    __tablename__ = "folder_ledger_dismissals"
+
+    folder_id: Mapped[str] = mapped_column(String(32), ForeignKey("folder_ledger_folders.id", ondelete="CASCADE"), nullable=False)
+    user_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    dismissed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_now)
+
+    __table_args__ = (PrimaryKeyConstraint("folder_id", "user_id", name="pk_folder_ledger_dismissals"),)

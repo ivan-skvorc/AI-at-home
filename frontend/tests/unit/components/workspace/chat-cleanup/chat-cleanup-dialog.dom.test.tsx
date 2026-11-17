@@ -9,6 +9,7 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
+import type { ReactNode } from "react";
 
 /**
  * The clean-up dialog end to end over a mocked Gateway (fork feature).
@@ -67,7 +68,10 @@ import {
   type InfiniteThreadsData,
 } from "@/core/threads/hooks";
 import type { AgentThread } from "@/core/threads/types";
-import { CHAT_FOLDERS_QUERY_KEY } from "@/core/threads/use-chat-folders";
+import {
+  CHAT_FOLDERS_QUERY_KEY,
+  useChatFolders,
+} from "@/core/threads/use-chat-folders";
 
 const recorded: Recorded[] = [];
 let handle: (request: Recorded) => Promise<Response> | Response;
@@ -96,10 +100,13 @@ function renderDialog({
   threadIds,
   threads,
   open = true,
+  beside = null,
 }: {
   threadIds: string[] | null;
   threads: AgentThread[];
   open?: boolean;
+  /** Rendered next to the dialog under the same query client (the sidebar). */
+  beside?: ReactNode;
 }) {
   const queryClient = new QueryClient({
     defaultOptions: {
@@ -119,6 +126,7 @@ function renderDialog({
   const view = (isOpen: boolean) => (
     <I18nProvider initialLocale="en-US">
       <QueryClientProvider client={queryClient}>
+        {beside}
         <ChatCleanupDialog
           open={isOpen}
           onOpenChange={onOpenChange}
@@ -318,6 +326,105 @@ test("setup, run, preview and apply: nothing is written before Apply, then one f
     folderMode: "auto",
     maxNewFolders: 8,
   });
+});
+
+test("Apply's folder write waits for a sidebar folder write still in flight", async () => {
+  // The sidebar created "Q3" a moment ago and its PUT has not landed. The
+  // apply step must read the list only after that write, or it would fold its
+  // new folders onto the list without Q3 and save Q3 away.
+  let serverFolders = [{ id: "home", name: "Home" }];
+  let releaseSidebarWrite: () => void = () => undefined;
+  let heldSidebarWrite = false;
+  handle = (request) => {
+    if (request.url.endsWith("/api/threads/t1/organize/suggest")) {
+      return json({
+        thread_id: "t1",
+        current_title: "Pasta recipe chat",
+        title: "Pasta recipe chat",
+        title_changed: false,
+        category: "Cooking",
+      });
+    }
+    if (request.url.endsWith("/api/chat-organize/consolidate")) {
+      return json({
+        folders: [
+          { name: "Cooking", existing_folder_id: null, thread_ids: ["t1"] },
+        ],
+        unfiled: [],
+        model_name: "local-model",
+      });
+    }
+    if (request.url.endsWith("/api/settings/chat-folders")) {
+      if (request.method !== "PUT") {
+        return json({ chat_folders: serverFolders });
+      }
+      const sent = (request.body as { chat_folders: typeof serverFolders })
+        .chat_folders;
+      if (!heldSidebarWrite) {
+        heldSidebarWrite = true;
+        return new Promise<Response>((resolve) => {
+          releaseSidebarWrite = () => {
+            serverFolders = sent;
+            resolve(json({ chat_folders: sent }));
+          };
+        });
+      }
+      serverFolders = sent;
+      return json({ chat_folders: sent });
+    }
+    if (request.method === "PATCH") {
+      return json({
+        thread_id: "t1",
+        metadata: (request.body as { metadata: unknown }).metadata,
+      });
+    }
+    return json({ detail: "Not mocked" }, 404);
+  };
+  let sidebar: ReturnType<typeof useChatFolders> | null = null;
+  function Sidebar() {
+    sidebar = useChatFolders();
+    return null;
+  }
+  const { queryClient } = renderDialog({
+    threadIds: ["t1"],
+    threads: [thread("t1", "Pasta recipe chat")],
+    beside: <Sidebar />,
+  });
+  await screen.findByText("1 selected conversation");
+
+  act(() => {
+    sidebar!.createFolder("Q3");
+  });
+  await waitFor(() =>
+    expect(requestsTo("/api/settings/chat-folders", "PUT")).toHaveLength(1),
+  );
+
+  await act(async () => {
+    fireEvent.click(screen.getByTestId("chat-cleanup-start"));
+  });
+  await screen.findByTestId("chat-cleanup-preview");
+  await act(async () => {
+    fireEvent.click(screen.getByTestId("chat-cleanup-apply"));
+  });
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  // Queued: no fresh read and no second write while the sidebar's is open.
+  expect(requestsTo("/api/settings/chat-folders", "GET")).toEqual([]);
+  expect(requestsTo("/api/settings/chat-folders", "PUT")).toHaveLength(1);
+
+  await act(async () => {
+    releaseSidebarWrite();
+  });
+  await screen.findByTestId("chat-cleanup-result");
+  const puts = requestsTo("/api/settings/chat-folders", "PUT");
+  expect(puts).toHaveLength(2);
+  const saved = (puts[1]!.body as { chat_folders: { name: string }[] })
+    .chat_folders;
+  expect(saved.map((folder) => folder.name)).toEqual(["Home", "Q3", "Cooking"]);
+  expect(
+    queryClient
+      .getQueryData<{ name: string }[]>(CHAT_FOLDERS_QUERY_KEY)
+      ?.map((folder) => folder.name),
+  ).toEqual(["Home", "Q3", "Cooking"]);
 });
 
 test("Cancel aborts the calls in flight and returns to the setup", async () => {

@@ -103,6 +103,23 @@ describe("folder-ledger parsers", () => {
     expect(parsed?.orphans[0]?.reason).toBe("unknown");
   });
 
+  it("keeps the server's shell_inferred and changed reasons", () => {
+    // Both refuse a delete the user could otherwise be offered: a folder that
+    // only appeared after a shell command may be a renamed pre-existing one,
+    // and a changed entry is no longer the folder a conversation created.
+    const parsed = parseOrphanFolders({
+      available: true,
+      orphans: [
+        orphan("renamed", { deletable: false, reason: "shell_inferred" }),
+        orphan("swapped", { deletable: false, reason: "changed" }),
+      ],
+    });
+    expect(parsed?.orphans.map((item) => item.reason)).toEqual([
+      "shell_inferred",
+      "changed",
+    ]);
+  });
+
   it("parses a folder detail with its conversations and edit log", () => {
     const detail = parseFolderDetail({
       folder: { ...FOLDER, role: null },

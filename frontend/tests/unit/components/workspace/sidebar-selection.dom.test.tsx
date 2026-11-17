@@ -8,6 +8,7 @@ import {
 } from "@rstest/core";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -28,6 +29,7 @@ const mocks = rs.hoisted(() => ({
   notifyThreadsDeleted: rs.fn(),
   saveChatFolders: rs.fn(),
   cleanupProps: [] as Array<{ open: boolean; threadIds: string[] | null }>,
+  toast: { success: rs.fn(), error: rs.fn(), info: rs.fn() },
 }));
 
 rs.mock("next/navigation", () => ({
@@ -40,9 +42,7 @@ rs.mock("next/navigation", () => ({
   useParams: () =>
     nav.activeThreadId ? { thread_id: nav.activeThreadId } : {},
 }));
-rs.mock("sonner", () => ({
-  toast: { success: rs.fn(), error: rs.fn(), info: rs.fn() },
-}));
+rs.mock("sonner", () => ({ toast: mocks.toast }));
 rs.mock("@/core/api", () => ({
   getAPIClient: () => ({
     threads: { delete: mocks.remove, search: mocks.search },
@@ -82,6 +82,7 @@ import {
   INFINITE_THREADS_QUERY_KEY_PREFIX,
   type InfiniteThreadsData,
 } from "@/core/threads/hooks";
+import { THREAD_SELECTING_ATTRIBUTE } from "@/core/threads/thread-selection";
 import type { AgentThread } from "@/core/threads/types";
 import { CHAT_FOLDERS_QUERY_KEY } from "@/core/threads/use-chat-folders";
 
@@ -207,9 +208,61 @@ function patchBodies(): Array<[string, unknown]> {
     .map(([url, init]) => [url.split("/").pop() ?? "", jsonBody(init)]);
 }
 
+/**
+ * A small Gateway for the thread routes: PATCH merges metadata (or answers
+ * with what `answer` returns for that call), and the list reads what the
+ * PATCHes left, so a list refetched after an action still shows every chat.
+ */
+function serveThreads(
+  answer: (
+    threadId: string,
+    metadata: Record<string, unknown>,
+  ) => Response | null | Promise<Response | null> = () => null,
+) {
+  const metadataById = new Map(
+    THREADS.map((item) => [item.thread_id, { ...item.metadata }]),
+  );
+  mocks.fetch.mockImplementation(async (url: string, init?: RequestInit) => {
+    if (init?.method === "PATCH") {
+      const threadId = url.split("/").pop() ?? "";
+      const metadata = jsonBody(init).metadata ?? {};
+      const response = await answer(threadId, metadata);
+      if (response) {
+        return response;
+      }
+      metadataById.set(threadId, {
+        ...metadataById.get(threadId),
+        ...metadata,
+      });
+      return new Response(JSON.stringify({ metadata }));
+    }
+    if (url.endsWith("/api/threads/search")) {
+      const { archived } = jsonBody(init) as { archived?: boolean };
+      return new Response(
+        JSON.stringify(
+          THREADS.map((item) => ({
+            ...item,
+            metadata: metadataById.get(item.thread_id) ?? {},
+          })).filter(
+            (item) =>
+              Boolean(item.metadata.deerflow_archived) === Boolean(archived),
+          ),
+        ),
+      );
+    }
+    return new Response(null, { status: 204 });
+  });
+}
+
+const busy = () =>
+  new Response(JSON.stringify({ detail: "busy" }), { status: 409 });
+
 beforeEach(() => {
   nav.activeThreadId = null;
   nav.replace.mockReset();
+  mocks.toast.success.mockReset();
+  mocks.toast.error.mockReset();
+  mocks.toast.info.mockReset();
   mocks.remove.mockReset().mockResolvedValue(undefined);
   mocks.search.mockReset().mockResolvedValue([]);
   mocks.notifyThreadsDeleted.mockReset();
@@ -249,6 +302,7 @@ describe("sidebar multi-select", () => {
       (await screen.findByTestId("chat-selection-toggle")).textContent,
     ).toBe("Select");
     expect(screen.queryByRole("checkbox")).toBeNull();
+    expect(rowLink("r1").hasAttribute(THREAD_SELECTING_ATTRIBUTE)).toBe(false);
     expect(screen.queryByTestId("chat-selection-toolbar")).toBeNull();
   });
 
@@ -264,6 +318,10 @@ describe("sidebar multi-select", () => {
     expect(box.parentElement).toBe(link.parentElement);
     expect(link.contains(box)).toBe(false);
     expect(link.getAttribute("draggable")).toBe("true");
+
+    // The mobile drawer reads this marker to leave a selecting row's click to
+    // the row (workspace-sidebar-frame.tsx).
+    expect(link.getAttribute(THREAD_SELECTING_ATTRIBUTE)).toBe("true");
 
     fireEvent.click(box);
     expect(box.checked).toBe(true);
@@ -284,6 +342,7 @@ describe("sidebar multi-select", () => {
       expect(screen.queryByTestId("chat-selection-toolbar")).toBeNull(),
     );
     expect(screen.queryByRole("checkbox")).toBeNull();
+    expect(rowLink("r1").hasAttribute(THREAD_SELECTING_ATTRIBUTE)).toBe(false);
   });
 
   test("shift-click selects the rendered run from a folder into the root list", async () => {
@@ -337,6 +396,39 @@ describe("sidebar multi-select", () => {
     await waitFor(() => expect(selectedCount()).toBe("0 selected"));
   });
 
+  test("a move unticks only what it handled; ticks changed while it ran stay", async () => {
+    let releaseFirst: () => void = () => undefined;
+    serveThreads((threadId) => {
+      if (threadId === "r1") {
+        return new Promise<null>((resolve) => {
+          releaseFirst = () => resolve(null);
+        });
+      }
+      return threadId === "r3" ? busy() : null;
+    });
+    renderSidebar();
+    await startSelecting();
+    fireEvent.click(checkbox("Root one"));
+    fireEvent.click(checkbox("Root three"));
+    openMenu(screen.getByTestId("chat-selection-move"));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Work" }));
+    await waitFor(() => expect(patchBodies()).toHaveLength(2));
+
+    // While the move runs: tick another chat, and untick the one that is
+    // about to fail.
+    fireEvent.click(checkbox("Root two"));
+    fireEvent.click(checkbox("Root three"));
+    await act(async () => {
+      releaseFirst();
+    });
+    await waitFor(() => expect(mocks.toast.error).toHaveBeenCalled());
+
+    await waitFor(() => expect(selectedCount()).toBe("1 selected"));
+    expect(checkbox("Root two").checked).toBe(true);
+    expect(checkbox("Root three").checked).toBe(false);
+    expect(checkbox("Root one").checked).toBe(false);
+  });
+
   test("New folder from selection creates the folder and files every selected chat", async () => {
     renderSidebar();
     await startSelecting();
@@ -382,6 +474,50 @@ describe("sidebar multi-select", () => {
       ["r1", { metadata: { deerflow_archived: true } }],
       ["w2", { metadata: { deerflow_archived: true } }],
     ]);
+  });
+
+  test("one toast for the batch; its Undo restores exactly the archived chats and leaves the selection alone", async () => {
+    serveThreads((threadId, metadata) =>
+      threadId === "w2" && metadata.deerflow_archived === true ? busy() : null,
+    );
+    renderSidebar();
+    await startSelecting();
+    fireEvent.click(checkbox("Root one"));
+    fireEvent.click(checkbox("Root three"));
+    fireEvent.click(checkbox("Work two"));
+    fireEvent.click(screen.getByTestId("chat-selection-archive"));
+
+    await waitFor(() => expect(mocks.toast.success).toHaveBeenCalledTimes(1));
+    expect(mocks.toast.success.mock.calls[0]![0]).toBe("Archived 2 chats");
+    expect(mocks.toast.error).toHaveBeenCalledTimes(1);
+    expect(mocks.toast.error.mock.calls[0]![0]).toBe(
+      "1 chat could not be archived. It is still selected.",
+    );
+    // The failure stays ticked; the archived chats leave the selection.
+    await waitFor(() => expect(selectedCount()).toBe("1 selected"));
+    expect(checkbox("Work two").checked).toBe(true);
+
+    // A new tick, then Undo from the toast.
+    fireEvent.click(checkbox("Root two"));
+    expect(selectedCount()).toBe("2 selected");
+    const archivePatches = patchBodies().length;
+    const { action } = mocks.toast.success.mock.calls[0]![1] as {
+      action: { onClick: () => void };
+    };
+    await act(async () => {
+      action.onClick();
+    });
+    await waitFor(() =>
+      expect(mocks.toast.success).toHaveBeenCalledWith("Restored 2 chats"),
+    );
+    expect(patchBodies().slice(archivePatches).sort()).toEqual([
+      ["r1", { metadata: { deerflow_archived: false } }],
+      ["r3", { metadata: { deerflow_archived: false } }],
+    ]);
+    // The restore is not a selection action: both ticks are still there.
+    expect(selectedCount()).toBe("2 selected");
+    expect(checkbox("Root two").checked).toBe(true);
+    expect(checkbox("Work two").checked).toBe(true);
   });
 
   test("Delete confirms with the titles, deletes the batch and leaves the open chat", async () => {

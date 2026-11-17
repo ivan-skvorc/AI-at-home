@@ -87,6 +87,8 @@ export type OrphanKeepReason =
   | "unsupported_platform"
   | "mount_unavailable"
   | "host_not_visible"
+  | "shell_inferred"
+  | "changed"
   | "unknown";
 
 /** A folder that no live conversation uses any more. */

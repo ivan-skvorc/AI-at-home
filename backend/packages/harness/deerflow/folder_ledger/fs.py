@@ -10,6 +10,10 @@ with ``shutil.rmtree(name, dir_fd=...)``, which re-checks the entry against the
 after the check cannot redirect the removal out of the mount. Only POSIX
 platforms whose ``rmtree`` resists symlink attacks are supported; elsewhere the
 delete is refused rather than done by path.
+
+The entry must also still be the one the ledger recorded: its
+``st_dev:st_ino`` is compared with the recorded identity, so a folder replaced
+or recreated outside the ledger since then is refused (``changed``).
 """
 
 from __future__ import annotations
@@ -19,6 +23,8 @@ import shutil
 import stat
 from collections.abc import Sequence
 from typing import Literal
+
+from deerflow.folder_ledger.mounts import entry_identity
 
 DeleteOutcome = Literal["deleted", "missing"]
 
@@ -54,13 +60,15 @@ def _protects(target: str, protected: str) -> bool:
     return protected == target or protected.startswith(target.rstrip(os.sep) + os.sep)
 
 
-def delete_folder_entry(host_root: str, name: str, *, protected_paths: Sequence[str] = ()) -> DeleteOutcome:
+def delete_folder_entry(host_root: str, name: str, *, expected_entry: str | None, protected_paths: Sequence[str] = ()) -> DeleteOutcome:
     """Remove ``host_root/name``; ``"missing"`` when it is already gone.
 
     Raises :class:`FolderDeleteRefused` (nothing removed) when the platform is
     unsupported, the name is not a single segment, the host root cannot be
-    opened, the entry is a link or a special file, or removing it would remove
-    one of *protected_paths* (another mount's host root, DeerFlow's own data).
+    opened, the entry is a link or a special file, it is not the entry
+    *expected_entry* names (``st_dev:st_ino``; None never matches), or removing
+    it would remove one of *protected_paths* (another mount's host root,
+    DeerFlow's own data).
     """
     if not _SUPPORTED:
         raise FolderDeleteRefused("unsupported_platform", "Deleting shared folders is not supported on this platform.")
@@ -79,6 +87,8 @@ def delete_folder_entry(host_root: str, name: str, *, protected_paths: Sequence[
             raise FolderDeleteRefused("link", "The folder is a link; links are never followed or removed.")
         if not (stat.S_ISDIR(info.st_mode) or stat.S_ISREG(info.st_mode)):
             raise FolderDeleteRefused("unsupported_type", "Only directories and regular files can be deleted.")
+        if expected_entry is None or entry_identity(info) != expected_entry:
+            raise FolderDeleteRefused("changed", "The folder on disk is not the one the conversation created: it was replaced or recreated since, so it is not deleted.")
         target = os.path.join(_real(host_root), os.path.normcase(name))
         for protected in protected_paths:
             if protected and _protects(target, _real(protected)):

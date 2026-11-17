@@ -76,8 +76,13 @@ export function SidebarSelectionToolbar({
   const canDelete = hasPermission(user, PERMISSIONS.THREADS_DELETE);
 
   const handleArchiveSettled = useCallback(
-    ({ failed }: BulkThreadResult) => {
-      api?.store.replace(failed.map((failure) => failure.threadId));
+    ({ succeeded }: BulkThreadResult, archived: boolean) => {
+      // The toast's Undo restores through the same mutation; that restore is
+      // not a selection action and leaves the current ticks alone. Failures
+      // stay ticked; rows ticked meanwhile stay ticked too.
+      if (archived) {
+        api?.store.remove(succeeded);
+      }
     },
     [api],
   );

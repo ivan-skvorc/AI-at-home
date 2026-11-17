@@ -41,10 +41,21 @@ DEFAULT_SKILLS_PREFIX = DEFAULT_SKILLS_CONTAINER_PATH
 MAX_MOUNT_PATH_CHARS = 512
 MAX_NAME_CHARS = 255
 MAX_REL_PATH_CHARS = 1024
+MAX_HOST_ROOT_CHARS = 1024
 #: Distinct folders one bash command can be credited with.
 MAX_BASH_REFERENCES = 16
 
 EntryState = Literal["missing", "dir", "file", "other", "link"]
+
+
+@dataclass(frozen=True)
+class EntryProbe:
+    """What the Gateway saw at ``<host root>/<name>``."""
+
+    state: EntryState
+    #: ``st_dev:st_ino`` of a directory or regular file, else None.
+    identity: str | None = None
+
 
 # A path token in a shell command ends at whitespace, a quote, an operator, an
 # expansion or a glob character: what follows such a character is not a literal
@@ -230,20 +241,31 @@ def host_root_visible(mount: LedgerMount) -> bool:
         return False
 
 
-def probe_entry(mount: LedgerMount, name: str) -> EntryState | None:
+def entry_identity(info: os.stat_result) -> str:
+    """``st_dev:st_ino``: which entry this is, as opposed to what it is called."""
+    return f"{info.st_dev}:{info.st_ino}"
+
+
+def host_root_key(mount: LedgerMount) -> str | None:
+    """The mount's host directory as the ledger stores it; None past the column limit."""
+    normalized = os.path.normpath(mount.host_path)
+    return normalized if len(normalized) <= MAX_HOST_ROOT_CHARS else None
+
+
+def probe_entry(mount: LedgerMount, name: str) -> EntryProbe | None:
     """The folder's state on the host, without following a link; None when not visible."""
     if not host_root_visible(mount):
         return None
     try:
         info = os.lstat(os.path.join(mount.host_path, name))
     except FileNotFoundError:
-        return "missing"
+        return EntryProbe("missing")
     except (OSError, ValueError):
         return None
     if stat.S_ISLNK(info.st_mode):
-        return "link"
+        return EntryProbe("link")
     if stat.S_ISDIR(info.st_mode):
-        return "dir"
+        return EntryProbe("dir", entry_identity(info))
     if stat.S_ISREG(info.st_mode):
-        return "file"
-    return "other"
+        return EntryProbe("file", entry_identity(info))
+    return EntryProbe("other")

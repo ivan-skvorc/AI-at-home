@@ -314,6 +314,10 @@ async def consolidate_chat_categories(
     await _require_owned_threads(request, user, order)
 
     existing = organize.normalize_folder_choices(body.existing)
+    # The registry's room is counted from every folder the client sent, not the
+    # normalized list: a name like "???" normalizes to nothing and drops out of
+    # matching, but it still holds one of the registry's slots.
+    existing_count = len({choice.id for choice in body.existing})
     groups, unfiled = organize.group_categories(items, existing)
     matched = [group for group in groups if group.existing_id is not None]
     unmatched = [group for group in groups if group.existing_id is None]
@@ -323,7 +327,7 @@ async def consolidate_chat_categories(
     # an existing folder's name, needs no model. Only labels still apart after
     # that are worth a call.
     if organize.needs_model_merge(groups):
-        cap = organize.new_folder_cap(existing_count=len(existing), max_new_folders=body.max_new_folders)
+        cap = organize.new_folder_cap(existing_count=existing_count, max_new_folders=body.max_new_folders)
         try:
             prompt = organize.build_consolidate_messages(
                 unmatched,
@@ -355,7 +359,7 @@ async def consolidate_chat_categories(
     plan = organize.finalize_plan(
         [*matched, *unmatched],
         unfiled=unfiled,
-        existing_count=len(existing),
+        existing_count=existing_count,
         max_new_folders=body.max_new_folders,
         min_group_size=body.min_group_size,
         order=order,

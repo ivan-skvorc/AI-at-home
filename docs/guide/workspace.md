@@ -25,7 +25,9 @@ See [dashboard behavior and design](../../frontend/docs/token-usage-dashboard.md
 The workspace keeps a collapsed icon sidebar visible on narrow screens. Its
 toggle opens the full navigation drawer; closing the drawer returns to the icon
 bar without changing your saved desktop sidebar preference. Navigating to another
-page also closes the mobile drawer and preserves the destination page's focus.
+page also closes the mobile drawer and preserves the destination page's focus;
+so does a link that only adds to the page's address, such as **Show files** on
+the chat that is already open.
 Dismissing the drawer returns keyboard focus to the control that opened it.
 The Agents gallery header wraps to the available width so its import and create
 actions remain visible beside the compact sidebar on narrow screens.
@@ -90,7 +92,9 @@ only with the `threads:delete` permission. Moving never changes the sidebar's
 recency order. Each chat is a separate request: moves and archives at most four
 at a time, deletes one at a time. A chat that fails stays ticked with its reason
 (a chat whose run is still going cannot be deleted until it ends), the rest
-proceed, and nothing is retried automatically. Deleting the open chat takes you to a new chat.
+proceed, and nothing is retried automatically. A finished move or archive unticks
+only the chats it handled: a chat you ticked or unticked while it ran keeps that
+state, and the archive's **Undo** leaves the selection alone. Deleting the open chat takes you to a new chat.
 
 ## Chat clean-up
 
@@ -105,7 +109,9 @@ folder whose name matches). The setup is remembered per browser.
 **Analyze** reads without writing: one model call per conversation, one at a time
 on a local model and three at a time on a hosted one, plus at most one grouping
 call in auto mode. The review screen lets you edit titles and folders, untick
-rows, and rename or merge proposed folders. **Apply** then creates new folders in one write
+rows, and rename or merge proposed folders; an edit that leaves nothing to apply
+(a cleared title, a merge into **Don't file these**) keeps the rows on screen so
+you can take it back. **Apply** then creates new folders in one write
 (never past the 50-folder limit), moves chats and renames them without changing
 their place in the recency order. Failed rows stay ticked under **Review again**;
 nothing is retried automatically, and applying the same plan again writes
@@ -125,7 +131,9 @@ renaming is unavailable and filing still works. The routes are documented in
 
 The labelled **Files** button in a chat's header, right after the token counter,
 opens the side panel on the conversation's file tree (`/mnt/user-data`). Below a
-header width of about 32rem it shows only its icon. **Show files** in a chat's
+header width of about 48rem (60rem on an agent's chat page, whose header also
+holds the agent badge and **New chat**) it shows only its icon, so the word never
+pushes the header's last controls off the edge. **Show files** in a chat's
 sidebar menu opens the chat on that tab through `?panel=files`; the parameter is
 removed once the panel opens. The tab notes that this folder is deleted together
 with the conversation, and lists the [shared folders](sandbox.md#shared-folders-in-writable-mounts)

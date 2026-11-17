@@ -2491,6 +2491,9 @@ export const zhCN: Translations = {
       unsupported_platform: "此服务器不支持删除文件夹。",
       mount_unavailable: "它所在的挂载已不再配置为可写。",
       host_not_visible: "由此服务器以外管理。",
+      shell_inferred:
+        "仅在一条 shell 命令后出现（可能是被重命名的文件夹），因此不会在此删除。",
+      changed: "磁盘上的文件夹已不是对话创建的那个，因此不会在此删除。",
       unknown: "无法在此删除。",
     },
     deleteSelected: (count) => `删除 ${count} 个文件夹`,

@@ -15,6 +15,12 @@ Every create-or-update by a unique key is a dialect ``ON CONFLICT`` upsert, so
 two first writers (two conversations creating the same folder at once) both
 land: the first commit wins ``created_by_*``, the second adds its touch.
 
+**Binding.** A folder row records the mount's host directory and the entry's
+``st_dev:st_ino`` (:mod:`.model`). A recorded call that saw the bound entry
+before it ran moves the binding to what it left behind (a rewritten bare file
+gets a new inode); anything else leaves it alone, so an entry replaced outside
+the ledger stops matching and the confined delete refuses it.
+
 **Liveness.** A touch keeps its folder in use while its thread is alive: the
 touch is not tombstoned, the thread's ``threads_meta`` row still exists, and
 the thread is not a hidden dependent (an edit version or a sidecar) whose
@@ -31,13 +37,13 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import and_, case, delete, func, or_, select, update
+from sqlalchemy import and_, case, delete, exists, false, func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import Session, sessionmaker
 
-from deerflow.persistence.folder_ledger.model import FolderLedgerEventRow, FolderLedgerFolderRow, FolderLedgerTouchRow
+from deerflow.persistence.folder_ledger.model import FolderLedgerDismissalRow, FolderLedgerEventRow, FolderLedgerFolderRow, FolderLedgerTouchRow
 from deerflow.persistence.thread_meta.model import ThreadMetaRow
 
 ATTRIBUTION_OBSERVED = "observed_create"
@@ -59,7 +65,7 @@ KIND_FILE = "file"
 
 #: Edit-log rows kept per folder; older rows are pruned in the same transaction.
 MAX_EVENTS_PER_FOLDER = 200
-#: Folders one listing or orphan query evaluates.
+#: Folders one listing or orphan answer returns.
 MAX_FOLDERS_PER_QUERY = 200
 #: Bound on the ids one ``IN (...)`` carries.
 _IN_CHUNK = 500
@@ -72,7 +78,7 @@ _EDIT_ROOT_THREAD_ID_KEY = "edit_root_thread_id"
 _SIDECAR_FLAG_KEY = "deerflow_sidecar"
 _SIDECAR_PARENT_THREAD_ID_KEY = "parent_thread_id"
 
-_FIELD_LIMITS = {"user_id": 64, "thread_id": 64, "run_id": 64, "tool_call_id": 128, "rel_path": 1024, "mount_path": 512, "name": 255}
+_FIELD_LIMITS = {"user_id": 64, "thread_id": 64, "run_id": 64, "tool_call_id": 128, "rel_path": 1024, "mount_path": 512, "name": 255, "host_root": 1024, "entry_before": 64, "entry_after": 64}
 
 
 @dataclass(frozen=True)
@@ -90,6 +96,12 @@ class TouchRecord:
     thread_id: str
     run_id: str | None = None
     tool_call_id: str | None = None
+    #: Normalized host directory of the mount (``mounts.host_root_key``).
+    host_root: str | None = None
+    #: ``st_dev:st_ino`` of the entry before and after the call; None when
+    #: missing, not a directory or regular file, or not visible.
+    entry_before: str | None = None
+    entry_after: str | None = None
 
     def __post_init__(self) -> None:
         if self.op not in OPS:
@@ -138,8 +150,9 @@ def _folder_upsert_stmt(dialect_name: str, record: TouchRecord, now: datetime):
     The first commit wins ``created_by_*``. A later write upgrades the
     attribution only when it observed a stronger fact (a pre-existing folder
     that vanished and was recreated, or a shell inference confirmed by a tool
-    write), never between two observed creations. New activity also clears a
-    dismissal, so the folder can be offered again when it is orphaned again.
+    write), never between two observed creations. An upgrade takes the new
+    entry's binding; a call that saw the bound entry before it ran moves the
+    binding to the entry it left (see the module docstring).
     """
     insert = _insert_for(dialect_name)
     created = record.created
@@ -153,6 +166,8 @@ def _folder_upsert_stmt(dialect_name: str, record: TouchRecord, now: datetime):
         created_attribution=record.attribution,
         first_seen_at=now,
         last_touched_at=now,
+        host_root=record.host_root,
+        host_entry=record.entry_after,
     )
     folder = FolderLedgerFolderRow
     excluded = stmt.excluded
@@ -160,15 +175,20 @@ def _folder_upsert_stmt(dialect_name: str, record: TouchRecord, now: datetime):
         and_(folder.created_attribution == ATTRIBUTION_PREEXISTING, excluded.created_attribution != ATTRIBUTION_PREEXISTING),
         and_(folder.created_attribution == ATTRIBUTION_SHELL, excluded.created_attribution == ATTRIBUTION_OBSERVED),
     )
+    if record.entry_before and record.entry_after and record.host_root:
+        continued = and_(folder.host_entry == record.entry_before, folder.host_root == record.host_root)
+    else:
+        continued = false()
     stmt = stmt.on_conflict_do_update(
         index_elements=[folder.mount_path, folder.name],
         index_where=folder.deleted_at.is_(None),
         set_={
             "last_touched_at": excluded.last_touched_at,
-            "dismissed_at": None,
             "created_attribution": case((upgrade, excluded.created_attribution), else_=folder.created_attribution),
             "created_by_user_id": case((upgrade, excluded.created_by_user_id), else_=folder.created_by_user_id),
             "created_by_thread_id": case((upgrade, excluded.created_by_thread_id), else_=folder.created_by_thread_id),
+            "host_root": case((upgrade, excluded.host_root), else_=folder.host_root),
+            "host_entry": case((upgrade, excluded.host_entry), (continued, excluded.host_entry), else_=folder.host_entry),
         },
     )
     return stmt.returning(folder.id)
@@ -178,8 +198,11 @@ def _touch_upsert_stmt(dialect_name: str, folder_id: str, record: TouchRecord, n
     """Insert or advance one (folder, user, thread) touch.
 
     Counters add up, the strongest role wins (created > edited > inherited),
-    and a tombstone is never cleared: a deleted thread's straggling write must
-    not keep the folder in use.
+    and a write clears the thread's tombstone. Thread ids are reusable (a
+    deleted conversation's id comes back when a client or an IM binding starts
+    it again), and the recreated thread's writes must keep the folder in use.
+    A straggling write of a deleted thread still does not: liveness also
+    requires the ``threads_meta`` row, which the thread delete removes first.
     """
     insert = _insert_for(dialect_name)
     role = ROLE_CREATED if record.created else ROLE_EDITED
@@ -206,6 +229,7 @@ def _touch_upsert_stmt(dialect_name: str, folder_id: str, record: TouchRecord, n
                 else_=ROLE_INHERITED,
             ),
             "last_at": excluded.last_at,
+            "thread_deleted_at": None,
             "last_run_id": func.coalesce(excluded.last_run_id, touch.last_run_id),
             "writes": touch.writes + excluded.writes,
             "edits": touch.edits + excluded.edits,
@@ -235,11 +259,27 @@ def _event_prune_stmt(folder_id: str):
     return delete(event).where(event.folder_id == folder_id, event.id < cutoff)
 
 
+def _dismissal_clear_stmt(folder_id: str):
+    """New activity on a folder lets it be offered again, to everyone."""
+    return delete(FolderLedgerDismissalRow).where(FolderLedgerDismissalRow.folder_id == folder_id)
+
+
+def _removed_stmt(mount_path: str, name: str, now: datetime):
+    """Retire the live row of an entry a recorded command removed.
+
+    A later creation of the same name then starts a new row credited to the
+    conversation that made it, instead of inheriting the old row's creator.
+    """
+    folder = FolderLedgerFolderRow
+    return update(folder).where(folder.mount_path == mount_path, folder.name == name, folder.deleted_at.is_(None)).values(deleted_at=now)
+
+
 def _record_statements(dialect_name: str, record: TouchRecord, now: datetime, execute: Callable[[Any], Any]) -> str:
     folder_id = execute(_folder_upsert_stmt(dialect_name, record, now)).scalar_one()
     execute(_touch_upsert_stmt(dialect_name, folder_id, record, now))
     execute(_event_insert_stmt(folder_id, record, now))
     execute(_event_prune_stmt(folder_id))
+    execute(_dismissal_clear_stmt(folder_id))
     return folder_id
 
 
@@ -254,13 +294,18 @@ class FolderLedgerRecorderStore:
     def __init__(self, session_factory: sessionmaker[Session]) -> None:
         self._Session = session_factory
 
-    def record(self, records: Sequence[TouchRecord]) -> list[str]:
-        """Record every touch in one transaction; returns the folder ids."""
-        if not records:
+    def record(self, records: Sequence[TouchRecord], removed: Sequence[tuple[str, str]] = ()) -> list[str]:
+        """Record every touch, and retire every removed ``(mount_path, name)``, in one transaction.
+
+        Returns the folder ids of the touches.
+        """
+        if not records and not removed:
             return []
         with self._Session() as session:
             dialect_name = session.get_bind().dialect.name
             now = _now()
+            for mount_path, name in removed:
+                session.execute(_removed_stmt(mount_path, name, now))
             folder_ids = [_record_statements(dialect_name, record, now, session.execute) for record in records]
             session.commit()
         return folder_ids
@@ -322,7 +367,8 @@ def _folder_dict(row: FolderLedgerFolderRow) -> dict[str, Any]:
         "first_seen_at": row.first_seen_at,
         "last_touched_at": row.last_touched_at,
         "deleted_at": row.deleted_at,
-        "dismissed_at": row.dismissed_at,
+        "host_root": row.host_root,
+        "host_entry": row.host_entry,
     }
 
 
@@ -343,6 +389,20 @@ def _touch_dict(row: FolderLedgerTouchRow) -> dict[str, Any]:
     }
 
 
+_ROLE_RANK = {ROLE_CREATED: 3, ROLE_EDITED: 2, ROLE_INHERITED: 1}
+
+
+def _merge_touches(a: dict[str, Any], b: dict[str, Any]) -> dict[str, Any]:
+    """Two users' touches of one thread on one folder, as one (shared workspace)."""
+    merged = dict(a)
+    merged["role"] = max(a["role"], b["role"], key=lambda role: _ROLE_RANK.get(role, 0))
+    for key in ("writes", "edits", "shell_ops"):
+        merged[key] = a[key] + b[key]
+    merged["first_at"] = min(a["first_at"], b["first_at"])
+    merged["last_at"] = max(a["last_at"], b["last_at"])
+    return merged
+
+
 # ---------------------------------------------------------------------------
 # Async Gateway repository
 # ---------------------------------------------------------------------------
@@ -352,25 +412,31 @@ class FolderLedgerRepository:
     """The Gateway's async facade over the folder ledger tables.
 
     Methods take explicit ``user_id`` strings; the router resolves the caller
-    once. Nothing here touches the filesystem.
+    once. A read whose ``user_id`` scopes touches takes None to mean every
+    user's touches, the shared-workspace scope (multi-user mode off), where the
+    router's owner check already lets every login open every conversation.
+    Nothing here touches the filesystem.
     """
 
     def __init__(self, session_factory: async_sessionmaker[AsyncSession]) -> None:
         self._sf = session_factory
 
-    async def record(self, records: Sequence[TouchRecord]) -> list[str]:
+    async def record(self, records: Sequence[TouchRecord], removed: Sequence[tuple[str, str]] = ()) -> list[str]:
         """Async twin of :meth:`FolderLedgerRecorderStore.record`."""
-        if not records:
+        if not records and not removed:
             return []
         async with self._sf() as session:
             dialect_name = session.get_bind().dialect.name
             now = _now()
+            for mount_path, name in removed:
+                await session.execute(_removed_stmt(mount_path, name, now))
             folder_ids: list[str] = []
             for record in records:
                 folder_id = (await session.execute(_folder_upsert_stmt(dialect_name, record, now))).scalar_one()
                 await session.execute(_touch_upsert_stmt(dialect_name, folder_id, record, now))
                 await session.execute(_event_insert_stmt(folder_id, record, now))
                 await session.execute(_event_prune_stmt(folder_id))
+                await session.execute(_dismissal_clear_stmt(folder_id))
                 folder_ids.append(folder_id)
             await session.commit()
         return folder_ids
@@ -447,8 +513,13 @@ class FolderLedgerRepository:
             row = await session.get(FolderLedgerFolderRow, folder_id)
             return _folder_dict(row) if row is not None else None
 
-    async def user_can_view(self, *, folder_id: str, user_id: str) -> bool:
-        """A user sees a folder they created or have any touch on (tombstoned included)."""
+    async def user_can_view(self, *, folder_id: str, user_id: str | None) -> bool:
+        """A user sees a folder they created or have any touch on (tombstoned included).
+
+        ``user_id=None`` (shared workspace) sees every folder.
+        """
+        if user_id is None:
+            return True
         touch = FolderLedgerTouchRow
         folder = FolderLedgerFolderRow
         async with self._sf() as session:
@@ -462,30 +533,34 @@ class FolderLedgerRepository:
         async with self._sf() as session:
             return (await _live_threads_by_folder(session, [folder_id])).get(folder_id, set())
 
-    async def list_thread_folders(self, *, thread_id: str, user_id: str) -> list[dict[str, Any]]:
+    async def list_thread_folders(self, *, thread_id: str, user_id: str | None) -> list[dict[str, Any]]:
         """Folders one thread created, edited or inherited, newest touch first.
 
         Each entry carries the folder, this thread's touch, and
         ``other_live_threads``: how many other live conversations (of any
-        user) also touch the folder.
+        user) also touch the folder. With ``user_id=None`` (shared workspace)
+        every user's touches of the thread count, merged into one per folder.
         """
         touch = FolderLedgerTouchRow
         folder = FolderLedgerFolderRow
+        conditions = [touch.thread_id == thread_id, folder.deleted_at.is_(None)]
+        if user_id is not None:
+            conditions.append(touch.user_id == user_id)
+        query = select(touch, folder).join(folder, folder.id == touch.folder_id).where(*conditions).order_by(touch.last_at.desc(), folder.name)
+        if user_id is not None:
+            query = query.limit(MAX_FOLDERS_PER_QUERY)  # one touch per folder
         async with self._sf() as session:
-            rows = (
-                await session.execute(
-                    select(touch, folder)
-                    .join(folder, folder.id == touch.folder_id)
-                    .where(touch.thread_id == thread_id, touch.user_id == user_id, folder.deleted_at.is_(None))
-                    .order_by(touch.last_at.desc(), folder.name)
-                    .limit(MAX_FOLDERS_PER_QUERY)
-                )
-            ).all()
-            live = await _live_threads_by_folder(session, [folder_row.id for _touch_row, folder_row in rows])
+            rows = (await session.execute(query)).all()
+            merged: dict[str, tuple[dict[str, Any], FolderLedgerFolderRow]] = {}
+            for touch_row, folder_row in rows:
+                current = merged.get(folder_row.id)
+                merged[folder_row.id] = (_touch_dict(touch_row) if current is None else _merge_touches(current[0], _touch_dict(touch_row)), folder_row)
+            selected = list(merged.values())[:MAX_FOLDERS_PER_QUERY]
+            live = await _live_threads_by_folder(session, [folder_row.id for _touch, folder_row in selected])
         entries = []
-        for touch_row, folder_row in rows:
+        for touch_entry, folder_row in selected:
             others = live.get(folder_row.id, set()) - {thread_id}
-            entries.append({"folder": _folder_dict(folder_row), "touch": _touch_dict(touch_row), "other_live_threads": len(others)})
+            entries.append({"folder": _folder_dict(folder_row), "touch": touch_entry, "other_live_threads": len(others)})
         return entries
 
     async def folder_detail(self, *, folder_id: str, event_limit: int = MAX_EVENTS_PER_FOLDER) -> dict[str, Any] | None:
@@ -525,43 +600,40 @@ class FolderLedgerRepository:
         ]
         return {"folder": _folder_dict(folder_row), "touches": touches, "events": events, "live_thread_ids": live}
 
-    async def find_orphans(self, *, thread_ids: Sequence[str], user_id: str) -> list[dict[str, Any]]:
+    async def find_orphans(self, *, thread_ids: Sequence[str], user_id: str | None, viewer_id: str | None = None) -> list[dict[str, Any]]:
         """Folders the caller's given threads touched that no live conversation uses.
 
-        Only the caller's own touches select candidates, so ids of other users'
-        threads are ignored. Deleted and dismissed folders are skipped. The
-        live-touch check then counts every user's conversations: mounts are
-        shared, and a per-user "last conversation" would offer to delete
-        another user's working folder.
+        Only the caller's own touches select candidates (``user_id``; None in a
+        shared workspace selects every user's), so ids of other users' threads
+        are ignored. Deleted folders, and folders ``viewer_id`` (default
+        ``user_id``) dismissed, are skipped. The live-touch check then counts
+        every user's conversations: mounts are shared, and a per-user "last
+        conversation" would offer to delete another user's working folder.
+        Liveness is checked on every candidate before the answer is capped, so
+        live folders never crowd an orphan out of it.
         """
         ids = [thread_id for thread_id in dict.fromkeys(thread_ids) if isinstance(thread_id, str) and thread_id]
         if not ids:
             return []
+        viewer = viewer_id if viewer_id is not None else user_id
         touch = FolderLedgerTouchRow
         folder = FolderLedgerFolderRow
+        dismissal = FolderLedgerDismissalRow
         async with self._sf() as session:
             candidates: dict[str, FolderLedgerFolderRow] = {}
             for chunk in _chunks(ids):
-                rows = (
-                    (
-                        await session.execute(
-                            select(folder)
-                            .join(touch, touch.folder_id == folder.id)
-                            .where(touch.thread_id.in_(chunk), touch.user_id == user_id, folder.deleted_at.is_(None), folder.dismissed_at.is_(None))
-                            .order_by(folder.last_touched_at.desc())
-                        )
-                    )
-                    .scalars()
-                    .unique()
-                    .all()
-                )
+                conditions = [touch.thread_id.in_(chunk), folder.deleted_at.is_(None)]
+                if user_id is not None:
+                    conditions.append(touch.user_id == user_id)
+                if viewer is not None:
+                    conditions.append(~exists().where(dismissal.folder_id == folder.id, dismissal.user_id == viewer))
+                rows = (await session.execute(select(folder).join(touch, touch.folder_id == folder.id).where(*conditions))).scalars().unique().all()
                 for row in rows:
                     candidates.setdefault(row.id, row)
-            ordered = sorted(candidates.values(), key=lambda row: (row.last_touched_at, row.id), reverse=True)[:MAX_FOLDERS_PER_QUERY]
-            if not ordered:
+            if not candidates:
                 return []
-            live = await _live_threads_by_folder(session, [row.id for row in ordered])
-            orphan_rows = [row for row in ordered if not live.get(row.id)]
+            live = await _live_threads_by_folder(session, list(candidates))
+            orphan_rows = sorted((row for row in candidates.values() if not live.get(row.id)), key=lambda row: (row.last_touched_at, row.id), reverse=True)[:MAX_FOLDERS_PER_QUERY]
             totals: dict[str, tuple[int, int, Any]] = {}
             for chunk in _chunks([row.id for row in orphan_rows]):
                 result = await session.execute(select(touch.folder_id, func.coalesce(func.sum(touch.writes), 0), func.coalesce(func.sum(touch.edits), 0), func.max(touch.last_at)).where(touch.folder_id.in_(chunk)).group_by(touch.folder_id))
@@ -584,9 +656,16 @@ class FolderLedgerRepository:
             await session.commit()
         return bool(result.rowcount)
 
-    async def mark_dismissed(self, folder_id: str) -> bool:
+    async def mark_dismissed(self, folder_id: str, *, user_id: str) -> bool:
+        """Stop offering a live folder's deletion to one user, until new activity on it."""
         folder = FolderLedgerFolderRow
+        dismissal = FolderLedgerDismissalRow
         async with self._sf() as session:
-            result = await session.execute(update(folder).where(folder.id == folder_id, folder.deleted_at.is_(None)).values(dismissed_at=_now()))
+            live = await session.scalar(select(folder.id).where(folder.id == folder_id, folder.deleted_at.is_(None)))
+            if live is None:
+                return False
+            insert = _insert_for(session.get_bind().dialect.name)
+            stmt = insert(dismissal).values(folder_id=folder_id, user_id=user_id, dismissed_at=_now())
+            await session.execute(stmt.on_conflict_do_update(index_elements=[dismissal.folder_id, dismissal.user_id], set_={"dismissed_at": stmt.excluded.dismissed_at}))
             await session.commit()
-        return bool(result.rowcount)
+        return True

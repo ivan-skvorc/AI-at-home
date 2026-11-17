@@ -2668,6 +2668,10 @@ export const enUS: Translations = {
       unsupported_platform: "Deleting folders is not supported on this server.",
       mount_unavailable: "Its mount is no longer configured as writable.",
       host_not_visible: "Managed outside this server.",
+      shell_inferred:
+        "Only seen appearing after a shell command (it may be a renamed folder), so it is never deleted from here.",
+      changed:
+        "The folder on disk is no longer the one a conversation created, so it is never deleted from here.",
       unknown: "It cannot be deleted from here.",
     },
     deleteSelected: (count) =>

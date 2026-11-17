@@ -629,7 +629,7 @@ export default function AgentChatPage() {
                 {/* Ahead of the icon-only triggers: the row cannot shrink, so
                 the last controls are the ones clipped. The Files panel also
                 holds the Artifacts tab. */}
-                {threadFilesEnabled && <ThreadFilesTrigger />}
+                {threadFilesEnabled && <ThreadFilesTrigger header="agent" />}
                 <SidecarTrigger />
                 {browserEnabled && <BrowserTrigger />}
                 <ExportTrigger threadId={threadId} />

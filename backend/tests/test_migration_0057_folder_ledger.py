@@ -1,6 +1,6 @@
 """Migration 0057: the folder-ledger tables match the ORM and round-trip cleanly.
 
-Upgrading an existing install keeps its conversations, the three new tables
+Upgrading an existing install keeps its conversations, the four new tables
 match ``Base.metadata`` (including the live-only partial unique index on both
 dialects), and downgrade/upgrade round-trips.
 """
@@ -29,7 +29,7 @@ from deerflow.persistence.thread_meta.model import ThreadMetaRow
 
 REVISION = "0057_folder_ledger"
 PREVIOUS = "0056_merge_prefs_thread_shares"
-TABLES = {"folder_ledger_folders", "folder_ledger_touches", "folder_ledger_events"}
+TABLES = {"folder_ledger_folders", "folder_ledger_touches", "folder_ledger_events", "folder_ledger_dismissals"}
 
 
 def _folder_insert(letter: str, now: datetime, *, deleted_at: datetime | None):

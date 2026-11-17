@@ -5062,7 +5062,17 @@ export function useDeleteThread() {
         apiClient,
         threadId,
       );
-      await deleteThreadEverywhere(apiClient, threadId);
+      try {
+        await deleteThreadEverywhere(apiClient, threadId);
+      } catch (error) {
+        // The Side Chat threads are gone even though the conversation is not
+        // (a run in flight, a refusal). A retry finds no sidecars, so this is
+        // the only chance to offer the folders only they used.
+        if (deletedSidecarThreadIds.length > 0) {
+          notifyThreadsDeleted(deletedSidecarThreadIds);
+        }
+        throw error;
+      }
       onDeleted?.();
       return deletedSidecarThreadIds;
     },

@@ -79,7 +79,9 @@ _REDACTION_WINDOW_CHARS = 16_000
 
 #: Folder choices one request may carry; the registry holds no more.
 MAX_ORGANIZE_TARGETS = MAX_CHAT_FOLDERS
-#: A category is a folder name, so it is short; a hard cap below the registry's.
+#: A NEW folder's name is short; a hard cap below the registry's. Matching a
+#: category against the user's existing folders uses their whole names (up to
+#: ``MAX_FOLDER_NAME_CHARS``), so this cut applies only once nothing matched.
 MAX_CATEGORY_CHARS = 40
 MAX_SUMMARY_CHARS = 160
 #: Conversations one consolidation may merge.
@@ -282,6 +284,35 @@ class FolderChoice:
     name: str
 
 
+def _existing_by_key(existing: Sequence[FolderChoice]) -> dict[str, FolderChoice]:
+    by_key: dict[str, FolderChoice] = {}
+    for choice in existing:
+        by_key.setdefault(category_key(choice.name), choice)
+    return by_key
+
+
+def resolve_category(raw: Any, existing_by_key: Mapping[str, FolderChoice]) -> tuple[str, str, FolderChoice | None]:
+    """``(key, label, existing folder)`` for a category or a model's folder name.
+
+    An existing folder matches on its whole name, up to the registry's
+    ``MAX_FOLDER_NAME_CHARS``: the prompt tells the model to repeat it exactly,
+    and a cut at ``MAX_CATEGORY_CHARS`` first would turn a 41-80 character
+    folder into a truncated near-duplicate. Only a name that matches nothing is
+    cut to ``MAX_CATEGORY_CHARS`` as the name of a new folder, and keyed by
+    that cut, so two long spellings that share it stay one folder. The key is
+    ``""`` for an unusable name.
+    """
+    full = normalize_category_name(raw, max_chars=MAX_FOLDER_NAME_CHARS)
+    match = existing_by_key.get(category_key(full))
+    label = full
+    if match is None:
+        label = normalize_category_name(full)
+        match = existing_by_key.get(category_key(label))
+    if match is not None:
+        return category_key(match.name), match.name, match
+    return category_key(label), label, None
+
+
 def normalize_folder_choices(choices: Sequence[Any], *, limit: int = MAX_ORGANIZE_TARGETS) -> list[FolderChoice]:
     """Usable, de-duplicated folder choices (by id), names normalized for the prompt."""
     result: list[FolderChoice] = []
@@ -479,7 +510,9 @@ def parse_suggest_reply(
         if title is None and "folder" not in payload:
             raise OrganizeReplyError("The reply named neither a title nor a folder.")
     elif mode == "auto":
-        category = normalize_category_name(payload.get("category")) or None
+        # The registry's cap, not the category cap: an existing folder's name
+        # repeated exactly must reach the consolidation whole to match it.
+        category = normalize_category_name(payload.get("category"), max_chars=MAX_FOLDER_NAME_CHARS) or None
         raw_summary = payload.get("summary")
         if isinstance(raw_summary, str) and _squash(raw_summary):
             summary = _squash(raw_summary)[:MAX_SUMMARY_CHARS].rstrip()
@@ -558,9 +591,7 @@ def group_categories(items: Sequence[ConsolidationItem], existing: Sequence[Fold
     to that folder (the first one, if the user has two that differ only in case).
     Duplicate thread ids are dropped, first one wins.
     """
-    existing_by_key: dict[str, FolderChoice] = {}
-    for choice in existing:
-        existing_by_key.setdefault(category_key(choice.name), choice)
+    existing_by_key = _existing_by_key(existing)
 
     groups: dict[str, CategoryGroup] = {}
     unfiled: list[str] = []
@@ -569,15 +600,13 @@ def group_categories(items: Sequence[ConsolidationItem], existing: Sequence[Fold
         if item.thread_id in seen:
             continue
         seen.add(item.thread_id)
-        label = normalize_category_name(item.category)
-        key = category_key(label)
+        key, label, match = resolve_category(item.category, existing_by_key)
         if not key:
             unfiled.append(item.thread_id)
             continue
         group = groups.get(key)
         if group is None:
-            match = existing_by_key.get(key)
-            group = CategoryGroup(key=key, label=match.name if match else label, existing_id=match.id if match else None)
+            group = CategoryGroup(key=key, label=label, existing_id=match.id if match else None)
             groups[key] = group
         group.thread_ids.append(item.thread_id)
         group.spellings[label] = group.spellings.get(label, 0) + 1
@@ -749,9 +778,7 @@ def apply_model_merges(
     model left out keep their own group. Groups that end up with the same key
     are one folder.
     """
-    existing_by_key: dict[str, FolderChoice] = {}
-    for choice in existing:
-        existing_by_key.setdefault(category_key(choice.name), choice)
+    existing_by_key = _existing_by_key(existing)
 
     assigned: dict[int, str] = {}
     names: dict[str, tuple[str, FolderChoice | None]] = {}
@@ -761,12 +788,10 @@ def apply_model_merges(
             if 0 < member <= len(prompt_labels) and category_key(prompt_labels[member - 1]) == key:
                 name = groups[member - 1].label
                 break
-        name = normalize_category_name(name)
-        key = category_key(name)
+        key, name, match = resolve_category(name, existing_by_key)
         if not key:
             continue
-        match = existing_by_key.get(key)
-        names.setdefault(key, (match.name if match else name, match))
+        names.setdefault(key, (name, match))
         for member in members:
             if 0 < member <= len(groups):
                 assigned.setdefault(member, key)
