@@ -15,10 +15,12 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { ModelSelect } from "@/components/workspace/model-select";
+import { Tooltip } from "@/components/workspace/tooltip";
 import { useAutoTitleCapability } from "@/core/features";
 import { useI18n } from "@/core/i18n/hooks";
 import { useModels } from "@/core/models/hooks";
 import { useLocalSettings } from "@/core/settings";
+import { setAutoTitlePreference } from "@/core/settings/auto-title-sync";
 import { useAutoRenameThread } from "@/core/threads/auto-rename";
 
 /**
@@ -42,6 +44,10 @@ const SERVER_DEFAULT = "__server_default__";
  * Two steps, deliberately: the Gateway *writes* the title and the client
  * *applies* it through the ordinary rename, so the refusal while a run is in
  * flight (409) stays in the one place that already enforces it.
+ *
+ * The button stays when the user has switched automatic renaming off: on
+ * demand is exactly what is left then. Its tooltip and the dialog say so, or a
+ * sparkles "Auto rename" in every header reads as the setting being ignored.
  */
 export function ThreadAutoRename({
   threadId,
@@ -52,7 +58,7 @@ export function ThreadAutoRename({
 }) {
   const { t } = useI18n();
   const { models } = useModels();
-  const [settings, setSettings] = useLocalSettings();
+  const [settings] = useLocalSettings();
   const [open, setOpen] = useState(false);
   const { mutateAsync: autoRename, isPending } = useAutoRenameThread();
   // The operator's `config.yaml -> title.enabled`. When they have turned
@@ -60,6 +66,9 @@ export function ThreadAutoRename({
   // button would only offer a press that cannot work. Same flag the Settings
   // page greys its toggle on.
   const { enabled: renamingEnabled } = useAutoTitleCapability();
+  // The user's own switch in Settings → Conversation titles. It turns off only
+  // the automatic rename; this button is the manual one.
+  const automaticOff = !settings.autoTitle.enabled;
 
   const storedModel = settings.autoTitle.modelName;
   // Derived, not an effect. The picker starts on the remembered model and only
@@ -90,9 +99,11 @@ export function ThreadAutoRename({
       const title = await autoRename({ threadId, modelName: chosen });
       // Remember the pick for the next press *and* for the automatic rename:
       // both read the one `autoTitle.modelName` preference, so choosing a model
-      // here is the same choice as choosing it in Settings.
+      // here is the same choice as choosing it in Settings, saved to the
+      // account the same way. The rename itself has already succeeded, so a
+      // save that does not land is left to roll back quietly.
       if (chosen) {
-        setSettings("autoTitle", { modelName: chosen });
+        void setAutoTitlePreference({ modelName: chosen });
       }
       setOpen(false);
       toast.success(t.autoRename.success(title));
@@ -105,25 +116,43 @@ export function ThreadAutoRename({
     return null;
   }
 
+  const trigger = (
+    <DialogTrigger asChild>
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        disabled={disabled}
+        aria-label={t.autoRename.label}
+        data-testid="auto-rename-trigger"
+      >
+        <SparklesIcon />
+        <span className="hidden lg:inline">{t.autoRename.label}</span>
+      </Button>
+    </DialogTrigger>
+  );
+
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogTrigger asChild>
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          disabled={disabled}
-          aria-label={t.autoRename.label}
-          data-testid="auto-rename-trigger"
-        >
-          <SparklesIcon />
-          <span className="hidden lg:inline">{t.autoRename.label}</span>
-        </Button>
-      </DialogTrigger>
+      {automaticOff ? (
+        <Tooltip content={t.autoRename.manualOnly}>{trigger}</Tooltip>
+      ) : (
+        trigger
+      )}
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>{t.autoRename.title}</DialogTitle>
-          <DialogDescription>{t.autoRename.description}</DialogDescription>
+          <DialogDescription>
+            {t.autoRename.description}
+            {automaticOff && (
+              <span
+                className="mt-2 block"
+                data-testid="auto-rename-manual-only"
+              >
+                {t.autoRename.manualOnly}
+              </span>
+            )}
+          </DialogDescription>
         </DialogHeader>
         <div className="flex flex-col gap-2">
           <div className="text-sm font-medium">{t.autoRename.modelLabel}</div>

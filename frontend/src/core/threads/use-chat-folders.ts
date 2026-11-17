@@ -11,8 +11,13 @@
  * nothing and cost a merge conflict.
  */
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useCallback, useEffect, useState } from "react";
+import {
+  type QueryClient,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
   addFolder,
@@ -28,7 +33,30 @@ import { fetchChatFolders, saveChatFolders } from "./chat-folders-api";
 
 export const CHAT_FOLDERS_QUERY_KEY = ["settings", "chat-folders"] as const;
 
+/**
+ * Mutation scope of every whole-list folder write. TanStack runs mutations that
+ * share a scope one after another, so PUTs land in the order they were made.
+ * Exported for any other writer of the list (clean-up mode's apply step), which
+ * must queue behind the sidebar's writes rather than race them.
+ */
+export const CHAT_FOLDERS_MUTATION_SCOPE = "chat-folders";
+
 const EMPTY_FOLDERS: readonly ChatFolder[] = [];
+
+/**
+ * The number of the latest folder edit, per query client, shared by every
+ * mounted `useChatFolders`. A write's response is applied only while its edit
+ * is still the latest one. The cache cannot answer that by identity: React
+ * Query structurally shares `setQueryData`, so the cache holds a copy of the
+ * list an edit wrote, never the array itself.
+ */
+const latestFolderEdit = new WeakMap<QueryClient, number>();
+
+function nextFolderEdit(queryClient: QueryClient): number {
+  const edit = (latestFolderEdit.get(queryClient) ?? 0) + 1;
+  latestFolderEdit.set(queryClient, edit);
+  return edit;
+}
 
 /** A random, collision-free folder id, with a fallback for insecure origins. */
 export function newFolderId(): string {
@@ -66,39 +94,75 @@ export function useChatFolders() {
   });
   const folders = data ?? EMPTY_FOLDERS;
 
+  // Every edit starts from the list in the query cache, not from `folders`:
+  // the render closure goes stale the moment one handler makes a second edit,
+  // so two folders created in one go used to compute the second from the old
+  // list and overwrite the first. The cache already holds the first one.
+  const readFolders = useCallback(
+    (): readonly ChatFolder[] =>
+      queryClient.getQueryData<readonly ChatFolder[]>(CHAT_FOLDERS_QUERY_KEY) ??
+      EMPTY_FOLDERS,
+    [queryClient],
+  );
+
   const { mutate: persist } = useMutation({
-    mutationFn: async (next: readonly ChatFolder[]) => saveChatFolders(next),
-    onSuccess(stored) {
-      // The server's normalized value is authoritative; a failed write (`null`)
-      // leaves the optimistic list in place so the user's edit is not yanked
-      // back on a transient error.
-      if (stored) {
+    mutationFn: async ({
+      next,
+    }: {
+      next: readonly ChatFolder[];
+      edit: number;
+    }) => saveChatFolders(next),
+    // One write at a time, in order. Two whole-list PUTs racing could resolve
+    // out of order, and the older response would then overwrite the newer
+    // list in `onSuccess` below.
+    scope: { id: CHAT_FOLDERS_MUTATION_SCOPE },
+    onSuccess(stored, { edit }) {
+      // The server's normalized value is authoritative, and it also repairs
+      // the cache when a list read landed on top of the optimistic edit. A
+      // failed write (`null`) leaves the optimistic list in place so the
+      // user's edit is not yanked back on a transient error. Applied only for
+      // the latest edit: after a newer one, the response describes an older
+      // list, and showing it would make the newer folder blink out until its
+      // own write lands.
+      if (stored && edit === latestFolderEdit.get(queryClient)) {
         queryClient.setQueryData(CHAT_FOLDERS_QUERY_KEY, stored);
       }
     },
   });
 
   const commit = useCallback(
-    (next: readonly ChatFolder[]) => {
-      if (next === folders) {
+    (current: readonly ChatFolder[], next: readonly ChatFolder[]) => {
+      if (next === current) {
         return;
       }
+      const edit = nextFolderEdit(queryClient);
+      // A list read already in flight answers with the list before this edit;
+      // landing after it, it would drop the new folder, and the next edit
+      // would then save the list without it. Cancelling reverts that read at
+      // once, so the optimistic write below is the last word.
+      void queryClient.cancelQueries({ queryKey: CHAT_FOLDERS_QUERY_KEY });
       queryClient.setQueryData(CHAT_FOLDERS_QUERY_KEY, next);
-      persist(next);
+      persist({ next, edit });
     },
-    [folders, persist, queryClient],
+    [persist, queryClient],
   );
 
   // Expanded/collapsed is per browser, not per account: hydrate after mount so
-  // SSR and the first client render agree, then mirror every change back.
+  // SSR and the first client render agree, then mirror every change back. The
+  // ref is the same fix as `readFolders`: a handler that creates a folder and
+  // then expands its target must see the first write.
   const [expandedFolderIds, setExpandedFolderIds] = useState<Set<string>>(
     () => new Set(),
   );
+  const expandedRef = useRef<ReadonlySet<string>>(expandedFolderIds);
   useEffect(() => {
-    setExpandedFolderIds(readExpandedFolderIds());
+    const stored = readExpandedFolderIds();
+    expandedRef.current = stored;
+    setExpandedFolderIds(stored);
   }, []);
 
   const writeExpanded = useCallback((next: Set<string>) => {
+    expandedRef.current = next;
     setExpandedFolderIds(next);
     try {
       window.localStorage.setItem(
@@ -113,52 +177,83 @@ export function useChatFolders() {
 
   const toggleFolderExpanded = useCallback(
     (folderId: string) => {
-      const next = new Set(expandedFolderIds);
+      const next = new Set(expandedRef.current);
       if (!next.delete(folderId)) {
         next.add(folderId);
       }
       writeExpanded(next);
     },
-    [expandedFolderIds, writeExpanded],
+    [writeExpanded],
   );
 
   const expandFolder = useCallback(
     (folderId: string) => {
-      if (expandedFolderIds.has(folderId)) {
+      if (expandedRef.current.has(folderId)) {
         return;
       }
-      writeExpanded(new Set(expandedFolderIds).add(folderId));
+      writeExpanded(new Set(expandedRef.current).add(folderId));
     },
-    [expandedFolderIds, writeExpanded],
+    [writeExpanded],
   );
 
-  const createFolder = useCallback(
-    (name: string, parentId: string | null = null) => {
-      const id = newFolderId();
-      const next = addFolder(folders, { id, name, parentId });
-      if (next === folders) {
-        return null;
+  /**
+   * Create several folders in one write, all under `parentId`, answering one
+   * entry per name: the new id, or `null` for a name the model refused (blank,
+   * over the {@link MAX_CHAT_FOLDERS} cap, or nested too deep). A refusal does
+   * not stop the names after it — a blank one in the middle still lets the
+   * rest through.
+   */
+  const createFolders = useCallback(
+    (
+      names: readonly string[],
+      parentId: string | null = null,
+    ): Array<string | null> => {
+      const current = readFolders();
+      let next = current;
+      const ids = names.map((name) => {
+        const id = newFolderId();
+        const added = addFolder(next, { id, name, parentId });
+        if (added === next) {
+          return null;
+        }
+        next = added;
+        return id;
+      });
+      if (next === current) {
+        return ids;
       }
-      commit(next);
+      commit(current, next);
       // A brand-new folder opens, so the drop the user is about to make has a
       // visible target — and so does the folder it was created inside, or the
       // new subfolder would be created into a collapsed row and look like
       // nothing happened.
-      const expanded = new Set(expandedFolderIds).add(id);
+      const expanded = new Set(expandedRef.current);
+      for (const id of ids) {
+        if (id) {
+          expanded.add(id);
+        }
+      }
       if (parentId) {
         expanded.add(parentId);
       }
       writeExpanded(expanded);
-      return id;
+      return ids;
     },
-    [commit, expandedFolderIds, folders, writeExpanded],
+    [commit, readFolders, writeExpanded],
+  );
+
+  const createFolder = useCallback(
+    (name: string, parentId: string | null = null) =>
+      createFolders([name], parentId)[0] ?? null,
+    [createFolders],
   );
 
   const rename = useCallback(
     (folderId: string, name: string) => {
-      commit(renameFolder(folders, folderId, name));
+      const current = readFolders();
+      commit(current, renameFolder(current, folderId, name));
     },
-    [commit, folders],
+    [commit, readFolders],
   );
 
   /**
@@ -169,34 +264,37 @@ export function useChatFolders() {
    */
   const remove = useCallback(
     (folderId: string) => {
-      const removedIds = folderSubtreeIds(folders, folderId);
-      commit(removeFolder(folders, folderId));
+      const current = readFolders();
+      const removedIds = folderSubtreeIds(current, folderId);
+      commit(current, removeFolder(current, folderId));
       return removedIds;
     },
-    [commit, folders],
+    [commit, readFolders],
   );
 
   const move = useCallback(
     (folderId: string, parentId: string | null) => {
-      const next = moveFolder(folders, folderId, parentId);
-      if (next === folders) {
+      const current = readFolders();
+      const next = moveFolder(current, folderId, parentId);
+      if (next === current) {
         return false;
       }
-      commit(next);
+      commit(current, next);
       if (parentId) {
         // Same reason a new subfolder opens its parent: a folder dragged into a
         // collapsed row would simply vanish from the tree.
-        writeExpanded(new Set(expandedFolderIds).add(parentId));
+        writeExpanded(new Set(expandedRef.current).add(parentId));
       }
       return true;
     },
-    [commit, expandedFolderIds, folders, writeExpanded],
+    [commit, readFolders, writeExpanded],
   );
 
   return {
     folders,
     expandedFolderIds,
     createFolder,
+    createFolders,
     renameFolder: rename,
     removeFolder: remove,
     moveFolder: move,

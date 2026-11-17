@@ -12,6 +12,7 @@ import {
 } from "react";
 
 import { Sidebar, useSidebar } from "@/components/ui/sidebar";
+import { THREAD_SELECTING_ATTRIBUTE } from "@/core/threads/thread-selection";
 import { cn } from "@/lib/utils";
 
 const ExpandedContext = createContext<boolean | undefined>(undefined);
@@ -51,13 +52,20 @@ function Presentation({
           if (
             !link ||
             link.hasAttribute("download") ||
-            (link.target && link.target !== "_self")
+            (link.target && link.target !== "_self") ||
+            // A chat row in selection mode toggles its checkbox on click and
+            // cancels the navigation, but only in its own bubble-phase
+            // handler — too late to stop this capture-phase close.
+            link.closest(`[${THREAD_SELECTING_ATTRIBUTE}]`)
           )
             return;
           const destination = new URL(link.href, window.location.href);
+          // The query counts too: **Show files** on the open chat only adds
+          // `?panel=files`, and the panel it opens would sit behind the drawer.
           if (
             destination.origin === window.location.origin &&
-            destination.pathname !== window.location.pathname
+            destination.pathname + destination.search !==
+              window.location.pathname + window.location.search
           ) {
             // Release the focus trap before the destination mounts its input.
             setOpenMobile(false);

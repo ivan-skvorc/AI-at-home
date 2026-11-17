@@ -27,7 +27,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from deerflow.utils.llm_text import strip_think_blocks
+from deerflow.utils.llm_text import strip_markdown_code_fence, strip_think_blocks
 from deerflow.utils.messages import ORIGINAL_USER_CONTENT_KEY, get_original_user_content_text
 
 #: How many opening exchanges a title is written from. Two is enough to tell a
@@ -186,3 +186,43 @@ def render_exchanges(exchanges: Sequence[VisibleExchange], *, max_chars_per_mess
         else:
             lines.append("Assistant: (no answer yet)")
     return "\n".join(lines)
+
+
+# Quote pairs a model wraps a bare title in. Typographic and CJK pairs are here
+# because a model answering in the user's language quotes in that language too.
+_TITLE_QUOTE_PAIRS = (('"', '"'), ("'", "'"), ("`", "`"), ("“", "”"), ("‘", "’"), ("«", "»"), ("「", "」"), ("『", "』"))
+
+
+def _unwrap_title_line(line: str) -> str:
+    """Peel a heading marker, bold markers and one matching quote pair off a line."""
+    candidate = line.strip()
+    if candidate.startswith("#"):
+        candidate = candidate.lstrip("#").strip()
+    if len(candidate) > 4 and candidate.startswith("**") and candidate.endswith("**"):
+        candidate = candidate[2:-2].strip()
+    for opening, closing in _TITLE_QUOTE_PAIRS:
+        if len(candidate) >= 2 and candidate.startswith(opening) and candidate.endswith(closing):
+            candidate = candidate[len(opening) : -len(closing)].strip()
+            break
+    return candidate.strip('"').strip("'").strip()
+
+
+def clean_title(text: str, *, max_chars: int) -> str:
+    """Normalize a model's answer to "write a title" into the title itself.
+
+    Shared by the manual rename (FORK.md §38) and the chat clean-up pass, so a
+    fix lands in both. A model asked for a bare title still returns one fenced,
+    quoted, bolded or preceded by its reasoning often enough that skipping any
+    of these steps shows up as a thread named ``"Fix the flaky test"`` -- quotes
+    included. A chatty model can answer with several lines; the title is the
+    first non-empty one, not the essay under it. Inner whitespace is collapsed
+    so a title never carries a tab or a double space into the sidebar.
+
+    Returns ``""`` when nothing usable is left; callers treat that as "no title".
+    """
+    candidate = strip_think_blocks(text or "", truncate_unclosed=True)
+    candidate = strip_markdown_code_fence(candidate)
+    candidate = candidate.strip().strip('"').strip("'").strip()
+    first_line = next((line for line in candidate.splitlines() if line.strip()), "")
+    title = " ".join(_unwrap_title_line(first_line).split())
+    return title[: max(max_chars, 0)].rstrip()

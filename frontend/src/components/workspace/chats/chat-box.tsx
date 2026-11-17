@@ -76,6 +76,14 @@ const ThreadFileExplorer = dynamic(
     ),
   { loading: RightPanelLoading },
 );
+const ThreadSharedFolders = dynamic(
+  () =>
+    import("../thread-files/thread-shared-folders").then(
+      (module) => module.ThreadSharedFolders,
+    ),
+  // A small section above the explorer: no placeholder of its own.
+  { loading: () => null },
+);
 const BrowserViewPanel = dynamic(
   () =>
     import("../browser-view/browser-view-panel").then(
@@ -481,7 +489,14 @@ const ChatBoxContent: React.FC<ChatBoxProps> = ({
               >
                 {artifactList}
               </TabsContent>
-              <TabsContent value="files" className="flex min-h-0 flex-col">
+              <TabsContent
+                value="files"
+                className="flex min-h-0 flex-col gap-3"
+              >
+                <ThreadSharedFolders
+                  threadId={threadId}
+                  isRunning={thread.isLoading}
+                />
                 <ThreadFileExplorer
                   className="min-h-0 flex-1"
                   threadId={threadId}

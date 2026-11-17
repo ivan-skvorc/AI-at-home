@@ -14,6 +14,7 @@ import { WorkspaceChannelsList } from "./channels/workspace-channels-list";
 import { PluginNavigation } from "./plugin-navigation";
 import { ProjectsSection } from "./projects-section";
 import { RecentChatList } from "./recent-chat-list";
+import { SidebarSelectionProvider } from "./sidebar-selection";
 import { ThreadDeleteDialogProvider } from "./thread-delete-dialog";
 import { WorkspaceHeader } from "./workspace-header";
 import { WorkspaceNavChatList } from "./workspace-nav-chat-list";
@@ -30,11 +31,16 @@ export function WorkspaceSidebar({
   // and changed server-created threads reach the thread lists without a
   // reload, and a read on another device clears their dots here.
   useThreadActivity();
+  // Both providers sit above the frame: the chat lists unmount when the
+  // sidebar collapses (and the mobile drawer closes), and a selection or a
+  // delete confirmation must outlive that.
   return (
     <ThreadDeleteDialogProvider>
-      <WorkspaceSidebarFrame variant="sidebar" collapsible="icon" {...props}>
-        <WorkspaceSidebarContents />
-      </WorkspaceSidebarFrame>
+      <SidebarSelectionProvider>
+        <WorkspaceSidebarFrame variant="sidebar" collapsible="icon" {...props}>
+          <WorkspaceSidebarContents />
+        </WorkspaceSidebarFrame>
+      </SidebarSelectionProvider>
     </ThreadDeleteDialogProvider>
   );
 }

@@ -178,6 +178,7 @@ class MemoryThreadMetaStore(ThreadMetaStore):
         display_name: str,
         *,
         remove_metadata_keys: tuple[str, ...] = (),
+        touch: bool = True,
         user_id: str | None | _AutoSentinel = AUTO,
     ) -> None:
         async with self._thread_locks.hold(thread_id):
@@ -189,7 +190,8 @@ class MemoryThreadMetaStore(ThreadMetaStore):
             for key in remove_metadata_keys:
                 metadata.pop(key, None)
             record["metadata"] = metadata
-            record["updated_at"] = now_iso()
+            if touch:
+                record["updated_at"] = now_iso()
             await self._store.aput(THREADS_NS, thread_id, record)
 
     async def update_status(self, thread_id: str, status: str, *, user_id: str | None | _AutoSentinel = AUTO) -> None:

@@ -22,7 +22,10 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { resetThreadChatAfterDelete } from "@/components/workspace/chats/use-thread-chat";
+import { useThreadFolders } from "@/core/folder-ledger/hooks";
+import type { ThreadFolders } from "@/core/folder-ledger/types";
 import { useI18n } from "@/core/i18n/hooks";
+import type { Translations } from "@/core/i18n/locales/types";
 import { useDeleteThread } from "@/core/threads/hooks";
 import type { AgentThread } from "@/core/threads/types";
 import { pathOfThread, titleOfThread } from "@/core/threads/utils";
@@ -34,6 +37,34 @@ type DeleteTarget = {
 const ThreadDeleteContext = createContext<
   ((target: DeleteTarget) => void) | null
 >(null);
+
+/** Shared folders named in the confirmation before the rest are counted. */
+const NAMED_SHARED_FOLDERS = 3;
+
+/**
+ * What happens to the folders outside the conversation's own one: kept, and
+ * (where the deployment tracks them) offered for deletion once unused.
+ */
+function sharedFoldersNote(
+  ledger: ThreadFolders | undefined,
+  t: Translations,
+): string {
+  const folders = ledger?.available ? ledger.folders : [];
+  const kept =
+    folders.length > 0
+      ? t.folderLedger.deleteDialogKeptNamed(
+          folders.slice(0, NAMED_SHARED_FOLDERS).map((folder) => folder.name),
+          Math.max(folders.length - NAMED_SHARED_FOLDERS, 0),
+        )
+      : t.folderLedger.deleteDialogKept;
+  // Promise the offer only once the ledger has said it tracks this account's
+  // folders. While it loads, and where it failed (a Gateway without the
+  // ledger routes, an error), the orphan check after the delete would fail
+  // the same way and the offer would never come.
+  return ledger?.available === true
+    ? `${kept} ${t.folderLedger.deleteDialogOffer}`
+    : kept;
+}
 
 export function useThreadDeleteDialog() {
   const requestDelete = useContext(ThreadDeleteContext);
@@ -59,6 +90,11 @@ export function ThreadDeleteDialogProvider({
   // A partial deletion can remove the row on a list refresh. Keep its snapshot
   // and the retry dialog in this stable host, outside the virtualized lists.
   const [target, setTarget] = useState<DeleteTarget | null>(null);
+  // Answers come back keyed by thread id, so a late one never names the
+  // folders of another conversation in this dialog.
+  const sharedFolders = useThreadFolders(target?.thread.thread_id, {
+    enabled: target !== null,
+  });
   const deleteInFlight = useRef(false);
   const deleteCancelRef = useRef<HTMLButtonElement>(null);
 
@@ -145,11 +181,18 @@ export function ThreadDeleteDialogProvider({
         >
           <DialogHeader>
             <DialogTitle>{t.chats.deleteChat}</DialogTitle>
-            <DialogDescription className="break-words">
-              {target &&
-                t.chats.deleteConfirm(
-                  titleOfThread(target.thread, t.pages.untitled),
-                )}
+            <DialogDescription asChild>
+              <div className="flex flex-col gap-2 break-words">
+                <p>
+                  {target &&
+                    t.chats.deleteConfirm(
+                      titleOfThread(target.thread, t.pages.untitled),
+                    )}
+                </p>
+                <p data-testid="thread-delete-shared-folders">
+                  {sharedFoldersNote(sharedFolders.data, t)}
+                </p>
+              </div>
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>

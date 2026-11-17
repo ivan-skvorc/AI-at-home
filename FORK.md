@@ -116,7 +116,10 @@ once you know to look. The 2026-09-09 sync hit all three at once:
   `0051`, joined by `0053_merge_prefs_batch_cont`), and the 2026-11-13 sync eleven
   (`0053_tool_approvals` → `0054_project_memory` off `0052_batch_continuation`, joined by
   `0055_merge_prefs_project_mem`), and the 2026-11-15 sync twelve (`0055_thread_shares` off
-  `0054_project_memory`, joined by `0056_merge_prefs_thread_shares`). The depth is in
+  `0054_project_memory`, joined by `0056_merge_prefs_thread_shares`). The folder ledger (§54)
+  then put a second fork revision, `0057_folder_ledger`, on top of that merge: it is the fork's
+  head, so the next merge point names it as the fork parent, and an upstream `0057_*` is a
+  sibling to join, not a conflict to renumber. The depth is in
   [`persistence/migrations/FORK_NOTES.md`](backend/packages/harness/deerflow/persistence/migrations/FORK_NOTES.md).
 - **Both sides adding a function of the same name to the same module.** Git merges two
   non-overlapping additions cleanly, so `frontend/src/core/threads/api.ts` came out of
@@ -337,14 +340,14 @@ First, the mechanical gates:
 - [ ] **VPN-hostile defaults** (§31): `cd backend && uv run pytest tests/test_searxng_client.py tests/test_ensure_camoufox.py tests/test_camoufox_runtime_deps.py tests/test_search_fetch_defaults.py -q`. Each silent: `TestCamoufoxRuntimeLibraries::test_the_libraries_are_installed_beside_the_browser_copy` (a browser copied where it cannot run passes every presence check); `TestFetchEnvironment::test_the_fetch_call_site_actually_uses_the_scrubbed_environment` (the *call site*, not the helper — the helper tests pass against a module that cannot resolve `os`); `TestUnresponsiveEngines::test_all_engines_blocked_raises_rather_than_returning_empty` **with** `test_a_genuinely_empty_result_set_is_still_a_success` ("empty means error" breaks a no-match search) and `test_a_blocked_later_page_keeps_the_results_already_collected` (the client walks pages; only page 1 may raise); and `TestSearxngEngineMix` (the VPN-tolerant engines, and that the json/limiter deltas survived the edit). A sync that drops the apt block from `backend/Dockerfile`, or takes upstream's `_search_page` without the `unresponsive_engines` branch, is green elsewhere.
 - [ ] **Offloaded-model context sizing** (§30): runs inside the first critical check (`test_sync_ollama_models.py`). Bounded on both sides: `TestVramNumCtxLimitUnderOffload::test_a_model_bigger_than_vram_gets_a_window_the_agent_can_run_in` (never under 32K) and `test_it_does_not_hand_the_whole_card_to_the_kv_cache` (Ollama pays for context in GPU layers, [#9750](https://github.com/ollama/ollama/issues/9750)); `test_a_model_that_fits_still_takes_all_the_spare_vram` pins the fits-in-VRAM path. Opposite policies for opposite regimes: do not merge the branches.
 - [ ] **Local-model subagent parallelism** (§34): `cd backend && uv run pytest tests/test_subagent_local_residency.py tests/test_subagent_executor.py -k "residency or capacity" -q`. Everything this defends is silent: Ollama answers an over-dispatch by queueing inside the daemon or evicting a model, never by failing. `TestGate::test_a_model_that_fits_the_card_once_runs_one_subagent_at_a_time` and `test_a_model_the_card_holds_twice_runs_two_at_a_time` are the feature; `test_models_that_co_reside_run_in_parallel` is the half a "just serialize local models" simplification would delete. `test_a_small_model_does_not_jump_the_queue_ahead_of_a_waiting_large_one` pins strict FIFO (throughput here is bought with starvation), `test_a_model_bigger_than_the_card_runs_alone_rather_than_never` pins that an offloaded model is slow, not barred, and `test_an_unknown_model_is_not_gated_at_all` pins that a hosted model or an unsized entry dispatches exactly as before. `test_aexecute_holds_gpu_residency_for_a_local_model_for_the_whole_run` is the wiring: the gate is nested inside the process capacity slot and wraps the model call, and it goes red if either is undone.
-- [ ] **Sidebar chat folders** (§32): `cd frontend && pnpm test chat-folders` and `cd backend && uv run pytest tests/test_user_ui_state.py tests/test_chat_folders_settings_router.py tests/test_threads_router.py -k "folder or pin or ui_state or chat_folders" -q`. Four silent failures. `groupThreadsByFolder > lists a filed chat inside its folder and NOT at the root` **with** `falls back to the root for a folder that no longer exists` — both directions of one partition: filed chats left in the root duplicate every conversation, threads naming a deleted folder vanish. `breaks a parent cycle instead of hanging or hiding the branch` **with** `promotes a folder whose parent is unknown rather than dropping it`, both sides of the wire: a parent link taken on trust leaves a branch unreachable from every root, so its folders and their chats stop rendering. `test_patch_thread_folder_move_preserves_updated_at` **with** `test_patch_thread_folder_with_a_wrong_typed_value_still_bumps_updated_at` — the exemption is shape-guarded per key; collapsed to "the key is present" it stays green and hands any client a way to edit metadata without touching recency. And `test_folders_and_push_subscriptions_do_not_clobber_each_other`: both keys share one `ui_state.json`, so a writer that replaces rather than merges eats the other's state. Also `cd frontend && pnpm test:e2e sidebar-chat-folders` when the sidebar was touched: `is labelled, not a bare icon` and `created before there are any conversations` pin the only entry point, unfindable when it loses its label or its group renders nothing; `a subfolder lives inside its parent` pins nesting, which renders identically as a sibling.
+- [ ] **Sidebar chat folders, multi-select and clean-up** (§32, §52, §53): `cd frontend && pnpm test chat-folders thread-selection sidebar-selection bulk-thread-actions chat-organize chat-cleanup` and `cd backend && uv run pytest tests/test_user_ui_state.py tests/test_chat_folders_settings_router.py tests/test_chat_organize_router.py tests/test_threads_router.py -k "folder or pin or ui_state or chat_folders or recency or organize" -q`. Silent when broken, each a list that still renders: the partition both ways (`lists a filed chat inside its folder and NOT at the root`, `falls back to the root for a folder that no longer exists`) and the tree repair (`breaks a parent cycle instead of hanging or hiding the branch`, `promotes a folder whose parent is unknown rather than dropping it`), or chats duplicate or vanish; the recency exemption, shape-guarded per key (`test_patch_thread_folder_with_a_wrong_typed_value_still_bumps_updated_at`) and `test_update_thread_state_rename_preserves_recency_only_when_asked` (SQL needs `flag_modified`), or filing and clean-up reshuffle the list; `whole-list writes run one at a time…` and `creates all new folders with a single PUT…`, or a new folder blinks out; `test_folders_and_push_subscriptions_do_not_clobber_each_other` (one `ui_state.json`, now also the title preference). Add `pnpm test:e2e sidebar-chat-folders sidebar-multi-select chat-cleanup` when the sidebar was touched (`is labelled, not a bare icon`, `a subfolder lives inside its parent`).
 - [ ] **Sidebar list scroll margin** (§35): `cd frontend && pnpm test thread-list-scroll-margin thread-list-virtualizer`. The sidebar's chat lists virtualize inside a scroll container they do not own, so each carries its own offset into it; a stale offset selects the wrong rows and positions them correctly — an empty band, no error. Three signals keep it honest and **each covers a hole the others do not**: `re-measures on a re-render, which is how an expanding folder reports` (the layout effect has no dependency list on purpose — restoring one is green against every other test here), `re-measures when a section above the list grows` **with** `re-measures and re-observes when a section mounts after the list` (the ResizeObserver/MutationObserver pair; a sibling growing never re-renders this component, and the sidebar's sections are conditional, so a fixed set watched at mount is not enough), and `still corrects itself on scroll when nothing else reported` (the backstop — dropping it is invisible until a layout change resizes no box). `keeps the offset scroll-invariant` pins what makes re-measuring during a scroll safe at all. Also run `cd frontend && pnpm test:e2e sidebar-long-chat-list` (and the row above's spec) when the sidebar or the virtualizer was touched — only a real layout engine can say the rows the reader looks at are the rows that are there.
-- [ ] **Automatic conversation renaming** (§33): `cd backend && uv run pytest tests/test_auto_title_preference.py tests/test_title_middleware_core_logic.py -q` and `cd frontend && pnpm test auto-title`. Three silent failures, none of which stops titles appearing. `test_the_title_is_written_from_after_agent_not_after_model` compares the bound hooks against `AgentMiddleware`'s own — LangChain's node-placement predicate — because the `after_model` spelling still titles, just back inside the window where the Gateway refuses the user's own rename with a 409. The opt-out pair (`..._cannot_switch_renaming_on_when_the_operator_disabled_it`, `..._unconfigured_model_is_dropped_rather_than_dialled`) is green either way if you honor whatever the browser sent; `distinguishes 'server default' from 'no model call'` pins absent-key vs empty-string as opposite instructions; `_ensure_interrupted_title` must run on **every** terminal status, or a turn ending in `ask_clarification` is never named. Add `pnpm test:e2e auto-title-settings` when the settings dialog was touched.
+- [ ] **Automatic conversation renaming** (§33): `cd backend && uv run pytest tests/test_auto_title_preference.py tests/test_auto_title_settings_router.py tests/test_title_middleware_core_logic.py -q` and `cd frontend && pnpm test auto-title`. Silent, titles keep appearing: `test_the_title_is_written_from_after_agent_not_after_model` (an `after_model` hook titles inside the window where the user's rename gets a 409); `..._cannot_switch_renaming_on_when_the_operator_disabled_it` and `..._unconfigured_model_is_dropped_rather_than_dialled`; `distinguishes 'server default' from 'no model call'`; `_ensure_interrupted_title` on **every** terminal status. The account preference: `test_a_stored_opt_out_wins_over_the_request` (admission ANDs; honouring the browser alone keeps renaming chats from IM, schedules and other devices) and `test_an_opted_out_first_turn_gets_no_fallback_title`. Add `pnpm test:e2e auto-title-settings` when the settings dialog was touched.
 - [ ] **Auto rename from the chat header** (§38): `cd backend && uv run pytest tests/test_thread_title_suggest.py -q` and `cd frontend && pnpm test auto-rename`. Silent: `..._ultra_turns_subagent_transcript_never_reaches_the_prompt`, whose **second half** bites — a `task` result is a `ToolMessage` carrying the panel's whole deliberation, so relaxing the filter still titles, after the models arguing rather than the answer. Also `..._refused_rather_than_quietly_swapped` and `applies the title through useRenameThread`. Add `pnpm test:e2e auto-rename`.
 - [ ] **Scroll-back history survives a restart** (§28): `cd backend && uv run pytest tests/test_run_history_durability.py tests/test_doctor.py::TestCheckRunEventsDurable -q` (migration 50: third critical check). The failure this defends is silent in every log: with `run_events.backend: memory` the page endpoint's store is process state, so after a Gateway restart a long conversation still opens and still renders its recent turns from the checkpoint, and merely stops loading older messages when the reader scrolls up. `test_older_messages_still_page_backwards_after_a_restart` is the claim, across a real engine teardown and rebuild; `test_the_memory_store_is_what_loses_it` is the other direction, so the file goes red if durability gets "fixed" in the memory store instead of the default. **All three default sources must survive a sync independently** — `test_the_schema_default_persists_run_events` (a `config.yaml` with no `run_events:` section, and the Helm chart), `test_the_shipped_example_persists_run_events` (fresh installs copy the example verbatim, so upstream restoring `memory` there overrides the schema default), and migration 50 in `test_run_events_memory_is_migrated_but_other_memory_backends_are_not` (existing installs, which keep whatever value they were created with). An upstream merge that reverts any one of them re-breaks a different population and nothing else notices. `TestCheckRunEventsDurable` keeps `make doctor` reporting the combination for installs that never run `make config-upgrade`.
 - [ ] **A reply keeps the price it was billed at** (§17): `cd backend && uv run pytest tests/test_run_pricing_snapshot.py tests/test_thread_token_usage.py tests/test_run_repository.py -q`. Cost is read from `runs.pricing_snapshot`, not recomputed from the live config, and every way that can regress is silent. `test_a_model_dropped_from_the_roster_keeps_its_cost` is the motivating case and asserts **both** directions in one test — with the snapshot the spend survives, without it the run prices to `None` — so deleting the snapshot path fails loudly instead of just making conversations cheaper. `test_a_later_price_change_does_not_rewrite_an_old_run` is the other half. Three guards exist because each is a way the fix could be worse than the bug: `test_a_currency_switch_re_prices_rather_than_summing_two_currencies`, `test_a_snapshot_cannot_switch_cost_reporting_back_on`, `test_a_discount_is_not_re_expired_on_replay`. `TestSnapshotPersistence` is the plumbing: it round-trips the SQL store, the memory store and `_with_pricing_snapshot`, and pins that a completion **retry** without a snapshot does not erase the stored value. Keep `test_the_headers_stated_relation_still_holds_across_an_edit` too: `sum(steps) + superseded_cost == total_cost` is what the cost dropdown tells the reader, and per-run pricing is what makes it an identity. A store with no `by_run` must still price its `by_model` aggregate (`tests/test_thread_token_usage.py` covers it).
 - [ ] **CI's pnpm bootstrap stays retried and pinned**: `cd backend && uv run pytest tests/test_ci_pnpm_bootstrap.py -q`. A transient registry abort while corepack fetches pnpm crashes Node's undici parser (`AssertionError: assert(!this.paused)`) before any test runs and reads like a broken branch (PR #106). `test_the_pnpm_download_is_retried` asserts the retry on the step's *shape*, so it can be rewritten but not removed, across every workflow that prepares pnpm (four today); `test_there_is_a_pnpm_bootstrap_to_check` exists because a renamed step would otherwise leave that parametrized test iterating an empty list and passing green. `test_every_workflow_prepares_the_version_the_repo_pins` is the drift guard: the version lives in five places (`frontend/package.json`'s `packageManager` plus one `corepack prepare` per workflow) and moves out of one at a time, and a mismatch means CI silently exercises a different pnpm than contributors run. Bumping pnpm is one change that touches all five.
-- [ ] **A file explorer for each conversation** (§49): `cd backend && uv run pytest tests/test_thread_files_router.py tests/blocking_io/test_thread_files_router.py -q` (the first inside the Backend gate) and `cd frontend && pnpm test thread-files`, plus `pnpm test:e2e thread-files`. Silent when broken: `test_symlink_escaping_user_data_is_listed_as_a_link_and_never_entered` and `test_dot_dot_traversal_never_lists_outside_user_data` (the route must keep `get_artifact`'s confinement: normalize, then `resolve_thread_virtual_path`, never follow a link), and `test_hides_only_gateway_transient_files` (dotfiles such as `.git` are content, not hidden).
+- [ ] **A file explorer for each conversation, and shared folders** (§49, §54): `cd backend && uv run pytest tests/test_thread_files_router.py tests/test_folder_ledger_middleware.py tests/test_folder_ledger_router.py -q` (inside the Backend gate), `make test-blocking-io`, `cd frontend && pnpm test thread-files folder-ledger`, plus `pnpm test:e2e thread-files folder-ledger`. Silent when broken: `test_symlink_escaping_user_data_is_listed_as_a_link_and_never_entered` and `test_dot_dot_traversal_never_lists_outside_user_data` (`get_artifact`'s confinement: normalize, `resolve_thread_virtual_path`, never follow a link), `test_hides_only_gateway_transient_files`; `test_shared_chain_places_it_just_outside_tool_error_handling` (moved, the recorder sees nothing and no deletion is ever offered), `test_orphans_are_not_offered_while_another_users_conversation_is_live`, and the guards against deleting data no conversation provably created, `test_a_renamed_existing_folder_is_listed_but_never_deleted` (a `mv` makes a name appear like `mkdir`) and `test_an_entry_replaced_outside_the_ledger_is_refused`.
 - [ ] **A plugin tool's file output** (§50): `tests/test_plugin_tools.py` runs inside the Backend gate; also `make test-blocking-io`. Untested: upstream owns `API_VERSION`. If the merge brings its own 0.2.13, move the fork's floor past it (the example's `@extension` marker and requirement, `docs/full-stack-plugins.md`, `test_example_extension_requires_a_host_with_file_output`).
 - [ ] Frontend: `pnpm check && pnpm test`. **`pnpm check` includes the formatting gate** (`prettier --check .`, eslint, `tsc --noEmit`). `pnpm format:write` fixes what the check reports; `eslint --fix` normalizes imports and optional-chains but not Prettier whitespace.
 - [ ] **Changed a shared UI control? Run the whole e2e suite, not the one spec you thought of.** `pnpm test:e2e` with no filter. A control's _specs_ are not the specs in the file you edited: they are every spec that clicks that control anywhere in the app, and nothing in `pnpm check` or `pnpm test` knows the difference. Observed live on the model-picker unification — the composer's picker was swapped into five screens, the Democracy spec was found and fixed by hand, and `suggestions-settings.spec.ts` was missed entirely because it drives the _same control_ from a different page. It failed only in CI. Two rules fell out of it, both now pinned by `frontend/tests/unit/components/workspace/model-picker-sites.test.ts`: a spec must locate a shared control by that control's **own** `data-slot`, never by the ARIA role of the primitive underneath (swap the primitive and the locator silently matches nothing), and a fast unit test should assert the contract so a six-minute e2e job is not the thing that tells you.
@@ -576,7 +579,7 @@ The shipped set is deliberately a curated "big names" list, not a catalog dump. 
   - When a new generation ships (say Opus 6), the rule rolls forward mechanically: the new model joins, the now-second-newest Opus stays as the previous-generation pin, and the third-oldest drops. Opus 5.5 was the first roll (2026-09-26): Opus 4.8 left the bundle. Sonnet 5.5 was the second (2026-09-28): Sonnet 4.6 left.
 - **Fable and Opus 5.5 also via OpenRouter.** Fable 5.1 and Opus 5.5 are the two Claudes that also get an OpenRouter entry (the paired-lab rule in step 3 of the audit), for users who only hold an `OPENROUTER_API_KEY` and still want the top tier. Every **other** Claude lives **only** on the direct Anthropic block — routing an already-direct Claude through OpenRouter just adds the `(p)` privacy caveat and a middleman for no benefit.
 - **First-party "home" block per big-name lab.** Every lab that ships its own API gets a direct block, gated by that lab's own key, carrying that lab's lineup on its native/OpenAI-compatible endpoint — the same shape as the Anthropic block above. Currently: **OpenAI** (`OPENAI_API_KEY`), **xAI** (`XAI_API_KEY`), **Google** (`GEMINI_API_KEY`, native SDK), **DeepSeek** (`DEEPSEEK_API_KEY`), **Mistral** (`MISTRAL_API_KEY`), **Moonshot** (`MOONSHOT_API_KEY`), **Qwen/Alibaba** (`DASHSCOPE_API_KEY`), **MiniMax** (`MINIMAX_API_KEY`), **Zhipu/z.ai** (`ZAI_API_KEY`). Two open-weight labs are deliberately **OpenRouter-only** — **Meta Llama** and **NVIDIA Nemotron** have no clean first-party consumer chat API, so they keep just their routed flagship. Each home block carries the flagship (**doubled** with the OpenRouter entry) **plus a small fuller family** — the same "a lab's direct key deserves its real lineup" logic that gives the Anthropic block six Claudes. Keep the home families tight (flagship + 1–2 acclaimed/cheaper siblings, like OpenAI's Sol + Codex + Mini); the trim-aggressively rule below still applies. Home entries carry the lab's own name suffix (`(OpenAI)`, `(xAI)`, …), **never** `(p)` (they're direct), and use the lab's own list price (no OpenRouter promo star).
-- **OpenRouter — the "big names," one main model each.** One flagship entry per major lab: **xAI** (Grok), **OpenAI/ChatGPT** (GPT), **Google** (Gemini), **DeepSeek**, **Moonshot/Kimi**, **Qwen**, **Mistral**, plus the other strong open models that make sense (**Zhipu/GLM**, **MiniMax**, Meta **Llama**, NVIDIA **Nemotron**). **Mostly just the main model per lab** — add a _second, smaller_ model only when that smaller one is itself **critically acclaimed** in its own right (the precedent was OpenAI's GPT-5.3 Codex, the widely-praised agentic-coding variant, beside the GPT-6 Astra + GPT-6.1 Sol pair, until OpenAI deprecated it and it left the bundle on 2026-11-13). Don't list every size a lab offers. This trim set is kept **as-is** even though the labs now also have home blocks — the doubled flagship is the point.
+- **OpenRouter — the "big names," one main model each.** One flagship entry per major lab: **xAI** (Grok), **OpenAI/ChatGPT** (GPT), **Google** (Gemini), **DeepSeek**, **Moonshot/Kimi**, **Qwen**, **Mistral**, plus the other strong open models that make sense (**Zhipu/GLM**, **MiniMax**, Meta **Llama**, NVIDIA **Nemotron**). **Mostly just the main model per lab** — add a _second, smaller_ model only when that smaller one is itself **critically acclaimed** in its own right (the precedent was OpenAI's GPT-5.3 Codex, the widely-praised agentic-coding variant, beside the GPT-6 Astra + GPT-6.1 Sol pair, until OpenAI deprecated it and it left the bundle on 2026-11-13; the current case is **DeepSeek V4.1 Flash** beside V4 Pro, routed from 2026-11-16 after three audits at #1 on OpenRouter's rankings in every window). Don't list every size a lab offers. This trim set is kept **as-is** even though the labs now also have home blocks — the doubled flagship is the point.
 - **A previous generation stays only where people are still choosing it.** The Anthropic rule above — Opus and Sonnet keep the outgoing 4.x beside the current 5 — is a shape, not an Anthropic privilege. Any lab's previous flagship earns the same second slot when it is _independently_ still in demand: the acclaim signal below, showing the old version holding its own share after the successor shipped. Absent that evidence the default is the mechanical roll-forward (new flagship in, previous one out), which is what happened to Grok 4.5, Qwen3.7 Max and GLM-5.2. Two generations of one tier is the ceiling; a third is never kept, and the cheap/small tiers (Haiku, Fable, the Flash/Lite/Mini picks) keep only their latest either way — nobody pins an old one.
 - **Cost spread.** Keep at least one genuinely cheap option live (Haiku, Gemini Flash, GLM/MiniMax) so the mixed-model cost story in this doc holds in practice.
 
@@ -633,7 +636,7 @@ The logic that block feeds, and the rules for writing it:
 - **One currency across every priced model.** The console sums cost across models, so a mix of currencies is meaningless — if two priced models declare different `currency` values, cost reporting is **disabled entirely** (the cost/currency fields go null) rather than producing an invalid total. Pick one currency and price every `pricing:` block in it.
 - **The display-name parser is the legacy path, and it must stay.** Every _bundled_ model now ships a structured `price:` block and no price in its name (§17), but a `config.yaml` written before that change carries the old `($<in>/<out>)` names and nothing else — so when a model entry has neither `price:` nor a `pricing:` block, `app/gateway/pricing.py::derive_pricing_from_display_name` still reads that pair (and any starred promo) straight out of `display_name`. **This is what makes the feature work on an existing install, and it is not a convenience.** Shipping blocks in `config.example.yaml` only ever reaches a _brand-new_ `config.yaml`: `sync-api-key-models.py` skips a provider block whose models are already active (correct — it must not duplicate them) and `config_upgrade.py`'s `merge_missing` is dict-based, so it cannot add a key inside an existing list entry. Anyone who ran DeerFlow before a price shipped therefore keeps that model active and **unpriced forever**, and their chat header stays on `—` no matter how many times the example is corrected. Reproduced end to end: an upgraded config with 13 active models and 0 `pricing:` blocks produced `no changes` from both launch-path regenerators. An explicit block always wins over the derived one, and a malformed explicit block is _not_ silently replaced by the name's price — that is an operator error worth surfacing. Pinned by `test_model_price_fields.py::TestBackwardCompatibility` (`test_display_name_derivation_still_works`, `test_a_legacy_pricing_block_still_prices`) and `TestExplicitPriceField::test_price_wins_over_the_display_name` — deleting the parser to "simplify" the pricing loader silently un-prices every install written before §17.
 - **Pricing is optional and additive.** A model with no `pricing:` block yields `cost: null` (it just doesn't contribute to the total); when _no_ model is priced, the console omits cost columns. `ModelConfig` is `extra="allow"`, so adding the block needs no schema change.
-- **What ships priced: everything.** All **41** bundled paid models across all eleven marker blocks carry a `price:` block, in both synced sources. This is load-bearing, not a nicety — a model without one contributes nothing to the total, so a conversation run entirely on unpriced models reports **no cost at all**. Shipping only the Anthropic block priced is exactly what made the chat header render `—` for anyone using another provider. Only Ollama (populated at runtime, genuinely free) stays unpriced. The price is **data, in one place**: `config.example.yaml` carries the block literally and `scripts/wizard/providers.py::MODEL_PRICES` holds the same figures for the wizard, with `test_config_integrity.py::TestBundledModelPricing::test_the_wizard_bundles_and_the_example_agree` asserting the two agree. It is deliberately **not** derived from the display name any more — see §17. `cache_hit` is set only where the lab publishes a cache-read rate and the audit read it: the Anthropic entries (0.1x input, 0.05x on Opus 5.5 and Sonnet 5.5, 0.025x on Fable 5.1), Kimi K3.1 Pro, Mistral Large 4 and MiniMax M3.1 Flash; every other block omits it and cache hits fall back to the full input price, the documented conservative upper bound. Two entries are currently discounted, both Google's introductory rate on Gemini 3.8 Flash: **the Google home block** (`until: 2026-12-31`, read off Google's own pricing page on 2026-09-26) and **its routed copy** (OpenRouter's model page shows the same 50% off on every endpoint, all of them Google's own, read 2026-11-10; OpenRouter states no end date, so the routed `until:` is inherited from the home entry's Google-announced window). **MiniMax M3** carried the routed promotion until 2026-11-10, when MiniMax's own page showed its 50% cut as *permanent*: `$0.30/1.20` became its plain price in both places and the routed discount was deleted — the same "intro made permanent" case as Claude Sonnet 5. Claude Sonnet 5 was the first: it launched on a `$2/10` introductory rate against a `$3/15` list, and on 2026-08-10 Anthropic made that rate **permanent** (the scheduled 2026-09-01 increase will not happen), so the discount was removed and `$2/10` is now its plain standard price — the intro window ending _upward_ into a list price is the case the mechanism was built for, and it ending _downward_ into the list price is the case it also has to survive. GLM-5.2's 76%-off promotion left with the entry when the roster rolled forward to GLM-5.3 — a discount belongs to the model it was quoted for, so it is not carried across a version bump. Pinned by `backend/tests/test_config_integrity.py::TestBundledModelPricing` (every model priced, no price in any name, well-formed, single-currency, discounts below list with a readable expiry, and the two sources agree).
+- **What ships priced: everything.** All **42** bundled paid models across all eleven marker blocks carry a `price:` block, in both synced sources. This is load-bearing, not a nicety — a model without one contributes nothing to the total, so a conversation run entirely on unpriced models reports **no cost at all**. Shipping only the Anthropic block priced is exactly what made the chat header render `—` for anyone using another provider. Only Ollama (populated at runtime, genuinely free) stays unpriced. The price is **data, in one place**: `config.example.yaml` carries the block literally and `scripts/wizard/providers.py::MODEL_PRICES` holds the same figures for the wizard, with `test_config_integrity.py::TestBundledModelPricing::test_the_wizard_bundles_and_the_example_agree` asserting the two agree. It is deliberately **not** derived from the display name any more — see §17. `cache_hit` is set only where the lab publishes a cache-read rate and the audit read it: the Anthropic entries (0.1x input, 0.05x on Opus 5.5 and Sonnet 5.5, 0.025x on Fable 5.1), Kimi K3.1 Pro, Mistral Large 4 and MiniMax M3.1 Flash; every other block omits it and cache hits fall back to the full input price, the documented conservative upper bound. Two entries are currently discounted, both Google's introductory rate on Gemini 3.8 Flash: **the Google home block** (`until: 2026-12-31`, read off Google's own pricing page on 2026-09-26) and **its routed copy** (OpenRouter's model page shows the same 50% off on every endpoint, all of them Google's own, read 2026-11-10; OpenRouter states no end date, so the routed `until:` is inherited from the home entry's Google-announced window). **MiniMax M3** carried the routed promotion until 2026-11-10, when MiniMax's own page showed its 50% cut as *permanent*: `$0.30/1.20` became its plain price in both places and the routed discount was deleted — the same "intro made permanent" case as Claude Sonnet 5. Claude Sonnet 5 was the first: it launched on a `$2/10` introductory rate against a `$3/15` list, and on 2026-08-10 Anthropic made that rate **permanent** (the scheduled 2026-09-01 increase will not happen), so the discount was removed and `$2/10` is now its plain standard price — the intro window ending _upward_ into a list price is the case the mechanism was built for, and it ending _downward_ into the list price is the case it also has to survive. GLM-5.2's 76%-off promotion left with the entry when the roster rolled forward to GLM-5.3 — a discount belongs to the model it was quoted for, so it is not carried across a version bump. Pinned by `backend/tests/test_config_integrity.py::TestBundledModelPricing` (every model priced, no price in any name, well-formed, single-currency, discounts below list with a readable expiry, and the two sources agree).
 - **Keep it current with the roster.** The `pricing:` block is part of the same living bundle as the model list — refresh it on the same cadence as slugs and thinking config (see _Auditing the model list_ below), reading each figure off the provider's own model page — or, when that page is unreachable, off several independent sources that agree (_Where a price may come from_) — never from memory.
 
 ### Display-name conventions (label, source suffix, privacy marker)
@@ -711,7 +714,7 @@ Run this pass **when that issue reports drift, when someone asks for an audit, o
 
    Four of the seven are prose that **no test can read** — `providers.py`'s `description=`, `config.example.yaml`'s `QUICK START` comment, the sync script's `QUICK START` docstring, and the README bullet. Those are where a roll-forward goes stale unnoticed; read all four by eye every pass. **`.env.example` used to be a fifth and is now pinned**: `test_env_example_names_the_models_each_home_key_actually_enables` compares each home key's trailing comment against the display names that key enables, after the 2026-09-05 pass found it still advertising Mistral Small 3 three weeks after the roll-forward updated the other four. It allows only a lab prefix every model in the block repeats to be abbreviated away, so "Large 4 / Small 4" passes and a stale version does not. The remaining four are prose in free-form sentences and are not mechanisable the same way — the eye is still the only check.
 
-   Then confirm the **doubling** still holds: each home flagship's bare id appears in the OpenRouter block as `<provider>/<same id>` (modulo the version separator — OpenRouter dots Claude versions, `anthropic/claude-fable-5.1` ↔ `claude-fable-5-1` — case — `minimax/minimax-m3` ↔ MiniMax's own `MiniMax-M3` — and a trailing date stamp, where OpenRouter pins the snapshot the home id serves: `deepseek/deepseek-v4-pro-0813` ↔ `deepseek-v4-pro`, `qwen/qwen3.8-max-0902` ↔ `qwen3.8-max`).
+   Then confirm the **doubling** still holds: each home flagship's bare id appears in the OpenRouter block as `<provider>/<same id>` (modulo the version separator — OpenRouter dots Claude versions, `anthropic/claude-fable-5.1` ↔ `claude-fable-5-1` — case — `minimax/minimax-m3` ↔ MiniMax's own `MiniMax-M3` — and a trailing date stamp, where OpenRouter pins the snapshot the home id serves: `deepseek/deepseek-v4-pro-0813` ↔ `deepseek-v4-pro`).
 
    **Two labs route a pair rather than a single flagship, and that is the rule for them, not a drift to clean up.** Anthropic routes **Fable 5.1 _and_ Opus 5.5**; OpenAI routes **GPT-6 Astra _and_ GPT-6.1 Sol**. Both pairs exist because the lab's top tier is really two models a factor of two or more apart in price — Fable `$10/$50` beside Opus 5.5 `$4/$20`, Astra `$10/$50` beside GPT-6.1 Sol `$2/$10` — and either half alone fails an OpenRouter-only user in a way that is invisible from the config: route only the dearer and every routed task is billed at two and a half to five times what the cheaper model would have charged for most of it; route only the cheaper and the lab's best model is simply unreachable on that key, with the home block no help because holding it is the thing this user did not do. A lab whose flagship is a single model keeps a single routed entry — the exception is about the *shape of the lab's top tier*, not a licence to route two of everything, and adding a third to either pair needs the same argument made again. `TestFirstPartyKeyCoverage::test_the_paired_labs_route_both_halves` pins both pairs by name so a roster roll-forward that upgrades one half and forgets the other fails loudly instead of quietly halving the choice.
 
@@ -719,7 +722,7 @@ Run this pass **when that issue reports drift, when someone asks for an audit, o
 
 4. **Slugs.** Confirm each `model:` is the exact current id (bare Anthropic ids like `claude-opus-5`; OpenRouter `provider/model` slugs; **home** blocks use each lab's own bare id — the OpenRouter slug minus its `provider/` prefix, e.g. `openai/gpt-6.1-sol` → `gpt-6.1-sol`, `z-ai/glm-5.3` → `glm-5.3` — **except Anthropic**, whose API hyphenates the version where OpenRouter dots it: `claude-fable-5-1` direct, `anthropic/claude-fable-5.1` routed. Read each spelling off its own catalog; the 2026-09-02 pass derived `anthropic/claude-fable-5-1` from the direct id and it shipped uncallable until 2026-09-26). A wrong/unreleased id fails at request time, not at load — verify against the provider's / OpenRouter's catalog, never from memory. **The cheaper siblings need this more than the flagships do**, because a lab's tier naming invites you to _derive_ the sibling's id instead of reading it, and the derived one looks right: the 2026-08-26 pass found three bundled entries — `gpt-5.6-mini`, `grok-4.5-fast`, `glm-5.2-air` — that were named that way and pointed at models no lab ever shipped. Two of the three carried a _plausible_ price, because the price had been taken from the real model the name was groping for, so nothing about the entry looked wrong until a request failed. Enumerate the lab's model list and pick the sibling **off it**; never spell one out of the flagship's name. **Never bundle a `*-latest` alias, either.** An alias moves on its own while the entry's name and `price:` stay where a human left them, so the three halves silently come to describe three different models and nothing raises — `mistral-medium-latest` was found sitting at Medium 3's price on 2026-08-20, and `mistral-small-latest` did the identical thing on 2026-09-02, still labelled "Small 3" at $0.10/$0.30 while serving Small 4 at $0.15/$0.60. Pin the dated/versioned id (`mistral-small-2603`, `mistral-medium-3-5`) and let the audit roll it forward deliberately; the automatic follow is not worth an entry that cannot be wrong out loud.
 5. **Per-model settings.** Sanity-check `max_tokens`, `supports_vision`, `supports_thinking`, `temperature`, and the thinking config against the model family (adaptive Claude vs. Haiku budget vs. OpenAI-compatible `extra_body` toggles — see _Keep the model format current_ above). `supports_thinking: true` is load-bearing; drop deprecated fields. Confirm each home block's `base_url`/`api_base` and env var match the lab (e.g. `https://api.x.ai/v1` + `XAI_API_KEY`); Google's home block uses the native `ChatGoogleGenerativeAI` SDK with `gemini_api_key` and no thinking toggle.
-6. **Pricing.** Read each price off the provider's / OpenRouter's own model page — or, when that page cannot be reached, off several independent sources that agree exactly, logged as corroborated (_Where a price may come from_, below). Refresh the model's `price:` block (all 41 bundled paid models carry one; `config.example.yaml` holds them literally and `scripts/wizard/providers.py::MODEL_PRICES` holds the same figures for the wizard, and `TestBundledModelPricing::test_the_wizard_bundles_and_the_example_agree` fails if the two ever disagree). Then add a `discount:` block — never a price in the name — for **any** currently discounted model, sourced from the **"N% off" badge** on the model's OpenRouter page, counted only when it applies to every endpoint — OpenRouter has no promotions page — (derive list as `list = discounted / (1 − discount)`) **or** an Anthropic **introductory-pricing** window (a newly launched Claude below its standard rate for a fixed window). Re-read the provider's note as well as its table: an intro window can end by lapsing _up_ to the list price **or** by the lab making the intro rate permanent, and the second means lowering `price:` and deleting `discount:` (what happened to Sonnet 5 on 2026-08-10). Delete the `discount:` block in **both** synced sources when a promo or intro window ends, or the header keeps advertising a discount nobody is getting; give it an `until:` the moment the provider announces an end date, and let that expire it instead. **Home entries use the lab's own list price with no discount** (the OpenRouter promo is a routing property that stays on the OpenRouter copy). Keep `price:` exact: `input`/`output` stay the **standard** rate — the conservative upper bound, which cost is billed against even while a discount is live — and `discount:` carries the reduced figures beside it.
+6. **Pricing.** Read each price off the provider's / OpenRouter's own model page — or, when that page cannot be reached, off several independent sources that agree exactly, logged as corroborated (_Where a price may come from_, below). Refresh the model's `price:` block (all 42 bundled paid models carry one; `config.example.yaml` holds them literally and `scripts/wizard/providers.py::MODEL_PRICES` holds the same figures for the wizard, and `TestBundledModelPricing::test_the_wizard_bundles_and_the_example_agree` fails if the two ever disagree). Then add a `discount:` block — never a price in the name — for **any** currently discounted model, sourced from the **"N% off" badge** on the model's OpenRouter page, counted only when it applies to every endpoint — OpenRouter has no promotions page — (derive list as `list = discounted / (1 − discount)`) **or** an Anthropic **introductory-pricing** window (a newly launched Claude below its standard rate for a fixed window). Re-read the provider's note as well as its table: an intro window can end by lapsing _up_ to the list price **or** by the lab making the intro rate permanent, and the second means lowering `price:` and deleting `discount:` (what happened to Sonnet 5 on 2026-08-10). Delete the `discount:` block in **both** synced sources when a promo or intro window ends, or the header keeps advertising a discount nobody is getting; give it an `until:` the moment the provider announces an end date, and let that expire it instead. **Home entries use the lab's own list price with no discount** (the OpenRouter promo is a routing property that stays on the OpenRouter copy). Keep `price:` exact: `input`/`output` stay the **standard** rate — the conservative upper bound, which cost is billed against even while a discount is live — and `discount:` carries the reduced figures beside it.
 7. **Privacy marker.** Every OpenRouter entry carries `(p)` (zero-data-retention not guaranteed); the direct Anthropic, first-party **home**, and Ollama entries do not (they hit the lab directly, no middleman). Add `(p)` to any new OpenRouter entry, and the lab's own name suffix (`(OpenAI)`, `(xAI)`, …) to any new home entry.
 8. **Regression-test.** `python3 scripts/sync-api-key-models.py --dry-run` must still uncomment the blocks cleanly, and `cd backend && uv run pytest tests/test_sync_api_key_models.py tests/test_setup_wizard.py tests/test_config_integrity.py` must stay green.
 
@@ -931,18 +934,18 @@ A companion to the Ollama sync for **cloud** models. `scripts/sync-api-key-model
 | `.env` key present   | Models enabled                                                                                                                                                                                                                              | Provider / `use`                                                             |
 | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
 | `ANTHROPIC_API_KEY`  | Claude **Fable 5.1**, **Opus 5.5**, **Opus 5**, **Sonnet 5.5**, **Sonnet 5**, **Haiku 5.5**                                                                                                                                                   | direct Anthropic API (`langchain_anthropic:ChatAnthropic`)                   |
-| `OPENROUTER_API_KEY` | Claude **Fable 5.1**, **Opus 5.5**, **Grok 4.7**, **GPT-6 Astra**, **GPT-6.1 Sol**, **Gemini 3.8 Flash**, **Llama 4 Maverick**, **MiniMax M3**, **Qwen3.8 Max**, **Kimi K3.1 Pro**, **Mistral Large 4**, **DeepSeek V4 Pro**, **GLM-5.3**, **Nemotron 3 Ultra** | OpenRouter (`langchain_openai:ChatOpenAI` + `base_url`) |
+| `OPENROUTER_API_KEY` | Claude **Fable 5.1**, **Opus 5.5**, **Grok 4.7**, **GPT-6 Astra**, **GPT-6.1 Sol**, **Gemini 3.8 Flash**, **Llama 4 Maverick**, **MiniMax M3**, **Qwen4 Max**, **Kimi K3.1 Pro**, **Mistral Large 4**, **DeepSeek V4 Pro**, **DeepSeek V4.1 Flash**, **GLM-5.3**, **Nemotron 3 Ultra** | OpenRouter (`langchain_openai:ChatOpenAI` + `base_url`) |
 | `OPENAI_API_KEY`     | **GPT-6 Astra**, **GPT-6.1 Sol**, **GPT-6.1 Terra**, **GPT-6 Luna**                                                                                                                                                                       | direct OpenAI API (`langchain_openai:ChatOpenAI`)           |
 | `XAI_API_KEY`        | **Grok 4.7**, **Grok 4.3**                                                                                                                                                                                                                  | direct xAI API (`langchain_openai:ChatOpenAI` + `base_url`)                  |
-| `GEMINI_API_KEY`     | **Gemini 3.8 Flash**, **3.5 Flash-Lite**, **4 Argon**                                                                                                                                                                                       | native Gemini SDK (`langchain_google_genai:ChatGoogleGenerativeAI`)          |
+| `GEMINI_API_KEY`     | **Gemini 3.8 Flash**, **3.5 Flash-Lite**, **4 Carbon**                                                                                                                                                                                      | native Gemini SDK (`langchain_google_genai:ChatGoogleGenerativeAI`)          |
 | `DEEPSEEK_API_KEY`   | **DeepSeek V4 Pro**, **V4.1 Flash**                                                                                                                                                                                                         | direct DeepSeek API (`deerflow.models.patched_deepseek:PatchedChatDeepSeek`) |
 | `MISTRAL_API_KEY`    | **Mistral Large 4**, **Small 4**                                                                                                                                                                                                            | direct Mistral API (`langchain_openai:ChatOpenAI` + `base_url`)              |
 | `MOONSHOT_API_KEY`   | **Kimi K3.1 Pro**, **Kimi K3**                                                                                                                                                                                                            | direct Moonshot API (`deerflow.models.patched_deepseek:PatchedChatDeepSeek`) |
-| `DASHSCOPE_API_KEY`  | **Qwen3.8 Max**, **Qwen3.7 Plus**                                                                                                                                                                                                           | Alibaba DashScope (`langchain_openai:ChatOpenAI` + `base_url`)               |
+| `DASHSCOPE_API_KEY`  | **Qwen4 Max**, **Qwen3.7 Plus**                                                                                                                                                                                                             | Alibaba DashScope (`langchain_openai:ChatOpenAI` + `base_url`)               |
 | `MINIMAX_API_KEY`    | **MiniMax M3**, **MiniMax M3.1 Flash**                                                                                                                                                                                                      | direct MiniMax API (`langchain_openai:ChatOpenAI` + `base_url`)              |
 | `ZAI_API_KEY`        | **GLM-5.3**, **GLM-5.3 Flash**                                                                                                                                                                                                              | direct z.ai API (`langchain_openai:ChatOpenAI` + `base_url`)                 |
 
-The first two rows are the aggregators; the rest are **first-party "home" API blocks**, one per big-name lab that ships its own API. This mirrors how Anthropic is handled — a lab's full lineup lives on the lab's own key, and the flagship is _doubled_: it's reachable through both its home API AND OpenRouter (the direct copy carries no `(p)` privacy caveat) — with Anthropic and OpenAI doubling a **pair**, per step 3 of the audit. So with a lab's own key set, its cheaper siblings light up on the home API only, while its flagship exists on both. OpenRouter keeps its trim "one flagship per lab" set unchanged — including the GPT **Sol + Codex** double.
+The first two rows are the aggregators; the rest are **first-party "home" API blocks**, one per big-name lab that ships its own API. This mirrors how Anthropic is handled — a lab's full lineup lives on the lab's own key, and the flagship is _doubled_: it's reachable through both its home API AND OpenRouter (the direct copy carries no `(p)` privacy caveat) — with Anthropic and OpenAI doubling a **pair**, per step 3 of the audit. So with a lab's own key set, its cheaper siblings light up on the home API only, while its flagship exists on both. OpenRouter keeps its trim "one flagship per lab" set unchanged — except where a smaller sibling is acclaimed in its own right (step 2), which is why **DeepSeek V4.1 Flash** is routed beside V4 Pro.
 
 Every block is independent: each key present enables its own block, and blocks never collide because their `name:`s are provider-prefixed (`openai-gpt-6.1-sol` on the direct block vs. `openrouter-gpt-6.1-sol` on the routed one, just as **Fable 5.1** appears once direct and once via OpenRouter). The adaptive Claude models (Fable 5.1, Opus 5.5, Opus 5, Sonnet 5.5, Sonnet 5) use adaptive thinking — always on for Fable 5.1, Opus 5.5 and Sonnet 5.5 (Haiku takes an explicit budget); DeepSeek and Moonshot home entries ship the OpenAI-compatible `extra_body` thinking toggle, and every thinking-capable entry ships `supports_thinking: true` so DeerFlow's thinking toggle actually engages. (Gemini's home entries go through the native SDK, which has no thinking toggle here — use the OpenRouter Gemini entry or a `gemini_openai_gateway` for Gemini thinking; Mistral Large is not a reasoning model, matching its OpenRouter entry.)
 
@@ -1033,7 +1036,7 @@ Pinned by `backend/tests/test_multi_user_mode.py` (setting round-trip, owner-sco
 
 The conversation header already showed a token counter (input / output / total for the whole thread). This fork adds a **real-cost estimate** next to it, and — because a personal deployment mixes premium, cheap, and free-local models on purpose (§"Why mix local and cloud" below) — makes it **model-aware** so the number reflects what you actually spent, not a single headline rate.
 
-- **Where the price comes from.** Each model's `price:` block in `config.yaml` (`currency`, `input`, `output`, optional `cache_hit`) plus an optional `discount:` beside it — the fields §17 introduced; the legacy `pricing:` block (`input_per_million`, `promo_*_per_million`, …) and the price-in-the-name parser are still read for configs written before that, in that order of precedence. **All 41 bundled paid models ship priced** on both the auto-config and `make setup` paths, so the estimate works out of the box whichever provider you use; only unpriced local Ollama models contribute nothing. No price anywhere → the cost line simply hides (token counts still show).
+- **Where the price comes from.** Each model's `price:` block in `config.yaml` (`currency`, `input`, `output`, optional `cache_hit`) plus an optional `discount:` beside it — the fields §17 introduced; the legacy `pricing:` block (`input_per_million`, `promo_*_per_million`, …) and the price-in-the-name parser are still read for configs written before that, in that order of precedence. **All 42 bundled paid models ship priced** on both the auto-config and `make setup` paths, so the estimate works out of the box whichever provider you use; only unpriced local Ollama models contribute nothing. No price anywhere → the cost line simply hides (token counts still show).
 - **The cost is green, and a live discount shows both prices.** The figure reads as money rather than as another token counter, so it is rendered in green (`text-emerald-500`) in both the header pill and the dropdown. When any model in the thread is currently discounted, the dropdown shows **two** totals side by side — the green one is what the conversation costs at today's promo rate, the red one (`text-red-500`) is the same thread billed at the standard rate it reverts to when the promo ends — with a `promo rate now` / `standard rate` legend beneath. Both totals cover the **whole** thread: an undiscounted model contributes its ordinary cost to each, so the pair is directly comparable rather than being a discounted subtotal beside a full total. The header pill stays a single number (what you actually pay now); there is no room there to label a pair. `promo_total_cost` is null — and the UI falls back to one green figure — when nothing in the thread is discounted, or when the promo total happens to equal the standard one, because printing the same number twice in two colours claims a discount that does not exist.
 - **A missing price explains itself.** A model that burned tokens with no price configured is reported in the endpoint's `unpriced_models`, and the header names it: _"No cost shown: no price is configured for `<model>`"_ when nothing was priceable, or _"Excludes `<model>` — no price configured, so the real cost is higher"_ when the total covers only some of the run. Without this a hand-added model silently renders a bare `—` (or a quietly low total), which is indistinguishable from the feature being broken — the exact failure that hid the two bugs above.
 - **Model-aware, so subagents are billed correctly.** The cost is summed from each run's **per-model** `token_usage_by_model` split, not a flat rate on the thread total. A run whose lead was Opus and whose subagents ran on Haiku or a local Ollama model is priced Opus-for-Opus and Haiku-for-Haiku — the lever this fork exposes (§3, the per-thread subagent model dropdown) shows up directly in the number. Prompt-cache hits are billed at the cache-hit rate when configured (a conservative upper bound otherwise), reusing the exact same cache-aware math as the ops console.
@@ -3694,6 +3697,7 @@ The side list was one flat, recency-ordered column: pinning kept a handful of co
 - **Deleting a folder deletes its subfolders, and never a conversation.** The subtree goes, the way a file manager works — leaving a subfolder behind would make it an orphan that only reappears because the normalizer promotes it, which is a repair, not a behaviour anyone asked for. Every loaded chat filed **anywhere in the subtree** has its `deerflow_folder` cleared, not just the direct members, and anything not loaded is caught by the unknown-folder fallback.
 - **The registry and the membership are stored in two different places, on purpose.** The folder list — id, name, display order — is per-user server state in `{base_dir}/users/{user_id}/ui_state.json`, exposed as `GET`/`PUT /api/settings/chat-folders`, ungated for the same reason: it is per-user UI state, not a server-wide setting. *Which* conversation is in *which* folder rides on that conversation's own thread metadata (`deerflow_folder`). Renaming a folder is therefore one small write instead of one write per conversation inside it, and a conversation carries its filing with it wherever the thread record goes. Do not "simplify" this by storing member ids in the registry: a rename is the cheap operation, and a membership list would need reconciling against every delete, branch and edit-version the thread list already performs.
 - **Filing a chat must not reorder the sidebar.** The list is recency-ordered, so a PATCH that bumped `updated_at` would shove the conversation the user just dragged to the top and reshuffle everything under their cursor mid-gesture. The Gateway's `PATCH /api/threads/{id}` therefore recognizes a **narrow placement-only patch** — `deerflow_pinned` and/or `deerflow_folder`, nothing else — and skips the touch. It is the same exemption pin/unpin already had, generalized. It is **shape-guarded per key**, not granted on the key name: a patch smuggling a non-string folder value, or mixing a placement key with ordinary metadata, falls back to the endpoint's normal recency contract rather than silently buying the exemption.
+- **Two folder edits in one handler must both land.** Every edit in `use-chat-folders.ts` reads the latest list from the query cache rather than the render closure, and `createFolders(names, parentId)` makes several folders in **one** write, answering each new id (or `null` for a refused name); `createFolder` is built on it. The save mutation runs under `scope: {id: CHAT_FOLDERS_MUTATION_SCOPE}` (`"chat-folders"`), so whole-list PUTs go one at a time, and a response is adopted only for the latest edit, by an edit counter per query client: the cache cannot answer that by identity, because `setQueryData` structurally shares and holds a copy, never the array an edit wrote. Each edit also cancels a folder-list read in flight, which would otherwise land the pre-edit list on top of it and make the next edit save the new folder away. Without these, *New folder from selection* (§52) and clean-up mode (§53) create a folder and then lose it: the second write starts from the stale list, or an older response lands last and the newer folder blinks out. Any other writer of the folder list uses the same scope; clean-up's apply does its fresh read **and** its write inside it.
 - **One drag, one payload.** A sidebar chat row advertises its thread id under `application/x-deerflow-thread-id` (`core/threads/dnd.ts`), which is what files the chat into a folder. Rows are **always** draggable. A folder row is a drag source too, advertising its own id under a **separate** `application/x-deerflow-folder-id` MIME — separate because a target decides what it accepts by reading the type list, and that is what lets a folder accept a chat while refusing a folder it cannot take. Drop targets are explicit and disjoint: a folder header (a chat, or a folder to nest), a folder's expanded child area (a chat), and the root list container (a chat out of its folder, or a folder back to the top level — without it a nested folder could only ever be promoted through its own menu). Nothing else accepts a drop, so there is no ambiguous middle ground where a drag silently does nothing or does the wrong thing.
 - **Drag-and-drop is the fast path, never the only path.** Native HTML5 DnD is unusable by keyboard and by screen readers, so every folder operation also exists in a menu: **Move to folder ▸** in a chat's row menu (with the folder tree indented one step per level, a **No folder** entry, and a **New folder** shortcut), and **New subfolder**, **Move folder to ▸** (with a **Top level** entry), rename and delete in the folder's own menu. The group header's control is a real button, it sits **beside the heading rather than at the sidebar's right edge**, and it is **labelled "New folder" rather than drawn as a bare `+`**. Two passes were needed to learn the same lesson twice: an unlabelled icon a sidebar-width from the words it belongs to is in the DOM without being findable, and moved next to those words it is *still* only findable by a reader who already knows folders exist — a 16px glyph against a 12px muted heading reads as part of the title. The words are what turn it into an invitation, so they are rendered, not hidden in an `sr-only` span that satisfies a text assertion while showing the reader nothing. The header is also rendered **whether or not anything is under it** — a workspace with no conversations is exactly where the first folder gets made, and a group that returns nothing until a chat exists takes the only control that creates one with it.
 - **Expanded/collapsed is per browser; the folders themselves are not.** Which folders are open lives in `localStorage` under one key — the same tree can reasonably be open on a desktop and collapsed on a laptop, and it is the one piece of this feature nobody would miss after a data clear. A folder the user *just created* is opened automatically, so the drop they are about to make has a visible target — and so is the folder it was created **inside**, or a new subfolder would appear in a collapsed row and read as nothing having happened. Re-parenting a folder opens its new parent for the same reason. Everything else — names, order, membership — is server state that follows the user across browsers and devices.
@@ -3707,12 +3711,14 @@ The side list was one flat, recency-ordered column: pinning kept a handful of co
 | Durable per-user registry + API                                          | `backend/packages/harness/deerflow/config/user_ui_state.py` (`get_chat_folders` / `set_chat_folders` / `normalize_chat_folders`); `GET`/`PUT /api/settings/chat-folders` in `backend/app/gateway/routers/settings.py` |
 | Placement-only PATCH exemption                                           | `backend/app/gateway/routers/threads.py` (`_is_ui_placement_metadata_patch`); key in `deerflow/persistence/thread_meta/base.py`                                                 |
 | Registry client                                                          | `frontend/src/core/threads/chat-folders-api.ts` (`fetchChatFolders` returns `null` for "unknown", so an unreachable gateway never collapses the tree)                          |
-| Folder state, optimistic edits, per-browser expanded set                 | `frontend/src/core/threads/use-chat-folders.ts`                                                                                                                                |
-| Move mutation                                                            | `frontend/src/core/threads/hooks.ts` (`useMoveThreadToFolder`)                                                                                                                 |
+| Folder state, optimistic edits, per-browser expanded set, `createFolders`, the save scope | `frontend/src/core/threads/use-chat-folders.ts`                                                                                                                |
+| Move mutations (one chat, a selection)                                   | `frontend/src/core/threads/hooks.ts` (`useMoveThreadToFolder`, `useMoveThreadsToFolder`)                                                                                       |
 | Sidebar tree + folder row                                                | `frontend/src/components/workspace/recent-chat-list.tsx`, `chat-folder-row.tsx`                                                                                                |
 | i18n                                                                      | `core/i18n/locales/{en-US,zh-CN}.ts` (`chats.folders.*`)                                                                                                                       |
 
 Pinned by `frontend/tests/unit/core/threads/chat-folders.test.ts` (the pure model — the exactly-once partition **at every level**, the unknown-folder and unknown-*parent* fallbacks, the cycle and depth repairs, the move rules, subtree deletion, order preservation inside a partition, the cap and the defensive parsers) and `frontend/tests/e2e/sidebar-chat-folders.spec.ts` (create from the `+` — including where it sits relative to the heading, measured, and on a workspace with no conversations at all — drag a chat in and confirm it left the root list, collapse/expand by the arrow, drag back out, rename and delete from the folder menu, the row menu's non-drag path, reload persistence, and the nesting workflow: a subfolder rendering inside its parent's own child area, a folder dragged in and back out again, and a parent's delete returning the chats from its subfolders).
+
+`frontend/tests/unit/core/threads/use-chat-folders.dom.test.tsx` pins the hook: two creates in one handler keep both folders, `createFolders` writes once and answers `null` for a refused name, and whole-list writes run one at a time (removing the `scope` fails it).
 
 The two halves the pure model cannot see are pinned separately:
 
@@ -3811,9 +3817,63 @@ undoing the feature, not optimizing it.
   means "clear it — rename without a model call". Collapsing them is the silent
   regression: send `""` for both and a user who configured a title model server
   side quietly stops getting it; omit for both and a user who asked for no model
-  call quietly starts paying for one. The frontend keeps the same three states
-  (`undefined` / `""` / a name) in `localStorage`, and `autoTitleRunContext()`
-  omits the key rather than sending `undefined`.
+  call quietly starts paying for one. The account store, its route and the
+  browser's copy keep the same three states (key absent / `""` / a name; `null`
+  on the wire reads as absent), and `autoTitleRunContext()` omits the key rather
+  than sending `undefined`.
+- **The preference is the account's, and the Gateway applies it at run
+  admission.** It used to live only in the browser that set it, so a run that
+  never saw that browser — another device or origin, the PWA, an IM channel, the
+  scheduler, an extension or workflow child run, a queued input — was renamed
+  regardless; that was the reported bug, "the setting is being ignored". It is
+  now `auto_title` in `{base_dir}/users/{user_id}/ui_state.json`
+  (`get_auto_title_preference`, merged through the same locked writer as the
+  chat folders), served by `GET`/`PUT /api/settings/auto-title`, and `start_run`
+  reads it for the run's **owner** right after the user context is injected
+  (`apply_stored_auto_title_preference`). Every run start passes there, which is
+  why the read is at admission and not in each caller. Two rules a refactor must
+  keep. **Opt-out is AND**: a stored `false` beats a request's `true` (a stale tab
+  must not re-enable what the user switched off elsewhere), a request's `false`
+  stays, and `true` is never written into the run, so the harness keeps its
+  one-way contract. **The model is the request's when the request carries the
+  key** (`""` included), else the stored one. A store that cannot be read is
+  logged and the run is admitted; the read runs in a worker thread
+  (`test_run_start_reads_the_stored_auto_title_preference_off_the_loop` asserts
+  the value reached the run, because a swallowed blocking error would only log).
+  The terminal UI and the embedded `DeerFlowClient` do not go through the
+  Gateway and keep `config.yaml`, by design. Test trap: admission reads the real
+  DeerFlow home, so `tests/conftest.py` stubs `get_auto_title_preference` to the
+  default whenever `app.gateway.services` is loaded; a test of the stored value
+  re-binds the real reader.
+- **An opted-out run writes no fallback title either.** The worker's end-of-run
+  fallback (`_ensure_interrupted_title`) is skipped, before any wait, when the
+  run context says `auto_title_enabled is False` — with or without an
+  `app_config`; without one it used to fall back to the global title config and
+  rename an opted-out chat anyway. The guard keeps only that boolean: an earlier
+  version kept a local copy of the run context, which pinned the run journal past
+  the run.
+- **The browser is a cache that writes through.** `AutoTitlePreferenceSync`
+  (mounted in `workspace-content.tsx`) adopts the account value once per
+  workspace session and account; every explicit change goes through
+  `setAutoTitlePreference` (`core/settings/auto-title-sync.ts`), which updates
+  the local copy at once and PUTs the full value, one save at a time in the order
+  made, rolling the switch back with a toast to the last value the server
+  confirmed when the newest save fails. A new writer that calls
+  `setSettings("autoTitle", …)` directly changes this browser only. An
+  unreachable Gateway is "unknown", never on or off, and the static demo stays
+  local. **The upgrade case is deliberate:** the GET cannot tell "never set" from
+  an explicit `true`, so a purely server-authoritative first hydration would
+  switch renaming back on for exactly the people who had turned it off. The first
+  hydration in a browser without the per-browser marker
+  `deerflow.auto-title.server-synced` uploads a non-default local value when the
+  account still reads as the default; after any successful sync the account
+  wins. The GET answer carries `"stored": bool` (`get_auto_title_account_state`,
+  pinned by `test_get_tells_a_never_set_account_from_an_explicit_on`), and the
+  client (`parseAutoTitleAccountState`) uploads only on `stored: false`, so an
+  origin first opened after the upgrade never overwrites an explicit "on" saved
+  from another device; both would otherwise read as `{"enabled": true}`. A
+  Gateway without the flag falls back to the shape check. The run context reads the in-memory settings snapshot the switch renders,
+  not `localStorage`, so a browser whose storage throws still sends its opt-out.
 
 **Where it's wired.**
 
@@ -3825,7 +3885,9 @@ undoing the feature, not optimizing it.
 | Clarification / cancellation fallback                     | `backend/packages/harness/deerflow/runtime/runs/worker.py` (`_ensure_interrupted_title`, now on every status)   |
 | Context allowlist (without it the toggle is a no-op)      | `backend/app/gateway/services.py` (`_CONTEXT_CONFIGURABLE_KEYS`)                                                |
 | Operator master switch, for the greyed-out toggle          | `backend/app/gateway/routers/features.py` (`auto_title` in `GET /api/features`)                                |
-| Stored preference and the run-context keys                | `frontend/src/core/settings/local.ts`, `frontend/src/core/threads/run-context.ts` (`autoTitleRunContext`)       |
+| Per-account store and route                               | `deerflow/config/user_ui_state.py` (`get_`/`set_auto_title_preference`); `GET`/`PUT /api/settings/auto-title` in `app/gateway/routers/settings.py` |
+| Applied at run admission                                  | `backend/app/gateway/services.py` (`apply_stored_auto_title_preference`, called in `start_run`)                  |
+| Browser copy, sync and the run-context keys               | `frontend/src/core/settings/{local,auto-title-api,auto-title-sync}.ts`, `components/workspace/settings/auto-title-preference-sync.tsx`, `frontend/src/core/threads/run-context.ts` (`autoTitleRunContext`) |
 | Settings page                                              | `frontend/src/components/workspace/settings/auto-title-settings-page.tsx`                                       |
 | i18n                                                       | `core/i18n/locales/{en-US,zh-CN}.ts` + `types.ts` (`settings.autoTitle.*`)                                      |
 
@@ -3836,20 +3898,30 @@ Helm chart copies are untouched. Adding a key here later does need the full
 
 Pinned by `backend/tests/test_auto_title_preference.py` (the hook identity, the
 final-answer prompt, the opt-out direction, the dropped model name, the three
-model states, and the context allowlist) and
-`frontend/tests/unit/core/threads/auto-title.test.ts` (the wire shape of the
-three states, both call sites, the default, and the merge for settings written
-before the toggle existed), plus
+model states, the context allowlist, and `TestTheStoredPreferenceAppliesAtAdmission`
+driving the real `start_run`: a stored opt-out wins over an explicit `true`, the
+stored model fills only an absent key, an IM-shaped run reads its connection
+owner's preference and never another user's, a store failure admits the run;
+plus `test_an_opted_out_first_turn_gets_no_fallback_title` for the worker),
+`test_user_ui_state.py` and `test_auto_title_settings_router.py` (normalization,
+replace semantics, the absent key staying absent on the wire, per-user scoping,
+no clobbering of the chat folders), and on the frontend
+`tests/unit/core/threads/auto-title.test.ts` (the wire shape of the three
+states, every send path, the default, the merge for settings written before the
+toggle existed, the snapshot read), `core/settings/auto-title-sync.dom.test.tsx`
+(adopt, upload once, roll back, order of saves) and
+`settings/auto-title-settings-page.dom.test.tsx`, plus
 `frontend/tests/e2e/auto-title-settings.spec.ts` for the page itself: the
 default-on toggle, the picker starting on *Server default*, a model pick and
-*No model call* landing in `localStorage` as a name and as `""`, the picker
-disappearing when the switch is off, and the greyed-out toggle explaining the
-operator's `title.enabled`.
+*No model call* reaching the account as a name and as `""`, switching off
+reaching the next run, an account value saved elsewhere winning in a fresh
+browser, and the greyed-out toggle explaining the operator's `title.enabled`.
 
 **Verify it works.**
 
 ```bash
-cd backend && uv run pytest tests/test_auto_title_preference.py tests/test_title_middleware_core_logic.py tests/test_title_generation.py tests/test_features_router.py -q
+cd backend && uv run pytest tests/test_auto_title_preference.py tests/test_auto_title_settings_router.py tests/test_user_ui_state.py tests/test_title_middleware_core_logic.py tests/test_title_generation.py tests/test_features_router.py -q
+cd backend && uv run pytest tests/blocking_io/test_run_start_config_reads.py -q
 cd frontend && corepack pnpm test auto-title lazy-panels
 cd frontend && corepack pnpm test:e2e auto-title-settings
 ```
@@ -3859,7 +3931,9 @@ on, start a chat and confirm the sidebar entry changes **only after the answer
 finishes** (and that **Rename** in the chat's ⋯ menu works at that same moment).
 Pick a model in the dropdown and start another chat — the new title should read
 like a summary rather than a truncation. Turn the switch off, start a third chat,
-and confirm it stays *New Conversation*.
+and confirm it stays *New Conversation*; then open the workspace in a second
+browser, or message the bot from a connected IM channel, and confirm that chat
+stays unnamed too.
 
 ### 34. Local models get as much parallelism as the GPU actually has
 
@@ -4168,9 +4242,14 @@ question rather than from `<uploaded_files>`.
   memory / suggestions / input_polish / goal. A user-triggered paid call that
   nothing counts makes the chat header understate the thread by exactly the
   amount the user chose to spend on naming it.
-- **One preference, two entry points.** The dialog reads and writes the same
-  `autoTitle.modelName` in `localStorage` that **Settings → Conversation titles**
-  does, so a model chosen here is already chosen there. A stored name that has
+- **One preference, two entry points.** The dialog reads the same
+  `autoTitle.modelName` that **Settings → Conversation titles** does and saves a
+  pick through `setAutoTitlePreference`, so it reaches the account (§33) and a
+  model chosen here is already chosen there, on every device; a failed save rolls
+  the remembered pick back quietly, since the rename itself already succeeded.
+  With the user's switch **off** the button stays, and its tooltip and the
+  dialog say it renames this conversation once and leaves the setting off — a
+  hidden button would read as the opt-out having broken manual renaming. A stored name that has
   since left `config.yaml` falls back to *Server default* rather than
   preselecting a value the Gateway would refuse. The dialog's picker is the
   shared `ModelSelect` (§8) — its "no model call" row is deliberately **absent**,
@@ -4186,6 +4265,7 @@ question rather than from `<uploaded_files>`.
 | Cost accounting                                      | `AUX_CATEGORY_TITLE` in `backend/packages/harness/deerflow/runtime/aux_usage.py`   |
 | API client                                           | `frontend/src/core/threads/api.ts` (`suggestThreadTitle`)                          |
 | suggest → rename                                     | `frontend/src/core/threads/auto-rename.ts` (`useAutoRenameThread`)                 |
+| Title cleaning, shared with clean-up mode (§53)      | `clean_title` in `backend/packages/harness/deerflow/utils/title_transcript.py`     |
 | Header button and dialog                             | `frontend/src/components/workspace/thread-auto-rename.tsx`                         |
 | Mounted in both chat headers                         | `components/workspace/chats/chat-instance.tsx`, `app/workspace/agents/[agent_name]/chats/[thread_id]/page.tsx` |
 | i18n                                                 | `core/i18n/locales/{en-US,zh-CN}.ts` + `types.ts` (`autoRename.*`, `tokenUsage.autoRenameCost`) |
@@ -4201,6 +4281,11 @@ cd backend && uv run pytest tests/test_thread_title_suggest.py tests/test_aux_us
 cd frontend && corepack pnpm test auto-rename
 cd frontend && corepack pnpm test:e2e auto-rename
 ```
+
+The shared-preference pin is `thread-auto-rename.dom.test.tsx` ("the picked
+model is the model that runs…", "the remembered model is where the picker
+starts", and the tooltip and dialog note with the switch off); it replaced a
+source-text check in `auto-rename.test.ts`.
 
 Then end-to-end (`make dev`): open a conversation with at least two turns, press
 **Auto rename**, pick a model, press **Run**, and confirm the header *and* the
@@ -5339,7 +5424,10 @@ contract: `frontend/docs/token-usage-dashboard.md`.
 panel on a **Files** tab: a tree of the conversation's sandbox folder
 (`/mnt/user-data` — `workspace/`, `uploads/`, `outputs/` and whatever a run
 creates), opened one directory at a time. Files open in the artifacts viewer or
-download. The backend half is one fork-owned router,
+download. **Show files** in a chat's sidebar menu, and any `?panel=files` chat
+URL, open the same tab. The tab says that this folder is deleted with the
+conversation and lists the shared mount folders the conversation used (§54).
+The backend half is one fork-owned router,
 `app/gateway/routers/thread_files.py` (`GET /api/threads/{id}/files?path=…`);
 files keep opening through `get_artifact`, so the explorer adds a listing, not a
 second way to read a file.
@@ -5374,6 +5462,32 @@ core, in a separate module so upstream merges stay conflict-free.
   temporaries). A dotfile the agent wrote is content.
 - The scan runs off the event loop (`run_file_io`), pinned by
   `tests/blocking_io/test_thread_files_router.py`.
+- **The button has to be findable, so it carries a word and sits early.** As
+  an unlabelled folder icon at the end of the header it was overlooked ("where
+  is the Files button?") and was the first control the header clipped. It now
+  shows **Files** (`t.threadFiles.title`) right after the token indicator, in
+  both chat headers. The label follows the **header's** width, not the
+  viewport's — an open side panel narrows the chat without changing the
+  viewport — so both headers are named containers (`@container/chat-header`).
+  The controls row cannot shrink and cuts off its last controls, so the label
+  shows only where the full row still fits with it: from `@[48rem]/chat-header`
+  on a chat page and `@[60rem]` on an agent's (`header="agent"`: its badge and
+  **New chat** come first). Earlier, the word pushed Artifacts off the edge.
+  Without that ancestor the button is icon-only. The aria-label stays "Show files", which the e2e locators use.
+  In Chinese, *Artifacts* became 产物 so the two buttons no longer share 文件.
+- **`?panel=files` opens one commit after it is seen, and only for its own
+  chat.** `ThreadFilesDeepLink` closes Side Chat, calls `showFiles()`, then
+  `router.replace`s the URL without `panel` (other parameters kept). Opening in
+  the same commit is undone by `ArtifactsProvider`, which restores its saved
+  panel state in a parent effect that runs after the child's
+  (`thread-files-entry.dom.test.tsx` fails if it opens in one step). It acts only
+  when the URL path names its own thread, because a kept-alive chat stays
+  mounted for another thread while the URL already names the next one
+  (`frontend/tests/unit/core/thread-files/deep-link.test.ts` pins
+  `routeShowsThread` and that only `panel` is stripped).
+- **The own-folder note is unconditional.** `threadFiles.ownFolderNote` and the
+  delete confirmation say `/mnt/user-data` goes with the chat; the shared-folder
+  section below it is what can outlive one.
 
 **The live timer.** "Working… (1m 4s)" counts from the active run's
 server-recorded start (upstream #8007), so reopening the page mid-run keeps the
@@ -5795,3 +5909,387 @@ Skill Review CI, and the operations page is compared again inside the Backend ga
 `test_config_upgrade_script.py -k BundledCadPluginDelivery`, `test_cad_runtime_deps.py`,
 `blocking_io/test_cad_extension.py`, `TestCheckCadExtension` in `test_doctor.py`,
 and the CAD case in `test_context_fit_critical.py`.
+
+### 52. Several conversations at once: select, move, archive, delete
+
+**Why.** Folders (§32) made filing possible one chat at a time, by drag or menu.
+Tidying a long history that way is tedious, and there was no way to delete or
+archive a batch. **Select** beside **New folder** (or **Select** in a row's menu,
+the keyboard path) puts a checkbox on every sidebar chat row; a toolbar then
+moves, archives, deletes or cleans up (§53) the ticked chats, and **New folder
+from selection…** creates a folder and files them into it.
+
+**Bulk actions are client loops over the existing routes, on purpose.** There is
+no server bulk endpoint: each chat goes through the route its single action
+already uses (the placement-only `PATCH` for a move and an archive, `DELETE
+/api/threads/{id}` with the private Side Chat cascade for a delete), so
+ownership, the 409 for a thread with work in flight and the recency exemption
+apply per chat unchanged. `settleWithConcurrency` keeps at most four moves or
+archives in flight (`BULK_THREAD_CONCURRENCY`), each success is written into the
+caches, and the caches are invalidated **once** at the end, not per chat. A failure is
+reported per chat with its HTTP status (busy for 409, no permission for 403);
+failed chats stay ticked, the chats the action handled are unticked
+(`store.remove`, not a replace: the checkboxes stay live while a move runs, so a
+tick made or removed meanwhile is kept), and **nothing retries on its own**. Delete stays a hard delete with a destructive confirmation that names the
+count and up to five titles and says it cannot be undone.
+
+**What a refactor must not simplify away.**
+
+- **The checkbox is a sibling of the link, never its parent.** It sits in the
+  `<li>` beside the `Link`, absolutely positioned, with the link padded. The
+  link stays `draggable` with the same payload (§32), and the e2e locators
+  (`thread-delete-confirm.spec`'s `xpath=..`, `a[data-sidebar="menu-button"]`)
+  keep working. While selecting, a click, Ctrl/Cmd-click or Shift-click on the
+  row toggles and calls `preventDefault`; the link carries
+  `data-thread-selecting` (`THREAD_SELECTING_ATTRIBUTE`, one constant for the
+  row and the drawer), and the mobile drawer's capture-phase close handler
+  skips such links, so ticking a row on a phone does not close the drawer. For
+  any other link it closes when the path **or the query** changes: the row
+  menu's **Show files** on the open chat only adds `?panel=files`.
+- **The selection lives in a store per provider that sits above the sidebar
+  frame.** The chat lists unmount when the sidebar collapses and virtualize past
+  60 rows (§35), so a selection held in a row or a list would vanish with it.
+  The bulk-delete and clean-up dialogs are hosted by the provider for the same
+  reason. Rows read their own status with `useSyncExternalStore` and re-render
+  only when it flips; a list that only needs to know whether selection is on
+  uses `useSidebarSelectionActive`, because `useSidebarSelectionState`
+  re-renders on every tick. Without a provider every hook answers "not
+  selecting", so a row rendered alone behaves as before.
+- **A range comes from the data order the lists render, never from the DOM.**
+  Most rows of a long list are not mounted, so each list registers its rendered
+  array in display order: open project groups first (rank `[0, i]`, archived
+  projects after active ones), then the folder tree depth-first with subfolders
+  before a folder's own chats, then the root list (rank `[1]`); anything under a
+  collapsed folder is left out. A range takes the state the clicked row switches
+  to, as in a mail client, and with no anchor in the current order it is a plain
+  toggle. **Select all** ticks every row shown and keeps already-ticked rows in a
+  folder that has since collapsed. The selection is pruned against the loaded
+  thread map, but not while the list has no data after a reset.
+- **One deletion notice per user action.** `useDeleteThreads` deletes one chat
+  at a time, reports `{deleted, deletedSidecarIds, failed}`, and calls
+  `notifyThreadsDeleted` **once** with every deleted id, Side Chat ids included,
+  and not at all when nothing was deleted. It does not loop over
+  `useDeleteThread`, which notifies per call. The folder ledger's orphan offer
+  (§54) keys on that notice. Only the open chat, if deleted, gets the forced
+  reset and `router.replace` to a new chat; the others get a non-forced reset,
+  which frees their live slots (§9).
+- **New folder from selection is one fold.** It goes through
+  `createFolders(names, parentId)` and the scoped save of §32; two creates from
+  the render closure would each start from the same stale list.
+- **Escape belongs to whatever has focus.** It leaves selection mode only from
+  inside the sidebar or with nothing focused, and never while focus is in a
+  text field or a Radix menu, dialog or the mobile drawer is open.
+- **Archive is one toast with one Undo** for the whole batch
+  (`useThreadsArchiveAction`); N single archives would stack N toasts, each
+  undoing one chat. The Undo restores exactly the archived chats through the
+  same mutation, and the toolbar ignores that restore's settle, so it never
+  rewrites the selection the user has built since.
+
+**Where it's wired.**
+
+| Piece | Location |
+| --- | --- |
+| Pure model: toggle, range, select all, prune, rendered order | `frontend/src/core/threads/thread-selection.ts` |
+| Bounded-concurrency runner, per-item failure | `frontend/src/core/threads/bulk.ts` |
+| Store, provider, hooks, hosted dialogs | `frontend/src/components/workspace/sidebar-selection.tsx` |
+| Toolbar, bulk-delete dialog | `components/workspace/sidebar-selection-toolbar.tsx`, `thread-bulk-delete-dialog.tsx` |
+| Bulk mutations | `core/threads/hooks.ts` (`useMoveThreadsToFolder`, `useDeleteThreads`), `core/threads/archive.ts` (`useArchiveThreads`), `components/workspace/use-thread-archive-action.ts` |
+| Rows, Select button, row menu (**Select**, **Show files**) | `components/workspace/recent-chat-list.tsx`, `projects-section.tsx`; provider in `workspace-sidebar.tsx`; drawer exception in `workspace-sidebar-frame.tsx` |
+| i18n | `core/i18n/locales/*` (`chats.selection.*`) |
+
+The rules an agent needs before editing the sidebar are in
+`frontend/src/components/workspace/SIDEBAR.md`.
+
+**No new config keys**, so `config_version` is not bumped.
+
+Pinned by `frontend/tests/unit/core/threads/thread-selection.test.ts` (ranges in
+both directions, the rendered-order walk that leaves collapsed folders out, the
+concurrency bound), `bulk-thread-actions.dom.test.tsx` (a 409 fails that chat
+only, one invalidation, one ledger notice with the Side Chat ids, none when
+nothing was deleted; placement-only move bodies), `use-chat-folders.dom.test.tsx`
+(§32), `components/workspace/sidebar-selection.dom.test.tsx` (the checkbox beside
+a still-draggable link, a Shift-click run from a folder into the root list, Move,
+New folder from selection, Archive, Delete including the open chat, a failed
+delete staying for **Try again**, Delete gated on `threads:delete`, Clean up
+passing the ids or `null`, the row's selecting marker, ticks changed during a
+move kept, one archive toast whose Undo restores exactly the archived chats and
+leaves the selection alone), `workspace-sidebar-frame.dom.test.tsx` (the drawer
+stays open for a selecting row and closes for a query-only link) and
+`frontend/tests/e2e/sidebar-multi-select.spec.ts`.
+
+### 53. Clean-up mode: a model you pick renames and files conversations
+
+**Why.** A long history is badly named (the first message, or a title from the
+first turn) and unfiled. **Clean up…** in the selection toolbar (§52), or
+**Clean up all…** with nothing ticked, has a model the user picks read each
+conversation, suggest a clearer title and a folder, and file the chats into
+folders the user names or folders it proposes. The user reviews and edits the
+plan before anything is written.
+
+**Two read-only routes; the client applies the plan through the ordinary
+ones.** `POST /api/threads/{id}/organize/suggest` reads one conversation and
+answers a title plus a folder choice (targets mode), a free category (auto
+mode) or nothing to file. `POST /api/chat-organize/consolidate` merges the
+categories of an auto-mode pass into folders. Neither writes, for the reason §38
+gives for the rename: a title write is a checkpoint write, refused with 409
+while a run is in flight, and only `POST /state` enforces that. The approved plan
+is applied with one whole-list `PUT /api/settings/chat-folders`, the
+placement-only `PATCH`, and `POST /state` with the new `preserve_recency`.
+
+**What a refactor must not simplify away.**
+
+- **Applying never reorders the sidebar.** The move PATCH carries only
+  `{metadata: {deerflow_folder}}`; any other key loses the recency exemption
+  (§32). A rename is `POST /api/threads/{id}/state {values: {title},
+  preserve_recency: true}`: the display-name sync then leaves `updated_at` alone
+  (`update_display_name(..., touch=False)` on the store interface and both
+  stores, memory and SQL). The SQL store must call
+  `flag_modified(row, "updated_at")` for that, because the column's `onupdate`
+  hook bumps it otherwise — the same trap `update_metadata`
+  already handles. Without `preserve_recency` a rename bumps recency as before.
+- **New folders are one fold over a fresh read, inside the folder-save scope.**
+  `foldNewFolders` reuses an existing folder by name (ignoring case),
+  de-duplicates, stops at the 50-folder cap and makes at most one PUT; the fresh
+  `fetchChatFolders` read and that write run inside a `useMutation` with
+  `scope: {id: CHAT_FOLDERS_MUTATION_SCOPE}`, so they queue behind the sidebar's
+  own folder writes (§32). Moves go only into ids the stored response contains;
+  an unreadable folder list writes nothing at all.
+- **The preview's "No changes" state means the model proposed nothing.** It is
+  decided when the preview opens, not from the live plan: an edit that takes
+  back the last change (a cleared title, a merge into *Don't file these*) keeps
+  the rows and the focused field, or only *Back* and a paid re-run could undo it.
+- **Every write skips a no-op** (a chat already in its folder, a title that is
+  already the title), so applying the same plan twice writes nothing. A rename
+  and a move are independent: a refused rename (409, run in flight) does not
+  undo the move. Failed rows stay ticked under *Review again*; nothing retries.
+- **The model cannot invent a folder.** In targets mode it answers an index
+  into the offered list (or an exact name), mapped back to an id on the server;
+  an unknown existing id in a consolidation answer is distrusted on the client.
+- **Refusals come before reading.** Unknown model 400 (never swapped, as in
+  §38), `authorize_model_use` 403 **before** the conversation is read (and, for
+  consolidate, before ownership is probed), the run-admission spend check 402
+  (§10). Consolidate checks every `thread_id` with `require_existing` (404),
+  because it bills them. The client stops the whole pass, aborting calls in
+  flight, on 400, 401, 402, 403 or 422, since every remaining call would fail
+  the same way; per-conversation errors (404, 409 `empty`, 502, 504) are listed
+  and the pass continues.
+- **Billed to real conversations, before parsing.** Each suggest call is
+  recorded under the new auxiliary category `organize` on its own thread (§7);
+  an unusable reply was paid for too. The consolidation call is split evenly
+  across the real thread ids whose labels it merged, the remainder on the first
+  share; a synthetic thread id would fall outside the per-user spend cap, which
+  counts only the owner's threads. A new aux category needs a
+  `CHAT_AUX_CATEGORIES` entry, `test_aux_usage_wiring.py`, and an
+  `auxCategoryLabel` case in `token-usage-indicator.tsx`
+  (`token-usage-aux-labels.test.ts` reads the backend list and fails otherwise).
+- **The prompt is bounded and fits a 32K local model.** The digest keeps the
+  first two and the last visible exchange (`extract_visible_exchanges`, the §38
+  rule: no tool results, nothing hidden) plus a compacted thread's summary,
+  redacts every field whole when `pii_redaction.enabled` **before** cutting
+  each message and the whole digest, and is fitted to the model's window
+  (422 `too_many_for_model` when the folder list cannot fit). Existing folder
+  names are not redacted, so they can be matched back. The worst cases are in
+  the first critical check (`test_context_fit_critical.py`).
+- **Consolidation is deterministic first.** Categories equal after ignoring case
+  and punctuation (keeping "C++" and "C#" apart) merge without a model, and one
+  equal to an existing folder's name maps to it; the model, and the spend check,
+  run only when at least two labels are still apart. A new folder needs
+  `min_group_size` members (the client sends 1 when fewer than four
+  conversations got a category, else 2) and new folders are capped at
+  min(`max_new_folders`, 50 − existing). An unusable consolidation reply keeps
+  the deterministic plan (200) and is still billed.
+- **The operator's switch covers renaming, not filing.** With `title.enabled:
+  false` the route forces `rename_disabled`, answers a mode-`none` request
+  without reading or spending, and the dialog greys its switch.
+- **Pace follows the model.** One conversation at a time on a model with
+  `size_bytes` (a local one) or one that cannot be resolved, three on a hosted
+  one; at most 200 conversations per pass, the same cap the consolidate route
+  enforces. The setup (model, rename, mode, new-folder cap) is remembered per
+  browser in `localSettings.chatCleanup`, not on the account.
+
+**Where it's wired.**
+
+| Piece | Location |
+| --- | --- |
+| Digest, prompts, parsing, deterministic merge, folder cap, split billing (pure) | `backend/packages/harness/deerflow/utils/chat_organize.py` |
+| The two routes | `backend/app/gateway/routers/chat_organize.py` |
+| `preserve_recency` | `ThreadStateUpdateRequest` in `app/gateway/routers/threads.py`; `update_display_name(touch=)` in `deerflow/persistence/thread_meta/{base,memory,sql}.py` |
+| Aux category | `AUX_CATEGORY_ORGANIZE` in `deerflow/runtime/aux_usage.py`; label in `components/workspace/token-usage-indicator.tsx` |
+| Client: API, run, plan, apply | `frontend/src/core/threads/chat-organize.ts` |
+| Dialog (setup, preview, result) | `frontend/src/components/workspace/chat-cleanup/` (`ChatCleanupDialog`, loaded on first open) |
+| i18n | `core/i18n/locales/*` (`chatCleanup.*`, `tokenUsage.organizeCost`) |
+
+**No new config keys**: the routes read the existing `title` block and
+`pii_redaction`, so `config_version` is not bumped.
+
+Pinned by `backend/tests/test_chat_organize.py` (digest, redaction before the
+cut, parsing, the deterministic merge, the cap, the split),
+`test_chat_organize_router.py` (the refusal order, `test_the_route_only_reads`,
+billing to the real thread and the split across real threads, the operator's
+switch), `test_threads_router.py::test_update_thread_state_rename_preserves_recency_only_when_asked`
+(memory and SQL; the SQL case fails without `flag_modified`), the two organize
+cases in `test_context_fit_critical.py`, `blocking_io/test_chat_organize_offloop.py`,
+`test_thread_title_suggest.py::TestTitleCleaning` (the shared `clean_title`), and
+on the frontend `tests/unit/core/threads/chat-organize.test.ts` (one PUT, moves
+only into stored ids, re-applying writes nothing, the read and write in the
+serialized slot, the placement-only PATCH body, `preserve_recency`, the 402 stop),
+`chat-cleanup/chat-cleanup-dialog.dom.test.tsx` (including Apply's folder read
+and write waiting behind a sidebar folder PUT still in flight, which fails
+without the scope), `chat-cleanup/cleanup-preview.dom.test.tsx`, `token-usage-aux-labels.test.ts`,
+`model-picker-sites.test.ts` (the setup uses the shared `ModelSelect`, §8) and
+`tests/e2e/chat-cleanup.spec.ts`.
+
+### 54. Shared folders remember which conversations wrote to them (the folder ledger)
+
+**Why.** "What happens to a conversation's folder when the conversation is
+deleted?" has two answers. Its own folder, `/mnt/user-data` (`workspace/`,
+`uploads/`, `outputs/`), belongs to exactly that conversation and was already
+deleted with it by `DELETE /api/threads/{id}`; the Files tab and the delete
+confirmation now say so (§49). A **writable custom `sandbox.mounts` entry** is
+different: every conversation and every user shares it, it outlives all of
+them, and nothing recorded who created or changed what in it. The ledger
+records, per top-level entry of such a mount, which conversations created,
+edited or inherited it and an edit log, shows that under **Shared folders** in
+the Files tab, and, after the last conversation involved is deleted, **offers**
+to delete the folder. It never deletes one on its own.
+
+**How it is filled.** `FolderLedgerMiddleware` watches the tool calls that write
+there. `write_file` (write or append) and `str_replace` (edit) count only when
+the normalized result is exactly `"OK"`; before the call the host entry is
+checked with `lstat` in a worker thread: missing means this conversation created
+it (`observed_create`), present or an invisible host means `preexisting`. `bash`
+is best effort: literal `<mount>/<name>` references are probed before and after,
+an entry that appeared is `inferred_shell`, an entry the command removed retires
+its row (so the next creator of that name is credited), and an invisible host
+records nothing. Read-only mounts, `/mnt/user-data`, the ACP workspace and the
+skills root are never tracked, and the longest matching mount wins. Rows live in
+four tables (`folder_ledger_folders`, `_touches`, `_events`, `_dismissals`;
+migration `0057_folder_ledger`): a folder is unique per (mount, name) among live
+rows and bound to its host entry (`host_root`, `host_entry` = `st_dev:st_ino`),
+a touch is per (folder, user, thread) with a tombstone, events are capped at 200
+per folder, and a dismissal is per (folder, user).
+
+**What a refactor must not simplify away.**
+
+- **Offered, never automatic, and narrow.** Deletion needs, in order: the folder
+  is visible to the caller (404 otherwise, no existence oracle); a tool write saw
+  it being created (`observed_create` only: 403 `shell_inferred` or
+  `preexisting` otherwise, because a `mv` of existing data makes a name appear
+  during a command just as `mkdir` does); the caller's conversation created it,
+  or the caller is an admin (403 `not_creator`); `confirm_name` equals its name;
+  the name is one path segment; the mount is still configured **writable**,
+  still points at the recorded host directory and is visible to the Gateway (422
+  `mount_unavailable` / `changed` / `host_not_visible`; an unreadable config
+  counts as unavailable, never as default); no live conversation uses it (409
+  `in_use`); and the entry on disk is still the recorded one (422 `changed`).
+  The orphan dialog ticks nothing, lists non-deletable folders under *Kept* with
+  their reason, and **Don't ask again** dismisses for the caller only, until new
+  activity.
+- **The row is bound to the entry, not just the name.** A recorded call that
+  saw the bound entry before it ran moves the binding to the entry it left (a
+  bare file rewritten by an atomic replace gets a new inode); nothing else
+  moves it. A repointed mount or a folder replaced outside the ledger therefore
+  stops matching, and the delete refuses it rather than remove data DeerFlow
+  never saw created.
+- **The delete is confined.** `deerflow.folder_ledger.fs` opens the mount root as
+  a directory descriptor, checks the entry without following links, then
+  `rmtree(name, dir_fd=…)` or `unlink`; it refuses a link, a special file, a
+  target containing another mount's host root or DeerFlow's `base_dir`, and a
+  platform that cannot do this safely. It never removes the mount root. The
+  removal and the `deleted_at` mark run together under `await_drained`.
+- **Liveness is computed at query time, across every user.** A touch is live
+  when it is not tombstoned, its `threads_meta` row exists, and it is not a
+  hidden edit version (§18) or Side Chat whose root or parent row is gone.
+  Orphans are selected only through the caller's own touches (every login's
+  with multi-user mode off, matching the thread routes' owner scope), but any
+  other user's live conversation keeps the folder, and liveness is checked on
+  every candidate before the answer is capped. `DELETE /api/threads/{id}`
+  tombstones the thread's touches and a branch inherits the parent's live
+  touches as `inherited`, both best effort (`routers/threads.py`); a missed
+  tombstone is harmless because a missing `threads_meta` row already reads as
+  deleted. A write clears its thread's tombstone, because thread ids come back
+  (a stale tab, an IM binding) and the recreated conversation uses the folder.
+- **The recorder's chain position is its contract.** It is appended just before
+  `ToolErrorHandlingMiddleware`, only when a writable mount is configured, so
+  every gate outside it (authorization, audit, read-before-write, the harness
+  guard, tool-progress short circuits) has already let the call through and the
+  result it reads is normalized. Being in the shared base chain is what makes
+  subagent writes count (`CHAIN.md` entry 14b).
+- **It writes through the synchronous engine in a worker thread.** The recorder
+  also runs on the subagents' persistent loop, where the Gateway's loop-bound
+  async pool must not be used, so it uses `database.app_sync_sqlalchemy_url`
+  like project memory, waits at most 10 s, and **fails open** everywhere: a
+  ledger error never changes a tool result.
+- **Other users stay anonymous.** The folder detail shows another user's
+  conversation as a stable `other-<16 hex>` pseudonym with no title or run id;
+  the detail is visible only to the creator and to users with a touch (to every
+  login with multi-user mode off).
+- **Only providers that honour mounts record anything**: the local provider and
+  AIO in local-container mode. An external AIO `base_url` or a provisioner
+  ignores the mounts, so the recorder does too. Without a SQL session factory
+  (`database.backend: memory`) it does nothing and the routes answer
+  `available: false` (lists) or 503.
+- **The frontend's offer hangs on one notice per user action.** Every delete path
+  calls `notifyThreadsDeleted(ids)` exactly once, Side Chat ids included
+  (`useDeleteThread` on success, and with the Side Chat ids alone when the
+  parent's delete fails after they went; `useDeleteThreads` per batch, §52);
+  `FolderOrphanOfferHost` (mounted in `workspace-content.tsx`) coalesces notices
+  for 300 ms, asks `POST /orphans` once (in chunks of 500 ids), and opens the
+  dialog only when something comes back. A failed lookup only logs.
+
+**Known gaps.** Changes made outside DeerFlow, MCP filesystem writes and shell
+paths built at run time are invisible, so a folder can look unused when it is
+not; the delete still requires the creator or an admin and an explicit tick in
+a dialog that starts with nothing ticked (the client sends `confirm_name`; it
+guards against a wrong id, not a typo). Read-only shell commands that name a
+folder count as touches, which only keeps folders longer. Under AIO with
+Docker-out-of-Docker, a `host_path` that happens to exist inside the Gateway
+container as a different directory would be judged against the wrong directory.
+A delete racing a brand-new first write has a small window between the live
+check and the removal. A folder removed outside DeerFlow and recreated by
+another conversation keeps its first creator until the delete refuses it, and a
+filesystem that hands the recreated folder the old inode number defeats the
+binding check.
+
+**On an upstream sync.** `0057_folder_ledger` chains onto
+`0056_merge_prefs_thread_shares` and is the fork's migration head, so the next
+merge point names it as the fork parent
+(`persistence/migrations/FORK_NOTES.md`; `test_migration_merge_points.py` pins
+the parent). The chain insertion is a fork block in upstream's
+`tool_error_handling_middleware.py`, and the delete and branch hooks are fork
+blocks in `routers/threads.py`.
+
+**Where it's wired.**
+
+| Piece | Location |
+| --- | --- |
+| Tables, async repository, sync recorder store | `backend/packages/harness/deerflow/persistence/folder_ledger/`; migration `versions/0057_folder_ledger.py` |
+| Mount classifier, bash references, host probes; confined delete | `deerflow/folder_ledger/mounts.py`, `deerflow/folder_ledger/fs.py` |
+| Recorder and its chain position | `deerflow/agents/middlewares/folder_ledger_middleware.py`, `tool_error_handling_middleware.py` |
+| Routes and thread hooks | `backend/app/gateway/routers/folder_ledger.py` (`/api/folder-ledger/*`); calls from `routers/threads.py` |
+| Client, event bus | `frontend/src/core/folder-ledger/` (`api.ts`, `events.ts`) |
+| Files-tab section, delete confirmation, orphan offer | `components/workspace/thread-files/thread-shared-folders.tsx`, `thread-delete-dialog.tsx`, `folder-ledger/folder-orphan-offer.tsx` |
+| i18n | `core/i18n/locales/*` (`folderLedger.*`, `threadFiles.ownFolderNote`) |
+
+**No new config keys**: it reads the existing `sandbox.mounts` and `database`
+blocks, so `config_version` is not bumped.
+
+Pinned by `backend/tests/test_folder_ledger_middleware.py` (attribution, only an
+exact OK counts, untracked paths, fail-open, the chain position
+`test_shared_chain_places_it_just_outside_tool_error_handling`, providers that
+ignore mounts, the entry binding, a removed folder retiring its row),
+`test_folder_ledger_repository.py` (first-writer races, a straggling write
+not keeping a folder, a reused thread id keeping it, liveness across users and
+for hidden dependents, live folders never crowding out an orphan, per-user
+dismissal, the binding; its PostgreSQL half needs `TEST_POSTGRES_URI`),
+`test_folder_ledger_router.py` (scoping, the shared workspace, pseudonyms, every
+refusal including a renamed folder, a repointed mount and a replaced entry, the
+data-root protection, 409 when used again, per-user dismiss, the
+`threads:delete` gate),
+`test_migration_0057_folder_ledger.py`, `blocking_io/test_folder_ledger_offloop.py`,
+`test_threads_router.py::test_branch_and_delete_hand_the_folder_ledger_its_thread_lifecycle`,
+and on the frontend `tests/unit/core/folder-ledger/{api,events}.test.ts`,
+`folder-ledger/folder-orphan-offer.dom.test.tsx` (one lookup per burst, nothing
+pre-checked, no retry), `thread-files/thread-shared-folders.dom.test.tsx`,
+`thread-delete-dialog.dom.test.tsx`, `core/threads/delete-thread.dom.test.tsx`
+and `tests/e2e/folder-ledger.spec.ts`.

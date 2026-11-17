@@ -50,6 +50,7 @@ import { env } from "@/env";
 import { isIMEComposing } from "@/lib/ime";
 
 import { ThreadSidebarItem } from "./recent-chat-list";
+import { useRegisterSelectionOrder } from "./sidebar-selection";
 
 function projectPath(projectId: string): string {
   return `/workspace/projects/${projectId}`;
@@ -59,11 +60,14 @@ function ProjectThreadGroup({
   project,
   threads,
   recentThreadId,
+  selectionRank,
 }: {
   project: Project;
   threads: readonly AgentThread[];
   /** Global most-recent thread id — mirrors flat mode's `threads[0]?.thread_id`. */
   recentThreadId: string | undefined;
+  /** This group's place among the sidebar's groups, for range selection. */
+  selectionRank: number;
 }) {
   const pathname = usePathname();
   const [open, setOpen] = useState(true);
@@ -71,6 +75,18 @@ function ProjectThreadGroup({
   const branchEntries = useMemo(
     () => flattenThreadBranches([...threads]),
     [threads],
+  );
+  // The rows stay selectable like any chat row, so the group publishes the
+  // order it renders them in — above the folder tree, and nothing while it is
+  // collapsed — for a shift-click range that runs across groups.
+  const selectionOrder = useMemo(
+    () => (open ? branchEntries.map((entry) => entry.thread.thread_id) : null),
+    [branchEntries, open],
+  );
+  useRegisterSelectionOrder(
+    `project:${project.id}`,
+    [0, selectionRank],
+    selectionOrder,
   );
   return (
     <Collapsible open={open} onOpenChange={setOpen}>
@@ -111,10 +127,13 @@ function ArchivedProjectsGroup({
   projects,
   threadsByProject,
   recentThreadId,
+  selectionRankOffset,
 }: {
   projects: readonly Project[];
   threadsByProject: ReadonlyMap<string, readonly AgentThread[]>;
   recentThreadId: string | undefined;
+  /** Ranks continue after the active projects' groups. */
+  selectionRankOffset: number;
 }) {
   const { t } = useI18n();
   const [open, setOpen] = useState(false);
@@ -131,12 +150,13 @@ function ArchivedProjectsGroup({
       </SidebarMenuItem>
       <CollapsibleContent>
         <SidebarMenu className="border-sidebar-border ml-4 w-auto border-l pl-2">
-          {projects.map((project) => (
+          {projects.map((project, index) => (
             <ProjectThreadGroup
               key={project.id}
               project={project}
               threads={threadsByProject.get(project.id) ?? []}
               recentThreadId={recentThreadId}
+              selectionRank={selectionRankOffset + index}
             />
           ))}
         </SidebarMenu>
@@ -211,12 +231,13 @@ function GroupedProjectList() {
   }
   return (
     <SidebarMenu>
-      {activeProjects?.map((project) => (
+      {activeProjects?.map((project, index) => (
         <ProjectThreadGroup
           key={project.id}
           project={project}
           threads={threadsByProject.get(project.id) ?? []}
           recentThreadId={globalRecentThreadId}
+          selectionRank={index}
         />
       ))}
       {archivedProjects && archivedProjects.length > 0 && (
@@ -224,6 +245,7 @@ function GroupedProjectList() {
           projects={archivedProjects}
           threadsByProject={threadsByProject}
           recentThreadId={globalRecentThreadId}
+          selectionRankOffset={activeProjects?.length ?? 0}
         />
       )}
     </SidebarMenu>

@@ -6,7 +6,7 @@
 >
 > - 🔓 **Passwordless on your own network** — `make dev` / `make start` come up with no login wall, so your phone and laptop reach it over the LAN or [Tailscale](https://tailscale.com/) immediately. Opt out with `DEER_FLOW_AUTH_DISABLED=0`; auth stays on in production regardless.
 > - 🦙 **Auto-populated Ollama models** — `config.yaml` syncs from your `ollama pull` list on every launch, with capabilities detected and each model's context window sized to your GPU instead of Ollama's 2048-token default. The GPU is detected on its own (an NVIDIA or AMD card beside the daemon). When Ollama runs on another machine, enter its GPU memory in **Settings → Models**: updates and syncs never reset it, and it wins over `ollama.vram_gb`. Local models are **free** — you pay for electricity.
-> - 🔑 **API-key model auto-config** — drop a cloud key in `.env` and the matching models uncomment themselves in `config.yaml` on the next launch. Anthropic, OpenAI, xAI, Gemini, DeepSeek, Moonshot, Qwen, Mistral, MiniMax, Z.ai direct, plus a routed set via OpenRouter — one flagship per lab, except Anthropic and OpenAI, whose top tier is really two models a factor of two or more apart in price, so both halves are routed (Fable 5.1 + Opus 5.5, GPT-6 Astra + GPT-6.1 Sol).
+> - 🔑 **API-key model auto-config** — drop a cloud key in `.env` and the matching models uncomment themselves in `config.yaml` on the next launch. Anthropic, OpenAI, xAI, Gemini, DeepSeek, Moonshot, Qwen, Mistral, MiniMax, Z.ai direct, plus a routed set via OpenRouter — one flagship per lab, except Anthropic and OpenAI, whose top tier is really two models a factor of two or more apart in price, so both halves are routed (Fable 5.1 + Opus 5.5, GPT-6 Astra + GPT-6.1 Sol), and DeepSeek, whose V4.1 Flash rides beside V4 Pro because it tops OpenRouter's rankings on its own.
 > - 🎟️ **Subscription models from Settings → Models** — connect a ChatGPT plan in your browser, sign in to Grok with a device code, or add a Kimi Code subscription key. Available models populate the picker automatically, with encrypted server-side credentials and refresh/disconnect controls. ChatGPT uses a manual return-URL handoff for LAN/Tailscale access; Kimi is restricted to personal interactive chats. A Grok or Kimi plan request that is accepted and then never answered now times out and, after the usual retries, ends in a visible error instead of showing "Working" for ever.
 > - 🎨 **Grok Imagine, X search and voice on your Grok plan** — once Grok is connected, an administrator can switch on image generation and editing, short video clips, X (Twitter) search and Grok voice (read answers aloud, transcribe speech), all paid for by the Grok subscription instead of API billing. **Every switch starts off**, a feature xAI refuses for your plan stays locked (image and video run on the plan's own Imagine quota, so the plan is checked on their first request), and each one says it sends your prompt (and, for edits, your images) to xAI; the internet switch turns them all off for a chat. Costs nothing to turn on beyond the plan you already have.
 > - 🔎 **Self-hosted search, no API key** — a bundled SearXNG is provisioned at startup (an existing instance is reused) and backs the default `web_search`.
@@ -22,7 +22,10 @@
 > - 🔀 **Independent model per conversation, remembered by the conversation** — every chat keeps its own model, subagent model, mode and reasoning effort, recorded on the chat itself rather than in one browser. Switching conversations switches the picker to *that* chat's model instead of leaving the last one selected — on your phone and after a site-data clear too — and a brand-new chat no longer forgets its model the moment it is created.
 > - 🚦 **Concurrent chats** — leaving a chat used to cancel its run. Now a chat you leave mid-answer keeps streaming in the background and notifies you when it lands; come back and the answer is already there.
 > - 🗃️ **Folders in the sidebar, with subfolders** — the chat list is a tree. A conversation you file is **inside its folder and gone from the list outside it**, the way a file manager works, and folders nest up to five levels. Drag chats and folders around, or use the **⋯** menus. Deleting a folder never deletes the chats in it. Stored per user on the server; nothing to configure.
-> - 🗂️ **A file explorer for each conversation** — a **Files** button in the chat header browses the folders the agent created in that chat: its `workspace`, your `uploads` and the `outputs`, as a tree you open folder by folder, with sizes and times. Any file opens in the preview panel or downloads, including the scratch files the agent never presented, and open folders refresh while a run is working. Read-only; nothing to configure.
+> - ☑️ **Select several chats and act on them at once** — **Select** beside *New folder* (or in a chat's **⋯** menu) puts a checkbox on every sidebar row: click to tick, Shift-click for a range, then move the batch into a folder, make a **new folder from the selection**, archive it with one Undo, or delete it. **Deleting is permanent**, as it is for one chat: the confirmation names the chats and says so, and a chat whose answer is still running stays ticked for you to try again rather than being retried on its own. Nothing to configure.
+> - 🧹 **Clean-up mode: a model renames and files your chats** — **Clean up…** in the selection toolbar (or **Clean up all…** for your 200 most recent chats) has a model you pick read each conversation, suggest a clearer title and file it into folders you name or folders it proposes. **Nothing changes until you have reviewed the plan and pressed Apply**, and applying it never reorders the sidebar. One model call per chat (plus, in auto mode, at most one to group the folders), counted in each chat's cost and stopped by your spend cap; nothing to configure.
+> - 🗂️ **A file explorer for each conversation** — a labelled **Files** button right after the token counter in the chat header (or **Show files** in a chat's sidebar menu) browses the folders the agent created in that chat: its `workspace`, your `uploads` and the `outputs`, as a tree you open folder by folder, with sizes and times. Any file opens in the preview panel or downloads, including the scratch files the agent never presented, and open folders refresh while a run is working. The tab says plainly that this folder is **deleted together with the chat**. Read-only; nothing to configure.
+> - 📒 **Shared folders remember which chats wrote to them** — a folder a conversation creates or edits inside a writable custom `sandbox.mounts` directory is recorded, with an edit log, and listed under **Shared folders** in that chat's **Files** tab. Such folders outlive the chat, so when you delete the last conversation that used one, DeerFlow **offers** to delete it: never on its own, with nothing pre-ticked, and only for a folder a conversation was seen creating. Needs the default SQL database and a writable mount; nothing else to switch on.
 > - 🧩 **Extensions whose tools produce files** — an installed extension's tool can write a file into the conversation that called it, and the file opens in the artifact panel and the Files view like one from a built-in tool. It works on the default sandbox with no shell, because the Gateway does the writing. **The tool only names a file:** it cannot choose a conversation or a folder, and an existing file is never replaced. Nothing to switch on; `plugin_outputs` in `config.yaml` caps a file at 8 MiB and one tool call at 32 MiB.
 > - 📐 **Mechanical parts from a chat** — describe a bracket and get a script you can edit, a STEP file for a CAD program, an STL for the printer and a GLB to look at, on whichever model the conversation uses, with the internet switch off. **The model's script is never run:** the bundled CAD module reads it and performs an allow-list of CadQuery operations itself, then measures the result and refuses to hand over a STEP file for a part that missed its numbers. **A part is built until it passes:** the assistant writes your requirements down first, builds, reads the measurements, repairs and builds again, while the tool counts the attempts, holds the numbers the part was first given, and stops the loop with a report after eight builds instead of running on. Scripts may use `for` loops. Installed and on with every new install and every update on Linux (x86-64 and arm64, glibc 2.31 or newer) and Apple-silicon Macs; Windows and Intel Macs go without it. It adds about 1.7 GB of disk for its geometry kernel, which loads only while a part is being built. Turn it off with `make extension-disable NAME=cad` and a restart (the disk space stays in use); see its [README](examples/deerflow-extension-cad/README.md).
 > - 🕯️ **Gaslight mode** — edit **either half of a turn**. Edit your own message and it replays from there; edit the assistant's answer and your text simply *becomes* what it said. Both versions are kept behind a `‹ 2/2 ›` switcher, and one conversation stays **one** sidebar entry however many times you edit it.
@@ -48,7 +51,7 @@
 > - 🧭 **Cost-aware subagent routing** — a policy that sends delegated subtasks to the cheapest model that can actually do them, never one that lacks the tools, vision or context window. Off until you write a policy.
 > - 🧠 **Long-term memory off by default** — the agent no longer learns from or injects your saved memory until you opt in per browser under **Settings → Memory**. When off, the backend skips memory injection, extraction and memory tools entirely.
 > - 💡 **Follow-up suggestions off by default** — the follow-up chips cost an extra model call after every answer, so they are opt-in under **Settings → Suggestions**, where you can also pick a cheap model to generate them.
-> - ✏️ **Conversation renaming you can switch off** — the shipped default spends **no** model call (the title is your first message, shortened); point it at a cheap model for a real summary, or turn it off entirely.
+> - ✏️ **Conversation renaming you can switch off** — the shipped default spends **no** model call (the title is your first message, shortened); point it at a cheap model for a real summary, or turn it off entirely. The choice is saved to your account, so **off holds everywhere**: on every device and browser, and for chats started from IM channels, schedules and workflows.
 > - 🪄 **Rename a conversation on demand, on a model you pick** — an **Auto rename** button in the chat header: pick a model, press **Run**, and the chat is named from what is actually in it now rather than from the line it opened with. Deliberation between models in an Ultra or Democracy turn is left out, so a panel is named after its conclusion rather than after the argument. One call on the model you chose, counted in the header's total.
 >
 > **Going further**
@@ -165,10 +168,13 @@ DeerFlow has newly integrated the intelligent search and crawling toolset indepe
     - [Host-run Ollama from inside the sandbox](#host-run-ollama-from-inside-the-sandbox)
     - [Private GitHub repositories](#private-github-repositories)
   - [Files in a Conversation](#files-in-a-conversation)
+  - [Shared Folders and Their Edit Log](#shared-folders-and-their-edit-log)
   - [System Prompt](#system-prompt)
   - [Internet Access Switch](#internet-access-switch)
   - [Concurrent Chats](#concurrent-chats)
   - [Folders in the Sidebar](#folders-in-the-sidebar)
+  - [Selecting Several Chats at Once](#selecting-several-chats-at-once)
+  - [Cleaning Up Your Chats With a Model](#cleaning-up-your-chats-with-a-model)
   - [A Conversation Remembers Its Model](#a-conversation-remembers-its-model)
   - [Automatic Conversation Titles](#automatic-conversation-titles)
   - [Renaming a Conversation on Demand](#renaming-a-conversation-on-demand)
@@ -2029,29 +2035,39 @@ The token never appears in remote URLs, `.git/config`, tool output, logs (contai
 ### Files in a Conversation
 
 Everything a run writes lands in the conversation's sandbox folder,
-`/mnt/user-data`: the agent's scratch work in `workspace/` (a cloned repository,
-a virtual environment, intermediate data), your attachments in `uploads/`, and
-deliverables in `outputs/`. The artifacts panel lists only the files the agent
-chose to present, so the rest used to be reachable only by asking the agent. The
-**Files** button in the chat header opens the same right-hand panel on a
-**Files** tab: a tree of that folder, opened one directory at a time, with each
-file's size and when it last changed. Select a file to preview it with the
-artifacts viewer, or download it. While a run is working, open folders refresh
-every few seconds.
+`/mnt/user-data`: the agent's scratch work in `workspace/`, your attachments in
+`uploads/`, and deliverables in `outputs/`. The artifacts panel lists only the
+files the agent chose to present. The labelled **Files** button, right after the
+token counter in the chat header, opens a **Files** tab on the whole folder: a
+tree opened one directory at a time, with sizes and times, where any file
+previews or downloads and open folders refresh while a run is working. **Show
+files** in a chat's sidebar **⋯** menu opens the same tab.
 
-- **Read-only, and confined to the conversation.** The listing comes from
-  `GET /api/threads/{thread_id}/files?path=…`, which applies the artifacts
-  endpoint's owner check and path confinement: nothing outside the
-  conversation's own folder is listed, and a symbolic link is shown as a link,
-  never followed. Editing stays where it was, for text files in `outputs/`.
-- **Large folders say they were cut.** A listing returns at most 500 entries (a
-  `node_modules` folder ends with "N more not shown"), and in-flight upload and
-  edit temporary files are hidden.
-- **The folder has to be on the host.** With the local sandbox and in
-  per-conversation container mode it is, so the explorer sees everything. A
-  shared external sandbox container (`make sandbox-up`) keeps the workspace
-  inside the container, where the explorer, like the artifacts panel, cannot
-  see it.
+The explorer is read-only and sees only the conversation's own folder; a link is
+shown, never followed. **This folder is deleted with the conversation**, which
+the tab and the delete confirmation both say; folders in a writable custom mount
+are kept (see [Shared Folders and Their Edit Log](#shared-folders-and-their-edit-log)).
+A shared external sandbox container (`make sandbox-up`) keeps the workspace where
+the explorer cannot see it. Details:
+[Conversation files](docs/guide/workspace.md#conversation-files).
+
+### Shared Folders and Their Edit Log
+
+A directory you map into the sandbox with a writable `sandbox.mounts` entry is
+shared by every conversation and user, and outlives them all. For each
+**top-level folder** in it, DeerFlow records which conversations created, edited
+or inherited it, with an edit log, and a conversation's **Files** tab lists them
+under **Shared folders**; another user's conversation is shown without its title.
+
+**Deleting the last conversation that used such a folder offers to delete the
+folder; it never deletes it for you.** Nothing is pre-ticked, and only a folder a
+conversation was **seen creating** can be deleted, by its creator or an
+administrator; a folder that already existed is always kept. Only the agent's
+file writes and shell commands that name the folder's path are seen, so a folder
+changed from outside DeerFlow can look unused. It needs the default SQL database
+and works with the local sandbox and per-conversation containers. No new
+configuration keys. Details:
+[Shared folders in writable mounts](docs/guide/sandbox.md#shared-folders-in-writable-mounts).
 
 ### System Prompt
 
@@ -2186,46 +2202,57 @@ Models**, with the fix if the answer is one.
 ### Folders in the Sidebar
 
 The conversation list in the sidebar is a tree. Press **New folder** in the
-*Recent chats* header, give the folder a name, and drag conversations onto it — or use
-**Move to folder** in a conversation's **⋯** menu if you would rather not drag.
-The arrow beside a folder's name opens and closes it, and its own **⋯** menu
-holds **New subfolder**, **Move folder to**, **Rename** and **Delete**, in the
-same place as the menu each conversation already has.
-
-**Folders nest.** A folder can go inside a folder — drag one onto another, or
-use its **New subfolder** / **Move folder to** entries — up to five levels deep.
-A chat filed two levels down is listed there and nowhere else, and the count
-beside a folder's name covers everything below it, so a collapsed folder never
-reads as empty while holding twenty conversations. Collapsing a folder collapses
-its whole branch. Deleting one deletes its subfolders too — but never the
-conversations, which come straight back to the main list.
+*Recent chats* header and drag conversations onto it, or use **Move to folder**
+in a conversation's **⋯** menu; a folder's own **⋯** menu holds **New
+subfolder**, **Move folder to**, **Rename** and **Delete**. Folders nest up to
+five levels deep, and the count beside a folder covers everything below it.
 
 **A conversation you file is inside the folder and no longer in the list outside
-it.** That is the point of the feature and the thing that makes a folder worth
-having: collapse it and those chats are genuinely out of the way, rather than
-listed twice. The number beside a folder's name says how many are in there while
-it is closed.
+it**, so a collapsed folder genuinely puts those chats out of the way. **Deleting
+a folder never deletes the conversations in it**: they return to the main list,
+as does any chat whose folder disappears for another reason.
 
-**Deleting a folder never deletes the conversations in it.** They return to the
-main list immediately — the folder is a label, not a container the chats live
-inside. The same is true if a folder disappears for any other reason (deleted
-from another browser, say): a conversation pointing at a folder that no longer
-exists is shown in the main list, never hidden. A *folder* whose parent is gone
-is treated the same way and reappears at the top level, so no branch of the tree
-can take the chats inside it out of sight.
+Folders are stored **per user on the server**, so they follow you to another
+browser or device; only which folders are expanded is per browser. At most **50
+folders**, and filing a chat never moves it in the recency order. Nothing to
+configure. Details: [Chat folders](docs/guide/workspace.md#chat-folders).
 
-Folder names, their order, and which conversation is in which folder are stored
-**per user on the server**, so they follow you to another browser or another
-device. Only which folders are
-*expanded* is per browser, since that is genuinely a per-screen preference.
+### Selecting Several Chats at Once
 
-Two limits worth knowing: a ceiling of **50 folders** in total, and **five
-levels** of nesting (past that the indentation leaves no room for a chat's
-title). Filing a conversation deliberately does **not** count as activity, so it
-keeps its place in the recency order instead of jumping to the top of the list
-the moment you drag it.
+Press **Select** beside **New folder** in the *Recent chats* header, or
+**Select** in a chat's **⋯** menu. Every row gets a checkbox: click to tick,
+Shift-click for everything in between, **Select all** for the chats shown, and
+**Escape** or **Done** to stop. The toolbar then **moves** the ticked chats into
+a folder (or **New folder from selection…**, which creates one and files them
+into it), **archives** them with one Undo, **deletes** them, or opens
+[clean-up mode](#cleaning-up-your-chats-with-a-model).
 
-Nothing to configure; it is on as soon as you have a conversation to file.
+**Deleting is permanent**, as it is for one chat: the confirmation names the
+chats and their count, and each chat's files go with it. A chat that fails — one
+still answering cannot be deleted — stays ticked with its reason and a **Try
+again** button; nothing is retried for you. Moving never reorders the list.
+Nothing to configure. Details:
+[Selecting several chats](docs/guide/workspace.md#selecting-several-chats).
+
+### Cleaning Up Your Chats With a Model
+
+**Clean up…** in the selection toolbar (or **Clean up all…** with nothing
+ticked, for your 200 most recent chats) has a model you pick read each
+conversation and propose a clearer title and a folder. You choose the model,
+whether to rename, and how to file: **Don't file**, **Into my folders** (folders
+you tick or name) or **Auto-generate folders** (it proposes folders, reuses
+yours when a name matches, and creates at most the number you set).
+
+**Nothing is changed until you have reviewed the plan and pressed Apply.** The
+review screen lets you edit each title and folder, untick rows, and rename or
+merge proposed folders. Applying creates the new folders in one write, moves and
+renames the chats **without reordering the sidebar**, and lists what failed;
+nothing is retried on its own, and applying the same plan twice writes nothing.
+
+It costs **one model call per conversation**, plus at most one to group folders
+in auto mode, each counted in the conversation's cost under **Chat clean-up** and
+stopped by your spend cap. No new configuration keys. Details:
+[Chat clean-up](docs/guide/workspace.md#chat-clean-up).
 
 ### A Conversation Remembers Its Model
 
@@ -2243,39 +2270,21 @@ Nothing to configure, and changing a model never reorders your sidebar — the r
 
 ### Automatic Conversation Titles
 
-A new conversation is called *New Conversation* until something renames it.
-DeerFlow renames it from the first exchange, and **Settings → Conversation
-titles** is where you decide whether it does that at all and what it costs. The
-switch beside the page heading turns automatic renaming off; a conversation then
-keeps whatever you call it yourself, indefinitely.
+A new conversation is called *New Conversation* until DeerFlow renames it, once,
+at the end of the first turn, so the title describes the answer as well as the
+question. **Settings → Conversation titles** decides whether that happens and
+what it costs: **No model call** (your first message, shortened; free, and **the
+shipped default**), a configured model (it reads at most 500 characters of the
+first question and of the answer), or **Server default** (whatever `config.yaml`
+names).
 
-Under the switch is a **Title model** dropdown with three kinds of answer:
-
-- **No model call** — the title is your first message, shortened. Free,
-  instant, and surprisingly good, because a first message is usually a question
-  about one thing.
-- **A configured model** — that model reads the first question and the answer to
-  it and writes a short title. It sees at most 500 characters of each, so even a
-  premium model costs a fraction of a cent per conversation; a cheap or local one
-  costs nothing worth measuring.
-- **Server default** — follow whatever the operator set in `config.yaml`, which
-  is what a fresh install does. **The shipped default is no model call**, so
-  DeerFlow does not quietly bill you for titles.
-
-**The rename waits for the answer to finish.** This is the part worth knowing:
-the Gateway refuses to rename a conversation while a run is in flight (that is
-why the **Rename** menu item does nothing mid-answer), so the automatic rename is
-deliberately scheduled for the end of the turn — the same moment your own rename
-becomes possible again. A side effect is that the title now describes the
-*answer* as well as the question, because the answer exists by the time it is
-written. A first turn that ends by **asking you** a clarifying question is
-renamed too, which it previously never was: it exits the run through a different
-path, and the conversation used to stay called *New Conversation* forever, since
-only the first turn is ever titled.
-
-The preference lives in your browser (per browser, like the other client
-settings). The operator's master switch is `config.yaml`, and turning it off
-there greys out the toggle with an explanation rather than silently ignoring it:
+**The switch is saved to your account and covers every conversation you own**:
+the Gateway applies it to each run, so a chat started from another device, an IM
+channel, a scheduled task or a workflow follows it too, and off anywhere is off
+everywhere. Before this, the setting lived only in the browser and every other
+way of starting a chat ignored it. The terminal UI and the embedded Python client
+keep using `config.yaml`, whose `title:` block is the operator's master switch;
+turning it off there greys out the switch with an explanation:
 
 ```yaml
 title:
@@ -2285,48 +2294,22 @@ title:
   model_name: null # null = no model call (shortened first message)
 ```
 
-`max_words` and `max_chars` bound the model's output; the shortened-first-message
-path honours `max_chars` too. No new configuration keys — the settings page reads
-the block that was already there, and the per-user choice is layered on top of it
-at run time.
+No new configuration keys. Details:
+[Conversation titles](docs/guide/workspace.md#conversation-titles).
 
 ### Renaming a Conversation on Demand
 
-The automatic rename above happens **once**, at the end of the first turn. That
-is the wrong moment often enough to matter: a chat that opened with "quick
-question about the build" and turned into a three-hour refactor is still filed
-under the quick question.
-
-**Auto rename** in the chat header is the same thing on demand. Press it, pick a
-model, press **Run**, and the conversation is renamed from what is in it now.
-Because you choose the model per press, the choice can be a different one from
-the automatic rename's: that one runs on every new chat and wants something
-cheap, while renaming a conversation that turned out to matter can afford a good
-model. Leaving the picker on **Server default** uses whatever `config.yaml`
-names. A model you pick is remembered, and it is the same preference **Settings →
-Conversation titles** reads, so the two screens never disagree about which model
-will run.
-
-It reads the first two exchanges — and only what you actually saw. On an Ultra or
-Democracy turn the panelists' deliberation is stored with the turn, and it is
-routinely far longer than the reply on screen; feeding that to a title model
-names the conversation after the models arguing with each other. So tool results,
-scaffolding and anything the interface hides are dropped, and the answer for a
-turn is the final reply you read.
-
-Two things are worth knowing. The button spends one model call, and it is counted
-in the conversation's cost in the header, under **Chat rename** — nothing is
-billed to you invisibly. And like every rename, it is refused while a run is in
-flight; press it mid-answer and you get that refusal in so many words, not a
-silent no-op. A model the operator has removed from `config.yaml` is refused too,
-rather than quietly swapped for another one.
-
-The operator's switch covers it: with `title.enabled: false` in `config.yaml`
-the button is not shown at all, because a manual rename spends the same kind of
-call the switch exists to stop.
-
-No new configuration keys: it reads the same `title:` block as the automatic
-rename.
+The automatic rename happens once, so a chat that opened with "quick question
+about the build" and turned into a three-hour refactor keeps the quick question
+as its title. **Auto rename** in the chat header renames it from what is in it
+now: pick a model, press **Run**. It reads the first two exchanges as you saw
+them (an Ultra or Democracy panel's deliberation is left out), spends one call
+counted in the header's cost under **Chat rename**, and is refused while a run is
+in flight. The model you pick is remembered in your account and shared with
+**Settings → Conversation titles**. With automatic renaming switched off the
+button still renames this one conversation; with `title.enabled: false` in
+`config.yaml` it is not shown. No new configuration keys. Details:
+[Conversation titles](docs/guide/workspace.md#conversation-titles).
 
 ## Recommended Models
 

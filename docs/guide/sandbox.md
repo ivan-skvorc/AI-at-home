@@ -502,3 +502,61 @@ This is the difference between a chatbot with tool access and an agent with an a
 ├── workspace/        ← agents' working directory
 └── outputs/          ← final deliverables
 ```
+
+## Shared folders in writable mounts
+
+A conversation's `/mnt/user-data` belongs to that conversation and is deleted with
+it. A writable entry of `sandbox.mounts` (one without `read_only: true`) is shared
+by every conversation and user and outlives them, so DeerFlow keeps a **folder
+ledger** for it: for each top-level folder or file directly under the mount, which
+conversations created, edited or inherited it (a branch inherits its parent's
+folders), and an edit log capped at the most recent 200 entries per folder. A
+mount is writable unless it says `read_only: true`:
+
+```yaml
+sandbox:
+  mounts:
+    - host_path: /home/user/projects   # absolute path on the host
+      container_path: /mnt/projects    # where the agent sees it
+```
+
+- **What is recorded.** Successful `write_file` (write or append) and
+  `str_replace` calls, including from subagents. Before the call the Gateway
+  checks the host entry: if it did not exist, the conversation is recorded as its
+  creator; if it existed, or the Gateway cannot see the mount's host directory,
+  the folder counts as pre-existing. `bash` is best effort: a literal
+  `<mount>/<name>` path in the command is checked before and after the call; with
+  no visible host nothing is recorded. A folder that appears during a command is
+  recorded but never offered for deletion, because `mv` or `cp` of existing data
+  makes a name appear just as `mkdir` does. A folder the command removes leaves
+  the ledger, so a later folder of that name is credited to whoever creates it.
+  Writes outside DeerFlow, through MCP filesystem servers or via paths built at
+  run time are not seen. Recording never changes a tool's result; a ledger
+  failure is logged and ignored.
+- **Where it applies.** The local sandbox and AIO in per-conversation container
+  mode, the providers that honour custom mounts. An external AIO `base_url` or a
+  provisioner ignores the mounts and records nothing. The ledger needs the SQL
+  database; with `database.backend: memory` it reports itself unavailable and the
+  UI hides it.
+- **Where you see it.** The **Files** tab of a conversation lists its shared
+  folders with their role, last edit and other users, and opens the edit log.
+  Another user's conversation appears without its title, under a pseudonymous id.
+  With multi-user mode off, every login sees every conversation's folders, as
+  it sees the conversations.
+- **Deletion is offered, never automatic.** After you delete conversations, the
+  folders they touched that no live conversation of any user still uses are
+  offered for deletion in a dialog with nothing pre-ticked. A hidden edit version
+  or Side Chat of a deleted conversation does not count as a user. A folder can
+  be deleted only if a `write_file` or `str_replace` call was seen creating it,
+  by the user who created it or an administrator, while its mount is still
+  configured writable, still points at the same host directory and is visible
+  to the Gateway, and while the entry on disk is still the one that was created
+  (a folder replaced or recreated outside the conversation is kept). The delete
+  is refused with 409 if a conversation uses the folder again, never follows a
+  link, never removes the mount itself, and refuses a folder that contains
+  another mount's host directory or DeerFlow's own data directory.
+  **Don't ask again** keeps the folder and stops offering it to you until it is
+  used again; it does not hide the offer from anyone else.
+
+No configuration keys of its own. The routes are documented in
+[API.md](../../backend/docs/API.md#folder-ledger).

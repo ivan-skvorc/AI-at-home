@@ -44,7 +44,7 @@ from deerflow.agents.interaction_policy import RunInteractionPolicy, resolve_run
 from deerflow.agents.middlewares.input_sanitization_middleware import neutralize_untrusted_tags
 from deerflow.config.app_config import AppConfig, get_app_config
 from deerflow.config.database_config import CheckpointChannelMode
-from deerflow.config.title_config import apply_auto_title_preference
+from deerflow.config.title_config import AUTO_TITLE_ENABLED_CONTEXT_KEY, apply_auto_title_preference
 from deerflow.constants import CONVERSATION_READER_CONTEXT_KEY, DELIVERY_PRESENTATION_TOOL_NAMES, TOOL_RESULTS_DIRNAME
 from deerflow.knowledge_scope import KNOWLEDGE_SCOPE_RUNTIME_KEY, execution_scope
 from deerflow.mcp_scope import (
@@ -2261,7 +2261,15 @@ async def run_agent(
                 # title is written from. So this runs on every terminal status, not
                 # only ``interrupted``. It is idempotent — a checkpoint that already
                 # carries a title short-circuits without writing.
-                if started and not record.ownership_lost and checkpointer is not None and not _is_edit_replay_run(record):
+                #
+                # A run that opted out of automatic renaming (FORK.md §33) skips
+                # the fallback outright, before any wait: the preference has to
+                # hold whether or not the run context carries an ``app_config``,
+                # and an opted-out run has no reason to poll older finalizers.
+                # Keep only the boolean: a local copy of the run context would
+                # pin the run journal it carries for as long as this frame lives.
+                auto_title_opted_out = _run_context_values(config).get(AUTO_TITLE_ENABLED_CONTEXT_KEY) is False
+                if started and not record.ownership_lost and checkpointer is not None and not _is_edit_replay_run(record) and not auto_title_opted_out:
                     try:
                         # Check for an existing title *before* waiting on older
                         # same-thread finalization. On the ordinary success path the
@@ -2275,10 +2283,8 @@ async def run_agent(
                                 await _ensure_interrupted_title(
                                     checkpointer=checkpointer,
                                     thread_id=thread_id,
-                                    # The per-user auto-rename preference (FORK.md §33)
-                                    # must gate this fallback too, or opting out would
-                                    # still get you a title whenever the middleware did
-                                    # not run.
+                                    # The per-run model choice (FORK.md §33) applies
+                                    # to the fallback as it does to the middleware.
                                     app_config=apply_auto_title_preference(ctx.app_config, _run_context_values(config)) if ctx.app_config is not None else None,
                                     graph_input=graph_input,
                                 )

@@ -39,7 +39,10 @@ import { ThreadArchiveStatus } from "@/components/workspace/thread-archive-statu
 import { ThreadAutoRename } from "@/components/workspace/thread-auto-rename";
 import { ThreadBackgroundTasks } from "@/components/workspace/thread-background-tasks";
 import { ThreadExtensionActions } from "@/components/workspace/thread-extension-actions";
-import { ThreadFilesTrigger } from "@/components/workspace/thread-files";
+import {
+  ThreadFilesDeepLink,
+  ThreadFilesTrigger,
+} from "@/components/workspace/thread-files";
 import { ThreadRunInputs } from "@/components/workspace/thread-run-inputs";
 import { ThreadSubagentBatches } from "@/components/workspace/thread-subagent-batches";
 import { ThreadTitle } from "@/components/workspace/thread-title";
@@ -531,6 +534,7 @@ export default function AgentChatPage() {
         context={{ ...settings.context, agent_name }}
         isMock={isMock}
       >
+        <ThreadFilesDeepLink threadId={threadId} enabled={threadFilesEnabled} />
         <ChatBox
           threadId={threadId}
           browserEnabled={browserEnabled}
@@ -539,7 +543,9 @@ export default function AgentChatPage() {
           <div className="relative flex size-full min-h-0 justify-between">
             <header
               className={cn(
-                "absolute top-0 right-0 left-0 flex h-12 shrink-0 items-center gap-2 px-2 sm:px-4",
+                // A named container: header labels (Files) follow the chat
+                // column's width, which an open side panel narrows.
+                "@container/chat-header absolute top-0 right-0 left-0 flex h-12 shrink-0 items-center gap-2 px-2 sm:px-4",
                 isWelcomeMode
                   ? "bg-background/0 z-40 backdrop-blur-none"
                   : "bg-background/80 z-30 shadow-xs backdrop-blur",
@@ -620,12 +626,15 @@ export default function AgentChatPage() {
                 ) : (
                   <ContextUsageBadge contextUsage={contextUsage} />
                 )}
+                {/* Ahead of the icon-only triggers: the row cannot shrink, so
+                the last controls are the ones clipped. The Files panel also
+                holds the Artifacts tab. */}
+                {threadFilesEnabled && <ThreadFilesTrigger header="agent" />}
                 <SidecarTrigger />
                 {browserEnabled && <BrowserTrigger />}
                 <ExportTrigger threadId={threadId} />
                 <ThreadExtensionActions threadId={threadId} />
                 <ArtifactTrigger />
-                {threadFilesEnabled && <ThreadFilesTrigger />}
               </div>
             </header>
 

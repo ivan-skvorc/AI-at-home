@@ -236,6 +236,10 @@ AUX_CATEGORY_INPUT_POLISH = "input_polish"
 AUX_CATEGORY_GOAL = "goal"
 #: The chat header's "Auto rename" button, one call per press (fork, FORK.md §38).
 AUX_CATEGORY_TITLE = "title"
+#: The sidebar's chat clean-up pass: one call per conversation it describes,
+#: plus the consolidation call that merges categories, split across the
+#: conversations it served (``deerflow.utils.chat_organize``).
+AUX_CATEGORY_ORGANIZE = "organize"
 
 #: Every auxiliary sink attributable to one conversation, i.e. everything the
 #: chat header must price on top of the thread's runs. ``agent_generation`` is
@@ -247,6 +251,7 @@ CHAT_AUX_CATEGORIES: tuple[str, ...] = (
     AUX_CATEGORY_INPUT_POLISH,
     AUX_CATEGORY_GOAL,
     AUX_CATEGORY_TITLE,
+    AUX_CATEGORY_ORGANIZE,
 )
 
 

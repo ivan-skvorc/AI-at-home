@@ -14,6 +14,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import type { Translations } from "@/core/i18n";
 import { useI18n } from "@/core/i18n/hooks";
 import {
   formatTokenCount,
@@ -47,9 +48,9 @@ import { Tooltip } from "./tooltip";
  * that to one entry, and an unknown category still falls back to its own name
  * rather than disappearing: a row with no label is still money spent.
  */
-function auxCategoryLabel(
+export function auxCategoryLabel(
   category: string,
-  t: ReturnType<typeof useI18n>["t"],
+  t: Pick<Translations, "tokenUsage">,
 ): string {
   switch (category) {
     case "memory":
@@ -62,6 +63,8 @@ function auxCategoryLabel(
       return t.tokenUsage.goal;
     case "title":
       return t.tokenUsage.autoRenameCost;
+    case "organize":
+      return t.tokenUsage.organizeCost;
     default:
       return category;
   }

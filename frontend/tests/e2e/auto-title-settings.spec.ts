@@ -1,13 +1,15 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page, type Request } from "@playwright/test";
 
-import { mockLangGraphAPI } from "./utils/mock-api";
+import { handleRunStream, mockLangGraphAPI } from "./utils/mock-api";
 
 /**
  * Automatic conversation renaming (fork feature, FORK.md §33).
  *
  * The unit tests pin the wire shape; this pins that the switch and its picker
- * are reachable at all, and that what the user clicks is what lands in
- * localStorage — the only place the preference lives before a run reads it.
+ * are reachable at all, and that what the user clicks reaches both places the
+ * preference lives: the account (`PUT /api/settings/auto-title`), which the
+ * Gateway applies to runs from every device, channel and extension, and this
+ * browser's copy, which the next run from here carries in its context.
  */
 
 const MODELS = [
@@ -55,6 +57,15 @@ async function openAutoTitleSettings(page: Page) {
   return dialog;
 }
 
+/** The next save of the account preference, to assert what it sent. */
+function nextAutoTitleSave(page: Page): Promise<Request> {
+  return page.waitForRequest(
+    (request) =>
+      request.method() === "PUT" &&
+      new URL(request.url()).pathname.endsWith("/api/settings/auto-title"),
+  );
+}
+
 function readStoredAutoTitle(page: Page) {
   return page.evaluate(() => {
     const raw = window.localStorage.getItem("deerflow.local-settings");
@@ -86,6 +97,7 @@ test.describe("Conversation titles settings", () => {
 
     // Targeted by the shared picker's own `data-slot`, never by the ARIA role of
     // whichever primitive is underneath it (FORK.md's shared-control rule).
+    let save = nextAutoTitleSave(page);
     await picker.click();
     await page.getByRole("option", { name: "Model One" }).click();
     await expect(picker).toContainText("Model One");
@@ -93,19 +105,39 @@ test.describe("Conversation titles settings", () => {
       enabled: true,
       modelName: "m1",
     });
+    expect((await save).postDataJSON()).toEqual({
+      enabled: true,
+      model_name: "m1",
+    });
 
-    // "No model call" is a distinct third state, stored as the empty string.
+    // "No model call" is a distinct third state, stored as the empty string —
+    // on the account too, where an omitted key would mean "server default".
+    save = nextAutoTitleSave(page);
     await picker.click();
     await page.getByRole("option", { name: "No model call" }).click();
     expect(await readStoredAutoTitle(page)).toEqual({
       enabled: true,
       modelName: "",
     });
+    expect((await save).postDataJSON()).toEqual({
+      enabled: true,
+      model_name: "",
+    });
   });
 
-  test("turning it off hides the model picker", async ({ page }) => {
+  test("turning it off saves it to the account and the next run carries it", async ({
+    page,
+  }) => {
     mockLangGraphAPI(page);
     await mockModels(page);
+    let context: Record<string, unknown> | undefined;
+    await page.route("**/runs/stream", (route) => {
+      const body = route.request().postDataJSON() as {
+        context?: Record<string, unknown>;
+      };
+      context = body.context;
+      return handleRunStream(route);
+    });
 
     const dialog = await openAutoTitleSettings(page);
     const toggle = dialog.getByRole("switch", {
@@ -113,10 +145,41 @@ test.describe("Conversation titles settings", () => {
     });
     await expect(toggle).toBeVisible({ timeout: 15_000 });
 
+    const save = nextAutoTitleSave(page);
     await toggle.click();
     await expect(toggle).not.toBeChecked();
     // Nothing is going to write a title, so there is no model to pick for it.
     await expect(dialog.locator('[data-slot="model-select"]')).toHaveCount(0);
+    expect(await readStoredAutoTitle(page)).toMatchObject({ enabled: false });
+    // The account copy is what IM channels, other devices and extension runs
+    // get: an opt-out that stayed in this browser is the bug this fixes.
+    expect((await save).postDataJSON()).toEqual({ enabled: false });
+
+    await page.keyboard.press("Escape");
+    await expect(dialog).toBeHidden();
+    const textarea = page.getByPlaceholder(/how can i assist you/i);
+    await expect(textarea).toBeVisible({ timeout: 20_000 });
+    await textarea.fill("hello");
+    await textarea.press("Enter");
+    await expect.poll(() => context?.auto_title_enabled).toBe(false);
+    expect(context).not.toHaveProperty("auto_title_model_name");
+  });
+
+  test("a preference saved on another device is the one this browser uses", async ({
+    page,
+  }) => {
+    // A fresh browser has the local default (on). The account says off, and
+    // the account wins, or a new device, the PWA or another origin would
+    // start renaming conversations again.
+    mockLangGraphAPI(page, { autoTitlePreference: { enabled: false } });
+    await mockModels(page);
+
+    const dialog = await openAutoTitleSettings(page);
+    const toggle = dialog.getByRole("switch", {
+      name: "Automatic conversation titles",
+    });
+    await expect(toggle).toBeVisible({ timeout: 15_000 });
+    await expect(toggle).not.toBeChecked();
     expect(await readStoredAutoTitle(page)).toMatchObject({ enabled: false });
   });
 

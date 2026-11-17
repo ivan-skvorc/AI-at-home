@@ -45,11 +45,13 @@ pytestmark = pytest.mark.asyncio
 
 async def test_0047_remains_in_the_single_migration_chain():
     script = ScriptDirectory(str(bootstrap._MIGRATIONS_DIR))
-    # Fork: a merge revision above upstream's tip is the single head
-    # (test_migration_merge_points.py). Upstream's 0055 tip is one parent.
+    # Fork: the fork's folder-ledger revision above the merge of upstream's
+    # tip is the single head (test_migration_merge_points.py). Upstream's 0055
+    # tip is one parent of that merge.
     (head,) = script.get_heads()
-    assert head == bootstrap._get_head_revision() == "0056_merge_prefs_thread_shares"
-    assert set(script.get_revision(head).down_revision) == {"0055_merge_prefs_project_mem", "0055_thread_shares"}
+    assert head == bootstrap._get_head_revision() == "0057_folder_ledger"
+    assert script.get_revision(head).down_revision == "0056_merge_prefs_thread_shares"
+    assert set(script.get_revision("0056_merge_prefs_thread_shares").down_revision) == {"0055_merge_prefs_project_mem", "0055_thread_shares"}
     assert script.get_revision("0055_thread_shares").down_revision == "0054_project_memory"
     assert script.get_revision("0054_project_memory").down_revision == "0053_tool_approvals"
     assert script.get_revision("0053_tool_approvals").down_revision == "0052_batch_continuation"

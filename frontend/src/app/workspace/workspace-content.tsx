@@ -8,9 +8,11 @@ import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
 // whole chats barrel into the server module graph.
 import { KeepAliveChatViewport } from "@/components/workspace/chats/keep-alive-chat-viewport";
 import { CommandPalette } from "@/components/workspace/command-palette";
+import { FolderOrphanOfferHost } from "@/components/workspace/folder-ledger/folder-orphan-offer";
 import { GatewayOfflineBanner } from "@/components/workspace/gateway-offline-banner";
 import { ModelLoadErrorBanner } from "@/components/workspace/model-load-error-banner";
 import { SettingsDialogHost } from "@/components/workspace/settings";
+import { AutoTitlePreferenceSync } from "@/components/workspace/settings/auto-title-preference-sync";
 import { WorkspaceSettingsDeepLink } from "@/components/workspace/workspace-settings-deep-link";
 import { WorkspaceSidebar } from "@/components/workspace/workspace-sidebar";
 import { ExtensionPageBootstrap } from "@/core/extensions/hooks";
@@ -59,7 +61,13 @@ export async function WorkspaceContent({
           </LiveChatSlotsProvider>
         </SidebarProvider>
         <CommandPalette />
+        {/* Above every route, so each delete path (sidebar, chats page,
+        projects, bulk actions) reaches the folder-ledger orphan offer. */}
+        <FolderOrphanOfferHost />
         <SettingsDialogHost />
+        {/* Inside the preferences boundary, so an account switch remounts it
+        and the new account's conversation-title preference is adopted. */}
+        <AutoTitlePreferenceSync />
         <WorkspaceSettingsDeepLink />
         <Toaster position="top-center" />
       </UserPreferencesBoundary>

@@ -501,6 +501,7 @@ export interface Translations {
     moreNotShown: (count: number) => string;
     symlink: string;
     specialFile: string;
+    ownFolderNote: string;
   };
 
   // Input Box
@@ -990,6 +991,7 @@ export interface Translations {
     running: string;
     success: (title: string) => string;
     failed: string;
+    manualOnly: string;
   };
   backgroundTasks: {
     label: string;
@@ -1702,6 +1704,54 @@ export interface Translations {
       depthLimitReached: (max: number) => string;
       moveFailed: string;
     };
+    /** Multi-select in the sidebar: bulk move, archive, delete, clean-up. */
+    selection: {
+      /** Header button and row-menu entry that start selecting. */
+      select: string;
+      /** Row-menu entry of a selected row. */
+      deselect: string;
+      /** Header button while selecting: leaves selection mode. */
+      done: string;
+      /** `aria-label` of the selection toolbar. */
+      toolbarLabel: string;
+      count: (count: number) => string;
+      selectAll: string;
+      selectAllHint: string;
+      /** Hint in the toolbar while nothing is selected. */
+      emptyHint: string;
+      /** Checkbox `aria-label`: "Select “{title}”". */
+      selectChat: (title: string) => string;
+      moveTo: string;
+      newFolderFromSelection: string;
+      newFolderFromSelectionDescription: (count: number) => string;
+      archive: string;
+      delete: string;
+      cleanUp: string;
+      cleanUpAll: string;
+      moved: (count: number, folder: string) => string;
+      movedToRoot: (count: number) => string;
+      moveFailed: (count: number) => string;
+      /** Grouped by project, a project's chats keep rendering in its group. */
+      movedProjectChatsHint: (count: number) => string;
+      archived: (count: number) => string;
+      restored: (count: number) => string;
+      archiveFailed: (count: number) => string;
+      deleteTitle: (count: number) => string;
+      deleteDescription: string;
+      deleteIncludesOpenChat: string;
+      deleteMore: (count: number) => string;
+      deleteConfirm: (count: number) => string;
+      deleting: (done: number, total: number) => string;
+      deleted: (count: number) => string;
+      deleteFailedTitle: (count: number) => string;
+      deleteFailedDescription: string;
+      /** Per-chat reason: HTTP 409. */
+      failedBusy: string;
+      /** Per-chat reason: HTTP 403. */
+      failedForbidden: string;
+      failedOther: string;
+      retry: string;
+    };
   };
 
   // Thread origin and unread markers (sidebar and chats list)
@@ -2075,6 +2125,8 @@ export interface Translations {
     inputPolish: string;
     goal: string;
     autoRenameCost: string;
+    /** The sidebar's chat clean-up pass (aux category `organize`). */
+    organizeCost: string;
     auxCallCount: (count: number) => string;
     /** Heading for the per-step cost chart in the cost dropdown. */
     chartTitle: string;
@@ -2138,6 +2190,175 @@ export interface Translations {
     keyboardShortcutsDescription: string;
     openCommandPalette: string;
     toggleSidebar: string;
+  };
+
+  // Folder ledger: shared mount folders a conversation created or edited
+  folderLedger: {
+    sharedTitle: string;
+    sharedDescription: string;
+    sharedLoading: string;
+    sharedLoadFailed: string;
+    roleCreated: string;
+    roleEdited: string;
+    roleInherited: string;
+    lastEdit: (ago: string) => string;
+    otherChats: (count: number) => string;
+    onlyThisChat: string;
+    hostHidden: string;
+    showDetails: (name: string) => string;
+    detailsDescription: (path: string) => string;
+    detailsLoadFailed: string;
+    attribution: {
+      observed_create: string;
+      preexisting: string;
+      inferred_shell: string;
+    };
+    activity: (writes: number, edits: number, shellOps: number) => string;
+    conversations: string;
+    thisChat: string;
+    untitledChat: string;
+    otherUserChat: string;
+    deletedChat: string;
+    editLog: string;
+    editLogEmpty: string;
+    ops: {
+      write: string;
+      append: string;
+      edit: string;
+      shell: string;
+    };
+    deleteDialogKept: string;
+    deleteDialogKeptNamed: (names: string[], more: number) => string;
+    deleteDialogOffer: string;
+    orphanTitle: (count: number) => string;
+    orphanDescription: string;
+    orphanWarning: string;
+    orphanKept: string;
+    orphanSelect: (name: string) => string;
+    orphanStats: (changes: number, ago: string | null) => string;
+    reasons: {
+      preexisting: string;
+      not_creator: string;
+      unsupported_platform: string;
+      mount_unavailable: string;
+      host_not_visible: string;
+      shell_inferred: string;
+      changed: string;
+      unknown: string;
+    };
+    deleteSelected: (count: number) => string;
+    deleting: string;
+    dismissing: string;
+    keep: string;
+    dismiss: string;
+    deletedStatus: string;
+    dismissedStatus: string;
+    inUse: string;
+    deleteFailed: (message: string) => string;
+    dismissFailed: (message: string) => string;
+    deletedToast: (count: number) => string;
+  };
+
+  // Chat clean-up mode: a model renames and files conversations (fork feature)
+  chatCleanup: {
+    title: string;
+    description: string;
+    scopeSelected: (count: number) => string;
+    scopeAll: (count: number) => string;
+    scopeLoading: string;
+    scopeFailed: string;
+    scopeRetry: string;
+    /** "all" scope: only the most recent N were loaded. */
+    scopeCapped: (max: number) => string;
+    /** Selection scope: more than N were selected. */
+    scopeSelectionCapped: (max: number) => string;
+    scopeMissing: (count: number) => string;
+    scopeEmpty: string;
+    costHint: string;
+    modelLabel: string;
+    serverDefault: string;
+    serverDefaultHint: string;
+    localPaceHint: string;
+    renameLabel: string;
+    renameHint: string;
+    renameDisabled: string;
+    foldersLabel: string;
+    folderModeNone: string;
+    folderModeNoneHint: string;
+    folderModeTargets: string;
+    folderModeTargetsHint: string;
+    folderModeAuto: string;
+    folderModeAutoHint: string;
+    targetsExisting: string;
+    targetsNoExisting: string;
+    targetsNewLabel: string;
+    targetsNewPlaceholder: string;
+    targetsAdd: string;
+    targetsRemove: (name: string) => string;
+    targetsNone: string;
+    targetsLimit: (max: number) => string;
+    maxNewFoldersLabel: string;
+    maxNewFoldersHint: string;
+    nothingToDo: string;
+    start: string;
+    analyzing: (done: number, total: number) => string;
+    consolidating: string;
+    runningHint: string;
+    stopped: (message: string) => string;
+    foldersSkipped: string;
+    consolidateFailed: (message: string) => string;
+    nothingAnalyzed: string;
+    previewTitle: string;
+    previewDescription: string;
+    selectAll: string;
+    selectNone: string;
+    includeLabel: (title: string) => string;
+    newTitleLabel: (title: string) => string;
+    folderLabel: (title: string) => string;
+    currentFolder: (name: string) => string;
+    keepFolder: string;
+    newFolderOption: (name: string) => string;
+    existingFoldersGroup: string;
+    newFoldersGroup: string;
+    unchanged: string;
+    proposedTitle: string;
+    proposedHint: string;
+    proposedNameLabel: (name: string) => string;
+    proposedCount: (count: number) => string;
+    mergeInto: string;
+    mergeIntoLabel: (name: string) => string;
+    mergeUnfile: string;
+    noChanges: string;
+    noChangesHint: string;
+    failuresTitle: (count: number) => string;
+    apply: (count: number) => string;
+    applying: (done: number, total: number) => string;
+    applyingHint: string;
+    back: string;
+    resultTitle: string;
+    resultRenamed: (count: number) => string;
+    resultMoved: (count: number) => string;
+    resultFoldersCreated: (count: number) => string;
+    resultFailed: (count: number) => string;
+    resultFailedHint: string;
+    reviewAgain: string;
+    done: string;
+    renameFailed: (reason: string) => string;
+    moveFailed: (reason: string) => string;
+    foldersUnavailable: string;
+    foldersSaveFailed: string;
+    reasons: {
+      busy: string;
+      notFound: string;
+      empty: string;
+      timeout: string;
+      unusable: string;
+      forbidden: string;
+      folderMissing: string;
+      folderNotCreated: string;
+      folderLimit: string;
+      other: string;
+    };
   };
 
   // Settings
@@ -2794,6 +3015,8 @@ export interface Translations {
       noModelHint: string;
       timingHint: string;
       serverDisabledHint: string;
+      accountHint: string;
+      saveFailed: string;
     };
     systemPrompt: {
       title: string;

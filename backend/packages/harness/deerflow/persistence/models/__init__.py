@@ -26,6 +26,7 @@ from deerflow.persistence.channel_runtime_configs.model import ChannelRuntimeCon
 from deerflow.persistence.channel_thread_bindings.model import ChannelThreadBindingRow
 from deerflow.persistence.extension_leases.model import ExtensionExecutionLeaseRow
 from deerflow.persistence.feedback.model import FeedbackRow
+from deerflow.persistence.folder_ledger.model import FolderLedgerDismissalRow, FolderLedgerEventRow, FolderLedgerFolderRow, FolderLedgerTouchRow
 from deerflow.persistence.login_throttle.model import LoginThrottleRow
 from deerflow.persistence.managed_subagents.model import ManagedSubagentRow
 from deerflow.persistence.mcp_oauth_tokens.model import McpOAuthTokenRow
@@ -62,6 +63,10 @@ __all__ = [
     "ChannelRuntimeConfigRow",
     "ChannelThreadBindingRow",
     "FeedbackRow",
+    "FolderLedgerDismissalRow",
+    "FolderLedgerEventRow",
+    "FolderLedgerFolderRow",
+    "FolderLedgerTouchRow",
     "LoginThrottleRow",
     "McpOAuthTokenRow",
     "McpTaskRow",

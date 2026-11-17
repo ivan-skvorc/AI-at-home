@@ -162,8 +162,16 @@ class ThreadMetaStore(abc.ABC):
         display_name: str,
         *,
         remove_metadata_keys: tuple[str, ...] = (),
+        touch: bool = True,
         user_id: str | None | _AutoSentinel = AUTO,
     ) -> None:
+        """Set the thread's display name and drop ``remove_metadata_keys``.
+
+        When ``touch`` is ``True`` (default) ``updated_at`` is refreshed, so a
+        rename bumps recency ordering like any other change. Pass
+        ``touch=False`` for a rename that is housekeeping rather than activity
+        (a bulk organize pass), so the sidebar keeps its order.
+        """
         pass
 
     @abc.abstractmethod

@@ -232,3 +232,89 @@ def test_an_over_deep_chain_is_pulled_back_into_range_from_the_top_of_the_breach
 def test_a_wrong_typed_parent_degrades_to_a_top_level_folder():
     stored = user_ui_state.set_chat_folders("default", [_folder("f1", "Work"), {"id": "f2", "name": "Invoices", "parentId": 7}])
     assert stored == [{"id": "f1", "name": "Work"}, {"id": "f2", "name": "Invoices"}]
+
+
+# ---------------------------------------------------------------------------
+# Automatic conversation titles (fork feature)
+# ---------------------------------------------------------------------------
+
+
+def test_a_never_set_auto_title_preference_is_on_and_follows_the_operator_model():
+    """No ``model_name`` key is the "follow config.yaml" state, not ``""``."""
+    assert user_ui_state.get_auto_title_preference("default") == {"enabled": True}
+
+
+def test_auto_title_preference_round_trips_across_a_cache_reset():
+    user_ui_state.set_auto_title_preference("default", {"enabled": False, "model_name": "cheap-model"})
+    user_ui_state.reset_cache_for_tests()
+    assert user_ui_state.get_auto_title_preference("default") == {"enabled": False, "model_name": "cheap-model"}
+
+
+def test_auto_title_preference_is_isolated_per_user():
+    user_ui_state.set_auto_title_preference("alice", {"enabled": False})
+    assert user_ui_state.get_auto_title_preference("bob") == {"enabled": True}
+
+
+def test_auto_title_set_is_a_replace_so_the_operator_model_can_be_chosen_again():
+    user_ui_state.set_auto_title_preference("default", {"enabled": True, "model_name": "cheap-model"})
+    assert user_ui_state.set_auto_title_preference("default", {"enabled": True}) == {"enabled": True}
+    user_ui_state.reset_cache_for_tests()
+    assert user_ui_state.get_auto_title_preference("default") == {"enabled": True}
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        (None, {"enabled": True}),
+        ("off", {"enabled": True}),
+        ({}, {"enabled": True}),
+        # Only a real boolean opts out: an unreadable value must not invent one.
+        ({"enabled": "false"}, {"enabled": True}),
+        ({"enabled": 0}, {"enabled": True}),
+        ({"enabled": False}, {"enabled": False}),
+        # "" is "rename without a model call", distinct from an absent key.
+        ({"enabled": True, "model_name": ""}, {"enabled": True, "model_name": ""}),
+        ({"enabled": True, "model_name": "  cheap-model  "}, {"enabled": True, "model_name": "cheap-model"}),
+        # Unusable names drop the key (follow the operator) rather than
+        # collapsing into "" (no model call) or a truncated, different name.
+        ({"enabled": True, "model_name": "   "}, {"enabled": True}),
+        ({"enabled": True, "model_name": None}, {"enabled": True}),
+        ({"enabled": True, "model_name": 7}, {"enabled": True}),
+        ({"enabled": True, "model_name": "m" * (user_ui_state.MAX_AUTO_TITLE_MODEL_CHARS + 1)}, {"enabled": True}),
+        ({"enabled": True, "model_name": "m" * user_ui_state.MAX_AUTO_TITLE_MODEL_CHARS}, {"enabled": True, "model_name": "m" * user_ui_state.MAX_AUTO_TITLE_MODEL_CHARS}),
+        ({"enabled": True, "extra": "ignored"}, {"enabled": True}),
+    ],
+)
+def test_auto_title_preference_normalization(raw, expected):
+    assert user_ui_state.normalize_auto_title_preference(raw) == expected
+
+
+def test_a_corrupt_stored_auto_title_value_degrades_to_the_default():
+    path = get_paths().user_dir("default") / user_ui_state.UI_STATE_FILENAME
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"auto_title": ["not", "a", "mapping"]}), encoding="utf-8")
+    user_ui_state.reset_cache_for_tests()
+    assert user_ui_state.get_auto_title_preference("default") == {"enabled": True}
+
+
+def test_auto_title_and_the_other_ui_state_keys_do_not_clobber_each_other():
+    """One ``ui_state.json`` per user holds folders, push devices and this
+    preference; every writer merges, so none of them erases another."""
+    user_ui_state.set_chat_folders("default", [{"id": "f1", "name": "Work"}])
+    user_ui_state.set_push_subscriptions("default", [{"endpoint": "https://push.example/1", "keys": {"p256dh": "a", "auth": "b"}}])
+
+    user_ui_state.set_auto_title_preference("default", {"enabled": False, "model_name": ""})
+    user_ui_state.set_chat_folders("default", [{"id": "f1", "name": "Work"}, {"id": "f2", "name": "Personal"}])
+
+    user_ui_state.reset_cache_for_tests()
+    assert user_ui_state.get_auto_title_preference("default") == {"enabled": False, "model_name": ""}
+    assert [folder["id"] for folder in user_ui_state.get_chat_folders("default")] == ["f1", "f2"]
+    assert [entry["endpoint"] for entry in user_ui_state.get_push_subscriptions("default")] == ["https://push.example/1"]
+
+
+def test_mutating_a_returned_auto_title_value_does_not_change_the_stored_one():
+    """The written dict doubles as the cache entry; a caller that edits its
+    result must not change what the next run reads."""
+    stored = user_ui_state.set_auto_title_preference("default", {"enabled": False})
+    stored["enabled"] = True
+    assert user_ui_state.get_auto_title_preference("default") == {"enabled": False}

@@ -6,8 +6,10 @@ has a migration branch at all is FORK.md §17; how each sync met it is in FORK.m
 
 ## Merge points
 
-The fork's only schema revision, `0019_runs_pricing_snapshot`, branches off
-`0018_oauth_identity_pg_partial`. Upstream keeps extending a revision that a
+The fork's first schema revision, `0019_runs_pricing_snapshot`, branches off
+`0018_oauth_identity_pg_partial`. `0057_folder_ledger` (the folder ledger)
+chains onto the merge head `0056_merge_prefs_thread_shares` and is the fork's
+head, so the next merge point names it as the fork parent. Upstream keeps extending a revision that a
 merge point has already claimed, which puts the tree back on two heads, so each
 row below joins the fork's previous head to upstream's tip at that sync. Every
 merge is a no-op revision; none re-parents a branch.
@@ -26,7 +28,10 @@ merge is a no-op revision; none re-parents a branch.
 | `0052_merge_prefs_run_inputs` | `0049_merge_prefs_ext_leases` | `0051_merge_run_inputs_fencing` |
 | `0053_merge_prefs_batch_cont` | `0052_merge_prefs_run_inputs` | `0052_batch_continuation` |
 | `0055_merge_prefs_project_mem` | `0053_merge_prefs_batch_cont` | `0054_project_memory` |
-| `0056_merge_prefs_thread_shares` (head) | `0055_merge_prefs_project_mem` | `0055_thread_shares` |
+| `0056_merge_prefs_thread_shares` | `0055_merge_prefs_project_mem` | `0055_thread_shares` |
+
+The current head is the fork revision `0057_folder_ledger`, not a merge: the next
+merge point names it as its fork parent.
 
 `0051_merge_run_inputs_fencing` is upstream's own merge of `0049_run_inputs` and
 the `0049_run_producer_fencing` → `0050_history_seed_authority` branch. Upstream

@@ -31,9 +31,11 @@ from app.gateway.routers import (
     capabilities,
     channel_connections,
     channels,
+    chat_organize,
     console,
     features,
     feedback,
+    folder_ledger,
     github_webhooks,
     im_notification_preferences,
     input_polish,
@@ -1395,6 +1397,10 @@ This gateway provides runtime endpoints for agent runs plus custom endpoints for
     # Fork feature: read-only file explorer listing at /api/threads/{thread_id}/files
     app.include_router(thread_files.router)
 
+    # Fork feature: ledger of shared mount folders conversations created or
+    # edited, and the deletion offer for orphans, at /api/folder-ledger
+    app.include_router(folder_ledger.router)
+
     # Browser API is mounted at /api/threads/{thread_id}/browser
     app.include_router(browser.router)
 
@@ -1425,6 +1431,10 @@ This gateway provides runtime endpoints for agent runs plus custom endpoints for
 
     # Agent generation API is mounted at /api/agent-generation
     app.include_router(agent_generation.router)
+
+    # Chat clean-up suggestions: /api/threads/{thread_id}/organize/suggest and
+    # /api/chat-organize/consolidate (read-only; the client applies the plan).
+    app.include_router(chat_organize.router)
 
     # Deployment-level subagent catalog and admin management.
     app.include_router(subagents.router)

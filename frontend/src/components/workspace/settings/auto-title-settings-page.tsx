@@ -1,11 +1,18 @@
 "use client";
 
+import { toast } from "sonner";
+
 import { Switch } from "@/components/ui/switch";
 import { ModelSelect } from "@/components/workspace/model-select";
 import { useAutoTitleCapability } from "@/core/features";
 import { useI18n } from "@/core/i18n/hooks";
 import { useModels } from "@/core/models/hooks";
 import { useLocalSettings } from "@/core/settings";
+import {
+  setAutoTitlePreference,
+  type AutoTitleSave,
+} from "@/core/settings/auto-title-sync";
+import { isStaticWebsiteOnly } from "@/core/static-mode";
 
 import { SettingsSection } from "./settings-section";
 
@@ -19,7 +26,9 @@ const NO_MODEL = "__no_model__";
 
 export function AutoTitleSettingsPage() {
   const { t } = useI18n();
-  const [settings, setSettings] = useLocalSettings();
+  // Read only: every change goes through `setAutoTitlePreference`, which also
+  // saves it to the account the Gateway applies to runs from anywhere.
+  const [settings] = useLocalSettings();
   const { models } = useModels();
   const { enabled: serverEnabled, modelName: serverModelName } =
     useAutoTitleCapability();
@@ -40,15 +49,24 @@ export function AutoTitleSettingsPage() {
       : FOLLOW_SERVER;
   }
 
+  // The switch moves at once; a save the account did not take puts it back
+  // on the stored value, and says so rather than leaving a setting on screen
+  // that other devices and channels would not follow.
+  const reportSave = (outcome: AutoTitleSave) => {
+    if (outcome === "failed") {
+      toast.error(t.settings.autoTitle.saveFailed);
+    }
+  };
+
   const handleToggle = (next: boolean) => {
-    setSettings("autoTitle", { enabled: next });
+    void setAutoTitlePreference({ enabled: next }).then(reportSave);
   };
 
   const handleModelChange = (value: string) => {
-    setSettings("autoTitle", {
+    void setAutoTitlePreference({
       modelName:
         value === FOLLOW_SERVER ? undefined : value === NO_MODEL ? "" : value,
-    });
+    }).then(reportSave);
   };
 
   return (
@@ -109,6 +127,13 @@ export function AutoTitleSettingsPage() {
         <p className="text-muted-foreground text-xs">
           {t.settings.autoTitle.timingHint}
         </p>
+
+        {/* A static demo has no account: there the setting is this browser's. */}
+        {!isStaticWebsiteOnly() && (
+          <p className="text-muted-foreground text-xs">
+            {t.settings.autoTitle.accountHint}
+          </p>
+        )}
       </div>
     </SettingsSection>
   );

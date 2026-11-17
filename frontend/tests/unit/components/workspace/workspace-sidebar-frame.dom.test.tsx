@@ -19,6 +19,7 @@ import {
   WorkspaceSidebarFrame,
   useWorkspaceSidebarExpanded,
 } from "@/components/workspace/workspace-sidebar-frame";
+import { THREAD_SELECTING_ATTRIBUTE } from "@/core/threads/thread-selection";
 
 const { mobile, navigation } = rs.hoisted(() => ({
   mobile: { value: true },
@@ -49,6 +50,23 @@ function Contents() {
       <a href="#agents">Agents</a>
       <Link href="/workspace/chats" onClick={(event) => event.preventDefault()}>
         Chats
+      </Link>
+      {/* A chat row in sidebar selection mode: its click toggles a checkbox.
+          The marker is the constant the real row sets. */}
+      <Link
+        {...{ [THREAD_SELECTING_ATTRIBUTE]: "true" }}
+        href="/workspace/chats/selected-chat"
+        onClick={(event) => event.preventDefault()}
+      >
+        Selecting row
+      </Link>
+      {/* A row menu's Show files on the chat that is already open: only the
+          query changes. */}
+      <Link
+        href="/workspace/chats/open-chat?panel=files"
+        onClick={(event) => event.preventDefault()}
+      >
+        Show files
       </Link>
       {expanded && <p>Projects and recent chats</p>}
     </>
@@ -136,6 +154,38 @@ describe("workspace mobile sidebar", () => {
         screen.getByRole("textbox", { name: "Search chats" }),
       ),
     );
+  });
+
+  it("stays open when a selecting chat row is clicked, and closes for a plain link", async () => {
+    render(<Harness />);
+    fireEvent.click(screen.getByRole("button", { name: "Toggle navigation" }));
+    const dialog = await screen.findByRole("dialog");
+
+    fireEvent.click(
+      within(dialog).getByRole("link", { name: "Selecting row" }),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(screen.queryByRole("dialog")).not.toBeNull();
+
+    fireEvent.click(within(dialog).getByRole("link", { name: "Chats" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  });
+
+  it("closes for a link that only adds a query to the open chat", async () => {
+    const { pathname, search, hash } = window.location;
+    window.history.replaceState(null, "", "/workspace/chats/open-chat");
+    try {
+      render(<Harness />);
+      fireEvent.click(
+        screen.getByRole("button", { name: "Toggle navigation" }),
+      );
+      const dialog = await screen.findByRole("dialog");
+      fireEvent.click(within(dialog).getByRole("link", { name: "Show files" }));
+      // The path stays the same, so the pathname effect never closes it.
+      await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    } finally {
+      window.history.replaceState(null, "", pathname + search + hash);
+    }
   });
 
   it("uses the standard mobile drawer width with a collapsed desktop preference", async () => {

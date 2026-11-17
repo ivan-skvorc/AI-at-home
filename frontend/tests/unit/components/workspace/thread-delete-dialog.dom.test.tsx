@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, rs } from "@rstest/core";
+import { afterEach, beforeEach, describe, expect, it, rs } from "@rstest/core";
 import {
   QueryClient,
   QueryClientProvider,
@@ -57,9 +57,117 @@ function Trigger() {
   );
 }
 
+// The folder ledger's answer for the conversation being deleted.
+let ledger: unknown = { available: false, folders: [] };
+
+beforeEach(() => {
+  ledger = { available: false, folders: [] };
+  rs.stubGlobal(
+    "fetch",
+    rs.fn(async (url: string) =>
+      url.includes("/api/folder-ledger/threads/thread-1/folders")
+        ? Response.json(ledger)
+        : new Response(null, { status: 404 }),
+    ),
+  );
+});
+
 afterEach(() => {
   cleanup();
   rs.restoreAllMocks();
+  rs.unstubAllGlobals();
+});
+
+function renderDialog() {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  });
+  render(
+    <I18nProvider initialLocale={DEFAULT_LOCALE}>
+      <QueryClientProvider client={client}>
+        <ThreadDeleteDialogProvider>
+          <Trigger />
+        </ThreadDeleteDialogProvider>
+      </QueryClientProvider>
+    </I18nProvider>,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Open deletion" }));
+  return client;
+}
+
+describe("thread deletion confirmation copy", () => {
+  it("says the own folder goes and names the shared folders that are kept", async () => {
+    ledger = {
+      available: true,
+      folders: ["acme", "data", "logs", "notes"].map((name) => ({
+        id: `id-${name}`,
+        path: `/mnt/projects/${name}`,
+        name,
+        mount_path: "/mnt/projects",
+        kind: "dir",
+        role: "edited",
+        created_here: false,
+        created_attribution: "observed_create",
+        first_at: null,
+        last_at: null,
+        writes: 1,
+        edits: 0,
+        shell_ops: 0,
+        other_live_threads: 0,
+        host_visible: true,
+      })),
+    };
+    const client = renderDialog();
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog.textContent).toContain(
+      "This deletes the conversation and its own folder (/mnt/user-data)",
+    );
+    await waitFor(() =>
+      expect(
+        screen.getByTestId("thread-delete-shared-folders").textContent,
+      ).toBe(
+        "It used these shared folders, which are kept: acme, data, logs and 1 more. If no other conversation still uses one, you will be offered to delete it.",
+      ),
+    );
+    client.clear();
+  });
+
+  it("promises no offer where folders are not tracked", async () => {
+    const client = renderDialog();
+    await screen.findByRole("dialog");
+    await waitFor(() =>
+      expect(
+        screen.getByTestId("thread-delete-shared-folders").textContent,
+      ).toBe("Shared folders it used outside /mnt/user-data are kept."),
+    );
+    client.clear();
+  });
+
+  for (const [name, answer] of [
+    ["while the ledger loads", () => new Promise<Response>(() => undefined)],
+    [
+      "when the Gateway has no ledger routes",
+      async () => new Response(null, { status: 404 }),
+    ],
+    [
+      "when the ledger fails",
+      async () => new Response("boom", { status: 500 }),
+    ],
+  ] as const) {
+    it(`promises no offer ${name}`, async () => {
+      const ledgerFetch = rs.fn(answer);
+      rs.stubGlobal("fetch", ledgerFetch);
+      const client = renderDialog();
+      await screen.findByRole("dialog");
+      await waitFor(() => expect(ledgerFetch).toHaveBeenCalled());
+      // Let a failed answer settle before reading the copy.
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(
+        screen.getByTestId("thread-delete-shared-folders").textContent,
+      ).toBe("Shared folders it used outside /mnt/user-data are kept.");
+      client.clear();
+    });
+  }
 });
 
 describe("thread deletion failure feedback", () => {
