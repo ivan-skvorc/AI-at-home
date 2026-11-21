@@ -156,6 +156,12 @@ def _make_todo_middleware():
     return TodoMiddleware()
 
 
+def _make_completion_review_middleware():
+    from deerflow.agents.middlewares.completion_review_middleware import CompletionReviewMiddleware
+
+    return CompletionReviewMiddleware(skill_learning=True, nudge_after_tool_calls=8, archive_unused_after_days=90)
+
+
 def _make_token_budget_middleware():
     from deerflow.agents.middlewares.token_budget_middleware import TokenBudgetMiddleware
     from deerflow.config.token_budget_config import TokenBudgetConfig
@@ -242,6 +248,8 @@ _MIDDLEWARE_DECLARATIONS = [
     # DeerFlow's own subclass, not the LangChain base class re-exported into
     # this module under the same import path (TodoListMiddleware).
     ("deerflow.agents.middlewares.todo_middleware", "TodoMiddleware", _make_todo_middleware),
+    # Fork (FORK.md §55): the completion review's checks and the curator window.
+    ("deerflow.agents.middlewares.completion_review_middleware", "CompletionReviewMiddleware", _make_completion_review_middleware),
     ("deerflow.agents.middlewares.token_budget_middleware", "TokenBudgetMiddleware", _make_token_budget_middleware),
     ("deerflow.agents.middlewares.deferred_tool_filter_middleware", "DeferredToolFilterMiddleware", _make_deferred_tool_filter_middleware),
     ("deerflow.agents.middlewares.safety_finish_reason_middleware", "SafetyFinishReasonMiddleware", _make_safety_finish_reason_middleware),
@@ -366,3 +374,30 @@ def test_equivalent_durable_context_configuration_has_identical_identity():
     first = DurableContextMiddleware(skills_container_path="/skills/./", skill_file_read_tool_names=["read_b", "read_a", "read_a"])
     second = DurableContextMiddleware(skills_container_path="/skills", skill_file_read_tool_names=["read_a", "read_b"])
     assert _middleware_fingerprint(first) == _middleware_fingerprint(second)
+
+
+@pytest.mark.parametrize(
+    "changed",
+    [
+        {"verify_code_edits": False},
+        {"skill_learning": False},
+        {"nudge_after_tool_calls": 30},
+        {"archive_unused_after_days": 7},
+    ],
+)
+def test_completion_review_settings_change_assembly_identity(changed):
+    from deerflow.agents.middlewares.completion_review_middleware import CompletionReviewMiddleware
+
+    baseline = {"verify_code_edits": True, "skill_learning": True, "nudge_after_tool_calls": 8, "archive_unused_after_days": 90}
+    assert _middleware_fingerprint(CompletionReviewMiddleware(**baseline)) != _middleware_fingerprint(CompletionReviewMiddleware(**{**baseline, **changed}))
+
+
+def test_completion_review_declares_the_reused_stop_vocabulary_and_code_suffixes(monkeypatch):
+    from deerflow.agents.middlewares import completion_review_middleware as module
+
+    params = module.CompletionReviewMiddleware().release_policy_parameters()
+    assert params["run_stop_reasons"] == ["loop_capped", "token_capped", "spend_capped"]
+    assert set(params["response_stop_markers"]) == {"safety_capped", "model_length_capped"}
+    before = params["code_suffixes_hash"]
+    monkeypatch.setattr(module, "CODE_SUFFIXES", module.CODE_SUFFIXES | {".md"})
+    assert module.CompletionReviewMiddleware().release_policy_parameters()["code_suffixes_hash"] != before

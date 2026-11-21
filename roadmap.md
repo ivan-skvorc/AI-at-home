@@ -143,6 +143,8 @@ Open items, one line each. The full orchestrator prompts follow.
   a native FreeCAD file, for the parts the allow-list cannot express.
 - **51. A part made of several bodies** — a print-in-place hinge is loose bodies with a
   gap; the tool delivers one solid and says so.
+- **52. Memory that helps a coding agent** — repository-scoped facts, build/test
+  procedures, a search over past conversations, and project memory the agent can write.
 
 **Suggested order for 19–25.** Voice first (19), since it is the one missing modality and it
 closes a live privacy leak. Then the injection boundary (23), *before* anything widens the
@@ -206,7 +208,7 @@ Repo conventions that are not optional:
   DEER_FLOW_ENV/ENVIRONMENT is prod. Follow the pattern in
   backend/app/gateway/auth_disabled.py.
 
-Follow CHANGE_CYCLE.md for the change itself; where this block and that file differ, that
+Follow change_cycle.md for the change itself; where this block and that file differ, that
 file wins. Work on a branch, never on main, and open the pull request when the change is
 done. That step does not wait to be asked for.
 ```
@@ -1451,6 +1453,48 @@ tests, `skills/public/cad-modeling/`.
 **Done when** — a two-link hinge with a 0.3 mm gap passes with a body count of three and
 fails with a gap of zero; a one-body part behaves exactly as before; and the fixed
 request still fits the allowance.
+
+---
+
+## 52. Memory that helps a coding agent
+
+**Goal** — The agent remembers how *this repository* is built and tested, what went wrong
+last time, and how a past session solved a similar problem, without the user repeating it.
+
+**Why it fits** — A review of `deerflow/agents/memory/` against coding work (FORK.md §55)
+found long-term memory built for facts about the *user*: the extraction prompt
+(`memory_update.chat.yaml`) stores only user-scoped, durable, descriptive facts and
+explicitly forbids "workspace state, exact current file/commit/error state"; tool-call
+turns are dropped before extraction; summaries are global per user. That is right for
+preferences and wrong for "this repo's tests run with `make test` from `backend/`".
+Procedures already have a home in skills (§55's learning loop); what is missing is the
+small, always-relevant layer under them.
+
+**Depends on** — nothing open. Skills (§55) stay the place for multi-step procedures.
+
+**Scope**
+
+- **Repository scope.** Key facts to a repository identity (the normalized `origin`
+  URL, falling back to the workspace path) and inject only the facts of the repository
+  the run is working in. Today the nearest thing, project memory
+  (`deerflow/projects/memory.py`, 30 facts / 2 KiB), is keyed to a user-created
+  conversation group with no repository field.
+- **A procedure/constraint category** for "how to build, test, run, deploy here" and
+  "never do X here", admitted by the deterministic gate only with evidence from a
+  successful tool run in the same turn, so a guessed command never becomes memory.
+- **Agent-writable project memory.** No tool reaches project facts; in `mode: tool`
+  the agent can write user facts but not the conventions of the project it is in.
+- **Search over past conversations.** `/threads/search` matches titles only and the FTS5
+  index covers facts only; an FTS index over finished runs' final answers (not tool
+  output) would let the agent find "how did we fix the flaky test last week".
+
+**Key files** — `deerflow/agents/memory/backends/deermem/deermem/core/prompts/memory_update.chat.yaml`,
+`core/storage.py`, `core/message_processing.py`, `deerflow/projects/memory.py`,
+`deerflow/agents/memory/tools.py`, `app/gateway/routers/threads.py` (search).
+
+**Done when** — a fact learned while testing repository A is injected in a later run on
+A and never on B; a guessed command that failed is not stored; and the 32K critical
+check still fits.
 
 ---
 

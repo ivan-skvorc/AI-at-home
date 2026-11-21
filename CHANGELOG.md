@@ -11,6 +11,7 @@ This section accumulates work toward the **2.3.0** milestone
 ([2.3.0](https://github.com/bytedance/deer-flow/milestone/4)).
 
 ### Added
+- **agent:** A coding agent that checks its work, learns skills and ships through git. `str_replace` refuses an `old_str` that matches more than one place (it used to edit the first copy and report OK); a write that leaves a Python, JSON, YAML or TOML file unparseable says where; and before its final answer the agent is reminded once to run something when it edited code and ran nothing afterwards (`harness_guard.verify_before_finish`, on). With `skill_evolution.enabled`, a long run ends with one reminder to save or patch a skill, loads are counted per user, and agent-written skills unused for 90 days are switched off, never deleted. Eight skills are bundled: six coding skills adapted from Hermes Agent (MIT), `git-pr-workflow` (branch, checkpoint, commit with secret refusals, verified push, one PR per branch) and `repo-change-cycle`. `CHANGE_CYCLE.md` is now `change_cycle.md`, run at level 1, 2 or 3 against a new feature map in `docs/repo-map/`. `config_version` 75.
 - **workspace:** Select several chats in the sidebar and act on them at once. **Select** beside *New folder* (or in a chat's menu) adds a checkbox to every row; Shift-click ticks a range in the order the sidebar shows. The toolbar moves the ticked chats into a folder, out of their folders or into a **New folder from selection…**, archives them with one Undo, deletes them after a confirmation that names them and says it cannot be undone, or opens clean-up mode. Moving never reorders the list; a chat that fails (for example one still answering, which cannot be deleted) stays ticked and nothing is retried automatically. No configuration.
 - **workspace:** Clean-up mode. **Clean up…** in the selection toolbar, or **Clean up all…** for the 200 most recent chats, has a model you pick suggest a clearer title for each conversation and file it into folders you choose or folders it proposes. Nothing is written until you review the plan and press **Apply**; applying creates new folders in one write, and moves and renames chats without changing their place in the recency order. One model call per conversation (plus at most one grouping call in auto mode), billed to the conversations under the new **Chat clean-up** cost line and stopped by the spend cap. New read-only routes `POST /api/threads/{thread_id}/organize/suggest` and `POST /api/chat-organize/consolidate`, and `preserve_recency` on `POST /api/threads/{thread_id}/state`. No configuration keys; `title.enabled: false` turns the renaming half off.
 - **workspace:** Shared folders remember which conversations wrote to them. Top-level folders in a writable custom `sandbox.mounts` entry are recorded with the conversations that created, edited or inherited them and an edit log, shown under **Shared folders** in a chat's **Files** tab. When the last conversation that used such a folder is deleted, DeerFlow offers to delete it, never automatically and with nothing pre-ticked, and only for a folder a conversation was seen creating, to its creator or an admin. Needs the SQL database (migration `0057_folder_ledger`); no configuration keys.
@@ -1189,7 +1190,7 @@ This section accumulates work toward the **2.3.0** milestone
   sentences at the end rather than nine lines at the top.
 
 - **docs:** **A new feature now owes `README.md` a bullet, and the change cycle
-  says so.** [`CHANGE_CYCLE.md`](CHANGE_CYCLE.md) step 7 gains an explicit gate
+  says so.** [`CHANGE_CYCLE.md`](change_cycle.md) step 7 gains an explicit gate
   next to step 3's "does this need a test": decide whether the change adds (or
   removes) something a user can name, and answer it in the report's new
   `README:` line — the bullet you added, or "no README change" with the reason.
@@ -1226,7 +1227,7 @@ This section accumulates work toward the **2.3.0** milestone
   `price:` / `discount:` blocks and name the one live promo, MiniMax M3.
 
 - **docs:** **The change cycle ends by opening the pull request, and the model
-  audit no longer runs unasked.** [`CHANGE_CYCLE.md`](CHANGE_CYCLE.md) gains an
+  audit no longer runs unasked.** [`CHANGE_CYCLE.md`](change_cycle.md) gains an
   end-to-end summary of its own shape at the top — change, write the tests a
   future reader needs, add and retire the matching FORK.md rows, run the whole
   list including the tests just added, optionally audit the models, open the PR —
@@ -1246,7 +1247,7 @@ This section accumulates work toward the **2.3.0** milestone
   reports green and simply sits there.
 
 - **docs:** **One sentence now runs the whole change procedure.**
-  [`CHANGE_CYCLE.md`](CHANGE_CYCLE.md) formalizes what was previously spread
+  [`CHANGE_CYCLE.md`](change_cycle.md) formalizes what was previously spread
   across FORK.md's preamble and a maintainer's habit: implement, decide whether
   the change owes a new test and write it, add or retire the matching row in
   FORK.md's post-sync checklist, run that full list, run the model audit only

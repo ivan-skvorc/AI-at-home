@@ -1,8 +1,8 @@
 """HarnessGuard tool-loop interceptor middleware.
 
 Provides:
-1. Optional Write-Verify Gate: Pre-execution syntax validation on .py (ast.parse) and .json writes
-   for str_replace (spliced verification on valid files; opt-in).
+1. Optional Write-Verify Gate: Pre-execution syntax validation on .py, .json, .yaml and .toml writes
+   for str_replace (spliced verification on valid files with an unambiguous old_str; opt-in).
 2. Error Signature Classifier: Detects classic failure patterns and injects actionable Targeted Hints.
 3. Anti-Doom-Loop: Detects consecutive identical error signatures and A -> B -> A -> B alternating failure loops,
    scoped cleanly by (thread_id, run_id) with bounded LRU tracking.
@@ -10,9 +10,7 @@ Provides:
 
 from __future__ import annotations
 
-import ast
 import asyncio
-import json
 import logging
 import re
 import threading
@@ -35,7 +33,8 @@ from deerflow.agents.middlewares.tool_result_meta import (
 )
 from deerflow.agents.middlewares.tool_transform_meta import append_tool_transform
 from deerflow.config.harness_guard_config import HarnessGuardConfig
-from deerflow.sandbox.tools import _match_line_endings, read_current_file_content
+from deerflow.sandbox.syntax_check import check_syntax, is_checked_path
+from deerflow.sandbox.tools import _is_ambiguous_match, _match_line_endings, read_current_file_content
 
 logger = logging.getLogger(__name__)
 
@@ -164,25 +163,13 @@ def classify_tool_error(content: str) -> ErrorSignature | None:
 
 
 def verify_content_syntax(file_path: str, content: str) -> str | None:
-    """Validate content syntax for known formats. Returns error message if invalid."""
-    if not file_path or not content:
-        return None
+    """Validate content syntax for known formats. Returns error message if invalid.
 
-    if file_path.endswith(".py"):
-        try:
-            ast.parse(content, filename=file_path)
-        except SyntaxError as e:
-            return f"Python syntax error at line {e.lineno}, col {e.offset}: {e.msg}"
-        except ValueError as e:
-            return f"Python source code error: {e}"
-
-    elif file_path.endswith(".json"):
-        try:
-            json.loads(content)
-        except Exception as e:
-            return f"Invalid JSON format: {e}"
-
-    return None
+    One parser set for the blocking gate here and the advisory note the write
+    tools append (``deerflow.sandbox.syntax_check``), so the two never disagree
+    about whether a file parses.
+    """
+    return check_syntax(file_path, content)
 
 
 def _extract_text_content(content: Any) -> str:
@@ -284,12 +271,16 @@ class HarnessGuardMiddleware(AgentMiddleware):
         if tool_name == "str_replace":
             old_str = args.get("old_str")
             new_str = args.get("new_str")
-            if isinstance(old_str, str) and isinstance(new_str, str) and (file_path.endswith(".py") or file_path.endswith(".json")):
+            if isinstance(old_str, str) and isinstance(new_str, str) and is_checked_path(file_path):
                 try:
                     current = read_current_file_content(request.runtime, file_path)
                     old_str, new_str = _match_line_endings(current, old_str, new_str)
-                    if old_str in current and verify_content_syntax(file_path, current) is None:
-                        replace_all = bool(args.get("replace_all", False))
+                    replace_all = bool(args.get("replace_all", False))
+                    # An ambiguous single edit is refused by the tool, with the
+                    # count and lines; splicing the first copy here would block
+                    # it for a syntax error at a place the model never meant.
+                    ambiguous = not replace_all and _is_ambiguous_match(current, old_str)
+                    if old_str in current and not ambiguous and verify_content_syntax(file_path, current) is None:
                         spliced = current.replace(old_str, new_str) if replace_all else current.replace(old_str, new_str, 1)
                         err = verify_content_syntax(file_path, spliced)
                 except Exception:

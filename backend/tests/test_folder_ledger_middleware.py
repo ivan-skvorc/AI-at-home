@@ -84,7 +84,7 @@ def _writing_tool(hosts, *, result="OK", status="success"):
 
     def handler(request):
         path = request.tool_call["args"]["path"]
-        if result == "OK" and path.startswith("/mnt/projects/"):
+        if result.partition("\n")[0] == "OK" and path.startswith("/mnt/projects/"):
             target = hosts.projects / path.removeprefix("/mnt/projects/")
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text("x", encoding="utf-8")
@@ -143,9 +143,24 @@ def test_sync_path_records_and_str_replace_counts_an_edit(hosts, ledger):
     assert ledger.rows(FolderLedgerEventRow)[0].op == "edit"
 
 
+def test_a_write_carrying_the_syntax_warning_is_recorded(hosts, ledger):
+    # A file written in parts does not parse after its first part, so that
+    # write returns OK plus a warning; it is still the write that created the folder.
+    middleware = _middleware(_config(hosts), ledger)
+    warned = "OK\n\nWarning: /mnt/projects/newproj/main.py does not parse after this write. Python 3.12 syntax error at line 1, column 7: invalid syntax. If you are still writing the file in parts, continue."
+
+    _arun(middleware, _request("write_file", {"path": "/mnt/projects/newproj/main.py", "content": "def f(:"}), _writing_tool(hosts, result=warned))
+    _arun(middleware, _request("write_file", {"path": "/mnt/projects/newproj/main.py", "content": ")", "append": True}, call_id="call-2"), _writing_tool(hosts))
+
+    (folder,) = ledger.rows(FolderLedgerFolderRow)
+    assert (folder.created_attribution, folder.created_by_thread_id) == ("observed_create", "thread-a")
+    (touch,) = ledger.rows(FolderLedgerTouchRow)
+    assert (touch.role, touch.writes) == ("created", 2)
+
+
 @pytest.mark.parametrize(
     ("result", "status"),
-    [("Error: String to replace not found in file: /mnt/projects/acme/a.py", "success"), ("Error: permission denied", "error"), ("Wrote 3 bytes", "success")],
+    [("Error: String to replace not found in file: /mnt/projects/acme/a.py", "success"), ("Error: permission denied", "error"), ("Wrote 3 bytes", "success"), ("OK, but nothing was written", "success")],
 )
 def test_only_an_exact_ok_result_is_recorded(hosts, ledger, result, status):
     middleware = _middleware(_config(hosts), ledger)

@@ -1,6 +1,6 @@
 # Copilot Onboarding Instructions for DeerFlow
 
-**Before making any repository change, read and follow [`AGENTS.md`](../AGENTS.md) and [`CHANGE_CYCLE.md`](../CHANGE_CYCLE.md).** The cycle applies automatically to every change request: run relevant existing tests, add tests only for gaps, review and remove unnecessary tests in the affected area, run the checks its step 5 scope table requires, run the model audit only when the request asks for one, and finish by opening a pull request. Where this file and `CHANGE_CYCLE.md` disagree, `CHANGE_CYCLE.md` wins.
+**Before making any repository change, read and follow [`AGENTS.md`](../AGENTS.md) and [`change_cycle.md`](../change_cycle.md).** The cycle applies automatically to every change request: run relevant existing tests, add tests only for gaps, review and remove unnecessary tests in the affected area, run the checks its level requires (level 1: the features the changed files map to in `docs/repo-map/index.md`), run the model audit only when the request asks for one, and finish by opening and merging a pull request. Where this file and `change_cycle.md` disagree, `change_cycle.md` wins.
 
 Use this file as the default operating guide for this repository. Follow it first, and only search the codebase when this file is incomplete or incorrect.
 
@@ -174,9 +174,9 @@ Skills and assets:
 This fork's full procedure — which tests a change owes, keeping
 [FORK.md's post-sync checklist](../FORK.md#post-sync-feature-checklist) in sync
 with the code, and the model audit, which runs only when the request asks for one — is
-[`CHANGE_CYCLE.md`](../CHANGE_CYCLE.md). Follow it automatically for every repository change.
+[`change_cycle.md`](../change_cycle.md). Follow it automatically for every repository change.
 
-Before submitting changes, run the checks CHANGE_CYCLE.md step 5 requires for the change. For code changes that means at minimum:
+Before submitting changes, run the checks change_cycle.md's level requires for the change. Level 1 runs the tests of the features the changed files map to in `docs/repo-map/index.md`, plus lint. Level 2, or a changed file the map marks `ALL`, means at minimum:
 
 - Backend (if touched): `cd backend && make lint && make test`
 - Frontend (if touched): `cd frontend && pnpm check && pnpm test`

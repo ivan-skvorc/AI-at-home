@@ -229,20 +229,18 @@ def get_skill_index_prompt_section(
     names = ", ".join(html.escape(name, quote=False) for name in sorted(skill_names))
     evolution = f"\n{skill_evolution_section}" if skill_evolution_section else ""
 
+    # Fork: worded tighter than upstream's numbered list, same instructions. This
+    # section rides every small-window request, and the tokens it gave back pay
+    # for the bundled coding skills' names (FORK.md §55); the 32K critical check
+    # (tests/test_context_fit_critical.py) fails if the long form returns.
     return f"""<skill_system>
-You have access to skills that provide optimized workflows for specific tasks.
+Skills are optimized workflows for specific tasks.
 
-**Skill Discovery:**
-1. Check <skill_index> for a skill name that matches your task
-2. Call describe_skill(name) to fetch its description and capabilities
-3. If the skill matches, call read_file on the returned location to load full instructions
-4. Follow the skill's instructions precisely
+**Skill Discovery:** when a name in <skill_index> matches your task, call describe_skill(name); if it fits, call read_file on the returned location and follow those instructions precisely.
 
-**Explicit Slash Skill Activation:**
-- If the user starts a request with `/<skill-name>`, that skill was explicitly requested.
-- The runtime injects the activated skill content; do not call `read_file` for that SKILL.md again unless the injected skill references supporting resources you need.
+**Slash activation:** a request starting with `/<skill-name>` explicitly asks for that skill, and the runtime already injected its content: read that SKILL.md again only for supporting resources it references.
 
-**Allowed tools:** A skill's `allowed-tools` metadata is compatibility information for other agent frameworks. It never restricts or grants tools here; your tools are controlled by DeerFlow's Agent configuration and authorization.
+**Allowed tools:** a skill's `allowed-tools` metadata is compatibility information for other frameworks; it never restricts or grants tools here.
 {evolution}
 <skill_index>
 {names}

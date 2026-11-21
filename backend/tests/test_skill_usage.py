@@ -228,3 +228,129 @@ def test_structured_read_failures_never_register_usage(asynchronous, content, kw
     assert result.additional_kwargs["deerflow_tool_meta"]["status"] == "error"
     assert "skill_usage" not in result.additional_kwargs
     assert recorded == []
+
+
+# -- the skill ledger counts loads where they happen (FORK.md §55) -------------------
+
+
+class _CustomRoot:
+    def __init__(self, root):
+        self.root = root
+
+    def get_user_custom_root(self):
+        return self.root
+
+
+@pytest.fixture
+def ledger_home(tmp_path, monkeypatch):
+    """The per-user storage the recorder resolves, under ``tmp_path``; yields a reader of the ledger."""
+    import json
+
+    from deerflow.agents.middlewares.skill_usage import flush_skill_ledger_jobs
+
+    custom_root = tmp_path / "users" / "u1" / "skills" / "custom"
+    owners = []
+    monkeypatch.setattr("deerflow.skills.storage.get_or_new_user_skill_storage", lambda user_id, **_kw: owners.append(user_id) or _CustomRoot(custom_root))
+
+    def read() -> dict:
+        assert flush_skill_ledger_jobs()
+        path = custom_root.parent / "_skill_ledger.json"
+        skills = json.loads(path.read_text(encoding="utf-8"))["skills"] if path.exists() else {}
+        return {name: entry["use_count"] for name, entry in skills.items()}
+
+    read.owners = owners
+    yield read
+    assert flush_skill_ledger_jobs()
+
+
+EVOLUTION_ON = SimpleNamespace(skill_evolution=SimpleNamespace(enabled=True))
+EVOLUTION_OFF = SimpleNamespace(skill_evolution=SimpleNamespace(enabled=False))
+
+
+def test_a_subagent_load_is_counted_but_not_journaled(ledger_home):
+    """Subagents never hand their messages to the lead, so the end-of-run count missed them."""
+    from deerflow.agents.middlewares.skill_usage import record_skill_usage
+
+    journal = SimpleNamespace(record_skill_usage=lambda usage: pytest.fail("subagent usage reached the lead's journal"))
+    runtime = SimpleNamespace(context={"is_subagent": True, "user_id": "u1", "app_config": EVOLUTION_ON, "__run_journal": journal})
+
+    record_skill_usage(runtime, {"name": "deploy", "category": "custom"})
+
+    assert ledger_home() == {"deploy": 1}
+    assert ledger_home.owners == ["u1"]
+
+
+def test_loads_are_not_counted_while_skill_evolution_is_off(ledger_home):
+    from deerflow.agents.middlewares.skill_usage import record_skill_usage
+
+    record_skill_usage(SimpleNamespace(context={"user_id": "u1", "app_config": EVOLUTION_OFF}), {"name": "deploy", "category": "custom"})
+
+    assert ledger_home() == {}
+    assert ledger_home.owners == []
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+def test_a_skill_read_is_counted_once_when_it_happens(ledger_home, asynchronous):
+    """The read funnel counts the load at once, so compaction later in the run cannot lose it."""
+    recorded = []
+    request = SimpleNamespace(
+        tool_call={"name": "read_file", "id": "read-1", "args": {"path": "/mnt/skills/custom/report/SKILL.md"}},
+        runtime=SimpleNamespace(context={"user_id": "u1", "app_config": EVOLUTION_ON, "__run_journal": SimpleNamespace(record_skill_usage=recorded.append)}),
+    )
+    content = "---\nname: quarterly-report\ndescription: Summarize results.\n---\n# Report"
+    read = ToolErrorHandlingMiddleware()
+    budget = ToolOutputBudgetMiddleware()
+    if asynchronous:
+
+        async def inner(_request):
+            return ToolMessage(content=content, tool_call_id="read-1")
+
+        async def wrapped(inner_request):
+            return await read.awrap_tool_call(inner_request, inner)
+
+        asyncio.run(budget.awrap_tool_call(request, wrapped))
+    else:
+        budget.wrap_tool_call(request, lambda inner_request: read.wrap_tool_call(inner_request, lambda _: ToolMessage(content=content, tool_call_id="read-1")))
+
+    assert ledger_home() == {"quarterly-report": 1}
+    assert len(recorded) == 1
+
+
+def test_the_recorder_drops_work_beyond_its_bound_instead_of_blocking(monkeypatch):
+    import threading
+
+    from deerflow.agents.middlewares import skill_usage
+
+    monkeypatch.setattr(skill_usage, "MAX_PENDING_LEDGER_JOBS", 2)
+    release = threading.Event()
+    started = threading.Event()
+    ran = []
+
+    def blocking_job():
+        started.set()
+        release.wait(10)
+
+    try:
+        assert skill_usage.submit_skill_ledger_job(blocking_job)
+        assert started.wait(10)
+        assert skill_usage.submit_skill_ledger_job(lambda: ran.append(1))
+        assert skill_usage.submit_skill_ledger_job(lambda: ran.append(2))
+        assert not skill_usage.submit_skill_ledger_job(lambda: ran.append(3))
+    finally:
+        release.set()
+    assert skill_usage.flush_skill_ledger_jobs()
+    assert ran == [1, 2]
+
+
+def test_a_failing_ledger_job_does_not_stop_the_recorder():
+    from deerflow.agents.middlewares import skill_usage
+
+    ran = []
+
+    def boom():
+        raise OSError("disk full")
+
+    assert skill_usage.submit_skill_ledger_job(boom)
+    assert skill_usage.submit_skill_ledger_job(lambda: ran.append("after"))
+    assert skill_usage.flush_skill_ledger_jobs()
+    assert ran == ["after"]

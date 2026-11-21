@@ -203,6 +203,89 @@ test("builds a draft write-file artifact from successful writes plus the selecte
   ).toBe("<!doctype html><html><body><p>追加内容</p>");
 });
 
+test("a base write that carries the syntax warning still starts the chunked draft", () => {
+  // The first part of a file written in parts does not parse, so write_file
+  // returns OK followed by a warning; the write itself succeeded.
+  const path = "/mnt/user-data/workspace/big.py";
+  const warned = `OK\n\nWarning: ${path} does not parse after this write. Python 3.12 syntax error at line 1, column 9: expected an indented block. If you are still writing the file in parts, continue; otherwise fix it before running it.`;
+  const messages = [
+    {
+      type: "ai",
+      id: "ai-1",
+      tool_calls: [
+        {
+          id: "call-1",
+          name: "write_file",
+          args: { path, content: "def f():\n" },
+        },
+      ],
+    },
+    { type: "tool", id: "tool-1", tool_call_id: "call-1", content: warned },
+    {
+      type: "ai",
+      id: "ai-2",
+      tool_calls: [
+        {
+          id: "call-2",
+          name: "write_file",
+          args: { append: true, path, content: "    return 1\n" },
+        },
+      ],
+    },
+    { type: "tool", id: "tool-2", tool_call_id: "call-2", content: "OK" },
+  ];
+
+  expect(
+    buildWriteFileDraftContent({
+      filepath: `write-file:${path}?message_id=ai-2&tool_call_id=call-2`,
+      messages,
+    }),
+  ).toBe("def f():\n    return 1\n");
+  expect(
+    buildWriteFileDraftContent({
+      filepath: `write-file:${path}?message_id=ai-1&tool_call_id=call-1`,
+      messages,
+    }),
+  ).toBe("def f():\n");
+  expect(
+    getArtifactViewState({
+      filepath: `write-file:${path}?message_id=ai-1&tool_call_id=call-1`,
+      isSupportPreview: true,
+      toolResult: warned,
+    }).canPreview,
+  ).toBe(true);
+});
+
+test("a write result whose status is error is a failed write even if it reads OK", () => {
+  const messages = [
+    {
+      type: "ai",
+      id: "ai-1",
+      tool_calls: [
+        {
+          id: "call-1",
+          name: "write_file",
+          args: { path: ARTIFACT_PATH, content: "<html>" },
+        },
+      ],
+    },
+    {
+      type: "tool",
+      id: "tool-1",
+      tool_call_id: "call-1",
+      status: "error",
+      content: "OK",
+    },
+  ];
+
+  expect(
+    buildWriteFileDraftContent({
+      filepath: `write-file:${ARTIFACT_PATH}?message_id=ai-1&tool_call_id=call-1`,
+      messages,
+    }),
+  ).toBeUndefined();
+});
+
 test("does not include failed writes in a draft artifact", () => {
   const filepath = `write-file:${ARTIFACT_PATH}?message_id=ai-3&tool_call_id=call-3`;
 

@@ -579,6 +579,16 @@ def build_middlewares(
     if summarization_middleware is not None:
         middlewares.append(summarization_middleware)
 
+    # One review before the final answer: code edited but never run, or a long
+    # run that taught something worth a skill (FORK.md §55). Registered before
+    # the TodoList middleware so the reverse-order after_model lets an open
+    # to-do list's reminder go first.
+    from deerflow.agents.middlewares.completion_review_middleware import CompletionReviewMiddleware
+
+    completion_review = CompletionReviewMiddleware.from_app_config(resolved_app_config)
+    if completion_review is not None:
+        middlewares.append(completion_review)
+
     # Add TodoList middleware if plan mode is enabled
     cfg = _get_runtime_config(config)
     is_plan_mode = cfg.get("is_plan_mode", False)

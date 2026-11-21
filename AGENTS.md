@@ -4,10 +4,11 @@ DeerFlow is an agent harness: a LangGraph-based backend with thread-isolated
 sandboxes, memory, subagents, skills and MCP tools, and a Next.js frontend. IM
 channels connect through the Gateway.
 
-**Before making any repository change, read and follow [CHANGE_CYCLE.md](CHANGE_CYCLE.md).**
+**Before making any repository change, read and follow [change_cycle.md](change_cycle.md).**
 It applies automatically to every change request, whichever agent, model or
 provider runs it, delegated agents included: run existing tests, add coverage
-only where needed, review and remove unnecessary tests, and open a pull request.
+only where needed, review and remove unnecessary tests, and open and merge a
+pull request. Its feature map is [docs/repo-map/index.md](docs/repo-map/index.md).
 The lead agent owns final validation and the PR. `CLAUDE.md` and `GEMINI.md`
 only import this file; don't edit them, edit guidance here.
 
@@ -50,8 +51,7 @@ default**: a new published port needs an explicit bind address, or it binds
 `0.0.0.0`. That rule and the three that ride with it (the non-loopback
 `BIND_HOST` co-bind, Compose's absolute `--env-file`, tailnet reach detected
 rather than configured) are in FORK.md, *Reaching the stack over Tailscale*,
-pinned by `test_compose_default_bind_host.py`, `test_deploy_loopback_cobind.py`
-and `test_docker_dev_tailnet.py`.
+pinned by the second critical check.
 
 Before changing ingress, port bindings or provisioner mounts, read
 [service topology details](docs/agent-service-topology.md).
@@ -116,8 +116,8 @@ a rebuild).
 - **Ship tests with every feature and bug fix.**
 - **Document behavior next to its topic, in the same change**: user-facing
   behavior in `docs/guide/` or `backend/docs/`. `README.md` is an index, except
-  that a new fork feature still owes its opening list a bullet (CHANGE_CYCLE.md
-  step 7); keep those bullets, and put their reference detail in `docs/guide/`.
+  that a new fork feature still owes its opening list a bullet (change_cycle.md
+  step 4); keep those bullets, and put their reference detail in `docs/guide/`.
 - **Keep the version fields identical**: `backend/pyproject.toml`,
   `backend/packages/harness/pyproject.toml`, `frontend/package.json`, and
   `version` and `appVersion` in `deploy/helm/deer-flow/Chart.yaml`.
