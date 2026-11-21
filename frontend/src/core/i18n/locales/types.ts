@@ -160,7 +160,8 @@ export interface Translations {
       | "weknora"
       | "lightrag"
       | "example"
-      | "cad",
+      | "cad"
+      | "cadPreview",
       {
         title: string;
         description: string;
@@ -401,6 +402,7 @@ export interface Translations {
     loadFullFile: string;
     loadingFullFile: string;
     previewFailed: string;
+    tooLarge: string;
     viewSource: string;
     missingTarget: string;
   };
