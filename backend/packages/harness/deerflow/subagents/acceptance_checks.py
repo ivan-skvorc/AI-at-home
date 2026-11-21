@@ -48,6 +48,13 @@ Leaf families:
   string (e.g. inside an ``echo`` argument or a comment) cannot anchor the
   leaf. Full parent-side re-execution stays deferred to the read-only
   verifier (RFC §6).
+- ``tool_result:<namespace>/<tool> <field>=<JSON scalar> [where <arg>=<JSON
+  scalar>]`` — reads a plugin tool's own recorded answer: the newest
+  matching call's host-stamped ``ToolMessage`` (harvested by the executor,
+  bounded) must carry ``field`` equal to the scalar. The tool is resolved to
+  its model-facing name through ``plugin_tool_name``. A missing, non-JSON,
+  truncated, rewritten or compacted result is UNVERIFIED, so files the
+  subagent wrote itself are never evidence.
 - Anything else is undecidable in code: ``checked=False``, rendered
   ``UNVERIFIED``, never silently passed.
 
@@ -67,6 +74,7 @@ import binascii
 import csv
 import io
 import json
+import math
 import ntpath
 import os
 import posixpath
@@ -76,7 +84,7 @@ import stat
 import time
 import unicodedata
 from collections.abc import Callable, Mapping
-from typing import Any, Literal, TypedDict
+from typing import Any, Literal, NamedTuple, TypedDict
 
 from deerflow.config.paths import VIRTUAL_PATH_PREFIX
 from deerflow.subagents.report_contract import MAX_ACCEPTANCE_CRITERIA, normalize_acceptance_criteria
@@ -284,7 +292,7 @@ _TEST_FAIL_SHAPE_RE = re.compile(
 
 class AcceptanceLeaf(TypedDict):
     criterion: str  # original criterion text (bounded)
-    family: str  # file_exists | file_non_empty | file_json_valid | file_csv_columns | file_written | tests_passed | undecidable
+    family: str  # file_exists | file_non_empty | file_json_valid | file_csv_columns | file_written | tests_passed | tool_result | undecidable
     checked: bool  # a deterministic check ran
     holds: bool  # checked AND the condition holds; always False when unchecked
     detail: str  # short evidence note (bounded)
@@ -2152,12 +2160,194 @@ def _check_tests_passed_leaf(command: str, bash_executions: list[dict[str, Any]]
     return base
 
 
+#: Bounds of the tool-result evidence the executor harvests
+#: (``executor._harvest_tool_results``): the newest calls of the tools some
+#: criterion names; only the arguments and top-level result fields a criterion
+#: names, kept when they are JSON scalars (strings up to the character bound);
+#: results parsed only up to the host's own 64 KiB plugin-result cap. A string
+#: longer than the bound is never recorded, so it can never be proven equal.
+TOOL_RESULT_MAX_CALLS = 20
+TOOL_RESULT_VALUE_MAX_CHARS = 120
+TOOL_RESULT_PARSE_CAP_BYTES = 64 * 1024
+
+_TOOL_RESULT_PREFIX_RE = re.compile(r"^tool_result:", re.IGNORECASE)
+# The namespace follows the extension API's namespace rule. Only the prefix and
+# ``where`` ignore case: the model-facing name hashes the exact spelling.
+_TOOL_RESULT_HEAD_RE = re.compile(r"^(?i:tool_result):(?P<namespace>[a-z][a-z0-9_.-]{0,95})/(?P<tool>[A-Za-z0-9_-]{1,64})\s+(?P<field>[A-Za-z_][A-Za-z0-9_-]{0,63})=")
+_TOOL_RESULT_WHERE_RE = re.compile(r"\s+(?i:where)\s+(?P<arg>[A-Za-z_][A-Za-z0-9_-]{0,63})=")
+_TOOL_RESULT_GRAMMAR = "expected tool_result:<namespace>/<tool> <field>=<JSON scalar> [where <arg>=<JSON scalar>]"
+_TOOL_RESULT_DECODER = json.JSONDecoder(parse_constant=_reject_json_constant)
+
+#: Why a recorded result cannot decide the leaf (``entry["result"]``).
+_TOOL_RESULT_UNUSABLE = {
+    "missing": "the newest matching call has no recorded result",
+    "error": "the newest matching call ended in a tool error",
+    "non_json": "the newest matching result is not a JSON object",
+    "truncated": "the newest matching result was truncated or moved out of the history",
+    "rewritten": "the newest matching result was rewritten after the tool returned",
+    "too_large": "the newest matching result exceeds the 64 KB parse cap",
+}
+
+JsonScalar = str | int | float | bool | None
+
+
+class ToolResultCriterion(NamedTuple):
+    namespace: str
+    tool: str
+    field: str
+    expected: JsonScalar
+    where_arg: str | None
+    where_value: JsonScalar
+
+
+def is_json_scalar(value: object) -> bool:
+    """A finite JSON scalar: the only values the tool-result evidence keeps."""
+    if isinstance(value, float):
+        return math.isfinite(value)
+    return value is None or isinstance(value, (str, int, bool))
+
+
+def _decode_json_scalar(text: str, start: int) -> tuple[JsonScalar, int] | None:
+    try:
+        value, end = _TOOL_RESULT_DECODER.raw_decode(text, start)
+    except (ValueError, RecursionError):
+        return None
+    return (value, end) if is_json_scalar(value) else None
+
+
+def parse_tool_result_criterion(criterion: str) -> ToolResultCriterion | None:
+    """Parse ``tool_result:<namespace>/<tool> <field>=<scalar> [where <arg>=<scalar>]``.
+
+    Values are JSON scalars written directly after ``=``: ``true``, ``2``,
+    ``null`` or a double-quoted string. Anything else returns ``None``.
+    """
+    head = _TOOL_RESULT_HEAD_RE.match(criterion)
+    if head is None:
+        return None
+    decoded = _decode_json_scalar(criterion, head.end())
+    if decoded is None:
+        return None
+    expected, end = decoded
+    rest = criterion[end:]
+    where_arg: str | None = None
+    where_value: JsonScalar = None
+    if rest.strip():
+        where = _TOOL_RESULT_WHERE_RE.match(rest)
+        decoded = _decode_json_scalar(rest, where.end()) if where is not None else None
+        if decoded is None or rest[decoded[1] :].strip():
+            return None
+        where_arg, where_value = where.group("arg"), decoded[0]
+    return ToolResultCriterion(head.group("namespace"), head.group("tool"), head.group("field"), expected, where_arg, where_value)
+
+
+def _model_facing_tool_name(namespace: str, tool: str) -> str:
+    # Lazy import: plugin_tools pulls the extension API; only a delegation that
+    # names a tool result pays for it. Model-facing names carry a hash suffix.
+    from deerflow.extensions.plugin_tools import plugin_tool_name
+
+    return plugin_tool_name(namespace, tool)
+
+
+def tool_result_harvest_plan(acceptance_criteria: list[str] | None) -> dict[str, tuple[frozenset[str], frozenset[str]]]:
+    """Map each model-facing tool name a criterion names to (fields, arguments) to record.
+
+    The executor harvests only these tools, fields and arguments. Criteria are
+    normalized as the checker normalizes them, so both read the same list.
+    """
+    wanted: dict[str, tuple[set[str], set[str]]] = {}
+    for criterion in normalize_acceptance_criteria(acceptance_criteria):
+        parsed = parse_tool_result_criterion(criterion)
+        if parsed is None:
+            continue
+        fields, args = wanted.setdefault(_model_facing_tool_name(parsed.namespace, parsed.tool), (set(), set()))
+        fields.add(parsed.field)
+        if parsed.where_arg is not None:
+            args.add(parsed.where_arg)
+    return {name: (frozenset(fields), frozenset(args)) for name, (fields, args) in wanted.items()}
+
+
+def _json_scalars_equal(left: object, right: object) -> bool:
+    """JSON equality: ``true`` is not ``1``, ``2`` equals ``2.0``, strings compare exactly."""
+    if isinstance(left, bool) or isinstance(right, bool):
+        return isinstance(left, bool) and isinstance(right, bool) and left is right
+    if left is None or right is None:
+        return left is None and right is None
+    if isinstance(left, str) or isinstance(right, str):
+        return isinstance(left, str) and isinstance(right, str) and left == right
+    return isinstance(left, (int, float)) and isinstance(right, (int, float)) and left == right
+
+
+def _render_scalar(value: object) -> str:
+    from deerflow.agents.middlewares.input_sanitization_middleware import neutralize_untrusted_tags
+
+    # A recorded string can echo model-chosen text into the lead's checklist.
+    return neutralize_untrusted_tags(json.dumps(value, ensure_ascii=False))
+
+
+def _tool_result_entry_outcome(entry: Mapping[str, Any], parsed: ToolResultCriterion) -> tuple[Literal["holds", "does_not_hold", "unverified"], str]:
+    if entry.get("compacted") is not False:
+        return "unverified", "the deciding call was removed from the subagent's history by compaction"
+    state = entry.get("result")
+    if state != "ok":
+        return "unverified", _TOOL_RESULT_UNUSABLE.get(str(state), "the newest matching result has no usable record")
+    fields = entry.get("fields")
+    if not isinstance(fields, Mapping):
+        return "unverified", "the newest matching result has no usable record"
+    if parsed.field not in fields:
+        return "does_not_hold", f"the newest matching result carries no scalar {parsed.field} within the evidence bound"
+    actual = fields[parsed.field]
+    recorded = f"the newest matching result recorded {parsed.field}={_render_scalar(actual)}"
+    return ("holds" if _json_scalars_equal(actual, parsed.expected) else "does_not_hold"), recorded
+
+
+def _check_tool_result_leaf(criterion: str, tool_results: list[dict[str, Any]] | None) -> AcceptanceLeaf:
+    base: AcceptanceLeaf = {"criterion": "", "family": "tool_result", "checked": False, "holds": False, "detail": ""}
+    parsed = parse_tool_result_criterion(criterion)
+    if parsed is None:
+        base["detail"] = f"malformed; {_TOOL_RESULT_GRAMMAR}"
+        return base
+    if any(isinstance(value, str) and len(value) > TOOL_RESULT_VALUE_MAX_CHARS for value in (parsed.expected, parsed.where_value)):
+        base["detail"] = f"a string longer than {TOOL_RESULT_VALUE_MAX_CHARS} characters is beyond the recorded evidence bound"
+        return base
+    if tool_results is None:
+        base["detail"] = "no tool-result evidence was recorded for this delegation"
+        return base
+    name = _model_facing_tool_name(parsed.namespace, parsed.tool)
+    matches = [
+        entry
+        for entry in tool_results
+        if isinstance(entry, Mapping)
+        and entry.get("tool_name") == name
+        and (parsed.where_arg is None or (isinstance(entry.get("args"), Mapping) and parsed.where_arg in entry["args"] and _json_scalars_equal(entry["args"][parsed.where_arg], parsed.where_value)))
+    ]
+    if not matches:
+        base["detail"] = "no matching call recorded"
+        return base
+    # The newest matching call decides: an earlier pass never saves a later
+    # failure. Calls of one assistant turn ran concurrently, in no fixed order,
+    # so the whole newest turn must agree.
+    newest_turn = matches[-1].get("turn")
+    outcomes = [_tool_result_entry_outcome(entry, parsed) for entry in matches if entry.get("turn") == newest_turn]
+    unverified = next((detail for outcome, detail in outcomes if outcome == "unverified"), None)
+    if unverified is not None:
+        base["detail"] = unverified
+        return base
+    if len({outcome for outcome, _ in outcomes}) > 1:
+        base["detail"] = "concurrent matching calls of the newest turn disagree; neither is newer"
+        return base
+    base["checked"] = True
+    base["holds"] = outcomes[-1][0] == "holds"
+    base["detail"] = outcomes[-1][1]
+    return base
+
+
 def check_acceptance_criteria(
     acceptance_criteria: list[str] | None,
     *,
     runtime: Any = None,
     thread_data: Mapping[str, Any] | None = None,
     bash_executions: list[dict[str, Any]] | None = None,
+    tool_results: list[dict[str, Any]] | None = None,
     content_reader: Callable[[Any, str], str] | None = None,
     size_prober: Callable[[Any, str, Mapping[str, Any] | None], int | None] | None = None,
     readable_prober: Callable[[Any, str, Mapping[str, Any] | None], bool | None] | None = None,
@@ -2165,6 +2355,8 @@ def check_acceptance_criteria(
     """Check each decidable criterion against recorded execution evidence.
 
     Returns ``None`` when no usable criterion exists (caller stamps nothing).
+    ``bash_executions`` and ``tool_results`` are the executor's harvested
+    evidence (``SubagentResult``); ``None`` means none was collected.
     Synchronous: the async call site offloads via ``asyncio.to_thread`` —
     ``content_reader`` performs sandbox IO. The shared normalizer keeps the
     checked list identical to the persisted and delegated list.
@@ -2201,6 +2393,8 @@ def check_acceptance_criteria(
             )
         elif tests_match is not None:
             leaf = _check_tests_passed_leaf(tests_match.group("command"), bash_executions, thread_data)
+        elif _TOOL_RESULT_PREFIX_RE.match(criterion):
+            leaf = _check_tool_result_leaf(criterion, tool_results)
         else:
             leaf = AcceptanceLeaf(criterion="", family="undecidable", checked=False, holds=False, detail="not deterministically checkable")
         leaf["criterion"] = criterion
