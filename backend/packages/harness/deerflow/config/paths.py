@@ -467,14 +467,6 @@ class Paths:
         """Host path for the ACP workspace mount source."""
         return _join_host_path(self.host_thread_dir(thread_id, user_id=user_id), "acp-workspace")
 
-    def host_user_custom_skills_dir(self, user_id: str) -> str:
-        """Host path for a user's custom skills directory, preserving Windows path syntax."""
-        return _join_host_path(self._host_base_dir_str(), "users", _validate_user_id(user_id), "skills", "custom")
-
-    def host_integration_skills_dir(self) -> str:
-        """Host path for globally installed managed integration skills."""
-        return _join_host_path(self._host_base_dir_str(), "integrations", "skills")
-
     def host_user_integration_config_dir(self, user_id: str, integration_id: str) -> str:
         """Host path for a user's managed integration runtime config directory."""
         return _join_host_path(self._host_base_dir_str(), "users", _validate_user_id(user_id), "integrations", _validate_integration_id(integration_id), "config")
