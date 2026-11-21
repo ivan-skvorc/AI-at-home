@@ -1,27 +1,45 @@
-"""GitHub REST helpers for gitflow.py.
+#!/usr/bin/env python3
+"""GitHub REST client for gitflow.sh: urllib only, it starts no processes.
 
-Standard library only. This module owns everything that talks to the GitHub API
-over HTTPS: parsing the repository from a git remote URL, a urllib transport,
-and the pull-request logic shared by the urllib transport and gitflow.py's
-gh api transport.
+gitflow.sh calls it for everything that talks to the GitHub API:
 
-The urllib transport reads the token from GH_TOKEN or GITHUB_TOKEN by
-name and sends it only in the Authorization header to the API host derived
-from the repository's own remote. It never reads the environment in bulk, and
-it never puts the token in a URL, a log line, or an error message.
+    gitflow_github.py parse-remote URL        -> "host<TAB>owner<TAB>name", exit 1 if not GitHub-style
+    gitflow_github.py token-names             -> names of the token variables that are set
+    gitflow_github.py new-pull-url --host H --owner O --repo R --branch B
+    gitflow_github.py pr-create --host H --owner O --repo R --head B --base B --title T --body-file F
+                      [--draft] --remote-sha S --local-sha S [--warning W ...] [--auth-from-stdin] [--api-url U]
+    gitflow_github.py pr-status --host H --owner O --repo R (--number N | --branch B) --local-sha S
+                      [--auth-from-stdin] [--api-url U]
+
+pr-create and pr-status print one JSON object (the gitflow.sh output contract).
+The token comes from GH_TOKEN or GITHUB_TOKEN, read by name, or from stdin when
+gitflow.sh pipes in the credentials of an authenticated gh. It is sent only in
+the Authorization header, to the API of the repository's own host (or to
+--api-url, which must be https, or plain http on the loopback interface for
+tests). It never appears in a URL, a log line or the output.
 """
 
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import re
+import sys
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Protocol
+
+sys.dont_write_bytecode = True  # the skill directory is read-only and statically reviewed
+_SCRIPT_DIR = str(Path(__file__).resolve().parent)
+if _SCRIPT_DIR not in sys.path:
+    sys.path.insert(0, _SCRIPT_DIR)
+
+import gitflow_json  # noqa: E402
 
 TOKEN_ENV_NAMES = ("GH_TOKEN", "GITHUB_TOKEN")
 USER_AGENT = "deerflow-gitflow/1.0"
@@ -79,6 +97,18 @@ def api_base(host: str) -> str:
     return f"https://{host}/api/v3"
 
 
+def resolve_api_base(host: str, override: str | None) -> str:
+    """The API root for host, or a validated override (https, or loopback for tests)."""
+    if not override:
+        return api_base(host)
+    parts = urllib.parse.urlsplit(override)
+    if parts.scheme == "https" and parts.hostname:
+        return override.rstrip("/")
+    if parts.scheme == "http" and parts.hostname in ("127.0.0.1", "localhost", "::1"):
+        return override.rstrip("/")
+    raise GitHubError("the API URL override must use https (plain http is allowed only on the loopback interface)")
+
+
 def web_url(repo: RemoteRepo, path: str = "") -> str:
     return f"https://{repo.host}/{repo.owner}/{repo.name}{path}"
 
@@ -129,9 +159,9 @@ def api_error_message(status: int | None, data: Any) -> str:
 class RestTransport:
     """GitHub REST over urllib, authenticated with a token from the environment."""
 
-    def __init__(self, host: str, auth_value: str, *, timeout: float = 30.0) -> None:
+    def __init__(self, host: str, auth_value: str, *, base: str | None = None, timeout: float = 30.0) -> None:
         self.host = host
-        self.base = api_base(host)
+        self.base = base or api_base(host)
         self._auth_value = auth_value
         self.timeout = timeout
 
@@ -311,3 +341,154 @@ def review_summary(transport: Transport, repo: RemoteRepo, number: int) -> dict[
         "changes_requested": values.count("CHANGES_REQUESTED"),
         "commented": values.count("COMMENTED"),
     }
+
+
+# ---------------------------------------------------------------------- CLI
+
+
+def _load_auth(from_stdin: bool) -> tuple[str, str]:
+    if from_stdin:
+        value = sys.stdin.readline().strip()
+        if not value:
+            raise GitHubError("gh is authenticated but returned no token (gh auth token)")
+        return value, "gh"
+    _, value = token_from_env()
+    if not value:
+        raise GitHubError("no GitHub credentials found (gh is missing or not authenticated, and neither GH_TOKEN nor GITHUB_TOKEN is set)")
+    return value, "env"
+
+
+def _transport(args: argparse.Namespace) -> tuple[RestTransport, str]:
+    base = resolve_api_base(args.host, args.api_url)
+    value, source = _load_auth(args.auth_from_stdin)
+    return RestTransport(args.host, value, base=base), source
+
+
+def _fail(command: str, exc: GitHubError) -> int:
+    message = str(exc)
+    data: dict[str, Any] = {"error": message, "status": exc.status}
+    hint = gitflow_json.hint_for(message) if exc.status in (401, 403, 404) else None
+    if message.startswith("no GitHub credentials"):
+        hint = "Ask the user to connect GitHub (or configure a token for the sandbox). Never ask them to paste a token into chat."
+    if hint:
+        data["hint"] = hint
+    gitflow_json.emit_fail(command, data)
+    return 1
+
+
+def cmd_pr_create(args: argparse.Namespace) -> int:
+    repo = RemoteRepo(args.host, args.owner, args.repo)
+    try:
+        transport, source = _transport(args)
+        body = Path(args.body_file).read_text(encoding="utf-8")
+        pull, created = create_pull(transport, repo, title=args.title, body=body, head=args.head, base=args.base, draft=args.draft)
+    except GitHubError as exc:
+        return _fail("pr create", exc)
+    summary = summarize_pull(pull)
+    warnings = list(args.warning or [])
+    if not created:
+        warnings.append("an open pull request for this branch already existed; it was returned unchanged (title and body were not edited)")
+        if summary["base"] != args.base:
+            warnings.append(f"the existing pull request targets {summary['base']!r}, not {args.base!r}")
+    data = {
+        "created": created,
+        "via": source,
+        "repository": repo.slug,
+        **summary,
+        "head_matches_remote": summary["head_sha"] == args.remote_sha,
+        "head_matches_local": summary["head_sha"] == args.local_sha,
+        "warnings": warnings,
+    }
+    return gitflow_json.emit_ok("pr create", data)
+
+
+def cmd_pr_status(args: argparse.Namespace) -> int:
+    repo = RemoteRepo(args.host, args.owner, args.repo)
+    try:
+        transport, source = _transport(args)
+        if args.number:
+            pull = get_pull(transport, repo, args.number)
+        elif not args.branch:
+            raise GitHubError("pass --number or --branch")
+        else:
+            found = find_pulls(transport, repo, args.branch) or find_pulls(transport, repo, args.branch, state="all")
+            if not found:
+                gitflow_json.emit_fail(
+                    "pr status",
+                    {"error": f"no pull request found for branch {args.branch!r} in {repo.slug}", "hint": "Create one with: gitflow.sh pr create --title ... --body-file ..."},
+                )
+                return 1
+            pull = get_pull(transport, repo, int(found[0]["number"]))
+        summary = summarize_pull(pull)
+        checks = check_summary(transport, repo, summary["head_sha"]) if summary["head_sha"] else None
+        reviews = review_summary(transport, repo, int(summary["number"]))
+    except GitHubError as exc:
+        return _fail("pr status", exc)
+    notes = []
+    if summary["mergeable"] is None and summary["state"] == "open":
+        notes.append("GitHub has not finished computing mergeability; run pr status again shortly")
+    if summary["head_sha"] and args.local_sha and summary["head_sha"] != args.local_sha and summary["head"] == args.branch:
+        notes.append("the pull request head differs from local HEAD; push to update it, or the checks below are for an older commit")
+    data = {"via": source, "repository": repo.slug, **summary, "head_matches_local": summary["head_sha"] == args.local_sha, "checks": checks, "reviews": reviews, "notes": notes}
+    return gitflow_json.emit_ok("pr status", data)
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="gitflow_github.py", description="GitHub REST helper for gitflow.sh.")
+    sub = parser.add_subparsers(dest="action", required=True)
+    remote = sub.add_parser("parse-remote")
+    remote.add_argument("url")
+    sub.add_parser("token-names")
+    new_pull = sub.add_parser("new-pull-url")
+    for name in ("--host", "--owner", "--repo", "--branch"):
+        new_pull.add_argument(name, required=True)
+
+    def repo_args(p: argparse.ArgumentParser) -> None:
+        for name in ("--host", "--owner", "--repo"):
+            p.add_argument(name, required=True)
+        p.add_argument("--auth-from-stdin", action="store_true", help="read the token from stdin (piped from gh auth token)")
+        p.add_argument("--api-url", help="API root override: https, or loopback http for tests")
+        p.add_argument("--local-sha", default="")
+
+    create = sub.add_parser("pr-create")
+    repo_args(create)
+    create.add_argument("--head", required=True)
+    create.add_argument("--base", required=True)
+    create.add_argument("--title", required=True)
+    create.add_argument("--body-file", required=True)
+    create.add_argument("--draft", action="store_true")
+    create.add_argument("--remote-sha", default="")
+    create.add_argument("--warning", action="append")
+    status = sub.add_parser("pr-status")
+    repo_args(status)
+    status.add_argument("--number", type=int, help="the pull request number (default: the one for --branch)")
+    status.add_argument("--branch", default="", help="the current branch")
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="backslashreplace")
+        except (AttributeError, ValueError):
+            pass
+    args = build_parser().parse_args(argv)
+    if args.action == "parse-remote":
+        parsed = parse_remote_url(args.url)
+        if parsed is None:
+            return 1
+        sys.stdout.write(f"{parsed.host}\t{parsed.owner}\t{parsed.name}\n")
+        return 0
+    if args.action == "token-names":
+        sys.stdout.write(" ".join(token_env_names_present()) + "\n")
+        return 0
+    if args.action == "new-pull-url":
+        sys.stdout.write(new_pull_url(RemoteRepo(args.host, args.owner, args.repo), args.branch) + "\n")
+        return 0
+    if args.action == "pr-create":
+        return cmd_pr_create(args)
+    return cmd_pr_status(args)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
