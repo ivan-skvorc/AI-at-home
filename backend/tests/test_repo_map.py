@@ -304,3 +304,23 @@ def test_every_area_file_opens_with_its_board():
         if lines and lines[0].startswith("# "):
             lines = lines[1:]
         assert lines and lines[0].strip() == "```mermaid", f"{area.name} must open with a ```mermaid board"
+
+
+def test_every_exact_file_a_feature_lists_resolves_to_that_feature():
+    """Level 1 runs a feature's tests only when the index sends a changed file there.
+
+    A feature that names a file under Files: while the index resolves that file
+    to other features is a feature whose tests level 1 silently skips when the
+    file changes. Patterns (``dir/**``) are summaries and are not checked here.
+    """
+    rows = index_rows()
+    problems = []
+    for name, fields in feature_entries().items():
+        for file_row in _list_field(fields["Files:"]):
+            if is_pattern(file_row) or file_row in PENDING_PATHS or is_excluded(file_row):
+                continue
+            winners = winning_rows(file_row, rows)
+            features = {feature for _, row_features in winners for feature in row_features}
+            if winners and name not in features and "ALL" not in features:
+                problems.append(f"{file_row}: listed by {name!r} but the index resolves it to {sorted(features)}")
+    assert not problems, "\n".join(problems)

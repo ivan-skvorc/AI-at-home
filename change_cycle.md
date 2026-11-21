@@ -41,13 +41,15 @@ Files changed since the sync point (committed, uncommitted and new; bash):
 
 ```bash
 git fetch origin
+[ "$(git rev-parse --is-shallow-repository)" = false ] || git fetch -q --unshallow origin
 SYNC=$(git log -1 --format=%H -G'Synced by change cycle:' origin/main -- docs/repo-map.md docs/repo-map/index.md)
 : "${SYNC:?no sync point found: check the whole map (level 2)}"
 { git diff --name-only --no-renames "$SYNC"; git ls-files --others --exclude-standard; } | sort -u
 ```
 
-A shallow clone may not reach the sync point; fetch more history
-(`git fetch --deepen=500 origin main`) before falling back to level 2.
+The second line is this repo's addition: in a shallow clone the oldest
+fetched commit looks as if it added the sync line, so without full history the
+command would pick it and silently skip everything merged before it.
 
 ## Critical checks
 
@@ -78,7 +80,7 @@ user loses outright and the rest of the suite does not notice.
 1. Work on a branch updated from the latest `main` (`git fetch origin && git checkout -b fix/short-slug origin/main`, prefixed `feat/`, `fix/`, `docs/` or `chore/`). Never commit to `main`.
 2. List the files changed since the sync point (command above). This covers this branch and anything merged since the last change cycle.
 3. Update `docs/repo-map/` for those files: add new features and files, remove deleted ones, fix renamed ones. Update the board if features, shared nodes, external services or data stores changed. Rewrite the sync line in `docs/repo-map/index.md`.
-4. A new feature gets at least one test in the same change. In this repo a feature that is added or removed also owes, in the same change: its bullet in the `README.md` list under "it adds — out of the box:" (written first: if the one-line promise is hard to write, the feature is not finished), a `### N.` section in [FORK.md](FORK.md#adding-a-new-fork-feature--what-to-write-and-where), a checklist row only for a risk that is silent when broken, user docs in `docs/guide/` or `backend/docs/`, one `### Added` line under `## [Unreleased]` in `CHANGELOG.md`, and for a new config key a `config_version` bump in `config.example.yaml` and both chart copies. Review the tests of the area you touched: remove a test only when it duplicates a retained one, exercises removed behavior or cannot fail, and name what still covers it.
+4. A new feature gets at least one test in the same change. In this repo a feature that is added or removed also owes, in the same change: its bullet in the `README.md` list under "it adds — out of the box:" (written first: if the one-line promise is hard to write, the feature is not finished), a `###` subsection under Core Features in `README.md` with its Table of Contents anchor, a `### N.` section in [FORK.md](FORK.md#adding-a-new-fork-feature--what-to-write-and-where), a checklist row only for a risk that is silent when broken, a note in the nearest `AGENTS.md` for what an agent must know before editing the code, user docs in `docs/guide/` or `backend/docs/`, one `### Added` line under `## [Unreleased]` in `CHANGELOG.md`, and for a new config key a `config_version` bump in `config.example.yaml` and both chart copies. Review the tests of the area you touched: remove a test only when it duplicates a retained one, exercises removed behavior or cannot fail, and name what still covers it.
 5. Run the level's checks, critical checks first. If one fails, fix it and rerun. Don't weaken or delete a test to make it pass unless the behavior change is intended and stated in the PR. If it can't be fixed within this change, stop without merging. Run each check once on the final tree: format first (`cd backend && make format`, `cd frontend && pnpm format:write`), and rerun only what reads a file that changed after the run.
 6. Open a PR with the summary below.
 7. Merge once the level's checks pass. If `main` breaks after a merge, revert that PR first, then fix.
@@ -143,12 +145,12 @@ Quality fixes: <list, or "n/a">
 Exceptions added/removed: <list, or "n/a">
 Critical checks: <each: inside make test | by itself | not affected — why; result>
 Model audit: <run — logged <date> | not run (not asked) — last pass <date>>
-PR: <url, once opened>
 ```
 
 The summary opens the PR body; [`.github/pull_request_template.md`](.github/pull_request_template.md)
 carries it, followed by the review sections (why, surface area, test
-maintenance).
+maintenance). The final report to whoever asked repeats it with
+`PR: <url>` and the merge state, read back from GitHub rather than assumed.
 
 ## References
 

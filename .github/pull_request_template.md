@@ -75,7 +75,8 @@ Model audit: <run — logged <date> | not run (not asked) — last pass <date>>
      with base-revision evidence for anything called environmental.
      Level 1: the tests of every feature the changed files map to in
      docs/repo-map/index.md (ALL = the level 2 suites), changed test files, lint.
-     Level 2: make test, make test-blocking-io, pnpm check, pnpm test, E2E, build.
+     Level 2: every command under "Full test suite" and "Lint / type-check /
+     build" in change_cycle.md's Commands section.
      Docs/guidance-only: focused existing checks, including guidance budgets.
      Don't rerun a command a selected suite already covered. -->
 

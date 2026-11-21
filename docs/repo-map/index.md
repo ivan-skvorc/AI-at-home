@@ -106,6 +106,9 @@ flowchart LR
 | File | Features |
 |---|---|
 | `Makefile` | ALL |
+| `backend/packages/harness/deerflow/config/skill_evolution_config.py` | Skills, Create and review skills, Skill learning loop |
+| `backend/packages/harness/deerflow/projects/trash.py` | Projects, Archive and trash |
+| `backend/packages/harness/deerflow/skills/describe.py` | Skills, Bundled coding skills |
 | `config.example.yaml` | ALL |
 | `.env.example` | ALL |
 | `extensions_config.example.json` | MCP servers, Skills, Extensions and plugins |
@@ -271,6 +274,7 @@ flowchart LR
 | `backend/packages/harness/deerflow/agents/middlewares/safety_*.py` | Guardrails and safety checks |
 | `backend/packages/harness/deerflow/agents/middlewares/sandbox_audit_middleware.py` | Sandbox and file tools |
 | `backend/packages/harness/deerflow/agents/middlewares/skill_*.py` | Skills |
+| `backend/packages/harness/deerflow/agents/middlewares/skill_usage.py` | Skills, Skill learning loop |
 | `backend/packages/harness/deerflow/agents/middlewares/spend_budget_middleware.py` | Spend caps and run limits |
 | `backend/packages/harness/deerflow/agents/middlewares/subagent_limit_middleware.py` | Delegate to subagents, Plus Ultracode |
 | `backend/packages/harness/deerflow/agents/middlewares/summarization_middleware.py` | No request bigger than the window |
@@ -654,6 +658,7 @@ flowchart LR
 | `frontend/src/core/suggestions/**` | Follow-up suggestions and prompt polish |
 | `frontend/src/core/system-prompt/**` | Editable system prompt |
 | `frontend/src/core/tasks/**` | Delegate to subagents |
+| `frontend/src/core/tasks/lifecycle.ts` | Delegate to subagents, Cost-aware subagent routing |
 | `frontend/src/core/thread-files/**` | Conversation files and shared folders |
 | `frontend/src/core/threads/**` | Chat with the agent |
 | `frontend/src/core/threads/activity.ts` | Conversation history and scroll-back |
@@ -727,7 +732,7 @@ flowchart LR
 | `scripts/configure.py` | Install and configure |
 | `scripts/deploy.sh` | Run the stack |
 | `scripts/docker.sh` | Run the stack |
-| `scripts/serve.sh` | Run the stack |
+| `scripts/serve.sh` | Run the stack, Passwordless on your own network |
 | `scripts/start-daemon.sh` | Run the stack |
 | `scripts/nginx*.sh` | Run the stack |
 | `scripts/wait-for-port.sh` | Run the stack |
@@ -755,6 +760,7 @@ flowchart LR
 | `scripts/wizard/**` | Install and configure |
 | `scripts/sync-api-key-models.py` | API-key model auto-config |
 | `scripts/sync-ollama-models.py` | Auto-populated Ollama models |
+| `scripts/wizard/providers.py` | Install and configure, API-key model auto-config |
 | `skills/public/**` | Bundled research skills |
 | `skills/public/chart-visualization/**` | Media generation skills |
 | `skills/public/image-generation/**` | Media generation skills |

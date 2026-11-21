@@ -312,8 +312,8 @@ follow them for every repository change, including test maintenance and opening
 a PR." Repository text cannot force an unsupported tool to load instructions or
 grant missing GitHub access. Report such limits instead of claiming completion.
 
-Run relevant existing tests before editing and the final checks from the cycle's
-scope table afterward. Reuse coverage, add tests for gaps, and review tests near
+Run relevant existing tests before editing and the final checks of the cycle's
+level afterward. Reuse coverage, add tests for gaps, and review tests near
 the change for proven redundancy or obsolete behavior. Record additions, reuse,
 removals (including retained coverage), and check results in the PR template;
 there is no quota for test additions or deletions.

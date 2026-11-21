@@ -28,9 +28,10 @@ On by default; nothing to configure.
 ## Verify before finishing
 
 `harness_guard.verify_before_finish` (default `true`). When a run edited a
-source file and ran no `bash` command after its last edit, the agent's first
-final answer is held back once and the next model call carries a hidden
-reminder: run the tests, the linter or the program, or say why you could not.
+source file and ran no `bash` command after its last edit, the run does not
+end at the agent's first final answer: that answer stays visible, and one more
+model call follows with a hidden reminder — run the tests, the linter or the
+program, or say why you could not — so the second answer reports the result.
 It fires at most once per run, never after a spend, token or loop cap, never
 while a to-do list is open, and only when the agent has `bash`. Docs, data and
 config edits do not count as code. Cost: at most one extra model call in a run
@@ -73,8 +74,11 @@ With it on, the loop closes like this:
 ## Coding skills from day one
 
 Bundled under `skills/public/`, enabled by default, and updated by every
-`git pull`. Adapted from [Hermes Agent](https://github.com/NousResearch/hermes-agent)
-(MIT; several originally from obra/superpowers), each with its `LICENSE.txt`:
+`git pull`. The first six are adapted from
+[Hermes Agent](https://github.com/NousResearch/hermes-agent) (MIT; several
+originally from obra/superpowers) and `git-pr-workflow` adapts parts of its
+GitHub skill; each of those seven carries its `LICENSE.txt`. `repo-change-cycle`
+is DeerFlow's own.
 
 | Skill | Use it when |
 | --- | --- |
@@ -87,7 +91,7 @@ Bundled under `skills/public/`, enabled by default, and updated by every
 | `git-pr-workflow` | Branching, committing, pushing and opening a PR from the sandbox |
 | `repo-change-cycle` | Setting up a repository with a feature map and a change cycle |
 
-Turn any of them off in **Settings → Skills**.
+Turn any of them off in **Capability Center → Skills**.
 
 ### Git and pull requests
 

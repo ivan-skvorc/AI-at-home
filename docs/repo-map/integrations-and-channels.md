@@ -117,12 +117,12 @@ External: none
 Tests: backend/tests/test_skill_manage_tool.py, backend/tests/test_skill_mutation_guard.py, backend/tests/test_skill_review_core.py, backend/tests/test_skill_reviewer_public_skill.py, tests/skills/test_skill_creator_frontmatter.py
 
 ### Skill learning loop
-What: after a run the completion review records what worked in a learning ledger, so skill_manage can turn a repeated lesson into a skill update.
-Entry points: completion review at run end, skill_manage tool
-Files: backend/packages/harness/deerflow/skills/learning.py, backend/packages/harness/deerflow/tools/skill_manage_tool.py, backend/packages/harness/deerflow/agents/middlewares/completion_review_middleware.py
-Data: skill learning ledger, skills/custom
+What: with skill_evolution on, a long run (or one that loaded a custom skill) gets one reminder before its final answer to save or patch a skill with skill_manage; every skill load is counted in a per-user ledger; a daily curator switches off agent-written skills nobody loaded for archive_unused_after_days.
+Entry points: the end-of-run review, skill_manage tool, skill loads (read_file of a SKILL.md, slash activation)
+Files: backend/packages/harness/deerflow/skills/learning.py, backend/packages/harness/deerflow/tools/skill_manage_tool.py, backend/packages/harness/deerflow/agents/middlewares/completion_review_middleware.py, backend/packages/harness/deerflow/agents/middlewares/skill_usage.py, backend/packages/harness/deerflow/config/skill_evolution_config.py
+Data: the per-user skill ledger, per-user skill enabled state, skill history (.history/*.jsonl)
 External: none
-Tests: backend/tests/test_skill_learning_ledger.py, backend/tests/test_skill_manage_tool.py
+Tests: backend/tests/test_skill_learning_ledger.py, backend/tests/test_completion_review_middleware.py, backend/tests/test_skill_manage_tool.py
 
 ### Bundled research skills
 What: the research, analysis and writing skills that ship in skills/public (deep research, GitHub research, data analysis, consulting analysis, paper and literature review, frontend and web design, Vercel deploy and others).

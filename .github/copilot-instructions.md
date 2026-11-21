@@ -176,7 +176,7 @@ This fork's full procedure — which tests a change owes, keeping
 with the code, and the model audit, which runs only when the request asks for one — is
 [`change_cycle.md`](../change_cycle.md). Follow it automatically for every repository change.
 
-Before submitting changes, run the checks change_cycle.md's level requires for the change. For code changes that means at minimum:
+Before submitting changes, run the checks change_cycle.md's level requires for the change. Level 1 runs the tests of the features the changed files map to in `docs/repo-map/index.md`, plus lint. Level 2, or a changed file the map marks `ALL`, means at minimum:
 
 - Backend (if touched): `cd backend && make lint && make test`
 - Frontend (if touched): `cd frontend && pnpm check && pnpm test`
