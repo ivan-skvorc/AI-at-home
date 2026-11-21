@@ -1,3 +1,5 @@
+import { isRecord } from "@/lib/utils";
+
 import type { MCPServerConfig } from "./types";
 
 export type MCPServerDefinitionErrorCode =
@@ -20,21 +22,17 @@ export class MCPServerDefinitionError extends Error {
   }
 }
 
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 function isWrappedServerMap(value: Record<string, unknown>): value is Record<
   string,
   unknown
 > & {
   mcpServers: Record<string, unknown>;
 } {
-  if (!Object.hasOwn(value, "mcpServers") || !isPlainObject(value.mcpServers)) {
+  if (!Object.hasOwn(value, "mcpServers") || !isRecord(value.mcpServers)) {
     return false;
   }
   const candidates = Object.values(value.mcpServers);
-  return candidates.length === 0 || candidates.every(isPlainObject);
+  return candidates.length === 0 || candidates.every(isRecord);
 }
 
 /** Serialize one existing server into the same copy-paste format the parser accepts. */
@@ -71,7 +69,7 @@ export function parseMCPServerDefinition(
     throw new MCPServerDefinitionError("invalidJson");
   }
 
-  if (!isPlainObject(parsed)) {
+  if (!isRecord(parsed)) {
     throw new MCPServerDefinitionError("rootNotObject");
   }
 
@@ -86,7 +84,7 @@ export function parseMCPServerDefinition(
 
   return Object.fromEntries(
     entries.map(([name, config]) => {
-      if (!isPlainObject(config)) {
+      if (!isRecord(config)) {
         throw new MCPServerDefinitionError("serverConfigNotObject", name);
       }
       // Servers are enabled on add: a definition the operator just pasted is
