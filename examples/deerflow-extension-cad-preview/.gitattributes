@@ -1,0 +1,2 @@
+# Keep generated bundles byte-for-byte, including embedded template strings.
+deerflow_extension_cad_preview/static/dist/** -whitespace linguist-generated=true

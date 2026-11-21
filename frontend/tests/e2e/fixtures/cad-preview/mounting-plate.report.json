@@ -1,0 +1,40 @@
+{
+  "name": "mounting-plate",
+  "passed": true,
+  "expected": {
+    "bbox_xyz_mm": [60, 40, 6]
+  },
+  "checks": [
+    {
+      "check": "one closed solid",
+      "expected": "exactly one valid, closed solid",
+      "measured": "1 solid(s), valid=True, closed=True",
+      "passed": true
+    },
+    {
+      "check": "bounding box",
+      "expected": [60, 40, 6],
+      "measured": [60.0, 40.0, 6.0],
+      "passed": true
+    }
+  ],
+  "measured": {
+    "solids": 1,
+    "valid": true,
+    "closed": true,
+    "bbox_mm": [60.0, 40.0, 6.0],
+    "volume_mm3": 14249.204,
+    "holes": [
+      {
+        "diameter_mm": 4.0,
+        "through": true,
+        "depth_mm": 6.0
+      },
+      {
+        "diameter_mm": 4.0,
+        "through": true,
+        "depth_mm": 6.0
+      }
+    ]
+  }
+}

@@ -209,6 +209,7 @@ export const enUS: Translations = {
       weknora: bundledCopy("deerflow-extension-weknora", "en-US"),
       example: bundledCopy("deerflow-extension-example", "en-US"),
       cad: bundledCopy("deerflow-extension-cad", "en-US"),
+      cadPreview: bundledCopy("deerflow-extension-cad-preview", "en-US"),
     },
     pageUnavailable: "Extension page unavailable",
     pageUnavailableHint:
