@@ -1,0 +1,17 @@
+{
+  "id": "p03-stair-block",
+  "band": "prismatic",
+  "title": "Three-step block",
+  "request": "Model a small staircase block with three equal steps, 40 mm wide. Each step is 15 mm deep and 10 mm high, so the block is 45 mm long and the top step is 30 mm above the base.",
+  "orientation": "z",
+  "truth": {
+    "solids": 1,
+    "bbox_mm": [
+      45.0,
+      40.0,
+      30.0
+    ],
+    "volume_mm3": 36000.0,
+    "hole_diameters_mm": []
+  }
+}

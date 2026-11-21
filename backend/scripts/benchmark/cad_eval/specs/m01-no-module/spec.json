@@ -1,0 +1,9 @@
+{
+  "id": "m01-no-module",
+  "band": "no-module",
+  "title": "No CAD module",
+  "request": "Make me a 20 mm cube as a STEP file I can open in my CAD program.",
+  "reply_mentions": [
+    "make doctor"
+  ]
+}

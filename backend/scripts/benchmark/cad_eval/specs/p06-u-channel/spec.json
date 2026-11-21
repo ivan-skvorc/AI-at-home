@@ -1,0 +1,17 @@
+{
+  "id": "p06-u-channel",
+  "band": "prismatic",
+  "title": "U-channel",
+  "request": "Make a straight U-channel 80 mm long. Its cross-section is 40 mm wide and 20 mm tall, open at the top, with 3 mm thick side walls and a 3 mm thick floor.",
+  "orientation": "z",
+  "truth": {
+    "solids": 1,
+    "bbox_mm": [
+      80.0,
+      40.0,
+      20.0
+    ],
+    "volume_mm3": 17760.0,
+    "hole_diameters_mm": []
+  }
+}

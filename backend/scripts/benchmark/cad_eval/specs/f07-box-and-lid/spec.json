@@ -1,0 +1,23 @@
+{
+  "id": "f07-box-and-lid",
+  "band": "fits",
+  "title": "Box and lid",
+  "request": "Make a small box and its lid, laid out side by side for printing. The box is 60 x 40 mm outside and 25 mm tall, open at the top, with 2 mm walls and a 2 mm floor. The lid is a 60 x 40 x 2 mm plate with a rim on one face, 4 mm tall and 1.5 mm thick, that fits inside the box with 0.3 mm clearance all round. Put the lid rim side up, 10 mm from the box along its 60 mm length.",
+  "needs": [
+    {
+      "item": "51",
+      "why": "two bodies: cad_build passes them only with its bodies argument",
+      "operations": []
+    }
+  ],
+  "orientation": "z",
+  "truth": {
+    "solids": 2,
+    "bbox_mm": [
+      130.0,
+      40.0,
+      25.0
+    ],
+    "volume_mm3": 19485.6
+  }
+}

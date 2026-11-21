@@ -1,0 +1,17 @@
+{
+  "id": "h03-pocketed-plate",
+  "band": "holes",
+  "title": "Pocketed plate",
+  "request": "Make a 100 x 60 mm plate, 10 mm thick, with a rectangular pocket 60 x 30 mm and 6 mm deep cut into the middle of its top face. The pocket corners can stay square.",
+  "orientation": "z",
+  "truth": {
+    "solids": 1,
+    "bbox_mm": [
+      100.0,
+      60.0,
+      10.0
+    ],
+    "volume_mm3": 49200.0,
+    "hole_diameters_mm": []
+  }
+}
