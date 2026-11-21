@@ -6377,10 +6377,15 @@ off agent-written skills unused for `archive_unused_after_days`. Do not
 **Bundled coding skills** (`skills/public/`). Six skills adapted from Hermes
 Agent (MIT; several from obra/superpowers), each with its `LICENSE.txt` and
 author credit and with Hermes tool names mapped to DeerFlow's, plus
-`git-pr-workflow` (a stdlib `scripts/gitflow.py`: branch, checkpoint/restore
-outside the real index, commit with secret and default-branch refusals, push
-with retry and read-back, idempotent PR create/status through `gh` or the REST
-API, worktrees for parallel subagents) and `repo-change-cycle` (the setup
+`git-pr-workflow` (`scripts/gitflow.sh`: branch, checkpoint/restore outside
+the real index, commit with secret and default-branch refusals, push with retry
+and read-back, idempotent PR create/status through the GitHub REST API with the
+sandbox token or `gh`'s login, worktrees for parallel subagents). The shell
+script is the only place it starts processes; its Python helpers (JSON
+formatting, the staged-diff secret scan, the REST client) spawn nothing,
+because the skill scanner rates any Python `subprocess` call an error, and a
+waiver cannot be landed ahead of a brand-new file (a proposed waiver must match
+a finding already in the tree) and `repo-change-cycle` (the setup
 brief this repository follows, in `references/setup-brief.md`). Public skills
 are read in place and enabled by default, which is what makes "a fresh install
 is not empty, and updates improve it" true. **Every enabled public skill's

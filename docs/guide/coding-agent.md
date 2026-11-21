@@ -91,7 +91,7 @@ Turn any of them off in **Settings → Skills**.
 
 ### Git and pull requests
 
-`git-pr-workflow` ships `scripts/gitflow.py`, which the agent runs with
+`git-pr-workflow` ships `scripts/gitflow.sh`, which the agent runs with
 `bash`. Every subcommand prints JSON and fails loudly:
 
 - `preflight` — branch, default branch, dirty files, ahead/behind, whether
@@ -102,8 +102,9 @@ Turn any of them off in **Settings → Skills**.
 - `commit` — stages only what you name, refuses the default branch, empty
   commits and anything that looks like a secret in the staged diff.
 - `push` — retries network failures and then reads the remote ref back.
-- `pr create` / `pr status` — through `gh` or the GitHub API, never twice for
-  one branch, and read back before it reports a URL.
+- `pr create` / `pr status` — through the GitHub API with the sandbox's
+  GitHub token (or `gh`'s login when that is all there is), never twice for one
+  branch, and read back before it reports a URL.
 - `worktree add NAME` — a separate checkout per parallel subagent.
 
 Private repositories authenticate through the GitHub token the sandbox
