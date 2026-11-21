@@ -60,18 +60,18 @@ import urllib.error
 import urllib.request
 from collections.abc import Callable, Mapping
 from pathlib import Path
-from urllib.parse import urlparse, urlunparse
 
 # Reuse the SearXNG detector's helpers rather than growing a second copy of the
-# same .env parsing and docker probing. They are pure functions with no SearXNG
-# specifics in them.
+# same .env parsing, loopback-URL handling and docker probing. They are pure
+# functions with no SearXNG specifics in them.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from detect_searxng import (  # noqa: E402 - path bootstrap above
-    LOOPBACK_HOSTS,
-    bridge_gateway_ip,
-    is_docker_desktop,
+    container_can_reach_host_port,
+    is_loopback_url,
     parse_env_file,
     run_docker,
+    translate_for_docker,
+    url_port,
 )
 
 ENV_VAR = "DEER_FLOW_COMFYUI_BASE_URL"
@@ -127,39 +127,6 @@ def bundled_container_publishes(port: int, docker: Callable[[list[str]], str | N
     if not out:
         return False
     return BUNDLED_CONTAINER in out.split()
-
-
-def is_loopback_url(url: str) -> bool:
-    host = (urlparse(url).hostname or "").lower()
-    return host in LOOPBACK_HOSTS
-
-
-def url_port(url: str) -> int:
-    parsed = urlparse(url)
-    if parsed.port:
-        return parsed.port
-    return 443 if parsed.scheme == "https" else 80
-
-
-def translate_for_docker(url: str) -> str:
-    parsed = urlparse(url)
-    if (parsed.hostname or "").lower() not in LOOPBACK_HOSTS:
-        return url
-    host = "host.docker.internal"
-    if parsed.port:
-        host = f"{host}:{parsed.port}"
-    return urlunparse(parsed._replace(netloc=host))
-
-
-def container_can_reach_host_port(
-    port: int,
-    probe: Callable[[str], bool],
-    docker: Callable[[list[str]], str | None],
-) -> bool:
-    ip = bridge_gateway_ip(docker)
-    if ip and probe(f"http://{ip}:{port}"):
-        return True
-    return is_docker_desktop(docker)
 
 
 def resolve(

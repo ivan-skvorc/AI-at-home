@@ -121,6 +121,13 @@ class TestTranslation:
     def test_other_hosts_are_left_alone(self):
         assert translate_for_docker("http://gpu-box:8188") == "http://gpu-box:8188"
 
+    def test_url_and_reachability_helpers_are_the_searxng_detectors(self):
+        # One copy of the loopback and docker-reach rules for both detectors.
+        import detect_searxng
+
+        for name in ("is_loopback_url", "url_port", "translate_for_docker", "container_can_reach_host_port"):
+            assert getattr(detect_comfyui, name) is getattr(detect_searxng, name), name
+
 
 class TestAutostartDecision:
     """Whether a launch may PROVISION ComfyUI, which is not the same question
