@@ -244,128 +244,85 @@ dotenv_provides_secret() {
     [ -n "$value" ] && [ "$value" != '""' ]
 }
 
-# ── BETTER_AUTH_SECRET ───────────────────────────────────────────────────────
-# Required by Next.js in production. Generated once and persisted so auth
-# sessions survive container restarts.
+# ── Persisted secrets ────────────────────────────────────────────────────────
+# Each secret resolves from the shell, then $ENV_FILE (left for Compose to
+# read), then its file under $DEER_FLOW_HOME, then a newly generated value. A
+# new value is written under umask 077 and noclobber: the file is never
+# readable by others, and noclobber turns the redirection into an exclusive
+# (O_EXCL) create, so when a concurrent run wins, its value is read back
+# instead of ours. A writable directory can still hold a root-owned,
+# unreadable file; persisted secrets are only read, so read-only files and
+# overrides are valid.
 
-_secret_file="$DEER_FLOW_HOME/.better-auth-secret"
-if [ "$CMD" != "down" ] && [ -z "$BETTER_AUTH_SECRET" ] && dotenv_provides_secret BETTER_AUTH_SECRET; then
-    echo -e "${GREEN}✓ BETTER_AUTH_SECRET loaded from $ENV_FILE${NC}"
-elif [ "$CMD" != "down" ] && [ -z "$BETTER_AUTH_SECRET" ]; then
-    if [ -f "$_secret_file" ]; then
-        # A writable directory can still contain a root-owned, unreadable file.
-        # Persisted secrets are only read; read-only files and overrides are valid.
-        if [ ! -r "$_secret_file" ]; then
-            fail_home_permission "$_secret_file" readable
-        fi
-        export BETTER_AUTH_SECRET
-        BETTER_AUTH_SECRET="$(cat "$_secret_file")"
-        echo -e "${GREEN}✓ BETTER_AUTH_SECRET loaded from $_secret_file${NC}"
-    else
-        export BETTER_AUTH_SECRET
-        if command -v python3 > /dev/null 2>&1 && \
-            BETTER_AUTH_SECRET="$(python3 -c 'import sys; sys.version_info >= (3, 6) or sys.exit(1); import secrets; print(secrets.token_hex(32))' 2>/dev/null)"; then
-            true
-        elif command -v python > /dev/null 2>&1 && \
-            BETTER_AUTH_SECRET="$(python -c 'import sys; sys.version_info >= (3, 6) or sys.exit(1); import secrets; print(secrets.token_hex(32))' 2>/dev/null)"; then
-            true
-        elif command -v openssl > /dev/null 2>&1 && \
-            BETTER_AUTH_SECRET="$(openssl rand -hex 32)"; then
-            true
-        else
-            echo -e "${RED}✗ Cannot generate BETTER_AUTH_SECRET: python3, python, and openssl are all unavailable.${NC}" >&2
-            echo -e "${RED}  Set BETTER_AUTH_SECRET manually before running make up.${NC}" >&2
+# Print a new random secret: `hex` or `urlsafe` (32 bytes), or `fernet`
+# (urlsafe base64 of 32 random bytes, the Fernet key format).
+generate_secret() {
+    local code python_bin
+    case "$1" in
+        hex) code='import secrets; print(secrets.token_hex(32))' ;;
+        urlsafe) code='import secrets; print(secrets.token_urlsafe(32))' ;;
+        fernet) code='import base64, os; print(base64.urlsafe_b64encode(os.urandom(32)).decode())' ;;
+    esac
+    python_bin="$(pick_detector_python || true)"
+    if [ -n "$python_bin" ] && "$python_bin" -c "$code" 2>/dev/null; then
+        return 0
+    fi
+    command -v openssl > /dev/null 2>&1 || return 1
+    case "$1" in
+        fernet) openssl rand -base64 32 | tr '+/' '-_' ;;
+        *) openssl rand -hex 32 ;;
+    esac
+}
+
+# resolve_secret NAME FILE FORMAT [NOTE]: resolve and export NAME as above.
+resolve_secret() {
+    local name="$1" file="$2" format="$3" note="${4:-}"
+    local generated="" value=""
+
+    if [ "$CMD" = "down" ] || [ -n "${!name}" ]; then
+        return 0
+    fi
+    if dotenv_provides_secret "$name"; then
+        echo -e "${GREEN}✓ $name loaded from $ENV_FILE${NC}"
+        return 0
+    fi
+    if [ ! -f "$file" ]; then
+        if ! generated="$(generate_secret "$format")"; then
+            echo -e "${RED}✗ Cannot generate $name: python3, python, and openssl are all unavailable.${NC}" >&2
+            echo -e "${RED}  Set $name manually before running make up.${NC}" >&2
             exit 1
         fi
-        echo "$BETTER_AUTH_SECRET" > "$_secret_file"
-        chmod 600 "$_secret_file"
-        echo -e "${GREEN}✓ BETTER_AUTH_SECRET generated → $_secret_file${NC}"
+        if ! ( umask 077; set -o noclobber; printf '%s\n' "$generated" > "$file" ) 2>/dev/null; then
+            generated=""
+        fi
     fi
-fi
+    if [ -n "$generated" ]; then
+        export "$name=$generated"
+        echo -e "${GREEN}✓ $name generated → $file$note${NC}"
+        return 0
+    fi
+    if [ ! -r "$file" ]; then
+        fail_home_permission "$file" readable
+    fi
+    value="$(cat "$file")"
+    export "$name=$value"
+    echo -e "${GREEN}✓ $name loaded from $file${NC}"
+}
 
-# ── DEER_FLOW_INTERNAL_AUTH_TOKEN ────────────────────────────────────────────
+# Required by Next.js in production. Persisted so auth sessions survive
+# container restarts.
+resolve_secret BETTER_AUTH_SECRET "$DEER_FLOW_HOME/.better-auth-secret" hex
+
 # Shared by all Gateway workers so channel workers can call internal Gateway
 # APIs even when the request is handled by a different Uvicorn worker.
+resolve_secret DEER_FLOW_INTERNAL_AUTH_TOKEN "$DEER_FLOW_HOME/.internal-auth-token" urlsafe
 
-_internal_auth_token_file="$DEER_FLOW_HOME/.internal-auth-token"
-if [ "$CMD" != "down" ] && [ -z "$DEER_FLOW_INTERNAL_AUTH_TOKEN" ] && dotenv_provides_secret DEER_FLOW_INTERNAL_AUTH_TOKEN; then
-    echo -e "${GREEN}✓ DEER_FLOW_INTERNAL_AUTH_TOKEN loaded from $ENV_FILE${NC}"
-elif [ "$CMD" != "down" ] && [ -z "$DEER_FLOW_INTERNAL_AUTH_TOKEN" ]; then
-    if [ -f "$_internal_auth_token_file" ]; then
-        if [ ! -r "$_internal_auth_token_file" ]; then
-            fail_home_permission "$_internal_auth_token_file" readable
-        fi
-        export DEER_FLOW_INTERNAL_AUTH_TOKEN
-        DEER_FLOW_INTERNAL_AUTH_TOKEN="$(cat "$_internal_auth_token_file")"
-        echo -e "${GREEN}✓ DEER_FLOW_INTERNAL_AUTH_TOKEN loaded from $_internal_auth_token_file${NC}"
-    else
-        export DEER_FLOW_INTERNAL_AUTH_TOKEN
-        if command -v python3 > /dev/null 2>&1 && \
-            DEER_FLOW_INTERNAL_AUTH_TOKEN="$(python3 -c 'import sys; sys.version_info >= (3, 6) or sys.exit(1); import secrets; print(secrets.token_urlsafe(32))' 2>/dev/null)"; then
-            true
-        elif command -v python > /dev/null 2>&1 && \
-            DEER_FLOW_INTERNAL_AUTH_TOKEN="$(python -c 'import sys; sys.version_info >= (3, 6) or sys.exit(1); import secrets; print(secrets.token_urlsafe(32))' 2>/dev/null)"; then
-            true
-        elif command -v openssl > /dev/null 2>&1 && \
-            DEER_FLOW_INTERNAL_AUTH_TOKEN="$(openssl rand -hex 32)"; then
-            true
-        else
-            echo -e "${RED}✗ Cannot generate DEER_FLOW_INTERNAL_AUTH_TOKEN: python3, python, and openssl are all unavailable.${NC}" >&2
-            echo -e "${RED}  Set DEER_FLOW_INTERNAL_AUTH_TOKEN manually before running make up.${NC}" >&2
-            exit 1
-        fi
-        echo "$DEER_FLOW_INTERNAL_AUTH_TOKEN" > "$_internal_auth_token_file"
-        chmod 600 "$_internal_auth_token_file"
-        echo -e "${GREEN}✓ DEER_FLOW_INTERNAL_AUTH_TOKEN generated → $_internal_auth_token_file${NC}"
-    fi
-fi
-
-# ── DEER_FLOW_CREDENTIALS_KEY ────────────────────────────────────────────────
 # At-rest Fernet key the Gateway encrypts stored credentials with. Losing it
 # makes those credentials unreadable, so back the file up. It is persisted
 # under the name the Gateway itself generates in its runtime home (the
 # $DEER_FLOW_HOME bind mount), so a key either side created first is the one
-# both keep. noclobber turns the redirection into an exclusive (O_EXCL)
-# create: when a concurrent run wins, its key is read back instead of ours.
-
-_credentials_key_file="$DEER_FLOW_HOME/.credentials_key"
-if [ "$CMD" != "down" ] && [ -z "$DEER_FLOW_CREDENTIALS_KEY" ] && dotenv_provides_secret DEER_FLOW_CREDENTIALS_KEY; then
-    echo -e "${GREEN}✓ DEER_FLOW_CREDENTIALS_KEY loaded from $ENV_FILE${NC}"
-elif [ "$CMD" != "down" ] && [ -z "$DEER_FLOW_CREDENTIALS_KEY" ]; then
-    _generated_credentials_key=""
-    if [ ! -f "$_credentials_key_file" ]; then
-        # urlsafe base64 of 32 random bytes, the Fernet key format.
-        if command -v python3 > /dev/null 2>&1 && \
-            _generated_credentials_key="$(python3 -c 'import sys; sys.version_info >= (3, 6) or sys.exit(1); import base64, os; print(base64.urlsafe_b64encode(os.urandom(32)).decode())' 2>/dev/null)"; then
-            true
-        elif command -v python > /dev/null 2>&1 && \
-            _generated_credentials_key="$(python -c 'import sys; sys.version_info >= (3, 6) or sys.exit(1); import base64, os; print(base64.urlsafe_b64encode(os.urandom(32)).decode())' 2>/dev/null)"; then
-            true
-        elif command -v openssl > /dev/null 2>&1 && \
-            _generated_credentials_key="$(openssl rand -base64 32 | tr '+/' '-_')"; then
-            true
-        else
-            echo -e "${RED}✗ Cannot generate DEER_FLOW_CREDENTIALS_KEY: python3, python, and openssl are all unavailable.${NC}" >&2
-            echo -e "${RED}  Set DEER_FLOW_CREDENTIALS_KEY manually before running make up.${NC}" >&2
-            exit 1
-        fi
-        if ! ( umask 077; set -o noclobber; printf '%s\n' "$_generated_credentials_key" > "$_credentials_key_file" ) 2>/dev/null; then
-            _generated_credentials_key=""
-        fi
-    fi
-    if [ -n "$_generated_credentials_key" ]; then
-        export DEER_FLOW_CREDENTIALS_KEY="$_generated_credentials_key"
-        echo -e "${GREEN}✓ DEER_FLOW_CREDENTIALS_KEY generated → $_credentials_key_file (back it up)${NC}"
-    else
-        if [ ! -r "$_credentials_key_file" ]; then
-            fail_home_permission "$_credentials_key_file" readable
-        fi
-        export DEER_FLOW_CREDENTIALS_KEY
-        DEER_FLOW_CREDENTIALS_KEY="$(cat "$_credentials_key_file")"
-        echo -e "${GREEN}✓ DEER_FLOW_CREDENTIALS_KEY loaded from $_credentials_key_file${NC}"
-    fi
-    unset _generated_credentials_key
-fi
+# both keep.
+resolve_secret DEER_FLOW_CREDENTIALS_KEY "$DEER_FLOW_HOME/.credentials_key" fernet " (back it up)"
 
 # ── Auth mode (fork: passwordless by default on the home-lab Docker path) ────
 

@@ -236,6 +236,30 @@ def test_deploy_still_generates_and_persists_a_secret_when_dotenv_has_none(tmp_p
     assert (persisted.stat().st_mode & 0o777) == 0o600 or os.name == "nt"
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX mode bits")
+def test_deploy_creates_every_secret_file_private_from_the_start(tmp_path):
+    """A generated secret is never on disk with the default umask's mode.
+
+    ``chmod`` is a no-op here, so each file keeps the mode it was created
+    with: writing first and tightening afterwards leaves it world-readable.
+    """
+    worktree = _worktree(tmp_path)
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "chmod").write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    (bin_dir / "chmod").chmod(0o755)
+
+    previous_umask = os.umask(0o022)
+    try:
+        _, observed, _, _, _, home = _run_deploy_build(tmp_path, worktree, compose_environment={})
+    finally:
+        os.umask(previous_umask)
+
+    for key in SECRETS:
+        assert GENERATED.fullmatch(observed[key]), observed[key]
+        assert (home / PERSISTED_FILE[key]).stat().st_mode & 0o777 == 0o600, key
+
+
 @pytest.mark.parametrize("key", SECRETS)
 def test_deploy_keeps_shell_export_ahead_of_dotenv(tmp_path, key):
     """An exported shell value keeps compose precedence: it wins over .env untouched."""
