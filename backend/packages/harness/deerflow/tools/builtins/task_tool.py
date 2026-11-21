@@ -36,7 +36,7 @@ from deerflow.sandbox.security import LOCAL_BASH_SUBAGENT_DISABLED_MESSAGE, is_h
 from deerflow.subagents import SubagentExecutor, get_available_subagent_names, get_subagent_config
 from deerflow.subagents.acceptance_checks import check_acceptance_criteria, render_acceptance_section
 from deerflow.subagents.capacity import SubagentExecutionCapacity
-from deerflow.subagents.config import resolve_subagent_model_name
+from deerflow.subagents.config import merge_skill_allowlists, resolve_subagent_model_name
 from deerflow.subagents.context_snapshot import ParentContextSnapshot
 from deerflow.subagents.executor import (
     SubagentStatus,
@@ -814,17 +814,6 @@ def _get_runtime_app_config(runtime: Any) -> "AppConfig | None":
     return None
 
 
-def _merge_skill_allowlists(parent: list[str] | None, child: list[str] | None) -> list[str] | None:
-    """Return the effective subagent skill allowlist under the parent policy."""
-    if parent is None:
-        return child
-    if child is None:
-        return list(parent)
-
-    parent_set = set(parent)
-    return [skill for skill in child if skill in parent_set]
-
-
 def _task_result_command(
     *,
     tool_call_id: str,
@@ -1143,7 +1132,7 @@ async def task_tool(
 
     parent_available_skills = metadata.get("available_skills")
     if parent_available_skills is not None:
-        overrides["skills"] = _merge_skill_allowlists(list(parent_available_skills), config.skills)
+        overrides["skills"] = merge_skill_allowlists(list(parent_available_skills), config.skills)
 
     # Double Plus Ultracode has no automatic limits (FORK.md §44): the child
     # carries the mode and gets no wall clock, which the poll loop below reads too.

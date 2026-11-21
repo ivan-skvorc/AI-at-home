@@ -32,6 +32,7 @@ from deerflow.subagents.batch_runtime import (
     SubagentBatchSubmitter,
     get_subagent_batch_submitter,
 )
+from deerflow.subagents.config import merge_skill_allowlists
 from deerflow.subagents.registry import get_available_subagent_names, get_subagent_config
 from deerflow.tools.sync import make_sync_tool_wrapper
 from deerflow.tools.types import Runtime
@@ -145,15 +146,6 @@ def _result(tool_call_id: str, *, content: str, batch: dict[str, Any] | None = N
     )
 
 
-def _merge_skill_allowlists(parent: list[str] | None, child: list[str] | None) -> list[str] | None:
-    if parent is None:
-        return child
-    if child is None:
-        return list(parent)
-    allowed = set(parent)
-    return [name for name in child if name in allowed]
-
-
 @tool("batch_task", parse_docstring=True)
 async def batch_task(
     runtime: Runtime,
@@ -231,7 +223,7 @@ async def batch_task(
 
     parent_skills = metadata.get("available_skills")
     if parent_skills is not None:
-        config = replace(config, skills=_merge_skill_allowlists(list(parent_skills), config.skills))
+        config = replace(config, skills=merge_skill_allowlists(list(parent_skills), config.skills))
 
     thread_id = context.get("thread_id") or runtime.config.get("configurable", {}).get("thread_id")
     if not thread_id:
