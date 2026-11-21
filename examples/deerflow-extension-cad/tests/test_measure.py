@@ -3,9 +3,16 @@
 Each case builds a part with the kernel, exports it, re-imports the STEP and
 measures it, because that round trip is what the tool decides on. The expected
 value is one (drill diameter, larger diameter, through) per hole.
+
+The later sections cover where holes are, the size and mass of the part, parts
+of several bodies and the gaps between them, the sampled wall, and
+``measure_cli``, which measures one STEP the same way outside the Gateway.
 """
 
 from __future__ import annotations
+
+import json
+import math
 
 import pytest
 
@@ -238,3 +245,272 @@ def test_two_separate_solids_are_counted_and_not_measured_for_holes(tmp_path):
     measured = measure.measure_step(path, cq)
     assert measured["solids"] == 2 and measured["holes"] == []
     assert measured["bbox_mm"] == [40.0, 10.0, 10.0] and measured["volume_mm3"] == pytest.approx(2000.0, abs=0.01)
+
+
+# --- Where the features are (items 57, 51 and 54) ------------------------------
+
+
+def _step(shape, tmp_path, name="part.step"):
+    path = tmp_path / name
+    exporters.export(shape.findSolid() if isinstance(shape, cq.Workplane) else shape, str(path))
+    return path
+
+
+def _bodies(*parts):
+    # Loose bodies in one file: what a print-in-place design or an assembled kit exports.
+    return cq.Compound.makeCompound([part.findSolid() if isinstance(part, cq.Workplane) else part for part in parts])
+
+
+def _near(seen, wanted, tolerance=0.01):
+    return len(seen) == len(wanted) and all(abs(s - w) <= tolerance for s, w in zip(seen, wanted))
+
+
+def test_each_hole_says_where_it_enters_and_which_way_it_runs(tmp_path):
+    # Two holes drilled from the top of a 40 x 30 x 6 plate and one drilled into its +X side.
+    plate = cq.Workplane("XY").box(40, 30, 6)
+    plate = plate.faces(">Z").workplane().pushPoints([(-15, 0), (15, 5)]).hole(4)
+    plate = plate.faces(">X").workplane(origin=(0, 0, 0)).hole(3, 10)  # the global origin projected: (20, 0, 0)
+    holes = measure.measure_step(_step(plate, tmp_path), cq)["holes"]
+    seen = sorted((hole["diameter_mm"], tuple(hole["at"]), tuple(hole["axis"])) for hole in holes)
+    wanted = [(3.0, (20, 0, 0), (-1, 0, 0)), (4.0, (-15, 0, 3), (0, 0, -1)), (4.0, (15, 5, 3), (0, 0, -1))]
+    assert [diameter for diameter, _, _ in seen] == [diameter for diameter, _, _ in wanted]
+    for (_, at, axis), (_, at_wanted, axis_wanted) in zip(seen, wanted):
+        assert _near(at, at_wanted) and _near(axis, axis_wanted, 1e-4), (at, axis)
+
+
+def test_a_hole_is_entered_from_its_open_end_or_its_wide_end(tmp_path):
+    # A blind hole can only be entered where it is open. A through hole is entered where it is
+    # widest (a counterbore here, drilled from below), otherwise from its upper end.
+    blind_from_below = cq.Workplane("XY").box(40, 30, 6).faces("<Z").workplane().hole(4, 3)
+    (blind,) = measure.measure_step(_step(blind_from_below, tmp_path, "blind.step"), cq)["holes"]
+    assert _near(blind["at"], (0, 0, -3)) and _near(blind["axis"], (0, 0, 1), 1e-4)
+    cbore_from_below = cq.Workplane("XY").box(40, 30, 6).faces("<Z").workplane().cboreHole(4, 8, 2)
+    (cbore,) = measure.measure_step(_step(cbore_from_below, tmp_path, "cbore.step"), cq)["holes"]
+    assert cbore["through"] and _near(cbore["at"], (0, 0, -3)) and _near(cbore["axis"], (0, 0, 1), 1e-4)
+    # Through the -X wall of an enclosure: the inner end opens into the part's own cavity, so it is the exit.
+    wall_hole = cq.Workplane("XY").box(40, 30, 20).faces("<Z").shell(-2).faces("<X").workplane(origin=(0, 0, 0)).hole(4, 3)
+    (side,) = measure.measure_step(_step(wall_hole, tmp_path, "wall.step"), cq)["holes"]
+    assert side["through"] and _near(side["at"], (-20, 0, 0)) and _near(side["axis"], (1, 0, 0), 1e-4)
+
+
+def test_an_off_origin_part_reports_its_corners(tmp_path):
+    box = cq.Workplane("XY").box(10, 20, 30).translate((100, -50, 7))
+    measured = measure.measure_step(_step(box, tmp_path), cq)
+    assert _near(measured["bbox_min_mm"], (95, -60, -8)) and _near(measured["bbox_max_mm"], (105, -40, 22))
+
+
+def test_a_cube_reports_its_area_and_centre_of_mass(tmp_path):
+    cube = cq.Workplane("XY").box(10, 10, 10).translate((7, -3, 12))
+    measured = measure.measure_step(_step(cube, tmp_path), cq)
+    assert measured["area_mm2"] == pytest.approx(600.0, abs=1e-3)
+    assert _near(measured["centre_of_mass_mm"], (7, -3, 12), 1e-4)
+
+
+def test_one_solid_keeps_every_key_it_had_and_gains_the_new_ones_after_them(tmp_path):
+    # The tool, the report and the eval read this dict: it is extended, never reshaped.
+    measured = measure.measure_step(_step(top(plate()).hole(4), tmp_path), cq)
+    assert list(measured)[:6] == ["solids", "valid", "closed", "bbox_mm", "volume_mm3", "holes"]
+    assert set(measured) == {"solids", "valid", "closed", "bbox_mm", "volume_mm3", "holes", "bbox_min_mm", "bbox_max_mm", "centre_of_mass_mm", "area_mm2"}
+    (hole,) = measured["holes"]
+    assert list(hole) == ["diameter_mm", "through", "depth_mm", "at", "axis"]
+
+
+def hinge():
+    # Two leaves 0.5 mm apart in z with a 6.6 mm bore each, and a 6 mm pin through both: 0.3 mm all round.
+    leaf = cq.Workplane("XY").box(20, 20, 5, centered=(True, True, False)).faces(">Z").workplane().hole(6.6)
+    pin = cq.Workplane("XY").circle(3).extrude(10.5)
+    return _bodies(leaf, leaf.translate((0, 0, 5.5)), pin)
+
+
+def test_each_body_is_measured_on_its_own_so_a_captive_pin_leaves_its_bore_a_hole(tmp_path):
+    measured = measure.measure_step(_step(hinge(), tmp_path), cq)
+    assert measured["solids"] == 3 and measured["holes"] == []  # the whole is not one solid
+    bodies = sorted(measured["bodies"], key=lambda body: body["volume_mm3"])
+    pin, low_leaf, high_leaf = bodies[0], *sorted(bodies[1:], key=lambda body: body["bbox_min_mm"][2])
+    assert pin["holes"] == [] and pin["valid"] and pin["closed"]
+    assert pin["volume_mm3"] == pytest.approx(3.14159265 * 9 * 10.5, abs=0.01)
+    for leaf, top_z in ((low_leaf, 5), (high_leaf, 10.5)):
+        (bore,) = leaf["holes"]
+        assert (bore["diameter_mm"], bore["through"]) == (6.6, True)
+        assert _near(bore["at"], (0, 0, top_z)) and _near(bore["axis"], (0, 0, -1), 1e-4)
+        assert leaf["bbox_mm"] == [20.0, 20.0, 5.0] and _near(leaf["centre_of_mass_mm"][:2], (0, 0), 1e-4)
+    assert sum(body["volume_mm3"] for body in bodies) == pytest.approx(measured["volume_mm3"], abs=0.01)
+    assert sum(body["area_mm2"] for body in bodies) == pytest.approx(measured["area_mm2"], abs=0.01)
+
+
+def test_the_smallest_gap_between_bodies_is_measured_with_its_pair_and_direction(tmp_path):
+    measured = measure.measure_step(_step(hinge(), tmp_path), cq)
+    gaps = measured["gaps"]
+    assert [round(gap["gap_mm"], 2) for gap in gaps] == [0.3, 0.3, 0.5]
+    volumes = [body["volume_mm3"] for body in measured["bodies"]]
+    pin = volumes.index(min(volumes))
+    for gap in gaps[:2]:
+        # pin against a leaf: radial, so horizontal
+        assert pin in gap["bodies"] and abs(gap["direction"][2]) < 1e-6
+        assert abs(math.hypot(*gap["direction"]) - 1) < 1e-3
+    (leaves,) = gaps[2:]
+    assert pin not in leaves["bodies"] and leaves["bodies"][0] < leaves["bodies"][1]
+    # from the first body of the pair to the second: the leaves are stacked, so straight up or down
+    assert abs(abs(leaves["direction"][2]) - 1) < 1e-6
+    assert 5 <= leaves["at_mm"][2] <= 5.5
+
+
+def test_bodies_that_overlap_or_sit_inside_each_other_have_no_gap(tmp_path):
+    overlapping = _bodies(cq.Workplane("XY").box(10, 10, 10), cq.Workplane("XY").box(10, 10, 10).translate((5, 0, 0)))
+    (gap,) = measure.measure_step(_step(overlapping, tmp_path, "overlap.step"), cq)["gaps"]
+    assert gap["gap_mm"] == 0 and gap["direction"] is None
+    # No surface of one meets the other, yet they share material: the kernel's distance is 4 mm here.
+    nested = _bodies(cq.Workplane("XY").box(20, 20, 20), cq.Workplane("XY").box(4, 4, 4))
+    (gap,) = measure.measure_step(_step(nested, tmp_path, "nested.step"), cq)["gaps"]
+    assert gap["gap_mm"] == 0 and gap["direction"] is None
+
+
+def test_far_apart_bodies_still_report_their_smallest_gap(tmp_path):
+    two = cq.Workplane("XY").box(10, 10, 10).union(cq.Workplane("XY").box(10, 10, 10).translate((30, 0, 0)))
+    (gap,) = measure.measure_step(_step(two, tmp_path), cq)["gaps"]
+    assert gap["gap_mm"] == pytest.approx(20.0, abs=1e-6) and gap["bodies"] == [0, 1]
+    assert _near(gap["direction"], (1, 0, 0), 1e-6) or _near(gap["direction"], (-1, 0, 0), 1e-6)
+
+
+def row_of_cubes(count, narrow):
+    # 2 mm cubes 1 mm apart along x, except the pair after cube *narrow*, which is 0.4 mm apart
+    cubes, x = [], 0.0
+    for index in range(count):
+        cubes.append(cq.Workplane("XY").box(2, 2, 2).translate((x, 0, 0)))
+        x += 2 + (0.4 if index == narrow else 1.0)
+    return _bodies(*cubes)
+
+
+def test_many_bodies_find_the_smallest_gap_and_list_only_the_close_pairs(tmp_path):
+    measured = measure.measure_step(_step(row_of_cubes(30, 17), tmp_path), cq)
+    gaps = measured["gaps"]
+    assert gaps[0]["gap_mm"] == pytest.approx(0.4, abs=1e-6)
+    left, right = gaps[0]["bodies"]
+    lows = [body["bbox_min_mm"][0] for body in measured["bodies"]]
+    assert sorted((lows[left], lows[right])) == pytest.approx([17 * 3 - 1, 17 * 3 + 1.4], abs=1e-4)
+    # 29 neighbouring pairs are under GAP_NEAR_MM; the list keeps the smallest MAX_GAPS_LISTED
+    assert len(gaps) == measure.MAX_GAPS_LISTED and all(gap["gap_mm"] <= measure.GAP_NEAR_MM for gap in gaps)
+    assert [gap["gap_mm"] for gap in gaps] == sorted(gap["gap_mm"] for gap in gaps)
+    assert "gaps_incomplete" not in measured
+
+
+def test_measuring_gaps_stops_at_its_pair_cap_and_says_so(tmp_path, monkeypatch):
+    monkeypatch.setattr(measure, "MAX_GAP_PAIRS", 3)
+    measured = measure.measure_step(_step(row_of_cubes(30, 17), tmp_path), cq)
+    assert measured["gaps_incomplete"] is True and len(measured["gaps"]) <= 3
+
+
+def test_the_sampled_wall_of_a_one_millimetre_shell(tmp_path):
+    shell = cq.Workplane("XY").box(40, 30, 20).faces(">Z").shell(-1)
+    wall = measure.sampled_wall(measure.step_solids(_step(shell, tmp_path), cq))
+    assert wall["thinnest_wall_sampled_mm"] == pytest.approx(1.0, abs=0.05)
+    assert wall["wall_sampling_complete"] is True and wall["wall_samples"] > 0
+    assert len(wall["thinnest_wall_at_mm"]) == 3
+
+
+def test_the_sampled_wall_of_a_t_shape_and_of_a_tube(tmp_path):
+    tee = cq.Workplane("XY").box(10, 10, 4).union(cq.Workplane("XY").box(40, 10, 4).translate((0, 0, 4)))
+    assert measure.sampled_wall(measure.step_solids(_step(tee, tmp_path, "tee.step"), cq))["thinnest_wall_sampled_mm"] == pytest.approx(4.0, abs=0.05)
+    tube = top(cq.Workplane("XY").cylinder(20, 8)).hole(10)
+    assert measure.sampled_wall(measure.step_solids(_step(tube, tmp_path, "tube.step"), cq))["thinnest_wall_sampled_mm"] == pytest.approx(3.0, abs=0.05)
+
+
+def test_the_sampled_wall_takes_the_thinnest_body_and_keeps_to_its_time(tmp_path):
+    import time
+
+    solids = measure.step_solids(_step(_bodies(cq.Workplane("XY").box(10, 10, 10), cq.Workplane("XY").box(10, 10, 1.5).translate((20, 0, 0))), tmp_path, "two.step"), cq)
+    assert measure.sampled_wall(solids)["thinnest_wall_sampled_mm"] == pytest.approx(1.5, abs=0.05)
+    enclosure = top(cq.Workplane("XY").box(120, 80, 40).edges("|Z").fillet(6).edges(">Z").fillet(4).faces("<Z").shell(-2)).rarray(8, 6, 10, 10).hole(3)
+    solids = measure.step_solids(_step(enclosure, tmp_path, "enclosure.step"), cq)
+    started = time.monotonic()
+    wall = measure.sampled_wall(solids)
+    assert time.monotonic() - started < measure.WALL_SECONDS + 0.5
+    assert wall["thinnest_wall_sampled_mm"] == pytest.approx(2.0, abs=0.05)
+    started = time.monotonic()
+    rushed = measure.sampled_wall(solids, seconds=0.0)
+    assert time.monotonic() - started < 0.5 and rushed["wall_sampling_complete"] is False
+
+
+# --- measure_cli: one STEP measured and judged outside the Gateway ------------------
+
+
+def _cli(*args, code=None):
+    import subprocess
+    import sys
+
+    command = [sys.executable, "-I", *(["-c", code] if code else ["-m", "deerflow_extension_cad.measure_cli"]), *map(str, args)]
+    return subprocess.run(command, capture_output=True, text=True, timeout=120)
+
+
+def _holed_plate(tmp_path):
+    return _step(top(plate()).pushPoints([(-15, 0), (15, 5)]).hole(4), tmp_path, "plate.step")
+
+
+def test_measure_cli_prints_what_the_tool_measures(tmp_path):
+    path = _holed_plate(tmp_path)
+    done = _cli(path)
+    assert done.returncode == 0, done.stderr
+    assert json.loads(done.stdout) == {"measured": measure.measure_step(path, cq)}
+
+
+def test_measure_cli_judges_a_step_against_its_truth(tmp_path):
+    from deerflow_extension_cad import measure_cli
+
+    path = _holed_plate(tmp_path)
+    truth = {"bbox_xyz_mm": [60, 40, 6], "volume_min_max_mm3": [14000, 14500], "hole_diameters_mm": [4, 4]}
+    judged = measure_cli.report(path, truth)
+    assert judged["passed"] is True and judged["expected"] == truth and judged["measured"] == measure.measure_step(path, cq)
+    assert [check["check"] for check in judged["checks"]] == ["one closed solid", "bounding box", "volume", "holes"]
+    (tmp_path / "truth.json").write_text(json.dumps({**truth, "bbox_xyz_mm": [61, 40, 6]}))
+    done = _cli(path, tmp_path / "truth.json")
+    assert done.returncode == 1, done.stderr
+    failed = json.loads(done.stdout)
+    assert failed["passed"] is False and [check["check"] for check in failed["checks"] if not check["passed"]] == ["bounding box"]
+
+
+def test_measure_cli_reports_several_bodies_with_the_tools_notes(tmp_path):
+    from deerflow_extension_cad import measure_cli
+
+    judged = measure_cli.report(_step(hinge(), tmp_path), {"bbox_xyz_mm": [20, 20, 10.5]})
+    assert judged["passed"] is False and len(judged["measured"]["bodies"]) == 3
+    assert any("3 separate bodies" in note for note in judged["notes"])
+
+
+def test_measure_cli_keeps_standard_output_for_its_answer(tmp_path):
+    # The kernel prints its STEP reader's errors to standard output; the answer must still parse.
+    broken = tmp_path / "broken.step"
+    broken.write_text("ISO-10303-21;\nHEADER;\nENDSEC;\nDATA;\n#1=FOO(;\nENDSEC;\nEND-ISO-10303-21;\n")
+    done = _cli(broken)
+    assert done.returncode == 2
+    assert set(json.loads(done.stdout)) == {"error"} and "ERR" in done.stderr
+
+
+def test_measure_cli_refuses_arguments_it_cannot_use(tmp_path):
+    path = _holed_plate(tmp_path)
+    (tmp_path / "list.json").write_text("[60, 40, 6]")
+    (tmp_path / "nobox.json").write_text('{"hole_diameters_mm": [4]}')
+    (tmp_path / "badvolume.json").write_text('{"bbox_xyz_mm": [60, 40, 6], "volume_min_max_mm3": "big"}')
+    for args in ((), (path, tmp_path / "list.json", "extra"), (tmp_path / "missing.step",), (path, tmp_path / "missing.json"), (path, tmp_path / "list.json"), (path, tmp_path / "nobox.json"), (path, tmp_path / "badvolume.json")):
+        done = _cli(*args)
+        assert done.returncode == 2, (args, done.stdout, done.stderr)
+        assert list(json.loads(done.stdout)) == ["error"], args
+
+
+def test_measure_cli_measures_under_the_workers_ceilings(tmp_path):
+    from deerflow_extension_cad import measure_cli
+
+    probe = (
+        "import resource, sys\n"
+        "from deerflow_extension_cad import measure_cli\n"
+        "measure_cli.report = lambda step, truth: {'limits': [resource.getrlimit(getattr(resource, name))[0] for name in ('RLIMIT_AS', 'RLIMIT_CPU', 'RLIMIT_FSIZE')]}\n"
+        "sys.exit(measure_cli.main(sys.argv[1:]))\n"
+    )
+    done = _cli(_holed_plate(tmp_path), code=probe)
+    assert done.returncode == 0, done.stderr
+    assert json.loads(done.stdout) == {"limits": [measure_cli.MEMORY_MB * 1024 * 1024, measure_cli.CPU_SECONDS, measure_cli.MAX_OUTPUT_BYTES]}
+
+
+def test_importing_measure_cli_loads_neither_the_kernel_nor_the_gateway():
+    done = _cli(code="import sys, deerflow_extension_cad.measure_cli\nprint(sorted({m.split('.')[0] for m in sys.modules} & {'cadquery', 'OCP', 'app', 'deerflow'}))")
+    assert done.returncode == 0, done.stderr
+    assert done.stdout.strip() == "[]"

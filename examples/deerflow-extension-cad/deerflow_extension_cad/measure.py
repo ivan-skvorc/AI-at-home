@@ -39,21 +39,52 @@ cup) is geometrically a large blind hole and is reported as one; a blind hole
 with a domed floor reads as through, because only cylinders and cones are
 chained.
 
-This module needs the kernel and runs in the worker process only.
+Where a hole is
+---------------
+Each hole says where it is entered (``at``, the point of its axis on the face it
+opens into) and which way it runs from there into the part (``axis``, a unit
+vector). A blind hole is entered at its open end. A through hole is entered
+where it is widest (a counterbore, a countersink, a chamfered mouth); else from
+the outside, when only one end has nothing more of the part beyond it along the
+axis (the outer face of an enclosure wall); else at the end that lies further
+along its axis's canonical direction, whose first non-zero component is
+positive: the top of a vertical hole, the +x end of one along x.
+
+Several bodies
+--------------
+A file of several solids (a print-in-place hinge, a kit modelled assembled) is
+also measured body by body, in the file's order: each body's size, mass and
+holes, with air told from material against that body alone, so a captive pin
+does not fill its bore. The whole keeps ``holes`` empty, as before. The gaps
+between bodies are listed smallest first: every pair closer than
+``GAP_NEAR_MM`` and always the closest pair, each with the direction from the
+first body to the second. Bodies that touch, overlap or sit inside one another
+have a gap of 0.
+
+``sampled_wall`` is separate because it is spent from a time budget: it casts
+rays straight into the material from a grid of points on every face and
+reports the shortest, which is the thinnest wall it found, not a proof that
+none is thinner.
+
+This module needs the kernel and runs in the worker process only (or in
+``measure_cli``, which measures one STEP the same way).
 """
 
 from __future__ import annotations
 
 import math
+import time
 from pathlib import Path
 
 from OCP.BRep import BRep_Tool
 from OCP.BRepAdaptor import BRepAdaptor_Surface
 from OCP.BRepClass3d import BRepClass3d_SolidClassifier
+from OCP.BRepExtrema import BRepExtrema_DistShapeShape
 from OCP.BRepGProp import BRepGProp_Face
 from OCP.BRepTools import BRepTools
+from OCP.BRepTopAdaptor import BRepTopAdaptor_FClass2d
 from OCP.GeomAbs import GeomAbs_Cone, GeomAbs_Cylinder
-from OCP.gp import gp_Dir, gp_Lin, gp_Pnt, gp_Vec
+from OCP.gp import gp_Dir, gp_Lin, gp_Pnt, gp_Pnt2d, gp_Vec
 from OCP.IntCurvesFace import IntCurvesFace_ShapeIntersector
 from OCP.IntCurveSurface import IntCurveSurface_Tangent
 from OCP.TopAbs import TopAbs_IN
@@ -74,6 +105,27 @@ _RAYS = ((0.3411, 0.5873, 0.7340), (-0.6229, 0.2671, 0.7354), (0.7112, -0.6377, 
 _RAY_LENGTH = 1e7  # past any part: sizes are capped at 1e5
 _RAY_NEAR = 1e-6  # a crossing this close to the start means the point is on a surface
 _SWEEP = (0.3711, 0.5373, 0.7577)  # generic direction for the grouping sweep
+#: A hole's entry point is said to 0.01 mm, its direction to four decimals.
+AT_DIGITS = 2
+AXIS_DIGITS = 4
+#: Pairs of bodies closer than this are all listed: every printer clearance and layer height is below it.
+GAP_NEAR_MM = 2.0
+#: Exact distances worked out at most: every pair of 20 bodies, the most a part may expect.
+MAX_GAP_PAIRS = 190
+#: Gaps one measurement lists, smallest first.
+MAX_GAPS_LISTED = 20
+#: Two bodies this close touch: no slicer leaves a gap that small.
+GAP_TOUCH_MM = 1e-6
+#: The sampled wall: grids of points per face, coarse first, so a short budget still reaches every face once.
+WALL_GRIDS = (2, 5)
+WALL_SECONDS = 1.0
+#: A crossing this close to a sample point is the face the ray starts on.
+_WALL_NEAR = 1e-4
+
+
+def _tidy(values, ndigits):
+    # + 0.0 turns -0.0 into 0.0, which a reader would otherwise take for a sign that means something.
+    return [round(value, ndigits) + 0.0 for value in values]
 
 
 def _dot(a, b):
@@ -217,6 +269,20 @@ def _cone_segments(faces):
     return segments
 
 
+def _by_ray(rays, point):
+    """True or False from an odd or even number of clean crossings, None when no ray is clean."""
+    for direction in _RAYS:
+        rays.Perform(gp_Lin(point, gp_Dir(*direction)), 0.0, _RAY_LENGTH)
+        if not rays.IsDone():
+            continue
+        crossings = rays.NbPnt()
+        # Clean: every crossing passes through the inside of a face, not along an edge
+        # (two faces would both report it) and not tangent to it (no crossing at all).
+        if all(rays.State(i) == TopAbs_IN and rays.Transition(i) != IntCurveSurface_Tangent and rays.WParameter(i) > _RAY_NEAR for i in range(1, crossings + 1)):
+            return crossings % 2 == 1
+    return None
+
+
 class _Classifier:
     def __init__(self, classifier, rays, direction, anchor):
         self._c = classifier
@@ -251,20 +317,16 @@ class _Classifier:
         return self._c.State() == TopAbs_IN
 
     def _by_ray(self, point):
-        """True or False from an odd or even number of clean crossings, None when no ray is clean."""
-        for direction in _RAYS:
-            self._rays.Perform(gp_Lin(point, gp_Dir(*direction)), 0.0, _RAY_LENGTH)
-            if not self._rays.IsDone():
-                continue
-            crossings = self._rays.NbPnt()
-            # Clean: every crossing passes through the inside of a face, not along an edge
-            # (two faces would both report it) and not tangent to it (no crossing at all).
-            if all(self._rays.State(i) == TopAbs_IN and self._rays.Transition(i) != IntCurveSurface_Tangent and self._rays.WParameter(i) > _RAY_NEAR for i in range(1, crossings + 1)):
-                return crossings % 2 == 1
-        return None
+        return _by_ray(self._rays, point)
 
     def air_inside(self, seg):
         return not self.in_material(0.5 * (seg["a0"] + seg["a1"]))
+
+    def opens_to_outside(self, a, sign):
+        """Whether the axis from *a* onwards, away from the hole (*sign* +1 or -1), meets no more of the part."""
+        d = tuple(sign * c for c in self._d)
+        self._rays.Perform(gp_Lin(gp_Pnt(*self.point(a)), gp_Dir(*d)), 0.0, _RAY_LENGTH)
+        return not (self._rays.IsDone() and self._rays.NbPnt() > 0)
 
 
 def _drop_recess_walls(segments):
@@ -342,30 +404,208 @@ def measure_holes(solid, ndigits: int = 4) -> list[dict]:
             walls = 1 + sum(1 for s in chain if s.get("new_wall"))
             if walls > 1:
                 hole["walls"] = walls
+            if open_lo and open_hi:
+                wide = [s for s in chain if round(2 * max(s["r0"], s["r1"]), ndigits) == larger] if larger is not None else []
+                if wide:
+                    entry_hi = sum(s["a0"] + s["a1"] for s in wide) / len(wide) >= a0 + a1
+                else:
+                    # An end that opens into the part's own cavity (the inside of an enclosure wall) is the exit.
+                    entry_hi = probe.opens_to_outside(a1 + PROBE_EPS, 1) or not probe.opens_to_outside(a0 - PROBE_EPS, -1)
+            else:
+                entry_hi = open_hi
+            hole["at"] = _tidy(probe.point(a1 if entry_hi else a0), AT_DIGITS)
+            hole["axis"] = _tidy([-c for c in direction] if entry_hi else direction, AXIS_DIGITS)
             holes.append((probe.point(a0), hole))
     holes.sort(key=lambda item: (item[1]["diameter_mm"], item[0]))
     return [hole for _, hole in holes]
 
 
-def measure_step(path: Path, cq) -> dict:
-    """Re-import the STEP at *path* and report what it holds. *cq* is the imported cadquery module."""
-    solids = [solid for value in cq.importers.importStep(str(path)).vals() for solid in value.Solids()]
-    measured: dict = {"solids": len(solids), "valid": False, "closed": False, "bbox_mm": [], "volume_mm3": 0.0, "holes": []}
-    if not solids:
-        return measured
-    shells = [shell for solid in solids for shell in solid.Shells()]
-    # isValid() alone is true for a wire or an open shell, and Volume() then returns a
-    # length or an area: a solid counts only with closed shells and a volume of its own.
-    measured["valid"] = all(solid.isValid() and solid.Volume() > 0 for solid in solids)
-    measured["closed"] = bool(shells) and all(BRep_Tool.IsClosed_s(shell.wrapped) for shell in shells)
-    if len(shells) > len(solids):
-        # Sealed cavities are legal geometry and usually a mistake; they are reported, not refused.
-        measured["enclosed_voids"] = len(shells) - len(solids)
+def _size(solids) -> dict:
+    """Bounding box, volume, corners, centre of mass and area of one or more solids taken together."""
     boxes = [solid.BoundingBox() for solid in solids]
     low = [min(getattr(box, axis + "min") for box in boxes) for axis in "xyz"]
     high = [max(getattr(box, axis + "max") for box in boxes) for axis in "xyz"]
-    measured["bbox_mm"] = [round(top - bottom, 4) for bottom, top in zip(low, high)]
-    measured["volume_mm3"] = round(sum(solid.Volume() for solid in solids), 3)
+    volumes = [solid.Volume() for solid in solids]
+    total = sum(volumes)
+    centres = [solid.Center().toTuple() for solid in solids]
+    return {
+        "bbox_mm": [round(top - bottom, 4) for bottom, top in zip(low, high)],
+        "volume_mm3": round(total, 3),
+        "bbox_min_mm": _tidy(low, 4),
+        "bbox_max_mm": _tidy(high, 4),
+        # Weighted by volume; None only for a shape with no volume, which is not valid either.
+        "centre_of_mass_mm": _tidy([sum(v * c[k] for v, c in zip(volumes, centres)) / total for k in range(3)], 4) if total > 0 else None,
+        "area_mm2": round(sum(solid.Area() for solid in solids), 3),
+    }
+
+
+def _shells_of(solids) -> tuple[bool, bool, int]:
+    """Valid, closed, and the number of sealed cavities."""
+    shells = [shell for solid in solids for shell in solid.Shells()]
+    # isValid() alone is true for a wire or an open shell, and Volume() then returns a
+    # length or an area: a solid counts only with closed shells and a volume of its own.
+    valid = all(solid.isValid() and solid.Volume() > 0 for solid in solids)
+    closed = bool(shells) and all(BRep_Tool.IsClosed_s(shell.wrapped) for shell in shells)
+    return valid, closed, len(shells) - len(solids)
+
+
+def _body(solid) -> dict:
+    valid, closed, voids = _shells_of([solid])
+    body: dict = {"valid": valid, "closed": closed}
+    if voids > 0:
+        body["enclosed_voids"] = voids
+    body.update(_size([solid]))
+    body["holes"] = measure_holes(solid)
+    return body
+
+
+def _box_gap(a, b) -> float:
+    """Distance between two bounding boxes: never more than the distance between what they hold."""
+    (a_low, a_high), (b_low, b_high) = a, b
+    return math.sqrt(sum(max(0.0, b_low[k] - a_high[k], a_low[k] - b_high[k]) ** 2 for k in range(3)))
+
+
+def _inside(solid, point: gp_Pnt) -> bool:
+    rays = IntCurvesFace_ShapeIntersector()
+    rays.Load(solid.wrapped, CLASSIFY_TOL)
+    inside = _by_ray(rays, point)
+    if inside is None:
+        inside = BRepClass3d_SolidClassifier(solid.wrapped, point, CLASSIFY_TOL).State() == TopAbs_IN
+    return inside
+
+
+def _gap(solids, i: int, j: int, boxes_meet: bool) -> dict | None:
+    """The gap between bodies *i* and *j*, or None when the kernel cannot work it out."""
+    distance = BRepExtrema_DistShapeShape(solids[i].wrapped, solids[j].wrapped)
+    if not distance.IsDone() or distance.NbSolution() < 1:
+        return None
+    value = distance.Value()
+    p, q = distance.PointOnShape1(1), distance.PointOnShape2(1)
+    at = ((p.X() + q.X()) / 2, (p.Y() + q.Y()) / 2, (p.Z() + q.Z()) / 2)
+    direction, inner = None, None
+    if value > GAP_TOUCH_MM and boxes_meet:
+        # No surface of one meets the other, so the kernel measured surface to surface; one body can
+        # still sit in the other's material. Then the point said is on the inner body.
+        inner = q if _inside(solids[i], q) else p if _inside(solids[j], p) else None
+    if inner is not None:
+        value, at = 0.0, (inner.X(), inner.Y(), inner.Z())
+    elif value > GAP_TOUCH_MM:
+        direction = _tidy([(q.X() - p.X()) / value, (q.Y() - p.Y()) / value, (q.Z() - p.Z()) / value], AXIS_DIGITS)
+    else:
+        value = 0.0
+    return {"bodies": [i, j], "gap_mm": round(value, 4) + 0.0, "direction": direction, "at_mm": _tidy(at, AT_DIGITS)}
+
+
+def body_gaps(solids) -> tuple[list[dict], bool]:
+    """Gaps between bodies, smallest first: every pair closer than GAP_NEAR_MM and always the closest pair.
+
+    Also says whether every pair that could matter was measured. Pairs are taken in the
+    order of their bounding boxes' distance, which no pair's gap can be below, so the
+    search stops once no further pair can be near or the smallest.
+    """
+    boxes = []
+    for solid in solids:
+        box = solid.BoundingBox()
+        boxes.append(((box.xmin, box.ymin, box.zmin), (box.xmax, box.ymax, box.zmax)))
+    pairs = sorted((_box_gap(boxes[i], boxes[j]), i, j) for i in range(len(solids)) for j in range(i + 1, len(solids)))
+    found: list[dict] = []
+    smallest, complete, tried = math.inf, True, 0
+    for lower, i, j in pairs:
+        if lower > max(GAP_NEAR_MM, smallest):
+            break
+        if tried >= MAX_GAP_PAIRS:
+            complete = False
+            break
+        tried += 1
+        gap = _gap(solids, i, j, lower == 0)
+        if gap is None:
+            complete = False
+            continue
+        smallest = min(smallest, gap["gap_mm"])
+        found.append(gap)
+    found.sort(key=lambda gap: (gap["gap_mm"], gap["bodies"]))
+    listed = [gap for index, gap in enumerate(found) if index == 0 or gap["gap_mm"] <= GAP_NEAR_MM]
+    return listed[:MAX_GAPS_LISTED], complete
+
+
+def step_solids(path: Path, cq) -> list:
+    """The solids of the STEP at *path*, in the file's order. *cq* is the imported cadquery module."""
+    return [solid for value in cq.importers.importStep(str(path)).vals() for solid in value.Solids()]
+
+
+def measure_step(path: Path, cq) -> dict:
+    """Re-import the STEP at *path* and report what it holds. *cq* is the imported cadquery module."""
+    return measure_solids(step_solids(path, cq))
+
+
+def measure_solids(solids: list) -> dict:
+    """Report what *solids* hold, as one part: the keys of one solid first, then what several bodies add."""
+    measured: dict = {"solids": len(solids), "valid": False, "closed": False, "bbox_mm": [], "volume_mm3": 0.0, "holes": []}
+    if not solids:
+        return measured
+    measured["valid"], measured["closed"], voids = _shells_of(solids)
+    if voids > 0:
+        # Sealed cavities are legal geometry and usually a mistake; they are reported, not refused.
+        measured["enclosed_voids"] = voids
+    measured.update(_size(solids))
     if len(solids) == 1:
         measured["holes"] = measure_holes(solids[0])
+    else:
+        # The whole keeps no holes: a hole is a feature of one body, and the checks of one solid read the whole.
+        measured["bodies"] = [_body(solid) for solid in solids]
+        measured["gaps"], complete = body_gaps(solids)
+        if not complete:
+            measured["gaps_incomplete"] = True
     return measured
+
+
+def sampled_wall(solids, seconds: float = WALL_SECONDS) -> dict:
+    """The thinnest wall found by rays cast straight into the material from points on every face.
+
+    A sample is a grid point inside a face; its ray runs against the outward normal
+    and the first surface it meets ends the wall. Every face gets the coarse grid
+    before any gets the fine one, and sampling stops when *seconds* are spent
+    (``wall_sampling_complete`` is then false). A wall thinner than every sampled one
+    can exist between samples.
+    """
+    deadline = time.monotonic() + seconds
+    thinnest, where, samples, complete = None, None, 0, True
+    loaded: dict[int, IntCurvesFace_ShapeIntersector] = {}
+
+    def faces():
+        for grid in WALL_GRIDS:
+            for index, solid in enumerate(solids):
+                for face in solid.Faces():
+                    yield grid, index, face.wrapped
+
+    for grid, index, face in faces():
+        if time.monotonic() >= deadline:
+            complete = False
+            break
+        rays = loaded.get(index)
+        if rays is None:
+            rays = loaded[index] = IntCurvesFace_ShapeIntersector()
+            rays.Load(solids[index].wrapped, CLASSIFY_TOL)
+        umin, umax, vmin, vmax = BRepTools.UVBounds_s(face)
+        within = BRepTopAdaptor_FClass2d(face, CLASSIFY_TOL)
+        surface = BRepGProp_Face(face)
+        for i in range(grid):
+            for k in range(grid):
+                u, v = umin + (i + 0.5) / grid * (umax - umin), vmin + (k + 0.5) / grid * (vmax - vmin)
+                if within.Perform(gp_Pnt2d(u, v)) != TopAbs_IN:
+                    continue  # in a hole of the face, or outside its trimmed outline
+                point, normal = gp_Pnt(), gp_Vec()
+                surface.Normal(u, v, point, normal)
+                length = normal.Magnitude()
+                if length < 1e-12:
+                    continue  # a degenerate point: the apex of a cone, the pole of a sphere
+                rays.PerformNearest(gp_Lin(point, gp_Dir(-normal.X() / length, -normal.Y() / length, -normal.Z() / length)), _WALL_NEAR, _RAY_LENGTH)
+                samples += 1
+                if rays.IsDone() and rays.NbPnt() > 0 and (thinnest is None or rays.WParameter(1) < thinnest):
+                    thinnest, where = rays.WParameter(1), (point.X(), point.Y(), point.Z())
+    return {
+        "thinnest_wall_sampled_mm": None if thinnest is None else round(thinnest, 3),
+        "thinnest_wall_at_mm": None if where is None else _tidy(where, AT_DIGITS),
+        "wall_samples": samples,
+        "wall_sampling_complete": complete,
+    }
