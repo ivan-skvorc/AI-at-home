@@ -346,5 +346,5 @@ def _get_pdf_converter() -> str:
             return "auto"
         return raw
     except Exception:
-        pass
+        logger.debug("Could not read uploads.pdf_converter; falling back to 'auto'", exc_info=True)
     return "auto"
