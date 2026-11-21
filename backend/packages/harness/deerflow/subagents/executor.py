@@ -167,6 +167,14 @@ class SubagentResult:
             execution. ``None`` when the delegation carried no acceptance
             criteria, the run ended before streaming, or harvesting failed;
             an empty list means the stream carried no bash-family tool calls.
+        tool_results: Bounded evidence for ``tool_result:`` acceptance leaves:
+            the newest calls of the tools those criteria name, with only the
+            named scalar arguments and top-level scalar result fields, and the
+            state of each recorded result. Merged per chunk like
+            ``bash_executions``; a call that later leaves the history is kept
+            and marked ``compacted``, which the leaf treats as UNVERIFIED.
+            ``None`` when no criterion names a tool result, the run ended
+            before streaming, or harvesting failed.
         execution_done_event: Internal lifecycle fence set only after stream,
             sandbox, extension, and capacity cleanup has settled. A configured
             timeout may publish ``TIMED_OUT`` before this fence opens.
@@ -187,6 +195,7 @@ class SubagentResult:
     admission_failure: bool = False
     tool_receipts: list[dict[str, Any]] | None = field(default=None, kw_only=True)
     bash_executions: list[dict[str, Any]] | None = field(default=None, kw_only=True)
+    tool_results: list[dict[str, Any]] | None = field(default=None, kw_only=True)
     knowledge_sources: list[dict[str, Any]] = field(default_factory=list, kw_only=True)
     _knowledge_messages: list[Any] = field(default_factory=list, init=False, repr=False)
     cancel_event: threading.Event = field(default_factory=threading.Event, repr=False)
@@ -239,6 +248,31 @@ class SubagentResult:
             for execution in executions:
                 merged[_bash_evidence_key(execution)] = dict(execution)
             self.bash_executions = list(merged.values())[-_BASH_EVIDENCE_MAX_ENTRIES:]
+
+    def update_tool_results(self, entries: list[dict[str, Any]] | None) -> None:
+        """Merge tool-result evidence from the latest yielded state while still running.
+
+        Entries merge by call occurrence in first-seen order, so a result that
+        arrives in a later chunk completes its pending entry in place. A
+        recorded call missing from the newer state left the history (by
+        compaction): it is kept, marked ``compacted``, until newer calls push
+        it out of the newest ``TOOL_RESULT_MAX_CALLS``. ``None`` leaves the
+        field untouched; an empty list still publishes.
+        """
+        if entries is None:
+            return
+        from deerflow.subagents.acceptance_checks import TOOL_RESULT_MAX_CALLS
+
+        with self._state_lock:
+            if self.status.is_terminal:
+                return
+            current = {_tool_result_evidence_key(entry): dict(entry) for entry in entries}
+            merged: dict[tuple[str, str, int], dict[str, Any]] = {}
+            for entry in self.tool_results or []:
+                key = _tool_result_evidence_key(entry)
+                merged[key] = current.pop(key) if key in current else {**entry, "compacted": True}
+            merged.update(current)
+            self.tool_results = list(merged.values())[-TOOL_RESULT_MAX_CALLS:]
 
     def snapshot_tool_receipts(self) -> list[dict[str, Any]] | None:
         """Copy the latest published receipts for a racing terminal writer."""
@@ -658,6 +692,139 @@ def _harvest_bash_executions(
         return executions[-_BASH_EVIDENCE_MAX_ENTRIES:]
     except Exception:
         logger.warning("Failed to harvest subagent bash execution evidence", exc_info=True)
+        return None
+
+
+def _tool_result_evidence_key(entry: Mapping[str, Any]) -> tuple[str, str, int]:
+    """Identify one call across values chunks.
+
+    Providers reuse call ids across responses, so a call is its assistant
+    turn, its id and its position among same-id calls of that turn.
+    """
+    return (str(entry.get("turn")), str(entry.get("tool_call_id")), int(entry.get("ordinal") or 0))
+
+
+def _reject_json_constant(value: str) -> None:
+    raise ValueError(f"non-standard JSON constant {value}")
+
+
+def _tool_result_entry(occurrence: Any, *, turn: str, ordinal: int, fields: frozenset[str], args: frozenset[str]) -> dict[str, Any]:
+    """Record one call: the named bounded arguments, and its result's state and named fields.
+
+    Only a host-stamped result read as the tool returned it is usable
+    (``result == "ok"``). A tool error, a budget truncation or externalization,
+    any other rewrite on the transform trail, a result over the parse cap, and
+    anything but a JSON object are recorded as such, so the leaf stays
+    UNVERIFIED on them.
+    """
+    from deerflow.agents.middlewares.tool_transform_meta import read_tool_transforms
+    from deerflow.subagents.acceptance_checks import TOOL_RESULT_PARSE_CAP_BYTES, TOOL_RESULT_VALUE_MAX_CHARS, is_json_scalar
+
+    def bounded(value: object) -> bool:
+        return is_json_scalar(value) and not (isinstance(value, str) and len(value) > TOOL_RESULT_VALUE_MAX_CHARS)
+
+    call_args = occurrence.tool_call.get("args")
+    call_args = call_args if isinstance(call_args, Mapping) else {}
+    entry: dict[str, Any] = {
+        "tool_name": occurrence.name,
+        "tool_call_id": occurrence.call_id,
+        "turn": turn,
+        "ordinal": ordinal,
+        "result_id": None,
+        "result": "missing",
+        "args": {name: call_args[name] for name in sorted(args) if name in call_args and bounded(call_args[name])},
+        "fields": {},
+        "compacted": False,
+    }
+    message = occurrence.result
+    if message is None:
+        return entry
+    entry["result_id"] = message.id if isinstance(message.id, str) and message.id else None
+    transforms = {transform["kind"] for transform in read_tool_transforms(message)}
+    content = message.content
+    if getattr(message, "status", "success") == "error":
+        entry["result"] = "error"
+    elif transforms & {"truncated", "externalized"}:
+        entry["result"] = "truncated"
+    elif transforms:
+        entry["result"] = "rewritten"
+    elif not isinstance(content, str):
+        entry["result"] = "non_json"
+    elif len(content) > TOOL_RESULT_PARSE_CAP_BYTES or len(content.encode("utf-8", "surrogatepass")) > TOOL_RESULT_PARSE_CAP_BYTES:
+        entry["result"] = "too_large"
+    else:
+        try:
+            parsed = json.loads(content, parse_constant=_reject_json_constant)
+        except (ValueError, RecursionError):
+            parsed = None
+        if isinstance(parsed, dict):
+            entry["result"] = "ok"
+            entry["fields"] = {name: parsed[name] for name in sorted(fields) if name in parsed and bounded(parsed[name])}
+        else:
+            entry["result"] = "non_json"
+    return entry
+
+
+def _resolve_tool_result_plan(acceptance_criteria: list[str]) -> dict[str, tuple[frozenset[str], frozenset[str]]]:
+    from deerflow.subagents.acceptance_checks import tool_result_harvest_plan
+
+    return tool_result_harvest_plan(acceptance_criteria)
+
+
+async def _plan_tool_result_harvest(acceptance_criteria: list[str] | None) -> Mapping[str, tuple[frozenset[str], frozenset[str]]]:
+    """Resolve which tools, fields and arguments the tool-result harvest records.
+
+    Off the event loop: resolving a model-facing plugin tool name imports the
+    extension stack, and a first import reads files. A planning error plans
+    nothing, so the run's outcome is unchanged and the leaves stay UNVERIFIED.
+    """
+    if not acceptance_criteria:
+        return {}
+    try:
+        return await asyncio.to_thread(_resolve_tool_result_plan, acceptance_criteria)
+    except Exception:
+        logger.warning("Failed to plan the subagent tool-result harvest", exc_info=True)
+        return {}
+
+
+def _harvest_tool_results(final_state: Any, plan: Mapping[str, tuple[frozenset[str], frozenset[str]]] | None) -> list[dict[str, Any]] | None:
+    """Harvest bounded evidence for ``tool_result:`` acceptance leaves from one streamed state.
+
+    Built on ``pair_tool_call_results``, so a result pairs with the call of
+    its own response. Only the tools in ``plan`` (from
+    ``acceptance_checks.tool_result_harvest_plan``) are read: their newest
+    ``TOOL_RESULT_MAX_CALLS`` calls, in turn order and then result order.
+    Failure-isolated like the other harvests: an error returns ``None``, which
+    leaves the recorded evidence untouched and the run's outcome unchanged.
+    """
+    if not plan or not final_state:
+        return None
+    messages = final_state.get("messages") if isinstance(final_state, dict) else None
+    if not messages:
+        return None
+    try:
+        from deerflow.agents.middlewares.tool_call_args import pair_tool_call_results
+        from deerflow.subagents.acceptance_checks import TOOL_RESULT_MAX_CALLS
+
+        positions = {id(message): index for index, message in enumerate(messages)}
+        seen: dict[tuple[int, str], int] = {}
+        calls: list[tuple[Any, int]] = []
+        for occurrence in pair_tool_call_results(messages):
+            if occurrence.name not in plan:
+                continue
+            slot = (occurrence.index, occurrence.call_id)
+            calls.append((occurrence, seen.get(slot, 0)))
+            seen[slot] = seen.get(slot, 0) + 1
+        calls.sort(key=lambda item: (item[0].index, positions[id(item[0].result)] if item[0].result is not None else len(messages)))
+        entries: list[dict[str, Any]] = []
+        for occurrence, ordinal in calls[-TOOL_RESULT_MAX_CALLS:]:
+            message_id = occurrence.message.id
+            turn = message_id if isinstance(message_id, str) and message_id else f"#{occurrence.index}"
+            fields, args = plan[occurrence.name]
+            entries.append(_tool_result_entry(occurrence, turn=turn, ordinal=ordinal, fields=fields, args=args))
+        return entries
+    except Exception:
+        logger.warning("Failed to harvest subagent tool-result evidence", exc_info=True)
         return None
 
 
@@ -1916,6 +2083,15 @@ class SubagentExecutor:
                 return None
             return _harvest_bash_executions(final_state, summary_cache=bash_summary_cache)
 
+        # Resolved once, off the loop, before streaming starts.
+        tool_result_plan: Mapping[str, tuple[frozenset[str], frozenset[str]]] = {}
+
+        def current_tool_results() -> list[dict[str, Any]] | None:
+            # Evidence for tool_result acceptance leaves, accumulated per chunk
+            # like the bash evidence. Runs whose criteria name no tool result
+            # have an empty plan and pay nothing.
+            return _harvest_tool_results(final_state, tool_result_plan)
+
         try:
             if task_info is not None and task_store is not None:
                 await notify_task_start(
@@ -2043,6 +2219,7 @@ class SubagentExecutor:
                 context[TOOL_PROGRESS_RECORDER_CONTEXT_KEY] = self.tool_progress_recorder
 
             logger.info(f"[trace={self.trace_id}] Subagent {self.config.name} starting async execution with max_turns={self.config.max_turns}")
+            tool_result_plan = await _plan_tool_result_harvest(self.acceptance_criteria)
 
             # Use stream instead of invoke to get real-time updates
             # This allows us to collect AI messages as they are generated
@@ -2070,6 +2247,7 @@ class SubagentExecutor:
                     result.update_knowledge_sources(chunk.get("messages") or [])
                     result.update_tool_receipts(terminal_receipts())
                     result.update_bash_executions(current_bash_executions())
+                    result.update_tool_results(current_tool_results())
 
                     # Cooperative cancellation: check if parent requested stop.
                     # Note: cancellation is only detected at astream iteration boundaries,
