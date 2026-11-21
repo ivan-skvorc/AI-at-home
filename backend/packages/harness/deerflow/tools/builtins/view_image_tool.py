@@ -1,7 +1,6 @@
 import hashlib
 import logging
 import mimetypes
-from collections.abc import Mapping
 from pathlib import Path
 from typing import Annotated
 
@@ -14,6 +13,7 @@ from deerflow.agents.thread_state import ThreadDataState, ViewedImageData
 from deerflow.config.paths import VIRTUAL_PATH_PREFIX
 from deerflow.sandbox.download import MAX_IMAGE_BYTES as _MAX_IMAGE_BYTES
 from deerflow.tools.types import Runtime
+from deerflow.utils.thread_id import runtime_thread_id
 
 logger = logging.getLogger(__name__)
 
@@ -52,19 +52,6 @@ def _sanitize_image_error(error: Exception, thread_data: ThreadDataState | None)
     from deerflow.sandbox.tools import mask_local_paths_in_output
 
     return mask_local_paths_in_output(f"{type(error).__name__}: {error}", thread_data)
-
-
-def _get_thread_id(runtime: Runtime) -> str | None:
-    """Resolve advisory blob provenance without depending on ambient config."""
-    context = getattr(runtime, "context", None)
-    if isinstance(context, Mapping):
-        thread_id = context.get("thread_id")
-        if isinstance(thread_id, str) and thread_id:
-            return thread_id
-    config = getattr(runtime, "config", None)
-    configurable = config.get("configurable") if isinstance(config, Mapping) else None
-    thread_id = configurable.get("thread_id") if isinstance(configurable, Mapping) else None
-    return thread_id if isinstance(thread_id, str) and thread_id else None
 
 
 def _is_file_not_found_error(error: BaseException) -> bool:
@@ -306,7 +293,8 @@ def _view_image_authorized(runtime: Runtime, image_path: str, tool_call_id: str)
                 image_data,
                 kind="viewed-image",
                 content_type=mime_type,
-                thread_id=_get_thread_id(runtime),
+                # Advisory blob provenance: never read the ambient config.
+                thread_id=runtime_thread_id(runtime),
             )
             image_metadata["blob_ref"] = blob_ref.model_dump(mode="json", exclude_none=True)
     except Exception:

@@ -17,7 +17,6 @@ from stat import S_ISREG
 from typing import Annotated, Any
 
 from langchain.tools import tool
-from langgraph.config import get_config
 
 from deerflow.agents.middlewares.input_sanitization_middleware import neutralize_untrusted_tags
 from deerflow.config.paths import get_paths
@@ -26,6 +25,7 @@ from deerflow.tools.types import Runtime
 from deerflow.uploads.companions import companion_names
 from deerflow.uploads.manager import is_upload_staging_file
 from deerflow.utils.file_outline import extract_outline_for_file
+from deerflow.utils.thread_id import runtime_thread_id
 
 logger = logging.getLogger(__name__)
 
@@ -63,19 +63,7 @@ def _format_omitted_summary(omitted: list[str]) -> str:
 
 def _resolve_thread_id(runtime: Runtime) -> str | None:
     """Resolve the current thread id from runtime context or RunnableConfig."""
-    thread_id = runtime.context.get("thread_id") if runtime.context else None
-    if thread_id:
-        return thread_id
-
-    runtime_config = getattr(runtime, "config", None) or {}
-    thread_id = runtime_config.get("configurable", {}).get("thread_id")
-    if thread_id:
-        return thread_id
-
-    try:
-        return get_config().get("configurable", {}).get("thread_id")
-    except RuntimeError:
-        return None
+    return runtime_thread_id(runtime, ambient=True)
 
 
 def _resolve_user_id(runtime: Runtime) -> str:

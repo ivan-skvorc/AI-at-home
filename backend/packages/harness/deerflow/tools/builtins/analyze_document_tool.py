@@ -26,7 +26,6 @@ from pathlib import Path
 from typing import Annotated, Any
 
 from langchain.tools import tool
-from langgraph.config import get_config
 
 from deerflow.agents.middlewares.input_sanitization_middleware import neutralize_untrusted_tags
 from deerflow.config.paths import get_paths
@@ -39,26 +38,12 @@ from deerflow.tools.types import Runtime
 from deerflow.utils.context_budget import resolve_context_budget
 from deerflow.utils.file_conversion import CONVERTIBLE_EXTENSIONS, convert_file_to_markdown
 from deerflow.utils.file_io import await_drained
+from deerflow.utils.thread_id import runtime_thread_id
 
 logger = logging.getLogger(__name__)
 
 _UPLOADS_PREFIX = "/mnt/user-data/uploads/"
 _NOTES_DIRNAME = "document-analysis"
-
-
-def _resolve_thread_id(runtime: Runtime | None) -> str | None:
-    if runtime is not None:
-        thread_id = runtime.context.get("thread_id") if runtime.context else None
-        if thread_id:
-            return thread_id
-        runtime_config = getattr(runtime, "config", None) or {}
-        thread_id = runtime_config.get("configurable", {}).get("thread_id")
-        if thread_id:
-            return thread_id
-    try:
-        return get_config().get("configurable", {}).get("thread_id")
-    except RuntimeError:
-        return None
 
 
 def _resolve_user_id(runtime: Runtime | None) -> str:
@@ -149,7 +134,7 @@ async def _analyze_document_impl(
     app_config = _app_config or get_app_config()
     settings = app_config.documents
 
-    thread_id = _resolve_thread_id(runtime)
+    thread_id = runtime_thread_id(runtime, ambient=True)
     if thread_id is None:
         return "Error: no thread context is available, so uploaded files cannot be located."
 
