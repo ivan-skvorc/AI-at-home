@@ -26,6 +26,7 @@ needs no CadQuery.
 from __future__ import annotations
 
 import ast
+import difflib
 import math
 import re
 import unicodedata
@@ -242,6 +243,17 @@ _RESERVED = ("cq", "math", "show_object", "range", *table.BUILTINS)
 #: Attribute names that mean "write a file": the tool does that itself, after its checks.
 _EXPORTS = ("export", "save", "tosvg")
 MAX_ECHO = 60
+
+
+#: Where every method is named. The list itself is too long to repeat in each refusal: it
+#: grows with the table, and a refusal four loops deep has to stay a few lines.
+_ALL_METHODS = "Every method a part has is named after Methods: in cad_build's description and in references/operations.md of the cad-modeling skill."
+
+
+def _nearest(name: str) -> str:
+    """The allow-listed methods spelled most like *name*, for a typo or a near miss such as cutThru."""
+    close = difflib.get_close_matches(name[:MAX_ECHO], table.METHODS, n=4, cutoff=0.6)
+    return f" The nearest on it: {', '.join(close)}." if close else ""
 
 
 def _refuse(construct: str, line: int | None, message: str, name: str | None = None):
@@ -880,7 +892,7 @@ class _Reader:
             _refuse("attribute", line, f".{_short(function.attr)}() cannot be called on {_describe(receiver)}: only a part has methods", f".{_short(function.attr)}")
         method = table.METHODS.get(function.attr)
         if method is None:
-            _refuse("method", line, f".{_short(function.attr)}() is not on the allow-list. Available: {', '.join(sorted(table.METHODS))}", _short(function.attr))
+            _refuse("method", line, f".{_short(function.attr)}() is not on the allow-list.{_nearest(function.attr)} {_ALL_METHODS}", _short(function.attr))
         return self.operation(node, line, receiver.slot, function.attr, method)
 
     def operation(self, node: ast.Call, line: int, receiver: int | None, name: str, method: table.Method) -> Ref:
@@ -928,7 +940,11 @@ class _Reader:
         kind = param.kind
         if value is None and param.nullable:
             return None
-        fitted = _fit(kind, value)
+        if kind == table.PATH:
+            # Decided from what the script drew, so a path that holds a solid is refused before the kernel loads.
+            fitted = value if isinstance(value, Ref) and self.operations[value.slot].method in table.OUTLINES else _UNFIT
+        else:
+            fitted = _fit(kind, value)
         if fitted is _UNFIT:
             _refuse("argument", line, f"{label}({param.name}=...) must be {_EXPECTED[kind] if isinstance(kind, str) else 'one of ' + ', '.join(map(repr, kind))}, got {_describe(value)}", label)
         return fitted
@@ -950,6 +966,7 @@ _EXPECTED = {
     table.SELECTOR: "a CadQuery selector such as '>Z' or '|Z and >Y'",
     table.TAG: "a label of letters, digits and underscores",
     table.WORKPLANE: "a part built earlier in the script",
+    table.PATH: "an outline drawn earlier in the script that ends with lines, arcs, a spline or a circle, for example path = cq.Workplane('XZ').polyline([(0, 0), (0, 20), (20, 20)])",
 }
 
 

@@ -84,9 +84,11 @@ say so. These are the numbers of the request. Do not read them off a build.
 - `cutThruAll()` cuts through every wall in its way. To cut one wall of a
   hollow part, use `cutBlind(-wall)`.
 
-Read `references/operations.md` when you need a method's arguments. Threads,
-sweeps, lofts, revolved shapes, text and assemblies of loose bodies are not
-available: see Step 7.
+Read `references/operations.md` when you need a method's arguments: `revolve`,
+`loft`, `sweep` and `twistExtrude` make turned, tapered, swept and twisted
+shapes, and `transformed` tilts a workplane for an angled hole. Text, threads,
+sketches, parametric curves, variable fillets and assemblies of loose bodies
+are not available: see Step 7.
 
 ### Step 3: Build
 

@@ -219,23 +219,32 @@ beside the part reads the way the tool read it" rests on; a line may still be
 up to 1,000 characters long.
 Characters of any language are fine in comments.
 
-The allow-list (`allowlist.py`, 46 methods plus the constructor):
+The allow-list (`allowlist.py`, 62 methods plus the constructor):
 
 | Group | Methods |
 | --- | --- |
-| Primitives | `box`, `cylinder`, `sphere` |
-| Outlines | `rect`, `circle`, `ellipse`, `polygon`, `slot2D`, `polyline`, `moveTo`, `move`, `lineTo`, `line`, `hLine`, `vLine`, `hLineTo`, `vLineTo`, `threePointArc`, `close`, `center` |
-| Solids from outlines | `extrude`, `cutBlind`, `cutThruAll` |
+| Primitives | `box`, `cylinder`, `sphere`, `wedge` |
+| Outlines | `rect`, `circle`, `ellipse`, `polygon`, `slot2D`, `polyline`, `moveTo`, `move`, `lineTo`, `line`, `hLine`, `vLine`, `hLineTo`, `vLineTo`, `threePointArc`, `spline`, `radiusArc`, `sagittaArc`, `tangentArcPoint`, `polarLine`, `polarLineTo`, `close`, `center`, `offset2D` |
+| Solids from outlines | `extrude`, `cutBlind`, `cutThruAll`, `revolve`, `loft`, `sweep`, `twistExtrude` |
 | Holes | `hole`, `cboreHole`, `cskHole` |
 | Edges and walls | `fillet`, `chamfer`, `shell` |
 | Patterns | `pushPoints`, `rarray`, `polarArray` |
-| Selecting | `faces`, `edges`, `vertices`, `workplane`, `tag`, `workplaneFromTagged` |
+| Selecting | `faces`, `edges`, `vertices`, `workplane`, `transformed`, `tag`, `workplaneFromTagged`, `end`, `first`, `last` |
 | Moving | `translate`, `rotate`, `mirror`, `mirrorX`, `mirrorY` |
 | Combining | `union`, `cut`, `intersect` |
 
 Selector strings are CadQuery's own (`">Z"`, `"|Z and >Y"`, `"%CIRCLE"`). Every
 argument is checked against the table before the kernel is loaded: a length must
 be a positive number, a plane one of the named planes, a part a part.
+
+A sweep's `path` is an outline the script drew earlier, ending with lines, arcs,
+a spline or a circle (`path = cq.Workplane("XZ").polyline([(0, 0), (0, 20),
+(20, 20)])`); a path that ends with a solid, a point or a moved copy is refused
+before the kernel loads. `combine` takes `True` or `False` on every method: the
+kernel's `"cut"` mode is `cut()`. Not exposed: `sweep`'s `normal` and
+`auxSpine` (a kernel vector, a second rail), `spline`'s arguments past
+`periodic`, `offset2D`'s `"tangent"` kind (`"intersection"` gives the same
+sharp corners) and `parametricCurve` (a callable).
 
 Methods that take a file path, a callable, a font or a raw kernel object are not
 on the list and will not be added: `export`, `exportSvg`, `text`, `each`,

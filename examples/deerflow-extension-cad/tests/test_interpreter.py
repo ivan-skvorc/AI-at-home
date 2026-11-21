@@ -68,6 +68,12 @@ def test_the_plate_becomes_a_list_of_allow_listed_operations():
         'import cadquery as cq\r\nresult = cq.Workplane("XY").box(1, 1, 1)  # Ø, ° and other signs are fine in a comment\r\n',
         'import cadquery as cq\nw = 10\nw += 5\nw -= 1\nw *= 2\nw /= 4\nw //= 2\nw **= 2\nw %= 7\nresult = cq.Workplane("XY").box(w, w, w)\n',
         'result = cq.Workplane("XY").box(40, 10, 2)\nfor x, y in [(-10, 0), (10, 0)]:\n    # one hole per point\n    result = (\n        result.faces(">Z")\n        .workplane()\n        .pushPoints([(x, y)])\n        .hole(3)\n    )\n',
+        # Item 56: a path to sweep along is an outline drawn earlier, on its own workplane or on a face of a part.
+        "path = cq.Workplane('XZ').polyline([(0, 0), (0, 20), (20, 20)])\nresult = cq.Workplane('XY').rect(4, 4).sweep(path, transition='round')\n",
+        "ring = cq.Workplane('XZ').circle(20)\nresult = cq.Workplane('XY').center(20, 0).circle(3).sweep(ring)\n",
+        "base = cq.Workplane('XY').box(40, 40, 4)\nrail = base.faces('>Z').workplane().spline([(0, 0), (5, 10), (0, 20)])\nresult = cq.Workplane('XY').circle(1).sweep(rail, isFrenet=True)\n",
+        "result = cq.Workplane('XY').rect(20, 20).workplane(offset=15).circle(6).loft(ruled=True, combine=True)\n",
+        "result = cq.Workplane('XY').box(40, 40, 10).faces('>Z').workplane().transformed(rotate=(30, 0, 0), offset=(5, 0, 0)).hole(5)\n",
     ],
 )
 def test_ordinary_scripts_are_accepted(script):
@@ -140,8 +146,8 @@ def test_the_numbers_a_script_starts_with_are_its_parameters():
 @pytest.mark.parametrize(
     ("script", "name"),
     [
-        ("result = cq.Workplane('XY').box(1, 1, 1).loft()\n", "loft"),
-        ("for i in range(2):\n    r = cq.Workplane('XY').box(1, 1, 1).loft()\n", "loft"),
+        ("result = cq.Workplane('XY').box(1, 1, 1).sketch()\n", "sketch"),
+        ("for i in range(2):\n    r = cq.Workplane('XY').box(1, 1, 1).sketch()\n", "sketch"),
         ("import os\n", "import os"),
         ("import cadquery as os\n", "import cadquery as os"),
         ("from math import *\n", "from math import *"),
@@ -490,6 +496,22 @@ REFUSED = [
     ("[a, b] = 1, 2\n", "assignment target", 1),
     ("a, b.c = 1, 2\n", "assignment target", 1),
     ("a, *b = 1, 2, 3\n", "starred argument", 1),
+    # Item 56: sweep's path is an outline drawn earlier, and nothing reaches the kernel's other modes.
+    ("path = cq.Workplane('XY').box(5, 5, 5)\nr = cq.Workplane('XY').rect(4, 4).sweep(path)\n", "argument", 2),
+    ("path = cq.Workplane('XZ').moveTo(0, 20)\nr = cq.Workplane('XY').rect(4, 4).sweep(path)\n", "argument", 2),
+    ("path = cq.Workplane('XZ').polyline([(0, 0), (0, 20)]).translate((1, 0, 0))\nr = cq.Workplane('XY').rect(4, 4).sweep(path)\n", "argument", 2),
+    ("r = cq.Workplane('XY').rect(4, 4).sweep(5)\n", "argument", 1),
+    ("r = cq.Workplane('XY').rect(4, 4).sweep()\n", "argument", 1),
+    ("path = cq.Workplane('XZ').polyline([(0, 0), (0, 20)])\nr = cq.Workplane('XY').rect(4, 4).sweep(path, transition='bogus')\n", "argument", 2),
+    ("path = cq.Workplane('XZ').polyline([(0, 0), (0, 20)])\nr = cq.Workplane('XY').rect(4, 4).sweep(path, normal=(0, 0, 1))\n", "argument", 2),
+    ("path = cq.Workplane('XZ').polyline([(0, 0), (0, 20)])\nr = cq.Workplane('XY').rect(4, 4).sweep(path, auxSpine=path)\n", "argument", 2),
+    ("r = cq.Workplane('XY').circle(5).workplane(offset=5).circle(3).loft(combine='cut')\n", "argument", 1),
+    ("r = cq.Workplane('XY').rect(4, 4).revolve(combine='s')\n", "argument", 1),
+    ("r = cq.Workplane('XY').rect(4, 4).offset2D(1, kind='tangent')\n", "argument", 1),
+    ("r = cq.Workplane('XY').spline([(0, 0), (1, 1)], tol=0.1)\n", "argument", 1),
+    ("r = cq.Workplane('XY').box(1, 1, 1).end(0)\n", "argument", 1),
+    ("r = cq.Workplane('XY').box(1, 1, 1).split(keepTop=True)\n", "method", 1),
+    ("r = cq.Workplane('XY').parametricCurve(lambda t: (t, t))\n", "lambda", 1),
 ]
 
 
@@ -526,6 +548,10 @@ def test_a_refusal_says_what_to_do_next():
     for long in ("x = " + "a" * 900 + "\n", box + "y = result." + "a" * 900 + "()\n", box + "y = result.box(1, 1, 1, " + "a" * 900 + "=1)\n"):
         assert "aaa..." in message(long) and len(message(long)) < 700
     assert "break it" in message("x = " + "1 + " * 300 + "1\n")
+    # A method off the list: the nearest names on it, and where all of them are, not the whole table in every refusal.
+    near_miss = message(box + "result = result.faces('>Z').workplane().rect(4, 4).cutThru()\n")
+    assert "The nearest on it: cutThruAll" in near_miss and "references/operations.md" in near_miss and len(near_miss) < 300
+    assert "nearest" not in message(box + "result = result.sketch()\n")
 
 
 def test_the_export_refusal_shadows_no_allow_listed_method():
@@ -690,7 +716,7 @@ def test_a_pass_clause_is_short_and_says_its_numbers_exactly():
     many = "for " + names.replace(", ", ",\n    ") + " in [(\n" + ",\n".join(", ".join(["1"] * 90) for _ in range(2)) + "\n)]:\n    y = 1 / 0\n"
     assert len(message(many)) < 200
     # The worst ordinary case: four loops deep, two names each, a method that is not on the list.
-    deep = "result = cq.Workplane('XY').box(1, 1, 1)\n" + "".join(" " * 4 * level + f"for a{level}, b{level} in [(1, 2)]:\n" for level in range(4)) + " " * 16 + "result = result.revolve()\n"
+    deep = "result = cq.Workplane('XY').box(1, 1, 1)\n" + "".join(" " * 4 * level + f"for a{level}, b{level} in [(1, 2)]:\n" for level in range(4)) + " " * 16 + "result = result.val()\n"
     assert len(message(deep)) < 700 and message(deep).count("pass 1 of the loop") == 4
 
 

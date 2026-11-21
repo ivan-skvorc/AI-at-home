@@ -51,6 +51,11 @@ _MUST_CHANGE = {
     "box": _INSIDE_THE_PART,
     "cylinder": _INSIDE_THE_PART,
     "sphere": _INSIDE_THE_PART,
+    "wedge": _INSIDE_THE_PART,
+    "revolve": _INSIDE_THE_PART,
+    "loft": _INSIDE_THE_PART,
+    "sweep": _INSIDE_THE_PART,
+    "twistExtrude": _INSIDE_THE_PART,
 }
 
 _HINTS = {
@@ -61,6 +66,10 @@ _HINTS = {
     "cutBlind": "there is no closed outline to cut: draw one first",
     "cutThruAll": "there is no closed outline to cut: draw one first",
     "hole": "there is no point to drill at or no solid to drill into",
+    "twistExtrude": "there is no closed outline to extrude: draw one first and close() it",
+    "loft": "loft needs two or more closed outlines on separate workplanes, such as circle(10).workplane(offset=20).circle(5)",
+    "sweep": "sweep needs a closed outline drawn before it, and the path must start on the profile's plane",
+    "revolve": "the axis must not cross the outline: draw the outline wholly on one side of it",
 }
 
 

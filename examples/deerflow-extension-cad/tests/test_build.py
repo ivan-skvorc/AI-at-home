@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import inspect
 import json
+import math
 import time
 
 import pytest
@@ -146,8 +147,8 @@ async def test_a_plate_written_with_the_habits_of_ordinary_python_builds_and_pas
     assert answer["passed"] is True, answer
     assert sorted(files) == ["part.glb", "part.py", "part.report.json", "part.step", "part.stl"]
     # A method that is not on the list is refused before the kernel loads, and the answer says which.
-    answer, files = await _build(HABITS_PLATE.replace(".hole(round(4.04, 1))", ".hole(4).faces('>Z').loft()"))
-    assert answer["passed"] is False and answer["error"]["construct"] == "method" and answer["error"]["message"].startswith(".loft() is not on the allow-list")
+    answer, files = await _build(HABITS_PLATE.replace(".hole(round(4.04, 1))", ".hole(4).faces('>Z').sketch()"))
+    assert answer["passed"] is False and answer["error"]["construct"] == "method" and answer["error"]["message"].startswith(".sketch() is not on the allow-list")
     assert sorted(files) == ["part.py", "part.report.json"]
 
 
@@ -384,6 +385,8 @@ ADDS_NOTHING = [
     ("an extrusion down into the block", f'result = {BLOCK}.faces(">Z").workplane().rect(20, 10).extrude(-3)\n', "extrude"),
     ("a cylinder placed inside the plate", f"result = {BLOCK}.cylinder(4, 3)\n", "cylinder"),
     ("a body joined where the part already is", f'a = {BLOCK}\nresult = a.union(cq.Workplane("XY").box(10, 10, 2))\n', "union"),
+    ("a wedge inside the block", f"result = {BLOCK}.wedge(10, 10, 2, 2, 0, 8, 2)\n", "wedge"),
+    ("a ring revolved inside the block", f'result = {BLOCK}.faces(">Z").workplane(offset=-3).moveTo(1.5, 0).rect(1, 1).revolve(360, (0, 0, 0), (0, 1, 0))\n', "revolve"),
 ]
 
 
@@ -535,6 +538,62 @@ async def test_a_rebuild_does_not_touch_the_first_build():
     assert sorted(files) == ["part-1.failed.glb", "part-1.py", "part-1.report.json", "part.glb", "part.py", "part.report.json", "part.step", "part.stl"]
 
 
+#: Item 56's operations against volumes worked out by hand: (label, script, bounding box, volume).
+ANALYTIC = [
+    # A 4 x 4 square along 20 + 20 mm with a mitred corner: the area times the length of the path.
+    ("a square swept along an L", "path = cq.Workplane('XZ').polyline([(0, 0), (0, 20), (20, 20)])\nresult = cq.Workplane('XY').rect(4, 4).sweep(path)\n", [22, 4, 22], 4 * 4 * 40),
+    ("a frustum lofted between two circles", "result = cq.Workplane('XY').circle(10).workplane(offset=20).circle(5).loft()\n", [20, 20, 20], math.pi * 20 * (10**2 + 10 * 5 + 5**2) / 3),
+    ("a ring revolved about the y axis", "result = cq.Workplane('XY').moveTo(12.5, 0).rect(5, 4).revolve(360, (0, 0, 0), (0, 1, 0))\n", [30, 4, 30], math.pi * (15**2 - 10**2) * 4),
+    # A twist turns the outline and keeps its area: the same volume as the plain extrusion.
+    ("a twisted extrusion", "result = cq.Workplane('XY').rect(20, 10).twistExtrude(10, 45)\n", None, 20 * 10 * 10),
+    # A prismatoid: a 20 x 10 base narrowed to a 10 mm edge 10 mm up, h / 6 * (base + 4 * middle + top).
+    ("a wedge", "result = cq.Workplane('XY').wedge(20, 10, 10, 5, 5, 15, 5)\n", [20, 10, 10], 10 / 6 * (20 * 10 + 4 * 15 * 5 + 10 * 0)),
+]
+
+
+@pytest.mark.parametrize(("label", "script", "bbox", "volume"), ANALYTIC, ids=[item[0] for item in ANALYTIC])
+def test_each_new_operation_builds_the_volume_worked_out_by_hand(label, script, bbox, volume):
+    solid = build.solid_of(build.run_program(compile_script(script), cq))
+    assert solid.isValid()
+    assert solid.Volume() == pytest.approx(volume, rel=1e-3)
+    if bbox:
+        box = solid.BoundingBox()
+        assert [box.xlen, box.ylen, box.zlen] == pytest.approx(bbox, abs=1e-3)
+
+
+async def test_a_sweep_along_a_solid_is_refused_before_the_kernel_loads():
+    started = time.monotonic()
+    answer, files = await _build("path = cq.Workplane('XY').box(5, 5, 5)\nresult = cq.Workplane('XY').rect(4, 4).sweep(path)\n", bbox_xyz_mm=[5, 5, 5])
+    assert (answer["error"]["construct"], answer["error"]["line"]) == ("argument", 2) and "outline" in answer["error"]["message"]
+    assert sorted(files) == ["part.py", "part.report.json"] and time.monotonic() - started < 10
+
+
+@pytest.mark.parametrize(
+    ("script", "operation", "hint"),
+    [
+        ("result = cq.Workplane('XY').rect(10, 10).loft()\n", "loft", "loft needs two or more closed outlines on separate workplanes"),
+        ("path = cq.Workplane('XZ').polyline([(0, 0), (0, 20)])\nresult = cq.Workplane('XY').sweep(path)\n", "sweep", "sweep needs a closed outline drawn before it, and the path must start on the profile's plane"),
+        ("result = cq.Workplane('XY').rect(10, 4).revolve(360, (0, 0, 0), (0, 1, 0))\n", "revolve", "the axis must not cross the outline"),
+        ("result = cq.Workplane('XY').twistExtrude(10, 45)\n", "twistExtrude", "there is no closed outline to extrude"),
+    ],
+    ids=["a loft of one outline", "a sweep with no outline", "a revolve about an axis through the outline", "a twist with no outline"],
+)
+async def test_an_operation_that_cannot_make_its_solid_fails_with_its_likely_cause(script, operation, hint):
+    answer, files = await _build(script, bbox_xyz_mm=[10, 10, 10])
+    assert answer["passed"] is False and answer["error"]["operation"] == operation
+    assert f"Likely cause: {hint}" in answer["error"]["message"]
+    assert "part.step" not in files
+
+
+async def test_a_sweep_that_runs_into_itself_fails_cleanly():
+    # A profile wider than the U it follows: the kernel makes a solid that crosses itself.
+    script = "path = cq.Workplane('XZ').polyline([(0, 0), (0, 20), (3, 20), (3, 0)])\nresult = cq.Workplane('XY').circle(10).sweep(path)\n"
+    started = time.monotonic()
+    answer, files = await _build(script, bbox_xyz_mm=[23, 20, 30])
+    assert answer["passed"] is False and time.monotonic() - started < 30
+    assert "part.step" not in files and "part.stl" not in files
+
+
 def test_every_allow_listed_method_matches_the_kernels_own_signature():
     """Positional arguments are bound by the table, so its order must be CadQuery's order."""
     for name, method in allowlist.METHODS.items():
@@ -578,7 +637,7 @@ def test_the_table_holds_no_method_that_takes_a_path_a_callable_or_a_font():
         "vals",
         "findSolid",
         "split",
-        "sweep",
+        # sweep is on the list since item 56: its path is a part the script drew, never a file.
         "toPending",
         "copyWorkplane",
     }

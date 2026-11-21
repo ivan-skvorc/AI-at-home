@@ -60,6 +60,20 @@ A sphere.
 result = cq.Workplane("XY").sphere(10)
 ```
 
+## wedge(dx, dy, dz, xmin, zmin, xmax, zmax, [pnt], [dir], [centered], [combine], [clean])
+
+A wedge: a dx by dz base that narrows, dy higher, to the face from xmin to xmax and zmin to zmax.
+
+- `dx`, `dy`, `dz`: millimetres, above 0
+- `xmin`, `zmin`, `xmax`, `zmax`: a number
+- `pnt`, `dir`: a point, (x, y) or (x, y, z)
+- `centered`: True, False, or one of them per axis: (True, True, False)
+- `combine`, `clean`: True or False
+
+```python
+result = cq.Workplane("XY").wedge(20, 10, 10, 5, 5, 15, 5)
+```
+
 ## rect(xLen, yLen, [centered], [forConstruction])
 
 A rectangle on the workplane, one per point on the stack.
@@ -226,6 +240,77 @@ An arc through a point to an end point.
 result = cq.Workplane("XY").lineTo(20, 0).threePointArc((25, 5), (20, 10)).lineTo(0, 10).close().extrude(5)
 ```
 
+## spline(listOfXYTuple, [tangents], [periodic])
+
+A smooth curve through the given points; tangents gives its direction at the start and the end.
+
+- `listOfXYTuple`: a list of points
+- `tangents`: a list of points, or None
+- `periodic`: True or False
+
+```python
+result = cq.Workplane("XY").spline([(0, 0), (10, 8), (20, 0)]).close().extrude(5)
+```
+
+## radiusArc(endPoint, radius, [forConstruction])
+
+An arc of a radius to an end point; a negative radius bends it the other way.
+
+- `endPoint`: a point, (x, y) or (x, y, z)
+- `radius`: a number
+- `forConstruction`: True or False
+
+```python
+result = cq.Workplane("XY").hLine(20).radiusArc((0, 0), -12).close().extrude(5)
+```
+
+## sagittaArc(endPoint, sag, [forConstruction])
+
+An arc to an end point that bulges by sag from the straight line.
+
+- `endPoint`: a point, (x, y) or (x, y, z)
+- `sag`: a number
+- `forConstruction`: True or False
+
+```python
+result = cq.Workplane("XY").hLine(20).sagittaArc((0, 0), 5).close().extrude(5)
+```
+
+## tangentArcPoint(endpoint, [forConstruction], [relative])
+
+An arc that carries on smoothly from the last line, to a point given from the pen unless relative=False.
+
+- `endpoint`: a point, (x, y) or (x, y, z)
+- `forConstruction`, `relative`: True or False
+
+```python
+result = cq.Workplane("XY").hLine(20).tangentArcPoint((0, 10)).hLineTo(0).close().extrude(5)
+```
+
+## polarLine(distance, angle, [forConstruction])
+
+A line by a distance at an angle in degrees from the x axis.
+
+- `distance`: a number
+- `angle`: degrees
+- `forConstruction`: True or False
+
+```python
+result = cq.Workplane("XY").polarLine(20, 30).hLineTo(0).close().extrude(5)
+```
+
+## polarLineTo(distance, angle, [forConstruction])
+
+A line to the point at a distance and an angle from the origin.
+
+- `distance`: a number
+- `angle`: degrees
+- `forConstruction`: True or False
+
+```python
+result = cq.Workplane("XY").hLine(20).polarLineTo(20, 60).close().extrude(5)
+```
+
 ## close()
 
 Close the outline back to its start.
@@ -242,6 +327,18 @@ Shift the workplane origin.
 
 ```python
 result = cq.Workplane("XY").box(60, 40, 6).faces('>Z').workplane().center(10, 0).hole(4)
+```
+
+## offset2D(d, [kind], [forConstruction])
+
+Grow the outline by d, or shrink it by a negative d; kind 'arc' rounds the corners it grows.
+
+- `d`: a number
+- `kind`: one of "arc", "intersection"
+- `forConstruction`: True or False
+
+```python
+result = cq.Workplane("XY").rect(20, 10).offset2D(2).extrude(5)
 ```
 
 ## extrude(until, [combine], [clean], [both], [taper])
@@ -277,6 +374,54 @@ Cut the outline through the whole part.
 
 ```python
 result = cq.Workplane("XY").box(60, 40, 6).faces('>Z').workplane().rect(20, 10).cutThruAll()
+```
+
+## revolve([angleDegrees], [axisStart], [axisEnd], [combine], [clean])
+
+Turn the outline about an axis through two points of the workplane, by an angle in degrees. The axis must not cross the outline.
+
+- `angleDegrees`: degrees
+- `axisStart`, `axisEnd`: a point, (x, y) or (x, y, z), or None
+- `combine`, `clean`: True or False
+
+```python
+result = cq.Workplane("XY").moveTo(12.5, 0).rect(5, 4).revolve(360, (0, 0, 0), (0, 1, 0))
+```
+
+## loft([ruled], [combine], [clean])
+
+A solid through the outlines drawn on successive workplanes, first to last; ruled=True joins them with straight lines.
+
+- `ruled`, `combine`, `clean`: True or False
+
+```python
+result = cq.Workplane("XY").circle(10).workplane(offset=20).circle(5).loft()
+```
+
+## sweep(path, [multisection], [sweepAlongWires], [makeSolid], [isFrenet], [combine], [clean], [transition])
+
+Move the outline along a path drawn earlier; the path starts on the outline's plane. transition is how corners are joined.
+
+- `path`: an outline drawn earlier in the script with lines, arcs, a spline or a circle, not a solid
+- `multisection`, `makeSolid`, `isFrenet`, `combine`, `clean`: True or False
+- `sweepAlongWires`: True or False, or None
+- `transition`: one of "right", "round", "transformed"
+
+```python
+path = cq.Workplane('XZ').polyline([(0, 0), (0, 20), (20, 20)])
+result = cq.Workplane('XY').rect(4, 4).sweep(path)
+```
+
+## twistExtrude(distance, angleDegrees, [combine], [clean])
+
+Extrude the outline by a distance while turning it by an angle in degrees.
+
+- `distance`: a number
+- `angleDegrees`: degrees
+- `combine`, `clean`: True or False
+
+```python
+result = cq.Workplane("XY").rect(20, 10).twistExtrude(10, 45)
 ```
 
 ## hole(diameter, [depth], [clean])
@@ -429,6 +574,16 @@ A new workplane on the selected face.
 result = cq.Workplane("XY").box(60, 40, 6).faces('>Z').workplane().hole(4)
 ```
 
+## transformed([rotate], [offset])
+
+Turn the workplane by degrees about its x, y and z axes and move it by offset: for angled holes and features.
+
+- `rotate`, `offset`: a point, (x, y) or (x, y, z)
+
+```python
+result = cq.Workplane("XY").box(40, 40, 10).faces('>Z').workplane().transformed(rotate=(30, 0, 0)).hole(5)
+```
+
 ## tag(name)
 
 Name the current state, to return to it with workplaneFromTagged.
@@ -447,6 +602,32 @@ Return to a tagged workplane.
 
 ```python
 result = cq.Workplane("XY").box(60, 40, 6).faces('>Z').workplane().tag('top').hole(4).workplaneFromTagged('top').center(20, 0).hole(3)
+```
+
+## end([n])
+
+Go back n steps, to what was selected before the last n calls.
+
+- `n`: a whole number, 1 or more
+
+```python
+result = cq.Workplane("XY").box(30, 20, 5).faces('>Z').edges('|X').end(2).edges('|Z').fillet(2)
+```
+
+## first()
+
+Keep the first of the selected items.
+
+```python
+result = cq.Workplane("XY").box(30, 20, 5).edges('|Z').first().fillet(2)
+```
+
+## last()
+
+Keep the last of the selected items.
+
+```python
+result = cq.Workplane("XY").box(30, 20, 5).edges('|Z').last().fillet(2)
 ```
 
 ## translate(vec)

@@ -32,10 +32,41 @@ PLANE = "plane"  # one of PLANE_NAMES
 SELECTOR = "selector"  # a CadQuery selector string, see SELECTOR_PATTERN
 TAG = "tag"  # a label, see TAG_PATTERN
 WORKPLANE = "workplane"  # a part built earlier in the script
+PATH = "path"  # an outline drawn earlier in the script, to sweep along: see OUTLINES
 
 PLANE_NAMES = ("XY", "YZ", "ZX", "XZ", "YX", "ZY", "front", "back", "left", "right", "top", "bottom")
 #: mirror() knows the six axis planes only; the kernel fails obscurely on any other name.
 MIRROR_PLANES = ("XY", "YX", "XZ", "ZX", "YZ", "ZY")
+#: The methods that end with lines, arcs or curves on the stack: what a PATH must end with.
+#: A path that ends with a solid, a point or a moved copy is not swept along: the kernel
+#: answers it with an error that names no cause.
+OUTLINES = frozenset(
+    {
+        "rect",
+        "circle",
+        "ellipse",
+        "polygon",
+        "slot2D",
+        "polyline",
+        "lineTo",
+        "line",
+        "hLine",
+        "vLine",
+        "hLineTo",
+        "vLineTo",
+        "threePointArc",
+        "spline",
+        "radiusArc",
+        "sagittaArc",
+        "tangentArcPoint",
+        "polarLine",
+        "polarLineTo",
+        "close",
+        "mirrorX",
+        "mirrorY",
+        "offset2D",
+    }
+)
 
 #: CadQuery's selector grammar: direction, type and index filters joined by
 #: and/or/not/exc. Nothing here names a file, a module or an attribute.
@@ -135,6 +166,24 @@ METHODS: dict[str, Method] = {
     ),
     "cylinder": Method((_req("height", LENGTH), _req("radius", LENGTH), _opt("direct", POINT), _opt("angle", ANGLE), _opt("centered", CENTERED_3D), _COMBINE, _CLEAN), "A cylinder along the workplane normal.", f"{_BASE}.cylinder(20, 5)"),
     "sphere": Method((_req("radius", LENGTH),), "A sphere.", f"{_BASE}.sphere(10)"),
+    "wedge": Method(
+        (
+            _req("dx", LENGTH),
+            _req("dy", LENGTH),
+            _req("dz", LENGTH),
+            _req("xmin", NUMBER),
+            _req("zmin", NUMBER),
+            _req("xmax", NUMBER),
+            _req("zmax", NUMBER),
+            _opt("pnt", POINT),
+            _opt("dir", POINT),
+            _opt("centered", CENTERED_3D),
+            _COMBINE,
+            _CLEAN,
+        ),
+        "A wedge: a dx by dz base that narrows, dy higher, to the face from xmin to xmax and zmin to zmax.",
+        f"{_BASE}.wedge(20, 10, 10, 5, 5, 15, 5)",
+    ),
     # Two-dimensional outlines, to extrude or to cut
     "rect": Method((_req("xLen", LENGTH), _req("yLen", LENGTH), _opt("centered", CENTERED_2D), _CONSTRUCTION), "A rectangle on the workplane, one per point on the stack.", f"{_BASE}.rect(30, 20).extrude(5)"),
     "circle": Method((_req("radius", LENGTH), _CONSTRUCTION), "A circle on the workplane, one per point on the stack.", f"{_BASE}.circle(10).extrude(5)"),
@@ -155,8 +204,27 @@ METHODS: dict[str, Method] = {
     "hLineTo": Method((_req("xCoord", NUMBER), _CONSTRUCTION), "A horizontal line to an x coordinate.", f"{_BASE}.hLineTo(30).vLineTo(20).close().extrude(5)"),
     "vLineTo": Method((_req("yCoord", NUMBER), _CONSTRUCTION), "A vertical line to a y coordinate.", f"{_BASE}.hLineTo(30).vLineTo(20).close().extrude(5)"),
     "threePointArc": Method((_req("point1", POINT), _req("point2", POINT), _CONSTRUCTION), "An arc through a point to an end point.", f"{_BASE}.lineTo(20, 0).threePointArc((25, 5), (20, 10)).lineTo(0, 10).close().extrude(5)"),
+    "spline": Method(
+        (_req("listOfXYTuple", POINTS), _opt("tangents", POINTS, nullable=True), _opt("periodic", BOOL)),
+        "A smooth curve through the given points; tangents gives its direction at the start and the end.",
+        f"{_BASE}.spline([(0, 0), (10, 8), (20, 0)]).close().extrude(5)",
+    ),
+    "radiusArc": Method((_req("endPoint", POINT), _req("radius", NUMBER), _CONSTRUCTION), "An arc of a radius to an end point; a negative radius bends it the other way.", f"{_BASE}.hLine(20).radiusArc((0, 0), -12).close().extrude(5)"),
+    "sagittaArc": Method((_req("endPoint", POINT), _req("sag", NUMBER), _CONSTRUCTION), "An arc to an end point that bulges by sag from the straight line.", f"{_BASE}.hLine(20).sagittaArc((0, 0), 5).close().extrude(5)"),
+    "tangentArcPoint": Method(
+        (_req("endpoint", POINT), _CONSTRUCTION, _opt("relative", BOOL)),
+        "An arc that carries on smoothly from the last line, to a point given from the pen unless relative=False.",
+        f"{_BASE}.hLine(20).tangentArcPoint((0, 10)).hLineTo(0).close().extrude(5)",
+    ),
+    "polarLine": Method((_req("distance", NUMBER), _req("angle", ANGLE), _CONSTRUCTION), "A line by a distance at an angle in degrees from the x axis.", f"{_BASE}.polarLine(20, 30).hLineTo(0).close().extrude(5)"),
+    "polarLineTo": Method((_req("distance", NUMBER), _req("angle", ANGLE), _CONSTRUCTION), "A line to the point at a distance and an angle from the origin.", f"{_BASE}.hLine(20).polarLineTo(20, 60).close().extrude(5)"),
     "close": Method((), "Close the outline back to its start.", f"{_BASE}.lineTo(30, 0).lineTo(30, 20).close().extrude(5)"),
     "center": Method((_req("x", NUMBER), _req("y", NUMBER)), "Shift the workplane origin.", f"{_BASE}.box(60, 40, 6).faces('>Z').workplane().center(10, 0).hole(4)"),
+    "offset2D": Method(
+        (_req("d", NUMBER), _opt("kind", ("arc", "intersection")), _CONSTRUCTION),
+        "Grow the outline by d, or shrink it by a negative d; kind 'arc' rounds the corners it grows.",
+        f"{_BASE}.rect(20, 10).offset2D(2).extrude(5)",
+    ),
     # Solids from outlines
     "extrude": Method((_req("until", NUMBER), _COMBINE, _CLEAN, _opt("both", BOOL), _opt("taper", ANGLE, nullable=True)), "Extrude the outline by a distance.", f"{_BASE}.rect(30, 20).extrude(5)"),
     "cutBlind": Method(
@@ -165,6 +233,31 @@ METHODS: dict[str, Method] = {
         f"{_BASE}.box(60, 40, 6).faces('>Z').workplane().rect(20, 10).cutBlind(-3)",
     ),
     "cutThruAll": Method((_CLEAN, _opt("taper", ANGLE)), "Cut the outline through the whole part.", f"{_BASE}.box(60, 40, 6).faces('>Z').workplane().rect(20, 10).cutThruAll()"),
+    "revolve": Method(
+        (_opt("angleDegrees", ANGLE), _opt("axisStart", POINT, nullable=True), _opt("axisEnd", POINT, nullable=True), _COMBINE, _CLEAN),
+        "Turn the outline about an axis through two points of the workplane, by an angle in degrees. The axis must not cross the outline.",
+        f"{_BASE}.moveTo(12.5, 0).rect(5, 4).revolve(360, (0, 0, 0), (0, 1, 0))",
+    ),
+    "loft": Method(
+        (_opt("ruled", BOOL), _COMBINE, _CLEAN),
+        "A solid through the outlines drawn on successive workplanes, first to last; ruled=True joins them with straight lines.",
+        f"{_BASE}.circle(10).workplane(offset=20).circle(5).loft()",
+    ),
+    "sweep": Method(
+        (
+            _req("path", PATH),
+            _opt("multisection", BOOL),
+            _opt("sweepAlongWires", BOOL, nullable=True),
+            _opt("makeSolid", BOOL),
+            _opt("isFrenet", BOOL),
+            _COMBINE,
+            _CLEAN,
+            _opt("transition", ("right", "round", "transformed")),
+        ),
+        "Move the outline along a path drawn earlier; the path starts on the outline's plane. transition is how corners are joined.",
+        "path = cq.Workplane('XZ').polyline([(0, 0), (0, 20), (20, 20)])\nresult = cq.Workplane('XY').rect(4, 4).sweep(path)",
+    ),
+    "twistExtrude": Method((_req("distance", NUMBER), _req("angleDegrees", ANGLE), _COMBINE, _CLEAN), "Extrude the outline by a distance while turning it by an angle in degrees.", f"{_BASE}.rect(20, 10).twistExtrude(10, 45)"),
     # Holes: one per point on the stack
     "hole": Method((_req("diameter", LENGTH), _opt("depth", LENGTH, nullable=True), _CLEAN), "A hole; through the part unless depth is given.", f"{_BASE}.box(60, 40, 6).faces('>Z').workplane().pushPoints([(-15, 0), (15, 0)]).hole(4)"),
     "cboreHole": Method(
@@ -200,8 +293,16 @@ METHODS: dict[str, Method] = {
         "A new workplane on the selected face.",
         f"{_BASE}.box(60, 40, 6).faces('>Z').workplane().hole(4)",
     ),
+    "transformed": Method(
+        (_opt("rotate", POINT), _opt("offset", POINT)),
+        "Turn the workplane by degrees about its x, y and z axes and move it by offset: for angled holes and features.",
+        f"{_BASE}.box(40, 40, 10).faces('>Z').workplane().transformed(rotate=(30, 0, 0)).hole(5)",
+    ),
     "tag": Method((_req("name", TAG),), "Name the current state, to return to it with workplaneFromTagged.", f"{_BASE}.box(60, 40, 6).faces('>Z').workplane().tag('top').hole(4).workplaneFromTagged('top').center(20, 0).hole(3)"),
     "workplaneFromTagged": Method((_req("name", TAG),), "Return to a tagged workplane.", f"{_BASE}.box(60, 40, 6).faces('>Z').workplane().tag('top').hole(4).workplaneFromTagged('top').center(20, 0).hole(3)"),
+    "end": Method((_opt("n", COUNT),), "Go back n steps, to what was selected before the last n calls.", f"{_BASE}.box(30, 20, 5).faces('>Z').edges('|X').end(2).edges('|Z').fillet(2)"),
+    "first": Method((), "Keep the first of the selected items.", f"{_BASE}.box(30, 20, 5).edges('|Z').first().fillet(2)"),
+    "last": Method((), "Keep the last of the selected items.", f"{_BASE}.box(30, 20, 5).edges('|Z').last().fillet(2)"),
     # Moving and copying
     "translate": Method((_req("vec", POINT),), "Move the part.", f"{_BASE}.box(10, 10, 10).translate((20, 0, 0))"),
     "rotate": Method((_req("axisStartPoint", POINT), _req("axisEndPoint", POINT), _req("angleDegrees", ANGLE)), "Rotate the part about an axis through two points.", f"{_BASE}.box(30, 10, 10).rotate((0, 0, 0), (0, 0, 1), 45)"),
@@ -236,6 +337,7 @@ _KIND_WORDS = {
     SELECTOR: "a selector string",
     TAG: "a label of letters, digits and underscores",
     WORKPLANE: "a part built earlier in the script",
+    PATH: "an outline drawn earlier in the script with lines, arcs, a spline or a circle, not a solid",
 }
 
 

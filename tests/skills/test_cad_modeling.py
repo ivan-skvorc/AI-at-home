@@ -90,6 +90,10 @@ QUOTED = [
     "is outside this list",
     "has no answer: the number is outside what",
     "is a name the script is given and cannot be assigned",
+    "an outline drawn earlier in the script that ends with lines, arcs",
+    "loft needs two or more closed outlines",
+    "sweep needs a closed outline drawn before it",
+    "the axis must not cross the outline",
     "range() takes whole numbers",
     "this loop would not run once",
     "a loop runs over range(...) or over a list",
@@ -127,6 +131,9 @@ ALLOWED = {
     "indexing": "p = (12, 8)\nresult = cq.Workplane('XY').box(p[0], p[-1], 2)\n",
     "a built-in call": "n = int(7 / 2)\nresult = cq.Workplane('XY').box(max(n, 2), min(10, 20), round(2.6))\n",
     "two names in one assignment": "w, d, t = 60, 40, 6\nresult = cq.Workplane('XY').box(w, d, t)\n",
+    # Operations that need no new trust (item 56): the path is an outline drawn first.
+    "a sweep along a path drawn first": 'path = cq.Workplane("XZ").polyline([(0, 0), (0, 20), (20, 20)])\nresult = cq.Workplane("XY").rect(4, 4).sweep(path)\n',
+    "a loft between two workplanes": "result = cq.Workplane('XY').circle(10).workplane(offset=20).circle(5).loft()\n",
 }
 REFUSED = {
     "an if statement": "x = 1\nif x:\n    y = 2\n",
