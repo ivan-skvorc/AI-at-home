@@ -56,6 +56,22 @@ class SubagentConfig:
     prompt_overlay: PromptOverlay = field(default_factory=PromptOverlay)
 
 
+def merge_skill_allowlists(parent: list[str] | None, child: list[str] | None) -> list[str] | None:
+    """Return a subagent's effective skill allowlist under the parent's policy.
+
+    ``None`` means "all enabled skills", so an unrestricted side defers to the
+    other. When both restrict, the child keeps only the skills the parent also
+    allows, in the child's order.
+    """
+    if parent is None:
+        return child
+    if child is None:
+        return list(parent)
+
+    parent_set = set(parent)
+    return [skill for skill in child if skill in parent_set]
+
+
 def _default_model_name(app_config: "AppConfig") -> str:
     if not app_config.models:
         raise ValueError("No chat models are configured. Please configure at least one model in config.yaml.")

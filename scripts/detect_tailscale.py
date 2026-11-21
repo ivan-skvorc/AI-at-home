@@ -93,7 +93,7 @@ class Detection:
 def read_env_file_value(path: str | os.PathLike[str] | None, key: str) -> str | None:
     """``key``'s value in a ``.env`` file, read the way Compose's --env-file does.
 
-    Mirrors ``read_dotenv_value`` in scripts/deploy.sh and scripts/docker.sh:
+    Mirrors ``read_dotenv_value`` in scripts/docker_launch_lib.sh:
     the last assignment wins, an ``export`` prefix and matching quotes are
     dropped, and a missing or unreadable file means unset.
     """

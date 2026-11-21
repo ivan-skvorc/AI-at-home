@@ -752,7 +752,7 @@ class TestBrowserlessTools:
         """web_fetch_tool resolves both wait timeouts with the tolerant int coercion.
 
         web_capture_tool reads ``wait_for_timeout_ms`` and
-        ``wait_for_selector_timeout_ms`` through ``_as_int``, so a loosely typed
+        ``wait_for_selector_timeout_ms`` through ``coerce_int``, so a loosely typed
         value falls back to the default instead of raising. web_fetch_tool used a
         bare ``int()`` for the first key and never read the second, so a typo'd
         value made every fetch return "invalid literal for int()" and a slow

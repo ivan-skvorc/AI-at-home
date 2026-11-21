@@ -10,14 +10,13 @@ different pod is still dropped as a duplicate. See issue #4120.
 from __future__ import annotations
 
 import logging
-import os
 import time
 from collections import OrderedDict
 from typing import Any, Protocol
 
 from sqlalchemy import text
 
-from deerflow.config.deployment_config import multi_instance_declaration
+from deerflow.config.deployment_config import gateway_worker_count, multi_instance_declaration
 
 logger = logging.getLogger(__name__)
 
@@ -200,40 +199,6 @@ class PostgresInboundDedupeStore:
             logger.exception("PostgresInboundDedupeStore.release failed; key left for TTL expiry (fail-open)")
 
 
-# The gateway worker count has two spellings: ``GATEWAY_WORKERS``, which
-# docker-compose forwards as ``--workers``, and ``WEB_CONCURRENCY``, which uvicorn reads
-# when no count is passed at all (``backend/Dockerfile``, ``scripts/serve.sh``). Read
-# both, otherwise a multi-worker pod that shares no dedupe state reports itself as
-# single-worker.
-_WORKER_COUNT_ENV_VARS = ("GATEWAY_WORKERS", "WEB_CONCURRENCY")
-
-
-def _gateway_workers() -> tuple[int, str]:
-    """Resolve the Gateway worker count the same way the startup gates do.
-
-    Returns the count and the name of the variable that set it, so a warning can name
-    the knob the operator actually has to change. A blank value means "unset".
-
-    This is a second reader of the same two spellings, not an import of
-    ``app/gateway/deps.py``'s helper, so the two can drift; and it differs on purpose
-    from ``app/gateway/routers/channel_connections.py``, which turns an unparsable value
-    into 0 and refuses, while here an unparsable value is skipped and only a resolved
-    count above 1 warns.
-    """
-    for name in _WORKER_COUNT_ENV_VARS:
-        raw = os.environ.get(name)
-        if not raw or not raw.strip():
-            continue
-        try:
-            return int(raw), name
-        except (TypeError, ValueError):
-            # Do not let an unparsable ``GATEWAY_WORKERS`` mask a real count in
-            # ``WEB_CONCURRENCY``: on the launchers that pass no ``--workers`` the
-            # former never reaches uvicorn, so the latter is what starts the processes.
-            continue
-    return 1, _WORKER_COUNT_ENV_VARS[0]
-
-
 def _build_postgres_store() -> InboundDedupeStore:
     """Build the shared Postgres dedupe store."""
     return PostgresInboundDedupeStore()
@@ -270,7 +235,7 @@ def make_inbound_dedupe_store(app_config: Any | None = None) -> InboundDedupeSto
         db_backend = getattr(db, "backend", None)
         db_is_postgres = db_backend == "postgres"
 
-    workers, worker_env = _gateway_workers()
+    workers, worker_env = gateway_worker_count()
     # The worker count only sees one process tree; Kubernetes replicas declare
     # themselves through deployment.multi_instance / DEER_FLOW_MULTI_INSTANCE.
     declaration = multi_instance_declaration(app_config)

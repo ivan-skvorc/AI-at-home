@@ -22,6 +22,7 @@ from deerflow.agents.middlewares.loop_detection_middleware import (
     LoopDetectionMiddleware,
     _hash_tool_calls,
 )
+from deerflow.utils import run_scope as run_scope_module
 
 
 def _make_runtime(thread_id="test-thread", run_id="test-run"):
@@ -570,7 +571,8 @@ class TestLoopDetection:
     def test_missing_run_id_fallback_survives_reused_object_address(self, monkeypatch):
         """A later invocation must not inherit a freed anchor's fallback key."""
         mw = LoopDetectionMiddleware()
-        monkeypatch.setattr(loop_detection_module, "id", lambda _value: 42, raising=False)
+        # The fallback map keys by address in the shared run-scope helper.
+        monkeypatch.setattr(run_scope_module, "id", lambda _value: 42, raising=False)
         first_runtime = SimpleNamespace(
             context={"thread_id": "test-thread"},
             control=object(),

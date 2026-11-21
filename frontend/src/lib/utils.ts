@@ -5,6 +5,14 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
+/**
+ * True for a non-null, non-array object, such as a parsed JSON object. Code
+ * that also accepts arrays keeps its own check on purpose.
+ */
+export function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 /** Shared class for external links (underline by default). */
 export const externalLinkClass =
   "text-primary underline underline-offset-2 hover:no-underline";

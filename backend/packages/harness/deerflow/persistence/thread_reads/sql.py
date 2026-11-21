@@ -21,21 +21,11 @@ from collections.abc import Sequence
 from datetime import UTC, datetime
 
 from sqlalchemy import and_, delete, func, select
-from sqlalchemy.dialects.postgresql import insert as pg_insert
-from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from deerflow.persistence.dialect_insert import dialect_insert
 from deerflow.persistence.run.model import RunRow
 from deerflow.persistence.thread_reads.model import ThreadReadMarkerRow, ThreadReadVersionRow
-
-
-def _insert_for(session: AsyncSession):
-    dialect = session.get_bind().dialect.name
-    if dialect == "postgresql":
-        return pg_insert
-    if dialect == "sqlite":
-        return sqlite_insert
-    raise ValueError(f"Unsupported thread read database dialect: {dialect}")
 
 
 class ThreadReadRepository:
@@ -54,7 +44,7 @@ class ThreadReadRepository:
         run of this user has nothing to read and gets no marker.
         """
         async with self._sf() as session:
-            insert = _insert_for(session)
+            insert = dialect_insert(session.get_bind().dialect.name, component="thread read")
             seen = int(
                 await session.scalar(
                     select(func.coalesce(func.max(RunRow.change_seq), 0)).where(

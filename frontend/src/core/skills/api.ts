@@ -1,7 +1,8 @@
 import { fetch } from "@/core/api/fetcher";
 import { getBackendBaseURL } from "@/core/config";
+import { isRecord } from "@/lib/utils";
 
-import { isErrorDetailRecord, readSkillErrorDetail } from "./error-detail";
+import { readSkillErrorDetail } from "./error-detail";
 import type { Skill, SkillLoadDiagnostic } from "./type";
 
 // Keep this in lockstep with `_MAX_SKILL_ARCHIVE_UPLOAD_BYTES` in
@@ -98,7 +99,7 @@ async function readErrorDetail(response: Response): Promise<SkillErrorDetail> {
   if (typeof detail === "string") {
     return { message: detail, findings: [] };
   }
-  if (isErrorDetailRecord(detail) && typeof detail.message === "string") {
+  if (isRecord(detail) && typeof detail.message === "string") {
     return {
       message: detail.message,
       skillName:

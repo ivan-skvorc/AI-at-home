@@ -120,19 +120,12 @@ Must hold:
 
 ## 6. Bump to the next development version (e.g. `2.0.0` → `2.1.0`)
 
-The project version lives in **five** places:
+[RELEASING.md](../RELEASING.md#version-sources) owns the version sources and
+the gate that checks them. Run `scripts/bump_version.sh <next>`, which sets
+all five version fields and refreshes `backend/uv.lock`, then
+`scripts/verify_versions.sh <next>`, the same check the tag workflows run.
 
-| File | What |
-|------|------|
-| `backend/pyproject.toml` | root `deer-flow` |
-| `backend/packages/harness/pyproject.toml` | `deerflow-harness` |
-| `frontend/package.json` | `deer-flow-frontend` |
-| `backend/uv.lock` | `deer-flow` + `deerflow-harness` `[[package]]` entries |
-
-> `frontend/pnpm-lock.yaml` does **not** store our project version — leave it
-> alone (its `2.0.0` hits are third-party deps like `cffi`).
-
-Then confirm no project-version leftovers:
+Then confirm no other file hard-codes the old version:
 
 ```bash
 git grep -nI '2\.0\.0' -- . \
@@ -157,4 +150,4 @@ git grep -nI '2\.0\.0' -- . \
 - **References are globally sorted and complete** — every `[#NNNN]` cited has a
   definition and vice-versa.
 - **Release notes cite only real PRs**; companion PRs paired in the CHANGELOG are fine.
-- **Version lives in 5 spots** — bumping a subset leaves the tree inconsistent.
+- **Version lives in 5 spots** ([RELEASING.md](../RELEASING.md#version-sources)) — bumping a subset leaves the tree inconsistent.

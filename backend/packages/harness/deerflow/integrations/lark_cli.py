@@ -292,10 +292,6 @@ def lark_integration_root(_user_id: str | None = None) -> Path:
     return get_paths().integration_skills_dir() / INTEGRATION_ID
 
 
-def lark_manifest_path(user_id: str) -> Path:
-    return lark_integration_root(user_id) / LARK_CLI_MANIFEST_FILE
-
-
 def lark_skills_installed(user_id: str | None = None) -> bool:
     """Whether the managed Lark skill pack is installed.
 

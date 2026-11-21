@@ -15,7 +15,6 @@ import {
   startWechatQRLogin,
   configureChannelProvider,
   connectChannelProvider,
-  disconnectChannelConnection,
   disconnectChannelProvider,
   listChannelConnections,
   listChannelProviders,
@@ -187,18 +186,6 @@ describe("channels api", () => {
           values: { bot_token: "xoxb-ui", app_token: "xapp-ui" },
         }),
       },
-    );
-  });
-
-  test("disconnects a channel connection", async () => {
-    mockedFetch.mockResolvedValueOnce(new Response(null, { status: 204 }));
-
-    await expect(
-      disconnectChannelConnection("connection-1"),
-    ).resolves.toBeUndefined();
-    expect(mockedFetch).toHaveBeenCalledWith(
-      "/backend/api/channels/connections/connection-1",
-      { method: "DELETE" },
     );
   });
 

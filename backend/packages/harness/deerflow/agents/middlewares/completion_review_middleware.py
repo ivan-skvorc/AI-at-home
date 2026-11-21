@@ -55,6 +55,7 @@ from deerflow.agents.middlewares.todo_middleware import (
     _COMPLETION_REMINDER_RUN_STOP_REASONS,
     _has_tool_call_intent_or_error,
 )
+from deerflow.utils.run_scope import context_scope
 
 logger = logging.getLogger(__name__)
 
@@ -315,9 +316,7 @@ class CompletionReviewMiddleware(AgentMiddleware):
 
     @staticmethod
     def _key(runtime: Any) -> tuple[str, str]:
-        context = getattr(runtime, "context", None)
-        context = context if isinstance(context, dict) else {}
-        return str(context.get("thread_id") or "default"), str(context.get("run_id") or "default")
+        return context_scope(runtime, "thread_id"), context_scope(runtime, "run_id")
 
     # -- the gate ------------------------------------------------------------------
 

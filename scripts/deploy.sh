@@ -49,6 +49,10 @@ cd "$REPO_ROOT"
 # Shared tailnet publish + origin merging, identical to the `make docker-start` path.
 # shellcheck source=scripts/tailscale_lib.sh
 . "$REPO_ROOT/scripts/tailscale_lib.sh"
+# Dotenv reading, the loopback co-bind decision and the detector Python, shared
+# with the `make docker-start` path.
+# shellcheck source=scripts/docker_launch_lib.sh
+. "$REPO_ROOT/scripts/docker_launch_lib.sh"
 
 ENV_FILE="${DEER_FLOW_COMPOSE_ENV_FILE:-$REPO_ROOT/.env}"
 # Docker Compose's interpolation file and service env_file must select the same
@@ -63,6 +67,7 @@ if [ -n "${DEER_FLOW_COMPOSE_ENV_FILE:-}" ] && [ "$CMD" != "down" ] && { [ ! -f 
     exit 1
 fi
 export DEER_FLOW_COMPOSE_ENV_FILE="$ENV_FILE"
+DOCKER_LAUNCH_ENV_FILE="$ENV_FILE"
 # Fork: the tailnet opt-out and the API-key model sync read the same selected file.
 TAILSCALE_LIB_ENV_FILE="${TAILSCALE_LIB_ENV_FILE:-$ENV_FILE}"
 DOCKER_DIR="$REPO_ROOT/docker"
@@ -74,57 +79,15 @@ COMPOSE_CMD=(docker compose "${COMPOSE_ENV_FILE_ARGS[@]}" -p deer-flow -f "$DOCK
 
 load_uv_extras_from_dotenv() {
     local line=""
-    local value=""
 
-    [ -f "$ENV_FILE" ] || return 0
     [ -z "${UV_EXTRAS+x}" ] || return 0
-
-    line="$(grep -E '^[[:space:]]*(export[[:space:]]+)?UV_EXTRAS[[:space:]]*=' "$ENV_FILE" | tail -n 1 || true)"
+    line="$(dotenv_line UV_EXTRAS)"
     [ -n "$line" ] || return 0
-
-    value="${line#*=}"
-    value="${value%$'\r'}"
-    value="${value#"${value%%[![:space:]]*}"}"
-    value="${value%"${value##*[![:space:]]}"}"
-    case "$value" in
-        \"*\") value="${value#\"}"; value="${value%\"}" ;;
-        \'*\') value="${value#\'}"; value="${value%\'}" ;;
-    esac
-    export UV_EXTRAS="$value"
+    UV_EXTRAS="$(dotenv_unquote "${line#*=}")"
+    export UV_EXTRAS
 }
 
 load_uv_extras_from_dotenv
-
-# Read one key from $ENV_FILE the way compose --env-file interpolates it, so the
-# final summary reports the values the stack actually came up with. The shell
-# does not source $ENV_FILE, so reading these from the environment alone would
-# report "loopback only" for a stack that .env exposed to the network.
-read_dotenv_value() {
-    local key="$1"
-    local line=""
-    local value=""
-
-    # An exported shell variable wins, matching compose precedence.
-    if [ -n "${!key+x}" ]; then
-        printf '%s' "${!key}"
-        return 0
-    fi
-
-    [ -f "$ENV_FILE" ] || return 0
-
-    line="$(grep -E "^[[:space:]]*(export[[:space:]]+)?${key}[[:space:]]*=" "$ENV_FILE" | tail -n 1 || true)"
-    [ -n "$line" ] || return 0
-
-    value="${line#*=}"
-    value="${value%$'\r'}"
-    value="${value#"${value%%[![:space:]]*}"}"
-    value="${value%"${value##*[![:space:]]}"}"
-    case "$value" in
-        \"*\") value="${value#\"}"; value="${value%\"}" ;;
-        \'*\') value="${value#\'}"; value="${value%\'}" ;;
-    esac
-    printf '%s' "$value"
-}
 
 # ── Fork: passwordless by default for the home-lab Docker path (make up) ──────
 # The local launchers (scripts/serve.sh, make dev / make start) already default
@@ -149,31 +112,6 @@ apply_default_auth_mode() {
     local current
     current="$(read_dotenv_value DEER_FLOW_AUTH_DISABLED)"
     export DEER_FLOW_AUTH_DISABLED="${current:-1}"
-}
-
-# ── Fork: keep localhost working when BIND_HOST is a single external interface ─
-# BIND_HOST publishes exactly ONE interface (it's a bind address, not an
-# allowlist). If you set it to your Tailscale IP (e.g. 100.x.y.z) to reach the
-# app from your phone, the host's own http://localhost:PORT is refused, because
-# nothing binds loopback — the "works over Tailscale, connection refused on
-# localhost" footgun. `should_cobind_loopback` echoes "yes" when BIND_HOST names
-# a single specific interface (neither loopback nor a wildcard), so deploy.sh can
-# append docker-compose.loopback.yaml to ALSO publish the port on 127.0.0.1.
-# Wildcards (0.0.0.0 / ::) already cover loopback, so co-binding there would
-# collide on the port; loopback binds need nothing extra. Reads BIND_HOST via
-# read_dotenv_value (an exported shell var wins, then .env). Kept as a function
-# so tests can exercise the decision (test_deploy_loopback_cobind.py).
-should_cobind_loopback() {
-    local bind
-    bind="$(read_dotenv_value BIND_HOST)"
-    case "$bind" in
-        "" | 127.0.0.1 | ::1 | localhost | 0.0.0.0 | ::)
-            echo "no"
-            ;;
-        *)
-            echo "yes"
-            ;;
-    esac
 }
 
 # ── Colors ────────────────────────────────────────────────────────────────────
@@ -306,128 +244,92 @@ dotenv_provides_secret() {
     [ -n "$value" ] && [ "$value" != '""' ]
 }
 
-# ── BETTER_AUTH_SECRET ───────────────────────────────────────────────────────
-# Required by Next.js in production. Generated once and persisted so auth
-# sessions survive container restarts.
+# ── Persisted secrets ────────────────────────────────────────────────────────
+# Each secret resolves from the shell, then $ENV_FILE (left for Compose to
+# read), then its file under $DEER_FLOW_HOME, then a newly generated value. A
+# new value is written under umask 077 and noclobber: the file is never
+# readable by others, and noclobber turns the redirection into an exclusive
+# (O_EXCL) create, so when a concurrent run wins, its value is read back
+# instead of ours. A writable directory can still hold a root-owned,
+# unreadable file; persisted secrets are only read, so read-only files and
+# overrides are valid.
 
-_secret_file="$DEER_FLOW_HOME/.better-auth-secret"
-if [ "$CMD" != "down" ] && [ -z "$BETTER_AUTH_SECRET" ] && dotenv_provides_secret BETTER_AUTH_SECRET; then
-    echo -e "${GREEN}✓ BETTER_AUTH_SECRET loaded from $ENV_FILE${NC}"
-elif [ "$CMD" != "down" ] && [ -z "$BETTER_AUTH_SECRET" ]; then
-    if [ -f "$_secret_file" ]; then
-        # A writable directory can still contain a root-owned, unreadable file.
-        # Persisted secrets are only read; read-only files and overrides are valid.
-        if [ ! -r "$_secret_file" ]; then
-            fail_home_permission "$_secret_file" readable
-        fi
-        export BETTER_AUTH_SECRET
-        BETTER_AUTH_SECRET="$(cat "$_secret_file")"
-        echo -e "${GREEN}✓ BETTER_AUTH_SECRET loaded from $_secret_file${NC}"
-    else
-        export BETTER_AUTH_SECRET
-        if command -v python3 > /dev/null 2>&1 && \
-            BETTER_AUTH_SECRET="$(python3 -c 'import sys; sys.version_info >= (3, 6) or sys.exit(1); import secrets; print(secrets.token_hex(32))' 2>/dev/null)"; then
-            true
-        elif command -v python > /dev/null 2>&1 && \
-            BETTER_AUTH_SECRET="$(python -c 'import sys; sys.version_info >= (3, 6) or sys.exit(1); import secrets; print(secrets.token_hex(32))' 2>/dev/null)"; then
-            true
-        elif command -v openssl > /dev/null 2>&1 && \
-            BETTER_AUTH_SECRET="$(openssl rand -hex 32)"; then
-            true
-        else
-            echo -e "${RED}✗ Cannot generate BETTER_AUTH_SECRET: python3, python, and openssl are all unavailable.${NC}" >&2
-            echo -e "${RED}  Set BETTER_AUTH_SECRET manually before running make up.${NC}" >&2
+# Print a new random secret: `hex` or `urlsafe` (32 bytes), or `fernet`
+# (urlsafe base64 of 32 random bytes, the Fernet key format).
+generate_secret() {
+    local code python_bin
+    case "$1" in
+        hex) code='import secrets; print(secrets.token_hex(32))' ;;
+        urlsafe) code='import secrets; print(secrets.token_urlsafe(32))' ;;
+        fernet) code='import base64, os; print(base64.urlsafe_b64encode(os.urandom(32)).decode())' ;;
+    esac
+    python_bin="$(pick_detector_python || true)"
+    if [ -n "$python_bin" ] && "$python_bin" -c "$code" 2>/dev/null; then
+        return 0
+    fi
+    command -v openssl > /dev/null 2>&1 || return 1
+    case "$1" in
+        fernet) openssl rand -base64 32 | tr '+/' '-_' ;;
+        *) openssl rand -hex 32 ;;
+    esac
+}
+
+# resolve_secret NAME FILE FORMAT [NOTE]: resolve and export NAME as above.
+resolve_secret() {
+    local name="$1" file="$2" format="$3" note="${4:-}"
+    local generated="" value=""
+
+    if [ "$CMD" = "down" ] || [ -n "${!name}" ]; then
+        return 0
+    fi
+    if dotenv_provides_secret "$name"; then
+        echo -e "${GREEN}✓ $name loaded from $ENV_FILE${NC}"
+        return 0
+    fi
+    if [ ! -f "$file" ]; then
+        if ! generated="$(generate_secret "$format")"; then
+            echo -e "${RED}✗ Cannot generate $name: python3, python, and openssl are all unavailable.${NC}" >&2
+            echo -e "${RED}  Set $name manually before running make up.${NC}" >&2
             exit 1
         fi
-        echo "$BETTER_AUTH_SECRET" > "$_secret_file"
-        chmod 600 "$_secret_file"
-        echo -e "${GREEN}✓ BETTER_AUTH_SECRET generated → $_secret_file${NC}"
+        if ! ( umask 077; set -o noclobber; printf '%s\n' "$generated" > "$file" ) 2>/dev/null; then
+            generated=""
+        fi
     fi
-fi
+    if [ -n "$generated" ]; then
+        export "$name=$generated"
+        echo -e "${GREEN}✓ $name generated → $file$note${NC}"
+        return 0
+    fi
+    if [ ! -r "$file" ]; then
+        fail_home_permission "$file" readable
+    fi
+    value="$(cat "$file")"
+    if [ -z "$value" ]; then
+        # An empty file (a write that failed after the file was created, or a
+        # truncated copy) must stop the deploy, not start it with no secret.
+        echo -e "${RED}✗ $file is empty, so $name has no value.${NC}" >&2
+        echo -e "${RED}  Remove the file to let deploy.sh generate a new one, or write the value into it.${NC}" >&2
+        exit 1
+    fi
+    export "$name=$value"
+    echo -e "${GREEN}✓ $name loaded from $file${NC}"
+}
 
-# ── DEER_FLOW_INTERNAL_AUTH_TOKEN ────────────────────────────────────────────
+# Required by Next.js in production. Persisted so auth sessions survive
+# container restarts.
+resolve_secret BETTER_AUTH_SECRET "$DEER_FLOW_HOME/.better-auth-secret" hex
+
 # Shared by all Gateway workers so channel workers can call internal Gateway
 # APIs even when the request is handled by a different Uvicorn worker.
+resolve_secret DEER_FLOW_INTERNAL_AUTH_TOKEN "$DEER_FLOW_HOME/.internal-auth-token" urlsafe
 
-_internal_auth_token_file="$DEER_FLOW_HOME/.internal-auth-token"
-if [ "$CMD" != "down" ] && [ -z "$DEER_FLOW_INTERNAL_AUTH_TOKEN" ] && dotenv_provides_secret DEER_FLOW_INTERNAL_AUTH_TOKEN; then
-    echo -e "${GREEN}✓ DEER_FLOW_INTERNAL_AUTH_TOKEN loaded from $ENV_FILE${NC}"
-elif [ "$CMD" != "down" ] && [ -z "$DEER_FLOW_INTERNAL_AUTH_TOKEN" ]; then
-    if [ -f "$_internal_auth_token_file" ]; then
-        if [ ! -r "$_internal_auth_token_file" ]; then
-            fail_home_permission "$_internal_auth_token_file" readable
-        fi
-        export DEER_FLOW_INTERNAL_AUTH_TOKEN
-        DEER_FLOW_INTERNAL_AUTH_TOKEN="$(cat "$_internal_auth_token_file")"
-        echo -e "${GREEN}✓ DEER_FLOW_INTERNAL_AUTH_TOKEN loaded from $_internal_auth_token_file${NC}"
-    else
-        export DEER_FLOW_INTERNAL_AUTH_TOKEN
-        if command -v python3 > /dev/null 2>&1 && \
-            DEER_FLOW_INTERNAL_AUTH_TOKEN="$(python3 -c 'import sys; sys.version_info >= (3, 6) or sys.exit(1); import secrets; print(secrets.token_urlsafe(32))' 2>/dev/null)"; then
-            true
-        elif command -v python > /dev/null 2>&1 && \
-            DEER_FLOW_INTERNAL_AUTH_TOKEN="$(python -c 'import sys; sys.version_info >= (3, 6) or sys.exit(1); import secrets; print(secrets.token_urlsafe(32))' 2>/dev/null)"; then
-            true
-        elif command -v openssl > /dev/null 2>&1 && \
-            DEER_FLOW_INTERNAL_AUTH_TOKEN="$(openssl rand -hex 32)"; then
-            true
-        else
-            echo -e "${RED}✗ Cannot generate DEER_FLOW_INTERNAL_AUTH_TOKEN: python3, python, and openssl are all unavailable.${NC}" >&2
-            echo -e "${RED}  Set DEER_FLOW_INTERNAL_AUTH_TOKEN manually before running make up.${NC}" >&2
-            exit 1
-        fi
-        echo "$DEER_FLOW_INTERNAL_AUTH_TOKEN" > "$_internal_auth_token_file"
-        chmod 600 "$_internal_auth_token_file"
-        echo -e "${GREEN}✓ DEER_FLOW_INTERNAL_AUTH_TOKEN generated → $_internal_auth_token_file${NC}"
-    fi
-fi
-
-# ── DEER_FLOW_CREDENTIALS_KEY ────────────────────────────────────────────────
 # At-rest Fernet key the Gateway encrypts stored credentials with. Losing it
 # makes those credentials unreadable, so back the file up. It is persisted
 # under the name the Gateway itself generates in its runtime home (the
 # $DEER_FLOW_HOME bind mount), so a key either side created first is the one
-# both keep. noclobber turns the redirection into an exclusive (O_EXCL)
-# create: when a concurrent run wins, its key is read back instead of ours.
-
-_credentials_key_file="$DEER_FLOW_HOME/.credentials_key"
-if [ "$CMD" != "down" ] && [ -z "$DEER_FLOW_CREDENTIALS_KEY" ] && dotenv_provides_secret DEER_FLOW_CREDENTIALS_KEY; then
-    echo -e "${GREEN}✓ DEER_FLOW_CREDENTIALS_KEY loaded from $ENV_FILE${NC}"
-elif [ "$CMD" != "down" ] && [ -z "$DEER_FLOW_CREDENTIALS_KEY" ]; then
-    _generated_credentials_key=""
-    if [ ! -f "$_credentials_key_file" ]; then
-        # urlsafe base64 of 32 random bytes, the Fernet key format.
-        if command -v python3 > /dev/null 2>&1 && \
-            _generated_credentials_key="$(python3 -c 'import sys; sys.version_info >= (3, 6) or sys.exit(1); import base64, os; print(base64.urlsafe_b64encode(os.urandom(32)).decode())' 2>/dev/null)"; then
-            true
-        elif command -v python > /dev/null 2>&1 && \
-            _generated_credentials_key="$(python -c 'import sys; sys.version_info >= (3, 6) or sys.exit(1); import base64, os; print(base64.urlsafe_b64encode(os.urandom(32)).decode())' 2>/dev/null)"; then
-            true
-        elif command -v openssl > /dev/null 2>&1 && \
-            _generated_credentials_key="$(openssl rand -base64 32 | tr '+/' '-_')"; then
-            true
-        else
-            echo -e "${RED}✗ Cannot generate DEER_FLOW_CREDENTIALS_KEY: python3, python, and openssl are all unavailable.${NC}" >&2
-            echo -e "${RED}  Set DEER_FLOW_CREDENTIALS_KEY manually before running make up.${NC}" >&2
-            exit 1
-        fi
-        if ! ( umask 077; set -o noclobber; printf '%s\n' "$_generated_credentials_key" > "$_credentials_key_file" ) 2>/dev/null; then
-            _generated_credentials_key=""
-        fi
-    fi
-    if [ -n "$_generated_credentials_key" ]; then
-        export DEER_FLOW_CREDENTIALS_KEY="$_generated_credentials_key"
-        echo -e "${GREEN}✓ DEER_FLOW_CREDENTIALS_KEY generated → $_credentials_key_file (back it up)${NC}"
-    else
-        if [ ! -r "$_credentials_key_file" ]; then
-            fail_home_permission "$_credentials_key_file" readable
-        fi
-        export DEER_FLOW_CREDENTIALS_KEY
-        DEER_FLOW_CREDENTIALS_KEY="$(cat "$_credentials_key_file")"
-        echo -e "${GREEN}✓ DEER_FLOW_CREDENTIALS_KEY loaded from $_credentials_key_file${NC}"
-    fi
-    unset _generated_credentials_key
-fi
+# both keep.
+resolve_secret DEER_FLOW_CREDENTIALS_KEY "$DEER_FLOW_HOME/.credentials_key" fernet " (back it up)"
 
 # ── Auth mode (fork: passwordless by default on the home-lab Docker path) ────
 
@@ -446,13 +348,7 @@ fi
 
 _detect_python=""
 if [ "$CMD" != "down" ]; then
-    for _python in python3 python; do
-        if command -v "$_python" >/dev/null 2>&1 && \
-            "$_python" -c 'import sys; sys.version_info >= (3, 6) or sys.exit(1)' >/dev/null 2>&1; then
-            _detect_python="$_python"
-            break
-        fi
-    done
+    _detect_python="$(pick_detector_python || true)"
 fi
 
 # ── UV_EXTRAS auto-detection ─────────────────────────────────────────────────
@@ -679,7 +575,7 @@ if tailscale_should_publish; then
 fi
 
 # ── Loopback co-bind (fork) ──────────────────────────────────────────────────
-# See should_cobind_loopback above. When BIND_HOST is a single external
+# See should_cobind_loopback in docker_launch_lib.sh. When BIND_HOST is a single external
 # interface (e.g. a Tailscale IP), also publish the entry port on 127.0.0.1 so
 # the host's own http://localhost keeps working. Loopback is host-only, so this
 # never widens the external surface.

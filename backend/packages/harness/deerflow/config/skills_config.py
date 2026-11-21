@@ -76,16 +76,3 @@ class SkillsConfig(BaseModel):
                 return candidate
 
         return project_default
-
-    def get_skill_container_path(self, skill_name: str, category: str = "public") -> str:
-        """
-        Get the full container path for a specific skill.
-
-        Args:
-            skill_name: Name of the skill (directory name)
-            category: Category of the skill (public or custom)
-
-        Returns:
-            Full path to the skill in the container
-        """
-        return f"{self.container_path}/{category}/{skill_name}"

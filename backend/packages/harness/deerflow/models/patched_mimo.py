@@ -9,40 +9,22 @@ enter the conversation history.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from typing import Any
+from typing import Any, ClassVar
 
 from langchain_core.language_models import LanguageModelInput
-from langchain_core.messages import AIMessage, AIMessageChunk
-from langchain_core.outputs import ChatGeneration, ChatGenerationChunk, ChatResult
 
 from deerflow.models.assistant_payload_replay import restore_assistant_payloads, restore_reasoning_content
-from deerflow.models.openai_response import GuardedChatOpenAI
-from deerflow.models.reasoning_capture import typed_choice_message, with_reasoning_content
-
-_MISSING = object()
+from deerflow.models.reasoning_capture import ReasoningCaptureChatOpenAI
 
 
-def _extract_reasoning_content(value: Any) -> str | object:
-    """Return reasoning_content from a dict/Pydantic object, preserving empty strings."""
-    if isinstance(value, Mapping):
-        if "reasoning_content" in value and value["reasoning_content"] is not None:
-            return value["reasoning_content"]
-        return _MISSING
+class PatchedChatMiMo(ReasoningCaptureChatOpenAI):
+    """ChatOpenAI with ``reasoning_content`` preservation for MiMo thinking mode.
 
-    reasoning = getattr(value, "reasoning_content", _MISSING)
-    if reasoning is not _MISSING and reasoning is not None:
-        return reasoning
+    Streaming and non-streaming capture come from ``ReasoningCaptureChatOpenAI``;
+    this class replays the captured value on outgoing assistant messages.
+    """
 
-    model_extra = getattr(value, "model_extra", None)
-    if isinstance(model_extra, Mapping) and "reasoning_content" in model_extra and model_extra["reasoning_content"] is not None:
-        return model_extra["reasoning_content"]
-
-    return _MISSING
-
-
-class PatchedChatMiMo(GuardedChatOpenAI):
-    """ChatOpenAI with ``reasoning_content`` preservation for MiMo thinking mode."""
+    reasoning_fields: ClassVar[tuple[str, ...]] = ("reasoning_content",)
 
     @classmethod
     def is_lc_serializable(cls) -> bool:
@@ -68,57 +50,3 @@ class PatchedChatMiMo(GuardedChatOpenAI):
         )
 
         return payload
-
-    def _convert_chunk_to_generation_chunk(
-        self,
-        chunk: dict,
-        default_chunk_class: type,
-        base_generation_info: dict | None,
-    ) -> ChatGenerationChunk | None:
-        generation_chunk = super()._convert_chunk_to_generation_chunk(
-            chunk,
-            default_chunk_class,
-            base_generation_info,
-        )
-        if generation_chunk is None:
-            return None
-
-        choices = chunk.get("choices", [])
-        if choices:
-            delta = choices[0].get("delta") or {}
-            reasoning = _extract_reasoning_content(delta)
-            if reasoning is not _MISSING and isinstance(generation_chunk.message, AIMessageChunk):
-                generation_chunk = ChatGenerationChunk(
-                    message=with_reasoning_content(generation_chunk.message, reasoning),
-                    generation_info=generation_chunk.generation_info,
-                )
-
-        return generation_chunk
-
-    def _create_chat_result(
-        self,
-        response: dict | Any,
-        generation_info: dict | None = None,
-    ) -> ChatResult:
-        result = super()._create_chat_result(response, generation_info)
-        response_dict = response if isinstance(response, dict) else response.model_dump()
-        choices = response_dict.get("choices", [])
-
-        patched_generations: list[ChatGeneration] | None = None
-        for index, generation in enumerate(result.generations):
-            choice = choices[index] if index < len(choices) else {}
-            choice_message = choice.get("message", {}) if isinstance(choice, Mapping) else {}
-            reasoning = _extract_reasoning_content(choice_message)
-            if reasoning is _MISSING and not isinstance(response, dict):
-                reasoning = _extract_reasoning_content(typed_choice_message(response, index))
-
-            message = generation.message
-            if reasoning is not _MISSING and isinstance(message, AIMessage):
-                if patched_generations is None:
-                    patched_generations = list(result.generations)
-                patched_generations[index] = ChatGeneration(
-                    message=with_reasoning_content(message, reasoning),
-                    generation_info=generation.generation_info,
-                )
-
-        return ChatResult(generations=patched_generations or result.generations, llm_output=result.llm_output)

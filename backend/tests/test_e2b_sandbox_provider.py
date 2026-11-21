@@ -7158,3 +7158,20 @@ def test_warm_sweep_cannot_race_lapsed_lease_reclaim(monkeypatch):
     assert provider._ownership.owner(sid) is None
     assert sid not in provider._owned_sandbox_ids
     assert provider._lifecycle_locks == {}
+
+
+@pytest.mark.parametrize("path", ["/mnt/user-data/../etc/passwd", "\\mnt\\user-data\\..\\etc\\passwd"])
+def test_e2b_sandbox_rejects_parent_segments_before_reaching_the_vm(path):
+    mod = importlib.import_module("deerflow.community.e2b_sandbox.e2b_sandbox_provider")
+    files = FakeFilesAPI({"/etc/passwd": b"root", "/home/user/outputs/a.txt": b"ok"})
+    sandbox = mod.E2BSandbox(id="sandbox-1", client=FakeClient(files=files), home_dir="/home/user")
+
+    with pytest.raises(PermissionError, match="path traversal detected in"):
+        sandbox.read_file(path)
+    with pytest.raises(PermissionError, match="path traversal detected in"):
+        sandbox.download_file(path)
+    assert files.read_calls == []
+
+    # Backslashes are normalised before the user-data prefix is mapped into the VM home.
+    assert sandbox.read_file("\\mnt\\user-data\\outputs\\a.txt") == "ok"
+    assert files.read_calls == [("/home/user/outputs/a.txt", None)]

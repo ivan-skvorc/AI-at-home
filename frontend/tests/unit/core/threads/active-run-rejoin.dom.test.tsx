@@ -134,7 +134,10 @@ function reportActiveRunThroughRunInputs(
   account: string,
 ) {
   act(() => {
-    queryClient.setQueryData(["features", "run_inputs"], true);
+    queryClient.setQueryData(["features"], {
+      agents_api: { enabled: true },
+      run_inputs: true,
+    });
     queryClient.setQueryData(["threads", "thread-1", "inputs", account], {
       items: [],
       active_run_id: runId,

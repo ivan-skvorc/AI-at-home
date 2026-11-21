@@ -32,11 +32,10 @@ from __future__ import annotations
 from collections.abc import Iterable
 
 from sqlalchemy import delete, func, or_, select
-from sqlalchemy.dialects.postgresql import insert as pg_insert
-from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from deerflow.persistence.channel_thread_bindings.model import ChannelThreadBinding, ChannelThreadBindingRow
+from deerflow.persistence.dialect_insert import dialect_insert
 
 #: Rows per ``INSERT`` statement during the import; keeps bind-parameter counts small on both dialects.
 IMPORT_BATCH_SIZE = 500
@@ -51,15 +50,6 @@ _COLUMNS = (
     ChannelThreadBindingRow.created_at,
     ChannelThreadBindingRow.updated_at,
 )
-
-
-def _insert_for(session: AsyncSession):
-    dialect = session.get_bind().dialect.name
-    if dialect == "postgresql":
-        return pg_insert
-    if dialect == "sqlite":
-        return sqlite_insert
-    raise ValueError(f"Unsupported channel thread binding database dialect: {dialect}")
 
 
 def _values(binding: ChannelThreadBinding) -> dict[str, object]:
@@ -93,7 +83,8 @@ class SqlChannelThreadBindingRepository:
     async def upsert(self, binding: ChannelThreadBinding) -> None:
         """Create or overwrite the binding; an existing row keeps its ``created_at``."""
         async with self._sf() as session:
-            stmt = _insert_for(session)(ChannelThreadBindingRow).values(**_values(binding))
+            insert = dialect_insert(session.get_bind().dialect.name, component="channel thread binding")
+            stmt = insert(ChannelThreadBindingRow).values(**_values(binding))
             stmt = stmt.on_conflict_do_update(
                 index_elements=[ChannelThreadBindingRow.key],
                 set_={"thread_id": stmt.excluded.thread_id, "user_id": stmt.excluded.user_id, "updated_at": stmt.excluded.updated_at},
@@ -104,7 +95,8 @@ class SqlChannelThreadBindingRepository:
     async def claim(self, binding: ChannelThreadBinding) -> str:
         """Insert the binding unless its key exists; return the ``thread_id`` the key is bound to."""
         async with self._sf() as session:
-            await session.execute(_insert_for(session)(ChannelThreadBindingRow).values(**_values(binding)).on_conflict_do_nothing(index_elements=[ChannelThreadBindingRow.key]))
+            insert = dialect_insert(session.get_bind().dialect.name, component="channel thread binding")
+            await session.execute(insert(ChannelThreadBindingRow).values(**_values(binding)).on_conflict_do_nothing(index_elements=[ChannelThreadBindingRow.key]))
             bound = (await session.execute(select(ChannelThreadBindingRow.thread_id).where(ChannelThreadBindingRow.key == binding.key))).scalar_one()
             await session.commit()
             return bound
@@ -142,7 +134,7 @@ class SqlChannelThreadBindingRepository:
             return 0
         inserted = 0
         async with self._sf() as session:
-            insert = _insert_for(session)
+            insert = dialect_insert(session.get_bind().dialect.name, component="channel thread binding")
             for start in range(0, len(rows), IMPORT_BATCH_SIZE):
                 batch = rows[start : start + IMPORT_BATCH_SIZE]
                 result = await session.execute(insert(ChannelThreadBindingRow).values(batch).on_conflict_do_nothing(index_elements=[ChannelThreadBindingRow.key]))

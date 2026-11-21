@@ -13,6 +13,7 @@ import {
   useBindingCode,
   type PendingBindingCode,
 } from "@/core/channels/use-binding-code";
+import { writeTextToClipboard } from "@/core/clipboard";
 import { useI18n } from "@/core/i18n/hooks";
 
 export type PendingWechatBinding = PendingBindingCode;
@@ -41,12 +42,7 @@ export function WechatQRCompletion({
     });
 
   const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(command);
-      reportCopy(true);
-    } catch {
-      reportCopy(false);
-    }
+    reportCopy(await writeTextToClipboard(command));
   };
 
   return (

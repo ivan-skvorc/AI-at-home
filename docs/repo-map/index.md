@@ -1,6 +1,6 @@
 # Repo map
 
-Synced by change cycle: 2026-11-21, level 1, "model audit 2026-11-21: Qwen4 Max price, GPT-6.2 Astra and Sol"
+Synced by change cycle: 2026-11-21, level 3, "quality review: shared helpers, dead code, dependency and security fixes"
 
 What the app does, feature by feature, and which files, data and external
 services each feature uses. Each area file opens with its own board and holds
@@ -722,7 +722,6 @@ flowchart LR
 | `scripts/backend-python.sh` | Run the stack |
 | `scripts/backup.py` | Backup and restore |
 | `scripts/check.py` | Install and configure |
-| `scripts/check.sh` | Install and configure |
 | `scripts/check-data-not-in-use.sh` | Run the stack |
 | `scripts/cleanup-containers.sh` | Run the stack |
 | `scripts/comfyui*` | Local image and video generation |
@@ -732,6 +731,7 @@ flowchart LR
 | `scripts/configure.py` | Install and configure |
 | `scripts/deploy.sh` | Run the stack |
 | `scripts/docker.sh` | Run the stack |
+| `scripts/docker_launch_lib.sh` | Run the stack, Passwordless on your own network |
 | `scripts/serve.sh` | Run the stack, Passwordless on your own network |
 | `scripts/start-daemon.sh` | Run the stack |
 | `scripts/nginx*.sh` | Run the stack |

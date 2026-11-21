@@ -638,7 +638,8 @@ class WeComChannel(Channel):
             try:
                 await self._ws_client.reply_stream(frame, stream_id, self._working_message, False)
             except Exception:
-                pass
+                # The placeholder is a courtesy; the message itself still goes to the agent.
+                logger.debug("[WeCom] 'working' placeholder reply failed for msg=%s", msg_id, exc_info=True)
 
             inbound = await self._attach_connection_identity(inbound)
             if group_chatid:

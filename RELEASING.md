@@ -6,6 +6,11 @@ the maintainer bumps the version sources, updates the changelog, commits, and
 tags. The helper scripts below keep the version sources in lockstep, and CI
 gates the release on them agreeing with the tag.
 
+This file owns the version sources, the helper scripts and the CI gates. The
+full release checklist, from gathering the milestone PRs to the English and
+Chinese changelogs and the release notes, is the
+[release SOP](docs/RELEASE_SOP.md).
+
 ## Version sources
 
 A release version must appear, identically, in five places:

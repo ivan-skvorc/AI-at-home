@@ -332,17 +332,6 @@ class ClarificationMiddleware(AgentMiddleware[ClarificationMiddlewareState]):
 
         return payload
 
-    def _is_chinese(self, text: str) -> bool:
-        """Check if text contains Chinese characters.
-
-        Args:
-            text: Text to check
-
-        Returns:
-            True if text contains Chinese characters
-        """
-        return any("\u4e00" <= char <= "\u9fff" for char in text)
-
     def _format_clarification_message(self, args: dict, fields: list[dict[str, Any]] | None = None) -> str:
         """Format the clarification arguments into a user-friendly message.
 

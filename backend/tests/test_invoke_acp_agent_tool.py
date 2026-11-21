@@ -627,6 +627,79 @@ async def test_invoke_acp_agent_skips_invalid_mcp_servers(monkeypatch, tmp_path,
 
 
 @pytest.mark.anyio
+async def test_invoke_acp_agent_logs_a_malformed_update_and_keeps_the_reply(monkeypatch, tmp_path, caplog):
+    """A message chunk without content is dropped with a debug log, not silently."""
+    from deerflow.config import paths as paths_module
+
+    monkeypatch.setattr(paths_module, "get_paths", lambda: paths_module.Paths(base_dir=tmp_path))
+    monkeypatch.setattr(
+        "deerflow.config.extensions_config.ExtensionsConfig.from_file",
+        classmethod(lambda cls: ExtensionsConfig(mcp_servers={}, skills={})),
+    )
+
+    text_content_block = type("TextContentBlock", (), {"__init__": lambda self, text: setattr(self, "text", text)})
+    captured: dict[str, object] = {}
+
+    class DummyClient:
+        def __init__(self) -> None:
+            self._chunks: list[str] = []
+
+    class DummyConn:
+        async def initialize(self, **kwargs):
+            pass
+
+        async def new_session(self, **kwargs):
+            return SimpleNamespace(session_id="s1")
+
+        async def prompt(self, **kwargs):
+            client = captured["client"]
+            await client.session_update("s1", SimpleNamespace(session_update="agent_message_chunk"))
+            await client.session_update("s1", SimpleNamespace(session_update="agent_message_chunk", content=text_content_block("kept")))
+
+    class DummyProcessContext:
+        def __init__(self, client):
+            captured["client"] = client
+
+        async def __aenter__(self):
+            return DummyConn(), _LiveAgentProcess()
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    monkeypatch.setitem(
+        sys.modules,
+        "acp",
+        SimpleNamespace(
+            PROTOCOL_VERSION="2026-03-24",
+            Client=DummyClient,
+            RequestError=Exception,
+            spawn_agent_process=lambda client, cmd, *args, env=None, cwd: DummyProcessContext(client),
+            text_block=lambda text: {"type": "text", "text": text},
+        ),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "acp.schema",
+        SimpleNamespace(ClientCapabilities=lambda: {}, Implementation=lambda **kwargs: kwargs, TextContentBlock=text_content_block),
+    )
+
+    tool = build_invoke_acp_agent_tool({"codex": ACPAgentConfig(command="codex-acp", description="Codex CLI")})
+    try:
+        with caplog.at_level(logging.DEBUG, logger="deerflow.tools.builtins.invoke_acp_agent_tool"):
+            result = await tool.coroutine(agent="codex", prompt="Do something")
+    finally:
+        sys.modules.pop("acp", None)
+        sys.modules.pop("acp.schema", None)
+
+    assert result == "kept"
+    dropped = [record for record in caplog.records if record.getMessage().startswith("Dropped a malformed ACP session update")]
+    assert len(dropped) == 1
+    assert dropped[0].levelno == logging.DEBUG
+    assert "agent codex in session s1" in dropped[0].getMessage()
+    assert dropped[0].exc_info is not None and dropped[0].exc_info[0] is AttributeError
+
+
+@pytest.mark.anyio
 async def test_invoke_acp_agent_passes_none_env_when_not_configured(monkeypatch, tmp_path):
     """When env is empty, None is passed to spawn_agent_process (subprocess inherits parent env)."""
     from deerflow.config import paths as paths_module

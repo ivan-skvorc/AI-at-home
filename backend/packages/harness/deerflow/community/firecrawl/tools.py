@@ -7,6 +7,7 @@ import os
 from firecrawl import AsyncFirecrawlApp
 from langchain.tools import tool
 
+from deerflow.community.config_bool import coerce_bool
 from deerflow.community.provider_credentials import resolve_api_key
 from deerflow.community.search_max_results import DEFAULT_MAX_RESULTS, coerce_max_results
 from deerflow.community.url_safety import safe_public_result_url, validate_delegated_backend_url, validate_public_http_url
@@ -44,18 +45,6 @@ def _get_tool_config_extra(tool_name: str) -> dict:
     return dict(config.model_extra or {}) if config is not None else {}
 
 
-def _coerce_bool(value: object, default: bool) -> bool:
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, str):
-        normalized = value.strip().lower()
-        if normalized in {"1", "true", "yes", "on"}:
-            return True
-        if normalized in {"0", "false", "no", "off"}:
-            return False
-    return default
-
-
 def _validate_backend_base_url(cfg: dict, base_url: str) -> str | None:
     """Refuse delegation to a self-hosted Firecrawl backend unless its egress is isolated.
 
@@ -66,7 +55,7 @@ def _validate_backend_base_url(cfg: dict, base_url: str) -> str | None:
     operator confirms via ``network_isolation_confirmed``. Blocking; call via
     ``asyncio.to_thread``.
     """
-    network_isolation_confirmed = _coerce_bool(cfg.get("network_isolation_confirmed"), False)
+    network_isolation_confirmed = coerce_bool(cfg.get("network_isolation_confirmed"), False)
     return validate_delegated_backend_url(base_url, network_isolation_confirmed=network_isolation_confirmed)
 
 
@@ -147,7 +136,7 @@ async def web_fetch_tool(url: str) -> str:
     try:
         # Config resolution stats and hashes the config files; keep it off the event loop.
         cfg = await asyncio.to_thread(_get_tool_config_extra, "web_fetch")
-        allow_private_addresses = _coerce_bool(cfg.get("allow_private_addresses"), False)
+        allow_private_addresses = coerce_bool(cfg.get("allow_private_addresses"), False)
         url_error = await asyncio.to_thread(validate_public_http_url, url, allow_private_addresses=allow_private_addresses)
         if url_error:
             return url_error

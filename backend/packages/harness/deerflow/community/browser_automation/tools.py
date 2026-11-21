@@ -32,6 +32,8 @@ from langchain.tools import InjectedToolCallId, tool
 from langchain_core.messages import ToolMessage
 from langgraph.types import Command
 
+from deerflow.community.config_bool import coerce_bool
+from deerflow.community.config_int import coerce_int
 from deerflow.community.url_safety import resolve_host_addresses as _resolve_host_addresses
 from deerflow.community.url_safety import resolve_public_addresses, validate_public_http_url
 from deerflow.config import get_app_config
@@ -72,29 +74,6 @@ def _get_tool_config(tool_name: str) -> dict:
     if config is None:
         return {}
     return config.model_extra or {}
-
-
-def _as_bool(value: object, default: bool) -> bool:
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, str):
-        lowered = value.strip().lower()
-        if lowered in {"1", "true", "yes", "on"}:
-            return True
-        if lowered in {"0", "false", "no", "off"}:
-            return False
-    return default
-
-
-def _as_int(value: object, default: int) -> int:
-    if isinstance(value, int) and not isinstance(value, bool):
-        return value
-    if isinstance(value, str):
-        try:
-            return int(value.strip())
-        except ValueError:
-            return default
-    return default
 
 
 def _thread_id(runtime: Runtime) -> str | None:
@@ -140,10 +119,10 @@ async def _launch_config() -> dict:
 
 def _resolve_session(runtime: Runtime, cfg: dict) -> _SessionLease:
     """Pin this thread's browser session, launching it with *cfg* (see :func:`_launch_config`)."""
-    headless = _as_bool(cfg.get("headless"), True)
-    timeout_ms = _as_int(cfg.get("timeout_ms"), 30000)
-    width = _as_int(cfg.get("viewport_width"), 1280)
-    height = _as_int(cfg.get("viewport_height"), 720)
+    headless = coerce_bool(cfg.get("headless"), True)
+    timeout_ms = coerce_int(cfg.get("timeout_ms"), 30000)
+    width = coerce_int(cfg.get("viewport_width"), 1280)
+    height = coerce_int(cfg.get("viewport_height"), 720)
     cdp_url = _as_str(cfg.get("cdp_url"))
     manager = get_browser_session_manager()
     thread_id = _thread_id(runtime)
@@ -153,7 +132,7 @@ def _resolve_session(runtime: Runtime, cfg: dict) -> _SessionLease:
         timeout_ms=timeout_ms,
         viewport={"width": width, "height": height},
         cdp_url=cdp_url,
-        allow_unguarded_cdp=_as_bool(cfg.get("allow_unguarded_cdp"), False),
+        allow_unguarded_cdp=coerce_bool(cfg.get("allow_unguarded_cdp"), False),
         url_guard=validate_browser_url,
         egress_resolver=resolve_browser_egress,
         pin=True,
@@ -170,7 +149,7 @@ def validate_browser_url(url: str, *, tool_name: str = "browser_navigate") -> st
     policy (``allow_private_addresses`` from the ``browser_navigate`` tool config).
     """
     cfg = _get_tool_config(tool_name)
-    allow_private = _as_bool(cfg.get("allow_private_addresses"), False)
+    allow_private = coerce_bool(cfg.get("allow_private_addresses"), False)
     return validate_public_http_url(
         url,
         allow_private_addresses=allow_private,
@@ -188,7 +167,7 @@ def resolve_browser_egress(host: str, *, tool_name: str = "browser_navigate") ->
     Raises ``ValueError`` when the host must be refused. Blocking (DNS).
     """
     cfg = _get_tool_config(tool_name)
-    if _as_bool(cfg.get("allow_private_addresses"), False):
+    if coerce_bool(cfg.get("allow_private_addresses"), False):
         addresses = _resolve_host_addresses(host)
         if not addresses:
             raise ValueError("Error: URL host could not be resolved")
@@ -284,11 +263,11 @@ async def navigate_and_capture(*, thread_id: str | None, url: str, outputs_path:
     manager = get_browser_session_manager()
     with manager.acquire_session(
         thread_id,
-        headless=_as_bool(cfg.get("headless"), True),
-        timeout_ms=_as_int(cfg.get("timeout_ms"), 30000),
-        viewport={"width": _as_int(cfg.get("viewport_width"), 1280), "height": _as_int(cfg.get("viewport_height"), 720)},
+        headless=coerce_bool(cfg.get("headless"), True),
+        timeout_ms=coerce_int(cfg.get("timeout_ms"), 30000),
+        viewport={"width": coerce_int(cfg.get("viewport_width"), 1280), "height": coerce_int(cfg.get("viewport_height"), 720)},
         cdp_url=_as_str(cfg.get("cdp_url")),
-        allow_unguarded_cdp=_as_bool(cfg.get("allow_unguarded_cdp"), False),
+        allow_unguarded_cdp=coerce_bool(cfg.get("allow_unguarded_cdp"), False),
         url_guard=validate_browser_url,
         egress_resolver=resolve_browser_egress,
     ) as session:
@@ -406,7 +385,7 @@ async def browser_get_text_tool(runtime: Runtime, tool_call_id: Annotated[str, I
     """Read the visible text content of the current page. Use this to extract readable text after navigating/interacting, e.g. to quote results or summarize content. Output is truncated for large pages."""
     try:
         cfg = await asyncio.to_thread(_get_tool_config, "browser_get_text")
-        max_chars = _as_int(cfg.get("max_chars"), 8000)
+        max_chars = coerce_int(cfg.get("max_chars"), 8000)
         with _resolve_session(runtime, await _launch_config()) as session:
             text = await session.get_text(max_chars=max_chars)
         return _tool_message(text or "(page has no visible text)", tool_call_id)

@@ -12,6 +12,8 @@ from langchain.tools import InjectedToolCallId, tool
 from langchain_core.messages import ToolMessage
 from langgraph.types import Command
 
+from deerflow.community.config_bool import coerce_bool
+from deerflow.community.config_int import coerce_int
 from deerflow.community.provider_credentials import resolve_api_key
 from deerflow.community.url_safety import resolve_host_addresses as _resolve_host_addresses
 from deerflow.community.url_safety import validate_delegated_backend_url, validate_public_http_url
@@ -102,18 +104,6 @@ def _get_browserless_client(tool_name: str = "web_fetch", cfg: dict | None = _UN
     return BrowserlessClient(base_url=base_url, token=token or "", timeout_s=timeout_s)
 
 
-def _as_bool(value: object, default: bool) -> bool:
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, str):
-        lowered = value.strip().lower()
-        if lowered in {"1", "true", "yes", "on"}:
-            return True
-        if lowered in {"0", "false", "no", "off"}:
-            return False
-    return default
-
-
 def _validate_backend_base_url(cfg: dict | None) -> str | None:
     """Refuse delegation to a self-hosted backend unless its egress is isolated.
 
@@ -127,23 +117,12 @@ def _validate_backend_base_url(cfg: dict | None) -> str | None:
     """
     cfg = cfg or {}
     base_url = cfg.get("base_url", DEFAULT_BASE_URL)
-    network_isolation_confirmed = _as_bool(cfg.get("network_isolation_confirmed"), False)
+    network_isolation_confirmed = coerce_bool(cfg.get("network_isolation_confirmed"), False)
     return validate_delegated_backend_url(
         base_url,
         network_isolation_confirmed=network_isolation_confirmed,
         resolver=_resolve_host_addresses,
     )
-
-
-def _as_int(value: object, default: int) -> int:
-    if isinstance(value, int) and not isinstance(value, bool):
-        return value
-    if isinstance(value, str):
-        try:
-            return int(value.strip())
-        except ValueError:
-            return default
-    return default
 
 
 def _as_str_list(value: object) -> list[str] | None:
@@ -169,7 +148,7 @@ def _as_str_list(value: object) -> list[str] | None:
 def _as_optional_quality(value: object, output_format: str) -> int | None:
     if output_format not in {"jpeg", "webp"}:
         return None
-    quality = _as_int(value, -1)
+    quality = coerce_int(value, -1)
     return quality if 0 <= quality <= 100 else None
 
 
@@ -314,7 +293,7 @@ async def web_fetch_tool(url: str) -> tuple[str, dict | None]:
     try:
         # Config resolution stats and hashes the config files; keep it off the event loop.
         cfg = await asyncio.to_thread(_get_tool_config, "web_fetch") or {}
-        allow_private_addresses = _as_bool(cfg.get("allow_private_addresses"), False)
+        allow_private_addresses = coerce_bool(cfg.get("allow_private_addresses"), False)
         url_error = await asyncio.to_thread(
             validate_public_http_url,
             url,
@@ -336,9 +315,9 @@ async def web_fetch_tool(url: str) -> tuple[str, dict | None]:
         reject_request_pattern = _as_str_list(cfg.get("reject_request_pattern"))
 
         wait_for_event = cfg.get("wait_for_event", wait_for_event)
-        wait_for_timeout_ms = _as_int(cfg.get("wait_for_timeout_ms"), wait_for_timeout_ms)
+        wait_for_timeout_ms = coerce_int(cfg.get("wait_for_timeout_ms"), wait_for_timeout_ms)
         wait_for_selector = cfg.get("wait_for_selector", wait_for_selector)
-        wait_for_selector_timeout_ms = _as_int(cfg.get("wait_for_selector_timeout_ms"), wait_for_selector_timeout_ms)
+        wait_for_selector_timeout_ms = coerce_int(cfg.get("wait_for_selector_timeout_ms"), wait_for_selector_timeout_ms)
 
         client = _get_browserless_client("web_fetch", cfg)
         result = await client.fetch_html_with_status(
@@ -395,7 +374,7 @@ async def web_capture_tool(
     try:
         # Config resolution stats and hashes the config files; keep it off the event loop.
         cfg = await asyncio.to_thread(_get_tool_config, "web_capture") or {}
-        allow_private_addresses = _as_bool(cfg.get("allow_private_addresses"), False)
+        allow_private_addresses = coerce_bool(cfg.get("allow_private_addresses"), False)
 
         url_error = await asyncio.to_thread(_validate_capture_url, url, allow_private_addresses=allow_private_addresses)
         if url_error:
@@ -410,14 +389,14 @@ async def web_capture_tool(
             return _tool_message(outputs_path, tool_call_id)
 
         final_format = _normalize_output_format(output_format or cfg.get("output_format", "png"))
-        final_full_page = full_page if full_page is not None else _as_bool(cfg.get("full_page"), True)
-        final_width = viewport_width if viewport_width is not None else _as_int(cfg.get("viewport_width"), 1280)
-        final_height = viewport_height if viewport_height is not None else _as_int(cfg.get("viewport_height"), 720)
+        final_full_page = full_page if full_page is not None else coerce_bool(cfg.get("full_page"), True)
+        final_width = viewport_width if viewport_width is not None else coerce_int(cfg.get("viewport_width"), 1280)
+        final_height = viewport_height if viewport_height is not None else coerce_int(cfg.get("viewport_height"), 720)
         quality = _as_optional_quality(cfg.get("quality"), final_format)
         wait_for_selector = str(cfg.get("wait_for_selector") or "")
-        wait_for_selector_timeout_ms = _as_int(cfg.get("wait_for_selector_timeout_ms"), 5000)
-        wait_for_timeout_ms = _as_int(cfg.get("wait_for_timeout_ms"), 0)
-        best_attempt = _as_bool(cfg.get("best_attempt"), False)
+        wait_for_selector_timeout_ms = coerce_int(cfg.get("wait_for_selector_timeout_ms"), 5000)
+        wait_for_timeout_ms = coerce_int(cfg.get("wait_for_timeout_ms"), 0)
+        best_attempt = coerce_bool(cfg.get("best_attempt"), False)
 
         output_name = _safe_capture_filename(filename, url, final_format)
 

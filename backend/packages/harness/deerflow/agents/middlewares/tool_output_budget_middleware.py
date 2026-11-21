@@ -65,6 +65,7 @@ from deerflow.utils.context_budget import (
     resolve_context_budget,
     use_context_budget,
 )
+from deerflow.utils.thread_id import runtime_thread_id
 
 if TYPE_CHECKING:
     from deerflow.sandbox.sandbox import Sandbox
@@ -517,16 +518,7 @@ def _resolve_outputs_path(request: ToolCallRequest) -> str | None:
 
 def _resolve_thread_id(request: ToolCallRequest) -> str | None:
     """Resolve advisory blob provenance from runtime context or config."""
-    runtime = getattr(request, "runtime", None)
-    context = getattr(runtime, "context", None)
-    if isinstance(context, Mapping):
-        thread_id = context.get("thread_id")
-        if isinstance(thread_id, str) and thread_id:
-            return thread_id
-    runtime_config = getattr(runtime, "config", None)
-    configurable = runtime_config.get("configurable") if isinstance(runtime_config, Mapping) else None
-    thread_id = configurable.get("thread_id") if isinstance(configurable, Mapping) else None
-    return thread_id if isinstance(thread_id, str) and thread_id else None
+    return runtime_thread_id(getattr(request, "runtime", None))
 
 
 def _resolve_sandbox(request: ToolCallRequest) -> Sandbox | None:

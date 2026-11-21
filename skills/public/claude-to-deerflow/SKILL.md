@@ -189,6 +189,11 @@ For sending messages and collecting the full response, use the helper script:
 bash /path/to/skills/claude-to-deerflow/scripts/chat.sh "Your question here"
 ```
 
+For health, models, skills, agents, recent threads or memory without sending
+a message, use `bash /path/to/skills/claude-to-deerflow/scripts/status.sh`
+(`status.sh models`, `status.sh thread <id>`, ...); `scripts/status.sh` lists
+every subcommand.
+
 See `scripts/chat.sh` for the implementation. The script:
 1. Checks health
 2. Creates a thread

@@ -28,7 +28,10 @@ from deerflow.config.extensions_config import (
     normalize_mcp_transport_alias,
     read_raw_extensions_config,
     reload_extensions_config,
+    validate_context_header_mapping,
     validate_raw_extensions_config,
+    validate_unique_header_names,
+    validate_user_auth_header,
 )
 from deerflow.constants import DEFAULT_MCP_SESSION_INIT_TIMEOUT
 from deerflow.mcp.cache import (
@@ -377,15 +380,12 @@ class McpUserScopedAuthConfigResponse(BaseModel):
     # stripped by the next admin PUT, while server-level extras are preserved.
     model_config = ConfigDict(extra="allow")
 
-    # Mirror the harness-side non-blank check: a blank header accepted here
-    # would be persisted, then fail ExtensionsConfig validation on reload —
-    # wedging every subsequent config load until the file is hand-edited.
+    # The harness-side check, so a value accepted here cannot fail the next
+    # ExtensionsConfig reload.
     @field_validator("header")
     @classmethod
     def _validate_header_not_blank(cls, value: str) -> str:
-        if not value.strip():
-            raise ValueError("user_auth.header must not be empty")
-        return value
+        return validate_user_auth_header(value)
 
 
 class McpContextHeadersConfigResponse(BaseModel):
@@ -406,23 +406,12 @@ class McpContextHeadersConfigResponse(BaseModel):
     # silently stripped by the next admin PUT.
     model_config = ConfigDict(extra="allow")
 
-    # Mirror the harness-side entry check: a blank name accepted here would be
-    # persisted, then fail ExtensionsConfig validation on reload — wedging every
-    # subsequent config load until the file is hand-edited.
+    # The harness-side entry check, so a value accepted here cannot fail the
+    # next ExtensionsConfig reload.
     @field_validator("headers")
     @classmethod
     def _validate_mapping_entries(cls, value: dict[str, str]) -> dict[str, str]:
-        seen: dict[str, str] = {}
-        for header_name, secret_key in value.items():
-            if not header_name.strip():
-                raise ValueError("headers_from_context.headers must not contain a blank header name")
-            if not isinstance(secret_key, str) or not secret_key.strip():
-                raise ValueError(f"headers_from_context.headers[{header_name!r}] must name a non-blank secret key from config.context.secrets")
-            lowered = header_name.lower()
-            if lowered in seen:
-                raise ValueError(f"headers_from_context.headers maps the same HTTP header under two spellings ({seen[lowered]!r} and {header_name!r}); header names are case-insensitive, so keep only one")
-            seen[lowered] = header_name
-        return value
+        return validate_context_header_mapping(value)
 
 
 class McpOAuthConfigResponse(BaseModel):
@@ -485,18 +474,9 @@ class McpServerConfigResponse(BaseModel):
     @field_validator("headers")
     @classmethod
     def _validate_header_names(cls, value: dict[str, str]) -> dict[str, str]:
-        # Mirror the harness-side McpServerConfig check: HTTP field names are
-        # case-insensitive, so a config carrying one header under two spellings
-        # would persist, reload into a connection with both fields, and let a
-        # later override replace only one of them. Reject at the API boundary
+        # The harness-side McpServerConfig check, applied at the API boundary
         # instead of wedging the next ExtensionsConfig reload.
-        seen: dict[str, str] = {}
-        for header_name in value:
-            lowered = header_name.lower()
-            if lowered in seen:
-                raise ValueError(f"headers maps the same HTTP header under two spellings ({seen[lowered]!r} and {header_name!r}); header names are case-insensitive, so keep only one")
-            seen[lowered] = header_name
-        return value
+        return validate_unique_header_names(value)
 
     @model_validator(mode="before")
     @classmethod

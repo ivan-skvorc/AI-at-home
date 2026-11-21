@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import re
 import uuid
-from typing import Annotated
+from collections.abc import Mapping
+from typing import Annotated, Any
 
 from pydantic import AfterValidator, StringConstraints
 
@@ -39,6 +40,38 @@ def resolve_thread_id(thread_id: str | None) -> str:
     if thread_id is None:
         return str(uuid.uuid4())
     return validate_thread_id(thread_id)
+
+
+def _configured_thread_id(config: object) -> str | None:
+    configurable = config.get("configurable") if isinstance(config, Mapping) else None
+    thread_id = configurable.get("thread_id") if isinstance(configurable, Mapping) else None
+    return thread_id if isinstance(thread_id, str) and thread_id else None
+
+
+def runtime_thread_id(runtime: Any, *, ambient: bool = False) -> str | None:
+    """Return the thread ID a tool runtime runs under, or ``None``.
+
+    Reads ``runtime.context["thread_id"]``, then the runtime's
+    ``RunnableConfig``. With ``ambient``, a runtime that carries neither (or
+    no runtime at all) falls back to the LangGraph config of the current task,
+    which exists only inside a graph run. Only a non-empty string counts.
+    """
+    context = getattr(runtime, "context", None)
+    if isinstance(context, Mapping):
+        thread_id = context.get("thread_id")
+        if isinstance(thread_id, str) and thread_id:
+            return thread_id
+    thread_id = _configured_thread_id(getattr(runtime, "config", None))
+    if thread_id is not None or not ambient:
+        return thread_id
+
+    # Imported here so validators that import this module do not load LangGraph.
+    from langgraph.config import get_config
+
+    try:
+        return _configured_thread_id(get_config())
+    except RuntimeError:
+        return None
 
 
 ThreadId = Annotated[

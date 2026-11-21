@@ -3,31 +3,14 @@ from typing import Annotated
 
 from langchain.tools import InjectedToolCallId, tool
 from langchain_core.messages import ToolMessage
-from langgraph.config import get_config
 from langgraph.types import Command
 
 from deerflow.config.paths import VIRTUAL_PATH_PREFIX, get_paths
 from deerflow.runtime.user_context import resolve_runtime_user_id
 from deerflow.tools.types import Runtime
+from deerflow.utils.thread_id import runtime_thread_id
 
 OUTPUTS_VIRTUAL_PREFIX = f"{VIRTUAL_PATH_PREFIX}/outputs"
-
-
-def _get_thread_id(runtime: Runtime) -> str | None:
-    """Resolve the current thread id from runtime context or RunnableConfig."""
-    thread_id = runtime.context.get("thread_id") if runtime.context else None
-    if thread_id:
-        return thread_id
-
-    runtime_config = getattr(runtime, "config", None) or {}
-    thread_id = runtime_config.get("configurable", {}).get("thread_id")
-    if thread_id:
-        return thread_id
-
-    try:
-        return get_config().get("configurable", {}).get("thread_id")
-    except RuntimeError:
-        return None
 
 
 def _normalize_presented_filepath(
@@ -51,7 +34,7 @@ def _normalize_presented_filepath(
     if runtime.state is None:
         raise ValueError("Thread runtime state is not available")
 
-    thread_id = _get_thread_id(runtime)
+    thread_id = runtime_thread_id(runtime, ambient=True)
     if not thread_id:
         raise ValueError("Thread ID is not available in runtime context or runtime config")
 

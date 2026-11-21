@@ -24,20 +24,10 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 from sqlalchemy import func, select
-from sqlalchemy.dialects.postgresql import insert as pg_insert
-from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session, sessionmaker
 
 from deerflow.persistence.channel_runtime_configs.model import ChannelRuntimeConfigRow, StoredChannelRuntimeConfig
-
-
-def _insert(session: Session):
-    name = session.get_bind().dialect.name
-    if name == "postgresql":
-        return pg_insert
-    if name == "sqlite":
-        return sqlite_insert
-    raise ValueError(f"Unsupported channel runtime config database dialect: {name}")
+from deerflow.persistence.dialect_insert import dialect_insert
 
 
 def _stored(row: ChannelRuntimeConfigRow) -> StoredChannelRuntimeConfig:
@@ -73,7 +63,7 @@ class SqlChannelRuntimeConfigRepository:
     def save(self, provider: str, *, config_ciphertext: str | None, disconnected: bool, now: float) -> int:
         """Create or replace ``provider``'s row and return its new version (1 for a new row)."""
         with self._sf() as session:
-            insert = _insert(session)
+            insert = dialect_insert(session.get_bind().dialect.name, component="channel runtime config")
             stmt = insert(ChannelRuntimeConfigRow).values(provider=provider, config_ciphertext=config_ciphertext, disconnected=disconnected, version=1, updated_at=now)
             stmt = stmt.on_conflict_do_update(
                 index_elements=[ChannelRuntimeConfigRow.provider],
@@ -96,7 +86,7 @@ class SqlChannelRuntimeConfigRepository:
             return 0
         inserted = 0
         with self._sf() as session:
-            insert = _insert(session)
+            insert = dialect_insert(session.get_bind().dialect.name, component="channel runtime config")
             for row in rows:
                 stmt = (
                     insert(ChannelRuntimeConfigRow)

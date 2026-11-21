@@ -32,6 +32,7 @@ import yaml
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DOCKER_SH = REPO_ROOT / "scripts" / "docker.sh"
 DEPLOY_SH = REPO_ROOT / "scripts" / "deploy.sh"
+LAUNCH_LIB = REPO_ROOT / "scripts" / "docker_launch_lib.sh"
 DOCKER_DIR = REPO_ROOT / "docker"
 TAILSCALE_OVERLAY = DOCKER_DIR / "docker-compose.tailscale.yaml"
 LOOPBACK_OVERLAY = DOCKER_DIR / "docker-compose.loopback.yaml"
@@ -89,12 +90,11 @@ class TestRootDotenvIsHonoredByComposeInterpolation:
         env_file.write_text("BIND_HOST=100.101.102.103\nPORT=2027\n", encoding="utf-8")
 
         # read_dotenv_value is the function the banner and the co-bind decision
-        # both use; it must see the root .env, not the shell environment.
+        # both use; docker.sh must point it at the root .env.
         snippet = f"""
             PROJECT_ROOT={tmp_path}
-            source /dev/stdin <<'FUNCS'
-{_extract_function(DOCKER_SH, "read_dotenv_value")}
-FUNCS
+            . "{LAUNCH_LIB}"
+            {_launch_env_assignment(DOCKER_SH)}
             read_dotenv_value BIND_HOST
             echo
             read_dotenv_value PORT
@@ -160,6 +160,14 @@ class TestScriptWiring:
         assert "tailscale_lib.sh" in script.read_text(encoding="utf-8")
 
     @pytest.mark.parametrize("script", [DOCKER_SH, DEPLOY_SH])
+    def test_both_paths_share_one_dotenv_reader_and_cobind_rule(self, script: Path) -> None:
+        # A private copy in either script is how the two paths drift apart.
+        text = script.read_text(encoding="utf-8")
+        assert "docker_launch_lib.sh" in text
+        for name in ("dotenv_unquote", "dotenv_line", "read_dotenv_value", "should_cobind_loopback", "pick_detector_python"):
+            assert f"{name}() {{" not in text, f"{script.name} defines its own {name}"
+
+    @pytest.mark.parametrize("script", [DOCKER_SH, DEPLOY_SH])
     def test_both_paths_add_the_overlay_and_merge_origins(self, script: Path) -> None:
         text = script.read_text(encoding="utf-8")
         assert "tailscale_detect" in text
@@ -195,26 +203,11 @@ class TestScriptWiring:
                 assert "serve status" in stripped, f"unexpected mutating serve call: {stripped}"
 
 
-def _extract_function(script: Path, name: str) -> str:
-    """Pull one shell function body out of a script for isolated execution."""
-    lines = script.read_text(encoding="utf-8").splitlines()
-    out: list[str] = []
-    depth = 0
-    capturing = False
-    for line in lines:
-        if not capturing and line.startswith(f"{name}() {{"):
-            capturing = True
-            depth = 1
-            out.append(line)
-            continue
-        if capturing:
-            out.append(line)
-            depth += line.count("{") - line.count("}")
-            if depth == 0:
-                break
-    if not out:
-        raise AssertionError(f"function {name} not found in {script}")
-    return "\n".join(out)
+def _launch_env_assignment(script: Path) -> str:
+    """The line where a launch script points docker_launch_lib.sh at its dotenv file."""
+    lines = [line for line in script.read_text(encoding="utf-8").splitlines() if line.startswith("DOCKER_LAUNCH_ENV_FILE=")]
+    assert len(lines) == 1, f"{script.name} must set DOCKER_LAUNCH_ENV_FILE exactly once, got {lines}"
+    return lines[0]
 
 
 def _cobind_decision(tmp_path: Path, bind: str, *, script: Path = DOCKER_SH) -> str:
@@ -224,10 +217,8 @@ def _cobind_decision(tmp_path: Path, bind: str, *, script: Path = DOCKER_SH) -> 
     root_value = str(tmp_path) if script == DOCKER_SH else str(env_file)
     snippet = f"""
         {root_var}={root_value}
-        source /dev/stdin <<'FUNCS'
-{_extract_function(script, "read_dotenv_value")}
-{_extract_function(script, "should_cobind_loopback")}
-FUNCS
+        . "{LAUNCH_LIB}"
+        {_launch_env_assignment(script)}
         should_cobind_loopback
     """
     result = _run_shell(snippet)

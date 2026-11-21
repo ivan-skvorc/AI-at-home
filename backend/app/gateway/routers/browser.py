@@ -527,7 +527,7 @@ async def browser_stream(websocket: WebSocket, thread_id: ThreadId) -> None:
             if cancellation is None:
                 cancellation = exc
         except Exception:
-            pass
+            logger.debug("Live browser stream: stopping the screencast failed during teardown", exc_info=True)
         session_lease.__exit__(None, None, None)
         reset_current_user(token)
         if cancellation is not None:

@@ -1,10 +1,8 @@
+import { isRecord } from "@/lib/utils";
+
 import type { AgentThreadState, ArtifactEntry, GoalState } from "./types";
 
 type ThreadStatePatch = Partial<AgentThreadState>;
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
 
 /**
  * An active goal as the backend judges one (`status` "active"), so a

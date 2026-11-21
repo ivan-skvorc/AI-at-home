@@ -1,7 +1,8 @@
 import { fetch } from "@/core/api/fetcher";
 import { getBackendBaseURL } from "@/core/config";
+import { isRecord } from "@/lib/utils";
 
-import { isErrorDetailRecord, readSkillErrorDetail } from "./error-detail";
+import { readSkillErrorDetail } from "./error-detail";
 
 export interface SkillExportNotice {
   code: string;
@@ -49,7 +50,7 @@ async function exportRequest(
   );
   if (!response.ok) {
     const detail = await readSkillErrorDetail(response);
-    const record = isErrorDetailRecord(detail) ? detail : undefined;
+    const record = isRecord(detail) ? detail : undefined;
     throw new SkillExportRequestError(
       response.status,
       typeof record?.code === "string" ? record.code : "skill_export_failed",

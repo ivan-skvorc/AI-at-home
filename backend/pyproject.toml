@@ -17,7 +17,6 @@ dependencies = [
     "httpx>=0.28.0",
     "websockets>=16.0,<17",
     "python-multipart>=0.0.31",
-    "sse-starlette>=2.1.0",
     # Direct dependency on purpose, even though FastAPI already pulls it in:
     # app/gateway/request_path.py imports the private
     # `starlette._utils.get_route_path` so the auth and CSRF predicates
@@ -58,6 +57,10 @@ browser = ["deerflow-harness[browser]"]
 # (uv sync --extra camoufox) resolves instead of failing with "extra not defined".
 camoufox = ["deerflow-harness[camoufox]"]
 memory-zh = ["deerflow-harness[memory-zh]"]
+# Web Push delivery (FORK.md §16). Forwarded like camoufox so the install hint
+# the Gateway prints (`cd backend && uv sync --extra webpush`) resolves; uv
+# reads extras from this root project, not from the harness member.
+webpush = ["deerflow-harness[webpush]"]
 
 [dependency-groups]
 # Managed extension packages are added here by `deerflow extensions install`.
@@ -80,6 +83,9 @@ dev = [
     "blockbuster>=1.5.26,<1.6",
     "hypothesis>=6.100,<7",
     "jsonschema>=4.26.0",
+    # The provisioner (docker/provisioner/app.py) installs its own copy in its
+    # image; the backend tests load that module, so the dev group carries it.
+    "kubernetes>=30.0.0",
     "prompt-toolkit>=3.0.0",
     "pytest>=9.0.3",
     "pytest-asyncio>=1.3.0",

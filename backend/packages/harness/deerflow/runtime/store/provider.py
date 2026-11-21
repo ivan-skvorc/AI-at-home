@@ -58,7 +58,8 @@ def _resolve_store_config(app_config: AppConfig) -> CheckpointerConfig:
     Store and Checkpointer continue to use the same backend. Otherwise the
     unified ``database`` section drives the Store as documented. The unified
     ``postgres_schema`` is forwarded so Store tables land in the configured
-    schema alongside the checkpointer and app tables.
+    schema alongside the checkpointer and app tables. The sync checkpointer
+    provider resolves its backend through this function too.
     """
     if app_config.checkpointer is not None:
         return app_config.checkpointer

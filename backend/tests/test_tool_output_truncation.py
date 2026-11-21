@@ -7,8 +7,12 @@ These functions truncate long tool outputs to prevent context window overflow.
 """
 
 import re
+from types import SimpleNamespace
 
-from deerflow.sandbox.tools import _truncate_bash_output, _truncate_ls_output, _truncate_read_file_output
+import pytest
+
+from deerflow.config import app_config
+from deerflow.sandbox.tools import _sandbox_settings, _truncate_bash_output, _truncate_ls_output, _truncate_read_file_output
 
 
 def _head_and_marker(result: str) -> tuple[str, str]:
@@ -514,3 +518,30 @@ class TestTruncateLsOutput:
         for max_chars in [100, 1000, 5000, 20000, len(output) - 1]:
             result = _truncate_ls_output(output, max_chars)
             assert len(result) <= max_chars, f"failed for max_chars={max_chars}"
+
+
+def _raise_config_error():
+    raise RuntimeError("config unreadable")
+
+
+class TestSandboxSettings:
+    """The output limits the bash, ls and read_file tools read before truncating."""
+
+    def test_configured_values_in_argument_order(self, monkeypatch):
+        sandbox = SimpleNamespace(bash_output_max_chars=123, bash_command_timeout=45)
+        monkeypatch.setattr(app_config, "get_app_config", lambda: SimpleNamespace(sandbox=sandbox))
+        assert _sandbox_settings(bash_output_max_chars=20000, bash_command_timeout=None) == (123, 45)
+
+    @pytest.mark.parametrize(
+        "get_config",
+        [
+            _raise_config_error,
+            lambda: SimpleNamespace(sandbox=None),
+            # One missing field drops the configured one too, so limits are never mixed.
+            lambda: SimpleNamespace(sandbox=SimpleNamespace(bash_output_max_chars=123)),
+        ],
+        ids=["unreadable", "no-sandbox-section", "missing-field"],
+    )
+    def test_every_default_applies_when_any_value_is_unavailable(self, monkeypatch, get_config):
+        monkeypatch.setattr(app_config, "get_app_config", get_config)
+        assert _sandbox_settings(bash_output_max_chars=20000, bash_command_timeout=None) == (20000, None)

@@ -122,3 +122,33 @@ def test_tui_resume_literal_ref_validated() -> None:
     assert session.resolve_ref("valid-id_1") == "valid-id_1"
     with pytest.raises(ValueError, match="not a valid thread id"):
         session.resolve_ref("bad.thread.id")
+
+
+def test_runtime_thread_id_prefers_context_then_runnable_config() -> None:
+    from types import SimpleNamespace
+
+    from deerflow.utils.thread_id import runtime_thread_id
+
+    config = {"configurable": {"thread_id": "from-config"}}
+    assert runtime_thread_id(SimpleNamespace(context={"thread_id": "from-context"}, config=config)) == "from-context"
+    assert runtime_thread_id(SimpleNamespace(context={"thread_id": ""}, config=config)) == "from-config"
+    assert runtime_thread_id(SimpleNamespace(context=None, config=config)) == "from-config"
+    # Only a non-empty string counts, and a malformed config reads as absent.
+    assert runtime_thread_id(SimpleNamespace(context={"thread_id": 7}, config={"configurable": None})) is None
+    assert runtime_thread_id(None) is None
+
+
+def test_runtime_thread_id_reads_the_ambient_config_only_when_asked(monkeypatch) -> None:
+    from types import SimpleNamespace
+
+    from deerflow.utils.thread_id import runtime_thread_id
+
+    bare = SimpleNamespace(context={}, config={})
+    # Outside a graph run LangGraph has no config to read.
+    assert runtime_thread_id(bare, ambient=True) is None
+
+    monkeypatch.setattr("langgraph.config.get_config", lambda: {"configurable": {"thread_id": "ambient"}})
+    assert runtime_thread_id(bare) is None
+    assert runtime_thread_id(bare, ambient=True) == "ambient"
+    assert runtime_thread_id(None, ambient=True) == "ambient"
+    assert runtime_thread_id(SimpleNamespace(context={"thread_id": "own"}, config={}), ambient=True) == "own"

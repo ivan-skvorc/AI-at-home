@@ -38,11 +38,10 @@ from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import and_, case, delete, exists, false, func, or_, select, update
-from sqlalchemy.dialects.postgresql import insert as pg_insert
-from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import Session, sessionmaker
 
+from deerflow.persistence.dialect_insert import dialect_insert
 from deerflow.persistence.folder_ledger.model import FolderLedgerDismissalRow, FolderLedgerEventRow, FolderLedgerFolderRow, FolderLedgerTouchRow
 from deerflow.persistence.thread_meta.model import ThreadMetaRow
 
@@ -126,14 +125,6 @@ def _now() -> datetime:
     return datetime.now(UTC)
 
 
-def _insert_for(dialect_name: str):
-    if dialect_name == "postgresql":
-        return pg_insert
-    if dialect_name == "sqlite":
-        return sqlite_insert
-    raise ValueError(f"Unsupported folder ledger database dialect: {dialect_name}")
-
-
 def _chunks(values: Sequence[str]) -> Iterable[list[str]]:
     for start in range(0, len(values), _IN_CHUNK):
         yield list(values[start : start + _IN_CHUNK])
@@ -154,7 +145,7 @@ def _folder_upsert_stmt(dialect_name: str, record: TouchRecord, now: datetime):
     entry's binding; a call that saw the bound entry before it ran moves the
     binding to the entry it left (see the module docstring).
     """
-    insert = _insert_for(dialect_name)
+    insert = dialect_insert(dialect_name, component="folder ledger")
     created = record.created
     stmt = insert(FolderLedgerFolderRow).values(
         id=uuid.uuid4().hex,
@@ -204,7 +195,7 @@ def _touch_upsert_stmt(dialect_name: str, folder_id: str, record: TouchRecord, n
     A straggling write of a deleted thread still does not: liveness also
     requires the ``threads_meta`` row, which the thread delete removes first.
     """
-    insert = _insert_for(dialect_name)
+    insert = dialect_insert(dialect_name, component="folder ledger")
     role = ROLE_CREATED if record.created else ROLE_EDITED
     stmt = insert(FolderLedgerTouchRow).values(
         folder_id=folder_id,
@@ -480,7 +471,7 @@ class FolderLedgerRepository:
             )
             if not parents:
                 return 0
-            insert = _insert_for(session.get_bind().dialect.name)
+            insert = dialect_insert(session.get_bind().dialect.name, component="folder ledger")
             copied: dict[str, FolderLedgerTouchRow] = {}
             for parent in parents:
                 copied.setdefault(parent.folder_id, parent)
@@ -664,7 +655,7 @@ class FolderLedgerRepository:
             live = await session.scalar(select(folder.id).where(folder.id == folder_id, folder.deleted_at.is_(None)))
             if live is None:
                 return False
-            insert = _insert_for(session.get_bind().dialect.name)
+            insert = dialect_insert(session.get_bind().dialect.name, component="folder ledger")
             stmt = insert(dismissal).values(folder_id=folder_id, user_id=user_id, dismissed_at=_now())
             await session.execute(stmt.on_conflict_do_update(index_elements=[dismissal.folder_id, dismissal.user_id], set_={"dismissed_at": stmt.excluded.dismissed_at}))
             await session.commit()

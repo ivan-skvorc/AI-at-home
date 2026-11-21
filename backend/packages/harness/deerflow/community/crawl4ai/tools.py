@@ -3,6 +3,7 @@ import logging
 
 from langchain.tools import tool
 
+from deerflow.community.config_bool import coerce_bool
 from deerflow.community.provider_credentials import resolve_api_key
 from deerflow.community.url_safety import validate_delegated_backend_url, validate_public_http_url
 from deerflow.config import get_app_config
@@ -29,7 +30,7 @@ def _get_tool_config(tool_name: str) -> dict | None:
 def _coerce_timeout(value: object, default: int) -> float:
     """Coerce a config timeout into seconds, falling back to ``default`` on bad input.
 
-    Mirrors ``jina_ai._coerce_timeout``: booleans and non-numeric strings fall
+    Mirrors ``config_int.coerce_int``: booleans and non-numeric strings fall
     back to the default so e.g. ``timeout: off`` (YAML ``False``) does not become
     ``0.0`` and time out every request against a healthy server.
     """
@@ -43,18 +44,6 @@ def _coerce_timeout(value: object, default: int) -> float:
         except ValueError:
             logger.warning("Crawl4AI web_fetch: invalid timeout %r in config; using %ss", value, default)
     return float(default)
-
-
-def _coerce_bool(value: object, default: bool) -> bool:
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, str):
-        normalized = value.strip().lower()
-        if normalized in {"1", "true", "yes", "on"}:
-            return True
-        if normalized in {"0", "false", "no", "off"}:
-            return False
-    return default
 
 
 def _coerce_filter(value: object) -> str:
@@ -100,7 +89,7 @@ def _validate_backend_base_url(cfg: dict | None) -> str | None:
     """
     cfg = cfg or {}
     base_url = cfg.get("base_url", DEFAULT_BASE_URL)
-    network_isolation_confirmed = _coerce_bool(cfg.get("network_isolation_confirmed"), False)
+    network_isolation_confirmed = coerce_bool(cfg.get("network_isolation_confirmed"), False)
     return validate_delegated_backend_url(
         base_url,
         network_isolation_confirmed=network_isolation_confirmed,
@@ -121,7 +110,7 @@ async def web_fetch_tool(url: str) -> str:
     try:
         # Read config once, off the event loop (it stats and hashes the config files); pass the values down.
         cfg = await asyncio.to_thread(_get_tool_config, "web_fetch")
-        allow_private_addresses = _coerce_bool(cfg.get("allow_private_addresses") if cfg is not None else None, False)
+        allow_private_addresses = coerce_bool(cfg.get("allow_private_addresses") if cfg is not None else None, False)
         url_error = await asyncio.to_thread(validate_public_http_url, url, allow_private_addresses=allow_private_addresses)
         if url_error:
             return url_error

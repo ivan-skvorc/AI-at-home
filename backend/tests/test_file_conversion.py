@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextvars
+import logging
 import sys
 import threading
 from types import ModuleType
@@ -239,6 +240,17 @@ class TestGetPdfConverter:
 
         with patch("deerflow.utils.file_conversion.get_app_config", return_value=cfg):
             assert _get_pdf_converter() == "auto"
+
+    def test_unreadable_config_falls_back_to_auto_with_a_debug_log(self, caplog):
+        with (
+            patch("deerflow.utils.file_conversion.get_app_config", side_effect=FileNotFoundError("config.yaml")),
+            caplog.at_level(logging.DEBUG, logger="deerflow.utils.file_conversion"),
+        ):
+            assert _get_pdf_converter() == "auto"
+
+        records = [record for record in caplog.records if "uploads.pdf_converter" in record.getMessage()]
+        assert len(records) == 1
+        assert records[0].exc_info is not None and records[0].exc_info[0] is FileNotFoundError
 
 
 class TestConvertFileToMarkdown:

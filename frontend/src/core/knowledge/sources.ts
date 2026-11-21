@@ -1,6 +1,7 @@
 import type { Message } from "@langchain/langgraph-sdk";
 
 import { maskCitationCode } from "@/core/citations/sources";
+import { isRecord } from "@/lib/utils";
 
 export type KnowledgeSource = {
   id: string;
@@ -16,10 +17,6 @@ const SOURCE_ID = /^[a-f0-9]{32}-[1-9][0-9]{0,2}$/;
 const SOURCE_LINK =
   /(?<!!)\[[^\]\n]+\]\(#(?:user-content-)?knowledge-([a-f0-9]{32}-[1-9][0-9]{0,2})\)/g;
 
-function record(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 /** Read only native tool artifacts, never model or human-provided metadata. */
 export function collectKnowledgeSources(messages: readonly Message[]) {
   const sources = new Map<string, KnowledgeSource>();
@@ -30,16 +27,16 @@ export function collectKnowledgeSources(messages: readonly Message[]) {
     )
       continue;
     const artifact: unknown = Reflect.get(message, "artifact");
-    const payload = record(artifact) ? artifact.knowledge_sources : null;
+    const payload = isRecord(artifact) ? artifact.knowledge_sources : null;
     if (
-      !record(payload) ||
+      !isRecord(payload) ||
       payload.version !== 1 ||
       !Array.isArray(payload.sources)
     )
       continue;
     for (const raw of payload.sources.slice(0, 100)) {
       if (
-        !record(raw) ||
+        !isRecord(raw) ||
         typeof raw.id !== "string" ||
         !SOURCE_ID.test(raw.id) ||
         raw.provider !== "ragflow"

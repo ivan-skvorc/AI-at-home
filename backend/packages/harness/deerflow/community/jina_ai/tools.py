@@ -2,36 +2,13 @@ import asyncio
 
 from langchain.tools import tool
 
+from deerflow.community.config_bool import coerce_bool
+from deerflow.community.config_int import coerce_int
 from deerflow.community.jina_ai.jina_client import JinaClient
 from deerflow.config import get_app_config
 from deerflow.utils.readability import ReadabilityExtractor
 
 readability_extractor = ReadabilityExtractor()
-
-
-def _coerce_bool(value: object, default: bool) -> bool:
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, str):
-        normalized = value.strip().lower()
-        if normalized in {"1", "true", "yes", "on"}:
-            return True
-        if normalized in {"0", "false", "no", "off"}:
-            return False
-    return default
-
-
-def _coerce_timeout(value: object, default: int) -> int:
-    if isinstance(value, bool):
-        return default
-    if isinstance(value, int):
-        return value
-    if isinstance(value, str):
-        try:
-            return int(value)
-        except ValueError:
-            return default
-    return default
 
 
 def _coerce_proxy(value: object) -> str | None:
@@ -56,9 +33,9 @@ async def fetch_url_via_jina(url: str) -> str:
     # Config resolution stats and hashes the config files; keep it off the event loop.
     config = (await asyncio.to_thread(get_app_config)).get_tool_config("web_fetch")
     if config is not None:
-        timeout = _coerce_timeout(config.model_extra.get("timeout"), timeout)
+        timeout = coerce_int(config.model_extra.get("timeout"), timeout)
         proxy = _coerce_proxy(config.model_extra.get("proxy"))
-        trust_env = _coerce_bool(config.model_extra.get("trust_env"), trust_env)
+        trust_env = coerce_bool(config.model_extra.get("trust_env"), trust_env)
         request_options = {key: config.model_extra[key] for key in ("max_retries", "retry_budget_seconds", "max_response_bytes", "request_admission") if key in config.model_extra}
     html_content = await jina_client.crawl(url, return_format="html", timeout=timeout, proxy=proxy, trust_env=trust_env, **request_options)
     if isinstance(html_content, str) and html_content.startswith("Error:"):

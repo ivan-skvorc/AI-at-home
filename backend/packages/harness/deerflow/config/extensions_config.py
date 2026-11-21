@@ -42,6 +42,57 @@ def normalize_mcp_transport_alias(data: Any) -> Any:
     return data
 
 
+# The header checks below are shared with the Gateway's MCP request models
+# (``app/gateway/routers/mcp.py``). A value the API accepts but this module
+# rejects would be persisted, then fail every later ``ExtensionsConfig`` load
+# until the file is hand-edited, so both sides call the same functions.
+
+
+def validate_user_auth_header(value: str) -> str:
+    """Reject a blank ``user_auth.header``."""
+    if not value.strip():
+        raise ValueError("user_auth.header must not be empty")
+    return value
+
+
+def validate_unique_header_names(value: dict[str, str]) -> dict[str, str]:
+    """Reject one HTTP header spelled two ways in a static ``headers`` map.
+
+    HTTP field names are case-insensitive, so two spellings of one header are
+    one field with two candidate values. The adapter copies the static mapping
+    verbatim, so both would reach the wire; a later per-request or OAuth
+    override only replaces one spelling, leaving the other to leak a shared
+    credential across tenant authority. Rejecting at config time keeps a bad
+    mapping from reaching the connection.
+    """
+    seen: dict[str, str] = {}
+    for header_name in value:
+        lowered = header_name.lower()
+        if lowered in seen:
+            raise ValueError(f"headers maps the same HTTP header under two spellings ({seen[lowered]!r} and {header_name!r}); header names are case-insensitive, so keep only one")
+        seen[lowered] = header_name
+    return value
+
+
+def validate_context_header_mapping(value: dict[str, str]) -> dict[str, str]:
+    """Check a ``headers_from_context.headers`` map of header name to secret key.
+
+    Names and keys must be non-blank, and one header must not appear under two
+    spellings: which value reached the remote would depend on dict ordering.
+    """
+    seen: dict[str, str] = {}
+    for header_name, secret_key in value.items():
+        if not header_name.strip():
+            raise ValueError("headers_from_context.headers must not contain a blank header name")
+        if not isinstance(secret_key, str) or not secret_key.strip():
+            raise ValueError(f"headers_from_context.headers[{header_name!r}] must name a non-blank secret key from config.context.secrets")
+        lowered = header_name.lower()
+        if lowered in seen:
+            raise ValueError(f"headers_from_context.headers maps the same HTTP header under two spellings ({seen[lowered]!r} and {header_name!r}); header names are case-insensitive, so keep only one")
+        seen[lowered] = header_name
+    return value
+
+
 class McpRoutingConfig(BaseModel):
     """Soft routing hints for MCP tool preference."""
 
@@ -133,9 +184,7 @@ class McpUserScopedAuthConfig(BaseModel):
     @field_validator("header")
     @classmethod
     def _validate_header_not_blank(cls, value: str) -> str:
-        if not value.strip():
-            raise ValueError("user_auth.header must not be empty")
-        return value
+        return validate_user_auth_header(value)
 
 
 class McpContextHeadersConfig(BaseModel):
@@ -167,20 +216,7 @@ class McpContextHeadersConfig(BaseModel):
     @field_validator("headers")
     @classmethod
     def _validate_mapping_entries(cls, value: dict[str, str]) -> dict[str, str]:
-        seen: dict[str, str] = {}
-        for header_name, secret_key in value.items():
-            if not header_name.strip():
-                raise ValueError("headers_from_context.headers must not contain a blank header name")
-            if not isinstance(secret_key, str) or not secret_key.strip():
-                raise ValueError(f"headers_from_context.headers[{header_name!r}] must name a non-blank secret key from config.context.secrets")
-            # HTTP field names are case-insensitive, so two spellings of one
-            # header are one header with two candidate values, and which one
-            # reaches the remote would depend on dict ordering.
-            lowered = header_name.lower()
-            if lowered in seen:
-                raise ValueError(f"headers_from_context.headers maps the same HTTP header under two spellings ({seen[lowered]!r} and {header_name!r}); header names are case-insensitive, so keep only one")
-            seen[lowered] = header_name
-        return value
+        return validate_context_header_mapping(value)
 
 
 class McpOAuthConfig(BaseModel):
@@ -288,19 +324,7 @@ class McpServerConfig(BaseModel):
     @field_validator("headers")
     @classmethod
     def _validate_header_names(cls, value: dict[str, str]) -> dict[str, str]:
-        # HTTP field names are case-insensitive, so two spellings of one header
-        # are one field with two candidate values. The adapter copies the static
-        # mapping verbatim, so both would reach the wire; a later per-request or
-        # OAuth override only replaces one spelling, leaving the other to leak a
-        # shared credential across tenant authority. Reject at config time so a
-        # bad mapping cannot reach the connection.
-        seen: dict[str, str] = {}
-        for header_name in value:
-            lowered = header_name.lower()
-            if lowered in seen:
-                raise ValueError(f"headers maps the same HTTP header under two spellings ({seen[lowered]!r} and {header_name!r}); header names are case-insensitive, so keep only one")
-            seen[lowered] = header_name
-        return value
+        return validate_unique_header_names(value)
 
     @model_validator(mode="before")
     @classmethod

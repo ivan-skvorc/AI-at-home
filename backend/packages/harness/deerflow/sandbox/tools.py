@@ -12,6 +12,7 @@ from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from functools import lru_cache, partial
 from pathlib import Path
+from typing import Any
 
 from langchain.tools import tool
 from langchain_core.messages import ToolMessage
@@ -48,6 +49,7 @@ from deerflow.sandbox.lease import (
 from deerflow.sandbox.local.local_sandbox import LocalSandbox, escape_powershell_path
 from deerflow.sandbox.overwrite import unwrap_sandbox
 from deerflow.sandbox.path_patterns import PATH_START_BOUNDARY, build_output_mask_pattern, normalize_mask_tail, replace_output_path_matches
+from deerflow.sandbox.path_traversal import reject_path_traversal
 from deerflow.sandbox.prewarm import claim_sandbox_prewarm
 from deerflow.sandbox.read_file_contract import (
     READ_FILE_EMPTY,
@@ -200,6 +202,7 @@ def _get_skills_container_path() -> str:
         _get_skills_container_path._cached = value  # type: ignore[attr-defined]
         return value
     except Exception:
+        logger.debug("Skills container path unavailable; using the default", exc_info=True)
         return _DEFAULT_SKILLS_CONTAINER_PATH
 
 
@@ -224,7 +227,7 @@ def _get_skills_host_path() -> str | None:
             _get_skills_host_path._cached = value  # type: ignore[attr-defined]
             return value
     except Exception:
-        pass
+        logger.debug("Skills host path unavailable", exc_info=True)
     return None
 
 
@@ -421,7 +424,7 @@ def _resolve_skills_path(path: str) -> str:
         integrations_relative = relative[len("integrations") :].lstrip("/")
         if not integrations_relative:
             return str(integrations_dir)
-        # Defense-in-depth: even though _reject_path_traversal runs upstream for
+        # Defense-in-depth: even though reject_path_traversal runs upstream for
         # sandbox callers, confirm the resolved path stays within the global
         # integration dir so a lexical ``../`` cannot escape it here.
         resolved = (integrations_dir / integrations_relative).resolve()
@@ -464,6 +467,7 @@ def _get_custom_mounts():
     except Exception:
         # If config loading fails, return an empty list without caching so that
         # a later call can retry once the config is available.
+        logger.debug("Custom sandbox mounts unavailable; using none", exc_info=True)
         return []
 
 
@@ -521,7 +525,7 @@ def _get_acp_workspace_host_path(thread_id: str | None = None) -> str | None:
             if host_path.exists():
                 return str(host_path)
         except Exception:
-            pass
+            logger.debug("Per-thread ACP workspace path unavailable", exc_info=True)
         return None
 
     cached = getattr(_get_acp_workspace_host_path, "_cached", None)
@@ -536,7 +540,7 @@ def _get_acp_workspace_host_path(thread_id: str | None = None) -> str | None:
             _get_acp_workspace_host_path._cached = value  # type: ignore[attr-defined]
             return value
     except Exception:
-        pass
+        logger.debug("Global ACP workspace path unavailable", exc_info=True)
     return None
 
 
@@ -555,7 +559,7 @@ def _resolve_acp_workspace_path(path: str, thread_id: str | None = None) -> str:
         FileNotFoundError: If ACP workspace directory does not exist.
         PermissionError: If path traversal is detected.
     """
-    _reject_path_traversal(path)
+    reject_path_traversal(path)
 
     host_path = _get_acp_workspace_host_path(thread_id)
     if host_path is None:
@@ -610,9 +614,27 @@ def _get_mcp_allowed_paths() -> list[str]:
                     allowed_paths.append(arg.rstrip("/") + "/")
 
     except Exception:
-        pass
+        logger.debug("MCP filesystem allowed paths unavailable; keeping %d found so far", len(allowed_paths), exc_info=True)
 
     return allowed_paths
+
+
+def _sandbox_settings(**defaults: Any) -> tuple[Any, ...]:
+    """Read ``sandbox`` config fields with one config read, in argument order.
+
+    Every default applies when the config cannot be read, has no ``sandbox``
+    section, or lacks one of the fields, so a call never mixes configured and
+    default values.
+    """
+    try:
+        from deerflow.config.app_config import get_app_config
+
+        sandbox_cfg = get_app_config().sandbox
+        if sandbox_cfg:
+            return tuple(getattr(sandbox_cfg, name) for name in defaults)
+    except Exception:
+        logger.debug("Sandbox settings %s unavailable; using the defaults", ", ".join(defaults), exc_info=True)
+    return tuple(defaults.values())
 
 
 def _get_tool_config_int(name: str, key: str, default: int) -> int:
@@ -623,7 +645,7 @@ def _get_tool_config_int(name: str, key: str, default: int) -> int:
             if isinstance(value, int):
                 return value
     except Exception:
-        pass
+        logger.debug("Tool config %s.%s unavailable; using the default", name, key, exc_info=True)
     return default
 
 
@@ -925,7 +947,7 @@ def mask_local_paths_in_output(output: str, thread_data: ThreadDataState | None)
             skills_container = _get_skills_container_path()
             stable_sources.append((str(integrations_dir), f"{skills_container}/integrations"))
     except Exception:
-        pass
+        logger.debug("User skill directories unavailable for output masking", exc_info=True)
 
     acp_host = _get_acp_workspace_host_path(_extract_thread_id_from_thread_data(thread_data))
     if acp_host:
@@ -1012,6 +1034,7 @@ def _stored_host_path_exists(path: str, thread_data: ThreadDataState | None) -> 
             try:
                 resolved = replace_virtual_path(path, thread_data)
             except Exception:
+                logger.debug("Stored-path check could not map a user-data path; checking it literally", exc_info=True)
                 resolved = None
             if resolved and resolved != path:
                 candidates.append(resolved)
@@ -1029,20 +1052,6 @@ def _reject_unstored_windows_incompatible_path(path: str, thread_data: ThreadDat
     if _stored_host_path_exists(path, thread_data):
         return
     raise PermissionError(f"Access denied: {reason}")
-
-
-def _reject_path_traversal(path: str) -> None:
-    """Reject paths that contain '..' segments to prevent directory traversal.
-
-    Windows reserved names and trailing dots or spaces are intentionally not
-    checked here. Portability is enforced when a path is created, not on every
-    read of a name the host already stored.
-    """
-    # Normalise to forward slashes, then check for '..' segments.
-    normalised = path.replace("\\", "/")
-    for segment in normalised.split("/"):
-        if segment == "..":
-            raise PermissionError("Access denied: path traversal detected")
 
 
 def validate_local_tool_path(path: str, thread_data: ThreadDataState | None, *, read_only: bool = False) -> None:
@@ -1072,7 +1081,7 @@ def validate_local_tool_path(path: str, thread_data: ThreadDataState | None, *, 
     if thread_data is None:
         raise SandboxRuntimeError("Thread data not available for local sandbox")
 
-    _reject_path_traversal(path)
+    reject_path_traversal(path)
     # Creating a non-portable name is rejected. Reading, and editing a file
     # that is already stored under that name, is not.
     if not read_only:
@@ -1658,7 +1667,7 @@ def _is_shell_assignment(token: str) -> bool:
 
 def _reject_allowed_bash_path(path: str, thread_data: ThreadDataState | None) -> None:
     """Traversal always; portability only when the host path is not stored yet."""
-    _reject_path_traversal(path)
+    reject_path_traversal(path)
     _reject_unstored_windows_incompatible_path(path, thread_data)
 
 
@@ -1729,7 +1738,7 @@ def _validate_local_bash_cwd_target(command_name: str, target: str | None, allow
     if target.startswith("~"):
         raise PermissionError(f"Unsafe working directory change in command: {command_name} {target}. Use paths under {VIRTUAL_PATH_PREFIX}")
     if target.startswith("/"):
-        _reject_path_traversal(target)
+        reject_path_traversal(target)
         if not _is_allowed_local_bash_absolute_path(target, allowed_paths, allow_system_paths=False, thread_data=thread_data):
             raise PermissionError(f"Unsafe working directory change in command: {command_name} {target}. Use paths under {VIRTUAL_PATH_PREFIX}")
 
@@ -2117,37 +2126,6 @@ def is_local_sandbox(runtime: Runtime | None) -> bool:
     if not isinstance(sandbox_id, str):
         return False
     return sandbox_id == "local" or sandbox_id.startswith("local:")
-
-
-def sandbox_from_runtime(runtime: Runtime | None = None) -> Sandbox:
-    """Extract sandbox instance from tool runtime.
-
-    DEPRECATED: Use ensure_sandbox_initialized() for lazy initialization support.
-    This function assumes sandbox is already initialized and will raise error if not.
-
-    Raises:
-        SandboxRuntimeError: If runtime is not available or sandbox state is missing.
-        SandboxNotFoundError: If sandbox with the given ID cannot be found.
-    """
-    if runtime is None:
-        raise SandboxRuntimeError("Tool runtime not available")
-    if runtime.state is None:
-        raise SandboxRuntimeError("Tool runtime state not available")
-    # Read-only lookup: this only resolves the provider entry, and ownership
-    # (release) stays with after_agent's short-circuit on the wrapped state.
-    sandbox_state, _ = unwrap_sandbox(runtime.state.get("sandbox"))
-    if sandbox_state is None:
-        raise SandboxRuntimeError("Sandbox state not initialized in runtime")
-    sandbox_id = sandbox_state.get("sandbox_id")
-    if sandbox_id is None:
-        raise SandboxRuntimeError("Sandbox ID not found in state")
-    sandbox = get_sandbox_provider().get(sandbox_id)
-    if sandbox is None:
-        raise SandboxNotFoundError(f"Sandbox with ID '{sandbox_id}' not found", sandbox_id=sandbox_id)
-
-    if runtime.context is not None:
-        runtime.context["sandbox_id"] = sandbox_id  # Ensure sandbox_id is in context for downstream use
-    return sandbox
 
 
 def _rollback_failed_sandbox_lookup(
@@ -3026,15 +3004,7 @@ def bash_tool(runtime: Runtime, command: str, description: str = "") -> str:
                 windows_user_id = _resolved_user_id(runtime)
                 if windows_user_id is not None:
                     local_env = {**(injected_env or {}), USER_ID_ENV: windows_user_id}
-            try:
-                from deerflow.config.app_config import get_app_config
-
-                sandbox_cfg = get_app_config().sandbox
-                max_chars = sandbox_cfg.bash_output_max_chars if sandbox_cfg else 20000
-                command_timeout = sandbox_cfg.bash_command_timeout if sandbox_cfg else None
-            except Exception:
-                max_chars = 20000
-                command_timeout = None
+            max_chars, command_timeout = _sandbox_settings(bash_output_max_chars=20000, bash_command_timeout=None)
             output = _execute_bash_command(
                 sandbox,
                 command,
@@ -3049,15 +3019,7 @@ def bash_tool(runtime: Runtime, command: str, description: str = "") -> str:
         ensure_thread_directories_exist(runtime)
         command = f"cd {VIRTUAL_PATH_PREFIX}/workspace; {command}"
         command = user_prefix + (identity_prefix or "") + command
-        try:
-            from deerflow.config.app_config import get_app_config
-
-            sandbox_cfg = get_app_config().sandbox
-            max_chars = sandbox_cfg.bash_output_max_chars if sandbox_cfg else 20000
-            command_timeout = sandbox_cfg.bash_command_timeout if sandbox_cfg else None
-        except Exception:
-            max_chars = 20000
-            command_timeout = None
+        max_chars, command_timeout = _sandbox_settings(bash_output_max_chars=20000, bash_command_timeout=None)
         return _truncate_bash_output(
             mask_secret_values(
                 _execute_bash_command(
@@ -3132,13 +3094,7 @@ def ls_tool(runtime: Runtime, path: str, description: str = "") -> str:
         if not entries:
             return "(empty)"
         output = "\n".join(entries)
-        try:
-            from deerflow.config.app_config import get_app_config
-
-            sandbox_cfg = get_app_config().sandbox
-            max_chars = sandbox_cfg.ls_output_max_chars if sandbox_cfg else 20000
-        except Exception:
-            max_chars = 20000
+        (max_chars,) = _sandbox_settings(ls_output_max_chars=20000)
         return _truncate_ls_output(output, _context_clamped(max_chars, COMMAND_OUTPUT_SHARE))
     except SandboxError as e:
         return f"Error: {e}"
@@ -3464,13 +3420,7 @@ def read_file_tool(
                     return _read_file_result(runtime, READ_FILE_EMPTY)
                 return _read_file_failure(runtime, READ_FILE_START_LINE_EXCEEDS)
             return _read_file_result(runtime, READ_FILE_EMPTY)
-        try:
-            from deerflow.config.app_config import get_app_config
-
-            sandbox_cfg = get_app_config().sandbox
-            max_chars = sandbox_cfg.read_file_output_max_chars if sandbox_cfg else 50000
-        except Exception:
-            max_chars = 50000
+        (max_chars,) = _sandbox_settings(read_file_output_max_chars=50000)
         # Line numbers in the marker are file line numbers, so a ranged read passes its offset along.
         limit = _context_clamped(max_chars, READ_FILE_SHARE)
         output = _truncate_read_file_output(content, limit, line_offset=effective_start - 1, joined_lines=use_line_range, ends_at_eof=end_line is None)

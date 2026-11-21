@@ -2,9 +2,11 @@
 
 Small helpers that several subsystems share: atomic file publication, advisory
 file locks, off-loop assembly, document conversion and outlines, message text
-extraction, host path portability, retry hints, port allocation and the proxy
-policy for internal HTTP calls. Before you write a local variant of one of these,
-use the helper here; each exists because separate copies drifted apart.
+extraction, host path portability, retry hints, port allocation, the proxy
+policy for internal HTTP calls, and the thread and run IDs read from a runtime
+(`thread_id.runtime_thread_id`, `run_scope`). Before you write a local variant of
+one of these, use the helper here; each exists because separate copies drifted
+apart.
 
 ## Verify
 

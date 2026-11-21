@@ -6,6 +6,7 @@ from urllib.parse import urlparse
 from exa_py import Exa
 from langchain.tools import tool
 
+from deerflow.community.config_bool import coerce_bool
 from deerflow.community.provider_credentials import resolve_api_key
 from deerflow.community.url_safety import safe_public_result_url, validate_delegated_backend_url
 from deerflow.config import get_app_config
@@ -36,18 +37,6 @@ def _coerce_positive_int(value: object, default: int, option: str) -> int:
         logger.warning("Invalid Exa %s=%r; using default %s", option, value, default)
         return default
     return count
-
-
-def _coerce_bool(value: object, default: bool) -> bool:
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, str):
-        normalized = value.strip().lower()
-        if normalized in {"1", "true", "yes", "on"}:
-            return True
-        if normalized in {"0", "false", "no", "off"}:
-            return False
-    return default
 
 
 def _resolve_base_url(extra: dict) -> str | None:
@@ -156,7 +145,7 @@ def web_fetch_tool(url: str) -> str:
             # A custom backend fetches the URL in its own network, like other delegated fetch services.
             backend_error = validate_delegated_backend_url(
                 base_url,
-                network_isolation_confirmed=_coerce_bool(extra.get("network_isolation_confirmed"), False),
+                network_isolation_confirmed=coerce_bool(extra.get("network_isolation_confirmed"), False),
             )
             if backend_error:
                 return backend_error

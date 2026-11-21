@@ -1,5 +1,6 @@
 import { fetch } from "@/core/api/fetcher";
 import { getBackendBaseURL } from "@/core/config";
+import { isRecord } from "@/lib/utils";
 
 import {
   THREAD_FILES_ROOT,
@@ -25,10 +26,6 @@ const KNOWN_KINDS: ReadonlySet<string> = new Set<ThreadFileKind>([
   "symlink",
   "other",
 ]);
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
 
 /** True for `/mnt/user-data` and paths below it without `.` or `..` steps. */
 export function isThreadFilesPath(path: string): boolean {

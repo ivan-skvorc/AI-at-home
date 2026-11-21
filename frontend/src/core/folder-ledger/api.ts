@@ -1,5 +1,6 @@
 import { fetch } from "@/core/api/fetcher";
 import { getBackendBaseURL } from "@/core/config";
+import { isRecord } from "@/lib/utils";
 
 import type {
   LedgerCreatedAttribution,
@@ -30,10 +31,6 @@ export class FolderLedgerRequestError extends Error {
     this.status = status;
     this.code = code;
   }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function asString(value: unknown): string | null {

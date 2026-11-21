@@ -35,6 +35,7 @@ from langgraph.runtime import Runtime
 from deerflow.agents.middlewares.model_length_finish_reason_middleware import MODEL_LENGTH_CAPPED_STOP_REASON, MODEL_LENGTH_TERMINATION_MARKER
 from deerflow.agents.middlewares.safety_finish_reason_middleware import SAFETY_CAPPED_STOP_REASON, SAFETY_TERMINATION_MARKER
 from deerflow.agents.thread_state import ThreadState
+from deerflow.utils.run_scope import context_scope
 
 TODO_REMINDER_MESSAGE_NAME = "todo_reminder"
 # Source-inventory and graph tests pin these values to the actual guard stamps;
@@ -247,19 +248,8 @@ class TodoMiddleware(TodoListMiddleware):
         self._completion_reminder_next_order = 0
 
     @staticmethod
-    def _get_thread_id(runtime: Runtime) -> str:
-        context = getattr(runtime, "context", None)
-        thread_id = context.get("thread_id") if context else None
-        return str(thread_id) if thread_id else "default"
-
-    @staticmethod
-    def _get_run_id(runtime: Runtime) -> str:
-        context = getattr(runtime, "context", None)
-        run_id = context.get("run_id") if context else None
-        return str(run_id) if run_id else "default"
-
-    def _pending_key(self, runtime: Runtime) -> tuple[str, str]:
-        return self._get_thread_id(runtime), self._get_run_id(runtime)
+    def _pending_key(runtime: Runtime) -> tuple[str, str]:
+        return context_scope(runtime, "thread_id"), context_scope(runtime, "run_id")
 
     def _touch_completion_reminder_key_locked(self, key: tuple[str, str]) -> None:
         self._completion_reminder_next_order += 1

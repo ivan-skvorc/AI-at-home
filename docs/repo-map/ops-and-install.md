@@ -74,10 +74,10 @@ Tests: backend/tests/test_setup_wizard.py, backend/tests/test_configure_script.p
 ### Run the stack
 What: start the Gateway, frontend and nginx locally or in Docker (dev with hot reload, or production images), loopback-only by default, with the Arch/CachyOS nginx and Ollama fixes built in.
 Entry points: make dev, make start, make up, make docker-start, http://localhost:2026
-Files: scripts/serve.sh, scripts/docker.sh, scripts/deploy.sh, scripts/nginx.sh, scripts/backend-python.sh, docker/docker-compose.yaml, docker/docker-compose-dev.yaml, docker/dev-entrypoint.sh, docker/nginx/**, backend/Dockerfile, frontend/Dockerfile, frontend/scripts/dev.mjs, backend/app/gateway/health.py
+Files: scripts/serve.sh, scripts/docker.sh, scripts/deploy.sh, scripts/nginx.sh, scripts/backend-python.sh, docker/docker-compose.yaml, docker/docker-compose-dev.yaml, docker/dev-entrypoint.sh, docker/nginx/**, backend/Dockerfile, frontend/Dockerfile, frontend/scripts/dev.mjs, backend/app/gateway/health.py, scripts/docker_launch_lib.sh
 Data: .deer-flow runtime home, logs/
 External: Docker
-Tests: backend/tests/test_serve_gateway_startup_timeout.py, backend/tests/test_compose_default_bind_host.py, backend/tests/test_nginx_browser_websocket.py, backend/tests/test_nginx_local_temp_paths.py, backend/tests/test_dev_stack_host_user.py, frontend/tests/unit/scripts/dev.test.ts
+Tests: backend/tests/test_serve_gateway_startup_timeout.py, backend/tests/test_compose_default_bind_host.py, backend/tests/test_nginx_browser_websocket.py, backend/tests/test_nginx_local_temp_paths.py, backend/tests/test_dev_stack_host_user.py, frontend/tests/unit/scripts/dev.test.ts, backend/tests/test_nginx_route_parity.py
 
 ### Deploy with Helm
 What: deploy the Gateway, frontend, nginx, provisioner, Postgres and Redis to Kubernetes from the bundled chart.
@@ -90,7 +90,7 @@ Tests: backend/tests/test_helm_credentials_key.py, backend/tests/test_helm_init_
 ### Passwordless on your own network
 What: make dev and make start come up with no login wall so phones and laptops reach it over the LAN or Tailscale, with private-LAN and tailnet dev origins allowed and tailnet reach detected rather than configured.
 Entry points: DEER_FLOW_AUTH_DISABLED (defaults to 1 for local launches), DEER_FLOW_DEV_ALLOWED_ORIGINS
-Files: backend/app/gateway/auth_disabled.py, frontend/src/core/auth/auth-disabled-user.ts, frontend/src/dev-origins.js, scripts/detect_tailscale.py, scripts/tailscale_lib.sh, docker/docker-compose.tailscale.yaml, docker/docker-compose.loopback.yaml, scripts/serve.sh
+Files: backend/app/gateway/auth_disabled.py, frontend/src/core/auth/auth-disabled-user.ts, frontend/src/dev-origins.js, scripts/detect_tailscale.py, scripts/tailscale_lib.sh, docker/docker-compose.tailscale.yaml, docker/docker-compose.loopback.yaml, scripts/serve.sh, scripts/docker_launch_lib.sh
 Data: none
 External: Tailscale
 Tests: backend/tests/test_serve_auth_default.py, backend/tests/test_deploy_auth_default.py, backend/tests/test_detect_tailscale.py, backend/tests/test_docker_dev_tailnet.py, backend/tests/test_deploy_loopback_cobind.py, frontend/tests/unit/dev-origins.test.ts

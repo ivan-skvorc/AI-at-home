@@ -236,6 +236,30 @@ def test_deploy_still_generates_and_persists_a_secret_when_dotenv_has_none(tmp_p
     assert (persisted.stat().st_mode & 0o777) == 0o600 or os.name == "nt"
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX mode bits")
+def test_deploy_creates_every_secret_file_private_from_the_start(tmp_path):
+    """A generated secret is never on disk with the default umask's mode.
+
+    ``chmod`` is a no-op here, so each file keeps the mode it was created
+    with: writing first and tightening afterwards leaves it world-readable.
+    """
+    worktree = _worktree(tmp_path)
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "chmod").write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    (bin_dir / "chmod").chmod(0o755)
+
+    previous_umask = os.umask(0o022)
+    try:
+        _, observed, _, _, _, home = _run_deploy_build(tmp_path, worktree, compose_environment={})
+    finally:
+        os.umask(previous_umask)
+
+    for key in SECRETS:
+        assert GENERATED.fullmatch(observed[key]), observed[key]
+        assert (home / PERSISTED_FILE[key]).stat().st_mode & 0o777 == 0o600, key
+
+
 @pytest.mark.parametrize("key", SECRETS)
 def test_deploy_keeps_shell_export_ahead_of_dotenv(tmp_path, key):
     """An exported shell value keeps compose precedence: it wins over .env untouched."""
@@ -278,6 +302,21 @@ def test_deploy_stops_when_compose_cannot_interpolate_instead_of_guessing(tmp_pa
     assert not args, "no build was attempted"
     assert not observed
     assert not (home / PERSISTED_FILE["BETTER_AUTH_SECRET"]).exists()
+
+
+@pytest.mark.parametrize("key", SECRETS)
+def test_deploy_stops_on_an_empty_persisted_secret_instead_of_exporting_nothing(tmp_path, key):
+    """An empty secret file (a write that failed after creating it) must stop the deploy."""
+    worktree = _worktree(tmp_path)
+    home = tmp_path / "deer-flow-home"
+    home.mkdir(parents=True, exist_ok=True)
+    (home / PERSISTED_FILE[key]).write_text("", encoding="utf-8")
+
+    result, observed, args, _, _, _ = _run_deploy_build(tmp_path, worktree, compose_environment={}, check=False)
+
+    assert result.returncode != 0
+    assert f"{PERSISTED_FILE[key]} is empty" in result.stderr
+    assert not args, "no build was attempted"
 
 
 # ── Against real Compose clients, when installed ────────────────────────────

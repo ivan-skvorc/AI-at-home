@@ -20,6 +20,7 @@ from deerflow.community.camoufox_fetch.browser import (
     CamoufoxNotInstalledError,
     get_shared_browser,
 )
+from deerflow.community.config_int import coerce_int
 from deerflow.config import get_app_config
 from deerflow.utils.readability import ReadabilityExtractor
 
@@ -35,27 +36,14 @@ NOT_INSTALLED_MESSAGE = "Error: web_fetch backend 'camoufox' is not installed. R
 BROWSER_MISSING_MESSAGE = "Error: camoufox browser not installed - run make fetch-browser"
 
 
-def _coerce_int(value: object, default: int) -> int:
-    if isinstance(value, bool):
-        return default
-    if isinstance(value, int):
-        return value
-    if isinstance(value, str):
-        try:
-            return int(value.strip())
-        except ValueError:
-            return default
-    return default
-
-
 def _tool_options() -> tuple[int, int]:
     """Return (timeout_seconds, max_content_length) from web_fetch tool config."""
     timeout = DEFAULT_TIMEOUT_SECONDS
     max_len = DEFAULT_MAX_CONTENT_LENGTH
     config = get_app_config().get_tool_config("web_fetch")
     if config is not None and config.model_extra:
-        timeout = _coerce_int(config.model_extra.get("timeout"), timeout)
-        max_len = _coerce_int(config.model_extra.get("max_content_length"), max_len)
+        timeout = coerce_int(config.model_extra.get("timeout"), timeout)
+        max_len = coerce_int(config.model_extra.get("max_content_length"), max_len)
     return timeout, max_len
 
 

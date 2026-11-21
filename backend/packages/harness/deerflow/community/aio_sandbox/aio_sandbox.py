@@ -18,6 +18,7 @@ from deerflow.config.paths import VIRTUAL_PATH_PREFIX
 from deerflow.sandbox.command_scope import COMMAND_OWNER_ENV, CommandScopeCancelled, command_lock, current_command_scope
 from deerflow.sandbox.download import DEFAULT_DOWNLOAD_LIMIT as _MAX_DOWNLOAD_SIZE
 from deerflow.sandbox.download import download_limit, read_download_stream
+from deerflow.sandbox.path_traversal import reject_path_traversal
 from deerflow.sandbox.remote_list_dir import parse_remote_list_dir_output, remote_list_dir_command
 from deerflow.sandbox.sandbox import Sandbox, _validate_extra_env
 from deerflow.sandbox.search import GrepMatch, path_matches, should_ignore_path_under_root, truncate_line
@@ -1284,11 +1285,11 @@ class AioSandbox(Sandbox):
         # Reject path traversal before sending to the container API.
         # LocalSandbox gets this implicitly via _resolve_path;
         # here the path is forwarded verbatim so we must check explicitly.
-        normalised = path.replace("\\", "/")
-        for segment in normalised.split("/"):
-            if segment == "..":
-                logger.error(f"Refused download due to path traversal: {path}")
-                raise PermissionError(f"Access denied: path traversal detected in '{path}'")
+        try:
+            normalised = reject_path_traversal(path, name_path=True)
+        except PermissionError:
+            logger.error(f"Refused download due to path traversal: {path}")
+            raise
 
         stripped_path = normalised.lstrip("/")
         allowed_prefix = VIRTUAL_PATH_PREFIX.lstrip("/")

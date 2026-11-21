@@ -31,6 +31,7 @@ from deerflow.config.checkpointer_config import CheckpointerConfig, ensure_confi
 from deerflow.persistence.postgres_schema import dsn_with_search_path, ensure_postgres_schema
 from deerflow.runtime.checkpoint_mode import frozen_checkpoint_channel_mode
 from deerflow.runtime.store._sqlite_utils import ensure_sqlite_parent_dir, resolve_sqlite_conn_str
+from deerflow.runtime.store.provider import _resolve_store_config
 
 logger = logging.getLogger(__name__)
 
@@ -58,25 +59,14 @@ def _ensure_postgres_schema(conn_string: str, schema: str) -> None:
 def _resolve_checkpointer_config(app_config: AppConfig) -> CheckpointerConfig:
     """Resolve the checkpointer backend from legacy or unified application config.
 
-    The legacy ``checkpointer`` section remains authoritative when present so
-    Checkpointer and Store keep using the same backend. Otherwise the unified
-    ``database`` section drives the checkpointer, matching the async
-    :func:`~deerflow.runtime.checkpointer.async_provider.make_checkpointer`
-    factory and the sync Store provider's ``_resolve_store_config``.
+    Checkpointer and Store must use the same backend, so this delegates to the
+    Store provider's resolver instead of keeping a second copy; it matches the
+    async :func:`~deerflow.runtime.checkpointer.async_provider.make_checkpointer`
+    factory. The import runs one way only: this module already loads
+    ``deerflow.runtime.store`` through ``_sqlite_utils``, so the Store provider
+    importing this one would be circular.
     """
-    if app_config.checkpointer is not None:
-        return app_config.checkpointer
-
-    database = app_config.database
-    if database is None or database.backend == "memory":
-        return CheckpointerConfig(type="memory")
-    if database.backend == "sqlite":
-        return CheckpointerConfig(type="sqlite", connection_string=database.checkpointer_sqlite_path)
-    if database.backend == "postgres":
-        if not database.postgres_url:
-            raise ValueError("database.postgres_url is required for the postgres backend")
-        return CheckpointerConfig(type="postgres", connection_string=database.postgres_url, postgres_schema=database.postgres_schema)
-    raise ValueError(f"Unknown database backend: {database.backend!r}")
+    return _resolve_store_config(app_config)
 
 
 def _get_checkpointer_config() -> CheckpointerConfig:
