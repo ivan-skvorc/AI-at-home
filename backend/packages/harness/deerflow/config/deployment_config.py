@@ -105,3 +105,38 @@ def multi_instance_declaration(config: Any) -> MultiInstanceDeclaration | None:
     if bool(getattr(deployment, "multi_instance", False)):
         return MultiInstanceDeclaration(source="config", value="true")
     return None
+
+
+#: ``GATEWAY_WORKERS`` is the documented knob, and ``docker/docker-compose.yaml``
+#: forwards it as ``--workers``. ``backend/Dockerfile`` and ``scripts/serve.sh``
+#: start uvicorn with no worker count, and uvicorn then takes it from
+#: ``WEB_CONCURRENCY``. Every multi-process gate reads both, or it stays inert in
+#: exactly the deployment it exists to refuse.
+WORKER_COUNT_ENV_VARS = ("GATEWAY_WORKERS", "WEB_CONCURRENCY")
+
+
+def gateway_worker_count() -> tuple[int, str]:
+    """Return the Gateway worker-process count and the variable that set it.
+
+    The startup gate (``app/gateway/deps.py``), the inbound dedupe warning and
+    the browser-tool refusal share this one reader. The name belongs in their
+    messages: an operator who only ever set ``WEB_CONCURRENCY`` cannot act on a
+    message about ``GATEWAY_WORKERS``. A blank value means "unset", as the
+    compose command's ``${GATEWAY_WORKERS:-1}`` treats it. An unparsable value
+    is skipped, not refused: uvicorn rejects a non-numeric count itself, and on
+    the launchers that pass no ``--workers`` an exported ``GATEWAY_WORKERS=abc``
+    never reaches uvicorn, so ``WEB_CONCURRENCY`` still decides how many
+    processes start.
+
+    ``app/gateway/routers/channel_connections.py`` differs on purpose: that
+    route resolves an unparsable value to 0 and refuses.
+    """
+    for name in WORKER_COUNT_ENV_VARS:
+        raw = os.environ.get(name)
+        if not raw or not raw.strip():
+            continue
+        try:
+            return int(raw), name
+        except (TypeError, ValueError):
+            continue
+    return 1, WORKER_COUNT_ENV_VARS[0]

@@ -34,7 +34,7 @@ from deerflow.community.browser_automation.session import browser_multi_worker_e
 from deerflow.config.app_config import AppConfig, get_app_config
 from deerflow.config.channel_leader_lease_config import CHANNEL_LEADER_LEASE_FIELD, ChannelLeaderLeaseConfig, ChannelLeaderLeaseConfigError, channel_leader_lease_from_app_config
 from deerflow.config.credentials_key import CREDENTIALS_KEY_ENV_VAR, CREDENTIALS_KEY_FILENAME, GENERATE_KEY_COMMAND, CredentialsKeyError, parse_credentials_keys
-from deerflow.config.deployment_config import multi_instance_declaration
+from deerflow.config.deployment_config import gateway_worker_count, multi_instance_declaration
 from deerflow.persistence.feedback import FeedbackRepository
 from deerflow.runtime import ORPHAN_RECOVERY_STOP_REASON, STARTUP_ORPHAN_RECOVERY_ERROR, RunContext, RunManager, StreamBridge
 from deerflow.runtime.events.store.base import RunEventStore
@@ -62,36 +62,6 @@ def _browser_tools_enabled_in_config(config: AppConfig) -> bool:
     return any(getattr(tool, "name", None) == "browser_navigate" for tool in (getattr(config, "tools", None) or []))
 
 
-# ``GATEWAY_WORKERS`` is the knob this project documents and the one
-# ``docker/docker-compose.yaml`` forwards as ``--workers``. ``backend/Dockerfile``
-# and ``scripts/serve.sh`` launch uvicorn with no worker count at all, and uvicorn
-# then takes the count from ``WEB_CONCURRENCY``. Both must be read, otherwise a
-# multi-process deployment starts with the safety gates inert.
-# A blank value means "unset", as the compose command's ``${GATEWAY_WORKERS:-1}`` treats it.
-_WORKER_COUNT_ENV_VARS = ("GATEWAY_WORKERS", "WEB_CONCURRENCY")
-
-
-def _gateway_worker_count() -> tuple[int, str]:
-    """Return the Gateway worker-process count and the environment variable that set it.
-
-    The name belongs in the refusal text: an operator who only ever set
-    ``WEB_CONCURRENCY`` cannot act on a message about ``GATEWAY_WORKERS``.
-    """
-    for name in _WORKER_COUNT_ENV_VARS:
-        raw = os.environ.get(name)
-        if not raw or not raw.strip():
-            continue
-        try:
-            return int(raw), name
-        except (TypeError, ValueError):
-            # Uvicorn rejects a non-numeric count itself, so this is not the place
-            # to fail the launch -- but an unparsable documented knob must not hide
-            # the count uvicorn takes from ``WEB_CONCURRENCY`` on the launches that
-            # pass no ``--workers``. Keep looking; report 1 only after the loop.
-            continue
-    return 1, _WORKER_COUNT_ENV_VARS[0]
-
-
 def _multi_process_signal(config: AppConfig) -> tuple[str, str] | None:
     """Return ``(reason, rollback)`` when this process must assume peer Gateway processes.
 
@@ -106,7 +76,7 @@ def _multi_process_signal(config: AppConfig) -> tuple[str, str] | None:
     Deployment with ``replicas > 1`` and one worker per Pod is invisible to
     them; the explicit declaration exists for exactly that topology.
     """
-    workers, worker_env = _gateway_worker_count()
+    workers, worker_env = gateway_worker_count()
     declaration = multi_instance_declaration(config)
     if workers > 1:
         rollback = f"Set {worker_env}=1"
@@ -214,7 +184,7 @@ def _enforce_postgres_for_multi_worker(config: AppConfig) -> None:
         raise SystemExit(f"{reason} cannot run with scheduler.enabled=true because each worker starts its own scheduler. {rollback}, scheduler.multi_instance=true, or scheduler.enabled=false.")
 
     if _browser_tools_enabled_in_config(config):
-        workers, _worker_env = _gateway_worker_count()
+        workers, _worker_env = gateway_worker_count()
         if workers > 1 and multi_instance_declaration(config) is None:
             raise SystemExit(browser_multi_worker_error(workers))
         raise SystemExit(f"{reason} cannot enable agentic browser tools: browser sessions are process-local and a request can land on any instance. {rollback} or disable the browser_navigate tool.")

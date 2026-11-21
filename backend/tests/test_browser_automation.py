@@ -28,6 +28,7 @@ from deerflow.community.browser_automation.session import (
     SnapshotElement,
     browser_multi_worker_error,
 )
+from deerflow.config.deployment_config import gateway_worker_count
 
 
 @pytest.fixture(autouse=True)
@@ -1131,7 +1132,8 @@ def test_worker_count_resolution_reads_both_spellings(monkeypatch, gateway_worke
         else:
             monkeypatch.setenv(name, value)
 
-    assert session_mod._worker_count_from_env()[0] == expected
+    # The browser refusal, the startup gate and the dedupe warning share this reader.
+    assert gateway_worker_count()[0] == expected
 
 
 def test_worker_count_error_names_the_variable_that_set_the_count(monkeypatch):

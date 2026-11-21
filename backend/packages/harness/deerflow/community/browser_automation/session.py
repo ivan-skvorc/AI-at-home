@@ -17,7 +17,6 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-import os
 import threading
 import time
 from collections.abc import Callable, Coroutine
@@ -25,6 +24,8 @@ from concurrent.futures import Future
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal, TypeVar
 from urllib.parse import urlparse
+
+from deerflow.config.deployment_config import gateway_worker_count
 
 from .egress import BrowserEgressProxy, EgressResolver
 
@@ -143,34 +144,6 @@ _DEFAULT_MAX_SESSIONS = 32
 _DEFAULT_IDLE_TIMEOUT_S = 30 * 60.0
 
 
-# ``GATEWAY_WORKERS`` is the documented knob and the one docker-compose forwards as
-# ``--workers``; ``backend/Dockerfile`` and ``scripts/serve.sh`` start uvicorn with no
-# worker count at all, and uvicorn then takes the count from ``WEB_CONCURRENCY``. Both
-# must be read, or this gate stays inert in exactly the deployment it exists to refuse.
-# ``app/gateway/routers/channel_connections.py`` reads the same two spellings and treats a
-# blank value as unset the same way, but deliberately differs on unparsable input: that
-# route resolves it to 0 and refuses, while this one falls through to the next spelling
-# and stays inert, because uvicorn rejects ``--workers abc`` itself before serving.
-_WORKER_COUNT_ENV_VARS = ("GATEWAY_WORKERS", "WEB_CONCURRENCY")
-
-
-def _worker_count_from_env() -> tuple[int, str]:
-    """Resolve the worker count and the variable that set it; a blank value is unset."""
-    for name in _WORKER_COUNT_ENV_VARS:
-        raw = os.environ.get(name)
-        if not raw or not raw.strip():
-            continue
-        try:
-            return int(raw), name
-        except (TypeError, ValueError):
-            # Unparsable here must not hide a valid count in the other spelling: an
-            # exported ``GATEWAY_WORKERS=abc`` never reaches uvicorn on the launchers
-            # that pass no ``--workers``, so ``WEB_CONCURRENCY`` is still what decides
-            # how many processes start.
-            continue
-    return 1, _WORKER_COUNT_ENV_VARS[0]
-
-
 def browser_multi_worker_error(workers: int | None = None, env_name: str | None = None) -> str | None:
     """Return the fail-closed reason for process-local browser sessions.
 
@@ -180,9 +153,9 @@ def browser_multi_worker_error(workers: int | None = None, env_name: str | None 
     environment, which is the same source the count came from.
     """
     if workers is None:
-        workers, env_name = _worker_count_from_env()
+        workers, env_name = gateway_worker_count()
     elif env_name is None:
-        env_name = _worker_count_from_env()[1]
+        env_name = gateway_worker_count()[1]
     if workers <= 1:
         return None
     return f"{env_name}={workers} cannot enable agentic browser tools: browser sessions are process-local and uvicorn does not provide thread affinity. Set {env_name}=1 or disable the browser_navigate tool."
