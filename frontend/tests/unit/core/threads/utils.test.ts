@@ -3,6 +3,7 @@ import { expect, test } from "@rstest/core";
 
 import type { AgentThread } from "@/core/threads/types";
 import {
+  agentNameOfThread,
   channelSourceOfThread,
   isThreadPinned,
   pathOfThread,
@@ -22,6 +23,20 @@ function makeThread(
     values: { title: threadId },
   } as unknown as AgentThread;
 }
+
+test("reads a thread's custom agent from context before metadata", () => {
+  expect(agentNameOfThread({ metadata: { agent_name: "writer" } })).toBe(
+    "writer",
+  );
+  expect(
+    agentNameOfThread({
+      metadata: { agent_name: "stale-agent" },
+      context: { agent_name: "scribe" },
+    }),
+  ).toBe("scribe");
+  expect(agentNameOfThread({ metadata: { agent_name: "" } })).toBeUndefined();
+  expect(agentNameOfThread({ metadata: {} })).toBeUndefined();
+});
 
 test("uses standard chat route when thread has no agent context", () => {
   expect(pathOfThread("thread-123")).toBe("/workspace/chats/thread-123");
