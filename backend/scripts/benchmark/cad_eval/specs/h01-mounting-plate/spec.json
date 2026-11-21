@@ -1,0 +1,22 @@
+{
+  "id": "h01-mounting-plate",
+  "band": "holes",
+  "title": "Mounting plate",
+  "request": "Make a flat mounting plate 80 by 50 mm and 5 mm thick, with a 5 mm hole through it near each corner. Each hole centre is 10 mm in from both nearby edges.",
+  "orientation": "z",
+  "truth": {
+    "solids": 1,
+    "bbox_mm": [
+      80.0,
+      50.0,
+      5.0
+    ],
+    "volume_mm3": 19607.301,
+    "hole_diameters_mm": [
+      5.0,
+      5.0,
+      5.0,
+      5.0
+    ]
+  }
+}

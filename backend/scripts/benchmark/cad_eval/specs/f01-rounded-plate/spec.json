@@ -1,0 +1,20 @@
+{
+  "id": "f01-rounded-plate",
+  "band": "fits",
+  "title": "Rounded plate",
+  "request": "Make a 60 x 40 x 6 mm plate with its four corners rounded to an 8 mm radius when seen from above, and two 4 mm holes through it on the long centre line, 30 mm apart and centred.",
+  "orientation": "z",
+  "truth": {
+    "solids": 1,
+    "bbox_mm": [
+      60.0,
+      40.0,
+      6.0
+    ],
+    "volume_mm3": 13919.575,
+    "hole_diameters_mm": [
+      4.0,
+      4.0
+    ]
+  }
+}

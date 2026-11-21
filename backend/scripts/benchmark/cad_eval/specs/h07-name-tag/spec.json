@@ -1,0 +1,28 @@
+{
+  "id": "h07-name-tag",
+  "band": "holes",
+  "title": "Name tag",
+  "request": "Make a key-ring tag 50 x 20 x 3 mm with the word DEER engraved 0.6 mm deep into the top face, letters 10 mm tall, and a 4 mm hole through the tag 5 mm from one short end for the ring.",
+  "needs": [
+    {
+      "item": "59",
+      "why": "lettering",
+      "operations": [
+        "text"
+      ]
+    }
+  ],
+  "orientation": "z",
+  "truth": {
+    "solids": 1,
+    "bbox_mm": [
+      50.0,
+      20.0,
+      3.0
+    ],
+    "volume_mm3": 2930.951,
+    "hole_diameters_mm": [
+      4.0
+    ]
+  }
+}
