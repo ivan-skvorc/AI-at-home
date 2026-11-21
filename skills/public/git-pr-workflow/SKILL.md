@@ -4,7 +4,7 @@ description: Use this skill when a task commits, pushes, branches, or opens, upd
 license: MIT
 author: DeerFlow; workflow guidance adapted from Hermes Agent (Nous Research)
 version: 1.0.0
-compatibility: Needs bash 4.4+, git and Python 3.10+ in the sandbox (POSIX). gh is optional. Pull requests use the GitHub REST API with the GH_TOKEN or GITHUB_TOKEN that bash receives when the user connected GitHub, or with an authenticated gh's credentials.
+compatibility: Needs bash 4.4+, git and Python 3.10+ in the sandbox (POSIX). gh is optional. Pull requests use the GitHub REST API with the GH_TOKEN or GITHUB_TOKEN that bash receives when the user connected GitHub (sent to github.com only), or with an authenticated gh's credentials.
 metadata:
   tags: [git, github, pull-requests, commits, ci, code-review, worktrees]
   related-skills: [test-driven-development, systematic-debugging]
@@ -43,11 +43,14 @@ fresh, so begin every command with a `cd` into the repository:
 cd /mnt/user-data/workspace/myrepo && bash /mnt/skills/public/git-pr-workflow/scripts/gitflow.sh preflight
 ~~~
 
-`--repo DIR` works instead of `cd`. Paths passed to `--paths` are relative to the
-repository root. Pull-request commands call the GitHub REST API with the
-`GH_TOKEN` or `GITHUB_TOKEN` variable that the sandbox `bash` tool provides once
-the user has connected GitHub; when neither is set and `gh` is installed and
-logged in, they use gh's credentials instead. Output never contains a token.
+`--repo DIR` works instead of `cd`. Paths passed to `--paths` are literal file
+names relative to the repository root. Pull-request commands call the GitHub
+REST API with the `GH_TOKEN` or `GITHUB_TOKEN` variable that the sandbox `bash`
+tool provides once the user has connected GitHub. Those variables go to
+github.com only; a GitHub Enterprise host needs `GH_ENTERPRISE_TOKEN` and its name
+in `GITFLOW_GITHUB_HOSTS`, and any host can use a `gh` that is logged in to it.
+`preflight` reports what would be used as `github_auth`. Output never contains a
+token.
 
 ## Routing
 

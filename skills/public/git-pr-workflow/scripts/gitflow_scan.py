@@ -3,8 +3,8 @@
 
     gitflow_scan.py --names NAMES_FILE < DIFF
 
-DIFF is the output of git diff --cached --unified=0 --no-renames with a/ and b/
-prefixes; NAMES_FILE holds the staged file names, NUL-separated (git diff
+DIFF is the output of git diff --cached --text --unified=0 --no-renames with
+a/ and b/ prefixes (--text, so files git would call binary are scanned too); NAMES_FILE holds the staged file names, NUL-separated (git diff
 --cached --name-only -z). Only added lines are scanned, and a renamed file
 counts as added, so a secret moved to a new file is still caught.
 
@@ -31,10 +31,12 @@ _SECRET_PATTERNS = (
     ("private-key", re.compile(r"-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)?-----")),
     ("slack-token", re.compile(r"\bxox[abposr]-[A-Za-z0-9-]{10,}")),
 )
-# name = "literal" / name: "literal" where the name ends in a credential word.
+# name = "literal" / name: "literal" / name: Type = "literal", where the name
+# ends in a credential word. Every repeat is bounded, so a long line costs
+# linear time and is scanned whole.
 _ASSIGNMENT_PATTERN = re.compile(
     r"(?i)(?:^|[^A-Za-z0-9])(?P<key>[A-Za-z0-9_.-]{0,40}?(?:api[_-]?key|secret|passw(?:or)?d|token|credential|auth)s?(?:[_-]?(?:key|value|access[_-]?key))?)"
-    r"[\"']?\s*(?::=|=>|=|:)\s*(?P<quote>[\"'])(?P<value>[^\"'\s]{12,})(?P=quote)"
+    r"[\"']?(?:\s*:\s*[A-Za-z_][\w\[\]., |]{0,40}?(?=\s*=))?\s*(?::=|=>|=|:)\s*(?P<quote>[\"'])(?P<value>[^\"'\s]{12,})(?P=quote)"
 )
 _PLACEHOLDER_HINTS = ("example", "sample", "placeholder", "changeme", "change-me", "your", "dummy", "fake", "redacted", "xxxx", "****", "<", "${", "{{", "%(", "$(")
 _SENSITIVE_FILE_RE = re.compile(r"^(?:\.env(?:\..+)?|id_(?:rsa|dsa|ecdsa|ed25519)|.+\.(?:pem|key|p12|pfx)|\.netrc|\.pypirc)$", re.IGNORECASE)
@@ -61,12 +63,15 @@ def sensitive_file(path: str) -> bool:
 
 def scan_line(text: str) -> str | None:
     """Return the rule name when an added line looks like it carries a secret."""
+    # UTF-16 text arrives with a NUL byte after every ASCII character; dropping
+    # the NULs makes a token in it readable to the patterns below.
+    text = text.replace("\x00", "")
     if ALLOW_MARKER in text:
         return None
     for rule, pattern in _SECRET_PATTERNS:
         if pattern.search(text):
             return rule
-    for match in _ASSIGNMENT_PATTERN.finditer(text[:4000]):
+    for match in _ASSIGNMENT_PATTERN.finditer(text):
         if not _is_placeholder(match.group("value")):
             return "hardcoded-credential"
     return None

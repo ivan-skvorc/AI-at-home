@@ -4,24 +4,31 @@
 gitflow.sh calls it for everything that talks to the GitHub API:
 
     gitflow_github.py parse-remote URL        -> "host<TAB>owner<TAB>name", exit 1 if not GitHub-style
-    gitflow_github.py token-names             -> names of the token variables that are set
+    gitflow_github.py token-names [--host H]  -> names of the token variables that are set (usable for H)
     gitflow_github.py new-pull-url --host H --owner O --repo R --branch B
     gitflow_github.py pr-create --host H --owner O --repo R --head B --base B --title T --body-file F
                       [--draft] --remote-sha S --local-sha S [--warning W ...] [--auth-from-stdin] [--api-url U]
     gitflow_github.py pr-status --host H --owner O --repo R (--number N | --branch B) --local-sha S
                       [--auth-from-stdin] [--api-url U]
 
-pr-create and pr-status print one JSON object (the gitflow.sh output contract).
-The token comes from GH_TOKEN or GITHUB_TOKEN, read by name, or from stdin when
-gitflow.sh pipes in the credentials of an authenticated gh. It is sent only in
-the Authorization header, to the API of the repository's own host (or to
---api-url, which must be https, or plain http on the loopback interface for
-tests). It never appears in a URL, a log line or the output.
+pr-create and pr-status print one JSON object (the gitflow.sh output contract),
+also when something unexpected fails.
+
+Credentials are read by name, never in bulk. GH_TOKEN and GITHUB_TOKEN are
+github.com credentials and are used only when the repository's host is
+github.com. Another host gets GH_ENTERPRISE_TOKEN or GITHUB_ENTERPRISE_TOKEN,
+and only when the operator lists it in GITFLOW_GITHUB_HOSTS (or names it in
+GH_HOST). gitflow.sh can instead pipe in the credentials of a gh that is logged
+in to that host. The token is sent only in the Authorization header, to the API
+of the repository's own host (or to --api-url, which must be https, or plain
+http on the loopback interface for tests); a redirect to any other origin drops
+it. It never appears in a URL, a log line or the output.
 """
 
 from __future__ import annotations
 
 import argparse
+import http.client
 import json
 import os
 import re
@@ -41,7 +48,10 @@ if _SCRIPT_DIR not in sys.path:
 
 import gitflow_json  # noqa: E402
 
-TOKEN_ENV_NAMES = ("GH_TOKEN", "GITHUB_TOKEN")
+TOKEN_ENV_NAMES = ("GH_TOKEN", "GITHUB_TOKEN")  # github.com only
+ENTERPRISE_TOKEN_ENV_NAMES = ("GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN")  # listed hosts only
+ALLOWED_HOSTS_ENV = "GITFLOW_GITHUB_HOSTS"
+PUBLIC_HOST = "github.com"
 USER_AGENT = "deerflow-gitflow/1.0"
 API_VERSION = "2022-11-28"
 GET_ATTEMPTS = 3
@@ -117,17 +127,63 @@ def new_pull_url(repo: RemoteRepo, branch: str) -> str:
     return web_url(repo, "/pull/new/" + urllib.parse.quote(branch, safe="/"))
 
 
-def token_from_env() -> tuple[str | None, str | None]:
-    """Return (variable name, value) of the first GitHub token variable that is set."""
-    for name in TOKEN_ENV_NAMES:
+def enterprise_hosts() -> set[str]:
+    """Hosts other than github.com that the operator allows to receive an enterprise token."""
+    raw = (os.getenv(ALLOWED_HOSTS_ENV) or "").replace(",", " ")
+    hosts = {host.strip().lower() for host in raw.split() if host.strip()}
+    gh_host = (os.getenv("GH_HOST") or "").strip().lower()
+    if gh_host and gh_host != PUBLIC_HOST:
+        hosts.add(gh_host)
+    return hosts
+
+
+def token_names_for_host(host: str) -> tuple[str, ...]:
+    host = host.lower()
+    if host == PUBLIC_HOST:
+        return TOKEN_ENV_NAMES
+    if host in enterprise_hosts():
+        return ENTERPRISE_TOKEN_ENV_NAMES
+    return ()
+
+
+def auth_for_host(host: str) -> tuple[str | None, str | None]:
+    """Return (variable name, value) of the first token variable this host may receive."""
+    for name in token_names_for_host(host):
         value = (os.getenv(name) or "").strip()
         if value:
             return name, value
     return None, None
 
 
-def token_env_names_present() -> list[str]:
-    return [name for name in TOKEN_ENV_NAMES if (os.getenv(name) or "").strip()]
+def token_env_names_present(host: str | None = None) -> list[str]:
+    names = token_names_for_host(host) if host else TOKEN_ENV_NAMES + ENTERPRISE_TOKEN_ENV_NAMES
+    return [name for name in names if (os.getenv(name) or "").strip()]
+
+
+def missing_credentials_message(host: str) -> str:
+    if host.lower() == PUBLIC_HOST:
+        return "no GitHub credentials found (gh is missing or not logged in, and neither GH_TOKEN nor GITHUB_TOKEN is set)"
+    return f"no GitHub credentials found for {host}: GH_TOKEN and GITHUB_TOKEN are only sent to github.com. For a GitHub Enterprise host, list it in {ALLOWED_HOSTS_ENV} and set GH_ENTERPRISE_TOKEN, or log gh in to it"
+
+
+def _origin(url: str) -> tuple[str, str, int | None]:
+    parts = urllib.parse.urlsplit(url)
+    scheme = parts.scheme.lower()
+    return scheme, (parts.hostname or "").lower(), parts.port or {"https": 443, "http": 80}.get(scheme)
+
+
+class _SameOriginRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Follow redirects, but keep the token on the origin it was meant for."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        new = super().redirect_request(req, fp, code, msg, headers, newurl)
+        if new is not None and _origin(new.full_url) != _origin(req.full_url):
+            new.remove_header("Authorization")
+        return new
+
+
+def _build_opener() -> urllib.request.OpenerDirector:
+    return urllib.request.build_opener(_SameOriginRedirectHandler())
 
 
 def _decode_json(raw: bytes) -> Any:
@@ -164,6 +220,7 @@ class RestTransport:
         self.base = base or api_base(host)
         self._auth_value = auth_value
         self.timeout = timeout
+        self._opener = _build_opener()
 
     def request(self, method: str, path: str, body: dict[str, Any] | None = None, query: dict[str, str] | None = None) -> tuple[int, Any]:
         url = self.base + path
@@ -183,7 +240,7 @@ class RestTransport:
         for attempt in range(1, attempts + 1):
             request = urllib.request.Request(url, data=data, method=method, headers=headers)
             try:
-                with urllib.request.urlopen(request, timeout=self.timeout) as response:
+                with self._opener.open(request, timeout=self.timeout) as response:
                     return int(response.status), _decode_json(response.read())
             except urllib.error.HTTPError as exc:
                 try:
@@ -194,11 +251,13 @@ class RestTransport:
                     time.sleep(RETRY_BASE_SECONDS * 2 ** (attempt - 1))
                     continue
                 return int(exc.code), _decode_json(raw)
-            except (urllib.error.URLError, TimeoutError, ConnectionError) as exc:
+            except (http.client.HTTPException, OSError) as exc:
+                # URLError, timeouts, resets, TLS errors and a response cut short
+                # (IncompleteRead, BadStatusLine) all mean: the outcome is unknown.
                 if attempt < attempts:
                     time.sleep(RETRY_BASE_SECONDS * 2 ** (attempt - 1))
                     continue
-                reason = getattr(exc, "reason", exc)
+                reason = getattr(exc, "reason", None) or f"{type(exc).__name__}: {exc}"
                 raise GitHubError(f"network error talking to {self.host}: {reason}", transient=True) from None
         raise GitHubError(f"no response from {self.host}", transient=True)
 
@@ -240,10 +299,11 @@ def create_pull(transport: Transport, repo: RemoteRepo, *, title: str, body: str
     except GitHubError as exc:
         if not exc.transient:
             raise
-        # The request may have reached GitHub before the connection dropped.
+        # The request may have reached GitHub before the connection dropped: the
+        # lookup before the POST found nothing, so a pull request now is this one.
         existing = find_pulls(transport, repo, head)
         if existing:
-            return get_pull(transport, repo, int(existing[0]["number"])), False
+            return get_pull(transport, repo, int(existing[0]["number"])), True
         status, data = transport.request("POST", f"/repos/{repo.owner}/{repo.name}/pulls", body=payload)
     if status == 201 and isinstance(data, dict) and "number" in data:
         return get_pull(transport, repo, int(data["number"])), True
@@ -346,22 +406,33 @@ def review_summary(transport: Transport, repo: RemoteRepo, number: int) -> dict[
 # ---------------------------------------------------------------------- CLI
 
 
-def _load_auth(from_stdin: bool) -> tuple[str, str]:
+def _load_auth(from_stdin: bool, host: str) -> tuple[str, str]:
     if from_stdin:
         value = sys.stdin.readline().strip()
         if not value:
             raise GitHubError("gh is authenticated but returned no token (gh auth token)")
         return value, "gh"
-    _, value = token_from_env()
+    _, value = auth_for_host(host)
     if not value:
-        raise GitHubError("no GitHub credentials found (gh is missing or not authenticated, and neither GH_TOKEN nor GITHUB_TOKEN is set)")
+        raise GitHubError(missing_credentials_message(host))
     return value, "env"
 
 
 def _transport(args: argparse.Namespace) -> tuple[RestTransport, str]:
     base = resolve_api_base(args.host, args.api_url)
-    value, source = _load_auth(args.auth_from_stdin)
+    value, source = _load_auth(args.auth_from_stdin, args.host)
     return RestTransport(args.host, value, base=base), source
+
+
+def _read_body(path: str) -> str:
+    try:
+        raw = Path(path).read_bytes()
+    except OSError as exc:
+        raise GitHubError(f"cannot read the body file {path}: {exc.strerror}") from None
+    try:
+        return raw.decode("utf-8")
+    except UnicodeDecodeError:
+        raise GitHubError(f"the body file {path} is not UTF-8 text; convert it (for example with iconv) and try again") from None
 
 
 def _fail(command: str, exc: GitHubError) -> int:
@@ -380,7 +451,7 @@ def cmd_pr_create(args: argparse.Namespace) -> int:
     repo = RemoteRepo(args.host, args.owner, args.repo)
     try:
         transport, source = _transport(args)
-        body = Path(args.body_file).read_text(encoding="utf-8")
+        body = _read_body(args.body_file)
         pull, created = create_pull(transport, repo, title=args.title, body=body, head=args.head, base=args.base, draft=args.draft)
     except GitHubError as exc:
         return _fail("pr create", exc)
@@ -438,7 +509,8 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="action", required=True)
     remote = sub.add_parser("parse-remote")
     remote.add_argument("url")
-    sub.add_parser("token-names")
+    names = sub.add_parser("token-names")
+    names.add_argument("--host", help="only the variables this host may receive")
     new_pull = sub.add_parser("new-pull-url")
     for name in ("--host", "--owner", "--repo", "--branch"):
         new_pull.add_argument(name, required=True)
@@ -480,14 +552,18 @@ def main(argv: list[str] | None = None) -> int:
         sys.stdout.write(f"{parsed.host}\t{parsed.owner}\t{parsed.name}\n")
         return 0
     if args.action == "token-names":
-        sys.stdout.write(" ".join(token_env_names_present()) + "\n")
+        sys.stdout.write(" ".join(token_env_names_present(args.host)) + "\n")
         return 0
     if args.action == "new-pull-url":
         sys.stdout.write(new_pull_url(RemoteRepo(args.host, args.owner, args.repo), args.branch) + "\n")
         return 0
-    if args.action == "pr-create":
-        return cmd_pr_create(args)
-    return cmd_pr_status(args)
+    command = "pr create" if args.action == "pr-create" else "pr status"
+    try:
+        return cmd_pr_create(args) if args.action == "pr-create" else cmd_pr_status(args)
+    except Exception as exc:
+        # The JSON contract holds even for a bug: report it instead of a traceback.
+        gitflow_json.emit_fail(command, {"error": f"internal error in gitflow_github.py: {type(exc).__name__}: {exc}"})
+        return 1
 
 
 if __name__ == "__main__":

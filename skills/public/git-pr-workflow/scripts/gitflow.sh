@@ -36,12 +36,16 @@ PERMANENT_RE='authentication failed|permission denied|could not read username|re
 TRANSIENT_RE='could not resolve host|temporary failure in name resolution|name or service not known|connection (timed out|reset|refused|closed)|operation timed out|timed out|early eof|rpc failed|remote end hung up unexpectedly|failed to connect|network is unreachable|unexpected disconnect|broken pipe|ssl_|gnutls|tls connection|returned error: 5[0-9][0-9]|http 5[0-9][0-9]|internal server error|bad gateway|service unavailable|gateway time-?out'
 
 export GIT_TERMINAL_PROMPT=0 GCM_INTERACTIVE=never GIT_EDITOR=true GH_PROMPT_DISABLED=1 GH_NO_UPDATE_NOTIFIER=1 PYTHONDONTWRITEBYTECODE=1
+# Paths given to --paths are file names: brackets, stars and question marks are
+# literal characters, never glob patterns.
+export GIT_LITERAL_PATHSPECS=1
 
 CMD=""
 REPO=""
 REPO_ARG=""
 REMOTE="origin"
-SAVED_INDEX=""
+SAVED_INDEX=""        # backup copy of the index file while a commit is staged
+SAVED_INDEX_TARGET="" # the index file that the backup belongs to
 GIT_INDEX_OVERRIDE=""
 GIT_STDIN=""
 GIT_NET=0
@@ -84,7 +88,11 @@ if ! type -P "$PY" >/dev/null; then
     exit 1
 fi
 
-TMP="$(mktemp -d "${TMPDIR:-/tmp}/gitflow.XXXXXXXX")"
+if ! TMP="$(mktemp -d "${TMPDIR:-/tmp}/gitflow.XXXXXXXX" 2>/dev/null)"; then
+    printf '{"ok": false, "error": "cannot create a temporary directory; check that TMPDIR names a writable directory"}\n'
+    printf 'gitflow: error: cannot create a temporary directory; check that TMPDIR names a writable directory\n' >&2
+    exit 1
+fi
 OUT="$TMP/out.rec"
 ERR="$TMP/err.rec"
 : >"$OUT"
@@ -132,12 +140,28 @@ finish() {
     exit 0
 }
 
+backup_index() { # copy the index file itself, so flags and intent-to-add entries survive a refusal
+    g rev-parse --git-path index
+    SAVED_INDEX_TARGET="$GOUT"
+    if [[ $SAVED_INDEX_TARGET != /* ]]; then SAVED_INDEX_TARGET="$REPO/$SAVED_INDEX_TARGET"; fi
+    SAVED_INDEX="$TMP/index.backup"
+    if [[ -f $SAVED_INDEX_TARGET ]]; then
+        cp -p -- "$SAVED_INDEX_TARGET" "$SAVED_INDEX"
+    else
+        SAVED_INDEX="absent" # a repository without an index file yet
+    fi
+}
+
 restore_saved_index() {
     if [[ -n $SAVED_INDEX ]]; then
         local saved="$SAVED_INDEX"
         SAVED_INDEX=""
-        LC_ALL=C git -C "$REPO" read-tree "$saved" >/dev/null 2>&1 || true
-        LC_ALL=C git -C "$REPO" update-index -q --refresh >/dev/null 2>&1 || true
+        if [[ $saved == absent ]]; then
+            rm -f -- "$SAVED_INDEX_TARGET" || true
+        else
+            # Copy next to the index, then rename over it: the swap is atomic.
+            cp -p -- "$saved" "$SAVED_INDEX_TARGET.gitflow" && mv -f -- "$SAVED_INDEX_TARGET.gitflow" "$SAVED_INDEX_TARGET" || true
+        fi
         _rec "$ERR" b index_restored true
     fi
 }
@@ -336,6 +360,32 @@ default_branch() { # -> DEFAULT_BRANCH DEFAULT_SOURCE
     DEFAULT_SOURCE="fallback"
 }
 
+default_branch_net() { # default_branch, but asks the remote when its HEAD is not recorded locally
+    local line re='^ref: refs/heads/([^[:space:]]+)[[:space:]]+HEAD$'
+    DEFAULT_UNKNOWN=false
+    default_branch
+    if [[ $DEFAULT_SOURCE == "$REMOTE/HEAD" ]] || ! has_remote "$REMOTE"; then return 0; fi
+    # A clone made with git init + fetch (as CI checkouts are) has no
+    # origin/HEAD; guessing main would leave the real default unprotected.
+    git_net 2 ls-remote --symref "$REMOTE" HEAD
+    if ((GRC == 0)); then
+        while IFS= read -r line; do
+            if [[ $line =~ $re ]]; then
+                DEFAULT_BRANCH="${BASH_REMATCH[1]}"
+                DEFAULT_SOURCE="$REMOTE HEAD (ls-remote)"
+                return 0
+            fi
+        done <<<"$GOUT"
+    fi
+    DEFAULT_UNKNOWN=true
+}
+
+warn_default_unknown() {
+    if [[ ${DEFAULT_UNKNOWN-false} == true ]]; then
+        warn "could not ask $REMOTE for its default branch; assuming '$DEFAULT_BRANCH' ($DEFAULT_SOURCE), and main and master stay protected"
+    fi
+}
+
 is_protected() { [[ $1 == "$DEFAULT_BRANCH" || $1 == main || $1 == master ]]; }
 
 operation_in_progress() { # -> OPERATION
@@ -374,7 +424,7 @@ url_has_credentials() {
 
 parse_remote() { # parse_remote URL -> R_HOST R_OWNER R_NAME; fails when not GitHub-style
     local line
-    if ! line="$("$PY" "$HERE/gitflow_github.py" parse-remote "$1")"; then return 1; fi
+    if ! line="$("$PY" "$HERE/gitflow_github.py" parse-remote -- "$1")"; then return 1; fi
     IFS=$'\t' read -r R_HOST R_OWNER R_NAME <<<"$line"
 }
 
@@ -395,9 +445,9 @@ gh_authenticated() { # gh_authenticated HOST
     fi
 }
 
-ls_remote_sha() { # ls_remote_sha BRANCH -> REMOTE_SHA (empty when the branch is not on the remote)
+ls_remote_sha() { # ls_remote_sha BRANCH [REMOTE_OR_URL] -> REMOTE_SHA (empty when the branch is not there)
     local sha ref
-    git_net 3 ls-remote "$REMOTE" "refs/heads/$1"
+    git_net 3 ls-remote "${2:-$REMOTE}" "refs/heads/$1"
     if ((GRC != 0)); then git_die ls-remote; fi
     REMOTE_SHA=""
     while IFS=$'\t' read -r sha ref; do
@@ -484,18 +534,34 @@ normalize_paths() { # normalize_paths RAW... -> PATHS (repository-root-relative)
     done
 }
 
-stamp_now() { # -> STAMP_ID (sortable, milliseconds) and STAMP_ISO, both UTC
-    local rt="${EPOCHREALTIME-}" secs ms="000"
+stamp_now() { # -> STAMP_ID (UTC, milliseconds, after every existing checkpoint id) and STAMP_ISO
+    local rt="${EPOCHREALTIME-}" secs ms="000" now latest
     if [[ -n $rt ]]; then
         secs="${rt%[.,]*}"
         ms="${rt#*[.,]}"
         ms="${ms:0:3}"
+    elif now="$(date +%s%N 2>/dev/null)" && [[ $now =~ ^[0-9]{19,}$ ]]; then
+        # bash before 5.0 has no EPOCHREALTIME; GNU date knows the sub-second part.
+        secs="${now:0:${#now}-9}"
+        ms="${now:${#now}-9:3}"
     else
         printf -v secs '%(%s)T' -1
     fi
     TZ=UTC0 printf -v STAMP_ID '%(%Y%m%dT%H%M%S)T' "$secs"
-    STAMP_ID+="${ms}Z"
+    STAMP_ID+="$ms"
     TZ=UTC0 printf -v STAMP_ISO '%(%Y-%m-%dT%H:%M:%SZ)T' "$secs"
+    # Ids must sort in creation order even when the clock has no sub-second part
+    # or steps back: never go below the newest id, take the next millisecond.
+    gx for-each-ref --sort=-refname --count=1 '--format=%(refname:lstrip=2)' "$CHECKPOINT_NS"
+    latest="${GOUT:0:18}"
+    if [[ $latest =~ ^[0-9]{8}T[0-9]{9}$ && ! $STAMP_ID > $latest ]]; then
+        if ((10#${latest:15:3} < 999)); then
+            printf -v STAMP_ID '%s%03d' "${latest:0:15}" $((10#${latest:15:3} + 1))
+        else
+            STAMP_ID="$latest"
+        fi
+    fi
+    STAMP_ID+="Z"
 }
 
 trim() {
@@ -518,7 +584,32 @@ drop_temp_index() {
     rm -f -- "$TMP_INDEX" "$TMP_INDEX.lock"
 }
 
-create_checkpoint() { # create_checkpoint MESSAGE: snapshot $REPO -> CK_* (HEAD and the index untouched)
+unflag_present_entries() { # in the temporary index: let git add read files hidden by index flags
+    # A copied index keeps skip-worktree and assume-unchanged bits, and git add
+    # then records the HEAD blob instead of the local edit. Re-insert those
+    # entries without flags and without stat data, so git add hashes the file on
+    # disk. Files that a sparse checkout left out keep their bit.
+    local record tag path
+    g_file "$TMP/flags" ls-files -v -s -z
+    : >"$TMP/flags.reset"
+    while IFS= read -r -d '' record; do
+        tag="${record:0:1}"
+        path="${record#*$'\t'}"
+        case "$tag" in
+        S | [a-z]) ;;
+        *) continue ;;
+        esac
+        if [[ -e $REPO/$path || -L $REPO/$path ]]; then printf '%s\0' "${record:2}" >>"$TMP/flags.reset"; fi
+    done <"$TMP/flags"
+    if [[ -s $TMP/flags.reset ]]; then
+        GIT_STDIN="$TMP/flags.reset"
+        g update-index -z --index-info
+        GIT_STDIN=""
+    fi
+}
+
+create_checkpoint() { # create_checkpoint MESSAGE [FORCE_FILE]: snapshot $REPO -> CK_* (HEAD and the index untouched)
+    # FORCE_FILE lists (NUL-separated) files to include even when they are ignored.
     local message head branch real_index tree commit subject
     message="$(trim "${1-}")"
     rev HEAD
@@ -533,7 +624,9 @@ create_checkpoint() { # create_checkpoint MESSAGE: snapshot $REPO -> CK_* (HEAD 
     if [[ -f $real_index ]] && cp -- "$real_index" "$TMP_INDEX" 2>/dev/null; then copied=true; fi
     GIT_INDEX_OVERRIDE="$TMP_INDEX"
     if [[ $copied == false && -n $head ]]; then g read-tree "$head"; fi
+    if [[ $copied == true ]]; then unflag_present_entries; fi
     g add -A -- .
+    if [[ -n ${2-} && -s ${2-} ]]; then g add -f --pathspec-from-file="$2" --pathspec-file-nul; fi
     g write-tree
     tree="$GOUT"
     drop_temp_index
@@ -562,6 +655,14 @@ create_checkpoint() { # create_checkpoint MESSAGE: snapshot $REPO -> CK_* (HEAD 
     CK_HEAD="$head"
     CK_BRANCH="$branch"
     CK_SUBJECT="$subject"
+}
+
+dir_is_empty() { # the script never sets these glob options elsewhere
+    local -a entries=()
+    shopt -s nullglob dotglob
+    entries=("$1"/*)
+    shopt -u nullglob dotglob
+    ((${#entries[@]} == 0))
 }
 
 put_checkpoint() {
@@ -616,6 +717,16 @@ delete_in_repo() { # delete_in_repo REL: remove one file or symlink inside $REPO
     case "/$rel/" in
     //* | */../* | */./*) return 0 ;; # only plain repository-relative paths, as git lists them
     esac
+    # A symlink in a leading component would lead outside the repository (or to
+    # another path in it): never delete through one.
+    dir="$rel"
+    while [[ $dir == */* ]]; do
+        dir="${dir%/*}"
+        if [[ -L $REPO/$dir ]]; then
+            KEPT_BEHIND_LINK+=("$rel")
+            return 0
+        fi
+    done
     if [[ -L $REPO/$rel || -f $REPO/$rel ]]; then
         rm -f -- "$REPO/$rel"
         DELETED+=("$rel")
@@ -662,9 +773,9 @@ cmd_preflight() {
     done
     resolve_repo
     g_file "$TMP/status" status --porcelain=v2 --branch -z --untracked-files=all
-    default_branch
+    default_branch_net
     current_branch
-    local url="" host="github.com" parsed=false gh_installed=false gh_auth=false names
+    local url="" host="github.com" parsed=false gh_installed=false gh_auth=false names usable
     gx config --get "remote.$REMOTE.url"
     if ((GRC == 0)); then url="$GOUT"; fi
     if [[ -n $url ]] && parse_remote "$url"; then
@@ -676,6 +787,7 @@ cmd_preflight() {
         if gh_authenticated "$host"; then gh_auth=true; fi
     fi
     names="$("$PY" "$HERE/gitflow_github.py" token-names)"
+    usable="$("$PY" "$HERE/gitflow_github.py" token-names "--host=$host")"
     operation_in_progress
     common_dir
     g rev-parse --absolute-git-dir
@@ -706,6 +818,14 @@ cmd_preflight() {
     local name
     for name in $names; do add token_env "$name"; done
     put_bool token_present "$(bool test -n "$names")"
+    # What pr create and pr status would authenticate with for this remote.
+    if [[ $parsed == true && -n $usable ]]; then
+        put github_auth "${usable%% *}"
+    elif [[ $parsed == true && $gh_auth == true ]]; then
+        put github_auth gh
+    else
+        put_null github_auth
+    fi
     put_bool linked_worktree "$(bool test "$git_dir" != "$COMMON")"
     put_num checkpoints "${#checkpoint_refs[@]}"
     put_list warnings
@@ -720,9 +840,14 @@ cmd_preflight() {
     if [[ -n $OPERATION ]]; then warn "a $OPERATION is in progress; finish or abort it before other git operations"; fi
     gx diff --name-only --diff-filter=U
     if [[ -n $GOUT ]]; then warn "unresolved merge conflicts are present"; fi
-    if [[ $parsed == true && $gh_auth == false && -z $names ]]; then
-        warn "no GitHub credentials found (gh is not authenticated and no token variable is set), so pushes over https and pull requests will fail"
+    if [[ $parsed == true && $gh_auth == false && -z $usable ]]; then
+        if [[ ${host,,} != github.com && -n $names ]]; then
+            warn "GH_TOKEN and GITHUB_TOKEN are only sent to github.com; pull requests on $host need GH_ENTERPRISE_TOKEN with $host listed in GITFLOW_GITHUB_HOSTS, or gh logged in to $host"
+        else
+            warn "no GitHub credentials found (gh is not authenticated and no token variable is set), so pushes over https and pull requests will fail"
+        fi
     fi
+    warn_default_unknown
     finish
 }
 
@@ -857,7 +982,8 @@ cmd_restore() {
             ;;
         --paths)
             shift
-            while (($#)) && [[ $1 != --* ]]; do
+            # The list ends at the next option (anything starting with '-').
+            while (($#)) && [[ $1 != -* ]]; do
                 raw_paths+=("$1")
                 shift
             done
@@ -875,25 +1001,70 @@ cmd_restore() {
     resolve_repo
     resolve_checkpoint "$id"
     normalize_paths "${raw_paths[@]}"
-    create_checkpoint "before restore of $T_ID"
-    local safety="$CK_ID"
-    local -a spec=("${PATHS[@]}") restored=() current=()
+    local -a spec=("${PATHS[@]}") restored=() current=() blocked=()
     if ((${#spec[@]} == 0)); then spec=(.); fi
+    # What the checkpoint would write, before anything changes.
     new_temp_index
     GIT_INDEX_OVERRIDE="$TMP_INDEX"
     g read-tree "$T_COMMIT"
     g_file "$TMP/restore.files" ls-files -z -- "${spec[@]}"
-    if [[ -s $TMP/restore.files ]]; then
-        GIT_STDIN="$TMP/restore.files"
-        g checkout-index -f -z --stdin
-        GIT_STDIN=""
-    fi
     drop_temp_index
     mapfile -d '' -t restored <"$TMP/restore.files"
     if ((${#PATHS[@]})) && ((${#restored[@]} == 0)) && [[ $clean == false ]]; then
         die "none of the given paths exist in the checkpoint" "Check the names with: git ls-tree -r --name-only $T_COMMIT"
     fi
+    # git would remove a directory, or a file or symlink standing where the
+    # checkpoint has a directory, to write these files. Ignored files and nested
+    # repositories inside them are in no checkpoint, so refuse instead.
+    local prefix rest target
+    local -A in_way=()
+    : >"$TMP/restore.existing"
+    for file in "${restored[@]}"; do
+        prefix=""
+        rest="$file"
+        while [[ $rest == */* ]]; do
+            prefix="${prefix:+$prefix/}${rest%%/*}"
+            rest="${rest#*/}"
+            if [[ -L $REPO/$prefix || (-e $REPO/$prefix && ! -d $REPO/$prefix) ]]; then
+                in_way["$prefix"]=1
+                continue 2
+            fi
+        done
+        target="$REPO/$file"
+        if [[ -d $target && ! -L $target ]]; then
+            if ! dir_is_empty "$target"; then in_way["$file"]=1; fi
+        elif [[ -e $target || -L $target ]]; then
+            printf '%s\0' "$file" >>"$TMP/restore.existing"
+        fi
+    done
+    # The safety checkpoint must keep every file this restore overwrites. git add
+    # skips ignored files, so those few are added by name, with force.
+    : >"$TMP/restore.force"
+    if [[ -s $TMP/restore.existing ]]; then
+        GIT_STDIN="$TMP/restore.existing"
+        # check-ignore rejects the literal-pathspec setting; it reads stdin paths literally anyway.
+        GIT_LITERAL_PATHSPECS=0 _git_exec "$TMP/restore.force" "$REPO" check-ignore -z --stdin
+        GIT_STDIN=""
+        if ((GRC > 1)); then git_die check-ignore; fi # 1 only means: none is ignored
+    fi
+    if ((${#in_way[@]})); then
+        for file in "${!in_way[@]}"; do blocked+=("$file"); done
+        for file in "${blocked[@]}"; do _rec "$ERR" a blocked_paths "$file"; done
+        die "restore would remove paths that are in the way: ${blocked[*]}" "A directory (or a file or symlink where the checkpoint has a directory) stands where the checkpoint has a file. Check its contents, move it aside yourself, then restore again."
+    fi
+    create_checkpoint "before restore of $T_ID" "$TMP/restore.force"
+    local safety="$CK_ID"
+    if [[ -s $TMP/restore.files ]]; then
+        new_temp_index
+        GIT_INDEX_OVERRIDE="$TMP_INDEX"
+        g read-tree "$T_COMMIT"
+        GIT_STDIN="$TMP/restore.files"
+        g checkout-index -f -z --stdin
+        GIT_STDIN=""
+        drop_temp_index
+    fi
     DELETED=()
+    KEPT_BEHIND_LINK=()
     if [[ $clean == true ]]; then
         local -A keep=() seen=()
         for file in "${restored[@]}"; do keep["$file"]=1; done
@@ -918,6 +1089,10 @@ cmd_restore() {
     local undo="restore $safety"
     if [[ $clean == true ]]; then undo+=" --clean"; fi
     put note "HEAD and the index are unchanged; restored files show up as working-tree changes. Undo with: $undo"
+    put_list warnings
+    for file in "${KEPT_BEHIND_LINK[@]}"; do
+        warn "kept $file: a leading directory of it is a symlink, and deleting through it could reach outside the repository"
+    done
     finish
 }
 
@@ -946,7 +1121,8 @@ cmd_commit() {
         --paths)
             paths_given=true
             shift
-            while (($#)) && [[ $1 != --* ]]; do
+            # The list ends at the next option (anything starting with '-').
+            while (($#)) && [[ $1 != -* ]]; do
                 raw_paths+=("$1")
                 shift
             done
@@ -986,7 +1162,7 @@ cmd_commit() {
     current_branch
     local branch="$BRANCH"
     if [[ -z $branch ]]; then die "HEAD is detached; commits made here are easy to lose" "Create a branch first: gitflow.sh branch NAME"; fi
-    default_branch
+    default_branch_net
     if is_protected "$branch" && [[ $allow == false ]]; then
         die "refusing to commit on protected branch '$branch'" "Create a work branch first (gitflow.sh branch feat/<topic>); pass --allow-default-branch only when the user asked for a commit on this branch."
     fi
@@ -1019,14 +1195,14 @@ cmd_commit() {
         fi
     fi
     if ((${#PATHS[@]})) || [[ $all == true ]]; then
-        gx write-tree
-        if ((GRC == 0)); then SAVED_INDEX="$GOUT"; fi
+        backup_index
         if ((${#PATHS[@]})); then g add -A -- "${PATHS[@]}"; else g add -A -- .; fi
     fi
     g_file "$TMP/staged" diff --cached --name-only -z --no-renames
     if [[ ! -s $TMP/staged ]]; then die "nothing to commit: no staged changes" "Pass --paths with the files you changed, or --all. Check them with preflight."; fi
     g_file "$TMP/scan.names" diff --cached --name-only -z --no-renames --diff-filter=ACMRT
-    g_file "$TMP/scan.diff" -c core.quotepath=false diff --cached --no-color --no-ext-diff --no-textconv --no-renames --unified=0 --src-prefix=a/ --dst-prefix=b/ --diff-filter=ACMRT
+    # --text: a -diff or binary attribute, a NUL byte or UTF-16 must not hide content from the scan.
+    g_file "$TMP/scan.diff" -c core.quotepath=false diff --cached --text --no-color --no-ext-diff --no-textconv --no-renames --unified=0 --src-prefix=a/ --dst-prefix=b/ --diff-filter=ACMRT
     local scan_status=0 summary="" findings=""
     "$PY" "$HERE/gitflow_scan.py" --names "$TMP/scan.names" <"$TMP/scan.diff" >"$TMP/scan.out" || scan_status=$?
     if ((scan_status == 3)); then
@@ -1042,7 +1218,10 @@ cmd_commit() {
     local body="$message"
     while [[ $body == *$'\n' ]]; do body="${body%$'\n'}"; done
     printf '%s\n' "$body" >"$TMP/commit.msg"
-    g commit --quiet -F "$TMP/commit.msg"
+    # The message travels on stdin, so no shell quoting can mangle it.
+    GIT_STDIN="$TMP/commit.msg"
+    g commit --quiet -F -
+    GIT_STDIN=""
     SAVED_INDEX=""
     rev HEAD
     local sha="$REV" subject re
@@ -1068,6 +1247,7 @@ cmd_commit() {
     put_num deletions "$deletions"
     put_list warnings
     if ((${#subject} > 72)); then warn "subject is ${#subject} characters; keep it under 72"; fi
+    warn_default_unknown
     finish
 }
 
@@ -1101,7 +1281,7 @@ cmd_push() {
     current_branch
     local branch="$BRANCH"
     if [[ -z $branch ]]; then die "HEAD is detached; nothing to push" "Create a branch first: gitflow.sh branch NAME"; fi
-    default_branch
+    default_branch_net
     if is_protected "$branch"; then die "refusing to push protected branch '$branch'" "Push a feature branch and open a pull request."; fi
     if ! has_remote "$REMOTE"; then die "remote '$REMOTE' is not configured"; fi
     rev HEAD
@@ -1134,7 +1314,8 @@ cmd_push() {
         if [[ -n $summary ]]; then GERR+=$'\n'"$summary"; fi
         git_die push
     fi
-    ls_remote_sha "$branch"
+    # Read back where the push went: a separate pushurl is not the fetch URL.
+    ls_remote_sha "$branch" "${push_url:-$REMOTE}"
     if [[ $REMOTE_SHA != "$head" ]]; then
         _rec "$ERR" s local_sha "$head"
         _rec "$ERR" s remote_sha "$REMOTE_SHA"
@@ -1160,18 +1341,19 @@ cmd_push() {
     put_num attempts "$push_attempts"
     _rec "$OUT" j retry_delays_seconds "[$delays]"
     if [[ -n $raw_url ]] && parse_remote "$raw_url"; then
-        put new_pull_request_url "$("$PY" "$HERE/gitflow_github.py" new-pull-url --host "$R_HOST" --owner "$R_OWNER" --repo "$R_NAME" --branch "$branch")"
+        put new_pull_request_url "$("$PY" "$HERE/gitflow_github.py" new-pull-url "--host=$R_HOST" "--owner=$R_OWNER" "--repo=$R_NAME" "--branch=$branch")"
     else
         put_null new_pull_request_url
     fi
     put_list warnings
     if url_has_credentials "$push_url"; then warn "remote '$REMOTE' URL embeds credentials; replace it with a plain URL and rely on the credential helper"; fi
+    warn_default_unknown
     finish
 }
 
-select_auth() { # select_auth HOST -> AUTH_MODE (env or gh)
-    local names
-    names="$("$PY" "$HERE/gitflow_github.py" token-names)"
+select_auth() { # select_auth HOST -> AUTH_MODE (env or gh); the token variables are scoped by host
+    local names message
+    names="$("$PY" "$HERE/gitflow_github.py" token-names "--host=$1")"
     if [[ -n ${names//[[:space:]]/} ]]; then
         AUTH_MODE=env
         return 0
@@ -1180,13 +1362,18 @@ select_auth() { # select_auth HOST -> AUTH_MODE (env or gh)
         AUTH_MODE=gh
         return 0
     fi
-    die "no GitHub credentials found (gh is missing or not authenticated, and neither GH_TOKEN nor GITHUB_TOKEN is set)" "Ask the user to connect GitHub (or configure a token for the sandbox). Never ask them to paste a token into chat."
+    if [[ ${1,,} == github.com ]]; then
+        message="no GitHub credentials found (gh is missing or not logged in, and neither GH_TOKEN nor GITHUB_TOKEN is set)"
+    else
+        message="no GitHub credentials found for $1 (GH_TOKEN and GITHUB_TOKEN are only sent to github.com; for a GitHub Enterprise host, list it in GITFLOW_GITHUB_HOSTS and set GH_ENTERPRISE_TOKEN, or log gh in to it)"
+    fi
+    die "$message" "Ask the user to connect GitHub (or configure a token for the sandbox). Never ask them to paste a token into chat."
 }
 
 run_github() { # run gitflow_github.py with the selected credentials and exit with its status
     local status=0
     trap - ERR
-    if [[ -n ${GITFLOW_API_URL-} ]]; then set -- "$@" --api-url "$GITFLOW_API_URL"; fi
+    if [[ -n ${GITFLOW_API_URL-} ]]; then set -- "$@" "--api-url=$GITFLOW_API_URL"; fi
     if [[ $AUTH_MODE == gh ]]; then
         # gh's credentials travel on a pipe, never through argv or the environment.
         gh auth token --hostname "$R_HOST" 2>/dev/null | "$PY" "$HERE/gitflow_github.py" "$@" --auth-from-stdin || status=$?
@@ -1240,7 +1427,7 @@ cmd_pr_create() {
     current_branch
     local branch="$BRANCH"
     if [[ -z $branch ]]; then die "HEAD is detached" "Switch to the branch you pushed."; fi
-    default_branch
+    default_branch_net
     if is_protected "$branch"; then die "the current branch '$branch' is protected; a pull request needs a feature branch as its head"; fi
     title="$(trim "$title")"
     if [[ -z $title ]]; then die "the pull request title is empty"; fi
@@ -1263,10 +1450,11 @@ cmd_pr_create() {
     ls_remote_sha "$branch"
     if [[ -z $REMOTE_SHA ]]; then die "branch '$branch' is not on $REMOTE" "Push it first: gitflow.sh push"; fi
     select_auth "$R_HOST"
-    local -a args=(pr-create --host "$R_HOST" --owner "$R_OWNER" --repo "$R_NAME" --head "$branch" --base "$base" --title "$title" --body-file "$body_path" --remote-sha "$REMOTE_SHA" --local-sha "$head")
+    # --opt=value: a value such as -WIP- can never be read as an option of the helper.
+    local -a args=(pr-create "--host=$R_HOST" "--owner=$R_OWNER" "--repo=$R_NAME" "--head=$branch" "--base=$base" "--title=$title" "--body-file=$body_path" "--remote-sha=$REMOTE_SHA" "--local-sha=$head")
     if [[ $draft == true ]]; then args+=(--draft); fi
     if [[ $REMOTE_SHA != "$head" ]]; then
-        args+=(--warning "$REMOTE/$branch is at ${REMOTE_SHA:0:12} but local HEAD is ${head:0:12}; push to update the pull request")
+        args+=("--warning=$REMOTE/$branch is at ${REMOTE_SHA:0:12} but local HEAD is ${head:0:12}; push to update the pull request")
     fi
     run_github "${args[@]}"
 }
@@ -1293,10 +1481,10 @@ cmd_pr_status() {
     github_remote
     current_branch
     rev HEAD
-    local -a args=(pr-status --host "$R_HOST" --owner "$R_OWNER" --repo "$R_NAME" --local-sha "$REV")
-    if [[ -n $number ]]; then args+=(--number "$number"); fi
+    local -a args=(pr-status "--host=$R_HOST" "--owner=$R_OWNER" "--repo=$R_NAME" "--local-sha=$REV")
+    if [[ -n $number ]]; then args+=("--number=$number"); fi
     if [[ -n $BRANCH ]]; then
-        args+=(--branch "$BRANCH")
+        args+=("--branch=$BRANCH")
     elif [[ -z $number ]]; then
         die "HEAD is detached; pass --number"
     fi
@@ -1364,10 +1552,10 @@ ensure_excluded() { # -> EXCLUDE_ADDED
     EXCLUDE_ADDED=true
 }
 
-is_dirty() { # is_dirty DIR
+is_dirty() { # is_dirty DIR: changes or untracked files whatever the status config, or a state git cannot read
     local REPO="$1"
-    gx status --porcelain
-    ((GRC == 0)) && [[ -n $GOUT ]]
+    gx status --porcelain --untracked-files=all --ignore-submodules=none
+    ((GRC != 0)) || [[ -n $GOUT ]]
 }
 
 cmd_worktree_add() {
@@ -1472,7 +1660,7 @@ cmd_worktree_remove() {
     local checkpoint=""
     if [[ -d $WT_PATH ]] && is_dirty "$WT_PATH"; then
         if [[ $force == false ]]; then
-            die "worktree '$name' has uncommitted changes" "Commit and push them, or pass --force (a checkpoint of the changes is saved first)."
+            die "worktree '$name' has uncommitted changes (or git cannot read its state)" "Commit and push them, or pass --force: a checkpoint of the changes is saved first, and the worktree is kept if that fails."
         fi
         local REPO_SAVED="$REPO"
         REPO="$WT_PATH"

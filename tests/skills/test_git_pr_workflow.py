@@ -92,7 +92,7 @@ def isolated_env(tmp_path, monkeypatch, host_tools):
     gitconfig = home / ".gitconfig"
     gitconfig.write_text("[user]\n\tname = Test Agent\n\temail = agent@example.com\n[init]\n\tdefaultBranch = main\n", encoding="utf-8")
     for name in list(os.environ):
-        if name.startswith(("GIT_", "GITFLOW_")) or name in ("GH_TOKEN", "GITHUB_TOKEN") or name.lower().endswith("_proxy"):
+        if name.startswith(("GIT_", "GITFLOW_", "GH_")) or name in ("GITHUB_TOKEN", "GITHUB_ENTERPRISE_TOKEN") or name.lower().endswith("_proxy"):
             monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("XDG_CONFIG_HOME", str(home / ".config"))
@@ -110,8 +110,8 @@ def git(cwd: Path, *args: str) -> str:
     return result.stdout.strip()
 
 
-def run_cli(*args: str, cwd: Path, stdin: str | None = None) -> tuple[int, dict | None, str, str]:
-    proc = subprocess.run([BASH, str(GITFLOW), *args], cwd=cwd, input=stdin, capture_output=True, text=True, timeout=120, check=False)
+def run_cli(*args: str, cwd: Path, stdin: str | None = None, env: dict | None = None) -> tuple[int, dict | None, str, str]:
+    proc = subprocess.run([BASH, str(GITFLOW), *args], cwd=cwd, input=stdin, capture_output=True, text=True, timeout=120, check=False, env=env)
     payload = json.loads(proc.stdout) if proc.stdout.startswith("{") else None
     return proc.returncode, payload, proc.stdout, proc.stderr
 
@@ -384,19 +384,29 @@ def test_restore_with_paths_only_touches_those_paths(repos):
 
 # ------------------------------------------------------------------ commit
 
+GH_SECRET = "ghp_" + "Ab3dE" * 8
+PAT_SECRET = "github_pat_" + "11AbCdEfGh" * 4
+AWS_SECRET = "AKIA" + "QWERTYUIOPASDFGH"
+SLACK_SECRET = "xoxb-" + "1234567890-abcdefghij"
+LITERAL_SECRET = "q8Zr2Lk9" + "Wm4Tn7Vb"
 SECRET_CASES = [
-    ("config.py", 'GITHUB = "' + "ghp_" + "Ab3dE" * 8 + '"\n', "github-token"),
-    ("config.py", 'PAT = "' + "github_pat_" + "11AbCdEfGh" * 4 + '"\n', "github-token"),
-    ("deploy.sh", "export KEY_ID=" + "AKIA" + "QWERTYUIOPASDFGH" + "\n", "aws-access-key"),
-    ("deploy_key", "-----BEGIN " + "OPENSSH PRIVATE KEY-----\nabc\n", "private-key"),
-    ("notify.js", 'const hook = "' + "xoxb-" + "1234567890-abcdefghij" + '";\n', "slack-token"),
-    ("settings.py", 'DB_PASSWORD = "' + "q8Zr2Lk9" + "Wm4Tn7Vb" + '"\n', "hardcoded-credential"),
-    ("settings.json", '{"api_key": "' + "Zx81Qp0" + "Lm22Rt9" + '"}\n', "hardcoded-credential"),
+    ("config.py", f'GITHUB = "{GH_SECRET}"\n', "github-token", GH_SECRET),
+    ("config.py", f'PAT = "{PAT_SECRET}"\n', "github-token", PAT_SECRET),
+    ("deploy.sh", f"export KEY_ID={AWS_SECRET}\n", "aws-access-key", AWS_SECRET),
+    ("deploy_key", "-----BEGIN " + "OPENSSH PRIVATE KEY-----\nabc\n", "private-key", "OPENSSH PRIVATE"),
+    ("notify.js", f'const hook = "{SLACK_SECRET}";\n', "slack-token", SLACK_SECRET),
+    ("settings.py", f'DB_PASSWORD = "{LITERAL_SECRET}"\n', "hardcoded-credential", LITERAL_SECRET),
+    ("settings.json", f'{{"api_key": "{LITERAL_SECRET}"}}\n', "hardcoded-credential", LITERAL_SECRET),
+    # (12) a type annotation between the name and the value
+    ("typed.py", f'    api_key: str = "{LITERAL_SECRET}"\n', "hardcoded-credential", LITERAL_SECRET),
+    ("client.ts", f'const apiKey: string = "{LITERAL_SECRET}";\n', "hardcoded-credential", LITERAL_SECRET),
+    # (13) a credential after the first 4000 characters of a minified line
+    ("bundle.min.js", '{"padding": "' + "a" * 4100 + f'", "client_secret": "{LITERAL_SECRET}"}}\n', "hardcoded-credential", LITERAL_SECRET),
 ]
 
 
-@pytest.mark.parametrize(("filename", "secret_line", "rule"), SECRET_CASES)
-def test_commit_refuses_secrets_in_the_staged_diff(repos, filename, secret_line, rule):
+@pytest.mark.parametrize(("filename", "secret_line", "rule", "secret_value"), SECRET_CASES)
+def test_commit_refuses_secrets_in_the_staged_diff(repos, filename, secret_line, rule, secret_value):
     work = repos.work
     ok("branch", "feat/secret", cwd=work)
     head = git(work, "rev-parse", "HEAD")
@@ -410,7 +420,6 @@ def test_commit_refuses_secrets_in_the_staged_diff(repos, filename, secret_line,
     assert payload["index_restored"] is True
     assert git(work, "diff", "--cached", "--name-only") == "", "the refused paths are unstaged again"
     assert git(work, "rev-parse", "HEAD") == head
-    secret_value = secret_line.split('"')[3] if filename.endswith(".json") else secret_line.split('"')[1] if '"' in secret_line else secret_line.split("=")[-1].strip()
     assert secret_value not in stdout + stderr, "the secret itself is never printed"
 
 
@@ -662,6 +671,7 @@ class FakeGitHub:
         self.statuses: list[dict] = []
         self.reviews: list[dict] = []
         self.head_sha = ""
+        self.truncate_next_post = False
 
     def add_pull(self, branch: str, sha: str, base: str = "main", title: str = "existing") -> dict:
         number = len(self.pulls) + 1
@@ -736,9 +746,15 @@ def github(repos, monkeypatch):
             body = json.loads(self.rfile.read(length)) if length else None
             status, payload = fake.handle(self.command, url.path, parse_qs(url.query), body, dict(self.headers.items()))
             data = json.dumps(payload).encode("utf-8")
+            declared = len(data)
+            if self.command == "POST" and fake.truncate_next_post:
+                # The pull request is created, then the connection drops mid-response.
+                fake.truncate_next_post = False
+                declared += 500
+                self.close_connection = True
             self.send_response(status)
             self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(data)))
+            self.send_header("Content-Length", str(declared))
             self.end_headers()
             self.wfile.write(data)
 
@@ -857,11 +873,18 @@ def test_pr_status_summarizes_checks_reviews_and_mergeability(github, monkeypatc
 # ------------------------------------------------------- helper internals
 
 
+def route_urllib(helpers, monkeypatch, handler) -> None:
+    """Send every request the REST helper makes, however it opens URLs, to handler."""
+    monkeypatch.setattr(urllib.request, "urlopen", handler)
+    monkeypatch.setattr(urllib.request.OpenerDirector, "open", lambda self, request, data=None, timeout=None: handler(request, timeout))
+    monkeypatch.setattr(helpers.github, "_build_opener", lambda: SimpleNamespace(open=handler), raising=False)
+
+
 def test_create_pull_returns_the_pull_request_that_won_a_creation_race(helpers, monkeypatch):
     fake = FakeGitHub()
     existing = fake.add_pull("feat/race", "a" * 40, title="opened elsewhere")
     fake.hidden_from_first_list.add(existing["number"])
-    monkeypatch.setattr(urllib.request, "urlopen", fake.urlopen)
+    route_urllib(helpers, monkeypatch, fake.urlopen)
     transport = helpers.github.RestTransport("github.com", FAKE_TOKEN)
     repo = helpers.github.RemoteRepo("github.com", "acme", "widgets")
 
@@ -923,3 +946,378 @@ def test_scan_ignores_removed_lines_and_reads_added_line_numbers(helpers):
     ]
     assert helpers.scan.scan_line('tokenizer = "bert-base-uncased-model"') is None
     assert helpers.scan.scan_line('password: "' + "s3cr3t-Pa55w0rd!" + '"') == "hardcoded-credential"
+
+
+# ------------------------------------------- regressions from the review
+# Each test names the finding it pins: (N) in the adversarial review of
+# skills/public/git-pr-workflow.
+
+
+def test_restore_clean_never_deletes_through_a_symlinked_directory(repos):
+    """(1) a tracked directory replaced by a symlink to a folder outside the repository."""
+    work = repos.work
+    ok("branch", "feat/link", cwd=work)
+    commit_file(work, "output/report.txt", "tracked report\n", "add report")
+    outside = repos.tmp / "shared-outputs"
+    outside.mkdir()
+    (outside / "report.txt").write_text("IMPORTANT user file outside the repo\n", encoding="utf-8")
+    shutil.rmtree(work / "output")
+    (work / "output").symlink_to(outside, target_is_directory=True)
+    ok("checkpoint", "-m", "with link", cwd=work)
+
+    result = ok("restore", "latest", "--clean", cwd=work)
+
+    assert (outside / "report.txt").read_text(encoding="utf-8") == "IMPORTANT user file outside the repo\n"
+    assert "output/report.txt" not in result["deleted"]
+    assert any("symlink" in warning for warning in result["warnings"])
+
+
+def test_checkpoint_captures_edits_hidden_by_skip_worktree_and_assume_unchanged(repos):
+    """(2) local edits in flagged files survive a restore through the safety checkpoint."""
+    work = repos.work
+    ok("branch", "feat/flags", cwd=work)
+    commit_file(work, "settings.yml", "db: prod\n", "settings")
+    commit_file(work, "hosts.txt", "prod-host\n", "hosts")
+    git(work, "update-index", "--skip-worktree", "settings.yml")
+    git(work, "update-index", "--assume-unchanged", "hosts.txt")
+    before = ok("checkpoint", "-m", "pristine", cwd=work)
+    (work / "settings.yml").write_text("db: local # my local edits\n", encoding="utf-8")
+    (work / "hosts.txt").write_text("my-laptop\n", encoding="utf-8")
+
+    edited = ok("checkpoint", "-m", "edited", cwd=work)
+    assert git(work, "show", f"{edited['commit']}:settings.yml") == "db: local # my local edits"
+    assert git(work, "show", f"{edited['commit']}:hosts.txt") == "my-laptop"
+    assert git(work, "ls-files", "-v", "settings.yml", "hosts.txt").splitlines() == ["h hosts.txt", "S settings.yml"], "flags stay set"
+
+    restored = ok("restore", before["id"], cwd=work)
+    assert (work / "settings.yml").read_text(encoding="utf-8") == "db: prod\n"
+    ok("restore", restored["safety_checkpoint"], cwd=work)
+    assert (work / "settings.yml").read_text(encoding="utf-8") == "db: local # my local edits\n"
+    assert (work / "hosts.txt").read_text(encoding="utf-8") == "my-laptop\n"
+
+
+def test_restore_refuses_when_a_directory_or_file_is_in_the_way(repos):
+    """(3) restore never removes a directory (ignored files, nested repos) to write a file."""
+    work = repos.work
+    ok("branch", "feat/inway", cwd=work)
+    commit_file(work, "deploy", "#!/bin/sh\n", "deploy script")
+    commit_file(work, "conf/app.ini", "x=1\n", "config")
+    checkpoint = ok("checkpoint", cwd=work)
+    (work / "deploy").unlink()
+    (work / "deploy").mkdir()
+    (work / "deploy" / "run.sh").write_text("new\n", encoding="utf-8")
+    (work / "deploy" / "prod.log").write_text("ignored and precious\n", encoding="utf-8")
+    shutil.rmtree(work / "conf")
+    (work / "conf").write_text("now a file\n", encoding="utf-8")
+
+    payload = refused("restore", checkpoint["id"], cwd=work)
+
+    assert sorted(payload["blocked_paths"]) == ["conf", "deploy"]
+    assert (work / "deploy" / "prod.log").read_text(encoding="utf-8") == "ignored and precious\n"
+    assert (work / "conf").read_text(encoding="utf-8") == "now a file\n"
+    assert ok("checkpoints", cwd=work)["count"] == 1, "a refused restore leaves no safety checkpoint behind"
+
+
+def test_restore_keeps_ignored_files_it_overwrites_in_the_safety_checkpoint(repos):
+    """(4) a file that became ignored can be brought back by the documented undo."""
+    work = repos.work
+    ok("branch", "feat/ignored-restore", cwd=work)
+    (work / "local.cfg").write_text("API_KEY=old-key\n", encoding="utf-8")
+    checkpoint = ok("checkpoint", cwd=work)
+    with (work / ".gitignore").open("a", encoding="utf-8") as handle:
+        handle.write("local.cfg\n")
+    (work / "local.cfg").write_text("API_KEY=new-rotated-key\n", encoding="utf-8")
+
+    restored = ok("restore", checkpoint["id"], cwd=work)
+    assert (work / "local.cfg").read_text(encoding="utf-8") == "API_KEY=old-key\n"
+    assert git(work, "show", f"refs/deerflow-checkpoints/{restored['safety_checkpoint']}:local.cfg") == "API_KEY=new-rotated-key"
+
+    ok("restore", restored["safety_checkpoint"], cwd=work)
+    assert (work / "local.cfg").read_text(encoding="utf-8") == "API_KEY=new-rotated-key\n"
+
+
+def test_worktree_remove_sees_untracked_files_whatever_the_status_config(repos):
+    """(5) status.showUntrackedFiles=no must not hide new files from the dirty check."""
+    work = repos.work
+    git(work, "config", "status.showUntrackedFiles", "no")
+    added = ok("worktree", "add", "sub1", cwd=work)
+    (Path(added["path"]) / "feature.py").write_text("print('unsaved')\n", encoding="utf-8")
+
+    assert "uncommitted" in refused("worktree", "remove", "sub1", cwd=work)["error"]
+    assert (Path(added["path"]) / "feature.py").exists()
+    listing = ok("worktree", "list", cwd=work)
+    assert [item["dirty"] for item in listing["worktrees"] if item["agent"]] == [True]
+
+
+def test_paths_are_literal_names_not_glob_patterns(repos):
+    """(6) brackets, stars and question marks in --paths are file names."""
+    work = repos.work
+    ok("branch", "feat/literal", cwd=work)
+    (work / "notes[1].md").write_text("intended\n", encoding="utf-8")
+    (work / "notes1.md").write_text("private scratch\n", encoding="utf-8")
+
+    result = ok("commit", "-m", "docs: notes", "--paths", "notes[1].md", cwd=work)
+
+    assert result["files"] == ["notes[1].md"]
+    assert git(work, "status", "--porcelain") == "?? notes1.md"
+    (work / "test[1].py").write_text("kept\n", encoding="utf-8")
+    checkpoint = ok("checkpoint", cwd=work)
+    (work / "test1.py").write_text("unrelated new file\n", encoding="utf-8")
+    cleaned = ok("restore", checkpoint["id"], "--paths", "test[1].py", "--clean", cwd=work)
+    assert cleaned["deleted"] == [] and (work / "test1.py").exists()
+
+
+def test_default_branch_is_asked_from_the_remote_when_origin_head_is_missing(tmp_path):
+    """(7) a checkout without origin/HEAD (git init + fetch) still protects the real default branch."""
+    origin = tmp_path / "origin.git"
+    git(tmp_path, "init", "-q", "--bare", "-b", "develop", str(origin))
+    seed = tmp_path / "seed"
+    git(tmp_path, "init", "-q", "-b", "develop", str(seed))
+    commit_file(seed, "README.md", "hello\n", "initial")
+    git(seed, "push", "-q", str(origin), "develop")
+    work = tmp_path / "work"
+    git(tmp_path, "init", "-q", "-b", "scratch", str(work))
+    git(work, "remote", "add", "origin", str(origin))
+    git(work, "fetch", "-q", "origin")
+    git(work, "switch", "-q", "-c", "develop", "--track", "origin/develop")
+
+    facts = ok("preflight", cwd=work)
+    assert facts["default_branch"] == "develop" and facts["on_default_branch"] is True
+    assert any("protected branch 'develop'" in warning for warning in facts["warnings"])
+    (work / "b.txt").write_text("b\n", encoding="utf-8")
+    assert "protected branch 'develop'" in refused("commit", "-m", "x", "--paths", "b.txt", cwd=work)["error"]
+    ok("commit", "-m", "x", "--paths", "b.txt", "--allow-default-branch", cwd=work)
+    assert "protected branch 'develop'" in refused("push", cwd=work)["error"]
+
+
+def test_refused_commit_puts_back_index_flags_and_intent_to_add_entries(repos):
+    """(8) the index backup keeps skip-worktree, assume-unchanged and intent-to-add."""
+    work = repos.work
+    ok("branch", "feat/index", cwd=work)
+    commit_file(work, "settings.yml", "db: prod\n", "settings")
+    commit_file(work, "hosts.txt", "prod-host\n", "hosts")
+    git(work, "update-index", "--skip-worktree", "settings.yml")
+    git(work, "update-index", "--assume-unchanged", "hosts.txt")
+    (work / "settings.yml").write_text("db: local, password: hunter2-local\n", encoding="utf-8")
+    (work / "planned.py").write_text("planned\n", encoding="utf-8")
+    git(work, "add", "-N", "planned.py")
+    flags_before = git(work, "ls-files", "-v")
+    status_before = subprocess.run([GIT, "status", "--porcelain"], cwd=work, capture_output=True, text=True, check=True).stdout
+    assert " A planned.py" in status_before.splitlines(), "planned.py is an intent-to-add entry"
+    (work / "api.py").write_text(f'TOKEN_VALUE = "{GH_SECRET}"\n', encoding="utf-8")
+
+    payload = refused("commit", "-m", "add api", "--paths", "api.py", cwd=work)
+
+    assert payload["index_restored"] is True
+    assert git(work, "ls-files", "-v") == flags_before
+    status_after = subprocess.run([GIT, "status", "--porcelain"], cwd=work, capture_output=True, text=True, check=True).stdout
+    assert status_after == status_before + "?? api.py\n"
+
+
+def test_worktree_remove_force_refuses_when_the_state_cannot_be_read(repos):
+    """(9) a failing status is not 'clean': --force needs a checkpoint that succeeds."""
+    work = repos.work
+    added = ok("worktree", "add", "sub1", cwd=work)
+    wt = Path(added["path"])
+    (wt / "work.py").write_text("unsaved\n", encoding="utf-8")
+    (Path(git(wt, "rev-parse", "--absolute-git-dir")) / "index").write_bytes(b"x")
+
+    refused("worktree", "remove", "sub1", "--force", cwd=work)
+
+    assert (wt / "work.py").read_text(encoding="utf-8") == "unsaved\n"
+
+
+def test_github_tokens_are_only_sent_for_github_com(helpers, monkeypatch, capsys):
+    """(10) GH_TOKEN / GITHUB_TOKEN are github.com credentials; other hosts need an explicit opt-in."""
+    seen = []
+    route_urllib(helpers, monkeypatch, lambda request, timeout=None: seen.append(request.full_url) or pytest.fail("no request may be sent"))
+    monkeypatch.setenv("GH_TOKEN", FAKE_TOKEN)
+    monkeypatch.setenv("GITHUB_TOKEN", FAKE_TOKEN)
+
+    code = helpers.github.main(["pr-status", "--host", "gitlab.com", "--owner", "acme", "--repo", "widgets", "--branch", "feat/x"])
+
+    out = capsys.readouterr()
+    assert code == 1 and seen == []
+    payload = json.loads(out.out)
+    assert payload["ok"] is False and "gitlab.com" in payload["error"]
+    assert FAKE_TOKEN not in out.out + out.err
+    assert helpers.github.auth_for_host("gitlab.com") == (None, None)
+    assert helpers.github.auth_for_host("github.com") == ("GH_TOKEN", FAKE_TOKEN)
+    monkeypatch.setenv("GH_ENTERPRISE_TOKEN", "enterprise-" + "value-123456789")
+    assert helpers.github.auth_for_host("git.corp.example") == (None, None), "an enterprise token needs the host on the allowlist"
+    monkeypatch.setenv("GITFLOW_GITHUB_HOSTS", "git.other.example, git.corp.example")
+    assert helpers.github.auth_for_host("git.corp.example") == ("GH_ENTERPRISE_TOKEN", "enterprise-value-123456789")
+    assert helpers.github.auth_for_host("gitlab.com") == (None, None)
+
+
+def test_pr_create_refuses_to_send_the_token_to_a_non_github_remote(github, monkeypatch):
+    """(15) end to end: the fake API never sees a request when the remote is not github.com."""
+    work = github.work
+    other = "https://gitea.example.org/someone/proj.git"
+    git(work, "remote", "set-url", "origin", other)
+    git(work, "config", f"url.{github.origin}.insteadOf", other)
+    pushed_branch(work, "feat/elsewhere")
+    monkeypatch.setenv("GH_TOKEN", FAKE_TOKEN)
+
+    payload = refused("pr", "create", "--title", "t", "--body", "b", cwd=work)
+
+    assert "gitea.example.org" in payload["error"] and github.fake.requests == []
+    facts = ok("preflight", cwd=work)
+    assert facts["github_auth"] is None
+    assert any("only sent to github.com" in warning for warning in facts["warnings"])
+
+
+def test_commit_scans_files_that_git_treats_as_binary(repos):
+    """(11) a -diff attribute, NUL bytes or UTF-16 must not hide a token from the scan."""
+    work = repos.work
+    ok("branch", "feat/binary", cwd=work)
+    (work / ".gitattributes").write_text("secrets.cfg -diff\n", encoding="utf-8")
+    (work / "secrets.cfg").write_text(f"token = {GH_SECRET}\n", encoding="utf-8")
+    payload = refused("commit", "-m", "add cfg", "--paths", ".gitattributes", "secrets.cfg", cwd=work)
+    assert {"file": "secrets.cfg", "line": 1, "rule": "github-token"} in payload["findings"]
+
+    (work / "win.ini").write_bytes(f"[auth]\r\nGITHUB={GH_SECRET}\r\n".encode("utf-16"))
+    payload = refused("commit", "-m", "add ini", "--paths", "win.ini", cwd=work)
+    assert [finding["rule"] for finding in payload["findings"]] == ["github-token"]
+
+
+def test_rest_client_drops_authorization_on_cross_origin_redirects(helpers):
+    """(14) a redirect to another host or port must not carry the token."""
+    seen: dict[str, object] = {}
+
+    class Target(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            seen["authorization"] = self.headers.get("Authorization")
+            data = b'{"ok": true}'
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+
+        def log_message(self, *args) -> None:
+            pass
+
+    target = ThreadingHTTPServer(("127.0.0.1", 0), Target)
+
+    class Redirector(Target):
+        def do_GET(self) -> None:
+            self.send_response(302)
+            self.send_header("Location", f"http://localhost:{target.server_address[1]}/collect")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+
+    origin = ThreadingHTTPServer(("127.0.0.1", 0), Redirector)
+    for server in (target, origin):
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        transport = helpers.github.RestTransport("github.com", FAKE_TOKEN, base=f"http://127.0.0.1:{origin.server_address[1]}")
+        status, _ = transport.request("GET", "/repos/acme/widgets")
+    finally:
+        for server in (target, origin):
+            server.shutdown()
+            server.server_close()
+    assert status == 200 and "authorization" in seen
+    assert seen["authorization"] is None
+
+
+def test_helper_failures_keep_the_json_contract(github, monkeypatch):
+    """(16) a dropped create response goes through the lookup; an undecodable body is a JSON error."""
+    work = github.work
+    pushed = pushed_branch(work, "feat/flaky-api")
+    github.fake.head_sha = pushed["remote_sha"]
+    github.fake.truncate_next_post = True
+    monkeypatch.setenv("GH_TOKEN", FAKE_TOKEN)
+
+    created = ok("pr", "create", "--title", "feat: v", "--body", "b", cwd=work)
+
+    assert created["number"] == 1 and created["created"] is True
+    assert [request["method"] for request in github.fake.requests] == ["GET", "POST", "GET", "GET"]
+    latin1 = github.tmp / "latin1.md"
+    latin1.write_bytes("caf\xe9 au lait\n".encode("latin-1"))
+    payload = refused("pr", "create", "--title", "t2", "--body-file", str(latin1), cwd=work)
+    assert "UTF-8" in payload["error"]
+
+
+def test_push_verifies_the_ref_where_it_pushed(repos):
+    """(17) with a separate pushurl the read-back asks the push target, not the fetch URL."""
+    work = repos.work
+    fork = repos.tmp / "fork.git"
+    git(repos.tmp, "init", "-q", "--bare", str(fork))
+    git(work, "remote", "set-url", "--push", "origin", str(fork))
+    ok("branch", "feat/fork", cwd=work)
+    sha = commit_file(work, "a.txt", "a\n", "feat: a")
+
+    pushed = ok("push", cwd=work)
+
+    assert pushed["remote_sha"] == sha == git(fork, "rev-parse", "refs/heads/feat/fork")
+
+
+def test_paths_end_at_the_next_option(repos):
+    """(18) --paths stops at any option, so -m may follow it."""
+    work = repos.work
+    ok("branch", "feat/order", cwd=work)
+    (work / "a.txt").write_text("a\n", encoding="utf-8")
+    assert ok("commit", "--paths", "a.txt", "-m", "feat: add a", cwd=work)["files"] == ["a.txt"]
+    (work / "b.txt").write_text("b\n", encoding="utf-8")
+    ok("commit", "-m", "feat: add b", "--paths", "b.txt", "-m", "Body paragraph.", cwd=work)
+    assert git(work, "log", "-1", "--format=%B") == "feat: add b\n\nBody paragraph."
+
+
+def test_a_missing_temporary_directory_is_reported_as_json(repos):
+    """(19) the mktemp failure happens before any trap; it still prints JSON."""
+    env = dict(os.environ, TMPDIR=str(repos.tmp / "does-not-exist"))
+    code, payload, stdout, stderr = run_cli("preflight", cwd=repos.work, env=env)
+    assert code == 1 and payload is not None and payload["ok"] is False, stdout + stderr
+    assert "temporary directory" in payload["error"]
+
+
+def test_checkpoint_ids_keep_creation_order_without_sub_second_clock(repos):
+    """(20) bash 4.4 has no EPOCHREALTIME; ids created in one second must still sort newest first."""
+    work = repos.work
+    ok("branch", "feat/order-ids", cwd=work)
+    fake_tool(repos.bin, "date", "exit 1\n")
+    for index in range(10):
+        (work / "n.txt").write_text(f"{index}\n", encoding="utf-8")
+        proc = subprocess.run([BASH, "-c", 'unset EPOCHREALTIME; source "$0" "$@"', str(GITFLOW), "checkpoint", "-m", f"n{index}"], cwd=work, capture_output=True, text=True, check=False)
+        assert proc.returncode == 0, proc.stdout + proc.stderr
+
+    listing = ok("checkpoints", cwd=work)
+
+    assert [item["message"] for item in listing["checkpoints"]] == [f"deerflow checkpoint: n{index}" for index in reversed(range(10))]
+
+
+def test_index_backup_keeps_a_sparse_checkout_sparse(repos):
+    """(21) a refused commit in a sparse checkout leaves files outside the cone alone."""
+    work = repos.work
+    ok("branch", "feat/sparse", cwd=work)
+    commit_file(work, "a/x.txt", "x\n", "a")
+    commit_file(work, "b/y.txt", "y\n", "b")
+    git(work, "sparse-checkout", "set", "a")
+    assert not (work / "b" / "y.txt").exists()
+    checkpoint = ok("checkpoint", cwd=work)
+    assert "b/y.txt" in git(work, "ls-tree", "-r", "--name-only", checkpoint["commit"]).splitlines(), "a checkpoint does not record the sparse files as deleted"
+    (work / "a" / "conf.py").write_text(f'TOKEN_VALUE = "{GH_SECRET}"\n', encoding="utf-8")
+
+    refused("commit", "-m", "conf", "--paths", "a/conf.py", cwd=work)
+
+    assert git(work, "status", "--porcelain") == "?? a/conf.py"
+    assert "S b/y.txt" in git(work, "ls-files", "-v").splitlines()
+
+
+def test_option_like_titles_reach_the_api_unchanged(github, monkeypatch):
+    """(22) a title such as -WIP- is a value, not an option of the helper."""
+    work = github.work
+    github.fake.head_sha = pushed_branch(work, "feat/dash")["remote_sha"]
+    monkeypatch.setenv("GH_TOKEN", FAKE_TOKEN)
+
+    created = ok("pr", "create", "--title", "-WIP-", "--body", "-b", cwd=work)
+
+    assert created["title"] == "-WIP-" and github.fake.requests[1]["body"]["body"] == "-b"
+
+
+def test_commit_passes_the_message_on_stdin_as_documented(repos):
+    """(23) the reference says git commit -F - with the message on stdin; the script must do that."""
+    doc = (SKILL_DIR / "references" / "gitflow-cli.md").read_text(encoding="utf-8")
+    script = GITFLOW.read_text(encoding="utf-8")
+    assert "`git commit -F -`" in doc
+    assert 'GIT_STDIN="$TMP/commit.msg"' in script and "commit --quiet -F -" in script
