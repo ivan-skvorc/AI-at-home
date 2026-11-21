@@ -259,6 +259,32 @@ localized download fallback, and release all resources in `dispose()`. Shadow DO
 isolates styling, not plugin privileges. Third-party parsers must ship in the trusted
 package and apply their own expansion/render limits.
 
+A file over the read cap rejects `readFile()` with `PreviewTooLargeError`
+(`core/artifacts/binary-preview.ts`, declared or streamed size). The host then shows
+its own localized "larger than the 25 MiB preview limit" reason with a download and
+no retry, whatever the renderer reports next; a renderer needs no size handling of
+its own. A renderer that refuses a file for a reason of its own (a parser budget)
+may render that reason inside its root instead of calling `onError()`, offering the
+bytes it read as a Blob download and revoking that URL in `dispose()`.
+
+The shadow tree inherits the host's theme tokens as CSS custom properties
+(`--background`, `--foreground`, `--muted-foreground`, `--border`, `--accent`,
+`--ring`, `--destructive` and the rest of `globals.css`), and they change in place
+when the theme changes. Use them in package CSS. A value outside CSS, such as a
+WebGL colour, must be resolved from the computed style (the tokens are `oklch()`),
+and re-resolved when `<html>`'s `class` or `style` changes or `prefers-color-scheme`
+does; the [CAD preview](../examples/deerflow-extension-cad-preview/README.md) does
+both without remounting.
+
+A Worker created from a packaged asset is subject to two rules. `new Worker(url)`
+requires `url` to be same-origin with the page, so the Gateway's asset route must
+share the frontend's origin (the default nginx deployment does); split-origin
+deployments get an error from the constructor and should fall back. And because
+asset responses carry `Content-Security-Policy: sandbox`, the Worker runs in an
+opaque origin: it cannot import further module chunks or fetch authenticated
+resources, so bundle it as one self-contained module and post the file's bytes to
+it. Terminate it on abort and in `dispose()`.
+
 Optional `getReadingState()` and `saveReadingState(state)` callbacks become available
 after `readFile()` and retain bounded JSON in memory for unchanged content in the
 current viewer session. They are scoped to viewer, thread, file, renderer and content

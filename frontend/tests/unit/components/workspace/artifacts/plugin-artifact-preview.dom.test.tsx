@@ -12,6 +12,7 @@ const state = rs.hoisted(() => ({
   entries: [] as unknown[],
   mount: rs.fn(),
   read: rs.fn(),
+  TooLarge: class PreviewTooLargeError extends Error {},
 }));
 rs.mock("@/core/auth/AuthProvider", () => ({
   useAuth: () => ({ user: state.user }),
@@ -21,6 +22,7 @@ rs.mock("@/core/extensions/hooks", () => ({
 }));
 rs.mock("@/core/artifacts/binary-preview", () => ({
   readPreviewFile: state.read,
+  PreviewTooLargeError: state.TooLarge,
 }));
 rs.mock("@/core/config", () => ({ getBackendBaseURL: () => "" }));
 rs.mock("@/core/i18n/hooks", () => ({
@@ -30,6 +32,7 @@ rs.mock("@/core/i18n/hooks", () => ({
       artifactPreview: {
         unavailable: "Unavailable",
         previewFailed: "Preview failed",
+        tooLarge: "Larger than the 25 MiB preview limit",
       },
       common: { download: "Download", retry: "Retry" },
     },
@@ -37,9 +40,16 @@ rs.mock("@/core/i18n/hooks", () => ({
 }));
 rs.mock("@/components/workspace/artifacts/artifact-file-preview", () => ({
   ArtifactDownloadFallback: () => <div>Unavailable</div>,
-  ArtifactPreviewError: ({ onRetry }: { onRetry?: () => void }) => (
+  ArtifactPreviewError: ({
+    message,
+    onRetry,
+  }: {
+    message: string;
+    onRetry?: () => void;
+  }) => (
     <div>
-      Preview failed<button onClick={onRetry}>Retry</button>
+      {message}
+      {onRetry && <button onClick={onRetry}>Retry</button>}
     </div>
   ),
 }));
@@ -216,6 +226,29 @@ test("synchronous renderer failure shows a download fallback", () => {
   render(<PluginArtifactPreview filepath="/a.xlsx" threadId="thread" />);
   expect(screen.getByText("Preview failed")).toBeTruthy();
   expect(state.mount).toHaveBeenCalledTimes(1);
+});
+
+test("a file over the read cap shows the limit and no retry, whatever the renderer reports", async () => {
+  setup();
+  state.read.mockRejectedValue(new state.TooLarge("Preview file too large"));
+  let context: ArtifactPreviewContext | undefined;
+  const dispose = rs.fn();
+  state.mount.mockImplementation(
+    (_root: HTMLElement, value: ArtifactPreviewContext) => {
+      context = value;
+      return { dispose };
+    },
+  );
+  render(<PluginArtifactPreview filepath="/huge.xlsx" threadId="thread" />);
+  // A renderer reports its failed read too; the host keeps the more precise reason.
+  await act(async () => {
+    await context!.readFile().catch(() => context!.onError());
+  });
+  expect(screen.getByText("Larger than the 25 MiB preview limit")).toBeTruthy();
+  expect(screen.queryByText("Preview failed")).toBeNull();
+  expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+  expect(context!.signal.aborted).toBe(true);
+  expect(dispose).toHaveBeenCalledTimes(1);
 });
 
 test("retry disposes the failed mount and ignores stale callbacks", () => {

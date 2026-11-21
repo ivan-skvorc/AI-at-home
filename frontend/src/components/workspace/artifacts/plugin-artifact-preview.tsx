@@ -3,7 +3,10 @@
 import { LoaderIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
-import { readPreviewFile } from "@/core/artifacts/binary-preview";
+import {
+  PreviewTooLargeError,
+  readPreviewFile,
+} from "@/core/artifacts/binary-preview";
 import { readingStateAccess } from "@/core/artifacts/reading-state";
 import { urlOfArtifact } from "@/core/artifacts/utils";
 import { useArtifactPreviewRenderer } from "@/core/extensions/artifact-previews";
@@ -33,9 +36,11 @@ function MountedPreview({
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const { locale, t } = useI18n();
-  const [failed, setFailed] = useState(false);
+  // "tooLarge" comes from the host's own read cap and outranks whatever the
+  // renderer reports afterwards: retrying cannot make the file smaller.
+  const [failure, setFailure] = useState<"failed" | "tooLarge" | null>(null);
   useEffect(() => {
-    if (failed || !ref.current) return;
+    if (failure || !ref.current) return;
     const abort = new AbortController();
     let state: ReturnType<typeof readingStateAccess> | undefined;
     const shadow =
@@ -45,7 +50,7 @@ function MountedPreview({
     shadow.replaceChildren(root);
     let controller: { dispose: () => void } | undefined;
     const onError = () => {
-      if (!abort.signal.aborted) setFailed(true);
+      if (!abort.signal.aborted) setFailure((current) => current ?? "failed");
     };
     try {
       controller = renderer.mount(root, {
@@ -62,7 +67,11 @@ function MountedPreview({
           const { bytes, etag } = await readPreviewFile(
             urlOfArtifact({ filepath, threadId, isMock }),
             abort.signal,
-          );
+          ).catch((error: unknown) => {
+            if (error instanceof PreviewTooLargeError && !abort.signal.aborted)
+              setFailure("tooLarge");
+            throw error;
+          });
           let version = etag ? `etag:${etag}` : undefined;
           if (!version && globalThis.crypto?.subtle) {
             try {
@@ -108,18 +117,22 @@ function MountedPreview({
     threadId,
     isMock,
     locale,
-    failed,
+    failure,
     viewerId,
     rendererKey,
   ]);
-  return failed ? (
+  return failure ? (
     <ArtifactPreviewError
       filepath={filepath}
       threadId={threadId}
       isMock={isMock}
-      message={t.artifactPreview.previewFailed}
+      message={
+        failure === "tooLarge"
+          ? t.artifactPreview.tooLarge
+          : t.artifactPreview.previewFailed
+      }
       downloadLabel={t.common.download}
-      onRetry={() => setFailed(false)}
+      onRetry={failure === "tooLarge" ? undefined : () => setFailure(null)}
     />
   ) : (
     <div

@@ -447,6 +447,7 @@ export const zhCN: Translations = {
     loadFullFile: "加载完整文件",
     loadingFullFile: "正在加载完整文件...",
     previewFailed: "无法预览此文件，但仍可下载原始文件。",
+    tooLarge: "此文件超过 25 MiB 的预览上限，请下载后查看。",
     viewSource: "查看原始文件",
     missingTarget: "该链接没有指明要展示哪个文件。",
   },

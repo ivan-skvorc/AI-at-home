@@ -401,6 +401,7 @@ export interface Translations {
     loadFullFile: string;
     loadingFullFile: string;
     previewFailed: string;
+    tooLarge: string;
     viewSource: string;
     missingTarget: string;
   };
