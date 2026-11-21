@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { connectChannelProvider } from "@/core/channels/api";
 import { channelConnectionsQueryKey } from "@/core/channels/hooks";
 import type { ChannelConnectResponse } from "@/core/channels/types";
+import { writeTextToClipboard } from "@/core/clipboard";
 import { useI18n } from "@/core/i18n/hooks";
 
 import { fill } from "./shared";
@@ -86,11 +87,10 @@ export function BindFeishuGroup() {
     }
   };
   const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(command);
+    if (await writeTextToClipboard(command)) {
       setCopied(true);
       setCopyFailed(false);
-    } catch {
+    } else {
       setCopyFailed(true);
     }
   };

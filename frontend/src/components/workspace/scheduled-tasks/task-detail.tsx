@@ -37,6 +37,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { GatewayApiError } from "@/core/api/errors";
+import { writeTextToClipboard } from "@/core/clipboard";
 import { useI18n } from "@/core/i18n/hooks";
 import type { Translations } from "@/core/i18n/locales/types";
 import { useModels } from "@/core/models/hooks";
@@ -366,10 +367,9 @@ export function TaskDetail({
   };
 
   const copyTaskId = () => {
-    void navigator.clipboard
-      ?.writeText(task.id)
-      .then(() => toast.success(st.detail.copied))
-      .catch(() => undefined);
+    void writeTextToClipboard(task.id).then((copied) => {
+      if (copied) toast.success(st.detail.copied);
+    });
   };
 
   const runNowReason = blockReasonText(actions.runNow.reason, t);
