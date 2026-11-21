@@ -13,9 +13,13 @@ Nothing was built. The answer's `error` has the construct and the line.
 | a script may not contain an if statement | A choice between two values | Compute it: `(-1) ** i` alternates the sign, `i % 2` alternates 0 and 1 |
 | … a while loop | A loop with a condition | A `for` loop over `range(n)`, with `n` worked out beforehand |
 | … a function definition, a lambda | A helper function | A `for` loop over the values the helper was called with |
-| … a comprehension | A list built in one line | Write the list out, or build the feature in a `for` loop |
-| … a subscript | `point[0]` | Take the point apart in the loop header: `for x, y in points:` |
-| the only import a script may contain is: import cadquery as cq | `import math` | Write the value: sin 30° is `0.5`, a square root is `** 0.5` |
+| a comprehension has one for and no if | A comprehension that filters, or runs over two lists | Write the list out, or use one `for` and arithmetic: `[(10 * i, (-1) ** i) for i in range(4)]` |
+| … a slice | `p[1:]` | Name the items one by one: `p[1]`, `p[2]` |
+| index … is outside this list | An index past either end | The first item is `p[0]`, the last `p[-1]` |
+| a script may contain two imports | `import os`, `import numpy` | Only `import cadquery as cq` and `import math`; compute the rest with arithmetic |
+| from math import … is not available: write import math | `from math import sin` | `import math`, then `math.sin(x)` |
+| has no answer: the number is outside what | `math.sqrt` of a negative number, `math.acos` of more than 1 | Check the arithmetic that leads to the call |
+| is a name the script is given and cannot be assigned | A variable called `min`, `max`, `len`, `round` or `math` | Rename it: `largest`, `count`, `size` |
 | range() takes whole numbers | A count that is not whole, such as 7.5 | Round it down with whole division (two slashes); a whole count is accepted with or without a decimal point |
 | this loop would not run once | A count that came out as 0 | Check the arithmetic of the count |
 | a loop runs over range(...) or over a list | `enumerate`, `zip`, a part | `for i in range(n):` and compute the rest from `i` |

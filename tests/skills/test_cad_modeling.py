@@ -84,7 +84,12 @@ def test_the_skill_names_the_tools_arguments_and_its_attempt_limit():
 
 #: Words the pages quote from the module's own answers. A message reworded there is reworded here.
 QUOTED = [
-    "the only import a script may contain is: import cadquery as cq",
+    "a script may contain two imports",
+    "is not available: write import math",
+    "a comprehension has one for and no if",
+    "is outside this list",
+    "has no answer: the number is outside what",
+    "is a name the script is given and cannot be assigned",
     "range() takes whole numbers",
     "this loop would not run once",
     "a loop runs over range(...) or over a list",
@@ -116,18 +121,24 @@ ALLOWED = {
     "a count worked out with a decimal pitch": "result = cq.Workplane('XY').box(9, 9, 9)\nfor i in range(50 // 3.5):\n    total = i\n",
     "a point taken apart in the loop header": "points = [(-10, 0), (10, 0)]\nresult = cq.Workplane('XY').box(40, 10, 2)\nfor x, y in points:\n    result = result.faces('>Z').workplane().pushPoints([(x, y)]).hole(3)\n",
     "an augmented assignment and a square root": "side = 2 ** 0.5\nside += 9\nside *= 2\nresult = cq.Workplane('XY').box(side, side, side)\n",
+    # Habits of ordinary Python the reader computes itself (item 55).
+    "a comprehension": "points = [(i * 10, 0) for i in range(3)]\nresult = cq.Workplane('XY').box(40, 10, 2).faces('>Z').workplane().pushPoints(points).hole(3)\n",
+    "import math": "import math\nresult = cq.Workplane('XY').box(math.sqrt(2) * 10, 20 * math.sin(math.radians(30)), 2)\n",
+    "indexing": "p = (12, 8)\nresult = cq.Workplane('XY').box(p[0], p[-1], 2)\n",
+    "a built-in call": "n = int(7 / 2)\nresult = cq.Workplane('XY').box(max(n, 2), min(10, 20), round(2.6))\n",
+    "two names in one assignment": "w, d, t = 60, 40, 6\nresult = cq.Workplane('XY').box(w, d, t)\n",
 }
 REFUSED = {
     "an if statement": "x = 1\nif x:\n    y = 2\n",
     "a while loop": "x = 1\nwhile x:\n    x = 0\n",
     "a function": "def link(i):\n    return i\n",
-    "a comprehension": "points = [(i, 0) for i in range(3)]\n",
-    "import math": "import math\n",
+    "a comprehension with an if": "points = [(i, 0) for i in range(3) if i]\n",
+    "from math import": "from math import sqrt\n",
+    "another import": "import numpy\n",
+    "a slice": "p = (1, 2, 3)\nx = p[1:]\n",
+    "a conditional expression": "x = 1 if True else 2\n",
     "an f-string": "x = f'{1}'\n",
-    "indexing": "p = (1, 2)\nx = p[0]\n",
-    "a built-in call": "n = int(7 / 2)\n",
     "a comparison": "big = 3 > 2\n",
-    "two names in one assignment": "a, b = 1, 2\n",
     "a list that grows": "points = [(0, 0)]\npoints += [(1, 1)]\n",
 }
 

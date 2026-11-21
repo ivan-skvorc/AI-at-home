@@ -121,6 +121,36 @@ async def test_a_hostile_script_is_refused_with_its_reason_and_nothing_runs(labe
     assert not any(canary.exists() for canary in canaries)
 
 
+#: The plate as models write it from ordinary Python habits (item 55): names assigned together, math, an index, a comprehension, round().
+HABITS_PLATE = """\
+import cadquery as cq
+import math
+
+w, d, t = 60, 40, 6
+holes = [(-15, 0), (15, 0)]
+spacing = math.hypot(holes[1][0] - holes[0][0], 0)
+
+result = (
+    cq.Workplane("XY")
+    .box(w, d, t)
+    .faces(">Z")
+    .workplane()
+    .pushPoints([(x * spacing / 30, y) for x, y in holes])
+    .hole(round(4.04, 1))
+)
+"""
+
+
+async def test_a_plate_written_with_the_habits_of_ordinary_python_builds_and_passes():
+    answer, files = await _build(HABITS_PLATE)
+    assert answer["passed"] is True, answer
+    assert sorted(files) == ["part.glb", "part.py", "part.report.json", "part.step", "part.stl"]
+    # A method that is not on the list is refused before the kernel loads, and the answer says which.
+    answer, files = await _build(HABITS_PLATE.replace(".hole(round(4.04, 1))", ".hole(4).faces('>Z').loft()"))
+    assert answer["passed"] is False and answer["error"]["construct"] == "method" and answer["error"]["message"].startswith(".loft() is not on the allow-list")
+    assert sorted(files) == ["part.py", "part.report.json"]
+
+
 async def test_a_kernel_error_names_the_line_and_the_operation():
     script = 'import cadquery as cq\nbase = cq.Workplane("XY").box(10, 10, 10)\nresult = (\n    base\n    .edges("|Z")\n    .fillet(20)\n)\n'
     answer, files = await _build(script, bbox_xyz_mm=[10, 10, 10])

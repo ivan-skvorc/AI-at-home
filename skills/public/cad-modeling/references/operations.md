@@ -10,6 +10,8 @@ Any other method, and anything else on `cq`, is refused.
 - Selector strings: CadQuery's own, such as `">Z"`, `"<X"`, `"|Z"`, `"#Z"`, `"%CIRCLE"`, `"|Z and >Y"`.
 - Sizes and coordinates: at most 100000 mm; a length is at least 0.0001 mm.
 - Patterns (`pushPoints`, `rarray`, `polarArray`): at most 100 points in one call and 200 in a script.
+- Numbers: `import math` gives `math.pi`, `math.tau` and `math.sin()`, `math.cos()`, `math.tan()`, `math.asin()`, `math.acos()`, `math.atan()`, `math.atan2()`, `math.sqrt()`, `math.hypot()`, `math.radians()`, `math.degrees()`, `math.floor()`, `math.ceil()`.
+  `abs()`, `min()`, `max()`, `round()`, `int()`, `float()`, `len()` take numbers or a list of them. An index such as `p[0]` is a whole number.
 
 ## cq.Workplane([inPlane], [origin])
 

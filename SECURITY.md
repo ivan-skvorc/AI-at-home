@@ -47,10 +47,12 @@ here as one.
 
 - **The script is read, never executed.** It is parsed into a syntax tree. A
   whitelist of node types is checked before anything is evaluated; every other
-  construct is refused with its line: imports other than `import cadquery as cq`,
-  attribute access, any call other than `cq.Workplane(...)`, an allow-listed
-  method and `show_object(name)` (read only as naming the result), definitions,
-  `while`, branches, comprehensions, f-strings, subscripts. No code object is ever
+  construct is refused with its line: imports other than `import cadquery as cq`
+  and `import math`, attribute access outside the numbers table below, any call
+  other than `cq.Workplane(...)`, an allow-listed method, the numbers table and
+  `show_object(name)` (read only as naming the result), definitions, `while`,
+  branches, comparisons, comprehensions other than a list comprehension with one
+  `for` and no `if`, f-strings, slices. No code object is ever
   made from script text: `ast.parse` (CPython's `compile()` with the flag that
   stops at the syntax tree) is its one reader, and `exec` and `eval` never
   receive it.
@@ -61,6 +63,20 @@ here as one.
   produces the same flat list of allow-listed operations the statements written
   out would give; a test compares the two. `range` is the reader's own call on
   those numbers and is not a name a script can assign or use as a value.
+- **Numbers are computed by the reader, from a closed table** (`allowlist.py`,
+  "Numbers"). `import math` gives `math.pi`, `math.tau` and thirteen functions,
+  and `abs`, `min`, `max`, `round`, `int`, `float` and `len` take numbers and
+  lists the script states. The reader computes each with its own function on
+  numbers it has already checked: no name is looked up on a module, so
+  `math.system`, `math.__dict__` and `getattr(math, ...)` are refused, and no
+  script can assign a name of the table. A result that is not finite, is over
+  the magnitude cap or is outside a function's domain is refused with its line;
+  `round` keeps at most 15 digits, since rounding a whole number to thousands
+  of places computes a power of ten that large. An index (`p[0]`) is a whole
+  number the reader knows and inside its list; slices are refused. A list
+  comprehension runs over a range or a list the script states, is unrolled like
+  a loop, makes a list of numbers or points and never an operation, and each of
+  its items counts toward the reading work below.
 - **The allow-list is data** (`allowlist.py`): method names with the kind of
   each argument. A method that takes a file path, a callable, a font or a raw
   kernel object is not on it. The one attribute lookup a script can cause is for

@@ -62,6 +62,32 @@ MAX_SIDES = 100
 #: Elements one list or tuple may hold.
 MAX_SEQUENCE_ITEMS = 400
 
+# --- Numbers ----------------------------------------------------------------
+# What a script may compute with besides arithmetic. The reader computes each one
+# with its own functions on numbers it has already checked; no name here is ever
+# looked up on a module, and a script cannot assign any of them.
+
+#: ``import math`` gives a script these two constants...
+MATH_CONSTANTS = ("pi", "tau")
+#: ...and these functions, each with the fewest and the most numbers it takes.
+MATH_FUNCTIONS: dict[str, tuple[int, int]] = {
+    "sin": (1, 1),
+    "cos": (1, 1),
+    "tan": (1, 1),
+    "asin": (1, 1),
+    "acos": (1, 1),
+    "atan": (1, 1),
+    "atan2": (2, 2),
+    "sqrt": (1, 1),
+    "hypot": (2, 3),
+    "radians": (1, 1),
+    "degrees": (1, 1),
+    "floor": (1, 1),
+    "ceil": (1, 1),
+}
+#: Built-in calls, on numbers and on lists the script states.
+BUILTINS = ("abs", "min", "max", "round", "int", "float", "len")
+
 
 @dataclass(frozen=True)
 class Param:
@@ -246,6 +272,8 @@ def reference() -> str:
         '- Selector strings: CadQuery\'s own, such as `">Z"`, `"<X"`, `"|Z"`, `"#Z"`, `"%CIRCLE"`, `"|Z and >Y"`.',
         f"- Sizes and coordinates: at most {MAX_MAGNITUDE:g} mm; a length is at least {MIN_LENGTH:g} mm.",
         f"- Patterns (`pushPoints`, `rarray`, `polarArray`): at most {MAX_INSTANCES_PER_CALL} points in one call and {MAX_INSTANCES_PER_SCRIPT} in a script.",
+        f"- Numbers: `import math` gives {', '.join(f'`math.{name}`' for name in MATH_CONSTANTS)} and {', '.join(f'`math.{name}()`' for name in MATH_FUNCTIONS)}.",
+        f"  {', '.join(f'`{name}()`' for name in BUILTINS)} take numbers or a list of them. An index such as `p[0]` is a whole number.",
         "",
         f"## {_signature('cq.Workplane', CONSTRUCTOR)}",
         "",

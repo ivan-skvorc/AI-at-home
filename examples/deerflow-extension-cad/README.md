@@ -158,10 +158,19 @@ the `cad-modeling` skill (`skills/public/cad-modeling`).
 
 ## What a script may contain
 
-- `import cadquery as cq` (optional: `cq` is the only name a script is given).
-- `name = value` lines. Values are numbers, strings, `True`, `False`, `None`,
-  tuples and lists of numbers, arithmetic on numbers (`+ - * / // % **`), and
-  parts. `name += value` and its relatives are the arithmetic they stand for.
+- `import cadquery as cq` and `import math` (both optional: `cq` and `math` are
+  the only modules a script is given).
+- `name = value` lines, and several names at once: `w, d, t = 60, 40, 6`.
+  Values are numbers, strings, `True`, `False`, `None`, tuples and lists of
+  numbers, arithmetic on numbers (`+ - * / // % **`), and parts.
+  `name += value` and its relatives are the arithmetic they stand for.
+- Numbers from a closed table, computed by the reader itself: `math.pi`,
+  `math.tau`, `math.sin`, `cos`, `tan`, `asin`, `acos`, `atan`, `atan2`,
+  `sqrt`, `hypot`, `radians`, `degrees`, `floor` and `ceil`; and `abs`, `min`,
+  `max`, `round`, `int`, `float` and `len` on numbers and on lists the script
+  states. An index by a whole number the reader knows (`p[0]`, `p[-1]`), and a
+  list comprehension with one `for` and no `if`, read item by item like a loop:
+  `[(10 * i, 0) for i in range(4)]`. None of these names can be assigned.
 - `for` loops over `range(...)` or over a list of numbers or points that the
   script states, with one name or one name per number of a point
   (`for x, y in [(0, 0), (10, 0)]:`). Loops may be nested four deep. A count
@@ -186,10 +195,12 @@ refused: it is a count that came out as zero. An exponent is capped at 64
 unless its base is one or less, which cannot grow: `(-1) ** i` alternates a
 sign over any number of passes.
 
-Everything else is refused with the construct and its line: other imports,
-attribute access, any other call, `def`, `lambda`, `class`, `while`, `if`,
-`break`, `continue`, a loop's `else`, comprehensions, `with`, `try`, f-strings,
-subscripts, comparisons, dunder names. `range(...)` is what a loop runs over
+Everything else is refused with the construct and its line: other imports and
+`from math import`, attribute access, any other call, `def`, `lambda`,
+`class`, `while`, `if`, `break`, `continue`, a loop's `else`, comprehensions
+other than the one above, `with`, `try`, f-strings, slices, comparisons,
+dunder names. The answer's `error.refused` names what was refused, as the
+script wrote it where that is short (`loft`, `import os`, `math.system`). `range(...)` is what a loop runs over
 and nothing else: it cannot be assigned or used as a value.
 An export line such as `cq.exporters.export(result, "plate.step")` is refused
 with its reason: the tool writes the files, after its checks.

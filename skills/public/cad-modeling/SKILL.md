@@ -54,17 +54,18 @@ say so. These are the numbers of the request. Do not read them off a build.
 
 - Start with `import cadquery as cq`. Units are millimetres. Put every
   dimension in a named variable at the top. Assign the part to `result`.
-- A script may contain assignments of one value to one name, numbers,
+- A script may contain assignments (`w, d, t = 60, 40, 6` too), numbers,
   arithmetic (`+`, `-`, `*`, `%`, `**`, division with one slash or two, and
-  `+=`), lists of numbers or points written out whole, `for` loops over
-  `range(...)` or over such a list, `cq.Workplane(...)` and the methods in
+  `+=`), `import math` with `math.pi` and the functions named in
+  `references/operations.md`, `abs`, `min`, `max`, `round`, `int`, `float`,
+  `len`, an index by a whole number (`p[0]`, `p[-1]`), lists of numbers or
+  points, a list comprehension with one `for` and no `if`, `for` loops over
+  `range(...)` or a list, `cq.Workplane(...)` and the methods in
   `references/operations.md`.
-- It may not contain `if`, `while`, functions, comprehensions, `import math`,
-  built-in calls (`int`, `round`, `abs`, `min`, `max`, `len`), comparisons,
-  f-strings or indexing (`p[0]`), and a list cannot be added to. Write a choice
-  as arithmetic (`(-1) ** i` alternates the sign), take a point apart in the
-  loop header (`for x, y in points:`), write a sine as its number and a square
-  root as `** 0.5`.
+- It may not contain `if`, `while`, functions, comparisons, conditional
+  expressions, f-strings, slices (`p[1:]`), `from math import` or any other
+  import, and a list cannot be added to. Write a choice as arithmetic
+  (`(-1) ** i` alternates the sign).
 - The part is **one solid**. Bodies must overlap or share a face and be joined
   with `union()`.
 - **Say where every feature goes from the part's own origin.** Build the part

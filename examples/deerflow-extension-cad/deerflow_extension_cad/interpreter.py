@@ -1,20 +1,26 @@
 """Read a CadQuery script without running it.
 
 ``compile_script`` parses the text into a syntax tree and walks it. The walk
-accepts ``import cadquery as cq``, assignments to plain names, numbers,
-strings, tuples, lists, arithmetic on numbers, ``for`` loops over ``range(...)``
-or a list, ``cq.Workplane(...)`` and calls to the methods in :mod:`allowlist`.
-Everything else is refused with the construct and its line. The outcome is a
-:class:`Program`: a flat list of allow-listed operations with plain-data
-arguments, which ``build.run_program`` performs against the kernel.
+accepts ``import cadquery as cq`` and ``import math``, assignments to plain
+names (several at once: ``w, d, t = 60, 40, 6``), numbers, strings, tuples,
+lists, arithmetic on numbers, the closed numbers table of :mod:`allowlist`
+(``math.pi``, ``math.sin(x)``, ``min``, ``max``, ``round`` ...), an index known
+when the script is read (``p[0]``), list comprehensions with one ``for``,
+``for`` loops over ``range(...)`` or a list, ``cq.Workplane(...)`` and calls to
+the methods in :mod:`allowlist`. Everything else is refused with the construct,
+what it refused and its line. The outcome is a :class:`Program`: a flat list of
+allow-listed operations with plain-data arguments, which ``build.run_program``
+performs against the kernel.
 
 Nothing here executes script text. ``ast.parse`` builds a tree and runs
-nothing; no value from the script is ever used to look up an attribute. A
-``for`` loop is unrolled here, pass by pass: what it runs over is a range or a
-list the script states, so the loop is the same statements written out, and
+nothing; no value from the script is ever used to look up an attribute. The
+numbers table is computed here, by the reader's own functions on numbers it has
+checked. A ``for`` loop and a comprehension are unrolled here, pass by pass:
+what they run over is a range or a list the script states, so a loop is the
+same statements written out and a comprehension the same list written out, and
 the program stays flat. A script has no branches, functions or ``while``, so
-every number is known before the kernel starts: a refusal costs no geometry
-and needs no CadQuery.
+every number is known before the kernel starts: a refusal costs no geometry and
+needs no CadQuery.
 """
 
 from __future__ import annotations
@@ -77,11 +83,14 @@ TAB_WIDTH = 8
 class ScriptRefused(Exception):
     """The script asks for something a script may not contain."""
 
-    def __init__(self, construct: str, line: int | None, message: str):
+    def __init__(self, construct: str, line: int | None, message: str, name: str | None = None):
         super().__init__(f"line {line}: {message}" if line else message)
         self.construct = construct
         self.line = line
         self.message = message
+        #: What was refused, as the script wrote it where that is shorter than a sentence
+        #: ('loft', 'import os', 'math.sqrt'); else the construct. Counted by kind, not read.
+        self.name = name or construct
         #: True once the message says which loop pass it happened in.
         self.placed = False
 
@@ -123,6 +132,9 @@ class Program:
     #: Position of the operation that yields the part.
     result: int
     result_name: str
+    #: The numbers the script starts with: top-level names assigned once, before the first
+    #: operation, in the order assigned. What a follow-up edit changes.
+    parameters: tuple[tuple[str, int | float], ...] = ()
 
 
 # --- What the tree may contain ----------------------------------------------
@@ -156,13 +168,15 @@ _ALLOWED = frozenset(
         ast.Call,
         ast.Attribute,
         ast.keyword,
+        ast.Subscript,
+        ast.ListComp,
+        ast.comprehension,
     }
 )
 
 _CONSTRUCTS: dict[type, str] = {
     ast.ImportFrom: "import",
     ast.Lambda: "lambda",
-    ast.ListComp: "comprehension",
     ast.SetComp: "comprehension",
     ast.DictComp: "comprehension",
     ast.GeneratorExp: "comprehension",
@@ -170,8 +184,7 @@ _CONSTRUCTS: dict[type, str] = {
     ast.NamedExpr: "assignment expression",
     ast.JoinedStr: "f-string",
     ast.FormattedValue: "f-string",
-    ast.Subscript: "subscript",
-    ast.Slice: "subscript",
+    ast.Slice: "slice",
     ast.Compare: "comparison",
     ast.BoolOp: "boolean operator",
     ast.Set: "set",
@@ -213,11 +226,17 @@ _CONSTRUCTS: dict[type, str] = {
 }
 
 _POSITIONED = (ast.stmt, ast.expr, ast.keyword, ast.alias)
-_ONLY_IMPORT = "the only import a script may contain is: import cadquery as cq"
-_ALLOWED_SUMMARY = "A script may contain: import cadquery as cq, assignments to names, numbers, strings, tuples, lists, arithmetic, for loops over range(...) or a list, cq.Workplane(...) and the allow-listed methods of a part."
+_ONLY_IMPORT = "a script may contain two imports: import cadquery as cq and import math"
+_FROM_MATH = "from math import ... is not available: write import math, then math.sqrt(x) or math.pi"
+_ALLOWED_SUMMARY = (
+    "A script may contain: import cadquery as cq and import math, assignments to names (a, b = 1, 2), numbers, strings, tuples, lists, arithmetic, "
+    "math.pi and the math functions, abs, min, max, round, int, float, len, an index such as p[0], a list comprehension with one for, "
+    "for loops over range(...) or a list, cq.Workplane(...) and the allow-listed methods of a part."
+)
 _LOOP_OVER = "a loop runs over range(...) or over a list of numbers or points, for example: for i in range(5):"
-#: Names a script reads and may not assign: the module, the viewer's call, and what a loop counts with.
-_RESERVED = ("cq", "show_object", "range")
+_COMPREHENSION_OVER = "a comprehension runs over range(...) or over a list of numbers or points, for example: [(10 * i, 0) for i in range(5)]"
+#: Names a script reads and may not assign: the modules, the viewer's call, what a loop counts with, and the built-ins.
+_RESERVED = ("cq", "math", "show_object", "range", *table.BUILTINS)
 
 
 #: Attribute names that mean "write a file": the tool does that itself, after its checks.
@@ -225,8 +244,8 @@ _EXPORTS = ("export", "save", "tosvg")
 MAX_ECHO = 60
 
 
-def _refuse(construct: str, line: int | None, message: str):
-    raise ScriptRefused(construct, line, message)
+def _refuse(construct: str, line: int | None, message: str, name: str | None = None):
+    raise ScriptRefused(construct, line, message, name)
 
 
 def _short(text: str, limit: int = MAX_ECHO) -> str:
@@ -287,7 +306,8 @@ def _check_tree(tree: ast.Module) -> None:
             _refuse("nesting", line, f"the expression is nested deeper than {MAX_DEPTH} levels; split a long chain of calls across two assignments")
         kind = type(node)
         if kind is ast.ImportFrom:
-            _refuse("import", line, _ONLY_IMPORT)
+            written = _short(f"from {'.' * node.level}{node.module or ''} import {', '.join(alias.name for alias in node.names)}")
+            _refuse("import", line, _FROM_MATH if node.module == "math" and not node.level else _ONLY_IMPORT, written)
         if kind not in _ALLOWED:
             construct = _CONSTRUCTS.get(kind, kind.__name__.lower())
             _refuse(construct, line, f"a script may not contain {_article(construct)}. {_ALLOWED_SUMMARY}")
@@ -326,6 +346,99 @@ def _describe(value: object) -> str:
     return "a list or tuple"
 
 
+def _holdable(item: object) -> bool:
+    """What a list or tuple may hold: numbers, booleans, or points made of numbers."""
+    if isinstance(item, tuple):
+        return not any(isinstance(inner, tuple) for inner in item)
+    return isinstance(item, bool) or _is_number(item)
+
+
+# --- The numbers table: what the reader computes itself ---------------------
+
+#: ``allowlist.MATH_FUNCTIONS``, by the function that computes each. A script's name for one
+#: is a key here, checked against the table first; nothing is looked up on the math module.
+_MATH = {
+    "sin": math.sin,
+    "cos": math.cos,
+    "tan": math.tan,
+    "asin": math.asin,
+    "acos": math.acos,
+    "atan": math.atan,
+    "atan2": math.atan2,
+    "sqrt": math.sqrt,
+    "hypot": math.hypot,
+    "radians": math.radians,
+    "degrees": math.degrees,
+    "floor": math.floor,
+    "ceil": math.ceil,
+}
+_MATH_CONSTANTS = {"pi": math.pi, "tau": math.tau}
+_MATH_SAID = f"A script may use math.pi, math.tau and these functions of math: {', '.join(table.MATH_FUNCTIONS)}."
+#: Digits round() may keep or drop. An int rounded to ten thousand digits is computed
+#: as a power of ten that large; a number of a script has twelve.
+MAX_ROUND_DIGITS = 15
+
+
+class _Unfit(Exception):
+    """A built-in called with what it does not take; the reader says so as a refusal."""
+
+
+def _number(value: object, what: str) -> int | float:
+    if not _is_number(value):
+        raise _Unfit(f"{what} takes numbers, not {_describe(value)}")
+    return value
+
+
+def _one(arguments: list, what: str) -> object:
+    if len(arguments) != 1:
+        raise _Unfit(f"{what} takes one value, got {len(arguments)}")
+    return arguments[0]
+
+
+def _extreme(choose):
+    def extreme(arguments: list, what: str) -> int | float:
+        # min(a, b, ...) or min(list): the two ways Python takes, on numbers only, since points would be compared.
+        values = arguments[0] if len(arguments) == 1 and isinstance(arguments[0], tuple) else arguments
+        if len(arguments) == 1 and not isinstance(arguments[0], tuple):
+            raise _Unfit(f"{what} takes two numbers or more, or one list of numbers")
+        if not values:
+            raise _Unfit(f"{what} of an empty list has no answer")
+        return choose(_number(value, what) for value in values)
+
+    return extreme
+
+
+def _round(arguments: list, what: str) -> int | float:
+    if not 1 <= len(arguments) <= 2:
+        raise _Unfit(f"{what} takes a number and, optionally, how many digits to keep")
+    value = _number(arguments[0], what)
+    if len(arguments) == 1:
+        return round(value)
+    digits = arguments[1]
+    if type(digits) is not int or abs(digits) > MAX_ROUND_DIGITS:
+        raise _Unfit(f"{what} keeps a whole number of digits from -{MAX_ROUND_DIGITS} to {MAX_ROUND_DIGITS}, got {_describe(digits)}")
+    return round(value, digits)
+
+
+def _length(arguments: list, what: str) -> int:
+    value = _one(arguments, what)
+    if not isinstance(value, tuple):
+        raise _Unfit(f"{what} takes a list or a point, not {_describe(value)}")
+    return len(value)
+
+
+#: ``allowlist.BUILTINS``, by the function that computes each.
+_BUILTIN = {
+    "abs": lambda arguments, what: abs(_number(_one(arguments, what), what)),
+    "min": _extreme(min),
+    "max": _extreme(max),
+    "round": _round,
+    "int": lambda arguments, what: int(_number(_one(arguments, what), what)),
+    "float": lambda arguments, what: float(_number(_one(arguments, what), what)),
+    "len": _length,
+}
+
+
 class _Reader:
     def __init__(self) -> None:
         self.names: dict[str, object] = {}
@@ -340,40 +453,75 @@ class _Reader:
         self.shown_line: int | None = None
         self.last_part: tuple[str, int] | None = None
         self.result_line: int | None = None
+        #: How often each name is assigned, and the numbers assigned at the top before the first operation.
+        self.assignments: dict[str, int] = {}
+        self.starting_numbers: dict[str, int | float] = {}
 
     # Statements
 
     def statement(self, node: ast.stmt) -> None:
         self.spend(1, node.lineno)  # a note or an import costs a pass through here too
         if isinstance(node, ast.Import):
-            if len(node.names) != 1 or node.names[0].name != "cadquery" or node.names[0].asname != "cq":
-                _refuse("import", node.lineno, _ONLY_IMPORT)
+            written = [alias.name + (f" as {alias.asname}" if alias.asname else "") for alias in node.names]
+            if written != ["cadquery as cq"] and written != ["math"]:
+                _refuse("import", node.lineno, _ONLY_IMPORT, _short("import " + ", ".join(written)))
         elif isinstance(node, ast.Assign):
-            if len(node.targets) != 1 or not isinstance(node.targets[0], ast.Name):
-                _refuse("assignment target", node.lineno, "assign one value to one plain name, for example: width = 40")
-            name = self.target(node.targets[0].id, node.lineno)
-            value = self.value(node.value)
-            self.names[name] = value
-            if name == "result":
-                self.result_line = node.lineno
-            if isinstance(value, Ref):
-                self.last_part = (name, value.slot)
+            target = node.targets[0] if len(node.targets) == 1 else None
+            if isinstance(target, ast.Name):
+                name = self.target(target.id, node.lineno)
+                self.assign(name, self.value(node.value), node.lineno)
+            elif isinstance(target, ast.Tuple):
+                self.unpack(target, node.value, node.lineno)
+            else:
+                self.refuse_target(target, node.lineno)
         elif isinstance(node, ast.AugAssign):
             # x += step is x = x + step: numbers only, like the arithmetic it stands for.
             if not isinstance(node.target, ast.Name):
-                _refuse("assignment target", node.lineno, "assign one value to one plain name, for example: width = 40")
+                self.refuse_target(node.target, node.lineno)
             name = self.target(node.target.id, node.lineno)
             if name not in self.names:
-                _refuse("name", node.lineno, f"{_short(name)!r} is not defined earlier in the script")
-            self.names[name] = self.combine(node.op, self.names[name], self.value(node.value), node.lineno)
-            if name == "result":
-                self.result_line = node.lineno
+                _refuse("name", node.lineno, f"{_short(name)!r} is not defined earlier in the script", name)
+            self.assign(name, self.combine(node.op, self.names[name], self.value(node.value), node.lineno), node.lineno)
         elif isinstance(node, ast.For):
             self.loop(node)
         elif isinstance(node, ast.Expr):
             self.expression_statement(node)
         else:  # pragma: no cover - _check_tree refuses every other statement first
             _refuse("statement", node.lineno, _ALLOWED_SUMMARY)
+
+    def assign(self, name: str, value: object, line: int, *, counted_by_a_loop: bool = False) -> None:
+        self.names[name] = value
+        self.assignments[name] = self.assignments.get(name, 0) + 1
+        if not (counted_by_a_loop or self.loops or self.operations) and _is_number(value) and name not in self.starting_numbers:
+            self.starting_numbers[name] = value
+        if name == "result":
+            self.result_line = line
+        if isinstance(value, Ref):
+            self.last_part = (name, value.slot)
+
+    def unpack(self, target: ast.Tuple, source: ast.expr, line: int) -> None:
+        """w, d, t = 60, 40, 6 is the three assignments written out; every value is read before any is assigned."""
+        if not target.elts or not all(isinstance(element, ast.Name) for element in target.elts):
+            _refuse("assignment target", line, "assign to plain names, one per value, for example: w, d, t = 60, 40, 6")
+        names = [self.target(element.id, line) for element in target.elts]
+        if isinstance(source, (ast.Tuple, ast.List)) and len(source.elts) == len(names):
+            # One value per name as written: a part may be one of them, as on a line of its own.
+            values = tuple(self.value(element) for element in source.elts)
+        else:
+            values = self.value(source)
+            if not isinstance(values, tuple) or len(values) != len(names):
+                said = f"{len(values)} values" if isinstance(values, tuple) else _describe(values)
+                _refuse("assignment target", line, f"{len(names)} names take {len(names)} values, and this is {said}")
+        for name, value in zip(names, values):
+            self.assign(name, value, line)
+
+    def refuse_target(self, target: ast.expr | None, line: int) -> None:
+        if isinstance(target, ast.Subscript):
+            _refuse("subscript", line, "an item of a list cannot be changed: write the list out again with the new item")
+        _refuse("assignment target", line, "assign one value to one plain name, for example: width = 40, or one per name: w, d = 60, 40")
+
+    def parameters(self) -> tuple[tuple[str, int | float], ...]:
+        return tuple((name, value) for name, value in self.starting_numbers.items() if self.assignments[name] == 1)
 
     def spend(self, amount: int, line: int) -> None:
         """Count what reading costs, so no script is read for longer than a moment."""
@@ -383,9 +531,9 @@ class _Reader:
 
     def target(self, name: str, line: int) -> str:
         if name in _RESERVED:
-            _refuse("name", line, f"{name!r} is a name the script is given and cannot be assigned: use another name")
+            _refuse("name", line, f"{name!r} is a name the script is given and cannot be assigned: use another name", name)
         if "__" in name or not _NAME.fullmatch(name):
-            _refuse("name", line, f"{_short(name)!r} cannot be assigned: use a name that starts with a letter and holds letters, digits and single underscores, at most 64 characters, and not cq")
+            _refuse("name", line, f"{_short(name)!r} cannot be assigned: use a name that starts with a letter and holds letters, digits and single underscores, at most 64 characters, and not cq", _short(name))
         return name
 
     # Loops
@@ -398,10 +546,12 @@ class _Reader:
         if len(self.loops) >= MAX_LOOP_DEPTH:
             _refuse("loop", line, f"loops may be nested at most {MAX_LOOP_DEPTH} deep")
         elements = node.target.elts if isinstance(node.target, ast.Tuple) else [node.target]
+        if any(isinstance(element, ast.Subscript) for element in elements):
+            _refuse("subscript", line, "a loop counts with a plain name, not with an item of a list")
         if not elements or not all(isinstance(element, ast.Name) for element in elements):
             _refuse("loop", line, "a loop counts with a plain name, or with one name per number of a point, for example: for x, y in [(0, 0), (10, 0)]:")
         names = [self.target(element.id, line) for element in elements]
-        items = self.loop_items(node.iter)
+        items = self.items(node.iter, "loop", MAX_LOOP_PASSES, f"the loops of a script may run at most {MAX_LOOP_PASSES} passes in total", _LOOP_OVER)
         if not items:
             _refuse("loop", line, "this loop would not run once: its range or list is empty")
         for number, item in enumerate(items, 1):
@@ -416,31 +566,32 @@ class _Reader:
             else:
                 values = (item,)
             for name, value in zip(names, values):
-                self.names[name] = value
-                if name == "result":
-                    self.result_line = line
+                self.assign(name, value, line, counted_by_a_loop=True)
             said = ", ".join(f"{name} = {_show(value)}" for name, value in list(zip(names, values))[:3]) + (", ..." if len(names) > 3 else "")
             self.loops.append((line, number, f"pass {number} of the loop on line {line} ({_short(said, MAX_PASS_SAID)})", number == len(items)))
             try:
                 for statement in node.body:
                     self.statement(statement)
             except ScriptRefused as refused:
-                if refused.placed:
-                    raise
-                # Said once, by the innermost loop, which is the one that knows every loop around it.
-                placed = ScriptRefused(refused.construct, refused.line, f"{refused.message} (in {self.where()})")
-                placed.placed = True
-                raise placed from None
+                self.place(refused)
             finally:
                 self.loops.pop()
 
-    def loop_items(self, node: ast.expr) -> tuple:
-        """What a loop runs over, known in full before its first pass."""
+    def place(self, refused: ScriptRefused) -> None:
+        """Say once, from the innermost loop or comprehension, which knows every one around it, where a refusal happened."""
+        if refused.placed:
+            raise refused
+        placed = ScriptRefused(refused.construct, refused.line, f"{refused.message} (in {self.where()})", refused.name)
+        placed.placed = True
+        raise placed from None
+
+    def items(self, node: ast.expr, construct: str, most: int, too_many: str, over: str) -> tuple:
+        """What a loop or a comprehension runs over, known in full before its first pass."""
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
             if node.func.id != "range":
-                _refuse("loop", node.lineno, f"{_LOOP_OVER} {_short(node.func.id)}() is not available.")
+                _refuse(construct, node.lineno, f"{over} {_short(node.func.id)}() is not available.", _short(node.func.id))
             if node.keywords or not 1 <= len(node.args) <= 3:
-                _refuse("loop", node.lineno, "range() takes one to three whole numbers, for example range(5) or range(0, 50, 10)")
+                _refuse(construct, node.lineno, "range() takes one to three whole numbers, for example range(5) or range(0, 50, 10)")
             bounds = [self.value(argument) for argument in node.args]
             for index, bound in enumerate(bounds):
                 # 50 // 3.5 is 14.0: a count worked out from a decimal is whole and still has its point.
@@ -448,17 +599,68 @@ class _Reader:
                     bound = bounds[index] = int(bound)
                 if type(bound) is not int:
                     said = repr(bound) if type(bound) is float else _describe(bound)
-                    _refuse("loop", node.lineno, f"range() takes whole numbers, got {said}: round a count down with //, for example range(length // pitch)")
+                    _refuse(construct, node.lineno, f"range() takes whole numbers, got {said}: round a count down with //, for example range(length // pitch)")
             if len(bounds) == 3 and bounds[2] == 0:
-                _refuse("loop", node.lineno, "range() cannot step by zero")
+                _refuse(construct, node.lineno, "range() cannot step by zero")
             steps = range(*bounds)
-            if len(steps) > MAX_LOOP_PASSES:
-                _refuse("loop", node.lineno, f"the loops of a script may run at most {MAX_LOOP_PASSES} passes in total")
+            if len(steps) > most:
+                _refuse(construct, node.lineno, too_many)
             return tuple(steps)
         items = self.value(node)
         if not isinstance(items, tuple):
-            _refuse("loop", node.lineno, f"{_LOOP_OVER} This one runs over {_describe(items)}.")
+            _refuse(construct, node.lineno, f"{over} This one runs over {_describe(items)}.")
         return items
+
+    def comprehension(self, node: ast.ListComp) -> tuple:
+        """[(10 * i, 0) for i in range(3)] is the list written out: read item by item, like the passes of a loop.
+
+        Its name is the comprehension's own, as in Python: what the name held before is
+        held again after. It makes a list, never an operation, so the passes of loops do
+        not count it; the work of reading does, item by item.
+        """
+        line = node.lineno
+        if len(node.generators) != 1 or node.generators[0].ifs:
+            _refuse("comprehension", line, "a comprehension has one for and no if: write the list out, or build what varies with arithmetic such as (-1) ** i")
+        generator = node.generators[0]
+        elements = generator.target.elts if isinstance(generator.target, ast.Tuple) else [generator.target]
+        if not elements or not all(isinstance(element, ast.Name) for element in elements):
+            _refuse("comprehension", line, "a comprehension counts with a plain name, or with one name per number of a point, for example: [(y, x) for x, y in points]")
+        names = [self.target(element.id, line) for element in elements]
+        items = self.items(generator.iter, "comprehension", table.MAX_SEQUENCE_ITEMS, f"a list holds at most {table.MAX_SEQUENCE_ITEMS} items", _COMPREHENSION_OVER)
+        if not items:
+            _refuse("comprehension", line, "this comprehension makes an empty list: its range or list is empty")
+        held = {name: self.names[name] for name in names if name in self.names}
+        made = []
+        try:
+            for number, item in enumerate(items, 1):
+                self.spend(1, line)
+                if isinstance(generator.target, ast.Tuple):
+                    if not isinstance(item, tuple) or len(item) != len(names):
+                        _refuse("comprehension", line, f"this comprehension takes {len(names)} names per item, and item {number} is {_short(_show(item))}")
+                    values = item
+                else:
+                    values = (item,)
+                self.names.update(zip(names, values))
+                said = ", ".join(f"{name} = {_show(value)}" for name, value in list(zip(names, values))[:3]) + (", ..." if len(names) > 3 else "")
+                self.loops.append((line, number, f"item {number} of the list on line {line} ({_short(said, MAX_PASS_SAID)})", number == len(items)))
+                try:
+                    value = self.value(node.elt)
+                    if isinstance(value, tuple):
+                        self.spend(len(value), line)
+                    if not _holdable(value):
+                        _refuse("sequence", node.elt.lineno, "a list or tuple holds numbers, booleans, or points made of numbers")
+                    made.append(value)
+                except ScriptRefused as refused:
+                    self.place(refused)
+                finally:
+                    self.loops.pop()
+        finally:
+            for name in names:
+                if name in held:
+                    self.names[name] = held[name]
+                else:
+                    self.names.pop(name, None)
+        return tuple(made)
 
     def where(self) -> str:
         """The passes being read, innermost first and no longer than a sentence; empty outside a loop."""
@@ -496,12 +698,20 @@ class _Reader:
             return self.constant(node)
         if isinstance(node, ast.Name):
             if node.id == "cq":
-                _refuse("name", node.lineno, "cq can only be used as cq.Workplane(...)")
+                _refuse("name", node.lineno, "cq can only be used as cq.Workplane(...)", "cq")
+            if node.id == "math":
+                _refuse("name", node.lineno, "math can only be used as math.pi, math.tau or a math function such as math.sqrt(x)", "math")
+            if node.id in table.BUILTINS:
+                _refuse("name", node.lineno, f"{node.id} can only be called, for example {node.id}(x)", node.id)
             if node.id not in self.names:
-                _refuse("name", node.lineno, f"{_short(node.id)!r} is not defined earlier in the script")
+                _refuse("name", node.lineno, f"{_short(node.id)!r} is not defined earlier in the script", _short(node.id))
             return self.names[node.id]
         if isinstance(node, (ast.Tuple, ast.List)):
             return self.sequence(node)
+        if isinstance(node, ast.Subscript):
+            return self.subscript(node)
+        if isinstance(node, ast.ListComp):
+            return self.comprehension(node)
         if isinstance(node, ast.UnaryOp):
             operand = self.value(node.operand)
             if not _is_number(operand):
@@ -513,7 +723,15 @@ class _Reader:
             return self.call(node)
         if isinstance(node, ast.Attribute):
             # The attribute's own line: a chain starts on the line of its first name.
-            _refuse("attribute", node.end_lineno or node.lineno, f".{_short(node.attr)} cannot be read: a script may only call the allow-listed methods of a part")
+            line = node.end_lineno or node.lineno
+            if isinstance(node.value, ast.Name) and node.value.id == "math":
+                if node.attr in table.MATH_CONSTANTS:
+                    return _MATH_CONSTANTS[node.attr]
+                said = f"math.{_short(node.attr)}"
+                if node.attr in table.MATH_FUNCTIONS:
+                    _refuse("attribute", line, f"{said} is a function: call it, for example {said}(x)", said)
+                _refuse("attribute", line, f"{said} is not available. {_MATH_SAID}", said)
+            _refuse("attribute", line, f".{_short(node.attr)} cannot be read: a script may only call the allow-listed methods of a part", f".{_short(node.attr)}")
         _refuse("expression", node.lineno, _ALLOWED_SUMMARY)  # pragma: no cover - _check_tree refuses these first
 
     def constant(self, node: ast.Constant) -> object:
@@ -537,10 +755,62 @@ class _Reader:
         # A name may stand for a long tuple, and the check below walks each one.
         self.spend(sum(len(item) for item in items if isinstance(item, tuple)), node.lineno)
         for element, item in zip(node.elts, items):
-            nested = isinstance(item, tuple)
-            if not (nested or isinstance(item, bool) or _is_number(item)) or (nested and any(isinstance(inner, tuple) for inner in item)):
+            if not _holdable(item):
                 _refuse("sequence", element.lineno, "a list or tuple holds numbers, booleans, or points made of numbers")
         return items
+
+    def subscript(self, node: ast.Subscript) -> object:
+        """p[0]: an item of a list or a point, by a whole number the reader knows. No slices."""
+        base = self.value(node.value)
+        index = self.value(node.slice)
+        line = node.lineno
+        if not isinstance(base, tuple):
+            _refuse("subscript", line, f"an index picks an item of a list or a point, not of {_describe(base)}")
+        if type(index) is not int:
+            said = repr(index) if type(index) is float else _describe(index)
+            _refuse("subscript", line, f"an index is a whole number, got {said}: for a count worked out by division, use // or int(...)")
+        if not -len(base) <= index < len(base):
+            _refuse("subscript", line, f"index {index} is outside this list of {len(base)}: the first item is [0] and the last is [{len(base) - 1}] or [-1]")
+        return base[index]
+
+    def math_call(self, node: ast.Call, line: int) -> int | float:
+        """math.sin(x) and the rest of the table, computed by the reader on numbers it checked."""
+        name = node.func.attr
+        said = f"math.{_short(name)}"
+        if name not in table.MATH_FUNCTIONS:
+            _refuse("call", line, f"{said}() is not available. {_MATH_SAID}", said)
+        fewest, most = table.MATH_FUNCTIONS[name]
+        count = f"{fewest} number{'' if fewest == 1 else 's'}" if fewest == most else f"{fewest} to {most} numbers"
+        if node.keywords or not fewest <= len(node.args) <= most:
+            _refuse("call", line, f"{said}() takes {count}, given in order without names", said)
+        arguments = [self.value(argument) for argument in node.args]
+        if not all(_is_number(argument) for argument in arguments):
+            _refuse("call", line, f"{said}() takes {count}, not {_describe(next(a for a in arguments if not _is_number(a)))}", said)
+        try:
+            result = _MATH[name](*arguments)
+        except (ValueError, OverflowError):
+            _refuse("arithmetic", line, f"{said}({', '.join(map(_show, arguments))}) has no answer: the number is outside what {said} takes", said)
+        return self.checked(result, line, said)
+
+    def builtin(self, node: ast.Call, line: int) -> int | float:
+        """abs, min, max, round, int, float and len, on numbers and on lists the script states."""
+        name = node.func.id
+        if node.keywords:
+            _refuse("call", line, f"{name}() takes no named arguments here", name)
+        arguments = [self.value(argument) for argument in node.args]
+        self.spend(sum(len(argument) for argument in arguments if isinstance(argument, tuple)), line)
+        try:
+            result = _BUILTIN[name](arguments, f"{name}()")
+        except _Unfit as unfit:
+            _refuse("call", line, str(unfit), name)
+        except (ValueError, OverflowError):
+            _refuse("arithmetic", line, f"{name}() has no finite answer here", name)
+        return self.checked(result, line, name)
+
+    def checked(self, value: int | float, line: int, name: str) -> int | float:
+        if not _in_range(value):
+            _refuse("arithmetic", line, f"the result must be a finite number no larger than {MAX_NUMBER:g}", name)
+        return value
 
     def arithmetic(self, node: ast.BinOp) -> object:
         return self.combine(node.op, self.value(node.left), self.value(node.right), node.lineno)
@@ -583,45 +853,54 @@ class _Reader:
         function = node.func
         if isinstance(function, ast.Name):
             if function.id == "range":
-                _refuse("call", node.lineno, "range(...) is what a loop runs over, for example: for i in range(5): It cannot be used as a value.")
-            _refuse("call", node.lineno, f"{_short(function.id)}() cannot be called. A script may call cq.Workplane(...) and the methods of a part.")
+                _refuse("call", node.lineno, "range(...) is what a loop runs over, for example: for i in range(5): It cannot be used as a value.", "range")
+            if function.id in table.BUILTINS:
+                return self.builtin(node, node.lineno)
+            _refuse(
+                "call",
+                node.lineno,
+                f"{_short(function.id)}() cannot be called. A script may call cq.Workplane(...), the methods of a part, the math functions and {', '.join(table.BUILTINS)}.",
+                _short(function.id),
+            )
         if not isinstance(function, ast.Attribute):
             _refuse("call", node.lineno, "only cq.Workplane(...) and the methods of a part can be called")
         # A chained call starts on the chain's first line; the method's own name is where it reads.
         line = function.end_lineno or node.lineno
         if function.attr.lower().startswith(_EXPORTS):
             # The usual last line of a CadQuery script. Nothing here writes a file for it.
-            _refuse("export", line, "a script does not export: the tool writes the STEP, STL and GLB files itself once the part passes its checks. Delete this line.")
+            _refuse("export", line, "a script does not export: the tool writes the STEP, STL and GLB files itself once the part passes its checks. Delete this line.", _short(function.attr))
         if isinstance(function.value, ast.Name) and function.value.id == "cq":
             if function.attr != "Workplane":
-                _refuse("call", line, f"cq.{_short(function.attr)} is not available: the only thing a script may use on cq is cq.Workplane(...)")
+                _refuse("call", line, f"cq.{_short(function.attr)} is not available: the only thing a script may use on cq is cq.Workplane(...)", f"cq.{_short(function.attr)}")
             return self.operation(node, line, None, "Workplane", table.CONSTRUCTOR)
+        if isinstance(function.value, ast.Name) and function.value.id == "math":
+            return self.math_call(node, line)
         receiver = self.value(function.value)
         if not isinstance(receiver, Ref):
-            _refuse("attribute", line, f".{_short(function.attr)}() cannot be called on {_describe(receiver)}: only a part has methods")
+            _refuse("attribute", line, f".{_short(function.attr)}() cannot be called on {_describe(receiver)}: only a part has methods", f".{_short(function.attr)}")
         method = table.METHODS.get(function.attr)
         if method is None:
-            _refuse("method", line, f".{_short(function.attr)}() is not on the allow-list. Available: {', '.join(sorted(table.METHODS))}")
+            _refuse("method", line, f".{_short(function.attr)}() is not on the allow-list. Available: {', '.join(sorted(table.METHODS))}", _short(function.attr))
         return self.operation(node, line, receiver.slot, function.attr, method)
 
     def operation(self, node: ast.Call, line: int, receiver: int | None, name: str, method: table.Method) -> Ref:
         label = "cq.Workplane" if receiver is None else name
         params = {param.name: param for param in method.params}
         if len(node.args) > len(method.params):
-            _refuse("argument", line, f"{label}() takes at most {len(method.params)} arguments, got {len(node.args)}")
+            _refuse("argument", line, f"{label}() takes at most {len(method.params)} arguments, got {len(node.args)}", label)
         supplied: dict[str, ast.expr] = {param.name: argument for param, argument in zip(method.params, node.args)}
         for keyword in node.keywords:
             if keyword.arg not in params:
-                _refuse("argument", keyword.lineno, f"{label}() has no argument {_short(keyword.arg)!r}. It takes: {', '.join(params) or 'no arguments'}")
+                _refuse("argument", keyword.lineno, f"{label}() has no argument {_short(keyword.arg)!r}. It takes: {', '.join(params) or 'no arguments'}", label)
             if keyword.arg in supplied:
-                _refuse("argument", keyword.lineno, f"{label}() got {keyword.arg!r} twice")
+                _refuse("argument", keyword.lineno, f"{label}() got {keyword.arg!r} twice", label)
             supplied[keyword.arg] = keyword.value
         arguments = []
         bound: dict[str, object] = {}
         for param in method.params:
             if param.name not in supplied:
                 if param.required:
-                    _refuse("argument", line, f"{label}() needs {param.name!r}")
+                    _refuse("argument", line, f"{label}() needs {param.name!r}", label)
                 continue
             # An argument on its own line is refused on that line, not on the method's.
             value = self.fit(label, param, self.value(supplied[param.name]), max(line, supplied[param.name].lineno))
@@ -632,7 +911,10 @@ class _Reader:
             self.instances += points
             if points > table.MAX_INSTANCES_PER_CALL or self.instances > table.MAX_INSTANCES_PER_SCRIPT:
                 _refuse(
-                    "pattern", line, f"{label}() would make {points} point{'' if points == 1 else 's'}, {self.instances} in the script so far: at most {table.MAX_INSTANCES_PER_CALL} per call and {table.MAX_INSTANCES_PER_SCRIPT} per script"
+                    "pattern",
+                    line,
+                    f"{label}() would make {points} point{'' if points == 1 else 's'}, {self.instances} in the script so far: at most {table.MAX_INSTANCES_PER_CALL} per call and {table.MAX_INSTANCES_PER_SCRIPT} per script",
+                    label,
                 )
         if len(self.operations) >= MAX_OPERATIONS:
             _refuse("script length", line, f"a script may perform at most {MAX_OPERATIONS} operations")
@@ -648,7 +930,7 @@ class _Reader:
             return None
         fitted = _fit(kind, value)
         if fitted is _UNFIT:
-            _refuse("argument", line, f"{label}({param.name}=...) must be {_EXPECTED[kind] if isinstance(kind, str) else 'one of ' + ', '.join(map(repr, kind))}, got {_describe(value)}")
+            _refuse("argument", line, f"{label}({param.name}=...) must be {_EXPECTED[kind] if isinstance(kind, str) else 'one of ' + ', '.join(map(repr, kind))}, got {_describe(value)}", label)
         return fitted
 
 
@@ -791,4 +1073,4 @@ def compile_script(source: str) -> Program:
         chosen = reader.shown or reader.last_part
     if chosen is None:
         _refuse("result", None, "the script builds no part: assign one to a name, for example result = cq.Workplane('XY').box(10, 10, 10)")
-    return Program(tuple(reader.operations), chosen[1], chosen[0])
+    return Program(tuple(reader.operations), chosen[1], chosen[0], reader.parameters())
