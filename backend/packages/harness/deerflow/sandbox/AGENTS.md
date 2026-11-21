@@ -84,6 +84,6 @@ Windows. The portable string assertions do not replace it.
 ## Adding a provider
 
 Reuse the shared pieces: `derive_sandbox_scope_token`, `AcquireSerializer`,
-`WarmPoolLifecycleMixin` and the ownership store in
+`WarmPoolLifecycleMixin`, `reject_path_traversal` and the ownership store in
 [aio_sandbox](../community/aio_sandbox/AGENTS.md). Scoped command hooks default to
 pass-through, so a provider without server-side sessions needs no change.

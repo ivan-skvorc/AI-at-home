@@ -48,6 +48,7 @@ from deerflow.sandbox.lease import (
 from deerflow.sandbox.local.local_sandbox import LocalSandbox, escape_powershell_path
 from deerflow.sandbox.overwrite import unwrap_sandbox
 from deerflow.sandbox.path_patterns import PATH_START_BOUNDARY, build_output_mask_pattern, normalize_mask_tail, replace_output_path_matches
+from deerflow.sandbox.path_traversal import reject_path_traversal
 from deerflow.sandbox.prewarm import claim_sandbox_prewarm
 from deerflow.sandbox.read_file_contract import (
     READ_FILE_EMPTY,
@@ -421,7 +422,7 @@ def _resolve_skills_path(path: str) -> str:
         integrations_relative = relative[len("integrations") :].lstrip("/")
         if not integrations_relative:
             return str(integrations_dir)
-        # Defense-in-depth: even though _reject_path_traversal runs upstream for
+        # Defense-in-depth: even though reject_path_traversal runs upstream for
         # sandbox callers, confirm the resolved path stays within the global
         # integration dir so a lexical ``../`` cannot escape it here.
         resolved = (integrations_dir / integrations_relative).resolve()
@@ -555,7 +556,7 @@ def _resolve_acp_workspace_path(path: str, thread_id: str | None = None) -> str:
         FileNotFoundError: If ACP workspace directory does not exist.
         PermissionError: If path traversal is detected.
     """
-    _reject_path_traversal(path)
+    reject_path_traversal(path)
 
     host_path = _get_acp_workspace_host_path(thread_id)
     if host_path is None:
@@ -1031,20 +1032,6 @@ def _reject_unstored_windows_incompatible_path(path: str, thread_data: ThreadDat
     raise PermissionError(f"Access denied: {reason}")
 
 
-def _reject_path_traversal(path: str) -> None:
-    """Reject paths that contain '..' segments to prevent directory traversal.
-
-    Windows reserved names and trailing dots or spaces are intentionally not
-    checked here. Portability is enforced when a path is created, not on every
-    read of a name the host already stored.
-    """
-    # Normalise to forward slashes, then check for '..' segments.
-    normalised = path.replace("\\", "/")
-    for segment in normalised.split("/"):
-        if segment == "..":
-            raise PermissionError("Access denied: path traversal detected")
-
-
 def validate_local_tool_path(path: str, thread_data: ThreadDataState | None, *, read_only: bool = False) -> None:
     """Validate that a virtual path is allowed for local-sandbox access.
 
@@ -1072,7 +1059,7 @@ def validate_local_tool_path(path: str, thread_data: ThreadDataState | None, *, 
     if thread_data is None:
         raise SandboxRuntimeError("Thread data not available for local sandbox")
 
-    _reject_path_traversal(path)
+    reject_path_traversal(path)
     # Creating a non-portable name is rejected. Reading, and editing a file
     # that is already stored under that name, is not.
     if not read_only:
@@ -1658,7 +1645,7 @@ def _is_shell_assignment(token: str) -> bool:
 
 def _reject_allowed_bash_path(path: str, thread_data: ThreadDataState | None) -> None:
     """Traversal always; portability only when the host path is not stored yet."""
-    _reject_path_traversal(path)
+    reject_path_traversal(path)
     _reject_unstored_windows_incompatible_path(path, thread_data)
 
 
@@ -1729,7 +1716,7 @@ def _validate_local_bash_cwd_target(command_name: str, target: str | None, allow
     if target.startswith("~"):
         raise PermissionError(f"Unsafe working directory change in command: {command_name} {target}. Use paths under {VIRTUAL_PATH_PREFIX}")
     if target.startswith("/"):
-        _reject_path_traversal(target)
+        reject_path_traversal(target)
         if not _is_allowed_local_bash_absolute_path(target, allowed_paths, allow_system_paths=False, thread_data=thread_data):
             raise PermissionError(f"Unsafe working directory change in command: {command_name} {target}. Use paths under {VIRTUAL_PATH_PREFIX}")
 

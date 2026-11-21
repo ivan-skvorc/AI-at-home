@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any
 from deerflow.config.paths import VIRTUAL_PATH_PREFIX
 from deerflow.sandbox.download import DEFAULT_DOWNLOAD_LIMIT as _MAX_DOWNLOAD_SIZE
 from deerflow.sandbox.download import download_limit, read_download_stream
+from deerflow.sandbox.path_traversal import reject_path_traversal
 from deerflow.sandbox.read_file_contract import split_file_lines
 from deerflow.sandbox.remote_list_dir import parse_remote_list_dir_output, remote_list_dir_command
 from deerflow.sandbox.remote_search import parse_remote_search_output, remote_search_command
@@ -251,12 +252,9 @@ class OpenSandboxSandbox(Sandbox):
     def _resolve_path(path: str) -> str:
         if not isinstance(path, str) or not path:
             raise ValueError("path must be a non-empty string")
-        normalized = path.replace("\\", "/")
-        if not normalized.startswith("/"):
+        if not path.replace("\\", "/").startswith("/"):
             raise ValueError(f"path must be absolute: '{path}'")
-        if any(segment == ".." for segment in normalized.split("/")):
-            raise PermissionError(f"Access denied: path traversal detected in '{path}'")
-        return normalized
+        return reject_path_traversal(path, name_path=True)
 
     @classmethod
     def _resolve_download_path(cls, path: str) -> str:

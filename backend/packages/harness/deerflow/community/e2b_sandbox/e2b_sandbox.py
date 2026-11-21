@@ -13,6 +13,7 @@ from e2b_code_interpreter import Sandbox as E2BClientSandbox
 from deerflow.config.paths import VIRTUAL_PATH_PREFIX
 from deerflow.sandbox.download import DEFAULT_DOWNLOAD_LIMIT as _MAX_DOWNLOAD_SIZE
 from deerflow.sandbox.download import download_limit, read_download_stream
+from deerflow.sandbox.path_traversal import reject_path_traversal
 from deerflow.sandbox.read_file_contract import split_file_lines
 from deerflow.sandbox.remote_list_dir import parse_remote_list_dir_output, remote_list_dir_command
 from deerflow.sandbox.remote_search import parse_remote_search_output, remote_search_command
@@ -127,10 +128,7 @@ class E2BSandbox(Sandbox):
         """
         if not path:
             raise ValueError("path must be a non-empty string")
-        normalised = path.replace("\\", "/")
-        for segment in normalised.split("/"):
-            if segment == "..":
-                raise PermissionError(f"Access denied: path traversal detected in '{path}'")
+        normalised = reject_path_traversal(path, name_path=True)
         if normalised == VIRTUAL_PATH_PREFIX or normalised.startswith(f"{VIRTUAL_PATH_PREFIX}/"):
             tail = normalised[len(VIRTUAL_PATH_PREFIX) :].lstrip("/")
             return f"{self._home_dir}/{tail}".rstrip("/") if tail else self._home_dir
@@ -263,11 +261,11 @@ class E2BSandbox(Sandbox):
 
     def download_file(self, path: str, *, max_bytes: int | None = None) -> bytes:
         limit = download_limit(max_bytes, _MAX_DOWNLOAD_SIZE)
-        normalised = path.replace("\\", "/")
-        for segment in normalised.split("/"):
-            if segment == "..":
-                logger.error("Refused download due to path traversal: %s", path)
-                raise PermissionError(f"Access denied: path traversal detected in '{path}'")
+        try:
+            normalised = reject_path_traversal(path, name_path=True)
+        except PermissionError:
+            logger.error("Refused download due to path traversal: %s", path)
+            raise
 
         stripped_path = normalised.lstrip("/")
         allowed_prefix = VIRTUAL_PATH_PREFIX.lstrip("/")

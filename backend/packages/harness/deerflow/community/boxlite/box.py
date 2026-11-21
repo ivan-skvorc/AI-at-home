@@ -27,6 +27,7 @@ from typing import TYPE_CHECKING, TypeVar
 from deerflow.config.paths import VIRTUAL_PATH_PREFIX
 from deerflow.sandbox.download import DEFAULT_DOWNLOAD_LIMIT as _MAX_DOWNLOAD_SIZE
 from deerflow.sandbox.download import download_limit
+from deerflow.sandbox.path_traversal import reject_path_traversal
 from deerflow.sandbox.read_file_contract import split_file_lines
 from deerflow.sandbox.remote_list_dir import parse_remote_list_dir_output, remote_list_dir_command
 from deerflow.sandbox.remote_search import parse_remote_search_output, remote_search_command
@@ -156,17 +157,13 @@ class BoxliteBox(Sandbox):
         with self._lock:
             return self._closed
 
-    # ── path safety (mirrors community/e2b_sandbox) ─────────────────────
+    # ── path safety (shared traversal rule) ─────────────────────
 
     @staticmethod
     def _guard_traversal(path: str) -> str:
         if not path:
             raise ValueError("path must be a non-empty string")
-        normalized = path.replace("\\", "/")
-        for segment in normalized.split("/"):
-            if segment == "..":
-                raise PermissionError(f"Access denied: path traversal detected in '{path}'")
-        return normalized
+        return reject_path_traversal(path, name_path=True)
 
     def _resolve_path(self, path: str) -> str:
         # The provider materialises the /mnt/user-data prefix on the box rootfs,

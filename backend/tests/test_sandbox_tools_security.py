@@ -8,6 +8,7 @@ import pytest
 
 from deerflow.sandbox.exceptions import SandboxError
 from deerflow.sandbox.local.local_sandbox import LocalSandbox, PathMapping
+from deerflow.sandbox.path_traversal import reject_path_traversal
 from deerflow.sandbox.tools import (
     VIRTUAL_PATH_PREFIX,
     _apply_cwd_prefix,
@@ -19,7 +20,6 @@ from deerflow.sandbox.tools import (
     _is_custom_mount_path,
     _is_skills_path,
     _mask_source_roots,
-    _reject_path_traversal,
     _resolve_acp_workspace_path,
     _resolve_and_validate_user_data_path,
     _resolve_skills_path,
@@ -403,29 +403,29 @@ def test_mask_local_paths_hides_global_integration_skill_paths(tmp_path: Path) -
     assert "/mnt/skills/integrations/lark-cli/lark-doc/SKILL.md" in masked
 
 
-# ---------- _reject_path_traversal ----------
+# ---------- reject_path_traversal ----------
 
 
 def test_reject_path_traversal_blocks_dotdot() -> None:
     with pytest.raises(PermissionError, match="path traversal"):
-        _reject_path_traversal("/mnt/user-data/workspace/../../etc/passwd")
+        reject_path_traversal("/mnt/user-data/workspace/../../etc/passwd")
 
 
 def test_reject_path_traversal_blocks_dotdot_at_start() -> None:
     with pytest.raises(PermissionError, match="path traversal"):
-        _reject_path_traversal("../etc/passwd")
+        reject_path_traversal("../etc/passwd")
 
 
 def test_reject_path_traversal_blocks_backslash_dotdot() -> None:
     with pytest.raises(PermissionError, match="path traversal"):
-        _reject_path_traversal("/mnt/user-data/workspace\\..\\..\\etc\\passwd")
+        reject_path_traversal("/mnt/user-data/workspace\\..\\..\\etc\\passwd")
 
 
 def test_reject_path_traversal_allows_normal_paths() -> None:
     # Should not raise
-    _reject_path_traversal("/mnt/user-data/workspace/file.txt")
-    _reject_path_traversal("/mnt/skills/public/bootstrap/SKILL.md")
-    _reject_path_traversal("/mnt/user-data/workspace/sub/dir/file.py")
+    reject_path_traversal("/mnt/user-data/workspace/file.txt")
+    reject_path_traversal("/mnt/skills/public/bootstrap/SKILL.md")
+    reject_path_traversal("/mnt/user-data/workspace/sub/dir/file.py")
 
 
 def test_reject_path_traversal_allows_windows_reserved_names() -> None:
@@ -436,11 +436,22 @@ def test_reject_path_traversal_allows_windows_reserved_names() -> None:
         "/mnt/user-data/workspace/file.txt.",
         "/mnt/user-data/workspace/file.txt ",
     ):
-        _reject_path_traversal(path)
+        reject_path_traversal(path)
 
 
 def test_reject_path_traversal_allows_names_that_only_look_reserved() -> None:
-    _reject_path_traversal("/mnt/user-data/workspace/contour.txt")
+    reject_path_traversal("/mnt/user-data/workspace/contour.txt")
+
+
+def test_reject_path_traversal_names_the_path_only_for_providers() -> None:
+    """The local tools keep the short message; remote providers quote the caller's path."""
+    with pytest.raises(PermissionError) as local:
+        reject_path_traversal("a/../b")
+    assert str(local.value) == "Access denied: path traversal detected"
+    with pytest.raises(PermissionError) as remote:
+        reject_path_traversal("a\\..\\b", name_path=True)
+    assert str(remote.value) == "Access denied: path traversal detected in 'a\\..\\b'"
+    assert reject_path_traversal("a\\b", name_path=True) == "a/b"
 
 
 # ---------- validate_local_tool_path ----------
