@@ -12,8 +12,8 @@ from deerflow.config.app_config import AppConfig
 from deerflow.config.managed_models import ManagedModel, ManagedModelStore, merge_managed_models
 from deerflow.models.factory import create_chat_model
 
-MODELS = ("gpt-6-astra", "gpt-6.1-sol", "gpt-6.1-terra", "gpt-6-sol", "gpt-6-luna")
-REQUIRED = {"gpt-6-astra", "gpt-6.1-sol"}
+MODELS = ("gpt-6.2-astra", "gpt-6.2-sol", "gpt-6-astra", "gpt-6.1-sol", "gpt-6.1-terra", "gpt-6-sol", "gpt-6-luna")
+REQUIRED = {"gpt-6.2-astra", "gpt-6.2-sol", "gpt-6-astra", "gpt-6.1-sol"}
 ADMIN = SimpleNamespace(state=SimpleNamespace(user=SimpleNamespace(system_role="admin")))
 TOOL = {"type": "function", "function": {"name": "connection_check", "description": "Check connectivity", "parameters": {"type": "object", "properties": {}}}}
 

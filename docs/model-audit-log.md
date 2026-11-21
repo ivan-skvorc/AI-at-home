@@ -15,9 +15,10 @@ providers that pass could actually reach.
   exceptions. OpenAI's home GPT-6 Astra and GPT-6.1 Sol are corroborated, because they have left
   OpenAI's price cards. z.ai's home block is tier 3, because its docs answered with a 403.
   Google's home block was read off Google's Cloud pricing page again. One price edit: the routed Qwen4 Max goes from `$1.425/$4.275` up to its
-  `$1.50/$4.50` list. No roster change. GPT-6.2 Astra and Sol were read at tier 1 and deferred
-  to a dedicated change, because the harness's GPT-6 parameter filter matches exact ids. Claude
-  Fable 5.2 stays deferred.** The repository owner asked for this pass in words, five days after
+  `$1.50/$4.50` list. One roster change, applied in a follow-up commit the same day: GPT-6.2
+  Astra and Sol, read at tier 1, replace GPT-6 Astra and GPT-6.1 Sol in both blocks, after the
+  harness's GPT-6 parameter filter, which matches exact ids, was extended to them. Claude Fable
+  5.2 stays deferred.** The repository owner asked for this pass in words, five days after
   the 2026-11-16 pass. Each lab group was researched against its own pages. Every source behind
   an edit or a deferral was then fetched again and read a second time, looking for reasons it
   might be wrong, before anything was decided. Only changes that held up on the second read
@@ -220,6 +221,39 @@ providers that pass could actually reach.
   - Audit-script gaps, reported only. The live parser still reads only the catalog headline, and
     five of five price findings this pass are artifacts of that. Reading each lab's own endpoint,
     with its overrides and its `discount`, would end them.
+
+  **GPT-6.2 roll applied** (same day, branch `claude/blissful-franklin-4qdr5u`). This is the
+  recipe above, done as one change, and it clears the first "Still owed" item.
+  - Preset: `gpt-6.2-astra` and `gpt-6.2-sol` joined `OPENAI_GPT6_MODELS` and its `required`
+    set, so they get the Responses route, required thinking with default effort `medium`, and
+    the factory's `temperature`/`top_p`/`top_logprobs` strip. The five GPT-6/6.1 ids stay,
+    because existing configs still use them. `test_managed_openai_gpt6.py`'s `MODELS`/`REQUIRED`
+    and the three docs that list the preset's ids follow. `TestBundledGpt6Routing` now also
+    fails when a direct gpt-6 entry's id is outside that set, which is the gap that forced the
+    deferral.
+  - Both synced sources: the `config.example.yaml` marker blocks, and `providers.py`'s
+    `MODEL_PRICES`, `HOME_API_BUNDLES`, `OPENROUTER_BUNDLE_MODELS` and both `description=`
+    strings. Home `GPT-6.2 Astra (OpenAI)` `$8/$40` and `GPT-6.2 Sol (OpenAI)` `$2/$10`; routed
+    `GPT-6.2 Astra (OpenRouter) (p)` and `GPT-6.2 Sol (OpenRouter) (p)` at the same prices. Every
+    setting is copied from the predecessor, and no `cache_hit` is shipped. The catalog showed the
+    same prices at roll time. The corroborated home GPT-6 Astra and GPT-6.1 Sol left with the
+    roll, so there is nothing of theirs to re-check next pass.
+  - Prose read and updated by eye: QUICK START, the OpenRouter and OpenAI block comments, the
+    sync script's docstring (its `PROVIDERS` pair names no model), `.env.example`'s OpenAI line,
+    README's leading bullet and wizard paragraph, FORK.md's roster mentions and §2 table, and
+    `CHANGELOG.md`. The pair is now `$8/$40` beside `$2/$10`, 4x apart, so the pair rule holds.
+  - Pins moved to GPT-6.2: `PAIRED_ROUTED_LABS`, the wizard's routed-pair and doubling lists,
+    the sync tests' expected ids, and the stale fixture. The fixture carries GPT-6.2 Astra at
+    `$8/$40` and its price drift on `openai/gpt-6.2-sol` (input 2.5).
+  - Gates: `sync-api-key-models.py --dry-run` exits 0, and on a copy with both keys it enables
+    the four GPT-6.2 entries at the new prices. The 11-file test gate, from
+    `test_managed_openai_gpt6.py` to `test_model_factory.py`: 782 passed, 7 skipped. The
+    managed-preset and catalog suites: 403 passed, 5 skipped. The live audit went from 19
+    findings to 17: the same five price artifacts, and 12 candidates instead of 14, because the
+    two rolled slugs and `gpt-6.2-sol-pro` no longer raise one. `gpt-6.2-astra-pro` still does,
+    and the Pro variants stay declined. The stale fixture yields exactly four findings, one per
+    kind. The price-in-name grep prints nothing. `make check-agent-guidance`: 0 errors and one
+    warning, README over its soft size limit, which it already was before this change.
 
 - **2026-11-16 (branch `claude/conversation-folder-management-ojsvgk`) — tier 1 for every price
   shipped, Google's home block again read off Google's Cloud pricing page. No price edits on any

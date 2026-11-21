@@ -1,5 +1,5 @@
 {
- "_comment": "Deliberately stale catalog fixture. Proves the audit still detects each drift kind (retired slug, changed list price, ended promo, started promo) without needing the network. Regenerate against config.example.yaml if the bundled roster changes: build one entry per openrouter marker-block model from its configured price, then re-apply exactly four drifts - delete the xAI flagship (retired), raise openai/gpt-6.1-sol input to 2.5 (price moved), leave google/gemini-3.8-flash without a promo while the config carries one (promo ended), and add a promo to qwen/qwen4-max that the config does not carry (promo started). Every other entry must MATCH the config, or an unrelated mismatch masks the drift it was meant to show - a model the config routes but the fixture omits reads as `retired`, which is how the second half of each routed pair (anthropic/claude-opus-5, openai/gpt-6-astra) went missing unnoticed. test_audit_models.py::TestStaleFixture pins this against config.example.yaml.",
+ "_comment": "Deliberately stale catalog fixture. Proves the audit still detects each drift kind (retired slug, changed list price, ended promo, started promo) without needing the network. Regenerate against config.example.yaml if the bundled roster changes: build one entry per openrouter marker-block model from its configured price, then re-apply exactly four drifts - delete the xAI flagship (retired), raise openai/gpt-6.2-sol input to 2.5 (price moved), leave google/gemini-3.8-flash without a promo while the config carries one (promo ended), and add a promo to qwen/qwen4-max that the config does not carry (promo started). Every other entry must MATCH the config, or an unrelated mismatch masks the drift it was meant to show - a model the config routes but the fixture omits reads as `retired`, which is how the second half of each routed pair (anthropic/claude-opus-5, openai/gpt-6-astra) went missing unnoticed. test_audit_models.py::TestStaleFixture pins this against config.example.yaml.",
  "openrouter": {
   "reachable": true,
   "models": {
@@ -11,11 +11,11 @@
     "input_per_million": 4.0,
     "output_per_million": 20.0
    },
-   "openai/gpt-6-astra": {
-    "input_per_million": 10.0,
-    "output_per_million": 50.0
+   "openai/gpt-6.2-astra": {
+    "input_per_million": 8.0,
+    "output_per_million": 40.0
    },
-   "openai/gpt-6.1-sol": {
+   "openai/gpt-6.2-sol": {
     "input_per_million": 2.5,
     "output_per_million": 10.0
    },

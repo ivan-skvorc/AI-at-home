@@ -232,11 +232,17 @@ class TestBundledGpt6Routing:
         any entry with a ``base_url`` as a custom endpoint, and every home
         entry names one. Without its own flag a direct gpt-6 entry loads, chats
         and fails its first tool call. OpenRouter copies stay on their endpoint.
+
+        Each id must also be in ``OPENAI_GPT6_MODELS``: the factory strips
+        ``temperature``/``top_p``/``top_logprobs`` only for those exact ids, and
+        OpenAI rejects them on GPT-6.2. A roll to an id outside the set loads and
+        chats, then fails the first request that carries an agent's temperature.
         """
         import sys
 
         from langchain_openai import ChatOpenAI
 
+        from deerflow.config.managed_model_providers import OPENAI_GPT6_MODELS
         from deerflow.models.factory import _apply_openai_responses_api_default
 
         sys.path.insert(0, str(REPO_ROOT / "scripts"))
@@ -250,6 +256,7 @@ class TestBundledGpt6Routing:
             settings = {key: value for key, value in entry.items() if key not in {"name", "display_name", "use", "price", "discount"}}
             _apply_openai_responses_api_default(ChatOpenAI, settings)
             assert settings.get("use_responses_api") is True, f"{entry['name']} would send gpt-6 tool calls to /v1/chat/completions"
+            assert entry["model"] in OPENAI_GPT6_MODELS, f"{entry['name']}: {entry['model']} is outside OPENAI_GPT6_MODELS, so the factory would not strip sampling parameters for it"
 
 
 class TestSandboxKeyLint:

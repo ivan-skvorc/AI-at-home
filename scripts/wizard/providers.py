@@ -307,7 +307,7 @@ def _openrouter_model(
 #
 # One flagship per lab, with two deliberate exceptions where a lab's top tier is
 # really two models at very different prices: Anthropic routes **Fable 5.1 and
-# Opus 5.5**, OpenAI routes **GPT-6 Astra and GPT-6.1 Sol**. Routing only the
+# Opus 5.5**, OpenAI routes **GPT-6.2 Astra and GPT-6.2 Sol**. Routing only the
 # dearer of each pair bills an OpenRouter-only user 2x for work the cheaper one
 # does; routing only the cheaper puts the lab's best model out of reach on that
 # key. FORK.md's audit, step 3, is where the rule and its exceptions live.
@@ -329,8 +329,8 @@ OPENROUTER_BUNDLE_MODELS: list[dict] = [
     _openrouter_model("openrouter-fable-5-1", "Claude Fable 5.1 (OpenRouter) (p)", "anthropic/claude-fable-5.1", supports_vision=True),
     _openrouter_model("openrouter-opus-5-5", "Claude Opus 5.5 (OpenRouter) (p)", "anthropic/claude-opus-5.5", supports_vision=True),
     _openrouter_model("openrouter-grok-4.7", "Grok 4.7 (OpenRouter) (p)", "x-ai/grok-4.7", supports_vision=True),
-    _openrouter_model("openrouter-gpt-6-astra", "GPT-6 Astra (OpenRouter) (p)", "openai/gpt-6-astra", supports_vision=True),
-    _openrouter_model("openrouter-gpt-6.1-sol", "GPT-6.1 Sol (OpenRouter) (p)", "openai/gpt-6.1-sol", supports_vision=True),
+    _openrouter_model("openrouter-gpt-6.2-astra", "GPT-6.2 Astra (OpenRouter) (p)", "openai/gpt-6.2-astra", supports_vision=True),
+    _openrouter_model("openrouter-gpt-6.2-sol", "GPT-6.2 Sol (OpenRouter) (p)", "openai/gpt-6.2-sol", supports_vision=True),
     _openrouter_model("openrouter-gemini-3.8-flash", "Gemini 3.8 Flash (OpenRouter) (p)", "google/gemini-3.8-flash", supports_vision=True),
     _openrouter_model("openrouter-llama-4-maverick", "Llama 4 Maverick (OpenRouter) (p)", "meta-llama/llama-4-maverick", supports_vision=True, supports_thinking=False),
     _openrouter_model("openrouter-minimax-m3", "MiniMax M3 (OpenRouter) (p)", "minimax/minimax-m3", supports_vision=True, max_tokens=16000, temperature=1.0),
@@ -483,15 +483,16 @@ def _home_gemini_model(name: str, display_name: str, model: str, *, max_tokens: 
     }
 
 
-# OpenAI: GPT-6 Astra (flagship) + GPT-6.1 Sol (the cheaper half of the routed
+# OpenAI: GPT-6.2 Astra (flagship) + GPT-6.2 Sol (the cheaper half of the routed
 # pair) + the two cheaper tiers. GPT-5.3 Codex left both blocks on 2026-11-13:
 # OpenAI deprecated it for GPT-6 Sol. The tiers ship as Sol / Terra /
 # Luna rather than a `-mini`/`-nano` pair, so `gpt-5.6-mini` never existed —
 # Terra is the tier that took `mini`'s place and Luna the one below it.
-# GPT-6.1 Terra (2026-10-26) replaced GPT-5.6 Terra in that tier.
+# GPT-6.1 Terra (2026-10-26) replaced GPT-5.6 Terra in that tier, and GPT-6.2
+# Astra and Sol (2026-11-21) replaced GPT-6 Astra and GPT-6.1 Sol.
 OPENAI_HOME_BUNDLE_MODELS: list[dict] = [
-    _home_openai_compat_model("openai-gpt-6-astra", "GPT-6 Astra (OpenAI)", "gpt-6-astra", api_key_env="OPENAI_API_KEY", base_url="https://api.openai.com/v1", supports_vision=True, responses_api=True),
-    _home_openai_compat_model("openai-gpt-6.1-sol", "GPT-6.1 Sol (OpenAI)", "gpt-6.1-sol", api_key_env="OPENAI_API_KEY", base_url="https://api.openai.com/v1", supports_vision=True, responses_api=True),
+    _home_openai_compat_model("openai-gpt-6.2-astra", "GPT-6.2 Astra (OpenAI)", "gpt-6.2-astra", api_key_env="OPENAI_API_KEY", base_url="https://api.openai.com/v1", supports_vision=True, responses_api=True),
+    _home_openai_compat_model("openai-gpt-6.2-sol", "GPT-6.2 Sol (OpenAI)", "gpt-6.2-sol", api_key_env="OPENAI_API_KEY", base_url="https://api.openai.com/v1", supports_vision=True, responses_api=True),
     _home_openai_compat_model("openai-gpt-6.1-terra", "GPT-6.1 Terra (OpenAI)", "gpt-6.1-terra", api_key_env="OPENAI_API_KEY", base_url="https://api.openai.com/v1", supports_vision=True, responses_api=True),
     _home_openai_compat_model("openai-gpt-6-luna", "GPT-6 Luna (OpenAI)", "gpt-6-luna", api_key_env="OPENAI_API_KEY", base_url="https://api.openai.com/v1", supports_vision=True, max_tokens=16000, responses_api=True),
 ]
@@ -654,15 +655,15 @@ MODEL_PRICES: dict[str, dict] = {
     "mistral-small-4": {"price": {"currency": "USD", "input": 0.15, "output": 0.6}},
     "moonshot-kimi-k3.1-pro": {"price": {"currency": "USD", "input": 2.0, "output": 10.0, "cache_hit": 0.2}},
     "moonshot-kimi-k3": {"price": {"currency": "USD", "input": 3.0, "output": 15.0, "cache_hit": 0.3}},
-    "openai-gpt-6-astra": {"price": {"currency": "USD", "input": 10.0, "output": 50.0}},
-    "openai-gpt-6.1-sol": {"price": {"currency": "USD", "input": 2.0, "output": 10.0}},
+    "openai-gpt-6.2-astra": {"price": {"currency": "USD", "input": 8.0, "output": 40.0}},
+    "openai-gpt-6.2-sol": {"price": {"currency": "USD", "input": 2.0, "output": 10.0}},
     "openai-gpt-6.1-terra": {"price": {"currency": "USD", "input": 1.0, "output": 5.0}},
     "openai-gpt-6-luna": {"price": {"currency": "USD", "input": 0.1, "output": 0.5}},
     "openrouter-fable-5-1": {"price": {"currency": "USD", "input": 10.0, "output": 50.0}},
     "openrouter-opus-5-5": {"price": {"currency": "USD", "input": 4.0, "output": 20.0}},
     "openrouter-grok-4.7": {"price": {"currency": "USD", "input": 2.0, "output": 6.0}},
-    "openrouter-gpt-6-astra": {"price": {"currency": "USD", "input": 10.0, "output": 50.0}},
-    "openrouter-gpt-6.1-sol": {"price": {"currency": "USD", "input": 2.0, "output": 10.0}},
+    "openrouter-gpt-6.2-astra": {"price": {"currency": "USD", "input": 8.0, "output": 40.0}},
+    "openrouter-gpt-6.2-sol": {"price": {"currency": "USD", "input": 2.0, "output": 10.0}},
     # OpenRouter shows 50% off on every endpoint for this model, all of them Google's
     # own, and no end date; the `until` is inherited from the home entry's
     # Google-announced window for the same introductory rate.
@@ -863,7 +864,7 @@ LLM_PROVIDERS: list[LLMProvider] = [
     LLMProvider(
         name="openai",
         display_name="OpenAI",
-        description="GPT-6 Astra + GPT-6.1 Sol + GPT-6.1 Terra + GPT-6 Luna (direct OpenAI API)",
+        description="GPT-6.2 Astra + GPT-6.2 Sol + GPT-6.1 Terra + GPT-6 Luna (direct OpenAI API)",
         use="langchain_openai:ChatOpenAI",
         models=[entry["model"] for entry in OPENAI_HOME_BUNDLE_MODELS],
         default_model=OPENAI_HOME_BUNDLE_MODELS[0]["model"],
@@ -1118,7 +1119,7 @@ LLM_PROVIDERS: list[LLMProvider] = [
     LLMProvider(
         name="openrouter",
         display_name="OpenRouter",
-        description="One key: Claude Fable 5.1 + Opus 5.5, GPT-6 Astra + GPT-6.1 Sol, xAI/Google flagships & open alternatives",
+        description="One key: Claude Fable 5.1 + Opus 5.5, GPT-6.2 Astra + GPT-6.2 Sol, xAI/Google flagships & open alternatives",
         use="langchain_openai:ChatOpenAI",
         models=[entry["model"] for entry in OPENROUTER_BUNDLE_MODELS],
         default_model=OPENROUTER_BUNDLE_MODELS[0]["model"],
