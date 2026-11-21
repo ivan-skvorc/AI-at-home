@@ -24,7 +24,6 @@ import {
   SafeStreamdown,
   toStreamdownComponents,
 } from "@/core/streamdown/components";
-import { formatFileSize } from "@/core/thread-files/format";
 import { getFileExtensionDisplayName, getFileName } from "@/core/utils/files";
 
 import { ArtifactLink } from "../citations/artifact-link";
@@ -72,9 +71,11 @@ export function ArtifactPreviewError({
   );
 }
 
-/** `formatFileSize` for a size the server may not have reported. */
 export function formatArtifactBytes(bytes: number | undefined) {
-  return bytes === undefined ? undefined : formatFileSize(bytes);
+  if (bytes === undefined) return undefined;
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KiB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MiB`;
 }
 
 export function ArtifactDownloadFallback({
