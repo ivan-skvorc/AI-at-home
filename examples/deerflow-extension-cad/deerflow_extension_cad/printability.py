@@ -214,24 +214,31 @@ def _first_hits(mesh: np.ndarray, origins: np.ndarray, directions: np.ndarray, s
     """The distance along each ray to the first triangle it meets, other than its own; inf for none."""
     centres = mesh.mean(axis=1)
     reach = np.sqrt(((mesh - centres[:, None]) ** 2).sum(axis=2).max(axis=1)) + nudge
-    behind, reach_square = -reach[:, None], (reach**2)[:, None]
-    centre_square = (centres**2).sum(axis=1)[:, None]
+    # The weighing runs in single precision, which halves its cost, with a margin far above its rounding
+    # (about 1e-7 of the largest squared distance): it may keep a pair too many, never drop one that meets.
+    largest = float((mesh**2).sum(axis=2).max())
+    slack = 1e-5 * largest
+    behind = (-reach - math.sqrt(slack))[:, None].astype(np.float32)
+    reach_square = (reach**2 + slack)[:, None].astype(np.float32)
+    centre_square = (centres**2).sum(axis=1)[:, None].astype(np.float32)
+    centres32 = centres.astype(np.float32)
     nearest = np.full(len(origins), np.inf)
     block = max(1, _PAIRS_PER_BLOCK // len(mesh))
     for start in range(0, len(origins), block):
         rays = slice(start, start + block)
         origin, direction = origins[rays], directions[rays]
+        origin32, direction32 = origin.astype(np.float32), direction.astype(np.float32)
         # A triangle can meet a ray only if its bounding sphere does: weighed for all pairs with matrix
         # products, in place, since these arrays are the whole cost.
-        ahead = centres @ direction.T
-        ahead -= (origin * direction).sum(axis=1)
-        apart = centres @ origin.T
+        ahead = centres32 @ direction32.T
+        ahead -= (origin32 * direction32).sum(axis=1)
+        near = ahead >= behind
+        apart = centres32 @ origin32.T
         apart *= -2
         apart += centre_square
-        apart += (origin**2).sum(axis=1)
-        apart -= np.square(ahead)
-        near = apart <= reach_square
-        near &= ahead >= behind
+        apart += (origin32**2).sum(axis=1)
+        apart -= np.square(ahead, out=ahead)
+        near &= apart <= reach_square
         triangle, ray = np.nonzero(near)
         ray_global = ray + start
         keep = triangle != source[ray_global]

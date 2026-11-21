@@ -159,6 +159,14 @@ def test_a_one_millimetre_shell_reads_one_millimetre(tmp_path):
     assert any("wall" in note and "1.2 mm" in note for note in printability.notes(block, nozzle_mm=0.6))
 
 
+def test_the_wall_estimate_holds_far_from_the_origin_and_on_a_part_of_metres():
+    # The rays are weighed against the triangles in single precision; the margin must keep every true hit.
+    plate = box((0, 0, 0), (40, 30, 1.5))
+    assert printability.thinnest_wall_mm(plate) == pytest.approx(1.5, abs=1e-6)
+    assert printability.thinnest_wall_mm(plate + 5000.0) == pytest.approx(1.5, abs=1e-4)
+    assert printability.thinnest_wall_mm(box((0, 0, 0), (2000, 1500, 3))) == pytest.approx(3, abs=1e-3)
+
+
 def test_a_wall_given_by_the_caller_is_used_instead_of_sampling():
     block = printability.assess(box((0, 0, 0), (10, 10, 10)), **PRINTER, wall_mm=0.5)
     assert block["thinnest_wall_mm"] == 0.5
@@ -222,8 +230,8 @@ def test_the_print_block_is_the_same_every_time(tmp_path):
 
 
 def test_the_enclosure_is_checked_well_within_its_budget(tmp_path):
-    # Budget: under 1 s (roadmap item 54). It measures 0.14 s here (median of 7, slowest 0.16 s), so a runner
-    # about six times slower still passes.
+    # Budget: under 1 s (roadmap item 54). It measures 0.12 s here (median of 7, slowest 0.13 s) and about
+    # 0.2 s with other builds loading the machine, so a runner five times slower than that still passes.
     triangles = kernel_triangles(enclosure, tmp_path)
     assert len(triangles) > 15_000
     started = time.perf_counter()
