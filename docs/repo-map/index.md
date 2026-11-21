@@ -1,6 +1,6 @@
 # Repo map
 
-Synced by change cycle: 2026-11-21, level 2, "coding agent: edit gates, skill learning loop, bundled coding skills, git workflow; change cycle and repo map"
+Synced by change cycle: 2026-11-21, level 1, "model audit 2026-11-21: Qwen4 Max price, GPT-6.2 Astra and Sol"
 
 What the app does, feature by feature, and which files, data and external
 services each feature uses. Each area file opens with its own board and holds

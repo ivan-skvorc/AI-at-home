@@ -6,7 +6,7 @@
 >
 > - 🔓 **Passwordless on your own network** — `make dev` / `make start` come up with no login wall, so your phone and laptop reach it over the LAN or [Tailscale](https://tailscale.com/) immediately. Opt out with `DEER_FLOW_AUTH_DISABLED=0`; auth stays on in production regardless.
 > - 🦙 **Auto-populated Ollama models** — `config.yaml` syncs from your `ollama pull` list on every launch, with capabilities detected and each model's context window sized to your GPU instead of Ollama's 2048-token default. The GPU is detected on its own (an NVIDIA or AMD card beside the daemon). When Ollama runs on another machine, enter its GPU memory in **Settings → Models**: updates and syncs never reset it, and it wins over `ollama.vram_gb`. Local models are **free** — you pay for electricity.
-> - 🔑 **API-key model auto-config** — drop a cloud key in `.env` and the matching models uncomment themselves in `config.yaml` on the next launch. Anthropic, OpenAI, xAI, Gemini, DeepSeek, Moonshot, Qwen, Mistral, MiniMax, Z.ai direct, plus a routed set via OpenRouter — one flagship per lab, except Anthropic and OpenAI, whose top tier is really two models a factor of two or more apart in price, so both halves are routed (Fable 5.1 + Opus 5.5, GPT-6 Astra + GPT-6.1 Sol), and DeepSeek, whose V4.1 Flash rides beside V4 Pro because it tops OpenRouter's rankings on its own.
+> - 🔑 **API-key model auto-config** — drop a cloud key in `.env` and the matching models uncomment themselves in `config.yaml` on the next launch. Anthropic, OpenAI, xAI, Gemini, DeepSeek, Moonshot, Qwen, Mistral, MiniMax, Z.ai direct, plus a routed set via OpenRouter — one flagship per lab, except Anthropic and OpenAI, whose top tier is really two models a factor of two or more apart in price, so both halves are routed (Fable 5.1 + Opus 5.5, GPT-6.2 Astra + GPT-6.2 Sol), and DeepSeek, whose V4.1 Flash rides beside V4 Pro because it tops OpenRouter's rankings on its own.
 > - 🎟️ **Subscription models from Settings → Models** — connect a ChatGPT plan in your browser, sign in to Grok with a device code, or add a Kimi Code subscription key. Available models populate the picker automatically, with encrypted server-side credentials and refresh/disconnect controls. ChatGPT uses a manual return-URL handoff for LAN/Tailscale access; Kimi is restricted to personal interactive chats. A Grok or Kimi plan request that is accepted and then never answered now times out and, after the usual retries, ends in a visible error instead of showing "Working" for ever.
 > - 🎨 **Grok Imagine, X search and voice on your Grok plan** — once Grok is connected, an administrator can switch on image generation and editing, short video clips, X (Twitter) search and Grok voice (read answers aloud, transcribe speech), all paid for by the Grok subscription instead of API billing. **Every switch starts off**, a feature xAI refuses for your plan stays locked (image and video run on the plan's own Imagine quota, so the plan is checked on their first request), and each one says it sends your prompt (and, for edits, your images) to xAI; the internet switch turns them all off for a chat. Costs nothing to turn on beyond the plan you already have.
 > - 🔎 **Self-hosted search, no API key** — a bundled SearXNG is provisioned at startup (an existing instance is reused) and backs the default `web_search`.
@@ -371,7 +371,7 @@ fences, including unclosed fences, in complete and streamed replies.
 
    This launches an interactive wizard that guides you through choosing an LLM provider, optional web search, and execution/safety preferences such as sandbox mode, bash access, and file-write tools. It generates a minimal `config.yaml` and writes your keys to `.env`. Takes about 2 minutes.
 
-   Pick **Anthropic** or **OpenRouter** and the wizard enables a whole set of latest models from that one key — Anthropic writes Fable 5.1 / Opus 5.5 / Opus 5 / Sonnet 5.5 / Sonnet 5 / Haiku 5.5, and OpenRouter writes Claude Fable 5.1 and Opus 5.5, GPT-6 Astra and GPT-6.1 Sol, plus the xAI / Google flagships and a spread of open alternatives (MiniMax, Mistral, DeepSeek, Kimi, GLM, Qwen). If you configure by hand instead (`make config`), the same ready-to-uncomment blocks are at the top of `config.example.yaml` under `models:` — uncomment the one matching your key.
+   Pick **Anthropic** or **OpenRouter** and the wizard enables a whole set of latest models from that one key — Anthropic writes Fable 5.1 / Opus 5.5 / Opus 5 / Sonnet 5.5 / Sonnet 5 / Haiku 5.5, and OpenRouter writes Claude Fable 5.1 and Opus 5.5, GPT-6.2 Astra and GPT-6.2 Sol, plus the xAI / Google flagships and a spread of open alternatives (MiniMax, Mistral, DeepSeek, Kimi, GLM, Qwen). If you configure by hand instead (`make config`), the same ready-to-uncomment blocks are at the top of `config.example.yaml` under `models:` — uncomment the one matching your key.
 
    The wizard also lets you configure an optional web search provider, or skip it for now.
 
@@ -476,9 +476,10 @@ fences, including unclosed fences, in complete and streamed replies.
    Chat pickers support name/ID search, provider filtering, favorites and the
    eight most recently selected models, scoped to your account in this browser.
 
-   The OpenAI preset routes `gpt-6-astra`, `gpt-6.1-sol`, `gpt-6.1-terra`,
-   `gpt-6-sol` and `gpt-6-luna` through the Responses API for tool calling,
-   with model-specific thinking and reasoning-effort defaults. Flash mode
+   The OpenAI preset routes `gpt-6.2-astra`, `gpt-6.2-sol`, `gpt-6-astra`,
+   `gpt-6.1-sol`, `gpt-6.1-terra`, `gpt-6-sol` and `gpt-6-luna` through the
+   Responses API for tool calling, with model-specific thinking and
+   reasoning-effort defaults. Flash mode
    turns off reasoning for GPT-6.1 Terra, GPT-6 Sol and GPT-6 Luna.
 
    The Moonshot (China) preset recognizes `kimi-k3.1-pro` and

@@ -218,9 +218,10 @@ fences, including unclosed fences, in complete and streamed replies.
    Chat pickers support name/ID search, provider filtering, favorites and the
    eight most recently selected models, scoped to your account in this browser.
 
-   The OpenAI preset routes `gpt-6-astra`, `gpt-6.1-sol`, `gpt-6.1-terra`,
-   `gpt-6-sol` and `gpt-6-luna` through the Responses API for tool calling,
-   with model-specific thinking and reasoning-effort defaults. Flash mode
+   The OpenAI preset routes `gpt-6.2-astra`, `gpt-6.2-sol`, `gpt-6-astra`,
+   `gpt-6.1-sol`, `gpt-6.1-terra`, `gpt-6-sol` and `gpt-6-luna` through the
+   Responses API for tool calling, with model-specific thinking and
+   reasoning-effort defaults. Flash mode
    turns off reasoning for GPT-6.1 Terra, GPT-6 Sol and GPT-6 Luna.
 
    The Moonshot (China) preset recognizes `kimi-k3.1-pro` and

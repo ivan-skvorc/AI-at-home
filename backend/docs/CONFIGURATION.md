@@ -390,11 +390,12 @@ with provider filtering and favorites/recent groups. The eight recent selections
 are browser-local and user-scoped, and only currently available models appear.
 Selecting a model continues to use the existing conversation/account preferences.
 
-The `openai` preset recognizes the exact IDs `gpt-6-astra`, `gpt-6.1-sol`,
-`gpt-6.1-terra`, `gpt-6-sol` and `gpt-6-luna`. They use the Responses API
-for both the connection probe and chat, including tool calls and tool-result
-follow-ups. Astra and GPT-6.1 Sol require thinking, default to `medium`, and
-accept `low`, `medium`, `high`, `xhigh` and `max`. The other three also accept
+The `openai` preset recognizes the exact IDs `gpt-6.2-astra`, `gpt-6.2-sol`,
+`gpt-6-astra`, `gpt-6.1-sol`, `gpt-6.1-terra`, `gpt-6-sol` and `gpt-6-luna`.
+They use the Responses API for both the connection probe and chat, including
+tool calls and tool-result follow-ups. Both Astras and the GPT-6.2 and GPT-6.1
+Sols require thinking, default to `medium`, and accept `low`, `medium`,
+`high`, `xhigh` and `max`. The other three also accept
 `none`: disabling thinking uses `none`, while enabling it without an explicit
 effort uses `medium`. Generic `minimal` maps to `low`. Image input is enabled.
 Explicit capability overrides remain supported; routing stays provider-owned.

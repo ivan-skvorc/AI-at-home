@@ -14,7 +14,7 @@ _DEEPSEEK = "deerflow.models.patched_deepseek:PatchedChatDeepSeek"
 _MINIMAX = "deerflow.models.patched_minimax:PatchedChatMiniMax"
 _STEPFUN = "deerflow.models.patched_stepfun:PatchedChatStepFun"
 MOONSHOT_K31_MODELS = frozenset({"kimi-k3.1-pro", "kimi-k3.1-pro-highspeed"})
-OPENAI_GPT6_MODELS = frozenset({"gpt-6-astra", "gpt-6.1-sol", "gpt-6.1-terra", "gpt-6-sol", "gpt-6-luna"})
+OPENAI_GPT6_MODELS = frozenset({"gpt-6.2-astra", "gpt-6.2-sol", "gpt-6-astra", "gpt-6.1-sol", "gpt-6.1-terra", "gpt-6-sol", "gpt-6-luna"})
 
 
 @dataclass(frozen=True)
@@ -90,7 +90,7 @@ def _capabilities(provider: str, model: str) -> dict[str, Any]:
     if provider == "openai" and model in OPENAI_GPT6_MODELS:
         # Presets supply base_url, so the factory deliberately skips its
         # endpoint-agnostic GPT-6 routing fallback. Own the official route here.
-        required = model in {"gpt-6-astra", "gpt-6.1-sol"}
+        required = model in {"gpt-6.2-astra", "gpt-6.2-sol", "gpt-6-astra", "gpt-6.1-sol"}
         effort = {"values": ["low", "medium", "high", "xhigh", "max"], "aliases": {"minimal": "low"}}
         result.update(
             use_responses_api=True,
