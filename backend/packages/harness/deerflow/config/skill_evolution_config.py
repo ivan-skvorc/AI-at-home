@@ -1,4 +1,6 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationInfo, field_validator
+
+from deerflow.config._boolean_guards import reject_boolean
 
 
 class SkillEvolutionConfig(BaseModel):
@@ -28,7 +30,14 @@ class SkillEvolutionConfig(BaseModel):
         default=90,
         ge=0,
         description=(
-            "The curator switches off agent-written custom skills that nobody loaded for this many days (the user can switch them back on in "
-            "Settings → Skills; nothing is deleted). 0 turns the curator off. Only applies when enabled is true."
+            "The curator switches off agent-written custom skills that nobody loaded for this many days (nothing is deleted; they are switched "
+            "back on in Capability Center → Skills). It curates only for admins and for runs without a role, the owners who can switch a skill "
+            "back on. 0 turns the curator off. Only applies when enabled is true."
         ),
     )
+
+    @field_validator("nudge_after_tool_calls", "archive_unused_after_days", mode="before")
+    @classmethod
+    def _reject_boolean_counts(cls, value: object, info: ValidationInfo) -> object:
+        # `archive_unused_after_days: true` would otherwise become a one-day curator.
+        return reject_boolean(value, info, kind="an integer")

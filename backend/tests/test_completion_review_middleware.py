@@ -7,10 +7,18 @@ Silent when broken, each in its own way:
 - the gate fires once per run, never on a capped/error/tool-intent response,
   and stands aside while to-dos are open, or it resumes runs a guard stopped;
 - the reminder rides the next request hidden from the UI and survives a retry;
-- the learning lines need skill evolution on and `skill_manage` bound;
-- after the run, loaded skills reach the per-user ledger.
+- the learning lines need skill evolution on and `skill_manage` bound, and see
+  every way a skill is loaded (a multi-skill slash selection too);
+- a tool result answers a call of its own response only, because providers
+  reuse call ids across responses;
+- loads are counted where they happen, not re-counted after each graph pass;
+  the curator is queued after the run, only for owners who can switch a skill
+  back on, and refreshes the prompt caches whenever it switched one off.
 """
 
+import errno
+import json
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
@@ -23,7 +31,7 @@ from deerflow.agents.middlewares.completion_review_middleware import (
     current_turn,
     skills_used,
 )
-from deerflow.agents.middlewares.skill_usage import SKILL_USAGE_KEY
+from deerflow.agents.middlewares.skill_usage import SKILL_USAGE_KEY, SKILL_USAGES_KEY, flush_skill_ledger_jobs, record_skill_usage
 
 TOOLS = frozenset({"bash", "write_file", "str_replace", "read_file", "skill_manage"})
 
@@ -77,6 +85,31 @@ class TestVerifyLine:
         later = [*earlier, HumanMessage(content="thanks, now explain it"), AIMessage(content="It works by...")]
         assert _reminder(later) is None
 
+    def test_a_later_response_reusing_the_call_id_does_not_hide_a_successful_edit(self) -> None:
+        """Providers that number every response's calls from call_0: the edit's
+        own result decides, not the last result that carried the same id."""
+        messages = [
+            HumanMessage(content="fix the bug"),
+            AIMessage(content="", tool_calls=[_call("str_replace", "call_0", path="/w/a.py")]),
+            ToolMessage(content="OK", tool_call_id="call_0", name="str_replace"),
+            AIMessage(content="", tool_calls=[_call("read_file", "call_0", path="/w/missing.txt")]),
+            ToolMessage(content="Error: File not found", tool_call_id="call_0", name="read_file"),
+            AIMessage(content="Done."),
+        ]
+        text = _reminder(messages)
+        assert text is not None and "a.py" in text
+
+    def test_a_later_response_reusing_the_call_id_does_not_validate_a_failed_edit(self) -> None:
+        messages = [
+            HumanMessage(content="fix the bug"),
+            AIMessage(content="", tool_calls=[_call("str_replace", "call_0", path="/w/a.py")]),
+            ToolMessage(content="Error: String to replace not found in file: /w/a.py", tool_call_id="call_0", name="str_replace"),
+            AIMessage(content="", tool_calls=[_call("read_file", "call_0", path="/w/a.py")]),
+            ToolMessage(content="x = 1", tool_call_id="call_0", name="read_file"),
+            AIMessage(content="Done."),
+        ]
+        assert _reminder(messages) is None
+
 
 class TestLearningLines:
     def _long_turn(self, n: int = 9) -> list:
@@ -105,6 +138,18 @@ class TestLearningLines:
         messages[2].additional_kwargs[SKILL_USAGE_KEY] = {"name": "deploy", "category": "custom"}
         text = _reminder(messages, skill_learning=True)
         assert text is not None and "custom skill(s) deploy" in text and "patch it now" in text
+
+    def test_a_multi_skill_slash_selection_gets_a_patch_line(self) -> None:
+        """Two or more skills picked in the composer stamp the plural key on the first response."""
+        messages = [
+            HumanMessage(content="/deploy /release ship it"),
+            AIMessage(
+                content="Shipped.",
+                additional_kwargs={SKILL_USAGES_KEY: [{"name": "deploy", "category": "custom"}, {"name": "release", "category": "custom"}, {"name": "pdf", "category": "public"}]},
+            ),
+        ]
+        text = _reminder(messages, skill_learning=True)
+        assert text is not None and "custom skill(s) deploy, release" in text
 
 
 def _runtime(**context) -> SimpleNamespace:
@@ -206,33 +251,150 @@ class TestFromAppConfig:
         assert SkillEvolutionConfig().archive_unused_after_days == 90
 
 
-class TestLedgerHandOff:
-    def test_loaded_skills_reach_the_ledger_after_the_run(self, monkeypatch) -> None:
-        recorded = {}
+NOW = datetime(2026, 11, 21, 12, 0, tzinfo=UTC)
+
+
+class _Storage:
+    """The slice of UserScopedSkillStorage the ledger and the curator use."""
+
+    def __init__(self, custom_root) -> None:
+        self.custom_root = custom_root
+        self.enabled: dict[str, bool] = {}
+        self.history: dict[str, list[dict]] = {}
+
+    def add_agent_skill(self, name: str, *, written: datetime) -> None:
+        skill_file = self.custom_root / name / "SKILL.md"
+        skill_file.parent.mkdir(parents=True, exist_ok=True)
+        skill_file.write_text("---\nname: x\n---\n", encoding="utf-8")
+        import os
+
+        os.utime(skill_file, (written.timestamp(), written.timestamp()))
+        self.enabled[name] = True
+        self.history[name] = [{"ts": written.isoformat(), "action": "create", "author": "agent"}]
+
+    def get_user_custom_root(self):
+        return self.custom_root
+
+    def load_skills(self, *, enabled_only: bool = False):
+        return [SimpleNamespace(name=name, category="custom") for name, on in self.enabled.items() if on or not enabled_only]
+
+    def read_history(self, name: str) -> list[dict]:
+        return self.history.get(name, [])
+
+    def get_custom_skill_file(self, name: str):
+        return self.custom_root / name / "SKILL.md"
+
+    def set_skill_enabled_state(self, name: str, enabled: bool) -> None:
+        self.enabled[name] = enabled
+
+
+@pytest.fixture
+def user_storage(tmp_path, monkeypatch) -> _Storage:
+    storage = _Storage(tmp_path / "users" / "u1" / "skills" / "custom")
+    storage.custom_root.mkdir(parents=True)
+    monkeypatch.setattr("deerflow.skills.storage.get_or_new_user_skill_storage", lambda user_id, **_kw: storage)
+    monkeypatch.setattr("deerflow.runtime.user_context.resolve_runtime_user_id", lambda runtime: "u1")
+    yield storage
+    assert flush_skill_ledger_jobs()
+
+
+def _ledger_on_disk(storage: _Storage) -> dict:
+    path = storage.custom_root.parent / "_skill_ledger.json"
+    return json.loads(path.read_text(encoding="utf-8")) if path.exists() else {"skills": {}}
+
+
+EVOLUTION_ON = SimpleNamespace(skill_evolution=SimpleNamespace(enabled=True))
+
+
+class TestLoadsAndCurator:
+    def test_loads_are_counted_once_however_often_the_graph_passes_end(self, user_storage) -> None:
+        """A Goal continuation is a new graph pass over the same messages: each
+        pass's after_agent used to count the turn's loads again."""
         mw = CompletionReviewMiddleware(verify_code_edits=False, skill_learning=True, archive_unused_after_days=0)
-        monkeypatch.setattr(mw, "_record_and_curate", lambda user_id, names: recorded.update(user=user_id, names=names) or [])
-        monkeypatch.setattr("deerflow.runtime.user_context.resolve_runtime_user_id", lambda runtime: "u1")
+        runtime = _runtime(app_config=EVOLUTION_ON)
         messages = _turn(("read_file", {"path": "/mnt/skills/custom/deploy/SKILL.md"}, "---"))
         messages[2].additional_kwargs[SKILL_USAGE_KEY] = {"name": "deploy", "category": "custom"}
 
-        mw.after_agent({"messages": messages}, _runtime())
+        record_skill_usage(runtime, messages[2].additional_kwargs[SKILL_USAGE_KEY])  # the load itself
+        for _graph_pass in range(3):  # the run's pass and two hidden continuations
+            mw.after_agent({"messages": messages}, runtime)
+        assert flush_skill_ledger_jobs()
 
-        assert recorded == {"user": "u1", "names": ["deploy"]}
+        assert _ledger_on_disk(user_storage)["skills"]["deploy"]["use_count"] == 1
 
-    def test_no_ledger_work_while_skill_evolution_is_off(self, monkeypatch) -> None:
-        mw = CompletionReviewMiddleware(verify_code_edits=True, skill_learning=False)
-        monkeypatch.setattr(mw, "_record_and_curate", lambda *a: pytest.fail("ledger touched"))
-        mw.after_agent({"messages": EDITED}, _runtime())
+    @pytest.mark.parametrize("context", [{"user_role": "admin"}, {"user_role": None}, {}], ids=["admin", "none", "absent"])
+    def test_the_curator_runs_after_the_run_for_an_owner_who_can_switch_skills_back_on(self, user_storage, monkeypatch, context) -> None:
+        curated = []
+        mw = CompletionReviewMiddleware(verify_code_edits=False, skill_learning=True, archive_unused_after_days=90)
+        monkeypatch.setattr(mw, "_curate_and_refresh", curated.append)
 
-    def test_a_ledger_failure_never_fails_the_run(self, monkeypatch) -> None:
-        mw = CompletionReviewMiddleware(verify_code_edits=False, skill_learning=True)
+        assert mw.after_agent({"messages": EDITED}, _runtime(**context)) is None
+        assert flush_skill_ledger_jobs()
+        assert curated == ["u1"]
 
-        def boom(*_a):
+    @pytest.mark.parametrize("invoke_async", [False, True], ids=["sync", "async"])
+    def test_other_roles_are_never_curated(self, user_storage, monkeypatch, invoke_async) -> None:
+        """Only an admin can switch a skill back on; a user's skill switched off
+        by the curator would be lost to them."""
+        import asyncio
+
+        curated = []
+        mw = CompletionReviewMiddleware(verify_code_edits=False, skill_learning=True, archive_unused_after_days=90)
+        monkeypatch.setattr(mw, "_curate_and_refresh", curated.append)
+        runtime = _runtime(user_role="user")
+
+        asyncio.run(mw.aafter_agent({"messages": EDITED}, runtime)) if invoke_async else mw.after_agent({"messages": EDITED}, runtime)
+        assert flush_skill_ledger_jobs()
+        assert curated == []
+
+    def test_no_curator_while_it_is_off_or_for_subagents(self, user_storage, monkeypatch) -> None:
+        curated = []
+        for mw, runtime in (
+            (CompletionReviewMiddleware(verify_code_edits=True, skill_learning=False), _runtime()),
+            (CompletionReviewMiddleware(verify_code_edits=False, skill_learning=True, archive_unused_after_days=0), _runtime()),
+            (CompletionReviewMiddleware(verify_code_edits=False, skill_learning=True, archive_unused_after_days=90), _runtime(is_subagent=True)),
+        ):
+            monkeypatch.setattr(mw, "_curate_and_refresh", curated.append)
+            mw.after_agent({"messages": EDITED}, runtime)
+        assert flush_skill_ledger_jobs()
+        assert curated == []
+
+    def test_a_switch_off_refreshes_the_prompt_caches_even_when_the_last_save_fails(self, user_storage, monkeypatch) -> None:
+        from deerflow.skills.learning import SkillLedger
+
+        refreshed = []
+        monkeypatch.setattr("deerflow.agents.lead_agent.prompt.invalidate_user_skill_cache", lambda user_id: refreshed.append(("invalidate", user_id)))
+        monkeypatch.setattr("deerflow.agents.lead_agent.prompt.publish_skills_cache_reset", lambda *, user_id=None: refreshed.append(("publish", user_id)))
+        user_storage.add_agent_skill("stale", written=datetime.now(UTC) - timedelta(days=400))
+        ledger_path = user_storage.custom_root.parent / "_skill_ledger.json"
+        ledger_path.write_text(json.dumps({"version": 1, "skills": {}, "tracking_since": "2020-01-01T00:00:00+00:00"}), encoding="utf-8")
+        save = SkillLedger._save
+        failures = []
+
+        def save_unless_final(self, data):
+            if "last_curated_at" in data:
+                failures.append(data)
+                raise OSError(errno.ENOSPC, "No space left on device")
+            save(self, data)
+
+        monkeypatch.setattr(SkillLedger, "_save", save_unless_final)
+        mw = CompletionReviewMiddleware(verify_code_edits=False, skill_learning=True, archive_unused_after_days=90)
+
+        assert mw.after_agent({"messages": EDITED}, _runtime()) is None
+        assert flush_skill_ledger_jobs()
+
+        assert failures and user_storage.enabled["stale"] is False
+        assert refreshed == [("invalidate", "u1"), ("publish", "u1")]
+
+    def test_a_curator_failure_never_fails_the_run(self, user_storage, monkeypatch) -> None:
+        mw = CompletionReviewMiddleware(verify_code_edits=False, skill_learning=True, archive_unused_after_days=90)
+
+        def boom(user_id):
             raise OSError("disk full")
 
-        monkeypatch.setattr(mw, "_record_and_curate", boom)
-        monkeypatch.setattr("deerflow.runtime.user_context.resolve_runtime_user_id", lambda runtime: "u1")
+        monkeypatch.setattr(mw, "_curate", boom)
         assert mw.after_agent({"messages": EDITED}, _runtime()) is None
+        assert flush_skill_ledger_jobs()
 
 
 def test_skills_used_dedupes_and_filters_by_category() -> None:
@@ -241,6 +403,13 @@ def test_skills_used_dedupes_and_filters_by_category() -> None:
     c = ToolMessage(content="x", tool_call_id="3", additional_kwargs={SKILL_USAGE_KEY: {"name": "deep-research", "category": "public"}})
     assert skills_used([a, b, c]) == ["deploy", "deep-research"]
     assert skills_used([a, b, c], category="custom") == ["deploy"]
+
+
+def test_skills_used_reads_multi_skill_selections_and_skips_malformed_entries() -> None:
+    selection = AIMessage(content="ok", additional_kwargs={SKILL_USAGES_KEY: [{"name": "deploy", "category": "custom"}, "junk", {"name": ""}, {"name": "pdf", "category": "public"}]})
+    broken = AIMessage(content="ok", additional_kwargs={SKILL_USAGES_KEY: {"name": "not-a-list"}})
+    assert skills_used([selection, broken]) == ["deploy", "pdf"]
+    assert skills_used([selection, broken], category="custom") == ["deploy"]
 
 
 class TestRealAgentGraph:

@@ -61,16 +61,24 @@ With it on, the loop closes like this:
    loads one with `read_file`, or you name it with `/skill-name`.
 3. **Improve.** When a run loaded one of your custom skills, the same review
    asks the agent to patch it now if it was wrong, incomplete or out of date.
-4. **Count.** Every load is recorded in
-   `{DEER_FLOW_HOME}/users/<user>/skills/custom/.learning/ledger.json` (use
-   count, first and last use).
-5. **Retire.** Once a day at most, the curator switches off skills **the agent
-   wrote** that nobody loaded for `archive_unused_after_days`. Skills you wrote
-   or installed are never touched. Switching off is the same toggle as
-   **Settings → Skills**: turn it back on there and the curator leaves it
-   alone from then on. Nothing is deleted, and every agent write stays in the
-   skill's history (`.history/<name>.jsonl`), which the Skills page can roll
-   back.
+4. **Count.** Every load is counted when it happens — a `SKILL.md` read or a
+   slash activation (several skills picked at once included), by the lead
+   agent or a subagent — in `{DEER_FLOW_HOME}/users/<user>/skills/_skill_ledger.json`
+   (use count, first and last use). Counting runs on a background thread and
+   is telemetry: a full queue or a busy ledger drops that one count.
+5. **Retire.** Once a day at most, after a run, the curator switches off
+   skills **the agent wrote** (the last create/delete in their history is the
+   agent's create) that nobody loaded or edited for `archive_unused_after_days`.
+   Skills you wrote or installed are never touched, and nothing is archived
+   until that many days have passed since counting started, so an upgraded
+   install does not lose skills it was using before. Switching off is the
+   toggle in **Capability Center → Skills**; turn it back on there and the
+   curator leaves it alone until it is loaded again, after which it is judged
+   like any other agent-written skill. Toggling skills is admin-only, so the
+   curator runs only for administrators (and single-user installs); other
+   users' loads are still counted. Nothing is deleted: every agent write stays
+   in the skill's history (`.history/<name>.jsonl`), and
+   `POST /api/skills/custom/<name>/rollback` restores an earlier version.
 
 ## Coding skills from day one
 

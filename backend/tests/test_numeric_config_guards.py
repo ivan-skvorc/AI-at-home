@@ -18,6 +18,7 @@ from deerflow.config.extensions_config import McpOAuthConfig, McpServerConfig
 from deerflow.config.model_config import ModelConfig
 from deerflow.config.run_events_config import RunEventsConfig
 from deerflow.config.sandbox_config import SandboxConfig, SandboxOwnershipConfig
+from deerflow.config.skill_evolution_config import SkillEvolutionConfig
 from deerflow.config.summarization_config import SummarizationConfig
 
 
@@ -158,3 +159,18 @@ class TestTrimTokensToSummarizeGuard:
     def test_rejects_non_positive_and_boolean(self, bad: int | bool) -> None:
         with pytest.raises(ValidationError):
             SummarizationConfig(**{"trim_tokens_to_summarize": bad})
+
+
+class TestSkillEvolutionCountGuards:
+    """`archive_unused_after_days: true` meant "turn the curator on" and became a one-day curator."""
+
+    @pytest.mark.parametrize("field", ["nudge_after_tool_calls", "archive_unused_after_days"])
+    @pytest.mark.parametrize("bad", [True, False, -1])
+    def test_rejects_booleans_and_negatives(self, field: str, bad: int | bool) -> None:
+        with pytest.raises(ValidationError):
+            SkillEvolutionConfig(**{field: bad})
+
+    @pytest.mark.parametrize("field", ["nudge_after_tool_calls", "archive_unused_after_days"])
+    def test_accepts_decimal_strings_and_zero(self, field: str) -> None:
+        assert getattr(SkillEvolutionConfig(**{field: "30"}), field) == 30
+        assert getattr(SkillEvolutionConfig(**{field: 0}), field) == 0

@@ -6365,22 +6365,39 @@ the learning lines need `skill_evolution.enabled` and `skill_manage` bound.
 The turn starts at the last human message that is not a hidden or
 `*reminder`-named framework message.
 
-**The skill ledger and curator** (`deerflow/skills/learning.py`). After a run,
-with skill evolution on, skills loaded in the turn (the `skill_usage` stamp the
-read and slash paths already put on messages) are counted in
-`<custom root>/.learning/ledger.json`, and at most daily the curator switches
-off agent-written skills unused for `archive_unused_after_days`. Do not
-"simplify" these away:
+**The skill ledger and curator** (`deerflow/skills/learning.py`). With skill
+evolution on, every skill load is counted **when it happens**, in
+`skill_usage.record_skill_usage` — the one funnel for `SKILL.md` reads and
+slash activations (multi-select included), for the lead and for subagents —
+on a bounded background executor, into `<user skills root>/_skill_ledger.json`.
+After each run the curator is queued behind that run's loads and runs at most
+daily, switching off agent-written skills unused for
+`archive_unused_after_days`. Do not "simplify" these away:
 
-- **Agent-written only**, from the first `.history` record (`create` by
-  `author: agent`); user-written and installed skills are never touched.
-- **A switch, not a deletion**: the per-user enabled state Settings → Skills
-  toggles. Once archived the curator never touches the skill again, so a user
-  who switches it back on keeps it on; a later load makes it active.
-- **Last activity, not use count**: a load, else a write, else the file's
-  mtime, so a skill created yesterday is not archived for having no loads.
-- **Telemetry**: every failure is logged and swallowed; the lock is
-  per-process, which is enough for counts that only drive a 90-day decision.
+- **Counted at the load, not reconstructed at the end.** Reading the turn at
+  `after_agent` missed subagent loads, loads summarization compacted away and
+  multi-skill selections, and re-counted Goal continuations.
+- **Outside the projected tree.** A ledger under the custom-skill root changed
+  the sandbox projection's source digest on every write and forced a rebuild;
+  beside `_skill_states.json` only that file's contents are hashed.
+- **Agent-written from the current lifecycle**: the last `create`/`delete`/
+  `human_delete` record must be a `create` by `author: agent`, so a skill the
+  user installs after an agent skill of that name was deleted is never touched.
+- **A switch, not a deletion, and only where it can be undone**: the per-user
+  enabled state Capability Center → Skills toggles, which is admin-only, so
+  the curator runs only when `user_role` is `admin` or absent. Once archived the
+  curator leaves the skill alone until its next load.
+- **Last activity, with a floor**: the latest of its last load, last write and
+  file mtime, never earlier than `tracking_since` (the ledger's first save), so
+  an upgraded install does not archive skills it used before counting began.
+- **Crash-safe telemetry**: a cross-process lock around read-modify-write; a
+  read error or lock timeout skips the write, only an undecodable file starts
+  fresh; the archived marker is saved before each switch-off and the prompt
+  caches are refreshed even when a later save fails.
+
+One limit remains: the nudge's tool-call count and the "patch your custom
+skill" line read the turn as it stands after compaction, so a very long run
+can be under-counted — which errs toward not reminding.
 
 **Bundled coding skills** (`skills/public/`). Six skills adapted from Hermes
 Agent (MIT; several from obra/superpowers), each with its `LICENSE.txt` and

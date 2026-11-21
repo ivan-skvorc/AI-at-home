@@ -4470,8 +4470,9 @@ skill_evolution:
   # patch a custom skill it loaded). 0 = no reminder.
   nudge_after_tool_calls: 8
   # The curator switches off agent-written custom skills nobody loaded for this
-  # many days; Settings → Skills switches them back on, nothing is deleted.
-  # 0 = never.
+  # many days (never before that many days of counting, never for non-admin
+  # users, who cannot switch skills back on); Capability Center → Skills turns
+  # them back on, nothing is deleted. 0 = never.
   archive_unused_after_days: 90
 
 # ============================================================================
