@@ -33,6 +33,7 @@ from deerflow.uploads.manager import (
     normalize_filename,
     write_upload_file_no_symlink,
 )
+from deerflow.utils.file_io import await_drained
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +47,10 @@ DINGTALK_STOP_TIMEOUT_SECONDS = 5
 DINGTALK_STREAM_CLOSE_TIMEOUT_SECONDS = 2
 # Deadline for the Stream ticket request (the SDK's own has none).
 DINGTALK_STREAM_TICKET_TIMEOUT_SECONDS = 30
+# Per-request deadlines for the OpenAPI calls the Gateway loop makes.
+_API_TIMEOUT = httpx.Timeout(30.0)
+_TOKEN_TIMEOUT = httpx.Timeout(10.0)
+_UPLOAD_TIMEOUT = httpx.Timeout(60.0)
 # Retry pacing copied from DingTalkStreamClient.start() (dingtalk-stream 0.24).
 _DINGTALK_STREAM_RETRY_SECONDS = 10
 _DINGTALK_STREAM_ERROR_RETRY_SECONDS = 3
@@ -196,6 +201,13 @@ class DingTalkChannel(Channel):
         self._card_template_id: str = config.get("card_template_id", "")
         self._card_track_ids: dict[str, str] = {}
         self._dingtalk_client: Any = None
+        # One pooled client for the OpenAPI calls made on the Gateway loop,
+        # created on first use and closed by stop(), so a reply does not pay a
+        # TLS handshake per request. The Stream ticket fetch keeps its own
+        # client: it runs on the SDK thread's private loop, and an httpx client
+        # belongs to the loop that opened its connections.
+        self._http: httpx.AsyncClient | None = None
+        self._http_lock = asyncio.Lock()
         # The SDK thread's private loop and client, published under _stream_lock
         # once constructed so stop() can shut them down from the Gateway loop.
         self._stream_client: Any = None
@@ -259,6 +271,11 @@ class DingTalkChannel(Channel):
         # Gateway-side drain below runs.
         self._request_stream_shutdown()
         await self._close_and_drain_threadsafe_futures()
+        # Outbound delivery is unsubscribed and the handlers above have drained,
+        # so nothing on the Gateway loop still uses the pooled client.
+        http, self._http = self._http, None
+        if http is not None:
+            await await_drained(http.aclose())
 
         self._dingtalk_client = None
         with self._incoming_messages_lock:
@@ -414,48 +431,48 @@ class DingTalkChannel(Channel):
                 )
 
             token = await self._get_access_token()
-            async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
-                if conversation_type == _CONVERSATION_TYPE_GROUP:
-                    response = await client.post(
-                        f"{DINGTALK_API_BASE}/v1.0/robot/groupMessages/send",
-                        headers=self._api_headers(token),
-                        json={
-                            "msgKey": msg_key,
-                            "msgParam": msg_param,
-                            "robotCode": robot_code,
-                            "openConversationId": conversation_id,
-                        },
-                    )
-                else:
-                    response = await client.post(
-                        f"{DINGTALK_API_BASE}/v1.0/robot/oToMessages/batchSend",
-                        headers=self._api_headers(token),
-                        json={
-                            "msgKey": msg_key,
-                            "msgParam": msg_param,
-                            "robotCode": robot_code,
-                            "userIds": [sender_staff_id],
-                        },
-                    )
-                response.raise_for_status()
-                data = response.json()
-                process_key = data.get("processQueryKey") if isinstance(data, dict) else None
-                if not isinstance(process_key, str) or not process_key.strip():
-                    logger.warning(
-                        "[DingTalk] file send response missing processQueryKey for %s; treating as not delivered",
-                        attachment.filename,
-                    )
-                    return False
-                if conversation_type != _CONVERSATION_TYPE_GROUP:
-                    target = sender_staff_id
-                    for field in ("invalidStaffIdList", "flowControlledStaffIdList"):
-                        failed = data.get(field, [])
-                        if not isinstance(failed, list):
-                            logger.warning("[DingTalk] unexpected %s in file send response for %s", field, attachment.filename)
-                            return False
-                        if target in failed:
-                            logger.warning("[DingTalk] file not delivered for %s (%s)", attachment.filename, field)
-                            return False
+            client = await self._api_client()
+            if conversation_type == _CONVERSATION_TYPE_GROUP:
+                response = await client.post(
+                    f"{DINGTALK_API_BASE}/v1.0/robot/groupMessages/send",
+                    headers=self._api_headers(token),
+                    json={
+                        "msgKey": msg_key,
+                        "msgParam": msg_param,
+                        "robotCode": robot_code,
+                        "openConversationId": conversation_id,
+                    },
+                )
+            else:
+                response = await client.post(
+                    f"{DINGTALK_API_BASE}/v1.0/robot/oToMessages/batchSend",
+                    headers=self._api_headers(token),
+                    json={
+                        "msgKey": msg_key,
+                        "msgParam": msg_param,
+                        "robotCode": robot_code,
+                        "userIds": [sender_staff_id],
+                    },
+                )
+            response.raise_for_status()
+            data = response.json()
+            process_key = data.get("processQueryKey") if isinstance(data, dict) else None
+            if not isinstance(process_key, str) or not process_key.strip():
+                logger.warning(
+                    "[DingTalk] file send response missing processQueryKey for %s; treating as not delivered",
+                    attachment.filename,
+                )
+                return False
+            if conversation_type != _CONVERSATION_TYPE_GROUP:
+                target = sender_staff_id
+                for field in ("invalidStaffIdList", "flowControlledStaffIdList"):
+                    failed = data.get(field, [])
+                    if not isinstance(failed, list):
+                        logger.warning("[DingTalk] unexpected %s in file send response for %s", field, attachment.filename)
+                        return False
+                    if target in failed:
+                        logger.warning("[DingTalk] file not delivered for %s (%s)", attachment.filename, field)
+                        return False
 
             logger.info("[DingTalk] file sent: %s", attachment.filename)
             return True
@@ -942,37 +959,37 @@ class DingTalkChannel(Channel):
             # receive_file without a try, so a token failure escaping here would
             # abort the whole chat turn instead of degrading to a failed-load marker.
             token = await self._get_access_token()
-            async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
-                response = await client.post(
-                    f"{DINGTALK_API_BASE}/v1.0/robot/messageFiles/download",
-                    headers={
-                        "x-acs-dingtalk-access-token": token,
-                        "Content-Type": "application/json",
-                    },
-                    json={"downloadCode": download_code, "robotCode": self._client_id},
-                )
-                if response.status_code != 200:
-                    logger.warning("[DingTalk] messageFiles/download failed: status=%d, body=%s", response.status_code, response.text[:300])
-                    return None
-                download_url = response.json().get("downloadUrl")
-                if not download_url:
-                    logger.warning("[DingTalk] messageFiles/download returned no downloadUrl")
-                    return None
+            client = await self._api_client()
+            response = await client.post(
+                f"{DINGTALK_API_BASE}/v1.0/robot/messageFiles/download",
+                headers={
+                    "x-acs-dingtalk-access-token": token,
+                    "Content-Type": "application/json",
+                },
+                json={"downloadCode": download_code, "robotCode": self._client_id},
+            )
+            if response.status_code != 200:
+                logger.warning("[DingTalk] messageFiles/download failed: status=%d, body=%s", response.status_code, response.text[:300])
+                return None
+            download_url = response.json().get("downloadUrl")
+            if not download_url:
+                logger.warning("[DingTalk] messageFiles/download returned no downloadUrl")
+                return None
 
-                # Stream with a size cap: the bytes are buffered in memory before
-                # being persisted, so an oversized attachment must be refused
-                # before it is fully read, not after.
-                chunks: list[bytes] = []
-                total = 0
-                async with client.stream("GET", download_url, follow_redirects=True) as file_response:
-                    file_response.raise_for_status()
-                    async for chunk in file_response.aiter_bytes():
-                        total += len(chunk)
-                        if total > _MAX_INBOUND_FILE_SIZE_BYTES:
-                            logger.warning("[DingTalk] inbound file exceeds %d bytes, dropping", _MAX_INBOUND_FILE_SIZE_BYTES)
-                            return None
-                        chunks.append(chunk)
-                return b"".join(chunks)
+            # Stream with a size cap: the bytes are buffered in memory before
+            # being persisted, so an oversized attachment must be refused
+            # before it is fully read, not after.
+            chunks: list[bytes] = []
+            total = 0
+            async with client.stream("GET", download_url, follow_redirects=True) as file_response:
+                file_response.raise_for_status()
+                async for chunk in file_response.aiter_bytes():
+                    total += len(chunk)
+                    if total > _MAX_INBOUND_FILE_SIZE_BYTES:
+                        logger.warning("[DingTalk] inbound file exceeds %d bytes, dropping", _MAX_INBOUND_FILE_SIZE_BYTES)
+                        return None
+                    chunks.append(chunk)
+            return b"".join(chunks)
         except (httpx.HTTPError, ValueError):
             logger.exception("[DingTalk] failed to download file by code")
             return None
@@ -1117,37 +1134,38 @@ class DingTalkChannel(Channel):
         async with self._token_lock:
             if self._cached_token and time.monotonic() < self._token_expires_at:
                 return self._cached_token
-            async with httpx.AsyncClient(timeout=httpx.Timeout(10.0)) as client:
-                response = await client.post(
-                    f"{DINGTALK_API_BASE}/v1.0/oauth2/accessToken",
-                    json={"appKey": self._client_id, "appSecret": self._client_secret},  # DingTalk API field names
-                )
-                response.raise_for_status()
-                data = response.json()
+            client = await self._api_client()
+            response = await client.post(
+                f"{DINGTALK_API_BASE}/v1.0/oauth2/accessToken",
+                json={"appKey": self._client_id, "appSecret": self._client_secret},  # DingTalk API field names
+                timeout=_TOKEN_TIMEOUT,
+            )
+            response.raise_for_status()
+            data = response.json()
 
-                if not isinstance(data, dict):
-                    raise ValueError(f"DingTalk access token response must be a JSON object, got {type(data).__name__}")
+            if not isinstance(data, dict):
+                raise ValueError(f"DingTalk access token response must be a JSON object, got {type(data).__name__}")
 
-                access_token = data.get("accessToken")
-                if not isinstance(access_token, str) or not access_token.strip():
-                    raise ValueError("DingTalk access token response did not contain a usable accessToken")
+            access_token = data.get("accessToken")
+            if not isinstance(access_token, str) or not access_token.strip():
+                raise ValueError("DingTalk access token response did not contain a usable accessToken")
 
-                raw_expires_in = data.get("expireIn", 7200)
-                now = time.monotonic()
-                try:
-                    expires_in = int(raw_expires_in)
-                    # A lifetime within the refresh margin is already stale.
-                    if expires_in <= _TOKEN_REFRESH_MARGIN_SECONDS:
-                        raise ValueError
-                    expires_at = now + expires_in - _TOKEN_REFRESH_MARGIN_SECONDS
-                except (TypeError, ValueError, OverflowError):
-                    logger.warning("[DingTalk] invalid expireIn value %r, using default 7200s", raw_expires_in)
-                    expires_in = 7200
-                    expires_at = now + expires_in - _TOKEN_REFRESH_MARGIN_SECONDS
+            raw_expires_in = data.get("expireIn", 7200)
+            now = time.monotonic()
+            try:
+                expires_in = int(raw_expires_in)
+                # A lifetime within the refresh margin is already stale.
+                if expires_in <= _TOKEN_REFRESH_MARGIN_SECONDS:
+                    raise ValueError
+                expires_at = now + expires_in - _TOKEN_REFRESH_MARGIN_SECONDS
+            except (TypeError, ValueError, OverflowError):
+                logger.warning("[DingTalk] invalid expireIn value %r, using default 7200s", raw_expires_in)
+                expires_in = 7200
+                expires_at = now + expires_in - _TOKEN_REFRESH_MARGIN_SECONDS
 
-                self._cached_token = access_token.strip()
-                self._token_expires_at = expires_at
-                return self._cached_token
+            self._cached_token = access_token.strip()
+            self._token_expires_at = expires_at
+            return self._cached_token
 
     @staticmethod
     def _api_headers(token: str) -> dict[str, str]:
@@ -1156,56 +1174,66 @@ class DingTalkChannel(Channel):
             "Content-Type": "application/json",
         }
 
+    async def _api_client(self) -> httpx.AsyncClient:
+        """Return the pooled OpenAPI client, building it off the event loop on first use."""
+        if self._http is not None:
+            return self._http
+        async with self._http_lock:
+            if self._http is None:
+                # TLS setup reads the CA bundle from disk.
+                self._http = await asyncio.to_thread(httpx.AsyncClient, timeout=_API_TIMEOUT)
+            return self._http
+
     async def _send_text_message_to_user(self, robot_code: str, user_id: str, text: str) -> None:
         token = await self._get_access_token()
-        async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
-            response = await client.post(
-                f"{DINGTALK_API_BASE}/v1.0/robot/oToMessages/batchSend",
-                headers=self._api_headers(token),
-                json={
-                    "msgKey": "sampleText",
-                    "msgParam": json.dumps({"content": text}),
-                    "robotCode": robot_code,
-                    "userIds": [user_id],
-                },
-            )
-            response.raise_for_status()
+        client = await self._api_client()
+        response = await client.post(
+            f"{DINGTALK_API_BASE}/v1.0/robot/oToMessages/batchSend",
+            headers=self._api_headers(token),
+            json={
+                "msgKey": "sampleText",
+                "msgParam": json.dumps({"content": text}),
+                "robotCode": robot_code,
+                "userIds": [user_id],
+            },
+        )
+        response.raise_for_status()
 
     async def _send_text_message_to_group(self, robot_code: str, conversation_id: str, text: str) -> None:
         token = await self._get_access_token()
-        async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
-            response = await client.post(
-                f"{DINGTALK_API_BASE}/v1.0/robot/groupMessages/send",
-                headers=self._api_headers(token),
-                json={
-                    "msgKey": "sampleText",
-                    "msgParam": json.dumps({"content": text}),
-                    "robotCode": robot_code,
-                    "openConversationId": conversation_id,
-                },
-            )
-            response.raise_for_status()
+        client = await self._api_client()
+        response = await client.post(
+            f"{DINGTALK_API_BASE}/v1.0/robot/groupMessages/send",
+            headers=self._api_headers(token),
+            json={
+                "msgKey": "sampleText",
+                "msgParam": json.dumps({"content": text}),
+                "robotCode": robot_code,
+                "openConversationId": conversation_id,
+            },
+        )
+        response.raise_for_status()
 
     async def _send_p2p_message(self, robot_code: str, user_id: str, text: str) -> None:
         text = _adapt_markdown_for_dingtalk(text)
         token = await self._get_access_token()
-        async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
-            response = await client.post(
-                f"{DINGTALK_API_BASE}/v1.0/robot/oToMessages/batchSend",
-                headers=self._api_headers(token),
-                json={
-                    "msgKey": "sampleMarkdown",
-                    "msgParam": json.dumps({"title": "DeerFlow", "text": text}),
-                    "robotCode": robot_code,
-                    "userIds": [user_id],
-                },
-            )
-            response.raise_for_status()
-            data = response.json()
-            if data.get("processQueryKey"):
-                logger.info("[DingTalk] P2P message sent to user=%s", user_id)
-            else:
-                logger.warning("[DingTalk] P2P send response: %s", data)
+        client = await self._api_client()
+        response = await client.post(
+            f"{DINGTALK_API_BASE}/v1.0/robot/oToMessages/batchSend",
+            headers=self._api_headers(token),
+            json={
+                "msgKey": "sampleMarkdown",
+                "msgParam": json.dumps({"title": "DeerFlow", "text": text}),
+                "robotCode": robot_code,
+                "userIds": [user_id],
+            },
+        )
+        response.raise_for_status()
+        data = response.json()
+        if data.get("processQueryKey"):
+            logger.info("[DingTalk] P2P message sent to user=%s", user_id)
+        else:
+            logger.warning("[DingTalk] P2P send response: %s", data)
 
     async def _send_group_message(
         self,
@@ -1219,24 +1247,23 @@ class DingTalkChannel(Channel):
         # (sampleMarkdown does not support @mentions).
         text = _adapt_markdown_for_dingtalk(text)
         token = await self._get_access_token()
-
-        async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
-            response = await client.post(
-                f"{DINGTALK_API_BASE}/v1.0/robot/groupMessages/send",
-                headers=self._api_headers(token),
-                json={
-                    "msgKey": "sampleMarkdown",
-                    "msgParam": json.dumps({"title": "DeerFlow", "text": text}),
-                    "robotCode": robot_code,
-                    "openConversationId": conversation_id,
-                },
-            )
-            response.raise_for_status()
-            data = response.json()
-            if data.get("processQueryKey"):
-                logger.info("[DingTalk] group message sent to conversation=%s", conversation_id)
-            else:
-                logger.warning("[DingTalk] group send response: %s", data)
+        client = await self._api_client()
+        response = await client.post(
+            f"{DINGTALK_API_BASE}/v1.0/robot/groupMessages/send",
+            headers=self._api_headers(token),
+            json={
+                "msgKey": "sampleMarkdown",
+                "msgParam": json.dumps({"title": "DeerFlow", "text": text}),
+                "robotCode": robot_code,
+                "openConversationId": conversation_id,
+            },
+        )
+        response.raise_for_status()
+        data = response.json()
+        if data.get("processQueryKey"):
+            logger.info("[DingTalk] group message sent to conversation=%s", conversation_id)
+        else:
+            logger.warning("[DingTalk] group send response: %s", data)
 
     # -- AI Card streaming helpers -------------------------------------------
 
@@ -1326,11 +1353,11 @@ class DingTalkChannel(Channel):
         fallback in ``send`` could then run, so the reply was lost.
         """
         token = await self._get_access_token()
-        async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
-            response = await client.request(method, f"{DINGTALK_API_BASE}{path}", headers=self._api_headers(token), json=body)
-            if response.is_error:
-                logger.warning("[DingTalk] card request %s %s returned %s: %s", method, path, response.status_code, response.text[:500])
-            response.raise_for_status()
+        client = await self._api_client()
+        response = await client.request(method, f"{DINGTALK_API_BASE}{path}", headers=self._api_headers(token), json=body)
+        if response.is_error:
+            logger.warning("[DingTalk] card request %s %s returned %s: %s", method, path, response.status_code, response.text[:500])
+        response.raise_for_status()
 
     # -- media upload --------------------------------------------------------
 
@@ -1338,23 +1365,24 @@ class DingTalkChannel(Channel):
         try:
             file_bytes = await asyncio.to_thread(Path(file_path).read_bytes)
             token = await self._get_access_token()
-            async with httpx.AsyncClient(timeout=httpx.Timeout(60.0)) as client:
-                response = await client.post(
-                    f"{DINGTALK_API_BASE}/v1.0/files/upload",
-                    headers={"x-acs-dingtalk-access-token": token},
-                    files={"file": ("upload", file_bytes)},
-                    data={"type": media_type},
-                )
-                response.raise_for_status()
-                try:
-                    payload = response.json()
-                except json.JSONDecodeError:
-                    logger.exception("[DingTalk] failed to decode upload response JSON: %s", file_path)
-                    return None
-                if not isinstance(payload, dict):
-                    logger.warning("[DingTalk] unexpected upload response type %s for %s", type(payload).__name__, file_path)
-                    return None
-                return payload.get("mediaId")
+            client = await self._api_client()
+            response = await client.post(
+                f"{DINGTALK_API_BASE}/v1.0/files/upload",
+                headers={"x-acs-dingtalk-access-token": token},
+                files={"file": ("upload", file_bytes)},
+                data={"type": media_type},
+                timeout=_UPLOAD_TIMEOUT,
+            )
+            response.raise_for_status()
+            try:
+                payload = response.json()
+            except json.JSONDecodeError:
+                logger.exception("[DingTalk] failed to decode upload response JSON: %s", file_path)
+                return None
+            if not isinstance(payload, dict):
+                logger.warning("[DingTalk] unexpected upload response type %s for %s", type(payload).__name__, file_path)
+                return None
+            return payload.get("mediaId")
         except (httpx.HTTPError, OSError):
             logger.exception("[DingTalk] failed to upload media: %s", file_path)
             return None

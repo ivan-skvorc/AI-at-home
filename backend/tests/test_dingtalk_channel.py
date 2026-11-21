@@ -1124,6 +1124,51 @@ class TestTokenCaching:
         _run(go())
 
 
+class TestPooledApiClient:
+    def test_api_calls_share_one_client_that_stop_closes(self, monkeypatch):
+        """OpenAPI calls reuse one client, keep their own deadlines, and stop() closes it."""
+        real_client = httpx.AsyncClient
+        created: list[httpx.AsyncClient] = []
+        seen: list[tuple[str, float | None]] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen.append((request.url.path, request.extensions["timeout"]["read"]))
+            if request.url.path == "/v1.0/oauth2/accessToken":
+                return httpx.Response(200, json={"accessToken": "tok", "expireIn": 7200})
+            return httpx.Response(200, json={"processQueryKey": "q"})
+
+        def build(**kwargs):
+            client = real_client(transport=httpx.MockTransport(handler), **kwargs)
+            created.append(client)
+            return client
+
+        monkeypatch.setattr("app.channels.dingtalk.httpx.AsyncClient", build)
+
+        async def go():
+            channel = DingTalkChannel(MessageBus(), config={})
+            channel._client_id, channel._client_secret = "id", "secret"
+            await channel._send_text_message_to_user("robot_001", "user_001", "one")
+            await channel._send_text_message_to_group("robot_001", "cid_001", "two")
+            assert len(created) == 1
+
+            await channel.stop()
+            assert created[0].is_closed
+
+            # A restarted channel builds a fresh client on its next call.
+            await channel._send_text_message_to_user("robot_001", "user_001", "three")
+            assert len(created) == 2
+            await channel.stop()
+            assert created[1].is_closed
+
+        _run(go())
+        assert seen == [
+            ("/v1.0/oauth2/accessToken", 10.0),
+            ("/v1.0/robot/oToMessages/batchSend", 30.0),
+            ("/v1.0/robot/groupMessages/send", 30.0),
+            ("/v1.0/robot/oToMessages/batchSend", 30.0),
+        ]
+
+
 # ---------------------------------------------------------------------------
 # Group message @ mention format tests
 # ---------------------------------------------------------------------------
