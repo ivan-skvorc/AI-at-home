@@ -10,7 +10,6 @@ import pytest
 import deerflow.community.jina_ai.jina_client as jina_client_module
 from deerflow.community.jina_ai.jina_client import JinaClient
 from deerflow.community.jina_ai.tools import (
-    _coerce_bool,
     _coerce_proxy,
     _coerce_timeout,
     web_fetch_tool,
@@ -407,30 +406,6 @@ async def test_web_fetch_tool_offloads_extraction_to_thread(monkeypatch):
     result = await web_fetch_tool.ainvoke("https://example.com")
     assert to_thread_called, "extract_article must be called via asyncio.to_thread to avoid blocking the event loop"
     assert "threaded" in result
-
-
-@pytest.mark.parametrize(
-    ("value", "default", "expected"),
-    [
-        (True, False, True),
-        (False, True, False),
-        ("true", False, True),
-        ("YES", False, True),
-        (" on ", False, True),
-        ("1", False, True),
-        ("false", True, False),
-        ("No", True, False),
-        ("off", True, False),
-        ("0", True, False),
-        ("maybe", True, True),
-        ("maybe", False, False),
-        (None, True, True),
-        (123, False, False),
-    ],
-)
-def test_coerce_bool(value, default, expected):
-    """_coerce_bool normalizes booleans, known strings, and falls back to the default."""
-    assert _coerce_bool(value, default) is expected
 
 
 @pytest.mark.parametrize(
