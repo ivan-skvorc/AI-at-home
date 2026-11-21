@@ -81,7 +81,7 @@ DESCRIPTION = (
     "for loops and allow-listed Workplane methods; no if, while or def. Millimetres. "
     "Methods: box, cylinder, sphere, wedge, rect, circle, ellipse, polygon, slot2D, polyline, "
     "moveTo, move, lineTo, line, hLine, vLine, hLineTo, vLineTo, threePointArc, spline, radiusArc, sagittaArc, tangentArcPoint, "
-    "polarLine, polarLineTo, close, center, offset2D, extrude, cutBlind, cutThruAll, revolve, loft, sweep, twistExtrude, "
+    "polarLine, polarLineTo, close, center, offset2D, extrude, cutBlind, cutThruAll, revolve, loft, sweep, twistExtrude, text, split, "
     "hole, cboreHole, cskHole, fillet, chamfer, shell, pushPoints, rarray, polarArray, faces, edges, vertices, workplane, transformed, tag, "
     "workplaneFromTagged, end, first, last, translate, rotate, mirror, mirrorX, mirrorY, union, cut, intersect. "
     "bbox_xyz_mm is the expected overall size along x, y and z. volume_min_max_mm3 is the allowed volume range. "

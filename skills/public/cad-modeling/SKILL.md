@@ -86,9 +86,10 @@ say so. These are the numbers of the request. Do not read them off a build.
 
 Read `references/operations.md` when you need a method's arguments: `revolve`,
 `loft`, `sweep` and `twistExtrude` make turned, tapered, swept and twisted
-shapes, and `transformed` tilts a workplane for an angled hole. Text, threads,
-sketches, parametric curves, variable fillets and assemblies of loose bodies
-are not available: see Step 7.
+shapes, `transformed` tilts a workplane for an angled hole, `text` letters a
+face in the module's own font, and a thread is an outline swept along
+`cq.Wire.makeHelix(...)`. Sketches, parametric curves, variable fillets and
+assemblies of loose bodies are not available: see Step 7.
 
 ### Step 3: Build
 

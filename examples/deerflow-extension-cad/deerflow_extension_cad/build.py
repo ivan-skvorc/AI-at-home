@@ -3,7 +3,10 @@
 This module is the only place a script's request turns into a kernel call, and
 the call is always the same shape: a ``Workplane`` method whose name is a key
 of ``allowlist.METHODS``, with keyword arguments the interpreter already
-checked. It runs in the worker process only; the Gateway never imports it.
+checked. Two arguments are the module's own and never the script's: the font
+file of ``text`` (``INJECTED``) and the helix wire a thread is swept along,
+made here from the numbers the interpreter kept. It runs in the worker process
+only; the Gateway never imports it.
 """
 
 from __future__ import annotations
@@ -11,7 +14,13 @@ from __future__ import annotations
 from pathlib import Path
 
 from deerflow_extension_cad import allowlist as table
-from deerflow_extension_cad.interpreter import Program, Ref
+from deerflow_extension_cad.interpreter import Helix, Program, Ref
+
+#: The lettering font, shipped in the package: the slim Gateway image has no system fonts,
+#: and a script never names a font or a path (fonts/README.md).
+FONT = Path(__file__).with_name("fonts") / "LiberationSans-Regular.ttf"
+#: Arguments this module passes itself, by method: never in the table, never from a script.
+INJECTED = {"text": ("fontPath",)}
 
 #: The STL and GLB meshes, finest first: millimetres off the surface, radians between
 #: facets. The angle decides size and time. A part dense with small fillets and holes
@@ -56,6 +65,11 @@ _MUST_CHANGE = {
     "loft": _INSIDE_THE_PART,
     "sweep": _INSIDE_THE_PART,
     "twistExtrude": _INSIDE_THE_PART,
+    "text": (
+        "changed nothing: lettering is cut into the part unless combine=True, and a cut needs a negative distance from a face of the part; "
+        "raised lettering takes combine=True and a positive distance. Check that the workplane is on the face the lettering belongs to."
+    ),
+    "split": "removed no material: the workplane does not cross the part, so nothing was cut off. Place the workplane through the part first.",
 }
 
 _HINTS = {
@@ -70,6 +84,7 @@ _HINTS = {
     "loft": "loft needs two or more closed outlines on separate workplanes, such as circle(10).workplane(offset=20).circle(5)",
     "sweep": "sweep needs a closed outline drawn before it, and the path must start on the profile's plane",
     "revolve": "the axis must not cross the outline: draw the outline wholly on one side of it",
+    "split": "keepTop or keepBottom must be True, and the workplane must cross a solid",
 }
 
 
@@ -145,8 +160,10 @@ def build_parts(program: Program, cq) -> list:
     parts: list = []
     used = _used_by_result(program)
     for slot, operation in enumerate(program.operations):
-        arguments = {name: parts[value.slot] if isinstance(value, Ref) else value for name, value in operation.arguments}
+        arguments = {name: _argument(value, parts, cq) for name, value in operation.arguments}
         try:
+            if operation.method in INJECTED:
+                arguments.update(_injected(operation))
             if operation.receiver is None:
                 parts.append(cq.Workplane(**arguments))
             elif operation.method in table.METHODS:
@@ -168,6 +185,23 @@ def build_parts(program: Program, cq) -> list:
             hint = _HINTS.get(operation.method)
             raise _failed(operation, f"{operation.method}() failed: {detail}" + (f". Likely cause: {hint}." if hint else "")) from None
     return parts
+
+
+def _argument(value, parts: list, cq):
+    """An argument as the kernel takes it: a part by its position, a helix as its wire, plain data as it is."""
+    if isinstance(value, Ref):
+        return parts[value.slot]
+    if isinstance(value, Helix):
+        return cq.Wire.makeHelix(value.pitch, value.height, value.radius, lefthand=value.lefthand)
+    return value
+
+
+def _injected(operation) -> dict[str, str]:
+    """The module's own arguments for *operation*: today the font of text()."""
+    if not FONT.is_file():
+        # The kernel would fall back to some system font, or to none, without saying so.
+        raise _failed(operation, f"{operation.method}() cannot letter: the module's font file is missing. Reinstall the CAD module.")
+    return {"fontPath": str(FONT)}
 
 
 def _holds_solid(part) -> bool:

@@ -52,8 +52,9 @@ def test_the_operations_page_names_every_method_once_with_an_example():
     table = _allowlist()
     page = _read(SKILL / "references" / "operations.md")
     headings = re.findall(r"^## ([A-Za-z0-9.]+)\(", page, flags=re.MULTILINE)
-    assert headings == ["cq.Workplane", *table.METHODS]
-    assert page.count("```python") == len(table.METHODS) + 1
+    # The two calls on cq, then every method: cq.Wire.makeHelix is the path of a thread (item 59).
+    assert headings == ["cq.Workplane", "cq.Wire.makeHelix", *table.METHODS]
+    assert page.count("```python") == len(table.METHODS) + 2
 
 
 def test_the_skill_is_named_after_its_directory_and_says_when_to_use_it():
@@ -94,6 +95,9 @@ QUOTED = [
     "loft needs two or more closed outlines",
     "sweep needs a closed outline drawn before it",
     "the axis must not cross the outline",
+    "on cq a script may use cq.Workplane(...) and cq.Wire.makeHelix(...)",
+    "lettering is cut into the part unless combine=True",
+    "turns (height / pitch)",
     "range() takes whole numbers",
     "this loop would not run once",
     "a loop runs over range(...) or over a list",
@@ -134,6 +138,13 @@ ALLOWED = {
     # Operations that need no new trust (item 56): the path is an outline drawn first.
     "a sweep along a path drawn first": 'path = cq.Workplane("XZ").polyline([(0, 0), (0, 20), (20, 20)])\nresult = cq.Workplane("XY").rect(4, 4).sweep(path)\n',
     "a loft between two workplanes": "result = cq.Workplane('XY').circle(10).workplane(offset=20).circle(5).loft()\n",
+    # Lettering and threads (item 59).
+    "lettering cut into a face": "result = cq.Workplane('XY').box(40, 15, 3).faces('>Z').workplane().text('HELLO', 8, -0.6)\n",
+    "a thread swept along a helix": (
+        "helix = cq.Wire.makeHelix(1.25, 10, 3.2)\n"
+        "thread = cq.Workplane('XZ').polyline([(3.2, -0.5), (4, -0.08), (4, 0.08), (3.2, 0.5)]).close().sweep(helix, isFrenet=True)\n"
+        "result = cq.Workplane('XY').circle(3.25).extrude(10).union(thread)\n"
+    ),
 }
 REFUSED = {
     "an if statement": "x = 1\nif x:\n    y = 2\n",
@@ -147,6 +158,7 @@ REFUSED = {
     "an f-string": "x = f'{1}'\n",
     "a comparison": "big = 3 > 2\n",
     "a list that grows": "points = [(0, 0)]\npoints += [(1, 1)]\n",
+    "a font named by the script": "result = cq.Workplane('XY').box(40, 15, 3).faces('>Z').workplane().text('HI', 8, -0.6, font='Arial')\n",
 }
 
 

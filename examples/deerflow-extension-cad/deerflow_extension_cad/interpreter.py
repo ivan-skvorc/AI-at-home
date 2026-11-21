@@ -6,8 +6,9 @@ names (several at once: ``w, d, t = 60, 40, 6``), numbers, strings, tuples,
 lists, arithmetic on numbers, the closed numbers table of :mod:`allowlist`
 (``math.pi``, ``math.sin(x)``, ``min``, ``max``, ``round`` ...), an index known
 when the script is read (``p[0]``), list comprehensions with one ``for``,
-``for`` loops over ``range(...)`` or a list, ``cq.Workplane(...)`` and calls to
-the methods in :mod:`allowlist`. Everything else is refused with the construct,
+``for`` loops over ``range(...)`` or a list, ``cq.Workplane(...)``,
+``cq.Wire.makeHelix(...)`` (kept as data for a sweep's path) and calls to the
+methods in :mod:`allowlist`. Everything else is refused with the construct,
 what it refused and its line. The outcome is a :class:`Program`: a flat list of
 allow-listed operations with plain-data arguments, which ``build.run_program``
 performs against the kernel.
@@ -101,6 +102,16 @@ class Ref:
     """A part built by an earlier operation, by its position in the program."""
 
     slot: int
+
+
+@dataclass(frozen=True)
+class Helix:
+    """cq.Wire.makeHelix(...) as data: build.py makes the wire, and only sweep's path takes one."""
+
+    pitch: float
+    height: float
+    radius: float
+    lefthand: bool = False
 
 
 @dataclass(frozen=True)
@@ -235,6 +246,7 @@ _ALLOWED_SUMMARY = (
     "for loops over range(...) or a list, cq.Workplane(...) and the allow-listed methods of a part."
 )
 _LOOP_OVER = "a loop runs over range(...) or over a list of numbers or points, for example: for i in range(5):"
+_ON_CQ = "on cq a script may use cq.Workplane(...) and cq.Wire.makeHelix(...), the path of a thread"
 _COMPREHENSION_OVER = "a comprehension runs over range(...) or over a list of numbers or points, for example: [(10 * i, 0) for i in range(5)]"
 #: Names a script reads and may not assign: the modules, the viewer's call, what a loop counts with, and the built-ins.
 _RESERVED = ("cq", "math", "show_object", "range", *table.BUILTINS)
@@ -347,6 +359,8 @@ def _in_range(value: object) -> bool:
 def _describe(value: object) -> str:
     if isinstance(value, Ref):
         return "a part"
+    if isinstance(value, Helix):
+        return "a helix"
     if value is None:
         return "None"
     if isinstance(value, bool):
@@ -883,8 +897,13 @@ class _Reader:
             _refuse("export", line, "a script does not export: the tool writes the STEP, STL and GLB files itself once the part passes its checks. Delete this line.", _short(function.attr))
         if isinstance(function.value, ast.Name) and function.value.id == "cq":
             if function.attr != "Workplane":
-                _refuse("call", line, f"cq.{_short(function.attr)} is not available: the only thing a script may use on cq is cq.Workplane(...)", f"cq.{_short(function.attr)}")
+                _refuse("call", line, f"cq.{_short(function.attr)} is not available: {_ON_CQ}", f"cq.{_short(function.attr)}")
             return self.operation(node, line, None, "Workplane", table.CONSTRUCTOR)
+        if isinstance(function.value, ast.Attribute) and function.value.attr == "Wire" and isinstance(function.value.value, ast.Name) and function.value.value.id == "cq":
+            # cq.Wire.makeHelix and nothing else of cq.Wire; any other cq.X.y is an attribute read, refused below.
+            if function.attr != "makeHelix":
+                _refuse("call", line, f"cq.Wire.{_short(function.attr)} is not available: {_ON_CQ}", f"cq.Wire.{_short(function.attr)}")
+            return self.helix(node, line)
         if isinstance(function.value, ast.Name) and function.value.id == "math":
             return self.math_call(node, line)
         receiver = self.value(function.value)
@@ -895,12 +914,34 @@ class _Reader:
             _refuse("method", line, f".{_short(function.attr)}() is not on the allow-list.{_nearest(function.attr)} {_ALL_METHODS}", _short(function.attr))
         return self.operation(node, line, receiver.slot, function.attr, method)
 
+    def helix(self, node: ast.Call, line: int) -> Helix:
+        """cq.Wire.makeHelix(pitch, height, radius): numbers the reader checks, kept as data for sweep's path."""
+        label = "cq.Wire.makeHelix"
+        arguments = dict(self.bind(node, line, label, table.HELIX))
+        turns = arguments["height"] / arguments["pitch"]
+        if turns > table.MAX_HELIX_TURNS:
+            _refuse("argument", line, f"{label}() would make {turns:.12g} turns (height / pitch): at most {table.MAX_HELIX_TURNS}", label)
+        self.spend(1, line)
+        return Helix(arguments["pitch"], arguments["height"], arguments["radius"], arguments.get("lefthand", False))
+
     def operation(self, node: ast.Call, line: int, receiver: int | None, name: str, method: table.Method) -> Ref:
         label = "cq.Workplane" if receiver is None else name
+        arguments = self.bind(node, line, label, method)
+        if len(self.operations) >= MAX_OPERATIONS:
+            _refuse("script length", line, f"a script may perform at most {MAX_OPERATIONS} operations")
+        passes = tuple((loop, number) for loop, number, _, _ in self.loops)
+        site = (node.end_lineno or node.lineno, node.end_col_offset or 0)
+        self.operations.append(Operation(line, receiver, name, tuple(arguments), self.where(), passes, bool(self.loops) and self.loops[-1][3], site))
+        return Ref(len(self.operations) - 1)
+
+    def bind(self, node: ast.Call, line: int, label: str, method: table.Method) -> list[tuple[str, object]]:
+        """The call's arguments as the table's parameters, in its order, each checked for its kind."""
         params = {param.name: param for param in method.params}
-        if len(node.args) > len(method.params):
-            _refuse("argument", line, f"{label}() takes at most {len(method.params)} arguments, got {len(node.args)}", label)
-        supplied: dict[str, ast.expr] = {param.name: argument for param, argument in zip(method.params, node.args)}
+        # A keyword-only parameter is given by name: the kernel has it further along than the table can follow.
+        positional = [param for param in method.params if not param.keyword]
+        if len(node.args) > len(positional):
+            _refuse("argument", line, f"{label}() takes at most {len(positional)} arguments by position, got {len(node.args)}; name the others", label)
+        supplied: dict[str, ast.expr] = {param.name: argument for param, argument in zip(positional, node.args)}
         for keyword in node.keywords:
             if keyword.arg not in params:
                 _refuse("argument", keyword.lineno, f"{label}() has no argument {_short(keyword.arg)!r}. It takes: {', '.join(params) or 'no arguments'}", label)
@@ -928,12 +969,7 @@ class _Reader:
                     f"{label}() would make {points} point{'' if points == 1 else 's'}, {self.instances} in the script so far: at most {table.MAX_INSTANCES_PER_CALL} per call and {table.MAX_INSTANCES_PER_SCRIPT} per script",
                     label,
                 )
-        if len(self.operations) >= MAX_OPERATIONS:
-            _refuse("script length", line, f"a script may perform at most {MAX_OPERATIONS} operations")
-        passes = tuple((loop, number) for loop, number, _, _ in self.loops)
-        site = (node.end_lineno or node.lineno, node.end_col_offset or 0)
-        self.operations.append(Operation(line, receiver, name, tuple(arguments), self.where(), passes, bool(self.loops) and self.loops[-1][3], site))
-        return Ref(len(self.operations) - 1)
+        return arguments
 
     def fit(self, label: str, param: table.Param, value: object, line: int) -> object:
         """Return *value* in the form the kernel takes, or refuse it for this parameter."""
@@ -942,9 +978,12 @@ class _Reader:
             return None
         if kind == table.PATH:
             # Decided from what the script drew, so a path that holds a solid is refused before the kernel loads.
-            fitted = value if isinstance(value, Ref) and self.operations[value.slot].method in table.OUTLINES else _UNFIT
+            drawn = isinstance(value, Ref) and self.operations[value.slot].method in table.OUTLINES
+            fitted = value if drawn or isinstance(value, Helix) else _UNFIT
         else:
             fitted = _fit(kind, value)
+        if kind == table.TEXT and fitted is not _UNFIT:
+            self.spend(len(fitted), line)  # every letter is a shape the kernel draws
         if fitted is _UNFIT:
             _refuse("argument", line, f"{label}({param.name}=...) must be {_EXPECTED[kind] if isinstance(kind, str) else 'one of ' + ', '.join(map(repr, kind))}, got {_describe(value)}", label)
         return fitted
@@ -966,7 +1005,10 @@ _EXPECTED = {
     table.SELECTOR: "a CadQuery selector such as '>Z' or '|Z and >Y'",
     table.TAG: "a label of letters, digits and underscores",
     table.WORKPLANE: "a part built earlier in the script",
-    table.PATH: "an outline drawn earlier in the script that ends with lines, arcs, a spline or a circle, for example path = cq.Workplane('XZ').polyline([(0, 0), (0, 20), (20, 20)])",
+    table.PATH: (
+        "an outline drawn earlier in the script that ends with lines, arcs, a spline or a circle, for example path = cq.Workplane('XZ').polyline([(0, 0), (0, 20), (20, 20)]), or a helix from cq.Wire.makeHelix(pitch, height, radius)"
+    ),
+    table.TEXT: f"lettering of 1 to {table.MAX_TEXT} plain ASCII characters",
 }
 
 
@@ -1021,6 +1063,8 @@ def _fit(kind: str | tuple[str, ...], value: object) -> object:
         return value if isinstance(value, str) and _TAG.fullmatch(value) else _UNFIT
     if kind == table.WORKPLANE:
         return value if isinstance(value, Ref) else _UNFIT
+    if kind == table.TEXT:
+        return value if isinstance(value, str) and 1 <= len(value) <= table.MAX_TEXT and value.isascii() and value.isprintable() else _UNFIT
     return _UNFIT
 
 

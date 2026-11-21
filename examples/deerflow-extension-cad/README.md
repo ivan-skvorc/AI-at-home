@@ -176,7 +176,9 @@ the `cad-modeling` skill (`skills/public/cad-modeling`).
   (`for x, y in [(0, 0), (10, 0)]:`). Loops may be nested four deep. A count
   for `range` is a whole number however it was worked out: `50 // 3.5` is
   `14.0` and counts as 14.
-- `cq.Workplane(...)` and the methods below, chained or held in variables.
+- `cq.Workplane(...)` and the methods below, chained or held in variables, and
+  `cq.Wire.makeHelix(pitch, height, radius)`, the path of a thread, which only
+  `sweep` takes.
 - Comments and a docstring. `show_object(name)` is accepted as a way to name the
   result.
 
@@ -219,7 +221,7 @@ beside the part reads the way the tool read it" rests on; a line may still be
 up to 1,000 characters long.
 Characters of any language are fine in comments.
 
-The allow-list (`allowlist.py`, 62 methods plus the constructor):
+The allow-list (`allowlist.py`, 64 methods plus the constructor):
 
 | Group | Methods |
 | --- | --- |
@@ -232,6 +234,7 @@ The allow-list (`allowlist.py`, 62 methods plus the constructor):
 | Selecting | `faces`, `edges`, `vertices`, `workplane`, `transformed`, `tag`, `workplaneFromTagged`, `end`, `first`, `last` |
 | Moving | `translate`, `rotate`, `mirror`, `mirrorX`, `mirrorY` |
 | Combining | `union`, `cut`, `intersect` |
+| Lettering and splitting | `text`, `split` |
 
 Selector strings are CadQuery's own (`">Z"`, `"|Z and >Y"`, `"%CIRCLE"`). Every
 argument is checked against the table before the kernel is loaded: a length must
@@ -246,12 +249,37 @@ kernel's `"cut"` mode is `cut()`. Not exposed: `sweep`'s `normal` and
 `periodic`, `offset2D`'s `"tangent"` kind (`"intersection"` gives the same
 sharp corners) and `parametricCurve` (a callable).
 
-Methods that take a file path, a callable, a font or a raw kernel object are not
-on the list and will not be added: `export`, `exportSvg`, `text`, `each`,
-`eachpoint`, `cutEach`, `invoke`, `apply`, `map`, `filter`, `sort`, `sketch`,
-`add`, `val`, `vals`, `findSolid`. The list grows one method at a time, each
-with an example that builds and a signature check against the kernel
-(`tests/test_build.py`).
+Lettering and threads widen two rules of the boundary, each by one thing the
+module owns (SECURITY.md):
+
+- **`text` letters in the module's own font**, Liberation Sans, shipped in
+  `deerflow_extension_cad/fonts/` with its licence (SIL OFL 1.1). `build.py`
+  passes the file's path; a script cannot name a font or a path, since `font`
+  and `fontPath` are not in the table. The slim Gateway image has no system
+  fonts, and a missing font file fails the build instead of letting the kernel
+  fall back to another. Lettering is at most 64 plain ASCII characters. It is
+  cut into the part by default (a negative distance from a face); raised
+  lettering takes `combine=True` and a positive distance. `halign` and
+  `valign` are given by name; `kind` is not offered, since one font file
+  letters bold and italic as regular.
+- **`cq.Wire.makeHelix(pitch, height, radius)` is the one call on `cq` besides
+  `cq.Workplane`.** The reader keeps its numbers as data (at most 200 turns),
+  `build.py` makes the wire, and only `sweep`'s `path` takes it: a helix
+  passed anywhere else, or given a method, is refused. An M8 x 1.25 and an
+  M24 x 3 thread each build valid in under five seconds (`tests/test_build.py`
+  holds that gate).
+
+`split(keepTop=..., keepBottom=...)` cuts a part at the workplane, as for a
+part too tall for a printer's bed; its arguments are given by name, because the
+kernel takes them only as keywords and reads a positional part as a cutting
+tool, which is `cut()`'s job.
+
+Parameters that take a file path, a callable, a font or a raw kernel object are
+not on the list and will not be added, nor are the methods made of them:
+`export`, `exportSvg`, `each`, `eachpoint`, `cutEach`, `invoke`, `apply`, `map`,
+`filter`, `sort`, `sketch`, `add`, `val`, `vals`, `findSolid`. The list grows
+one method at a time, each with an example that builds and a signature check
+against the kernel (`tests/test_build.py`).
 
 ## Limits
 
@@ -423,7 +451,8 @@ deerflow_extension_cad/
 ├── measure.py      # the re-imported STEP: solids, bounding box, volume, holes
 ├── worker.py       # the child process
 ├── tool.py         # the handler: child process, limits, pass or fail, file writes
-└── selftest.py     # the one-millimetre cube `make doctor` builds
+├── selftest.py     # the one-millimetre cube `make doctor` builds
+└── fonts/          # the lettering font, its licence and where it comes from
 tests/
 ├── test_interpreter.py     # what is accepted and what is refused
 ├── test_worker_process.py  # the parent's hold on the child

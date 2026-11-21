@@ -49,8 +49,9 @@ here as one.
   whitelist of node types is checked before anything is evaluated; every other
   construct is refused with its line: imports other than `import cadquery as cq`
   and `import math`, attribute access outside the numbers table below, any call
-  other than `cq.Workplane(...)`, an allow-listed method, the numbers table and
-  `show_object(name)` (read only as naming the result), definitions, `while`,
+  other than `cq.Workplane(...)`, `cq.Wire.makeHelix(...)`, an allow-listed
+  method, the numbers table and `show_object(name)` (read only as naming the
+  result), definitions, `while`,
   branches, comparisons, comprehensions other than a list comprehension with one
   `for` and no `if`, f-strings, slices. No code object is ever
   made from script text: `ast.parse` (CPython's `compile()` with the flag that
@@ -78,9 +79,23 @@ here as one.
   a loop, makes a list of numbers or points and never an operation, and each of
   its items counts toward the reading work below.
 - **The allow-list is data** (`allowlist.py`): method names with the kind of
-  each argument. A method that takes a file path, a callable, a font or a raw
-  kernel object is not on it. The one attribute lookup a script can cause is for
+  each argument. No parameter that takes a file path, a callable, a font or a
+  raw kernel object is on it. The one attribute lookup a script can cause is for
   a name that is a key of that table.
+- **The lettering font is the module's, never the script's.** `text` is on the
+  allow-list without its `font` and `fontPath` parameters: `build.py` passes the
+  path of the font file shipped in the package (`fonts/`, SIL OFL 1.1), and a
+  script that names a font or a path is refused. A missing font file fails the
+  build rather than letting the kernel fall back to a font of the host. The
+  lettering is at most 64 plain ASCII characters, each counted in the reading
+  work.
+- **One constructor on `cq` besides `cq.Workplane`: `cq.Wire.makeHelix`.** It
+  takes three lengths and, by name, `lefthand`, at most 200 turns; the reader
+  keeps them as data, and `build.py` makes the wire. Only `sweep`'s path takes a
+  helix: as any other argument, in a list, in arithmetic or with a method it is
+  refused, and so is any other name on `cq.Wire` or on `cq`. A thread swept
+  along it is bounded like every build, by the parent's wall clock and the
+  child's limits.
 - **Reading and building happen in a child process**, started in isolated mode
   in an empty temporary directory with an environment that carries no Gateway
   credentials. The Gateway process neither parses the script nor loads the

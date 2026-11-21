@@ -37,6 +37,17 @@ result = (
 )
 """
 
+#: A metric M8 x 1.25 thread as models write one: a profile swept along a helix and joined to its core (item 59).
+THREAD = """\
+d, pitch, length = 8, 1.25, 10
+root = d / 2 - 0.61343 * pitch
+helix = cq.Wire.makeHelix(pitch, length, root - 0.05, lefthand=False)
+half = 0.4 * pitch
+outline = [(root - 0.05, -half), (d / 2, -0.06 * pitch), (d / 2, 0.06 * pitch), (root - 0.05, half)]
+thread = cq.Workplane("XZ").polyline(outline).close().sweep(helix, isFrenet=True)
+result = cq.Workplane("XY").circle(root).extrude(length).union(thread)
+"""
+
 
 def test_the_plate_becomes_a_list_of_allow_listed_operations():
     program = compile_script(PLATE)
@@ -74,6 +85,10 @@ def test_the_plate_becomes_a_list_of_allow_listed_operations():
         "base = cq.Workplane('XY').box(40, 40, 4)\nrail = base.faces('>Z').workplane().spline([(0, 0), (5, 10), (0, 20)])\nresult = cq.Workplane('XY').circle(1).sweep(rail, isFrenet=True)\n",
         "result = cq.Workplane('XY').rect(20, 20).workplane(offset=15).circle(6).loft(ruled=True, combine=True)\n",
         "result = cq.Workplane('XY').box(40, 40, 10).faces('>Z').workplane().transformed(rotate=(30, 0, 0), offset=(5, 0, 0)).hole(5)\n",
+        # Item 59: lettering, a thread swept along a helix, and a part split at a workplane.
+        "result = cq.Workplane('XY').box(40, 15, 3).faces('>Z').workplane().text('HELLO 42', 8, -0.6, halign='left', valign='bottom')\n",
+        THREAD,
+        "result = cq.Workplane('XY').box(20, 20, 40).faces('>Z').workplane(-20).split(keepBottom=True)\n",
     ],
 )
 def test_ordinary_scripts_are_accepted(script):
@@ -192,6 +207,36 @@ def test_a_comprehension_is_bounded_by_the_work_of_reading_it():
     assert time.perf_counter() - started < 0.1 and "at most 400" in refused.value.message
 
 
+def test_a_helix_is_data_the_build_turns_into_a_wire_and_only_sweep_takes_it():
+    from deerflow_extension_cad.interpreter import Helix
+
+    program = compile_script(THREAD)
+    (sweep,) = [op for op in program.operations if op.method == "sweep"]
+    path = dict(sweep.arguments)["path"]
+    assert path == Helix(1.25, 10, 8 / 2 - 0.61343 * 1.25 - 0.05, False)
+    # Not an operation: the program is the Workplane calls, and the helix rides in one of them as plain data.
+    assert [op.method for op in program.operations] == ["Workplane", "polyline", "close", "sweep", "Workplane", "circle", "extrude", "union"]
+
+
+def test_lettering_is_bounded_and_read_letter_by_letter(monkeypatch):
+    from deerflow_extension_cad import interpreter
+
+    def work(text: str) -> int:
+        """The least MAX_WORK that reads the script: what reading it costs."""
+        script = f"result = cq.Workplane('XY').box(40, 15, 3).faces('>Z').workplane().text('{text}', 8, -0.6, halign='left', valign='bottom')\n"
+        for limit in range(1, 1000):
+            monkeypatch.setattr(interpreter, "MAX_WORK", limit)
+            try:
+                compile_script(script)
+            except ScriptRefused:
+                continue
+            return limit
+        raise AssertionError("never read")
+
+    assert work("A" * 64) - work("A") == 63
+    assert allowlist.MAX_TEXT == 64
+
+
 def test_names_are_data_so_a_script_may_call_its_variables_anything_but_cq():
     # A name is only ever looked up in the script's own table. Nothing a script
     # assigns can shadow a builtin or a method, because neither is ever resolved by name.
@@ -256,7 +301,8 @@ REFUSED = [
     ("r = cq.Workplane('XY').box(1, 1, 1).val()\n", "method", 1),
     ("r = cq.Workplane('XY').box(1, 1, 1).exportSvg('/tmp/x.svg')\n", "export", 1),
     ("r = cq.Workplane('XY').box(1, 1, 1).export('/tmp/x.step')\n", "export", 1),
-    ("r = cq.Workplane('XY').text('hi', 10, 1, fontPath='/etc/passwd')\n", "method", 1),
+    # text is on the list since item 59, in the module's own font: a script names no font and no path.
+    ("r = cq.Workplane('XY').text('hi', 10, 1, fontPath='/etc/passwd')\n", "argument", 1),
     ("r = cq.Workplane('XY').box(1, 1, 1).each(lambda s: s)\n", "lambda", 1),
     ("r = cq.Workplane('XY').box(1, 1, 1).eachpoint(cq.Workplane('XY'))\n", "method", 1),
     ("r = cq.Workplane('XY').sketch()\n", "method", 1),
@@ -510,8 +556,36 @@ REFUSED = [
     ("r = cq.Workplane('XY').rect(4, 4).offset2D(1, kind='tangent')\n", "argument", 1),
     ("r = cq.Workplane('XY').spline([(0, 0), (1, 1)], tol=0.1)\n", "argument", 1),
     ("r = cq.Workplane('XY').box(1, 1, 1).end(0)\n", "argument", 1),
-    ("r = cq.Workplane('XY').box(1, 1, 1).split(keepTop=True)\n", "method", 1),
     ("r = cq.Workplane('XY').parametricCurve(lambda t: (t, t))\n", "lambda", 1),
+    # Item 59: lettering in the module's font, and one constructor on cq besides Workplane.
+    ("r = cq.Workplane('XY').text('hi', 10, 1, font='Arial')\n", "argument", 1),
+    ("r = cq.Workplane('XY').text('hi', 10, 1, kind='bold')\n", "argument", 1),
+    ("r = cq.Workplane('XY').text('" + "A" * 65 + "', 10, 1)\n", "argument", 1),
+    ("r = cq.Workplane('XY').text('', 10, 1)\n", "argument", 1),
+    ("r = cq.Workplane('XY').text(5, 10, 1)\n", "argument", 1),
+    ("r = cq.Workplane('XY').text('hi', 10, 1, True, True, 'left')\n", "argument", 1),
+    ("r = cq.Workplane('XY').text('hi', 10, 1, halign='middle')\n", "argument", 1),
+    ("r = cq.Workplane('XY').text('hi', 10, 1, combine='cut')\n", "argument", 1),
+    ("x = cq.Wire.makePolygon([(0, 0), (1, 0), (1, 1)])\n", "call", 1),
+    ("x = cq.Edge.makeLine((0, 0, 0), (1, 0, 0))\n", "attribute", 1),
+    ("x = cq.Solid.makeBox(1, 1, 1)\n", "attribute", 1),
+    ("x = cq.Wire\n", "attribute", 1),
+    ("x = cq.Wire.makeHelix\n", "attribute", 1),
+    ("h = cq.Wire.makeHelix(1, 10, 4)\nr = cq.Workplane('XY').box(1, 1, 1).union(h)\n", "argument", 2),
+    ("h = cq.Wire.makeHelix(1, 10, 4)\nr = cq.Workplane('XY').rect(1, 1).extrude(h)\n", "argument", 2),
+    ("h = cq.Wire.makeHelix(1, 10, 4)\nr = h.translate((1, 0, 0))\n", "attribute", 2),
+    ("h = cq.Wire.makeHelix(1, 10, 4)\nresult = h\n", "result", 2),
+    ("h = cq.Wire.makeHelix(1, 10, 4)\np = [h]\n", "sequence", 2),
+    ("h = cq.Wire.makeHelix(1, 10, 4)\nx = h + 1\n", "arithmetic", 2),
+    ("h = cq.Wire.makeHelix(0.1, 30, 4)\n", "argument", 1),
+    ("h = cq.Wire.makeHelix(1, 10, 4, (0, 0, 0))\n", "argument", 1),
+    ("h = cq.Wire.makeHelix(1, 10, 4, center=(0, 0, 1))\n", "argument", 1),
+    ("h = cq.Wire.makeHelix(1, 10, -4)\n", "argument", 1),
+    ("h = cq.Wire.makeHelix(1, 10)\n", "argument", 1),
+    # split cuts the part at the workplane, by keyword only: given a part, it would cut with it.
+    ("r = cq.Workplane('XY').box(1, 1, 1).split(True)\n", "argument", 1),
+    ("r = cq.Workplane('XY').box(1, 1, 1).split(cq.Workplane('XY').box(1, 1, 1))\n", "argument", 1),
+    ("r = cq.Workplane('XY').box(1, 1, 1).split(keepTop='yes')\n", "argument", 1),
 ]
 
 

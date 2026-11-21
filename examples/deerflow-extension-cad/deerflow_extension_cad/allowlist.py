@@ -3,8 +3,12 @@
 This table is the whole reach of a script into the kernel: the interpreter
 calls a ``Workplane`` method only when its name is a key here, and passes an
 argument only when the table names the parameter and the value fits its kind.
-A method that takes a file path, a callable, a font or a raw kernel object is
-absent on purpose and stays absent (README, "What a script may contain").
+A parameter that takes a file path, a callable, a font or a raw kernel object
+is absent on purpose and stays absent (README, "What a script may contain"):
+``text`` is here without its ``font`` and ``fontPath``, because ``build.py``
+passes the module's own font file. Besides ``cq.Workplane``, the one thing a
+script may call on ``cq`` is ``cq.Wire.makeHelix`` (``HELIX``), whose wire only
+``sweep`` takes.
 
 The module imports nothing from CadQuery, so the table can be read, tested and
 turned into documentation without the kernel installed.
@@ -32,7 +36,8 @@ PLANE = "plane"  # one of PLANE_NAMES
 SELECTOR = "selector"  # a CadQuery selector string, see SELECTOR_PATTERN
 TAG = "tag"  # a label, see TAG_PATTERN
 WORKPLANE = "workplane"  # a part built earlier in the script
-PATH = "path"  # an outline drawn earlier in the script, to sweep along: see OUTLINES
+PATH = "path"  # an outline drawn earlier in the script (see OUTLINES), or a helix, to sweep along
+TEXT = "text"  # lettering: printable ASCII, at most MAX_TEXT characters
 
 PLANE_NAMES = ("XY", "YZ", "ZX", "XZ", "YX", "ZY", "front", "back", "left", "right", "top", "bottom")
 #: mirror() knows the six axis planes only; the kernel fails obscurely on any other name.
@@ -92,6 +97,11 @@ MAX_INSTANCES_PER_SCRIPT = 200
 MAX_SIDES = 100
 #: Elements one list or tuple may hold.
 MAX_SEQUENCE_ITEMS = 400
+#: Letters one text() call cuts or raises: a label, not a page. Each is read as work.
+MAX_TEXT = 64
+#: Turns of one helix: past any screw a home printer makes, and few enough that sweeping
+#: a thread along it stays inside the build's wall clock.
+MAX_HELIX_TURNS = 200
 
 # --- Numbers ----------------------------------------------------------------
 # What a script may compute with besides arithmetic. The reader computes each one
@@ -126,6 +136,8 @@ class Param:
     kind: str | tuple[str, ...]
     required: bool = False
     nullable: bool = False
+    #: Given by name only: the kernel has it further down its own order than the table can follow.
+    keyword: bool = False
 
 
 @dataclass(frozen=True)
@@ -147,6 +159,10 @@ def _opt(name: str, kind: str | tuple[str, ...], *, nullable: bool = False) -> P
     return Param(name, kind, nullable=nullable)
 
 
+def _kw(name: str, kind: str | tuple[str, ...]) -> Param:
+    return Param(name, kind, keyword=True)
+
+
 _CLEAN = _opt("clean", BOOL)
 _COMBINE = _opt("combine", BOOL)
 _CONSTRUCTION = _opt("forConstruction", BOOL)
@@ -157,6 +173,14 @@ CONSTRUCTOR = Method(
     (_opt("inPlane", PLANE), _opt("origin", POINT)),
     "Start a part on a named plane.",
     'cq.Workplane("XY")',
+)
+
+#: ``cq.Wire.makeHelix(...)``: the one constructor on ``cq`` besides Workplane, for threads. The
+#: reader keeps its numbers as data; build.py makes the wire, and only sweep's path takes it.
+HELIX = Method(
+    (_req("pitch", LENGTH), _req("height", LENGTH), _req("radius", LENGTH), _kw("lefthand", BOOL)),
+    f"A helix to sweep a thread's outline along, at most {MAX_HELIX_TURNS} turns (height / pitch); the outline is drawn on a plane through the axis, at the radius.",
+    "helix = cq.Wire.makeHelix(1.25, 10, 3.2)\nthread = cq.Workplane('XZ').polyline([(3.2, -0.5), (4, -0.08), (4, 0.08), (3.2, 0.5)]).close().sweep(helix, isFrenet=True)\nresult = cq.Workplane('XY').circle(3.25).extrude(10).union(thread)",
 )
 
 METHODS: dict[str, Method] = {
@@ -257,6 +281,11 @@ METHODS: dict[str, Method] = {
         "Move the outline along a path drawn earlier; the path starts on the outline's plane. transition is how corners are joined.",
         "path = cq.Workplane('XZ').polyline([(0, 0), (0, 20), (20, 20)])\nresult = cq.Workplane('XY').rect(4, 4).sweep(path)",
     ),
+    "text": Method(
+        (_req("txt", TEXT), _req("fontsize", LENGTH), _req("distance", NUMBER), _COMBINE, _CLEAN, _kw("halign", ("center", "left", "right")), _kw("valign", ("center", "top", "bottom"))),
+        "Lettering in the module's own font, fontsize millimetres tall. It is cut into the part for a negative distance; combine=True and a positive distance raise it.",
+        f"{_BASE}.box(40, 15, 3).faces('>Z').workplane().text('HELLO', 8, -0.6)",
+    ),
     "twistExtrude": Method((_req("distance", NUMBER), _req("angleDegrees", ANGLE), _COMBINE, _CLEAN), "Extrude the outline by a distance while turning it by an angle in degrees.", f"{_BASE}.rect(20, 10).twistExtrude(10, 45)"),
     # Holes: one per point on the stack
     "hole": Method((_req("diameter", LENGTH), _opt("depth", LENGTH, nullable=True), _CLEAN), "A hole; through the part unless depth is given.", f"{_BASE}.box(60, 40, 6).faces('>Z').workplane().pushPoints([(-15, 0), (15, 0)]).hole(4)"),
@@ -313,6 +342,11 @@ METHODS: dict[str, Method] = {
     ),
     "mirrorX": Method((), "Mirror a half outline across the workplane's x axis, closing it.", f"{_BASE}.vLine(10).hLine(20).vLineTo(0).mirrorX().extrude(5)"),
     "mirrorY": Method((), "Mirror a half outline across the workplane's y axis, closing it.", f"{_BASE}.hLine(20).vLine(10).hLineTo(0).mirrorY().extrude(5)"),
+    "split": Method(
+        (_kw("keepTop", BOOL), _kw("keepBottom", BOOL)),
+        "Cut the part in two at the workplane and keep the top, the bottom or both, as for a part too tall for the printer's bed.",
+        f"{_BASE}.box(20, 20, 40).faces('>Z').workplane(-20).split(keepBottom=True)",
+    ),
     # Combining parts held in variables
     "union": Method((_req("toUnion", WORKPLANE), _CLEAN), "Join another part to this one.", "base = cq.Workplane('XY').box(60, 40, 6)\nrib = cq.Workplane('XY').box(6, 40, 20).translate((0, 0, 13))\nresult = base.union(rib)"),
     "cut": Method((_req("toCut", WORKPLANE), _CLEAN), "Remove another part from this one.", "block = cq.Workplane('XY').box(40, 40, 20)\npocket = cq.Workplane('XY').box(20, 20, 10).translate((0, 0, 5))\nresult = block.cut(pocket)"),
@@ -337,12 +371,18 @@ _KIND_WORDS = {
     SELECTOR: "a selector string",
     TAG: "a label of letters, digits and underscores",
     WORKPLANE: "a part built earlier in the script",
-    PATH: "an outline drawn earlier in the script with lines, arcs, a spline or a circle, not a solid",
+    PATH: "an outline drawn earlier in the script with lines, arcs, a spline or a circle, or a helix; not a solid",
+    TEXT: f"lettering, at most {MAX_TEXT} plain ASCII characters",
 }
 
 
 def _signature(name: str, method: Method) -> str:
-    return f"{name}({', '.join(param.name if param.required else f'[{param.name}]' for param in method.params)})"
+    def said(param: Param) -> str:
+        if param.keyword:
+            return f"[{param.name}=]"
+        return param.name if param.required else f"[{param.name}]"
+
+    return f"{name}({', '.join(map(said, method.params))})"
 
 
 def _arguments(method: Method) -> str:
@@ -367,8 +407,8 @@ def reference() -> str:
         "Generated from the CAD module's allow-list. Do not edit: change the table and regenerate.",
         "",
         "A part starts with `cq.Workplane(...)` and is shaped by the methods below, each called on a part.",
-        "Arguments are in CadQuery's order and may be given by name; one in `[brackets]` is optional.",
-        "Any other method, and anything else on `cq`, is refused.",
+        "Arguments are in CadQuery's order and may be given by name; one in `[brackets]` is optional, and one written `[name=]` is given by name only.",
+        "Any other method, and anything else on `cq` but `cq.Wire.makeHelix`, is refused.",
         "",
         f"- Plane names: {', '.join(f'`{name}`' for name in PLANE_NAMES)}.",
         '- Selector strings: CadQuery\'s own, such as `">Z"`, `"<X"`, `"|Z"`, `"#Z"`, `"%CIRCLE"`, `"|Z and >Y"`.',
@@ -385,6 +425,16 @@ def reference() -> str:
         "",
         "```python",
         f"result = {CONSTRUCTOR.example}.box(10, 10, 10)",
+        "```",
+        "",
+        f"## {_signature('cq.Wire.makeHelix', HELIX)}",
+        "",
+        HELIX.summary,
+        "",
+        _arguments(HELIX),
+        "",
+        "```python",
+        HELIX.example,
         "```",
     ]
     for name, method in METHODS.items():

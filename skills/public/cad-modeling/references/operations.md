@@ -3,8 +3,8 @@
 Generated from the CAD module's allow-list. Do not edit: change the table and regenerate.
 
 A part starts with `cq.Workplane(...)` and is shaped by the methods below, each called on a part.
-Arguments are in CadQuery's order and may be given by name; one in `[brackets]` is optional.
-Any other method, and anything else on `cq`, is refused.
+Arguments are in CadQuery's order and may be given by name; one in `[brackets]` is optional, and one written `[name=]` is given by name only.
+Any other method, and anything else on `cq` but `cq.Wire.makeHelix`, is refused.
 
 - Plane names: `XY`, `YZ`, `ZX`, `XZ`, `YX`, `ZY`, `front`, `back`, `left`, `right`, `top`, `bottom`.
 - Selector strings: CadQuery's own, such as `">Z"`, `"<X"`, `"|Z"`, `"#Z"`, `"%CIRCLE"`, `"|Z and >Y"`.
@@ -22,6 +22,19 @@ Start a part on a named plane.
 
 ```python
 result = cq.Workplane("XY").box(10, 10, 10)
+```
+
+## cq.Wire.makeHelix(pitch, height, radius, [lefthand=])
+
+A helix to sweep a thread's outline along, at most 200 turns (height / pitch); the outline is drawn on a plane through the axis, at the radius.
+
+- `pitch`, `height`, `radius`: millimetres, above 0
+- `lefthand`: True or False
+
+```python
+helix = cq.Wire.makeHelix(1.25, 10, 3.2)
+thread = cq.Workplane('XZ').polyline([(3.2, -0.5), (4, -0.08), (4, 0.08), (3.2, 0.5)]).close().sweep(helix, isFrenet=True)
+result = cq.Workplane('XY').circle(3.25).extrude(10).union(thread)
 ```
 
 ## box(length, width, height, [centered], [combine], [clean])
@@ -402,7 +415,7 @@ result = cq.Workplane("XY").circle(10).workplane(offset=20).circle(5).loft()
 
 Move the outline along a path drawn earlier; the path starts on the outline's plane. transition is how corners are joined.
 
-- `path`: an outline drawn earlier in the script with lines, arcs, a spline or a circle, not a solid
+- `path`: an outline drawn earlier in the script with lines, arcs, a spline or a circle, or a helix; not a solid
 - `multisection`, `makeSolid`, `isFrenet`, `combine`, `clean`: True or False
 - `sweepAlongWires`: True or False, or None
 - `transition`: one of "right", "round", "transformed"
@@ -410,6 +423,21 @@ Move the outline along a path drawn earlier; the path starts on the outline's pl
 ```python
 path = cq.Workplane('XZ').polyline([(0, 0), (0, 20), (20, 20)])
 result = cq.Workplane('XY').rect(4, 4).sweep(path)
+```
+
+## text(txt, fontsize, distance, [combine], [clean], [halign=], [valign=])
+
+Lettering in the module's own font, fontsize millimetres tall. It is cut into the part for a negative distance; combine=True and a positive distance raise it.
+
+- `txt`: lettering, at most 64 plain ASCII characters
+- `fontsize`: millimetres, above 0
+- `distance`: a number
+- `combine`, `clean`: True or False
+- `halign`: one of "center", "left", "right"
+- `valign`: one of "center", "top", "bottom"
+
+```python
+result = cq.Workplane("XY").box(40, 15, 3).faces('>Z').workplane().text('HELLO', 8, -0.6)
 ```
 
 ## twistExtrude(distance, angleDegrees, [combine], [clean])
@@ -677,6 +705,16 @@ Mirror a half outline across the workplane's y axis, closing it.
 
 ```python
 result = cq.Workplane("XY").hLine(20).vLine(10).hLineTo(0).mirrorY().extrude(5)
+```
+
+## split([keepTop=], [keepBottom=])
+
+Cut the part in two at the workplane and keep the top, the bottom or both, as for a part too tall for the printer's bed.
+
+- `keepTop`, `keepBottom`: True or False
+
+```python
+result = cq.Workplane("XY").box(20, 20, 40).faces('>Z').workplane(-20).split(keepBottom=True)
 ```
 
 ## union(toUnion, [clean])
