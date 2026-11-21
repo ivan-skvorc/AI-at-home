@@ -1,6 +1,6 @@
 # Repo map
 
-Synced by change cycle: 2026-11-21, level 2, "initial repo map"
+Synced by change cycle: 2026-11-21, level 2, "coding agent: edit gates, skill learning loop, bundled coding skills, git workflow; change cycle and repo map"
 
 What the app does, feature by feature, and which files, data and external
 services each feature uses. Each area file opens with its own board and holds
