@@ -109,10 +109,15 @@ jobs:
             curl -LsSf https://astral.sh/uv/install.sh | sh
             export PATH="$HOME/.local/bin:$PATH"
 
-            (cd backend && uv sync --frozen 2>/dev/null || uv sync) && \
+            # Check the lock before anything can rewrite it: a plain `uv sync`
+            # or `uv run` re-locks the working tree, and the check would then
+            # pass on a lock that is not the one pushed. UV_FROZEN keeps every
+            # later command on the merged lock as it is.
+            (cd backend && uv lock --check) && uv_lock=pass || uv_lock=fail
+            export UV_FROZEN=1
+            (cd backend && uv sync) && \
               (cd backend && uv run ruff check . && uv run ruff format --check .) && backend_lint=pass || backend_lint=fail
             (cd backend && PYTHONPATH=. uv run pytest -q --timeout=900) && backend_test=pass || backend_test=fail
-            (cd backend && uv lock --check) && uv_lock=pass || uv_lock=fail
             frontend_check=skip
           fi
 
@@ -136,11 +141,17 @@ jobs:
         run: |
           set +e
           corepack enable
-          (cd frontend && python3 ../scripts/pnpm.py install --frozen-lockfile) || exit 0
           status=pass
-          (cd frontend && python3 ../scripts/pnpm.py format) || status=fail
-          (cd frontend && python3 ../scripts/pnpm.py check) || status=fail
-          (cd frontend && python3 ../scripts/pnpm.py test) || status=fail
+          # A failed frozen install (usually a lockfile the merge left stale)
+          # fails the gate. Leaving it "skipped" would tell the PR body the
+          # merge conflicted, which it did not.
+          if (cd frontend && python3 ../scripts/pnpm.py install --frozen-lockfile); then
+            (cd frontend && python3 ../scripts/pnpm.py format) || status=fail
+            (cd frontend && python3 ../scripts/pnpm.py check) || status=fail
+            (cd frontend && python3 ../scripts/pnpm.py test) || status=fail
+          else
+            status=fail
+          fi
           python3 - <<PY
           import json, pathlib
           path = pathlib.Path("/tmp/gates.json")

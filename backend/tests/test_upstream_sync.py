@@ -12,8 +12,14 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
+import re
+import shutil
+import subprocess
 import sys
 from pathlib import Path
+
+import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT_PATH = REPO_ROOT / "scripts" / "upstream_sync.py"
@@ -229,3 +235,62 @@ class TestWorkflow:
         # The conflict path is exactly when a human most needs to know early,
         # so the PR step must not be gated on the merge succeeding.
         assert "if: always()" in text or "continue-on-error" in text
+
+    def test_the_uv_lock_is_checked_before_anything_can_relock_it(self):
+        # A plain `uv sync` or `uv run` rewrites a stale uv.lock in the runner's
+        # working tree, which is not pushed; a lock check after them passes on
+        # a lock the PR does not contain.
+        lines = [line.strip() for line in _workflow_step("gates").splitlines()]
+        lines = [line for line in lines if line and not line.startswith("#")]
+        check = next(i for i, line in enumerate(lines) if "uv lock --check" in line)
+        frozen = next(i for i, line in enumerate(lines) if line == "export UV_FROZEN=1")
+        first_sync_or_run = next(i for i, line in enumerate(lines) if re.search(r"\buv (sync|run)\b", line))
+        assert check < frozen < first_sync_or_run
+        assert not any(re.search(r"\|\|\s*uv sync", line) for line in lines), "a fallback `uv sync` re-locks the tree"
+
+
+def _workflow_step(step_id: str) -> str:
+    import yaml
+
+    data = yaml.safe_load(WORKFLOW_PATH.read_text(encoding="utf-8"))
+    for step in data["jobs"]["sync"]["steps"]:
+        if step.get("id") == step_id:
+            return step["run"]
+    raise AssertionError(f"no step with id {step_id!r} in {WORKFLOW_PATH.name}")
+
+
+@pytest.mark.skipif(os.name == "nt" or shutil.which("bash") is None, reason="runs the workflow step under bash")
+@pytest.mark.parametrize(("failing", "expected"), [("", "pass"), ("install", "fail"), ("check", "fail")], ids=["all-pass", "install-fails", "check-fails"])
+def test_the_frontend_gate_reports_a_failed_install_as_failed(tmp_path, failing, expected):
+    """Run the real frontend step with pnpm.py and corepack stubbed out.
+
+    "skipped" tells the PR body the merge conflicted, so an install that fails
+    on a stale lockfile must read as a failed gate instead.
+    """
+    gates_file = tmp_path / "gates.json"
+    gates_file.write_text(json.dumps(gates(frontend_check="skip")), encoding="utf-8")
+    (tmp_path / "frontend").mkdir()
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "corepack").write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    # pnpm.py subcommands succeed unless named by $FAILING; the step's inline
+    # Python heredoc runs on the real interpreter.
+    (bin_dir / "python3").write_text(
+        f'#!/bin/sh\nif [ "$1" = ../scripts/pnpm.py ]; then\n  [ "$2" = "$FAILING" ] && exit 1\n  exit 0\nfi\nexec "{sys.executable}" "$@"\n',
+        encoding="utf-8",
+    )
+    for stub in bin_dir.iterdir():
+        stub.chmod(0o755)
+    script = _workflow_step("frontend").replace("/tmp/gates.json", str(gates_file))
+
+    result = subprocess.run(
+        ["bash", "--noprofile", "--norc", "-eo", "pipefail", "-c", script],
+        cwd=tmp_path,
+        env={**os.environ, "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}", "FAILING": failing},
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert json.loads(gates_file.read_text(encoding="utf-8"))["frontend_check"] == expected
