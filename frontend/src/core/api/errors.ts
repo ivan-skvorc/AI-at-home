@@ -1,3 +1,5 @@
+import { isRecord } from "@/lib/utils";
+
 /**
  * Raised after the shared fetcher has started a login redirect for a 401.
  *
@@ -49,10 +51,6 @@ export class GatewayApiError extends Error {
     this.params = params;
     this.rawMessage = rawMessage;
   }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 /** Interpret a FastAPI error body (`{ detail }`) without throwing. */

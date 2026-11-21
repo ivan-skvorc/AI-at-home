@@ -1,3 +1,5 @@
+import { isRecord } from "@/lib/utils";
+
 import type { UserMemory } from "./types";
 
 type ContextSection = UserMemory["user"]["workContext"];
@@ -19,10 +21,6 @@ const HISTORY_SECTION_KEYS = [
 
 function emptySection(): ContextSection {
   return { summary: "", updatedAt: "" };
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function normalizeContextSection(value: unknown): ContextSection {

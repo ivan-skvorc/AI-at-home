@@ -2,6 +2,8 @@
  * API functions for file uploads
  */
 
+import { isRecord } from "@/lib/utils";
+
 import { fetch } from "../api/fetcher";
 import { getBackendBaseURL } from "../config";
 
@@ -30,10 +32,6 @@ export interface UploadLimits {
   max_files: number;
   max_file_size: number;
   max_total_size: number;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function formatValidationIssue(issue: unknown): string | null {

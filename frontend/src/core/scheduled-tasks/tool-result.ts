@@ -6,6 +6,8 @@
  * or show one task become a card; `list`, `note` and errors do not.
  */
 
+import { isRecord } from "@/lib/utils";
+
 import { zonedLocalToUtcIso } from "./cron";
 import type {
   ScheduledTask,
@@ -64,10 +66,6 @@ export type ScheduleToolResult = {
     thread_id?: string | null;
   };
 };
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
 
 function contentText(content: unknown): string | null {
   if (typeof content === "string") {
