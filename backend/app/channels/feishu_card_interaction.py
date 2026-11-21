@@ -26,7 +26,7 @@ import secrets
 import threading
 import time
 from dataclasses import dataclass
-from typing import Any, TypedDict, cast
+from typing import Any, TypedDict
 
 from app.channels.message_bus import HUMAN_INPUT_REQUEST_METADATA_KEY
 
@@ -253,29 +253,6 @@ class PendingCardRegistry:
             for token in tokens:
                 del self._entries[token]
             return len(tokens)
-
-    def prune_expired(self, now: float | None = None) -> int:
-        """Prune all expired entries from the registry and return the count."""
-        now = time.time() if now is None else now
-        with self._lock:
-            expired = [token for token, pending in self._entries.items() if now - pending.get("created_at", 0) > self._ttl_seconds]
-            for token in expired:
-                del self._entries[token]
-            return len(expired)
-
-    def get_pending_entry(self, callback_token: str) -> PendingCardEntry | None:
-        """Read-only lookup of a pending entry without consuming it.
-
-        .. note::
-
-            The lookup does **not** check the entry's TTL.  An expired-but-not-
-            yet-pruned entry is still reported as pending.  Callers that need
-            strict freshness should call :meth:`prune_expired` first or compare
-            ``created_at`` themselves.
-        """
-        with self._lock:
-            entry = self._entries.get(callback_token)
-            return cast(PendingCardEntry, dict(entry)) if entry is not None else None
 
     def __len__(self) -> int:
         """Return the number of tracked pending cards."""

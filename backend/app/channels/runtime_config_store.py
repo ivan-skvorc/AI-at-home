@@ -240,14 +240,6 @@ class ChannelRuntimeConfigStore:
             }
             self._save(data)
 
-    def remove_provider_config(self, provider: str) -> bool:
-        with self._mutation() as data:
-            if provider not in data:
-                return False
-            del data[provider]
-            self._save(data)
-            return True
-
     def versions(self) -> dict[str, int]:
         # One process owns the file (a ``memory`` database cannot be shared), so
         # every save already went through this process: there is no peer save

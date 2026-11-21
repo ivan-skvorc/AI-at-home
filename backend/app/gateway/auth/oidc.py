@@ -54,10 +54,6 @@ class OIDCError(Exception):
     """Base error for OIDC operations. Message is safe for API responses."""
 
 
-class OIDCProviderError(OIDCError):
-    """The OIDC provider returned an error (e.g. access_denied)."""
-
-
 class OIDCValidationError(OIDCError):
     """ID token validation failed."""
 

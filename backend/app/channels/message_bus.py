@@ -363,8 +363,9 @@ class MessageBus:
         """Reject new intake and invalidate uncommitted reservations.
 
         Returns the number of provider-side reservations invalidated. Queued
-        messages remain until workers finish or ``discard_pending_inbound`` is
-        called by shutdown.
+        messages remain until workers finish or shutdown discards them through
+        ``ChannelManager._discard_pending_inbound``, which also releases their
+        attachments and dedupe claims.
         """
         with self._inbound_admission_lock:
             self._accepting_inbound = False
@@ -376,18 +377,6 @@ class MessageBus:
         """Re-open admission when a stopped manager is explicitly restarted."""
         with self._inbound_admission_lock:
             self._accepting_inbound = True
-
-    def discard_pending_inbound(self) -> int:
-        """Drop queued, not-yet-started messages during shutdown."""
-        discarded = 0
-        while True:
-            try:
-                self.get_inbound_nowait()
-            except asyncio.QueueEmpty:
-                break
-            self._inbound_queue.task_done()
-            discarded += 1
-        return discarded
 
     @property
     def inbound_queue_maxsize(self) -> int:

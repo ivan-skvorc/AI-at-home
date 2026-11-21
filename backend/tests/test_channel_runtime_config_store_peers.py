@@ -49,15 +49,6 @@ def test_disconnect_survives_a_later_peer_save(tmp_path):
     }
 
 
-def test_remove_sees_a_provider_a_peer_saved_after_this_store_loaded(tmp_path):
-    worker_a = ChannelRuntimeConfigStore(_path(tmp_path))
-    worker_b = ChannelRuntimeConfigStore(_path(tmp_path))
-    worker_b.set_provider_config("slack", SLACK)
-
-    assert worker_a.remove_provider_config("slack") is True
-    assert ChannelRuntimeConfigStore(_path(tmp_path)).load_all() == {}
-
-
 def test_save_over_a_corrupt_file_keeps_this_process_copy(tmp_path):
     store = ChannelRuntimeConfigStore(_path(tmp_path))
     store.set_provider_config("telegram", TELEGRAM)
