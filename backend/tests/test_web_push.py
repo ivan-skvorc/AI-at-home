@@ -14,7 +14,9 @@ from __future__ import annotations
 
 import json
 import stat
+import tomllib
 from datetime import datetime, timedelta
+from pathlib import Path
 
 import pytest
 
@@ -190,6 +192,16 @@ class TestNotifyUser:
         available, reason = web_push.push_availability()
         assert available is False
         assert "uv sync --extra webpush" in reason
+
+    def test_the_install_hint_names_an_extra_the_backend_project_defines(self):
+        # `uv sync --extra X` inside backend/ reads extras from the root project,
+        # not from the harness workspace member, so the hint only works while
+        # backend/pyproject.toml forwards the harness extra.
+        backend_root = Path(__file__).resolve().parents[1]
+        root = tomllib.loads((backend_root / "pyproject.toml").read_text(encoding="utf-8"))
+        harness = tomllib.loads((backend_root / "packages" / "harness" / "pyproject.toml").read_text(encoding="utf-8"))
+        assert root["project"]["optional-dependencies"]["webpush"] == ["deerflow-harness[webpush]"]
+        assert any(dep.startswith("pywebpush") for dep in harness["project"]["optional-dependencies"]["webpush"])
 
 
 # ---------------------------------------------------------------------------
