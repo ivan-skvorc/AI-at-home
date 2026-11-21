@@ -33,11 +33,13 @@ fi
 
 # --- Create or reuse thread ---
 if [ -z "$THREAD_ID" ]; then
+  # Both substitutions are tested in place: under `set -e` a failing curl or
+  # parse would otherwise end the script silently, before the error below.
   THREAD_RESP=$(curl -s -X POST "${LANGGRAPH_URL}/threads" \
     -H "Content-Type: application/json" \
-    -d '{}')
-  THREAD_ID=$(echo "$THREAD_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin)['thread_id'])" 2>/dev/null)
-  if [ -z "$THREAD_ID" ]; then
+    -d '{}') || THREAD_RESP=""
+  if ! THREAD_ID=$(echo "$THREAD_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin)['thread_id'])" 2>/dev/null) \
+    || [ -z "$THREAD_ID" ]; then
     echo "ERROR: Failed to create thread. Response: ${THREAD_RESP}" >&2
     exit 1
   fi
