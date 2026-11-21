@@ -1044,11 +1044,6 @@ def set_app_config(config: AppConfig) -> None:
         _app_config_extensions_source = None
 
 
-def peek_current_app_config() -> AppConfig | None:
-    """Return the runtime-scoped AppConfig override, if one is active."""
-    return _current_app_config.get()
-
-
 def peek_loaded_app_config(*, use_runtime_override: bool = True) -> AppConfig | None:
     """Return the configuration this process has loaded, without touching the filesystem.
 

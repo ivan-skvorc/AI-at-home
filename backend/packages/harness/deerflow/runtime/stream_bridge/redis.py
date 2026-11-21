@@ -654,26 +654,6 @@ class RedisStreamBridge(StreamBridge):
             )
         )
 
-    async def _xadd_retained(self, key: str, fields: dict[str, str], *, maxlen: int) -> None:
-        if self._stream_ttl_seconds is None:
-            await self._redis.xadd(
-                key,
-                fields,
-                maxlen=maxlen,
-                approximate=False,
-            )
-            return
-
-        async with self._redis.pipeline(transaction=True) as pipe:
-            pipe.xadd(
-                key,
-                fields,
-                maxlen=maxlen,
-                approximate=False,
-            )
-            pipe.expire(key, self._stream_ttl_seconds)
-            await pipe.execute()
-
     @staticmethod
     def _decode(value: Any) -> str:
         if isinstance(value, bytes):
