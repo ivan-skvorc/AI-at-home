@@ -11,8 +11,11 @@ Python/JSON/YAML/TOML file unparseable (FORK.md §55); the write itself still
 happens, because a file written in parts is legitimately broken in between.
 """
 
+import sys
 from pathlib import Path
 from types import SimpleNamespace
+
+import pytest
 
 from deerflow.sandbox.local.local_sandbox import LocalSandbox
 from deerflow.sandbox.tools import str_replace_tool, write_file_tool
@@ -79,12 +82,75 @@ def test_many_matches_list_a_bounded_set_of_lines(tmp_path, monkeypatch) -> None
     assert after == content
 
 
+@pytest.mark.parametrize(
+    ("content", "expected"),
+    [
+        ("}\n}\n}\n", "matches 2 places in /mnt/user-data/workspace/a.js (starting on lines 1, 2)"),
+        ("}\n}\n}\n}\n", "matches 3 places in /mnt/user-data/workspace/a.js (starting on lines 1, 2, 3)"),
+    ],
+)
+def test_overlapping_copies_count_as_ambiguous(tmp_path, monkeypatch, content, expected) -> None:
+    # str.count() sees "}\n}" once in three stacked braces; the edit would still land on a guess.
+    result, after = _replace(tmp_path, monkeypatch, name="a.js", content=content, old_str="}\n}", new_str="}")
+
+    assert result.startswith("Error:") and expected in result, result
+    assert after == content
+
+
+def test_a_huge_match_count_is_capped(tmp_path, monkeypatch) -> None:
+    content = "a" * 100_000
+    result, after = _replace(tmp_path, monkeypatch, name="data.txt", content=content, old_str="a", new_str="b")
+
+    assert "matches more than 1000 places" in result, result[:200]
+    assert after == content
+
+
 def test_an_edit_that_breaks_python_succeeds_with_a_warning(tmp_path, monkeypatch) -> None:
     result, after = _replace(tmp_path, monkeypatch, name="m.py", content=SOURCE, old_str="def b():", new_str="def b(:")
 
     assert result.startswith("OK\n\nWarning: /mnt/user-data/workspace/m.py does not parse"), result
-    assert "Python syntax error at line 5" in result
+    assert f"Python {sys.version_info.major}.{sys.version_info.minor} syntax error at line 5" in result
     assert "def b(:" in after  # advisory, not a block
+
+
+def test_an_edit_to_a_file_that_already_did_not_parse_is_plain_ok(tmp_path, monkeypatch) -> None:
+    # The warning is for an edit that broke the file; this one did not, and a
+    # file mid-way through a multi-step rewrite is broken legitimately.
+    broken = "def a(:\n    return None\n"
+    result, after = _replace(tmp_path, monkeypatch, name="m.py", content=broken, old_str="return None", new_str="return 1")
+
+    assert result == "OK"
+    assert after == "def a(:\n    return 1\n"
+
+
+def test_a_bom_json_file_edits_without_a_warning(tmp_path, monkeypatch) -> None:
+    content = '\ufeff{\n  "Logging": {"Level": "Info"}\n}\n'
+    result, after = _replace(tmp_path, monkeypatch, name="appsettings.json", content=content, old_str='"Info"', new_str='"Debug"')
+
+    assert result == "OK"
+    assert after.startswith("\ufeff") and '"Debug"' in after
+
+
+def test_a_write_whose_checker_hits_python_int_limit_still_reports_ok(tmp_path, monkeypatch) -> None:
+    big = "1" * 5000
+    result, after = _replace(tmp_path, monkeypatch, name="vectors.toml", content=f"a = {big}\nb = 1\n", old_str="b = 1", new_str="b = 2")
+
+    assert result == "OK"
+    assert after.endswith("b = 2\n")
+
+
+def test_a_checker_failure_falls_back_to_plain_ok(tmp_path, monkeypatch) -> None:
+    def boom(*args, **kwargs):
+        raise RuntimeError("checker bug")
+
+    _patch_sandbox(monkeypatch)
+    monkeypatch.setattr("deerflow.sandbox.tools.syntax_advisory", boom)
+    runtime = _runtime(tmp_path)
+    target = tmp_path / "workspace" / "m.py"
+
+    assert write_file_tool.func(runtime=runtime, path="/mnt/user-data/workspace/m.py", content=SOURCE) == "OK"
+    assert str_replace_tool.func(runtime=runtime, path="/mnt/user-data/workspace/m.py", old_str="def b():", new_str="def c():") == "OK"
+    assert "def c():" in target.read_text(encoding="utf-8")
 
 
 def test_write_file_warns_on_invalid_json_but_writes_it(tmp_path, monkeypatch) -> None:

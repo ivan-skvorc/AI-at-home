@@ -17,11 +17,12 @@ On by default; nothing to configure.
   first copy and report `OK`.
 - **A write that breaks a file says so.** After a successful `write_file` or
   `str_replace` on a `.py`, `.pyi`, `.json`, `.yaml`/`.yml` or `.toml` file,
-  the result carries a warning with the line of the first syntax error. The
-  write still happens (a file written in parts is broken in between). Parsing
-  never executes the content. JSON with comments (`tsconfig.json`) and
-  templated YAML (Helm, Jinja) are accepted, so a correct file never gets a
-  false warning. To *block* an edit that breaks a previously valid file
+  the result carries a warning with the line of the first syntax error (for
+  an edit, only when the file parsed before it). The write still happens (a
+  file written in parts is broken in between). Parsing never executes the
+  content. JSON with comments (`tsconfig.json`), templated YAML (Helm, Jinja)
+  and files with a byte-order mark are accepted, so a correct file never gets
+  a false warning. To *block* an edit that breaks a previously valid file
   instead, set `harness_guard.write_verify_syntax: true`; it uses the same
   parsers.
 

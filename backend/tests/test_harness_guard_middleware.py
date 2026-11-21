@@ -261,6 +261,33 @@ class TestHarnessGuardMiddleware:
         assert res.status != "error"
         assert res.content == "Replaced successfully"
 
+    @pytest.mark.parametrize(
+        ("current", "old_str", "new_str"),
+        [
+            ("def a():\n    x = 1\n\nclass B:\n    def m(self):\n        x = 1\n", "x = 1", "x = 1\n        y = 2"),
+            # Overlapping copies: str.count() sees one, the tool sees two.
+            ("pass\npass\npass\n", "pass\npass", "pass\n  pass"),
+        ],
+    )
+    def test_ambiguous_str_replace_is_left_to_the_tool_refusal(self, current, old_str, new_str):
+        """A non-unique old_str is the tool's refusal to report, not a syntax error at a copy the model did not mean."""
+        middleware = HarnessGuardMiddleware(HarnessGuardConfig(write_verify_syntax=True, block_on_syntax_error=True))
+        req = _make_request("str_replace", {"path": "m.py", "old_str": old_str, "new_str": new_str})
+        calls = []
+
+        def tool(r):
+            calls.append(r)
+            return ToolMessage(content="Error: old_str matches 2 places in m.py", tool_call_id=r.tool_call["id"], name="str_replace")
+
+        with patch(
+            "deerflow.agents.middlewares.harness_guard_middleware.read_current_file_content",
+            return_value=current,
+        ):
+            res = middleware.wrap_tool_call(req, tool)
+
+        assert len(calls) == 1
+        assert "WRITE BLOCKED" not in res.content
+
     def test_str_replace_crlf_normalization_repro(self):
         """CRLF file with LF old_str must be normalized before matching so syntax errors are not bypassed."""
         middleware = HarnessGuardMiddleware(HarnessGuardConfig(write_verify_syntax=True, block_on_syntax_error=True))

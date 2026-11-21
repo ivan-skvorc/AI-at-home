@@ -6335,12 +6335,20 @@ properties are load-bearing:
   before. Both use one parser set (`verify_content_syntax` delegates to
   `check_syntax`), so they never disagree.
 - **No false positives.** JSON with comments and trailing commas, templated
-  YAML (`{{`/`{%`) and YAML custom tags (`yaml.compose_all`, not `safe_load`)
-  are accepted. A warning on a correct file costs a turn of second-guessing
-  and teaches the model to ignore the warning.
-- **Success still starts with `OK`.** Every success consumer reads "not an
-  `Error:` prefix" (`folder_ledger_middleware`, read-before-write marks), so
-  the appended note changes no attribution; the refusal starts with `Error:`.
+  YAML (`{{`/`{%`/`{#`), YAML custom tags (`yaml.compose_all`, not
+  `safe_load`) and a leading BOM are accepted; an edit warns only when the
+  file parsed before it and no longer does; a parser failure that is not a
+  syntax error (Python's 4,300-digit integer limit) means "not checked", and a
+  checker that raises falls back to plain `OK`. A warning on a correct file
+  costs a turn of second-guessing and teaches the model to ignore the warning.
+  For JSON with comments the reported line comes from the comment-stripped
+  parse (comments are blanked, so lines and columns stay put).
+- **Success is the first line, `OK`.** The folder ledger
+  (`folder_ledger_middleware._succeeded`) and the frontend's write preview
+  (`frontend/src/core/artifacts/preview.ts`) used to compare the whole result
+  to `OK`; both now accept a first line of exactly `OK` with a non-error
+  status, so a write carrying the warning is still attributed and previewed.
+  The ambiguity refusal starts with `Error:` and counts overlapping matches.
 
 **Verify before finishing and the learning nudge** (`deerflow/agents/middlewares/completion_review_middleware.py`).
 One middleware, registered just before `TodoMiddleware` in the lead chain, so

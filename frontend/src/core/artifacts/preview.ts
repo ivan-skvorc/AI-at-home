@@ -13,6 +13,7 @@ type ArtifactPreviewMessage = {
   id?: string;
   name?: string | null;
   tool_call_id?: string;
+  status?: string;
   content?: unknown;
   tool_calls?: Array<{
     id?: string;
@@ -25,13 +26,23 @@ export function isWriteFileArtifact(filepath: string) {
   return filepath.startsWith("write-file:");
 }
 
-function hasSuccessfulWriteResult(toolResult: string | undefined) {
-  return toolResult?.trim() === "OK";
+// A write succeeded when its result's first line is exactly "OK": write_file
+// and str_replace may append a syntax warning below it, and the write still
+// happened (a file written in parts does not parse after its first part).
+function hasSuccessfulWriteResult(
+  toolResult: string | undefined,
+  status?: string,
+) {
+  if (toolResult === undefined || status === "error") {
+    return false;
+  }
+  return toolResult.trim().split("\n", 1)[0]?.trimEnd() === "OK";
 }
 
-function hasFailedWriteResult(toolResult: string | undefined) {
+function hasFailedWriteResult(toolResult: string | undefined, status?: string) {
   return (
-    typeof toolResult === "string" && !hasSuccessfulWriteResult(toolResult)
+    typeof toolResult === "string" &&
+    !hasSuccessfulWriteResult(toolResult, status)
   );
 }
 
@@ -64,7 +75,7 @@ function findToolResult(
 ) {
   for (const message of messages) {
     if (message.type === "tool" && message.tool_call_id === toolCallId) {
-      return getTextContent(message.content);
+      return { text: getTextContent(message.content), status: message.status };
     }
   }
   return undefined;
@@ -118,18 +129,19 @@ export function buildWriteFileDraftContent({
       }
 
       const toolCallId = toolCall.id;
-      const toolResult = toolCallId
+      const result = toolCallId
         ? findToolResult(toolCallId, toolResults.get(messageIndex) ?? [])
         : undefined;
+      const toolResult = result?.text;
       const isSelected =
         toolCallId === target.toolCallId &&
         (!target.messageId || message.id === target.messageId);
-      if (isSelected && hasFailedWriteResult(toolResult)) {
+      if (isSelected && hasFailedWriteResult(toolResult, result?.status)) {
         return undefined;
       }
 
       const shouldInclude =
-        hasSuccessfulWriteResult(toolResult) ||
+        hasSuccessfulWriteResult(toolResult, result?.status) ||
         (isSelected && toolResult === undefined);
 
       if (!shouldInclude) {

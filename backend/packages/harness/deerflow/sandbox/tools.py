@@ -3638,8 +3638,7 @@ def write_file_tool(
         with get_file_operation_lock(sandbox, path):
             sandbox.write_file(path, content, append)
         # An append carries only the tail, so only a whole-file write is checked.
-        advisory = None if append else syntax_advisory(requested_path, content)
-        return "OK" if advisory is None else f"OK\n\n{advisory}"
+        return "OK" if append else _write_advisory(requested_path, content)
     except SandboxError as e:
         return _format_write_file_error(requested_path, e, runtime)
     except PermissionError:
@@ -3696,6 +3695,28 @@ def _match_line_endings(content: str, old_str: str, new_str: str) -> tuple[str, 
 
 
 _AMBIGUOUS_MATCH_LINES_SHOWN = 10
+# Past this many matches the exact count tells the model nothing more, and a
+# one-character old_str in a large file would otherwise scan every position.
+_AMBIGUOUS_MATCH_COUNT_CAP = 1000
+
+
+def _match_starts(content: str, old_str: str, limit: int) -> list[int]:
+    """Offsets where ``old_str`` starts in ``content``, overlapping copies included, at most ``limit``.
+
+    ``str.count`` skips a copy that overlaps the previous one ("}\\n}" in three
+    stacked braces), so it would pass an edit whose target is still a guess.
+    """
+    starts: list[int] = []
+    index = content.find(old_str)
+    while index != -1 and len(starts) < limit:
+        starts.append(index)
+        index = content.find(old_str, index + 1)
+    return starts
+
+
+def _is_ambiguous_match(content: str, old_str: str) -> bool:
+    """True when a single-replacement ``str_replace`` would refuse ``old_str`` as matching several places."""
+    return len(_match_starts(content, old_str, 2)) > 1
 
 
 def _ambiguous_match_error(content: str, old_str: str, requested_path: str) -> str | None:
@@ -3705,20 +3726,30 @@ def _ambiguous_match_error(content: str, old_str: str, requested_path: str) -> s
     first, which is the wrong one as often as not, and the call still reports
     success. Naming the lines lets the model widen ``old_str`` in one retry.
     """
-    count = content.count(old_str)
+    starts = _match_starts(content, old_str, _AMBIGUOUS_MATCH_COUNT_CAP + 1)
+    count = len(starts)
     if count <= 1:
         return None
-    lines: list[int] = []
-    start = 0
-    while len(lines) < _AMBIGUOUS_MATCH_LINES_SHOWN:
-        index = content.find(old_str, start)
-        if index == -1:
-            break
-        lines.append(content.count("\n", 0, index) + 1)
-        start = index + 1
+    lines = [content.count("\n", 0, index) + 1 for index in starts[:_AMBIGUOUS_MATCH_LINES_SHOWN]]
     shown = ", ".join(str(line) for line in lines)
     more = "" if count <= len(lines) else ", ..."
-    return f"Error: old_str matches {count} places in {requested_path} (starting on lines {shown}{more}). Include enough surrounding lines to match exactly one place, or set replace_all=true to change every occurrence."
+    places = f"more than {_AMBIGUOUS_MATCH_COUNT_CAP}" if count > _AMBIGUOUS_MATCH_COUNT_CAP else str(count)
+    return f"Error: old_str matches {places} places in {requested_path} (starting on lines {shown}{more}). Include enough surrounding lines to match exactly one place, or set replace_all=true to change every occurrence."
+
+
+def _write_advisory(requested_path: str, content: str, *, before: str | None = None) -> str:
+    """The result of a write that happened: ``OK``, plus the syntax note when the file does not parse.
+
+    The write is already on disk, so a checker failure must never turn it into a
+    reported error: a retried ``str_replace`` would then find nothing to
+    replace, and a retried ``write_file`` would trip read-before-write.
+    """
+    try:
+        advisory = syntax_advisory(requested_path, content, before=before)
+    except Exception:
+        logger.warning("Syntax advisory failed for %s; reporting plain OK", requested_path, exc_info=True)
+        return "OK"
+    return "OK" if advisory is None else f"OK\n\n{advisory}"
 
 
 @tool("str_replace", parse_docstring=True)
@@ -3766,10 +3797,11 @@ def str_replace_tool(
                 ambiguity = _ambiguous_match_error(content, old_str, requested_path)
                 if ambiguity is not None:
                     return ambiguity
+            before = content
             content = content.replace(old_str, new_str) if replace_all else content.replace(old_str, new_str, 1)
             sandbox.write_file(path, content)
-        advisory = syntax_advisory(requested_path, content)
-        return "OK" if advisory is None else f"OK\n\n{advisory}"
+        # Only an edit that broke a file that parsed gets the note.
+        return _write_advisory(requested_path, content, before=before)
     except SandboxError as e:
         return f"Error: {e}"
     except FileNotFoundError:

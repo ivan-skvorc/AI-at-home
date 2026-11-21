@@ -2,7 +2,7 @@
 
 Provides:
 1. Optional Write-Verify Gate: Pre-execution syntax validation on .py, .json, .yaml and .toml writes
-   for str_replace (spliced verification on valid files; opt-in).
+   for str_replace (spliced verification on valid files with an unambiguous old_str; opt-in).
 2. Error Signature Classifier: Detects classic failure patterns and injects actionable Targeted Hints.
 3. Anti-Doom-Loop: Detects consecutive identical error signatures and A -> B -> A -> B alternating failure loops,
    scoped cleanly by (thread_id, run_id) with bounded LRU tracking.
@@ -34,7 +34,7 @@ from deerflow.agents.middlewares.tool_result_meta import (
 from deerflow.agents.middlewares.tool_transform_meta import append_tool_transform
 from deerflow.config.harness_guard_config import HarnessGuardConfig
 from deerflow.sandbox.syntax_check import check_syntax, is_checked_path
-from deerflow.sandbox.tools import _match_line_endings, read_current_file_content
+from deerflow.sandbox.tools import _is_ambiguous_match, _match_line_endings, read_current_file_content
 
 logger = logging.getLogger(__name__)
 
@@ -275,8 +275,12 @@ class HarnessGuardMiddleware(AgentMiddleware):
                 try:
                     current = read_current_file_content(request.runtime, file_path)
                     old_str, new_str = _match_line_endings(current, old_str, new_str)
-                    if old_str in current and verify_content_syntax(file_path, current) is None:
-                        replace_all = bool(args.get("replace_all", False))
+                    replace_all = bool(args.get("replace_all", False))
+                    # An ambiguous single edit is refused by the tool, with the
+                    # count and lines; splicing the first copy here would block
+                    # it for a syntax error at a place the model never meant.
+                    ambiguous = not replace_all and _is_ambiguous_match(current, old_str)
+                    if old_str in current and not ambiguous and verify_content_syntax(file_path, current) is None:
                         spliced = current.replace(old_str, new_str) if replace_all else current.replace(old_str, new_str, 1)
                         err = verify_content_syntax(file_path, spliced)
                 except Exception:

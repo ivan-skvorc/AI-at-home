@@ -6,11 +6,13 @@ middleware fills the folder ledger (``deerflow.persistence.folder_ledger``) from
 the tool calls that write to such a mount:
 
 - ``write_file`` (``write`` / ``append``) and ``str_replace`` (``edit``) are
-  recorded when the tool returned exactly ``"OK"``. Before the call, when the
-  Gateway can see the mount's host directory, the folder entry is checked with
-  ``lstat``: an entry that did not exist yet is credited to this conversation
-  as ``observed_create``; otherwise the folder is ``preexisting`` (an unseen
-  host also reads as pre-existing, so it is never offered for deletion).
+  recorded when the tool's result is not an error and its first line is
+  exactly ``"OK"`` (a write may append a syntax warning below it; the write
+  still happened). Before the call, when the Gateway can see the mount's host
+  directory, the folder entry is checked with ``lstat``: an entry that did not
+  exist yet is credited to this conversation as ``observed_create``; otherwise
+  the folder is ``preexisting`` (an unseen host also reads as pre-existing, so
+  it is never offered for deletion).
 - ``bash`` is best effort: literal ``<mount>/<name>`` references in the
   command are checked on the host before and after the call. A referenced
   entry that appeared is ``inferred_shell`` (never offered for deletion: a
@@ -197,7 +199,8 @@ class FolderLedgerMiddleware(AgentMiddleware):
             return False
         text = _text(message)
         if plan.tool in _WRITE_TOOLS:
-            return text is not None and text.strip() == _SUCCESS
+            # "OK", or "OK" then a blank line and the syntax warning (sandbox/syntax_check.py).
+            return text is not None and text.strip().partition("\n")[0].rstrip() == _SUCCESS
         return text is None or not text.lstrip().startswith("Error:")
 
     def _records(self, plan: _Plan, before: Probes, after: Probes) -> tuple[list[TouchRecord], list[tuple[str, str]]]:
