@@ -85,10 +85,9 @@ import time
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import and_, case, delete, or_, select, update
-from sqlalchemy.dialects.postgresql import insert as pg_insert
-from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from deerflow.persistence.dialect_insert import dialect_insert
 from deerflow.persistence.login_throttle.base import LoginThrottlePolicy, LoginThrottleRecord, evaluate_check
 from deerflow.persistence.login_throttle.model import LOGIN_THROTTLE_IP_LENGTH, LoginThrottleRow
 
@@ -100,15 +99,6 @@ STALE_COUNTER_SECONDS = 24 * 60 * 60
 SWEEP_BATCH_SIZE = 200
 #: Snapshot reads one ``check`` may make before it stops retrying a missed compare-and-set.
 CHECK_CAS_ATTEMPTS = 3
-
-
-def _insert_for(session: AsyncSession):
-    dialect = session.get_bind().dialect.name
-    if dialect == "postgresql":
-        return pg_insert
-    if dialect == "sqlite":
-        return sqlite_insert
-    raise ValueError(f"Unsupported login throttle database dialect: {dialect}")
 
 
 def _record(fail_count: int, locked_at: float | None, lock_duration: float | None) -> LoginThrottleRecord:
@@ -188,7 +178,7 @@ class SqlLoginThrottleStore:
             # Housekeeping rides in the upsert's transaction (one commit per
             # failed login); ``keep`` leaves this IP's row to the upsert below.
             await session.execute(self.sweep_statement(now, keep=key))
-            insert = _insert_for(session)
+            insert = dialect_insert(session.get_bind().dialect.name, component="login throttle")
             # One atomic decision on the row's own values (see the module
             # docstring): below the threshold -> counting, lock cleared; at or
             # over it during an *active* lock -> keep the lock's start and
