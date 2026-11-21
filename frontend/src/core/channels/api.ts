@@ -89,21 +89,6 @@ export async function configureChannelProvider(
   return response.json() as Promise<ChannelProvider>;
 }
 
-export async function disconnectChannelConnection(
-  connectionId: string,
-): Promise<void> {
-  const response = await fetch(
-    channelsUrl(`/connections/${encodeURIComponent(connectionId)}`),
-    { method: "DELETE" },
-  );
-  if (!response.ok) {
-    await throwGatewayApiError(
-      response,
-      `Failed to disconnect channel: ${response.statusText}`,
-    );
-  }
-}
-
 export async function disconnectChannelProvider(
   provider: ChannelProviderId,
 ): Promise<ChannelProvider> {

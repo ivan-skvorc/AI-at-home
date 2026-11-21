@@ -26,11 +26,6 @@ export interface UploadResponse {
   skipped_files: string[];
 }
 
-export interface ListFilesResponse {
-  files: UploadedFileInfo[];
-  count: number;
-}
-
 export interface UploadLimits {
   max_files: number;
   max_file_size: number;
@@ -173,47 +168,6 @@ export async function getUploadLimits(threadId: string): Promise<UploadLimits> {
     throw new Error(
       await readErrorDetail(response, "Failed to load upload limits"),
     );
-  }
-
-  return response.json();
-}
-
-/**
- * List all uploaded files for a thread
- */
-export async function listUploadedFiles(
-  threadId: string,
-): Promise<ListFilesResponse> {
-  const response = await fetch(
-    `${getBackendBaseURL()}/api/threads/${threadId}/uploads/list`,
-  );
-
-  if (!response.ok) {
-    throw new Error(
-      await readErrorDetail(response, "Failed to list uploaded files"),
-    );
-  }
-
-  return response.json();
-}
-
-/**
- * Delete an uploaded file
- */
-export async function deleteUploadedFile(
-  threadId: string,
-  filename: string,
-): Promise<{ success: boolean; message: string }> {
-  const encodedFilename = encodeURIComponent(filename);
-  const response = await fetch(
-    `${getBackendBaseURL()}/api/threads/${threadId}/uploads/${encodedFilename}`,
-    {
-      method: "DELETE",
-    },
-  );
-
-  if (!response.ok) {
-    throw new Error(await readErrorDetail(response, "Failed to delete file"));
   }
 
   return response.json();

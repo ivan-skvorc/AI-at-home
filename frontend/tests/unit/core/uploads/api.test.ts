@@ -9,7 +9,7 @@ rs.mock("@/core/config", () => ({
 }));
 
 import { fetch as fetcher } from "@/core/api/fetcher";
-import { deleteUploadedFile, uploadFiles } from "@/core/uploads/api";
+import { uploadFiles } from "@/core/uploads/api";
 
 const mockedFetch = rs.mocked(fetcher);
 
@@ -196,26 +196,5 @@ describe("uploads api", () => {
     );
 
     expect(error.message).toBe("Upload failed");
-  });
-
-  test("encodes uploaded filenames in delete request paths", async () => {
-    mockedFetch.mockResolvedValueOnce(
-      jsonResponse(200, {
-        success: true,
-        message: "Deleted report#1?.txt",
-      }),
-    );
-
-    await expect(
-      deleteUploadedFile("thread-1", "report#1?.txt"),
-    ).resolves.toEqual({
-      success: true,
-      message: "Deleted report#1?.txt",
-    });
-
-    expect(mockedFetch).toHaveBeenCalledWith(
-      "/backend/api/threads/thread-1/uploads/report%231%3F.txt",
-      { method: "DELETE" },
-    );
   });
 });

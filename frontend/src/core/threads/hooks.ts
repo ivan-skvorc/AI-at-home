@@ -4522,46 +4522,6 @@ export function useThreadTokenUsage(
   });
 }
 
-export function useBranchThread() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: async ({
-      threadId,
-      messageId,
-      messageIds,
-      title,
-    }: {
-      threadId: string;
-      messageId: string;
-      messageIds?: string[];
-      title?: string;
-    }) => {
-      const response = await branchThreadFromTurn(threadId, {
-        messageId,
-        messageIds,
-        title,
-      });
-      // Same reason as the edit-version path below: a branch is a new thread
-      // id, and the per-conversation model/mode selection is stored under that
-      // id, so without this the branch starts on the app default model.
-      copyThreadContextOverride(threadId, response.thread_id);
-      return response;
-    },
-    onSuccess(response, { threadId }) {
-      void queryClient.invalidateQueries({
-        queryKey: ["thread", "metadata", response.thread_id],
-      });
-      void queryClient.invalidateQueries({
-        queryKey: ["thread", "metadata", threadId],
-      });
-      void queryClient.invalidateQueries({ queryKey: ["threads", "search"] });
-      void queryClient.invalidateQueries({
-        queryKey: INFINITE_THREADS_QUERY_KEY_PREFIX,
-      });
-    },
-  });
-}
-
 export type CreateEditVersionInput = {
   /** The thread the edited message currently lives in. */
   threadId: string;
@@ -4912,18 +4872,6 @@ export function useMoveThreadsToFolder() {
         queryKey: INFINITE_THREADS_QUERY_KEY_PREFIX,
       });
     },
-  });
-}
-
-export function useRunDetail(threadId: string, runId: string) {
-  const apiClient = getAPIClient();
-  return useQuery<AppRun>({
-    queryKey: ["thread", threadId, "run", runId],
-    queryFn: async () => {
-      const response = await apiClient.runs.get(threadId, runId);
-      return response as AppRun;
-    },
-    refetchOnWindowFocus: false,
   });
 }
 
