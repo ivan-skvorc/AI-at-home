@@ -45,7 +45,6 @@ from __future__ import annotations
 
 import logging
 import threading
-import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any, override
@@ -61,6 +60,7 @@ from deerflow.agents.middlewares.model_response import last_ai_message
 from deerflow.agents.middlewares.tool_call_metadata import clone_ai_message_with_tool_calls
 from deerflow.config.run_limit_overrides import run_limits_suspended
 from deerflow.config.token_budget_config import TokenBudgetConfig
+from deerflow.utils.run_scope import invocation_run_id, release_invocation_run_id
 
 logger = logging.getLogger(__name__)
 
@@ -157,30 +157,16 @@ class TokenBudgetMiddleware(AgentMiddleware[AgentState]):
         run_id = self._context_run_id(runtime)
         if run_id is not None:
             return run_id
-        # Same anchor as LoopDetectionMiddleware: ``id(runtime)`` changes from
-        # one graph node to the next, ``Runtime.control`` does not. The key is a
-        # generated token rather than the address, which can be reused once the
-        # object is collected. Unlike loop detection, ``execution_info.run_id``
-        # is skipped on purpose: without a context run_id the budget is per
-        # invocation, not per RunnableConfig run.
-        control = getattr(runtime, "control", None)
-        anchor = control if control is not None else runtime
+        # Same invocation anchor as LoopDetectionMiddleware (see run_scope).
+        # Unlike loop detection, ``execution_info.run_id`` is skipped on
+        # purpose: without a context run_id the budget is per invocation, not
+        # per RunnableConfig run.
         with self._lock:
-            entry = self._fallback_run_ids.get(id(anchor))
-            if entry is None or entry[0] is not anchor:
-                entry = (anchor, f"__invocation__:{uuid.uuid4().hex}")
-                self._fallback_run_ids[id(anchor)] = entry
-            # Least recently used goes first, so a full map never evicts an active invocation.
-            self._fallback_run_ids.move_to_end(id(anchor))
-            return entry[1]
+            return invocation_run_id(self._fallback_run_ids, runtime)
 
     def _release_fallback_run_id(self, runtime: Runtime) -> None:
-        control = getattr(runtime, "control", None)
-        anchor = control if control is not None else runtime
         with self._lock:
-            entry = self._fallback_run_ids.get(id(anchor))
-            if entry is not None and entry[0] is anchor:
-                del self._fallback_run_ids[id(anchor)]
+            release_invocation_run_id(self._fallback_run_ids, runtime)
 
     @staticmethod
     def _stop_reason_key(runtime: Runtime, run_id: str) -> str | None:

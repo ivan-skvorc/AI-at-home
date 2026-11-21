@@ -14,7 +14,6 @@ import asyncio
 import logging
 import re
 import threading
-import uuid
 from collections import OrderedDict, deque
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -35,6 +34,7 @@ from deerflow.agents.middlewares.tool_transform_meta import append_tool_transfor
 from deerflow.config.harness_guard_config import HarnessGuardConfig
 from deerflow.sandbox.syntax_check import check_syntax, is_checked_path
 from deerflow.sandbox.tools import _is_ambiguous_match, _match_line_endings, read_current_file_content
+from deerflow.utils.run_scope import runtime_run_id
 
 logger = logging.getLogger(__name__)
 
@@ -220,31 +220,9 @@ class HarnessGuardMiddleware(AgentMiddleware):
         return "default"
 
     def _get_run_id(self, runtime: Any) -> str | None:
-        ctx = getattr(runtime, "context", None)
-        if isinstance(ctx, dict) and "run_id" in ctx:
-            return ctx["run_id"]
-
-        execution_info = getattr(runtime, "execution_info", None)
-        execution_run_id = getattr(execution_info, "run_id", None)
-        if execution_run_id is not None:
-            return str(execution_run_id)
-
-        # Standalone context-less run: anchor to Runtime.control
-        control = getattr(runtime, "control", None)
-        anchor = control if control is not None else runtime
-        anchor_id = id(anchor)
-        with self._lock:
-            existing = self._fallback_run_ids.get(anchor_id)
-            if existing is not None and existing[0] is anchor:
-                self._fallback_run_ids.move_to_end(anchor_id)
-                return existing[1]
-
-            fallback_run_id = f"__invocation__:{uuid.uuid4().hex}"
-            self._fallback_run_ids[anchor_id] = (anchor, fallback_run_id)
-            self._fallback_run_ids.move_to_end(anchor_id)
-            while len(self._fallback_run_ids) > self._max_fallback_run_ids:
-                self._fallback_run_ids.popitem(last=False)
-            return fallback_run_id
+        # Same resolution as LoopDetectionMiddleware; a standalone context-less
+        # run anchors to Runtime.control.
+        return runtime_run_id(runtime, self._fallback_run_ids, self._lock, max_entries=self._max_fallback_run_ids)
 
     def _scope_key(self, request: ToolCallRequest) -> _ScopeKey:
         return self._get_thread_id(request.runtime), self._get_run_id(request.runtime)

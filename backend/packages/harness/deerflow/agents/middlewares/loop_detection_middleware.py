@@ -65,7 +65,6 @@ import hashlib
 import json
 import logging
 import threading
-import uuid
 from collections import Counter, OrderedDict, defaultdict, deque
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -86,6 +85,7 @@ from deerflow.agents.middlewares.tool_call_metadata import clone_ai_message_with
 from deerflow.config.run_limit_overrides import DOUBLE_ULTRACODE_MODE as _DOUBLE_ULTRACODE_MODE
 from deerflow.config.run_limit_overrides import run_limits_suspended
 from deerflow.runtime.events.catalog import MIDDLEWARE_LOOP_DETECTION_TAG
+from deerflow.utils.run_scope import context_scope, explicit_run_id, release_invocation_run_id, runtime_run_id
 
 if TYPE_CHECKING:
     from deerflow.config.loop_detection_config import LoopDetectionConfig
@@ -444,10 +444,7 @@ class LoopDetectionMiddleware(AgentMiddleware[AgentState]):
 
     def _get_thread_id(self, runtime: Runtime) -> str:
         """Extract thread_id from runtime context for per-thread tracking."""
-        thread_id = runtime.context.get("thread_id") if runtime.context else None
-        if thread_id:
-            return str(thread_id)
-        return "default"
+        return context_scope(runtime, "thread_id")
 
     def _get_run_id(self, runtime: Runtime) -> str | None:
         """Extract run_id from runtime context for per-run warning scoping.
@@ -466,48 +463,14 @@ class LoopDetectionMiddleware(AgentMiddleware[AgentState]):
         collection. The bounded map keeps a strong reference while active and
         is released by ``after_agent`` on the normal completion path.
         """
-        ctx = getattr(runtime, "context", None)
-        if isinstance(ctx, dict) and "run_id" in ctx:
-            return ctx["run_id"]
-
-        execution_info = getattr(runtime, "execution_info", None)
-        execution_run_id = getattr(execution_info, "run_id", None)
-        if execution_run_id is not None:
-            return str(execution_run_id)
-
-        control = getattr(runtime, "control", None)
-        anchor = control if control is not None else runtime
-        anchor_id = id(anchor)
-        with self._lock:
-            existing = self._fallback_run_ids.get(anchor_id)
-            if existing is not None and existing[0] is anchor:
-                self._fallback_run_ids.move_to_end(anchor_id)
-                return existing[1]
-
-            fallback_run_id = f"__invocation__:{uuid.uuid4().hex}"
-            self._fallback_run_ids[anchor_id] = (anchor, fallback_run_id)
-            self._fallback_run_ids.move_to_end(anchor_id)
-            while len(self._fallback_run_ids) > self._max_fallback_run_ids:
-                self._fallback_run_ids.popitem(last=False)
-            return fallback_run_id
+        return runtime_run_id(runtime, self._fallback_run_ids, self._lock, max_entries=self._max_fallback_run_ids)
 
     def _release_fallback_run_id(self, runtime: Runtime) -> None:
         """Release a completed invocation's fallback anchor, if it used one."""
-        ctx = getattr(runtime, "context", None)
-        if isinstance(ctx, dict) and "run_id" in ctx:
+        if explicit_run_id(runtime)[0]:
             return
-
-        execution_info = getattr(runtime, "execution_info", None)
-        if getattr(execution_info, "run_id", None) is not None:
-            return
-
-        control = getattr(runtime, "control", None)
-        anchor = control if control is not None else runtime
-        anchor_id = id(anchor)
         with self._lock:
-            existing = self._fallback_run_ids.get(anchor_id)
-            if existing is not None and existing[0] is anchor:
-                self._fallback_run_ids.pop(anchor_id, None)
+            release_invocation_run_id(self._fallback_run_ids, runtime)
 
     def consume_stop_reason(self, run_id: str | None) -> str | None:
         """Pop and return the stop reason the hard-stop set for this run.

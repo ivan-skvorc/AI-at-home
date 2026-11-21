@@ -78,6 +78,7 @@ from deerflow.agents.middlewares.tool_result_meta import (
     ToolResultMeta,
 )
 from deerflow.runtime.events.catalog import MIDDLEWARE_TOOL_PROGRESS_TAG
+from deerflow.utils.run_scope import context_scope
 
 if TYPE_CHECKING:
     from deerflow.config.tool_progress_config import ToolProgressConfig
@@ -304,16 +305,10 @@ class ToolProgressMiddleware(AgentMiddleware[AgentState]):
 
     @staticmethod
     def _thread_id(runtime: Runtime) -> str:
-        tid = runtime.context.get("thread_id") if runtime.context else None
-        return str(tid) if tid else "default"
-
-    @staticmethod
-    def _run_id(runtime: Runtime) -> str:
-        rid = runtime.context.get("run_id") if runtime.context else None
-        return str(rid) if rid else "default"
+        return context_scope(runtime, "thread_id")
 
     def _pending_key(self, runtime: Runtime) -> tuple[str, str]:
-        return self._thread_id(runtime), self._run_id(runtime)
+        return self._thread_id(runtime), context_scope(runtime, "run_id")
 
     def _entry_epoch(self, runtime: Runtime) -> object:
         thread_id = self._thread_id(runtime)
