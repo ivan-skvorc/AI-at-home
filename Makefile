@@ -301,6 +301,13 @@ clean:
 	@echo "Deleting local runtime data in backend/.deer-flow ($(RUNTIME_DATA_CONTENTS)) and logs/*.log..."
 	@-rm -rf backend/.deer-flow 2>/dev/null || true
 	@-rm -rf logs/*.log 2>/dev/null || true
+ifneq ($(OS),Windows_NT)
+	@if [ -e backend/.deer-flow ]; then \
+		echo "✗ backend/.deer-flow was not fully deleted: part of it is not yours to remove (the Docker stack may have created it as root)." >&2; \
+		echo "  Remove what is left with: sudo rm -rf backend/.deer-flow" >&2; \
+		exit 1; \
+	fi
+endif
 	@echo "✓ Cleanup complete"
 
 # ==========================================

@@ -51,17 +51,21 @@ def _checkout(tmp_path: Path) -> Path:
     return root
 
 
-def _bin(tmp_path: Path, docker: str | None) -> Path:
+def _bin(tmp_path: Path, docker: str | None, *, rm: str | None = None) -> Path:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
+    fakes = {"docker": docker, "rm": rm}
     for tool in _TOOLS:
+        if fakes.get(tool) is not None:
+            continue
         found = shutil.which(tool)
         assert found, tool
         (bin_dir / tool).symlink_to(found)
-    if docker is not None:
-        fake = bin_dir / "docker"
-        fake.write_text(f"#!/bin/sh\n{docker}\n", encoding="utf-8")
-        fake.chmod(0o755)
+    for tool, body in fakes.items():
+        if body is not None:
+            fake = bin_dir / tool
+            fake.write_text(f"#!/bin/sh\n{body}\n", encoding="utf-8")
+            fake.chmod(0o755)
     return bin_dir
 
 
@@ -114,6 +118,19 @@ def test_clean_deletes_runtime_data_when_no_gateway_container_runs(tmp_path: Pat
     assert not (root / "logs" / "gateway.log").exists()
     # stop (and with it the sandbox-container cleanup) runs before the deletion.
     assert (root / "stop-calls").read_text(encoding="utf-8").split() == ["--stop", "data-present"]
+
+
+def test_clean_fails_with_a_sudo_hint_when_the_data_survives(tmp_path: Path) -> None:
+    # A tree the Docker stack created as root cannot be removed by the
+    # invoking user; the fake rm stands in for that refusal.
+    root = _checkout(tmp_path)
+
+    result = _make(root, _bin(tmp_path, None, rm="echo \"rm: cannot remove '$*': Permission denied\" >&2; exit 1"))
+
+    assert result.returncode != 0
+    assert "sudo rm -rf backend/.deer-flow" in result.stderr
+    assert "Cleanup complete" not in result.stdout
+    assert (root / "backend" / ".deer-flow" / "data" / "deerflow.db").exists()
 
 
 def _listed_contents(line: str, prefix: str) -> list[str]:
