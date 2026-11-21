@@ -52,34 +52,35 @@ def test_request_uses_documented_max_tokens_for_instance_and_call_limits(limit_f
 
 
 # ---------------------------------------------------------------------------
-# _extract_reasoning helper
+# StepFun's reasoning fields, read through the shared extractor
 # ---------------------------------------------------------------------------
 
 
-def test_extract_reasoning_from_dict_with_reasoning():
-    from deerflow.models.patched_stepfun import _extract_reasoning
+def _extract_reasoning(value):
+    from deerflow.models.patched_stepfun import PatchedChatStepFun
+    from deerflow.models.reasoning_capture import extract_reasoning
 
+    return extract_reasoning(value, PatchedChatStepFun.reasoning_fields)
+
+
+def test_extract_reasoning_from_dict_with_reasoning():
     assert _extract_reasoning({"reasoning": "thinking..."}) == "thinking..."
 
 
 def test_extract_reasoning_from_dict_with_reasoning_content():
-    from deerflow.models.patched_stepfun import _extract_reasoning
-
     assert _extract_reasoning({"reasoning_content": "thinking..."}) == "thinking..."
 
 
 def test_extract_reasoning_prefers_reasoning_content_over_reasoning():
-    from deerflow.models.patched_stepfun import _extract_reasoning
-
     result = _extract_reasoning({"reasoning_content": "deepseek", "reasoning": "native"})
     assert result == "deepseek"
 
 
 def test_extract_reasoning_missing_returns_sentinel():
-    from deerflow.models.patched_stepfun import _MISSING, _extract_reasoning
+    from deerflow.models.reasoning_capture import MISSING_REASONING
 
-    assert _extract_reasoning({}) is _MISSING
-    assert _extract_reasoning({"reasoning": None}) is _MISSING
+    assert _extract_reasoning({}) is MISSING_REASONING
+    assert _extract_reasoning({"reasoning": None}) is MISSING_REASONING
 
 
 # ---------------------------------------------------------------------------

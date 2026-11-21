@@ -4,18 +4,22 @@
 two helpers: attach a reasoning string to a LangChain message without mutating
 the message the caller still holds, and read ``choices[index].message`` out of a
 response that may be a dict payload, an SDK object, or a chunk with no choices.
-Two owners for one rule means a leak fix (or an identity fix) landing in one
-provider silently leaves the other behind.
+They also carried identical streaming and non-streaming capture methods and the
+same field lookup, differing only in which fields they read; those now live in
+``ReasoningCaptureChatOpenAI`` and ``extract_reasoning``. Two owners for one rule
+means a leak fix (or an identity fix) landing in one provider silently leaves
+the other behind.
 
 These tests pin three things the extraction must not silently give back:
 
 1. the owner's behaviour, case by case — including the two properties that are
    easy to lose in a refactor: the input message is never mutated, and a copy is
    returned even when the value already matched;
-2. that both providers actually call the owner (binding identity, plus the
-   streaming path exercised end to end), and the private helpers are gone;
-3. a source census over ``models/``: no module may restate either function body,
-   and exactly the two migrated providers import the owner.
+2. that both providers actually go through the owner (they inherit the capture
+   methods without overriding them, plus the streaming path exercised end to
+   end), and the private helpers are gone;
+3. a source census over ``models/``: no module may restate an owned function
+   body, and exactly the two migrated providers import the owner.
 
 Providers whose reasoning handling genuinely differs are out of scope and stay
 local: ``patched_minimax`` merges streamed deltas, ``patched_deepseek`` and
@@ -110,11 +114,46 @@ def test_typed_choice_message_reports_absence_rather_than_raising(response, inde
 
 
 @pytest.mark.parametrize(("module", "cls", "model_name"), sorted(PROVIDERS.values(), key=lambda x: x[0].__name__))
-def test_provider_names_are_the_owner_not_a_restatement(module, cls, model_name: str) -> None:
-    assert module.with_reasoning_content is owner.with_reasoning_content
-    assert module.typed_choice_message is owner.typed_choice_message
-    for stale in ("_with_reasoning_content", "_get_typed_choice_message"):
+def test_provider_capture_is_the_owner_not_a_restatement(module, cls, model_name: str) -> None:
+    assert issubclass(cls, owner.ReasoningCaptureChatOpenAI)
+    for method in ("_convert_chunk_to_generation_chunk", "_create_chat_result"):
+        assert method not in cls.__dict__, f"{cls.__name__} overrides the owned {method}"
+        assert getattr(cls, method) is getattr(owner.ReasoningCaptureChatOpenAI, method)
+    for stale in ("_with_reasoning_content", "_get_typed_choice_message", "_extract_reasoning", "_extract_reasoning_content", "_MISSING"):
         assert not hasattr(module, stale), f"{module.__name__} still carries its private {stale}"
+
+
+@pytest.mark.parametrize(
+    ("fields", "value", "expected"),
+    [
+        (("reasoning_content",), {"reasoning_content": ""}, ""),
+        (("reasoning_content",), {"reasoning": "other dialect"}, owner.MISSING_REASONING),
+        (("reasoning_content", "reasoning"), {"reasoning_content": None, "reasoning": "native"}, "native"),
+        (("reasoning_content",), SimpleNamespace(reasoning_content="attr"), "attr"),
+        (("reasoning_content",), SimpleNamespace(model_extra={"reasoning_content": "extra"}), "extra"),
+        (("reasoning_content",), None, owner.MISSING_REASONING),
+    ],
+)
+def test_extract_reasoning_reads_the_declared_fields_only(fields, value, expected) -> None:
+    result = owner.extract_reasoning(value, fields)
+    if expected is owner.MISSING_REASONING:
+        assert result is owner.MISSING_REASONING
+    else:
+        assert result == expected
+
+
+@pytest.mark.parametrize(("module", "cls", "model_name"), sorted(PROVIDERS.values(), key=lambda x: x[0].__name__))
+def test_non_streaming_path_still_captures_reasoning_through_the_owner(module, cls, model_name: str) -> None:
+    model = cls(model=model_name, api_key="test-key", base_url="https://example.invalid/v1")
+    result = model._create_chat_result(
+        {
+            "id": "chatcmpl-1",
+            "object": "chat.completion",
+            "model": model_name,
+            "choices": [{"index": 0, "finish_reason": "stop", "message": {"role": "assistant", "content": "answer", "reasoning_content": REASONING}}],
+        }
+    )
+    assert result.generations[0].message.additional_kwargs["reasoning_content"] == REASONING
 
 
 @pytest.mark.parametrize(("module", "cls", "model_name"), sorted(PROVIDERS.values(), key=lambda x: x[0].__name__))
