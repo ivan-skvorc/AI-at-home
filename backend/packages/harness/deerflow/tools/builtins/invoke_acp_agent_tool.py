@@ -331,7 +331,8 @@ def build_invoke_acp_agent_tool(agents: dict) -> BaseTool:
                     if getattr(update, "session_update", None) == "agent_message_chunk" and isinstance(update.content, TextContentBlock):
                         self._chunks.append(update.content.text)
                 except Exception:
-                    pass
+                    # A malformed update must not end the exchange; its text is dropped.
+                    logger.debug("Dropped a malformed ACP session update from agent %s in session %s", agent, session_id, exc_info=True)
 
             async def request_permission(self, options, session_id: str, tool_call, **kwargs):  # type: ignore[override]
                 response = _build_permission_response(options, auto_approve=agent_config.auto_approve_permissions)
