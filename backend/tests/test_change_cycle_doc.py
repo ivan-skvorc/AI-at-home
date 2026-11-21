@@ -327,3 +327,20 @@ def test_no_check_is_run_twice_on_one_tree() -> None:
                     assert not path.startswith("tests/blocking_io/"), f"{path}: `make test` ignores tests/blocking_io, so it would stop running this critical check"
     twice = sorted(path for path, rows in owners.items() if len(rows) > 1)
     assert not twice, f"run whole by two checklist items; name the first row in the second instead: {twice}"
+
+
+def test_every_level_updates_the_map() -> None:
+    """The map goes stale silently: a new file with no row is only caught by the next full check.
+
+    "Every level, step 3" says to update it, but an agent running one level reads that
+    level's section; each of the three names the update and the check that proves it,
+    and level 3 updates again after its own fixes add, delete or rename files.
+    """
+    text = CHANGE_CYCLE.read_text(encoding="utf-8")
+    for heading in ("Level 1: affected features", "Level 2: whole app", "Level 3: quality review"):
+        section = _section(text, heading)
+        assert "Update the map" in section, f"{heading} no longer updates the map"
+        assert "test_repo_map.py" in section, f"{heading} no longer runs the map check"
+    for row in ("| 1 | Features linked to the changed files |", "| 2 | The whole app |", "| 3 | The whole app + quality review |"):
+        line = next(line for line in text.splitlines() if line.startswith(row))
+        assert line.rstrip().rstrip("|").rsplit("|", 1)[-1].strip(), f"the level table row {row!r} lost its map column"
