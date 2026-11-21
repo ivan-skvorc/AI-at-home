@@ -12,6 +12,7 @@ from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from functools import lru_cache, partial
 from pathlib import Path
+from typing import Any
 
 from langchain.tools import tool
 from langchain_core.messages import ToolMessage
@@ -616,6 +617,24 @@ def _get_mcp_allowed_paths() -> list[str]:
         logger.debug("MCP filesystem allowed paths unavailable; keeping %d found so far", len(allowed_paths), exc_info=True)
 
     return allowed_paths
+
+
+def _sandbox_settings(**defaults: Any) -> tuple[Any, ...]:
+    """Read ``sandbox`` config fields with one config read, in argument order.
+
+    Every default applies when the config cannot be read, has no ``sandbox``
+    section, or lacks one of the fields, so a call never mixes configured and
+    default values.
+    """
+    try:
+        from deerflow.config.app_config import get_app_config
+
+        sandbox_cfg = get_app_config().sandbox
+        if sandbox_cfg:
+            return tuple(getattr(sandbox_cfg, name) for name in defaults)
+    except Exception:
+        logger.debug("Sandbox settings %s unavailable; using the defaults", ", ".join(defaults), exc_info=True)
+    return tuple(defaults.values())
 
 
 def _get_tool_config_int(name: str, key: str, default: int) -> int:
@@ -2985,16 +3004,7 @@ def bash_tool(runtime: Runtime, command: str, description: str = "") -> str:
                 windows_user_id = _resolved_user_id(runtime)
                 if windows_user_id is not None:
                     local_env = {**(injected_env or {}), USER_ID_ENV: windows_user_id}
-            try:
-                from deerflow.config.app_config import get_app_config
-
-                sandbox_cfg = get_app_config().sandbox
-                max_chars = sandbox_cfg.bash_output_max_chars if sandbox_cfg else 20000
-                command_timeout = sandbox_cfg.bash_command_timeout if sandbox_cfg else None
-            except Exception:
-                logger.debug("Sandbox bash limits unavailable; using the defaults", exc_info=True)
-                max_chars = 20000
-                command_timeout = None
+            max_chars, command_timeout = _sandbox_settings(bash_output_max_chars=20000, bash_command_timeout=None)
             output = _execute_bash_command(
                 sandbox,
                 command,
@@ -3009,16 +3019,7 @@ def bash_tool(runtime: Runtime, command: str, description: str = "") -> str:
         ensure_thread_directories_exist(runtime)
         command = f"cd {VIRTUAL_PATH_PREFIX}/workspace; {command}"
         command = user_prefix + (identity_prefix or "") + command
-        try:
-            from deerflow.config.app_config import get_app_config
-
-            sandbox_cfg = get_app_config().sandbox
-            max_chars = sandbox_cfg.bash_output_max_chars if sandbox_cfg else 20000
-            command_timeout = sandbox_cfg.bash_command_timeout if sandbox_cfg else None
-        except Exception:
-            logger.debug("Sandbox bash limits unavailable; using the defaults", exc_info=True)
-            max_chars = 20000
-            command_timeout = None
+        max_chars, command_timeout = _sandbox_settings(bash_output_max_chars=20000, bash_command_timeout=None)
         return _truncate_bash_output(
             mask_secret_values(
                 _execute_bash_command(
@@ -3093,14 +3094,7 @@ def ls_tool(runtime: Runtime, path: str, description: str = "") -> str:
         if not entries:
             return "(empty)"
         output = "\n".join(entries)
-        try:
-            from deerflow.config.app_config import get_app_config
-
-            sandbox_cfg = get_app_config().sandbox
-            max_chars = sandbox_cfg.ls_output_max_chars if sandbox_cfg else 20000
-        except Exception:
-            logger.debug("Sandbox ls output limit unavailable; using the default", exc_info=True)
-            max_chars = 20000
+        (max_chars,) = _sandbox_settings(ls_output_max_chars=20000)
         return _truncate_ls_output(output, _context_clamped(max_chars, COMMAND_OUTPUT_SHARE))
     except SandboxError as e:
         return f"Error: {e}"
@@ -3426,14 +3420,7 @@ def read_file_tool(
                     return _read_file_result(runtime, READ_FILE_EMPTY)
                 return _read_file_failure(runtime, READ_FILE_START_LINE_EXCEEDS)
             return _read_file_result(runtime, READ_FILE_EMPTY)
-        try:
-            from deerflow.config.app_config import get_app_config
-
-            sandbox_cfg = get_app_config().sandbox
-            max_chars = sandbox_cfg.read_file_output_max_chars if sandbox_cfg else 50000
-        except Exception:
-            logger.debug("Sandbox read_file output limit unavailable; using the default", exc_info=True)
-            max_chars = 50000
+        (max_chars,) = _sandbox_settings(read_file_output_max_chars=50000)
         # Line numbers in the marker are file line numbers, so a ranged read passes its offset along.
         limit = _context_clamped(max_chars, READ_FILE_SHARE)
         output = _truncate_read_file_output(content, limit, line_offset=effective_start - 1, joined_lines=use_line_range, ends_at_eof=end_line is None)
