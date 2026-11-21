@@ -30,7 +30,7 @@ def _get_tool_config(tool_name: str) -> dict | None:
 def _coerce_timeout(value: object, default: int) -> float:
     """Coerce a config timeout into seconds, falling back to ``default`` on bad input.
 
-    Mirrors ``jina_ai._coerce_timeout``: booleans and non-numeric strings fall
+    Mirrors ``config_int.coerce_int``: booleans and non-numeric strings fall
     back to the default so e.g. ``timeout: off`` (YAML ``False``) does not become
     ``0.0`` and time out every request against a healthy server.
     """

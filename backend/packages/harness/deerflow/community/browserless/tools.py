@@ -13,6 +13,7 @@ from langchain_core.messages import ToolMessage
 from langgraph.types import Command
 
 from deerflow.community.config_bool import coerce_bool
+from deerflow.community.config_int import coerce_int
 from deerflow.community.provider_credentials import resolve_api_key
 from deerflow.community.url_safety import resolve_host_addresses as _resolve_host_addresses
 from deerflow.community.url_safety import validate_delegated_backend_url, validate_public_http_url
@@ -124,17 +125,6 @@ def _validate_backend_base_url(cfg: dict | None) -> str | None:
     )
 
 
-def _as_int(value: object, default: int) -> int:
-    if isinstance(value, int) and not isinstance(value, bool):
-        return value
-    if isinstance(value, str):
-        try:
-            return int(value.strip())
-        except ValueError:
-            return default
-    return default
-
-
 def _as_str_list(value: object) -> list[str] | None:
     """Coerce a config value into a non-empty list of strings, or ``None``.
 
@@ -158,7 +148,7 @@ def _as_str_list(value: object) -> list[str] | None:
 def _as_optional_quality(value: object, output_format: str) -> int | None:
     if output_format not in {"jpeg", "webp"}:
         return None
-    quality = _as_int(value, -1)
+    quality = coerce_int(value, -1)
     return quality if 0 <= quality <= 100 else None
 
 
@@ -325,9 +315,9 @@ async def web_fetch_tool(url: str) -> tuple[str, dict | None]:
         reject_request_pattern = _as_str_list(cfg.get("reject_request_pattern"))
 
         wait_for_event = cfg.get("wait_for_event", wait_for_event)
-        wait_for_timeout_ms = _as_int(cfg.get("wait_for_timeout_ms"), wait_for_timeout_ms)
+        wait_for_timeout_ms = coerce_int(cfg.get("wait_for_timeout_ms"), wait_for_timeout_ms)
         wait_for_selector = cfg.get("wait_for_selector", wait_for_selector)
-        wait_for_selector_timeout_ms = _as_int(cfg.get("wait_for_selector_timeout_ms"), wait_for_selector_timeout_ms)
+        wait_for_selector_timeout_ms = coerce_int(cfg.get("wait_for_selector_timeout_ms"), wait_for_selector_timeout_ms)
 
         client = _get_browserless_client("web_fetch", cfg)
         result = await client.fetch_html_with_status(
@@ -400,12 +390,12 @@ async def web_capture_tool(
 
         final_format = _normalize_output_format(output_format or cfg.get("output_format", "png"))
         final_full_page = full_page if full_page is not None else coerce_bool(cfg.get("full_page"), True)
-        final_width = viewport_width if viewport_width is not None else _as_int(cfg.get("viewport_width"), 1280)
-        final_height = viewport_height if viewport_height is not None else _as_int(cfg.get("viewport_height"), 720)
+        final_width = viewport_width if viewport_width is not None else coerce_int(cfg.get("viewport_width"), 1280)
+        final_height = viewport_height if viewport_height is not None else coerce_int(cfg.get("viewport_height"), 720)
         quality = _as_optional_quality(cfg.get("quality"), final_format)
         wait_for_selector = str(cfg.get("wait_for_selector") or "")
-        wait_for_selector_timeout_ms = _as_int(cfg.get("wait_for_selector_timeout_ms"), 5000)
-        wait_for_timeout_ms = _as_int(cfg.get("wait_for_timeout_ms"), 0)
+        wait_for_selector_timeout_ms = coerce_int(cfg.get("wait_for_selector_timeout_ms"), 5000)
+        wait_for_timeout_ms = coerce_int(cfg.get("wait_for_timeout_ms"), 0)
         best_attempt = coerce_bool(cfg.get("best_attempt"), False)
 
         output_name = _safe_capture_filename(filename, url, final_format)

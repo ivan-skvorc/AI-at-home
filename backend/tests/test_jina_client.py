@@ -11,7 +11,6 @@ import deerflow.community.jina_ai.jina_client as jina_client_module
 from deerflow.community.jina_ai.jina_client import JinaClient
 from deerflow.community.jina_ai.tools import (
     _coerce_proxy,
-    _coerce_timeout,
     web_fetch_tool,
 )
 
@@ -406,23 +405,6 @@ async def test_web_fetch_tool_offloads_extraction_to_thread(monkeypatch):
     result = await web_fetch_tool.ainvoke("https://example.com")
     assert to_thread_called, "extract_article must be called via asyncio.to_thread to avoid blocking the event loop"
     assert "threaded" in result
-
-
-@pytest.mark.parametrize(
-    ("value", "default", "expected"),
-    [
-        (30, 10, 30),
-        ("45", 10, 45),
-        ("not-a-number", 10, 10),
-        (True, 10, 10),
-        (False, 10, 10),
-        (None, 10, 10),
-        (1.5, 10, 10),
-    ],
-)
-def test_coerce_timeout(value, default, expected):
-    """_coerce_timeout accepts ints and numeric strings, rejecting bools and junk."""
-    assert _coerce_timeout(value, default) == expected
 
 
 @pytest.mark.parametrize(
