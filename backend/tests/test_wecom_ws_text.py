@@ -10,6 +10,7 @@ with a null value, so chaining ``.get``/``.strip`` on it raised
 from __future__ import annotations
 
 import asyncio
+import logging
 import sys
 import types
 from types import SimpleNamespace
@@ -172,3 +173,23 @@ class TestGroupMentionBeforeCommand:
         inbound = bus.get_inbound_nowait()
         assert inbound.msg_type is InboundMessageType.COMMAND
         assert inbound.text == "/status"
+
+
+def test_failed_working_placeholder_is_logged_and_the_message_still_reaches_the_agent(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    TestGroupMentionBeforeCommand._stub_aibot(monkeypatch)
+    channel, bus = TestGroupMentionBeforeCommand._live_channel()
+    channel._ws_client.reply_stream = AsyncMock(side_effect=RuntimeError("socket gone"))
+
+    with caplog.at_level(logging.DEBUG, logger="app.channels.wecom"):
+        _run(channel._on_ws_text(TestGroupMentionBeforeCommand._group_frame("hello there")))
+
+    channel._ws_client.reply_stream.assert_awaited_once()
+    inbound = bus.get_inbound_nowait()
+    assert inbound.text == "hello there"
+    records = [record for record in caplog.records if record.name == "app.channels.wecom" and record.exc_info]
+    assert len(records) == 1
+    assert records[0].levelno == logging.DEBUG
+    assert isinstance(records[0].exc_info[1], RuntimeError)
