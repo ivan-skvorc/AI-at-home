@@ -3,18 +3,32 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, renderHook, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 
-import { fetchConversationReferencesCapability } from "@/core/features/api";
-import { useConversationReferencesCapability } from "@/core/features/hooks";
+import type * as FeaturesApi from "@/core/features/api";
+import { fetchFeatures, type FeaturesResponse } from "@/core/features/api";
+import {
+  useConversationReferencesCapability,
+  useMcpTasksEnabled,
+  useScheduledTasksFeature,
+} from "@/core/features/hooks";
 
 rs.mock("@/core/features/api", () => ({
-  fetchConversationReferencesCapability: rs.fn(),
+  ...rs.requireActual<typeof FeaturesApi>("@/core/features/api"),
+  fetchFeatures: rs.fn(),
 }));
-const fetchCapability = rs.mocked(fetchConversationReferencesCapability);
+const mockedFetchFeatures = rs.mocked(fetchFeatures);
+const capability = (enabled: boolean, maxReferences: number) =>
+  ({
+    agents_api: { enabled: true },
+    conversation_references: { enabled, max_references: maxReferences },
+  }) satisfies FeaturesResponse;
 function renderCapability() {
+  return renderWithClient(useConversationReferencesCapability);
+}
+function renderWithClient<T>(hook: () => T) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
-  return renderHook(useConversationReferencesCapability, {
+  return renderHook(hook, {
     wrapper: ({ children }: { children: ReactNode }) => (
       <QueryClientProvider client={client}>{children}</QueryClientProvider>
     ),
@@ -22,19 +36,19 @@ function renderCapability() {
 }
 afterEach(() => {
   cleanup();
-  fetchCapability.mockReset();
+  mockedFetchFeatures.mockReset();
 });
 
 describe("conversation reference discovery", () => {
   it("distinguishes an initial failure from a confirmed disable and supports retry", async () => {
-    fetchCapability.mockRejectedValueOnce(new Error("503 temporary"));
+    mockedFetchFeatures.mockRejectedValueOnce(new Error("503 temporary"));
     const { result } = renderCapability();
     expect(result.current.isLoading).toBe(true);
     expect(result.current.isSuccess).toBe(false);
     await waitFor(() => expect(result.current.error).toBeTruthy());
     expect(result.current.isLoading).toBe(false);
     expect(result.current.isSuccess).toBe(false);
-    fetchCapability.mockResolvedValueOnce({ enabled: true, maxReferences: 4 });
+    mockedFetchFeatures.mockResolvedValueOnce(capability(true, 4));
     await result.current.refetch();
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(result.current).toMatchObject({
@@ -44,7 +58,7 @@ describe("conversation reference discovery", () => {
     });
   });
   it("marks a successful disabled response as authoritative", async () => {
-    fetchCapability.mockResolvedValueOnce({ enabled: false, maxReferences: 0 });
+    mockedFetchFeatures.mockResolvedValueOnce(capability(false, 0));
     const { result } = renderCapability();
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(result.current).toMatchObject({
@@ -54,10 +68,10 @@ describe("conversation reference discovery", () => {
     });
   });
   it("does not expose a cached enabled capability after a failed refresh", async () => {
-    fetchCapability.mockResolvedValueOnce({ enabled: true, maxReferences: 3 });
+    mockedFetchFeatures.mockResolvedValueOnce(capability(true, 3));
     const { result } = renderCapability();
     await waitFor(() => expect(result.current.enabled).toBe(true));
-    fetchCapability.mockRejectedValueOnce(new Error("network unavailable"));
+    mockedFetchFeatures.mockRejectedValueOnce(new Error("network unavailable"));
     await result.current.refetch();
     await waitFor(() => expect(result.current.error).toBeTruthy());
     expect(result.current).toMatchObject({
@@ -65,5 +79,26 @@ describe("conversation reference discovery", () => {
       isSuccess: false,
       isLoading: false,
     });
+  });
+});
+
+describe("shared features query", () => {
+  it("serves every feature hook from one /api/features request", async () => {
+    mockedFetchFeatures.mockResolvedValueOnce({
+      ...capability(true, 2),
+      mcp_tasks: { enabled: true },
+    });
+    const { result } = renderWithClient(() => ({
+      references: useConversationReferencesCapability(),
+      mcpTasks: useMcpTasksEnabled(),
+      scheduledTasks: useScheduledTasksFeature(),
+    }));
+    await waitFor(() => expect(result.current.mcpTasks.enabled).toBe(true));
+    expect(result.current.references).toMatchObject({
+      enabled: true,
+      maxReferences: 2,
+    });
+    expect(result.current.scheduledTasks.minIntervalSeconds).toBe(60);
+    expect(mockedFetchFeatures).toHaveBeenCalledTimes(1);
   });
 });

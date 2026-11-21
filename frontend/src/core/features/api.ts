@@ -89,6 +89,11 @@ export interface SubagentBatchesCapability {
   maxRunning: number;
 }
 
+/**
+ * Every feature hook reads this one response through `useFeaturesQuery`
+ * (`./query.ts`) and picks its block with a `select*` function below, so a
+ * page issues one `/api/features` request instead of one per hook.
+ */
 export async function fetchFeatures(): Promise<FeaturesResponse> {
   const res = await fetch(`${getBackendBaseURL()}/api/features`);
   if (!res.ok) {
@@ -108,8 +113,10 @@ export interface AutoTitleCapability {
   modelName: string | null;
 }
 
-export async function fetchAutoTitleCapability(): Promise<AutoTitleCapability> {
-  const feature = (await fetchFeatures()).auto_title;
+export function selectAutoTitleCapability(
+  features: FeaturesResponse,
+): AutoTitleCapability {
+  const feature = features.auto_title;
   return {
     // Fail open: a Gateway that predates the field still renames conversations,
     // so reporting "disabled" would grey out a toggle that in fact works.
@@ -118,16 +125,20 @@ export async function fetchAutoTitleCapability(): Promise<AutoTitleCapability> {
   };
 }
 
-export async function fetchBrowserControlEnabled(): Promise<boolean> {
-  return (await fetchFeatures()).browser_control?.enabled ?? false;
+export function selectBrowserControlEnabled(
+  features: FeaturesResponse,
+): boolean {
+  return features.browser_control?.enabled ?? false;
 }
 
-export async function fetchMcpTasksEnabled(): Promise<boolean> {
-  return (await fetchFeatures()).mcp_tasks?.enabled ?? false;
+export function selectMcpTasksEnabled(features: FeaturesResponse): boolean {
+  return features.mcp_tasks?.enabled ?? false;
 }
 
-export async function fetchSubagentBatchesCapability(): Promise<SubagentBatchesCapability> {
-  const feature = (await fetchFeatures()).subagent_batches;
+export function selectSubagentBatchesCapability(
+  features: FeaturesResponse,
+): SubagentBatchesCapability {
+  const feature = features.subagent_batches;
   const legacyEnabled = feature?.enabled ?? false;
   return {
     repositoryAvailable: feature?.repository_available ?? legacyEnabled,
@@ -136,8 +147,9 @@ export async function fetchSubagentBatchesCapability(): Promise<SubagentBatchesC
   };
 }
 
-export async function fetchConversationReferencesCapability(): Promise<ConversationReferencesCapability> {
-  const features = await fetchFeatures();
+export function selectConversationReferencesCapability(
+  features: FeaturesResponse,
+): ConversationReferencesCapability {
   const capability = features.conversation_references;
   const maxReferences = capability?.max_references;
   return {
@@ -151,17 +163,19 @@ export async function fetchConversationReferencesCapability(): Promise<Conversat
   };
 }
 
-export async function fetchKnowledgeBaseFeature(): Promise<{
+export function selectKnowledgeBaseFeature(features: FeaturesResponse): {
   scopeSelectionEnabled: boolean;
-}> {
-  const feature = (await fetchFeatures()).knowledge_base;
+} {
+  const feature = features.knowledge_base;
   return {
     scopeSelectionEnabled: feature?.scope_selection_enabled ?? false,
   };
 }
 
-export async function fetchScheduledTasksFeature(): Promise<ScheduledTasksFeature> {
-  const feature = (await fetchFeatures()).scheduled_tasks;
+export function selectScheduledTasksFeature(
+  features: FeaturesResponse,
+): ScheduledTasksFeature {
+  const feature = features.scheduled_tasks;
   const defaults = DEFAULT_SCHEDULED_TASKS_FEATURE;
   const minInterval = feature?.min_interval_seconds;
   return {
@@ -187,8 +201,10 @@ export async function fetchScheduledTasksFeature(): Promise<ScheduledTasksFeatur
   };
 }
 
-export async function fetchThreadActivityFeature(): Promise<ThreadActivityFeature> {
-  const feature = (await fetchFeatures()).thread_activity;
+export function selectThreadActivityFeature(
+  features: FeaturesResponse,
+): ThreadActivityFeature {
+  const feature = features.thread_activity;
   return {
     available: feature?.available === true,
   };

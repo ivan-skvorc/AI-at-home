@@ -1,39 +1,39 @@
-import { useQuery } from "@tanstack/react-query";
-
 import {
   type AutoTitleCapability,
-  fetchAutoTitleCapability,
-  fetchFeatures,
   DEFAULT_SCHEDULED_TASKS_FEATURE,
   DEFAULT_THREAD_ACTIVITY_FEATURE,
-  fetchBrowserControlEnabled,
-  fetchConversationReferencesCapability,
-  fetchKnowledgeBaseFeature,
-  fetchMcpTasksEnabled,
-  fetchScheduledTasksFeature,
-  fetchSubagentBatchesCapability,
-  fetchThreadActivityFeature,
+  type FeaturesResponse,
+  selectAutoTitleCapability,
+  selectBrowserControlEnabled,
+  selectConversationReferencesCapability,
+  selectKnowledgeBaseFeature,
+  selectMcpTasksEnabled,
+  selectScheduledTasksFeature,
+  selectSubagentBatchesCapability,
+  selectThreadActivityFeature,
 } from "./api";
+import { useFeaturesQuery } from "./query";
+
+// Hooks that re-check on every mount, so flipping config.yaml reaches the UI
+// on the next visit without a rebuild.
+const ON_EVERY_MOUNT = { staleTime: 0, refetchOnMount: true } as const;
+
+const selectRunInputs = (features: FeaturesResponse) =>
+  features.run_inputs === true;
 
 export function useRunInputsEnabled(enabled = true) {
-  const { data } = useQuery({
-    queryKey: ["features", "run_inputs"],
-    queryFn: async () => (await fetchFeatures()).run_inputs === true,
+  const { data } = useFeaturesQuery(selectRunInputs, {
     enabled,
-    retry: false,
     staleTime: 60_000,
   });
   return enabled && data === true;
 }
 
 export function useBrowserControlEnabled() {
-  const { data, isPending } = useQuery({
-    queryKey: ["features", "browser_control"],
-    queryFn: () => fetchBrowserControlEnabled(),
-    staleTime: 0,
-    refetchOnMount: true,
-    retry: false,
-  });
+  const { data, isPending } = useFeaturesQuery(
+    selectBrowserControlEnabled,
+    ON_EVERY_MOUNT,
+  );
 
   return {
     enabled: data ?? false,
@@ -42,13 +42,10 @@ export function useBrowserControlEnabled() {
 }
 
 export function useMcpTasksEnabled() {
-  const { data, isPending } = useQuery({
-    queryKey: ["features", "mcp_tasks"],
-    queryFn: () => fetchMcpTasksEnabled(),
-    staleTime: 0,
-    refetchOnMount: true,
-    retry: false,
-  });
+  const { data, isPending } = useFeaturesQuery(
+    selectMcpTasksEnabled,
+    ON_EVERY_MOUNT,
+  );
 
   return {
     enabled: data ?? false,
@@ -57,13 +54,10 @@ export function useMcpTasksEnabled() {
 }
 
 export function useSubagentBatchesCapability() {
-  const { data, isPending } = useQuery({
-    queryKey: ["features", "subagent_batches"],
-    queryFn: () => fetchSubagentBatchesCapability(),
-    staleTime: 0,
-    refetchOnMount: true,
-    retry: false,
-  });
+  const { data, isPending } = useFeaturesQuery(
+    selectSubagentBatchesCapability,
+    ON_EVERY_MOUNT,
+  );
   return {
     repositoryAvailable: data?.repositoryAvailable ?? false,
     workerRunning: data?.workerRunning ?? false,
@@ -80,13 +74,10 @@ export function useSubagentBatchesCapability() {
 export function useAutoTitleCapability(): AutoTitleCapability & {
   isLoading: boolean;
 } {
-  const { data, isPending } = useQuery({
-    queryKey: ["features", "auto_title"],
-    queryFn: () => fetchAutoTitleCapability(),
-    staleTime: 0,
-    refetchOnMount: true,
-    retry: false,
-  });
+  const { data, isPending } = useFeaturesQuery(
+    selectAutoTitleCapability,
+    ON_EVERY_MOUNT,
+  );
   return {
     enabled: data?.enabled ?? true,
     modelName: data?.modelName ?? null,
@@ -95,13 +86,10 @@ export function useAutoTitleCapability(): AutoTitleCapability & {
 }
 
 export function useConversationReferencesCapability() {
-  const { data, isPending, isSuccess, error, refetch } = useQuery({
-    queryKey: ["features", "conversation_references"],
-    queryFn: () => fetchConversationReferencesCapability(),
-    staleTime: 0,
-    refetchOnMount: true,
-    retry: false,
-  });
+  const { data, isPending, isSuccess, error, refetch } = useFeaturesQuery(
+    selectConversationReferencesCapability,
+    ON_EVERY_MOUNT,
+  );
   return {
     enabled: isSuccess && (data?.enabled ?? false),
     maxReferences: data?.maxReferences ?? 0,
@@ -113,13 +101,10 @@ export function useConversationReferencesCapability() {
 }
 
 export function useKnowledgeBaseEnabled() {
-  const { data, isPending } = useQuery({
-    queryKey: ["features", "knowledge_base"],
-    queryFn: fetchKnowledgeBaseFeature,
-    staleTime: 0,
-    refetchOnMount: true,
-    retry: false,
-  });
+  const { data, isPending } = useFeaturesQuery(
+    selectKnowledgeBaseFeature,
+    ON_EVERY_MOUNT,
+  );
   return {
     scopeSelectionEnabled: data?.scopeSelectionEnabled ?? false,
     isLoading: isPending,
@@ -132,13 +117,10 @@ export function useKnowledgeBaseEnabled() {
  * flashes an "unavailable" state on a working server.
  */
 export function useScheduledTasksFeature() {
-  const { data, isPending } = useQuery({
-    queryKey: ["features", "scheduled_tasks"],
-    queryFn: fetchScheduledTasksFeature,
-    staleTime: 0,
-    refetchOnMount: true,
-    retry: false,
-  });
+  const { data, isPending } = useFeaturesQuery(
+    selectScheduledTasksFeature,
+    ON_EVERY_MOUNT,
+  );
   const feature = data ?? DEFAULT_SCHEDULED_TASKS_FEATURE;
   return {
     available: feature.available,
@@ -156,13 +138,10 @@ export function useScheduledTasksFeature() {
  * or posts against a backend that lacks the endpoints.
  */
 export function useThreadActivityFeature() {
-  const { data, isPending } = useQuery({
-    queryKey: ["features", "thread_activity"],
-    queryFn: fetchThreadActivityFeature,
-    staleTime: 0,
-    refetchOnMount: true,
-    retry: false,
-  });
+  const { data, isPending } = useFeaturesQuery(
+    selectThreadActivityFeature,
+    ON_EVERY_MOUNT,
+  );
   const feature = data ?? DEFAULT_THREAD_ACTIVITY_FEATURE;
   return {
     available: feature.available,

@@ -1,10 +1,7 @@
-import { useQuery } from "@tanstack/react-query";
-import { useContext } from "react";
-
 import { fetch } from "@/core/api/fetcher";
-import { AuthQueryScopeContext } from "@/core/auth/query-scope";
 import { getBackendBaseURL } from "@/core/config";
-import { fetchFeatures } from "@/core/features/api";
+import { type FeaturesResponse } from "@/core/features/api";
+import { useFeaturesQuery } from "@/core/features/query";
 import {
   extractHitlApprovalRequests,
   type HitlApprovalRequest,
@@ -13,15 +10,13 @@ import {
 
 export type ApprovalMode = "ask" | "auto" | "full";
 
+const selectToolApproval = (features: FeaturesResponse) =>
+  features.tool_approval ?? null;
+
+// The query client is already scoped to the signed-in account
+// (components/query-client-provider.tsx), so the shared key needs no account.
 export function useToolApprovalFeature(enabled = true) {
-  const account = useContext(AuthQueryScopeContext);
-  return useQuery({
-    queryKey: ["features", "tool_approval", account],
-    queryFn: async () => (await fetchFeatures()).tool_approval ?? null,
-    enabled,
-    retry: false,
-    staleTime: 60_000,
-  });
+  return useFeaturesQuery(selectToolApproval, { enabled, staleTime: 60_000 });
 }
 
 export const approvalsKey = (threadId: string, account: unknown) =>
