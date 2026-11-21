@@ -130,7 +130,7 @@ Entry points: the skills by name or slash command
 Files: skills/public/deep-research/**, skills/public/github-deep-research/**, skills/public/data-analysis/**, skills/public/consulting-analysis/**, skills/public/academic-paper-review/**, skills/public/systematic-literature-review/**, skills/public/frontend-design/**, skills/public/web-design-guidelines/**, skills/public/vercel-deploy/**, skills/public/code-documentation/**, skills/public/bootstrap/**, skills/public/claude-to-deerflow/**, skills/public/surprise-me/**
 Data: thread workspace
 External: the services each skill names (GitHub, Vercel, ...)
-Tests: tests/skills/test_data_analysis_json_export.py, tests/skills/test_github_deep_research.py, tests/skills/test_github_research_issues.py, backend/tests/test_skills_bundled.py
+Tests: tests/skills/test_data_analysis_json_export.py, tests/skills/test_github_deep_research.py, tests/skills/test_github_research_issues.py, backend/tests/test_skills_bundled.py, tests/skills/test_claude_to_deerflow.py
 
 ### Bundled coding skills
 What: coding-discipline skills that ship in skills/public: systematic debugging, test-driven development, requesting code review, simplify code, spike, subagent-driven development, and repo-change-cycle (sets a repository up with a feature map and a three-level change cycle from the bundled setup brief).
@@ -194,7 +194,7 @@ Entry points: web_search and image_search tools
 Files: backend/packages/harness/deerflow/community/web_search/**, backend/packages/harness/deerflow/community/searxng/**, backend/packages/harness/deerflow/community/tavily/**, backend/packages/harness/deerflow/community/ddg_search/**, scripts/detect_searxng.py, scripts/searxng.sh, docker/searxng/**, frontend/src/components/workspace/citations/**
 Data: none
 External: SearXNG on loopback port 8088, Tavily and other search APIs
-Tests: backend/tests/test_web_search_dispatcher.py, backend/tests/test_searxng_client.py, backend/tests/test_detect_searxng.py, backend/tests/test_tavily_tools.py, backend/tests/test_search_fetch_defaults.py, frontend/tests/e2e/web-search-results.spec.ts
+Tests: backend/tests/test_web_search_dispatcher.py, backend/tests/test_searxng_client.py, backend/tests/test_detect_searxng.py, backend/tests/test_tavily_tools.py, backend/tests/test_search_fetch_defaults.py, frontend/tests/e2e/web-search-results.spec.ts, backend/tests/test_community_config_bool.py, backend/tests/test_community_config_int.py
 
 ### Web fetch
 What: web_fetch reads pages through a local Camoufox stealth browser by default (geoip, humanize, block_webrtc), with Jina and other readers as alternatives.
@@ -202,7 +202,7 @@ Entry points: web_fetch tool
 Files: backend/packages/harness/deerflow/community/web_fetch/**, backend/packages/harness/deerflow/community/camoufox_fetch/**, backend/packages/harness/deerflow/community/jina_ai/**, backend/packages/harness/deerflow/community/url_safety.py, backend/packages/harness/deerflow/utils/readability.py, scripts/ensure_camoufox.py
 Data: none
 External: the fetched sites, Jina reader when configured
-Tests: backend/tests/test_web_fetch_dispatcher.py, backend/tests/test_camoufox_fetch.py, backend/tests/test_camoufox_stealth_options.py, backend/tests/test_ensure_camoufox.py, backend/tests/test_camoufox_runtime_deps.py, backend/tests/test_jina_client.py
+Tests: backend/tests/test_web_fetch_dispatcher.py, backend/tests/test_camoufox_fetch.py, backend/tests/test_camoufox_stealth_options.py, backend/tests/test_ensure_camoufox.py, backend/tests/test_camoufox_runtime_deps.py, backend/tests/test_jina_client.py, backend/tests/test_community_config_bool.py, backend/tests/test_community_config_int.py
 
 ### Sandbox and file tools
 What: bash and file tools run in a local or per-thread container sandbox (also E2B, BoxLite, OpenSandbox, Tenki), with clone-and-run of repos, exposed ports, debuggers, optional KVM and private GitHub access.

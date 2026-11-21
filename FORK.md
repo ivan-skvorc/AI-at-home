@@ -3574,8 +3574,9 @@ defaults: an edit silently moved the conversation onto the default model, and
 took the mode, reasoning effort, internet switch and Democracy panel with it.
 
 `copyThreadContextOverride(source, target)` copies the override onto the new
-thread id before anything routes to it, on both fork paths — the edit version
-and `useBranchThread`. It is a copy, not a share: changing the model in the
+thread id before anything routes to it, on both paths that create one — the
+edit version and the branch action in `components/workspace/chats/chat-instance.tsx`.
+It is a copy, not a share: changing the model in the
 version must not reach back into its parent. Pinned by
 `tests/unit/core/settings/thread-context-isolation.dom.test.ts`.
 

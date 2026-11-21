@@ -232,7 +232,7 @@ Tests: backend/tests/test_guardrail_middleware.py, backend/tests/test_pii_redact
 
 ### Mentions and conversation references
 What: @-mention skills, files and extensions in the composer, attach up to three earlier conversations for the agent to read, or ask about a message in a side chat (sidecar).
-Entry points: @ in the composer, Reference a conversation button, sidecar panel
+Entry points: @ in the composer, sidecar panel
 Files: frontend/src/components/workspace/mentions/**, frontend/src/components/workspace/conversation-references/**, frontend/src/components/workspace/sidecar/**, frontend/src/core/sidecar/**, frontend/src/core/conversation-references/**, backend/packages/harness/deerflow/tools/conversation.py, backend/app/gateway/conversation_access.py, backend/app/gateway/conversation_reader.py
 Data: reads other threads' visible messages for the length of the run
 External: none

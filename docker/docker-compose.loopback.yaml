@@ -2,7 +2,7 @@
 #
 # Appended by scripts/deploy.sh ONLY when BIND_HOST is set to a single specific
 # interface (e.g. a Tailscale IP like 100.x.y.z) that is neither loopback nor a
-# wildcard. See scripts/deploy.sh::should_cobind_loopback.
+# wildcard. See scripts/docker_launch_lib.sh::should_cobind_loopback.
 #
 # Why this exists: the base docker-compose.yaml publishes the entry port as
 # "${BIND_HOST:-127.0.0.1}:${PORT:-2026}:2026", i.e. ONE interface. BIND_HOST is a
