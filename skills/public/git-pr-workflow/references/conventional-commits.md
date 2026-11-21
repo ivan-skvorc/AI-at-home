@@ -65,5 +65,5 @@ branch; `Refs #42` links without closing.
 - Changed CI pipelines: `ci`. Updated dependencies or tooling: `chore`.
 - Made something faster: `perf`.
 
-Pass the message to `gitflow.py commit` with `--message-file -` and a quoted
+Pass the message to `gitflow.sh commit` with `--message-file -` and a quoted
 heredoc, so backquotes and dollar signs in it reach git unchanged.

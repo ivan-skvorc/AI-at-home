@@ -1,10 +1,10 @@
 ---
 name: git-pr-workflow
-description: Use this skill when a task commits, pushes, branches, or opens, updates or checks a GitHub pull request in the sandbox. gitflow.py gives JSON-reporting primitives - work branches, checkpoints, secret-scanned commits, verified pushes, idempotent PRs, CI status, worktrees.
+description: Use this skill when a task commits, pushes, branches, or opens, updates or checks a GitHub pull request in the sandbox. gitflow.sh gives JSON-reporting primitives - work branches, checkpoints, secret-scanned commits, verified pushes, idempotent PRs, CI status, worktrees.
 license: MIT
 author: DeerFlow; workflow guidance adapted from Hermes Agent (Nous Research)
 version: 1.0.0
-compatibility: Needs git and Python 3.10+ in the sandbox. gh is optional; without it, pull requests use the GitHub REST API with the GH_TOKEN or GITHUB_TOKEN that bash receives when the user connected GitHub.
+compatibility: Needs bash 4.4+, git and Python 3.10+ in the sandbox (POSIX). gh is optional. Pull requests use the GitHub REST API with the GH_TOKEN or GITHUB_TOKEN that bash receives when the user connected GitHub, or with an authenticated gh's credentials.
 metadata:
   tags: [git, github, pull-requests, commits, ci, code-review, worktrees]
   related-skills: [test-driven-development, systematic-debugging]
@@ -19,31 +19,35 @@ Agents lose work and report things that never happened when they drive git by
 hand: commit messages mangled by quoting, commits on the default branch, tokens
 pasted into remote URLs, a "pushed" branch that is not on the remote, a pull
 request that was never opened, and parallel subagents editing one checkout. This
-skill replaces those steps with one script, `scripts/gitflow.py` (its GitHub API
-client is `scripts/gitflow_github.py`). Every subcommand checks its
-preconditions, does one thing, reads the result back from git or GitHub, and
-prints a single JSON object. A failure exits non-zero with `error` and `hint`
-fields, and the same text on stderr.
+skill replaces those steps with one entry point, `scripts/gitflow.sh`. Every
+subcommand checks its preconditions, does one thing, reads the result back from
+git or GitHub, and prints a single JSON object. A failure exits non-zero with
+`error` and `hint` fields, and the same text on stderr.
+
+The bash script is the only part that starts processes (git, gh, python3). Its
+Python helpers start none: `scripts/gitflow_json.py` parses git output and
+formats the JSON, `scripts/gitflow_scan.py` scans the staged diff for secrets,
+and `scripts/gitflow_github.py` calls the GitHub REST API over HTTPS.
 
 **Core rule: never claim a branch, commit, push, pull request, CI result or
-merge that you have not read back with gitflow.py in this turn.** Quote the
+merge that you have not read back with gitflow.sh in this turn.** Quote the
 `sha`, `remote_sha`, `url`, `state` and `checks.state` fields from its output.
 
 ## Running it
 
 The script is mounted read-only at
-/mnt/skills/public/git-pr-workflow/scripts/gitflow.py. Each `bash` call starts
+/mnt/skills/public/git-pr-workflow/scripts/gitflow.sh. Each `bash` call starts
 fresh, so begin every command with a `cd` into the repository:
 
 ~~~bash
-cd /mnt/user-data/workspace/myrepo && python3 /mnt/skills/public/git-pr-workflow/scripts/gitflow.py preflight
+cd /mnt/user-data/workspace/myrepo && bash /mnt/skills/public/git-pr-workflow/scripts/gitflow.sh preflight
 ~~~
 
 `--repo DIR` works instead of `cd`. Paths passed to `--paths` are relative to the
-repository root. `gh` is optional: pull-request commands use it when it is
-installed and authenticated, and otherwise call the GitHub REST API with the
+repository root. Pull-request commands call the GitHub REST API with the
 `GH_TOKEN` or `GITHUB_TOKEN` variable that the sandbox `bash` tool provides once
-the user has connected GitHub. Output never contains a token.
+the user has connected GitHub; when neither is set and `gh` is installed and
+logged in, they use gh's credentials instead. Output never contains a token.
 
 ## Routing
 
@@ -84,7 +88,7 @@ the user has connected GitHub. Output never contains a token.
    after checking `preflight`). Pass multi-line messages through a quoted
    heredoc so nothing is expanded. If the secret scan refuses, remove the
    secret; never route around the scan with plain `git commit`.
-6. **Push with gitflow.py.** `push` never uses plain `--force`, retries
+6. **Push with gitflow.sh.** `push` never uses plain `--force`, retries
    transient network errors, and verifies that the remote ref equals local HEAD.
    Never put a token into a remote URL or onto a command line.
 7. **Open the pull request with `pr create`.** It returns the open pull request
@@ -100,18 +104,18 @@ the user has connected GitHub. Output never contains a token.
 ## End-to-end example
 
 ~~~bash
-cd /mnt/user-data/workspace/myrepo && python3 /mnt/skills/public/git-pr-workflow/scripts/gitflow.py preflight
-cd /mnt/user-data/workspace/myrepo && python3 /mnt/skills/public/git-pr-workflow/scripts/gitflow.py branch fix/empty-payload
-cd /mnt/user-data/workspace/myrepo && python3 /mnt/skills/public/git-pr-workflow/scripts/gitflow.py checkpoint -m "before payload refactor"
+cd /mnt/user-data/workspace/myrepo && bash /mnt/skills/public/git-pr-workflow/scripts/gitflow.sh preflight
+cd /mnt/user-data/workspace/myrepo && bash /mnt/skills/public/git-pr-workflow/scripts/gitflow.sh branch fix/empty-payload
+cd /mnt/user-data/workspace/myrepo && bash /mnt/skills/public/git-pr-workflow/scripts/gitflow.sh checkpoint -m "before payload refactor"
 # ... edit with str_replace or write_file, run the project's tests with bash ...
-cd /mnt/user-data/workspace/myrepo && python3 /mnt/skills/public/git-pr-workflow/scripts/gitflow.py commit \
+cd /mnt/user-data/workspace/myrepo && bash /mnt/skills/public/git-pr-workflow/scripts/gitflow.sh commit \
   --paths src/api.py tests/test_api.py --message-file - <<'EOF'
 fix(api): return 400 for an empty payload
 
 The handler indexed into the body before checking it, so an empty
 request crashed with a 500.
 EOF
-cd /mnt/user-data/workspace/myrepo && python3 /mnt/skills/public/git-pr-workflow/scripts/gitflow.py push
+cd /mnt/user-data/workspace/myrepo && bash /mnt/skills/public/git-pr-workflow/scripts/gitflow.sh push
 ~~~
 
 Write the pull request body with `write_file` outside the repository, starting
@@ -120,9 +124,9 @@ to /mnt/user-data/workspace/pr-body.md), then open the pull request and read its
 state back:
 
 ~~~bash
-cd /mnt/user-data/workspace/myrepo && python3 /mnt/skills/public/git-pr-workflow/scripts/gitflow.py pr create \
+cd /mnt/user-data/workspace/myrepo && bash /mnt/skills/public/git-pr-workflow/scripts/gitflow.sh pr create \
   --title "fix(api): return 400 for an empty payload" --body-file /mnt/user-data/workspace/pr-body.md
-cd /mnt/user-data/workspace/myrepo && python3 /mnt/skills/public/git-pr-workflow/scripts/gitflow.py pr status
+cd /mnt/user-data/workspace/myrepo && bash /mnt/skills/public/git-pr-workflow/scripts/gitflow.sh pr status
 ~~~
 
 ## Parallel subagents

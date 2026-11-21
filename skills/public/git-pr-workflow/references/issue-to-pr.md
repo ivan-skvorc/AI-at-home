@@ -41,7 +41,7 @@ criterion to a test or an explicit verification step.
 
 ## 5. Implement the smallest complete change and fix the whole class
 
-Create the branch with `gitflow.py branch`, named like fix/issue-N (or a worktree when
+Create the branch with `gitflow.sh branch`, named like fix/issue-N (or a worktree when
 subagents work in parallel). Add the regression test first, then the fix. When
 the fix works, `grep` for the same bug shape at sibling call sites and fix them
 in the same pull request, or rule them out explicitly. Every changed line should
@@ -50,7 +50,7 @@ trace to the issue; no drive-by cleanup.
 ## 6. Prove the regression test bites
 
 Checkpoint, temporarily restore the old behavior of the function under test, run
-the new test and confirm it fails, then restore the fix (`gitflow.py restore`
+the new test and confirm it fails, then restore the fix (`gitflow.sh restore`
 with the checkpoint id) and confirm it passes. A test that passes with and
 without the fix proves nothing.
 
@@ -60,12 +60,12 @@ Run the formatter, linter, type checker and the project's test entry point on
 the affected area. Review your own diff (`code-review.md`). Commit, push and
 open the pull request right away: CI only starts once it exists. The body links
 the issue ("Closes #N") and states the problem, the approach, the tests you ran,
-the risk and what is out of scope. `gitflow.py pr create` reads the pull request
+the risk and what is out of scope. `gitflow.sh pr create` reads the pull request
 back; check its `head_sha`, `base` and `title`.
 
 ## 8. Shepherd CI honestly and close the loop
 
-Read the live checks with `gitflow.py pr status` and the failing logs as
+Read the live checks with `gitflow.sh pr status` and the failing logs as
 described in `ci-troubleshooting.md`. Separate failures caused by your diff from
 pre-existing or infrastructure failures (reproduce on the default branch when
 unsure; rerun once only for a genuine flake). Never say green, merged or

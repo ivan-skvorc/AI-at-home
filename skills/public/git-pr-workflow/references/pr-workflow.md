@@ -1,8 +1,8 @@
 # Pull request workflow
 
 The full lifecycle of a change, from a fresh branch to a merged pull request,
-with gitflow.py doing the steps that must not go wrong. In the commands below,
-GITFLOW stands for python3 /mnt/skills/public/git-pr-workflow/scripts/gitflow.py.
+with gitflow.sh doing the steps that must not go wrong. In the commands below,
+GITFLOW stands for bash /mnt/skills/public/git-pr-workflow/scripts/gitflow.sh.
 Write the full command each time, because a `bash` call keeps no variables.
 
 ## 1. Before you start
@@ -95,7 +95,7 @@ cd /mnt/user-data/workspace/myrepo && GITFLOW pr create --title "feat(auth): add
 Add `--draft` for work in progress and `--base BRANCH` when the target is not
 the default branch. Running it again returns the existing open pull request
 (`created: false`) instead of opening a second one. Give the user `url` and
-`number` from the output. Reviewers and labels are not part of gitflow.py; see
+`number` from the output. Reviewers and labels are not part of gitflow.sh; see
 the table at the end.
 
 ## 7. Watch CI and fix failures
@@ -151,7 +151,7 @@ main checkout and runs the full test suite there. Remove each worktree with
 
 ## Other pull request operations
 
-gitflow.py covers the steps where mistakes are costly. For everything else use
+gitflow.sh covers the steps where mistakes are costly. For everything else use
 `gh` when it is available, or the REST API with curl, keeping the token in the
 environment variable. For a JSON payload with free text, write it with
 `write_file` and send it with `--data @file`, which avoids shell quoting.

@@ -1,7 +1,18 @@
-# gitflow.py reference
+# gitflow.sh reference
 
-The script is `../scripts/gitflow.py`; the GitHub REST client it uses is
-`../scripts/gitflow_github.py`. Both are standard-library Python 3.10+ for POSIX.
+The entry point is `../scripts/gitflow.sh` (bash 4.4+). It is the only file in
+the skill that starts processes: git, gh when installed, and its three
+standard-library Python 3.10+ helpers, which start none:
+
+| Helper | Role |
+| --- | --- |
+| `../scripts/gitflow_json.py` | parses git output (status, checkpoints, worktrees) and prints the JSON result, redacted |
+| `../scripts/gitflow_scan.py` | reads the staged diff on stdin and prints secret findings |
+| `../scripts/gitflow_github.py` | the GitHub REST client (urllib over HTTPS) behind `pr create` and `pr status` |
+
+The script passes results to the JSON helper as NUL-separated
+(type, key, value) records; the record types are listed in that helper's
+docstring.
 
 ## Conventions
 
@@ -12,13 +23,18 @@ The script is `../scripts/gitflow.py`; the GitHub REST client it uses is
   exits 0.
 - A refusal or failure prints `"ok": false`, `error`, usually `hint`, and any
   details (for example `findings` or `stderr`) on stdout, repeats the error and
-  hint on stderr, and exits 1. A usage error (unknown flag, missing argument)
-  exits 2 with argparse's message on stderr and no JSON.
+  hint on stderr, and exits 1. A usage error (unknown command or flag, missing
+  argument) exits 2 with a message on stderr and no JSON. `--help` prints the
+  command list.
+- Unexpected failures of the script itself are reported the same way, as an
+  "internal error" with the line number, so stdout always carries JSON for
+  exit codes 0 and 1.
 - Output is redacted: credentials inside URLs, token-shaped strings, and the
   values of `GH_TOKEN` and `GITHUB_TOKEN` are replaced with `***`.
 - Git runs with terminal prompts disabled, so it fails instead of waiting for a
-  password. Local git calls time out after 120 s and network calls after 300 s.
-  When a parallel git process holds a lock, the call is retried a few times.
+  password, and network calls (fetch, push, ls-remote) time out after 300 s when
+  the timeout tool is available. When a parallel git process holds a lock, the
+  call is retried a few times.
 - Protected branches are the default branch plus main and master.
 
 ## preflight
@@ -65,6 +81,9 @@ HEAD, the real index and the working tree are not touched. The commit is stored
 as a ref in the refs namespace deerflow-checkpoints, which a normal push or fetch
 does not transfer. Checkpoint refs are shared by all worktrees of the
 repository. Ignored files (build output, local env files) are never included.
+
+Ids are the UTC creation time with milliseconds plus the commit's first eight
+hex digits, so they sort in creation order.
 
 Fields: `id`, `ref`, `commit`, `tree`, `head`, `branch`, `message`, `files`
 (count), `same_as_head`.
@@ -152,17 +171,25 @@ printed.
 
 Fields: `remote`, `remote_url` (redacted), `branch`, `local_sha`, `remote_sha`,
 `verified`, `result` (new branch, fast-forward, forced update or up to date),
-`forced`, `upstream`, `attempts`, `new_pull_request_url` (GitHub remotes only),
-`warnings`.
+`forced`, `upstream`, `attempts`, `retry_delays_seconds` (the waits before each
+retry), `new_pull_request_url` (GitHub remotes only), `warnings`. A failed push
+reports `attempts` in its error JSON too.
 
 ## pr create and pr status
 
 Both read OWNER and REPO from the remote URL (https, ssh, or the scp-like
 user-at-host form; github.com or GitHub Enterprise, whose API is under
-/api/v3 on the same host). Transport: `gh api` when gh is installed and
-`gh auth status` succeeds for the host; otherwise the REST API over HTTPS with
-`GH_TOKEN` or `GITHUB_TOKEN` (in that order) sent only in the Authorization
-header. With neither, the command fails and asks for GitHub to be connected.
+/api/v3 on the same host). Both call the REST API over HTTPS through
+`gitflow_github.py`. The credentials come from `GH_TOKEN` or `GITHUB_TOKEN` (in that order),
+or, when neither is set and gh is installed and `gh auth status` succeeds for
+the host, gh's own credentials, which the script pipes to the helper on stdin
+(never through argv or the environment). The token is sent only in the
+Authorization header. With no credentials, the command fails and asks for
+GitHub to be connected.
+
+`GITFLOW_API_URL` overrides the API root, for GitHub Enterprise setups whose API
+is not at https://HOST/api/v3, and for tests. It must be https; plain http is
+accepted only on the loopback interface.
 
 `pr create --title T (--body B | --body-file FILE) [--base BRANCH] [--draft] [--remote NAME]`
 
@@ -174,7 +201,7 @@ header. With neither, the command fails and asks for GitHub to be connected.
   before one retry, so a retry cannot open a duplicate.
 - The result is read back from GitHub, never taken from the create response.
 
-Fields: `created`, `via` (gh or rest), `repository`, `number`, `url`, `title`,
+Fields: `created`, `via` (env or gh: where the credentials came from), `repository`, `number`, `url`, `title`,
 `state`, `draft`, `merged`, `merged_at`, `mergeable`, `mergeable_state`, `base`,
 `head`, `head_sha`, `head_matches_remote`, `head_matches_local`, `warnings`.
 

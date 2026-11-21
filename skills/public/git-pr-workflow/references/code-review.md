@@ -11,7 +11,7 @@ cd /mnt/user-data/workspace/myrepo && git log --oneline origin/main..HEAD
 cd /mnt/user-data/workspace/myrepo && git diff origin/main...HEAD -- src/auth/login.py
 ~~~
 
-Use the default branch from `gitflow.py preflight` in place of main. Then:
+Use the default branch from `gitflow.sh preflight` in place of main. Then:
 
 1. Read the summary first (files and sizes), then the diff file by file. Use
    `read_file` on each changed file for context: a diff hides what surrounds it.
@@ -20,7 +20,7 @@ Use the default branch from `gitflow.py preflight` in place of main. Then:
 3. Apply the checklist below and present the findings in the format below.
 4. If you find a critical issue in your own change, fix it before pushing.
 
-`gitflow.py commit` already refuses staged secrets, but review for logic that
+`gitflow.sh commit` already refuses staged secrets, but review for logic that
 leaks them too (logging a request with its headers, for example).
 
 ## Reviewing someone's pull request
@@ -32,14 +32,14 @@ leaks them too (logging a request with its headers, for example).
 
 ~~~bash
 cd /mnt/user-data/workspace/myrepo && git fetch origin pull/42/head:pr-42
-cd /mnt/user-data/workspace/myrepo && python3 /mnt/skills/public/git-pr-workflow/scripts/gitflow.py worktree add review-42 --from pr-42
+cd /mnt/user-data/workspace/myrepo && bash /mnt/skills/public/git-pr-workflow/scripts/gitflow.sh worktree add review-42 --from pr-42
 ~~~
 
 3. Read the diff against the base and the changed files in full, run the tests
    and linters in the worktree, and check the CI state with
-   `gitflow.py pr status --number 42`.
+   `gitflow.sh pr status --number 42`.
 4. Apply the checklist, write the review, then remove the worktree with
-   `gitflow.py worktree remove review-42 --force`.
+   `gitflow.sh worktree remove review-42 --force`.
 
 ## Checklist
 
@@ -90,7 +90,7 @@ cd /mnt/user-data/workspace/myrepo && gh pr review 42 --request-changes --body-f
 ~~~
 
 Without gh, build the payload as a JSON file with `write_file` (the commit id is
-the pull request's `head_sha` from `gitflow.py pr status`; `line` is the line in
+the pull request's `head_sha` from `gitflow.sh pr status`; `line` is the line in
 the new version of the file):
 
 ~~~json

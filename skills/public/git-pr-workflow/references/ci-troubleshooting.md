@@ -1,6 +1,6 @@
 # CI troubleshooting
 
-Start from `gitflow.py pr status`: `checks.failing` names each failed check
+Start from `gitflow.sh pr status`: `checks.failing` names each failed check
 with its URL. Never report CI as green unless `checks.state` is `success` for
 the commit you pushed (`head_matches_local` true).
 
@@ -78,6 +78,6 @@ CI failed
 
 ## After a fix
 
-Commit with gitflow.py, push, and run `gitflow.py pr status` again. The new
+Commit with gitflow.sh, push, and run `gitflow.sh pr status` again. The new
 commit's checks start from `pending`. Stop after three attempts on the same
 failure and report what you found.
