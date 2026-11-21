@@ -201,6 +201,7 @@ def _get_skills_container_path() -> str:
         _get_skills_container_path._cached = value  # type: ignore[attr-defined]
         return value
     except Exception:
+        logger.debug("Skills container path unavailable; using the default", exc_info=True)
         return _DEFAULT_SKILLS_CONTAINER_PATH
 
 
@@ -225,7 +226,7 @@ def _get_skills_host_path() -> str | None:
             _get_skills_host_path._cached = value  # type: ignore[attr-defined]
             return value
     except Exception:
-        pass
+        logger.debug("Skills host path unavailable", exc_info=True)
     return None
 
 
@@ -465,6 +466,7 @@ def _get_custom_mounts():
     except Exception:
         # If config loading fails, return an empty list without caching so that
         # a later call can retry once the config is available.
+        logger.debug("Custom sandbox mounts unavailable; using none", exc_info=True)
         return []
 
 
@@ -522,7 +524,7 @@ def _get_acp_workspace_host_path(thread_id: str | None = None) -> str | None:
             if host_path.exists():
                 return str(host_path)
         except Exception:
-            pass
+            logger.debug("Per-thread ACP workspace path unavailable", exc_info=True)
         return None
 
     cached = getattr(_get_acp_workspace_host_path, "_cached", None)
@@ -537,7 +539,7 @@ def _get_acp_workspace_host_path(thread_id: str | None = None) -> str | None:
             _get_acp_workspace_host_path._cached = value  # type: ignore[attr-defined]
             return value
     except Exception:
-        pass
+        logger.debug("Global ACP workspace path unavailable", exc_info=True)
     return None
 
 
@@ -611,7 +613,7 @@ def _get_mcp_allowed_paths() -> list[str]:
                     allowed_paths.append(arg.rstrip("/") + "/")
 
     except Exception:
-        pass
+        logger.debug("MCP filesystem allowed paths unavailable; keeping %d found so far", len(allowed_paths), exc_info=True)
 
     return allowed_paths
 
@@ -624,7 +626,7 @@ def _get_tool_config_int(name: str, key: str, default: int) -> int:
             if isinstance(value, int):
                 return value
     except Exception:
-        pass
+        logger.debug("Tool config %s.%s unavailable; using the default", name, key, exc_info=True)
     return default
 
 
@@ -926,7 +928,7 @@ def mask_local_paths_in_output(output: str, thread_data: ThreadDataState | None)
             skills_container = _get_skills_container_path()
             stable_sources.append((str(integrations_dir), f"{skills_container}/integrations"))
     except Exception:
-        pass
+        logger.debug("User skill directories unavailable for output masking", exc_info=True)
 
     acp_host = _get_acp_workspace_host_path(_extract_thread_id_from_thread_data(thread_data))
     if acp_host:
@@ -1013,6 +1015,7 @@ def _stored_host_path_exists(path: str, thread_data: ThreadDataState | None) -> 
             try:
                 resolved = replace_virtual_path(path, thread_data)
             except Exception:
+                logger.debug("Stored-path check could not map a user-data path; checking it literally", exc_info=True)
                 resolved = None
             if resolved and resolved != path:
                 candidates.append(resolved)
@@ -2989,6 +2992,7 @@ def bash_tool(runtime: Runtime, command: str, description: str = "") -> str:
                 max_chars = sandbox_cfg.bash_output_max_chars if sandbox_cfg else 20000
                 command_timeout = sandbox_cfg.bash_command_timeout if sandbox_cfg else None
             except Exception:
+                logger.debug("Sandbox bash limits unavailable; using the defaults", exc_info=True)
                 max_chars = 20000
                 command_timeout = None
             output = _execute_bash_command(
@@ -3012,6 +3016,7 @@ def bash_tool(runtime: Runtime, command: str, description: str = "") -> str:
             max_chars = sandbox_cfg.bash_output_max_chars if sandbox_cfg else 20000
             command_timeout = sandbox_cfg.bash_command_timeout if sandbox_cfg else None
         except Exception:
+            logger.debug("Sandbox bash limits unavailable; using the defaults", exc_info=True)
             max_chars = 20000
             command_timeout = None
         return _truncate_bash_output(
@@ -3094,6 +3099,7 @@ def ls_tool(runtime: Runtime, path: str, description: str = "") -> str:
             sandbox_cfg = get_app_config().sandbox
             max_chars = sandbox_cfg.ls_output_max_chars if sandbox_cfg else 20000
         except Exception:
+            logger.debug("Sandbox ls output limit unavailable; using the default", exc_info=True)
             max_chars = 20000
         return _truncate_ls_output(output, _context_clamped(max_chars, COMMAND_OUTPUT_SHARE))
     except SandboxError as e:
@@ -3426,6 +3432,7 @@ def read_file_tool(
             sandbox_cfg = get_app_config().sandbox
             max_chars = sandbox_cfg.read_file_output_max_chars if sandbox_cfg else 50000
         except Exception:
+            logger.debug("Sandbox read_file output limit unavailable; using the default", exc_info=True)
             max_chars = 50000
         # Line numbers in the marker are file line numbers, so a ranged read passes its offset along.
         limit = _context_clamped(max_chars, READ_FILE_SHARE)

@@ -679,8 +679,8 @@ class E2BSandboxProvider(SandboxProvider):
             self._release_ownership(sid)
             try:
                 sandbox.close()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("e2b client close raised: %s", e)
             self._release_deployment_sandbox(sid)
             return None
 
@@ -1587,8 +1587,8 @@ class E2BSandboxProvider(SandboxProvider):
         if sandbox is not None:
             try:
                 sandbox.close()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("e2b client close raised: %s", e)
 
     def _refresh_owned_leases(self) -> None:
         with self._lock:
@@ -2781,8 +2781,8 @@ class E2BSandboxProvider(SandboxProvider):
                         parent = target.rsplit("/", 1)[0]
                         if parent and parent != dest_dir:
                             make_dir(parent)
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug("make_dir for %s failed (continuing): %s", target, e)
                 if thread_resource:
                     if path.is_symlink() or not path.resolve().is_relative_to(src.resolve()):
                         raise ValueError("Thread resource changed to a symlink during upload")
@@ -2810,8 +2810,8 @@ class E2BSandboxProvider(SandboxProvider):
                     chmod_target = files[0][1] if source_is_file else dest_dir
                     chmod_flag = "" if source_is_file else "-R "
                     client.commands.run(f"chmod {chmod_flag}a-w {shlex.quote(chmod_target)}")
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.warning("Could not make e2b mount %s read-only: %s", dest_dir, e)
         elapsed_ms = int((time.monotonic() - started_at) * 1000)
         logger.info(
             "e2b mount upload: source=%s destination=%s files=%d bytes=%d elapsed_ms=%d",
@@ -3039,8 +3039,8 @@ class E2BSandboxProvider(SandboxProvider):
             logger.info("Not killing E2B sandbox %s because a peer owns it", sandbox.id)
             try:
                 sandbox.close()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("e2b client close raised: %s", e)
             return
         self._forget_mount_result(sandbox.id)
         if error := self._kill_client(getattr(sandbox, "_client", None)):
@@ -3052,8 +3052,8 @@ class E2BSandboxProvider(SandboxProvider):
         self._release_ownership(sandbox.id)
         try:
             sandbox.close()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("e2b client close raised: %s", e)
 
     def _kill_client(
         self,
@@ -3143,8 +3143,8 @@ class E2BSandboxProvider(SandboxProvider):
                 self._release_ownership(sandbox_id)
             try:
                 sandbox.close()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("e2b client close raised: %s", e)
 
         sandbox_cls = self._get_sandbox_cls()
         for sandbox_id in warm_ids:
@@ -3173,8 +3173,8 @@ class E2BSandboxProvider(SandboxProvider):
             if callable(close):
                 try:
                     close()
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug("e2b client close raised: %s", e)
         try:
             self._ownership.close()
         except Exception as e:

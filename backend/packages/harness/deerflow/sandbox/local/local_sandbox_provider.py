@@ -115,6 +115,7 @@ class LocalSandboxProvider(SandboxProvider):
 
             sandbox_config = get_app_config().sandbox
         except Exception:
+            logger.debug("Sandbox environment config unavailable; injecting nothing", exc_info=True)
             return {}
         env_config = getattr(sandbox_config, "environment", None) or {}
         return dict(env_config)
