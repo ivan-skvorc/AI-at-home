@@ -670,9 +670,11 @@ MODEL_PRICES: dict[str, dict] = {
     "openrouter-llama-4-maverick": {"price": {"currency": "USD", "input": 0.35, "output": 1.0}},
     # MiniMax's permanent rate; the old 60%-off OpenRouter promotion ended.
     "openrouter-minimax-m3": {"price": {"currency": "USD", "input": 0.3, "output": 1.2}},
-    # OpenRouter's only endpoint is Alibaba's, no discount: 0.95x Alibaba's own
-    # $1.50/$4.50 International list, read on release day 2026-11-16.
-    "openrouter-qwen4-max": {"price": {"currency": "USD", "input": 1.425, "output": 4.275}},
+    # The list rate, which is Alibaba's own $1.50/$4.50 International price: one
+    # of OpenRouter's two Alibaba endpoints shows it 5% off and the other charges
+    # it in full, so the discount is not on every endpoint and is not shipped
+    # (OpenRouter's model page, 2026-11-21).
+    "openrouter-qwen4-max": {"price": {"currency": "USD", "input": 1.5, "output": 4.5}},
     "openrouter-kimi-k3.1-pro": {"price": {"currency": "USD", "input": 2.0, "output": 10.0, "cache_hit": 0.2}},
     "openrouter-mistral-large-4": {"price": {"currency": "USD", "input": 0.7, "output": 2.1, "cache_hit": 0.07}},
     # DeepSeek's own endpoint on the 0813 listing bills its peak/off-peak schedule;

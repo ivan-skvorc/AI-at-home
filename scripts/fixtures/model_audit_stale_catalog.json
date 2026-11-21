@@ -24,8 +24,8 @@
     "output_per_million": 1.2
    },
    "qwen/qwen4-max": {
-    "input_per_million": 1.425,
-    "output_per_million": 4.275,
+    "input_per_million": 1.5,
+    "output_per_million": 4.5,
     "promo_input_per_million": 0.75,
     "promo_output_per_million": 2.2
    },

@@ -674,8 +674,8 @@ models:
   #   supports_thinking: true
   #   price:                          # per 1M tokens; the single source of truth for cost display and budgets
   #     currency: USD
-  #     input: 1.425                   # OpenRouter's only (Alibaba) endpoint, no discount; 0.95x Alibaba's own $1.50/$4.50
-  #     output: 4.275
+  #     input: 1.5                     # the list rate on both Alibaba endpoints; the 5% off one of them shows is not on every endpoint, so it is not shipped
+  #     output: 4.5
   #
   # - name: openrouter-kimi-k3.1-pro
   #   display_name: Kimi K3.1 Pro (OpenRouter) (p)
