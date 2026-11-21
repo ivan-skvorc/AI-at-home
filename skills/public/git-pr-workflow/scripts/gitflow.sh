@@ -90,13 +90,14 @@ ERR="$TMP/err.rec"
 : >"$OUT"
 : >"$ERR"
 
-cleanup() {
+cleanup() { # never changes the exit status
+    trap - ERR
     local file
     for file in "${CLEANUP[@]}"; do
-        rm -f -- "$file" "$file.lock"
+        rm -f -- "$file" "$file.lock" || true
     done
     if [[ -n ${TMP-} && -d $TMP && $TMP == */gitflow.* ]]; then
-        rm -f -- "$TMP"/*
+        rm -f -- "$TMP"/* || true
         rmdir -- "$TMP" 2>/dev/null || true
     fi
 }
@@ -1117,6 +1118,9 @@ cmd_push() {
     fi
     args+=("$REMOTE" "refs/heads/$branch:refs/heads/$branch")
     git_net "$PUSH_ATTEMPTS" "${args[@]}"
+    # The read-back below is another networked call; keep the push's own numbers.
+    local push_attempts="$ATTEMPTS" delays
+    delays="$(IFS=,; printf '%s' "${DELAYS[*]}")"
     local flag="" ref summary="" line
     while IFS= read -r line; do
         IFS=$'\t' read -r flag ref summary <<<"$line" || true
@@ -1125,7 +1129,7 @@ cmd_push() {
         summary=""
     done <<<"$GOUT"
     if ((GRC != 0)); then
-        _rec "$ERR" n attempts "$ATTEMPTS"
+        _rec "$ERR" n attempts "$push_attempts"
         _rec "$ERR" s remote_url "$push_url"
         if [[ -n $summary ]]; then GERR+=$'\n'"$summary"; fi
         git_die push
@@ -1153,9 +1157,7 @@ cmd_push() {
     put_bool forced "$(bool test "$flag" = "+")"
     gx rev-parse --abbrev-ref --symbolic-full-name "@{upstream}"
     if ((GRC == 0)); then put upstream "$GOUT"; else put_null upstream; fi
-    put_num attempts "$ATTEMPTS"
-    local delays
-    delays="$(IFS=,; printf '%s' "${DELAYS[*]}")"
+    put_num attempts "$push_attempts"
     _rec "$OUT" j retry_delays_seconds "[$delays]"
     if [[ -n $raw_url ]] && parse_remote "$raw_url"; then
         put new_pull_request_url "$("$PY" "$HERE/gitflow_github.py" new-pull-url --host "$R_HOST" --owner "$R_OWNER" --repo "$R_NAME" --branch "$branch")"
