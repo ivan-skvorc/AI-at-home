@@ -8,9 +8,9 @@ gated by a login wall the operator did not expect.
 
 ``deploy.sh`` does not source ``.env`` into the shell (compose reads it via
 ``--env-file``), so ``apply_default_auth_mode`` must consult ``.env`` through
-``read_dotenv_value`` to honor an explicit ``DEER_FLOW_AUTH_DISABLED=0``
-opt-out. These tests extract both shell functions and exercise the decision in
-isolation, so a large upstream merge that dropped the hook or reordered the
+``read_dotenv_value`` (``scripts/docker_launch_lib.sh``) to honor an explicit
+``DEER_FLOW_AUTH_DISABLED=0`` opt-out. These tests source the library, extract
+the deploy.sh function and exercise the decision in isolation, so a large upstream merge that dropped the hook or reordered the
 precedence would fail here instead of quietly re-enabling (or force-disabling)
 the login wall in production Docker.
 """
@@ -26,6 +26,7 @@ import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEPLOY_SH = REPO_ROOT / "scripts" / "deploy.sh"
+LAUNCH_LIB = REPO_ROOT / "scripts" / "docker_launch_lib.sh"
 COMPOSE_PATH = REPO_ROOT / "docker" / "docker-compose.yaml"
 
 
@@ -64,15 +65,14 @@ def _run_apply_default_auth_mode(
     env_file = tmp_path / ".env"
     env_file.write_text("" if env_line is None else env_line + "\n", encoding="utf-8")
 
-    read_fn = _extract_shell_function("read_dotenv_value")
     apply_fn = _extract_shell_function("apply_default_auth_mode")
     preset_line = "" if shell_preset is None else f"export DEER_FLOW_AUTH_DISABLED={shell_preset}\n"
 
     script = f"""
 set -e
-ENV_FILE="{env_file}"
-{preset_line}{read_fn}
-{apply_fn}
+. "{LAUNCH_LIB}"
+DOCKER_LAUNCH_ENV_FILE="{env_file}"
+{preset_line}{apply_fn}
 
 apply_default_auth_mode
 printf '%s' "${{DEER_FLOW_AUTH_DISABLED-<unset>}}"

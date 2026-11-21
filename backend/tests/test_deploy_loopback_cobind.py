@@ -6,7 +6,8 @@ from a phone binds ONLY that interface, so the host's own
 ``http://localhost:2026`` is refused — the "works over Tailscale on my phone,
 connection refused on localhost on the PC" footgun.
 
-``scripts/deploy.sh::should_cobind_loopback`` decides when to append
+``should_cobind_loopback`` (``scripts/docker_launch_lib.sh``, sourced by
+``scripts/deploy.sh`` and ``scripts/docker.sh``) decides when to append
 ``docker/docker-compose.loopback.yaml`` (which also publishes the entry port on
 ``127.0.0.1``) so localhost keeps working on the host without widening the
 external surface. These tests pin both the decision (only a single, non-loopback,
@@ -26,24 +27,8 @@ import pytest
 import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-DEPLOY_SH = REPO_ROOT / "scripts" / "deploy.sh"
+LAUNCH_LIB = REPO_ROOT / "scripts" / "docker_launch_lib.sh"
 OVERLAY_PATH = REPO_ROOT / "docker" / "docker-compose.loopback.yaml"
-
-
-def _extract_shell_function(name: str) -> str:
-    text = DEPLOY_SH.read_text(encoding="utf-8")
-    marker = f"{name}() {{"
-    start = text.index(marker)
-    depth = 0
-    chunks: list[str] = []
-
-    for line in text[start:].splitlines(keepends=True):
-        chunks.append(line)
-        depth += line.count("{") - line.count("}")
-        if depth == 0:
-            return "".join(chunks)
-
-    raise AssertionError(f"Could not extract shell function {name}")
 
 
 def _run_should_cobind(tmp_path: Path, *, bind_host: str | None) -> str:
@@ -58,18 +43,14 @@ def _run_should_cobind(tmp_path: Path, *, bind_host: str | None) -> str:
     env_file = tmp_path / ".env"
     env_file.write_text("" if bind_host is None else f"BIND_HOST={bind_host}\n", encoding="utf-8")
 
-    read_fn = _extract_shell_function("read_dotenv_value")
-    decide_fn = _extract_shell_function("should_cobind_loopback")
-
-    script = f"""
+    # deploy.sh points the library at its selected env file the same way.
+    script = """
 set -e
-ENV_FILE="{env_file}"
-{read_fn}
-{decide_fn}
-
+. "$1"
+DOCKER_LAUNCH_ENV_FILE="$2"
 should_cobind_loopback
 """
-    result = subprocess.run([bash, "-c", script], check=True, capture_output=True, text=True)
+    result = subprocess.run([bash, "-c", script, "bash", str(LAUNCH_LIB), str(env_file)], check=True, capture_output=True, text=True)
     return result.stdout.strip()
 
 

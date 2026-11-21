@@ -15,6 +15,12 @@ DOCKER_DIR="$PROJECT_ROOT/docker"
 # Shared tailnet publish + origin merging, identical to the `make up` path.
 # shellcheck source=scripts/tailscale_lib.sh
 . "$SCRIPT_DIR/tailscale_lib.sh"
+# Dotenv reading, the loopback co-bind decision and the detector Python, shared
+# with the `make up` path. Reads the repo-root .env, which --env-file below also
+# hands Compose.
+# shellcheck source=scripts/docker_launch_lib.sh
+. "$SCRIPT_DIR/docker_launch_lib.sh"
+DOCKER_LAUNCH_ENV_FILE="$PROJECT_ROOT/.env"
 
 # Docker Compose command with project name.
 # Use a filename relative to DOCKER_DIR (we always `cd` there) so Windows
@@ -209,74 +215,10 @@ load_proxy_env_from_dotenv() {
     done
 }
 
-# Read one key from the repo-root .env the way `docker compose --env-file`
-# interpolates it, so the banner reports the values the stack actually came up
-# with. The shell never sources .env, so reading these from the environment
-# alone would report "loopback only" for a stack that .env exposed elsewhere.
-# Mirrors scripts/deploy.sh::read_dotenv_value.
-read_dotenv_value() {
-    local key="$1"
-    local line=""
-    local value=""
-
-    # An exported shell variable wins, matching compose precedence.
-    if [ -n "${!key+x}" ]; then
-        printf '%s' "${!key}"
-        return 0
-    fi
-
-    [ -f "$PROJECT_ROOT/.env" ] || return 0
-
-    line="$(grep -E "^[[:space:]]*(export[[:space:]]+)?${key}[[:space:]]*=" "$PROJECT_ROOT/.env" | tail -n 1 || true)"
-    [ -n "$line" ] || return 0
-
-    value="${line#*=}"
-    value="${value%$'\r'}"
-    value="${value#"${value%%[![:space:]]*}"}"
-    value="${value%"${value##*[![:space:]]}"}"
-    case "$value" in
-        \"*\") value="${value#\"}"; value="${value%\"}" ;;
-        \'*\') value="${value#\'}"; value="${value%\'}" ;;
-    esac
-    printf '%s' "$value"
-}
-
-# BIND_HOST publishes exactly ONE interface (it is a bind address, not an
-# allowlist), so pointing it at a single external interface refuses the host's
-# own http://localhost:PORT. Echo "yes" when that is the case so the caller can
-# append docker/docker-compose.loopback.yaml and ALSO publish on 127.0.0.1.
-# Wildcards already cover loopback (a second mapping would collide on the port);
-# loopback binds need nothing extra. Mirrors scripts/deploy.sh so both Docker
-# paths behave identically. Pinned by backend/tests/test_docker_dev_tailnet.py.
-should_cobind_loopback() {
-    local bind
-    bind="$(read_dotenv_value BIND_HOST)"
-    case "$bind" in
-        "" | 127.0.0.1 | ::1 | localhost | 0.0.0.0 | ::)
-            echo "no"
-            ;;
-        *)
-            echo "yes"
-            ;;
-    esac
-}
-
-_pick_python() {
-    local candidate
-    for candidate in python3 python; do
-        if command -v "$candidate" >/dev/null 2>&1 && \
-            "$candidate" -c 'import sys; sys.version_info >= (3, 6) or sys.exit(1)' >/dev/null 2>&1; then
-            printf '%s\n' "$candidate"
-            return 0
-        fi
-    done
-    return 1
-}
-
 # Prints "skip", "bundled", or "external <url>" — see scripts/detect_searxng.py.
 resolve_searxng() {
     local detect_python
-    detect_python="$(_pick_python || true)"
+    detect_python="$(pick_detector_python || true)"
     if [ -n "$detect_python" ]; then
         local args=(--context docker --config "$PROJECT_ROOT/config.yaml")
         [ -f "$PROJECT_ROOT/.env" ] && args+=(--env-file "$PROJECT_ROOT/.env")
@@ -292,7 +234,7 @@ resolve_searxng() {
 # Prints "skip", "bundled", or "external <url>" — see scripts/detect_comfyui.py.
 resolve_comfyui() {
     local detect_python
-    detect_python="$(_pick_python || true)"
+    detect_python="$(pick_detector_python || true)"
     if [ -n "$detect_python" ]; then
         local args=(--context docker --config "$PROJECT_ROOT/config.yaml")
         [ -f "$PROJECT_ROOT/.env" ] && args+=(--env-file "$PROJECT_ROOT/.env")
@@ -509,7 +451,7 @@ start() {
     # where a host-run Ollama listens (host.docker.internal is mapped via
     # extra_hosts in the compose files). Best-effort: unreachable daemon = no-op.
     local ollama_python
-    ollama_python="$(_pick_python || true)"
+    ollama_python="$(pick_detector_python || true)"
     if [ -n "$ollama_python" ]; then
         "$ollama_python" "$SCRIPT_DIR/sync-ollama-models.py" --config "$PROJECT_ROOT/config.yaml" --container --verbose || true
     fi

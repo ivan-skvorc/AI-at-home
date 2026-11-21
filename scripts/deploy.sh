@@ -49,6 +49,10 @@ cd "$REPO_ROOT"
 # Shared tailnet publish + origin merging, identical to the `make docker-start` path.
 # shellcheck source=scripts/tailscale_lib.sh
 . "$REPO_ROOT/scripts/tailscale_lib.sh"
+# Dotenv reading, the loopback co-bind decision and the detector Python, shared
+# with the `make docker-start` path.
+# shellcheck source=scripts/docker_launch_lib.sh
+. "$REPO_ROOT/scripts/docker_launch_lib.sh"
 
 ENV_FILE="${DEER_FLOW_COMPOSE_ENV_FILE:-$REPO_ROOT/.env}"
 # Docker Compose's interpolation file and service env_file must select the same
@@ -63,6 +67,7 @@ if [ -n "${DEER_FLOW_COMPOSE_ENV_FILE:-}" ] && [ "$CMD" != "down" ] && { [ ! -f 
     exit 1
 fi
 export DEER_FLOW_COMPOSE_ENV_FILE="$ENV_FILE"
+DOCKER_LAUNCH_ENV_FILE="$ENV_FILE"
 # Fork: the tailnet opt-out and the API-key model sync read the same selected file.
 TAILSCALE_LIB_ENV_FILE="${TAILSCALE_LIB_ENV_FILE:-$ENV_FILE}"
 DOCKER_DIR="$REPO_ROOT/docker"
@@ -74,57 +79,15 @@ COMPOSE_CMD=(docker compose "${COMPOSE_ENV_FILE_ARGS[@]}" -p deer-flow -f "$DOCK
 
 load_uv_extras_from_dotenv() {
     local line=""
-    local value=""
 
-    [ -f "$ENV_FILE" ] || return 0
     [ -z "${UV_EXTRAS+x}" ] || return 0
-
-    line="$(grep -E '^[[:space:]]*(export[[:space:]]+)?UV_EXTRAS[[:space:]]*=' "$ENV_FILE" | tail -n 1 || true)"
+    line="$(dotenv_line UV_EXTRAS)"
     [ -n "$line" ] || return 0
-
-    value="${line#*=}"
-    value="${value%$'\r'}"
-    value="${value#"${value%%[![:space:]]*}"}"
-    value="${value%"${value##*[![:space:]]}"}"
-    case "$value" in
-        \"*\") value="${value#\"}"; value="${value%\"}" ;;
-        \'*\') value="${value#\'}"; value="${value%\'}" ;;
-    esac
-    export UV_EXTRAS="$value"
+    UV_EXTRAS="$(dotenv_unquote "${line#*=}")"
+    export UV_EXTRAS
 }
 
 load_uv_extras_from_dotenv
-
-# Read one key from $ENV_FILE the way compose --env-file interpolates it, so the
-# final summary reports the values the stack actually came up with. The shell
-# does not source $ENV_FILE, so reading these from the environment alone would
-# report "loopback only" for a stack that .env exposed to the network.
-read_dotenv_value() {
-    local key="$1"
-    local line=""
-    local value=""
-
-    # An exported shell variable wins, matching compose precedence.
-    if [ -n "${!key+x}" ]; then
-        printf '%s' "${!key}"
-        return 0
-    fi
-
-    [ -f "$ENV_FILE" ] || return 0
-
-    line="$(grep -E "^[[:space:]]*(export[[:space:]]+)?${key}[[:space:]]*=" "$ENV_FILE" | tail -n 1 || true)"
-    [ -n "$line" ] || return 0
-
-    value="${line#*=}"
-    value="${value%$'\r'}"
-    value="${value#"${value%%[![:space:]]*}"}"
-    value="${value%"${value##*[![:space:]]}"}"
-    case "$value" in
-        \"*\") value="${value#\"}"; value="${value%\"}" ;;
-        \'*\') value="${value#\'}"; value="${value%\'}" ;;
-    esac
-    printf '%s' "$value"
-}
 
 # ── Fork: passwordless by default for the home-lab Docker path (make up) ──────
 # The local launchers (scripts/serve.sh, make dev / make start) already default
@@ -149,31 +112,6 @@ apply_default_auth_mode() {
     local current
     current="$(read_dotenv_value DEER_FLOW_AUTH_DISABLED)"
     export DEER_FLOW_AUTH_DISABLED="${current:-1}"
-}
-
-# ── Fork: keep localhost working when BIND_HOST is a single external interface ─
-# BIND_HOST publishes exactly ONE interface (it's a bind address, not an
-# allowlist). If you set it to your Tailscale IP (e.g. 100.x.y.z) to reach the
-# app from your phone, the host's own http://localhost:PORT is refused, because
-# nothing binds loopback — the "works over Tailscale, connection refused on
-# localhost" footgun. `should_cobind_loopback` echoes "yes" when BIND_HOST names
-# a single specific interface (neither loopback nor a wildcard), so deploy.sh can
-# append docker-compose.loopback.yaml to ALSO publish the port on 127.0.0.1.
-# Wildcards (0.0.0.0 / ::) already cover loopback, so co-binding there would
-# collide on the port; loopback binds need nothing extra. Reads BIND_HOST via
-# read_dotenv_value (an exported shell var wins, then .env). Kept as a function
-# so tests can exercise the decision (test_deploy_loopback_cobind.py).
-should_cobind_loopback() {
-    local bind
-    bind="$(read_dotenv_value BIND_HOST)"
-    case "$bind" in
-        "" | 127.0.0.1 | ::1 | localhost | 0.0.0.0 | ::)
-            echo "no"
-            ;;
-        *)
-            echo "yes"
-            ;;
-    esac
 }
 
 # ── Colors ────────────────────────────────────────────────────────────────────
@@ -446,13 +384,7 @@ fi
 
 _detect_python=""
 if [ "$CMD" != "down" ]; then
-    for _python in python3 python; do
-        if command -v "$_python" >/dev/null 2>&1 && \
-            "$_python" -c 'import sys; sys.version_info >= (3, 6) or sys.exit(1)' >/dev/null 2>&1; then
-            _detect_python="$_python"
-            break
-        fi
-    done
+    _detect_python="$(pick_detector_python || true)"
 fi
 
 # ── UV_EXTRAS auto-detection ─────────────────────────────────────────────────
@@ -679,7 +611,7 @@ if tailscale_should_publish; then
 fi
 
 # ── Loopback co-bind (fork) ──────────────────────────────────────────────────
-# See should_cobind_loopback above. When BIND_HOST is a single external
+# See should_cobind_loopback in docker_launch_lib.sh. When BIND_HOST is a single external
 # interface (e.g. a Tailscale IP), also publish the entry port on 127.0.0.1 so
 # the host's own http://localhost keeps working. Loopback is host-only, so this
 # never widens the external surface.
