@@ -305,6 +305,13 @@ resolve_secret() {
         fail_home_permission "$file" readable
     fi
     value="$(cat "$file")"
+    if [ -z "$value" ]; then
+        # An empty file (a write that failed after the file was created, or a
+        # truncated copy) must stop the deploy, not start it with no secret.
+        echo -e "${RED}✗ $file is empty, so $name has no value.${NC}" >&2
+        echo -e "${RED}  Remove the file to let deploy.sh generate a new one, or write the value into it.${NC}" >&2
+        exit 1
+    fi
     export "$name=$value"
     echo -e "${GREEN}✓ $name loaded from $file${NC}"
 }

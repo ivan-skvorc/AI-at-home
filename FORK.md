@@ -1406,8 +1406,8 @@ A Tailscale bind is deliberately not the same as `0.0.0.0`: 100.64.0.0/10 and
 `fd7a:115c:a1e0::/48` are classified as `tailscale`, not `private`, because a
 tailnet is a device-authenticated overlay. (Python's own `is_private` reports
 CGNAT as private, so the ordering in `classify_bind_host` is load-bearing.)
-`should_cobind_loopback` in `deploy.sh` already treats the two differently; this
-matches it.
+`should_cobind_loopback` in `scripts/docker_launch_lib.sh` (used by `deploy.sh`
+and `docker.sh`) already treats the two differently; this matches it.
 
 **Contributing settings are only named when they can matter.** Multi-user mode
 off on a loopback-only box is the documented personal-server default, not a
@@ -3574,9 +3574,11 @@ defaults: an edit silently moved the conversation onto the default model, and
 took the mode, reasoning effort, internet switch and Democracy panel with it.
 
 `copyThreadContextOverride(source, target)` copies the override onto the new
-thread id before anything routes to it, on both paths that create one — the
-edit version and the branch action in `components/workspace/chats/chat-instance.tsx`.
-It is a copy, not a share: changing the model in the
+thread id before anything routes to it. Branching a thread happens on one path,
+the edit version (`useCreateEditVersion` → `branchThreadFromTurn`); the new-chat
+promotion in `components/workspace/chats/chat-instance.tsx` (`onStart`) copies it
+too, as a placeholder-to-real-id move rather than a branch. It is a copy, not a
+share: changing the model in the
 version must not reach back into its parent. Pinned by
 `tests/unit/core/settings/thread-context-isolation.dom.test.ts`.
 

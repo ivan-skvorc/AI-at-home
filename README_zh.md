@@ -926,7 +926,7 @@ workspace 的 Browser Live 客户端通过二进制 JPEG WebSocket 帧协商画�
 
 Gateway API 调用方可以启用 `read_conversation`，并在一次 run 中提交 `conversation_references` 列表。主 agent 随后可以分页读取这些归属会话当前可见文本的有界页面。读取权限随该次 run 结束而失效，旧消息中的文本不会授予访问权限。访问权限失效或来源被删除后，agent 已经读过的文本仍会保留在目标会话中。一条消息如果单次读取放不下，会带有续接，agent 可以继续读取剩余部分；只有在那次读取不可用时，它才会请求缺失的部分。
 
-无法在请求顶层添加字段的 SDK 客户端可以把同样的列表放在 `context.conversation_references` 中发送，`GET /api/features` 会报告该工具是否启用。启用后，Web UI 输入框会在附件按钮旁边显示一个"引用会话"按钮：最多选择你最近的三个会话，它们只附加到下一条消息上，以 chips 的形式显示在输入框与对话记录里。不会自动搜索历史。参见[配置](backend/docs/CONFIGURATION.md#reading-referenced-conversations)与[请求契约](backend/docs/API.md#referencing-a-previous-conversation)。
+无法在请求顶层添加字段的 SDK 客户端可以把同样的列表放在 `context.conversation_references` 中发送，`GET /api/features` 会报告该工具是否启用。启用后，在 Web UI 输入框中输入 `@` 会在技能和文件旁列出你最近的会话：最多选择三个（即 `GET /api/features` 报告的 `max_references`），它们只附加到下一条消息上，以 chips 的形式内嵌显示在草稿与对话记录里。不会自动搜索历史。参见[配置](backend/docs/CONFIGURATION.md#reading-referenced-conversations)与[请求契约](backend/docs/API.md#referencing-a-previous-conversation)。
 
 ### 当前任务笔记
 

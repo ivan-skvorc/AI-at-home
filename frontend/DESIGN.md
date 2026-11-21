@@ -151,5 +151,5 @@ into app or docs UI:
   `.golden-text` is a gold gradient.
 - `.ambilight` is a rainbow glow, and the header's Star on GitHub button has a
   pink-to-violet blur behind it (`#ff80b5` to `#9089fc`).
-- `galaxy`, `aurora-text`, `flickering-grid`, `magic-bento`, `spotlight-card`
-  and `shine-border` in `components/ui/` are landing effects.
+- `galaxy`, `aurora-text`, `flickering-grid`, `magic-bento` and
+  `shine-border` in `components/ui/` are landing effects.

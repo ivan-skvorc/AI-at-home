@@ -243,10 +243,15 @@ class TestWorkflow:
         lines = [line.strip() for line in _workflow_step("gates").splitlines()]
         lines = [line for line in lines if line and not line.startswith("#")]
         check = next(i for i, line in enumerate(lines) if "uv lock --check" in line)
-        frozen = next(i for i, line in enumerate(lines) if line == "export UV_FROZEN=1")
         first_sync_or_run = next(i for i, line in enumerate(lines) if re.search(r"\buv (sync|run)\b", line))
-        assert check < frozen < first_sync_or_run
+        assert check < first_sync_or_run
         assert not any(re.search(r"\|\|\s*uv sync", line) for line in lines), "a fallback `uv sync` re-locks the tree"
+        # Every later sync/run is frozen by flag. An exported UV_FROZEN would
+        # reach the tests pytest runs, and those that call `uv sync --locked`
+        # would fail on every clean sync.
+        for command in re.findall(r"\buv (?:sync|run)\b[^)&|]*", "\n".join(lines[first_sync_or_run:])):
+            assert "--frozen" in command, f"not frozen: {command!r}"
+        assert not any("UV_FROZEN" in line for line in lines), "UV_FROZEN must not be exported into the gate's environment"
 
 
 def _workflow_step(step_id: str) -> str:

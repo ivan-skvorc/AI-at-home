@@ -90,9 +90,11 @@ export interface SubagentBatchesCapability {
 }
 
 /**
- * Every feature hook reads this one response through `useFeaturesQuery`
- * (`./query.ts`) and picks its block with a `select*` function below, so a
- * page issues one `/api/features` request instead of one per hook.
+ * The feature hooks in `core/features` (and `useToolApprovalFeature`) read
+ * this one response through `useFeaturesQuery` (`./query.ts`) and pick their
+ * block with a `select*` function below, so they share one `/api/features`
+ * request. `useAgentsApiEnabled` (`core/agents/hooks.ts`) still queries on its
+ * own key; see docs/quality-exceptions.md.
  */
 export async function fetchFeatures(): Promise<FeaturesResponse> {
   const res = await fetch(`${getBackendBaseURL()}/api/features`);

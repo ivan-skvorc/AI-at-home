@@ -148,9 +148,10 @@ if that read is unavailable.
 SDK clients that cannot add top-level request fields may send the same list as
 `context.conversation_references`, and `GET /api/features` reports whether the
 tool is enabled. When it is, typing `@` in the web composer lists your recent
-conversations beside skills and files: pick up to `max_references` (three by
-default), and they are attached to the next message only, shown as chips inline
-in the draft and in the transcript. There is no automatic history search. See
+conversations beside skills and files: pick up to three (the
+`max_references` that `GET /api/features` reports), and they are attached to
+the next message only, shown as chips inline in the draft and in the
+transcript. There is no automatic history search. See
 [configuration](../../backend/docs/CONFIGURATION.md#reading-referenced-conversations)
 and the [request contract](../../backend/docs/API.md#referencing-a-previous-conversation).
 

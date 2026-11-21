@@ -18,7 +18,7 @@ Added: <YYYY-MM-DD>, <PR link>
 ```
 
 ### Remaining thread-id resolver variants
-Where: mcp/tools.py:458 _extract_thread_id; agents/middlewares/summarization_middleware.py:155 _resolve_thread_id; agents/middlewares/sandbox_audit_middleware.py:472 _get_thread_id; tools/skill_manage_tool.py:111 _get_thread_id; community/browser_automation/tools.py:100 _thread_id; agents/middlewares/artifact_capture_middleware.py:82 _thread_id; agents/middlewares/harness_guard_middleware.py:227 _get_thread_id; inline lookups in tools/builtins/task_tool.py:1072, tools/builtins/batch_task_tool.py:228 and :436, tools/builtins/invoke_acp_agent_tool.py:309, and in the view_image/uploads/thread_data/memory/safety_finish_reason middlewares (all paths under backend/packages/harness/deerflow/)
+Where: mcp/tools.py:458 _extract_thread_id; agents/middlewares/summarization_middleware.py:155 _resolve_thread_id; agents/middlewares/sandbox_audit_middleware.py:472 _get_thread_id; tools/skill_manage_tool.py:111 _get_thread_id; community/browser_automation/tools.py:79 _thread_id; agents/middlewares/artifact_capture_middleware.py:82 _thread_id; agents/middlewares/harness_guard_middleware.py:214 _get_thread_id; inline lookups in tools/builtins/task_tool.py:1072, tools/builtins/batch_task_tool.py:228 and :436, tools/builtins/invoke_acp_agent_tool.py:309, and in the view_image/uploads/thread_data/memory/safety_finish_reason middlewares (all paths under backend/packages/harness/deerflow/)
 What: These still re-implement the 'thread id from runtime context, else RunnableConfig, else ambient config' lookup. Each one differs from utils.thread_id.runtime_thread_id in at least one rule: what counts as absent (None, falsy or non-string), whether it reads runtime.config or the ambient LangGraph config, the fallback value ('default', '' or None), or str() coercion.
 Why kept: Folding any one of them into runtime_thread_id changes behavior for at least one input at that site, for example mcp/tools returning 'default' or str(non-string), or summarization skipping runtime.config. Together they also touch more than 10 files owned by several areas (mcp, community, sandbox audit, summarization, memory). That needs an owner decision on one uniform semantics.
 Fix when: For each site, either its tests pin that the site's absent, empty and non-string cases match runtime_thread_id (with or without ambient), or the owner decides on one uniform rule. Then replace the local variant with runtime_thread_id, one area per change.
@@ -101,10 +101,10 @@ Why kept: The fix touches more than 10 files, and error text visible to users wo
 Fix when: Split the change into area-sized PRs of 10 files or fewer, each moving a group of modules onto throwGatewayApiError with tests for the message it shows. Done when grep for '"detail" in' and 'body.detail' in frontend/src/core finds only core/api/errors.ts.
 Added: 2026-11-21, PR #TBD
 
-### Three byte formatters with different visible formats
-Where: frontend/src/components/workspace/messages/message-list-item.tsx:812 formatBytes; frontend/src/core/uploads/file-validation.ts:120 formatUploadSize; frontend/src/core/models/sorting.ts:393 formatModelSize
-What: formatBytes prints decimal-looking 'KB/MB' labels (1024-based), '—' for 0 and no GiB. formatUploadSize drops a trailing .0 ('50 MiB'). formatModelSize prints whole MiB below 1 GiB, then GiB with one decimal. formatFileSize, which formatArtifactBytes now uses too, always prints one decimal.
-Why kept: Merging them changes visible text, and the tests pin each format (file-validation.test.ts, sorting.test.ts). The owner has to pick the format.
+### Four byte formatters with different visible formats
+Where: frontend/src/components/workspace/messages/message-list-item.tsx:812 formatBytes; frontend/src/core/uploads/file-validation.ts:120 formatUploadSize; frontend/src/core/models/sorting.ts:393 formatModelSize; frontend/src/components/workspace/artifacts/artifact-file-preview.tsx:74 formatArtifactBytes
+What: formatBytes prints decimal-looking 'KB/MB' labels (1024-based), '—' for 0 and no GiB. formatUploadSize drops a trailing .0 ('50 MiB'). formatModelSize prints whole MiB below 1 GiB, then GiB with one decimal. formatArtifactBytes prints KiB below 1 MiB and MiB above it, so 1048575 B reads '1024.0 KiB' and 5 GiB reads '5120.0 MiB'. formatFileSize always prints one decimal and moves up a unit at 1024.
+Why kept: Merging them changes visible text, and the tests pin each format (file-validation.test.ts, sorting.test.ts). The owner has to pick the format. A level-3 commit moved formatArtifactBytes onto formatFileSize and was reverted, because it changed sizes of 1023.95 KiB and up and GiB-sized files.
 Fix when: The owner picks one display format per context. Then they go through formatFileSize, with an option for trailing-zero trimming, plus formatModelSize kept for the VRAM comparison.
 Added: 2026-11-21, PR #TBD
 
@@ -221,8 +221,15 @@ Fix when: The skill packaging supports a shared library resource.
 Added: 2026-11-21, PR #TBD
 
 ### README/Install.md clone bytedance/deer-flow
-Where: README.md:213, Install.md:3 and :38
+Where: README.md (Quick Start, the `git clone` line), Install.md:3 and :38
 What: Verified: the fork's install instructions clone upstream.
 Why kept: Owner decision on which repository installs should point to.
 Fix when: The owner chooses the canonical clone URL.
+Added: 2026-11-21, PR #TBD
+
+### DingTalk channel opens one HTTP client per OpenAPI call
+Where: backend/app/channels/dingtalk.py (each OpenAPI call runs `async with httpx.AsyncClient(...)`)
+What: Every token fetch, send and download builds and closes its own client, so no connection is reused across calls. A level-3 commit pooled one client and was reverted: stop() closed it under in-flight requests, and a call after stop() rebuilt a client that nothing ever closed.
+Why kept: A pooled client needs a lifecycle the channel does not have yet, and the per-call cost is small at IM message rates.
+Fix when: The pooled client is created in start(), calls after stop() refuse (as the QQ channel's request paths do when the client is None or closed), and stop() waits for in-flight calls before aclose(), with a test for each of the three.
 Added: 2026-11-21, PR #TBD

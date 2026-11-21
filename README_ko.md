@@ -1607,7 +1607,7 @@ uv run playwright install chromium
 ### 참조한 대화 읽기
 
 Gateway API 호출자는 `read_conversation`을 명시적으로 켜고 실행(run)과 함께 `conversation_references` 목록을 제출할 수 있습니다. 그러면 리드 에이전트는 자신이 소유한 해당 대화들의 현재 보이는 텍스트를 제한된 크기의 페이지 단위로 읽을 수 있습니다. 읽기 권한은 실행과 함께 만료되며, 이전 메시지에 있는 텍스트는 접근 권한을 부여하지 않습니다. 에이전트가 이미 읽은 텍스트는 접근 권한이 만료되거나 원본이 삭제된 뒤에도 대상 대화에 남습니다. 한 번에 읽기에 너무 긴 메시지에는 이어 읽기 정보가 포함되므로 에이전트는 나머지를 읽을 수 있으며, 그 읽기를 사용할 수 없을 때만 누락된 부분을 요청합니다.
-최상위 요청 필드를 추가할 수 없는 SDK 클라이언트는 같은 목록을 `context.conversation_references`로 보낼 수 있으며, `GET /api/features`는 이 도구가 활성화되어 있는지 알려 줍니다. 활성화되어 있으면 웹 입력창(composer)의 첨부 버튼 옆에 "Reference a conversation" 버튼이 표시됩니다. 최근 대화 중 최대 세 개를 선택하면 다음 메시지에만 첨부되며, 입력창과 대화 기록에 칩으로 표시됩니다. 자동 기록 검색은 없습니다. [설정](backend/docs/CONFIGURATION.md#reading-referenced-conversations)과 [요청 계약](backend/docs/API.md#referencing-a-previous-conversation)을 참고하세요.
+최상위 요청 필드를 추가할 수 없는 SDK 클라이언트는 같은 목록을 `context.conversation_references`로 보낼 수 있으며, `GET /api/features`는 이 도구가 활성화되어 있는지 알려 줍니다. 활성화되어 있으면 웹 입력창(composer)에 `@`를 입력할 때 스킬과 파일 옆에 최근 대화가 나열됩니다. 최대 세 개(`GET /api/features`가 알려 주는 `max_references`)를 선택하면 다음 메시지에만 첨부되며, 초안과 대화 기록에 인라인 칩으로 표시됩니다. 자동 기록 검색은 없습니다. [설정](backend/docs/CONFIGURATION.md#reading-referenced-conversations)과 [요청 계약](backend/docs/API.md#referencing-a-previous-conversation)을 참고하세요.
 
 ### 현재 작업 노트
 

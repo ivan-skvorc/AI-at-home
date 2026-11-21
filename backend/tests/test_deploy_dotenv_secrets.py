@@ -304,6 +304,21 @@ def test_deploy_stops_when_compose_cannot_interpolate_instead_of_guessing(tmp_pa
     assert not (home / PERSISTED_FILE["BETTER_AUTH_SECRET"]).exists()
 
 
+@pytest.mark.parametrize("key", SECRETS)
+def test_deploy_stops_on_an_empty_persisted_secret_instead_of_exporting_nothing(tmp_path, key):
+    """An empty secret file (a write that failed after creating it) must stop the deploy."""
+    worktree = _worktree(tmp_path)
+    home = tmp_path / "deer-flow-home"
+    home.mkdir(parents=True, exist_ok=True)
+    (home / PERSISTED_FILE[key]).write_text("", encoding="utf-8")
+
+    result, observed, args, _, _, _ = _run_deploy_build(tmp_path, worktree, compose_environment={}, check=False)
+
+    assert result.returncode != 0
+    assert f"{PERSISTED_FILE[key]} is empty" in result.stderr
+    assert not args, "no build was attempted"
+
+
 # ── Against real Compose clients, when installed ────────────────────────────
 
 

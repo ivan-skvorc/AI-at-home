@@ -111,13 +111,14 @@ jobs:
 
             # Check the lock before anything can rewrite it: a plain `uv sync`
             # or `uv run` re-locks the working tree, and the check would then
-            # pass on a lock that is not the one pushed. UV_FROZEN keeps every
-            # later command on the merged lock as it is.
+            # pass on a lock that is not the one pushed. --frozen keeps every
+            # later command on the merged lock; it is a flag, not an exported
+            # UV_FROZEN, so the tests pytest runs (some call `uv sync --locked`)
+            # do not inherit it.
             (cd backend && uv lock --check) && uv_lock=pass || uv_lock=fail
-            export UV_FROZEN=1
-            (cd backend && uv sync) && \
-              (cd backend && uv run ruff check . && uv run ruff format --check .) && backend_lint=pass || backend_lint=fail
-            (cd backend && PYTHONPATH=. uv run pytest -q --timeout=900) && backend_test=pass || backend_test=fail
+            (cd backend && uv sync --frozen) && \
+              (cd backend && uv run --frozen ruff check . && uv run --frozen ruff format --check .) && backend_lint=pass || backend_lint=fail
+            (cd backend && PYTHONPATH=. uv run --frozen pytest -q --timeout=900) && backend_test=pass || backend_test=fail
             frontend_check=skip
           fi
 
