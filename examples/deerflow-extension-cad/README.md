@@ -158,16 +158,27 @@ the `cad-modeling` skill (`skills/public/cad-modeling`).
 
 ## What a script may contain
 
-- `import cadquery as cq` (optional: `cq` is the only name a script is given).
-- `name = value` lines. Values are numbers, strings, `True`, `False`, `None`,
-  tuples and lists of numbers, arithmetic on numbers (`+ - * / // % **`), and
-  parts. `name += value` and its relatives are the arithmetic they stand for.
+- `import cadquery as cq` and `import math` (both optional: `cq` and `math` are
+  the only modules a script is given).
+- `name = value` lines, and several names at once: `w, d, t = 60, 40, 6`.
+  Values are numbers, strings, `True`, `False`, `None`, tuples and lists of
+  numbers, arithmetic on numbers (`+ - * / // % **`), and parts.
+  `name += value` and its relatives are the arithmetic they stand for.
+- Numbers from a closed table, computed by the reader itself: `math.pi`,
+  `math.tau`, `math.sin`, `cos`, `tan`, `asin`, `acos`, `atan`, `atan2`,
+  `sqrt`, `hypot`, `radians`, `degrees`, `floor` and `ceil`; and `abs`, `min`,
+  `max`, `round`, `int`, `float` and `len` on numbers and on lists the script
+  states. An index by a whole number the reader knows (`p[0]`, `p[-1]`), and a
+  list comprehension with one `for` and no `if`, read item by item like a loop:
+  `[(10 * i, 0) for i in range(4)]`. None of these names can be assigned.
 - `for` loops over `range(...)` or over a list of numbers or points that the
   script states, with one name or one name per number of a point
   (`for x, y in [(0, 0), (10, 0)]:`). Loops may be nested four deep. A count
   for `range` is a whole number however it was worked out: `50 // 3.5` is
   `14.0` and counts as 14.
-- `cq.Workplane(...)` and the methods below, chained or held in variables.
+- `cq.Workplane(...)` and the methods below, chained or held in variables, and
+  `cq.Wire.makeHelix(pitch, height, radius)`, the path of a thread, which only
+  `sweep` takes.
 - Comments and a docstring. `show_object(name)` is accepted as a way to name the
   result.
 
@@ -186,10 +197,12 @@ refused: it is a count that came out as zero. An exponent is capped at 64
 unless its base is one or less, which cannot grow: `(-1) ** i` alternates a
 sign over any number of passes.
 
-Everything else is refused with the construct and its line: other imports,
-attribute access, any other call, `def`, `lambda`, `class`, `while`, `if`,
-`break`, `continue`, a loop's `else`, comprehensions, `with`, `try`, f-strings,
-subscripts, comparisons, dunder names. `range(...)` is what a loop runs over
+Everything else is refused with the construct and its line: other imports and
+`from math import`, attribute access, any other call, `def`, `lambda`,
+`class`, `while`, `if`, `break`, `continue`, a loop's `else`, comprehensions
+other than the one above, `with`, `try`, f-strings, slices, comparisons,
+dunder names. The answer's `error.refused` names what was refused, as the
+script wrote it where that is short (`loft`, `import os`, `math.system`). `range(...)` is what a loop runs over
 and nothing else: it cannot be assigned or used as a value.
 An export line such as `cq.exporters.export(result, "plate.step")` is refused
 with its reason: the tool writes the files, after its checks.
@@ -208,30 +221,65 @@ beside the part reads the way the tool read it" rests on; a line may still be
 up to 1,000 characters long.
 Characters of any language are fine in comments.
 
-The allow-list (`allowlist.py`, 46 methods plus the constructor):
+The allow-list (`allowlist.py`, 64 methods plus the constructor):
 
 | Group | Methods |
 | --- | --- |
-| Primitives | `box`, `cylinder`, `sphere` |
-| Outlines | `rect`, `circle`, `ellipse`, `polygon`, `slot2D`, `polyline`, `moveTo`, `move`, `lineTo`, `line`, `hLine`, `vLine`, `hLineTo`, `vLineTo`, `threePointArc`, `close`, `center` |
-| Solids from outlines | `extrude`, `cutBlind`, `cutThruAll` |
+| Primitives | `box`, `cylinder`, `sphere`, `wedge` |
+| Outlines | `rect`, `circle`, `ellipse`, `polygon`, `slot2D`, `polyline`, `moveTo`, `move`, `lineTo`, `line`, `hLine`, `vLine`, `hLineTo`, `vLineTo`, `threePointArc`, `spline`, `radiusArc`, `sagittaArc`, `tangentArcPoint`, `polarLine`, `polarLineTo`, `close`, `center`, `offset2D` |
+| Solids from outlines | `extrude`, `cutBlind`, `cutThruAll`, `revolve`, `loft`, `sweep`, `twistExtrude` |
 | Holes | `hole`, `cboreHole`, `cskHole` |
 | Edges and walls | `fillet`, `chamfer`, `shell` |
 | Patterns | `pushPoints`, `rarray`, `polarArray` |
-| Selecting | `faces`, `edges`, `vertices`, `workplane`, `tag`, `workplaneFromTagged` |
+| Selecting | `faces`, `edges`, `vertices`, `workplane`, `transformed`, `tag`, `workplaneFromTagged`, `end`, `first`, `last` |
 | Moving | `translate`, `rotate`, `mirror`, `mirrorX`, `mirrorY` |
 | Combining | `union`, `cut`, `intersect` |
+| Lettering and splitting | `text`, `split` |
 
 Selector strings are CadQuery's own (`">Z"`, `"|Z and >Y"`, `"%CIRCLE"`). Every
 argument is checked against the table before the kernel is loaded: a length must
 be a positive number, a plane one of the named planes, a part a part.
 
-Methods that take a file path, a callable, a font or a raw kernel object are not
-on the list and will not be added: `export`, `exportSvg`, `text`, `each`,
-`eachpoint`, `cutEach`, `invoke`, `apply`, `map`, `filter`, `sort`, `sketch`,
-`add`, `val`, `vals`, `findSolid`. The list grows one method at a time, each
-with an example that builds and a signature check against the kernel
-(`tests/test_build.py`).
+A sweep's `path` is an outline the script drew earlier, ending with lines, arcs,
+a spline or a circle (`path = cq.Workplane("XZ").polyline([(0, 0), (0, 20),
+(20, 20)])`); a path that ends with a solid, a point or a moved copy is refused
+before the kernel loads. `combine` takes `True` or `False` on every method: the
+kernel's `"cut"` mode is `cut()`. Not exposed: `sweep`'s `normal` and
+`auxSpine` (a kernel vector, a second rail), `spline`'s arguments past
+`periodic`, `offset2D`'s `"tangent"` kind (`"intersection"` gives the same
+sharp corners) and `parametricCurve` (a callable).
+
+Lettering and threads widen two rules of the boundary, each by one thing the
+module owns (SECURITY.md):
+
+- **`text` letters in the module's own font**, Liberation Sans, shipped in
+  `deerflow_extension_cad/fonts/` with its licence (SIL OFL 1.1). `build.py`
+  passes the file's path; a script cannot name a font or a path, since `font`
+  and `fontPath` are not in the table. The slim Gateway image has no system
+  fonts, and a missing font file fails the build instead of letting the kernel
+  fall back to another. Lettering is at most 64 plain ASCII characters. It is
+  cut into the part by default (a negative distance from a face); raised
+  lettering takes `combine=True` and a positive distance. `halign` and
+  `valign` are given by name; `kind` is not offered, since one font file
+  letters bold and italic as regular.
+- **`cq.Wire.makeHelix(pitch, height, radius)` is the one call on `cq` besides
+  `cq.Workplane`.** The reader keeps its numbers as data (at most 200 turns),
+  `build.py` makes the wire, and only `sweep`'s `path` takes it: a helix
+  passed anywhere else, or given a method, is refused. An M8 x 1.25 and an
+  M24 x 3 thread each build valid in under five seconds (`tests/test_build.py`
+  holds that gate).
+
+`split(keepTop=..., keepBottom=...)` cuts a part at the workplane, as for a
+part too tall for a printer's bed; its arguments are given by name, because the
+kernel takes them only as keywords and reads a positional part as a cutting
+tool, which is `cut()`'s job.
+
+Parameters that take a file path, a callable, a font or a raw kernel object are
+not on the list and will not be added, nor are the methods made of them:
+`export`, `exportSvg`, `each`, `eachpoint`, `cutEach`, `invoke`, `apply`, `map`,
+`filter`, `sort`, `sketch`, `add`, `val`, `vals`, `findSolid`. The list grows
+one method at a time, each with an example that builds and a signature check
+against the kernel (`tests/test_build.py`).
 
 ## Limits
 
@@ -403,7 +451,8 @@ deerflow_extension_cad/
 ├── measure.py      # the re-imported STEP: solids, bounding box, volume, holes
 ├── worker.py       # the child process
 ├── tool.py         # the handler: child process, limits, pass or fail, file writes
-└── selftest.py     # the one-millimetre cube `make doctor` builds
+├── selftest.py     # the one-millimetre cube `make doctor` builds
+└── fonts/          # the lettering font, its licence and where it comes from
 tests/
 ├── test_interpreter.py     # what is accepted and what is refused
 ├── test_worker_process.py  # the parent's hold on the child

@@ -52,8 +52,9 @@ def test_the_operations_page_names_every_method_once_with_an_example():
     table = _allowlist()
     page = _read(SKILL / "references" / "operations.md")
     headings = re.findall(r"^## ([A-Za-z0-9.]+)\(", page, flags=re.MULTILINE)
-    assert headings == ["cq.Workplane", *table.METHODS]
-    assert page.count("```python") == len(table.METHODS) + 1
+    # The two calls on cq, then every method: cq.Wire.makeHelix is the path of a thread (item 59).
+    assert headings == ["cq.Workplane", "cq.Wire.makeHelix", *table.METHODS]
+    assert page.count("```python") == len(table.METHODS) + 2
 
 
 def test_the_skill_is_named_after_its_directory_and_says_when_to_use_it():
@@ -84,7 +85,19 @@ def test_the_skill_names_the_tools_arguments_and_its_attempt_limit():
 
 #: Words the pages quote from the module's own answers. A message reworded there is reworded here.
 QUOTED = [
-    "the only import a script may contain is: import cadquery as cq",
+    "a script may contain two imports",
+    "is not available: write import math",
+    "a comprehension has one for and no if",
+    "is outside this list",
+    "has no answer: the number is outside what",
+    "is a name the script is given and cannot be assigned",
+    "an outline drawn earlier in the script that ends with lines, arcs",
+    "loft needs two or more closed outlines",
+    "sweep needs a closed outline drawn before it",
+    "the axis must not cross the outline",
+    "on cq a script may use cq.Workplane(...) and cq.Wire.makeHelix(...)",
+    "lettering is cut into the part unless combine=True",
+    "turns (height / pitch)",
     "range() takes whole numbers",
     "this loop would not run once",
     "a loop runs over range(...) or over a list",
@@ -116,19 +129,36 @@ ALLOWED = {
     "a count worked out with a decimal pitch": "result = cq.Workplane('XY').box(9, 9, 9)\nfor i in range(50 // 3.5):\n    total = i\n",
     "a point taken apart in the loop header": "points = [(-10, 0), (10, 0)]\nresult = cq.Workplane('XY').box(40, 10, 2)\nfor x, y in points:\n    result = result.faces('>Z').workplane().pushPoints([(x, y)]).hole(3)\n",
     "an augmented assignment and a square root": "side = 2 ** 0.5\nside += 9\nside *= 2\nresult = cq.Workplane('XY').box(side, side, side)\n",
+    # Habits of ordinary Python the reader computes itself (item 55).
+    "a comprehension": "points = [(i * 10, 0) for i in range(3)]\nresult = cq.Workplane('XY').box(40, 10, 2).faces('>Z').workplane().pushPoints(points).hole(3)\n",
+    "import math": "import math\nresult = cq.Workplane('XY').box(math.sqrt(2) * 10, 20 * math.sin(math.radians(30)), 2)\n",
+    "indexing": "p = (12, 8)\nresult = cq.Workplane('XY').box(p[0], p[-1], 2)\n",
+    "a built-in call": "n = int(7 / 2)\nresult = cq.Workplane('XY').box(max(n, 2), min(10, 20), round(2.6))\n",
+    "two names in one assignment": "w, d, t = 60, 40, 6\nresult = cq.Workplane('XY').box(w, d, t)\n",
+    # Operations that need no new trust (item 56): the path is an outline drawn first.
+    "a sweep along a path drawn first": 'path = cq.Workplane("XZ").polyline([(0, 0), (0, 20), (20, 20)])\nresult = cq.Workplane("XY").rect(4, 4).sweep(path)\n',
+    "a loft between two workplanes": "result = cq.Workplane('XY').circle(10).workplane(offset=20).circle(5).loft()\n",
+    # Lettering and threads (item 59).
+    "lettering cut into a face": "result = cq.Workplane('XY').box(40, 15, 3).faces('>Z').workplane().text('HELLO', 8, -0.6)\n",
+    "a thread swept along a helix": (
+        "helix = cq.Wire.makeHelix(1.25, 10, 3.2)\n"
+        "thread = cq.Workplane('XZ').polyline([(3.2, -0.5), (4, -0.08), (4, 0.08), (3.2, 0.5)]).close().sweep(helix, isFrenet=True)\n"
+        "result = cq.Workplane('XY').circle(3.25).extrude(10).union(thread)\n"
+    ),
 }
 REFUSED = {
     "an if statement": "x = 1\nif x:\n    y = 2\n",
     "a while loop": "x = 1\nwhile x:\n    x = 0\n",
     "a function": "def link(i):\n    return i\n",
-    "a comprehension": "points = [(i, 0) for i in range(3)]\n",
-    "import math": "import math\n",
+    "a comprehension with an if": "points = [(i, 0) for i in range(3) if i]\n",
+    "from math import": "from math import sqrt\n",
+    "another import": "import numpy\n",
+    "a slice": "p = (1, 2, 3)\nx = p[1:]\n",
+    "a conditional expression": "x = 1 if True else 2\n",
     "an f-string": "x = f'{1}'\n",
-    "indexing": "p = (1, 2)\nx = p[0]\n",
-    "a built-in call": "n = int(7 / 2)\n",
     "a comparison": "big = 3 > 2\n",
-    "two names in one assignment": "a, b = 1, 2\n",
     "a list that grows": "points = [(0, 0)]\npoints += [(1, 1)]\n",
+    "a font named by the script": "result = cq.Workplane('XY').box(40, 15, 3).faces('>Z').workplane().text('HI', 8, -0.6, font='Arial')\n",
 }
 
 

@@ -77,12 +77,13 @@ LENGTH_TOLERANCE_RATIO = 0.001
 # handler checks the values itself (``_problem_with``). The context-fit critical
 # check pins the cost (backend/tests/test_context_fit_critical.py).
 DESCRIPTION = (
-    "Build and check a part from a CadQuery script. It is read, not run: only assignments, arithmetic, "
-    "for loops over range() or a list, and allow-listed Workplane methods. No if, while, def or other imports. Millimetres. "
-    "Methods: box, cylinder, sphere, rect, circle, ellipse, polygon, slot2D, polyline, "
-    "moveTo, move, lineTo, line, hLine, vLine, hLineTo, vLineTo, threePointArc, close, center, extrude, cutBlind, cutThruAll, "
-    "hole, cboreHole, cskHole, fillet, chamfer, shell, pushPoints, rarray, polarArray, faces, edges, vertices, workplane, tag, "
-    "workplaneFromTagged, translate, rotate, mirror, mirrorX, mirrorY, union, cut, intersect. "
+    "Build and check a part from a CadQuery script. It is read, not run: assignments, arithmetic, math, "
+    "for loops and allow-listed Workplane methods; no if, while or def. Millimetres. "
+    "Methods: box, cylinder, sphere, wedge, rect, circle, ellipse, polygon, slot2D, polyline, "
+    "moveTo, move, lineTo, line, hLine, vLine, hLineTo, vLineTo, threePointArc, spline, radiusArc, sagittaArc, tangentArcPoint, "
+    "polarLine, polarLineTo, close, center, offset2D, extrude, cutBlind, cutThruAll, revolve, loft, sweep, twistExtrude, text, split, "
+    "hole, cboreHole, cskHole, fillet, chamfer, shell, pushPoints, rarray, polarArray, faces, edges, vertices, workplane, transformed, tag, "
+    "workplaneFromTagged, end, first, last, translate, rotate, mirror, mirrorX, mirrorY, union, cut, intersect. "
     "bbox_xyz_mm is the expected overall size along x, y and z. volume_min_max_mm3 is the allowed volume range. "
     "hole_diameters_mm lists one diameter per expected hole, [] for none. Assign the part to result. "
     "Returns pass or fail per check with the measured values. STEP, STL and GLB files are saved only when every check passes."
@@ -114,6 +115,8 @@ MAX_ATTEMPTS = 8
 MAX_COUNTED_PARTS = 1000
 #: Lines of left-out bodies one note names, and loops that drop work one answer names.
 MAX_LINES_SAID = 5
+#: What the worker may say about a script it refused or a build that failed, passed on as it is.
+_ERROR_KEYS = ("construct", "refused", "line", "operation", "message")
 
 NEXT_FIX = "Attempt {attempt} of {limit}. Read what failed, change the script and call cad_build again with the same name. Keep the expected numbers: change one only if it was worked out wrongly. Do not present this part as finished."
 #: For a build whose script could not be stored: without its files it is not one of the part's attempts.
@@ -298,6 +301,14 @@ def unchecked(measured: Mapping[str, Any], payload: Mapping[str, Any]) -> dict[s
     if "hole_diameters_mm" not in payload:
         extra["hole_diameters_mm"] = sorted(hole["diameter_mm"] for hole in measured["holes"])[:MAX_HOLES]
     return extra
+
+
+def _parameters_of(result: Mapping[str, Any]) -> dict[str, int | float]:
+    """The script's starting numbers as the worker read them: names and numbers only, nothing else it sends."""
+    parameters = result.get("parameters")
+    if not isinstance(parameters, Mapping):
+        return {}
+    return {name: value for name, value in parameters.items() if isinstance(name, str) and type(value) in (int, float)}
 
 
 # --- Counting the attempts ---------------------------------------------------
@@ -587,7 +598,7 @@ def make_handler(settings: Mapping[str, int]):
             # Without the script there is no stem for the set, and files under a guessed one would mix with
             # another build's. What the build itself said still reaches the model: a refusal stays a refusal.
             status = result.get("status")
-            error = {key: result[key] for key in ("construct", "line", "operation", "message") if result.get(key) is not None}
+            error = {key: result[key] for key in _ERROR_KEYS if result.get(key) is not None}
             if status == "built":
                 error = {"message": "the part was built, but its script could not be stored, so nothing was"}
             return {
@@ -603,6 +614,10 @@ def make_handler(settings: Mapping[str, int]):
         next_step: str | None = None
         expected = {key: payload[key] for key in EXPECTATIONS if key in payload}
         report: dict[str, Any] = {"name": payload["name"], "passed": False, "expected": expected}
+        parameters = _parameters_of(result)
+        if parameters:
+            # The numbers the script starts with, for a follow-up edit. The model has them in its script already.
+            report["parameters"] = parameters
         failure = ""
         files = result.get("files") or {}
         if result.get("status") == "built":
@@ -631,7 +646,7 @@ def make_handler(settings: Mapping[str, int]):
             elif "glb" in files:
                 await _save(context, f"{stem}.failed.glb", files["glb"], saved, problems)
         else:
-            error = {key: result[key] for key in ("construct", "line", "operation", "message") if result.get(key) is not None}
+            error = {key: result[key] for key in _ERROR_KEYS if result.get(key) is not None}
             answer["error"] = report["error"] = error or {"message": "the build failed"}
             failure = json.dumps(answer["error"], sort_keys=True, default=str)
             if result.get("status") == "unavailable":

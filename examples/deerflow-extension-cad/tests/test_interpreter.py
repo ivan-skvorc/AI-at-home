@@ -7,6 +7,7 @@ allow-listed operations or raises ``ScriptRefused`` with the construct and line.
 from __future__ import annotations
 
 import ast
+import math
 import re
 import time
 from pathlib import Path
@@ -34,6 +35,17 @@ result = (
     .pushPoints([(-hole_x, 0), (hole_x, 0)])
     .hole(hole_d)
 )
+"""
+
+#: A metric M8 x 1.25 thread as models write one: a profile swept along a helix and joined to its core (item 59).
+THREAD = """\
+d, pitch, length = 8, 1.25, 10
+root = d / 2 - 0.61343 * pitch
+helix = cq.Wire.makeHelix(pitch, length, root - 0.05, lefthand=False)
+half = 0.4 * pitch
+outline = [(root - 0.05, -half), (d / 2, -0.06 * pitch), (d / 2, 0.06 * pitch), (root - 0.05, half)]
+thread = cq.Workplane("XZ").polyline(outline).close().sweep(helix, isFrenet=True)
+result = cq.Workplane("XY").circle(root).extrude(length).union(thread)
 """
 
 
@@ -67,11 +79,162 @@ def test_the_plate_becomes_a_list_of_allow_listed_operations():
         'import cadquery as cq\r\nresult = cq.Workplane("XY").box(1, 1, 1)  # Ø, ° and other signs are fine in a comment\r\n',
         'import cadquery as cq\nw = 10\nw += 5\nw -= 1\nw *= 2\nw /= 4\nw //= 2\nw **= 2\nw %= 7\nresult = cq.Workplane("XY").box(w, w, w)\n',
         'result = cq.Workplane("XY").box(40, 10, 2)\nfor x, y in [(-10, 0), (10, 0)]:\n    # one hole per point\n    result = (\n        result.faces(">Z")\n        .workplane()\n        .pushPoints([(x, y)])\n        .hole(3)\n    )\n',
+        # Item 56: a path to sweep along is an outline drawn earlier, on its own workplane or on a face of a part.
+        "path = cq.Workplane('XZ').polyline([(0, 0), (0, 20), (20, 20)])\nresult = cq.Workplane('XY').rect(4, 4).sweep(path, transition='round')\n",
+        "ring = cq.Workplane('XZ').circle(20)\nresult = cq.Workplane('XY').center(20, 0).circle(3).sweep(ring)\n",
+        "base = cq.Workplane('XY').box(40, 40, 4)\nrail = base.faces('>Z').workplane().spline([(0, 0), (5, 10), (0, 20)])\nresult = cq.Workplane('XY').circle(1).sweep(rail, isFrenet=True)\n",
+        "result = cq.Workplane('XY').rect(20, 20).workplane(offset=15).circle(6).loft(ruled=True, combine=True)\n",
+        "result = cq.Workplane('XY').box(40, 40, 10).faces('>Z').workplane().transformed(rotate=(30, 0, 0), offset=(5, 0, 0)).hole(5)\n",
+        # Item 59: lettering, a thread swept along a helix, and a part split at a workplane.
+        "result = cq.Workplane('XY').box(40, 15, 3).faces('>Z').workplane().text('HELLO 42', 8, -0.6, halign='left', valign='bottom')\n",
+        THREAD,
+        "result = cq.Workplane('XY').box(20, 20, 40).faces('>Z').workplane(-20).split(keepBottom=True)\n",
     ],
 )
 def test_ordinary_scripts_are_accepted(script):
     program = compile_script(script)
     assert program.operations and program.operations[program.result].method in allowlist.METHODS
+
+
+#: Habits models bring from ordinary Python, each beside the same program written out (item 55).
+#: The reader computes every number itself, so a habit adds nothing a script could not already say.
+HABITS = {
+    "names assigned together": ("w, d, t = 60, 40, 6\nresult = cq.Workplane('XY').box(w, d, t)\n", "w = 60\nd = 40\nt = 6\nresult = cq.Workplane('XY').box(w, d, t)\n"),
+    "names swapped": ("a, b = 4, 9\na, b = b, a\nresult = cq.Workplane('XY').box(a, b, 1)\n", "result = cq.Workplane('XY').box(9, 4, 1)\n"),
+    "a point taken apart": ("p = (30, 20)\nx, y = p\nresult = cq.Workplane('XY').box(x, y, 2)\n", "result = cq.Workplane('XY').box(30, 20, 2)\n"),
+    "two parts at once": (
+        "a, b = cq.Workplane('XY').box(4, 4, 4), cq.Workplane('XY').sphere(3)\nresult = a.intersect(b)\n",
+        "a = cq.Workplane('XY').box(4, 4, 4)\nb = cq.Workplane('XY').sphere(3)\nresult = a.intersect(b)\n",
+    ),
+    "math functions": (
+        "import math\nr = 20\nresult = cq.Workplane('XY').box(r * math.cos(math.radians(60)), math.sqrt(2) * 10, math.hypot(3, 4)).rotate((0, 0, 0), (0, 0, 1), math.degrees(math.atan2(1, 1)))\n",
+        f"result = cq.Workplane('XY').box({20 * math.cos(math.radians(60))!r}, {math.sqrt(2) * 10!r}, 5.0).rotate((0, 0, 0), (0, 0, 1), {math.degrees(math.atan2(1, 1))!r})\n",
+    ),
+    "math constants, floor and ceil": (
+        "import math\nresult = cq.Workplane('XY').box(math.floor(math.pi * 10), math.ceil(math.tau), math.asin(1) + math.acos(1) + math.atan(0) + math.tan(0))\n",
+        f"result = cq.Workplane('XY').box(31, 7, {math.pi / 2!r})\n",
+    ),
+    "math without its import": ("result = cq.Workplane('XY').box(math.pi, 1, 1)\n", f"result = cq.Workplane('XY').box({math.pi!r}, 1, 1)\n"),
+    "the built-ins on numbers": ("a = 4\nresult = cq.Workplane('XY').box(max(a, 10, 2), min(a, 10), abs(-3) + int(2.9) + float(1) + round(2.4) + round(0.123456, 3))\n", "result = cq.Workplane('XY').box(10, 4, 8.123)\n"),
+    "the built-ins on a list": ("sizes = [12, 30, 7.5]\nresult = cq.Workplane('XY').box(max(sizes), min(sizes), len(sizes))\n", "result = cq.Workplane('XY').box(30, 7.5, 3)\n"),
+    "an index": ("pts = [(10, 0), (0, 20)]\nresult = cq.Workplane('XY').box(pts[0][0], pts[-1][1], (1, 2, 3)[0])\n", "result = cq.Workplane('XY').box(10, 20, 1)\n"),
+    "a comprehension over a range": (
+        "result = cq.Workplane('XY').box(60, 60, 4).faces('>Z').workplane().pushPoints([(20 * i - 20, 0) for i in range(3)]).hole(3)\n",
+        "result = cq.Workplane('XY').box(60, 60, 4).faces('>Z').workplane().pushPoints([(-20, 0), (0, 0), (20, 0)]).hole(3)\n",
+    ),
+    "a comprehension over a list, taking points apart": (
+        "pts = [(x, y * 2) for x, y in [(5, 1), (-5, 2)]]\nresult = cq.Workplane('XY').box(30, 30, 4).faces('>Z').workplane().pushPoints(pts).hole(2)\n",
+        "result = cq.Workplane('XY').box(30, 30, 4).faces('>Z').workplane().pushPoints([(5, 2), (-5, 4)]).hole(2)\n",
+    ),
+    "a comprehension that leaves its name alone": ("y = 7\nys = [y for y in (1, 2)]\nresult = cq.Workplane('XY').box(y, max(ys), 1)\n", "result = cq.Workplane('XY').box(7, 2, 1)\n"),
+}
+
+
+@pytest.mark.parametrize(("habit", "written_out"), HABITS.values(), ids=HABITS.keys())
+def test_a_habit_from_ordinary_python_is_the_same_program_as_its_numbers_written_out(habit, written_out):
+    assert _shape(compile_script(habit)) == _shape(compile_script(written_out))
+
+
+def test_a_sine_is_computed_by_the_reader_to_the_last_digit():
+    program = compile_script("import math\nx = 20 * math.sin(math.radians(30))\nresult = cq.Workplane('XY').box(x, 1, 1)\n")
+    assert abs(dict(program.operations[1].arguments)["length"] - 10) <= 1e-9
+
+
+def test_the_numbers_table_is_closed_and_every_name_in_it_is_reserved():
+    from deerflow_extension_cad import interpreter
+
+    assert set(allowlist.MATH_CONSTANTS) == {"pi", "tau"}
+    assert set(allowlist.MATH_FUNCTIONS) == {"sin", "cos", "tan", "asin", "acos", "atan", "atan2", "sqrt", "hypot", "radians", "degrees", "floor", "ceil"}
+    assert set(allowlist.BUILTINS) == {"abs", "min", "max", "round", "int", "float", "len"}
+    # What the table names, the reader computes with its own functions: none is looked up on a module.
+    assert set(interpreter._MATH) == set(allowlist.MATH_FUNCTIONS) and set(interpreter._BUILTIN) == set(allowlist.BUILTINS)
+    assert {"math", *allowlist.BUILTINS} <= set(interpreter._RESERVED)
+
+
+def test_the_numbers_a_script_starts_with_are_its_parameters():
+    """Top-level numbers assigned once before the first operation: what a follow-up edit changes."""
+    script = "import math\nw, d, t = 60, 40, 6\nhole = 4.2\nhalf = w / 2\nplane = 'XY'\nflag = True\npitch = 10\npitch += 2\ncount = 3\nresult = cq.Workplane(plane).box(w, d, t)\nlate = 5\nfor count in range(2):\n    inner = count\n"
+    assert compile_script(script).parameters == (("w", 60), ("d", 40), ("t", 6), ("hole", 4.2), ("half", 30.0))
+    assert compile_script("result = cq.Workplane('XY').box(1, 1, 1)\n").parameters == ()
+
+
+@pytest.mark.parametrize(
+    ("script", "name"),
+    [
+        ("result = cq.Workplane('XY').box(1, 1, 1).sketch()\n", "sketch"),
+        ("for i in range(2):\n    r = cq.Workplane('XY').box(1, 1, 1).sketch()\n", "sketch"),
+        ("import os\n", "import os"),
+        ("import cadquery as os\n", "import cadquery as os"),
+        ("from math import *\n", "from math import *"),
+        ("x = open('/etc/passwd')\n", "open"),
+        ("x = cq.Assembly()\n", "cq.Assembly"),
+        ("x = math.system\n", "math.system"),
+        ("r = cq.Workplane('XY').box(1, 1, 1)\nx = r.objects\n", ".objects"),
+        ("if True:\n    x = 1\n", "if statement"),
+        ("r = cq.Workplane('XY').box(0, 1, 1)\n", "box"),
+        ("result = cq.Workplane('XY').box(1, 1, 1)\nresult.export('x.step')\n", "export"),
+        ("x = [i for i in range(3) if i]\n", "comprehension"),
+        ("math = 3\n", "math"),
+        ("x = math.sqrt(-1)\n", "math.sqrt"),
+    ],
+)
+def test_a_refusal_names_what_it_refused(script, name):
+    with pytest.raises(ScriptRefused) as refused:
+        compile_script(script)
+    assert refused.value.name == name
+
+
+def test_a_refusal_inside_a_comprehension_says_which_item():
+    with pytest.raises(ScriptRefused) as refused:
+        compile_script("x = [1 / (i - 2) for i in range(4)]\n")
+    assert (refused.value.construct, refused.value.line) == ("arithmetic", 1)
+    assert refused.value.message == "division by zero (in item 3 of the list on line 1 (i = 2))"
+
+
+def test_a_comprehension_is_bounded_by_the_work_of_reading_it():
+    """A comprehension makes a list and no operations, so loop passes do not bound it: the work does."""
+    # Ten passes of a loop over a comprehension of comprehensions: a million items read in all.
+    script = "for i in range(10):\n    grid = [[j for j in range(400)] for k in range(250)]\n"
+    started = time.perf_counter()
+    with pytest.raises(ScriptRefused) as refused:
+        compile_script(script)
+    assert time.perf_counter() - started < 3
+    assert refused.value.construct == "script length" and "more work" in refused.value.message
+    # One longer than a list may be is refused before its first item.
+    started = time.perf_counter()
+    with pytest.raises(ScriptRefused) as refused:
+        compile_script("x = [i for i in range(10 ** 6)]\n")
+    assert time.perf_counter() - started < 0.1 and "at most 400" in refused.value.message
+
+
+def test_a_helix_is_data_the_build_turns_into_a_wire_and_only_sweep_takes_it():
+    from deerflow_extension_cad.interpreter import Helix
+
+    program = compile_script(THREAD)
+    (sweep,) = [op for op in program.operations if op.method == "sweep"]
+    path = dict(sweep.arguments)["path"]
+    assert path == Helix(1.25, 10, 8 / 2 - 0.61343 * 1.25 - 0.05, False)
+    # Not an operation: the program is the Workplane calls, and the helix rides in one of them as plain data.
+    assert [op.method for op in program.operations] == ["Workplane", "polyline", "close", "sweep", "Workplane", "circle", "extrude", "union"]
+
+
+def test_lettering_is_bounded_and_read_letter_by_letter(monkeypatch):
+    from deerflow_extension_cad import interpreter
+
+    def work(text: str) -> int:
+        """The least MAX_WORK that reads the script: what reading it costs."""
+        script = f"result = cq.Workplane('XY').box(40, 15, 3).faces('>Z').workplane().text('{text}', 8, -0.6, halign='left', valign='bottom')\n"
+        for limit in range(1, 1000):
+            monkeypatch.setattr(interpreter, "MAX_WORK", limit)
+            try:
+                compile_script(script)
+            except ScriptRefused:
+                continue
+            return limit
+        raise AssertionError("never read")
+
+    assert work("A" * 64) - work("A") == 63
+    assert allowlist.MAX_TEXT == 64
 
 
 def test_names_are_data_so_a_script_may_call_its_variables_anything_but_cq():
@@ -138,7 +301,8 @@ REFUSED = [
     ("r = cq.Workplane('XY').box(1, 1, 1).val()\n", "method", 1),
     ("r = cq.Workplane('XY').box(1, 1, 1).exportSvg('/tmp/x.svg')\n", "export", 1),
     ("r = cq.Workplane('XY').box(1, 1, 1).export('/tmp/x.step')\n", "export", 1),
-    ("r = cq.Workplane('XY').text('hi', 10, 1, fontPath='/etc/passwd')\n", "method", 1),
+    # text is on the list since item 59, in the module's own font: a script names no font and no path.
+    ("r = cq.Workplane('XY').text('hi', 10, 1, fontPath='/etc/passwd')\n", "argument", 1),
     ("r = cq.Workplane('XY').box(1, 1, 1).each(lambda s: s)\n", "lambda", 1),
     ("r = cq.Workplane('XY').box(1, 1, 1).eachpoint(cq.Workplane('XY'))\n", "method", 1),
     ("r = cq.Workplane('XY').sketch()\n", "method", 1),
@@ -161,7 +325,6 @@ REFUSED = [
     ("r = cq.Workplane('XY').box(-1, 1, 1)\n", "argument", 1),
     ("r = cq.Workplane('XY').polygon(2.5, 10)\n", "argument", 1),
     ("x = lambda: 1\n", "lambda", 1),
-    ("x = [i for i in (1, 2)]\n", "comprehension", 1),
     ("x = (i for i in (1, 2))\n", "comprehension", 1),
     ("x = 1 if 2 else 3\n", "conditional expression", 1),
     ("x = (y := 1)\n", "assignment expression", 1),
@@ -170,7 +333,6 @@ REFUSED = [
     ("x = 'a' + 'b'\n", "arithmetic", 1),
     ("x = 'a' * 3\n", "arithmetic", 1),
     ("x = [0] * 3\n", "arithmetic", 1),
-    ("x = (1, 2)[0]\n", "subscript", 1),
     ("x = 1 < 2\n", "comparison", 1),
     ("x = 1 and 2\n", "boolean operator", 1),
     ("x = not 1\n", "operator", 1),
@@ -223,7 +385,6 @@ REFUSED = [
     ("async def f():\n    async for i in x:\n        y = 1\n", "function definition", 1),
     ("x = range(3)\n", "call", 1),
     ("range = 3\n", "name", 1),
-    ("x = [i for i in range(3)]\n", "comprehension", 1),
     ("x += 1\n", "name", 1),
     ("p = cq.Workplane('XY').box(1, 1, 1)\np += 1\n", "arithmetic", 2),
     ("x = 1\nx |= 1\n", "operator", 2),
@@ -238,7 +399,6 @@ REFUSED = [
     ("global x\n", "global", 1),
     ("pass\n", "pass", 1),
     ("x: int = 1\n", "annotated assignment", 1),
-    ("a, b = 1, 2\n", "assignment target", 1),
     ("a = b = 1\n", "assignment target", 1),
     ("cq.x = 1\n", "assignment target", 1),
     ("x = [1]\nx[0] = 2\n", "subscript", 2),
@@ -313,6 +473,119 @@ REFUSED = [
     ("match x:\n    case 1:\n        y = 1\n", "match statement", 1),
     ("type X = int\n", "type alias", 1),
     ("@decorator\ndef f():\n    pass\n", "function definition", 2),
+    # What item 55 admits, and no further: the math table, the seven built-ins, an index, a comprehension, a tuple of names.
+    ("math = 3\n", "name", 1),
+    ("min = 2\n", "name", 1),
+    ("for len in range(2):\n    x = 1\n", "name", 1),
+    ("a, math = 1, 2\n", "name", 1),
+    ("x = math.system\n", "attribute", 1),
+    ("x = math.system('ls')\n", "call", 1),
+    ("x = math.__dict__\n", "attribute", 1),
+    ("x = math.sin.__call__(1)\n", "attribute", 1),
+    ("x = math.e\n", "attribute", 1),
+    ("x = math.inf\n", "attribute", 1),
+    ("x = math.sin\n", "attribute", 1),
+    ("x = math\n", "name", 1),
+    ("x = abs\n", "name", 1),
+    ("x = getattr(math, 'sin')\n", "call", 1),
+    ("x = sorted([2, 1])\n", "call", 1),
+    ("from math import *\n", "import", 1),
+    ("from math import sin\n", "import", 1),
+    ("import math as m\n", "import", 1),
+    ("import math, os\n", "import", 1),
+    ("import math.sys\n", "import", 1),
+    ("p = (1, 2, 3)\nx = p[1:2]\n", "slice", 2),
+    ("p = (1, 2, 3)\nx = p[3]\n", "subscript", 2),
+    ("p = (1, 2, 3)\nx = p[-4]\n", "subscript", 2),
+    ("p = (1, 2, 3)\nx = p[1.0]\n", "subscript", 2),
+    ("p = (1, 2, 3)\nx = p[True]\n", "subscript", 2),
+    ("p = (1, 2, 3)\nx = p[0, 1]\n", "subscript", 2),
+    ("x = 'XY'[0]\n", "subscript", 1),
+    ("r = cq.Workplane('XY').box(1, 1, 1)\nx = r[0]\n", "subscript", 2),
+    ("x = math.sqrt(-1)\n", "arithmetic", 1),
+    ("x = math.acos(2)\n", "arithmetic", 1),
+    ("x = math.tan(math.pi / 2)\n", "arithmetic", 1),
+    ("x = int(1e400)\n", "number", 1),
+    ("x = math.sin(1, 2)\n", "call", 1),
+    ("x = math.atan2(1)\n", "call", 1),
+    ("x = math.sin(x=1)\n", "call", 1),
+    ("x = math.sin('1')\n", "call", 1),
+    ("x = math.sin((1, 2))\n", "call", 1),
+    ("x = min()\n", "call", 1),
+    ("x = min([])\n", "call", 1),
+    ("x = min(5)\n", "call", 1),
+    ("x = min([(1, 2), (3, 4)])\n", "call", 1),
+    ("x = max(1, 2, key=3)\n", "call", 1),
+    ("x = len(5)\n", "call", 1),
+    ("x = len('abc')\n", "call", 1),
+    ("x = int('5')\n", "call", 1),
+    ("x = float('inf')\n", "call", 1),
+    ("x = abs(True)\n", "call", 1),
+    ("x = round(5, -10 ** 9)\n", "call", 1),
+    ("x = round(1.5, 0.5)\n", "call", 1),
+    ("x = [i for i in range(3) if i]\n", "comprehension", 1),
+    ("x = [i for i in range(3) for j in range(2)]\n", "comprehension", 1),
+    ("x = [i for i in 'abc']\n", "comprehension", 1),
+    ("x = [i for i in range(2.5)]\n", "comprehension", 1),
+    ("x = [i for i in []]\n", "comprehension", 1),
+    ("x = [i for i in range(10 ** 6)]\n", "comprehension", 1),
+    ("x = [a for (a, b), c in [(1, 2)]]\n", "comprehension", 1),
+    ("x = [i for cq in range(3)]\n", "name", 1),
+    ("x = {i for i in range(3)}\n", "comprehension", 1),
+    ("x = {i: i for i in range(3)}\n", "comprehension", 1),
+    ("x = [cq.Workplane('XY').box(i + 1, 1, 1) for i in range(3)]\n", "sequence", 1),
+    ("x = [y for y in range(3)]\nz = y\n", "name", 2),
+    ("a, b = 1, 2, 3\n", "assignment target", 1),
+    ("p = (1, 2, 3)\na, b = p\n", "assignment target", 2),
+    ("a, b = 5\n", "assignment target", 1),
+    ("(a, b), c = (1, 2), 3\n", "assignment target", 1),
+    ("[a, b] = 1, 2\n", "assignment target", 1),
+    ("a, b.c = 1, 2\n", "assignment target", 1),
+    ("a, *b = 1, 2, 3\n", "starred argument", 1),
+    # Item 56: sweep's path is an outline drawn earlier, and nothing reaches the kernel's other modes.
+    ("path = cq.Workplane('XY').box(5, 5, 5)\nr = cq.Workplane('XY').rect(4, 4).sweep(path)\n", "argument", 2),
+    ("path = cq.Workplane('XZ').moveTo(0, 20)\nr = cq.Workplane('XY').rect(4, 4).sweep(path)\n", "argument", 2),
+    ("path = cq.Workplane('XZ').polyline([(0, 0), (0, 20)]).translate((1, 0, 0))\nr = cq.Workplane('XY').rect(4, 4).sweep(path)\n", "argument", 2),
+    ("r = cq.Workplane('XY').rect(4, 4).sweep(5)\n", "argument", 1),
+    ("r = cq.Workplane('XY').rect(4, 4).sweep()\n", "argument", 1),
+    ("path = cq.Workplane('XZ').polyline([(0, 0), (0, 20)])\nr = cq.Workplane('XY').rect(4, 4).sweep(path, transition='bogus')\n", "argument", 2),
+    ("path = cq.Workplane('XZ').polyline([(0, 0), (0, 20)])\nr = cq.Workplane('XY').rect(4, 4).sweep(path, normal=(0, 0, 1))\n", "argument", 2),
+    ("path = cq.Workplane('XZ').polyline([(0, 0), (0, 20)])\nr = cq.Workplane('XY').rect(4, 4).sweep(path, auxSpine=path)\n", "argument", 2),
+    ("r = cq.Workplane('XY').circle(5).workplane(offset=5).circle(3).loft(combine='cut')\n", "argument", 1),
+    ("r = cq.Workplane('XY').rect(4, 4).revolve(combine='s')\n", "argument", 1),
+    ("r = cq.Workplane('XY').rect(4, 4).offset2D(1, kind='tangent')\n", "argument", 1),
+    ("r = cq.Workplane('XY').spline([(0, 0), (1, 1)], tol=0.1)\n", "argument", 1),
+    ("r = cq.Workplane('XY').box(1, 1, 1).end(0)\n", "argument", 1),
+    ("r = cq.Workplane('XY').parametricCurve(lambda t: (t, t))\n", "lambda", 1),
+    # Item 59: lettering in the module's font, and one constructor on cq besides Workplane.
+    ("r = cq.Workplane('XY').text('hi', 10, 1, font='Arial')\n", "argument", 1),
+    ("r = cq.Workplane('XY').text('hi', 10, 1, kind='bold')\n", "argument", 1),
+    ("r = cq.Workplane('XY').text('" + "A" * 65 + "', 10, 1)\n", "argument", 1),
+    ("r = cq.Workplane('XY').text('', 10, 1)\n", "argument", 1),
+    ("r = cq.Workplane('XY').text(5, 10, 1)\n", "argument", 1),
+    ("r = cq.Workplane('XY').text('hi', 10, 1, True, True, 'left')\n", "argument", 1),
+    ("r = cq.Workplane('XY').text('hi', 10, 1, halign='middle')\n", "argument", 1),
+    ("r = cq.Workplane('XY').text('hi', 10, 1, combine='cut')\n", "argument", 1),
+    ("x = cq.Wire.makePolygon([(0, 0), (1, 0), (1, 1)])\n", "call", 1),
+    ("x = cq.Edge.makeLine((0, 0, 0), (1, 0, 0))\n", "attribute", 1),
+    ("x = cq.Solid.makeBox(1, 1, 1)\n", "attribute", 1),
+    ("x = cq.Wire\n", "attribute", 1),
+    ("x = cq.Wire.makeHelix\n", "attribute", 1),
+    ("h = cq.Wire.makeHelix(1, 10, 4)\nr = cq.Workplane('XY').box(1, 1, 1).union(h)\n", "argument", 2),
+    ("h = cq.Wire.makeHelix(1, 10, 4)\nr = cq.Workplane('XY').rect(1, 1).extrude(h)\n", "argument", 2),
+    ("h = cq.Wire.makeHelix(1, 10, 4)\nr = h.translate((1, 0, 0))\n", "attribute", 2),
+    ("h = cq.Wire.makeHelix(1, 10, 4)\nresult = h\n", "result", 2),
+    ("h = cq.Wire.makeHelix(1, 10, 4)\np = [h]\n", "sequence", 2),
+    ("h = cq.Wire.makeHelix(1, 10, 4)\nx = h + 1\n", "arithmetic", 2),
+    ("h = cq.Wire.makeHelix(0.1, 30, 4)\n", "argument", 1),
+    ("h = cq.Wire.makeHelix(1, 10, 4, (0, 0, 0))\n", "argument", 1),
+    ("h = cq.Wire.makeHelix(1, 10, 4, center=(0, 0, 1))\n", "argument", 1),
+    ("h = cq.Wire.makeHelix(1, 10, -4)\n", "argument", 1),
+    ("h = cq.Wire.makeHelix(1, 10)\n", "argument", 1),
+    # split cuts the part at the workplane, by keyword only: given a part, it would cut with it.
+    ("r = cq.Workplane('XY').box(1, 1, 1).split(True)\n", "argument", 1),
+    ("r = cq.Workplane('XY').box(1, 1, 1).split(cq.Workplane('XY').box(1, 1, 1))\n", "argument", 1),
+    ("r = cq.Workplane('XY').box(1, 1, 1).split(keepTop='yes')\n", "argument", 1),
 ]
 
 
@@ -349,6 +622,10 @@ def test_a_refusal_says_what_to_do_next():
     for long in ("x = " + "a" * 900 + "\n", box + "y = result." + "a" * 900 + "()\n", box + "y = result.box(1, 1, 1, " + "a" * 900 + "=1)\n"):
         assert "aaa..." in message(long) and len(message(long)) < 700
     assert "break it" in message("x = " + "1 + " * 300 + "1\n")
+    # A method off the list: the nearest names on it, and where all of them are, not the whole table in every refusal.
+    near_miss = message(box + "result = result.faces('>Z').workplane().rect(4, 4).cutThru()\n")
+    assert "The nearest on it: cutThruAll" in near_miss and "references/operations.md" in near_miss and len(near_miss) < 300
+    assert "nearest" not in message(box + "result = result.sketch()\n")
 
 
 def test_the_export_refusal_shadows_no_allow_listed_method():
@@ -513,7 +790,7 @@ def test_a_pass_clause_is_short_and_says_its_numbers_exactly():
     many = "for " + names.replace(", ", ",\n    ") + " in [(\n" + ",\n".join(", ".join(["1"] * 90) for _ in range(2)) + "\n)]:\n    y = 1 / 0\n"
     assert len(message(many)) < 200
     # The worst ordinary case: four loops deep, two names each, a method that is not on the list.
-    deep = "result = cq.Workplane('XY').box(1, 1, 1)\n" + "".join(" " * 4 * level + f"for a{level}, b{level} in [(1, 2)]:\n" for level in range(4)) + " " * 16 + "result = result.revolve()\n"
+    deep = "result = cq.Workplane('XY').box(1, 1, 1)\n" + "".join(" " * 4 * level + f"for a{level}, b{level} in [(1, 2)]:\n" for level in range(4)) + " " * 16 + "result = result.val()\n"
     assert len(message(deep)) < 700 and message(deep).count("pass 1 of the loop") == 4
 
 

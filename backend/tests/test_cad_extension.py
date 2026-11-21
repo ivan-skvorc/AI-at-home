@@ -415,6 +415,43 @@ async def test_a_refused_script_is_reported_with_its_construct_and_line_and_buil
 
 
 @pytest.mark.asyncio
+async def test_a_refusal_names_what_it_refused_in_the_answer_and_the_report(cad, outputs, monkeypatch):
+    # What the reader refused, as the script wrote it: counted by kind (item 48), and said to the model without parsing the message.
+    refused = {"status": "refused", "construct": "method", "refused": "loft", "line": 2, "message": ".loft() is not on the allow-list."}
+    answer, _, _ = await _call(cad, outputs, monkeypatch, refused)
+    assert answer["error"] == {"construct": "method", "refused": "loft", "line": 2, "message": refused["message"]}
+    assert json.loads((outputs / "mounting-plate.report.json").read_text(encoding="utf-8"))["error"]["refused"] == "loft"
+
+
+@pytest.mark.asyncio
+async def test_the_numbers_a_script_starts_with_reach_the_report_and_not_the_answer(cad, outputs, monkeypatch):
+    # For a follow-up edit ("make it 80 long"): the report keeps them, and the model already has them in its script.
+    built = {**BUILT, "parameters": {"w": 60, "d": 40, "t": 6, "hole": 4.2}}
+    answer, _, _ = await _call(cad, outputs, monkeypatch, built)
+    assert answer["passed"] is True and "parameters" not in answer
+    report = json.loads((outputs / "mounting-plate.report.json").read_text(encoding="utf-8"))
+    assert report["parameters"] == {"w": 60, "d": 40, "t": 6, "hole": 4.2}
+    # A failed build keeps them too; anything but a name and a number is not copied from the child's answer.
+    failed = {"status": "failed", "line": 3, "operation": "fillet", "message": "fillet() failed", "parameters": {"w": 60, "x": "60", "y": [1], "ok": True}}
+    await _call(cad, outputs, monkeypatch, failed)
+    report = json.loads((outputs / "mounting-plate-1.report.json").read_text(encoding="utf-8"))
+    assert report["parameters"] == {"w": 60}
+    # None at all: no empty field.
+    await _call(cad, outputs, monkeypatch, BUILT)
+    assert "parameters" not in json.loads((outputs / "mounting-plate-2.report.json").read_text(encoding="utf-8"))
+
+
+def test_the_opening_a_small_model_gets_says_what_a_script_may_contain(cad):
+    from deerflow.agents.middlewares.context_window_guard_middleware import short_tool_schema
+
+    ((_, plugin),) = cad.plugins
+    (tool,) = plugin.tools
+    short = short_tool_schema({"type": "function", "function": {"name": "cad_build", "description": tool.description, "parameters": dict(tool.input_schema)}})
+    # A 32K model gets the sentences before "Methods:" and nothing after: they name what the reader takes, math included.
+    assert short["function"]["description"] == ("Build and check a part from a CadQuery script. It is read, not run: assignments, arithmetic, math, for loops and allow-listed Workplane methods; no if, while or def. Millimetres.")
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("worker_result", "arguments", "says", "not_says"),
     [

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import inspect
 import json
+import math
 import time
 
 import pytest
@@ -119,6 +120,36 @@ async def test_a_hostile_script_is_refused_with_its_reason_and_nothing_runs(labe
     assert sorted(files) == ["part.py", "part.report.json"]
     assert elapsed < 10
     assert not any(canary.exists() for canary in canaries)
+
+
+#: The plate as models write it from ordinary Python habits (item 55): names assigned together, math, an index, a comprehension, round().
+HABITS_PLATE = """\
+import cadquery as cq
+import math
+
+w, d, t = 60, 40, 6
+holes = [(-15, 0), (15, 0)]
+spacing = math.hypot(holes[1][0] - holes[0][0], 0)
+
+result = (
+    cq.Workplane("XY")
+    .box(w, d, t)
+    .faces(">Z")
+    .workplane()
+    .pushPoints([(x * spacing / 30, y) for x, y in holes])
+    .hole(round(4.04, 1))
+)
+"""
+
+
+async def test_a_plate_written_with_the_habits_of_ordinary_python_builds_and_passes():
+    answer, files = await _build(HABITS_PLATE)
+    assert answer["passed"] is True, answer
+    assert sorted(files) == ["part.glb", "part.py", "part.report.json", "part.step", "part.stl"]
+    # A method that is not on the list is refused before the kernel loads, and the answer says which.
+    answer, files = await _build(HABITS_PLATE.replace(".hole(round(4.04, 1))", ".hole(4).faces('>Z').sketch()"))
+    assert answer["passed"] is False and answer["error"]["construct"] == "method" and answer["error"]["message"].startswith(".sketch() is not on the allow-list")
+    assert sorted(files) == ["part.py", "part.report.json"]
 
 
 async def test_a_kernel_error_names_the_line_and_the_operation():
@@ -354,6 +385,8 @@ ADDS_NOTHING = [
     ("an extrusion down into the block", f'result = {BLOCK}.faces(">Z").workplane().rect(20, 10).extrude(-3)\n', "extrude"),
     ("a cylinder placed inside the plate", f"result = {BLOCK}.cylinder(4, 3)\n", "cylinder"),
     ("a body joined where the part already is", f'a = {BLOCK}\nresult = a.union(cq.Workplane("XY").box(10, 10, 2))\n', "union"),
+    ("a wedge inside the block", f"result = {BLOCK}.wedge(10, 10, 2, 2, 0, 8, 2)\n", "wedge"),
+    ("a ring revolved inside the block", f'result = {BLOCK}.faces(">Z").workplane(offset=-3).moveTo(1.5, 0).rect(1, 1).revolve(360, (0, 0, 0), (0, 1, 0))\n', "revolve"),
 ]
 
 
@@ -505,14 +538,152 @@ async def test_a_rebuild_does_not_touch_the_first_build():
     assert sorted(files) == ["part-1.failed.glb", "part-1.py", "part-1.report.json", "part.glb", "part.py", "part.report.json", "part.step", "part.stl"]
 
 
+#: Item 56's operations against volumes worked out by hand: (label, script, bounding box, volume).
+ANALYTIC = [
+    # A 4 x 4 square along 20 + 20 mm with a mitred corner: the area times the length of the path.
+    ("a square swept along an L", "path = cq.Workplane('XZ').polyline([(0, 0), (0, 20), (20, 20)])\nresult = cq.Workplane('XY').rect(4, 4).sweep(path)\n", [22, 4, 22], 4 * 4 * 40),
+    ("a frustum lofted between two circles", "result = cq.Workplane('XY').circle(10).workplane(offset=20).circle(5).loft()\n", [20, 20, 20], math.pi * 20 * (10**2 + 10 * 5 + 5**2) / 3),
+    ("a ring revolved about the y axis", "result = cq.Workplane('XY').moveTo(12.5, 0).rect(5, 4).revolve(360, (0, 0, 0), (0, 1, 0))\n", [30, 4, 30], math.pi * (15**2 - 10**2) * 4),
+    # A twist turns the outline and keeps its area: the same volume as the plain extrusion.
+    ("a twisted extrusion", "result = cq.Workplane('XY').rect(20, 10).twistExtrude(10, 45)\n", None, 20 * 10 * 10),
+    # A prismatoid: a 20 x 10 base narrowed to a 10 mm edge 10 mm up, h / 6 * (base + 4 * middle + top).
+    ("a wedge", "result = cq.Workplane('XY').wedge(20, 10, 10, 5, 5, 15, 5)\n", [20, 10, 10], 10 / 6 * (20 * 10 + 4 * 15 * 5 + 10 * 0)),
+]
+
+
+@pytest.mark.parametrize(("label", "script", "bbox", "volume"), ANALYTIC, ids=[item[0] for item in ANALYTIC])
+def test_each_new_operation_builds_the_volume_worked_out_by_hand(label, script, bbox, volume):
+    solid = build.solid_of(build.run_program(compile_script(script), cq))
+    assert solid.isValid()
+    assert solid.Volume() == pytest.approx(volume, rel=1e-3)
+    if bbox:
+        box = solid.BoundingBox()
+        assert [box.xlen, box.ylen, box.zlen] == pytest.approx(bbox, abs=1e-3)
+
+
+LETTERED = "result = cq.Workplane('XY').box(40, 15, 3).faces('>Z').workplane().text('HELLO', 8, {distance}{combine})\n"
+
+
+async def test_lettering_is_cut_or_raised_in_the_modules_own_font():
+    # The slim Gateway image has no system fonts: the module ships one, and the build passes its path.
+    assert build.FONT.is_file() and build.FONT.parent.name == "fonts"
+    licence = (build.FONT.parent / "OFL.txt").read_text(encoding="utf-8")
+    assert "SIL OPEN FONT LICENSE Version 1.1" in licence and "Liberation" in licence
+    cut, files = await _build(LETTERED.format(distance=-0.6, combine=""), bbox_xyz_mm=[40, 15, 3])
+    assert cut["passed"] is True, cut
+    assert 1700 < cut["unchecked"]["volume_mm3"] < 1795 and "part.step" in files
+    raised, _ = await _build(LETTERED.format(distance=0.6, combine=", combine=True"), bbox_xyz_mm=[40, 15, 3.6])
+    assert raised["passed"] is True and 1805 < raised["unchecked"]["volume_mm3"] < 1900, raised
+    # Lettering is cut unless combine=True, so a positive distance alone cuts air: that is said, not passed.
+    air, _ = await _build(LETTERED.format(distance=0.6, combine=""), bbox_xyz_mm=[40, 15, 3])
+    assert air["passed"] is False and air["error"]["operation"] == "text" and "combine=True" in air["error"]["message"]
+
+
+def test_lettering_is_never_in_a_font_the_script_names(monkeypatch):
+    # The path is the module's, and a missing file is a failed build, not the kernel's silent fallback to a system font.
+    monkeypatch.setattr(build, "FONT", build.FONT.with_name("missing.ttf"))
+    with pytest.raises(build.BuildFailed) as failed:
+        build.run_program(compile_script(LETTERED.format(distance=-0.6, combine="")), cq)
+    assert failed.value.operation == "text" and "font" in failed.value.message
+
+
+#: The thread gate (item 59): threads ship only if both build valid inside it.
+THREADS = {
+    "M8 x 1.25": (8, 1.25, 10),
+    "M24 x 3": (24, 3, 24),
+}
+THREAD_GATE_SECONDS = 5
+
+
+def _thread(d: float, pitch: float, length: float) -> str:
+    return (
+        f"d, pitch, length = {d}, {pitch}, {length}\n"
+        "root = d / 2 - 0.61343 * pitch\n"
+        "helix = cq.Wire.makeHelix(pitch, length, root - 0.05)\n"
+        "half = 0.4 * pitch\n"
+        "outline = [(root - 0.05, -half), (d / 2, -0.06 * pitch), (d / 2, 0.06 * pitch), (root - 0.05, half)]\n"
+        "thread = cq.Workplane('XZ').polyline(outline).close().sweep(helix, isFrenet=True)\n"
+        "result = cq.Workplane('XY').circle(root).extrude(length).union(thread)\n"
+    )
+
+
+@pytest.mark.parametrize(("d", "pitch", "length"), THREADS.values(), ids=THREADS.keys())
+def test_a_metric_thread_builds_valid_inside_the_gate(d, pitch, length):
+    started = time.perf_counter()
+    solid = build.solid_of(build.run_program(compile_script(_thread(d, pitch, length)), cq))
+    assert solid.isValid() and len(solid.Solids()) == 1
+    assert time.perf_counter() - started < THREAD_GATE_SECONDS
+    box = solid.BoundingBox()
+    assert [box.xlen, box.ylen] == pytest.approx([d, d], abs=0.01)
+
+
+async def test_a_threaded_rod_passes_the_tools_checks():
+    answer, files = await _build(_thread(8, 1.25, 10), bbox_xyz_mm=[8, 8, 11])
+    assert answer["passed"] is True, answer
+    assert "part.step" in files
+
+
+async def test_a_part_split_at_a_workplane_keeps_the_half_asked_for():
+    answer, _ = await _build("result = cq.Workplane('XY').box(20, 20, 40).faces('>Z').workplane(-20).split(keepBottom=True)\n", bbox_xyz_mm=[20, 20, 20], volume_min_max_mm3=[7990, 8010])
+    assert answer["passed"] is True, answer
+
+
+async def test_a_sweep_along_a_solid_is_refused_before_the_kernel_loads():
+    started = time.monotonic()
+    answer, files = await _build("path = cq.Workplane('XY').box(5, 5, 5)\nresult = cq.Workplane('XY').rect(4, 4).sweep(path)\n", bbox_xyz_mm=[5, 5, 5])
+    assert (answer["error"]["construct"], answer["error"]["line"]) == ("argument", 2) and "outline" in answer["error"]["message"]
+    assert sorted(files) == ["part.py", "part.report.json"] and time.monotonic() - started < 10
+
+
+@pytest.mark.parametrize(
+    ("script", "operation", "hint"),
+    [
+        ("result = cq.Workplane('XY').rect(10, 10).loft()\n", "loft", "loft needs two or more closed outlines on separate workplanes"),
+        ("path = cq.Workplane('XZ').polyline([(0, 0), (0, 20)])\nresult = cq.Workplane('XY').sweep(path)\n", "sweep", "sweep needs a closed outline drawn before it, and the path must start on the profile's plane"),
+        ("result = cq.Workplane('XY').rect(10, 4).revolve(360, (0, 0, 0), (0, 1, 0))\n", "revolve", "the axis must not cross the outline"),
+        ("result = cq.Workplane('XY').twistExtrude(10, 45)\n", "twistExtrude", "there is no closed outline to extrude"),
+    ],
+    ids=["a loft of one outline", "a sweep with no outline", "a revolve about an axis through the outline", "a twist with no outline"],
+)
+async def test_an_operation_that_cannot_make_its_solid_fails_with_its_likely_cause(script, operation, hint):
+    answer, files = await _build(script, bbox_xyz_mm=[10, 10, 10])
+    assert answer["passed"] is False and answer["error"]["operation"] == operation
+    assert f"Likely cause: {hint}" in answer["error"]["message"]
+    assert "part.step" not in files
+
+
+async def test_a_sweep_that_runs_into_itself_fails_cleanly():
+    # A profile wider than the U it follows: the kernel makes a solid that crosses itself.
+    script = "path = cq.Workplane('XZ').polyline([(0, 0), (0, 20), (3, 20), (3, 0)])\nresult = cq.Workplane('XY').circle(10).sweep(path)\n"
+    started = time.monotonic()
+    answer, files = await _build(script, bbox_xyz_mm=[23, 20, 30])
+    assert answer["passed"] is False and time.monotonic() - started < 30
+    assert "part.step" not in files and "part.stl" not in files
+
+
 def test_every_allow_listed_method_matches_the_kernels_own_signature():
-    """Positional arguments are bound by the table, so its order must be CadQuery's order."""
+    """Positional arguments are bound by the table, so its order must be CadQuery's order.
+
+    A parameter the table marks keyword-only is bound by name only, so it need only exist.
+    Two exceptions, each stated: split takes **kwargs and names keepTop and keepBottom in its
+    documentation, and text's fontPath is not in the table at all because build.py passes it.
+    """
     for name, method in allowlist.METHODS.items():
         kernel = [parameter for parameter in inspect.signature(vars(cq.Workplane)[name]).parameters if parameter != "self"]
-        ours = [param.name for param in method.params]
+        ours = [param.name for param in method.params if not param.keyword]
         assert ours == kernel[: len(ours)], f"{name}: the table says {ours}, cadquery {cq.__version__} says {kernel}"
+        named = [param.name for param in method.params if param.keyword]
+        if name == "split":
+            assert kernel == ["args", "kwargs"] and all(f":param bool {keyword}:" in cq.Workplane.split.__doc__ for keyword in named)
+        else:
+            assert set(named) <= set(kernel), f"{name}: {named} are not parameters of cadquery {cq.__version__}"
+    for name, injected in build.INJECTED.items():
+        kernel = inspect.signature(vars(cq.Workplane)[name]).parameters
+        assert set(injected) <= set(kernel) and not set(injected) & {param.name for param in allowlist.METHODS[name].params}
     constructor = [parameter for parameter in inspect.signature(cq.Workplane.__init__).parameters if parameter != "self"]
     assert [param.name for param in allowlist.CONSTRUCTOR.params] == constructor[:2]
+    helix = [parameter for parameter in inspect.signature(cq.Wire.makeHelix).parameters]
+    assert [param.name for param in allowlist.HELIX.params if not param.keyword] == helix[:3] and {param.name for param in allowlist.HELIX.params if param.keyword} <= set(helix)
 
 
 @pytest.mark.parametrize("name", sorted(allowlist.METHODS))
@@ -526,12 +697,17 @@ def test_every_allow_listed_method_has_an_example_that_builds_a_solid(name):
     assert solid.isValid() and solid.Volume() > 0
 
 
+def test_the_helix_example_builds_one_threaded_solid():
+    solid = build.solid_of(build.run_program(compile_script(allowlist.HELIX.example), cq))
+    assert solid.isValid() and len(solid.Solids()) == 1
+
+
 def test_the_table_holds_no_method_that_takes_a_path_a_callable_or_a_font():
     forbidden = {
         "export",
         "exportSvg",
         "toSvg",
-        "text",
+        # text is on the list since item 59: the font is the module's own file, which build.py passes; see below.
         "each",
         "eachpoint",
         "cutEach",
@@ -547,12 +723,15 @@ def test_the_table_holds_no_method_that_takes_a_path_a_callable_or_a_font():
         "val",
         "vals",
         "findSolid",
-        "split",
-        "sweep",
+        # split is on the list since item 51, by keyword only: given a part, it would cut with it, which cut() does.
+        # sweep is on the list since item 56: its path is a part the script drew, never a file.
         "toPending",
         "copyWorkplane",
     }
     assert not forbidden & set(allowlist.METHODS)
+    # No parameter that names a font or a file: text's font is the module's own, passed by build.py.
+    assert not {"font", "fontPath", "fname"} & {param.name for method in allowlist.METHODS.values() for param in method.params}
+    assert [(name, param.kind) for name, method in allowlist.METHODS.items() for param in method.params if param.name == "path"] == [("sweep", allowlist.PATH)]
     for name in allowlist.METHODS:
         for parameter in inspect.signature(vars(cq.Workplane)[name]).parameters.values():
             annotation = str(parameter.annotation)

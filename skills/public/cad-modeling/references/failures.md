@@ -13,14 +13,22 @@ Nothing was built. The answer's `error` has the construct and the line.
 | a script may not contain an if statement | A choice between two values | Compute it: `(-1) ** i` alternates the sign, `i % 2` alternates 0 and 1 |
 | … a while loop | A loop with a condition | A `for` loop over `range(n)`, with `n` worked out beforehand |
 | … a function definition, a lambda | A helper function | A `for` loop over the values the helper was called with |
-| … a comprehension | A list built in one line | Write the list out, or build the feature in a `for` loop |
-| … a subscript | `point[0]` | Take the point apart in the loop header: `for x, y in points:` |
-| the only import a script may contain is: import cadquery as cq | `import math` | Write the value: sin 30° is `0.5`, a square root is `** 0.5` |
+| a comprehension has one for and no if | A comprehension that filters, or runs over two lists | Write the list out, or use one `for` and arithmetic: `[(10 * i, (-1) ** i) for i in range(4)]` |
+| … a slice | `p[1:]` | Name the items one by one: `p[1]`, `p[2]` |
+| index … is outside this list | An index past either end | The first item is `p[0]`, the last `p[-1]` |
+| a script may contain two imports | `import os`, `import numpy` | Only `import cadquery as cq` and `import math`; compute the rest with arithmetic |
+| from math import … is not available: write import math | `from math import sin` | `import math`, then `math.sin(x)` |
+| has no answer: the number is outside what | `math.sqrt` of a negative number, `math.acos` of more than 1 | Check the arithmetic that leads to the call |
+| is a name the script is given and cannot be assigned | A variable called `min`, `max`, `len`, `round` or `math` | Rename it: `largest`, `count`, `size` |
 | range() takes whole numbers | A count that is not whole, such as 7.5 | Round it down with whole division (two slashes); a whole count is accepted with or without a decimal point |
 | this loop would not run once | A count that came out as 0 | Check the arithmetic of the count |
 | a loop runs over range(...) or over a list | `enumerate`, `zip`, a part | `for i in range(n):` and compute the rest from `i` |
 | .name() is not on the allow-list | A method the tool does not have | Build the shape from the methods in `operations.md`; if it cannot be done, tell the user |
 | a script does not export | An export or save line | Delete it: the tool writes the files |
+| text() has no argument 'font' (or 'fontPath') | A font named by the script | Leave it out: lettering is always in the module's own font |
+| on cq a script may use cq.Workplane(...) and cq.Wire.makeHelix(...) | Another kernel constructor, such as `cq.Wire.makePolygon` | Draw the shape with the methods of a part: `polyline`, `polygon` |
+| … turns (height / pitch): at most 200 | A helix taller than 200 pitches | Shorten the thread, or check that pitch and height are in millimetres |
+| sweep(path=...) must be an outline drawn earlier in the script that ends with lines, arcs … | A path that is a solid, a point, or a drawing moved after it was drawn | Draw the path on a workplane of its own and sweep along it as drawn: `path = cq.Workplane("XZ").polyline([(0, 0), (0, 20), (20, 20)])` |
 | at most 300 operations, at most 1000 passes | A loop that is too long | One pattern call (`rarray`, `polarArray`, `pushPoints`) instead of one operation per pass |
 
 ## A build step failed
@@ -38,6 +46,10 @@ for a line inside a loop the pass and the loop variable's value.
 | fillet() or chamfer() failed | The radius is too large for an edge, or no edge is selected | A smaller radius, or a narrower selector such as `"\|Z"`; fillet before cutting small features |
 | shell() failed, changed nothing | The wall is thicker than the part allows | A thinner wall, or shell before adding small features |
 | there is no closed outline | `extrude` or a cut without a closed shape | Draw the outline and `close()` it first |
+| loft needs two or more closed outlines | One outline, or all of them on one workplane | Draw each on its own workplane, first to last: `circle(10).workplane(offset=20).circle(5).loft()` |
+| sweep needs a closed outline drawn before it | No profile before `sweep`, or a profile away from where the path starts | Draw the profile on the plane square to the path's first segment, at its first point |
+| text() changed nothing: lettering is cut into the part unless combine=True | Raised lettering without `combine=True`, or a cut with a positive distance, or a workplane off the face | Cut: a negative distance into the face. Raised: `combine=True` and a positive distance. Letters at least 5 mm tall print legibly |
+| the axis must not cross the outline | `revolve` about an axis through the outline | Draw the outline wholly on one side of the axis: `moveTo(12.5, 0).rect(5, 4)` about the y axis |
 | did not finish within … seconds | The part is too costly to build | Fewer pattern points; `hole()` instead of `circle().cutThruAll()`; fewer small fillets |
 
 ## A check failed
