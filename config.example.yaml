@@ -20,7 +20,7 @@
 # ============================================================================
 # Bump this number when the config schema changes.
 # Run `make config-upgrade` to merge new fields into your local config.yaml.
-config_version: 74
+config_version: 75
 
 # Optional operator-owned literal prompt extensions (see CONFIGURATION.md):
 # lead_prompt_overlay:
@@ -3265,6 +3265,9 @@ harness_guard:
   enabled: true
   write_verify_syntax: false
   block_on_syntax_error: true
+  # Before its final answer, remind the lead agent once when it edited code in
+  # this run and ran nothing afterwards (FORK.md §55). Needs the bash tool.
+  verify_before_finish: true
   targeted_hints_enabled: true
   max_repeated_error_signatures: 2
   detect_alternating_loops: true
@@ -4460,6 +4463,15 @@ skill_evolution:
   enabled: false # Set to true to allow agent-managed writes under skills/custom
   moderation_model_name: null # Model for LLM-based security scanning (null = use default model)
   security_fail_closed: true # Moderation model unavailable: true blocks all writes; false allows non-executable content with a warning (executable is always blocked)
+  # The learning loop (FORK.md §55). Both apply only while enabled is true.
+  # A run that used this many tool calls without calling skill_manage gets one
+  # reminder before its final answer to save what it learned as a skill (or
+  # patch a custom skill it loaded). 0 = no reminder.
+  nudge_after_tool_calls: 8
+  # The curator switches off agent-written custom skills nobody loaded for this
+  # many days; Settings → Skills switches them back on, nothing is deleted.
+  # 0 = never.
+  archive_unused_after_days: 90
 
 # ============================================================================
 # Checkpointer Configuration (DEPRECATED — use `database` instead)

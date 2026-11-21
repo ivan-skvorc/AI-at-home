@@ -63,6 +63,7 @@ from deerflow.sandbox.sandbox import Sandbox
 from deerflow.sandbox.sandbox_provider import SandboxProvider, get_sandbox_provider
 from deerflow.sandbox.search import GrepMatch
 from deerflow.sandbox.security import LOCAL_HOST_BASH_DISABLED_MESSAGE, is_host_bash_allowed
+from deerflow.sandbox.syntax_check import syntax_advisory
 from deerflow.tools.types import Runtime
 from deerflow.utils.context_budget import (
     COMMAND_OUTPUT_SHARE,
@@ -3636,7 +3637,9 @@ def write_file_tool(
             # Custom mount paths are resolved by LocalSandbox._resolve_path()
         with get_file_operation_lock(sandbox, path):
             sandbox.write_file(path, content, append)
-        return "OK"
+        # An append carries only the tail, so only a whole-file write is checked.
+        advisory = None if append else syntax_advisory(requested_path, content)
+        return "OK" if advisory is None else f"OK\n\n{advisory}"
     except SandboxError as e:
         return _format_write_file_error(requested_path, e, runtime)
     except PermissionError:
@@ -3692,6 +3695,32 @@ def _match_line_endings(content: str, old_str: str, new_str: str) -> tuple[str, 
     return old_str, new_str
 
 
+_AMBIGUOUS_MATCH_LINES_SHOWN = 10
+
+
+def _ambiguous_match_error(content: str, old_str: str, requested_path: str) -> str | None:
+    """Refuse an edit whose ``old_str`` matches more than once.
+
+    Replacing the first of several matches edits whichever copy happens to come
+    first, which is the wrong one as often as not, and the call still reports
+    success. Naming the lines lets the model widen ``old_str`` in one retry.
+    """
+    count = content.count(old_str)
+    if count <= 1:
+        return None
+    lines: list[int] = []
+    start = 0
+    while len(lines) < _AMBIGUOUS_MATCH_LINES_SHOWN:
+        index = content.find(old_str, start)
+        if index == -1:
+            break
+        lines.append(content.count("\n", 0, index) + 1)
+        start = index + 1
+    shown = ", ".join(str(line) for line in lines)
+    more = "" if count <= len(lines) else ", ..."
+    return f"Error: old_str matches {count} places in {requested_path} (starting on lines {shown}{more}). Include enough surrounding lines to match exactly one place, or set replace_all=true to change every occurrence."
+
+
 @tool("str_replace", parse_docstring=True)
 def str_replace_tool(
     runtime: Runtime,
@@ -3712,7 +3741,7 @@ def str_replace_tool(
         old_str: The substring to replace.
         new_str: The new substring.
         description: Optional short explanation of this replacement shown in the UI.
-        replace_all: Whether to replace all occurrences of the substring. If False, only the first occurrence will be replaced. Default is False.
+        replace_all: Whether to replace all occurrences of the substring. If False, old_str must match exactly once. Default is False.
     """
     try:
         sandbox = ensure_sandbox_initialized(runtime)
@@ -3733,12 +3762,14 @@ def str_replace_tool(
             old_str, new_str = _match_line_endings(content, old_str, new_str)
             if not content or old_str not in content:
                 return f"Error: String to replace not found in file: {requested_path}"
-            if replace_all:
-                content = content.replace(old_str, new_str)
-            else:
-                content = content.replace(old_str, new_str, 1)
+            if not replace_all:
+                ambiguity = _ambiguous_match_error(content, old_str, requested_path)
+                if ambiguity is not None:
+                    return ambiguity
+            content = content.replace(old_str, new_str) if replace_all else content.replace(old_str, new_str, 1)
             sandbox.write_file(path, content)
-        return "OK"
+        advisory = syntax_advisory(requested_path, content)
+        return "OK" if advisory is None else f"OK\n\n{advisory}"
     except SandboxError as e:
         return f"Error: {e}"
     except FileNotFoundError:

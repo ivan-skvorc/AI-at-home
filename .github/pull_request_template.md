@@ -2,6 +2,21 @@
      auto-close it on merge. Delete this line if the PR doesn't reference an issue. -->
 Fixes #
 
+## Change cycle summary
+
+<!-- change_cycle.md → PR summary. Fill every line with what actually ran. -->
+
+```
+Level: <1|2|3>
+Changed since sync point: <files → features>
+Checks run: <commands> — <pass/fail>
+Map: <features/files added, removed, renamed; board updated: yes/no>
+Quality fixes: <list, or "n/a">
+Exceptions added/removed: <list, or "n/a">
+Critical checks: <each: inside make test | by itself | not affected — why; result>
+Model audit: <run — logged <date> | not run (not asked) — last pass <date>>
+```
+
 ## Why
 
 <!-- Why are you opening this PR? Cover two things:
@@ -55,14 +70,14 @@ Fixes #
 
 ## Validation
 
-<!-- Follow CHANGE_CYCLE.md step 5. List commands actually run, baseline and final
-     outcomes (including counts), scope rationale, and failures or skipped checks.
-     Relevant existing tests are required even if no new tests were needed.
+<!-- Follow change_cycle.md's level. List commands actually run and their outcomes
+     (including counts), the critical checks first, and failures or skipped checks
+     with base-revision evidence for anything called environmental.
+     Level 1: the tests of every feature the changed files map to in
+     docs/repo-map/index.md (ALL = the level 2 suites), changed test files, lint.
+     Level 2: make test, make test-blocking-io, pnpm check, pnpm test, E2E, build.
      Docs/guidance-only: focused existing checks, including guidance budgets.
-     Backend code: make lint && make test; blocking-I/O when affected.
-     Frontend code: pnpm check && pnpm test; E2E for affected workflows, full E2E
-     for shared controls/navigation/streaming. Full checklist for upstream merges
-     or broad changes. Don't rerun checklist commands covered by the same suite. -->
+     Don't rerun a command a selected suite already covered. -->
 
 
 ## Test maintenance

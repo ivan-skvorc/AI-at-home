@@ -22,3 +22,9 @@ run in Skill Review CI, independent of package review.
   and messages of `cad_build`, and its operations page is generated from the
   module's allow-list. `tests/skills/test_cad_modeling.py` reads both sides;
   reword a quoted message in the module and on the page together.
+- **Every enabled public skill's name rides each small-window request.** The
+  32K context-fit critical check (`backend/tests/test_context_fit_critical.py`)
+  has a few dozen tokens of headroom in the heaviest mode; a new public skill
+  may have to pay its name back elsewhere (FORK.md §55).
+- **A skill adapted from another project keeps its `LICENSE.txt` and an
+  `author:` credit**, as the Hermes-derived coding skills do.

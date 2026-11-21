@@ -292,13 +292,14 @@ Nginx (port 2026) ← Unified entry point
 > **Fork note.** This fork formalizes the loop below — including which tests a
 > change owes, keeping [FORK.md's post-sync checklist](FORK.md#post-sync-feature-checklist)
 > in sync with the code, and the model audit, which runs only when asked — in
-> [`CHANGE_CYCLE.md`](CHANGE_CYCLE.md). Every coding-agent change request follows
-> it automatically, through tests, test cleanup, and an open pull request.
+> [`change_cycle.md`](change_cycle.md), at three levels against the feature map in
+> [`docs/repo-map/`](docs/repo-map/index.md). Every coding-agent change request follows
+> it automatically, through tests, test cleanup, and a merged pull request.
 
 [`AGENTS.md`](AGENTS.md) is the shared instruction source. Codex/ChatGPT, Grok
 Build and other agents that support `AGENTS.md` discover it directly; Claude Code
 and Gemini CLI import it through the `CLAUDE.md` and `GEMINI.md` shims. Keep shared rules in `AGENTS.md`
-and `CHANGE_CYCLE.md` so every agent and model uses the same procedure, and keep
+and `change_cycle.md` so every agent and model uses the same procedure, and keep
 the cycle pointer at the top of the root `AGENTS.md`: some agents cap how much
 instruction text they load (Codex reads 32 KiB by default). Read the root and
 applicable nested guides even when starting in a subdirectory, and pass them to
@@ -306,7 +307,7 @@ delegated agents.
 
 For another coding tool, configure its repository instructions to read those
 files before editing. If it has no instruction-file discovery, start its session
-with: "Read AGENTS.md, the applicable nested AGENTS.md files, and CHANGE_CYCLE.md;
+with: "Read AGENTS.md, the applicable nested AGENTS.md files, and change_cycle.md;
 follow them for every repository change, including test maintenance and opening
 a PR." Repository text cannot force an unsupported tool to load instructions or
 grant missing GitHub access. Report such limits instead of claiming completion.

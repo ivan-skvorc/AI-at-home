@@ -94,7 +94,7 @@ changing either file.
   schemas wait behind `tool_search`, whatever `skills.deferred_discovery` and
   `tool_search.enabled` say; `effective_policies` records the effective values.
 - **Prompt text costs every request.** `backend/tests/test_context_fit_critical.py`
-  (a CHANGE_CYCLE.md critical check) builds this agent from `config.example.yaml`
+  (a change_cycle.md critical check) builds this agent from `config.example.yaml`
   with a synced 32K Ollama entry in every composer mode and fails when the system
   prompt plus short-form tool schemas exceed `FIXED_REQUEST_ALLOWANCE_TOKENS`.
   Make the text smaller rather than raising the allowance.

@@ -31,9 +31,9 @@ through `scripts/pnpm.py`.
 
 ## Tests
 
-- **Test scope follows [CHANGE_CYCLE.md](../CHANGE_CYCLE.md).** Reuse coverage
+- **Test scope follows [change_cycle.md](../change_cycle.md).** Reuse coverage
   and add tests only for uncovered behavior. A code change runs `pnpm check`
-  and `pnpm test`; E2E follows the cycle's scope table.
+  and the tests of the features it touches; E2E follows the cycle's level.
 - **The file name selects the environment.** `*.test.*` runs in Node and is for
   logic. `*.dom.test.*` runs in happy-dom and is for components and hooks. Keep
   logic out of the DOM suite, which is about three times slower.

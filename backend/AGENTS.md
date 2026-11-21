@@ -35,10 +35,10 @@ make format
 make test-live          # calls real APIs; needs DEER_FLOW_RUN_LIVE_TESTS=1
 ```
 
-[CHANGE_CYCLE.md](../CHANGE_CYCLE.md) sets the test scope: `make lint` and
-`make test` after a code change, plus `make test-blocking-io` for async, runtime
-or I/O changes. Live tests stay opt-in, so the default suite needs no network
-and no API key.
+[change_cycle.md](../change_cycle.md) sets the test scope: `make lint` and the
+tests of the features a change touches (level 1), `make test` and
+`make test-blocking-io` at level 2 or when a touched file is `ALL`. Live
+tests stay opt-in, so the default suite needs no network and no API key.
 
 ## Rules
 

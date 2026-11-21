@@ -21,7 +21,7 @@ CHAIN_HARD = 32 * 1024
 README_PATH = PurePosixPath("README.md")
 # Fork: upstream budgets its README at 12/16 KiB because upstream's README is only
 # an index. The fork's README also carries the fork's exhaustive feature list and
-# a Core Features section per fork feature (CHANGE_CYCLE.md step 7), so it gets
+# a Core Features section per fork feature (change_cycle.md, Every level step 4), so it gets
 # its own budget; past it, the remedy is still a topic guide under docs/guide/.
 README_SOFT = 224 * 1024
 README_HARD = 256 * 1024

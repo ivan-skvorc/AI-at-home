@@ -35,6 +35,10 @@
 > - 📖 **Books in any format, zipped or not** — an HTML, EPUB, plain-text or zipped book (a Project Gutenberg download, say) now states its size in the prompt and, when it is too big for one window, is routed to `analyze_document`, which reads HTML and EPUB as Markdown and reads the documents inside a zip. **Nothing is parsed or unpacked on the host to size an upload**, and a zip that would unpack past 64 MB, holds over 1,000 files, nests another archive or is encrypted is refused with the reason. Nothing to turn on.
 > - 🧱 **No request bigger than the window** — before every model call the whole request (system prompt, tool schemas, conversation) is measured against the serving model's window. If it does not fit, the oldest tool results are dropped from that request — never your messages or the instructions — and if it still does not fit it is **not sent**: the chat says why, instead of Ollama silently cutting off the start of the prompt. On a local model the request is also **built to fit from the first message**: tools are described in short form, skills are listed by name and MCP tools wait behind a search, so a synced 32K Ollama model keeps about 15K tokens for the conversation in Flash mode (it had about 7K). Compaction fires before the window fills, and a refusal states the real limit and what is using it. Nothing to turn on; a model whose window is unknown is left alone.
 > - 🎯 **A drift check for long documents** — `make drift-eval` gives a model a large PDF with facts planted at known pages, then has a *second* model judge whether the answer still addresses the question that was asked or quietly became "summarise this document". The planted facts grade the judge too, so a judge that waves through a wrong answer is reported as the judge failing. Runs offline against the document path, or end to end through the running agent with `MODE=agent`.
+> - 🛠️ **A coding agent that checks its own work** — `str_replace` refuses an edit whose text matches more than one place, a write that leaves a Python, JSON, YAML or TOML file unparseable comes back with the line of the error, and before its final answer the agent is reminded once to run something when it edited code and ran nothing afterwards. On by default (`harness_guard.verify_before_finish`); at most one extra model call per run.
+> - 🎓 **Skills the agent learns, uses and retires** — with `skill_evolution.enabled: true`, a long run (8+ tool calls) ends with one reminder to save what it worked out as a skill, or to patch the custom skill it followed; every later load is counted, and agent-written skills nobody loaded for 90 days are switched off (Settings → Skills turns them back on, nothing is deleted). Off by default, because each skill write runs a security-scan model call.
+> - 📚 **Coding skills from day one** — test-driven development, systematic debugging, pre-commit code review, simplify-code, spikes and subagent-driven development (adapted from Hermes Agent, MIT), plus `git-pr-workflow`: a script that branches, checkpoints, commits (refusing secrets and the default branch), pushes with a read-back and opens a PR exactly once. Bundled in `skills/public/`: a fresh install has them and every update improves them.
+> - 🗺️ **A repo map and a three-level change cycle** — `change_cycle.md` runs every change at level 1 (the tests of the features the changed files map to), 2 (the whole app) or 3 (plus a quality review), against [`docs/repo-map/`](docs/repo-map/index.md), a feature-by-feature map of this repository and its tests. The `repo-change-cycle` skill sets up any repository the agent creates the same way, from the bundled setup brief. Nothing to switch on.
 > - 🐳 **Full clone-and-debug sandbox runs** — one-command per-thread containers, host-reachable ports, native debuggers (`gdb` / `strace`), and a `repo-runner` skill that encodes clone → install → run → debug.
 > - 🖥️ **Hardware-accelerated virtual machines in the sandbox, opt-in** — set `sandbox.devices: [/dev/kvm]` and a QEMU guest the agent starts inside its per-conversation container runs on the host's KVM instead of slow software emulation; the `repo-runner` skill carries the recipe (headless QEMU, a cloud-init seed, SSH on a loopback port). What you would not expect: it is **off by default**, it needs a sandbox image that **already contains QEMU** (none is shipped, and the agent cannot `apt-get` one in), and **it has not been run end to end** — it was written without Docker or KVM at hand. Switching it on costs one config key and a larger attack surface: the host kernel's KVM interface is handed to everything the agent runs.
 > - 📜 **Scroll-back that survives a restart** — history is served by the run-event store, which now defaults to `db` rather than process memory. Older messages keep loading after the Gateway restarts, an edited version of a conversation keeps the whole history instead of starting at the last compaction, and a message whose run was stopped before the model answered is kept too. It needs the default SQL database, and history lost before these fixes does not come back.
@@ -163,6 +167,7 @@ DeerFlow has newly integrated the intelligent search and crawling toolset indepe
   - [Plus Ultracode and Double Plus Ultracode — The Plan Becomes a Script](#plus-ultracode-and-double-plus-ultracode--the-plan-becomes-a-script)
   - [Run Limits — What Can End a Run Early](#run-limits--what-can-end-a-run-early)
   - [Generating Agents From Your History](#generating-agents-from-your-history)
+  - [Coding Agent: Gates, Learned Skills and Git](#coding-agent-gates-learned-skills-and-git)
   - [Sandbox & File System](#sandbox--file-system)
     - [Containerized sandbox as a one-command capability](#containerized-sandbox-as-a-one-command-capability)
     - [Host-run Ollama from inside the sandbox](#host-run-ollama-from-inside-the-sandbox)
@@ -1373,6 +1378,7 @@ version; the [Table of Contents](#table-of-contents) lists them.
 | Docker, local development, upgrades, production deployment | [Running the Application](docs/guide/deployment.md) |
 | Sandbox modes, file system, uploads and outputs | [Sandbox](docs/guide/sandbox.md) |
 | Skills, built-in tools, script workflows, Claude Code integration | [Skills & Tools](docs/guide/skills-and-tools.md) |
+| Edit gates, verify-before-finish, the skill learning loop, bundled coding skills, git and PRs | [Coding Agent](docs/guide/coding-agent.md) |
 | MCP servers | [MCP Server](docs/guide/mcp.md) |
 | Sub-agents and task delegation | [Sub-Agents](docs/guide/subagents.md), [Tool restrictions](docs/guide/subagents.md#tool-restrictions) |
 | Long-term memory | [Long-Term Memory](docs/guide/memory.md) |
@@ -1976,6 +1982,14 @@ agent_generation:
   max_runs_per_task: 5
   max_goal_chars: 2000 # cap on the "what should this agent do?" / refine text
 ```
+
+### Coding Agent: Gates, Learned Skills and Git
+
+Edit gates and verify-before-finish are on by default; the skill learning loop
+is behind `skill_evolution.enabled`; the bundled coding skills (including
+`git-pr-workflow` and `repo-change-cycle`) are in `skills/public/`. What each
+does, its config keys and what it costs: the
+[Coding Agent guide](docs/guide/coding-agent.md).
 
 ### Sandbox & File System
 
@@ -2619,7 +2633,8 @@ The refresh takes a few minutes, so the button starts it and the page polls: eac
 - [Conversation Sharing](docs/guide/sharing.md) - Expiring read-only snapshots, artifact previews and workspace copies
 - [Architecture Overview](docs/ARCHITECTURE.md) - How the services fit together
 - [Contributing Guide](CONTRIBUTING.md) - Development environment, workflow and tests
-- [The Code Change Cycle](CHANGE_CYCLE.md) - The procedure every change follows: test, checklist row, full run, docs, PR
+- [The Change Cycle](change_cycle.md) - The procedure every change follows, at three levels: map the change to features, test them, PR, merge
+- [Repo Map](docs/repo-map/index.md) - What the app does feature by feature, and which files, data and services each feature uses
 - [Changelog](CHANGELOG.md) - Release notes
 
 ## ⚠️ Security Notice

@@ -1,6 +1,6 @@
 """Critical check: a fresh request fits a synced 32K Ollama model in every composer mode.
 
-CHANGE_CYCLE.md runs this before the ordinary suites (its *Critical checks*):
+change_cycle.md runs this before the ordinary suites (its *Critical checks*):
 when it fails, local models are broken for everyone, whatever else is green.
 
 The reported failure was a brand-new Flash chat on ``deepseek-r1:14b`` refused

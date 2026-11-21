@@ -21,6 +21,10 @@ class HarnessGuardConfig(BaseModel):
         default=True,
         description="Whether to reject the write immediately if a syntax error is detected",
     )
+    verify_before_finish: bool = Field(
+        default=True,
+        description=("Remind the lead agent once, before its final answer, when it edited code files in this run and ran no command afterwards, so it runs the tests or says why it could not. Applies only when the agent has the bash tool."),
+    )
     targeted_hints_enabled: bool = Field(
         default=True,
         description="Whether to analyze tool error outputs and append actionable targeted hints",

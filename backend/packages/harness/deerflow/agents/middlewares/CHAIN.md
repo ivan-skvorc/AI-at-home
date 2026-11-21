@@ -150,3 +150,7 @@ Scope / known provider compatibility limits (#8038, #8037 review):
 - All-empty lists become `content=""`; this middleware replaces
   messages in place rather than dropping turns, and an empty user turn can still
   be rejected. No upstream Gateway / IM empty-turn handling is assumed.
+
+## Lead-only, after the runtime chain
+
+**CompletionReviewMiddleware** *(fork, FORK.md §55; built when `harness_guard.verify_before_finish` or `skill_evolution.enabled`)* - Appended just before `TodoMiddleware`, so the reverse-order `after_model` gives an open to-do list's reminder precedence. Holds back the first clean final answer once per (thread, run) when code was edited after the last `bash` call, or when skill evolution is on and the run was long or loaded a custom skill without calling `skill_manage`; the reminder rides the next request as a hidden `HumanMessage` and is restored when that call fails. It imports the todo middleware's stop vocabulary, so a loop, token or spend cap is never resumed. `after_agent` counts loaded skills in the per-user skill ledger and runs the daily curator (`deerflow/skills/learning.py`), failing open. Tests: `tests/test_completion_review_middleware.py`.
