@@ -5784,6 +5784,12 @@ numbers.
   kernel to import, so `measure_cli` (`python -I -m
   deerflow_extension_cad.measure_cli <step> [truth.json]`, under the worker's
   limits) and the CAD eval judge a STEP exactly as `cad_build` does.
+  Fillet reach: `build.selections()` counts, for each fillet and chamfer the
+  result is made of, the edges the kernel took and the edges the part had then
+  (`measured.selections`, `{line, method, edges, of}`, all in `report.json`).
+  The answer names one only when it took more than four edges and not every
+  edge (`EDGES_SAID_ABOVE`), at most `MAX_LINES_SAID` notes of about 26 tokens
+  each, so the usual four-corner fillet costs nothing.
 - **The picture (item 53).** Nothing looked at the part, and a feature on the
   wrong face passes every number. `render.py` draws a 960 px sheet, iso, top,
   front and right at one scale, with numpy and Pillow alone: VTK's offscreen
@@ -6058,9 +6064,11 @@ renames the part on every attempt starts a new count each time. A feature other
 than a hole on the wrong face passes every check; the picture is where it shows,
 and the skill places every feature from the part's origin
 (`workplane(origin=(0, 0, 0))`; the centre of a face moves when a cut splits
-it). Nor does the tool count what a selector took: a fillet on `edges("|Z")`
-after a rim was added rounds the rim too, and the volume comes out as worked out
-(roadmap item 57 keeps this as its open half). A build that runs out of time is
+it). A selector takes every matching edge on the part as it is at that line, so a
+fillet on `edges("|Z")` after a rim was added rounds the rim too and the volume
+comes out as worked out; the answer names such a fillet by its edge count (item
+57, below), but a selection of too few edges is shown only by the report and the
+picture. A build that runs out of time is
 told what it was doing when the clock ran out, which is not always what took
 the time. Not exposed, each for its reason: `sweep`'s `normal` and `auxSpine` (a
 kernel vector, a second rail), `spline`'s arguments past `periodic`,

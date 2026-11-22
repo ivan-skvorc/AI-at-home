@@ -99,13 +99,14 @@ review declined are under *Deliberately not*. Item **45** — the CAD skill, pro
 models — was merged rather than shipped: its live proof is item 48's first run, scored on
 ground truth, and its skill revision is item 58. Its number stays retired like 12–15.
 
-Items **46**, **47**, **51** and **53–56**, **58** and **59** — the CAD model preview, the
-`tool_result` acceptance leaf for delegated parts, parts of several bodies, the picture,
-the 3MF and print notes, scripts the way models write them, revolve, loft and sweep, the
-FDM and hardware reference, and lettering and threads — landed together as one change set:
+Items **46**, **47**, **51** and **53–59** — the CAD model preview, the `tool_result`
+acceptance leaf for delegated parts, parts of several bodies, the picture, the 3MF and
+print notes, scripts the way models write them, revolve, loft and sweep, where the features
+are (hole positions and how many edges a fillet or chamfer took), the FDM and hardware
+reference, and lettering and threads — landed together as one change set:
 see [FORK.md §51 and §56](./FORK.md). Their numbers stay retired like 12–15. Item **48**
-keeps only its live-run half, because its offline harness (`make cad-eval`) shipped, and
-item **57** only its unshipped half, the fillet reach. Two acceptance checks need the
+keeps only its live-run half, because its offline harness (`make cad-eval`) shipped. Two
+acceptance checks need the
 owner's hardware rather than a change: the viewer on a real phone with a GPU, and the print
 thresholds and the skill's clearance tables on a printed fit-test coupon. FORK.md records
 both under its known gaps; the live Ultra delegation rides with item 48's first run.
@@ -168,8 +169,6 @@ Open items, one line each. The full orchestrator prompts follow.
   can never accept, built in the container and judged on the host.
 - **52. Memory that helps a coding agent** — repository-scoped facts, build/test
   procedures, a search over past conversations, and project memory the agent can write.
-- **57. How far a fillet or chamfer reached** — the answer counts the edges each fillet
-  and chamfer took; the rest of 57 shipped.
 
 **Suggested order for 19–25.** Voice first (19), since it is the one missing modality and it
 closes a live privacy leak. Then the injection boundary (23), *before* anything widens the
@@ -195,9 +194,7 @@ change.
 **Suggested order for CAD.** 48's live runs first, on the owner's host: they are the only
 measure of whether the shipped CAD work helps real models, they are the skill's proof on
 real models and carry the live Ultra delegation, and their refusal counts decide item 50's
-gate. 57's
-remaining half is small and can go any time; it adds a note to the answer, so run 48 again
-after it, as after every change to the allow-list or the skill. 50 only if 48 shows that
+gate. Run 48 again after every change to the allow-list, the skill or the tool's answers. 50 only if 48 shows that
 the reader, and not the model, is what stops real parts, and only where a Docker daemon
 can build and test it.
 
@@ -1401,45 +1398,6 @@ small, always-relevant layer under them.
 **Done when** — a fact learned while testing repository A is injected in a later run on
 A and never on B; a guessed command that failed is not stored; and the 32K critical
 check still fits.
-
----
-
-## 57. How far a fillet or chamfer reached
-
-**Goal** — The answer says how many edges each fillet and chamfer of the part took, so a
-fillet on `edges("|Z")` that also rounded a rim is seen without looking at the picture.
-
-**Why it fits** — The rest of this item shipped (FORK.md §51): hole positions and axes,
-the bounding-box corners, the report's provenance, `checks.py` and `measure_cli`. This half
-was not assigned in that round. A selector takes every matching edge on the part as it is
-at that line, so a fillet after a rim was added rounds the rim too, and the volume comes out
-as worked out. Today only the picture shows it, and `failures.md` describes it as something
-the picture shows.
-
-**Depends on** — nothing open.
-
-**Scope**
-
-- `build.py`: a pure post-build function, `selections(program, parts, cq)`, that counts the
-  `cq.Edge` objects on the receiver of every `fillet` and `chamfer` the result is made of
-  (`_used_by_result`).
-- `worker.py` sets `measured["selections"]` to `[{line, method, edges}]`, and
-  `checks.notes_on` adds at most `MAX_LINES_SAID` notes in the form "fillet() on line N
-  rounded M edges: check that the selection took only the edges meant".
-- `failures.md` gains the row, and `tests/skills/test_cad_modeling.py` quotes the note.
-
-**Key files** — `examples/deerflow-extension-cad/deerflow_extension_cad/build.py`,
-`worker.py`, `checks.py`, the package's `tests/test_build.py`,
-`backend/tests/test_cad_extension.py`, `skills/public/cad-modeling/references/failures.md`,
-`tests/skills/test_cad_modeling.py`.
-
-**Done when**
-
-- A rim-fillet fixture in `test_build.py` (a shelled box whose `edges("|Z")` fillet also
-  takes the rim) reports the larger edge count, and the narrower selector the smaller one.
-- A host test pins the note and its cap, and the context-fit check is unchanged.
-
-It costs nothing in the schema, and at most five notes of about twenty tokens in an answer.
 
 ---
 

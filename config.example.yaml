@@ -5675,7 +5675,7 @@ plugins:
       #   overhang_deg: 45       # 10 to 80, from vertical; overhang past it is reported as needing support
       #   min_clearance_mm: 0.3  # 0.05 to 3; a gap between bodies under it gets a note (print in place)
       #   density_g_cm3: 1.24    # 0.5 to 20; grams = volume x density, solid (PLA 1.24, PETG 1.27)
-  # Bundled and on by default: the CAD model preview (FORK.md, viewer section). It
+  # Bundled and on by default: the CAD model preview (FORK.md §56). It
   # draws .glb and .stl files (the CAD module's output among them) as a model you
   # can rotate, in the artifact panel and the reader. Browser-only: no tool, no
   # route. Its source is examples/deerflow-extension-cad-preview, installed from the

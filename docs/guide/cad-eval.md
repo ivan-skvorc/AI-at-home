@@ -48,8 +48,11 @@ It exits without running anything, with status 3 and a message, when:
   run the request on its default model, and the row would carry the wrong name;
 - `deerflow_extension_cad.measure_cli` or the CAD kernel (`cadquery`) is not
   importable by the measuring Python (`--measure-python`, default the
-  backend's own). The backend environment has both once the bundled CAD module
-  ships item 57; any environment with the CAD module installed will do.
+  backend's own; through make, `MEASURE_PYTHON=examples/deerflow-extension-cad/.venv/bin/python`,
+  where a path is taken from the repository root and a bare command name is
+  looked up on PATH). The backend environment has both, since the bundled CAD
+  module ships `measure_cli`; any environment with the CAD module installed
+  will do.
 
 Without `MODEL` it prints its usage and exits with status 2. A completed run
 exits 0 whatever its pass rate, because the eval measures and does not gate. A

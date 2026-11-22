@@ -72,14 +72,17 @@ The checks decide pass or fail, on numbers the model states before the build:
   and how far off it is.
 
 The answer also lists up to 12 holes, each with its diameter, the point where
-it is entered and its drill direction. The report lists every hole.
+it is entered and its drill direction. The report lists every hole, and its
+`measured.selections` gives every fillet and chamfer with the line it is on,
+the edges it took and the edges the part had then.
 
 Everything else is reported and never changes pass or fail:
 
 - **The print block**, for a part that passed (below).
 - **Notes**: bodies the script built and never joined, loop passes whose work
-  is not in the part, the smallest gap between bodies, a step after the checks
-  that was left out.
+  is not in the part, the smallest gap between bodies, a fillet or chamfer that
+  took more than four edges and not every edge of the part (a selector that
+  also caught a rim or a pocket), a step after the checks that was left out.
 - **The report's provenance**: the module's and CadQuery's versions, the
   script's SHA-256, the starting numbers of the script, and the files of the set.
 

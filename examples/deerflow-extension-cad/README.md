@@ -105,6 +105,12 @@ a build volume the part already fits. The message says to delete the line.
 What the checks do not decide is said in the answer. `notes` names an outline
 the script drew and never extruded or cut, a cavity sealed inside the part, a
 hole that crosses more than one wall, and a mesh written coarser than usual.
+A fillet or chamfer that took more than four edges, and not every edge of its
+part, is named with its line and count: a selector takes everything that
+matches on the part as it is at that line, so `edges("|Z")` on an open box also
+rounds its inner corners. report.json's `measured.selections` lists every
+fillet and chamfer with the edges it took (`edges`) and the edges the part had
+then (`of`).
 `unchecked` gives the measured volume and hole diameters when the call did not
 state them, under the names of the arguments that would check them. The hole
 check compares diameters; holes that stop inside the part are listed with the

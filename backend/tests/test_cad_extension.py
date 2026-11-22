@@ -933,3 +933,20 @@ def test_the_schema_the_model_sees_is_structure_only_and_requires_the_size(cad):
     # Descriptions and item types cost every request of every conversation; the parameter
     # names carry the meaning and the handler checks the numbers.
     assert all(set(spec) == {"type"} for spec in schema["properties"].values())
+
+
+@pytest.mark.asyncio
+async def test_a_fillet_that_took_more_edges_than_a_selector_usually_means_adds_one_short_note(cad, outputs, monkeypatch):
+    from deerflow.config import paths
+    from deerflow.utils.context_budget import estimate_tokens
+
+    # The rim fixture as the worker reports it ("|Z" on an open box takes the inner corners too), beside a
+    # chamfer of four edges and a fillet of every edge, which an answer does not name.
+    taken = [{"line": 7, "method": "fillet", "edges": 8, "of": 24}, {"line": 9, "method": "chamfer", "edges": 4, "of": 24}, {"line": 11, "method": "fillet", "edges": 24, "of": 24}]
+    elsewhere = paths.get_paths().sandbox_outputs_dir("thread-b", user_id="alice")
+    old, _, _ = await _call(cad, outputs, monkeypatch, BUILT, hole_diameters_mm=[4, 4])
+    new, _, _ = await _call(cad, elsewhere, monkeypatch, {**BUILT, "measured": {**MEASURED, "selections": taken}}, conversation="thread-b", hole_diameters_mm=[4, 4])
+    assert new["notes"] == ["fillet() on line 7 rounded 8 edges: check that the selection took only the edges meant."]
+    # What the host sends the model (plugin_tools serialises the answer this way).
+    grown = estimate_tokens(json.dumps(new, ensure_ascii=False)) - estimate_tokens(json.dumps(old, ensure_ascii=False))
+    assert 0 < grown <= 30, grown
