@@ -28,13 +28,21 @@
       {
         "diameter_mm": 4.0,
         "through": true,
-        "depth_mm": 8.0
+        "depth_mm": 8.0,
+        "at": [-15.0, 0.0, 4.0],
+        "axis": [0.0, 0.0, -1.0]
       },
       {
         "diameter_mm": 4.0,
         "through": true,
-        "depth_mm": 8.0
+        "depth_mm": 8.0,
+        "at": [15.0, 0.0, 4.0],
+        "axis": [0.0, 0.0, -1.0]
       }
-    ]
+    ],
+    "bbox_min_mm": [-30.0, -20.0, -4.0],
+    "bbox_max_mm": [30.0, 20.0, 4.0],
+    "centre_of_mass_mm": [0.0, 0.0, 0.0],
+    "area_mm2": 6550.796
   }
 }

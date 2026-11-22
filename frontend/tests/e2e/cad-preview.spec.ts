@@ -8,6 +8,7 @@ import {
   cadFixtures,
   mockCadPreview,
   pngPixel,
+  pngRow,
 } from "./utils/cad-preview";
 import { mockLangGraphAPI } from "./utils/mock-api";
 
@@ -25,6 +26,7 @@ const models = [
   "mounting-plate.glb",
   "mounting-plate.stl",
   "mounting-plate-1.failed.glb",
+  "split-plate.glb",
 ];
 const outputs = [...models, "huge.glb", "amplifying.glb"].map(
   (name) => `/mnt/user-data/outputs/${name}`,
@@ -155,7 +157,7 @@ async function expectModel(page: Page, name: string) {
       ),
       "utf8",
     ),
-  ) as { measured: { bbox_mm: number[] } };
+  ) as { expected: { bodies?: number }; measured: { bbox_mm: number[] } };
   const dims = host.locator(".dims");
   await expect(dims).toHaveText(/^Bounding box .+ mm \(from the mesh\)$/);
   const shown = /([\d.,]+) × ([\d.,]+) × ([\d.,]+)/
@@ -167,21 +169,30 @@ async function expectModel(page: Page, name: string) {
       Math.abs(value - report.measured.bbox_mm[axis]!),
     ).toBeLessThanOrEqual(0.1),
   );
-  // The part covers the middle of a fitted view; the corner is background.
+  // One body covers the middle of a fitted view; the corner is background.
+  // Bodies laid side by side along X each cross the middle row of the top
+  // view, with background between them: one run of drawn pixels per body.
+  const bodies = report.expected.bodies ?? 1;
+  if (bodies > 1)
+    await host.getByRole("button", { name: "Top view", exact: true }).click();
   await expect
     .poll(async () => {
       const png = await canvas.screenshot();
       const box = (await canvas.boundingBox())!;
       const scale = png.readUInt32BE(16) / box.width;
-      const centre = pngPixel(
-        png,
-        Math.floor((box.width / 2) * scale),
-        Math.floor((box.height / 2) * scale),
-      );
       const corner = pngPixel(png, 3, 3);
-      return centre.some((value, i) => Math.abs(value - corner[i]!) > 12);
+      const drawn = pngRow(png, Math.floor((box.height / 2) * scale)).map(
+        (pixel) => pixel.some((value, i) => Math.abs(value - corner[i]!) > 12),
+      );
+      // Read three pixels in from each side, like the corner: a screenshot at
+      // a fractional offset can catch the panel's border in its edge column.
+      const inner = drawn.slice(3, -3);
+      return {
+        centre: drawn[Math.floor((box.width / 2) * scale)],
+        runs: inner.filter((on, x) => on && !inner[x - 1]).length,
+      };
     })
-    .toBe(true);
+    .toMatchObject(bodies === 1 ? { centre: true } : { runs: bodies });
   await expect(host.locator(".banner")).toHaveCount(
     name.endsWith(".failed.glb") ? 1 : 0,
   );

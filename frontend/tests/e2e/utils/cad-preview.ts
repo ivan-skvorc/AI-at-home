@@ -114,6 +114,11 @@ export function amplifyingGlb() {
 
 /** One RGB pixel of an 8-bit, non-interlaced PNG such as a Playwright screenshot. */
 export function pngPixel(png: Buffer, x: number, y: number) {
+  return pngRow(png, y)[x]!;
+}
+
+/** The RGB pixels of row `y` of an 8-bit, non-interlaced PNG, left to right. */
+export function pngRow(png: Buffer, y: number) {
   const width = png.readUInt32BE(16);
   const colorType = png[25]!;
   const channels = colorType === 6 ? 4 : colorType === 2 ? 3 : 0;
@@ -146,5 +151,7 @@ export function pngPixel(png: Buffer, x: number, y: number) {
     }
     previous = row;
   }
-  return [...row.subarray(x * channels, x * channels + 3)];
+  return Array.from({ length: width }, (_, x) => [
+    ...row.subarray(x * channels, x * channels + 3),
+  ]);
 }
