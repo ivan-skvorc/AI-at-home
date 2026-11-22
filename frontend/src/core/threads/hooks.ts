@@ -79,6 +79,7 @@ import {
   type BulkThreadResult,
 } from "./bulk";
 import { THREAD_FOLDER_METADATA_KEY } from "./chat-folders";
+import { deviationMonitorRunContext } from "./deviation-monitor";
 import {
   addEditVersionToGroups,
   buildEditVersionThreadMetadata,
@@ -442,6 +443,13 @@ export function buildRunContext({
       ([key]) => key !== "conversation_references",
     ),
   );
+  // The model this run is sent with: a one-turn choice replaces the saved one
+  // below, and a workflow's agents (and a deviation monitor that follows the
+  // chat's model) must use the same one.
+  const runModelName =
+    typeof extraContext?.model_name === "string"
+      ? extraContext.model_name
+      : settings.model_name;
   // Derived through the shared helper rather than inline: Democracy mode is a
   // fourth mode with its own plan/subagent answers, its own delegation budget,
   // and roster keys that must be *cleared* when the thread leaves the mode.
@@ -450,12 +458,7 @@ export function buildRunContext({
   // Settings applies to the very next Double Plus Ultracode message.
   const modeContext = deriveModeContext({
     ...settings,
-    // The model this run is sent with: a one-turn choice replaces the saved one
-    // below, and a workflow's agents must inherit the same one.
-    model_name:
-      typeof extraContext?.model_name === "string"
-        ? extraContext.model_name
-        : settings.model_name,
+    model_name: runModelName,
     ultracode_limits: getLocalSettings().ultracode,
   });
   // Fork: the thread's Ultra-mode subagent dropdown shares this key with
@@ -488,6 +491,16 @@ export function buildRunContext({
     // Living in the shared builder means a regenerate or edit runs under the
     // same switch as the send it replays.
     internet_enabled: resolveInternetEnabled(settings),
+    // Fork: the deviation monitor, explicit for the same reason. The stored
+    // choice keeps its model and cadence while off, so the settings spread
+    // above would otherwise carry `{ enabled: false, ... }` onto the wire;
+    // this sends the strict contract object or nothing (`undefined` is
+    // dropped by JSON). A chat seeded with "the chat's own model" is checked
+    // by the model this run is sent with.
+    deviation_monitor: deviationMonitorRunContext(
+      settings.deviation_monitor,
+      runModelName,
+    ),
     thread_id: threadId,
     ...(locale ? { locale } : {}),
     ...clientTimezoneContext(),

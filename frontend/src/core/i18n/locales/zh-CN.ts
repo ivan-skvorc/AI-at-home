@@ -1137,6 +1137,67 @@ export const zhCN: Translations = {
     manualOnly:
       "已在“设置 → 会话标题”中关闭自动重命名。此操作只立即为当前对话重命名一次，不会重新开启该设置。",
   },
+  deviationMonitor: {
+    name: "偏离监控",
+    buttonOn: "偏离监控已开启",
+    buttonOff: "偏离监控已关闭",
+    tooltipOff:
+      "偏离监控：由另一个模型检查智能体的工作是否仍在完成你的请求，一旦偏离就停止运行。",
+    tooltipOn: (model, cadence) =>
+      `偏离监控已开启：由 ${model} ${cadence}检查一次。点击可修改或关闭。`,
+    title: "偏离监控",
+    description:
+      "智能体工作时，由另一个模型检查其最近的步骤是否仍在完成你的请求。确认偏离后会停止运行并留下说明；在 Ultra 和 Ultracode 模式下会先拆分成更小的子任务重试一次。每次检查时智能体会等待。它只是辅助，不是安全保证。",
+    modelLabel: "监控模型",
+    modelHint:
+      "每次检查都是对该模型的一次单独调用，计入本次运行的费用和你的花费上限。使用第二个本地模型时，GPU 可能在每次检查时切换模型。",
+    modelRequired: "请选择执行检查的模型。",
+    cadenceLabel: "检查频率",
+    cadenceSteps: "每 X 步",
+    cadenceStepsHint: "智能体在一次回复中执行的步骤（1–50）。",
+    cadenceTurns: "每 N 轮",
+    cadenceTurnsHint:
+      "一轮是一条消息及智能体对它的处理；检查在给出最终回答前进行（1–20）。",
+    cadenceEveryTurn: "每轮",
+    cadenceEveryTurnHint: "每条消息检查一次，在给出最终回答前进行。",
+    stepsInputLabel: "两次检查之间的步数",
+    turnsInputLabel: "两次检查之间的轮数",
+    notInteger: "请输入整数。",
+    outOfRange: (min, max) => `请输入 ${min} 到 ${max} 之间的数字。`,
+    turnOn: "开启",
+    save: "保存",
+    cancel: "取消",
+    turnOff: "关闭",
+    turnedOff: "已为此对话关闭偏离监控。",
+    everySteps: (count) => (count === 1 ? "每步" : `每 ${count} 步`),
+    everyTurns: (count) => (count === 1 ? "每轮" : `每 ${count} 轮`),
+    chatModel: "对话所用模型",
+    status: {
+      regionLabel: "偏离监控",
+      idle: "监控中",
+      off: "本次运行未监控",
+      checking: "检查中…",
+      on_track: "未偏离",
+      unsure: "无法判断，未采取行动",
+      drifting: "可能偏离，正在复核",
+      retrying: "确认偏离，正在拆分重试",
+      stopped: "已停止运行：偏离了你的请求",
+    },
+    checks: (count) => `${count} 次检查`,
+    lastStep: (step) => `第 ${step} 步`,
+    details: "详情",
+    hideDetails: "收起详情",
+    reasonLabel: "原因：",
+    driftKindLabel: "类型：",
+    restatedTaskLabel: "你的请求：",
+    modelLabelShort: "模型：",
+    driftKinds: {
+      goal_substitution: "转去做了别的目标",
+      scope_creep: "超出了请求的范围",
+      abandonment: "放弃了任务",
+      false_completion: "过早声称已完成",
+    },
+  },
   backgroundTasks: {
     label: "后台任务",
     title: "后台任务",
@@ -2814,6 +2875,7 @@ export const zhCN: Translations = {
       systemPrompt: "系统提示词",
       maintenance: "维护",
       runLimits: "运行限制",
+      deviationMonitor: "偏离监控",
       about: "关于",
     },
     runLimits: {
@@ -3427,6 +3489,18 @@ export const zhCN: Translations = {
       followWorkflow: "跟随工作流选择",
       serverDisabledHint:
         "后续建议已被服务器配置禁用（config.yaml 中的 suggestions.enabled）。请在那里启用后再使用此开关。",
+    },
+    deviationMonitor: {
+      title: "偏离监控",
+      description:
+        "新对话的默认设置。每个对话保留自己的选择（通过输入框下方的监控按钮设置）；修改默认值不会影响已有对话。",
+      enableLabel: "新对话默认开启",
+      enableHint: "新对话开始时即开启监控，使用下方的模型和频率。",
+      modelLabel: "默认监控模型",
+      chatModelHint: "每次检查使用对话所用的模型。",
+      cadenceLabel: "默认检查频率",
+      serverDisabledHint:
+        "偏离监控已在服务器配置中关闭（config.yaml 中的 deviation_monitor.enabled）。",
     },
     autoTitle: {
       title: "自动生成会话标题",

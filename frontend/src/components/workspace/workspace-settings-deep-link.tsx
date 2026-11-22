@@ -23,6 +23,7 @@ const SETTINGS_SECTIONS: Record<SettingsSection, true> = {
   // Fork sections (FORK.md §4, §19, §33, §46 and Maintenance).
   suggestions: true,
   autoTitle: true,
+  deviationMonitor: true,
   systemPrompt: true,
   maintenance: true,
   runLimits: true,

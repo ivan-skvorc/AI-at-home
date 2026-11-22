@@ -4,6 +4,11 @@ import type { ReasoningEffortValue } from "@/core/models/reasoning";
 
 import type { Todo } from "../todos";
 
+import type {
+  DeviationMonitorRunContext,
+  DeviationMonitorState,
+} from "./deviation-monitor";
+
 /** Gateway status outside the SDK's closed RunStatus union. */
 export type AppRunStatus = Run["status"] | "waiting_for_input";
 export type AppRun = Omit<Run, "status"> & { status: AppRunStatus };
@@ -77,6 +82,9 @@ export interface AgentThreadState extends Record<string, unknown> {
   goal_outcome?: ThreadGoalOutcome | null;
   applied_run_inputs?: { run_id: string; ids: string[] } | null;
   tool_artifacts?: ArtifactEntry[];
+  // Fork: the deviation monitor's status channel, narrowed by
+  // `readDeviationMonitorState` wherever it is read.
+  deviation_monitor?: DeviationMonitorState | null;
 }
 
 export interface AgentClientContext {
@@ -120,6 +128,12 @@ export interface AgentThreadContext extends Record<string, unknown> {
   // groups, MCP servers, external ACP agents). Omitted means "no opinion" and
   // leaves the operator's configured tool list alone.
   internet_enabled?: boolean;
+  // Fork: the conversation's deviation monitor. Present only while it is on,
+  // and then exactly `{ enabled: true, model, cadence: { mode, every } }`
+  // (steps 1-50, turns 1-20); the backend turns the monitor off for the run on
+  // anything else. Stored per conversation, so one chat can be watched while
+  // another is not.
+  deviation_monitor?: DeviationMonitorRunContext;
   client?: AgentClientContext;
 }
 

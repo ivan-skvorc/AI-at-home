@@ -991,6 +991,63 @@ export interface Translations {
     failed: string;
     manualOnly: string;
   };
+  /** The deviation monitor (fork feature): composer button, dialog, status bar. */
+  deviationMonitor: {
+    name: string;
+    buttonOn: string;
+    buttonOff: string;
+    tooltipOff: string;
+    tooltipOn: (model: string, cadence: string) => string;
+    title: string;
+    description: string;
+    modelLabel: string;
+    modelHint: string;
+    modelRequired: string;
+    cadenceLabel: string;
+    cadenceSteps: string;
+    cadenceStepsHint: string;
+    cadenceTurns: string;
+    cadenceTurnsHint: string;
+    cadenceEveryTurn: string;
+    cadenceEveryTurnHint: string;
+    stepsInputLabel: string;
+    turnsInputLabel: string;
+    notInteger: string;
+    outOfRange: (min: number, max: number) => string;
+    turnOn: string;
+    save: string;
+    cancel: string;
+    turnOff: string;
+    turnedOff: string;
+    everySteps: (count: number) => string;
+    everyTurns: (count: number) => string;
+    chatModel: string;
+    status: {
+      regionLabel: string;
+      idle: string;
+      off: string;
+      checking: string;
+      on_track: string;
+      unsure: string;
+      drifting: string;
+      retrying: string;
+      stopped: string;
+    };
+    checks: (count: number) => string;
+    lastStep: (step: number) => string;
+    details: string;
+    hideDetails: string;
+    reasonLabel: string;
+    driftKindLabel: string;
+    restatedTaskLabel: string;
+    modelLabelShort: string;
+    driftKinds: {
+      goal_substitution: string;
+      scope_creep: string;
+      abandonment: string;
+      false_completion: string;
+    };
+  };
   backgroundTasks: {
     label: string;
     title: string;
@@ -2535,6 +2592,7 @@ export interface Translations {
       systemPrompt: string;
       maintenance: string;
       runLimits: string;
+      deviationMonitor: string;
       about: string;
     };
     /** Settings → Run limits (fork feature, FORK.md §46). */
@@ -2999,6 +3057,17 @@ export interface Translations {
       modelLabel: string;
       modelHint: string;
       followWorkflow: string;
+      serverDisabledHint: string;
+    };
+    /** Settings → Deviation monitor: the defaults new chats start with. */
+    deviationMonitor: {
+      title: string;
+      description: string;
+      enableLabel: string;
+      enableHint: string;
+      modelLabel: string;
+      chatModelHint: string;
+      cadenceLabel: string;
       serverDisabledHint: string;
     };
     autoTitle: {

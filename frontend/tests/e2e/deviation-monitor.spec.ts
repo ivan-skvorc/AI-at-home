@@ -1,0 +1,515 @@
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
+
+import { expect, test, type Page, type Route } from "@playwright/test";
+
+import {
+  MOCK_RUN_ID,
+  handleRunStream,
+  mockLangGraphAPI,
+  runStreamThreadId,
+  type MockAPIOptions,
+} from "./utils/mock-api";
+
+/**
+ * The deviation monitor (fork feature).
+ *
+ * The unit tests pin each piece; this drives the chain only a browser shows:
+ * the composer button → the dialog with the shared model picker and the
+ * cadence → the run request the backend receives, and the thread-state
+ * channel → the status bar on both chat pages, with the run's stop note in the
+ * transcript. Shared controls are found by their own `data-slot`, never by the
+ * ARIA role of the primitive underneath (FORK.md §8).
+ */
+
+const BUTTON = "[data-slot='deviation-monitor']";
+const THREAD_ID = "00000000-0000-0000-0000-000000000731";
+const AGENT = "test-agent";
+
+const MODELS = [
+  {
+    name: "chat-model",
+    model: "chat-model",
+    display_name: "Chat Model",
+    supports_thinking: false,
+    supports_reasoning_effort: false,
+    supports_tools: true,
+  },
+  {
+    name: "judge-model",
+    model: "judge-model",
+    display_name: "Judge Model",
+    supports_thinking: false,
+    supports_reasoning_effort: false,
+    supports_tools: true,
+  },
+];
+
+const ON = {
+  enabled: true,
+  model: "judge-model",
+  cadence: { mode: "steps", every: 3 },
+};
+
+const STOP_NOTE =
+  "I stopped this run because the work drifted from your request: it began rewriting the whole README. Your request was: fix the typo in README.md.";
+
+type MonitorState = Record<string, unknown> | null;
+
+function composer(page: Page) {
+  return page.getByPlaceholder(/how can i assist you/i);
+}
+
+function statusBar(page: Page) {
+  return page.getByTestId("deviation-monitor-status");
+}
+
+/** `/api/features`; `undefined` leaves the block out, as an older Gateway does. */
+async function mockFeature(page: Page, enabled: boolean | undefined) {
+  await page.route("**/api/features", (route) =>
+    route.request().method() === "GET"
+      ? route.fulfill({
+          json: {
+            agents_api: { enabled: true },
+            ...(enabled === undefined
+              ? {}
+              : { deviation_monitor: { enabled } }),
+          },
+        })
+      : route.fallback(),
+  );
+}
+
+async function mockModels(page: Page) {
+  await page.route("**/api/models", (route) =>
+    route.request().method() === "GET"
+      ? route.fulfill({
+          json: { models: MODELS, token_usage: { enabled: false } },
+        })
+      : route.fallback(),
+  );
+}
+
+/** Capture the run context of every run the page starts. */
+function captureRuns(page: Page) {
+  const contexts: Record<string, unknown>[] = [];
+  void page.route("**/runs/stream", (route) => {
+    const body = route.request().postDataJSON() as {
+      context?: Record<string, unknown>;
+    };
+    contexts.push(body.context ?? {});
+    return handleRunStream(route);
+  });
+  return contexts;
+}
+
+async function setup(
+  page: Page,
+  { feature = true, options }: { feature?: boolean; options?: MockAPIOptions },
+) {
+  mockLangGraphAPI(page, options);
+  await mockFeature(page, feature);
+  await mockModels(page);
+}
+
+/**
+ * An existing chat whose monitor is on, with the thread state the backend
+ * reported. The per-chat choice lives in this browser's per-thread override;
+ * the state is served from the POST /history head, which `useStream`
+ * rebuilds thread values from.
+ */
+async function openMonitoredChat(
+  page: Page,
+  read: () => MonitorState,
+  { agent = false }: { agent?: boolean } = {},
+) {
+  await page.addInitScript(
+    ([key, value]) => window.localStorage.setItem(key, value),
+    [
+      `deerflow.thread-context.${THREAD_ID}`,
+      JSON.stringify({ deviation_monitor: ON }),
+    ] as const,
+  );
+  await setup(page, {
+    options: {
+      threads: [
+        {
+          thread_id: THREAD_ID,
+          title: "Fix the README typo",
+          updated_at: "2026-11-22T10:00:00Z",
+          ...(agent ? { agent_name: AGENT } : {}),
+        },
+      ],
+      ...(agent
+        ? {
+            agents: [
+              {
+                name: AGENT,
+                description: "A test agent for E2E tests",
+                system_prompt: "You are a test agent.",
+              },
+            ],
+          }
+        : {}),
+    },
+  });
+  await page.route("**/api/langgraph/threads/*/history", (route) => {
+    const state = read();
+    return route.fulfill({
+      json: [
+        {
+          values: {
+            title: "Fix the README typo",
+            messages: [
+              {
+                type: "human",
+                id: "devmon-human",
+                content: [{ type: "text", text: "Fix the typo in README.md" }],
+              },
+              { type: "ai", id: "devmon-ai", content: STOP_NOTE },
+            ],
+            ...(state ? { deviation_monitor: state } : {}),
+          },
+          next: [],
+          metadata: {},
+          created_at: "2026-11-22T10:00:00Z",
+          parent_config: null,
+        },
+      ],
+    });
+  });
+  await page.goto(
+    agent
+      ? `/workspace/agents/${AGENT}/chats/${THREAD_ID}`
+      : `/workspace/chats/${THREAD_ID}`,
+  );
+  await expect(composer(page)).toBeVisible({ timeout: 20_000 });
+}
+
+function reported(status: string, extra: Record<string, unknown> = {}) {
+  return {
+    status,
+    reason: null,
+    drift_kind: null,
+    restated_task: null,
+    model: "judge-model",
+    checks: 3,
+    last_checked_step: 9,
+    updated_at: "2026-11-22T10:00:30Z",
+    ...extra,
+  };
+}
+
+test.describe("the composer button", () => {
+  test("turning it on sends the contract object with the next run", async ({
+    page,
+  }) => {
+    await setup(page, {});
+    const contexts = captureRuns(page);
+    await page.goto("/workspace/chats/new");
+    await expect(composer(page)).toBeVisible({ timeout: 20_000 });
+
+    const button = page.locator(BUTTON);
+    await expect(button).toHaveAttribute("data-state", "off");
+    await expect(button).toHaveAccessibleName("Deviation monitor off");
+    await button.click();
+
+    const dialog = page.getByRole("dialog", { name: "Deviation monitor" });
+    await expect(dialog).toBeVisible();
+    // The shared picker, preselected on the chat's own model.
+    const picker = dialog.locator("[data-slot='model-select']");
+    await expect(picker).toContainText("Chat Model");
+    await picker.click();
+    await expect(page.getByPlaceholder("Search models...")).toBeVisible();
+    await page.getByRole("option", { name: /Judge Model/ }).click();
+    await expect(picker).toContainText("Judge Model");
+
+    await dialog.getByTestId("deviation-monitor-cadence-turns").check();
+    const every = dialog.getByTestId("deviation-monitor-every");
+    await every.fill("21");
+    await expect(dialog.getByRole("alert")).toHaveText(
+      "Enter a number from 1 to 20.",
+    );
+    await expect(dialog.getByTestId("deviation-monitor-save")).toBeDisabled();
+    await every.fill("4");
+    await dialog.getByTestId("deviation-monitor-save").click();
+    await expect(dialog).toBeHidden();
+    await expect(button).toHaveAttribute("data-state", "on");
+
+    await composer(page).fill("Fix the typo in README.md");
+    await composer(page).press("Enter");
+    await expect
+      .poll(() => contexts.at(-1)?.deviation_monitor)
+      .toEqual({
+        enabled: true,
+        model: "judge-model",
+        cadence: { mode: "turns", every: 4 },
+      });
+
+    // On, the status bar turns it off in one click, and the next run is
+    // not monitored.
+    await expect(statusBar(page)).toBeVisible();
+    await page.getByTestId("deviation-monitor-status-turn-off").click();
+    await expect(button).toHaveAttribute("data-state", "off");
+    await expect(statusBar(page)).toBeHidden();
+    await composer(page).fill("And the one in CONTRIBUTING.md");
+    await composer(page).press("Enter");
+    await expect.poll(() => contexts.length).toBe(2);
+    expect(contexts[1]).not.toHaveProperty("deviation_monitor");
+  });
+
+  test("every turn is sent as one turn", async ({ page }) => {
+    await setup(page, {});
+    const contexts = captureRuns(page);
+    await page.goto("/workspace/chats/new");
+    await expect(composer(page)).toBeVisible({ timeout: 20_000 });
+
+    await page.locator(BUTTON).click();
+    const dialog = page.getByRole("dialog", { name: "Deviation monitor" });
+    await dialog.getByTestId("deviation-monitor-cadence-everyTurn").check();
+    await dialog.getByTestId("deviation-monitor-save").click();
+
+    await composer(page).fill("hello");
+    await composer(page).press("Enter");
+    await expect
+      .poll(() => contexts.at(-1)?.deviation_monitor)
+      .toEqual({
+        enabled: true,
+        model: "chat-model",
+        cadence: { mode: "turns", every: 1 },
+      });
+  });
+
+  test("a new chat starts with the Settings default", async ({ page }) => {
+    await page.addInitScript(() => {
+      const key = "deerflow.local-settings";
+      const stored = JSON.parse(window.localStorage.getItem(key) ?? "{}") as {
+        deviationMonitor?: unknown;
+      };
+      if (stored.deviationMonitor) return;
+      window.localStorage.setItem(
+        key,
+        JSON.stringify({
+          ...stored,
+          deviationMonitor: {
+            enabledForNewChats: true,
+            modelName: "judge-model",
+            cadence: { mode: "steps", every: 7 },
+          },
+        }),
+      );
+    });
+    await setup(page, {});
+    const contexts = captureRuns(page);
+    await page.goto("/workspace/chats/new");
+    await expect(composer(page)).toBeVisible({ timeout: 20_000 });
+    await expect(page.locator(BUTTON)).toHaveAttribute("data-state", "on");
+
+    await composer(page).fill("hello");
+    await composer(page).press("Enter");
+    await expect
+      .poll(() => contexts.at(-1)?.deviation_monitor)
+      .toEqual({
+        enabled: true,
+        model: "judge-model",
+        cadence: { mode: "steps", every: 7 },
+      });
+  });
+
+  test("is hidden when the operator turned the monitor off", async ({
+    page,
+  }) => {
+    await setup(page, { feature: false });
+    await page.goto("/workspace/chats/new");
+    await expect(composer(page)).toBeVisible({ timeout: 20_000 });
+    // The tool row rendered: its neighbour is there, the monitor is not.
+    await expect(page.locator("[data-slot='internet-toggle']")).toBeVisible();
+    await expect(page.locator(BUTTON)).toHaveCount(0);
+  });
+
+  test("is hidden on a Gateway that predates the feature", async ({ page }) => {
+    mockLangGraphAPI(page);
+    await mockFeature(page, undefined);
+    await page.goto("/workspace/chats/new");
+    await expect(composer(page)).toBeVisible({ timeout: 20_000 });
+    await expect(page.locator("[data-slot='internet-toggle']")).toBeVisible();
+    await expect(page.locator(BUTTON)).toHaveCount(0);
+  });
+});
+
+test.describe("the status bar", () => {
+  test("renders each status the backend reports", async ({ page }) => {
+    let state: MonitorState = null;
+    await openMonitoredChat(page, () => state);
+    await expect(statusBar(page)).toHaveAttribute("data-status", "idle");
+    await expect(statusBar(page)).toContainText("Watching");
+
+    const expected: Record<string, string> = {
+      off: "Off for this run",
+      on_track: "On track",
+      unsure: "Unsure, not acted on",
+      drifting: "Possible drift, re-checking",
+      retrying: "Drift confirmed, retrying in smaller pieces",
+      stopped: "Stopped the run: it drifted from your request",
+    };
+    for (const [status, label] of Object.entries(expected)) {
+      state = reported(status);
+      await page.reload();
+      await expect(statusBar(page)).toHaveAttribute("data-status", status);
+      await expect(
+        page.getByTestId("deviation-monitor-status-label"),
+      ).toHaveText(label);
+    }
+
+    // A check left "checking" by a run that is no longer going is not a
+    // spinner that never stops.
+    state = reported("checking");
+    await page.reload();
+    await expect(statusBar(page)).toHaveAttribute("data-status", "idle");
+  });
+
+  test("explains a stop, with the stop note in the transcript", async ({
+    page,
+  }) => {
+    await openMonitoredChat(page, () =>
+      reported("stopped", {
+        reason: "It began rewriting the whole README.",
+        drift_kind: "scope_creep",
+        restated_task: "Fix the typo in README.md",
+      }),
+    );
+    // The backend's note is an ordinary assistant message.
+    await expect(page.getByTestId("main-message-list")).toContainText(
+      STOP_NOTE,
+    );
+    const bar = statusBar(page);
+    await expect(bar).toHaveAttribute("data-status", "stopped");
+    await bar.getByRole("button", { name: "Details" }).click();
+    const details = page.getByTestId("deviation-monitor-status-details");
+    await expect(details).toContainText("It began rewriting the whole README.");
+    await expect(details).toContainText("Went beyond what was asked");
+    await expect(details).toContainText("Fix the typo in README.md");
+    await expect(details).toContainText("Judge Model");
+  });
+
+  test("renders on the custom agent chat page too", async ({ page }) => {
+    await openMonitoredChat(page, () => reported("on_track"), { agent: true });
+    await expect(statusBar(page)).toHaveAttribute("data-status", "on_track");
+    await expect(page.locator(BUTTON)).toHaveAttribute("data-state", "on");
+  });
+
+  test("follows the monitor live while a run streams", async ({ page }) => {
+    const run = await startUpdatesStream();
+    try {
+      await openMonitoredChat(page, () => null);
+      await page.route("**/runs/stream", (route) => run.serve(route));
+      await composer(page).fill("Fix the typo in README.md");
+      await composer(page).press("Enter");
+      // An `updates` frame from the monitor's node, folded by the reducer.
+      await expect(statusBar(page)).toHaveAttribute("data-status", "checking", {
+        timeout: 10_000,
+      });
+      await expect(statusBar(page)).toHaveAttribute("data-status", "drifting", {
+        timeout: 10_000,
+      });
+    } finally {
+      await run.close();
+    }
+  });
+});
+
+test.describe("at phone width", () => {
+  test.use({ viewport: { width: 390, height: 844 } });
+
+  test("the button, the dialog and the status bar fit the screen", async ({
+    page,
+  }) => {
+    await openMonitoredChat(page, () =>
+      reported("stopped", { reason: "It began rewriting the whole README." }),
+    );
+    const noHorizontalScroll = () =>
+      page.evaluate(
+        () =>
+          document.documentElement.scrollWidth <=
+          document.documentElement.clientWidth,
+      );
+
+    await expect(page.locator(BUTTON)).toBeInViewport();
+    const bar = await statusBar(page).boundingBox();
+    expect(bar).not.toBeNull();
+    expect(bar!.x).toBeGreaterThanOrEqual(0);
+    expect(bar!.x + bar!.width).toBeLessThanOrEqual(390);
+    await expect(
+      page.getByTestId("deviation-monitor-status-turn-off"),
+    ).toBeInViewport();
+    expect(await noHorizontalScroll()).toBe(true);
+
+    await page.locator(BUTTON).click();
+    const dialog = page.getByRole("dialog", { name: "Deviation monitor" });
+    await expect(dialog).toBeVisible();
+    const box = await dialog.boundingBox();
+    expect(box).not.toBeNull();
+    expect(box!.x).toBeGreaterThanOrEqual(0);
+    expect(box!.x + box!.width).toBeLessThanOrEqual(390);
+    await dialog.getByTestId("deviation-monitor-save").scrollIntoViewIfNeeded();
+    await expect(dialog.getByTestId("deviation-monitor-save")).toBeInViewport();
+    expect(await noHorizontalScroll()).toBe(true);
+  });
+});
+
+/**
+ * A Gateway-like run stream that stays open long enough to see the monitor
+ * report "checking" and then "drifting" through `updates` frames, the way a
+ * middleware node's state write reaches the browser mid-run.
+ */
+async function startUpdatesStream() {
+  let threadId = "";
+  const server = createServer((_request, response) => {
+    response.writeHead(200, {
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Expose-Headers": "Content-Location",
+      "Cache-Control": "no-cache",
+      "Content-Location": `/threads/${threadId}/runs/${MOCK_RUN_ID}`,
+      "Content-Type": "text/event-stream",
+    });
+    const frame = (event: string, data: unknown) =>
+      `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+    const update = (status: string) =>
+      frame("updates", {
+        DeviationMonitorMiddleware: {
+          deviation_monitor: reported(status, {
+            updated_at: new Date().toISOString(),
+          }),
+        },
+      });
+    response.write(
+      frame("metadata", { run_id: MOCK_RUN_ID, thread_id: threadId }),
+    );
+    response.write(update("checking"));
+    const timers = [
+      setTimeout(() => response.write(update("drifting")), 1_500),
+      setTimeout(() => response.end(frame("end", {})), 4_000),
+    ];
+    response.once("close", () => timers.forEach(clearTimeout));
+  });
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      server.off("error", reject);
+      resolve();
+    });
+  });
+  const { port } = server.address() as AddressInfo;
+  return {
+    serve(route: Route) {
+      threadId = runStreamThreadId(route);
+      return route.continue({ url: `http://127.0.0.1:${port}/runs/stream` });
+    },
+    async close() {
+      server.closeAllConnections();
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    },
+  };
+}

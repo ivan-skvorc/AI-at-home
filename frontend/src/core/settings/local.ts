@@ -7,6 +7,12 @@ import {
 } from "../models/sorting";
 import type { AgentThreadContext } from "../threads";
 import {
+  DEFAULT_DEVIATION_MONITOR_DEFAULTS,
+  normalizeDeviationMonitorDefaults,
+  type DeviationMonitorChatSetting,
+  type DeviationMonitorDefaults,
+} from "../threads/deviation-monitor";
+import {
   DEFAULT_ULTRACODE_LIMITS,
   normalizeUltracodeLimits,
   type UltracodeLimits,
@@ -68,6 +74,10 @@ export const DEFAULT_LOCAL_SETTINGS: LocalSettings = {
   // Double Plus Ultracode's limits (Settings → Subagents). The Script
   // workflows extension clamps each to the operator's limits.
   ultracode: DEFAULT_ULTRACODE_LIMITS,
+  // Settings → Deviation monitor: what a *new* chat starts with. Off, so a
+  // fresh install monitors nothing; the per-chat choice itself is a
+  // THREAD_SCOPED_CONTEXT_KEYS entry (`deviation_monitor`), never stored here.
+  deviationMonitor: DEFAULT_DEVIATION_MONITOR_DEFAULTS,
   // Per-browser model-picker preference (sort key/direction + group-by-provider
   // toggle). Defaults to config order, ungrouped, so the picker looks unchanged
   // until the user opts into sorting/grouping.
@@ -118,6 +128,11 @@ export const THREAD_SCOPED_CONTEXT_KEYS = [
   // "Full" in one chat never grants unattended execution in another, and
   // because the per-thread setter drops any context key not listed here.
   "tool_approval_mode",
+  // The deviation monitor (fork feature): on, its model and its cadence, per
+  // conversation. Off by default — absent from DEFAULT_LOCAL_SETTINGS.context —
+  // so a chat that never turned it on is never monitored. Sent by
+  // `buildRunContext` only as the strict contract object.
+  "deviation_monitor",
 ] as const;
 
 export type ThreadContextOverride = Partial<
@@ -223,6 +238,8 @@ export interface LocalSettings {
   // one workflow may start, how many at once, and its wall time in minutes.
   // Sent with each run in that mode.
   ultracode: UltracodeLimits;
+  // Deviation monitor defaults for new chats (fork feature), per browser.
+  deviationMonitor: DeviationMonitorDefaults;
   // How the model dropdown orders/groups its entries (fork feature). Per browser,
   // shared across threads. See `core/models/sorting.ts`.
   modelPicker: ModelPickerPrefs;
@@ -236,6 +253,7 @@ export interface LocalSettings {
     | "model_name"
     | "reasoning_effort"
     | "memory_enabled"
+    | "deviation_monitor"
   > & {
     model_name?: string | undefined;
     subagent_model_name?: string | undefined;
@@ -254,6 +272,10 @@ export interface LocalSettings {
     // backend in the run context; `false` strips every internet-reaching tool
     // from the run.
     internet_enabled?: boolean;
+    // The chat's deviation monitor choice as stored, off included (it keeps the
+    // last model and cadence for the dialog). The run carries only the strict
+    // `AgentThreadContext["deviation_monitor"]` built from it.
+    deviation_monitor?: DeviationMonitorChatSetting;
   };
 }
 
@@ -289,6 +311,10 @@ export function mergeLocalSettings(
     // Normalized from the stored value alone: it fills each missing field, and
     // it must see whether `maxMinutes` was stored to upgrade old defaults.
     ultracode: normalizeUltracodeLimits(settings?.ultracode),
+    // Repaired as a whole: a hand-edited cadence must not reach a new chat.
+    deviationMonitor: normalizeDeviationMonitorDefaults(
+      settings?.deviationMonitor,
+    ),
     modelPicker: {
       ...DEFAULT_LOCAL_SETTINGS.modelPicker,
       ...settings?.modelPicker,
