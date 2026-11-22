@@ -85,9 +85,26 @@ def test_holes_at_their_stated_centres_pass_and_holes_a_millimetre_off_fail_with
 def test_a_point_on_a_side_holes_axis_places_it_even_beside_the_part():
     measured = _plate(_down(-15, 0), SIDE)
     assert _holes_check(measured, [4, [3, 25, 0, 3]])["passed"] is True
-    assert _holes_check(measured, [[4, -15, 0, 6], [3, 0, 0, 3]])["passed"] is True
+    # Beside the part, on the side the hole is drilled from: its line runs on out of the face.
+    assert _holes_check(measured, [[4, -15, 0, 6], [3, 40, 0, 3]])["passed"] is True
     # The same point is a millimetre off the axis once the hole sits a millimetre higher.
     assert _holes_check(measured, [4, [3, 25, 0, 4]])["passed"] is False
+
+
+def test_a_blind_hole_is_placed_only_on_its_entry_side_of_its_floor():
+    # SIDE goes 12 mm in from the +x face, so its floor is at x = 18. Past the floor is solid: a point
+    # there, or on the far face, describes a hole drilled into the other end of the same line.
+    measured = _plate(_down(-15, 0), SIDE)
+    assert _holes_check(measured, [4, [3, 18, 0, 3]])["passed"] is True
+    for x in (0, -30):
+        check = _holes_check(measured, [4, [3, x, 0, 3]])
+        assert check["passed"] is False
+        (said,) = check["misplaced"]
+        # On the axis, so the distance that places it wrong is the one past the floor.
+        assert said == {"expected": [3, x, 0, 3], "nearest_at": [30.0, 0.0, 3.0], "off_axis_mm": 0.0, "past_floor_mm": 18 - x}
+    # A through hole is one hole along its whole line: past either face is still on it.
+    assert _holes_check(measured, [3, [4, -15, 0, -20]])["passed"] is True
+    assert _holes_check(measured, [3, [4, -15, 0, 30]])["passed"] is True
 
 
 def test_one_measured_hole_stands_for_one_expected_hole():
@@ -107,10 +124,21 @@ def test_a_position_needs_a_hole_of_its_own_diameter():
     check = _holes_check(measured, [[4, -15, 0, 6], [4, 15, 0, 6]])
     assert check["passed"] is False
     (said,) = check["misplaced"]
-    # The only 4 mm hole is taken by the first point: the nearest one of that size is said, far off.
+    # The only 4 mm hole is taken by the first point: the nearest one of that size is said, far off,
+    # with the point it already stands for, so it is not the hole to move.
     assert said["expected"] == [4, 15, 0, 6] and said["nearest_at"] == [-15.0, 0.0, 6.0] and said["off_axis_mm"] == 30.0
+    assert said["nearest_matches"] == [4, -15, 0, 6]
     lone = _holes_check(_plate(_down(15, 0, d=5.0)), [[4, 15, 0, 6]])
     assert lone["misplaced"] == [{"expected": [4, 15, 0, 6], "nearest_at": None}]
+
+
+def test_a_stray_hole_is_named_before_a_hole_that_is_where_it_belongs():
+    # Three corners drilled right and the fourth hole far off (a sign slip): the hole to move is the
+    # stray one, not the correct neighbour 20 mm away that already stands for its own corner.
+    measured = _plate(_down(-15, 10), _down(15, 10), _down(-15, -10), _down(15, -40))
+    check = _holes_check(measured, [[4, x, y, 6] for x, y in CORNERS])
+    assert check["passed"] is False
+    assert check["misplaced"] == [{"expected": [4, 15, -10, 6], "nearest_at": [15, -40, 6.0], "off_axis_mm": 30.0}]
 
 
 def test_plain_diameters_are_checked_exactly_as_before():

@@ -107,6 +107,26 @@ async def test_holes_expected_at_points_are_checked_where_they_are():
     assert "part.step" not in files
 
 
+async def test_a_blind_hole_drilled_into_the_opposite_face_is_not_where_it_was_asked_for():
+    # h08 of the CAD eval: a 3 mm hole 12 mm deep into the bar's +x end face, asked for at that face's
+    # centre. Drilled into the -x end it lies on the same line, and the eval scores it a truth fail.
+    bar = 'result = cq.Workplane("XY").box(80, 20, 8).faces("{face}").workplane(centerOption="CenterOfBoundBox").hole(3, 12)\n'
+    expect = {"bbox_xyz_mm": [80, 20, 8], "hole_diameters_mm": [[3, 40, 0, 0]]}
+    right, _ = await _build(bar.format(face=">X"), **expect)
+    assert right["passed"] is True, right
+    wrong, files = await _build(bar.format(face="<X"), **expect)
+    holes = next(check for check in wrong["checks"] if check["check"] == "holes")
+    assert wrong["passed"] is False and holes["misplaced"] == [{"expected": [3, 40, 0, 0], "nearest_at": [-40.0, 0.0, 0.0], "off_axis_mm": 0.0, "past_floor_mm": 68.0}]
+    assert "part.step" not in files
+    # A blind insert hole asked for on the top face and drilled up from the bottom one.
+    plate = 'result = cq.Workplane("XY").box(30, 30, 10).faces("{face}").workplane(centerOption="CenterOfBoundBox").hole(6, 4)\n'
+    top = {"bbox_xyz_mm": [30, 30, 10], "hole_diameters_mm": [[6, 0, 0, 5]]}
+    assert (await _build(plate.format(face=">Z"), **top))[0]["passed"] is True
+    bottom, _ = await _build(plate.format(face="<Z"), **top)
+    holes = next(check for check in bottom["checks"] if check["check"] == "holes")
+    assert bottom["passed"] is False and holes["misplaced"][0]["past_floor_mm"] == 6.0
+
+
 async def test_a_report_of_four_hundred_holes_stays_small_and_names_what_made_it(tmp_path, monkeypatch):
     # A script may make 200 pattern points, and an expectation may name 400 holes. The plate is measured
     # by the module itself and handed to the real handler as the worker's answer.
@@ -163,6 +183,54 @@ async def test_the_glb_opens_at_real_size_and_the_3mf_is_in_millimetres():
     # A failed part's GLB is in metres too.
     _, failed = await _build(ONE_HOLE)
     assert document["nodes"][root]["scale"] == _glb_document(failed["part.failed.glb"])["nodes"][root]["scale"] and "part.3mf" not in failed
+
+
+#: A part of two bodies that touch: the slicer's file holds both, and part.parts.3mf lays them apart.
+SPLIT = "result = cq.Workplane('XY').box(20, 20, 40).faces('>Z').workplane(-20).split(keepTop=True, keepBottom=True)\n"
+
+
+def _package(data: bytes) -> tuple[str, str]:
+    import io
+    import zipfile
+
+    with zipfile.ZipFile(io.BytesIO(data)) as package:
+        return package.read("3D/3dmodel.model").decode("utf-8"), package.read("[Content_Types].xml").decode("utf-8")
+
+
+async def _slicer_files() -> dict[str, bytes]:
+    _, one = await _build(PLATE)
+    _, two = await _build(SPLIT, bbox_xyz_mm=[20, 20, 40], bodies=2)
+    return {"one-part.3mf": one["part.3mf"], "two-part.3mf": two["part.3mf"], "two-part.parts.3mf": two["part.parts.3mf"]}
+
+
+async def test_the_3mf_files_keep_to_the_3mf_core_specification():
+    # The kernel numbers its objects from 0, where the specification's resource ids are positive, and gives
+    # the package relationships no content type of their own: lib3mf, the 3MF Consortium's reader, refused
+    # every file. Each is renumbered from 1 and given the defaults; every reference still names an object.
+    import re
+
+    for name, data in (await _slicer_files()).items():
+        model, types = _package(data)
+        ids = [int(found) for found in re.findall(r'<object id="(\d+)"', model)]
+        references = [int(found) for found in re.findall(r'objectid="(\d+)"', model)]
+        assert ids and min(ids) >= 1 and len(set(ids)) == len(ids) and references and set(references) <= set(ids), name
+        assert '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml" />' in types, name
+        assert '<Default Extension="model" ContentType="application/vnd.ms-package.3dmanufacturing-3dmodel+xml" />' in types, name
+
+
+async def test_the_3mf_files_open_in_the_3mf_consortiums_reader(tmp_path):
+    lib3mf = pytest.importorskip("lib3mf", reason="lib3mf is not installed")
+    wrapper = lib3mf.get_wrapper()
+    for name, data in (await _slicer_files()).items():
+        path = tmp_path / name
+        path.write_bytes(data)
+        model = wrapper.CreateModel()
+        reader = model.QueryReader("3mf")
+        reader.SetStrictModeActive(True)
+        reader.ReadFromFile(str(path))
+        meshes, items = model.GetMeshObjects(), model.GetBuildItems()
+        counted = [sum(1 for _ in iter(listing.MoveNext, False)) for listing in (meshes, items)]
+        assert counted == ([1, 1] if name == "one-part.3mf" else [2, 1] if name == "two-part.3mf" else [2, 2]), (name, counted)
 
 
 async def test_a_passed_part_says_how_it_prints_and_the_print_block_never_decides():
@@ -534,6 +602,26 @@ async def test_a_part_too_tall_for_the_bed_split_in_two_passes_as_two_bodies():
     assert answer["notes"][:2] == ["The smallest gap between bodies is 0 mm, between body 1 and body 2.", "That gap is under the printer's minimum clearance (0.3 mm): printed as modelled, the bodies may fuse."]
     boxes = _laid_out_items(files["part.parts.3mf"])
     assert [[round(value, 6) for value in low] for low, _ in boxes] == [[0, 0, 0], [25, 0, 0]]
+
+
+async def test_a_part_split_for_the_bed_is_judged_as_its_bodies_print_apart():
+    # The way out failures.md gives for "larger than the build volume": split it and build bodies=2. Judged as
+    # one mesh the split part was still too tall, open where the halves touch and 400 mm² overhanging, and
+    # the answer sent the model to split it again. Each half is 20 mm tall, closed and flat in part.parts.3mf.
+    outputs = Outputs()
+    context = ToolContext(ExtensionPrincipal("alice"), {"enabled": True}, "thread-a", output_writer=outputs.write)
+    handler = make_handler(settings_from({"printer": {"build_volume_mm": [100, 100, 30]}}))
+    answer = await handler({"name": "part", "script": SPLIT, "bbox_xyz_mm": [20, 20, 40], "bodies": 2}, context)
+    assert answer["passed"] is True, answer
+    printing = answer["print"]
+    assert (printing["fits_build_volume"], printing["printed_apart"], printing["overhang_mm2"]) == (True, True, 0)
+    assert printing["notes"] == ["as modelled the bodies do not fit the build volume together (100 × 100 × 30 mm) in Z; printed apart, as the .parts.3mf lays them out, each one does"]
+    block = json.loads(outputs.files["part.report.json"])["measured"]["print"]
+    assert block["watertight"] is True and "open_edges" not in block and block["bed_contact_mm2"] == pytest.approx(800, abs=0.5)
+    assert [body["fits_build_volume"] for body in block["bodies"]] == [True, True]
+    # One body is judged on the part's own STL, as before.
+    single = await handler({"name": "plate", "script": PLATE, **EXPECT}, context)
+    assert "printed_apart" not in single["print"] and "bodies" not in json.loads(outputs.files["plate.report.json"])["measured"]["print"]
 
 
 def test_bodies_that_cannot_be_laid_out_get_one_stl_each(tmp_path, monkeypatch):

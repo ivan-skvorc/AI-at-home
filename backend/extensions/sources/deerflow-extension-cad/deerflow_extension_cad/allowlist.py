@@ -168,7 +168,7 @@ _COMBINE = _opt("combine", BOOL)
 _CONSTRUCTION = _opt("forConstruction", BOOL)
 _BASE = 'cq.Workplane("XY")'
 
-#: ``cq.Workplane(...)``: the only thing a script may call on ``cq``.
+#: ``cq.Workplane(...)``: one of the two things a script may call on ``cq``; the other is ``HELIX``.
 CONSTRUCTOR = Method(
     (_opt("inPlane", PLANE), _opt("origin", POINT)),
     "Start a part on a named plane.",

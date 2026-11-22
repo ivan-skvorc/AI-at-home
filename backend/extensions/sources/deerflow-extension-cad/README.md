@@ -45,7 +45,7 @@ rotate there through the bundled
 | `mounting-plate.png` | A picture: iso, top, front and right views with the measured size; the reply shows it inline |
 | `mounting-plate.glb` | The mesh for a viewer, in metres (glTF's unit), one node per body |
 | `mounting-plate.stl` | The mesh, in millimetres |
-| `mounting-plate.3mf` | The part for a slicer, in millimetres; several bodies stay one object, to print in place |
+| `mounting-plate.3mf` | The part for a slicer, in millimetres, renumbered and typed so lib3mf reads it; several bodies stay one object, to print in place |
 | `mounting-plate.parts.3mf` | Only for several bodies: each body on the bed, 5 mm apart, to print apart (fallback: `mounting-plate.body-N.stl`, at most 8) |
 | `mounting-plate.step` | The part for a CAD program |
 | `mounting-plate.report.json` | Expected and measured numbers, each check, the print block, and what made it (module and CadQuery versions, the script's SHA-256, the files of the set) |
@@ -73,7 +73,7 @@ does not get a vote.
 | One closed solid | The file holds exactly one solid, it is valid, its shells are closed and its volume is positive. With `bodies` above 1 the check is "closed solids": exactly that many valid, closed solids; the volume is their sum and the bounding box their union |
 | Bounding box | Each side is within 0.01 mm or 0.1 % of `bbox_xyz_mm`, whichever is larger |
 | Volume | The volume is inside `volume_min_max_mm3` (only when given) |
-| Holes | The drilled holes match `hole_diameters_mm`, one entry per hole, a diameter or `[d, x, y, z]`, same tolerance (only when given). A hole given a point passes when a measured hole of that diameter has its axis within 0.05 mm or 0.1 % of the largest side of the point, one measured hole per expected hole |
+| Holes | The drilled holes match `hole_diameters_mm`, one entry per hole, a diameter or `[d, x, y, z]`, same tolerance (only when given). A hole given a point passes when a measured hole of that diameter has its axis within 0.05 mm or 0.1 % of the largest side of the point and, for a blind hole, the point lies no further past its floor than that, one measured hole per expected hole |
 
 A hole is a full-circle, concave cylindrical wall with air inside that is open at
 one end or both. A counterbore or countersink counts once, with its drill
@@ -137,8 +137,10 @@ checked.
 The answer lists up to 12 holes, each with its diameter, the point where it is
 entered (`at`) and its drill direction (`axis`); beyond that a note names the
 report, which lists every hole. A hole check that missed a position gives
-`misplaced`: the expected entry, the nearest hole of that diameter and how far
-its axis is from the point.
+`misplaced`: the expected entry, the nearest hole of that diameter that no
+other point accounts for (`nearest_matches` names the point when none is left),
+how far its axis is from the point and, for a blind hole, how far past its
+floor the point lies (`past_floor_mm`).
 
 ## How it prints
 
@@ -147,7 +149,9 @@ density), bed contact, overhang past the printer's angle, a sampled thinnest
 wall, and the fit to the build volume when one is set, plus notes past fixed
 thresholds (a wall under two nozzle widths, an overhang that needs support with
 a better face down, nothing flat on the bed, larger than the bed, a mesh that
-is not watertight). The whole block is in report.json for every build. It is
+is not watertight). A part of several bodies is judged body by body, each on
+the bed as `.parts.3mf` lays it out (`printed_apart`), with the bodies named in
+each note. The whole block is in report.json for every build. It is
 reported, never checked: pass or fail stays on the user's numbers. The printer
 is the operator's, set under `printer:` in the CAD record of config.yaml (see
 `config.example.yaml`); the model cannot change it. The user guide is
@@ -259,7 +263,7 @@ beside the part reads the way the tool read it" rests on; a line may still be
 up to 1,000 characters long.
 Characters of any language are fine in comments.
 
-The allow-list (`allowlist.py`, 64 methods plus the constructor):
+The allow-list (`allowlist.py`, 64 methods plus two constructors, `cq.Workplane` and `cq.Wire.makeHelix`):
 
 | Group | Methods |
 | --- | --- |
