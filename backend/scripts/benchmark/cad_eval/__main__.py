@@ -30,7 +30,8 @@ from typing import Any
 
 import httpx
 
-from .agent import DEFAULT_BASE_URL, DEFAULT_TIMEOUT_SECONDS, MeasureCli, SpendCapReached, StartRefused, check_gateway, download, headers, run_request, token_usage
+from .agent import DEFAULT_BASE_URL, DEFAULT_TIMEOUT_SECONDS, SpendCapReached, StartRefused, check_gateway, download, headers, run_request, token_usage
+from .measuring import MeasureCli
 from .score import TABLE_HEADER, Build, SampleResult, Transcript, format_row, judge_truth, read_transcript, summarize
 from .specs import BANDS, NO_MODULE_BAND, Spec, SpecError, load_specs, spec_set_hash
 

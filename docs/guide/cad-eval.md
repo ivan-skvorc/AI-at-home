@@ -46,9 +46,10 @@ It exits without running anything, with status 3 and a message, when:
   module is not installed or not enabled;
 - the model is not configured on the Gateway. The Gateway would otherwise
   run the request on its default model, and the row would carry the wrong name;
-- `deerflow_extension_cad.measure_cli` is not importable by the measuring
-  Python (`--measure-python`, default the backend's own). The backend
-  environment has it once the bundled CAD module ships item 57.
+- `deerflow_extension_cad.measure_cli` or the CAD kernel (`cadquery`) is not
+  importable by the measuring Python (`--measure-python`, default the
+  backend's own). The backend environment has both once the bundled CAD module
+  ships item 57; any environment with the CAD module installed will do.
 
 Without `MODEL` it prints its usage and exits with status 2. A completed run
 exits 0 whatever its pass rate, because the eval measures and does not gate. A
@@ -74,8 +75,10 @@ server says why. It refuses to start while the module is on.
    newest build that answered `passed: true`; its STEP file is downloaded
    through the artifact route.
 4. `python -I -m deerflow_extension_cad.measure_cli <step>` re-imports and
-   measures it, and `judge_truth` holds it to the spec's truth. `passed` is
-   never the score.
+   measures it with the module's own `measure_step` (the measurer is
+   `measuring.py`), and `judge_truth` holds the measurement to the spec's
+   truth. `passed` is never the score. A STEP that measure_cli cannot measure
+   makes the sample unscored, with the reason measure_cli gave.
 
 A spec asks for one part. A kit, such as the box and lid, is one build of two
 bodies. A run that builds the box and the lid as two parts delivers only the
@@ -107,40 +110,52 @@ to `--out-dir` (default `/tmp/deer-flow-cad-eval`) and is never committed.
 The specs live in `backend/scripts/benchmark/cad_eval/specs/<id>/`. Each holds
 `spec.json` (the request, its band, how the bounding box is compared, and the
 truth) and `reference.py`, a script in the dialect `cad_build` reads. All
-twenty requests and reference parts were written for this fork.
+twenty-two requests and reference parts were written for this fork.
 
 | Band | Specs |
 | --- | --- |
 | Prismatic | spacer block, L-bracket, three-step block, hexagonal prism, threshold ramp, U-channel |
-| Holes, patterns and pockets | mounting plate (a 2 x 2 pattern), bolt flange (a polar pattern), pocketed plate, slotted plate, countersunk strip, counterbored block, name tag |
-| Fillets, shells and two-part fits | rounded plate, open box, chamfered cube, control knob, V-groove pulley, captive pin, box and lid |
+| Holes, patterns and pockets | mounting plate (a 2 x 2 pattern), bolt flange (a polar pattern), pocketed plate, slotted plate, countersunk strip, counterbored block, name tag, drilled bar (holes at stated places) |
+| Fillets, shells and two-part fits | rounded plate, open box, chamfered cube, control knob, V-groove pulley, captive pin, box and lid, print-in-place hinge |
 
-Four specs wait on other roadmap items, and their `spec.json` lists them under
-`needs`:
-
-- The name tag needs `text` (item 59), and the pulley needs `revolve` (item 56).
-  Until those operations are on the allow-list, the CAD package's test skips
-  their reference parts and names the item.
-- The captive pin and the box and lid are two bodies. Their reference parts
-  build today, but `cad_build` passes two bodies only with its `bodies`
-  argument (item 51). Before that a run ends without a delivered part, which
-  is the honest result.
+Five specs name, under `needs`, the roadmap item that made them reachable: the
+name tag needs `text` (item 59), the pulley `revolve` (item 56), and the
+captive pin, the box and lid and the hinge are two bodies, which `cad_build`
+passes only with its `bodies` argument (item 51). A module from before those
+items cannot pass them, which is the honest result for that module. All three
+items have landed, so the CAD package's test fails, rather than skips, a
+reference part its allow-list cannot build.
 
 ### Truth and its tolerances
 
 The truth is what the reference part measures through the CAD module's own
-reader, kernel calls and STEP re-import: the number of solids, the bounding
-box, the volume and, for a one-solid part, the drilled hole diameters. A part
-meets it when:
+reader, kernel calls, STEP re-import and `measure_cli`: the number of solids,
+the bounding box, the volume, the drilled hole diameters (each body's, for a
+part of several bodies) and, for several bodies, the smallest gap between
+them. A spec whose request says where its holes go sets `hole_positions`, and
+its truth also keeps each hole's point and direction. A part meets the truth
+when:
 
 - it has the same number of valid, closed solids;
 - each bounding-box side is within 1 mm. With orientation `z`, the height must
   match and the two footprint sides may be swapped. With `free`, the three
   sides are compared in any order, for parts whose request fixes no direction;
 - its volume is within 2%;
-- for a one-solid part, it has the same hole diameters, each within 0.1 mm.
-  The hole check is what fails a plate that forgot its holes, because those
-  can be under 2% of the volume.
+- it has the same hole diameters, each within 0.1 mm. The hole check is what
+  fails a plate that forgot its holes, because those can be under 2% of the
+  volume;
+- with several bodies, the smallest gap between them is no more than 0.05 mm
+  or 10% (whichever is larger) under the truth's. A print-in-place clearance
+  asked for as 0.4 mm must not come back as 0.2, where the bodies fuse;
+- with `hole_positions`, every hole is where the truth puts it: a measured hole
+  of the same diameter, through or blind as in the truth, running within 5
+  degrees of the truth's direction and passing within 0.5 mm of its point (the
+  axis of a through hole, the open end of a blind one). Points are compared
+  from the centre of each bounding box, so the part may sit anywhere, and
+  under every mirror and every swap of axes the orientation allows, so a part
+  built from the other end or turned on the bed is the same part. Diameters,
+  box and volume cannot tell a hole moved along the part from one in its
+  place; this check can.
 
 `derive_truth.py` writes the truth. It runs in the CAD package's environment,
 because it needs the kernel:
@@ -151,20 +166,31 @@ uv run --no-project python ../../backend/scripts/benchmark/cad_eval/derive_truth
 ```
 
 `examples/deerflow-extension-cad/tests/test_eval_specs.py` rebuilds every
-reference part in CI's extension package job, judges it with the same
-`judge_truth`, and fails when the stored truth no longer matches what the
-reference builds. The backend's offline test, `test_bench_cad_eval.py`, drives
-the runner against a fake Gateway with synthetic transcripts.
+reference part in CI's extension package job, measures it through the eval's
+own `measuring.py` and `measure_cli`, judges it with the same `judge_truth`,
+and fails when the stored truth no longer matches what the reference builds.
+A part whose pass depends on the tool itself (several bodies, or holes at
+stated places) goes through the real `cad_build` handler, and the delivered
+STEP is found in its answer the way the runner finds it in a transcript. The
+same test feeds a refused build's real answer to the transcript reader, which
+counts it by `error.refused`. The backend's offline test,
+`test_bench_cad_eval.py`, drives the runner against a fake Gateway with
+synthetic transcripts.
 
 ### Adding a spec
 
 1. Create `specs/<band letter><nn>-<name>/spec.json` with `id`, `band`,
-   `title`, `request` and `orientation`, plus `needs` if its reference calls an
-   operation the allow-list does not have yet.
+   `title`, `request` and `orientation`, plus `needs` if it depends on a
+   roadmap item, and `hole_positions: true` if the request says where every
+   hole goes (a polar pattern with no stated start angle does not).
 2. Write `reference.py` in the allow-listed dialect, with every dimension in a
-   named variable, and run `derive_truth.py <id>`.
+   named variable, and run `derive_truth.py <id>`. Centre each workplane on
+   its own face (`workplane(centerOption="CenterOfBoundBox")`) when a script
+   works on more than one face: the default projects the previous workplane's
+   origin, which can put a hole on an edge.
 3. Run the CAD package's `tests/test_eval_specs.py` and the backend's
-   `tests/test_bench_cad_eval.py`, whose spec count stays between 15 and 20.
+   `tests/test_bench_cad_eval.py`, and update the number of specs per band
+   that the latter pins.
 
 A request the allow-list cannot express at all can carry `expected_refused:
 <construct>` instead of a reference part. Its refusals are recorded, and they

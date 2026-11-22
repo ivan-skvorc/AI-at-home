@@ -9,10 +9,11 @@ module's ``measure_cli``, and held to truth derived from a reference script the
 model never saw.
 
 1. ``specs`` loads the requests, their bands and their truth.
-2. ``agent`` drives the Gateway over public HTTP and runs the measurer.
-3. ``score`` reads a run's transcript and judges the part, purely.
-4. ``derive_truth`` builds each reference once, offline, in the CAD package's
-   environment, and stores what it measures.
+2. ``agent`` drives the Gateway over public HTTP.
+3. ``measuring`` runs ``measure_cli`` on a STEP in a child process.
+4. ``score`` reads a run's transcript and judges the part, purely.
+5. ``derive_truth`` builds each reference once, offline, in the CAD package's
+   environment, and stores what ``measure_cli`` measures.
 
 Protocol and results: docs/guide/cad-eval.md.
 """

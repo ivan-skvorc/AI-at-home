@@ -18,6 +18,10 @@
       24.8,
       20.0
     ],
-    "volume_mm3": 12336.15
+    "volume_mm3": 12336.15,
+    "hole_diameters_mm": [
+      8.6
+    ],
+    "min_gap_mm": 0.3
   }
 }

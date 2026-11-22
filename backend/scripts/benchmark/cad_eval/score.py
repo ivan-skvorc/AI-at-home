@@ -11,6 +11,7 @@ reference part with the same function that judges a model's part.
 
 from __future__ import annotations
 
+import itertools
 import json
 import math
 import statistics
@@ -26,6 +27,22 @@ from typing import Any
 TRUTH_BBOX_MM = 1.0
 TRUTH_VOLUME_RATIO = 0.02
 TRUTH_HOLE_MM = 0.1
+#: A hole the spec places (``holes_at_mm``) is there when a measured hole of its diameter and kind
+#: (through or blind) runs within 5 degrees of its direction, and passes within this distance of
+#: the point: its axis for a through hole, its open end for a blind one, which has only that end.
+TRUTH_POSITION_MM = 0.5
+TRUTH_AXIS_COS = math.cos(math.radians(5))
+#: The smallest gap between bodies may fall short of the truth's by 0.05 mm or 10 %, whichever is
+#: larger: a print-in-place clearance asked for as 0.4 mm must not come back as 0.2.
+TRUTH_GAP_MM = 0.05
+TRUTH_GAP_RATIO = 0.1
+#: Which axes of the truth may stand for which axes of the part, by orientation: as stated,
+#: the footprint either way round, or any way round. Every mirror is allowed on top.
+_PERMUTATIONS = {
+    "fixed": ((0, 1, 2),),
+    "z": ((0, 1, 2), (1, 0, 2)),
+    "free": tuple(itertools.permutations(range(3))),
+}
 
 #: z for a two-sided 95 % interval.
 Z_95 = 1.959963984540054
@@ -38,10 +55,15 @@ VIEW_IMAGE_TOOL = "view_image"
 # --- Ground truth -------------------------------------------------------------
 
 
-def measured_from(output: Mapping[str, Any]) -> dict[str, Any]:
-    """The measure_step fields of a measure_cli answer, whether it nests them under ``measured`` or not."""
-    inner = output.get("measured")
-    return dict(inner if isinstance(inner, Mapping) else output)
+def holes_of(measured: Mapping[str, Any]) -> list[Mapping[str, Any]]:
+    """Every measured hole: the part's own, or each body's in turn.
+
+    The module measures a hole against its own body, so a captive pin does not fill
+    its bore, and keeps the part's ``holes`` empty when there is more than one body.
+    """
+    bodies = measured.get("bodies")
+    holes = [hole for body in bodies if isinstance(body, Mapping) for hole in body.get("holes") or []] if isinstance(bodies, list) else measured.get("holes") or []
+    return [hole for hole in holes if isinstance(hole, Mapping) and isinstance(hole.get("diameter_mm"), (int, float))]
 
 
 def _sides(box: Sequence[float], orientation: str) -> list[float]:
@@ -50,6 +72,70 @@ def _sides(box: Sequence[float], orientation: str) -> list[float]:
     if orientation == "z":
         return [*sorted(box[:2]), box[2]]
     return list(box)
+
+
+def _centre(measured: Mapping[str, Any]) -> list[float] | None:
+    low, high = measured.get("bbox_min_mm"), measured.get("bbox_max_mm")
+    if not (isinstance(low, list) and isinstance(high, list) and len(low) == len(high) == 3):
+        return None
+    return [(a + b) / 2 for a, b in zip(low, high)]
+
+
+def _off_axis(point: Sequence[float], at: Sequence[float], axis: Sequence[float]) -> float:
+    """How far *point* lies from the line through *at* along the unit vector *axis*."""
+    offset = [p - a for p, a in zip(point, at)]
+    along = sum(o * d for o, d in zip(offset, axis))
+    return math.sqrt(sum((o - along * d) ** 2 for o, d in zip(offset, axis)))
+
+
+def _matched(fits: list[list[int]]) -> int:
+    """The size of a maximum one-to-one matching, *fits[i]* listing what expected entry i may take."""
+    owner: dict[int, int] = {}
+
+    def claim(i: int, seen: set[int]) -> bool:
+        for k in fits[i]:
+            if k not in seen:
+                seen.add(k)
+                if k not in owner or claim(owner[k], seen):
+                    owner[k] = i
+                    return True
+        return False
+
+    return sum(claim(i, set()) for i in range(len(fits)))
+
+
+def _placed(expected: Sequence[Mapping[str, Any]], measured: Mapping[str, Any], orientation: str) -> tuple[bool, str | None]:
+    """Whether every hole the truth places is on the part, under some turn and mirror its box allows.
+
+    Points are compared from the centre of each bounding box, so the part may sit anywhere,
+    and a part built mirrored or turned the way the orientation allows is the same part.
+    """
+    centre = _centre(measured)
+    if centre is None:
+        return False, "not measured: this module reports no bounding-box corners"
+    holes = [hole for hole in holes_of(measured) if isinstance(hole.get("at"), list) and isinstance(hole.get("axis"), list)]
+    located = [{**hole, "at": [a - c for a, c in zip(hole["at"], centre)]} for hole in holes]
+
+    def there(entry: Mapping[str, Any], point: list[float], direction: list[float], hole: Mapping[str, Any]) -> bool:
+        if abs(hole["diameter_mm"] - entry["diameter_mm"]) > TRUTH_HOLE_MM or abs(sum(a * b for a, b in zip(hole["axis"], direction))) < TRUTH_AXIS_COS:
+            return False
+        through = entry.get("through", True)
+        if hole.get("through", True) != through:
+            return False
+        if through:
+            return _off_axis(point, hole["at"], hole["axis"]) <= TRUTH_POSITION_MM
+        return math.dist(point, hole["at"]) <= TRUTH_POSITION_MM
+
+    for order in _PERMUTATIONS[orientation]:
+        for signs in itertools.product((1, -1), repeat=3):
+
+            def turned(vector: Sequence[float]) -> list[float]:
+                return [sign * vector[index] for sign, index in zip(signs, order)]
+
+            fits = [[k for k, hole in enumerate(located) if there(entry, turned(entry["at"]), turned(entry["axis"]), hole)] for entry in expected]
+            if _matched(fits) == len(expected):
+                return True, None
+    return False, f"{len(located)} located hole(s); no turn or mirror of the part puts a hole at every expected point"
 
 
 def judge_truth(measured: Mapping[str, Any], truth: Mapping[str, Any], orientation: str = "z") -> dict[str, Any]:
@@ -86,7 +172,7 @@ def judge_truth(measured: Mapping[str, Any], truth: Mapping[str, Any], orientati
     )
     if truth.get("hole_diameters_mm") is not None:
         expected = sorted(truth["hole_diameters_mm"])
-        found = sorted(hole["diameter_mm"] for hole in measured.get("holes") or [] if isinstance(hole, Mapping) and isinstance(hole.get("diameter_mm"), (int, float)))
+        found = sorted(hole["diameter_mm"] for hole in holes_of(measured))
         checks.append(
             {
                 "check": "holes",
@@ -95,18 +181,37 @@ def judge_truth(measured: Mapping[str, Any], truth: Mapping[str, Any], orientati
                 "passed": len(expected) == len(found) and all(abs(e - m) <= TRUTH_HOLE_MM for e, m in zip(expected, found)),
             }
         )
+    if truth.get("holes_at_mm"):
+        placed, why = _placed(truth["holes_at_mm"], measured, orientation)
+        checks.append({"check": "hole positions", "expected": [[entry["diameter_mm"], *entry["at"]] for entry in truth["holes_at_mm"]], "measured": why or "every expected hole found", "passed": placed})
+    if truth.get("min_gap_mm") is not None:
+        gaps = [gap["gap_mm"] for gap in measured.get("gaps") or [] if isinstance(gap, Mapping) and isinstance(gap.get("gap_mm"), (int, float))]
+        smallest = min(gaps) if gaps else None
+        least = truth["min_gap_mm"] - max(TRUTH_GAP_MM, TRUTH_GAP_RATIO * truth["min_gap_mm"])
+        checks.append({"check": "smallest gap", "expected": f">= {round(least, 3)}", "measured": smallest, "passed": smallest is not None and smallest >= least})
     return {"passed": all(check["passed"] for check in checks), "checks": checks}
 
 
-def truth_from(measured: Mapping[str, Any]) -> dict[str, Any]:
+def truth_from(measured: Mapping[str, Any], *, positions: bool = False) -> dict[str, Any]:
     """The truth a reference part stands for: what was measured on it, nothing typed in beside it.
 
-    Holes are part of the truth of a one-solid part only: on several bodies the
-    module does not measure them.
+    Every part gets its hole diameters (each body's, for several bodies) and a part of
+    several bodies the smallest gap between them. With *positions*, each hole's point and
+    direction are kept too, from the centre of the bounding box, for a request that says
+    where its holes go.
     """
     truth: dict[str, Any] = {"solids": measured["solids"], "bbox_mm": list(measured["bbox_mm"]), "volume_mm3": measured["volume_mm3"]}
-    if measured["solids"] == 1:
-        truth["hole_diameters_mm"] = sorted(hole["diameter_mm"] for hole in measured.get("holes") or [])
+    holes = sorted(holes_of(measured), key=lambda hole: hole["diameter_mm"])
+    truth["hole_diameters_mm"] = [hole["diameter_mm"] for hole in holes]
+    if positions:
+        centre = _centre(measured)
+        if centre is None:
+            raise ValueError("hole positions need a module that reports bounding-box corners (item 57)")
+        truth["holes_at_mm"] = [{"diameter_mm": hole["diameter_mm"], "through": hole.get("through", True), "at": [round(a - c, 3) for a, c in zip(hole["at"], centre)], "axis": list(hole["axis"])} for hole in holes]
+    if measured["solids"] > 1:
+        gaps = [gap["gap_mm"] for gap in measured.get("gaps") or [] if isinstance(gap, Mapping) and isinstance(gap.get("gap_mm"), (int, float))]
+        if gaps:
+            truth["min_gap_mm"] = min(gaps)
     return truth
 
 

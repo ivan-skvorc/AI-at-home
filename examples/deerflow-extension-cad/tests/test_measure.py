@@ -476,6 +476,41 @@ def test_measure_cli_reports_several_bodies_with_the_tools_notes(tmp_path):
     assert any("3 separate bodies" in note for note in judged["notes"])
 
 
+def test_measure_cli_finds_holes_where_the_truth_places_them_and_names_a_moved_one(tmp_path):
+    path = _holed_plate(tmp_path)
+    placed = {"bbox_xyz_mm": [60, 40, 6], "hole_diameters_mm": [[4, -15, 0, 3], [4, 15, 5, 3]]}
+    (tmp_path / "placed.json").write_text(json.dumps(placed))
+    done = _cli(path, tmp_path / "placed.json")
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert json.loads(done.stdout)["passed"] is True
+    (tmp_path / "moved.json").write_text(json.dumps({**placed, "hole_diameters_mm": [[4, -14, 0, 3], [4, 15, 5, 3]]}))
+    done = _cli(path, tmp_path / "moved.json")
+    assert done.returncode == 1, done.stdout + done.stderr
+    (holes,) = [check for check in json.loads(done.stdout)["checks"] if not check["passed"]]
+    (moved,) = holes["misplaced"]
+    assert moved["expected"] == [4, -14, 0, 3] and _near(moved["nearest_at"], (-15, 0, 3)) and moved["off_axis_mm"] == pytest.approx(1.0, abs=0.01)
+
+
+def test_measure_cli_judges_the_bodies_the_truth_expects_with_the_checks_alone(tmp_path):
+    # As a program, with neither the extension API nor tool.py importable: checks.py is what judges.
+    path = _step(hinge(), tmp_path)
+    (tmp_path / "truth.json").write_text(json.dumps({"bbox_xyz_mm": [20, 20, 10.5], "bodies": 3}))
+    code = (
+        "import runpy, sys\n"
+        "sys.modules['deerflow_extension_api'] = None\n"
+        "sys.modules['deerflow_extension_cad.tool'] = None\n"
+        "sys.argv = ['measure_cli', *sys.argv[1:]]\n"
+        "runpy.run_module('deerflow_extension_cad.measure_cli', run_name='__main__')\n"
+    )
+    done = _cli(path, tmp_path / "truth.json", code=code)
+    assert done.returncode == 0, done.stdout + done.stderr
+    judged = json.loads(done.stdout)
+    assert judged["passed"] is True and [check["check"] for check in judged["checks"]] == ["closed solids", "bounding box"]
+    # Three bodies were expected, so no note calls them separate; the smallest gap is said.
+    assert not any("separate bodies" in note for note in judged["notes"])
+    assert any(note.startswith("The smallest gap between bodies is 0.3 mm") for note in judged["notes"])
+
+
 def test_measure_cli_keeps_standard_output_for_its_answer(tmp_path):
     # The kernel prints its STEP reader's errors to standard output; the answer must still parse.
     broken = tmp_path / "broken.step"
@@ -494,6 +529,14 @@ def test_measure_cli_refuses_arguments_it_cannot_use(tmp_path):
         done = _cli(*args)
         assert done.returncode == 2, (args, done.stdout, done.stderr)
         assert list(json.loads(done.stdout)) == ["error"], args
+    # A body count the tool would refuse is refused here too, instead of judged.
+    for bodies in ("two", 0, True):
+        (tmp_path / "bodies.json").write_text(json.dumps({"bbox_xyz_mm": [60, 40, 6], "bodies": bodies}))
+        done = _cli(path, tmp_path / "bodies.json")
+        assert done.returncode == 2 and list(json.loads(done.stdout)) == ["error"], (bodies, done.stdout, done.stderr)
+    from deerflow_extension_cad import measure_cli, tool
+
+    assert measure_cli.MAX_BODIES == tool.MAX_BODIES
 
 
 def test_measure_cli_measures_under_the_workers_ceilings(tmp_path):

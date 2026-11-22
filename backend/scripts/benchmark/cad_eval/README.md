@@ -25,10 +25,11 @@ uv run --no-project pytest -q tests/test_eval_specs.py
 | --- | --- |
 | `specs.py` | Loads `specs/<id>/spec.json`, the bands and the spec-set hash |
 | `score.py` | Pure scoring: the transcript, the truth judgement, the Wilson interval, the row |
-| `agent.py` | The Gateway over public HTTP, and the `measure_cli` child process |
-| `derive_truth.py` | Builds each `reference.py` and stores what it measures as the truth |
+| `agent.py` | The Gateway over public HTTP |
+| `measuring.py` | The measurer: `measure_cli` as a child process, for scored parts and reference parts alike |
+| `derive_truth.py` | Builds each `reference.py` and stores what `measure_cli` measures as the truth |
 | `__main__.py` | The CLI: preconditions, the sample loop, the report and the run record |
 
-`specs.py` and `score.py` import only the standard library, because the CAD
-package's test loads them by path in an environment without DeerFlow. Keep
-them that way.
+`specs.py`, `score.py` and `measuring.py` import only the standard library,
+because the CAD package's test loads them by path in an environment without
+DeerFlow and scores every reference part through them. Keep them that way.

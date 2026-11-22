@@ -12,7 +12,10 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import os
 import re
+import sys
+from collections import Counter
 from pathlib import Path
 from urllib.parse import parse_qs
 
@@ -20,7 +23,8 @@ import httpx
 import pytest
 
 from scripts.benchmark.cad_eval.__main__ import build_parser, run_eval
-from scripts.benchmark.cad_eval.score import TABLE_HEADER, judge_truth, read_transcript, wilson
+from scripts.benchmark.cad_eval.measuring import MeasureCli, MeasureError
+from scripts.benchmark.cad_eval.score import TABLE_HEADER, judge_truth, read_transcript, truth_from, wilson
 from scripts.benchmark.cad_eval.specs import BANDS, NO_MODULE_BAND, PREAMBLE, load_specs, spec_set_hash
 
 CAD = "ext_cad_cad_build_0123456789ab"
@@ -272,6 +276,90 @@ def test_truth_compares_the_footprint_in_either_order_but_holds_the_height():
     assert judge_truth(_measured([80, 50, 5], solids=2), truth, "z")["passed"] is False
 
 
+def _bar(through_x=(-25, -5), side_x=40.0, shift=(0.0, 0.0, 0.0), turned=False) -> dict:
+    """h08's 80 x 20 x 8 bar as measure_cli reports it: two 5 mm holes down through it, a 3 mm one into an end.
+
+    *through_x* and *side_x* are along the bar from its centre; *shift* moves the whole part,
+    and *turned* lays it along y instead of x.
+    """
+
+    def place(x: float, y: float, z: float) -> list[float]:
+        point = [y, x, z] if turned else [x, y, z]
+        return [round(value + offset, 3) for value, offset in zip(point, shift)]
+
+    def along(x: float, z: float) -> list[float]:
+        return [0.0, x, z] if turned else [x, 0.0, z]
+
+    holes = [{"diameter_mm": 5.0, "through": True, "depth_mm": 8.0, "at": place(x, 0, 4), "axis": along(0.0, -1.0)} for x in through_x]
+    holes.append({"diameter_mm": 3.0, "through": False, "depth_mm": 12.0, "at": place(side_x, 0, 0), "axis": along(-1.0 if side_x > 0 else 1.0, 0.0)})
+    size = [20.0, 80.0, 8.0] if turned else [80.0, 20.0, 8.0]
+    low = [-side / 2 + offset for side, offset in zip(size, shift)]
+    return {"solids": 1, "valid": True, "closed": True, "bbox_mm": size, "volume_mm3": 12401.018, "holes": holes, "bbox_min_mm": low, "bbox_max_mm": [a + side for a, side in zip(low, size)]}
+
+
+BAR = next(spec for spec in load_specs() if spec.id == "h08-drilled-bar")
+
+
+def _failed(verdict: dict) -> list[str]:
+    return [check["check"] for check in verdict["checks"] if not check["passed"]]
+
+
+def test_holes_the_request_places_are_found_however_the_part_is_turned_and_a_moved_one_fails():
+    truth = BAR.truth
+    assert truth_from(_bar(shift=(40, 10, 4)), positions=True) == truth  # the truth is taken from the box's centre
+    for part in (_bar(), _bar(shift=(40, 10, 4)), _bar(through_x=(25, 5), side_x=-40), _bar(turned=True, shift=(3, -7, 0))):
+        assert judge_truth(part, truth, BAR.orientation)["passed"] is True, part
+    # Same diameters, volume and box: only where the holes are tells these apart.
+    assert _failed(judge_truth(_bar(through_x=(-10, 10)), truth, BAR.orientation)) == ["hole positions"]
+    assert _failed(judge_truth(_bar(through_x=(25, 5)), truth, BAR.orientation)) == ["hole positions"]
+    older = {key: value for key, value in _bar().items() if key not in ("bbox_min_mm", "bbox_max_mm")}
+    (check,) = [check for check in judge_truth(older, truth, BAR.orientation)["checks"] if not check["passed"]]
+    assert check["check"] == "hole positions" and check["measured"].startswith("not measured")
+
+
+def _hinge(gap: float = 0.4, bore: float | None = 4.8) -> dict:
+    """f08's two bodies as measure_cli reports them: the holes are each body's, the gaps between them."""
+    bodies = [{"valid": True, "closed": True, "volume_mm3": 4074.2, "holes": []}, {"valid": True, "closed": True, "volume_mm3": 2957.3, "holes": [{"diameter_mm": bore, "through": True}] if bore else []}]
+    gaps = [{"bodies": [0, 1], "gap_mm": gap, "direction": [1.0, 0.0, 0.0], "at_mm": [13.2, 0.0, 0.0]}]
+    return {"solids": 2, "valid": True, "closed": True, "bbox_mm": [40.0, 50.0, 8.0], "volume_mm3": 7031.5, "holes": [], "bodies": bodies, "gaps": gaps}
+
+
+def test_a_print_in_place_gap_narrower_than_asked_fails_and_holes_are_read_from_each_body():
+    truth = next(spec for spec in load_specs() if spec.id == "f08-print-in-place-hinge").truth
+    assert truth_from(_hinge()) == {**truth, "volume_mm3": 7031.5}
+    assert judge_truth(_hinge(), truth)["passed"] is True
+    assert judge_truth(_hinge(gap=0.36), truth)["passed"] is True  # within 0.05 mm
+    assert _failed(judge_truth(_hinge(gap=0.2), truth)) == ["smallest gap"]
+    assert _failed(judge_truth(_hinge(bore=None), truth)) == ["holes"]
+    fused = {**_hinge(), "solids": 1, "bodies": None, "gaps": None}
+    assert _failed(judge_truth(fused, truth)) == ["solids", "holes", "smallest gap"]
+
+
+@pytest.mark.skipif(os.name != "posix", reason="the stand-in measurer is a POSIX script")
+def test_the_measurer_returns_measure_clis_measurement_and_says_why_when_there_is_none(tmp_path):
+    # A stand-in for the CAD environment's python: it answers what measure_cli would, for the case in its argv.
+    python = tmp_path / "python"
+    python.write_text(
+        f"#!{sys.executable}\n"
+        "import json, sys\n"
+        "step = sys.argv[-1]\n"
+        "if step.endswith('good.step'):\n"
+        "    print(json.dumps({'measured': {'solids': 1}, 'notes': ['n']}))\n"
+        "elif step.endswith('bad.step'):\n"
+        "    print(json.dumps({'error': {'message': 'the STEP could not be measured (ValueError: no shape)'}})); sys.exit(2)\n"
+        "else:\n"
+        "    print('Segmentation fault', file=sys.stderr); sys.exit(139)\n",
+        encoding="utf-8",
+    )
+    python.chmod(0o755)
+    measurer = MeasureCli(str(python))
+    assert measurer.measure(tmp_path / "good.step") == {"solids": 1}
+    with pytest.raises(MeasureError, match="no shape"):
+        measurer.measure(tmp_path / "bad.step")
+    with pytest.raises(MeasureError, match="Segmentation fault"):
+        measurer.measure(tmp_path / "crash.step")
+
+
 # --- Refusing to start --------------------------------------------------------
 
 
@@ -356,8 +444,8 @@ async def test_without_the_module_the_reply_must_say_how_to_find_out_why(tmp_pat
 
 def test_the_part_specs_cover_three_bands_with_a_reference_and_truth_each():
     parts = load_specs()
-    assert 15 <= len(parts) <= 20
-    assert {spec.band for spec in parts} == set(BANDS)
+    assert Counter(spec.band for spec in parts) == {"prismatic": 6, "holes": 8, "fits": 8}
+    assert set(BANDS) == {"prismatic", "holes", "fits"}
     assert len({spec.id for spec in parts}) == len(parts)
     for spec in parts:
         assert spec.has_reference, spec.id
@@ -365,7 +453,10 @@ def test_the_part_specs_cover_three_bands_with_a_reference_and_truth_each():
         assert "import cadquery" in spec.reference.read_text(encoding="utf-8")
     # Specs that wait on another roadmap item say which, and what they call from it.
     waiting = {spec.id: [need.item for need in spec.needs] for spec in parts if spec.needs}
-    assert waiting == {"f05-v-pulley": ["56"], "f06-captive-pin": ["51"], "f07-box-and-lid": ["51"], "h07-name-tag": ["59"]}
+    assert waiting == {"f05-v-pulley": ["56"], "f06-captive-pin": ["51"], "f07-box-and-lid": ["51"], "f08-print-in-place-hinge": ["51"], "h07-name-tag": ["59"]}
+    # Positions are checked only where the request says where the holes go.
+    assert [spec.id for spec in parts if spec.hole_positions] == ["h08-drilled-bar"] and "holes_at_mm" in BAR.truth
+    assert {spec.id: spec.truth["min_gap_mm"] for spec in parts if spec.truth["solids"] > 1} == {"f06-captive-pin": 0.3, "f07-box-and-lid": 10.0, "f08-print-in-place-hinge": 0.4}
     assert [spec.id for spec in load_specs(band=NO_MODULE_BAND)] == ["m01-no-module"]
 
 
