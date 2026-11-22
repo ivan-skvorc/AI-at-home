@@ -5854,7 +5854,15 @@ numbers.
   UNVERIFIED. It adds nothing CAD-specific to core (see
   `subagents/ACCEPTANCE_CHECKS.md`), and the `task` description did not change
   by a byte; `references/delegation.md` carries the recipe, one part name per
-  subagent, Ultra only. Plus Ultracode is later work: its workflow agents run
+  subagent, Ultra only. The leaf matches `where` exactly and records no other
+  argument, so `holds` says the subagent's newest build of that exact name
+  passed against numbers the subagent chose (a reviewer's subagent passed with
+  a 10 mm cube for a 60 × 40 × 6 bracket); the recipe has the lead build the
+  returned script once against its own numbers before calling the part
+  finished, which also covers a rebuild under a case variant of the name.
+  Binding the numbers in the leaf would need an assertion clause on the
+  deciding call, not a second `where`, which filters and would let an early
+  pass decide. Plus Ultracode is later work: its workflow agents run
   on child threads where acceptance criteria are not checked, so it needs merge
   workspaces and host evidence on the workflow record.
 - **The CAD eval (item 48).** `cad_build`'s pass is graded on the model's own

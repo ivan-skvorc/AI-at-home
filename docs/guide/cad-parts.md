@@ -219,5 +219,7 @@ sweep.
 - Whether a model follows the skill's procedure on real requests is measured by
   the [CAD eval](cad-eval.md), not by these checks.
 - In Ultra mode a part can be handed to a subagent and accepted on its
-  recorded `cad_build` answer; the recipe is the skill's
+  recorded `cad_build` answer, which shows the subagent's newest build passed
+  against the numbers it passed itself; the lead then builds the returned
+  script once against its own numbers. The recipe is the skill's
   [delegation reference](../../skills/public/cad-modeling/references/delegation.md).

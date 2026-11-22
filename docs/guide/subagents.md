@@ -183,6 +183,31 @@ checked automatically. This criterion standardizes verdicts, path boundaries, an
 instead of requiring ad hoc bash/Python checks, and makes insufficient evidence explicit.
 Execution completion status and automatic retry policy are unchanged.
 
+To accept a deliverable that a plugin tool judges itself, such as a part that
+`cad_build` answers `passed` for, set a criterion to
+`tool_result:<namespace>/<tool> <field>=<JSON scalar> [where <arg>=<JSON scalar>]`,
+for example `tool_result:cad/cad_build passed=true where name="bracket-a"`. It
+is read from the tool's own recorded answer, because a file the subagent could
+write, such as a report named like the tool's, is not evidence. Write the tool
+as `namespace/tool`, not as the hashed name the model calls. Values are `true`,
+`false`, `null`, a finite number or a double-quoted string, compared by JSON
+equality (`true` is not `1`; strings compare exactly, case included). Among
+the recorded calls of that tool whose `where` argument equals the value, the
+newest decides, so an earlier pass never saves a later failure; when calls of
+the newest assistant turn disagree, the leaf is `UNVERIFIED`. A field missing
+from a usable result is `does not hold`. It is `UNVERIFIED`, never a pass, when
+no call matches, a call has no recorded result, the tool answered with an
+error, the result was truncated, externalized or otherwise rewritten, it is
+over 64 KiB or not a JSON object, compaction removed the deciding call, or an
+expected or `where` string is longer than 120 characters. Only the newest 20
+calls of the named tools are kept, and the leaf needs no sandbox. It proves
+what the tool answered for the arguments the subagent chose: any argument
+other than the `where` one, such as the expected numbers a build was judged
+against, is not checked, so the CAD recipe has the lead confirm them
+([delegation reference](../../skills/public/cad-modeling/references/delegation.md)).
+Reference depth:
+[`ACCEPTANCE_CHECKS.md`](../../backend/packages/harness/deerflow/subagents/ACCEPTANCE_CHECKS.md).
+
 Content-less sub-agent final messages report `No response generated` instead of the literal text `None`. A content-less provider-error fallback reports its structured error detail when available.
 
 An ordinary `task` also receives a defensive snapshot of the dispatching run's current uploads. This lets eligible sub-agents use `list_uploaded_files` to find earlier-turn files without returning same-turn attachments as historical. Delayed or recovered `batch_task` workers leave this tool disabled because they have no valid turn-local upload boundary.
