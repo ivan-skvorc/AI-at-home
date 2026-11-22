@@ -136,10 +136,11 @@ QUOTED = [
     "under the printer's minimum clearance",
     "is thinner than one layer",
     "no laid-out 3MF: the bodies could not be written apart; the .3mf holds them as modelled",
-    # Holes where they are (item 57).
+    # Holes where they are, and how many edges a fillet or chamfer took (item 57).
     "nearest_at",
     "off_axis_mm",
     "lists every hole with where it is",
+    "check that the selection took only the edges meant",
     # The steps after the checks (items 53 and 54), and printability's notes.
     "no picture: the build used most of its time",
     "no print check: the build used most of its time",
