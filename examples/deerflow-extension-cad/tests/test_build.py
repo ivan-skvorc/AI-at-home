@@ -92,6 +92,42 @@ async def test_the_same_script_with_one_hole_removed_fails_the_hole_check_and_le
     assert json.loads(files["part.report.json"])["passed"] is False
 
 
+async def test_holes_expected_at_points_are_checked_where_they_are():
+    # The plate is centred on the origin, so its top face is at z = 3; any point on a hole's axis places it.
+    answer, files = await _build(PLATE, **{**EXPECT, "hole_diameters_mm": [[4, -15, 0, 3], [4, 15, 0, -3]]})
+    assert answer["passed"] is True, answer
+    assert answer["holes"] == [{"d": 4, "at": [-15, 0, 3], "axis": [0, 0, -1]}, {"d": 4, "at": [15, 0, 3], "axis": [0, 0, -1]}]
+    answer, files = await _build(PLATE, **{**EXPECT, "hole_diameters_mm": [[4, -14, 0, 3], [4, 15, 0, 3]]})
+    holes = next(check for check in answer["checks"] if check["check"] == "holes")
+    assert answer["passed"] is False and holes["misplaced"] == [{"expected": [4, -14, 0, 3], "nearest_at": [-15.0, 0.0, 3.0], "off_axis_mm": 1.0}]
+    assert "part.step" not in files
+
+
+async def test_a_report_of_four_hundred_holes_stays_small_and_names_what_made_it(tmp_path, monkeypatch):
+    # A script may make 200 pattern points, and an expectation may name 400 holes. The plate is measured
+    # by the module itself and handed to the real handler as the worker's answer.
+    from deerflow_extension_cad import measure, tool
+
+    plate = cq.Workplane("XY").box(205, 205, 4).faces(">Z").workplane().rarray(10, 10, 20, 20).hole(3).findSolid()
+    names, mesh = build.export(plate, cq, tmp_path, tool.MAX_EXPORT_BYTES)
+    measured = {**measure.measure_step(tmp_path / names["step"], cq), "mesh": mesh}
+    exported = {kind: (tmp_path / name).read_bytes() for kind, name in names.items()}
+
+    async def worker(script, **limits):
+        return {"status": "built", "measured": measured, "files": dict(exported)}
+
+    monkeypatch.setattr(tool, "run_worker", worker)
+    answer, files = await _build("result = cq.Workplane('XY').box(205, 205, 4)\n", bbox_xyz_mm=[205, 205, 4], hole_diameters_mm=[3] * 400)
+    assert answer["passed"] is True, answer
+    report = json.loads(files["part.report.json"])
+    assert len(report["measured"]["holes"]) == 400 and len(files["part.report.json"]) < 50_000
+    # Twelve holes in the answer, every hole in the report: once, on a line of its own.
+    assert len(answer["holes"]) == 12 and any("part.report.json lists every hole" in note for note in answer["notes"])
+    assert files["part.report.json"].count(b'"at":') == 400
+    assert report["cadquery_version"] == cq.__version__ and report["module_version"]
+    assert report["files"] == ["part.py", "part.glb", "part.stl", "part.step"]
+
+
 HOSTILE = [
     ("another import", "import os\nresult = cq.Workplane('XY').box(1, 1, 1)\n", "import"),
     ("a dunder attribute", "result = cq.Workplane('XY').box(1, 1, 1).__class__.__mro__\n", "attribute"),

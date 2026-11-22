@@ -295,6 +295,12 @@ async def test_a_check_added_later_is_held_and_not_reported_as_a_change(cad, out
     await _call(cad, outputs, monkeypatch, ONE_HOLE, run="run-1", name="two sizes", hole_diameters_mm=[6, 4])
     sorted_back, _, _ = await _call(cad, outputs, monkeypatch, ONE_HOLE, run="run-1", name="two sizes", hole_diameters_mm=[4, 6])
     assert "expected_changed" not in sorted_back
+    # Holes at points as well, mixed with plain diameters; a moved point is a changed number.
+    await _call(cad, outputs, monkeypatch, ONE_HOLE, run="run-1", name="placed", hole_diameters_mm=[[4, 15, 0, 6], 6, [4, -15, 0, 6]])
+    placed, _, _ = await _call(cad, outputs, monkeypatch, ONE_HOLE, run="run-1", name="placed", hole_diameters_mm=[[4, -15, 0, 6], [4, 15, 0, 6], 6])
+    assert "expected_changed" not in placed
+    moved, _, _ = await _call(cad, outputs, monkeypatch, ONE_HOLE, run="run-1", name="placed", hole_diameters_mm=[[4, -15, 0, 6], [4, 16, 0, 6], 6])
+    assert moved["expected_changed"] == {"hole_diameters_mm": {"first": [[4, -15, 0, 6], [4, 15, 0, 6], 6], "now": [[4, -15, 0, 6], [4, 16, 0, 6], 6]}}
 
 
 @pytest.mark.asyncio
@@ -369,6 +375,79 @@ async def test_a_result_of_several_loose_bodies_says_what_this_tool_cannot_deliv
     assert [note[:33] for note in many["notes"]] == [f"2 passes of the loop on line {line} do"[:33] for line in (3, 5, 7, 9, 11)] + ["More loops than these do work tha"]
     one, _, _ = await _call(cad, outputs, monkeypatch, BUILT, run="run-1", name="one body")
     assert "notes" not in one and "separate bodies" not in one["next"]
+
+
+def _drilled(x: float, y: float) -> dict:
+    """A 4 mm hole through the 6 mm plate at (x, y), as the measurement reports it since item 57."""
+    return {"diameter_mm": 4.0, "through": True, "depth_mm": 6.0, "at": [x, y, 6.0], "axis": [0.0, 0.0, -1.0]}
+
+
+FOUR_HOLES = [(-15.0, -10.0), (-15.0, 10.0), (15.0, -10.0), (15.0, 10.0)]
+
+
+@pytest.mark.asyncio
+async def test_holes_are_listed_where_they_are_and_checked_where_they_were_asked_for(cad, outputs, monkeypatch):
+    placed = {**BUILT, "measured": {**MEASURED, "holes": [_drilled(x, y) for x, y in FOUR_HOLES]}}
+    answer, _, _ = await _call(cad, outputs, monkeypatch, placed, hole_diameters_mm=[[4, x, y, 6] for x, y in FOUR_HOLES])
+    assert answer["passed"] is True
+    # Where each hole is entered and which way it runs, in the fewest tokens: whole numbers without '.0'.
+    assert answer["holes"][0] == {"d": 4, "at": [-15, -10, 6], "axis": [0, 0, -1]} and len(answer["holes"]) == 4
+    off, _, _ = await _call(cad, outputs, monkeypatch, placed, name="plate off", hole_diameters_mm=[[4, x + 1, y, 6] for x, y in FOUR_HOLES])
+    holes = next(check for check in off["checks"] if check["check"] == "holes")
+    assert off["passed"] is False and holes["passed"] is False and len(holes["misplaced"]) == 4
+    assert holes["misplaced"][0] == {"expected": [4, -14, -10, 6], "nearest_at": [-15.0, -10.0, 6.0], "off_axis_mm": 1.0}
+    assert off["next"].startswith("Attempt 1 of")
+    # Moving the holes towards their points without reaching them is not "the same failure".
+    closer, _, _ = await _call(cad, outputs, monkeypatch, {**BUILT, "measured": {**MEASURED, "holes": [_drilled(x + 0.5, y) for x, y in FOUR_HOLES]}}, name="plate off", hole_diameters_mm=[[4, x + 1, y, 6] for x, y in FOUR_HOLES])
+    assert closer["attempt"] == 2 and "same failure" not in closer["next"]
+
+
+@pytest.mark.asyncio
+async def test_an_answer_lists_twelve_holes_and_names_the_report_for_the_rest(cad, outputs, monkeypatch):
+    from deerflow_extension_cad.checks import MAX_HOLES_LISTED
+
+    grid = [_drilled(float(x), float(y)) for x in range(-25, 26, 10) for y in (-10, 0, 10)]
+    answer, _, _ = await _call(cad, outputs, monkeypatch, {**BUILT, "measured": {**MEASURED, "holes": grid}})
+    assert len(answer["holes"]) == MAX_HOLES_LISTED == 12
+    assert answer["notes"] == [f"The answer lists 12 of the {len(grid)} holes; mounting-plate.report.json lists every hole with where it is."]
+    report = json.loads((outputs / "mounting-plate.report.json").read_text(encoding="utf-8"))
+    assert report["measured"]["holes"] == grid
+    # Measured before item 57, holes have no position, and nothing is listed.
+    plain, _, _ = await _call(cad, outputs, monkeypatch, BUILT)
+    assert "holes" not in plain and "notes" not in plain
+
+
+@pytest.mark.asyncio
+async def test_hole_positions_add_at_most_120_tokens_to_a_four_hole_answer(cad, outputs, monkeypatch):
+    from deerflow.config import paths
+    from deerflow.utils.context_budget import estimate_tokens
+
+    # The same plate measured as before item 57 and as now, in two conversations so the file names match.
+    before = {**BUILT, "measured": {**MEASURED, "holes": [{key: value for key, value in _drilled(x, y).items() if key not in ("at", "axis")} for x, y in FOUR_HOLES]}}
+    after = {**BUILT, "measured": {**MEASURED, "holes": [_drilled(x, y) for x, y in FOUR_HOLES]}}
+    elsewhere = paths.get_paths().sandbox_outputs_dir("thread-b", user_id="alice")
+    old, _, _ = await _call(cad, outputs, monkeypatch, before, hole_diameters_mm=[4, 4, 4, 4])
+    new, _, _ = await _call(cad, elsewhere, monkeypatch, after, conversation="thread-b", hole_diameters_mm=[4, 4, 4, 4])
+    assert [Path(path).name for path in old["files"]] == [Path(path).name for path in new["files"]]
+    # What the host sends the model (plugin_tools serialises the answer this way).
+    grown = estimate_tokens(json.dumps(new, ensure_ascii=False)) - estimate_tokens(json.dumps(old, ensure_ascii=False))
+    assert 0 < grown <= 120, grown
+
+
+@pytest.mark.asyncio
+async def test_a_report_names_what_made_it_and_the_files_it_was_saved_with(cad, outputs, monkeypatch):
+    import hashlib
+
+    answer, _, _ = await _call(cad, outputs, monkeypatch, BUILT)
+    report = json.loads((outputs / "mounting-plate.report.json").read_text(encoding="utf-8"))
+    assert report["script_sha256"] == hashlib.sha256(PLATE.encode("utf-8")).hexdigest()
+    assert {"module_version", "cadquery_version"} <= set(report) and isinstance(report["module_version"], str)
+    # Every file of the set but the report itself, under the names the host gave them.
+    assert report["files"] == [Path(path).name for path in answer["files"]][:-1] == ["mounting-plate.py", "mounting-plate.glb", "mounting-plate.stl", "mounting-plate.step"]
+    # A refusal names the script too: it is what the reader refused.
+    await _call(cad, outputs, monkeypatch, REFUSED)
+    refused = json.loads((outputs / "mounting-plate-1.report.json").read_text(encoding="utf-8"))
+    assert refused["files"] == ["mounting-plate-1.py"] and refused["script_sha256"] == report["script_sha256"]
 
 
 def test_the_table_of_counted_parts_does_not_grow_for_ever(monkeypatch):
@@ -639,6 +718,12 @@ async def test_the_tool_does_not_start_a_build_it_could_not_hand_over(cad, monke
         ({"volume_min_max_mm3": [0, 10**400]}, "volume_min_max_mm3 must be [min, max]"),
         # Not numbers. The schema leaves the items untyped to keep the tool small, so this is where they are caught.
         ({"hole_diameters_mm": ["4"]}, "hole_diameters_mm must list one positive diameter"),
+        # A hole at a point is [d, x, y, z]: four numbers, the first a positive diameter.
+        ({"hole_diameters_mm": [[4, 15, 0]]}, "hole_diameters_mm must list one positive diameter, or [d, x, y, z]"),
+        ({"hole_diameters_mm": [[0, 15, 0, 6]]}, "hole_diameters_mm must list one positive diameter, or [d, x, y, z]"),
+        ({"hole_diameters_mm": [[4, "15", 0, 6]]}, "hole_diameters_mm must list one positive diameter, or [d, x, y, z]"),
+        ({"hole_diameters_mm": [[4, 15, 0, 10**400]]}, "hole_diameters_mm must list one positive diameter, or [d, x, y, z]"),
+        ({"hole_diameters_mm": [4, [4, [15], 0, 6]]}, "hole_diameters_mm must list one positive diameter, or [d, x, y, z]"),
         ({"bbox_xyz_mm": [60, 40, True]}, "bbox_xyz_mm must be three positive numbers"),
         ({"volume_min_max_mm3": ["1", "2"]}, "volume_min_max_mm3 must be [min, max]"),
         ({"name": "plate \ud83d"}, "name contains a character"),

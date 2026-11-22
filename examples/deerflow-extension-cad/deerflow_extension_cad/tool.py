@@ -13,6 +13,8 @@ means a part that passed.
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import importlib.metadata
 import json
 import os
 import re
@@ -31,7 +33,7 @@ from deerflow_extension_api import HostCapabilityError, ToolContext
 
 # The checks live in checks.py, which needs no extension API (the eval and measure_cli use it);
 # they are named here too, where the handler and older callers look for them.
-from deerflow_extension_cad.checks import MAX_HOLES, decide, notes_on, unchecked
+from deerflow_extension_cad.checks import MAX_HOLES, MAX_HOLES_LISTED, canonical_holes, decide, notes_on, unchecked
 
 WORKER = Path(__file__).with_name("worker.py")
 REQUEST_FILE = "request.json"
@@ -82,7 +84,7 @@ DESCRIPTION = (
     "hole, cboreHole, cskHole, fillet, chamfer, shell, pushPoints, rarray, polarArray, faces, edges, vertices, workplane, transformed, tag, "
     "workplaneFromTagged, end, first, last, translate, rotate, mirror, mirrorX, mirrorY, union, cut, intersect. "
     "bbox_xyz_mm is the expected overall size along x, y and z. volume_min_max_mm3 is the allowed volume range. "
-    "hole_diameters_mm lists one diameter per expected hole, [] for none. Assign the part to result. "
+    "hole_diameters_mm lists one diameter, or [d, x, y, z], per expected hole, [] for none. Assign the part to result. "
     "Returns pass or fail per check with the measured values. STEP, STL and GLB files are saved only when every check passes."
 )
 
@@ -175,8 +177,16 @@ def _problem_with(payload: Mapping[str, Any]) -> str | None:
         return "bbox_xyz_mm must be three positive numbers: the expected size along x, y and z in millimetres"
     if "volume_min_max_mm3" in payload and (not numbers("volume_min_max_mm3", 2) or not 0 <= payload["volume_min_max_mm3"][0] <= payload["volume_min_max_mm3"][1]):
         return "volume_min_max_mm3 must be [min, max] with 0 <= min <= max, in cubic millimetres"
-    if "hole_diameters_mm" in payload and (not numbers("hole_diameters_mm", None) or len(payload["hole_diameters_mm"]) > MAX_HOLES or any(diameter <= 0 for diameter in payload["hole_diameters_mm"])):
-        return f"hole_diameters_mm must list one positive diameter per expected hole, at most {MAX_HOLES}"
+    if "hole_diameters_mm" in payload:
+        holes = payload["hole_diameters_mm"]
+
+        def hole(entry: Any) -> bool:
+            # A diameter, or a diameter and a point on the hole's axis: [d, x, y, z].
+            point = entry if isinstance(entry, (list, tuple)) and len(entry) == 4 else [entry]
+            return all(type(number) in (int, float) and abs(number) <= MAX_EXPECTED for number in point) and point[0] > 0
+
+        if not isinstance(holes, (list, tuple)) or len(holes) > MAX_HOLES or not all(hole(entry) for entry in holes):
+            return f"hole_diameters_mm must list one positive diameter, or [d, x, y, z], per expected hole, at most {MAX_HOLES}"
     return None
 
 
@@ -220,6 +230,50 @@ def _parameters_of(result: Mapping[str, Any]) -> dict[str, int | float]:
     return {name: value for name, value in parameters.items() if isinstance(name, str) and type(value) in (int, float)}
 
 
+def _short(value: Any) -> Any:
+    """A number as an answer prints it: a whole number without its '.0', which is a token saved per number."""
+    return int(value) if isinstance(value, float) and value.is_integer() else value
+
+
+def listed_holes(measured: Mapping[str, Any]) -> tuple[list[dict[str, Any]], int]:
+    """The holes an answer lists, with where each is entered and which way it runs, and how many have a position."""
+    located = [hole for hole in measured.get("holes") or [] if isinstance(hole, Mapping) and isinstance(hole.get("at"), list) and isinstance(hole.get("axis"), list)]
+    listed = [{"d": _short(hole["diameter_mm"]), "at": [_short(value) for value in hole["at"]], "axis": [_short(value) for value in hole["axis"]]} for hole in located[:MAX_HOLES_LISTED]]
+    return listed, len(located)
+
+
+def provenance() -> dict[str, str | None]:
+    """What made a report: this module's release and the kernel's, read from the installed metadata, never by importing the kernel."""
+    found: dict[str, str | None] = {}
+    for key, distribution in (("module_version", "deerflow-extension-cad"), ("cadquery_version", "cadquery")):
+        try:
+            found[key] = importlib.metadata.version(distribution)
+        except importlib.metadata.PackageNotFoundError:
+            found[key] = None
+    return found
+
+
+def report_text(report: Mapping[str, Any]) -> str:
+    """report.json as text: a key per line in the outer two levels and one record per line in a list of records.
+
+    A part with hundreds of holes stays a file of tens of kilobytes this way; indenting every
+    number of every hole's point and axis doubled it.
+    """
+
+    def compact(value: Any) -> str:
+        return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+
+    def block(value: Any, depth: int) -> str:
+        pad, end = "  " * (depth + 1), "  " * depth
+        if isinstance(value, Mapping) and value and depth < 2:
+            return "{\n" + ",\n".join(f"{pad}{compact(key)}: {block(item, depth + 1)}" for key, item in value.items()) + "\n" + end + "}"
+        if isinstance(value, list) and value and all(isinstance(item, Mapping) for item in value):
+            return "[\n" + ",\n".join(pad + compact(item) for item in value) + "\n" + end + "]"
+        return compact(value)
+
+    return block(report, 0) + "\n"
+
+
 # --- Counting the attempts ---------------------------------------------------
 
 
@@ -240,7 +294,7 @@ class Attempts:
         """Count one build. Returns its number in this run, the expected numbers that changed, and whether it failed as the last one did."""
         key = (conversation, part)
         # The holes are checked in any order and printed sorted, so they are held sorted.
-        expected = {name: sorted(value) if name == "hole_diameters_mm" else list(value) for name, value in expected.items()}
+        expected = {name: canonical_holes(value) if name == "hole_diameters_mm" else list(value) for name, value in expected.items()}
         with self._lock:
             # Taken out and put back last: the table is kept in the order parts were last built.
             entry = self._parts.pop(key, None)
@@ -472,8 +526,10 @@ async def _save(context: ToolContext, name: str, content: bytes, saved: list[str
     return path
 
 
-def make_handler(settings: Mapping[str, int]):
+def make_handler(settings: Mapping[str, Any]):
     slots = threading.BoundedSemaphore(settings.get("parallel_builds") or default_parallel_builds())
+    # Read once, when the module is installed: every report names the code that made it.
+    made_by = provenance()
     # Builds in a row that never got past loading the kernel, by conversation: three people
     # asking at once after a restart are each on their first attempt.
     still_loading: dict[str, int] = {}
@@ -522,7 +578,7 @@ def make_handler(settings: Mapping[str, int]):
         # None while the build's own outcome decides what comes next; a sentence when something else does.
         next_step: str | None = None
         expected = {key: payload[key] for key in EXPECTATIONS if key in payload}
-        report: dict[str, Any] = {"name": payload["name"], "passed": False, "expected": expected}
+        report: dict[str, Any] = {"name": payload["name"], "passed": False, "expected": expected, **made_by, "script_sha256": hashlib.sha256(script.encode("utf-8")).hexdigest()}
         parameters = _parameters_of(result)
         if parameters:
             # The numbers the script starts with, for a follow-up edit. The model has them in its script already.
@@ -534,13 +590,19 @@ def make_handler(settings: Mapping[str, int]):
             passed = all(check["passed"] for check in checks)
             answer.update(passed=passed, checks=checks)
             report.update(passed=passed, checks=checks, measured=result["measured"])
-            failure = json.dumps([[check["check"], check["measured"]] for check in checks if not check["passed"]], sort_keys=True, default=str)
+            # A hole moved but still not where it belongs is a different failure, not the same one.
+            failure = json.dumps([[check["check"], check["measured"], *([check["misplaced"]] if "misplaced" in check else [])] for check in checks if not check["passed"]], sort_keys=True, default=str)
             notes = notes_on(result["measured"])
-            if notes:
-                answer["notes"] = report["notes"] = notes
             extra = unchecked(result["measured"], payload)
             if extra:
                 answer["unchecked"] = extra
+            listed, located = listed_holes(result["measured"])
+            if listed:
+                answer["holes"] = listed
+                if located > len(listed):
+                    notes.append(f"The answer lists {len(listed)} of the {located} holes; {stem}.report.json lists every hole with where it is.")
+            if notes:
+                answer["notes"] = report["notes"] = notes
             if passed:
                 # STEP goes last: a STEP file in the outputs means the whole set was handed over.
                 for kind in ("glb", "stl", "step"):
@@ -570,7 +632,9 @@ def make_handler(settings: Mapping[str, int]):
             next_step = _next_after(answer["passed"], attempt, changed, same, isinstance(solids, int) and solids > 1)
         if problems:
             report["problems"] = list(problems)
-        await _save(context, f"{stem}.report.json", json.dumps(report, indent=2, ensure_ascii=False).encode("utf-8"), saved, problems)
+        # The set as stored, for whoever reads the report later: the eval finds the delivered part this way.
+        report["files"] = [Path(path).name for path in saved]
+        await _save(context, f"{stem}.report.json", report_text(report).encode("utf-8"), saved, problems)
         if problems:
             answer["problems"] = problems
         answer["files"] = saved
