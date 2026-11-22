@@ -67,11 +67,11 @@ async def _build(script: str, outputs: Outputs | None = None, **expect):
     return answer, outputs.files
 
 
-async def test_the_plate_is_built_and_its_five_files_are_handed_over():
+async def test_the_plate_is_built_and_its_files_are_handed_over_in_order():
     answer, files = await _build(PLATE)
     assert answer["passed"] is True, answer
     assert {check["check"]: check["passed"] for check in answer["checks"]} == {"one closed solid": True, "bounding box": True, "volume": True, "holes": True}
-    assert sorted(files) == ["part.glb", "part.py", "part.report.json", "part.step", "part.stl"]
+    assert sorted(files) == ["part.glb", "part.png", "part.py", "part.report.json", "part.step", "part.stl"]
     assert files["part.py"].decode() == PLATE
     assert files["part.step"].startswith(b"ISO-10303-21") and b"MANIFOLD_SOLID_BREP" in files["part.step"]
     assert files["part.glb"][:4] == b"glTF"
@@ -80,6 +80,10 @@ async def test_the_plate_is_built_and_its_five_files_are_handed_over():
     assert report["measured"]["bbox_mm"] == [60.0, 40.0, 6.0]
     assert [hole["diameter_mm"] for hole in report["measured"]["holes"]] == [4.0, 4.0]
     assert sorted(answer["files"]) == sorted(f"/mnt/user-data/outputs/{name}" for name in files)
+    # The order a set is saved in: the picture before the meshes, STEP as the last part file, the report after it.
+    assert [path.rpartition("/")[2] for path in answer["files"]] == ["part.py", "part.png", "part.glb", "part.stl", "part.step", "part.report.json"]
+    assert files["part.png"][:8] == b"\x89PNG\r\n\x1a\n"
+    assert answer["next"].endswith(" Show /mnt/user-data/outputs/part.png in your reply; if you can view images, look at it once and compare it with the request.")
 
 
 async def test_the_same_script_with_one_hole_removed_fails_the_hole_check_and_leaves_no_step():
@@ -87,8 +91,8 @@ async def test_the_same_script_with_one_hole_removed_fails_the_hole_check_and_le
     assert answer["passed"] is False
     failed = [check for check in answer["checks"] if not check["passed"]]
     assert [(check["check"], check["expected"], check["measured"]) for check in failed] == [("holes", [4, 4], [4.0])]
-    assert sorted(files) == ["part.failed.glb", "part.py", "part.report.json"]
-    assert files["part.failed.glb"][:4] == b"glTF"
+    assert sorted(files) == ["part.failed.glb", "part.failed.png", "part.py", "part.report.json"]
+    assert files["part.failed.glb"][:4] == b"glTF" and files["part.failed.png"][:8] == b"\x89PNG\r\n\x1a\n"
     assert json.loads(files["part.report.json"])["passed"] is False
 
 
@@ -181,7 +185,7 @@ result = (
 async def test_a_plate_written_with_the_habits_of_ordinary_python_builds_and_passes():
     answer, files = await _build(HABITS_PLATE)
     assert answer["passed"] is True, answer
-    assert sorted(files) == ["part.glb", "part.py", "part.report.json", "part.step", "part.stl"]
+    assert sorted(files) == ["part.glb", "part.png", "part.py", "part.report.json", "part.step", "part.stl"]
     assert json.loads(files["part.report.json"])["parameters"] == {"w": 60, "d": 40, "t": 6, "spacing": 30.0}
     # A method that is not on the list is refused before the kernel loads, and the answer says which.
     answer, files = await _build(HABITS_PLATE.replace(".hole(round(4.04, 1))", ".hole(4).faces('>Z').sketch()"))
@@ -573,7 +577,7 @@ async def test_a_rebuild_does_not_touch_the_first_build():
     await _build(PLATE, outputs)
     answer, files = await _build(ONE_HOLE, outputs)
     assert answer["passed"] is False
-    assert sorted(files) == ["part-1.failed.glb", "part-1.py", "part-1.report.json", "part.glb", "part.py", "part.report.json", "part.step", "part.stl"]
+    assert sorted(files) == ["part-1.failed.glb", "part-1.failed.png", "part-1.py", "part-1.report.json", "part.glb", "part.png", "part.py", "part.report.json", "part.step", "part.stl"]
 
 
 #: Item 56's operations against volumes worked out by hand: (label, script, bounding box, volume).

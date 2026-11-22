@@ -113,6 +113,9 @@ MAX_ATTEMPTS = 8
 MAX_COUNTED_PARTS = 1000
 #: What the worker may say about a script it refused or a build that failed, passed on as it is.
 _ERROR_KEYS = ("construct", "refused", "line", "operation", "message")
+#: Notes from the worker an answer passes on ("no picture: ..."), and how long each may be.
+MAX_WORKER_NOTES = 5
+MAX_WORKER_NOTE_CHARS = 300
 
 NEXT_FIX = "Attempt {attempt} of {limit}. Read what failed, change the script and call cad_build again with the same name. Keep the expected numbers: change one only if it was worked out wrongly. Do not present this part as finished."
 #: For a build whose script could not be stored: without its files it is not one of the part's attempts.
@@ -131,6 +134,8 @@ NEXT_LOOSE = (
 )
 NEXT_REVIEW = "Every check passed. Before you present the part, go through what the user asked for that these numbers do not cover; if something is missing or wrong, change the script and build again."
 NEXT_PRESENT = "Every check passed. Present the part, and say which of the user's requirements these numbers do not cover."
+#: After either sentence of a pass, when the part's picture was saved. Viewed once, at review: the numbers decide.
+NEXT_PICTURE = " Show {picture} in your reply; if you can view images, look at it once and compare it with the request."
 NEXT_CHANGED = " The expected numbers are not the ones this part was first built against (expected_changed): they stand for what the user asked for, so tell the user which changed and why."
 NEXT_UNAVAILABLE = "The CAD kernel cannot run on this server, so another script will not help. Do not call cad_build again; tell the user, and that `make doctor` on the server names what is missing."
 NEXT_BUSY = "Nothing is wrong with the script. Call cad_build again with the same arguments."
@@ -147,6 +152,8 @@ MAX_LOADING_ANSWERS = 3
 MAX_COUNTED_CONVERSATIONS = 1000
 #: What a timed-out worker was doing, in the words of the answer.
 _PHASES = {
+    # Only when the answer written before this step cannot be read: otherwise run_worker returns it.
+    "rendering": "The part was built and checked, and drawing its picture did not finish in time. Simplify the part: fewer small fillets and holes.",
     "exporting": "The part was built, and writing its files did not finish in time. Simplify the part: fewer small fillets and holes.",
     "measuring": "The part was built, and measuring it did not finish in time. Reduce the number of holes and fillets.",
 }
@@ -228,6 +235,14 @@ def _parameters_of(result: Mapping[str, Any]) -> dict[str, int | float]:
     if not isinstance(parameters, Mapping):
         return {}
     return {name: value for name, value in parameters.items() if isinstance(name, str) and type(value) in (int, float)}
+
+
+def _worker_notes(result: Mapping[str, Any]) -> list[str]:
+    """What the worker says about the steps after the checks ("no picture: ..."): sentences only, bounded."""
+    notes = result.get("notes")
+    if not isinstance(notes, list):
+        return []
+    return [note[:MAX_WORKER_NOTE_CHARS] for note in notes if isinstance(note, str) and note][:MAX_WORKER_NOTES]
 
 
 def _short(value: Any) -> Any:
@@ -334,11 +349,16 @@ def _next_after(passed: bool, attempt: int, changed: Mapping[str, Any], same: bo
 # --- Running the worker -----------------------------------------------------
 
 
-def _prepare(script: str, memory_mb: int, timeout_seconds: int) -> str:
+#: The worker's steps after the checks, in order, and the note for each one a timeout leaves out.
+_AFTER_THE_CHECKS = {"rendering": "no picture: the build used most of its time"}
+
+
+def _prepare(script: str, memory_mb: int, timeout_seconds: int, extra: Mapping[str, Any] | None = None) -> str:
     directory = tempfile.mkdtemp(prefix="deerflow-cad-")
     # The kernel works on several cores at once, so processor time runs ahead of the clock.
     cpu_seconds = timeout_seconds * (os.cpu_count() or 1) + CPU_BACKSTOP_SECONDS
-    request = {"script": script, "memory_mb": memory_mb, "max_export_bytes": MAX_EXPORT_BYTES, "cpu_seconds": cpu_seconds}
+    # The wall clock too, so the worker can leave out a step after the checks that would not finish in it.
+    request = {"script": script, "memory_mb": memory_mb, "max_export_bytes": MAX_EXPORT_BYTES, "cpu_seconds": cpu_seconds, "budget_seconds": timeout_seconds, **(extra or {})}
     try:
         Path(directory, REQUEST_FILE).write_text(json.dumps(request), encoding="utf-8")
     except BaseException:
@@ -360,8 +380,8 @@ class _Preparation:
         self._abandoned = False
         self._directory: str | None = None
 
-    def make(self, script: str, memory_mb: int, timeout_seconds: int) -> str | None:
-        directory = _prepare(script, memory_mb, timeout_seconds)
+    def make(self, script: str, memory_mb: int, timeout_seconds: int, extra: Mapping[str, Any] | None = None) -> str | None:
+        directory = _prepare(script, memory_mb, timeout_seconds, extra)
         with self._lock:
             if not self._abandoned:
                 self._directory = directory
@@ -454,8 +474,11 @@ def _phase_of(directory: str) -> str:
         return ""
 
 
-async def run_worker(script: str, *, timeout_seconds: int, memory_mb: int, slots: threading.BoundedSemaphore | None = None) -> dict[str, Any]:
-    """Build *script* in a child interpreter and return its answer, or a failure it could not report itself."""
+async def run_worker(script: str, *, timeout_seconds: int, memory_mb: int, slots: threading.BoundedSemaphore | None = None, expected: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    """Build *script* in a child interpreter and return its answer, or a failure it could not report itself.
+
+    *expected* is what the part must meet; the worker draws a failed part's picture with the checks it did not pass.
+    """
     if slots is not None and not await _acquire(slots, QUEUE_SECONDS):
         return {"status": "busy", "message": "the server is building other parts right now and has no free slot for this one"}
     process = None
@@ -464,7 +487,8 @@ async def run_worker(script: str, *, timeout_seconds: int, memory_mb: int, slots
     try:
         preparation = _Preparation()
         try:
-            directory = await asyncio.to_thread(preparation.make, script, memory_mb, timeout_seconds)
+            extra = {"expected": dict(expected)} if expected is not None else None
+            directory = await asyncio.to_thread(preparation.make, script, memory_mb, timeout_seconds, extra)
         except asyncio.CancelledError:
             preparation.abandon()
             raise
@@ -490,6 +514,16 @@ async def run_worker(script: str, *, timeout_seconds: int, memory_mb: int, slots
                 # Nothing was built yet, so nothing can be said about the part. The modules Python
                 # compiled before it was stopped stay compiled, which is why calling again works.
                 return {"status": "loading", "message": "the CAD kernel was still loading when the time ran out. The first build after an install, an update or a restart takes longer."}
+            if phase in _AFTER_THE_CHECKS:
+                # The checked part was answered before this step began. It stands, without what the step adds.
+                _stop(process)
+                stopped = True
+                result = await asyncio.to_thread(_collect, directory)
+                if result.get("status") == "built":
+                    steps = list(_AFTER_THE_CHECKS)
+                    left_out = [_AFTER_THE_CHECKS[step] for step in steps[steps.index(phase) :]]
+                    result["notes"] = [note for note in result.get("notes") or [] if isinstance(note, str)] + left_out
+                    return result
             advice = _PHASES.get(phase, "Simplify the part: fewer pattern points, fewer fillets, and hole() instead of circle().cutThruAll() for round holes.")
             return {"status": "failed", "message": f"the build did not finish within {timeout_seconds} seconds and was stopped. {advice}"}
         # At once, before its files are read: whatever the worker left running goes with it.
@@ -542,7 +576,8 @@ def make_handler(settings: Mapping[str, Any]):
         if problem:
             return {"passed": False, "error": {"message": problem}, "files": [], "next": NEXT_ARGUMENTS}
         script = payload["script"]
-        result = await run_worker(script, timeout_seconds=settings["timeout_seconds"], memory_mb=settings["memory_mb"], slots=slots)
+        expected = {key: payload[key] for key in EXPECTATIONS if key in payload}
+        result = await run_worker(script, timeout_seconds=settings["timeout_seconds"], memory_mb=settings["memory_mb"], slots=slots, expected=expected)
         status = result.get("status")
         conversation = str(context.thread_id or "")
         if status == "loading":
@@ -577,7 +612,7 @@ def make_handler(settings: Mapping[str, Any]):
         answer: dict[str, Any] = {"passed": False}
         # None while the build's own outcome decides what comes next; a sentence when something else does.
         next_step: str | None = None
-        expected = {key: payload[key] for key in EXPECTATIONS if key in payload}
+        picture: str | None = None
         report: dict[str, Any] = {"name": payload["name"], "passed": False, "expected": expected, **made_by, "script_sha256": hashlib.sha256(script.encode("utf-8")).hexdigest()}
         parameters = _parameters_of(result)
         if parameters:
@@ -601,9 +636,13 @@ def make_handler(settings: Mapping[str, Any]):
                 answer["holes"] = listed
                 if located > len(listed):
                     notes.append(f"The answer lists {len(listed)} of the {located} holes; {stem}.report.json lists every hole with where it is.")
+            notes += _worker_notes(result)
             if notes:
                 answer["notes"] = report["notes"] = notes
             if passed:
+                # The picture first: it is what a reader looks at, and a picture the host refuses is a problem, not a lost part.
+                if "png" in files:
+                    picture = await _save(context, f"{stem}.png", files["png"], saved, problems)
                 # STEP goes last: a STEP file in the outputs means the whole set was handed over.
                 for kind in ("glb", "stl", "step"):
                     if kind not in files:
@@ -614,8 +653,10 @@ def make_handler(settings: Mapping[str, Any]):
                     answer["passed"] = report["passed"] = False
                     next_step = NEXT_UNSTORED
                     break
-            elif "glb" in files:
-                await _save(context, f"{stem}.failed.glb", files["glb"], saved, problems)
+            else:
+                for kind in ("png", "glb"):
+                    if kind in files:
+                        await _save(context, f"{stem}.failed.{kind}", files[kind], saved, problems)
         else:
             error = {key: result[key] for key in _ERROR_KEYS if result.get(key) is not None}
             answer["error"] = report["error"] = error or {"message": "the build failed"}
@@ -630,6 +671,8 @@ def make_handler(settings: Mapping[str, Any]):
                 answer["expected_changed"] = report["expected_changed"] = changed
             solids = (result.get("measured") or {}).get("solids")
             next_step = _next_after(answer["passed"], attempt, changed, same, isinstance(solids, int) and solids > 1)
+            if answer["passed"] and picture is not None:
+                next_step += NEXT_PICTURE.format(picture=picture)
         if problems:
             report["problems"] = list(problems)
         # The set as stored, for whoever reads the report later: the eval finds the delivered part this way.

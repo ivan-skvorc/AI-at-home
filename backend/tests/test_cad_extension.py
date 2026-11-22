@@ -169,11 +169,13 @@ async def test_a_part_that_passes_every_check_is_handed_over_with_its_step_file(
     assert sorted(state["artifacts"]) == sorted(f"/mnt/user-data/outputs/{name}" for name in _files(outputs))
     # A pass is not the end of the work: the numbers cover a part of what was asked for.
     assert answer["files"] and answer["attempt"] == 1 and answer["next"].startswith("Every check passed. Before you present the part")
-    # The Gateway only starts the child: the script reaches it untouched, with the operator's limits
-    # and the slots that bound how many builds run at once.
+    # The Gateway only starts the child: the script reaches it untouched, with the operator's limits,
+    # the slots that bound how many builds run at once, and what the part must meet (for a failed
+    # part's picture; pass or fail is still decided here).
     ((script, limits),) = seen
     assert script == PLATE
-    assert {key: value for key, value in limits.items() if key != "slots"} == {"timeout_seconds": 20, "memory_mb": 4096}
+    expected = {"bbox_xyz_mm": [60, 40, 6], "volume_min_max_mm3": [14000, 14400], "hole_diameters_mm": [4, 4]}
+    assert {key: value for key, value in limits.items() if key != "slots"} == {"timeout_seconds": 20, "memory_mb": 4096, "expected": expected}
     assert limits["slots"].acquire(blocking=False)
 
 
@@ -604,6 +606,33 @@ async def test_what_was_measured_and_not_asked_about_is_given(cad, outputs, monk
     assert answer["unchecked"] == {"volume_mm3": 14249.2, "hole_diameters_mm": [4.0, 4.0]}
     answer, _, _ = await _call(cad, outputs, monkeypatch, BUILT, hole_diameters_mm=[4, 4])
     assert answer["unchecked"] == {"volume_mm3": 14249.2}
+
+
+PNG = b"\x89PNG\r\n\x1a\n" + bytes(32)
+
+
+@pytest.mark.asyncio
+async def test_a_part_is_shown_by_its_picture_saved_first_and_named_in_what_comes_next(cad, outputs, monkeypatch):
+    drawn = {**BUILT, "files": {**BUILT["files"], "png": PNG}}
+    answer, _, _ = await _call(cad, outputs, monkeypatch, drawn)
+    assert [Path(path).name for path in answer["files"]] == ["mounting-plate.py", "mounting-plate.png", "mounting-plate.glb", "mounting-plate.stl", "mounting-plate.step", "mounting-plate.report.json"]
+    assert answer["next"] == (
+        "Every check passed. Before you present the part, go through what the user asked for that these numbers do not cover; if something is missing or wrong, "
+        "change the script and build again. Show /mnt/user-data/outputs/mounting-plate.png in your reply; if you can view images, look at it once and compare it with the request."
+    )
+    # A failed part's picture is kept as failed, and nothing asks for it to be shown.
+    failed, _, _ = await _call(cad, outputs, monkeypatch, {**drawn, "measured": {**MEASURED, "bbox_mm": [60.0, 40.0, 7.0]}})
+    assert [Path(path).name for path in failed["files"]] == ["mounting-plate-1.py", "mounting-plate-1.failed.png", "mounting-plate-1.failed.glb", "mounting-plate-1.report.json"]
+    assert "Show" not in failed["next"]
+
+
+@pytest.mark.asyncio
+async def test_what_the_worker_says_about_the_steps_after_the_checks_reaches_the_answer(cad, outputs, monkeypatch):
+    noted = {**BUILT, "notes": ["no picture: the build used most of its time", 7, "", "x" * 1000]}
+    answer, _, _ = await _call(cad, outputs, monkeypatch, noted)
+    # Sentences only, each bounded: the child's answer is not trusted further than that.
+    assert answer["passed"] is True and answer["notes"] == ["no picture: the build used most of its time", "x" * 300]
+    assert "Show" not in answer["next"]
 
 
 @pytest.mark.asyncio
