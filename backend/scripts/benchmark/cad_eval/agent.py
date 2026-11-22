@@ -1,31 +1,27 @@
-"""The two boundaries a run crosses: the running Gateway, and the process that measures a STEP.
+"""The boundary a run crosses: the running Gateway, over public HTTP.
 
 Everything goes through public HTTP routes, as ``drift_eval``'s agent mode does,
 so a result is a statement about the deployed system: the request goes in as a
 user message, the transcript comes back from the run's event store, and the
 delivered STEP is downloaded through the artifact route like any user's file.
-The STEP is measured by the CAD module's own ``measure_cli`` in a child process,
-because the Gateway's Python never loads the kernel and neither does this one.
+The STEP is then measured by the CAD module's own ``measure_cli`` in a child
+process (``measuring.py``), because the Gateway's Python never loads the kernel
+and neither does this one.
 """
 
 from __future__ import annotations
 
 import json
 import os
-import subprocess
-import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 import httpx
 
-from .score import measured_from
-
 DEFAULT_BASE_URL = "http://localhost:8001"
 #: A local model on a 32K window can take many minutes for a part it repairs several times.
 DEFAULT_TIMEOUT_SECONDS = 1_800
-MEASURE_TIMEOUT_SECONDS = 300
 #: The CAD module's namespace and tool, as /api/plugins lists them.
 CAD_NAMESPACE = "cad"
 CAD_TOOL = "cad_build"
@@ -152,24 +148,3 @@ async def download(client: httpx.AsyncClient, thread_id: str, virtual_path: str,
     target = directory / Path(virtual_path).name
     target.write_bytes(response.content)
     return target
-
-
-class MeasureCli:
-    """``python -I -m deerflow_extension_cad.measure_cli <step>``, in an environment that has the CAD module."""
-
-    def __init__(self, python: str = sys.executable):
-        self.python = python
-
-    def problem(self) -> str | None:
-        probe = "import importlib.util, sys; sys.exit(0 if importlib.util.find_spec('deerflow_extension_cad.measure_cli') else 3)"
-        try:
-            done = subprocess.run([self.python, "-I", "-c", probe], capture_output=True, timeout=60)
-        except (OSError, subprocess.TimeoutExpired) as exc:
-            return f"{self.python} could not be started ({exc})"
-        if done.returncode != 0:
-            return f"the CAD module's measure_cli is not installed for {self.python}: the eval measures each STEP with it. Install the CAD module there, or pass --measure-python."
-        return None
-
-    def measure(self, step: Path) -> dict[str, Any]:
-        done = subprocess.run([self.python, "-I", "-m", "deerflow_extension_cad.measure_cli", str(step)], capture_output=True, text=True, timeout=MEASURE_TIMEOUT_SECONDS, check=True)
-        return measured_from(json.loads(done.stdout))

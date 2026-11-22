@@ -50,8 +50,10 @@ class Spec:
     title: str
     request: str
     directory: Path
-    #: How the truth bounding box is compared (ORIENTATIONS).
+    #: How the truth bounding box is compared (ORIENTATIONS); hole positions turn the same way.
     orientation: str = "z"
+    #: The request says where its holes go, so the truth keeps each hole's point and direction.
+    hole_positions: bool = False
     #: Derived from the reference script; None until ``derive_truth.py`` has run for it.
     truth: dict[str, Any] | None = None
     needs: tuple[Need, ...] = ()
@@ -111,6 +113,20 @@ def _check_truth(truth: Any, where: str) -> None:
     holes = truth.get("hole_diameters_mm")
     if holes is not None and (not isinstance(holes, list) or not all(isinstance(d, (int, float)) and d > 0 for d in holes)):
         raise SpecError(f"{where}: truth.hole_diameters_mm lists positive diameters")
+    placed = truth.get("holes_at_mm")
+    if placed is not None and not (isinstance(placed, list) and all(_is_placed_hole(entry) for entry in placed)):
+        raise SpecError(f"{where}: truth.holes_at_mm lists {{'diameter_mm': d, 'through': bool, 'at': [x, y, z], 'axis': [x, y, z]}} per hole")
+    gap = truth.get("min_gap_mm")
+    if gap is not None and (not isinstance(gap, (int, float)) or gap < 0):
+        raise SpecError(f"{where}: truth.min_gap_mm is a number of at least zero")
+
+
+def _is_placed_hole(entry: Any) -> bool:
+    def point(value: Any) -> bool:
+        return isinstance(value, list) and len(value) == 3 and all(isinstance(number, (int, float)) for number in value)
+
+    sized = isinstance(entry, dict) and isinstance(entry.get("diameter_mm"), (int, float)) and entry["diameter_mm"] > 0
+    return sized and isinstance(entry.get("through", True), bool) and point(entry.get("at")) and point(entry.get("axis"))
 
 
 def load_spec(directory: Path) -> Spec:
@@ -128,6 +144,8 @@ def load_spec(directory: Path) -> Spec:
         raise SpecError(f"{where}: band is one of {', '.join((*BANDS, NO_MODULE_BAND))}")
     if raw.get("orientation", "z") not in ORIENTATIONS:
         raise SpecError(f"{where}: orientation is one of {', '.join(ORIENTATIONS)}")
+    if not isinstance(raw.get("hole_positions", False), bool):
+        raise SpecError(f"{where}: hole_positions is true or false")
     _check_truth(raw.get("truth"), where)
     mentions = raw.get("reply_mentions", [])
     if not isinstance(mentions, list) or not all(isinstance(text, str) and text for text in mentions):
@@ -139,6 +157,7 @@ def load_spec(directory: Path) -> Spec:
         request=raw["request"],
         directory=directory,
         orientation=raw.get("orientation", "z"),
+        hole_positions=raw.get("hole_positions", False),
         truth=raw.get("truth"),
         needs=tuple(_need(value, where) for value in raw.get("needs", [])),
         expected_refused=raw.get("expected_refused"),
