@@ -6080,9 +6080,9 @@ kernel vector, a second rail), `spline`'s arguments past `periodic`,
 `text`'s `kind` (one font file letters bold and italic as regular), `split` with
 a part (`cut()` does it), `parametricCurve`, `each`, `eachpoint` and `cutEach`
 (callables), `sketch` and `placeSketch`, and every constructor on `cq` but
-`cq.Wire.makeHelix`. CadQuery's 3MF writer numbers its objects from 0, which the
-3MF core specification does not allow, and writes each face's vertices apart, so
-a slicer may report a repair; a post-pass that renumbers and welds is not
+`cq.Wire.makeHelix`. CadQuery's 3MF writer writes each face's vertices apart,
+so a slicer may report a repair; `normalise_3mf` renumbers the objects from 1
+and adds the default content types, and a pass that welds the vertices is not
 written. `measure.sampled_wall` is a library function the worker does not call
 (the print block's wall comes from `printability.py`). The print thresholds and
 the skill's clearance and nut tables have not been checked on a real printer;

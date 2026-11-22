@@ -45,7 +45,7 @@ rotate there through the bundled
 | `mounting-plate.png` | A picture: iso, top, front and right views with the measured size; the reply shows it inline |
 | `mounting-plate.glb` | The mesh for a viewer, in metres (glTF's unit), one node per body |
 | `mounting-plate.stl` | The mesh, in millimetres |
-| `mounting-plate.3mf` | The part for a slicer, in millimetres; several bodies stay one object, to print in place |
+| `mounting-plate.3mf` | The part for a slicer, in millimetres, renumbered and typed so lib3mf reads it; several bodies stay one object, to print in place |
 | `mounting-plate.parts.3mf` | Only for several bodies: each body on the bed, 5 mm apart, to print apart (fallback: `mounting-plate.body-N.stl`, at most 8) |
 | `mounting-plate.step` | The part for a CAD program |
 | `mounting-plate.report.json` | Expected and measured numbers, each check, the print block, and what made it (module and CadQuery versions, the script's SHA-256, the files of the set) |

@@ -204,8 +204,10 @@ sweep.
 
 - The module does not slice or send anything to a printer; the 3MF goes to the
   slicer you use.
-- CadQuery's 3MF writer numbers its objects from 0 and writes each face's
-  vertices separately, so a slicer may report that it repaired the file.
+- CadQuery's 3MF writer writes each face's vertices separately, so a slicer
+  may report that it repaired the file. Its objects are renumbered from 1 and
+  the package gets the default content types the 3MF reader lib3mf requires;
+  the vertices are not welded.
 - The print block is a fast estimate on the mesh, not a slicer's preview.
 - Whether a model follows the skill's procedure on real requests is measured by
   the [CAD eval](cad-eval.md), not by these checks.

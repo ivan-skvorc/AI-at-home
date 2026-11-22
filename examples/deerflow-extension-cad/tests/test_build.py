@@ -185,6 +185,54 @@ async def test_the_glb_opens_at_real_size_and_the_3mf_is_in_millimetres():
     assert document["nodes"][root]["scale"] == _glb_document(failed["part.failed.glb"])["nodes"][root]["scale"] and "part.3mf" not in failed
 
 
+#: A part of two bodies that touch: the slicer's file holds both, and part.parts.3mf lays them apart.
+SPLIT = "result = cq.Workplane('XY').box(20, 20, 40).faces('>Z').workplane(-20).split(keepTop=True, keepBottom=True)\n"
+
+
+def _package(data: bytes) -> tuple[str, str]:
+    import io
+    import zipfile
+
+    with zipfile.ZipFile(io.BytesIO(data)) as package:
+        return package.read("3D/3dmodel.model").decode("utf-8"), package.read("[Content_Types].xml").decode("utf-8")
+
+
+async def _slicer_files() -> dict[str, bytes]:
+    _, one = await _build(PLATE)
+    _, two = await _build(SPLIT, bbox_xyz_mm=[20, 20, 40], bodies=2)
+    return {"one-part.3mf": one["part.3mf"], "two-part.3mf": two["part.3mf"], "two-part.parts.3mf": two["part.parts.3mf"]}
+
+
+async def test_the_3mf_files_keep_to_the_3mf_core_specification():
+    # The kernel numbers its objects from 0, where the specification's resource ids are positive, and gives
+    # the package relationships no content type of their own: lib3mf, the 3MF Consortium's reader, refused
+    # every file. Each is renumbered from 1 and given the defaults; every reference still names an object.
+    import re
+
+    for name, data in (await _slicer_files()).items():
+        model, types = _package(data)
+        ids = [int(found) for found in re.findall(r'<object id="(\d+)"', model)]
+        references = [int(found) for found in re.findall(r'objectid="(\d+)"', model)]
+        assert ids and min(ids) >= 1 and len(set(ids)) == len(ids) and references and set(references) <= set(ids), name
+        assert '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml" />' in types, name
+        assert '<Default Extension="model" ContentType="application/vnd.ms-package.3dmanufacturing-3dmodel+xml" />' in types, name
+
+
+async def test_the_3mf_files_open_in_the_3mf_consortiums_reader(tmp_path):
+    lib3mf = pytest.importorskip("lib3mf", reason="lib3mf is not installed")
+    wrapper = lib3mf.get_wrapper()
+    for name, data in (await _slicer_files()).items():
+        path = tmp_path / name
+        path.write_bytes(data)
+        model = wrapper.CreateModel()
+        reader = model.QueryReader("3mf")
+        reader.SetStrictModeActive(True)
+        reader.ReadFromFile(str(path))
+        meshes, items = model.GetMeshObjects(), model.GetBuildItems()
+        counted = [sum(1 for _ in iter(listing.MoveNext, False)) for listing in (meshes, items)]
+        assert counted == ([1, 1] if name == "one-part.3mf" else [2, 1] if name == "two-part.3mf" else [2, 2]), (name, counted)
+
+
 async def test_a_passed_part_says_how_it_prints_and_the_print_block_never_decides():
     from deerflow_extension_api import ExtensionPrincipal, ToolContext
 
