@@ -222,6 +222,7 @@ export default function AgentChatPage() {
     canSendInput,
     activeRunId,
     activeRunStartedAt,
+    latestRunStartedAt,
     regenerateMessage,
     isUploading,
     isHistoryLoading,
@@ -767,6 +768,7 @@ export default function AgentChatPage() {
                       state={thread.values.deviation_monitor}
                       isRunning={thread.isLoading}
                       runStartedAt={activeRunStartedAt}
+                      latestRunStartedAt={latestRunStartedAt}
                       onChange={(deviation_monitor) =>
                         setSettings("context", { deviation_monitor })
                       }

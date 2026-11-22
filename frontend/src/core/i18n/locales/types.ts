@@ -1023,6 +1023,10 @@ export interface Translations {
     everySteps: (count: number) => string;
     everyTurns: (count: number) => string;
     chatModel: string;
+    /** The bar while a run sent without the monitor is going and the chat turned it on. */
+    onFromNextMessage: string;
+    /** Beside the run's status when the chat turned the monitor off during it. */
+    offFromNextMessage: string;
     status: {
       regionLabel: string;
       idle: string;

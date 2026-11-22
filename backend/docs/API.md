@@ -615,8 +615,10 @@ A run asks for the deviation monitor (fork feature,
 ```
 
 `mode` is `steps` (every 1-50 agent steps) or `turns` (the final answer of
-every 1-20 turns; every turn is `{"mode": "turns", "every": 1}`). Keys are
-strict. Without the key the monitor does nothing and writes nothing;
+every 1-20 turns; every turn is `{"mode": "turns", "every": 1}`). Steps, turns
+and the one retry count per user message: a run over the same message (a
+`command.resume`, a batch follow-up) continues them, so send the key on those
+runs too. Keys are strict. Without the key the monitor does nothing and writes nothing;
 `{"enabled": false}` is off. Any other value is never a 400: the Gateway stores
 `{"enabled": false, "rejected": "<code>"}` and the monitor is off for that run
 with the reason in its status. The model is authorized for the caller at run

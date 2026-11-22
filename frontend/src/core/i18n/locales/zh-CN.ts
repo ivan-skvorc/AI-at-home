@@ -1149,7 +1149,7 @@ export const zhCN: Translations = {
       `偏离监控已开启：由 ${model} ${cadence}检查一次。点击可修改或关闭。`,
     title: "偏离监控",
     description:
-      "智能体工作时，由另一个模型检查其最近的步骤是否仍在完成你的请求。确认偏离后会停止运行并留下说明；在 Ultra 和 Ultracode 模式下会先拆分成更小的子任务重试一次。每次检查时智能体会等待。它只是辅助，不是安全保证。",
+      "智能体工作时，由另一个模型检查其最近的步骤是否仍在完成你的请求。确认偏离后会停止运行并留下说明；在 Ultra、众议和 Ultracode 模式下会先拆分成更小的子任务重试一次。每次检查时智能体会等待。它只是辅助，不是安全保证。",
     modelLabel: "监控模型",
     modelHint:
       "每次检查都是对该模型的一次单独调用，计入本次运行的费用和你的花费上限。使用第二个本地模型时，GPU 可能在每次检查时切换模型。",
@@ -1174,6 +1174,8 @@ export const zhCN: Translations = {
     everySteps: (count) => (count === 1 ? "每步" : `每 ${count} 步`),
     everyTurns: (count) => (count === 1 ? "每轮" : `每 ${count} 轮`),
     chatModel: "对话所用模型",
+    onFromNextMessage: "从下一条消息起开启",
+    offFromNextMessage: "从下一条消息起关闭；本次运行仍受监控",
     status: {
       regionLabel: "偏离监控",
       idle: "监控中",

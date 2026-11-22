@@ -188,6 +188,88 @@ describe("describeDeviationMonitorBar", () => {
     ).toBe("drifting");
   });
 
+  it("does not bring an earlier run's verdict back once later runs went unmonitored", () => {
+    // Run 1 was stopped; the user switched the monitor off, ran clean turns
+    // (which write nothing), and switched it back on.
+    const stopped = state({ status: "stopped", reason: "Run 1 drifted." });
+    const latestRunStartedAt = Date.parse("2026-11-22T10:05:00Z");
+    expect(
+      describeDeviationMonitorBar({
+        setting: ON,
+        state: stopped,
+        isRunning: false,
+        latestRunStartedAt,
+      }),
+    ).toMatchObject({ kind: "idle", reason: null });
+    // The newest run's own report stays.
+    expect(
+      describeDeviationMonitorBar({
+        setting: ON,
+        state: stopped,
+        isRunning: false,
+        latestRunStartedAt: Date.parse("2026-11-22T10:00:00Z"),
+      })?.kind,
+    ).toBe("stopped");
+  });
+
+  it("keeps a monitored run's bar when the chat turns the monitor off during it", () => {
+    const runStartedAt = Date.parse("2026-11-22T10:00:00Z");
+    const view = describeDeviationMonitorBar({
+      setting: { ...ON, enabled: false },
+      state: state({ status: "drifting", reason: "Possibly off-task." }),
+      isRunning: true,
+      runStartedAt,
+      runSetting: ON,
+    });
+    expect(view).toMatchObject({ kind: "drifting", nextMessage: "off" });
+    // Its own report proves it, even when the choice it was sent is unknown
+    // (the page joined the run after a reload).
+    expect(
+      describeDeviationMonitorBar({
+        setting: { ...ON, enabled: false },
+        state: state({ status: "drifting" }),
+        isRunning: true,
+        runStartedAt,
+      })?.nextMessage,
+    ).toBe("off");
+    // Once the run is over, the chat's choice is all there is.
+    expect(
+      describeDeviationMonitorBar({
+        setting: { ...ON, enabled: false },
+        state: state({ status: "drifting" }),
+        isRunning: false,
+      }),
+    ).toBeNull();
+  });
+
+  it("does not claim to watch a run sent without the monitor", () => {
+    const view = describeDeviationMonitorBar({
+      setting: ON,
+      state: null,
+      isRunning: true,
+      runStartedAt: Date.parse("2026-11-22T10:00:00Z"),
+      runSetting: { ...ON, enabled: false },
+    });
+    expect(view).toMatchObject({ kind: "idle", nextMessage: "on" });
+    expect(
+      describeDeviationMonitorBar({
+        setting: { ...ON, enabled: false },
+        state: null,
+        isRunning: true,
+        runSetting: { ...ON, enabled: false },
+      }),
+    ).toBeNull();
+    // Nothing pending while the run has what the chat has.
+    expect(
+      describeDeviationMonitorBar({
+        setting: ON,
+        state: null,
+        isRunning: true,
+        runSetting: ON,
+      })?.nextMessage,
+    ).toBeNull();
+  });
+
   it("names the chat's model when the choice follows it", () => {
     const followsChat = withoutModel(ON);
     expect(

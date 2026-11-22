@@ -1129,23 +1129,26 @@ still serve what you asked. Turn it on with the **compass button** in the
 message box's tool row: the dialog asks for the monitor's model (the same picker
 as everywhere else) and how often to check: **every X steps** (1-50, agent steps
 within one reply), **every N turns** (1-20, just before the final answer) or
-**every turn**. It applies to that chat only. A status bar above the message box
-shows the latest report (Watching, Checking…, On track, Unsure, Possible drift,
-Stopped) with the reason behind **Details**, and turns the monitor off in one
-click. **Settings → Deviation monitor** sets what new chats start with.
+**every turn**. It applies to that chat only, and a reply resumed after a tool
+approval still counts as one. A status bar above the message box shows the
+latest report (Watching, Checking… with a steps cadence, On track, Unsure,
+Possible drift, Stopped) with the reason behind **Details**, and turns the
+monitor off in one click, from your next message. **Settings → Deviation
+monitor** sets what new chats start with.
 
 **A confirmed drift stops the run.** A step check judges a response before its
 tool calls run, so the drifting actions never happen: the response keeps its
 text, loses its tool calls, and ends with a note naming the reason and your
-request. A goal on the chat stands down with `deviation_stopped`, and no
-reminder or continuation resumes the run. In a mode with subagents (Ultra,
-Democracy, Plus and Double Plus Ultracode) the first confirmed drift **retries
-once** instead, telling the agent to return to your request and split the work
-across subagents; a second one stops it. Small judges are noisy, so a
-"drifting" verdict is asked twice and acts only when both agree or a mechanical
-signal backs it (a partial read, a truncated result, a compaction, a full
-window); **an unsure verdict, a timeout or an error is shown and never acted
-on**.
+request. No reminder or continuation resumes the run; a goal on the chat
+stays active for your next message (stand-down reason `deviation_stopped`)
+unless the goal check finds the visible answer already meets it. In a mode with
+subagents (Ultra, Democracy, Plus and Double Plus Ultracode) the first
+confirmed drift **retries once** instead, telling the agent to return to your
+request and split the work across subagents; a second one stops it. Small
+judges are noisy, so a "drifting" verdict is asked twice and acts only when
+both agree or a mechanical signal backs it (a partial read, a truncated result,
+repeated tool failures, a compaction during this run, a full window); **an
+unsure verdict, a timeout or an error is shown and never acted on**.
 
 The limits that bite: **the agent waits for each check**, so a check every step
 can double a run's time on a local GPU, and a second local model that does not

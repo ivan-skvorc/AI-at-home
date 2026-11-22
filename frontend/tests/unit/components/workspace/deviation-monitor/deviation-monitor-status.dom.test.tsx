@@ -141,6 +141,65 @@ describe("the status bar", () => {
     expect(onChange).toHaveBeenCalledWith({ ...ON, enabled: false });
   });
 
+  it("keeps a monitored run's bar when the monitor is turned off during it", () => {
+    // The run read the chat's choice when it was sent; it is still monitored.
+    const runStartedAt = Date.parse("2026-11-22T10:00:00Z");
+    const during = {
+      state: { status: "drifting", updated_at: "2026-11-22T10:00:30Z" },
+      runStartedAt,
+    };
+    const view = mount({ setting: ON, isRunning: true, ...during });
+    const rerender = (props: Props) =>
+      view.rerender(
+        <I18nContext.Provider
+          value={{ locale: "en-US", setLocale: () => undefined, t: enUS }}
+        >
+          <DeviationMonitorStatus {...props} onChange={onChange} />
+        </I18nContext.Provider>,
+      );
+    rerender({
+      setting: { ...ON, enabled: false },
+      isRunning: true,
+      ...during,
+    });
+    expect(bar()!.getAttribute("data-status")).toBe("drifting");
+    expect(
+      screen.getByTestId("deviation-monitor-next-message").textContent,
+    ).toBe(enUS.deviationMonitor.offFromNextMessage);
+    expect(
+      screen.queryByTestId("deviation-monitor-status-turn-off"),
+    ).toBeNull();
+    // The run is over: the chat's choice decides.
+    rerender({
+      setting: { ...ON, enabled: false },
+      isRunning: false,
+      ...during,
+    });
+    expect(bar()).toBeNull();
+  });
+
+  it("says a monitor turned on during a run starts with the next message", () => {
+    const off = { ...ON, enabled: false };
+    const view = mount({ setting: off, state: undefined, isRunning: true });
+    expect(bar()).toBeNull();
+    view.rerender(
+      <I18nContext.Provider
+        value={{ locale: "en-US", setLocale: () => undefined, t: enUS }}
+      >
+        <DeviationMonitorStatus
+          setting={ON}
+          state={undefined}
+          isRunning
+          onChange={onChange}
+        />
+      </I18nContext.Provider>,
+    );
+    expect(
+      screen.getByTestId("deviation-monitor-status-label").textContent,
+    ).toBe(enUS.deviationMonitor.onFromNextMessage);
+    expect(bar()!.textContent).not.toContain(enUS.deviationMonitor.status.idle);
+  });
+
   it("announces the status to screen readers", () => {
     mount({ setting: ON, state: { status: "drifting" }, isRunning: true });
     expect(bar()!.querySelector('[role="status"]')!.textContent).toBe(

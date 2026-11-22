@@ -10,9 +10,13 @@
  * - **Run context.** The chat's choice is stored per conversation (a
  *   `THREAD_SCOPED_CONTEXT_KEYS` entry) and sent as
  *   `context.deviation_monitor = { enabled: true, model, cadence: { mode,
- *   every } }`. Anything else — off, a stale model, an out-of-range cadence —
- *   is sent as nothing at all, so a hand-edited blob can never put a malformed
- *   object on the wire.
+ *   every } }`, or nothing at all while it is off. The run builder reads the
+ *   stored choice the way the button and the status bar do
+ *   (`normalizeDeviationMonitorSetting`), so a damaged blob that they show as
+ *   on — an out-of-range cadence, a blank model — is sent repaired as shown
+ *   (the default cadence, the chat's model) rather than quietly dropped, and
+ *   the strict `deviationMonitorRunContext` still keeps anything malformed
+ *   off the wire.
  * - **Thread state.** The monitor reports through a `deviation_monitor`
  *   channel that the status bar renders; the reader here narrows it, since it
  *   arrives from history, `updates` frames and status reads alike.
@@ -172,8 +176,10 @@ export function normalizeDeviationMonitorSetting(
  *
  * Strict on purpose, unlike the stored-value reader: only an explicit
  * `enabled: true` with an in-range cadence is sent, because the backend turns
- * the monitor off (with a logged reason) for anything else, and a run that the
- * user believes is monitored must not quietly be the one that is not.
+ * the monitor off (with a logged reason) for anything else. The run builder
+ * passes the stored choice through `normalizeDeviationMonitorSetting` first,
+ * so a run that the user sees as monitored is not quietly the one that is not;
+ * this function is the last guard against a malformed object.
  */
 export function deviationMonitorRunContext(
   setting: unknown,
@@ -227,21 +233,34 @@ export function chatSettingFromDefaults(
  * "off" in this chat wins), and whose user switched the default on. An
  * existing chat never picks the default up: "off by default per chat" means a
  * conversation that predates the setting stays unmonitored.
+ *
+ * `configuredModels`, once the roster has loaded, drops a default model that
+ * has since left `config.yaml`: the chat then follows its own model, which is
+ * what the Settings page already shows for it, instead of naming one the
+ * backend refuses (and turns the monitor off for) on every run.
  */
 export function newChatDeviationMonitorSeed({
   isNewThread,
   override,
   defaults,
+  configuredModels,
 }: {
   isNewThread: boolean;
   override: Record<string, unknown>;
   defaults: DeviationMonitorDefaults;
+  configuredModels?: readonly string[];
 }): DeviationMonitorChatSetting | null {
   if (!isNewThread || !defaults.enabledForNewChats) return null;
   if (Object.prototype.hasOwnProperty.call(override, "deviation_monitor")) {
     return null;
   }
-  return chatSettingFromDefaults(defaults);
+  const stale =
+    configuredModels !== undefined &&
+    defaults.modelName !== undefined &&
+    !configuredModels.includes(defaults.modelName);
+  return chatSettingFromDefaults(
+    stale ? { ...defaults, modelName: undefined } : defaults,
+  );
 }
 
 /**

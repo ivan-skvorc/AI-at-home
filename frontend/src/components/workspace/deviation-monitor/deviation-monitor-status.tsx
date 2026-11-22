@@ -56,8 +56,11 @@ const TONE_CLASSES: Record<DeviationMonitorBarTone, string> = {
  * survives a reload, unlike a custom stream event.
  *
  * Renders nothing unless the operator offers the monitor and this chat has it
- * on. The run's stop note itself is an ordinary assistant message from the
- * backend, rendered in the transcript like any other cap's note.
+ * on, or the run now going was sent with it on. A run reads the chat's choice
+ * once, when it is sent, so a change made while it runs is shown as applying
+ * from the next message rather than hiding the bar of a run that is still
+ * monitored. The run's stop note itself is an ordinary assistant message from
+ * the backend, rendered in the transcript like any other cap's note.
  */
 export function DeviationMonitorStatus({
   className,
@@ -65,6 +68,7 @@ export function DeviationMonitorStatus({
   state,
   isRunning = false,
   runStartedAt,
+  latestRunStartedAt,
   onChange,
 }: {
   className?: string;
@@ -74,17 +78,30 @@ export function DeviationMonitorStatus({
   state: unknown;
   isRunning?: boolean;
   runStartedAt?: number | null;
+  /** The newest run's start, finished or not (`useThreadStream`). */
+  latestRunStartedAt?: number | null;
   onChange: (setting: DeviationMonitorChatSetting) => void;
 }) {
   const { t } = useI18n();
   const copy = t.deviationMonitor;
   const { enabled: featureEnabled } = useDeviationMonitorFeature();
   const { models } = useModels();
+  // The choice the running run was sent with: the run context is built from
+  // the chat's choice at the moment the run starts.
+  const [runChoice, setRunChoice] = useState<{
+    running: boolean;
+    setting: unknown;
+  }>({ running: isRunning, setting: storedSetting });
+  if (runChoice.running !== isRunning) {
+    setRunChoice({ running: isRunning, setting: storedSetting });
+  }
   const view = describeDeviationMonitorBar({
     setting: storedSetting,
     state,
     isRunning,
     runStartedAt,
+    runSetting: isRunning ? runChoice.setting : undefined,
+    latestRunStartedAt,
   });
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [openedFor, setOpenedFor] = useState(view?.kind);
@@ -100,7 +117,8 @@ export function DeviationMonitorStatus({
     return null;
   }
   const Icon = ICONS[view.kind];
-  const statusLabel = copy.status[view.kind];
+  const statusLabel =
+    view.nextMessage === "on" ? copy.onFromNextMessage : copy.status[view.kind];
   const modelLabel = monitorModelLabel(t, models, view.model);
   const meta = [
     view.checks > 0 ? copy.checks(view.checks) : null,
@@ -136,6 +154,14 @@ export function DeviationMonitorStatus({
           >
             {statusLabel}
           </span>
+          {view.nextMessage === "off" && (
+            <span
+              className="text-muted-foreground ml-1.5 text-xs"
+              data-testid="deviation-monitor-next-message"
+            >
+              {copy.offFromNextMessage}
+            </span>
+          )}
           <span className="text-muted-foreground hidden text-xs sm:inline">
             {" · "}
             {cadenceSummary(t, setting.cadence)}
@@ -167,16 +193,18 @@ export function DeviationMonitorStatus({
             />
           </button>
         )}
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          className="h-6 shrink-0 px-2 text-xs"
-          onClick={() => onChange({ ...setting, enabled: false })}
-          data-testid="deviation-monitor-status-turn-off"
-        >
-          {copy.turnOff}
-        </Button>
+        {setting.enabled && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="h-6 shrink-0 px-2 text-xs"
+            onClick={() => onChange({ ...setting, enabled: false })}
+            data-testid="deviation-monitor-status-turn-off"
+          >
+            {copy.turnOff}
+          </Button>
+        )}
       </div>
       {view.hasDetails && (
         <div

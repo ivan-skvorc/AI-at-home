@@ -368,7 +368,7 @@ First, the mechanical gates:
 - [ ] **CI's pnpm bootstrap stays retried and pinned**: `cd backend && uv run pytest tests/test_ci_pnpm_bootstrap.py -q`. A registry abort during corepack's pnpm fetch fails CI before any test (PR #106). Silent: `test_the_pnpm_download_is_retried` (the retry, on the step's shape in every workflow), `test_there_is_a_pnpm_bootstrap_to_check` (a renamed step leaves it iterating nothing), `test_every_workflow_prepares_the_version_the_repo_pins` (`packageManager` and every `corepack prepare` move together).
 - [ ] **A file explorer for each conversation, and shared folders** (§49, §54): `cd backend && uv run pytest tests/test_thread_files_router.py tests/test_folder_ledger_middleware.py tests/test_folder_ledger_router.py -q` (inside the Backend gate), `make test-blocking-io`, `cd frontend && pnpm test thread-files folder-ledger`, plus `pnpm test:e2e thread-files folder-ledger`. Silent when broken: `test_symlink_escaping_user_data_is_listed_as_a_link_and_never_entered` and `test_dot_dot_traversal_never_lists_outside_user_data` (`get_artifact`'s confinement: normalize, `resolve_thread_virtual_path`, never follow a link), `test_hides_only_gateway_transient_files`; `test_shared_chain_places_it_just_outside_tool_error_handling` (moved, the recorder sees nothing and no deletion is ever offered), `test_orphans_are_not_offered_while_another_users_conversation_is_live`, and the guards against deleting data no conversation provably created, `test_a_renamed_existing_folder_is_listed_but_never_deleted` (a `mv` makes a name appear like `mkdir`) and `test_an_entry_replaced_outside_the_ledger_is_refused`.
 - [ ] **A plugin tool's file output** (§50): `tests/test_plugin_tools.py` runs inside the Backend gate; also `make test-blocking-io`. Untested: upstream owns `API_VERSION`. If the merge brings its own 0.2.13, move the fork's floor past it (the example's `@extension` marker and requirement, `docs/full-stack-plugins.md`, `test_example_extension_requires_a_host_with_file_output`).
-- [ ] **Deviation monitor** (§57): `cd backend && uv run pytest tests/test_deviation_monitor.py tests/test_deviation_monitor_gateway.py -q`, `cd frontend && pnpm test deviation-monitor`. Silent: the key dropped by the Gateway's `_CONTEXT_CONFIGURABLE_KEYS` or the browser's `THREAD_SCOPED_CONTEXT_KEYS`, `deviation_stopped` missing from a stop list (`test_the_stop_vocabulary_knows_deviation_stopped`), a side leaving `contracts/deviation_monitor_contract.json` (`TestSharedContract`).
+- [ ] **Deviation monitor** (§57): `cd backend && uv run pytest tests/test_deviation_monitor.py tests/test_deviation_monitor_gateway.py tests/test_deviation_monitor_graph.py tests/test_thread_goal_contract.py -q`, `cd frontend && pnpm test deviation-monitor`. Silent: the key dropped by the Gateway's `_CONTEXT_CONFIGURABLE_KEYS` or the browser's `THREAD_SCOPED_CONTEXT_KEYS`, `deviation_stopped` missing from a stop list (`test_the_stop_vocabulary_knows_deviation_stopped`), a side leaving `contracts/deviation_monitor_contract.json` (`TestSharedContract`), the POST `/history` head dropping the channel (`test_history_head_carries_exactly_the_contract_keys`), the monitor leaving its place in upstream's `lead_agent/agent.py` chain (`TestLeadChain`).
 - [ ] Frontend: `pnpm check && pnpm test`. **`pnpm check` includes the formatting gate** (`prettier --check .`, eslint, `tsc --noEmit`). `pnpm format:write` fixes what the check reports; `eslint --fix` normalizes imports and optional-chains but not Prettier whitespace.
 - [ ] **Changed a shared UI control? Run the whole e2e suite, not the one spec you thought of.** `pnpm test:e2e` with no filter. A control's _specs_ are not the specs in the file you edited: they are every spec that clicks that control anywhere in the app, and nothing in `pnpm check` or `pnpm test` knows the difference. Observed live on the model-picker unification — the composer's picker was swapped into five screens, the Democracy spec was found and fixed by hand, and `suggestions-settings.spec.ts` was missed entirely because it drives the _same control_ from a different page. It failed only in CI. Two rules fell out of it, both now pinned by `frontend/tests/unit/components/workspace/model-picker-sites.test.ts`: a spec must locate a shared control by that control's **own** `data-slot`, never by the ARIA role of the primitive underneath (swap the primitive and the locator silently matches nothing), and a fast unit test should assert the contract so a six-minute e2e job is not the thing that tells you.
 
@@ -6828,15 +6828,18 @@ public API.
   added, and the next model call carries a request-only hidden
   `HumanMessage(name="deviation_monitor_reminder", hide_from_ui)` restating the
   request and asking for smaller pieces through subagents. A second confirmed
-  drift in the run stops it.
+  drift in the same reply stops it, and so does the first in an Ultra or
+  Democracy run whose `task` delegations are used up (the per-run total, or
+  `subagent_limit_capped`), since every `task` call the retry asked for would
+  be stripped.
 - **The user picks the model with the shared picker**, preselected from the
   chat's last monitor model, else the Settings default, else the chat's model.
 - **The agent waits for each check.** No parallel judge: on one local GPU a
   parallel check queues behind the main model or evicts it, and a blocking
   check leaves no task to drain before the end-of-run journal snapshot.
-- **Cadence: every X steps, every N turns, or every turn.** A turn check runs
-  once per run, at the final answer that CompletionReview and the to-do list let
-  stand.
+- **Cadence: every X steps, every N turns, or every turn.** A turn is one user
+  message and the agent's work on it. A turn check runs once per turn, at the
+  final answer that CompletionReview and the to-do list let stand.
 - **Per chat, with Settings defaults** that a new chat has written into its own
   override; an existing chat never picks them up.
 
@@ -6844,9 +6847,25 @@ public API.
 
 - **A step check judges a response before its tool calls run**, so a stop
   prevents the drifting actions rather than reporting them.
+- **Steps, the turn counter and the one retry belong to the user turn, not the
+  run.** An approval resume, a batch follow-up and a goal wakeup are new runs
+  over the same user message; counted per run, a reply that pauses for approval
+  every two steps was never checked at "every 3 steps", counted as several
+  turns, and could retry once per resume. The channel keeps the turn's
+  bookkeeping (`turn`, the user message's `request_id`, `retried`, and
+  `last_checked_step`), and a run over the same message starts from it, its
+  step count from the turn's responses still in the thread (the last check is
+  the floor when compaction removed some). A response an inner `after_model`
+  (the to-do reminder, the completion review) sends straight back to the model
+  never reaches this middleware's `after_model`; the next `before_model` counts
+  it, and a step check is due once `every` steps have passed since the last
+  one, so a due step that was sent back is checked at the next response.
 - **Noise control.** A `drifting` verdict is asked once more; the monitor acts
   when both agree, or when one does and a mechanical signal (a partial read, a
-  truncated or elided result, compaction in the run, a full window) backs it. A
+  truncated or elided result, three or more failed tool calls in the turn, a
+  HarnessGuard flag, a compaction in the run, a full window) backs it. The
+  thread keeps its summary for good, so only a summary that changed since the
+  run started is a signal; an older one is evidence. A
   malformed reply, a timeout or a provider error is `unsure`: shown, never acted
   on. The prompt says "when in doubt, on task", because a false stop costs the
   user's run. §25a's warning that a judge agrees with fluent output is why a
@@ -6856,17 +6875,25 @@ public API.
   message (same id), `deviation_stopped` stamped on `runtime.context`, the run
   record `success` with that stop reason. A stopped final answer stays visible
   with the note, marked off-task by `additional_kwargs.deviation_monitor_action`.
-  The note is in `content`, so IM channels and older clients show it too.
+  The note is in `content`, so IM channels and older clients show it too. The
+  marker also carries the note, so the next check shows the held-back response
+  as the agent wrote it plus a neutral `Harness:` line, never the monitor's own
+  verdict as the agent's words (and never as a signal, which would confirm the
+  next drift on one verdict).
 - **`deviation_stopped` joins both stop lists** (`_COMPLETION_REMINDER_RUN_STOP_REASONS`
   and `GOAL_RUN_HARD_STOP_REASONS`), the goal and scheduled-notes contracts, the
   IM notice texts and the goal bar's copy, so no to-do reminder, completion
   review or goal continuation resumes a stopped run, and the monitor never
-  checks or resumes a run a loop, token or spend cap stopped.
+  checks or resumes a run a loop, token or spend cap stopped. As with the other
+  hard stops (`test_goal_worker.py`), the goal check still runs on the visible
+  answer: the goal is met only if it says so, and otherwise stands down with
+  `deviation_stopped` unless it names another blocker.
 - **Evidence is sized to the monitor model's window** (`configured_model_budget`,
   `estimate_tokens`, `REQUEST_FIT_SHARE`), capped by `max_evidence_chars`: the
   request verbatim, goal and to-dos, the last six steps of the turn (older ones
   shorter), the compaction summary, the signals and a capped excerpt of the
-  latest tool result framed as data. Older steps go first; **the request is
+  latest tool result framed as data and JSON-encoded like the step results, so
+  a `>>>` in it cannot close the frame. Older steps go first; **the request is
   never cut**, and when it alone does not fit the check is skipped as `unsure`.
   Otherwise the monitor would repeat the silent truncation it exists to catch.
 - PII is redacted as `runtime/goal.py` does. The monitor model is authorized at
@@ -6877,10 +6904,22 @@ public API.
 - **The main request gains nothing**: no tool, no system-prompt text, only the
   retry's hidden reminder, so `test_context_fit_critical.py` is unchanged.
 - **The client omits the key while the chat's monitor is off**, and absent means
-  off with nothing written. The run-start write is `on_track` with
+  off with nothing written. The write that starts a turn is `on_track` with
   `last_checked_step: null`, which the bar shows as **Watching**: no check has
-  run in this run yet. `drifting` is one unconfirmed flag after the re-check, so
-  the bar says "not confirmed", never "re-checking".
+  run in this turn yet. `drifting` is one unconfirmed flag after the re-check,
+  so the bar says "not confirmed", never "re-checking".
+- **The bar follows what the running run was sent.** A run reads the chat's
+  choice once, at submit, so a change made during it shows as applying from the
+  next message instead of hiding a bar whose run is still monitored, or showing
+  Watching over a run nobody checks. Once idle, a report older than the newest
+  run is not current (an unmonitored run writes nothing). The run builder reads
+  the stored choice through `normalizeDeviationMonitorSetting`, as the button
+  and the bar do, so a damaged choice they show as on is sent as shown.
+- **A new chat's Settings default is held in memory** (`seedThreadContext`)
+  until the chat is sent (`promoteThreadContext`) or the user changes a choice
+  in it, so a new chat left without a message leaves no `localStorage` record;
+  a default model that left `config.yaml` is dropped once the model list has
+  loaded.
 - **Advisory, not a security boundary.** Text the agent read can steer the
   monitor's model too.
 
@@ -6921,7 +6960,9 @@ on the same real model; the eval's agent mode sends no run context yet, so
 roadmap item 60 first gives it an option that turns the monitor on. Turns mode has no `checking` status,
 because whether a response is the final answer is known only after the model
 call. Subagents are not monitored inside their own loops; only what they return
-is judged. `GOAL_RUN_HARD_STOP_REASONS` still lacks `spend_capped`
+is judged. The turn is keyed on the user message's id, so a resume after
+compaction removed that message starts a new turn (its count and its retry),
+and a compaction made by the first step of a resumed run is not a signal. `GOAL_RUN_HARD_STOP_REASONS` still lacks `spend_capped`
 (pre-existing, a separate decision).
 
 **On an upstream sync.** Upstream owns `services.py`, `routers/threads.py`,
@@ -6931,13 +6972,17 @@ projection without a visible failure, which is why this feature has a checklist
 row.
 
 Coverage: `backend/tests/test_deviation_monitor.py` (request parser, evidence,
-judge parse, cadence, stop, noise control, subagent retry, skips, run start,
+judge parse, cadence, the turn scope across runs, stop, noise control,
+subagent retry, skips, run start,
 billing, the sync path, the operator block, the stop vocabulary, and
 `TestSharedContract`, which regenerates the contract fixture's run-start
 write, stop message and stop state from the middleware),
 `test_deviation_monitor_graph.py` (a real graph: a stop before the drifting tool
-runs, the retry reminder, chain order), `test_deviation_monitor_gateway.py`
-(canonical context, server-owned channel, features),
+runs, the retry reminder, a response sent back by an inner middleware, chain
+order), `test_deviation_monitor_gateway.py` (canonical context, server-owned
+channel, features), `test_thread_goal_contract.py` (the POST `/history` head
+projects the channel), `test_goal_worker.py` (the goal after a
+`deviation_stopped` run),
 `tests/blocking_io/test_deviation_monitor_offloop.py`; the frontend
 `tests/unit/core/threads/deviation-monitor.test.ts` (with the contract fixture),
 `tests/unit/core/settings/deviation-monitor-storage.dom.test.ts`,

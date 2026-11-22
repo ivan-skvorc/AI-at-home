@@ -74,11 +74,12 @@ import { useProject } from "@/core/projects";
 import { useThreadScheduledTaskEvents } from "@/core/scheduled-tasks/events";
 import { useScheduleToolResultRefresh } from "@/core/scheduled-tasks/hooks";
 import { useLocalSettings, useThreadSettings } from "@/core/settings";
+import { getThreadContextOverride } from "@/core/settings/local";
 import {
-  copyThreadContextOverride,
-  getThreadContextOverride,
-} from "@/core/settings/local";
-import { resolveThreadContext, selectThreadModel } from "@/core/settings/store";
+  promoteThreadContext,
+  resolveThreadContext,
+  selectThreadModel,
+} from "@/core/settings/store";
 import { createThread } from "@/core/threads/api";
 import { holdsWorkflowSelection } from "@/core/threads/deviation-monitor";
 import {
@@ -366,6 +367,7 @@ function ChatInstanceContent({
     canSendInput,
     activeRunId,
     activeRunStartedAt,
+    latestRunStartedAt,
     regenerateMessage,
     isUploading,
     isHistoryLoading,
@@ -400,7 +402,9 @@ function ChatInstanceContent({
       // per-conversation key is stored under the thread id. Carry the selection
       // across before anything reads it, or the chat forgets — on its very
       // first turn — which model it just answered with.
-      copyThreadContextOverride(threadId, createdThreadId);
+      // Read from this tab, not storage: a new chat's Settings default is held
+      // in memory until now (`seedThreadContext`).
+      promoteThreadContext(threadId, createdThreadId);
       recordOnPromotion(createdThreadId, settingsRef.current.context);
       onThreadStarted?.(slotKey, createdThreadId);
     },
@@ -1010,6 +1014,7 @@ function ChatInstanceContent({
                       state={thread.values.deviation_monitor}
                       isRunning={thread.isLoading}
                       runStartedAt={activeRunStartedAt}
+                      latestRunStartedAt={latestRunStartedAt}
                       onChange={(deviation_monitor) =>
                         setSettings("context", { deviation_monitor })
                       }

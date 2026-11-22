@@ -6,29 +6,35 @@ through the run-context key ``deviation_monitor``
 every N agent steps or the final answer of every N turns. The operator's
 ``deviation_monitor:`` block decides whether it is offered at all.
 
-**When.** Steps are the lead's model responses in this run, a goal
-continuation included. A step check judges the response that just arrived,
-before its tool calls run; a turn check judges the turn's final answer once,
-at the moment ``CompletionReviewMiddleware`` and ``TodoMiddleware`` have let it
-stand (this middleware is registered outer of them, so its reverse-order
-``after_model`` runs after theirs). The agent waits for each check.
+**When.** Steps are the lead's model responses in the current user turn: a
+goal continuation, a response the to-do list or completion review sent back,
+and the runs that resume the same reply (an approval, a batch follow-up) all
+count, and only a new user message starts the count again. A step check judges
+the response that just arrived, before its tool calls run, once ``every``
+steps have passed since the last check (a due step that was sent back is
+checked at the next response); a turn check judges the turn's final answer
+once, at the moment ``CompletionReviewMiddleware`` and ``TodoMiddleware`` have
+let it stand (this middleware is registered outer of them, so its
+reverse-order ``after_model`` runs after theirs). The agent waits for each
+check.
 
 **What.** ``deviation_monitor_judge`` builds evidence sized to the monitor
 model's window and asks it for ``on_task`` / ``drifting`` / ``unsure``. A
 ``drifting`` verdict is asked once more; the monitor acts only when both
 agree, or when one does and a mechanical signal (a partial read, a truncated
-result, compaction, a full window) backs it. ``unsure``, a malformed reply, a
-timeout or a provider error is shown and never acted on.
+result, a compaction in this run, a full window) backs it. ``unsure``, a
+malformed reply, a timeout or a provider error is shown and never acted on.
 
 **Acting.** In a mode with subagents (Ultra's ``task``, Plus and Double Plus
 Ultracode's workflows) the first confirmed drift retries once: the drifting
 tool calls are dropped, the response keeps its text plus a visible notice, and
 the next model call carries a hidden reminder (request-only, named
 ``deviation_monitor_reminder``) restating the request and asking for smaller
-pieces through subagents. Otherwise, and on the second confirmed drift, the
-run stops the way the money cap stops it: tool calls stripped, a visible note
-appended, and ``deviation_stopped`` stamped on ``runtime.context`` so no to-do
-reminder, completion review or goal continuation resumes the run. A final
+pieces through subagents. Otherwise, on the second confirmed drift in the
+turn, and when the run has no ``task`` delegation left, the run stops the way
+the money cap stops it: tool calls stripped, a visible note appended, and
+``deviation_stopped`` stamped on ``runtime.context`` so no to-do reminder,
+completion review or goal continuation resumes the run. A final
 answer that is stopped stays visible, marked off-task by the note and by
 ``additional_kwargs.deviation_monitor_action``.
 
@@ -39,9 +45,10 @@ gains nothing (no tool, no prompt text) except the hidden reminder of a retry.
 
 **Visible.** Every decision is written to the thread-state channel
 ``deviation_monitor`` (status, reason, drift kind, restated task, model,
-checks, last checked step, update time, turn) and each check to the run
-journal (``middleware:deviation_monitor``, without the model's text). Every
-monitor call is billed into the run journal as ``middleware:deviation_monitor``.
+checks, last checked step, update time, and the turn bookkeeping: turn,
+request id, retried) and each check to the run journal
+(``middleware:deviation_monitor``, without the model's text). Every monitor
+call is billed into the run journal as ``middleware:deviation_monitor``.
 """
 
 from __future__ import annotations
@@ -61,9 +68,11 @@ from langchain_core.messages import AIMessage, HumanMessage
 from langgraph.runtime import Runtime
 
 from deerflow.agents.middlewares._bounded_dict import BoundedDict
+from deerflow.agents.middlewares.completion_review_middleware import current_turn
 from deerflow.agents.middlewares.context_window_guard_middleware import estimate_request_tokens
-from deerflow.agents.middlewares.deviation_monitor_judge import JudgeVerdict, ask_judge, build_monitor_evidence, latest_request
+from deerflow.agents.middlewares.deviation_monitor_judge import ACTION_MARKER_KEY, JudgeVerdict, ask_judge, build_monitor_evidence, latest_request, request_key
 from deerflow.agents.middlewares.input_sanitization_middleware import neutralize_untrusted_tags
+from deerflow.agents.middlewares.subagent_limit_middleware import _count_prior_delegations
 from deerflow.agents.middlewares.todo_middleware import (
     _COMPLETION_REMINDER_RESPONSE_STOP_MARKERS,
     _COMPLETION_REMINDER_RUN_STOP_REASONS,
@@ -71,6 +80,8 @@ from deerflow.agents.middlewares.todo_middleware import (
 )
 from deerflow.agents.middlewares.tool_call_metadata import clone_ai_message_with_tool_calls
 from deerflow.config.deviation_monitor_config import DEVIATION_MONITOR_CONTEXT_KEY, DeviationMonitorConfig, DeviationMonitorRequest, parse_deviation_monitor_request
+from deerflow.config.run_limit_overrides import run_limits_suspended
+from deerflow.config.subagents_config import effective_total_subagents_per_run
 from deerflow.runtime.events.catalog import MIDDLEWARE_DEVIATION_MONITOR_TAG
 from deerflow.utils.assembly_io import run_assembly
 from deerflow.utils.context_budget import configured_model_budget, resolve_context_budget
@@ -82,8 +93,9 @@ logger = logging.getLogger(__name__)
 STOP_REASON = "deviation_stopped"
 STATE_CHANNEL = DEVIATION_MONITOR_CONTEXT_KEY
 REMINDER_MESSAGE_NAME = "deviation_monitor_reminder"
-#: Marks a response the monitor rewrote: ``{action, final_answer, reason, drift_kind, restated_task}``.
-ACTION_MARKER_KEY = "deviation_monitor_action"
+#: The stop reason SubagentLimitMiddleware stamps once the run's delegations are used up.
+SUBAGENT_LIMIT_STOP_REASON = "subagent_limit_capped"
+_STATUSES = frozenset({"off", "checking", "on_track", "unsure", "drifting", "retrying", "stopped"})
 
 #: Plus and Double Plus Ultracode: the lead plans the work as a workflow script.
 WORKFLOW_MODES = frozenset({"ultracode", "double_ultracode"})
@@ -133,6 +145,9 @@ class DeviationMonitorState(AgentState):
 
 @dataclass
 class _Run:
+    """One run's monitor state. ``steps``, ``retried`` and ``turn_checked`` belong
+    to the user turn: a run that continues the turn starts from the channel."""
+
     request: DeviationMonitorRequest
     channel: dict[str, Any]
     steps: int = 0
@@ -142,6 +157,29 @@ class _Run:
     pending_reminder: str | None = None
     #: The status a "checking" replaced, put back when that check does not happen.
     before_checking: dict[str, Any] | None = None
+    #: The compaction summary when the run started; a change is a compaction in this run.
+    summary_at_start: str | None = None
+    #: The last response this middleware counted, so a response sent back is counted once.
+    seen_response: str | None = None
+
+
+def _whole(value: Any) -> int | None:
+    return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else None
+
+
+def _response_key(message: AIMessage) -> str:
+    return message.id if isinstance(message.id, str) and message.id else f"object:{id(message)}"
+
+
+def _stamped(message: AIMessage) -> bool:
+    """A response the monitor neither counts nor checks: an error fallback or a stop marker."""
+    metadata = message.additional_kwargs or {}
+    return bool(metadata.get("deerflow_error_fallback")) or any(metadata.get(marker) for marker in _COMPLETION_REMINDER_RESPONSE_STOP_MARKERS.values())
+
+
+def _turn_steps(messages: list[Any]) -> int:
+    """The current turn's responses still in the thread (compaction can remove some)."""
+    return sum(1 for message in current_turn(messages) if isinstance(message, AIMessage) and not _stamped(message))
 
 
 def _context(runtime: Any) -> dict[str, Any]:
@@ -231,6 +269,25 @@ class DeviationMonitorMiddleware(AgentMiddleware[DeviationMonitorState]):
             return None
         return cls(config, app_config=app_config)
 
+    def _can_delegate(self, state: Any, context: Mapping[str, Any]) -> bool:
+        """Whether a retry can still split the work: ``task`` delegations left, or a workflow mode.
+
+        A retry that asks for subagents the run may no longer start would have
+        every ``task`` call stripped by SubagentLimitMiddleware and throw the
+        response's work away for nothing.
+        """
+        if _workflow_mode(context) or run_limits_suspended(context):
+            return True
+        if context.get("stop_reason") == SUBAGENT_LIMIT_STOP_REASON:
+            return False
+        try:
+            total = effective_total_subagents_per_run(context.get("max_total_subagents"), self._resolved_app_config())
+        except (TypeError, ValueError):
+            return True  # SubagentLimitMiddleware owns the limit; a value it cannot read is not ours to enforce
+        run_id = context.get("run_id")
+        delegations = state.get("delegations") if isinstance(state, Mapping) else None
+        return _count_prior_delegations(delegations, run_id=str(run_id) if run_id else None) < total
+
     def release_policy_parameters(self) -> dict[str, object]:
         return {
             "judge_timeout_seconds": self._config.judge_timeout_seconds,
@@ -275,7 +332,21 @@ class DeviationMonitorMiddleware(AgentMiddleware[DeviationMonitorState]):
 
     @staticmethod
     def _channel(previous: Mapping[str, Any] | None, **fields: Any) -> dict[str, Any]:
-        base = {"status": "off", "reason": "", "drift_kind": None, "restated_task": "", "model": None, "checks": 0, "last_checked_step": None, "updated_at": "", "turn": 0}
+        base = {
+            "status": "off",
+            "reason": "",
+            "drift_kind": None,
+            "restated_task": "",
+            "model": None,
+            "checks": 0,
+            "last_checked_step": None,
+            "updated_at": "",
+            # Turn bookkeeping, outside the bar's fields: which user message the
+            # turn answers, how many turns there were, and whether it retried.
+            "turn": 0,
+            "request_id": None,
+            "retried": False,
+        }
         if isinstance(previous, Mapping):
             for key in base:
                 if key in previous:
@@ -335,28 +406,50 @@ class DeviationMonitorMiddleware(AgentMiddleware[DeviationMonitorState]):
         if refusal is not None:
             self._mark_unmonitored(key)
             return None, {STATE_CHANNEL: self._channel(previous, status="off", reason=refusal, model=request.model, last_checked_step=None)}
-        turn = previous.get("turn") if previous is not None else 0
-        turn = (turn if isinstance(turn, int) and not isinstance(turn, bool) and turn >= 0 else 0) + 1
-        checks = previous.get("checks") if previous is not None else 0
-        run = _Run(
-            request=request,
-            channel=self._channel(
-                previous,
-                status="on_track",
-                reason="",
-                drift_kind=None,
-                restated_task="",
-                model=request.model,
-                checks=checks if isinstance(checks, int) and not isinstance(checks, bool) and checks >= 0 else 0,
-                last_checked_step=None,
-                turn=turn,
-            ),
-        )
+        messages = list(state.get("messages") or []) if isinstance(state, Mapping) else []
+        run = self._start_run(request, previous, messages)
+        summary = state.get("summary_text") if isinstance(state, Mapping) else None
+        run.summary_at_start = summary if isinstance(summary, str) else None
         with self._lock:
             if key in self._runs:  # a concurrent hook of the same run started it first
                 return self._runs[key], None
             self._runs[key] = run
             return run, {STATE_CHANNEL: dict(run.channel)}
+
+    def _start_run(self, request: DeviationMonitorRequest, previous: Mapping[str, Any] | None, messages: list[Any]) -> _Run:
+        """The run's state, continuing the user turn when the run answers the same message.
+
+        A new user message starts a turn: the turn counter moves on and the
+        step count, the last check and the retry start over. A run over the
+        same message (an approval resume, a batch follow-up, a goal wakeup)
+        keeps all three, so "every N steps", "every N turns" and "one retry"
+        mean the user's reply, not each run inside it.
+        """
+        request_id = request_key(messages)
+        turn = (_whole(previous.get("turn")) if previous is not None else None) or 0
+        checks = (_whole(previous.get("checks")) if previous is not None else None) or 0
+        continuing = previous is not None and request_id is not None and previous.get("request_id") == request_id and previous.get("status") in _STATUSES - {"off"}
+        last = messages[-1] if messages and isinstance(messages[-1], AIMessage) else None
+        seen = _response_key(last) if last is not None else None
+        if not continuing:
+            channel = self._channel(previous, status="on_track", reason="", drift_kind=None, restated_task="", model=request.model, checks=checks, last_checked_step=None, turn=turn + 1, request_id=request_id, retried=False)
+            return _Run(request=request, channel=channel, seen_response=seen)
+        last_checked = _whole(previous.get("last_checked_step"))
+        retried = previous.get("retried") is True
+        status = previous.get("status")
+        restored = {} if status != "checking" else {"status": "on_track", "reason": ""}
+        channel = self._channel(previous, model=request.model, checks=checks, last_checked_step=last_checked, turn=turn, request_id=request_id, retried=retried, **restored)
+        return _Run(
+            request=request,
+            channel=channel,
+            # Counted in the earlier runs; compaction may have removed some of
+            # those responses, and the last check is a floor it cannot undercut.
+            steps=max(last_checked or 0, _turn_steps(messages)),
+            retried=retried,
+            # A turn check already ran in this turn, unless it asked for the retry still pending.
+            turn_checked=last_checked is not None and status != "retrying",
+            seen_response=seen,
+        )
 
     # -- hooks -------------------------------------------------------------------
 
@@ -364,11 +457,32 @@ class DeviationMonitorMiddleware(AgentMiddleware[DeviationMonitorState]):
         _run, update = await self._ensure_run(state, runtime)
         return update
 
+    def _count_sent_back(self, run: _Run, state: Any) -> None:
+        """Count a response an inner ``after_model`` sent straight back to the model.
+
+        The to-do reminder and the completion review jump to the model before
+        this middleware's ``after_model`` sees the response, so the next
+        ``before_model`` finds it as the latest message, not yet counted.
+        """
+        messages = state.get("messages") if isinstance(state, Mapping) else None
+        last = messages[-1] if messages else None
+        if not isinstance(last, AIMessage) or _stamped(last) or ACTION_MARKER_KEY in (last.additional_kwargs or {}):
+            return
+        key = _response_key(last)
+        with self._lock:
+            if key != run.seen_response:
+                run.seen_response = key
+                run.steps += 1
+
+    def _since_check(self, run: _Run, step: int) -> int:
+        return step - (_whole(run.channel.get("last_checked_step")) or 0)
+
     async def _before_model(self, state: Any, runtime: Any) -> dict[str, Any] | None:
         run, update = await self._ensure_run(state, runtime)
         if run is None or _context(runtime).get("stop_reason") in _COMPLETION_REMINDER_RUN_STOP_REASONS:
             return update
-        if run.request.mode == "steps" and (run.steps + 1) % run.request.every == 0 and run.channel.get("status") != "checking":
+        self._count_sent_back(run, state)
+        if run.request.mode == "steps" and self._since_check(run, run.steps + 1) >= run.request.every and run.channel.get("status") != "checking":
             with self._lock:
                 run.before_checking = {"status": run.channel.get("status"), "reason": run.channel.get("reason")}
             return _merge(update, self._publish(run, status="checking", reason=""))
@@ -383,7 +497,8 @@ class DeviationMonitorMiddleware(AgentMiddleware[DeviationMonitorState]):
 
     def _due(self, run: _Run, step: int, final: bool) -> bool:
         if run.request.mode == "steps":
-            return step % run.request.every == 0
+            # Not ``step % every``: a due step that was sent back is checked at the next response.
+            return self._since_check(run, step) >= run.request.every
         return final and not run.turn_checked and run.channel.get("turn", 0) % run.request.every == 0
 
     async def _after_model(self, state: Any, runtime: Any) -> dict[str, Any] | None:
@@ -400,11 +515,11 @@ class DeviationMonitorMiddleware(AgentMiddleware[DeviationMonitorState]):
         last = messages[-1] if messages and isinstance(messages[-1], AIMessage) else None
         if last is None:
             return None
-        metadata = last.additional_kwargs or {}
-        if metadata.get("deerflow_error_fallback") or any(metadata.get(marker) for marker in _COMPLETION_REMINDER_RESPONSE_STOP_MARKERS.values()):
+        if _stamped(last):
             return None
         final = not _has_tool_call_intent_or_error(last)
         with self._lock:
+            run.seen_response = _response_key(last)
             run.steps += 1
             step = run.steps
             due = self._due(run, step, final)
@@ -436,13 +551,16 @@ class DeviationMonitorMiddleware(AgentMiddleware[DeviationMonitorState]):
         app_config = self._resolved_app_config()
         messages = list(state.get("messages") or [])
         checks = int(run.channel.get("checks") or 0) + 1
+        summary = state.get("summary_text")
         evidence = build_monitor_evidence(
             messages,
             budget=configured_model_budget(app_config, run.request.model),
             max_chars=self._config.max_evidence_chars,
             goal=state.get("goal"),
             todos=state.get("todos"),
-            summary_text=state.get("summary_text"),
+            summary_text=summary,
+            # The summary is evidence either way; only a compaction in this run is a signal.
+            compacted_this_run=isinstance(summary, str) and bool(summary.strip()) and summary != run.summary_at_start,
             window_fill=run.window_fill,
             final_answer=final,
             pii_redaction=getattr(app_config, "pii_redaction", None),
@@ -488,7 +606,7 @@ class DeviationMonitorMiddleware(AgentMiddleware[DeviationMonitorState]):
 
         locale = _locale(context)
         reason = neutralize_untrusted_tags(acting.reason) if acting.reason else _NO_REASON[locale]
-        if _subagent_mode(context) and not run.retried:
+        if _subagent_mode(context) and not run.retried and self._can_delegate(state, context):
             with self._lock:
                 run.retried = True
                 run.turn_checked = False  # the retried answer is checked again
@@ -500,7 +618,7 @@ class DeviationMonitorMiddleware(AgentMiddleware[DeviationMonitorState]):
                 )
             note = _NOTES[locale]["retrying_final" if final else "retrying"].format(reason=reason)
             self._record(context, "retrying", audit)
-            update = self._publish(run, status="retrying", reason=acting.reason, drift_kind=acting.drift_kind, restated_task=acting.restated_task, **base)
+            update = self._publish(run, status="retrying", reason=acting.reason, drift_kind=acting.drift_kind, restated_task=acting.restated_task, retried=True, **base)
             return {**update, "messages": [self._rewrite(last, "retrying", acting, final, note)], "jump_to": "model"}
 
         context["stop_reason"] = STOP_REASON
@@ -515,7 +633,8 @@ class DeviationMonitorMiddleware(AgentMiddleware[DeviationMonitorState]):
         """The response with every tool call removed, its text kept and the note appended."""
         cloned = clone_ai_message_with_tool_calls(message.model_copy(update={"invalid_tool_calls": []}), [])
         kwargs = dict(cloned.additional_kwargs or {})
-        kwargs[ACTION_MARKER_KEY] = {"action": action, "final_answer": final, "reason": verdict.reason, "drift_kind": verdict.drift_kind, "restated_task": verdict.restated_task}
+        # ``note`` lets the next check show the response without the monitor's own words.
+        kwargs[ACTION_MARKER_KEY] = {"action": action, "final_answer": final, "reason": verdict.reason, "drift_kind": verdict.drift_kind, "restated_task": verdict.restated_task, "note": note}
         return cloned.model_copy(update={"content": _append_text(cloned.content, note), "additional_kwargs": kwargs})
 
     # -- the retry reminder and the window measurement --------------------------

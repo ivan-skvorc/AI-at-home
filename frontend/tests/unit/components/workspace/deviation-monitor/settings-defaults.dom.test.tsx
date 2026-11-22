@@ -23,12 +23,21 @@ rs.mock("@/core/features/deviation-monitor", () => ({
     isLoading: false,
   }),
 }));
+let modelsLoading = false;
 rs.mock("@/core/models/hooks", () => ({
   useModels: () => ({
-    models: [
-      { id: "chat-model", name: "chat-model", display_name: "Chat Model" },
-      { id: "judge-model", name: "judge-model", display_name: "Judge Model" },
-    ],
+    models: modelsLoading
+      ? []
+      : [
+          { id: "chat-model", name: "chat-model", display_name: "Chat Model" },
+          {
+            id: "judge-model",
+            name: "judge-model",
+            display_name: "Judge Model",
+          },
+        ],
+    isLoading: modelsLoading,
+    error: null,
   }),
 }));
 
@@ -39,6 +48,7 @@ import { enUS } from "@/core/i18n/locales/en-US";
 import { getThreadContextOverride } from "@/core/settings/local";
 import {
   getBaseSettingsSnapshot,
+  getThreadContextSnapshot,
   updateLocalSettings,
   updateThreadSettings,
 } from "@/core/settings/store";
@@ -46,6 +56,7 @@ import { DEFAULT_DEVIATION_MONITOR_DEFAULTS } from "@/core/threads/deviation-mon
 
 beforeEach(() => {
   featureEnabled = true;
+  modelsLoading = false;
   window.localStorage.clear();
   updateLocalSettings("deviationMonitor", {
     ...DEFAULT_DEVIATION_MONITOR_DEFAULTS,
@@ -133,10 +144,31 @@ describe("a new chat taking the defaults", () => {
 
   it("starts with the monitor on, as this chat's own choice", () => {
     seed("new-chat", true);
-    expect(getThreadContextOverride("new-chat")).toEqual({
+    expect(getThreadContextSnapshot("new-chat")).toEqual({
       deviation_monitor: {
         enabled: true,
         model: "judge-model",
+        cadence: { mode: "turns", every: 2 },
+      },
+    });
+    // Held in this tab until the chat is sent: an abandoned new chat leaves
+    // nothing in storage.
+    expect(getThreadContextOverride("new-chat")).toEqual({});
+  });
+
+  it("follows the chat's own model when the default model left config.yaml", () => {
+    act(() =>
+      updateLocalSettings("deviationMonitor", { modelName: "removed-model" }),
+    );
+    modelsLoading = true;
+    const { rerender } = seed("stale-default-chat", true);
+    // Not seeded while the model list loads: a chat is seeded once.
+    expect(getThreadContextSnapshot("stale-default-chat")).toEqual({});
+    modelsLoading = false;
+    rerender();
+    expect(getThreadContextSnapshot("stale-default-chat")).toEqual({
+      deviation_monitor: {
+        enabled: true,
         cadence: { mode: "turns", every: 2 },
       },
     });

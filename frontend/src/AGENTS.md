@@ -107,8 +107,8 @@ Each rule below breaks silently; the rationale and tests are in
 
 - Read [DATA_FLOW.md](DATA_FLOW.md) before you change `core/threads/` or
   `core/messages/`: run lifecycle, SSE frames, optimistic messages, grouping.
-- Live chat slots, concurrent chats, Democracy panels and the internet switch:
-  the [chats guide](components/workspace/chats/AGENTS.md).
+- Live chat slots, concurrent chats, Democracy panels, the internet switch and
+  the deviation monitor: the [chats guide](components/workspace/chats/AGENTS.md).
 - The composer and Side Chat keep the fork's picker, with prices:
   [MODEL_PICKER.md](components/workspace/MODEL_PICKER.md).
 - Chat folders and the virtualized sidebar lists:
