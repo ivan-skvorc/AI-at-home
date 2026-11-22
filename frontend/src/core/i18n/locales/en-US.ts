@@ -1213,6 +1213,69 @@ export const enUS: Translations = {
     manualOnly:
       "Automatic renaming is off in Settings → Conversation titles. This renames this conversation once, now, and leaves the setting off.",
   },
+  deviationMonitor: {
+    name: "Deviation monitor",
+    buttonOn: "Deviation monitor on",
+    buttonOff: "Deviation monitor off",
+    tooltipOff:
+      "Deviation monitor: a second model checks that the agent's work still serves your request, and stops the run if it drifts.",
+    tooltipOn: (model, cadence) =>
+      `Deviation monitor on: ${model} checks ${cadence}. Click to change it or turn it off.`,
+    title: "Deviation monitor",
+    description:
+      "While the agent works, a second model checks that its recent steps still serve your request. A confirmed drift stops the run with a note; in Ultra and Ultracode it first retries once, split into smaller subtasks. The agent waits for each check. It is a helper, not a safety guarantee.",
+    modelLabel: "Monitor model",
+    modelHint:
+      "Each check is a separate call to this model, billed to the run and counted against your spend limits. A second local model may make the GPU swap models on every check.",
+    modelRequired: "Pick the model that runs the checks.",
+    cadenceLabel: "How often to check",
+    cadenceSteps: "Every X steps",
+    cadenceStepsHint: "Steps the agent takes within one reply (1–50).",
+    cadenceTurns: "Every N turns",
+    cadenceTurnsHint:
+      "A turn is one message and the agent's work on it; the check runs just before the final answer (1–20).",
+    cadenceEveryTurn: "Every turn",
+    cadenceEveryTurnHint: "Once per message, just before the final answer.",
+    stepsInputLabel: "Steps between checks",
+    turnsInputLabel: "Turns between checks",
+    notInteger: "Enter a whole number.",
+    outOfRange: (min, max) => `Enter a number from ${min} to ${max}.`,
+    turnOn: "Turn on",
+    save: "Save",
+    cancel: "Cancel",
+    turnOff: "Turn off",
+    turnedOff: "Deviation monitor turned off for this chat.",
+    everySteps: (count) =>
+      count === 1 ? "every step" : `every ${count} steps`,
+    everyTurns: (count) =>
+      count === 1 ? "every turn" : `every ${count} turns`,
+    chatModel: "The chat's model",
+    status: {
+      regionLabel: "Deviation monitor",
+      idle: "Watching",
+      off: "Off for this run",
+      checking: "Checking…",
+      on_track: "On track",
+      unsure: "Unsure, not acted on",
+      drifting: "Possible drift, re-checking",
+      retrying: "Drift confirmed, retrying in smaller pieces",
+      stopped: "Stopped the run: it drifted from your request",
+    },
+    checks: (count) => (count === 1 ? "1 check" : `${count} checks`),
+    lastStep: (step) => `step ${step}`,
+    details: "Details",
+    hideDetails: "Hide details",
+    reasonLabel: "Why:",
+    driftKindLabel: "Kind:",
+    restatedTaskLabel: "Your request:",
+    modelLabelShort: "Model:",
+    driftKinds: {
+      goal_substitution: "Worked on a different goal",
+      scope_creep: "Went beyond what was asked",
+      abandonment: "Dropped the task",
+      false_completion: "Claimed it was done too early",
+    },
+  },
   backgroundTasks: {
     label: "Background tasks",
     title: "Background tasks",
@@ -3037,6 +3100,7 @@ export const enUS: Translations = {
       systemPrompt: "System prompt",
       maintenance: "Maintenance",
       runLimits: "Run limits",
+      deviationMonitor: "Deviation monitor",
       about: "About",
     },
     runLimits: {
@@ -3692,6 +3756,19 @@ export const enUS: Translations = {
       followWorkflow: "Follow workflow selection",
       serverDisabledHint:
         "Follow-up suggestions are disabled by the server configuration (suggestions.enabled in config.yaml). Enable it there to use this toggle.",
+    },
+    deviationMonitor: {
+      title: "Deviation monitor",
+      description:
+        "What new chats start with. Each chat keeps its own choice, set with the monitor button under the message box; changing these defaults leaves existing chats as they are.",
+      enableLabel: "On for new chats",
+      enableHint:
+        "New chats start with the monitor on, using the model and cadence below.",
+      modelLabel: "Default monitor model",
+      chatModelHint: "Each check uses the model the chat runs on.",
+      cadenceLabel: "Default cadence",
+      serverDisabledHint:
+        "The deviation monitor is turned off in the server configuration (deviation_monitor.enabled in config.yaml).",
     },
     autoTitle: {
       title: "Automatic conversation titles",

@@ -1,5 +1,6 @@
 import { isRecord } from "@/lib/utils";
 
+import { readDeviationMonitorState } from "./deviation-monitor";
 import type { AgentThreadState, ArtifactEntry, GoalState } from "./types";
 
 type ThreadStatePatch = Partial<AgentThreadState>;
@@ -26,6 +27,9 @@ const RENDERED_THREAD_STATE_KEYS = [
   "tool_artifacts",
   "todos",
   "goal",
+  // Fork: the deviation monitor's status bar. A key missing here is a frame
+  // the reducer never sees, and the bar would sit on "checking" all run.
+  "deviation_monitor",
 ];
 
 export function hasRenderedThreadStateUpdate(data: unknown): boolean {
@@ -164,6 +168,17 @@ export function reduceThreadStateUpdates(
     ) {
       patch.goal = update.goal;
       hasPatch = true;
+    }
+
+    // The monitor writes its whole status each time, so the latest valid one
+    // replaces the last. A null or malformed write is "not touched": blanking
+    // the bar mid-run would hide a drift the user has not read yet.
+    if (Object.hasOwn(update, "deviation_monitor")) {
+      const monitor = readDeviationMonitorState(update.deviation_monitor);
+      if (monitor !== null) {
+        patch.deviation_monitor = monitor;
+        hasPatch = true;
+      }
     }
   }
 

@@ -133,6 +133,7 @@ import {
   type ComposerDraft,
   writeComposerDraft,
 } from "@/core/threads/composer-draft";
+import type { DeviationMonitorChatSetting } from "@/core/threads/deviation-monitor";
 import type { RunInputMode } from "@/core/threads/run-inputs";
 import { threadTokenUsageQueryKey } from "@/core/threads/token-usage";
 import {
@@ -194,6 +195,7 @@ import {
   DropdownMenuTrigger,
 } from "../ui/dropdown-menu";
 
+import { DeviationMonitorControl } from "./deviation-monitor/deviation-monitor-control";
 import { InputAttachment } from "./input-attachment";
 import {
   abortGoalRequest,
@@ -459,7 +461,11 @@ export function InputBox({
     context: Partial<
       Omit<
         AgentThreadContext,
-        "thread_id" | "is_plan_mode" | "thinking_enabled" | "subagent_enabled"
+        | "thread_id"
+        | "is_plan_mode"
+        | "thinking_enabled"
+        | "subagent_enabled"
+        | "deviation_monitor"
       > & {
         mode:
           | "flash"
@@ -471,6 +477,8 @@ export function InputBox({
           | "double_ultracode"
           | undefined;
         reasoning_effort?: ReasoningEffortValue;
+        // The chat's stored monitor choice, off included.
+        deviation_monitor?: DeviationMonitorChatSetting;
       }
     >,
     options?: { automatic: boolean },
@@ -3629,6 +3637,20 @@ export function InputBox({
               disabled={composerLocked}
               enabled={internetEnabled}
               onToggle={handleInternetToggle}
+            />
+            {/* Fork: the deviation monitor. Only the changed key is passed, like
+                every explicit selection here. */}
+            <DeviationMonitorControl
+              disabled={composerLocked}
+              setting={context.deviation_monitor}
+              chatModelName={
+                typeof context.model_name === "string"
+                  ? context.model_name
+                  : undefined
+              }
+              onChange={(deviation_monitor) =>
+                onContextChange?.({ deviation_monitor })
+              }
             />
             <Tooltip
               content={

@@ -311,6 +311,10 @@ export function resolveThreadContext(
   const resolved = pickThreadScopedContext(context);
   const updates: Record<string, unknown> = {};
   const baseUpdates: Record<string, unknown> = { ...context };
+  // The deviation monitor is a per-chat choice with no app-wide default in
+  // `context` (new chats take theirs from Settings). In the base it would
+  // switch the monitor on for every chat in this tab that has none of its own.
+  delete baseUpdates.deviation_monitor;
   for (const key of Object.keys(resolved)) {
     if (Object.prototype.hasOwnProperty.call(existing, key)) {
       updates[key] = (resolved as Record<string, unknown>)[key];
