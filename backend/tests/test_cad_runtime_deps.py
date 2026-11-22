@@ -12,10 +12,15 @@ half is pinned on the Dockerfile text. The build itself is not exercised here.
 
 from __future__ import annotations
 
+import importlib.util
 import re
+import tomllib
 from pathlib import Path
 
+import pytest
+
 DOCKERFILE = Path(__file__).resolve().parents[2] / "backend" / "Dockerfile"
+CAD_PACKAGE = Path(__file__).resolve().parents[2] / "examples" / "deerflow-extension-cad"
 DISPATCH_PACKAGES = ("libglvnd0", "libglx0", "libgl1")
 
 
@@ -82,3 +87,19 @@ def test_the_unpack_follows_the_install_that_brings_libx11():
     install = next(index for index, instruction in enumerate(instructions) if re.search(r"apt-get install\b.*\blibgtk-3-0\b", instruction))
     unpack = next(index for index, instruction in enumerate(instructions) if "dpkg-deb -x" in instruction)
     assert install < unpack
+
+
+@pytest.mark.skipif(importlib.util.find_spec("cadquery") is None, reason="the CAD module is not installed on this platform")
+def test_the_picture_and_print_libraries_are_declared_and_import():
+    # The worker draws every part with numpy and Pillow (render.py) and reads how it prints with numpy
+    # (printability.py). Both used to arrive only through the kernel; the module now states them.
+    import numpy
+    from PIL import Image, ImageFont
+
+    dependencies = tomllib.loads((CAD_PACKAGE / "pyproject.toml").read_text(encoding="utf-8"))["project"]["dependencies"]
+    assert any(dependency.startswith("numpy>=2") for dependency in dependencies)
+    assert any(dependency.startswith("pillow>=10.1") for dependency in dependencies)
+    assert int(numpy.__version__.split(".")[0]) == 2
+    # Pillow 10.1 is the first whose built-in font takes a size, which the picture's labels use.
+    ImageFont.load_default(size=12)
+    assert Image.new("RGB", (2, 2)).size == (2, 2)
