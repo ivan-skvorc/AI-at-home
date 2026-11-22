@@ -80,6 +80,8 @@ async def test_history_head_carries_exactly_the_contract_keys(monkeypatch):
         # Server writers never leave both set; the projection must still carry each.
         "goal": active,
         "goal_outcome": goal.build_goal_outcome(active, _MET, reply_message_id=None),
+        # Fork: the deviation monitor's status bar survives a reload through the head too.
+        "deviation_monitor": {"status": "on_track", "reason": "", "model": "judge-small", "checks": 1},
         "todos": [{"content": "write tests", "status": "pending"}],
         "artifacts": ["/mnt/user-data/outputs/report.md"],
     }

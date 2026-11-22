@@ -59,6 +59,7 @@ from deerflow.agents.middlewares.view_image_middleware import _IMAGE_CONTEXT_MES
 from deerflow.config.agents_config import load_agent_config
 from deerflow.config.app_config import AppConfig, get_app_config
 from deerflow.config.database_config import resolve_checkpoint_graph_cache_max
+from deerflow.config.deviation_monitor_config import DEVIATION_MONITOR_CONTEXT_KEY, parse_deviation_monitor_request
 from deerflow.config.run_limit_overrides import UNLIMITED_STEPS, effective_recursion_limit, run_limits_suspended
 from deerflow.config.title_config import AUTO_TITLE_ENABLED_CONTEXT_KEY, AUTO_TITLE_MODEL_CONTEXT_KEY
 from deerflow.config.user_ui_state import get_auto_title_preference
@@ -650,7 +651,7 @@ def _normalize_input_messages(
 
 #: State channels only the server writes. ``goal_outcome`` is the "goal met"
 #: record that clearing a satisfied goal writes; a caller copy would forge one.
-SERVER_OWNED_STATE_CHANNELS = frozenset({"sandbox", "thread_data", "viewed_images", "goal_outcome", "applied_run_inputs"})
+SERVER_OWNED_STATE_CHANNELS = frozenset({"sandbox", "thread_data", "viewed_images", "goal_outcome", "applied_run_inputs", DEVIATION_MONITOR_CONTEXT_KEY})
 
 #: The ``write_todos`` status contract the todo middleware renders.
 _TODO_STATUSES = frozenset({"pending", "in_progress", "completed"})
@@ -1174,6 +1175,12 @@ _CONTEXT_CONFIGURABLE_KEYS: frozenset[str] = frozenset(
         # subagents alike; absent leaves the configured tool list alone, so
         # non-web callers (IM channels, TUI, scheduler) are unaffected.
         "internet_enabled",
+        # Fork: the per-chat deviation monitor (``{"enabled", "model",
+        # "cadence"}``). Checkpointed like the other composer switches, but
+        # only in its canonical form: ``_normalize_deviation_monitor_sections``
+        # rewrites whatever a client sent, so an invalid value is stored as
+        # off with a reason code and never fails the run.
+        DEVIATION_MONITOR_CONTEXT_KEY,
     }
 )
 
@@ -1317,6 +1324,21 @@ def sanitize_plugin_options(raw: Any) -> dict[str, dict[str, Any]] | None:
     return json.loads(encoded)
 
 
+def _normalize_deviation_monitor_sections(config: dict[str, Any]) -> None:
+    """Rewrite each section's ``deviation_monitor`` value into its canonical form.
+
+    Runs on both run-config sections, because ``build_run_config`` copies a
+    client's ``body.config`` verbatim and the key reaches ``configurable``
+    (checkpointed) that way too. The log carries the reason code, never the value.
+    """
+    for section in (config.get("configurable"), config.get("context")):
+        if isinstance(section, dict) and DEVIATION_MONITOR_CONTEXT_KEY in section:
+            request = parse_deviation_monitor_request(section[DEVIATION_MONITOR_CONTEXT_KEY])
+            if request.rejected:
+                logger.info("Deviation monitor request rejected for this run: %s", request.rejected)
+            section[DEVIATION_MONITOR_CONTEXT_KEY] = request.to_context()
+
+
 def merge_run_context_overrides(config: dict[str, Any], context: Mapping[str, Any] | None, *, internal: bool = False) -> None:
     """Merge whitelisted keys from ``body.context`` into both ``config['configurable']``
     and ``config['context']`` so they are visible to legacy configurable readers and
@@ -1374,6 +1396,7 @@ def merge_run_context_overrides(config: dict[str, Any], context: Mapping[str, An
             existing_runtime_context["client"] = existing_client_context
 
     if not context:
+        _normalize_deviation_monitor_sections(config)
         return
 
     configurable = config.setdefault("configurable", {})
@@ -1392,6 +1415,7 @@ def merge_run_context_overrides(config: dict[str, Any], context: Mapping[str, An
                 configurable.setdefault(key, context[key])
             if isinstance(runtime_context, dict):
                 runtime_context.setdefault(key, context[key])
+    _normalize_deviation_monitor_sections(config)
     # Explicit choices belong to this run, never to checkpoint defaults. Model
     # use is authorized against the authenticated identity during assembly and
     # again at child dispatch; these fields grant no additional permissions.

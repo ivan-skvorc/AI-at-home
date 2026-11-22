@@ -23,6 +23,7 @@ from deerflow.config.config_lint import lint_unknown_config_keys
 from deerflow.config.database_config import DatabaseConfig
 from deerflow.config.dedupe_storage_config import DedupeStorageConfig
 from deerflow.config.deployment_config import DeploymentConfig
+from deerflow.config.deviation_monitor_config import DeviationMonitorConfig
 from deerflow.config.documents_config import DocumentsConfig
 from deerflow.config.extensions_config import ExtensionsConfig, get_extensions_config
 from deerflow.config.file_signature import ConfigSignature as _ConfigSignature
@@ -387,6 +388,7 @@ class AppConfig(BaseModel):
     hitl_approval: HitlApprovalConfig = Field(default_factory=HitlApprovalConfig, description="Human-in-the-loop approval for high-risk tool calls")
     read_before_write: ReadBeforeWriteConfig = Field(default_factory=ReadBeforeWriteConfig, description="Read-before-write file gate middleware configuration")
     harness_guard: HarnessGuardConfig = Field(default_factory=HarnessGuardConfig, description="HarnessGuard tool-loop interceptor middleware configuration")
+    deviation_monitor: DeviationMonitorConfig = Field(default_factory=DeviationMonitorConfig, description="Deviation monitor: whether chats may turn it on, and the bounds of one check (fork feature)")
     projects: ProjectsConfig = Field(default_factory=ProjectsConfig, description="User projects configuration (instructions injection, shelf index, trash retention)")
     pii_redaction: PiiRedactionConfig = Field(default_factory=PiiRedactionConfig, description="PII redaction middleware configuration (issue #3190)")
     safety_finish_reason: SafetyFinishReasonConfig = Field(default_factory=SafetyFinishReasonConfig, description="Provider safety-filter finish_reason interception middleware configuration")

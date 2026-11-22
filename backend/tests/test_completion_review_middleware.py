@@ -171,7 +171,7 @@ class TestGate:
         assert mw.after_model({"messages": EDITED}, _runtime()) == {"jump_to": "model"}
         assert mw.after_model({"messages": EDITED}, _runtime()) is None
 
-    @pytest.mark.parametrize("stop", ["loop_capped", "token_capped", "spend_capped"])
+    @pytest.mark.parametrize("stop", ["loop_capped", "token_capped", "spend_capped", "deviation_stopped"])
     def test_a_capped_run_is_never_resumed(self, stop: str) -> None:
         assert _middleware_with_tools().after_model({"messages": EDITED}, _runtime(stop_reason=stop)) is None
 

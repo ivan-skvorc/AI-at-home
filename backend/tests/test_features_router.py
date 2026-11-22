@@ -97,6 +97,7 @@ def test_features_reports_agents_api_enabled() -> None:
         },
         "scheduled_tasks": {"available": False, "running": False, "tool_enabled": False, "min_interval_seconds": 60, "group_notifications": False},
         "thread_activity": {"available": False},
+        "deviation_monitor": {"enabled": True},
     }
 
 
@@ -123,6 +124,7 @@ def test_features_reports_agents_api_disabled() -> None:
         },
         "scheduled_tasks": {"available": False, "running": False, "tool_enabled": False, "min_interval_seconds": 60, "group_notifications": False},
         "thread_activity": {"available": False},
+        "deviation_monitor": {"enabled": True},
     }
 
 

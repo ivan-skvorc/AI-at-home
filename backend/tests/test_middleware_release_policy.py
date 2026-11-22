@@ -162,6 +162,12 @@ def _make_completion_review_middleware():
     return CompletionReviewMiddleware(skill_learning=True, nudge_after_tool_calls=8, archive_unused_after_days=90)
 
 
+def _make_deviation_monitor_middleware():
+    from deerflow.agents.middlewares.deviation_monitor_middleware import DeviationMonitorMiddleware
+
+    return DeviationMonitorMiddleware()
+
+
 def _make_token_budget_middleware():
     from deerflow.agents.middlewares.token_budget_middleware import TokenBudgetMiddleware
     from deerflow.config.token_budget_config import TokenBudgetConfig
@@ -250,6 +256,8 @@ _MIDDLEWARE_DECLARATIONS = [
     ("deerflow.agents.middlewares.todo_middleware", "TodoMiddleware", _make_todo_middleware),
     # Fork (FORK.md §55): the completion review's checks and the curator window.
     ("deerflow.agents.middlewares.completion_review_middleware", "CompletionReviewMiddleware", _make_completion_review_middleware),
+    # Fork: the deviation monitor's bounds and the stop vocabulary it skips on.
+    ("deerflow.agents.middlewares.deviation_monitor_middleware", "DeviationMonitorMiddleware", _make_deviation_monitor_middleware),
     ("deerflow.agents.middlewares.token_budget_middleware", "TokenBudgetMiddleware", _make_token_budget_middleware),
     ("deerflow.agents.middlewares.deferred_tool_filter_middleware", "DeferredToolFilterMiddleware", _make_deferred_tool_filter_middleware),
     ("deerflow.agents.middlewares.safety_finish_reason_middleware", "SafetyFinishReasonMiddleware", _make_safety_finish_reason_middleware),
@@ -318,7 +326,7 @@ def test_todo_hard_stop_policy_changes_assembly_identity(monkeypatch):
     previous = TodoMiddleware()
     previous_params = previous.release_policy_parameters()
     # Fork: the money cap's run-level stop is a hard stop too (FORK.md §10).
-    assert previous_params["completion_reminder_hard_stop_reasons"] == ["loop_capped", "token_capped", "spend_capped", "safety_capped", "model_length_capped"]
+    assert previous_params["completion_reminder_hard_stop_reasons"] == ["loop_capped", "token_capped", "spend_capped", "deviation_stopped", "safety_capped", "model_length_capped"]
     previous_params["completion_reminder_hard_stop_reasons"] = ["loop_capped", "token_capped"]
     assert previous_params.pop("skip_completion_reminder_on_safety_cap") is True
     monkeypatch.setattr(previous, "release_policy_parameters", lambda: previous_params)
@@ -396,7 +404,7 @@ def test_completion_review_declares_the_reused_stop_vocabulary_and_code_suffixes
     from deerflow.agents.middlewares import completion_review_middleware as module
 
     params = module.CompletionReviewMiddleware().release_policy_parameters()
-    assert params["run_stop_reasons"] == ["loop_capped", "token_capped", "spend_capped"]
+    assert params["run_stop_reasons"] == ["loop_capped", "token_capped", "spend_capped", "deviation_stopped"]
     assert set(params["response_stop_markers"]) == {"safety_capped", "model_length_capped"}
     before = params["code_suffixes_hash"]
     monkeypatch.setattr(module, "CODE_SUFFIXES", module.CODE_SUFFIXES | {".md"})
