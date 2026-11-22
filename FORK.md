@@ -5776,7 +5776,11 @@ numbers.
   and the area. A `hole_diameters_mm` entry may be `[d, x, y, z]`, any point on
   the axis, so the schema did not change: it passes when a measured hole of
   that diameter has its axis within max(0.05 mm, 0.1 % of the largest side) of
-  the point, matched one to one, and a miss names the nearest hole. The answer
+  the point, matched one to one, and a miss names the nearest hole that no
+  other point took. A blind hole's point may not lie past its floor by more
+  than that tolerance (`past_floor_mm` on a miss), because h08's hole drilled
+  into the wrong end lies on the same line and passed; a point beside the part
+  on the entry side still places it. The answer
   lists at most 12 holes (four add about 50 tokens, pinned at 120), and
   `report.json` holds every hole once, with what made it: the module's and
   CadQuery's versions, the script's SHA-256 and the files of the set. The
@@ -5813,7 +5817,15 @@ numbers.
   wall estimate is used, `printability.thinnest_wall_mm`: it is deterministic
   and reads the file the slicer gets, while `measure.sampled_wall` is bounded
   by a clock, so its value moved with the machine's load and it could add a
-  second to every build.
+  second to every build. A part of several bodies is judged body by body, each
+  standing on the bed as `.parts.3mf` lays it out (`assess_apart`, meshes read
+  from the 3MF's per-body objects, `printed_apart: true`): on the merged STL a
+  part split for the bed was still too tall, open where its halves touch and
+  400 mm² overhanging, and the notes sent the model to split it again. Bodies
+  share the wall rays by area. Welded connected components of the STL would not
+  do: touching bodies weld into one. `build.export` renumbers the kernel's 3MF
+  objects from 1 and adds the `rels` and `model` default content types, because
+  lib3mf refused every file the kernel wrote (`normalise_3mf`).
 - **Several bodies (item 51).** The first real request was a print-in-place
   laptop stand. `bodies` (1 to 20) makes the check "closed solids", exactly n
   valid closed solids, with the volume their sum and the box their union; with
@@ -5842,7 +5854,15 @@ numbers.
   UNVERIFIED. It adds nothing CAD-specific to core (see
   `subagents/ACCEPTANCE_CHECKS.md`), and the `task` description did not change
   by a byte; `references/delegation.md` carries the recipe, one part name per
-  subagent, Ultra only. Plus Ultracode is later work: its workflow agents run
+  subagent, Ultra only. The leaf matches `where` exactly and records no other
+  argument, so `holds` says the subagent's newest build of that exact name
+  passed against numbers the subagent chose (a reviewer's subagent passed with
+  a 10 mm cube for a 60 × 40 × 6 bracket); the recipe has the lead build the
+  returned script once against its own numbers before calling the part
+  finished, which also covers a rebuild under a case variant of the name.
+  Binding the numbers in the leaf would need an assertion clause on the
+  deciding call, not a second `where`, which filters and would let an early
+  pass decide. Plus Ultracode is later work: its workflow agents run
   on child threads where acceptance criteria are not checked, so it needs merge
   workspaces and host evidence on the workflow record.
 - **The CAD eval (item 48).** `cad_build`'s pass is graded on the model's own
@@ -6076,9 +6096,9 @@ kernel vector, a second rail), `spline`'s arguments past `periodic`,
 `text`'s `kind` (one font file letters bold and italic as regular), `split` with
 a part (`cut()` does it), `parametricCurve`, `each`, `eachpoint` and `cutEach`
 (callables), `sketch` and `placeSketch`, and every constructor on `cq` but
-`cq.Wire.makeHelix`. CadQuery's 3MF writer numbers its objects from 0, which the
-3MF core specification does not allow, and writes each face's vertices apart, so
-a slicer may report a repair; a post-pass that renumbers and welds is not
+`cq.Wire.makeHelix`. CadQuery's 3MF writer writes each face's vertices apart,
+so a slicer may report a repair; `normalise_3mf` renumbers the objects from 1
+and adds the default content types, and a pass that welds the vertices is not
 written. `measure.sampled_wall` is a library function the worker does not call
 (the print block's wall comes from `printability.py`). The print thresholds and
 the skill's clearance and nut tables have not been checked on a real printer;
@@ -6662,7 +6682,11 @@ extensions-group entry and a `[tool.uv.sources]` path in
 `backend/pyproject.toml` with no platform marker (the Python half is a
 registration and the rest is built browser assets), an enabled `plugins:` record
 in `config.example.yaml`, and a `config_upgrade.py` migration that names
-`cad-preview` alone, as migration 73 does for `cad`. Rejected: off by default.
+`cad-preview` alone, as migration 73 does for `cad`: migration 76, so
+`config_version` is 76 in the example and both chart copies. Like every
+migration that delivers a record, it rewrites `config.yaml` without its comments
+and keeps the original as `config.yaml.bak`; the release note says so.
+Rejected: off by default.
 A viewer that waits for an operator leaves every default CAD user with files
 they can only download, and the parsers, not the switch, are what contain a
 hostile file. `make extension-disable NAME=cad-preview` turns it off, and GLB
@@ -6723,10 +6747,10 @@ and STL files go back to the download fallback.
 
 **Known gaps.** There was no real phone and no GPU where it was built: 390 px
 was emulated and WebGL ran on SwiftShader, so a real phone with a GPU browser is
-the owner's acceptance check. At 390 px the host's artifact sheet header is
-408 px wide for every file type, a host bug older than this package, so the spec
-checks page-level overflow only from 600 px up; it checks the viewer's own box
-at every width. A 3MF gets the download fallback. The bounding box is measured
+the owner's acceptance check. At 390 px the chat header's toolbar
+(`chat-instance.tsx`, a row that does not shrink) runs past the viewport behind
+the panel's sheet, with or without this package, so the spec checks page-level
+overflow only from 600 px up; it checks the viewer's own box at every width. A 3MF gets the download fallback. The bounding box is measured
 on the triangles, so a curved face can read up to the mesh tolerance under the
 CAD report, which measures the solid.
 
@@ -6749,5 +6773,7 @@ of two bodies in the panel and the reader at 1440 and 390 px, the bounding box
 against `report.json` within 0.1 mm, both download fallbacks, twenty file
 switches with one live context, no idle frames, the theme switch, and GLB and
 STL unchanged with the plugin absent or disabled); and
-`backend/tests/test_bundled_cad_preview_extension.py` with the migration's case
-in `test_config_upgrade_script.py`.
+`backend/tests/test_bundled_cad_preview_extension.py`, which also holds
+migration 76's cases (delivered once to an install on version 75, a removal
+that sticks, an operator's own record left alone); `test_config_upgrade_script.py`
+only pins the example's plugin order (`workflows`, `cad`, `cad-preview`).

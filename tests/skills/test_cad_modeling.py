@@ -139,6 +139,8 @@ QUOTED = [
     # Holes where they are, and how many edges a fillet or chamfer took (item 57).
     "nearest_at",
     "off_axis_mm",
+    "past_floor_mm",
+    "nearest_matches",
     "lists every hole with where it is",
     "check that the selection took only the edges meant",
     # The steps after the checks (items 53 and 54), and printability's notes.
@@ -151,6 +153,9 @@ QUOTED = [
     "larger than the build volume",
     "it fits turned 90° on the bed",
     "the mesh is not watertight",
+    # Several bodies are judged as .parts.3mf lays them out, each named by its number.
+    "do not fit the build volume together",
+    "printed apart, as the .parts.3mf lays them out, each one does",
 ]
 
 

@@ -185,6 +185,43 @@ def test_a_part_larger_than_the_bed_gets_the_fit_note():
     assert printability.fit([300, 250, 10], [256, 320, 100]) == {"fits_build_volume": False, "too_large_axes": ["X"], "fits_turned": True}
 
 
+def test_bodies_printed_apart_are_each_judged_standing_on_the_bed():
+    # A 40 mm part split into two 20 mm halves for a 30 mm bed. As one mesh it is too tall, its halves'
+    # shared corners are edges of four triangles and the upper half's underside hangs: three notes the
+    # split was meant to answer. Laid apart (part.parts.3mf), each half is closed, fits and stands flat.
+    bed = {**PRINTER, "build_volume_mm": [100, 100, 30]}
+    lower, upper = box((0, 0, 0), (20, 20, 20)), box((0, 0, 20), (20, 20, 40))
+    together = printability.assess(np.concatenate([lower, upper]), **bed)
+    assert (together["fits_build_volume"], together["watertight"], together["overhang_mm2"]) == (False, False, 400.0)
+    apart = printability.assess_apart([lower, upper], **bed, volume_mm3=16000.0)
+    assert apart["printed_apart"] is True and apart["fits_build_volume"] is True and apart["watertight"] is True
+    assert (apart["overhang_mm2"], apart["bed_contact_mm2"], apart["grams"], apart["thinnest_wall_mm"]) == (0.0, 800.0, 19.84, 20.0)
+    assert [body["fits_build_volume"] for body in apart["bodies"]] == [True, True]
+    # Too tall together and not apart: said once, in words that do not send the model to split it again.
+    (note,) = printability.notes(apart, nozzle_mm=0.4)
+    assert note == "as modelled the bodies do not fit the build volume together (100 × 100 × 30 mm) in Z; printed apart, as the .parts.3mf lays them out, each one does"
+    assert "larger than the build volume" not in note
+    # A body that does not fit on its own is named with its number; the bodies together are not said again.
+    tall = printability.assess_apart([lower, box((40, 0, 0), (60, 20, 50))], **bed)
+    assert tall["fits_build_volume"] is False and tall["too_large_axes"] == ["Z"] and tall["fits_turned"] is False
+    assert printability.notes(tall, nozzle_mm=0.4) == ["body 2: larger than the build volume (100 × 100 × 30 mm) in Z"]
+    # The same sentence for several bodies is one note that names them all.
+    posts = [box((x, 0, 0), (x + 10, 10, 50)) for x in (0, 20, 40)]
+    assert printability.notes(printability.assess_apart(posts, **bed), nozzle_mm=0.4) == ["bodies 1, 2 and 3: larger than the build volume (100 × 100 × 30 mm) in Z"]
+    assert printability.notes(printability.assess_apart(posts[:2], **bed), nozzle_mm=0.4)[0].startswith("bodies 1 and 2: ")
+
+
+def test_a_mesh_given_as_vertices_and_triangles_is_read_as_triangles():
+    vertices = [(0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1)]
+    triangles = printability.mesh_triangles(vertices, [(0, 2, 1), (0, 1, 3), (0, 3, 2), (1, 2, 3)])
+    assert triangles.shape == (4, 3, 3) and printability.open_edges(triangles) == 0
+    for bad in ([(0, 1, 4)], [], [(0, 1)]):
+        with pytest.raises(ValueError):
+            printability.mesh_triangles(vertices, bad)
+    with pytest.raises(ValueError):
+        printability.mesh_triangles([(0, 0, float("nan")), (1, 0, 0), (0, 1, 0)], [(0, 1, 2)])
+
+
 def test_a_plate_built_standing_on_edge_is_told_to_lie_flat(tmp_path):
     triangles = kernel_triangles(plate_on_edge, tmp_path)
     sizes = np.ptp(triangles.reshape(-1, 3), axis=0)

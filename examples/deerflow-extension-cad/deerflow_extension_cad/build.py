@@ -16,6 +16,7 @@ import json
 import re
 import struct
 import zipfile
+from collections.abc import Callable
 from pathlib import Path
 
 from deerflow_extension_cad import allowlist as table
@@ -378,7 +379,58 @@ MAX_BODY_FILES = 8
 _MESH_OBJECT = re.compile(r'<object id="(\d+)"[^>]*>\s*<mesh>(.*?)</mesh>\s*</object>', re.S)
 _COMPONENTS_OBJECT = re.compile(r'<object id="\d+"[^>]*>\s*<components>.*?</components>\s*</object>', re.S)
 _VERTEX = re.compile(r'<vertex x="([^"]+)" y="([^"]+)" z="([^"]+)"')
+_TRIANGLE = re.compile(r'<triangle v1="(\d+)" v2="(\d+)" v3="(\d+)"')
 _BUILD = re.compile(r"<build>.*?</build>", re.S)
+
+
+#: An object's own id and the references to one, in the kernel's model.
+_RESOURCE_ID = re.compile(r'(<(?:object|component|item)\b[^>]*?\s(?:id|objectid)=")(\d+)(")')
+_TYPES_OPEN = re.compile(r"<Types\b[^>]*>")
+#: Package defaults lib3mf requires: the relationships part needs a content type for its extension.
+_DEFAULT_TYPES = {
+    "rels": "application/vnd.openxmlformats-package.relationships+xml",
+    "model": "application/vnd.ms-package.3dmanufacturing-3dmodel+xml",
+}
+
+
+def _rewrite(threemf: bytes, edits: dict[str, Callable[[str], str]]) -> bytes:
+    """The package with each named part passed through its edit (text in, text out), every other part as it was."""
+    with zipfile.ZipFile(io.BytesIO(threemf)) as package:
+        entries = [(info, package.read(info)) for info in package.infolist()]
+    missing = set(edits) - {info.filename for info, _ in entries}
+    if missing:
+        raise ValueError(f"the 3MF has no {sorted(missing)[0]}")
+    out = io.BytesIO()
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as package:
+        for info, content in entries:
+            edit = edits.get(info.filename)
+            package.writestr(info.filename, edit(content.decode("utf-8")).encode("utf-8") if edit else content)
+    return out.getvalue()
+
+
+def normalise_3mf(threemf: bytes) -> bytes:
+    """The kernel's 3MF made to the 3MF core specification, which lib3mf, the Consortium's reader, holds it to.
+
+    The kernel numbers its objects from 0, where a resource id is a positive integer, so every id and
+    every reference to one moves up by one. Its content types name the relationships part only by an
+    override, and lib3mf refuses a package without a default for the extension, so the defaults are added.
+    The geometry is untouched.
+    """
+
+    def renumber(model: str) -> str:
+        ids = [int(found) for found in re.findall(r'<object\b[^>]*?\sid="(\d+)"', model)]
+        if not ids or min(ids) > 0:
+            return model
+        return _RESOURCE_ID.sub(lambda found: f"{found.group(1)}{int(found.group(2)) + 1}{found.group(3)}", model)
+
+    def defaults(types: str) -> str:
+        added = "".join(f'<Default Extension="{extension}" ContentType="{kind}" />' for extension, kind in _DEFAULT_TYPES.items() if f'Extension="{extension}"' not in types)
+        opening = _TYPES_OPEN.search(types)
+        if opening is None:
+            raise ValueError("the 3MF content types have no Types element")
+        return types[: opening.end()] + added + types[opening.end() :]
+
+    return _rewrite(threemf, {"3D/3dmodel.model": renumber, "[Content_Types].xml": defaults})
 
 
 def lay_out(threemf: bytes, gap_mm: float = PARTS_GAP_MM) -> bytes:
@@ -415,6 +467,17 @@ def lay_out(threemf: bytes, gap_mm: float = PARTS_GAP_MM) -> bytes:
         for info, content in entries:
             package.writestr(info.filename, model.encode("utf-8") if info.filename == "3D/3dmodel.model" else content)
     return out.getvalue()
+
+
+def body_meshes(threemf: bytes) -> list[tuple[list[tuple[float, ...]], list[tuple[int, ...]]]]:
+    """Each body's mesh in the kernel's 3MF, in the order it holds them: vertices in millimetres and triangles by vertex.
+
+    The kernel writes one mesh object per body, from the mesh the STL was written with, so the print
+    block can judge the bodies one by one where part.stl has them merged.
+    """
+    with zipfile.ZipFile(io.BytesIO(threemf)) as package:
+        model = package.read("3D/3dmodel.model").decode("utf-8")
+    return [([tuple(map(float, found)) for found in _VERTEX.findall(mesh)], [tuple(map(int, found)) for found in _TRIANGLE.findall(mesh)]) for _, mesh in _MESH_OBJECT.findall(model)]
 
 
 def _bodies_apart(shape, threemf: Path, directory: Path, names: dict[str, str], linear: float, angular: float, max_bytes: int) -> None:
@@ -475,6 +538,9 @@ def export(shape, cq, directory: Path, max_bytes: int) -> tuple[dict[str, str], 
     _fits(stl, "STL", max_bytes)
     # The slicer's file: in millimetres, from the mesh the STL was just written with (the kernel keeps it on the shape).
     cq.exporters.export(shape, str(threemf), tolerance=linear, angularTolerance=angular)
+    _fits(threemf, "3MF", max_bytes)
+    # Before anything reads it: part.parts.3mf is made from these bytes and inherits the ids and defaults.
+    threemf.write_bytes(normalise_3mf(threemf.read_bytes()))
     _fits(threemf, "3MF", max_bytes)
     solids = shape.Solids()
     if len(solids) > 1:

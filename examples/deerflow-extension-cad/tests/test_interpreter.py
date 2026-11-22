@@ -985,7 +985,8 @@ def test_the_tool_description_and_the_readme_list_exactly_the_allow_listed_metho
     readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
     table = readme[readme.index("| Group | Methods |") : readme.index("Selector strings are")]
     assert set(re.findall(r"`([A-Za-z0-9]+)`", table)) == set(allowlist.METHODS)
-    assert f"{len(allowlist.METHODS)} methods plus the constructor" in readme
+    # Besides the methods, two constructors on cq: CONSTRUCTOR (cq.Workplane) and HELIX (cq.Wire.makeHelix).
+    assert f"{len(allowlist.METHODS)} methods plus two constructors, `cq.Workplane` and `cq.Wire.makeHelix`" in readme
 
 
 def test_model_text_never_reaches_exec_eval_or_compile():

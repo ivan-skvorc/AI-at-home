@@ -65,7 +65,7 @@ The part was built and measured. Each check gives `expected` and `measured`.
 | volume | A cut that is missing or made twice, a body that was never joined, a loop whose passes each start from the same part, a feature in the wrong place | Read `notes`: they name bodies left out of the result and passes of a loop whose work is not in it. Carry the part through the loop: `result = result.hole(...)`. A countersink cut from the top of a peg removes its drill and not its head; a slot placed from a face that an earlier slot split lands elsewhere: place it from the origin. Several bodies: the volume is their sum |
 | holes, with "not measured" | One body was expected and the result is several, and holes are measured on one solid | Join the bodies, or pass `bodies` if they are meant to be loose; each body's holes are then measured on that body |
 | holes | A hole missing, doubled or of another diameter | One entry per hole. A counterbore or countersink counts once, with its drill diameter. One pass through two walls is one hole. Slots are not holes. The inside of a round pot or a hollow boss counts as one blind hole of its inner diameter: list it. A hole that breaks out through an edge is not counted: check its position |
-| holes, with `misplaced` | A hole is not at the point given as `[d, x, y, z]`. Each entry has your point (`expected`), the nearest hole of that diameter (`nearest_at`, where it is entered) and how far its axis passes from your point (`off_axis_mm`) | The point is in the part's coordinates, not the workplane's: on a side face the workplane's x is not the part's x. Move the hole by the difference, placed from `workplane(origin=(0, 0, 0))`. `nearest_at` null: no hole of that diameter at all. Check the sign of each coordinate before you move anything |
+| holes, with `misplaced` | A hole is not at the point given as `[d, x, y, z]`. Each entry has your point (`expected`), the nearest hole of that diameter that no other point accounts for (`nearest_at`, where it is entered), how far its axis passes from your point (`off_axis_mm`) and, for a blind hole whose floor stops short of your point, by how much (`past_floor_mm`) | The point is in the part's coordinates, not the workplane's: on a side face the workplane's x is not the part's x. Move the hole by the difference, placed from `workplane(origin=(0, 0, 0))`. `past_floor_mm`: the hole is drilled into the opposite face; drill it from the face your point is on. `nearest_matches`: that hole already stands for the point named there, so leave it and add the missing hole. `nearest_at` null: no hole of that diameter at all. Check the sign of each coordinate before you move anything |
 
 ## What the picture shows
 
@@ -106,7 +106,9 @@ A passed part's `print` block has `grams` (solid, at the printer's density),
 `bed_contact_mm2`, `overhang_mm2`, `thinnest_wall_mm` and, when the operator set
 a build volume, `fits_build_volume`. It is reported, never checked: a part
 passes or fails on its numbers alone. Its `notes` come only past a fixed
-threshold. The printer is the operator's; do not ask the user for it.
+threshold. The printer is the operator's; do not ask the user for it. For
+several bodies the block has `printed_apart: true`: each body is judged on the
+bed as `.parts.3mf` lays it out, and each note names its bodies (`body 2: …`).
 
 | The print note says | Do |
 | --- | --- |
@@ -114,6 +116,7 @@ threshold. The printer is the operator's; do not ask the user for it.
 | … mm² overhangs past …° and needs support | When the note names a better side (`; with its … side on the bed it would be …`), tell the user to lay the part on that side in the slicer. Turning it in the script instead changes the expected bounding box: say why when `expected_changed` reports it. Otherwise chamfer the underside at 45°, or tell the user it needs support |
 | nothing flat rests on the bed: give it a flat face at the lowest z, or it needs a brim or support | Cut a flat at the lowest z, or turn the part onto a flat face |
 | larger than the build volume (… mm) in … | With `; it fits turned 90° on the bed`, say so: the user turns it in the slicer. Otherwise `split` it, keeping both halves, and build it with `bodies=2`: the `.parts.3mf` lays the halves apart, so a gap note about where they touch does not apply to it. Or tell the user it does not fit their printer |
+| as modelled the bodies do not fit the build volume together (… mm) in …; printed apart, as the .parts.3mf lays them out, each one does | Present the `.parts.3mf` for printing. The bodies cannot be printed in place from the `.3mf` on this printer: say so when they were meant to be |
 | the mesh is not watertight | The STEP is exact; the STL and 3MF have gaps a slicer usually repairs. Tell the user, and simplify the smallest features if the slicer cannot |
 
 ## Not a failure of the script

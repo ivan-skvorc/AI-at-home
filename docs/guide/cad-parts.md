@@ -67,9 +67,12 @@ The checks decide pass or fail, on numbers the model states before the build:
   `[d, x, y, z]`, a diameter and any point on its axis, such as its centre on
   the face it is drilled from. It then passes only when a measured hole of that
   diameter has its axis within 0.05 mm, or 0.1 % of the part's largest side, of
-  that point. One measured hole stands for one expected hole. A hole that is
+  that point. For a blind hole the point must also not lie past the hole's
+  floor by more than that, so the same line drilled into the opposite face does
+  not pass. One measured hole stands for one expected hole. A hole that is
   not where it was asked for is listed with the nearest hole of its diameter
-  and how far off it is.
+  that no other point accounts for, how far off its axis is and, for a blind
+  hole, how far past its floor the point lies.
 
 The answer also lists up to 12 holes, each with its diameter, the point where
 it is entered and its drill direction. The report lists every hole, and its
@@ -109,6 +112,13 @@ overhang of 25 mm² or more (with the side that would halve it when there is
 one), nothing flat on the bed, a part larger than the build volume (and whether
 it fits turned 90°), and a mesh that is not watertight. The report holds the
 whole block for every built part, passed or failed.
+
+A part of several bodies is judged body by body instead, each standing on the
+bed as `.parts.3mf` lays it out, never turned. The block then has
+`printed_apart: true`: its areas are the bodies' sums, it fits and is watertight
+only when every body does, and each note names its bodies (`body 2: …`). One
+more note says when the bodies fit the bed apart but not together as modelled,
+which matters for printing them in place from the `.3mf`.
 
 The model builds a part in print orientation, with the bed face flat at the
 lowest z. For holes that take screws, nuts and inserts, fits between printed
@@ -201,11 +211,15 @@ sweep.
 
 - The module does not slice or send anything to a printer; the 3MF goes to the
   slicer you use.
-- CadQuery's 3MF writer numbers its objects from 0 and writes each face's
-  vertices separately, so a slicer may report that it repaired the file.
+- CadQuery's 3MF writer writes each face's vertices separately, so a slicer
+  may report that it repaired the file. Its objects are renumbered from 1 and
+  the package gets the default content types the 3MF reader lib3mf requires;
+  the vertices are not welded.
 - The print block is a fast estimate on the mesh, not a slicer's preview.
 - Whether a model follows the skill's procedure on real requests is measured by
   the [CAD eval](cad-eval.md), not by these checks.
 - In Ultra mode a part can be handed to a subagent and accepted on its
-  recorded `cad_build` answer; the recipe is the skill's
+  recorded `cad_build` answer, which shows the subagent's newest build passed
+  against the numbers it passed itself; the lead then builds the returned
+  script once against its own numbers. The recipe is the skill's
   [delegation reference](../../skills/public/cad-modeling/references/delegation.md).

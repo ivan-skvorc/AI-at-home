@@ -23,8 +23,10 @@ MAX_HOLES = 400
 #: Lines of left-out bodies one note names, and loops that drop work one answer names.
 MAX_LINES_SAID = 5
 #: A hole expected at a point, [d, x, y, z], is there when a measured hole of that diameter has its axis
-#: within 0.05 mm or 0.1 % of the part's largest side of the point, whichever is larger. Any point on the
-#: axis will do: the centre on the face it is drilled from, or a point beside the part on a side hole's line.
+#: within 0.05 mm or 0.1 % of the part's largest side of the point, whichever is larger. Any point on a
+#: through hole's axis will do: the centre on the face it is drilled from, or a point beside the part on a
+#: side hole's line. A blind hole's point must not lie past its floor by more than that, so the same line
+#: drilled into the opposite face is not the hole asked for.
 POSITION_TOLERANCE_MM = 0.05
 POSITION_TOLERANCE_RATIO = 0.001
 #: Holes the check names as not where they were expected; report.json lists every measured hole.
@@ -58,6 +60,24 @@ def _off_axis(point: Sequence[float], hole: Mapping[str, Any]) -> float:
     return math.sqrt(sum((o - along * d) ** 2 for o, d in zip(offset, hole["axis"])))
 
 
+def _past_floor(point: Sequence[float], hole: Mapping[str, Any]) -> float:
+    """How far *point* lies beyond a blind hole's floor along its axis; 0 for a through hole.
+
+    ``at`` is where a blind hole is entered and ``axis`` runs from there into the part, so a point
+    between the entry and the floor, or beside the part on the entry side, is 0.
+    """
+    depth = hole.get("depth_mm")
+    if hole.get("through") is not False or type(depth) not in (int, float):
+        return 0.0
+    along = sum((p - a) * d for p, a, d in zip(point, hole["at"], hole["axis"]))
+    return max(0.0, along - depth)
+
+
+def _miss(point: Sequence[float], hole: Mapping[str, Any]) -> float:
+    """How far a measured hole is from standing for an expected point: off its axis, or past its floor."""
+    return max(_off_axis(point, hole), _past_floor(point, hole))
+
+
 def holes_of(measured: Mapping[str, Any]) -> list[Mapping[str, Any]]:
     """Every measured hole: the part's own, or each body's in turn for a part of several bodies.
 
@@ -74,11 +94,14 @@ def _misplaced(positioned: list[list[float]], holes: Sequence[Mapping[str, Any]]
     """The positioned holes that no measured hole of their diameter stands for, each with the nearest one.
 
     One measured hole stands for one expected hole: two expected at the same point need two holes
-    there. The matching is a maximum matching, so an early guess never blocks a later hole.
+    there. The matching is a maximum matching, so an early guess never blocks a later hole. The
+    nearest hole is looked for first among the holes of that diameter that no point took, so the
+    stray hole is named and not a correct neighbour; a hole that does stand for another point is
+    named only when no other is left, with that point (``nearest_matches``).
     """
     located = [hole for hole in holes if isinstance(hole.get("at"), list) and isinstance(hole.get("axis"), list)]
     sized = [[k for k, hole in enumerate(located) if _close(entry[0], hole["diameter_mm"])] for entry in positioned]
-    fits = [[k for k in sized[i] if _off_axis(entry[1:], located[k]) <= tolerance] for i, entry in enumerate(positioned)]
+    fits = [[k for k in sized[i] if _miss(entry[1:], located[k]) <= tolerance] for i, entry in enumerate(positioned)]
     owner: dict[int, int] = {}
 
     def claim(i: int, seen: set[int]) -> bool:
@@ -97,10 +120,16 @@ def _misplaced(positioned: list[list[float]], holes: Sequence[Mapping[str, Any]]
     for i, entry in enumerate(positioned):
         if i in matched:
             continue
-        nearest = min(sized[i], key=lambda k: _off_axis(entry[1:], located[k]), default=None)
+        pool = [k for k in sized[i] if k not in owner] or sized[i]
+        nearest = min(pool, key=lambda k: _miss(entry[1:], located[k]), default=None)
         said: dict[str, Any] = {"expected": entry, "nearest_at": None}
         if nearest is not None:
             said.update(nearest_at=located[nearest]["at"], off_axis_mm=round(_off_axis(entry[1:], located[nearest]), 3))
+            past = round(_past_floor(entry[1:], located[nearest]), 3)
+            if past > 0:
+                said["past_floor_mm"] = past
+            if nearest in owner:
+                said["nearest_matches"] = positioned[owner[nearest]]
         misplaced.append(said)
     return misplaced
 

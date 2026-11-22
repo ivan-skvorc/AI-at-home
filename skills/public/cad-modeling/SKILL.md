@@ -105,7 +105,8 @@ cad_build(name="<part name>", script="…", bbox_xyz_mm=[x, y, z],
 - Pass the volume range and the hole list every time, `[]` for no holes. A
   number you leave out is not checked.
 - A hole is its diameter, or `[d, x, y, z]` with a point on its axis, such as
-  its centre on the face it is drilled from; it then passes only there.
+  its centre on the face it is drilled from; it then passes only there, and a
+  blind hole only from that side.
 - For loose bodies add `bodies=N`, their count.
 
 ### Step 4: Read the whole answer

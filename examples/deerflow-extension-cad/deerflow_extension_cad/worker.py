@@ -87,8 +87,26 @@ def _picture(request: dict, answer: dict, notes: list[str]) -> None:
     files["png"] = "part.png"
 
 
+def _bodies(answer: dict) -> list | None:
+    """Each body's triangles from the 3MF, for a part of several bodies; None for one body or a 3MF that does not hold them one by one."""
+    measured, files = answer["measured"], answer["files"]
+    solids = measured.get("solids")
+    if not isinstance(solids, int) or solids < 2 or "3mf" not in files:
+        return None
+    from deerflow_extension_cad import build, printability
+
+    meshes = build.body_meshes(Path(files["3mf"]).read_bytes())
+    if len(meshes) != solids:
+        return None
+    return [printability.mesh_triangles(vertices, triangles) for vertices, triangles in meshes]
+
+
 def _print_check(request: dict, answer: dict, notes: list[str]) -> None:
-    """How the part would print on the operator's printer, read off the STL; reported, never checked."""
+    """How the part would print on the operator's printer, read off its meshes; reported, never checked.
+
+    One body is read off the STL. Several are judged each on its own, printed apart as part.parts.3mf
+    lays them out: part.stl has them merged, where touching bodies share edges and one rests on another.
+    """
     printer = request.get("printer")
     if not isinstance(printer, dict):
         return  # nothing to measure against
@@ -99,9 +117,13 @@ def _print_check(request: dict, answer: dict, notes: list[str]) -> None:
     try:
         from deerflow_extension_cad import printability
 
-        triangles = printability.read_stl(Path(answer["files"]["stl"]).read_bytes())
-        # The thinnest wall is printability's own estimate on the STL: no clock, the same answer for the same file.
-        block = printability.assess(triangles, overhang_deg=printer["overhang_deg"], build_volume_mm=printer.get("build_volume_mm"), density_g_cm3=printer["density_g_cm3"], volume_mm3=measured["volume_mm3"])
+        # The thinnest wall is printability's own estimate on the mesh: no clock, the same answer for the same file.
+        given = {"overhang_deg": printer["overhang_deg"], "build_volume_mm": printer.get("build_volume_mm"), "density_g_cm3": printer["density_g_cm3"], "volume_mm3": measured["volume_mm3"]}
+        bodies = _bodies(answer)
+        if bodies is not None:
+            block = printability.assess_apart(bodies, **given)
+        else:
+            block = printability.assess(printability.read_stl(Path(answer["files"]["stl"]).read_bytes()), **given)
         said = printability.notes(block, nozzle_mm=printer["nozzle_mm"])
     except Exception as exc:
         notes.append(f"no print check: {_reason(exc)}")

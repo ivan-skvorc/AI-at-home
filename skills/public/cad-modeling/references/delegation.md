@@ -19,7 +19,8 @@ build yourself.
    `bracket-a`, `bracket-b`.
 2. **Put the name in the prompt, verbatim.** Write the requirements and the
    expected numbers as you would for your own build, and tell the subagent to
-   pass that exact `name` on every `cad_build` call, rebuilds included.
+   pass that exact `name` on every `cad_build` call, rebuilds included, and to
+   end its report with the script of its last build.
 3. **Attach one criterion per part:**
 
    ```
@@ -30,8 +31,14 @@ build yourself.
    you call; the host resolves it. The name is a JSON string in double quotes
    and is compared exactly, so spell it as the subagent will pass it.
 4. **Read the checklist line for each part** in the subagent's result:
-   - `holds`: the subagent's newest `cad_build` call for that name answered
-     `passed: true`. The numbers were met; judge the part against the
+   - `holds`: the subagent's newest `cad_build` call with exactly that name
+     answered `passed: true` against the expected numbers the subagent passed.
+     Those may not be the numbers in your prompt: `cad_build` judges whatever
+     numbers its caller gives, a builder may change one it thinks it worked
+     out wrongly, and the checklist does not record them. Before you call the
+     part finished, build the script from the subagent's report once yourself
+     with `cad_build`, the same name and your own expected numbers: that
+     answer is your evidence for the size. Then judge the part against the
      requirements the numbers do not cover, as in your own loop.
    - `does not hold`: the newest build of that name failed. An earlier pass
      does not count, because a later build replaced it. Repair or delegate
@@ -41,6 +48,11 @@ build yourself.
      missing evidence, not a failure: build the part yourself with
      `cad_build` before you call it finished.
 
+   The line sees only calls spelled exactly as the criterion. A rebuild under
+   a case or spacing variant, such as `Bracket-A`, is the same part to
+   `cad_build` but invisible to the line, which then still reads the older
+   build; your own build of the subagent's last script settles it.
+
 ## What is not evidence
 
 - **Files.** A subagent can write any file, including one named like a
@@ -49,7 +61,8 @@ build yourself.
   parts also get numbered file names, so a file criterion written in advance
   cannot name the last build.
 - **The subagent's own report.** It says what the subagent believes. The
-  checklist line is the tool's recorded answer.
+  checklist line is the tool's recorded answer, and the script in the report
+  is input for your own build, not proof of it.
 
 ## Not covered
 
