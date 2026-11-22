@@ -145,3 +145,56 @@ def test_the_print_block_never_decides():
     expected = {"bbox_xyz_mm": [60, 40, 6], "volume_min_max_mm3": [13000, 15000], "hole_diameters_mm": [[4, -15, 0, 6], 4]}
     assert checks.decide({**measured, "print": printing}, expected) == checks.decide(measured, expected)
     assert all(check["passed"] for check in checks.decide(measured, expected))
+
+
+# --- Several bodies ---------------------------------------------------------------
+
+
+def _three_bodies(**changes) -> dict:
+    leaf = {"valid": True, "closed": True, "bbox_mm": [30.0, 20.0, 4.0], "volume_mm3": 2287.0}
+    measured = {
+        "solids": 3,
+        "valid": True,
+        "closed": True,
+        "bbox_mm": [30.0, 20.0, 8.3],
+        "volume_mm3": 4768.9,
+        "holes": [],
+        "bodies": [{**leaf, "holes": [_down(0, 0, d=6.0)]}, {**leaf, "holes": [{**_down(0, 0, d=6.0), "at": [0.0, 0.0, 8.3]}]}, {**leaf, "holes": []}],
+        "gaps": [{"bodies": [0, 1], "gap_mm": 0.3, "direction": [0.0, 0.0, 1.0], "at_mm": [0, 0, 4.15]}],
+    }
+    return {**measured, **changes}
+
+
+def test_one_body_is_checked_and_said_exactly_as_before():
+    expected = {"bbox_xyz_mm": [30, 20, 8.3]}
+    (solid,) = [check for check in checks.decide(_three_bodies(), expected) if check["check"] == "one closed solid"]
+    assert solid == {"check": "one closed solid", "expected": "exactly one valid, closed solid", "measured": "3 solid(s), valid=True, closed=True", "passed": False}
+    assert checks.decide(_three_bodies(), {**expected, "bodies": 1}) == checks.decide(_three_bodies(), expected)
+    (holes,) = [check for check in checks.decide(_three_bodies(), {**expected, "hole_diameters_mm": [6, 6]}) if check["check"] == "holes"]
+    assert holes["measured"] == "not measured: the result is not one solid" and holes["passed"] is False
+    assert checks.notes_on(_three_bodies())[0].startswith("The result is 3 separate bodies")
+
+
+def test_several_bodies_pass_on_their_count_with_the_holes_of_each():
+    expected = {"bbox_xyz_mm": [30, 20, 8.3], "volume_min_max_mm3": [4700, 4800], "hole_diameters_mm": [6, [6, 0, 0, 2]], "bodies": 3}
+    verdict = checks.decide(_three_bodies(), expected)
+    assert [(check["check"], check["passed"]) for check in verdict] == [("closed solids", True), ("bounding box", True), ("volume", True), ("holes", True)]
+    assert verdict[0]["expected"] == "exactly 3 valid, closed solids"
+    # Two bodies fused into one: the count fails, and the holes of what is there are still compared.
+    fused = checks.decide(_three_bodies(solids=2, bodies=_three_bodies()["bodies"][:2]), expected)
+    assert [check["check"] for check in fused if not check["passed"]] == ["closed solids"]
+    # The expected count is not a note: only an unexpected one is.
+    assert checks.notes_on(_three_bodies(), bodies=3) == [] and checks.notes_on(_three_bodies(solids=4), bodies=3)[0].startswith("The result is 4")
+
+
+def test_the_smallest_gap_is_said_and_gaps_the_printer_may_close_are_named():
+    printer = {"min_clearance_mm": 0.3, "layer_mm": 0.2}
+    assert checks.gap_notes(_three_bodies(), printer) == ["The smallest gap between bodies is 0.3 mm, between body 1 and body 2, along +z."]
+    slanted = _three_bodies(gaps=[{"bodies": [1, 2], "gap_mm": 0.25, "direction": [0.6, 0.0, -0.8], "at_mm": [0, 0, 0]}])
+    assert checks.gap_notes(slanted, printer) == [
+        "The smallest gap between bodies is 0.25 mm, between body 2 and body 3, along [0.6, 0.0, -0.8].",
+        "That gap is under the printer's minimum clearance (0.3 mm): printed as modelled, the bodies may fuse.",
+    ]
+    touching = _three_bodies(gaps=[{"bodies": [0, 2], "gap_mm": 0.0, "direction": None, "at_mm": [0, 0, 0]}])
+    assert checks.gap_notes(touching, printer)[0] == "The smallest gap between bodies is 0 mm, between body 1 and body 3."
+    assert checks.gap_notes(_plate(_down(0, 0)), printer) == []

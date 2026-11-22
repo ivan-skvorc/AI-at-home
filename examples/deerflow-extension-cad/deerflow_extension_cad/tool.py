@@ -35,7 +35,7 @@ from deerflow_extension_api import HostCapabilityError, ToolContext
 
 # The checks live in checks.py, which needs no extension API (the eval and measure_cli use it);
 # they are named here too, where the handler and older callers look for them.
-from deerflow_extension_cad.checks import MAX_HOLES, MAX_HOLES_LISTED, canonical_holes, decide, notes_on, unchecked
+from deerflow_extension_cad.checks import MAX_HOLES, MAX_HOLES_LISTED, canonical_holes, decide, gap_notes, notes_on, unchecked
 
 WORKER = Path(__file__).with_name("worker.py")
 REQUEST_FILE = "request.json"
@@ -86,7 +86,8 @@ DESCRIPTION = (
     "hole, cboreHole, cskHole, fillet, chamfer, shell, pushPoints, rarray, polarArray, faces, edges, vertices, workplane, transformed, tag, "
     "workplaneFromTagged, end, first, last, translate, rotate, mirror, mirrorX, mirrorY, union, cut, intersect. "
     "bbox_xyz_mm is the expected overall size along x, y and z. volume_min_max_mm3 is the allowed volume range. "
-    "hole_diameters_mm lists one diameter, or [d, x, y, z], per expected hole, [] for none. Assign the part to result. "
+    "hole_diameters_mm lists one diameter, or [d, x, y, z], per expected hole, [] for none. "
+    "bodies is how many separate solids the part is, 1 unless loose parts are meant. Assign the part to result. "
     "Returns pass or fail per check with the measured values. STEP, STL, GLB and 3MF files are saved only when every check passes."
 )
 
@@ -99,12 +100,16 @@ INPUT_SCHEMA: dict[str, Any] = {
         "bbox_xyz_mm": {"type": "array"},
         "volume_min_max_mm3": {"type": "array"},
         "hole_diameters_mm": {"type": "array"},
+        # The number of separate solids, 1 when left out. Measured at 8 tokens of every request (FORK.md §51).
+        "bodies": {"type": "integer"},
     },
     "required": ["name", "script", "bbox_xyz_mm"],
 }
-EXPECTATIONS = ("bbox_xyz_mm", "volume_min_max_mm3", "hole_diameters_mm")
+EXPECTATIONS = ("bbox_xyz_mm", "volume_min_max_mm3", "hole_diameters_mm", "bodies")
 
 MAX_NAME_CHARS = 60
+#: Separate solids a part may be: a chain or a kit, not a pile. measure.py works out every pair's gap up to this.
+MAX_BODIES = 20
 #: No expected number may exceed what a script itself may state.
 MAX_EXPECTED = 1e12
 
@@ -128,11 +133,11 @@ NEXT_STOP = (
     "{attempt} builds of this part in this run and the last one did not pass. Stop building. Tell the user what still fails, with the measured numbers, "
     "and what you would change next. Do not present this part as finished; build again only when the user asks."
 )
-#: For a result of several bodies. No change of one kind passes it, so both ways out are said in the field a model follows.
+#: For a result of more bodies than expected. No change of one kind passes it, so both ways out are said in the field a model follows.
 NEXT_LOOSE = (
-    "Attempt {attempt} of {limit}. The result is several separate bodies and cad_build delivers one solid. If they are meant to be one part, "
-    "make them overlap or share a face and call cad_build again with the same name. If the design is loose bodies, such as a print-in-place hinge, "
-    "stop: tell the user that this tool cannot deliver it. Do not present this part as finished."
+    "Attempt {attempt} of {limit}. Expected {expected}, got {solids} separate bodies. If they are meant to be one part, "
+    "make them overlap or share a face and call cad_build again with the same name. If loose bodies are intended, such as a print-in-place hinge "
+    "or a box and its lid, call cad_build again with the same name and bodies={solids}. Do not present this part as finished."
 )
 NEXT_REVIEW = "Every check passed. Before you present the part, go through what the user asked for that these numbers do not cover; if something is missing or wrong, change the script and build again."
 NEXT_PRESENT = "Every check passed. Present the part, and say which of the user's requirements these numbers do not cover."
@@ -187,6 +192,8 @@ def _problem_with(payload: Mapping[str, Any]) -> str | None:
         return "bbox_xyz_mm must be three positive numbers: the expected size along x, y and z in millimetres"
     if "volume_min_max_mm3" in payload and (not numbers("volume_min_max_mm3", 2) or not 0 <= payload["volume_min_max_mm3"][0] <= payload["volume_min_max_mm3"][1]):
         return "volume_min_max_mm3 must be [min, max] with 0 <= min <= max, in cubic millimetres"
+    if "bodies" in payload and (type(payload["bodies"]) is not int or not 1 <= payload["bodies"] <= MAX_BODIES):
+        return f"bodies must be a whole number from 1 to {MAX_BODIES}: how many separate solids the part is"
     if "hole_diameters_mm" in payload:
         holes = payload["hole_diameters_mm"]
 
@@ -316,9 +323,19 @@ def _short(value: Any) -> Any:
 
 
 def listed_holes(measured: Mapping[str, Any]) -> tuple[list[dict[str, Any]], int]:
-    """The holes an answer lists, with where each is entered and which way it runs, and how many have a position."""
-    located = [hole for hole in measured.get("holes") or [] if isinstance(hole, Mapping) and isinstance(hole.get("at"), list) and isinstance(hole.get("axis"), list)]
-    listed = [{"d": _short(hole["diameter_mm"]), "at": [_short(value) for value in hole["at"]], "axis": [_short(value) for value in hole["axis"]]} for hole in located[:MAX_HOLES_LISTED]]
+    """The holes an answer lists, with where each is entered and which way it runs, and how many have a position.
+
+    A part of several bodies lists each hole with its body, numbered from 1 in the order of ``measured.bodies``.
+    """
+    bodies = measured.get("bodies")
+    owned = [(number, hole) for number, body in enumerate(bodies, 1) if isinstance(body, Mapping) for hole in body.get("holes") or []] if isinstance(bodies, list) else [(None, hole) for hole in measured.get("holes") or []]
+    located = [(number, hole) for number, hole in owned if isinstance(hole, Mapping) and isinstance(hole.get("at"), list) and isinstance(hole.get("axis"), list)]
+    listed = []
+    for number, hole in located[:MAX_HOLES_LISTED]:
+        entry: dict[str, Any] = {"d": _short(hole["diameter_mm"]), "at": [_short(value) for value in hole["at"]], "axis": [_short(value) for value in hole["axis"]]}
+        if number is not None:
+            entry["body"] = number
+        listed.append(entry)
     return listed, len(located)
 
 
@@ -374,7 +391,7 @@ class Attempts:
         """Count one build. Returns its number in this run, the expected numbers that changed, and whether it failed as the last one did."""
         key = (conversation, part)
         # The holes are checked in any order and printed sorted, so they are held sorted.
-        expected = {name: canonical_holes(value) if name == "hole_diameters_mm" else list(value) for name, value in expected.items()}
+        expected = {name: canonical_holes(value) if name == "hole_diameters_mm" else value if isinstance(value, int) else list(value) for name, value in expected.items()}
         with self._lock:
             # Taken out and put back last: the table is kept in the order parts were last built.
             entry = self._parts.pop(key, None)
@@ -399,13 +416,14 @@ class Attempts:
             return entry["builds"], changed, same
 
 
-def _next_after(passed: bool, attempt: int, changed: Mapping[str, Any], same: bool, loose: bool) -> str:
+def _next_after(passed: bool, attempt: int, changed: Mapping[str, Any], same: bool, solids: Any = 1, bodies: int = 1) -> str:
     if passed:
         step = NEXT_REVIEW if attempt < MAX_ATTEMPTS else NEXT_PRESENT
     elif attempt >= MAX_ATTEMPTS:
         step = NEXT_STOP.format(attempt=attempt)
-    elif loose:
-        step = NEXT_LOOSE.format(attempt=attempt, limit=MAX_ATTEMPTS)
+    elif isinstance(solids, int) and solids > max(bodies, 1):
+        expected = f"{bodies} bod{'y' if bodies == 1 else 'ies'}"
+        step = NEXT_LOOSE.format(attempt=attempt, limit=MAX_ATTEMPTS, expected=expected, solids=solids)
     else:
         step = NEXT_FIX.format(attempt=attempt, limit=MAX_ATTEMPTS) + (NEXT_SAME if same else "")
     return step + (NEXT_CHANGED if changed else "")
@@ -702,7 +720,8 @@ def make_handler(settings: Mapping[str, Any]):
             report.update(passed=passed, checks=checks, measured=result["measured"])
             # A hole moved but still not where it belongs is a different failure, not the same one.
             failure = json.dumps([[check["check"], check["measured"], *([check["misplaced"]] if "misplaced" in check else [])] for check in checks if not check["passed"]], sort_keys=True, default=str)
-            notes = notes_on(result["measured"])
+            bodies = payload.get("bodies", 1)
+            notes = notes_on(result["measured"], bodies) + gap_notes(result["measured"], printer)
             extra = unchecked(result["measured"], payload)
             if extra:
                 answer["unchecked"] = extra
@@ -724,7 +743,9 @@ def make_handler(settings: Mapping[str, Any]):
                     picture = await _save(context, f"{stem}.png", files["png"], saved, problems)
                 # STEP goes last: a STEP file in the outputs means the whole set was handed over. The 3MF is
                 # part of the set when the worker wrote one (it always does since item 54).
-                for kind in ("glb", "stl", *(("3mf",) if "3mf" in files else ()), "step"):
+                # So are the bodies laid out for printing apart, or each body's STL where they could not be.
+                laid_out = sorted((kind for kind in files if kind == "parts.3mf" or re.fullmatch(r"body-\d+\.stl", kind)), key=lambda kind: (len(kind), kind))
+                for kind in ("glb", "stl", *(("3mf",) if "3mf" in files else ()), *laid_out, "step"):
                     if kind not in files:
                         problems.append(f"the {kind.upper()} export is missing or larger than {MAX_EXPORT_BYTES // (1024 * 1024)} MiB")
                     elif await _save(context, f"{stem}.{kind}", files[kind], saved, problems) is not None:
@@ -749,8 +770,7 @@ def make_handler(settings: Mapping[str, Any]):
             answer["attempt"] = report["attempt"] = attempt
             if changed:
                 answer["expected_changed"] = report["expected_changed"] = changed
-            solids = (result.get("measured") or {}).get("solids")
-            next_step = _next_after(answer["passed"], attempt, changed, same, isinstance(solids, int) and solids > 1)
+            next_step = _next_after(answer["passed"], attempt, changed, same, (result.get("measured") or {}).get("solids"), payload.get("bodies", 1))
             if answer["passed"] and picture is not None:
                 next_step += NEXT_PICTURE.format(picture=picture)
         if problems:

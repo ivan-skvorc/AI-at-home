@@ -461,3 +461,23 @@ async def test_the_real_worker_draws_a_failed_part_with_the_checks_it_did_not_pa
     answer, files = await _handle_script("result = cq.Workplane('XY').box(1, 1, 1)\n", bbox=(1, 1, 2))
     assert answer["passed"] is False and files["cube.failed.png"][:8] == b"\x89PNG\r\n\x1a\n"
     assert json.loads(seen.read_text()) == {"failed_checks": ["bounding box"]}
+
+
+@needs_kernel
+async def test_bodies_that_can_be_written_neither_laid_out_nor_one_by_one_are_said_and_still_delivered(tmp_path, monkeypatch):
+    patch = "from deerflow_extension_cad import build\nbuild._bodies_apart = lambda *arguments: None"
+    _real_worker_with(tmp_path, monkeypatch, patch)
+    script = "a = cq.Workplane('XY').box(10, 10, 10)\nresult = a.union(cq.Workplane('XY').box(10, 10, 10).translate((30, 0, 0)))\n"
+    answer, files = await _handle_kit(script)
+    assert answer["passed"] is True and "cube.step" in files and "cube.3mf" in files
+    assert not [name for name in files if ".parts." in name or ".body-" in name]
+    assert "no laid-out 3MF: the bodies could not be written apart; the .3mf holds them as modelled" in answer["notes"]
+
+
+async def _handle_kit(script: str):
+    from deerflow_extension_api import ExtensionPrincipal, ToolContext
+
+    outputs = _Outputs()
+    context = ToolContext(ExtensionPrincipal("alice"), {"enabled": True}, "thread-b", output_writer=outputs.write)
+    answer = await tool.make_handler(tool.settings_from({}))({"name": "cube", "script": script, "bbox_xyz_mm": [40, 10, 10], "bodies": 2}, context)
+    return answer, outputs.files

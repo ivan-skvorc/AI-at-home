@@ -184,9 +184,13 @@ def main() -> None:
         _answer({"status": "failed", "message": "the kernel ran out of memory building this part"})
         return
     answer = {"status": "built", "measured": measured, "files": files, "parameters": parameters}
+    notes: list[str] = []
+    if measured.get("solids", 0) > 1 and not any(kind == "parts.3mf" or kind.startswith("body-") for kind in files):
+        notes.append("no laid-out 3MF: the bodies could not be written apart; the .3mf holds them as modelled")
+    if notes:
+        answer["notes"] = notes
     # The checked part, before anything that may run out of time: the parent falls back on it.
     _answer(answer)
-    notes: list[str] = []
     answer["notes"] = notes
     try:
         _phase("rendering")

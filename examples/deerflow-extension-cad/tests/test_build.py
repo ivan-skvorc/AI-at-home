@@ -449,6 +449,108 @@ async def test_two_separate_bodies_are_not_one_part():
     assert "part.step" not in files and "part.failed.glb" in files
 
 
+#: Two 30 x 20 x 4 leaves, each with a 6 mm bore, one above the other, and a pin through both bores:
+#: three bodies with {gap} mm between the leaves and around the pin (fdm.md's print-in-place hinge).
+HINGE = """\
+gap = {gap}
+a = cq.Workplane("XY").box(30, 20, 4).translate((0, 0, 2)).faces(">Z").workplane().hole(6)
+b = cq.Workplane("XY").box(30, 20, 4).translate((0, 0, 6 + gap)).faces(">Z").workplane().hole(6)
+pin = cq.Workplane("XY").circle(3 - gap).extrude(8 + gap)
+result = a.union(b).union(pin)
+"""
+
+
+def _model(threemf: bytes) -> str:
+    import io
+    import zipfile
+
+    with zipfile.ZipFile(io.BytesIO(threemf)) as package:
+        return package.read("3D/3dmodel.model").decode("utf-8")
+
+
+def _laid_out_items(threemf: bytes) -> list[tuple[list[float], list[float]]]:
+    """Each build item of a 3MF as the box its mesh occupies once moved by the item's transform."""
+    import re
+
+    model = _model(threemf)
+    meshes = dict(re.findall(r'<object id="(\d+)"[^>]*>\s*<mesh>(.*?)</mesh>', model, re.S))
+    boxes = []
+    for identifier, transform in re.findall(r'<item objectid="(\d+)" transform="([^"]+)"', model):
+        move = [float(value) for value in transform.split()[9:]]
+        points = [tuple(map(float, found)) for found in re.findall(r'<vertex x="([^"]+)" y="([^"]+)" z="([^"]+)"', meshes[identifier])]
+        boxes.append(([min(p[k] for p in points) + move[k] for k in range(3)], [max(p[k] for p in points) + move[k] for k in range(3)]))
+    return boxes
+
+
+async def test_a_print_in_place_hinge_passes_as_three_bodies_with_its_gap_said():
+    answer, files = await _build(HINGE.format(gap=0.3), bbox_xyz_mm=[30, 20, 8.3], hole_diameters_mm=[6, 6], bodies=3)
+    assert answer["passed"] is True, answer
+    assert [check["check"] for check in answer["checks"]] == ["closed solids", "bounding box", "holes"]
+    # Each leaf's bore is a hole of that leaf: the pin inside it is another body and does not fill it.
+    assert [(hole["d"], hole["body"]) for hole in answer["holes"]] == [(6, 1), (6, 2)]
+    report = json.loads(files["part.report.json"])
+    smallest = report["measured"]["gaps"][0]
+    assert abs(smallest["gap_mm"] - 0.3) <= 0.01 and smallest["direction"] == [0.0, 0.0, 1.0]
+    assert answer["notes"] == ["The smallest gap between bodies is 0.3 mm, between body 1 and body 2, along +z."]
+    # Printed in place: the kernel's one item of three components. Printed apart: three items on the bed, side by side.
+    assert sorted(files) == ["part.3mf", "part.glb", "part.parts.3mf", "part.png", "part.py", "part.report.json", "part.step", "part.stl"]
+    in_place = _model(files["part.3mf"])
+    assert in_place.count("<item ") == 1 and in_place.count("<component ") == 3
+    boxes = _laid_out_items(files["part.parts.3mf"])
+    assert len(boxes) == 3 and all(abs(low[2]) <= 1e-6 for low, _ in boxes)
+    assert all(boxes[k][1][0] + 5 - 1e-6 <= boxes[k + 1][0][0] for k in range(2))
+    # One GLB node per body, for a viewer that picks them apart.
+    document = _glb_document(files["part.glb"])
+    (root,) = document["scenes"][document.get("scene", 0)]["nodes"]
+    assert [document["nodes"][child]["name"] for child in document["nodes"][root]["children"]] == ["body-1", "body-2", "body-3"]
+
+
+async def test_bodies_that_touch_fuse_and_fail_the_count_and_a_tight_gap_is_said():
+    fused, files = await _build(HINGE.format(gap=0), bbox_xyz_mm=[30, 20, 8], bodies=3)
+    assert fused["passed"] is False and [check["check"] for check in fused["checks"] if not check["passed"]] == ["closed solids"]
+    assert "part.step" not in files
+    tight, files = await _build(HINGE.format(gap=0.1), bbox_xyz_mm=[30, 20, 8.1], bodies=3)
+    assert tight["passed"] is True, tight
+    assert tight["notes"] == [
+        "The smallest gap between bodies is 0.1 mm, between body 1 and body 2, along +z.",
+        "That gap is under the printer's minimum clearance (0.3 mm): printed as modelled, the bodies may fuse.",
+        "The gap of 0.1 mm between body 1 and body 2, along +z is thinner than one layer (0.2 mm): the slicer may fill it and fuse the bodies.",
+    ]
+
+
+async def test_a_box_and_its_lid_modelled_closed_pass_as_two_bodies():
+    script = 'box = cq.Workplane("XY").box(40, 30, 20).faces(">Z").shell(-2)\nlid = cq.Workplane("XY").box(40, 30, 2).translate((0, 0, 11.3)).faces("<Z").workplane().rect(36 - 0.6, 26 - 0.6).extrude(3)\nresult = box.union(lid)\n'
+    answer, files = await _build(script, bbox_xyz_mm=[40, 30, 22.3], bodies=2)
+    assert answer["passed"] is True, answer
+    assert answer["notes"][0].startswith("The smallest gap between bodies is 0.3 mm")
+    boxes = _laid_out_items(files["part.parts.3mf"])
+    assert len(boxes) == 2 and all(abs(low[2]) <= 1e-6 for low, _ in boxes) and boxes[0][1][0] + 5 - 1e-6 <= boxes[1][0][0]
+
+
+async def test_a_part_too_tall_for_the_bed_split_in_two_passes_as_two_bodies():
+    # split() keeps both halves when asked to: two bodies that touch, laid out apart for the printer.
+    answer, files = await _build("result = cq.Workplane('XY').box(20, 20, 40).faces('>Z').workplane(-20).split(keepTop=True, keepBottom=True)\n", bbox_xyz_mm=[20, 20, 40], bodies=2)
+    assert answer["passed"] is True, answer
+    assert answer["notes"][:2] == ["The smallest gap between bodies is 0 mm, between body 1 and body 2.", "That gap is under the printer's minimum clearance (0.3 mm): printed as modelled, the bodies may fuse."]
+    boxes = _laid_out_items(files["part.parts.3mf"])
+    assert [[round(value, 6) for value in low] for low, _ in boxes] == [[0, 0, 0], [25, 0, 0]]
+
+
+def test_bodies_that_cannot_be_laid_out_get_one_stl_each(tmp_path, monkeypatch):
+    from deerflow_extension_cad import tool
+
+    def broken(threemf, gap_mm=build.PARTS_GAP_MM):
+        raise ValueError("the layout broke")
+
+    monkeypatch.setattr(build, "lay_out", broken)
+    a = cq.Workplane("XY").box(10, 10, 10).val()
+    b = cq.Workplane("XY").box(10, 10, 10).translate((30, 0, 0)).val()
+    names, _ = build.export(cq.Compound.makeCompound([a, b]), cq, tmp_path, tool.MAX_EXPORT_BYTES)
+    assert "parts.3mf" not in names and not (tmp_path / "part.parts.3mf").exists()
+    assert [names[f"body-{number}.stl"] for number in (1, 2)] == ["part.body-1.stl", "part.body-2.stl"]
+    assert all(build.whole_stl(tmp_path / names[f"body-{number}.stl"]) for number in (1, 2))
+
+
 BLOCK = 'cq.Workplane("XY").box(60, 40, 6)'
 EMPTIED = [
     ("an intersection of parts that do not meet", 'a = cq.Workplane("XY").box(40, 40, 20)\nb = cq.Workplane("XY").sphere(22).translate((100, 0, 0))\nresult = a.intersect(b)\n', [40, 40, 20], 3, "intersect"),
