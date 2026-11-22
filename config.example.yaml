@@ -3283,8 +3283,8 @@ harness_guard:
 # in every chat until the user turns it on under the composer, choosing the
 # monitor's model and a cadence (every N agent steps, or the final answer of
 # every N turns). On a confirmed drift the run stops with a visible note; in a
-# mode with subagents (Ultra, Plus/Double Plus Ultracode) the first drift
-# retries once, asking the agent to split the work across subagents.
+# mode with subagents (Ultra, Democracy, Plus/Double Plus Ultracode) the first
+# drift retries once, asking the agent to split the work across subagents.
 # Each check is a model call the agent waits for, billed to the run and
 # counted by the spend caps. Advisory only: it is not a security boundary.
 deviation_monitor:

@@ -481,6 +481,7 @@ flowchart LR
 | `frontend/src/app/share/**` | Share and export a conversation |
 | `frontend/src/app/workspace/*.tsx` | ALL |
 | `frontend/src/app/workspace/agents/**` | Custom agents |
+| `frontend/src/app/workspace/agents/[agent_name]/chats/[thread_id]/page.tsx` | Custom agents, Deviation monitor |
 | `frontend/src/app/workspace/agents/generate/**` | Generate an agent from history |
 | `frontend/src/app/workspace/capabilities/**` | Extensions and plugins |
 | `frontend/src/app/workspace/chats/**` | Chat with the agent |
@@ -585,6 +586,7 @@ flowchart LR
 | `frontend/src/components/workspace/sidebar-selection*.tsx` | Select several chats |
 | `frontend/src/components/workspace/thread-bulk-delete-dialog.tsx` | Select several chats |
 | `frontend/src/components/workspace/sidecar/**` | Mentions and conversation references |
+| `frontend/src/components/workspace/sidecar/context.tsx` | Mentions and conversation references, Deviation monitor |
 | `frontend/src/components/workspace/skill-usage/**` | Skills |
 | `frontend/src/components/workspace/slash-skill-chip.tsx` | Skills |
 | `frontend/src/components/workspace/thread-archive-status.tsx` | Archive and trash |

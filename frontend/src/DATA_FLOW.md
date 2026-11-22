@@ -44,7 +44,7 @@ material for `core/threads/` and `core/messages/`, not optional reading.
    preference.** Upstream scopes only `model_name` per thread and syncs
    mode/effort account-wide; this fork scopes every `THREAD_SCOPED_CONTEXT_KEYS`
    entry (model, subagent model, mode, effort, internet switch, the Democracy
-   roster) per conversation, so `updateThreadSettings` writes that thread's own
+   roster, the deviation monitor) per conversation, so `updateThreadSettings` writes that thread's own
    override for `context` and never calls the preference hook — uploading one
    would make one chat's choice the default for every other chat, on every
    device, with nothing failing. Settings-page edits (`updateLocalSettings`) are

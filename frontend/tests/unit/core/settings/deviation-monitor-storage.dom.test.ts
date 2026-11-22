@@ -7,7 +7,10 @@ import {
 } from "@/core/settings/local";
 import {
   getBaseSettingsSnapshot,
+  getThreadContextSnapshot,
+  promoteThreadContext,
   resolveThreadContext,
+  seedThreadContext,
   updateThreadSettings,
 } from "@/core/settings/store";
 
@@ -85,5 +88,46 @@ describe("the per-conversation monitor choice", () => {
       "deviation_monitor",
     );
     expect(getThreadContextOverride("thread-x")).toEqual({});
+  });
+
+  it("holds a new chat's seeded default in this tab until the chat is sent", () => {
+    // Every visit to a new chat has a fresh draft id: one left without a
+    // message must not leave a record in this browser for good.
+    seedThreadContext("draft-1", { deviation_monitor: ON });
+    seedThreadContext("draft-2", { deviation_monitor: ON });
+    expect(getThreadContextSnapshot("draft-2")).toEqual({
+      deviation_monitor: ON,
+    });
+    // The composer's automatic context report does not save it either.
+    resolveThreadContext("draft-2", {
+      model_name: "chat-model",
+      deviation_monitor: ON,
+    });
+    expect(
+      Object.keys(window.localStorage).filter((key) =>
+        key.startsWith("deerflow.thread-context."),
+      ),
+    ).toEqual([]);
+
+    // Sent: the real thread keeps it, in storage.
+    promoteThreadContext("draft-2", "real-2");
+    expect(getThreadContextOverride("real-2")).toEqual({
+      deviation_monitor: ON,
+    });
+    // A thread created under its draft id is saved in place.
+    seedThreadContext("project-thread", { deviation_monitor: ON });
+    promoteThreadContext("project-thread", "project-thread");
+    expect(getThreadContextOverride("project-thread")).toEqual({
+      deviation_monitor: ON,
+    });
+  });
+
+  it("saves a held seed with the user's first explicit choice in that chat", () => {
+    seedThreadContext("draft-3", { deviation_monitor: ON });
+    updateThreadSettings("draft-3", "context", { model_name: "chat-model" });
+    expect(getThreadContextOverride("draft-3")).toEqual({
+      deviation_monitor: ON,
+      model_name: "chat-model",
+    });
   });
 });

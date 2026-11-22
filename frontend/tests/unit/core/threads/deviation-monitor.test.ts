@@ -151,8 +151,8 @@ describe("what reaches the run context", () => {
   });
 
   it("never sends a value the backend would have to reject", () => {
-    // A hand-edited or stale localStorage blob must degrade to "off", never
-    // to a malformed object on the wire.
+    // The last guard: whatever reaches it, a malformed object never reaches
+    // the wire. (The run builder repairs a stored blob first, as shown.)
     for (const bad of [
       { ...ON, cadence: { mode: "steps", every: 51 } },
       { ...ON, cadence: { mode: "turns", every: 21 } },
@@ -167,6 +167,35 @@ describe("what reaches the run context", () => {
       [],
     ]) {
       expect(deviationMonitorRunContext(bad, "chat-model")).toBeUndefined();
+    }
+  });
+
+  it("sends a damaged stored choice the way the button and the status bar show it", () => {
+    // The button and the bar read the stored choice tolerantly
+    // (`normalizeDeviationMonitorSetting`); a run sent from a chat they show
+    // as monitored must be monitored, with what they show.
+    for (const damaged of [
+      { ...ON, cadence: { mode: "steps", every: 60 } },
+      { ...ON, cadence: { mode: "steps", every: "3" } },
+      { enabled: true, model: "judge-model" },
+      { ...ON, model: "   " },
+    ]) {
+      const shown = normalizeDeviationMonitorSetting(damaged);
+      expect(shown?.enabled).toBe(true);
+      const sent = buildRunContext({
+        settings: {
+          ...baseContext,
+          // A hand-edited blob: not the stored type.
+          deviation_monitor:
+            damaged as unknown as LocalSettings["context"]["deviation_monitor"],
+        },
+        threadId: "t-1",
+      }).deviation_monitor;
+      expect(sent).toEqual({
+        enabled: true,
+        model: shown?.model ?? "chat-model",
+        cadence: shown?.cadence,
+      });
     }
   });
 
@@ -364,6 +393,49 @@ describe("the Settings defaults", () => {
     ).toBeNull();
   });
 
+  it("seed a new chat with its own model when the default model left config.yaml", () => {
+    const defaults = {
+      enabledForNewChats: true,
+      modelName: "removed-model",
+      cadence: { mode: "turns" as const, every: 2 },
+    };
+    const seed = newChatDeviationMonitorSeed({
+      isNewThread: true,
+      override: {},
+      defaults,
+      configuredModels: ["chat-model", "judge-model"],
+    });
+    // "The chat's model", as the Settings page shows it, not a name the
+    // backend refuses on every run.
+    expect(seed).toEqual({
+      enabled: true,
+      cadence: { mode: "turns", every: 2 },
+    });
+    expect(
+      buildRunContext({
+        settings: { ...baseContext, deviation_monitor: seed ?? undefined },
+        threadId: "t-1",
+      }).deviation_monitor,
+    ).toEqual({
+      enabled: true,
+      model: "chat-model",
+      cadence: { mode: "turns", every: 2 },
+    });
+    // A configured default, or a roster not known yet, keeps the model.
+    expect(
+      newChatDeviationMonitorSeed({
+        isNewThread: true,
+        override: {},
+        defaults: { ...defaults, modelName: "judge-model" },
+        configuredModels: ["chat-model", "judge-model"],
+      })?.model,
+    ).toBe("judge-model");
+    expect(
+      newChatDeviationMonitorSeed({ isNewThread: true, override: {}, defaults })
+        ?.model,
+    ).toBe("removed-model");
+  });
+
   it("leave the model out when the default is the chat's own model", () => {
     expect(
       chatSettingFromDefaults({
@@ -533,6 +605,7 @@ const CONTRACT = JSON.parse(
   cadence_bounds: Record<string, { min: number; max: number }>;
   run_context_examples: DeviationMonitorRunContext[];
   state_channel: string;
+  state_extra_keys: string[];
   statuses: string[];
   drift_kinds: string[];
   run_start_state: Record<string, unknown>;
@@ -571,9 +644,11 @@ describe("the backend contract (contracts/deviation_monitor_contract.json)", () 
   });
 
   it("reads what the middleware writes, extra fields included", () => {
-    // `turn` is the backend's own counter, outside the channel's contract.
+    // `state_extra_keys` are the backend's turn bookkeeping, which the bar ignores.
     const stopped = Object.fromEntries(
-      Object.entries(CONTRACT.stopped_state).filter(([key]) => key !== "turn"),
+      Object.entries(CONTRACT.stopped_state).filter(
+        ([key]) => !CONTRACT.state_extra_keys.includes(key),
+      ),
     );
     expect(readDeviationMonitorState(CONTRACT.stopped_state)).toEqual(stopped);
     // The run-start write's empty strings are "no text", not a reason.

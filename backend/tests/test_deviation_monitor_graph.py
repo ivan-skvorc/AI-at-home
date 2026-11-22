@@ -15,6 +15,8 @@ import json
 from typing import Any
 
 from langchain.agents import create_agent
+from langchain.agents.middleware import AgentMiddleware
+from langchain.agents.middleware.types import hook_config
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, HumanMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
@@ -115,6 +117,33 @@ def test_a_subagent_mode_retries_once_with_the_hidden_reminder() -> None:
     assert held.tool_calls == [] and held.additional_kwargs[ACTION_MARKER_KEY]["action"] == "retrying"
     assert result["messages"][-1].content.startswith("EMEA Q3 revenue was 4.2M")
     assert result[STATE_CHANNEL]["status"] == "on_track" and result[STATE_CHANNEL]["checks"] == 2
+
+
+class _SendBack(AgentMiddleware):
+    """Stands in for the to-do reminder and the completion review: sends final answers back."""
+
+    def __init__(self, times: int) -> None:
+        super().__init__()
+        self.left = times
+
+    @hook_config(can_jump_to=["model"])
+    def after_model(self, state, runtime):
+        if self.left and not state["messages"][-1].tool_calls:
+            self.left -= 1
+            return {"jump_to": "model"}
+        return None
+
+
+def test_a_response_an_inner_middleware_sends_back_still_counts_as_a_step() -> None:
+    model = _ScriptedModel(responses=[AIMessage(content=f"Draft answer {index}.") for index in range(1, 4)], seen=[])
+    judge = _Judge("on_task")
+    monitor = DeviationMonitorMiddleware(DeviationMonitorConfig(), app_config=_app_config(), model_factory=lambda name: judge)
+    graph = create_agent(model=model, tools=[read_pages], middleware=[monitor, _SendBack(2)])
+    context = _context(deviation_monitor={"enabled": True, "model": MONITOR, "cadence": {"mode": "steps", "every": 3}})
+    result = asyncio.run(graph.ainvoke({"messages": [HumanMessage(content=REQUEST)]}, context=context))
+
+    assert len(model.seen) == 3 and judge.verdicts == []  # three responses, so the third was checked
+    assert result[STATE_CHANNEL]["status"] == "on_track" and result[STATE_CHANNEL]["last_checked_step"] == 3
 
 
 class TestLeadChain:

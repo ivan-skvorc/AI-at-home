@@ -79,7 +79,10 @@ import {
   type BulkThreadResult,
 } from "./bulk";
 import { THREAD_FOLDER_METADATA_KEY } from "./chat-folders";
-import { deviationMonitorRunContext } from "./deviation-monitor";
+import {
+  deviationMonitorRunContext,
+  normalizeDeviationMonitorSetting,
+} from "./deviation-monitor";
 import {
   addEditVersionToGroups,
   buildEditVersionThreadMetadata,
@@ -496,9 +499,10 @@ export function buildRunContext({
     // above would otherwise carry `{ enabled: false, ... }` onto the wire;
     // this sends the strict contract object or nothing (`undefined` is
     // dropped by JSON). A chat seeded with "the chat's own model" is checked
-    // by the model this run is sent with.
+    // by the model this run is sent with. Read like the button and the status
+    // bar read it, so a damaged choice they show as on is sent as shown.
     deviation_monitor: deviationMonitorRunContext(
-      settings.deviation_monitor,
+      normalizeDeviationMonitorSetting(settings.deviation_monitor),
       runModelName,
     ),
     thread_id: threadId,
@@ -2850,6 +2854,18 @@ export function useThreadStream({
     !completedRunIdsRef.current.has(knownActiveRun.run_id)
       ? parseRunStartTime(knownActiveRun.created_at)
       : null;
+  // The newest run's start, finished or not: a report written before it (an
+  // earlier run's, when the newest one was not monitored) is no longer current.
+  const latestRunStartedAt = useMemo(() => {
+    let latest: number | null = null;
+    for (const run of runsQuery.data ?? []) {
+      const startedAt = parseRunStartTime(run.created_at);
+      if (startedAt !== null && (latest === null || startedAt > latest)) {
+        latest = startedAt;
+      }
+    }
+    return latest;
+  }, [runsQuery.data]);
 
   // Run inputs can name an active run the cached list predates (a run started
   // from another tab, a channel or a schedule after this list was read; it is
@@ -4076,6 +4092,7 @@ export function useThreadStream({
     canSendInput: inputCapability && !!inputQuery.data?.active_run_id,
     activeRunId: knownActiveRunId,
     activeRunStartedAt: knownActiveRunStartedAt,
+    latestRunStartedAt,
   } as const;
 }
 

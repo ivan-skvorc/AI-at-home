@@ -1225,7 +1225,7 @@ export const enUS: Translations = {
       `Deviation monitor on: ${model} checks ${cadence}. Click to change it or turn it off.`,
     title: "Deviation monitor",
     description:
-      "While the agent works, a second model checks that its recent steps still serve your request. A confirmed drift stops the run with a note; in Ultra and Ultracode it first retries once, split into smaller subtasks. The agent waits for each check. It is a helper, not a safety guarantee.",
+      "While the agent works, a second model checks that its recent steps still serve your request. A confirmed drift stops the run with a note; in Ultra, Democracy and Ultracode it first retries once, split into smaller subtasks. The agent waits for each check. It is a helper, not a safety guarantee.",
     modelLabel: "Monitor model",
     modelHint:
       "Each check is a separate call to this model, billed to the run and counted against your spend limits. A second local model may make the GPU swap models on every check.",
@@ -1252,6 +1252,8 @@ export const enUS: Translations = {
     everyTurns: (count) =>
       count === 1 ? "every turn" : `every ${count} turns`,
     chatModel: "The chat's model",
+    onFromNextMessage: "On from your next message",
+    offFromNextMessage: "Off from your next message; this run keeps it",
     status: {
       regionLabel: "Deviation monitor",
       idle: "Watching",

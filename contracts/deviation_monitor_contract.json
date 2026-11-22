@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "description": "Cross-language contract fixture for the deviation monitor (FORK.md §57). The web UI sends run context[context_key] only while the chat's monitor is on, exactly one of run_context_examples' shape, and omits the key otherwise; absent means off and the backend writes nothing. The Gateway stores the canonical form (deerflow/config/deviation_monitor_config.py). The middleware writes thread-state channel state_channel with exactly state_keys plus state_extra_keys, whose status is one of statuses; run_start_state is its run-start write (on_track with last_checked_step null: no check has run in this run yet, which the status bar shows as watching). A confirmed drift rewrites the checked response in place (same id): tool calls removed, the note appended to content, additional_kwargs[action_marker_key] set, and the run stamped with stop_reason. stopped_message and stopped_state are what the backend emits for request and the scripted verdict in judge_reply; backend/tests/test_deviation_monitor.py regenerates them, and the frontend unit tests and tests/e2e/deviation-monitor.spec.ts read them. GET /api/features carries {feature_key: {\"enabled\": bool}}.",
+  "description": "Cross-language contract fixture for the deviation monitor (FORK.md §57). The web UI sends run context[context_key] only while the chat's monitor is on, exactly one of run_context_examples' shape, and omits the key otherwise; absent means off and the backend writes nothing. The Gateway stores the canonical form (deerflow/config/deviation_monitor_config.py). The middleware writes thread-state channel state_channel with exactly state_keys plus state_extra_keys, whose status is one of statuses; state_extra_keys are the backend's turn bookkeeping (the turn counter, the id of the user message the turn answers, and whether the turn retried), which the web UI ignores. A run over the same user message (an approval resume, a batch follow-up) continues that turn's steps, last check and retry. run_start_state is the write that starts a turn (on_track with last_checked_step null: no check has run in this turn yet, which the status bar shows as watching). A confirmed drift rewrites the checked response in place (same id): tool calls removed, the note appended to content, additional_kwargs[action_marker_key] set (the note included, so a later check can leave it out of the agent's words), and the run stamped with stop_reason. stopped_message and stopped_state are what the backend emits for request (a user message with id request_id) and the scripted verdict in judge_reply; backend/tests/test_deviation_monitor.py regenerates them, and the frontend unit tests and tests/e2e/deviation-monitor.spec.ts read them. GET /api/features carries {feature_key: {\"enabled\": bool}}.",
   "context_key": "deviation_monitor",
   "cadence_bounds": {
     "steps": { "min": 1, "max": 50 },
@@ -29,7 +29,7 @@
     "last_checked_step",
     "updated_at"
   ],
-  "state_extra_keys": ["turn"],
+  "state_extra_keys": ["turn", "request_id", "retried"],
   "statuses": [
     "off",
     "checking",
@@ -54,12 +54,15 @@
     "checks": 0,
     "last_checked_step": null,
     "updated_at": "2026-11-22T10:00:00.000000+00:00",
-    "turn": 1
+    "turn": 1,
+    "request_id": "devmon-request",
+    "retried": false
   },
   "feature_key": "deviation_monitor",
   "stop_reason": "deviation_stopped",
   "action_marker_key": "deviation_monitor_action",
   "request": "Fix the typo in README.md",
+  "request_id": "devmon-request",
   "judge_reply": {
     "verdict": "drifting",
     "drift_kind": "scope_creep",
@@ -76,7 +79,8 @@
         "final_answer": false,
         "reason": "It began rewriting the whole README instead of fixing one typo.",
         "drift_kind": "scope_creep",
-        "restated_task": "Fix the typo in README.md."
+        "restated_task": "Fix the typo in README.md.",
+        "note": "**Deviation monitor stopped this run.** The recent work no longer served your request: It began rewriting the whole README instead of fixing one typo.\n\nYour request: “Fix the typo in README.md”"
       }
     },
     "tool_calls": []
@@ -90,6 +94,8 @@
     "checks": 1,
     "last_checked_step": 1,
     "updated_at": "2026-11-22T10:00:30.000000+00:00",
-    "turn": 1
+    "turn": 1,
+    "request_id": "devmon-request",
+    "retried": false
   }
 }
