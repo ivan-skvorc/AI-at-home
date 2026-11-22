@@ -71,7 +71,7 @@ async def test_the_plate_is_built_and_its_files_are_handed_over_in_order():
     answer, files = await _build(PLATE)
     assert answer["passed"] is True, answer
     assert {check["check"]: check["passed"] for check in answer["checks"]} == {"one closed solid": True, "bounding box": True, "volume": True, "holes": True}
-    assert sorted(files) == ["part.glb", "part.png", "part.py", "part.report.json", "part.step", "part.stl"]
+    assert sorted(files) == ["part.3mf", "part.glb", "part.png", "part.py", "part.report.json", "part.step", "part.stl"]
     assert files["part.py"].decode() == PLATE
     assert files["part.step"].startswith(b"ISO-10303-21") and b"MANIFOLD_SOLID_BREP" in files["part.step"]
     assert files["part.glb"][:4] == b"glTF"
@@ -81,7 +81,7 @@ async def test_the_plate_is_built_and_its_files_are_handed_over_in_order():
     assert [hole["diameter_mm"] for hole in report["measured"]["holes"]] == [4.0, 4.0]
     assert sorted(answer["files"]) == sorted(f"/mnt/user-data/outputs/{name}" for name in files)
     # The order a set is saved in: the picture before the meshes, STEP as the last part file, the report after it.
-    assert [path.rpartition("/")[2] for path in answer["files"]] == ["part.py", "part.png", "part.glb", "part.stl", "part.step", "part.report.json"]
+    assert [path.rpartition("/")[2] for path in answer["files"]] == ["part.py", "part.png", "part.glb", "part.stl", "part.3mf", "part.step", "part.report.json"]
     assert files["part.png"][:8] == b"\x89PNG\r\n\x1a\n"
     assert answer["next"].endswith(" Show /mnt/user-data/outputs/part.png in your reply; if you can view images, look at it once and compare it with the request.")
 
@@ -129,7 +129,68 @@ async def test_a_report_of_four_hundred_holes_stays_small_and_names_what_made_it
     assert len(answer["holes"]) == 12 and any("part.report.json lists every hole" in note for note in answer["notes"])
     assert files["part.report.json"].count(b'"at":') == 400
     assert report["cadquery_version"] == cq.__version__ and report["module_version"]
-    assert report["files"] == ["part.py", "part.glb", "part.stl", "part.step"]
+    assert report["files"] == ["part.py", "part.glb", "part.stl", "part.3mf", "part.step"]
+
+
+def _glb_document(glb: bytes) -> dict:
+    length = int.from_bytes(glb[12:16], "little")
+    assert int.from_bytes(glb[16:20], "little") == 0x4E4F534A and length % 4 == 0 and int.from_bytes(glb[8:12], "little") == len(glb)
+    return json.loads(glb[20 : 20 + length])
+
+
+async def test_the_glb_opens_at_real_size_and_the_3mf_is_in_millimetres():
+    import io
+    import re
+    import zipfile
+
+    answer, files = await _build(PLATE)
+    report = json.loads(files["part.report.json"])
+    low, high = report["measured"]["bbox_min_mm"], report["measured"]["bbox_max_mm"]
+    # glTF is in metres: the scene's root scales the kernel's millimetre vertices by 0.001.
+    document = _glb_document(files["part.glb"])
+    (root,) = document["scenes"][document.get("scene", 0)]["nodes"]
+    scale = document["nodes"][root]["scale"]
+    assert scale == [0.001, 0.001, 0.001]
+    positions = [document["accessors"][primitive["attributes"]["POSITION"]] for mesh in document["meshes"] for primitive in mesh["primitives"]]
+    extent = [max(a["max"][k] for a in positions) - min(a["min"][k] for a in positions) for k in range(3)]
+    assert all(abs(side * scale[0] - size / 1000) <= 1e-6 for side, size in zip(extent, report["measured"]["bbox_mm"]))
+    # The slicer's file: a 3MF package whose model is in millimetres and spans the measured box.
+    with zipfile.ZipFile(io.BytesIO(files["part.3mf"])) as package:
+        model = package.read("3D/3dmodel.model").decode("utf-8")
+    assert 'unit="millimeter"' in model
+    vertices = [tuple(map(float, found)) for found in re.findall(r'<vertex x="([^"]+)" y="([^"]+)" z="([^"]+)"', model)]
+    assert all(abs(min(v[k] for v in vertices) - low[k]) <= 1e-6 and abs(max(v[k] for v in vertices) - high[k]) <= 1e-6 for k in range(3))
+    # A failed part's GLB is in metres too.
+    _, failed = await _build(ONE_HOLE)
+    assert document["nodes"][root]["scale"] == _glb_document(failed["part.failed.glb"])["nodes"][root]["scale"] and "part.3mf" not in failed
+
+
+async def test_a_passed_part_says_how_it_prints_and_the_print_block_never_decides():
+    from deerflow_extension_api import ExtensionPrincipal, ToolContext
+
+    from deerflow_extension_cad import checks
+
+    outputs = Outputs()
+    context = ToolContext(ExtensionPrincipal("alice"), {"enabled": True}, "thread-a", output_writer=outputs.write)
+    # The operator's printer has a bed smaller than the plate: a note, not a failure.
+    handler = make_handler(settings_from({"printer": {"build_volume_mm": [50, 50, 50], "nozzle_mm": 0.6}}))
+    answer = await handler({"name": "part", "script": PLATE, **EXPECT}, context)
+    assert answer["passed"] is True, answer
+    printing = answer["print"]
+    assert set(printing) == {"grams", "bed_contact_mm2", "overhang_mm2", "thinnest_wall_mm", "fits_build_volume", "notes"}
+    assert printing["fits_build_volume"] is False and printing["notes"] == ["larger than the build volume (50 × 50 × 50 mm) in X"]
+    # 14249 mm3 of PLA at 1.24 g/cm3, solid.
+    assert printing["grams"] == pytest.approx(17.67, abs=0.01) and printing["overhang_mm2"] == 0
+    report = json.loads(outputs.files["part.report.json"])
+    block = report["measured"]["print"]
+    assert block["build_volume_mm"] == [50.0, 50.0, 50.0] and block["watertight"] is True and block["notes"] == printing["notes"]
+    # The same measurement without its print block is decided the same way.
+    without = {key: value for key, value in report["measured"].items() if key != "print"}
+    assert checks.decide(report["measured"], EXPECT) == checks.decide(without, EXPECT) == answer["checks"]
+    # A failed part carries no print block in its answer; its report still has one.
+    failed = await handler({"name": "part", "script": ONE_HOLE, **EXPECT}, context)
+    assert failed["passed"] is False and "print" not in failed
+    assert "print" in json.loads(outputs.files["part-1.report.json"])["measured"]
 
 
 HOSTILE = [
@@ -185,7 +246,7 @@ result = (
 async def test_a_plate_written_with_the_habits_of_ordinary_python_builds_and_passes():
     answer, files = await _build(HABITS_PLATE)
     assert answer["passed"] is True, answer
-    assert sorted(files) == ["part.glb", "part.png", "part.py", "part.report.json", "part.step", "part.stl"]
+    assert sorted(files) == ["part.3mf", "part.glb", "part.png", "part.py", "part.report.json", "part.step", "part.stl"]
     assert json.loads(files["part.report.json"])["parameters"] == {"w": 60, "d": 40, "t": 6, "spacing": 30.0}
     # A method that is not on the list is refused before the kernel loads, and the answer says which.
     answer, files = await _build(HABITS_PLATE.replace(".hole(round(4.04, 1))", ".hole(4).faces('>Z').sketch()"))
@@ -577,7 +638,7 @@ async def test_a_rebuild_does_not_touch_the_first_build():
     await _build(PLATE, outputs)
     answer, files = await _build(ONE_HOLE, outputs)
     assert answer["passed"] is False
-    assert sorted(files) == ["part-1.failed.glb", "part-1.failed.png", "part-1.py", "part-1.report.json", "part.glb", "part.png", "part.py", "part.report.json", "part.step", "part.stl"]
+    assert sorted(files) == ["part-1.failed.glb", "part-1.failed.png", "part-1.py", "part-1.report.json", "part.3mf", "part.glb", "part.png", "part.py", "part.report.json", "part.step", "part.stl"]
 
 
 #: Item 56's operations against volumes worked out by hand: (label, script, bounding box, volume).

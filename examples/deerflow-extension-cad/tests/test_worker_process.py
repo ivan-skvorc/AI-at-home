@@ -370,7 +370,15 @@ async def test_a_build_stopped_while_its_picture_is_drawn_still_delivers_the_che
     answer, files = await _handle(timeout_seconds=1)
     assert time.monotonic() - started < 10
     assert answer["passed"] is True and "cube.step" in files and "cube.png" not in files
-    assert "no picture: the build used most of its time" in answer["notes"]
+    # The print check comes after the picture, so it was left out too.
+    assert answer["notes"] == ["no picture: the build used most of its time", "no print check: the build used most of its time"]
+
+
+async def test_a_build_stopped_while_checking_how_it_prints_keeps_its_picture(tmp_path, monkeypatch):
+    _stand_in(tmp_path, monkeypatch, _built_stand_in(picture=True, then="open('phase', 'w').write('checking print')\ntime.sleep(60)\n"))
+    answer, files = await _handle(timeout_seconds=1)
+    assert answer["passed"] is True and list(files) == ["cube.py", "cube.png", "cube.glb", "cube.stl", "cube.step", "cube.report.json"]
+    assert answer["notes"] == ["no print check: the build used most of its time"] and "print" not in answer
 
 
 async def test_a_build_stopped_while_drawing_with_no_answer_written_is_a_failed_build(tmp_path, monkeypatch):
@@ -381,8 +389,10 @@ async def test_a_build_stopped_while_drawing_with_no_answer_written_is_a_failed_
 
 async def test_the_worker_is_told_the_wall_clock_and_what_the_part_must_meet(tmp_path, monkeypatch):
     _stand_in(tmp_path, monkeypatch, "request = json.load(open('request.json'))\njson.dump({'status': 'built', 'measured': request, 'files': {}}, open('result.json', 'w'))")
-    request = (await tool.run_worker("x = 1", timeout_seconds=7, memory_mb=4096, expected={"bbox_xyz_mm": [1, 2, 3]}))["measured"]
+    printer = tool.printer_from({})
+    request = (await tool.run_worker("x = 1", timeout_seconds=7, memory_mb=4096, expected={"bbox_xyz_mm": [1, 2, 3]}, printer=printer))["measured"]
     assert request["budget_seconds"] == 7 and request["expected"] == {"bbox_xyz_mm": [1, 2, 3]}
+    assert request["printer"] == {"build_volume_mm": None, "nozzle_mm": 0.4, "layer_mm": 0.2, "overhang_deg": 45.0, "min_clearance_mm": 0.3, "density_g_cm3": 1.24}
 
 
 def test_a_refused_script_saves_no_picture():
@@ -421,13 +431,22 @@ async def test_a_picture_that_cannot_be_drawn_costs_the_part_nothing(tmp_path, m
 
 
 @needs_kernel
+async def test_a_print_check_that_cannot_run_costs_the_part_nothing(tmp_path, monkeypatch):
+    patch = "from deerflow_extension_cad import printability\ndef broken(*arguments, **options):\n    raise ValueError('the print check broke')\nprintability.assess = broken"
+    _real_worker_with(tmp_path, monkeypatch, patch)
+    answer, files = await _handle_script("result = cq.Workplane('XY').box(1, 1, 1)\n")
+    assert answer["passed"] is True and "cube.step" in files and "cube.png" in files and "print" not in answer
+    assert answer["notes"] == ["no print check: the print check broke"]
+
+
+@needs_kernel
 async def test_a_build_with_little_time_left_skips_its_picture_with_a_note(tmp_path, monkeypatch):
     # The worker counts from its own start: with two seconds of budget, less than three remain once the part is measured.
     patch = "import json\nrequest = json.load(open('request.json'))\njson.dump({**request, 'budget_seconds': 2}, open('request.json', 'w'))"
     _real_worker_with(tmp_path, monkeypatch, patch)
     answer, files = await _handle_script("result = cq.Workplane('XY').box(1, 1, 1)\n")
-    assert answer["passed"] is True and "cube.step" in files and "cube.png" not in files
-    assert "no picture: the build used most of its time" in answer["notes"]
+    assert answer["passed"] is True and "cube.step" in files and "cube.png" not in files and "print" not in answer
+    assert answer["notes"] == ["no picture: the build used most of its time", "no print check: the build used most of its time"]
 
 
 @needs_kernel

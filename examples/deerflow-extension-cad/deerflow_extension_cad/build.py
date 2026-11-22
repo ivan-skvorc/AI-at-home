@@ -11,6 +11,8 @@ only; the Gateway never imports it.
 
 from __future__ import annotations
 
+import json
+import struct
 from pathlib import Path
 
 from deerflow_extension_cad import allowlist as table
@@ -309,15 +311,49 @@ def _fits(path: Path, kind: str, max_bytes: int) -> None:
         raise BuildFailed(None, "export", f"the {kind} file is larger than {limit}. Simplify the part: fewer small fillets and holes.")
 
 
-def export(shape, cq, directory: Path, max_bytes: int) -> tuple[dict[str, str], dict[str, float]]:
-    """Write STEP, STL and GLB of *shape* into *directory*.
+#: glTF lengths are metres and the kernel writes the GLB in millimetres: its scene is scaled by this.
+GLB_SCALE = 0.001
+_GLB_MAGIC, _GLB_JSON = 0x46546C67, 0x4E4F534A
 
-    Returns the file names by kind and the mesh tolerance that was used.
+
+def in_metres(glb: bytes) -> bytes:
+    """The GLB with each root node of its scenes scaled from millimetres to metres.
+
+    The vertices stay as the kernel wrote them; only the scene's root transform changes, so a
+    viewer, Blender or a phone's AR view opens a 40 mm part at 40 mm instead of 40 m. The JSON
+    chunk is padded back to four bytes, as the format requires.
+    """
+    magic, version, _ = struct.unpack_from("<III", glb, 0)
+    length, kind = struct.unpack_from("<II", glb, 12)
+    if magic != _GLB_MAGIC or kind != _GLB_JSON:
+        raise ValueError("not a binary glTF file")
+    document = json.loads(glb[20 : 20 + length])
+    roots = {index for scene in document.get("scenes", []) for index in scene.get("nodes", [])}
+    for index in sorted(roots):
+        node = document["nodes"][index]
+        if "matrix" in node:
+            # Column-major: scaling the result scales the first three rows of every column, translation included.
+            node["matrix"] = [value * GLB_SCALE if position % 4 != 3 else value for position, value in enumerate(node["matrix"])]
+            continue
+        node["scale"] = [value * GLB_SCALE for value in node.get("scale", [1.0, 1.0, 1.0])]
+        if "translation" in node:
+            node["translation"] = [value * GLB_SCALE for value in node["translation"]]
+    text = json.dumps(document, separators=(",", ":")).encode("utf-8")
+    text += b" " * (-len(text) % 4)
+    body = struct.pack("<II", len(text), _GLB_JSON) + text + glb[20 + length :]
+    return struct.pack("<III", magic, version, 12 + len(body)) + body
+
+
+def export(shape, cq, directory: Path, max_bytes: int) -> tuple[dict[str, str], dict[str, float]]:
+    """Write STEP, STL, 3MF and GLB of *shape* into *directory*.
+
+    Returns the file names by kind and the mesh tolerance that was used. STEP, STL and 3MF are
+    in millimetres; the GLB is in metres, the unit of glTF.
     """
     from OCP.BRepTools import BRepTools
 
-    names = {"step": "part.step", "stl": "part.stl", "glb": "part.glb"}
-    step, stl, glb = (directory / names[kind] for kind in ("step", "stl", "glb"))
+    names = {"step": "part.step", "stl": "part.stl", "3mf": "part.3mf", "glb": "part.glb"}
+    step, stl, threemf, glb = (directory / names[kind] for kind in ("step", "stl", "3mf", "glb"))
     cq.exporters.export(shape, str(step))
     _fits(step, "STEP", max_bytes)
     scale = max(1.0, shape.BoundingBox().DiagonalLength / MESH_FULL_DETAIL_MM)
@@ -332,6 +368,11 @@ def export(shape, cq, directory: Path, max_bytes: int) -> tuple[dict[str, str], 
     if not whole_stl(stl):
         raise BuildFailed(None, "export", "the STL mesh could not be written in full, even at the coarsest tolerance. Simplify the part: fewer small fillets and holes.")
     _fits(stl, "STL", max_bytes)
+    # The slicer's file: in millimetres, from the mesh the STL was just written with (the kernel keeps it on the shape).
+    cq.exporters.export(shape, str(threemf), tolerance=linear, angularTolerance=angular)
+    _fits(threemf, "3MF", max_bytes)
     cq.Assembly(shape, name="part").export(str(glb), tolerance=linear, angularTolerance=angular)
+    _fits(glb, "GLB", max_bytes)
+    glb.write_bytes(in_metres(glb.read_bytes()))
     _fits(glb, "GLB", max_bytes)
     return names, {"tolerance_mm": linear, "angular_rad": angular}

@@ -107,6 +107,32 @@ def test_operator_settings_are_validated_at_startup(monkeypatch):
     assert not loaded.plugins and not diagnostics
 
 
+def test_a_printer_value_out_of_range_stops_the_module_and_names_the_key(monkeypatch):
+    # The printer profile is the operator's, in config.yaml: a wrong value must not become a silent default.
+    monkeypatch.syspath_prepend(str(PACKAGE))
+    for printer, key in (
+        ({"nozzle_mm": 0}, "printer.nozzle_mm must be a number from 0.1 to 2"),
+        ({"nozzle_mm": True}, "printer.nozzle_mm"),
+        ({"layer_mm": "0.2"}, "printer.layer_mm"),
+        ({"overhang_deg": 90}, "printer.overhang_deg must be a number from 10 to 80"),
+        ({"min_clearance_mm": float("nan")}, "printer.min_clearance_mm"),
+        ({"density_g_cm3": 100}, "printer.density_g_cm3"),
+        ({"build_volume_mm": [256, 256]}, "printer.build_volume_mm must be three numbers"),
+        ({"build_volume_mm": [256, 256, 0]}, "printer.build_volume_mm must be three numbers"),
+        ({"nozzle": 0.4}, "printer.nozzle is not a printer value"),
+        ("prusa", "printer must be a mapping"),
+    ):
+        loaded, diagnostics = load_extensions([ExtensionSpec(use="deerflow_extension_cad:install", config={"printer": printer})])
+        assert not loaded.plugins and key in diagnostics[0].message, (printer, diagnostics)
+    from deerflow_extension_cad.tool import settings_from
+
+    # Every value is optional: `printer:` with all of them commented out is the defaults.
+    defaults = {"build_volume_mm": None, "nozzle_mm": 0.4, "layer_mm": 0.2, "overhang_deg": 45.0, "min_clearance_mm": 0.3, "density_g_cm3": 1.24}
+    assert settings_from({})["printer"] == settings_from({"printer": None})["printer"] == defaults
+    mine = settings_from({"printer": {"build_volume_mm": [256, 256, 256], "nozzle_mm": 0.6, "density_g_cm3": 1.27}})["printer"]
+    assert mine == {**defaults, "build_volume_mm": [256.0, 256.0, 256.0], "nozzle_mm": 0.6, "density_g_cm3": 1.27}
+
+
 def test_the_module_loads_on_a_server_with_many_processors(monkeypatch):
     # The default number of builds at once is half the processors; it has to stay inside what an operator may set.
     import os
@@ -175,7 +201,8 @@ async def test_a_part_that_passes_every_check_is_handed_over_with_its_step_file(
     ((script, limits),) = seen
     assert script == PLATE
     expected = {"bbox_xyz_mm": [60, 40, 6], "volume_min_max_mm3": [14000, 14400], "hole_diameters_mm": [4, 4]}
-    assert {key: value for key, value in limits.items() if key != "slots"} == {"timeout_seconds": 20, "memory_mb": 4096, "expected": expected}
+    printer = {"build_volume_mm": None, "nozzle_mm": 0.4, "layer_mm": 0.2, "overhang_deg": 45.0, "min_clearance_mm": 0.3, "density_g_cm3": 1.24}
+    assert {key: value for key, value in limits.items() if key != "slots"} == {"timeout_seconds": 20, "memory_mb": 4096, "expected": expected, "printer": printer}
     assert limits["slots"].acquire(blocking=False)
 
 
@@ -633,6 +660,28 @@ async def test_what_the_worker_says_about_the_steps_after_the_checks_reaches_the
     # Sentences only, each bounded: the child's answer is not trusted further than that.
     assert answer["passed"] is True and answer["notes"] == ["no picture: the build used most of its time", "x" * 300]
     assert "Show" not in answer["next"]
+
+
+PRINT = {"bed_contact_mm2": 2375.0, "overhang_mm2": 0.0, "overhang_deg": 45.0, "thinnest_wall_mm": 6.0, "watertight": True, "grams": 17.67}
+
+
+@pytest.mark.asyncio
+async def test_a_passed_part_carries_its_print_block_and_its_slicer_file(cad, outputs, monkeypatch):
+    noted = {**PRINT, "build_volume_mm": [50.0, 50.0, 50.0], "fits_build_volume": False, "too_large_axes": ["X"], "notes": ["larger than the build volume (50 × 50 × 50 mm) in X"]}
+    ready = {**BUILT, "measured": {**MEASURED, "print": noted}, "files": {**BUILT["files"], "3mf": b"PK3MF"}}
+    answer, _, _ = await _call(cad, outputs, monkeypatch, ready)
+    # The 3MF is the last mesh before the STEP, which still closes the set.
+    assert [Path(path).name for path in answer["files"]] == ["mounting-plate.py", "mounting-plate.glb", "mounting-plate.stl", "mounting-plate.3mf", "mounting-plate.step", "mounting-plate.report.json"]
+    # A few numbers and the notes past a threshold; the whole block is in the report.
+    assert answer["print"] == {"grams": 17.67, "bed_contact_mm2": 2375, "overhang_mm2": 0, "thinnest_wall_mm": 6, "fits_build_volume": False, "notes": ["larger than the build volume (50 × 50 × 50 mm) in X"]}
+    assert json.loads((outputs / "mounting-plate.report.json").read_text(encoding="utf-8"))["measured"]["print"] == noted
+    # Pass or fail is the user's numbers alone: the same part without a print block is decided the same way.
+    plain, _, _ = await _call(cad, outputs, monkeypatch, BUILT)
+    assert plain["checks"] == answer["checks"] and plain["passed"] is True and "print" not in plain
+    # A failed part is not told how it prints, and its 3MF is not saved; its report keeps the block.
+    failed, _, _ = await _call(cad, outputs, monkeypatch, {**ready, "measured": {**ready["measured"], "bbox_mm": [60.0, 40.0, 7.0]}})
+    assert failed["passed"] is False and "print" not in failed and not [path for path in failed["files"] if path.endswith(".3mf")]
+    assert "print" in json.loads((outputs / "mounting-plate-2.report.json").read_text(encoding="utf-8"))["measured"]
 
 
 @pytest.mark.asyncio

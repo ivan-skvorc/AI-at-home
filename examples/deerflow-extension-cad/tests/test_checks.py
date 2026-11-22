@@ -136,3 +136,12 @@ def test_more_misplaced_holes_than_a_check_names_are_counted():
     measured = _plate(*(_down(x, 0.0) for x in range(-20, 20)))
     check = _holes_check(measured, [[4, x, 5, 6] for x in range(-20, 20)])
     assert len(check["misplaced"]) == checks.MAX_HOLES_LISTED and check["misplaced_count"] == 40
+
+
+def test_the_print_block_never_decides():
+    # How a part prints is reported, not checked: the same part with any print block is decided the same way.
+    measured = _plate(_down(-15, 0), _down(15, 0))
+    printing = {"bed_contact_mm2": 0.0, "overhang_mm2": 9999.0, "thinnest_wall_mm": 0.1, "watertight": False, "open_edges": 12, "fits_build_volume": False}
+    expected = {"bbox_xyz_mm": [60, 40, 6], "volume_min_max_mm3": [13000, 15000], "hole_diameters_mm": [[4, -15, 0, 6], 4]}
+    assert checks.decide({**measured, "print": printing}, expected) == checks.decide(measured, expected)
+    assert all(check["passed"] for check in checks.decide(measured, expected))

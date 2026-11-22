@@ -2,8 +2,8 @@
 
 Installing the package adds one model tool, ``cad_build``. The tool reads a
 short CadQuery script as a syntax tree, performs an allow-list of operations
-itself in a child process, measures the result and writes STEP, STL and GLB
-files into the calling conversation's outputs. See README.md.
+itself in a child process, measures the result and writes STEP, STL, 3MF and
+GLB files and a picture into the calling conversation's outputs. See README.md.
 
 Importing this package does not import CadQuery: the kernel is loaded only by
 the worker process, so a Gateway with the extension installed starts as fast
@@ -47,7 +47,7 @@ if extension is not None:
             PluginContribution(
                 namespace=NAMESPACE,
                 title="CAD parts",
-                description="Builds a mechanical part from a CadQuery script without running the script, checks it, and saves STEP, STL and GLB files.",
+                description="Builds a mechanical part from a CadQuery script without running the script, checks it, and saves STEP, STL, 3MF and GLB files with a picture of the part.",
                 enabled=True,
                 tools=(ModelTool("cad_build", DESCRIPTION, INPUT_SCHEMA, make_handler(settings), TOOL_GROUP),),
             )

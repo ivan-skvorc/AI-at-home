@@ -5,9 +5,10 @@ It starts ``worker.py`` in a fresh interpreter with a wall-clock limit, reads
 back measured numbers, compares them with what the model said the part must
 meet, and writes files through the host (``ToolContext.write_output``).
 
-The tool decides pass or fail, not the model: STEP, STL and GLB are written
-only when every check passed, so a STEP file listed in a ``cad_build`` answer
-means a part that passed.
+The tool decides pass or fail, not the model: STEP, STL, 3MF and GLB are
+written only when every check passed, so a STEP file listed in a ``cad_build``
+answer means a part that passed. A failed build keeps its picture and GLB, named
+``.failed``, to look at.
 """
 
 from __future__ import annotations
@@ -16,6 +17,7 @@ import asyncio
 import hashlib
 import importlib.metadata
 import json
+import math
 import os
 import re
 import shutil
@@ -85,7 +87,7 @@ DESCRIPTION = (
     "workplaneFromTagged, end, first, last, translate, rotate, mirror, mirrorX, mirrorY, union, cut, intersect. "
     "bbox_xyz_mm is the expected overall size along x, y and z. volume_min_max_mm3 is the allowed volume range. "
     "hole_diameters_mm lists one diameter, or [d, x, y, z], per expected hole, [] for none. Assign the part to result. "
-    "Returns pass or fail per check with the measured values. STEP, STL and GLB files are saved only when every check passes."
+    "Returns pass or fail per check with the measured values. STEP, STL, GLB and 3MF files are saved only when every check passes."
 )
 
 INPUT_SCHEMA: dict[str, Any] = {
@@ -154,6 +156,7 @@ MAX_COUNTED_CONVERSATIONS = 1000
 _PHASES = {
     # Only when the answer written before this step cannot be read: otherwise run_worker returns it.
     "rendering": "The part was built and checked, and drawing its picture did not finish in time. Simplify the part: fewer small fillets and holes.",
+    "checking print": "The part was built and checked, and checking how it prints did not finish in time. Simplify the part: fewer small fillets and holes.",
     "exporting": "The part was built, and writing its files did not finish in time. Simplify the part: fewer small fillets and holes.",
     "measuring": "The part was built, and measuring it did not finish in time. Reduce the number of holes and fillets.",
 }
@@ -197,7 +200,50 @@ def _problem_with(payload: Mapping[str, Any]) -> str | None:
     return None
 
 
-def settings_from(config: Mapping[str, Any]) -> dict[str, int]:
+#: The operator's printer (``printer:`` in the CAD record's config), for the print block and its notes.
+#: Defaults for a common 0.4 mm nozzle printing PLA. No build volume means no fit note.
+PRINTER_DEFAULTS: dict[str, float] = {"nozzle_mm": 0.4, "layer_mm": 0.2, "overhang_deg": 45.0, "min_clearance_mm": 0.3, "density_g_cm3": 1.24}
+PRINTER_RANGES: dict[str, tuple[float, float]] = {"nozzle_mm": (0.1, 2.0), "layer_mm": (0.02, 1.0), "overhang_deg": (10.0, 80.0), "min_clearance_mm": (0.05, 3.0), "density_g_cm3": (0.5, 20.0)}
+BUILD_VOLUME_RANGE_MM = (10.0, 5000.0)
+
+
+def printer_from(config: Mapping[str, Any]) -> dict[str, Any]:
+    """The printer profile from the CAD record's config: every value bounded, and an error names its key.
+
+    It is operator configuration in config.yaml, which no API writes, and it costs no tokens: the
+    model sees only notes that name the value they compared against.
+    """
+    given = config.get("printer")
+    if given is None:
+        given = {}  # `printer:` with every value commented out
+    if not isinstance(given, Mapping):
+        raise ValueError("cad: printer must be a mapping of printer values, such as nozzle_mm: 0.4")
+    known = ("build_volume_mm", *PRINTER_DEFAULTS)
+    unknown = sorted(str(key) for key in given if key not in known)
+    if unknown:
+        # A misspelled value would otherwise be a default the operator thinks they changed.
+        raise ValueError(f"cad: printer.{unknown[0]} is not a printer value; printer takes {', '.join(known)}")
+
+    def number(value: Any, low: float, high: float) -> bool:
+        return type(value) in (int, float) and math.isfinite(value) and low <= value <= high
+
+    profile: dict[str, Any] = {"build_volume_mm": None}
+    volume = given.get("build_volume_mm")
+    if volume is not None:
+        low, high = BUILD_VOLUME_RANGE_MM
+        if not (isinstance(volume, (list, tuple)) and len(volume) == 3 and all(number(side, low, high) for side in volume)):
+            raise ValueError(f"cad: printer.build_volume_mm must be three numbers from {low:g} to {high:g}: the bed's x and y and the height, in millimetres")
+        profile["build_volume_mm"] = [float(side) for side in volume]
+    for key, default in PRINTER_DEFAULTS.items():
+        value = given.get(key, default)
+        low, high = PRINTER_RANGES[key]
+        if not number(value, low, high):
+            raise ValueError(f"cad: printer.{key} must be a number from {low:g} to {high:g}")
+        profile[key] = float(value)
+    return profile
+
+
+def settings_from(config: Mapping[str, Any]) -> dict[str, Any]:
     """Read the operator's values for this extension, clamped to what the host allows."""
 
     def whole(key: str, default: int, low: int, high: int) -> int:
@@ -210,6 +256,7 @@ def settings_from(config: Mapping[str, Any]) -> dict[str, int]:
         "timeout_seconds": whole("timeout_seconds", DEFAULT_TIMEOUT_SECONDS, 5, MAX_TIMEOUT_SECONDS),
         "memory_mb": whole("memory_mb", DEFAULT_MEMORY_MB, MIN_MEMORY_MB, 65536),
         "parallel_builds": whole("parallel_builds", default_parallel_builds(), 1, MAX_PARALLEL_BUILDS),
+        "printer": printer_from(config),
     }
 
 
@@ -243,6 +290,24 @@ def _worker_notes(result: Mapping[str, Any]) -> list[str]:
     if not isinstance(notes, list):
         return []
     return [note[:MAX_WORKER_NOTE_CHARS] for note in notes if isinstance(note, str) and note][:MAX_WORKER_NOTES]
+
+
+#: The print block's numbers an answer carries; report.json keeps the whole block.
+_PRINT_SAID = ("grams", "bed_contact_mm2", "overhang_mm2", "thinnest_wall_mm")
+
+
+def print_block(measured: Mapping[str, Any]) -> dict[str, Any] | None:
+    """The print block as an answer carries it: four numbers, the fit when there is a bed to fit, and the notes."""
+    block = measured.get("print")
+    if not isinstance(block, Mapping):
+        return None
+    said: dict[str, Any] = {key: _short(block[key]) for key in _PRINT_SAID if type(block.get(key)) in (int, float)}
+    if isinstance(block.get("fits_build_volume"), bool):
+        said["fits_build_volume"] = block["fits_build_volume"]
+    notes = _worker_notes(block)
+    if notes:
+        said["notes"] = notes
+    return said or None
 
 
 def _short(value: Any) -> Any:
@@ -350,7 +415,7 @@ def _next_after(passed: bool, attempt: int, changed: Mapping[str, Any], same: bo
 
 
 #: The worker's steps after the checks, in order, and the note for each one a timeout leaves out.
-_AFTER_THE_CHECKS = {"rendering": "no picture: the build used most of its time"}
+_AFTER_THE_CHECKS = {"rendering": "no picture: the build used most of its time", "checking print": "no print check: the build used most of its time"}
 
 
 def _prepare(script: str, memory_mb: int, timeout_seconds: int, extra: Mapping[str, Any] | None = None) -> str:
@@ -474,10 +539,19 @@ def _phase_of(directory: str) -> str:
         return ""
 
 
-async def run_worker(script: str, *, timeout_seconds: int, memory_mb: int, slots: threading.BoundedSemaphore | None = None, expected: Mapping[str, Any] | None = None) -> dict[str, Any]:
+async def run_worker(
+    script: str,
+    *,
+    timeout_seconds: int,
+    memory_mb: int,
+    slots: threading.BoundedSemaphore | None = None,
+    expected: Mapping[str, Any] | None = None,
+    printer: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
     """Build *script* in a child interpreter and return its answer, or a failure it could not report itself.
 
-    *expected* is what the part must meet; the worker draws a failed part's picture with the checks it did not pass.
+    *expected* is what the part must meet; the worker draws a failed part's picture with the checks it did
+    not pass. *printer* is the operator's printer profile, which the print check measures against.
     """
     if slots is not None and not await _acquire(slots, QUEUE_SECONDS):
         return {"status": "busy", "message": "the server is building other parts right now and has no free slot for this one"}
@@ -487,7 +561,7 @@ async def run_worker(script: str, *, timeout_seconds: int, memory_mb: int, slots
     try:
         preparation = _Preparation()
         try:
-            extra = {"expected": dict(expected)} if expected is not None else None
+            extra = {key: dict(value) for key, value in (("expected", expected), ("printer", printer)) if value is not None} or None
             directory = await asyncio.to_thread(preparation.make, script, memory_mb, timeout_seconds, extra)
         except asyncio.CancelledError:
             preparation.abandon()
@@ -562,6 +636,7 @@ async def _save(context: ToolContext, name: str, content: bytes, saved: list[str
 
 def make_handler(settings: Mapping[str, Any]):
     slots = threading.BoundedSemaphore(settings.get("parallel_builds") or default_parallel_builds())
+    printer = settings.get("printer") or printer_from({})
     # Read once, when the module is installed: every report names the code that made it.
     made_by = provenance()
     # Builds in a row that never got past loading the kernel, by conversation: three people
@@ -577,7 +652,7 @@ def make_handler(settings: Mapping[str, Any]):
             return {"passed": False, "error": {"message": problem}, "files": [], "next": NEXT_ARGUMENTS}
         script = payload["script"]
         expected = {key: payload[key] for key in EXPECTATIONS if key in payload}
-        result = await run_worker(script, timeout_seconds=settings["timeout_seconds"], memory_mb=settings["memory_mb"], slots=slots, expected=expected)
+        result = await run_worker(script, timeout_seconds=settings["timeout_seconds"], memory_mb=settings["memory_mb"], slots=slots, expected=expected, printer=printer)
         status = result.get("status")
         conversation = str(context.thread_id or "")
         if status == "loading":
@@ -640,11 +715,16 @@ def make_handler(settings: Mapping[str, Any]):
             if notes:
                 answer["notes"] = report["notes"] = notes
             if passed:
+                printing = print_block(result["measured"])
+                if printing:
+                    # Reported, never checked: the block cannot change pass or fail.
+                    answer["print"] = printing
                 # The picture first: it is what a reader looks at, and a picture the host refuses is a problem, not a lost part.
                 if "png" in files:
                     picture = await _save(context, f"{stem}.png", files["png"], saved, problems)
-                # STEP goes last: a STEP file in the outputs means the whole set was handed over.
-                for kind in ("glb", "stl", "step"):
+                # STEP goes last: a STEP file in the outputs means the whole set was handed over. The 3MF is
+                # part of the set when the worker wrote one (it always does since item 54).
+                for kind in ("glb", "stl", *(("3mf",) if "3mf" in files else ()), "step"):
                     if kind not in files:
                         problems.append(f"the {kind.upper()} export is missing or larger than {MAX_EXPORT_BYTES // (1024 * 1024)} MiB")
                     elif await _save(context, f"{stem}.{kind}", files[kind], saved, problems) is not None:

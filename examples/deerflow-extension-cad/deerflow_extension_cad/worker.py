@@ -11,7 +11,7 @@ fraction of a second and no geometry.
 
 Once the part is measured, the answer is written at once: that is the checked
 part. What follows adds to it and may be cut short without costing it: the
-picture (``render.py``). Each such step is skipped with a note when less than
+picture (``render.py``) and the print block (``printability.py``). Each such step is skipped with a note when less than
 ``MIN_SECONDS_LEFT`` of the build's wall clock remains, and a failure inside
 one becomes a note, never a failed build. After each step the answer is
 written again with what it added.
@@ -85,6 +85,30 @@ def _picture(request: dict, answer: dict, notes: list[str]) -> None:
         notes.append(f"no picture: {_reason(exc)}")
         return
     files["png"] = "part.png"
+
+
+def _print_check(request: dict, answer: dict, notes: list[str]) -> None:
+    """How the part would print on the operator's printer, read off the STL; reported, never checked."""
+    printer = request.get("printer")
+    if not isinstance(printer, dict):
+        return  # nothing to measure against
+    if _seconds_left(request) < MIN_SECONDS_LEFT:
+        notes.append(f"no print check: {OUT_OF_TIME}")
+        return
+    measured = answer["measured"]
+    try:
+        from deerflow_extension_cad import printability
+
+        triangles = printability.read_stl(Path(answer["files"]["stl"]).read_bytes())
+        # The thinnest wall is printability's own estimate on the STL: no clock, the same answer for the same file.
+        block = printability.assess(triangles, overhang_deg=printer["overhang_deg"], build_volume_mm=printer.get("build_volume_mm"), density_g_cm3=printer["density_g_cm3"], volume_mm3=measured["volume_mm3"])
+        said = printability.notes(block, nozzle_mm=printer["nozzle_mm"])
+    except Exception as exc:
+        notes.append(f"no print check: {_reason(exc)}")
+        return
+    if said:
+        block["notes"] = said
+    measured["print"] = block
 
 
 def _limit(memory_mb: int, max_export_bytes: int, cpu_seconds: int) -> None:
@@ -167,6 +191,9 @@ def main() -> None:
     try:
         _phase("rendering")
         _picture(request, answer, notes)
+        _answer(answer)
+        _phase("checking print")
+        _print_check(request, answer, notes)
         _answer(answer)
     except Exception:
         # Not even the answer could be written again (a full disk): the one above stands, and
