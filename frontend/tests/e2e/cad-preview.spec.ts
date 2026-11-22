@@ -221,9 +221,10 @@ async function expectModel(page: Page, name: string) {
     );
   });
   expect(fits).toBe(true);
-  // The page as a whole too. At phone width the host's own panel header
-  // (file picker and actions) is wider than its sheet for every file type,
-  // with or without this extension, so only the viewer is held to it there.
+  // The page as a whole too. At phone width the chat header's toolbar
+  // (chat-instance.tsx, a row that does not shrink) runs past the viewport
+  // behind the panel's sheet, with or without this extension, so only the
+  // viewer is held to it there.
   if (page.viewportSize()!.width >= 600)
     expect(
       await page.evaluate(

@@ -35,8 +35,23 @@ test("catalog covers every bundled extension package even without runtime regist
 test("catalog merge namespaces match the corresponding bundled plugin declarations", () => {
   for (const entry of extensionCatalog) {
     const directory = resolve(process.cwd(), "../examples", entry.package);
+    // A package's own sources only: a local venv (the CAD kernel's lives in
+    // examples/deerflow-extension-cad/.venv), tool caches and node_modules hold
+    // third-party .py files that declare namespaces of their own.
     const namespaces = readdirSync(directory, { recursive: true })
-      .filter((path) => typeof path === "string" && path.endsWith(".py"))
+      .filter(
+        (path) =>
+          typeof path === "string" &&
+          path.endsWith(".py") &&
+          !path
+            .split(/[\\/]/)
+            .some(
+              (part) =>
+                part.startsWith(".") ||
+                part === "node_modules" ||
+                part === "site-packages",
+            ),
+      )
       .flatMap((path) =>
         [
           ...readFileSync(resolve(directory, String(path)), "utf8").matchAll(

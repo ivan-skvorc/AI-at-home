@@ -457,7 +457,7 @@ class TestBundledCadPluginDelivery:
     def test_the_real_example_holds_the_record_the_migration_delivers(self):
         example = yaml.safe_load((REPO_ROOT / "config.example.yaml").read_text(encoding="utf-8"))
         assert example["config_version"] >= 73
-        assert [entry["name"] for entry in example["plugins"]] == ["workflows", "cad"]
+        assert [entry["name"] for entry in example["plugins"]] == ["workflows", "cad", "cad-preview"]
         assert config_upgrade.MIGRATIONS[73]["plugins_from_example"] == ("cad",)
 
     @pytest.mark.parametrize(

@@ -434,3 +434,23 @@ async def test_only_effective_file_checks_request_sandbox_access(env, monkeypatc
     assert all(leaf["family"] == "undecidable" for leaf in verdict["leaves"])
     authorize.assert_not_awaited()
     acquire.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_tool_result_criterion_is_checked_from_the_recorded_results_without_a_sandbox(env, monkeypatch):
+    """The service hands the executor's tool results to the checklist; a tool-result leaf is not a file check."""
+    from deerflow.extensions.plugin_tools import plugin_tool_name
+
+    authorize = AsyncMock(side_effect=AssertionError("no effective file check"))
+    acquire = Mock(side_effect=AssertionError("no sandbox acquisition"))
+    monkeypatch.setattr("deerflow.authz.sandbox_authz.authorize_sandbox_execution_async", authorize)
+    monkeypatch.setattr(env.provider, "acquire", acquire)
+    entry = {"tool_name": plugin_tool_name("parts", "build_part"), "tool_call_id": "tc-1", "turn": "ai-1", "ordinal": 0, "result_id": "r-1", "result": "ok", "args": {"name": "bracket-a"}, "fields": {"passed": True}, "compacted": False}
+    env.result.tool_results = [entry]
+    batch = await _submit(env, ['tool_result:parts/build_part passed=true where name="bracket-a"'])
+    await _execute(env)
+    item = (await env.repo.list_items(batch["id"], user_id="user-1"))[0]
+    assert item["status"] == "succeeded"
+    assert [(leaf["family"], leaf["checked"], leaf["holds"]) for leaf in item["acceptance_verdict"]["leaves"]] == [("tool_result", True, True)]
+    authorize.assert_not_awaited()
+    acquire.assert_not_called()
