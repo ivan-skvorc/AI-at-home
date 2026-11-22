@@ -32,6 +32,10 @@ make test-blocking-io
 - **Tool wrappers nest.** Receipts wrap authorization, audit and write checks, so
   a denied call still gets a receipt. Progress tracking wraps error handling, so it
   sees the result that error handling produced.
+- **A new run-level `stop_reason` joins both stop lists**
+  (`todo_middleware._COMPLETION_REMINDER_RUN_STOP_REASONS`,
+  `runs/schemas.GOAL_RUN_HARD_STOP_REASONS`), or a reminder, review or goal
+  continuation resumes the run it stopped (`deviation_stopped`, FORK.md §57).
 - **Progress tracking fences late results and hint retries by graph entry**, also
   within one run.
 

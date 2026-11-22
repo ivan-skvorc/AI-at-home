@@ -58,6 +58,11 @@ function parseTime(value: string | null): number | null {
  *   verdict, and a spinner that never stops reads as a hung check;
  * - any report older than the run now going — the previous run's "stopped"
  *   would otherwise sit on the bar until this run's first check.
+ *
+ * One report is not a verdict at all: the backend's run-start write is
+ * `on_track` with `last_checked_step: null` (`run_start_state` in
+ * contracts/deviation_monitor_contract.json), which means no check has run in
+ * this run yet, so it reads as watching rather than "On track".
  */
 export function describeDeviationMonitorBar({
   setting: storedSetting,
@@ -79,8 +84,12 @@ export function describeDeviationMonitorBar({
     if (updatedAt !== null && updatedAt < runStartedAt) state = null;
   }
   if (state?.status === "checking" && !isRunning) state = null;
+  const noCheckYet =
+    state?.status === "on_track" && state.last_checked_step === null;
 
-  const kind: DeviationMonitorBarKind = state?.status ?? "idle";
+  const kind: DeviationMonitorBarKind = noCheckYet
+    ? "idle"
+    : (state?.status ?? "idle");
   const reason = state?.reason ?? null;
   const driftKind = state?.drift_kind ?? null;
   const restatedTask = state?.restated_task ?? null;

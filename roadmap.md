@@ -111,6 +111,11 @@ owner's hardware rather than a change: the viewer on a real phone with a GPU, an
 thresholds and the skill's clearance tables on a printed fit-test coupon. FORK.md records
 both under its known gaps; the live Ultra delegation rides with item 48's first run.
 
+Item **60** came from the deviation monitor ([FORK.md §57](./FORK.md)), which shipped with
+every model call faked at the model boundary because the machine that built it had no keys
+and no GPU. It keeps only the live half: whether the monitor catches real drift on a real
+model, and what it costs in time and false stops.
+
 Every CAD item states what it costs per request, against two rules that no item loosens.
 `cad_build` may cost at most 150 tokens of every request
 (`test_the_bundled_cad_tool_stays_cheap_on_every_request`), and every composer mode must
@@ -169,6 +174,9 @@ Open items, one line each. The full orchestrator prompts follow.
   can never accept, built in the container and judged on the host.
 - **52. Memory that helps a coding agent** — repository-scoped facts, build/test
   procedures, a search over past conversations, and project memory the agent can write.
+- **60. The deviation monitor's live acceptance** — `make drift-eval MODE=agent` with the
+  monitor off and on, on one local and one cloud model: what it catches, what it stops by
+  mistake, and what each check costs.
 
 **Suggested order for 19–25.** Voice first (19), since it is the one missing modality and it
 closes a live privacy leak. Then the injection boundary (23), *before* anything widens the
@@ -1398,6 +1406,57 @@ small, always-relevant layer under them.
 **Done when** — a fact learned while testing repository A is injected in a later run on
 A and never on B; a guessed command that failed is not stored; and the 32K critical
 check still fits.
+
+---
+
+## 60. The deviation monitor's live acceptance
+
+**Goal** — Measured evidence that the deviation monitor (FORK.md §57) stops real drift on
+real models without stopping runs that were on task, recorded beside the drift eval's
+results, and the defaults (cadence, noise control, the evidence cap) kept or changed on
+that evidence.
+
+**Why it fits** — The monitor shipped tested offline only: every judge reply was scripted,
+including inside a real agent graph. Nothing yet shows how often a small local judge flags
+fluent on-task work (FORK.md §25a found judges agree with fluent output more often than they
+should, the opposite risk), how often the re-ask and the mechanical signals turn a true
+drift into a stop, or what a check every few steps costs a local GPU in wall time and model
+swaps.
+
+**Depends on** — LLM keys and Ollama with a 32K local model on the owner's host, and
+`make dev`. Nothing in this file.
+
+**Scope**
+
+- Give the drift eval's agent mode a way to turn the monitor on. Today
+  `backend/scripts/benchmark/drift_eval/agent.py` posts `/api/runs/wait` with no run
+  context, so every run is unmonitored; a `MONITOR=<model> CADENCE=steps:3` option on
+  `make drift-eval` that sends the `deviation_monitor` context key, with a test of the body
+  it sends, is the first change.
+- Run `make drift-eval MODE=agent` on one local 32K model and one cloud model, each with the
+  monitor off and with it on (every 3 steps, and every turn), the monitor model once the
+  chat's own model and once a different one. Record drift caught, false stops, `unsure`
+  rates, the extra wall time per run and the monitor's spend.
+- A run that drifted with the monitor off and finished on task with it on (a retry in Ultra,
+  or a stop that named the request) is the acceptance case; a stop on an on-task answer is a
+  false stop and is recorded with its reason.
+- If false stops are common, change the noise control (the re-ask, the signals) or the
+  prompt's bias, not the threshold of a critical check.
+
+**Key files** — `backend/scripts/benchmark/drift_eval/agent.py` and `__main__.py` (the
+option), the `drift-eval` target in the `Makefile`,
+`backend/packages/harness/deerflow/agents/middlewares/deviation_monitor_judge.py`
+(prompt, evidence), `deviation_monitor_middleware.py` (noise control), `docs/guide/deviation-monitor.md`, FORK.md §57.
+
+**Done when**
+
+- The drift eval's results hold off/on pairs for both models, with false stops and the time
+  each check added.
+- FORK.md §57's known gaps no longer say that no live run happened, and the defaults are kept
+  or changed with the numbers that decided it.
+
+It costs the main agent nothing per request: no tool and no prompt text; the checks run
+beside it, billed to the run.
 
 ---
 

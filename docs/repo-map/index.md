@@ -1,6 +1,6 @@
 # Repo map
 
-Synced by change cycle: 2026-11-22, level 1, "CAD parts: picture, print files, several bodies, lettering, hole positions, the CAD eval, delegated-part acceptance and the 3D model preview"
+Synced by change cycle: 2026-11-22, level 1, "Deviation monitor: a per-chat second model that stops or retries a run drifting from the request"
 
 What the app does, feature by feature, and which files, data and external
 services each feature uses. Each area file opens with its own board and holds
@@ -9,7 +9,7 @@ index.
 
 | Area | Features |
 |---|---|
-| [Chat and the agent loop](chat-and-agent.md) | 18 |
+| [Chat and the agent loop](chat-and-agent.md) | 19 |
 | [Models and cost](models-and-cost.md) | 11 |
 | [Sidebar and workspace](sidebar-and-workspace.md) | 19 |
 | [Generation, media and documents](generation-and-media.md) | 6 |
@@ -119,6 +119,7 @@ flowchart LR
 | `deer-flow.code-workspace` | none (dev tooling) |
 | `.github/**` | none (dev tooling) |
 | `.agent/**` | none (dev tooling) |
+| `contracts/deviation_monitor_contract.json` | Deviation monitor |
 | `contracts/knowledge_sources.v1.json` | Knowledge retrieval |
 | `contracts/run_event_stream_contract.json` | Chat with the agent, Conversation history and scroll-back |
 | `contracts/scheduled_goal_notes_contract.json` | Scheduled tasks, Session goals and todos |
@@ -230,7 +231,7 @@ flowchart LR
 | `backend/app/gateway/routers/thread_activity.py` | Conversation history and scroll-back |
 | `backend/app/gateway/routers/thread_files.py` | Conversation files and shared folders |
 | `backend/app/gateway/routers/thread_runs.py` | Chat with the agent, Concurrent chats |
-| `backend/app/gateway/routers/threads.py` | Chat with the agent, Conversation history and scroll-back, Gaslight mode, Per-conversation model and mode, Sidebar chat folders, Conversation titles, Clean-up mode |
+| `backend/app/gateway/routers/threads.py` | Chat with the agent, Conversation history and scroll-back, Gaslight mode, Per-conversation model and mode, Sidebar chat folders, Conversation titles, Clean-up mode, Deviation monitor |
 | `backend/app/gateway/routers/trash.py` | Archive and trash |
 | `backend/app/gateway/routers/uploads.py` | Upload files |
 | `backend/app/gateway/routers/user_preferences.py` | Per-conversation model and mode |
@@ -262,6 +263,8 @@ flowchart LR
 | `backend/packages/harness/deerflow/agents/middlewares/context_window_guard_middleware.py` | No request bigger than the window |
 | `backend/packages/harness/deerflow/agents/middlewares/deferred_tool_filter_middleware.py` | MCP servers |
 | `backend/packages/harness/deerflow/agents/middlewares/delegation_ledger.py` | Delegate to subagents |
+| `backend/packages/harness/deerflow/agents/middlewares/deviation_monitor_judge.py` | Deviation monitor |
+| `backend/packages/harness/deerflow/agents/middlewares/deviation_monitor_middleware.py` | Deviation monitor |
 | `backend/packages/harness/deerflow/agents/middlewares/folder_ledger_middleware.py` | Conversation files and shared folders |
 | `backend/packages/harness/deerflow/agents/middlewares/harness_guard_middleware.py` | Coding gates |
 | `backend/packages/harness/deerflow/agents/middlewares/input_sanitization_middleware.py` | Guardrails and safety checks, Democracy panels |
@@ -281,7 +284,7 @@ flowchart LR
 | `backend/packages/harness/deerflow/agents/middlewares/subagent_limit_middleware.py` | Delegate to subagents, Plus Ultracode |
 | `backend/packages/harness/deerflow/agents/middlewares/summarization_middleware.py` | No request bigger than the window |
 | `backend/packages/harness/deerflow/agents/middlewares/title_middleware.py` | Conversation titles |
-| `backend/packages/harness/deerflow/agents/middlewares/todo_middleware.py` | Session goals and todos, Spend caps and run limits |
+| `backend/packages/harness/deerflow/agents/middlewares/todo_middleware.py` | Session goals and todos, Spend caps and run limits, Deviation monitor |
 | `backend/packages/harness/deerflow/agents/middlewares/token_budget_middleware.py` | Spend caps and run limits |
 | `backend/packages/harness/deerflow/agents/middlewares/token_usage_middleware.py` | Live cost overview, Token usage page |
 | `backend/packages/harness/deerflow/agents/middlewares/tool_output_*.py` | No request bigger than the window |
@@ -309,6 +312,7 @@ flowchart LR
 | `backend/packages/harness/deerflow/config/agent_generation_config.py` | Generate an agent from history |
 | `backend/packages/harness/deerflow/config/agent*.py` | Custom agents |
 | `backend/packages/harness/deerflow/config/channel_*.py` | IM channels |
+| `backend/packages/harness/deerflow/config/deviation_monitor_config.py` | Deviation monitor |
 | `backend/packages/harness/deerflow/config/documents_config.py` | Big documents on small models |
 | `backend/packages/harness/deerflow/config/extensions_config.py` | Extensions and plugins, MCP servers, Skills |
 | `backend/packages/harness/deerflow/config/guardrails_config.py` | Guardrails and safety checks |
@@ -512,7 +516,7 @@ flowchart LR
 | `frontend/src/components/workspace/channels/**` | IM channels |
 | `frontend/src/components/workspace/chat-cleanup/**` | Clean-up mode |
 | `frontend/src/components/workspace/chat-folder-row.tsx` | Sidebar chat folders |
-| `frontend/src/components/workspace/chats/chat-instance.tsx` | Chat with the agent, Concurrent chats |
+| `frontend/src/components/workspace/chats/chat-instance.tsx` | Chat with the agent, Concurrent chats, Deviation monitor |
 | `frontend/src/components/workspace/chats/chat-providers.tsx` | Concurrent chats |
 | `frontend/src/components/workspace/chats/keep-alive-chat-viewport.tsx` | Concurrent chats |
 | `frontend/src/components/workspace/chats/use-chat-mode.ts` | Per-conversation model and mode |
@@ -528,13 +532,14 @@ flowchart LR
 | `frontend/src/components/workspace/conversation-references/**` | Mentions and conversation references |
 | `frontend/src/components/workspace/cost-per-step-chart.tsx` | Live cost overview |
 | `frontend/src/components/workspace/democracy-setup.tsx` | Democracy panels |
+| `frontend/src/components/workspace/deviation-monitor/**` | Deviation monitor |
 | `frontend/src/components/workspace/export-trigger.tsx` | Share and export a conversation |
 | `frontend/src/components/workspace/file-*.tsx` | Artifacts and previews, Conversation files and shared folders, Upload files |
 | `frontend/src/components/workspace/folder-ledger/**` | Conversation files and shared folders |
 | `frontend/src/components/workspace/*goal*.ts*` | Session goals and todos |
 | `frontend/src/components/workspace/image-generation-setup.tsx` | Local image and video generation |
 | `frontend/src/components/workspace/input-attachment.tsx` | Upload files |
-| `frontend/src/components/workspace/input-box*.ts*` | Chat with the agent, Per-conversation model and mode, Internet switch, Follow-up suggestions and prompt polish, Delegate to subagents, Plus Ultracode, Voice input |
+| `frontend/src/components/workspace/input-box*.ts*` | Chat with the agent, Per-conversation model and mode, Internet switch, Follow-up suggestions and prompt polish, Delegate to subagents, Plus Ultracode, Voice input, Deviation monitor |
 | `frontend/src/components/workspace/knowledge-scope-selector.tsx` | Knowledge retrieval |
 | `frontend/src/components/workspace/mentions/**` | Mentions and conversation references |
 | `frontend/src/components/workspace/message-details/**` | Live cost overview |
@@ -565,6 +570,7 @@ flowchart LR
 | `frontend/src/components/workspace/settings/appearance-settings-page.tsx` | Appearance and language |
 | `frontend/src/components/workspace/settings/auto-title-*.tsx` | Conversation titles |
 | `frontend/src/components/workspace/settings/channel*.tsx` | IM channels |
+| `frontend/src/components/workspace/settings/deviation-monitor-settings-page.tsx` | Deviation monitor |
 | `frontend/src/components/workspace/settings/maintenance-settings-page.tsx` | Self-updating browser and search |
 | `frontend/src/components/workspace/settings/memory-settings-page.tsx` | Long-term memory |
 | `frontend/src/components/workspace/settings/model-*.tsx` | Model providers, Subscription models, Auto-populated Ollama models |
@@ -622,6 +628,7 @@ flowchart LR
 | `frontend/src/core/dom/**` | Chat with the agent |
 | `frontend/src/core/extensions/**` | Extensions and plugins |
 | `frontend/src/core/features/**` | ALL |
+| `frontend/src/core/features/deviation-monitor.ts` | Deviation monitor |
 | `frontend/src/core/folder-ledger/**` | Conversation files and shared folders |
 | `frontend/src/core/i18n/**` | ALL |
 | `frontend/src/core/input-polish/**` | Follow-up suggestions and prompt polish |
@@ -669,6 +676,7 @@ flowchart LR
 | `frontend/src/core/threads/auto-rename.ts` | Conversation titles |
 | `frontend/src/core/threads/bulk.ts` | Select several chats |
 | `frontend/src/core/threads/*chat-folders*.ts` | Sidebar chat folders |
+| `frontend/src/core/threads/deviation-monitor.ts` | Deviation monitor |
 | `frontend/src/core/threads/dnd.ts` | Sidebar chat folders |
 | `frontend/src/core/threads/chat-organize.ts` | Clean-up mode |
 | `frontend/src/core/threads/cost-chart.ts` | Live cost overview |
@@ -677,12 +685,13 @@ flowchart LR
 | `frontend/src/core/threads/pending-edit-send.ts` | Gaslight mode |
 | `frontend/src/core/threads/thread-branch-tree.ts` | Gaslight mode |
 | `frontend/src/core/threads/export.ts` | Share and export a conversation |
-| `frontend/src/core/threads/hooks.ts` | Chat with the agent, Conversation history and scroll-back, Concurrent chats |
+| `frontend/src/core/threads/hooks.ts` | Chat with the agent, Conversation history and scroll-back, Concurrent chats, Deviation monitor |
 | `frontend/src/core/threads/image-generation.ts` | Local image and video generation |
 | `frontend/src/core/threads/live-chat-slots*.ts*` | Concurrent chats |
 | `frontend/src/core/threads/message-order.ts` | Conversation history and scroll-back |
 | `frontend/src/core/threads/run-context.ts` | Per-conversation model and mode, Internet switch, Democracy panels, Plus Ultracode |
 | `frontend/src/core/threads/static-demo.ts` | Docs site and landing page |
+| `frontend/src/core/threads/stream-state.ts` | Chat with the agent, Deviation monitor |
 | `frontend/src/core/threads/thread-list-model.ts` | Sidebar chat folders |
 | `frontend/src/core/threads/thread-search-query.ts` | Search conversations |
 | `frontend/src/core/threads/thread-selection.ts` | Select several chats |

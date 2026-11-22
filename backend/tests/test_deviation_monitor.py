@@ -23,6 +23,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+from datetime import datetime
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
@@ -46,6 +48,8 @@ from deerflow.agents.middlewares.deviation_monitor_middleware import (
 from deerflow.config.app_config import AppConfig
 from deerflow.config.authorization_config import AuthorizationConfig
 from deerflow.config.deviation_monitor_config import (
+    CADENCE_BOUNDS,
+    DEVIATION_MONITOR_CONTEXT_KEY,
     REJECTION_REASONS,
     DeviationMonitorConfig,
     parse_deviation_monitor_request,
@@ -104,11 +108,11 @@ def _verdict(verdict: str, kind: str = "none", reason: str = "", task: str = "Fi
     return json.dumps({"verdict": verdict, "drift_kind": kind, "reason": reason, "restated_task": task})
 
 
-def _app_config(*, monitor_window: int | None = 32_768, authorization: AuthorizationConfig | None = None) -> AppConfig:
+def _app_config(*, monitor_window: int | None = 32_768, authorization: AuthorizationConfig | None = None, monitor: str = MONITOR) -> AppConfig:
     return AppConfig(
         models=[
             ModelConfig(name="lead", model="lead", use="langchain_openai:ChatOpenAI"),
-            ModelConfig(name=MONITOR, model=MONITOR, use="langchain_openai:ChatOpenAI", context_window=monitor_window, max_tokens=1024),
+            ModelConfig(name=monitor, model=monitor, use="langchain_openai:ChatOpenAI", context_window=monitor_window, max_tokens=1024),
         ],
         sandbox=SandboxConfig(use="deerflow.sandbox.local:LocalSandboxProvider"),
         token_usage=TokenUsageConfig(enabled=False),
@@ -731,6 +735,86 @@ class TestOperatorBlock:
         params = DeviationMonitorMiddleware(DeviationMonitorConfig(judge_timeout_seconds=30)).release_policy_parameters()
         assert params["judge_timeout_seconds"] == 30 and params["stop_reason"] == STOP_REASON
         assert params["run_stop_reasons"] == ["loop_capped", "token_capped", "spend_capped", "deviation_stopped"]
+
+
+# ── the contract the web UI reads (contracts/deviation_monitor_contract.json) ──
+
+CONTRACT = json.loads((Path(__file__).resolve().parents[2] / "contracts" / "deviation_monitor_contract.json").read_text(encoding="utf-8"))
+_CONTRACT_MONITOR = CONTRACT["run_context_examples"][0]["model"]
+
+
+def _without_time(channel: dict) -> dict:
+    return {key: value for key, value in channel.items() if key != "updated_at"}
+
+
+def _contract_middleware(*replies: str) -> DeviationMonitorMiddleware:
+    return _middleware(FakeJudge(*replies), app_config=_app_config(monitor=_CONTRACT_MONITOR))
+
+
+class TestSharedContract:
+    """The backend half of the fixture the frontend unit and e2e tests read."""
+
+    def test_names_bounds_and_kinds(self) -> None:
+        from app.gateway.routers.features import FeaturesResponse
+
+        assert CONTRACT["context_key"] == DEVIATION_MONITOR_CONTEXT_KEY == CONTRACT["state_channel"] == STATE_CHANNEL
+        assert {mode: [bounds["min"], bounds["max"]] for mode, bounds in CONTRACT["cadence_bounds"].items()} == {mode: list(bounds) for mode, bounds in CADENCE_BOUNDS.items()}
+        assert sorted(CONTRACT["drift_kinds"]) == sorted(kind for kind in DRIFT_KINDS if kind != "none")
+        assert CONTRACT["stop_reason"] == STOP_REASON and CONTRACT["action_marker_key"] == ACTION_MARKER_KEY
+        assert CONTRACT["feature_key"] in FeaturesResponse.model_fields
+
+    @pytest.mark.parametrize("example", CONTRACT["run_context_examples"])
+    def test_what_the_web_ui_sends_is_accepted_as_is(self, example) -> None:
+        parsed = parse_deviation_monitor_request(example)
+        assert parsed.enabled and parsed.to_context() == example
+
+    def test_every_status_and_field_the_middleware_writes_is_in_the_contract(self) -> None:
+        keys = set(CONTRACT["state_keys"]) | set(CONTRACT["state_extra_keys"])
+        drift = _verdict("drifting", "scope_creep")
+        scenarios = [
+            ((), {}),
+            ((_verdict("unsure"),), {}),
+            ((drift, _verdict("on_task")), {}),
+            ((drift, drift), {"subagent_enabled": True}),
+            ((drift, drift), {}),
+        ]
+        written: list[dict] = []
+        for index, (replies, context) in enumerate(scenarios):
+            mw = _contract_middleware(*replies)
+            runtime = _runtime(run_id=f"r{index}", deviation_monitor=CONTRACT["run_context_examples"][0] | {"cadence": {"mode": "steps", "every": 1}}, **context)
+            state = _state()
+            for update in (_run(_start(mw, state, runtime)), _run(mw.abefore_model(state, runtime))):
+                written.append(_channel(update))
+            state["messages"].append(_tool_step("c1"))
+            written.append(_channel(_run(mw.aafter_model(state, runtime))))
+        off = _contract_middleware()
+        written.append(_channel(_run(_start(off, _state(), _runtime(run_id="off", deviation_monitor={"enabled": True, "model": _CONTRACT_MONITOR, "cadence": {"mode": "steps", "every": 99}})))))
+        for channel in written:
+            assert set(channel) == keys
+            assert channel["drift_kind"] is None or channel["drift_kind"] in CONTRACT["drift_kinds"]
+            datetime.fromisoformat(channel["updated_at"])
+        assert {channel["status"] for channel in written} == set(CONTRACT["statuses"])
+
+    def test_the_run_start_write_says_no_check_yet(self) -> None:
+        mw = _contract_middleware()
+        runtime = _runtime(deviation_monitor=CONTRACT["run_context_examples"][0])
+        channel = _channel(_run(_start(mw, _state(), runtime)))
+        assert _without_time(channel) == _without_time(CONTRACT["run_start_state"])
+
+    def test_a_stop_reaches_the_transcript_and_the_status_bar_as_the_fixture_shows(self) -> None:
+        reply = json.dumps(CONTRACT["judge_reply"])
+        mw = _contract_middleware(reply, reply)
+        runtime = _runtime(deviation_monitor=CONTRACT["run_context_examples"][0] | {"cadence": {"mode": "steps", "every": 1}})
+        expected = CONTRACT["stopped_message"]
+        state = {"messages": [HumanMessage(content=CONTRACT["request"])]}
+        _run(_start(mw, state, runtime))
+        drifting = AIMessage(content=expected["content"].split("\n\n**")[0], tool_calls=[_call("write_file", "w1", path="/mnt/user-data/outputs/README.md", content="...")], id=expected["id"])
+        update = _run(_drive_step(mw, state, runtime, drifting))
+        stopped = update["messages"][0]
+        assert (stopped.type, stopped.id, stopped.content, stopped.tool_calls) == (expected["type"], expected["id"], expected["content"], expected["tool_calls"])
+        assert stopped.additional_kwargs == expected["additional_kwargs"]
+        assert _without_time(_channel(update)) == _without_time(CONTRACT["stopped_state"])
+        assert runtime.context["stop_reason"] == CONTRACT["stop_reason"]
 
 
 def test_the_stop_vocabulary_knows_deviation_stopped() -> None:

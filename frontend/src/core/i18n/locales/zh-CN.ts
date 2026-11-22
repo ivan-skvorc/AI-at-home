@@ -721,6 +721,8 @@ export const zhCN: Translations = {
           "已达到 token 预算。发送消息即可继续，新的运行会重新计算预算。",
         loopCapped:
           "重复工具调用触发了安全停止。调整要求后发送新消息即可重试，目标会保留。",
+        deviationStopped:
+          "偏离监控发现工作偏离了你的请求，停止了运行。重新说明需求后发送新消息即可，目标会保留。",
         recursionCapped:
           "运行达到了步数上限，未能完成。发送新消息即可继续，目标会保留。",
         missingEvidence:
@@ -1179,7 +1181,7 @@ export const zhCN: Translations = {
       checking: "检查中…",
       on_track: "未偏离",
       unsure: "无法判断，未采取行动",
-      drifting: "可能偏离，正在复核",
+      drifting: "可能偏离，尚未确认",
       retrying: "确认偏离，正在拆分重试",
       stopped: "已停止运行：偏离了你的请求",
     },
@@ -1618,6 +1620,7 @@ export const zhCN: Translations = {
         noProgress: "连续多轮没有进展",
         tokenCapped: "已达到 token 预算",
         loopCapped: "重复工具调用触发了安全停止",
+        deviationStopped: "偏离监控停止了偏离请求的运行",
         recursionCapped: "运行达到了步数上限",
         evaluatorFailed: "未能检查目标，这次运行本身可能没问题",
         noDurableEndOfTurn: "未能检查目标：没有保存最终回复",

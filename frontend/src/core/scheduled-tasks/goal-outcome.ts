@@ -10,6 +10,7 @@ export type GoalReasonKey =
   | "noProgress"
   | "tokenCapped"
   | "loopCapped"
+  | "deviationStopped"
   | "recursionCapped"
   | "evaluatorFailed"
   | "noDurableEndOfTurn"
@@ -30,6 +31,7 @@ const REASON_KEYS: Record<string, GoalReasonKey> = {
   no_progress_detected: "noProgress",
   token_capped: "tokenCapped",
   loop_capped: "loopCapped",
+  deviation_stopped: "deviationStopped",
   recursion_capped: "recursionCapped",
   evaluator_failed: "evaluatorFailed",
   no_durable_end_of_turn: "noDurableEndOfTurn",

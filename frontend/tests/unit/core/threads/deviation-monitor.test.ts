@@ -14,6 +14,9 @@ import {
 import {
   DEFAULT_DEVIATION_MONITOR_CADENCE,
   DEFAULT_DEVIATION_MONITOR_DEFAULTS,
+  DEVIATION_MONITOR_CADENCE_BOUNDS,
+  DEVIATION_MONITOR_DRIFT_KINDS,
+  DEVIATION_MONITOR_STATUSES,
   cadenceChoiceOf,
   cadenceFromChoice,
   chatSettingFromDefaults,
@@ -25,6 +28,7 @@ import {
   pickDeviationMonitorModel,
   readDeviationMonitorState,
   sidecarRunContext,
+  type DeviationMonitorRunContext,
 } from "@/core/threads/deviation-monitor";
 import { buildRunContext } from "@/core/threads/hooks";
 import {
@@ -514,5 +518,83 @@ describe("the operator flag", () => {
     expect(
       selectDeviationMonitorFeature({ agents_api: { enabled: true } }),
     ).toEqual({ enabled: false });
+  });
+});
+
+/**
+ * The fixture the backend's tests regenerate (`TestSharedContract` in
+ * backend/tests/test_deviation_monitor.py), so a rename or a new status on
+ * either side fails here instead of leaving a button that does nothing.
+ */
+const CONTRACT = JSON.parse(
+  read("../contracts/deviation_monitor_contract.json"),
+) as {
+  context_key: string;
+  cadence_bounds: Record<string, { min: number; max: number }>;
+  run_context_examples: DeviationMonitorRunContext[];
+  state_channel: string;
+  statuses: string[];
+  drift_kinds: string[];
+  run_start_state: Record<string, unknown>;
+  stopped_state: Record<string, unknown>;
+  feature_key: string;
+};
+
+describe("the backend contract (contracts/deviation_monitor_contract.json)", () => {
+  it("names the same key, bounds, statuses and drift kinds", () => {
+    expect(THREAD_SCOPED_CONTEXT_KEYS).toContain(CONTRACT.context_key);
+    expect(CONTRACT.state_channel).toBe(CONTRACT.context_key);
+    expect(DEVIATION_MONITOR_CADENCE_BOUNDS).toEqual(CONTRACT.cadence_bounds);
+    expect([...DEVIATION_MONITOR_STATUSES].sort()).toEqual(
+      [...CONTRACT.statuses].sort(),
+    );
+    expect([...DEVIATION_MONITOR_DRIFT_KINDS].sort()).toEqual(
+      [...CONTRACT.drift_kinds].sort(),
+    );
+  });
+
+  it("sends each example exactly as the backend accepts it, and nothing when off", () => {
+    for (const example of CONTRACT.run_context_examples) {
+      expect(deviationMonitorRunContext(example, "chat-model")).toEqual(
+        example,
+      );
+      expect(
+        buildRunContext({
+          settings: { ...baseContext, deviation_monitor: example },
+          threadId: "t-1",
+        }).deviation_monitor,
+      ).toEqual(example);
+      expect(
+        deviationMonitorRunContext({ ...example, enabled: false }, "x"),
+      ).toBeUndefined();
+    }
+  });
+
+  it("reads what the middleware writes, extra fields included", () => {
+    // `turn` is the backend's own counter, outside the channel's contract.
+    const stopped = Object.fromEntries(
+      Object.entries(CONTRACT.stopped_state).filter(([key]) => key !== "turn"),
+    );
+    expect(readDeviationMonitorState(CONTRACT.stopped_state)).toEqual(stopped);
+    // The run-start write's empty strings are "no text", not a reason.
+    expect(readDeviationMonitorState(CONTRACT.run_start_state)).toEqual({
+      status: "on_track",
+      reason: null,
+      drift_kind: null,
+      restated_task: null,
+      model: CONTRACT.run_start_state.model,
+      checks: 0,
+      last_checked_step: null,
+      updated_at: CONTRACT.run_start_state.updated_at,
+    });
+  });
+
+  it("reads the operator flag under the key the Gateway sends", () => {
+    expect(
+      selectDeviationMonitorFeature({
+        agents_api: { enabled: true },
+        [CONTRACT.feature_key]: { enabled: true },
+      }),
+    ).toEqual({ enabled: true });
   });
 });
