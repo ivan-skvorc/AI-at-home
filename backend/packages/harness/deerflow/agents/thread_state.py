@@ -441,6 +441,8 @@ class ThreadState(AgentState):
     todos: Annotated[list | None, merge_todos]
     goal: Annotated[GoalState | None, merge_goal]
     goal_outcome: NotRequired[GoalOutcomeState | None]
+    # Fork: the deviation monitor's status, written only by DeviationMonitorMiddleware.
+    deviation_monitor: NotRequired[dict | None]
     applied_run_inputs: NotRequired[dict | None]
     uploaded_files: NotRequired[list[dict] | None]
     viewed_images: Annotated[dict[str, ViewedImageData], merge_viewed_images]  # image_path -> metadata (no base64)

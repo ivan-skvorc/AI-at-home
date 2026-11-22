@@ -358,9 +358,10 @@ class TestAfterModel:
         assert mw._pending_completion_reminders == {}
 
     @pytest.mark.parametrize("invoke_async", [False, True], ids=["sync", "async"])
-    # Fork: "spend_capped" is the money cap's run-level stop (FORK.md §10). A
-    # completion reminder after it would resume a run the cap just ended.
-    @pytest.mark.parametrize("stop_reason", ["loop_capped", "token_capped", "spend_capped", "safety_capped", "model_length_capped"])
+    # Fork: "spend_capped" is the money cap's run-level stop (FORK.md §10), and
+    # "deviation_stopped" the deviation monitor's. A completion reminder after
+    # either would resume a run that was just ended.
+    @pytest.mark.parametrize("stop_reason", ["loop_capped", "token_capped", "spend_capped", "deviation_stopped", "safety_capped", "model_length_capped"])
     def test_recognized_stop_reason_suppresses_completion_reminders(self, invoke_async, stop_reason):
         mw = TodoMiddleware()
         runtime = _make_runtime()
@@ -375,9 +376,10 @@ class TestAfterModel:
         assert state["todos"] == _incomplete_todos()
 
     @pytest.mark.parametrize("invoke_async", [False, True], ids=["sync", "async"])
-    # Fork: "spend_capped" is the money cap's run-level stop (FORK.md §10). A
-    # completion reminder after it would resume a run the cap just ended.
-    @pytest.mark.parametrize("stop_reason", ["loop_capped", "token_capped", "spend_capped", "safety_capped", "model_length_capped"])
+    # Fork: "spend_capped" is the money cap's run-level stop (FORK.md §10), and
+    # "deviation_stopped" the deviation monitor's. A completion reminder after
+    # either would resume a run that was just ended.
+    @pytest.mark.parametrize("stop_reason", ["loop_capped", "token_capped", "spend_capped", "deviation_stopped", "safety_capped", "model_length_capped"])
     def test_hard_stop_takes_precedence_over_base_jump(self, monkeypatch, invoke_async, stop_reason):
         base_hook = MagicMock(return_value={"jump_to": "model"})
         monkeypatch.setattr(TodoListMiddleware, "after_model", base_hook)

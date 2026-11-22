@@ -229,10 +229,12 @@ GET /api/langgraph/threads/{thread_id}/state
 POST /api/langgraph/threads/{thread_id}/history
 ```
 
-Only the newest entry carries `messages`, the `goal` while it is active, and
-`goal_outcome` (the latest met goal, kept until the next goal change). Older
-entries carry only `title` and `thread_data`. `goal_outcome` is server-owned:
-state updates and run input that include it are rejected with 400.
+Only the newest entry carries `messages`, the `goal` while it is active,
+`goal_outcome` (the latest met goal, kept until the next goal change) and
+`deviation_monitor` (the deviation monitor's status, when the thread has one).
+Older entries carry only `title` and `thread_data`. `goal_outcome` and
+`deviation_monitor` are server-owned: state updates and run input that include
+them are rejected with 400.
 
 External state updates and run input that supply a non-null `goal` must include
 a string `objective` that is non-empty after whitespace normalization and at

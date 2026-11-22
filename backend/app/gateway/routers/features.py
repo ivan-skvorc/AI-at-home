@@ -18,6 +18,7 @@ from app.gateway.deps import get_config
 from app.gateway.routers.thread_activity import thread_activity_available
 from app.gateway.run_models import MAX_CONVERSATION_REFERENCES
 from deerflow.config.app_config import AppConfig
+from deerflow.config.deviation_monitor_config import DeviationMonitorConfig
 from deerflow.knowledge.providers import get_knowledge_capabilities
 from deerflow.scheduler.runtime import scheduler_tools_enabled
 from deerflow.subagents.capacity import configured_subagent_max_running
@@ -96,6 +97,12 @@ class ThreadActivityFeature(BaseModel):
     available: bool = Field(..., description="Whether GET /api/thread-activity, POST /api/threads/{thread_id}/read and the thread search `unread` field work (SQL persistence)")
 
 
+class DeviationMonitorFeature(BaseModel):
+    """Operator switch for the per-chat deviation monitor (fork feature)."""
+
+    enabled: bool = Field(..., description="Whether config.yaml -> deviation_monitor.enabled offers the monitor, so the composer shows its button")
+
+
 class ToolApprovalFeature(BaseModel):
     enabled: bool = False
     default_mode: Literal["ask", "auto", "full"] = "ask"
@@ -116,6 +123,7 @@ class FeaturesResponse(BaseModel):
     thread_activity: ThreadActivityFeature
     run_inputs: bool = False
     tool_approval: ToolApprovalFeature = Field(default_factory=ToolApprovalFeature)
+    deviation_monitor: DeviationMonitorFeature
 
 
 @router.get(
@@ -164,6 +172,10 @@ async def list_features(request: Request, config: AppConfig = Depends(get_config
         scheduled_tasks=_scheduled_tasks_feature(request, config),
         # Startup-scoped: the read repository exists only with SQL persistence.
         thread_activity=ThreadActivityFeature(available=thread_activity_available(request.app.state)),
+        # Config-only, read through ``get_config`` like auto_title. A config
+        # object without the block (an older embedder) offers it, as the
+        # operator default does.
+        deviation_monitor=DeviationMonitorFeature(enabled=getattr(getattr(config, "deviation_monitor", None), "enabled", DeviationMonitorConfig().enabled)),
     )
 
 

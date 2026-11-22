@@ -44,8 +44,11 @@ TODO_REMINDER_MESSAGE_NAME = "todo_reminder"
 # Goal stands down on them, so runtime.context["stop_reason"] is authoritative.
 # Fork: the money cap's "spend_capped" (spend_budget_middleware.STOP_REASON,
 # FORK.md §10) is the same kind of run-level stop; a reminder after it would
-# resume a run the cap just ended and spend past the cap.
-_COMPLETION_REMINDER_RUN_STOP_REASONS = ("loop_capped", "token_capped", "spend_capped")
+# resume a run the cap just ended and spend past the cap. The deviation
+# monitor's "deviation_stopped" (deviation_monitor_middleware.STOP_REASON) ends
+# a run that drifted from the user's request; resuming it would continue the
+# off-task work.
+_COMPLETION_REMINDER_RUN_STOP_REASONS = ("loop_capped", "token_capped", "spend_capped", "deviation_stopped")
 # Provider safety and length stops end one response, which carries the marker.
 # runtime.context keeps the first cap across hidden Goal turns, and a Goal
 # continues after these, so the context alone does not mean the current
