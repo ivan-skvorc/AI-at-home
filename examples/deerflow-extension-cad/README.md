@@ -263,7 +263,7 @@ beside the part reads the way the tool read it" rests on; a line may still be
 up to 1,000 characters long.
 Characters of any language are fine in comments.
 
-The allow-list (`allowlist.py`, 64 methods plus the constructor):
+The allow-list (`allowlist.py`, 64 methods plus two constructors, `cq.Workplane` and `cq.Wire.makeHelix`):
 
 | Group | Methods |
 | --- | --- |

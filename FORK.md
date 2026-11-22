@@ -6682,7 +6682,11 @@ extensions-group entry and a `[tool.uv.sources]` path in
 `backend/pyproject.toml` with no platform marker (the Python half is a
 registration and the rest is built browser assets), an enabled `plugins:` record
 in `config.example.yaml`, and a `config_upgrade.py` migration that names
-`cad-preview` alone, as migration 73 does for `cad`. Rejected: off by default.
+`cad-preview` alone, as migration 73 does for `cad`: migration 76, so
+`config_version` is 76 in the example and both chart copies. Like every
+migration that delivers a record, it rewrites `config.yaml` without its comments
+and keeps the original as `config.yaml.bak`; the release note says so.
+Rejected: off by default.
 A viewer that waits for an operator leaves every default CAD user with files
 they can only download, and the parsers, not the switch, are what contain a
 hostile file. `make extension-disable NAME=cad-preview` turns it off, and GLB
@@ -6743,10 +6747,10 @@ and STL files go back to the download fallback.
 
 **Known gaps.** There was no real phone and no GPU where it was built: 390 px
 was emulated and WebGL ran on SwiftShader, so a real phone with a GPU browser is
-the owner's acceptance check. At 390 px the host's artifact sheet header is
-408 px wide for every file type, a host bug older than this package, so the spec
-checks page-level overflow only from 600 px up; it checks the viewer's own box
-at every width. A 3MF gets the download fallback. The bounding box is measured
+the owner's acceptance check. At 390 px the chat header's toolbar
+(`chat-instance.tsx`, a row that does not shrink) runs past the viewport behind
+the panel's sheet, with or without this package, so the spec checks page-level
+overflow only from 600 px up; it checks the viewer's own box at every width. A 3MF gets the download fallback. The bounding box is measured
 on the triangles, so a curved face can read up to the mesh tolerance under the
 CAD report, which measures the solid.
 
@@ -6769,5 +6773,7 @@ of two bodies in the panel and the reader at 1440 and 390 px, the bounding box
 against `report.json` within 0.1 mm, both download fallbacks, twenty file
 switches with one live context, no idle frames, the theme switch, and GLB and
 STL unchanged with the plugin absent or disabled); and
-`backend/tests/test_bundled_cad_preview_extension.py` with the migration's case
-in `test_config_upgrade_script.py`.
+`backend/tests/test_bundled_cad_preview_extension.py`, which also holds
+migration 76's cases (delivered once to an install on version 75, a removal
+that sticks, an operator's own record left alone); `test_config_upgrade_script.py`
+only pins the example's plugin order (`workflows`, `cad`, `cad-preview`).
