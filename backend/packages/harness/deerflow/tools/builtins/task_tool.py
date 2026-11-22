@@ -1449,6 +1449,7 @@ async def task_tool(
                             runtime=runtime,
                             thread_data=thread_data,
                             bash_executions=getattr(result, "bash_executions", None),
+                            tool_results=getattr(result, "tool_results", None),
                         )
                     except Exception:
                         logger.warning(f"[trace={trace_id}] Acceptance checklist failed for task {tool_call_id}; result flows back unchecked", exc_info=True)

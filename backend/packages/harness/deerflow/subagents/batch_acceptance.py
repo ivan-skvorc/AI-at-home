@@ -27,6 +27,7 @@ async def check_batch_acceptance(
     batch: dict[str, Any],
     app_config: AppConfig,
     bash_executions: list[dict[str, Any]] | None,
+    tool_results: list[dict[str, Any]] | None = None,
 ) -> AcceptanceVerdict | None:
     from deerflow.authz.sandbox_authz import authorize_sandbox_execution_async
     from deerflow.sandbox.lease import SANDBOX_LEASE_OWNER_CONTEXT_KEY, acquire_sandbox_client_lease, run_sync_lifecycle_operation
@@ -52,7 +53,7 @@ async def check_batch_acceptance(
             runtime.state["sandbox"] = {"sandbox_id": lease.sandbox_id}
             context[SANDBOX_LEASE_OWNER_CONTEXT_KEY] = lease.owner_id
         # Drain blocking reads before releasing the holder, including shutdown.
-        return await run_sync_lifecycle_operation(check_acceptance_criteria, criteria, runtime=runtime, thread_data=thread_data, bash_executions=bash_executions)
+        return await run_sync_lifecycle_operation(check_acceptance_criteria, criteria, runtime=runtime, thread_data=thread_data, bash_executions=bash_executions, tool_results=tool_results)
     finally:
         if lease is not None:
             await lease.release()
