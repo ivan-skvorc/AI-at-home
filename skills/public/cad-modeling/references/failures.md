@@ -1,8 +1,8 @@
 # Failures and what to change
 
-What `cad_build` says when a build does not pass, the usual cause, and the
-change that fixes it. Change one thing, then build again with the same name and
-the same expected numbers.
+What `cad_build` says when a build does not pass, and beside a part that did,
+the usual cause, and the change that fixes it. Change one thing, then build
+again with the same name and the same expected numbers.
 
 ## The script was refused
 
@@ -58,11 +58,62 @@ The part was built and measured. Each check gives `expected` and `measured`.
 
 | Check | Usual cause | Change |
 | --- | --- | --- |
-| one closed solid, with several solids | Bodies that do not touch, or a cut that goes right through the part | Make them overlap or share a face, then `union()`. A design of loose bodies, such as a print-in-place hinge, cannot be delivered: tell the user |
-| bounding box | A feature that sticks out, a body that is not centred, axes in another order, a cut that removes the outermost points | Compare axis by axis. `box()` is centred on the origin unless `centered` says otherwise; a part drawn on `"XZ"` has its height along y; notches at 0° and 90° of a round part make it narrower |
-| volume | A cut that is missing or made twice, a body that was never joined, a loop whose passes each start from the same part, a feature in the wrong place | Read `notes`: they name bodies left out of the result and passes of a loop whose work is not in it. Carry the part through the loop: `result = result.hole(...)`. A countersink cut from the top of a peg removes its drill and not its head; a slot placed from a face that an earlier slot split lands elsewhere: place it from the origin |
-| holes, with "not measured" | The result is several bodies, and holes are measured on one solid | Join the bodies first; the holes are then measured |
+| one closed solid, with several solids | Bodies that do not touch, or a cut that goes right through the part | Make them overlap or share a face, then `union()`. If loose bodies are meant, such as a print-in-place hinge or a box and its lid, do what `next` says: call cad_build again with the same name and bodies=N, their count |
+| closed solids (with `bodies` above 1), with fewer solids | Bodies that touch or overlap fuse into one | Leave a gap between bodies that must come apart: for print-in-place at least the printer's clearance (`fdm.md`). The smallest gap is in `notes` |
+| closed solids, with more solids | A cut right through a body, or a piece of one body that does not touch the rest | Join the pieces of a body with `union()`; check the cut's depth and position |
+| bounding box | A feature that sticks out, a body that is not centred, axes in another order, a cut that removes the outermost points | Compare axis by axis. `box()` is centred on the origin unless `centered` says otherwise; a part drawn on `"XZ"` has its height along y; notches at 0° and 90° of a round part make it narrower. Several bodies are measured together, where they were built |
+| volume | A cut that is missing or made twice, a body that was never joined, a loop whose passes each start from the same part, a feature in the wrong place | Read `notes`: they name bodies left out of the result and passes of a loop whose work is not in it. Carry the part through the loop: `result = result.hole(...)`. A countersink cut from the top of a peg removes its drill and not its head; a slot placed from a face that an earlier slot split lands elsewhere: place it from the origin. Several bodies: the volume is their sum |
+| holes, with "not measured" | One body was expected and the result is several, and holes are measured on one solid | Join the bodies, or pass `bodies` if they are meant to be loose; each body's holes are then measured on that body |
 | holes | A hole missing, doubled or of another diameter | One entry per hole. A counterbore or countersink counts once, with its drill diameter. One pass through two walls is one hole. Slots are not holes. The inside of a round pot or a hollow boss counts as one blind hole of its inner diameter: list it. A hole that breaks out through an edge is not counted: check its position |
+| holes, with `misplaced` | A hole is not at the point given as `[d, x, y, z]`. Each entry has your point (`expected`), the nearest hole of that diameter (`nearest_at`, where it is entered) and how far its axis passes from your point (`off_axis_mm`) | The point is in the part's coordinates, not the workplane's: on a side face the workplane's x is not the part's x. Move the hole by the difference, placed from `workplane(origin=(0, 0, 0))`. `nearest_at` null: no hole of that diameter at all. Check the sign of each coordinate before you move anything |
+
+## What the picture shows
+
+The checks pass on numbers. The picture (`<name>.png`, or `<name>.failed.png`
+with the checks it did not pass) shows what they do not measure. It carries no
+dimension but the overall size.
+
+| You see | Usual cause | Change |
+| --- | --- | --- |
+| More edges rounded or cut than you meant | The selector took every edge that matched on the part as it was at that line, including those of a boss or a rim added before | A narrower selector (`"\|Z and >X"`), or round the body before adding the feature |
+| A feature on the wrong face or side | A face selector with the wrong sign or axis, or a workplane whose origin carried over | Check `>` and `<` and the axis letter; start the feature from `workplane(origin=(0, 0, 0))` |
+| A feature missing although every check passed | Nothing checked it: a pocket, a boss or a slot the volume band was too wide to catch | Narrow the volume band to less than that feature (SKILL.md step 1) and build again |
+
+## Notes beside the checks
+
+`notes` decide nothing. Each says what a reader of the answer should still know.
+
+| The note says | Do |
+| --- | --- |
+| The result is N separate bodies. Bodies become one part only where they overlap or share a face | Join them, or pass `bodies` with their count if they are meant to be loose |
+| The smallest gap between bodies is … mm, between body … and body … | Compare it with the gap you meant: a print-in-place gap is 0.3 to 0.5 mm (`fdm.md`). A gap of 0: the bodies touch and print as one |
+| That gap is under the printer's minimum clearance (… mm) | Widen it to at least that clearance, which is the operator's printer, or tell the user it may print fused |
+| The gap of … mm between … is thinner than one layer | A gap across the layers prints as solid: widen it to at least two layers (`fdm.md`) |
+| The answer lists 12 of the N holes; ….report.json lists every hole with where it is | The holes check covered all of them; read the report for the positions the answer leaves out |
+| no picture: the build used most of its time | The part was checked and delivered without its picture. Judge it on its numbers and say that there is no picture; a part with fewer small fillets and holes draws in time |
+| no picture: … (any other reason) | The same: the part stands without its picture |
+| no print check: the build used most of its time, or another reason | The part stands; its answer has no `print` block, so say that how it prints was not reported |
+| no laid-out 3MF: the bodies could not be written apart; the .3mf holds them as modelled | Present the `.3mf`: the bodies are in it as built, and the user can separate them in the slicer |
+
+Several bodies normally also come as `<name>.parts.3mf`, laid out side by side
+on the bed to print apart. Where that file could not be written, each body
+comes as `<name>.body-1.stl`, `<name>.body-2.stl` and so on (at most 8).
+
+## Print notes
+
+A passed part's `print` block has `grams` (solid, at the printer's density),
+`bed_contact_mm2`, `overhang_mm2`, `thinnest_wall_mm` and, when the operator set
+a build volume, `fits_build_volume`. It is reported, never checked: a part
+passes or fails on its numbers alone. Its `notes` come only past a fixed
+threshold. The printer is the operator's; do not ask the user for it.
+
+| The print note says | Do |
+| --- | --- |
+| thinnest wall about … mm (sampled), under two nozzle widths | Thicken that wall to two nozzle widths or more, or tell the user it may print weak. The wall is sampled: a thinner one can be missed, and the note is an estimate |
+| … mm² overhangs past …° and needs support | When the note names a better side (`; with its … side on the bed it would be …`), tell the user to lay the part on that side in the slicer. Turning it in the script instead changes the expected bounding box: say why when `expected_changed` reports it. Otherwise chamfer the underside at 45°, or tell the user it needs support |
+| nothing flat rests on the bed: give it a flat face at the lowest z, or it needs a brim or support | Cut a flat at the lowest z, or turn the part onto a flat face |
+| larger than the build volume (… mm) in … | With `; it fits turned 90° on the bed`, say so: the user turns it in the slicer. Otherwise `split` it, keeping both halves, and build it with `bodies=2`: the `.parts.3mf` lays the halves apart, so a gap note about where they touch does not apply to it. Or tell the user it does not fit their printer |
+| the mesh is not watertight | The STEP is exact; the STL and 3MF have gaps a slicer usually repairs. Tell the user, and simplify the smallest features if the slicer cannot |
 
 ## Not a failure of the script
 

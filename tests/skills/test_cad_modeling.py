@@ -64,7 +64,22 @@ def test_the_skill_is_named_after_its_directory_and_says_when_to_use_it():
     assert front["name"] == SKILL.name == "cad-modeling"
     assert "cad_build" in front["description"] and len(front["description"]) <= 1024
     # No scripts: the procedure needs the tool and the file reader, and nothing a shell would run.
-    assert sorted(path.relative_to(SKILL).as_posix() for path in SKILL.rglob("*") if path.is_file()) == ["SKILL.md", "references/failures.md", "references/operations.md"]
+    assert sorted(path.relative_to(SKILL).as_posix() for path in SKILL.rglob("*") if path.is_file()) == [
+        "SKILL.md",
+        "references/delegation.md",
+        "references/failures.md",
+        "references/fdm.md",
+        "references/operations.md",
+    ]
+
+
+def test_the_skill_links_every_reference_and_stays_small():
+    # The skill's body is read whole on every CAD conversation; the references load on demand (item 58).
+    skill = SKILL / "SKILL.md"
+    for reference in sorted((SKILL / "references").iterdir()):
+        assert f"references/{reference.name}" in _read(skill), reference.name
+    assert skill.stat().st_size <= 10 * 1024
+    assert (SKILL / "references" / "fdm.md").stat().st_size <= 6 * 1024
 
 
 def test_the_skill_names_the_tools_arguments_and_its_attempt_limit():
@@ -72,13 +87,13 @@ def test_the_skill_names_the_tools_arguments_and_its_attempt_limit():
     skill = _read(SKILL / "SKILL.md")
     properties = re.search(r'"properties": \{(.*?)\n    \},', tool, flags=re.DOTALL).group(1)
     arguments = re.findall(r'^\s+"([a-z0-9_]+)": \{', properties, flags=re.MULTILINE)
-    assert arguments == ["name", "script", "bbox_xyz_mm", "volume_min_max_mm3", "hole_diameters_mm"]
+    assert arguments == ["name", "script", "bbox_xyz_mm", "volume_min_max_mm3", "hole_diameters_mm", "bodies"]
     for argument in arguments:
         assert f"{argument}=" in skill, argument
     limit = int(re.search(r"^MAX_ATTEMPTS = (\d+)$", tool, flags=re.MULTILINE).group(1))
     assert f"({limit} builds in one run)" in skill
     # What the skill tells the model to read in an answer is what an answer holds.
-    for field in ("error", "checks", "notes", "unchecked", "expected_changed", "attempt", "next"):
+    for field in ("error", "checks", "holes", "notes", "print", "unchecked", "expected_changed", "attempt", "next"):
         assert f"`{field}`" in skill, field
         assert re.search(rf'answer(\["{field}"\]|\.update\([^)]*\b{field}=)', tool), field
 
@@ -113,6 +128,28 @@ QUOTED = [
     "the cut ran away from the material",
     "not measured",
     "Leave this pass out",
+    # A part of several bodies (item 51): the check, the way out NEXT_LOOSE gives, the notes and the fallback.
+    "closed solids",
+    "call cad_build again with the same name and bodies=",
+    "Bodies become one part only where they overlap or share a face",
+    "The smallest gap between bodies is",
+    "under the printer's minimum clearance",
+    "is thinner than one layer",
+    "no laid-out 3MF: the bodies could not be written apart; the .3mf holds them as modelled",
+    # Holes where they are (item 57).
+    "nearest_at",
+    "off_axis_mm",
+    "lists every hole with where it is",
+    # The steps after the checks (items 53 and 54), and printability's notes.
+    "no picture: the build used most of its time",
+    "no print check: the build used most of its time",
+    "under two nozzle widths",
+    "and needs support",
+    "side on the bed it would be",
+    "nothing flat rests on the bed: give it a flat face at the lowest z, or it needs a brim or support",
+    "larger than the build volume",
+    "it fits turned 90° on the bed",
+    "the mesh is not watertight",
 ]
 
 
@@ -120,6 +157,56 @@ QUOTED = [
 def test_a_message_the_failures_page_quotes_is_one_the_module_gives(phrase):
     assert phrase in _read(SKILL / "references" / "failures.md"), "the page no longer quotes it: drop it from QUOTED"
     assert phrase in _module_text(), "the module no longer says this: reword the page"
+
+
+def test_the_skill_says_what_next_says_about_the_picture_and_loose_bodies():
+    tool = _read(SOURCE / "tool.py")
+    skill = _read(SKILL / "SKILL.md")
+    # NEXT_PICTURE asks for one look, after a pass; the skill says when (step 5) and how to show it (step 7).
+    assert "look at it once" in re.search(r"^NEXT_PICTURE = (.*)$", tool, flags=re.MULTILINE).group(1)
+    assert "Look at it once, at review" in skill and "`![name](its path in files)`" in skill
+    # NEXT_LOOSE gives bodies=N as the way out for loose bodies; the skill teaches the same argument.
+    assert "bodies={solids}" in tool and "bodies=N" in skill
+
+
+def _fdm_table():
+    """The hardware table of fdm.md as {thread size: {column: number}}."""
+    page = _read(SKILL / "references" / "fdm.md")
+    header = next(line for line in page.splitlines() if line.startswith("| Size |"))
+    columns = [cell.strip() for cell in header.strip("|").split("|")]
+    rows = {}
+    for line in page.splitlines():
+        match = re.match(r"^\| M(\d+(?:\.\d+)?) \|", line)
+        if match:
+            cells = [cell.strip() for cell in line.strip("|").split("|")]
+            rows[float(match.group(1))] = {name: float(cell.split(" ")[0]) for name, cell in zip(columns[1:], cells[1:])}
+    return rows
+
+
+def test_every_hole_in_the_fdm_table_clears_its_metal_part():
+    rows = _fdm_table()
+    assert list(rows) == [2, 2.5, 3, 4, 5]
+    for size, row in rows.items():
+        assert size < row["Clearance, ISO 273 medium"] < row["Model at"], size
+        assert row["Nut across flats, ISO 4032"] < row["Nut trap across flats"], size
+        assert size < row["Insert hole"], size
+    for column in next(iter(rows.values())):
+        values = [row[column] for row in rows.values()]
+        assert values == sorted(values) and len(set(values)) == len(values), column
+
+
+@pytest.mark.parametrize("page", ["SKILL.md", "references/failures.md", "references/fdm.md"])
+def test_a_page_names_only_methods_on_the_allow_list(page):
+    """Every call in inline code, and every camelCase name in backticks, is a method the reader takes."""
+    table = _allowlist()
+    text = re.sub(r"```.*?```", "", _read(SKILL / page), flags=re.DOTALL)
+    spans = re.findall(r"`([^`\n]+)`", text)
+    calls = {name for span in spans for name in re.findall(r"(?<![\w.])([a-z]\w*)\(|(?<!math)\.([a-z]\w*)\(", span) for name in name if name}
+    named = calls | {span for span in spans if re.fullmatch(r"[a-z]+[A-Z][A-Za-z]*", span)}
+    functions = {name for span in spans for name in re.findall(r"\bmath\.([a-z]\w*)\(", span)}
+    known = set(table.METHODS) | set(table.BUILTINS) | {"range", "makeHelix"}
+    assert named and named <= known, named - known
+    assert functions <= set(table.MATH_FUNCTIONS), functions - set(table.MATH_FUNCTIONS)
 
 
 ALLOWED = {
@@ -145,6 +232,9 @@ ALLOWED = {
         "thread = cq.Workplane('XZ').polyline([(3.2, -0.5), (4, -0.08), (4, 0.08), (3.2, 0.5)]).close().sweep(helix, isFrenet=True)\n"
         "result = cq.Workplane('XY').circle(3.25).extrude(10).union(thread)\n"
     ),
+    # A part too tall for the bed, cut in two and built as two bodies (items 51 and 54).
+    "a part split in two for the bed": "result = cq.Workplane('XY').box(20, 20, 300).faces('>Z').workplane(-150).split(keepTop=True, keepBottom=True)\n",
+    "an angled hole from a tilted workplane": "result = cq.Workplane('XY').box(40, 40, 10).faces('>Z').workplane(origin=(0, 0, 0)).transformed(rotate=(30, 0, 0)).hole(5)\n",
 }
 REFUSED = {
     "an if statement": "x = 1\nif x:\n    y = 2\n",
