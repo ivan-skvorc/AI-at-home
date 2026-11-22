@@ -35,7 +35,7 @@ from deerflow_extension_api import HostCapabilityError, ToolContext
 
 # The checks live in checks.py, which needs no extension API (the eval and measure_cli use it);
 # they are named here too, where the handler and older callers look for them.
-from deerflow_extension_cad.checks import MAX_HOLES, MAX_HOLES_LISTED, canonical_holes, decide, gap_notes, notes_on, unchecked
+from deerflow_extension_cad.checks import MAX_HOLES, MAX_HOLES_LISTED, MAX_LINES_SAID, canonical_holes, decide, gap_notes, notes_on, unchecked
 
 WORKER = Path(__file__).with_name("worker.py")
 REQUEST_FILE = "request.json"
@@ -337,6 +337,35 @@ def listed_holes(measured: Mapping[str, Any]) -> tuple[list[dict[str, Any]], int
             entry["body"] = number
         listed.append(entry)
     return listed, len(located)
+
+
+#: A fillet or chamfer is named in the answer when it took more edges than this and not every edge of
+#: its part. A selector string takes four edges of a box, its corners along one axis or one face's
+#: edges; more is where it also caught a rim, a pocket or a hole made before it. Every edge is what
+#: fillet() on the part itself, or edges() with no selector, asks for. report.json keeps every count.
+EDGES_SAID_ABOVE = 4
+#: What each operation did to the edges it took, in the words of its note.
+_DONE_TO_EDGES = {"fillet": "rounded", "chamfer": "cut"}
+
+
+def selection_notes(measured: Mapping[str, Any]) -> list[str]:
+    """The fillets and chamfers that took more edges than a selector usually means: a note each, at most MAX_LINES_SAID.
+
+    Passes of a loop that took the same edges are one note. Only a method of the table and whole
+    numbers from the worker reach a note.
+    """
+    taken: list[tuple[str, int, int]] = []
+    for selected in measured.get("selections") or []:
+        if not isinstance(selected, Mapping):
+            continue
+        method, line, edges, of = (selected.get(key) for key in ("method", "line", "edges", "of"))
+        said = (method, line, edges)
+        if isinstance(method, str) and method in _DONE_TO_EDGES and type(line) is int and type(edges) is int and type(of) is int and EDGES_SAID_ABOVE < edges < of and said not in taken:
+            taken.append(said)
+    notes = [f"{method}() on line {line} {_DONE_TO_EDGES[method]} {edges} edges: check that the selection took only the edges meant." for method, line, edges in taken[:MAX_LINES_SAID]]
+    if len(taken) > MAX_LINES_SAID:
+        notes.append(f"More fillets and chamfers than these took more than {EDGES_SAID_ABOVE} edges.")
+    return notes
 
 
 def provenance() -> dict[str, str | None]:
@@ -721,7 +750,7 @@ def make_handler(settings: Mapping[str, Any]):
             # A hole moved but still not where it belongs is a different failure, not the same one.
             failure = json.dumps([[check["check"], check["measured"], *([check["misplaced"]] if "misplaced" in check else [])] for check in checks if not check["passed"]], sort_keys=True, default=str)
             bodies = payload.get("bodies", 1)
-            notes = notes_on(result["measured"], bodies) + gap_notes(result["measured"], printer)
+            notes = notes_on(result["measured"], bodies) + gap_notes(result["measured"], printer) + selection_notes(result["measured"])
             extra = unchecked(result["measured"], payload)
             if extra:
                 answer["unchecked"] = extra

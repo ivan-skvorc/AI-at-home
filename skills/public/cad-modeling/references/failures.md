@@ -90,6 +90,7 @@ dimension but the overall size.
 | That gap is under the printer's minimum clearance (… mm) | Widen it to at least that clearance, which is the operator's printer, or tell the user it may print fused |
 | The gap of … mm between … is thinner than one layer | A gap across the layers prints as solid: widen it to at least two layers (`fdm.md`) |
 | The answer lists 12 of the N holes; ….report.json lists every hole with where it is | The holes check covered all of them; read the report for the positions the answer leaves out |
+| fillet() on line N rounded M edges: check that the selection took only the edges meant (a chamfer "cut" them) | Said when one took more than four edges and not every edge of the part: the selector took every edge that matched on the part as it was at that line, such as a rim's inner corners as well as its outer ones. If those are the edges you meant, nothing changes. Otherwise use a narrower selector (`"\|Z and >X"`), or round the body before adding the feature. The report's `measured.selections` counts every fillet and chamfer |
 | no picture: the build used most of its time | The part was checked and delivered without its picture. Judge it on its numbers and say that there is no picture; a part with fewer small fillets and holes draws in time |
 | no picture: … (any other reason) | The same: the part stands without its picture |
 | no print check: the build used most of its time, or another reason | The part stands; its answer has no `print` block, so say that how it prints was not reported |

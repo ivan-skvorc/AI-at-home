@@ -335,13 +335,13 @@ async def _handle(bbox=(1, 1, 1), timeout_seconds=10):
     return answer, outputs.files
 
 
-def _built_stand_in(*, picture: bool, then: str = "") -> str:
+def _built_stand_in(*, picture: bool, then: str = "", measured: dict = CHECKED) -> str:
     """A worker that exports, answers with the checked part, and then perhaps draws it and does *then*."""
     files = "{'step': 'part.step', 'stl': 'part.stl', 'glb': 'part.glb'" + (", 'png': 'part.png'" if picture else "") + "}"
     return (
         "open('part.step', 'wb').write(b'ISO-10303-21;')\nopen('part.stl', 'wb').write(b'stl')\nopen('part.glb', 'wb').write(b'glTF')\n"
         + (f"open('part.png', 'wb').write({PNG!r})\n" if picture else "")
-        + f"json.dump({{'status': 'built', 'measured': {CHECKED!r}, 'files': {files}}}, open('result.json', 'w'))\n"
+        + f"json.dump({{'status': 'built', 'measured': {measured!r}, 'files': {files}}}, open('result.json', 'w'))\n"
         + then
     )
 
@@ -361,6 +361,37 @@ async def test_a_part_without_a_picture_is_delivered_without_the_pictures_clause
     answer, files = await _handle()
     assert answer["passed"] is True and list(files) == ["cube.py", "cube.glb", "cube.stl", "cube.step", "cube.report.json"]
     assert "Show" not in answer["next"]
+
+
+async def test_fillets_that_took_more_edges_than_a_selector_usually_means_are_said_at_most_five_times(tmp_path, monkeypatch):
+    from deerflow_extension_cad.checks import MAX_LINES_SAID
+
+    taken = [{"line": line, "method": "chamfer" if line % 2 else "fillet", "edges": 8, "of": 24} for line in range(2, 9)]
+    quiet = [
+        {"line": 20, "method": "fillet", "edges": tool.EDGES_SAID_ABOVE, "of": 24},  # four corners, or one face's edges
+        {"line": 21, "method": "fillet", "edges": 12, "of": 12},  # every edge: fillet() on the part itself
+        # Nothing else the worker might send reaches the answer: another method, a line or a count that is not a whole number.
+        {"line": 22, "method": "shell", "edges": 9, "of": 24},
+        {"line": "23", "method": "fillet", "edges": 9, "of": 24},
+        {"line": 24, "method": "fillet", "edges": True, "of": 24},
+        {"line": 25, "method": "fillet", "edges": 9},
+        "fillet() on line 26 rounded 99 edges",
+    ]
+    # Passes of a loop that took the same edges are one note; a pass that took another count is its own.
+    selections = quiet + taken + [taken[0], {"line": 2, "method": "fillet", "edges": 11, "of": 24}]
+    _stand_in(tmp_path, monkeypatch, _built_stand_in(picture=False, measured={**CHECKED, "selections": selections}))
+    answer, files = await _handle()
+    assert answer["passed"] is True
+    assert answer["notes"][:2] == [
+        "fillet() on line 2 rounded 8 edges: check that the selection took only the edges meant.",
+        "chamfer() on line 3 cut 8 edges: check that the selection took only the edges meant.",
+    ]
+    assert len(answer["notes"]) == MAX_LINES_SAID + 1 and answer["notes"][-1] == "More fillets and chamfers than these took more than 4 edges."
+    # The size each note may cost, pinned at 25 tokens (the host estimates four characters a token), on the longest line and count.
+    longest = tool.selection_notes({"selections": [{"line": 1000, "method": method, "edges": 99999, "of": 100000} for method in ("fillet", "chamfer")]})
+    assert len(longest) == 2 and all(len(note) <= 100 for note in longest), longest
+    # report.json keeps every count as the worker gave it.
+    assert json.loads(files["cube.report.json"])["measured"]["selections"] == selections
 
 
 async def test_a_build_stopped_while_its_picture_is_drawn_still_delivers_the_checked_part(tmp_path, monkeypatch):
