@@ -289,6 +289,49 @@ export function updateThreadSettings<K extends keyof LocalSettings>(
 }
 
 /**
+ * Hold values in a conversation's override for this tab only, without writing
+ * them to browser storage.
+ *
+ * A new chat's Settings default (the deviation monitor) waits here until the
+ * chat is sent (`promoteThreadContext` saves it under the real thread id) or
+ * the user changes a choice in it (`updateThreadSettings` saves the whole
+ * override then). Written to storage straight away, every new chat opened and
+ * left without a message would leave a record behind for good: a draft's id
+ * is new on every visit.
+ */
+export function seedThreadContext(
+  threadId: string,
+  value: Partial<LocalSettings["context"]>,
+) {
+  ensureBaseSettingsLoaded();
+  ensureStorageListenerRegistered();
+  threadContextOverrides.set(threadId, {
+    ...getThreadContextSnapshot(threadId),
+    ...pickThreadScopedContext(value),
+  });
+  emitChange();
+}
+
+/**
+ * Save a conversation's override under the thread id the backend gave it.
+ *
+ * Reads this tab's override rather than storage, so a value held by
+ * `seedThreadContext` is saved too; a thread created under its draft id is
+ * saved in place.
+ */
+export function promoteThreadContext(draftThreadId: string, threadId: string) {
+  if (!draftThreadId || !threadId) {
+    return;
+  }
+  const override = getThreadContextSnapshot(draftThreadId);
+  saveThreadContextOverride(threadId, override);
+  if (threadContextOverrides.get(threadId) !== override) {
+    threadContextOverrides.set(threadId, override);
+    emitChange();
+  }
+}
+
+/**
  * Model availability/default resolution is not an explicit choice — not an
  * account edit, and not this conversation's own selection either.
  *
@@ -311,13 +354,20 @@ export function resolveThreadContext(
   const resolved = pickThreadScopedContext(context);
   const updates: Record<string, unknown> = {};
   const baseUpdates: Record<string, unknown> = { ...context };
+  // The deviation monitor is a per-chat choice with no app-wide default in
+  // `context` (new chats take theirs from Settings). In the base it would
+  // switch the monitor on for every chat in this tab that has none of its own.
+  delete baseUpdates.deviation_monitor;
   for (const key of Object.keys(resolved)) {
     if (Object.prototype.hasOwnProperty.call(existing, key)) {
-      updates[key] = (resolved as Record<string, unknown>)[key];
       // The caller reports the chat's whole effective context, its overrides
       // included; merging those into the base would hand one chat's choices
       // (an offline switch, a Democracy roster) to every other chat.
       delete baseUpdates[key];
+      // Resolution repairs models; the monitor choice it only echoes back,
+      // and saving it would write a new chat's held seed to storage.
+      if (key === "deviation_monitor") continue;
+      updates[key] = (resolved as Record<string, unknown>)[key];
     }
   }
   baseSettings = mergeSettingsSection(

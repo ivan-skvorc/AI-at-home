@@ -27,3 +27,6 @@ Read them before you change this directory. The rules that break silently:
   sent as a strict boolean by both submit paths.
 - **Auto rename.** The suggest route only reads; the title is applied through
   `useRenameThread`, and the picker shares `autoTitle.modelName` with Settings.
+- **Deviation monitor.** A `THREAD_SCOPED_CONTEXT_KEYS` entry sent only through
+  `deviationMonitorRunContext`, omitted while off; its status shape is pinned by
+  `contracts/deviation_monitor_contract.json` on both sides.

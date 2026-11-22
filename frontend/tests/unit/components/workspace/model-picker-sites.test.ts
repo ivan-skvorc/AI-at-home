@@ -81,6 +81,10 @@ describe("every model-selection site goes through the shared picker", () => {
     "src/components/workspace/agents/agent-settings-dialog.tsx",
     // Clean-up mode's model choice (FORK.md, chat clean-up).
     "src/components/workspace/chat-cleanup/cleanup-setup.tsx",
+    // The deviation monitor's model: the composer dialog and the Settings
+    // default for new chats.
+    "src/components/workspace/deviation-monitor/deviation-monitor-dialog.tsx",
+    "src/components/workspace/settings/deviation-monitor-settings-page.tsx",
   ];
 
   it.each(SHARED_PICKER_USERS)("%s uses ModelSelect", (file) => {

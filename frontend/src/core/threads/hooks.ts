@@ -80,6 +80,10 @@ import {
 } from "./bulk";
 import { THREAD_FOLDER_METADATA_KEY } from "./chat-folders";
 import {
+  deviationMonitorRunContext,
+  normalizeDeviationMonitorSetting,
+} from "./deviation-monitor";
+import {
   addEditVersionToGroups,
   buildEditVersionThreadMetadata,
   EDIT_ACTIVE_VERSION_METADATA_KEY,
@@ -442,6 +446,13 @@ export function buildRunContext({
       ([key]) => key !== "conversation_references",
     ),
   );
+  // The model this run is sent with: a one-turn choice replaces the saved one
+  // below, and a workflow's agents (and a deviation monitor that follows the
+  // chat's model) must use the same one.
+  const runModelName =
+    typeof extraContext?.model_name === "string"
+      ? extraContext.model_name
+      : settings.model_name;
   // Derived through the shared helper rather than inline: Democracy mode is a
   // fourth mode with its own plan/subagent answers, its own delegation budget,
   // and roster keys that must be *cleared* when the thread leaves the mode.
@@ -450,12 +461,7 @@ export function buildRunContext({
   // Settings applies to the very next Double Plus Ultracode message.
   const modeContext = deriveModeContext({
     ...settings,
-    // The model this run is sent with: a one-turn choice replaces the saved one
-    // below, and a workflow's agents must inherit the same one.
-    model_name:
-      typeof extraContext?.model_name === "string"
-        ? extraContext.model_name
-        : settings.model_name,
+    model_name: runModelName,
     ultracode_limits: getLocalSettings().ultracode,
   });
   // Fork: the thread's Ultra-mode subagent dropdown shares this key with
@@ -488,6 +494,17 @@ export function buildRunContext({
     // Living in the shared builder means a regenerate or edit runs under the
     // same switch as the send it replays.
     internet_enabled: resolveInternetEnabled(settings),
+    // Fork: the deviation monitor, explicit for the same reason. The stored
+    // choice keeps its model and cadence while off, so the settings spread
+    // above would otherwise carry `{ enabled: false, ... }` onto the wire;
+    // this sends the strict contract object or nothing (`undefined` is
+    // dropped by JSON). A chat seeded with "the chat's own model" is checked
+    // by the model this run is sent with. Read like the button and the status
+    // bar read it, so a damaged choice they show as on is sent as shown.
+    deviation_monitor: deviationMonitorRunContext(
+      normalizeDeviationMonitorSetting(settings.deviation_monitor),
+      runModelName,
+    ),
     thread_id: threadId,
     ...(locale ? { locale } : {}),
     ...clientTimezoneContext(),
@@ -2837,6 +2854,18 @@ export function useThreadStream({
     !completedRunIdsRef.current.has(knownActiveRun.run_id)
       ? parseRunStartTime(knownActiveRun.created_at)
       : null;
+  // The newest run's start, finished or not: a report written before it (an
+  // earlier run's, when the newest one was not monitored) is no longer current.
+  const latestRunStartedAt = useMemo(() => {
+    let latest: number | null = null;
+    for (const run of runsQuery.data ?? []) {
+      const startedAt = parseRunStartTime(run.created_at);
+      if (startedAt !== null && (latest === null || startedAt > latest)) {
+        latest = startedAt;
+      }
+    }
+    return latest;
+  }, [runsQuery.data]);
 
   // Run inputs can name an active run the cached list predates (a run started
   // from another tab, a channel or a schedule after this list was read; it is
@@ -4063,6 +4092,7 @@ export function useThreadStream({
     canSendInput: inputCapability && !!inputQuery.data?.active_run_id,
     activeRunId: knownActiveRunId,
     activeRunStartedAt: knownActiveRunStartedAt,
+    latestRunStartedAt,
   } as const;
 }
 

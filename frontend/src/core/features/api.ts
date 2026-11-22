@@ -37,6 +37,11 @@ export interface FeaturesResponse {
   thread_activity?: {
     available?: boolean;
   };
+  // Fork: the operator switch for the deviation monitor (config.yaml ->
+  // deviation_monitor.enabled). Absent on a Gateway that predates it.
+  deviation_monitor?: {
+    enabled?: boolean;
+  };
 }
 
 export interface ScheduledTasksFeature {
@@ -201,6 +206,22 @@ export function selectScheduledTasksFeature(
         ? minInterval
         : defaults.minIntervalSeconds,
   };
+}
+
+export interface DeviationMonitorFeature {
+  /** The operator offers the monitor: the composer shows its button. */
+  enabled: boolean;
+}
+
+/**
+ * Fail closed, unlike the rename switch: a Gateway without the block does not
+ * read `context.deviation_monitor`, so offering the button there would let a
+ * user turn on a monitor that never runs.
+ */
+export function selectDeviationMonitorFeature(
+  features: FeaturesResponse,
+): DeviationMonitorFeature {
+  return { enabled: features.deviation_monitor?.enabled === true };
 }
 
 export function selectThreadActivityFeature(

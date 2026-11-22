@@ -20,6 +20,7 @@ import {
   type SidecarReferenceStateItem,
 } from "@/core/sidecar";
 import { findLatestSidecarThread } from "@/core/sidecar/api";
+import { sidecarRunContext } from "@/core/threads/deviation-monitor";
 import type { ThreadStreamOptions } from "@/core/threads/hooks";
 
 export type SidecarReference = SidecarReferenceStateItem;
@@ -68,8 +69,11 @@ export function SidecarProvider({
     [],
   );
   const [sidecarThreadId, setSidecarThreadId] = useState<string | null>(null);
-  const [sidecarContext, setSidecarContext] =
-    useState<ThreadStreamOptions["context"]>(context);
+  // The parent's selection minus its deviation monitor: a side chat has no
+  // monitor button or status bar to show or explain one.
+  const [sidecarContext, setSidecarContext] = useState<
+    ThreadStreamOptions["context"]
+  >(() => sidecarRunContext(context));
   const [conversationQuotes, setConversationQuotes] = useState<
     SidecarReference[]
   >([]);
@@ -101,7 +105,7 @@ export function SidecarProvider({
     parentThreadIdRef.current = parentThreadId;
     setOpen(false);
     setActiveReferences([]);
-    setSidecarContext(context);
+    setSidecarContext(sidecarRunContext(context));
     updateSidecarThreadId(null);
     setConversationQuotes([]);
   }, [context, parentThreadId, updateSidecarThreadId]);

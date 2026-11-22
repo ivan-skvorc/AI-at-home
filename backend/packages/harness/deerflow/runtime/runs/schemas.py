@@ -4,7 +4,9 @@ from enum import StrEnum
 
 # Shared by Gateway admission and RunManager; values remain wire-format strings.
 EVIDENCE_ORIGINS = frozenset({"interactive", "scheduled", "extension_evaluation", "unknown"})
-GOAL_RUN_HARD_STOP_REASONS = frozenset({"token_capped", "loop_capped"})
+# Run-level stops a goal continuation, a steer and a batch continuation never
+# resume. Fork: the deviation monitor's stop is one (deviation_monitor_middleware).
+GOAL_RUN_HARD_STOP_REASONS = frozenset({"token_capped", "loop_capped", "deviation_stopped"})
 
 
 class ThreadOperationKind(StrEnum):

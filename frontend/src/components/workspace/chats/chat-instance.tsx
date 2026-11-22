@@ -11,6 +11,8 @@ import { type PromptInputMessage } from "@/components/ai-elements/prompt-input";
 import { ArtifactTrigger } from "@/components/workspace/artifacts";
 import { BrowserTrigger } from "@/components/workspace/browser-view";
 import { ContextUsageBadge } from "@/components/workspace/context-usage-badge";
+import { DeviationMonitorStatus } from "@/components/workspace/deviation-monitor/deviation-monitor-status";
+import { useDeviationMonitorNewChatDefault } from "@/components/workspace/deviation-monitor/use-new-chat-default";
 import { ExportTrigger } from "@/components/workspace/export-trigger";
 import { GoalStatus } from "@/components/workspace/goal-status";
 import {
@@ -72,12 +74,14 @@ import { useProject } from "@/core/projects";
 import { useThreadScheduledTaskEvents } from "@/core/scheduled-tasks/events";
 import { useScheduleToolResultRefresh } from "@/core/scheduled-tasks/hooks";
 import { useLocalSettings, useThreadSettings } from "@/core/settings";
+import { getThreadContextOverride } from "@/core/settings/local";
 import {
-  copyThreadContextOverride,
-  getThreadContextOverride,
-} from "@/core/settings/local";
-import { resolveThreadContext, selectThreadModel } from "@/core/settings/store";
+  promoteThreadContext,
+  resolveThreadContext,
+  selectThreadModel,
+} from "@/core/settings/store";
 import { createThread } from "@/core/threads/api";
+import { holdsWorkflowSelection } from "@/core/threads/deviation-monitor";
 import {
   INFINITE_THREADS_QUERY_KEY_PREFIX,
   useThreadMetadata,
@@ -246,7 +250,9 @@ function ChatInstanceContent({
         // A selection this browser already holds for the thread wins: it is
         // what the user is looking at. The record is the fallback for a chat
         // this browser has not seen before.
-        if (Object.keys(getThreadContextOverride(threadId)).length > 0) {
+        // A deviation monitor choice alone (a new chat gets one from the
+        // Settings default) is not a workflow selection.
+        if (holdsWorkflowSelection(getThreadContextOverride(threadId))) {
           return;
         }
         setSettings("context", {
@@ -261,6 +267,12 @@ function ChatInstanceContent({
   // Only the visible slot seeds the composer from ?mode=skill; background
   // instances share the same route params and must not fight over it.
   useSpecificChatMode(isActive);
+  // Settings → Deviation monitor applies to a chat as it starts (fork).
+  useDeviationMonitorNewChatDefault({
+    threadId,
+    isNewThread,
+    enabled: isActive && !isMock,
+  });
   // A Democracy launch (sidebar → setup dialog) lands here: the dialog stashes
   // the panel, this new chat claims it and becomes the panel's thread.
   const { seededTask: democracyTask } = useDemocracyLaunch({
@@ -355,6 +367,7 @@ function ChatInstanceContent({
     canSendInput,
     activeRunId,
     activeRunStartedAt,
+    latestRunStartedAt,
     regenerateMessage,
     isUploading,
     isHistoryLoading,
@@ -389,7 +402,9 @@ function ChatInstanceContent({
       // per-conversation key is stored under the thread id. Carry the selection
       // across before anything reads it, or the chat forgets — on its very
       // first turn — which model it just answered with.
-      copyThreadContextOverride(threadId, createdThreadId);
+      // Read from this tab, not storage: a new chat's Settings default is held
+      // in memory until now (`seedThreadContext`).
+      promoteThreadContext(threadId, createdThreadId);
       recordOnPromotion(createdThreadId, settingsRef.current.context);
       onThreadStarted?.(slotKey, createdThreadId);
     },
@@ -991,6 +1006,19 @@ function ChatInstanceContent({
                     >
                       {modelChoiceSummary}
                     </p>
+                  )}
+                  {!isWelcomeMode && (
+                    <DeviationMonitorStatus
+                      className="mb-2"
+                      setting={settings.context.deviation_monitor}
+                      state={thread.values.deviation_monitor}
+                      isRunning={thread.isLoading}
+                      runStartedAt={activeRunStartedAt}
+                      latestRunStartedAt={latestRunStartedAt}
+                      onChange={(deviation_monitor) =>
+                        setSettings("context", { deviation_monitor })
+                      }
+                    />
                   )}
                   {mountedRef.current ? (
                     <div className="w-full">

@@ -229,10 +229,12 @@ GET /api/langgraph/threads/{thread_id}/state
 POST /api/langgraph/threads/{thread_id}/history
 ```
 
-Only the newest entry carries `messages`, the `goal` while it is active, and
-`goal_outcome` (the latest met goal, kept until the next goal change). Older
-entries carry only `title` and `thread_data`. `goal_outcome` is server-owned:
-state updates and run input that include it are rejected with 400.
+Only the newest entry carries `messages`, the `goal` while it is active,
+`goal_outcome` (the latest met goal, kept until the next goal change) and
+`deviation_monitor` (the deviation monitor's status, when the thread has one).
+Older entries carry only `title` and `thread_data`. `goal_outcome` and
+`deviation_monitor` are server-owned: state updates and run input that include
+them are rejected with 400.
 
 External state updates and run input that supply a non-null `goal` must include
 a string `objective` that is non-empty after whitespace normalization and at
@@ -594,6 +596,39 @@ a new confirmation mechanism or a guarantee of model compliance.
 This first version adds no frontend picker or link-to-reference conversion. The
 tool is unavailable to bootstrap agents, subagents and embedded clients without
 a host-provided reader. Active tool/skill policies continue to apply.
+
+#### Deviation monitor
+
+A run asks for the deviation monitor (fork feature,
+[guide](../../docs/guide/deviation-monitor.md)) in its context:
+
+```json
+{
+  "context": {
+    "deviation_monitor": {
+      "enabled": true,
+      "model": "<configured model name>",
+      "cadence": {"mode": "steps", "every": 3}
+    }
+  }
+}
+```
+
+`mode` is `steps` (every 1-50 agent steps) or `turns` (the final answer of
+every 1-20 turns; every turn is `{"mode": "turns", "every": 1}`). Steps, turns
+and the one retry count per user message: a run over the same message (a
+`command.resume`, a batch follow-up) continues them, so send the key on those
+runs too. Keys are strict. Without the key the monitor does nothing and writes nothing;
+`{"enabled": false}` is off. Any other value is never a 400: the Gateway stores
+`{"enabled": false, "rejected": "<code>"}` and the monitor is off for that run
+with the reason in its status. The model is authorized for the caller at run
+start like any model selection. Progress is written to the server-owned
+`deviation_monitor` state channel. A confirmed drift appends a note to the
+checked AI message (same id, tool calls removed,
+`additional_kwargs.deviation_monitor_action`) and ends the run with
+`stop_reason` `deviation_stopped`. The shapes are pinned in
+`contracts/deviation_monitor_contract.json`; `GET /api/features` reports
+`deviation_monitor.enabled`.
 
 #### Get Run History
 

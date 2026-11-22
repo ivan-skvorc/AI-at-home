@@ -585,6 +585,18 @@ def build_middlewares(
     # to-do list's reminder go first.
     from deerflow.agents.middlewares.completion_review_middleware import CompletionReviewMiddleware
 
+    # Fork: the deviation monitor checks mid-run that the work still serves the
+    # request, and stops (or, in a subagent mode, retries) on a confirmed drift.
+    # Outer of the completion review and the to-do list, so their reverse-order
+    # after_model decides first whether an answer is final; outer of the
+    # context-window guard, which then measures the retry's hidden reminder.
+    # A no-op unless the run context asks for it.
+    from deerflow.agents.middlewares.deviation_monitor_middleware import DeviationMonitorMiddleware
+
+    deviation_monitor = DeviationMonitorMiddleware.from_app_config(resolved_app_config)
+    if deviation_monitor is not None:
+        middlewares.append(deviation_monitor)
+
     completion_review = CompletionReviewMiddleware.from_app_config(resolved_app_config)
     if completion_review is not None:
         middlewares.append(completion_review)

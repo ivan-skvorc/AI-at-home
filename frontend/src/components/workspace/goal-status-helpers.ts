@@ -163,6 +163,7 @@ const STOP_BY_REASON: Partial<Record<GoalReasonKey, StopRow>> = {
   noProgress: { stop: "noProgress", chip: "stopped" },
   tokenCapped: { stop: "tokenCapped", chip: "stopped" },
   loopCapped: { stop: "loopCapped", chip: "stopped" },
+  deviationStopped: { stop: "deviationStopped", chip: "stopped" },
   recursionCapped: { stop: "recursionCapped", chip: "stopped" },
   missingEvidence: { stop: "missingEvidence", chip: "stopped" },
   runFailed: { stop: "runFailed", chip: "stopped" },

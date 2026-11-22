@@ -59,6 +59,7 @@ from app.gateway.utils import sanitize_log_param
 from deerflow.agents.human_input import extract_unanswered_human_input_request
 from deerflow.agents.thread_state import THREAD_STATE_REDUCER_FIELDS
 from deerflow.config.app_config import AppConfig, get_app_config
+from deerflow.config.deviation_monitor_config import DEVIATION_MONITOR_CONTEXT_KEY
 from deerflow.config.paths import Paths, get_paths
 from deerflow.config.summarization_config import ContextSize
 from deerflow.persistence.thread_meta import (
@@ -2574,6 +2575,11 @@ async def get_thread_history(
                 outcome = materialized_values.get(GOAL_OUTCOME_CHANNEL)
                 if isinstance(outcome, dict) and outcome.get("status") == "achieved":
                     values[GOAL_OUTCOME_CHANNEL] = outcome
+                # Fork: the deviation monitor's status bar reads this channel,
+                # and useStream rebuilds thread values from this head after a run.
+                monitor = materialized_values.get(DEVIATION_MONITOR_CONTEXT_KEY)
+                if isinstance(monitor, dict):
+                    values[DEVIATION_MONITOR_CONTEXT_KEY] = monitor
                 messages = materialized_values.get("messages")
                 if messages:
                     serialized_msgs = serialize_channel_values_for_api({"messages": messages}).get("messages", [])

@@ -56,6 +56,9 @@ flowchart LR
   subgraph gates [Coding gates]
     harnessGuard["harness_guard_middleware.py"]
   end
+  subgraph devmon [Deviation monitor]
+    devmonButton["composer compass + status bar"]
+  end
   inputBox[["input-box.tsx"]]
   runContext[["core/threads/run-context.ts"]]
   threadsHooks[["core/threads/hooks.ts"]]
@@ -72,15 +75,18 @@ flowchart LR
   net --> inputBox
   sugg --> inputBox
   ultra --> inputBox
+  devmon --> inputBox
   mode --> runContext
   net --> runContext
   demo --> runContext
   ultra --> runContext
   chat --> threadsHooks
+  devmon --> threadsHooks
   conc --> threadsHooks
   hist --> threadsHooks
   chat --> servicesPy
   net --> servicesPy
+  devmon --> servicesPy
   demo --> servicesPy
   servicesPy --> worker
   worker --> leadAgent
@@ -97,6 +103,8 @@ flowchart LR
   win --> leadAgent
   guardrails --> leadAgent
   gates --> leadAgent
+  devmon --> leadAgent
+  devmon --> llm
   hitl --> worker
   goal --> worker
   refs --> chat
@@ -245,3 +253,11 @@ Files: backend/packages/harness/deerflow/sandbox/syntax_check.py, backend/packag
 Data: sandbox files
 External: none
 Tests: backend/tests/test_sandbox_syntax_check.py, backend/tests/test_str_replace_ambiguous_match.py, backend/tests/test_completion_review_middleware.py, backend/tests/test_harness_guard_middleware.py
+
+### Deviation monitor
+What: a second model, chosen per chat, checks on a cadence (every 1-50 agent steps of a reply, or before the final answer of every 1-20 turns; a reply resumed after an approval or a batch follow-up stays one turn) that the agent's recent work still serves the request; a confirmed drift stops the run with a note, or in a mode with subagents retries once with a hidden reminder first. Off in every chat; operator switch `deviation_monitor.enabled`.
+Entry points: composer compass button and its dialog, the status bar above the composer on both chat pages, Settings → Deviation monitor, run context `deviation_monitor`, GET /api/features
+Files: backend/packages/harness/deerflow/agents/middlewares/deviation_monitor_middleware.py, backend/packages/harness/deerflow/agents/middlewares/deviation_monitor_judge.py, backend/packages/harness/deerflow/config/deviation_monitor_config.py, backend/packages/harness/deerflow/agents/middlewares/todo_middleware.py, backend/app/gateway/services.py, backend/app/gateway/routers/features.py, backend/app/gateway/routers/threads.py, contracts/deviation_monitor_contract.json, frontend/src/core/threads/deviation-monitor.ts, frontend/src/core/features/deviation-monitor.ts, frontend/src/components/workspace/deviation-monitor/**, frontend/src/components/workspace/settings/deviation-monitor-settings-page.tsx, frontend/src/components/workspace/input-box.tsx, frontend/src/components/workspace/chats/chat-instance.tsx, frontend/src/app/workspace/agents/[agent_name]/chats/[thread_id]/page.tsx, frontend/src/components/workspace/sidecar/context.tsx, frontend/src/core/threads/hooks.ts, frontend/src/core/threads/stream-state.ts, frontend/src/core/settings/local.ts, frontend/src/core/settings/store.ts
+Data: per-thread setting in local settings (`deerflow.thread-context.<id>.deviation_monitor`), per-browser defaults (`LocalSettings.deviationMonitor`), thread-state channel `deviation_monitor`, run journal usage and `middleware:deviation_monitor` events
+External: LLM providers (the user-chosen monitor model)
+Tests: backend/tests/test_deviation_monitor.py, backend/tests/test_deviation_monitor_graph.py, backend/tests/test_deviation_monitor_gateway.py, backend/tests/test_thread_goal_contract.py, backend/tests/blocking_io/test_deviation_monitor_offloop.py, frontend/tests/unit/core/threads/deviation-monitor.test.ts, frontend/tests/unit/core/settings/deviation-monitor-storage.dom.test.ts, frontend/tests/unit/components/workspace/deviation-monitor/deviation-monitor-control.dom.test.tsx, frontend/tests/unit/components/workspace/deviation-monitor/deviation-monitor-status.dom.test.tsx, frontend/tests/unit/components/workspace/deviation-monitor/settings-defaults.dom.test.tsx, frontend/tests/unit/components/workspace/deviation-monitor/status-helpers.test.ts, frontend/tests/e2e/deviation-monitor.spec.ts

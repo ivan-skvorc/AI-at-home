@@ -7,6 +7,7 @@ import {
   DownloadCloudIcon,
   InfoIcon,
   BrainIcon,
+  CompassIcon,
   LightbulbIcon,
   PaletteIcon,
   PencilLineIcon,
@@ -93,6 +94,14 @@ const SuggestionsSettingsPage = dynamic(
 );
 // Fork-only system-prompt editor (not present upstream); lazy-loaded like the
 // other settings pages so the prompt template never lands in the main bundle.
+// Fork-only deviation monitor defaults for new chats; lazy-loaded like the rest.
+const DeviationMonitorSettingsPage = dynamic(
+  () =>
+    import("./deviation-monitor-settings-page").then(
+      (module) => module.DeviationMonitorSettingsPage,
+    ),
+  { loading: SettingsPageLoading },
+);
 const SystemPromptSettingsPage = dynamic(
   () =>
     import("./system-prompt-settings-page").then(
@@ -148,6 +157,7 @@ export type SettingsSection =
   | "subagents"
   | "notification"
   | "suggestions"
+  | "deviationMonitor"
   | "systemPrompt"
   | "maintenance"
   | "runLimits"
@@ -206,6 +216,11 @@ export function SettingsDialog(props: SettingsDialogProps) {
         icon: PencilLineIcon,
       },
       {
+        id: "deviationMonitor",
+        label: t.settings.sections.deviationMonitor,
+        icon: CompassIcon,
+      },
+      {
         id: "channels",
         label: t.settings.sections.channels,
         icon: CableIcon,
@@ -256,6 +271,7 @@ export function SettingsDialog(props: SettingsDialogProps) {
     t.settings.sections.account,
     t.settings.sections.appearance,
     t.settings.sections.autoTitle,
+    t.settings.sections.deviationMonitor,
     t.settings.sections.channels,
     t.settings.sections.memory,
     t.settings.sections.subagents,
@@ -325,6 +341,9 @@ export function SettingsDialog(props: SettingsDialogProps) {
               {activeId === "notification" && <NotificationSettingsPage />}
               {activeId === "suggestions" && <SuggestionsSettingsPage />}
               {activeId === "autoTitle" && <AutoTitleSettingsPage />}
+              {activeId === "deviationMonitor" && (
+                <DeviationMonitorSettingsPage />
+              )}
               {activeId === "channels" && <ChannelsSettingsPage />}
               {activeId === "systemPrompt" && <SystemPromptSettingsPage />}
               {activeId === "maintenance" && <MaintenanceSettingsPage />}

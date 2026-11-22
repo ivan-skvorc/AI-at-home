@@ -210,7 +210,7 @@ not gate SSE recovery.
 
 Current middleware tags are `guardrail`, `loop_detection`,
 `safety_termination`, `skill_activation`, `skill_secrets`, `tool_promotion`,
-`tool_progress`, and `summarize`. The pattern is intentionally open so new middleware tags
+`tool_progress`, `summarize`, and `deviation_monitor`. The pattern is intentionally open so new middleware tags
 are additive. Because the full event type is limited to 32 characters and
 `middleware:` uses 11, a tag must contain 1-21 characters.
 

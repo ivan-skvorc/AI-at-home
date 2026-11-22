@@ -20,6 +20,8 @@ import {
   usePendingEditSend,
 } from "@/components/workspace/chats/use-edit-versions";
 import { ContextUsageBadge } from "@/components/workspace/context-usage-badge";
+import { DeviationMonitorStatus } from "@/components/workspace/deviation-monitor/deviation-monitor-status";
+import { useDeviationMonitorNewChatDefault } from "@/components/workspace/deviation-monitor/use-new-chat-default";
 import { ExportTrigger } from "@/components/workspace/export-trigger";
 import { GoalStatus } from "@/components/workspace/goal-status";
 import {
@@ -116,6 +118,12 @@ export default function AgentChatPage() {
   // it can flip immediately on submit without triggering eager history loads.
   const [isWelcomeMode, setIsWelcomeMode] = useState(isNewThread);
   const [settings, setSettings] = useThreadSettings(threadId);
+  // Settings → Deviation monitor applies to a chat as it starts (fork).
+  useDeviationMonitorNewChatDefault({
+    threadId,
+    isNewThread,
+    enabled: !isMock,
+  });
   const modelControl = useModelControl(
     `${user?.id ?? "anonymous"}:${agent_name}:${threadId}`,
     locale,
@@ -214,6 +222,7 @@ export default function AgentChatPage() {
     canSendInput,
     activeRunId,
     activeRunStartedAt,
+    latestRunStartedAt,
     regenerateMessage,
     isUploading,
     isHistoryLoading,
@@ -751,6 +760,19 @@ export default function AgentChatPage() {
                         onSubmit={(response) => modelControl.choose(response)}
                       />
                     </div>
+                  )}
+                  {!isWelcomeMode && (
+                    <DeviationMonitorStatus
+                      className="mb-2"
+                      setting={settings.context.deviation_monitor}
+                      state={thread.values.deviation_monitor}
+                      isRunning={thread.isLoading}
+                      runStartedAt={activeRunStartedAt}
+                      latestRunStartedAt={latestRunStartedAt}
+                      onChange={(deviation_monitor) =>
+                        setSettings("context", { deviation_monitor })
+                      }
+                    />
                   )}
                   <ThreadRunInputs
                     inputs={runInputs}

@@ -37,6 +37,7 @@
 > - 📖 **Books in any format, zipped or not** — an HTML, EPUB, plain-text or zipped book (a Project Gutenberg download, say) now states its size in the prompt and, when it is too big for one window, is routed to `analyze_document`, which reads HTML and EPUB as Markdown and reads the documents inside a zip. **Nothing is parsed or unpacked on the host to size an upload**, and a zip that would unpack past 64 MB, holds over 1,000 files, nests another archive or is encrypted is refused with the reason. Nothing to turn on.
 > - 🧱 **No request bigger than the window** — before every model call the whole request (system prompt, tool schemas, conversation) is measured against the serving model's window. If it does not fit, the oldest tool results are dropped from that request — never your messages or the instructions — and if it still does not fit it is **not sent**: the chat says why, instead of Ollama silently cutting off the start of the prompt. On a local model the request is also **built to fit from the first message**: tools are described in short form, skills are listed by name and MCP tools wait behind a search, so a synced 32K Ollama model keeps about 15K tokens for the conversation in Flash mode (it had about 7K). Compaction fires before the window fills, and a refusal states the real limit and what is using it. Nothing to turn on; a model whose window is unknown is left alone.
 > - 🎯 **A drift check for long documents** — `make drift-eval` gives a model a large PDF with facts planted at known pages, then has a *second* model judge whether the answer still addresses the question that was asked or quietly became "summarise this document". The planted facts grade the judge too, so a judge that waves through a wrong answer is reported as the judge failing. Runs offline against the document path, or end to end through the running agent with `MODE=agent`.
+> - 🔭 **A deviation monitor that stops a run once it drifts off your request** — the compass under the message box turns it on for one chat: pick the model that checks and how often (every few agent steps, or just before the final answer of every few turns), and while the agent works that second model judges whether its recent steps still serve what you asked. **A confirmed drift stops the run** before the drifting tool calls run, with a note naming your request; in Ultra, Democracy and the Ultracode modes it first retries once, split across subagents. An unsure verdict is shown and never acted on. Off in every chat until you turn it on; each check is a model call the agent waits for, billed to the run (`deviation_monitor:` in `config.yaml`, offered by default).
 > - 🛠️ **A coding agent that checks its own work** — `str_replace` refuses an edit whose text matches more than one place, a write that leaves a Python, JSON, YAML or TOML file unparseable comes back with the line of the error, and before its final answer the agent is reminded once to run something when it edited code and ran nothing afterwards. On by default (`harness_guard.verify_before_finish`); at most one extra model call per run.
 > - 🎓 **Skills the agent learns, uses and retires** — with `skill_evolution.enabled: true`, a long run (8+ tool calls) ends with one reminder to save what it worked out as a skill, or to patch the custom skill it followed; every later load is counted, and agent-written skills nobody loaded for 90 days are switched off (Capability Center → Skills turns them back on, nothing is deleted). Off by default, because each skill write runs a security-scan model call.
 > - 📚 **Coding skills from day one** — test-driven development, systematic debugging, pre-commit code review, simplify-code, spikes and subagent-driven development (adapted from Hermes Agent, MIT), plus `git-pr-workflow`: a script that branches, checkpoints, commits (refusing secrets and the default branch), pushes with a read-back and opens a PR exactly once. Bundled in `skills/public/`: a fresh install has them and every update improves them.
@@ -168,6 +169,7 @@ DeerFlow has newly integrated the intelligent search and crawling toolset indepe
   - [Democracy — Several Models Answer, Then Decide Together](#democracy--several-models-answer-then-decide-together)
   - [Plus Ultracode and Double Plus Ultracode — The Plan Becomes a Script](#plus-ultracode-and-double-plus-ultracode--the-plan-becomes-a-script)
   - [Run Limits — What Can End a Run Early](#run-limits--what-can-end-a-run-early)
+  - [Deviation Monitor — A Second Model Keeps the Run on Your Request](#deviation-monitor--a-second-model-keeps-the-run-on-your-request)
   - [Generating Agents From Your History](#generating-agents-from-your-history)
   - [Coding Agent: Gates, Learned Skills and Git](#coding-agent-gates-learned-skills-and-git)
   - [Sandbox & File System](#sandbox--file-system)
@@ -576,6 +578,7 @@ version; the [Table of Contents](#table-of-contents) lists them.
 | Sub-agents and task delegation | [Sub-Agents](docs/guide/subagents.md), [Tool restrictions](docs/guide/subagents.md#tool-restrictions) |
 | Long-term memory | [Long-Term Memory](docs/guide/memory.md) |
 | Session goals, context compaction, task notes, evidence-based decisions | [Context, Goals and Agent Decisions](docs/guide/context.md) |
+| The deviation monitor: turning it on per chat, cadence, what a stop looks like | [Deviation Monitor](docs/guide/deviation-monitor.md) |
 | Private knowledge retrieval (RAGFlow) | [Private Knowledge Retrieval](docs/guide/knowledge-retrieval.md) |
 | Agentic browser control | [Agentic Browser Control](docs/guide/browser-control.md) |
 | Projects, instructions, document shelf | [Projects](docs/guide/projects.md) |
@@ -1115,6 +1118,60 @@ says so. It does not ignore what is not on this page: the workflow's own agent
 and size limits, a configuration change mid-run, and the model provider's stops
 still apply to it (see the table under
 [Plus Ultracode and Double Plus Ultracode](#plus-ultracode-and-double-plus-ultracode--the-plan-becomes-a-script)).
+
+### Deviation Monitor — A Second Model Keeps the Run on Your Request
+
+A long run can drift without failing: the agent reads a large file, your request
+ages out of its window or is compacted away, and it settles into whatever its
+remaining context suggests, usually "summarise this". The **deviation monitor**
+is a second model that checks, while the agent works, whether its recent steps
+still serve what you asked. Turn it on with the **compass button** in the
+message box's tool row: the dialog asks for the monitor's model (the same picker
+as everywhere else) and how often to check: **every X steps** (1-50, agent steps
+within one reply), **every N turns** (1-20, just before the final answer) or
+**every turn**. It applies to that chat only, and a reply resumed after a tool
+approval still counts as one. A status bar above the message box shows the
+latest report (Watching, Checking… with a steps cadence, On track, Unsure,
+Possible drift, Stopped) with the reason behind **Details**, and turns the
+monitor off in one click, from your next message. **Settings → Deviation
+monitor** sets what new chats start with.
+
+**A confirmed drift stops the run.** A step check judges a response before its
+tool calls run, so the drifting actions never happen: the response keeps its
+text, loses its tool calls, and ends with a note naming the reason and your
+request. No reminder or continuation resumes the run; a goal on the chat
+stays active for your next message (stand-down reason `deviation_stopped`)
+unless the goal check finds the visible answer already meets it. In a mode with
+subagents (Ultra, Democracy, Plus and Double Plus Ultracode) the first
+confirmed drift **retries once** instead, telling the agent to return to your
+request and split the work across subagents; a second one stops it. Small
+judges are noisy, so a "drifting" verdict is asked twice and acts only when
+both agree or a mechanical signal backs it (a partial read, a truncated result,
+repeated tool failures, a compaction during this run, a full window); **an
+unsure verdict, a timeout or an error is shown and never acted on**.
+
+The limits that bite: **the agent waits for each check**, so a check every step
+can double a run's time on a local GPU, and a second local model that does not
+fit beside the main one makes Ollama swap models on every check. Each check is
+billed to the run and counted by the spend caps. The monitor sees your request
+verbatim, the goal and to-dos, the last six steps and the compaction summary,
+sized to its own model's window; when your request alone does not fit, the
+check is skipped as unsure. It is advisory, **not a security boundary**: text
+the agent read can steer it too. IM channels, schedules and API callers that do
+not send the setting are never monitored.
+
+It is offered by default and off in every chat. The operator block:
+
+```yaml
+deviation_monitor:
+  enabled: true              # false hides the button and ignores any request
+  judge_timeout_seconds: 60  # 5-600; a check that runs out of time is unsure
+  max_evidence_chars: 24000  # 4000-200000; the monitor model's window lowers it
+```
+
+Details, the API shape and how it is to be measured against
+`make drift-eval MODE=agent` are in the
+[Deviation Monitor guide](docs/guide/deviation-monitor.md).
 
 ### Generating Agents From Your History
 

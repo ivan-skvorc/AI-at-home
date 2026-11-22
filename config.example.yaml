@@ -20,7 +20,7 @@
 # ============================================================================
 # Bump this number when the config schema changes.
 # Run `make config-upgrade` to merge new fields into your local config.yaml.
-config_version: 76
+config_version: 77
 
 # Optional operator-owned literal prompt extensions (see CONFIGURATION.md):
 # lead_prompt_overlay:
@@ -3275,6 +3275,29 @@ harness_guard:
   detect_alternating_loops: true
   max_loop_history: 20
   max_tracked_scopes: 1000
+
+# ============================================================================
+# Deviation Monitor (fork feature)
+# ============================================================================
+# A per-chat check that the agent's work still serves the user's request. Off
+# in every chat until the user turns it on under the composer, choosing the
+# monitor's model and a cadence (every N agent steps, or the final answer of
+# every N turns). On a confirmed drift the run stops with a visible note; in a
+# mode with subagents (Ultra, Democracy, Plus/Double Plus Ultracode) the first
+# drift retries once, asking the agent to split the work across subagents.
+# Each check is a model call the agent waits for, billed to the run and
+# counted by the spend caps. Advisory only: it is not a security boundary.
+deviation_monitor:
+  # Offer the monitor in the composer; false hides its button and ignores any
+  # request a client sends.
+  enabled: true
+  # How long one check may wait for the monitor model (5-600). A check that
+  # runs out of time is reported as unsure and never acted on.
+  judge_timeout_seconds: 60
+  # Ceiling on the evidence one check sends, in characters (4000-200000). The
+  # monitor model's own window lowers it further; the user's request is never
+  # cut, older steps are dropped first.
+  max_evidence_chars: 24000
 
 # ============================================================================
 # Projects

@@ -2,11 +2,11 @@
 
 Run with "run change_cycle.md level 1" (or 2, or 3). Each level includes everything in the levels before it.
 
-| Level | Tests | Typical use | Map |
-|---|---|---|---|
-| 1 | Features linked to the changed files | Everyday changes | Updated for the changed files |
-| 2 | The whole app | Before a release; after large or risky changes | Updated, then checked whole against the code |
-| 3 | The whole app + quality review | Periodic clean-up; after a large feature | Updated again for what the quality fixes add, delete or rename |
+| Level | Tests | Typical use | Map | README |
+|---|---|---|---|---|
+| 1 | Features linked to the changed files | Everyday changes | Updated for the changed files | Updated only if the change warrants it |
+| 2 | The whole app | Before a release; after large or risky changes | Updated, then checked whole against the code | Updated only if the change warrants it |
+| 3 | The whole app + quality review | Periodic clean-up; after a large feature | Updated again for what the quality fixes add, delete or rename | Checked whole against the code |
 
 **Automatic for every change request, whichever agent or model runs it.** Claude
 Code, Codex, Grok Build, any other coding agent and their delegated agents run
@@ -80,7 +80,7 @@ user loses outright and the rest of the suite does not notice.
 1. Work on a branch updated from the latest `main` (`git fetch origin && git checkout -b fix/short-slug origin/main`, prefixed `feat/`, `fix/`, `docs/` or `chore/`). Never commit to `main`.
 2. List the files changed since the sync point (command above). This covers this branch and anything merged since the last change cycle.
 3. Update `docs/repo-map/` for those files: add new features and files, remove deleted ones, fix renamed ones. Update the board if features, shared nodes, external services or data stores changed. Rewrite the sync line in `docs/repo-map/index.md`.
-4. A new feature gets at least one test in the same change. In this repo a feature that is added or removed also owes, in the same change: its bullet in the `README.md` list under "it adds — out of the box:" (written first: if the one-line promise is hard to write, the feature is not finished), a `###` subsection under Core Features in `README.md` with its Table of Contents anchor, a `### N.` section in [FORK.md](FORK.md#adding-a-new-fork-feature--what-to-write-and-where), a checklist row only for a risk that is silent when broken, a note in the nearest `AGENTS.md` for what an agent must know before editing the code, user docs in `docs/guide/` or `backend/docs/`, one `### Added` line under `## [Unreleased]` in `CHANGELOG.md`, and for a new config key a `config_version` bump in `config.example.yaml` and both chart copies. Review the tests of the area you touched: remove a test only when it duplicates a retained one, exercises removed behavior or cannot fail, and name what still covers it.
+4. A new feature gets at least one test in the same change. `README.md` changes only when the change warrants it: it adds or removes a feature, announces one that is coming (a roadmap item the README names), or makes a sentence the README already says untrue. A fix, a refactor or an internal change that leaves every README sentence true leaves `README.md` alone. When it does change, a feature added or removed owes its bullet in the `README.md` list under "it adds — out of the box:" (written first: if the one-line promise is hard to write, the feature is not finished) and a `###` subsection under Core Features in `README.md` with its Table of Contents anchor, and a broken sentence is corrected where it stands. In this repo a feature that is added or removed also owes, in the same change: a `### N.` section in [FORK.md](FORK.md#adding-a-new-fork-feature--what-to-write-and-where), a checklist row only for a risk that is silent when broken, a note in the nearest `AGENTS.md` for what an agent must know before editing the code, user docs in `docs/guide/` or `backend/docs/`, one `### Added` line under `## [Unreleased]` in `CHANGELOG.md`, and for a new config key a `config_version` bump in `config.example.yaml` and both chart copies. Review the tests of the area you touched: remove a test only when it duplicates a retained one, exercises removed behavior or cannot fail, and name what still covers it.
 5. Run the level's checks, critical checks first. If one fails, fix it and rerun. Don't weaken or delete a test to make it pass unless the behavior change is intended and stated in the PR. If it can't be fixed within this change, stop without merging. Run each check once on the final tree: format first (`cd backend && make format`, `cd frontend && pnpm format:write`), and rerun only what reads a file that changed after the run.
 6. Open a PR with the summary below.
 7. Merge once the level's checks pass. If `main` breaks after a merge, revert that PR first, then fix.
@@ -108,6 +108,7 @@ Level 2, then review the whole repo, not only the changed files, for:
 - **Duplicate implementations of the same thing.** Example: four separate model dropdowns where one shared component, with a simplified variant if needed, would do. Also duplicated API clients, model or provider lists, URLs, validation and formatting helpers. A shared component with variants is fine; copies are not.
 - **Repeated remote calls.** LLM, API or database calls inside loops where one request carrying all items, the provider's batch API (for non-interactive jobs), bounded parallel requests or caching would do; the same data fetched by several components; polling where streaming, events or webhooks exist.
 - **Other waste.** Dead code, unused dependencies, generic best-practice text copied into the repo (replace it with a link under References).
+- **The whole `README.md`, not only the parts the change touched.** Every bullet under "it adds — out of the box:" and every Core Features subsection still describes the code (a shipped feature is not missing, a removed one is not still promised, numbers, commands, defaults and paths are current), the Table of Contents anchors resolve, and the links point at files that exist. Wrong text is a finding like any other: fix it here, since a README correction keeps behaviour the same.
 - **Also check:** secrets in code or committed config (move them to environment variables; the owner must rotate any secret that was ever committed), and errors that are caught and silently ignored.
 
 Then:

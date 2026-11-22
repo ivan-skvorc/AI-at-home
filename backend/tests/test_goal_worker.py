@@ -350,7 +350,7 @@ async def test_goal_worker_stands_down_for_non_continuable_blocker(monkeypatch, 
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("run_stop_reason", ["token_capped", "loop_capped"])
+@pytest.mark.parametrize("run_stop_reason", ["token_capped", "loop_capped", "deviation_stopped"])
 async def test_goal_worker_stands_down_after_run_hard_stop(monkeypatch, run_stop_reason):
     checkpointer = InMemorySaver()
     thread_id = "hard-stop-goal-thread"
@@ -498,7 +498,7 @@ async def test_goal_worker_resumes_after_the_user_answers_clarification(monkeypa
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("run_stop_reason", ["token_capped", "loop_capped"])
+@pytest.mark.parametrize("run_stop_reason", ["token_capped", "loop_capped", "deviation_stopped"])
 async def test_goal_worker_defers_satisfied_goal_completion_even_after_hard_stop(monkeypatch, run_stop_reason):
     checkpointer = InMemorySaver()
     thread_id = "token-capped-done-goal-thread"
