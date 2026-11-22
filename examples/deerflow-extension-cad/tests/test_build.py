@@ -146,10 +146,12 @@ async def test_a_plate_written_with_the_habits_of_ordinary_python_builds_and_pas
     answer, files = await _build(HABITS_PLATE)
     assert answer["passed"] is True, answer
     assert sorted(files) == ["part.glb", "part.py", "part.report.json", "part.step", "part.stl"]
+    assert json.loads(files["part.report.json"])["parameters"] == {"w": 60, "d": 40, "t": 6, "spacing": 30.0}
     # A method that is not on the list is refused before the kernel loads, and the answer says which.
     answer, files = await _build(HABITS_PLATE.replace(".hole(round(4.04, 1))", ".hole(4).faces('>Z').sketch()"))
     assert answer["passed"] is False and answer["error"]["construct"] == "method" and answer["error"]["message"].startswith(".sketch() is not on the allow-list")
     assert sorted(files) == ["part.py", "part.report.json"]
+    assert answer["error"]["refused"] == "sketch"
 
 
 async def test_a_kernel_error_names_the_line_and_the_operation():

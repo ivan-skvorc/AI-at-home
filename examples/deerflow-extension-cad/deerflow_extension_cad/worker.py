@@ -68,8 +68,10 @@ def main() -> None:
     try:
         program = compile_script(request["script"])
     except ScriptRefused as refused:
-        _answer({"status": "refused", "construct": refused.construct, "line": refused.line, "message": refused.message})
+        _answer({"status": "refused", "construct": refused.construct, "refused": refused.name, "line": refused.line, "message": refused.message})
         return
+    # The numbers the script starts with, for report.json; tool.py copies names and numbers only.
+    parameters = dict(program.parameters)
 
     try:
         _phase("loading")  # two seconds when the libraries are in the disk cache, far longer when they are not
@@ -100,12 +102,12 @@ def main() -> None:
         if passes:
             measured["dropped_passes"] = [{"loop_line": line, "passes": count} for line, count in passes.items()][: MAX_UNUSED_SAID + 1]
     except build.BuildFailed as failed:
-        _answer({"status": "failed", "line": failed.line, "operation": failed.operation, "message": failed.message})
+        _answer({"status": "failed", "line": failed.line, "operation": failed.operation, "message": failed.message, "parameters": parameters})
         return
     except MemoryError:
         _answer({"status": "failed", "message": "the kernel ran out of memory building this part"})
         return
-    _answer({"status": "built", "measured": measured, "files": files})
+    _answer({"status": "built", "measured": measured, "files": files, "parameters": parameters})
 
 
 if __name__ == "__main__":
