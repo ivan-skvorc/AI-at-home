@@ -1117,7 +1117,7 @@ webpush = [
 
 [package.dev-dependencies]
 cad = [
-    { name = "deerflow-extension-cad", marker = "(platform_machine == 'arm64' and sys_platform == 'darwin') or (platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux')" },
+    { name = "deerflow-extension-cad", marker = "platform_machine == 'arm64' and sys_platform == 'darwin' or (platform_machine == 'aarch64' or platform_machine == 'x86_64') and sys_platform == 'linux'" },
 ]
 dev = [
     { name = "anthropic" },
@@ -1136,6 +1136,7 @@ dev = [
     { name = "textual" },
 ]
 extensions = [
+    { name = "deerflow-extension-cad-preview" },
     { name = "deerflow-extension-workflows", marker = "sys_platform != 'win32'" },
 ]
 
@@ -1176,7 +1177,7 @@ requires-dist = [
 provides-extras = ["postgres", "redis", "discord", "buzz", "monocle", "ollama", "browser", "camoufox", "memory-zh", "webpush"]
 
 [package.metadata.requires-dev]
-cad = [{ name = "deerflow-extension-cad", marker = "(platform_machine == 'arm64' and sys_platform == 'darwin') or (platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux')", directory = "extensions/sources/deerflow-extension-cad" }]
+cad = [{ name = "deerflow-extension-cad", marker = "platform_machine == 'arm64' and sys_platform == 'darwin' or (platform_machine == 'aarch64' or platform_machine == 'x86_64') and sys_platform == 'linux'", directory = "extensions/sources/deerflow-extension-cad" }]
 dev = [
     { name = "anthropic", specifier = ">=0.97.0" },
     { name = "blockbuster", specifier = ">=1.5.26,<1.6" },
@@ -1193,7 +1194,10 @@ dev = [
     { name = "ruff", specifier = ">=0.14.11" },
     { name = "textual", specifier = ">=0.80" },
 ]
-extensions = [{ name = "deerflow-extension-workflows", marker = "sys_platform != 'win32'", directory = "extensions/sources/deerflow-extension-workflows" }]
+extensions = [
+    { name = "deerflow-extension-cad-preview", directory = "extensions/sources/deerflow-extension-cad-preview" },
+    { name = "deerflow-extension-workflows", marker = "sys_platform != 'win32'", directory = "extensions/sources/deerflow-extension-workflows" },
+]
 
 [[package]]
 name = "deerflow-extension-api"
@@ -1207,15 +1211,35 @@ source = { directory = "extensions/sources/deerflow-extension-cad" }
 dependencies = [
     { name = "cadquery" },
     { name = "deerflow-extension-api" },
+    { name = "numpy" },
+    { name = "pillow" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "cadquery", specifier = "==2.8.0" },
     { name = "deerflow-extension-api", specifier = ">=0.2.13,<0.3" },
+    { name = "numpy", specifier = ">=2,<3" },
+    { name = "pillow", specifier = ">=10.1,<14" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=9,<10" },
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=1,<2" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.14,<1" },
+]
+provides-extras = ["dev"]
+
+[[package]]
+name = "deerflow-extension-cad-preview"
+version = "0.1.0"
+source = { directory = "extensions/sources/deerflow-extension-cad-preview" }
+dependencies = [
+    { name = "deerflow-extension-api" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "deerflow-extension-api", specifier = ">=0.2.3,<0.3" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8" },
+    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.15" },
 ]
 provides-extras = ["dev"]
 

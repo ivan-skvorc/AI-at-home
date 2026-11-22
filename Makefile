@@ -1,6 +1,6 @@
 # DeerFlow - Unified Development Environment
 
-.PHONY: help drift-eval config config-upgrade test-config-version check check-agent-guidance install extension-install extension-upgrade extension-list extension-enable extension-disable extension-remove setup doctor support-bundle detect-thread-boundaries detect-blocking-io backup restore dev dev-daemon dev-multi dev-multi-check dev-multi-down start start-daemon nginx stop up up-start down clean docker-init docker-start docker-stop docker-logs docker-logs-frontend docker-logs-gateway docker-logs-redis searxng searxng-stop comfy-up comfy-down comfy-logs comfy-models comfy-model-add sandbox-up sandbox-down sandbox-logs sandbox-enable sandbox-disable setup-sandbox prod-logs fetch-browser auto-update auto-update-install auto-update-uninstall
+.PHONY: help drift-eval cad-eval config config-upgrade test-config-version check check-agent-guidance install extension-install extension-upgrade extension-list extension-enable extension-disable extension-remove setup doctor support-bundle detect-thread-boundaries detect-blocking-io backup restore dev dev-daemon dev-multi dev-multi-check dev-multi-down start start-daemon nginx stop up up-start down clean docker-init docker-start docker-stop docker-logs docker-logs-frontend docker-logs-gateway docker-logs-redis searxng searxng-stop comfy-up comfy-down comfy-logs comfy-models comfy-model-add sandbox-up sandbox-down sandbox-logs sandbox-enable sandbox-disable setup-sandbox prod-logs fetch-browser auto-update auto-update-install auto-update-uninstall
 
 # docker compose shim: prefer the v2 plugin, fall back to legacy docker-compose.
 DOCKER_COMPOSE ?= docker compose
@@ -43,6 +43,7 @@ help:
 	@echo "  make detect-thread-boundaries - Inventory backend executor/thread/event-loop boundaries"
 	@echo "  make detect-blocking-io        - Inventory blocking IO that may block the backend event loop"
 	@echo "  make drift-eval      - Measure mission drift on a large PDF (PAGES=/MODE=/PRIMARY=/JUDGE=)"
+	@echo "  make cad-eval MODEL=... - Score a model's CAD parts against ground truth (K=3 BAND= SPEC= MEASURE_PYTHON=; needs make dev)"
 	@echo "  make install         - Install all dependencies (frontend + backend + pre-commit hooks)"
 	@echo "  make extension-install SOURCE=... - Install and enable a trusted Python extension"
 	@echo "  make extension-upgrade SOURCE=... - Replace an installed extension and keep its config"
@@ -110,6 +111,21 @@ drift-eval:
 		--mode $(or $(MODE),pipeline) --pages $(or $(PAGES),300) \
 		$(if $(PRIMARY),--primary-model $(PRIMARY),) $(if $(JUDGE),--judge-model $(JUDGE),) \
 		$(if $(WINDOW),--context-window $(WINDOW),) $(if $(FACT),--fact $(FACT),)
+
+# CAD parts graded on ground truth: each spec's request goes to the running
+# agent on MODEL (a name from config.yaml), and the STEP it delivers is measured
+# again against numbers the model never saw. Opt-in and out of CI; needs
+# `make dev` up with the CAD module on. Without MODEL it prints usage and fails.
+# MEASURE_PYTHON names another Python with the CAD module, such as the kernel
+# venv; a path is taken from the repository root, because the recipe runs in
+# backend/, and a bare command name is left for PATH.
+# Depth: docs/guide/cad-eval.md
+cad-eval:
+	@cd backend && PYTHONPATH=. uv run python -m scripts.benchmark.cad_eval run \
+		$(if $(MODEL),--model "$(MODEL)",) --k $(or $(K),3) \
+		$(if $(BAND),--band $(BAND),) $(if $(SPEC),--spec $(SPEC),) $(if $(QUANT),--quant $(QUANT),) \
+		$(if $(BASE_URL),--base-url $(BASE_URL),) $(if $(MAX_COST),--max-cost $(MAX_COST),) $(if $(NO_MODULE),--no-module,) \
+		$(if $(MEASURE_PYTHON),--measure-python "$(if $(findstring /,$(MEASURE_PYTHON)),$(abspath $(MEASURE_PYTHON)),$(MEASURE_PYTHON))",)
 
 support-bundle:
 	@$(BACKEND_UV_RUN) python ../scripts/support_bundle.py --include-doctor

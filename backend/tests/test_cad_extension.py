@@ -107,6 +107,32 @@ def test_operator_settings_are_validated_at_startup(monkeypatch):
     assert not loaded.plugins and not diagnostics
 
 
+def test_a_printer_value_out_of_range_stops_the_module_and_names_the_key(monkeypatch):
+    # The printer profile is the operator's, in config.yaml: a wrong value must not become a silent default.
+    monkeypatch.syspath_prepend(str(PACKAGE))
+    for printer, key in (
+        ({"nozzle_mm": 0}, "printer.nozzle_mm must be a number from 0.1 to 2"),
+        ({"nozzle_mm": True}, "printer.nozzle_mm"),
+        ({"layer_mm": "0.2"}, "printer.layer_mm"),
+        ({"overhang_deg": 90}, "printer.overhang_deg must be a number from 10 to 80"),
+        ({"min_clearance_mm": float("nan")}, "printer.min_clearance_mm"),
+        ({"density_g_cm3": 100}, "printer.density_g_cm3"),
+        ({"build_volume_mm": [256, 256]}, "printer.build_volume_mm must be three numbers"),
+        ({"build_volume_mm": [256, 256, 0]}, "printer.build_volume_mm must be three numbers"),
+        ({"nozzle": 0.4}, "printer.nozzle is not a printer value"),
+        ("prusa", "printer must be a mapping"),
+    ):
+        loaded, diagnostics = load_extensions([ExtensionSpec(use="deerflow_extension_cad:install", config={"printer": printer})])
+        assert not loaded.plugins and key in diagnostics[0].message, (printer, diagnostics)
+    from deerflow_extension_cad.tool import settings_from
+
+    # Every value is optional: `printer:` with all of them commented out is the defaults.
+    defaults = {"build_volume_mm": None, "nozzle_mm": 0.4, "layer_mm": 0.2, "overhang_deg": 45.0, "min_clearance_mm": 0.3, "density_g_cm3": 1.24}
+    assert settings_from({})["printer"] == settings_from({"printer": None})["printer"] == defaults
+    mine = settings_from({"printer": {"build_volume_mm": [256, 256, 256], "nozzle_mm": 0.6, "density_g_cm3": 1.27}})["printer"]
+    assert mine == {**defaults, "build_volume_mm": [256.0, 256.0, 256.0], "nozzle_mm": 0.6, "density_g_cm3": 1.27}
+
+
 def test_the_module_loads_on_a_server_with_many_processors(monkeypatch):
     # The default number of builds at once is half the processors; it has to stay inside what an operator may set.
     import os
@@ -169,11 +195,14 @@ async def test_a_part_that_passes_every_check_is_handed_over_with_its_step_file(
     assert sorted(state["artifacts"]) == sorted(f"/mnt/user-data/outputs/{name}" for name in _files(outputs))
     # A pass is not the end of the work: the numbers cover a part of what was asked for.
     assert answer["files"] and answer["attempt"] == 1 and answer["next"].startswith("Every check passed. Before you present the part")
-    # The Gateway only starts the child: the script reaches it untouched, with the operator's limits
-    # and the slots that bound how many builds run at once.
+    # The Gateway only starts the child: the script reaches it untouched, with the operator's limits,
+    # the slots that bound how many builds run at once, and what the part must meet (for a failed
+    # part's picture; pass or fail is still decided here).
     ((script, limits),) = seen
     assert script == PLATE
-    assert {key: value for key, value in limits.items() if key != "slots"} == {"timeout_seconds": 20, "memory_mb": 4096}
+    expected = {"bbox_xyz_mm": [60, 40, 6], "volume_min_max_mm3": [14000, 14400], "hole_diameters_mm": [4, 4]}
+    printer = {"build_volume_mm": None, "nozzle_mm": 0.4, "layer_mm": 0.2, "overhang_deg": 45.0, "min_clearance_mm": 0.3, "density_g_cm3": 1.24}
+    assert {key: value for key, value in limits.items() if key != "slots"} == {"timeout_seconds": 20, "memory_mb": 4096, "expected": expected, "printer": printer}
     assert limits["slots"].acquire(blocking=False)
 
 
@@ -295,6 +324,29 @@ async def test_a_check_added_later_is_held_and_not_reported_as_a_change(cad, out
     await _call(cad, outputs, monkeypatch, ONE_HOLE, run="run-1", name="two sizes", hole_diameters_mm=[6, 4])
     sorted_back, _, _ = await _call(cad, outputs, monkeypatch, ONE_HOLE, run="run-1", name="two sizes", hole_diameters_mm=[4, 6])
     assert "expected_changed" not in sorted_back
+    # Holes at points as well, mixed with plain diameters; a moved point is a changed number.
+    await _call(cad, outputs, monkeypatch, ONE_HOLE, run="run-1", name="placed", hole_diameters_mm=[[4, 15, 0, 6], 6, [4, -15, 0, 6]])
+    placed, _, _ = await _call(cad, outputs, monkeypatch, ONE_HOLE, run="run-1", name="placed", hole_diameters_mm=[[4, -15, 0, 6], [4, 15, 0, 6], 6])
+    assert "expected_changed" not in placed
+    moved, _, _ = await _call(cad, outputs, monkeypatch, ONE_HOLE, run="run-1", name="placed", hole_diameters_mm=[[4, -15, 0, 6], [4, 16, 0, 6], 6])
+    assert moved["expected_changed"] == {"hole_diameters_mm": {"first": [[4, -15, 0, 6], [4, 15, 0, 6], 6], "now": [[4, -15, 0, 6], [4, 16, 0, 6], 6]}}
+
+
+@pytest.mark.asyncio
+async def test_leaving_out_bodies_is_one_body_and_not_a_changed_number(cad, outputs, monkeypatch):
+    # `bodies` is 1 when it is left out, for the check and for what the part is held to: dropping a stated
+    # 1 changes no check, and the answer must not have the model tell the user that a requirement moved.
+    await _call(cad, outputs, monkeypatch, ONE_HOLE, run="run-1", hole_diameters_mm=[4, 4], bodies=1)
+    left_out, _, _ = await _call(cad, outputs, monkeypatch, ONE_HOLE, run="run-1", hole_diameters_mm=[4, 4])
+    assert "expected_changed" not in left_out and "tell the user which changed" not in left_out["next"]
+    # Left out, then stated, then left out again.
+    for bodies in (None, 1, None):
+        again, _, _ = await _call(cad, outputs, monkeypatch, ONE_HOLE, run="run-1", name="lid", hole_diameters_mm=[4, 4], **({} if bodies is None else {"bodies": bodies}))
+        assert "expected_changed" not in again
+    # Two bodies dropped to the default is a change, and it is said as the one body it now is.
+    await _call(cad, outputs, monkeypatch, ONE_HOLE, run="run-1", name="kit", hole_diameters_mm=[4, 4], bodies=2)
+    dropped, _, _ = await _call(cad, outputs, monkeypatch, ONE_HOLE, run="run-1", name="kit", hole_diameters_mm=[4, 4])
+    assert dropped["expected_changed"] == {"bodies": {"first": 2, "now": 1}}
 
 
 @pytest.mark.asyncio
@@ -349,16 +401,24 @@ async def test_a_host_that_stamps_no_run_still_counts_and_a_pass_ends_the_count(
 
 
 @pytest.mark.asyncio
-async def test_a_result_of_several_loose_bodies_says_what_this_tool_cannot_deliver(cad, outputs, monkeypatch):
-    # What a loop over links builds when the links do not touch. No change to such a script passes, so the answer says so.
+async def test_a_result_of_more_bodies_than_expected_says_both_ways_out(cad, outputs, monkeypatch):
+    # What a loop over links builds when the links do not touch. No change of one kind passes it, so the answer says both.
     answer, _, _ = await _call(cad, outputs, monkeypatch, {**BUILT, "measured": {**MEASURED, "solids": 4}}, run="run-1")
     assert answer["passed"] is False
     (note,) = [note for note in answer["notes"] if "separate bodies" in note]
     assert note.startswith("The result is 4 separate bodies") and "overlap or share a face" in note
     # One instruction, in the field a model follows, with both ways out. The note and `next` used to disagree.
-    assert answer["next"].startswith("Attempt 1 of 8. The result is several separate bodies")
-    assert "call cad_build again with the same name" in answer["next"] and "print-in-place" in answer["next"] and "tell the user" in answer["next"]
-    assert "Read what failed, change the script" not in answer["next"]
+    assert answer["next"] == (
+        "Attempt 1 of 8. Expected 1 body, got 4 separate bodies. If they are meant to be one part, make them overlap or share a face and call cad_build "
+        "again with the same name. If loose bodies are intended, such as a print-in-place hinge or a box and its lid, call cad_build again with the same "
+        "name and bodies=4. Do not present this part as finished."
+    )
+    # Expecting some bodies and getting more says the same, with the count expected.
+    more, _, _ = await _call(cad, outputs, monkeypatch, {**BUILT, "measured": {**MEASURED, "solids": 4}}, run="run-1", name="kit", bodies=2)
+    assert more["next"].startswith("Attempt 1 of 8. Expected 2 bodies, got 4 separate bodies.") and "bodies=4" in more["next"]
+    # Fewer than expected is bodies that fused: an ordinary failure to fix.
+    fewer, _, _ = await _call(cad, outputs, monkeypatch, BUILT, run="run-1", name="hinge", bodies=3)
+    assert fewer["next"].startswith("Attempt 1 of 8. Read what failed") and "separate bodies" not in " ".join(fewer.get("notes", []))
     # Holes are measured on one solid. An empty list would say the holes are gone, and send the model after the one thing that was right.
     holes, _, _ = await _call(cad, outputs, monkeypatch, {**BUILT, "measured": {**MEASURED, "solids": 4, "holes": []}}, run="run-1", name="pegs off", hole_diameters_mm=[4, 4])
     check = next(check for check in holes["checks"] if check["check"] == "holes")
@@ -369,6 +429,164 @@ async def test_a_result_of_several_loose_bodies_says_what_this_tool_cannot_deliv
     assert [note[:33] for note in many["notes"]] == [f"2 passes of the loop on line {line} do"[:33] for line in (3, 5, 7, 9, 11)] + ["More loops than these do work tha"]
     one, _, _ = await _call(cad, outputs, monkeypatch, BUILT, run="run-1", name="one body")
     assert "notes" not in one and "separate bodies" not in one["next"]
+
+
+def _drilled(x: float, y: float) -> dict:
+    """A 4 mm hole through the 6 mm plate at (x, y), as the measurement reports it since item 57."""
+    return {"diameter_mm": 4.0, "through": True, "depth_mm": 6.0, "at": [x, y, 6.0], "axis": [0.0, 0.0, -1.0]}
+
+
+FOUR_HOLES = [(-15.0, -10.0), (-15.0, 10.0), (15.0, -10.0), (15.0, 10.0)]
+
+
+@pytest.mark.asyncio
+async def test_holes_are_listed_where_they_are_and_checked_where_they_were_asked_for(cad, outputs, monkeypatch):
+    placed = {**BUILT, "measured": {**MEASURED, "holes": [_drilled(x, y) for x, y in FOUR_HOLES]}}
+    answer, _, _ = await _call(cad, outputs, monkeypatch, placed, hole_diameters_mm=[[4, x, y, 6] for x, y in FOUR_HOLES])
+    assert answer["passed"] is True
+    # Where each hole is entered and which way it runs, in the fewest tokens: whole numbers without '.0'.
+    assert answer["holes"][0] == {"d": 4, "at": [-15, -10, 6], "axis": [0, 0, -1]} and len(answer["holes"]) == 4
+    off, _, _ = await _call(cad, outputs, monkeypatch, placed, name="plate off", hole_diameters_mm=[[4, x + 1, y, 6] for x, y in FOUR_HOLES])
+    holes = next(check for check in off["checks"] if check["check"] == "holes")
+    assert off["passed"] is False and holes["passed"] is False and len(holes["misplaced"]) == 4
+    assert holes["misplaced"][0] == {"expected": [4, -14, -10, 6], "nearest_at": [-15.0, -10.0, 6.0], "off_axis_mm": 1.0}
+    assert off["next"].startswith("Attempt 1 of")
+    # Moving the holes towards their points without reaching them is not "the same failure".
+    closer, _, _ = await _call(cad, outputs, monkeypatch, {**BUILT, "measured": {**MEASURED, "holes": [_drilled(x + 0.5, y) for x, y in FOUR_HOLES]}}, name="plate off", hole_diameters_mm=[[4, x + 1, y, 6] for x, y in FOUR_HOLES])
+    assert closer["attempt"] == 2 and "same failure" not in closer["next"]
+
+
+@pytest.mark.asyncio
+async def test_an_answer_lists_twelve_holes_and_names_the_report_for_the_rest(cad, outputs, monkeypatch):
+    from deerflow_extension_cad.checks import MAX_HOLES_LISTED
+
+    grid = [_drilled(float(x), float(y)) for x in range(-25, 26, 10) for y in (-10, 0, 10)]
+    answer, _, _ = await _call(cad, outputs, monkeypatch, {**BUILT, "measured": {**MEASURED, "holes": grid}})
+    assert len(answer["holes"]) == MAX_HOLES_LISTED == 12
+    assert answer["notes"] == [f"The answer lists 12 of the {len(grid)} holes; mounting-plate.report.json lists every hole with where it is."]
+    report = json.loads((outputs / "mounting-plate.report.json").read_text(encoding="utf-8"))
+    assert report["measured"]["holes"] == grid
+    # Measured before item 57, holes have no position, and nothing is listed.
+    plain, _, _ = await _call(cad, outputs, monkeypatch, BUILT)
+    assert "holes" not in plain and "notes" not in plain
+
+
+@pytest.mark.asyncio
+async def test_hole_positions_add_at_most_120_tokens_to_a_four_hole_answer(cad, outputs, monkeypatch):
+    from deerflow.config import paths
+    from deerflow.utils.context_budget import estimate_tokens
+
+    # The same plate measured as before item 57 and as now, in two conversations so the file names match.
+    before = {**BUILT, "measured": {**MEASURED, "holes": [{key: value for key, value in _drilled(x, y).items() if key not in ("at", "axis")} for x, y in FOUR_HOLES]}}
+    after = {**BUILT, "measured": {**MEASURED, "holes": [_drilled(x, y) for x, y in FOUR_HOLES]}}
+    elsewhere = paths.get_paths().sandbox_outputs_dir("thread-b", user_id="alice")
+    old, _, _ = await _call(cad, outputs, monkeypatch, before, hole_diameters_mm=[4, 4, 4, 4])
+    new, _, _ = await _call(cad, elsewhere, monkeypatch, after, conversation="thread-b", hole_diameters_mm=[4, 4, 4, 4])
+    assert [Path(path).name for path in old["files"]] == [Path(path).name for path in new["files"]]
+    # What the host sends the model (plugin_tools serialises the answer this way).
+    grown = estimate_tokens(json.dumps(new, ensure_ascii=False)) - estimate_tokens(json.dumps(old, ensure_ascii=False))
+    assert 0 < grown <= 120, grown
+
+
+@pytest.mark.asyncio
+async def test_a_report_names_what_made_it_and_the_files_it_was_saved_with(cad, outputs, monkeypatch):
+    import hashlib
+
+    answer, _, _ = await _call(cad, outputs, monkeypatch, BUILT)
+    report = json.loads((outputs / "mounting-plate.report.json").read_text(encoding="utf-8"))
+    assert report["script_sha256"] == hashlib.sha256(PLATE.encode("utf-8")).hexdigest()
+    assert {"module_version", "cadquery_version"} <= set(report) and isinstance(report["module_version"], str)
+    # Every file of the set but the report itself, under the names the host gave them.
+    assert report["files"] == [Path(path).name for path in answer["files"]][:-1] == ["mounting-plate.py", "mounting-plate.glb", "mounting-plate.stl", "mounting-plate.step"]
+    # A refusal names the script too: it is what the reader refused.
+    await _call(cad, outputs, monkeypatch, REFUSED)
+    refused = json.loads((outputs / "mounting-plate-1.report.json").read_text(encoding="utf-8"))
+    assert refused["files"] == ["mounting-plate-1.py"] and refused["script_sha256"] == report["script_sha256"]
+
+
+def _body(bbox_min: list[float], size: list[float], holes: list[dict] | None = None) -> dict:
+    """One body of several, as measure.py reports it."""
+    return {"valid": True, "closed": True, "bbox_mm": size, "volume_mm3": size[0] * size[1] * size[2], "bbox_min_mm": bbox_min, "bbox_max_mm": [low + side for low, side in zip(bbox_min, size)], "holes": holes or []}
+
+
+#: A hinge of two leaves with a 6 mm bore each and a pin, 0.3 mm apart, as the worker measures it.
+HINGE = {
+    "solids": 3,
+    "valid": True,
+    "closed": True,
+    "bbox_mm": [30.0, 20.0, 8.3],
+    "volume_mm3": 4768.9,
+    "holes": [],
+    "bodies": [
+        _body([-15.0, -10.0, 0.0], [30.0, 20.0, 4.0], [{"diameter_mm": 6.0, "through": True, "depth_mm": 4.0, "at": [0.0, 0.0, 4.0], "axis": [0.0, 0.0, -1.0]}]),
+        _body([-15.0, -10.0, 4.3], [30.0, 20.0, 4.0], [{"diameter_mm": 6.0, "through": True, "depth_mm": 4.0, "at": [0.0, 0.0, 8.3], "axis": [0.0, 0.0, -1.0]}]),
+        _body([-2.7, -2.7, 0.0], [5.4, 5.4, 8.3]),
+    ],
+    "gaps": [
+        {"bodies": [0, 1], "gap_mm": 0.3, "direction": [0.0, 0.0, 1.0], "at_mm": [-15.0, -10.0, 4.15]},
+        {"bodies": [0, 2], "gap_mm": 0.3, "direction": [1.0, 0.0, 0.0], "at_mm": [-2.85, 0.0, 0.0]},
+    ],
+}
+
+
+@pytest.mark.asyncio
+async def test_a_part_of_several_bodies_passes_on_their_count_and_hears_its_smallest_gap(cad, outputs, monkeypatch):
+    hinge = {**BUILT, "measured": HINGE, "files": {**BUILT["files"], "3mf": b"PK", "parts.3mf": b"PK"}}
+    answer, _, _ = await _call(cad, outputs, monkeypatch, hinge, bbox_xyz_mm=[30, 20, 8.3], hole_diameters_mm=[[6, 0, 0, 0], [6, 0, 0, 5]], bodies=3)
+    assert answer["passed"] is True
+    assert answer["checks"][0] == {"check": "closed solids", "expected": "exactly 3 valid, closed solids", "measured": "3 solid(s), valid=True, closed=True", "passed": True}
+    # Each body's holes, said with the body they are in (numbered from 1); the check reads them all.
+    assert answer["holes"] == [{"d": 6, "at": [0, 0, 4], "axis": [0, 0, -1], "body": 1}, {"d": 6, "at": [0, 0, 8.3], "axis": [0, 0, -1], "body": 2}]
+    # The gap is a note, never a check: the count passes, and the user's numbers decide.
+    assert answer["notes"] == ["The smallest gap between bodies is 0.3 mm, between body 1 and body 2, along +z."]
+    # Both 3MFs come before the STEP: the one to print in place and the one laid out to print apart.
+    assert [Path(path).name for path in answer["files"]] == [
+        "mounting-plate.py",
+        "mounting-plate.glb",
+        "mounting-plate.stl",
+        "mounting-plate.3mf",
+        "mounting-plate.parts.3mf",
+        "mounting-plate.step",
+        "mounting-plate.report.json",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_bodies_that_could_not_be_laid_out_are_handed_over_one_stl_each_in_order(cad, outputs, monkeypatch):
+    apart = {**BUILT, "measured": HINGE, "files": {**BUILT["files"], "3mf": b"PK", **{f"body-{number}.stl": b"STL" for number in (10, 2, 1)}}}
+    answer, _, _ = await _call(cad, outputs, monkeypatch, apart, bbox_xyz_mm=[30, 20, 8.3], bodies=3)
+    names = [Path(path).name for path in answer["files"]]
+    assert names[3:7] == ["mounting-plate.3mf", "mounting-plate.body-1.stl", "mounting-plate.body-2.stl", "mounting-plate.body-10.stl"]
+    assert names[-2:] == ["mounting-plate.step", "mounting-plate.report.json"]
+
+
+@pytest.mark.asyncio
+async def test_gaps_the_operators_printer_may_close_are_said_against_its_numbers(cad, outputs, monkeypatch):
+    tight = {**HINGE, "gaps": [{"bodies": [0, 1], "gap_mm": 0.1, "direction": [0.0, 0.0, 1.0], "at_mm": [0, 0, 4.05]}, {"bodies": [0, 2], "gap_mm": 0.15, "direction": [0.0, 0.7071, 0.7071], "at_mm": [0, 0, 0]}], "gaps_incomplete": True}
+    answer, _, _ = await _call(cad, outputs, monkeypatch, {**BUILT, "measured": tight}, bbox_xyz_mm=[30, 20, 8.3], bodies=3)
+    assert answer["passed"] is True
+    assert answer["notes"] == [
+        "The smallest gap between bodies is 0.1 mm, between body 1 and body 2, along +z (not every pair of bodies was measured).",
+        "That gap is under the printer's minimum clearance (0.3 mm): printed as modelled, the bodies may fuse.",
+        "The gap of 0.1 mm between body 1 and body 2, along +z is thinner than one layer (0.2 mm): the slicer may fill it and fuse the bodies.",
+    ]
+    # The operator's numbers, not fixed ones: a printer that holds 0.05 mm says nothing about clearance.
+    monkeypatch.syspath_prepend(str(PACKAGE))
+    loaded, _ = load_extensions([ExtensionSpec(use="deerflow_extension_cad:install", config={"printer": {"min_clearance_mm": 0.05, "layer_mm": 0.08}})])
+    fine, _, _ = await _call(loaded, outputs, monkeypatch, {**BUILT, "measured": tight}, bbox_xyz_mm=[30, 20, 8.3], bodies=3)
+    assert fine["notes"] == ["The smallest gap between bodies is 0.1 mm, between body 1 and body 2, along +z (not every pair of bodies was measured)."]
+
+
+@pytest.mark.asyncio
+async def test_the_number_of_bodies_is_held_like_every_expected_number(cad, outputs, monkeypatch):
+    hinge = {**BUILT, "measured": HINGE}
+    first, _, _ = await _call(cad, outputs, monkeypatch, hinge, run="run-1", name="hinge", bbox_xyz_mm=[30, 20, 8.3], bodies=3)
+    moved, _, _ = await _call(cad, outputs, monkeypatch, hinge, run="run-1", name="hinge", bbox_xyz_mm=[30, 20, 8.3], bodies=2)
+    assert "expected_changed" not in first and moved["expected_changed"] == {"bodies": {"first": 3, "now": 2}}
+    # Told to pass bodies after a loose result, a model adds a check: held from then on, not reported.
+    await _call(cad, outputs, monkeypatch, hinge, run="run-1", name="kit", bbox_xyz_mm=[30, 20, 8.3])
+    added, _, _ = await _call(cad, outputs, monkeypatch, hinge, run="run-1", name="kit", bbox_xyz_mm=[30, 20, 8.3], bodies=3)
+    assert added["passed"] is True and "expected_changed" not in added
 
 
 def test_the_table_of_counted_parts_does_not_grow_for_ever(monkeypatch):
@@ -412,6 +630,43 @@ async def test_a_refused_script_is_reported_with_its_construct_and_line_and_buil
     assert answer["error"] == {"construct": "import", "line": 1, "message": refused["message"]}
     assert _files(outputs) == ["mounting-plate.py", "mounting-plate.report.json"]
     assert "checks" not in answer
+
+
+@pytest.mark.asyncio
+async def test_a_refusal_names_what_it_refused_in_the_answer_and_the_report(cad, outputs, monkeypatch):
+    # What the reader refused, as the script wrote it: counted by kind (item 48), and said to the model without parsing the message.
+    refused = {"status": "refused", "construct": "method", "refused": "loft", "line": 2, "message": ".loft() is not on the allow-list."}
+    answer, _, _ = await _call(cad, outputs, monkeypatch, refused)
+    assert answer["error"] == {"construct": "method", "refused": "loft", "line": 2, "message": refused["message"]}
+    assert json.loads((outputs / "mounting-plate.report.json").read_text(encoding="utf-8"))["error"]["refused"] == "loft"
+
+
+@pytest.mark.asyncio
+async def test_the_numbers_a_script_starts_with_reach_the_report_and_not_the_answer(cad, outputs, monkeypatch):
+    # For a follow-up edit ("make it 80 long"): the report keeps them, and the model already has them in its script.
+    built = {**BUILT, "parameters": {"w": 60, "d": 40, "t": 6, "hole": 4.2}}
+    answer, _, _ = await _call(cad, outputs, monkeypatch, built)
+    assert answer["passed"] is True and "parameters" not in answer
+    report = json.loads((outputs / "mounting-plate.report.json").read_text(encoding="utf-8"))
+    assert report["parameters"] == {"w": 60, "d": 40, "t": 6, "hole": 4.2}
+    # A failed build keeps them too; anything but a name and a number is not copied from the child's answer.
+    failed = {"status": "failed", "line": 3, "operation": "fillet", "message": "fillet() failed", "parameters": {"w": 60, "x": "60", "y": [1], "ok": True}}
+    await _call(cad, outputs, monkeypatch, failed)
+    report = json.loads((outputs / "mounting-plate-1.report.json").read_text(encoding="utf-8"))
+    assert report["parameters"] == {"w": 60}
+    # None at all: no empty field.
+    await _call(cad, outputs, monkeypatch, BUILT)
+    assert "parameters" not in json.loads((outputs / "mounting-plate-2.report.json").read_text(encoding="utf-8"))
+
+
+def test_the_opening_a_small_model_gets_says_what_a_script_may_contain(cad):
+    from deerflow.agents.middlewares.context_window_guard_middleware import short_tool_schema
+
+    ((_, plugin),) = cad.plugins
+    (tool,) = plugin.tools
+    short = short_tool_schema({"type": "function", "function": {"name": "cad_build", "description": tool.description, "parameters": dict(tool.input_schema)}})
+    # A 32K model gets the sentences before "Methods:" and nothing after: they name what the reader takes, math included.
+    assert short["function"]["description"] == ("Build and check a part from a CadQuery script. It is read, not run: assignments, arithmetic, math, for loops and allow-listed Workplane methods; no if, while or def. Millimetres.")
 
 
 @pytest.mark.asyncio
@@ -488,6 +743,55 @@ async def test_what_was_measured_and_not_asked_about_is_given(cad, outputs, monk
     assert answer["unchecked"] == {"volume_mm3": 14249.2, "hole_diameters_mm": [4.0, 4.0]}
     answer, _, _ = await _call(cad, outputs, monkeypatch, BUILT, hole_diameters_mm=[4, 4])
     assert answer["unchecked"] == {"volume_mm3": 14249.2}
+
+
+PNG = b"\x89PNG\r\n\x1a\n" + bytes(32)
+
+
+@pytest.mark.asyncio
+async def test_a_part_is_shown_by_its_picture_saved_first_and_named_in_what_comes_next(cad, outputs, monkeypatch):
+    drawn = {**BUILT, "files": {**BUILT["files"], "png": PNG}}
+    answer, _, _ = await _call(cad, outputs, monkeypatch, drawn)
+    assert [Path(path).name for path in answer["files"]] == ["mounting-plate.py", "mounting-plate.png", "mounting-plate.glb", "mounting-plate.stl", "mounting-plate.step", "mounting-plate.report.json"]
+    assert answer["next"] == (
+        "Every check passed. Before you present the part, go through what the user asked for that these numbers do not cover; if something is missing or wrong, "
+        "change the script and build again. Show /mnt/user-data/outputs/mounting-plate.png in your reply; if you can view images, look at it once and compare it with the request."
+    )
+    # A failed part's picture is kept as failed, and nothing asks for it to be shown.
+    failed, _, _ = await _call(cad, outputs, monkeypatch, {**drawn, "measured": {**MEASURED, "bbox_mm": [60.0, 40.0, 7.0]}})
+    assert [Path(path).name for path in failed["files"]] == ["mounting-plate-1.py", "mounting-plate-1.failed.png", "mounting-plate-1.failed.glb", "mounting-plate-1.report.json"]
+    assert "Show" not in failed["next"]
+
+
+@pytest.mark.asyncio
+async def test_what_the_worker_says_about_the_steps_after_the_checks_reaches_the_answer(cad, outputs, monkeypatch):
+    noted = {**BUILT, "notes": ["no picture: the build used most of its time", 7, "", "x" * 1000]}
+    answer, _, _ = await _call(cad, outputs, monkeypatch, noted)
+    # Sentences only, each bounded: the child's answer is not trusted further than that.
+    assert answer["passed"] is True and answer["notes"] == ["no picture: the build used most of its time", "x" * 300]
+    assert "Show" not in answer["next"]
+
+
+PRINT = {"bed_contact_mm2": 2375.0, "overhang_mm2": 0.0, "overhang_deg": 45.0, "thinnest_wall_mm": 6.0, "watertight": True, "grams": 17.67}
+
+
+@pytest.mark.asyncio
+async def test_a_passed_part_carries_its_print_block_and_its_slicer_file(cad, outputs, monkeypatch):
+    noted = {**PRINT, "build_volume_mm": [50.0, 50.0, 50.0], "fits_build_volume": False, "too_large_axes": ["X"], "notes": ["larger than the build volume (50 × 50 × 50 mm) in X"]}
+    ready = {**BUILT, "measured": {**MEASURED, "print": noted}, "files": {**BUILT["files"], "3mf": b"PK3MF"}}
+    answer, _, _ = await _call(cad, outputs, monkeypatch, ready)
+    # The 3MF is the last mesh before the STEP, which still closes the set.
+    assert [Path(path).name for path in answer["files"]] == ["mounting-plate.py", "mounting-plate.glb", "mounting-plate.stl", "mounting-plate.3mf", "mounting-plate.step", "mounting-plate.report.json"]
+    # A few numbers and the notes past a threshold; the whole block is in the report.
+    assert answer["print"] == {"grams": 17.67, "bed_contact_mm2": 2375, "overhang_mm2": 0, "thinnest_wall_mm": 6, "fits_build_volume": False, "notes": ["larger than the build volume (50 × 50 × 50 mm) in X"]}
+    assert json.loads((outputs / "mounting-plate.report.json").read_text(encoding="utf-8"))["measured"]["print"] == noted
+    # Pass or fail is the user's numbers alone: the same part without a print block is decided the same way.
+    plain, _, _ = await _call(cad, outputs, monkeypatch, BUILT)
+    assert plain["checks"] == answer["checks"] and plain["passed"] is True and "print" not in plain
+    # A failed part is not told how it prints, and its 3MF is not saved; its report keeps the block.
+    failed, _, _ = await _call(cad, outputs, monkeypatch, {**ready, "measured": {**ready["measured"], "bbox_mm": [60.0, 40.0, 7.0]}})
+    assert failed["passed"] is False and "print" not in failed and not [path for path in failed["files"] if path.endswith(".3mf")]
+    assert "print" in json.loads((outputs / "mounting-plate-2.report.json").read_text(encoding="utf-8"))["measured"]
 
 
 @pytest.mark.asyncio
@@ -602,6 +906,17 @@ async def test_the_tool_does_not_start_a_build_it_could_not_hand_over(cad, monke
         ({"volume_min_max_mm3": [0, 10**400]}, "volume_min_max_mm3 must be [min, max]"),
         # Not numbers. The schema leaves the items untyped to keep the tool small, so this is where they are caught.
         ({"hole_diameters_mm": ["4"]}, "hole_diameters_mm must list one positive diameter"),
+        # A hole at a point is [d, x, y, z]: four numbers, the first a positive diameter.
+        ({"hole_diameters_mm": [[4, 15, 0]]}, "hole_diameters_mm must list one positive diameter, or [d, x, y, z]"),
+        ({"hole_diameters_mm": [[0, 15, 0, 6]]}, "hole_diameters_mm must list one positive diameter, or [d, x, y, z]"),
+        ({"hole_diameters_mm": [[4, "15", 0, 6]]}, "hole_diameters_mm must list one positive diameter, or [d, x, y, z]"),
+        ({"hole_diameters_mm": [[4, 15, 0, 10**400]]}, "hole_diameters_mm must list one positive diameter, or [d, x, y, z]"),
+        ({"hole_diameters_mm": [4, [4, [15], 0, 6]]}, "hole_diameters_mm must list one positive diameter, or [d, x, y, z]"),
+        # How many separate solids: a whole number from 1 to 20.
+        ({"bodies": 0}, "bodies must be a whole number from 1 to 20"),
+        ({"bodies": 21}, "bodies must be a whole number from 1 to 20"),
+        # The schema's integer admits 2.0, so the handler is where it is caught; the host refuses "2" and True itself.
+        ({"bodies": 2.0}, "bodies must be a whole number from 1 to 20"),
         ({"bbox_xyz_mm": [60, 40, True]}, "bbox_xyz_mm must be three positive numbers"),
         ({"volume_min_max_mm3": ["1", "2"]}, "volume_min_max_mm3 must be [min, max]"),
         ({"name": "plate \ud83d"}, "name contains a character"),
@@ -629,9 +944,26 @@ def test_the_schema_the_model_sees_is_structure_only_and_requires_the_size(cad):
     schema = dict(plugin.tools[0].input_schema)
     validator = Draft202012Validator(schema)
     good = {"name": "plate", "script": PLATE, "bbox_xyz_mm": [60, 40, 6]}
-    assert validator.is_valid(good) and validator.is_valid({**good, "volume_min_max_mm3": [1, 2], "hole_diameters_mm": []})
-    for bad in ({"name": "plate", "script": PLATE}, {**good, "bbox_xyz_mm": "60x40x6"}, {**good, "script": 5}, {**good, "hole_diameters_mm": 4}):
+    assert validator.is_valid(good) and validator.is_valid({**good, "volume_min_max_mm3": [1, 2], "hole_diameters_mm": [], "bodies": 3})
+    for bad in ({"name": "plate", "script": PLATE}, {**good, "bbox_xyz_mm": "60x40x6"}, {**good, "script": 5}, {**good, "hole_diameters_mm": 4}, {**good, "bodies": "2"}, {**good, "bodies": True}):
         assert not validator.is_valid(bad)
     # Descriptions and item types cost every request of every conversation; the parameter
     # names carry the meaning and the handler checks the numbers.
     assert all(set(spec) == {"type"} for spec in schema["properties"].values())
+
+
+@pytest.mark.asyncio
+async def test_a_fillet_that_took_more_edges_than_a_selector_usually_means_adds_one_short_note(cad, outputs, monkeypatch):
+    from deerflow.config import paths
+    from deerflow.utils.context_budget import estimate_tokens
+
+    # The rim fixture as the worker reports it ("|Z" on an open box takes the inner corners too), beside a
+    # chamfer of four edges and a fillet of every edge, which an answer does not name.
+    taken = [{"line": 7, "method": "fillet", "edges": 8, "of": 24}, {"line": 9, "method": "chamfer", "edges": 4, "of": 24}, {"line": 11, "method": "fillet", "edges": 24, "of": 24}]
+    elsewhere = paths.get_paths().sandbox_outputs_dir("thread-b", user_id="alice")
+    old, _, _ = await _call(cad, outputs, monkeypatch, BUILT, hole_diameters_mm=[4, 4])
+    new, _, _ = await _call(cad, elsewhere, monkeypatch, {**BUILT, "measured": {**MEASURED, "selections": taken}}, conversation="thread-b", hole_diameters_mm=[4, 4])
+    assert new["notes"] == ["fillet() on line 7 rounded 8 edges: check that the selection took only the edges meant."]
+    # What the host sends the model (plugin_tools serialises the answer this way).
+    grown = estimate_tokens(json.dumps(new, ensure_ascii=False)) - estimate_tokens(json.dumps(old, ensure_ascii=False))
+    assert 0 < grown <= 30, grown

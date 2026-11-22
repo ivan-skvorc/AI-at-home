@@ -14,8 +14,8 @@ the tool works on the default install, where `LocalSandboxProvider` gives the
 agent no shell, and why installing it does not weaken that decision. It also
 works with the conversation's internet switch off.
 
-**The tool decides pass or fail, not the model.** STEP, STL and GLB files are
-written only when every check passed. A STEP file listed in a `cad_build` answer
+**The tool decides pass or fail, not the model.** STEP, STL, 3MF and GLB files
+are written only when every check passed. A STEP file listed in a `cad_build` answer
 therefore means a part that passed.
 
 **A part is built until it passes.** The agent runs the loop: build, read what
@@ -34,21 +34,29 @@ Ask in any conversation, in any mode, on any model:
 > Make a 60 × 40 × 6 mm mounting plate with two 4 mm through holes, 30 mm apart.
 
 The model calls `cad_build` with a script and the expected numbers. A build that
-passes writes five files, which open in the artifact panel and are listed in the
-Files view:
+passes writes these files, in this order (STEP last, then the report). They
+open in the artifact panel and are listed in the Files view; the GLB and STL
+rotate there through the bundled
+[CAD model preview](../deerflow-extension-cad-preview/README.md):
 
 | File | Content |
 | --- | --- |
 | `mounting-plate.py` | The script, as given |
-| `mounting-plate.report.json` | Expected and measured numbers, each check, pass or fail |
+| `mounting-plate.png` | A picture: iso, top, front and right views with the measured size; the reply shows it inline |
+| `mounting-plate.glb` | The mesh for a viewer, in metres (glTF's unit), one node per body |
+| `mounting-plate.stl` | The mesh, in millimetres |
+| `mounting-plate.3mf` | The part for a slicer, in millimetres, renumbered and typed so lib3mf reads it; several bodies stay one object, to print in place |
+| `mounting-plate.parts.3mf` | Only for several bodies: each body on the bed, 5 mm apart, to print apart (fallback: `mounting-plate.body-N.stl`, at most 8) |
 | `mounting-plate.step` | The part for a CAD program |
-| `mounting-plate.stl` | The mesh for a slicer |
-| `mounting-plate.glb` | The mesh for a viewer |
+| `mounting-plate.report.json` | Expected and measured numbers, each check, the print block, and what made it (module and CadQuery versions, the script's SHA-256, the files of the set) |
 
-A build that fails a check writes the script, the report and
-`mounting-plate.failed.glb`, so the wrong shape can still be looked at. It
-writes no STEP and no STL. A script that is refused, or that the kernel cannot
-build, leaves the script and the report only.
+A build that fails a check writes the script, `mounting-plate.failed.png`
+(with a banner naming the checks it did not pass), `mounting-plate.failed.glb`
+and the report, so the wrong shape can still be looked at. It writes no STEP,
+STL or 3MF. A script that is refused, or that the kernel cannot build, leaves
+the script and the report only: a refusal or a kernel failure writes no
+picture. A picture that cannot be drawn, or a build with under 3 s of its time
+left, gets a note (`no picture: ...`) and costs the part nothing.
 
 A second build of the same name never replaces the first: its files are
 `mounting-plate-1.*`, as a set. So a STEP file from an earlier build that
@@ -62,10 +70,10 @@ does not get a vote.
 
 | Check | Passes when |
 | --- | --- |
-| One closed solid | The file holds exactly one solid, it is valid, its shells are closed and its volume is positive |
+| One closed solid | The file holds exactly one solid, it is valid, its shells are closed and its volume is positive. With `bodies` above 1 the check is "closed solids": exactly that many valid, closed solids; the volume is their sum and the bounding box their union |
 | Bounding box | Each side is within 0.01 mm or 0.1 % of `bbox_xyz_mm`, whichever is larger |
 | Volume | The volume is inside `volume_min_max_mm3` (only when given) |
-| Holes | The drilled holes match `hole_diameters_mm`, one entry per hole, same tolerance (only when given) |
+| Holes | The drilled holes match `hole_diameters_mm`, one entry per hole, a diameter or `[d, x, y, z]`, same tolerance (only when given). A hole given a point passes when a measured hole of that diameter has its axis within 0.05 mm or 0.1 % of the largest side of the point and, for a blind hole, the point lies no further past its floor than that, one measured hole per expected hole |
 
 A hole is a full-circle, concave cylindrical wall with air inside that is open at
 one end or both. A counterbore or countersink counts once, with its drill
@@ -97,6 +105,12 @@ a build volume the part already fits. The message says to delete the line.
 What the checks do not decide is said in the answer. `notes` names an outline
 the script drew and never extruded or cut, a cavity sealed inside the part, a
 hole that crosses more than one wall, and a mesh written coarser than usual.
+A fillet or chamfer that took more than four edges, and not every edge of its
+part, is named with its line and count: a selector takes everything that
+matches on the part as it is at that line, so `edges("|Z")` on an open box also
+rounds its inner corners. report.json's `measured.selections` lists every
+fillet and chamfer with the edges it took (`edges`) and the edges the part had
+then (`of`).
 `unchecked` gives the measured volume and hole diameters when the call did not
 state them, under the names of the arguments that would check them. The hole
 check compares diameters; holes that stop inside the part are listed with the
@@ -110,10 +124,38 @@ A loop whose every pass starts from the same part keeps only the last pass's
 work; the answer says how many passes did work that is not in the result. Not
 counted, because nothing is missing: a tool made ready for a pass that never
 came (a cutter moved on after its last cut), a part put together again in
-every pass, and a trial cut outside a loop. A result made of several loose
-bodies is said to be that, its holes are reported as not measured instead of
-as none, and `next` gives both ways out: join the bodies, or tell the user
-that the tool delivers one solid.
+every pass, and a trial cut outside a loop. A result of more bodies than
+`bodies` (1 when not given) is said to be that, and `next` gives both ways
+out: join the bodies, or call again with `bodies` set to the count when loose
+bodies are meant. With one body expected, holes are reported as not measured
+instead of as none. With several, each body's holes are measured against that
+body alone, the answer lists them with their body, and the smallest gap
+between bodies is a note, with notes for a gap under the printer's
+`min_clearance_mm` and a vertical gap under its `layer_mm`. Gaps are never
+checked.
+
+The answer lists up to 12 holes, each with its diameter, the point where it is
+entered (`at`) and its drill direction (`axis`); beyond that a note names the
+report, which lists every hole. A hole check that missed a position gives
+`misplaced`: the expected entry, the nearest hole of that diameter that no
+other point accounts for (`nearest_matches` names the point when none is left),
+how far its axis is from the point and, for a blind hole, how far past its
+floor the point lies (`past_floor_mm`).
+
+## How it prints
+
+A passed part's answer carries `print`: grams (solid, at the printer's
+density), bed contact, overhang past the printer's angle, a sampled thinnest
+wall, and the fit to the build volume when one is set, plus notes past fixed
+thresholds (a wall under two nozzle widths, an overhang that needs support with
+a better face down, nothing flat on the bed, larger than the bed, a mesh that
+is not watertight). A part of several bodies is judged body by body, each on
+the bed as `.parts.3mf` lays it out (`printed_apart`), with the bodies named in
+each note. The whole block is in report.json for every build. It is
+reported, never checked: pass or fail stays on the user's numbers. The printer
+is the operator's, set under `printer:` in the CAD record of config.yaml (see
+`config.example.yaml`); the model cannot change it. The user guide is
+[docs/guide/cad-parts.md](../../docs/guide/cad-parts.md).
 
 ## Building until it passes
 
@@ -158,16 +200,27 @@ the `cad-modeling` skill (`skills/public/cad-modeling`).
 
 ## What a script may contain
 
-- `import cadquery as cq` (optional: `cq` is the only name a script is given).
-- `name = value` lines. Values are numbers, strings, `True`, `False`, `None`,
-  tuples and lists of numbers, arithmetic on numbers (`+ - * / // % **`), and
-  parts. `name += value` and its relatives are the arithmetic they stand for.
+- `import cadquery as cq` and `import math` (both optional: `cq` and `math` are
+  the only modules a script is given).
+- `name = value` lines, and several names at once: `w, d, t = 60, 40, 6`.
+  Values are numbers, strings, `True`, `False`, `None`, tuples and lists of
+  numbers, arithmetic on numbers (`+ - * / // % **`), and parts.
+  `name += value` and its relatives are the arithmetic they stand for.
+- Numbers from a closed table, computed by the reader itself: `math.pi`,
+  `math.tau`, `math.sin`, `cos`, `tan`, `asin`, `acos`, `atan`, `atan2`,
+  `sqrt`, `hypot`, `radians`, `degrees`, `floor` and `ceil`; and `abs`, `min`,
+  `max`, `round`, `int`, `float` and `len` on numbers and on lists the script
+  states. An index by a whole number the reader knows (`p[0]`, `p[-1]`), and a
+  list comprehension with one `for` and no `if`, read item by item like a loop:
+  `[(10 * i, 0) for i in range(4)]`. None of these names can be assigned.
 - `for` loops over `range(...)` or over a list of numbers or points that the
   script states, with one name or one name per number of a point
   (`for x, y in [(0, 0), (10, 0)]:`). Loops may be nested four deep. A count
   for `range` is a whole number however it was worked out: `50 // 3.5` is
   `14.0` and counts as 14.
-- `cq.Workplane(...)` and the methods below, chained or held in variables.
+- `cq.Workplane(...)` and the methods below, chained or held in variables, and
+  `cq.Wire.makeHelix(pitch, height, radius)`, the path of a thread, which only
+  `sweep` takes.
 - Comments and a docstring. `show_object(name)` is accepted as a way to name the
   result.
 
@@ -186,10 +239,12 @@ refused: it is a count that came out as zero. An exponent is capped at 64
 unless its base is one or less, which cannot grow: `(-1) ** i` alternates a
 sign over any number of passes.
 
-Everything else is refused with the construct and its line: other imports,
-attribute access, any other call, `def`, `lambda`, `class`, `while`, `if`,
-`break`, `continue`, a loop's `else`, comprehensions, `with`, `try`, f-strings,
-subscripts, comparisons, dunder names. `range(...)` is what a loop runs over
+Everything else is refused with the construct and its line: other imports and
+`from math import`, attribute access, any other call, `def`, `lambda`,
+`class`, `while`, `if`, `break`, `continue`, a loop's `else`, comprehensions
+other than the one above, `with`, `try`, f-strings, slices, comparisons,
+dunder names. The answer's `error.refused` names what was refused, as the
+script wrote it where that is short (`loft`, `import os`, `math.system`). `range(...)` is what a loop runs over
 and nothing else: it cannot be assigned or used as a value.
 An export line such as `cq.exporters.export(result, "plate.step")` is refused
 with its reason: the tool writes the files, after its checks.
@@ -208,30 +263,65 @@ beside the part reads the way the tool read it" rests on; a line may still be
 up to 1,000 characters long.
 Characters of any language are fine in comments.
 
-The allow-list (`allowlist.py`, 46 methods plus the constructor):
+The allow-list (`allowlist.py`, 64 methods plus two constructors, `cq.Workplane` and `cq.Wire.makeHelix`):
 
 | Group | Methods |
 | --- | --- |
-| Primitives | `box`, `cylinder`, `sphere` |
-| Outlines | `rect`, `circle`, `ellipse`, `polygon`, `slot2D`, `polyline`, `moveTo`, `move`, `lineTo`, `line`, `hLine`, `vLine`, `hLineTo`, `vLineTo`, `threePointArc`, `close`, `center` |
-| Solids from outlines | `extrude`, `cutBlind`, `cutThruAll` |
+| Primitives | `box`, `cylinder`, `sphere`, `wedge` |
+| Outlines | `rect`, `circle`, `ellipse`, `polygon`, `slot2D`, `polyline`, `moveTo`, `move`, `lineTo`, `line`, `hLine`, `vLine`, `hLineTo`, `vLineTo`, `threePointArc`, `spline`, `radiusArc`, `sagittaArc`, `tangentArcPoint`, `polarLine`, `polarLineTo`, `close`, `center`, `offset2D` |
+| Solids from outlines | `extrude`, `cutBlind`, `cutThruAll`, `revolve`, `loft`, `sweep`, `twistExtrude` |
 | Holes | `hole`, `cboreHole`, `cskHole` |
 | Edges and walls | `fillet`, `chamfer`, `shell` |
 | Patterns | `pushPoints`, `rarray`, `polarArray` |
-| Selecting | `faces`, `edges`, `vertices`, `workplane`, `tag`, `workplaneFromTagged` |
+| Selecting | `faces`, `edges`, `vertices`, `workplane`, `transformed`, `tag`, `workplaneFromTagged`, `end`, `first`, `last` |
 | Moving | `translate`, `rotate`, `mirror`, `mirrorX`, `mirrorY` |
 | Combining | `union`, `cut`, `intersect` |
+| Lettering and splitting | `text`, `split` |
 
 Selector strings are CadQuery's own (`">Z"`, `"|Z and >Y"`, `"%CIRCLE"`). Every
 argument is checked against the table before the kernel is loaded: a length must
 be a positive number, a plane one of the named planes, a part a part.
 
-Methods that take a file path, a callable, a font or a raw kernel object are not
-on the list and will not be added: `export`, `exportSvg`, `text`, `each`,
-`eachpoint`, `cutEach`, `invoke`, `apply`, `map`, `filter`, `sort`, `sketch`,
-`add`, `val`, `vals`, `findSolid`. The list grows one method at a time, each
-with an example that builds and a signature check against the kernel
-(`tests/test_build.py`).
+A sweep's `path` is an outline the script drew earlier, ending with lines, arcs,
+a spline or a circle (`path = cq.Workplane("XZ").polyline([(0, 0), (0, 20),
+(20, 20)])`); a path that ends with a solid, a point or a moved copy is refused
+before the kernel loads. `combine` takes `True` or `False` on every method: the
+kernel's `"cut"` mode is `cut()`. Not exposed: `sweep`'s `normal` and
+`auxSpine` (a kernel vector, a second rail), `spline`'s arguments past
+`periodic`, `offset2D`'s `"tangent"` kind (`"intersection"` gives the same
+sharp corners) and `parametricCurve` (a callable).
+
+Lettering and threads widen two rules of the boundary, each by one thing the
+module owns (SECURITY.md):
+
+- **`text` letters in the module's own font**, Liberation Sans, shipped in
+  `deerflow_extension_cad/fonts/` with its licence (SIL OFL 1.1). `build.py`
+  passes the file's path; a script cannot name a font or a path, since `font`
+  and `fontPath` are not in the table. The slim Gateway image has no system
+  fonts, and a missing font file fails the build instead of letting the kernel
+  fall back to another. Lettering is at most 64 plain ASCII characters. It is
+  cut into the part by default (a negative distance from a face); raised
+  lettering takes `combine=True` and a positive distance. `halign` and
+  `valign` are given by name; `kind` is not offered, since one font file
+  letters bold and italic as regular.
+- **`cq.Wire.makeHelix(pitch, height, radius)` is the one call on `cq` besides
+  `cq.Workplane`.** The reader keeps its numbers as data (at most 200 turns),
+  `build.py` makes the wire, and only `sweep`'s `path` takes it: a helix
+  passed anywhere else, or given a method, is refused. An M8 x 1.25 and an
+  M24 x 3 thread each build valid in under five seconds (`tests/test_build.py`
+  holds that gate).
+
+`split(keepTop=..., keepBottom=...)` cuts a part at the workplane, as for a
+part too tall for a printer's bed; its arguments are given by name, because the
+kernel takes them only as keywords and reads a positional part as a cutting
+tool, which is `cut()`'s job.
+
+Parameters that take a file path, a callable, a font or a raw kernel object are
+not on the list and will not be added, nor are the methods made of them:
+`export`, `exportSvg`, `each`, `eachpoint`, `cutEach`, `invoke`, `apply`, `map`,
+`filter`, `sort`, `sketch`, `add`, `val`, `vals`, `findSolid`. The list grows
+one method at a time, each with an example that builds and a signature check
+against the kernel (`tests/test_build.py`).
 
 ## Limits
 
@@ -247,7 +337,7 @@ with an example that builds and a signature check against the kernel
 | Build time | 20 seconds wall clock, then the process group is killed | `timeout_seconds` |
 | Build memory | 4,096 MiB of address space, where the operating system enforces it (Linux) | `memory_mb` |
 | Builds at once | half the processor cores, at least one; a call waits 3 seconds for a slot, then is told to call again | `parallel_builds` |
-| Mesh | STL: 0.1 mm off the surface and 0.3 rad between facets, in proportion to the size for a part over a metre; coarser (twice, then four times) until it is under 6 MiB. GLB: a mesh for viewing, bounded by the same angle | `build.py` |
+| Mesh | STL: 0.1 mm off the surface and 0.3 rad between facets, in proportion to the size for a part over a metre; coarser (twice, then four times) until it is under 6 MiB. GLB: a mesh for viewing, bounded by the same angle. GLB in metres; STL, STEP and 3MF in millimetres | `build.py` |
 | Exported file | 16 MiB read back, then the host's `plugin_outputs` caps apply (8 MiB per file by default) | `tool.py` |
 
 Pattern cost grows faster than the count. `circle().cutThruAll()` on a pattern is
@@ -341,7 +431,7 @@ and restart:
 make extension-install SOURCE="$PWD/examples/deerflow-extension-cad"
 ```
 
-`config` accepts four values, all optional:
+`config` accepts five values, all optional:
 
 | Key | Default | Meaning |
 | --- | --- | --- |
@@ -349,6 +439,7 @@ make extension-install SOURCE="$PWD/examples/deerflow-extension-cad"
 | `timeout_seconds` | `20` | Wall clock for one build, 5 to 25 |
 | `memory_mb` | `4096` | Address space for one build, 3,072 to 65,536 |
 | `parallel_builds` | half the cores | Builds at once, 1 to 16; each holds several hundred MiB |
+| `printer` | a 0.4 mm nozzle printing PLA, no build volume | The operator's printer for the print block and its notes: `build_volume_mm`, `nozzle_mm`, `layer_mm`, `overhang_deg`, `min_clearance_mm`, `density_g_cm3`, each optional and bounded ([cad-parts.md](../../docs/guide/cad-parts.md#the-printer-profile)). An unknown key or a value out of range stops the module at install with a message naming `printer.<key>` |
 
 Then check it:
 
@@ -399,14 +490,23 @@ deerflow_extension_cad/
 ├── __init__.py     # install(): registers the tool; imports no kernel
 ├── allowlist.py    # the operations a script may ask for, as data
 ├── interpreter.py  # text → allow-listed operations, or a refusal with its line
-├── build.py        # operations → kernel calls; STEP, STL and GLB export
-├── measure.py      # the re-imported STEP: solids, bounding box, volume, holes
+├── build.py        # operations → kernel calls; STEP, STL, 3MF and GLB export
+├── measure.py      # the re-imported STEP: solids, bounding box, volume, holes and where they are, gaps
+├── checks.py       # pass or fail, and the notes; no extension API, used by measure_cli and the eval
+├── render.py       # the picture: numpy and Pillow
+├── printability.py # the print block, from the STL
+├── measure_cli.py  # measure and judge one STEP outside the Gateway
 ├── worker.py       # the child process
 ├── tool.py         # the handler: child process, limits, pass or fail, file writes
-└── selftest.py     # the one-millimetre cube `make doctor` builds
+├── selftest.py     # the one-millimetre cube `make doctor` builds
+└── fonts/          # the lettering font, its licence and where it comes from
 tests/
 ├── test_interpreter.py     # what is accepted and what is refused
 ├── test_worker_process.py  # the parent's hold on the child
 ├── test_build.py           # the whole tool against the real kernel
-└── test_measure.py         # what counts as a hole
+├── test_measure.py         # what counts as a hole, where it is, measure_cli
+├── test_checks.py          # the checks without the host
+├── test_render.py          # the picture
+├── test_printability.py    # the print block
+└── test_eval_specs.py      # every CAD eval spec's reference part meets its stored truth, scored through measure_cli
 ```

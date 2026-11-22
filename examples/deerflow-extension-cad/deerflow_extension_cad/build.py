@@ -3,15 +3,30 @@
 This module is the only place a script's request turns into a kernel call, and
 the call is always the same shape: a ``Workplane`` method whose name is a key
 of ``allowlist.METHODS``, with keyword arguments the interpreter already
-checked. It runs in the worker process only; the Gateway never imports it.
+checked. Two arguments are the module's own and never the script's: the font
+file of ``text`` (``INJECTED``) and the helix wire a thread is swept along,
+made here from the numbers the interpreter kept. It runs in the worker process
+only; the Gateway never imports it.
 """
 
 from __future__ import annotations
 
+import io
+import json
+import re
+import struct
+import zipfile
+from collections.abc import Callable
 from pathlib import Path
 
 from deerflow_extension_cad import allowlist as table
-from deerflow_extension_cad.interpreter import Program, Ref
+from deerflow_extension_cad.interpreter import Helix, Program, Ref
+
+#: The lettering font, shipped in the package: the slim Gateway image has no system fonts,
+#: and a script never names a font or a path (fonts/README.md).
+FONT = Path(__file__).with_name("fonts") / "LiberationSans-Regular.ttf"
+#: Arguments this module passes itself, by method: never in the table, never from a script.
+INJECTED = {"text": ("fontPath",)}
 
 #: The STL and GLB meshes, finest first: millimetres off the surface, radians between
 #: facets. The angle decides size and time. A part dense with small fillets and holes
@@ -51,6 +66,16 @@ _MUST_CHANGE = {
     "box": _INSIDE_THE_PART,
     "cylinder": _INSIDE_THE_PART,
     "sphere": _INSIDE_THE_PART,
+    "wedge": _INSIDE_THE_PART,
+    "revolve": _INSIDE_THE_PART,
+    "loft": _INSIDE_THE_PART,
+    "sweep": _INSIDE_THE_PART,
+    "twistExtrude": _INSIDE_THE_PART,
+    "text": (
+        "changed nothing: lettering is cut into the part unless combine=True, and a cut needs a negative distance from a face of the part; "
+        "raised lettering takes combine=True and a positive distance. Check that the workplane is on the face the lettering belongs to."
+    ),
+    "split": "removed no material: the workplane does not cross the part, so nothing was cut off. Place the workplane through the part first.",
 }
 
 _HINTS = {
@@ -61,6 +86,11 @@ _HINTS = {
     "cutBlind": "there is no closed outline to cut: draw one first",
     "cutThruAll": "there is no closed outline to cut: draw one first",
     "hole": "there is no point to drill at or no solid to drill into",
+    "twistExtrude": "there is no closed outline to extrude: draw one first and close() it",
+    "loft": "loft needs two or more closed outlines on separate workplanes, such as circle(10).workplane(offset=20).circle(5)",
+    "sweep": "sweep needs a closed outline drawn before it, and the path must start on the profile's plane",
+    "revolve": "the axis must not cross the outline: draw the outline wholly on one side of it",
+    "split": "keepTop or keepBottom must be True, and the workplane must cross a solid",
 }
 
 
@@ -136,8 +166,10 @@ def build_parts(program: Program, cq) -> list:
     parts: list = []
     used = _used_by_result(program)
     for slot, operation in enumerate(program.operations):
-        arguments = {name: parts[value.slot] if isinstance(value, Ref) else value for name, value in operation.arguments}
+        arguments = {name: _argument(value, parts, cq) for name, value in operation.arguments}
         try:
+            if operation.method in INJECTED:
+                arguments.update(_injected(operation))
             if operation.receiver is None:
                 parts.append(cq.Workplane(**arguments))
             elif operation.method in table.METHODS:
@@ -159,6 +191,23 @@ def build_parts(program: Program, cq) -> list:
             hint = _HINTS.get(operation.method)
             raise _failed(operation, f"{operation.method}() failed: {detail}" + (f". Likely cause: {hint}." if hint else "")) from None
     return parts
+
+
+def _argument(value, parts: list, cq):
+    """An argument as the kernel takes it: a part by its position, a helix as its wire, plain data as it is."""
+    if isinstance(value, Ref):
+        return parts[value.slot]
+    if isinstance(value, Helix):
+        return cq.Wire.makeHelix(value.pitch, value.height, value.radius, lefthand=value.lefthand)
+    return value
+
+
+def _injected(operation) -> dict[str, str]:
+    """The module's own arguments for *operation*: today the font of text()."""
+    if not FONT.is_file():
+        # The kernel would fall back to some system font, or to none, without saying so.
+        raise _failed(operation, f"{operation.method}() cannot letter: the module's font file is missing. Reinstall the CAD module.")
+    return {"fontPath": str(FONT)}
 
 
 def _holds_solid(part) -> bool:
@@ -235,6 +284,30 @@ def left_out(program: Program, parts: list) -> tuple[list[int], dict[int, int]]:
     return sorted(bodies.values()), {loop: len(dropped) for loop, dropped in sorted(passes.items())}
 
 
+#: The operations whose reach a selector decides: they work on every edge of whatever the selection holds.
+_ON_EDGES = ("fillet", "chamfer")
+
+
+def selections(program: Program, parts: list, cq) -> list[dict]:
+    """How many edges each fillet and chamfer of the result took, and how many edges its part had then.
+
+    A selector takes every edge that matches on the part as it is at that line, so a fillet
+    meant for four corners also rounds the inner corners of a rim or the edges of a pocket
+    made before it, and the part still meets every number it was asked to meet. The count
+    is the kernel's own: fillet() and chamfer() take the edges of whatever the selection
+    holds, a face standing for its edges and the part for all of them. Both calls already
+    succeeded on these objects when the operation ran, and take nothing from the script.
+    One entry per operation; a script has at most ``interpreter.MAX_OPERATIONS``.
+    """
+    used = _used_by_result(program)
+    found = []
+    for slot, operation in enumerate(program.operations):
+        if slot in used and operation.method in _ON_EDGES and operation.receiver is not None:
+            selected = parts[operation.receiver]
+            found.append({"line": operation.line, "method": operation.method, "edges": len(selected.edges().vals()), "of": len(selected.findSolid().Edges())})
+    return found
+
+
 def solid_of(part):
     """The solid a script's result stands for, even when its last call selected a face or drew an outline."""
     try:
@@ -266,15 +339,189 @@ def _fits(path: Path, kind: str, max_bytes: int) -> None:
         raise BuildFailed(None, "export", f"the {kind} file is larger than {limit}. Simplify the part: fewer small fillets and holes.")
 
 
-def export(shape, cq, directory: Path, max_bytes: int) -> tuple[dict[str, str], dict[str, float]]:
-    """Write STEP, STL and GLB of *shape* into *directory*.
+#: glTF lengths are metres and the kernel writes the GLB in millimetres: its scene is scaled by this.
+GLB_SCALE = 0.001
+_GLB_MAGIC, _GLB_JSON = 0x46546C67, 0x4E4F534A
 
-    Returns the file names by kind and the mesh tolerance that was used.
+
+def in_metres(glb: bytes) -> bytes:
+    """The GLB with each root node of its scenes scaled from millimetres to metres.
+
+    The vertices stay as the kernel wrote them; only the scene's root transform changes, so a
+    viewer, Blender or a phone's AR view opens a 40 mm part at 40 mm instead of 40 m. The JSON
+    chunk is padded back to four bytes, as the format requires.
+    """
+    magic, version, _ = struct.unpack_from("<III", glb, 0)
+    length, kind = struct.unpack_from("<II", glb, 12)
+    if magic != _GLB_MAGIC or kind != _GLB_JSON:
+        raise ValueError("not a binary glTF file")
+    document = json.loads(glb[20 : 20 + length])
+    roots = {index for scene in document.get("scenes", []) for index in scene.get("nodes", [])}
+    for index in sorted(roots):
+        node = document["nodes"][index]
+        if "matrix" in node:
+            # Column-major: scaling the result scales the first three rows of every column, translation included.
+            node["matrix"] = [value * GLB_SCALE if position % 4 != 3 else value for position, value in enumerate(node["matrix"])]
+            continue
+        node["scale"] = [value * GLB_SCALE for value in node.get("scale", [1.0, 1.0, 1.0])]
+        if "translation" in node:
+            node["translation"] = [value * GLB_SCALE for value in node["translation"]]
+    text = json.dumps(document, separators=(",", ":")).encode("utf-8")
+    text += b" " * (-len(text) % 4)
+    body = struct.pack("<II", len(text), _GLB_JSON) + text + glb[20 + length :]
+    return struct.pack("<III", magic, version, 12 + len(body)) + body
+
+
+#: Bodies laid out to print apart stand on the bed side by side along x, this far from each other.
+PARTS_GAP_MM = 5.0
+#: Per-body STL files written when the laid-out 3MF cannot be: a kit, not a pile.
+MAX_BODY_FILES = 8
+_MESH_OBJECT = re.compile(r'<object id="(\d+)"[^>]*>\s*<mesh>(.*?)</mesh>\s*</object>', re.S)
+_COMPONENTS_OBJECT = re.compile(r'<object id="\d+"[^>]*>\s*<components>.*?</components>\s*</object>', re.S)
+_VERTEX = re.compile(r'<vertex x="([^"]+)" y="([^"]+)" z="([^"]+)"')
+_TRIANGLE = re.compile(r'<triangle v1="(\d+)" v2="(\d+)" v3="(\d+)"')
+_BUILD = re.compile(r"<build>.*?</build>", re.S)
+
+
+#: An object's own id and the references to one, in the kernel's model.
+_RESOURCE_ID = re.compile(r'(<(?:object|component|item)\b[^>]*?\s(?:id|objectid)=")(\d+)(")')
+_TYPES_OPEN = re.compile(r"<Types\b[^>]*>")
+#: Package defaults lib3mf requires: the relationships part needs a content type for its extension.
+_DEFAULT_TYPES = {
+    "rels": "application/vnd.openxmlformats-package.relationships+xml",
+    "model": "application/vnd.ms-package.3dmanufacturing-3dmodel+xml",
+}
+
+
+def _rewrite(threemf: bytes, edits: dict[str, Callable[[str], str]]) -> bytes:
+    """The package with each named part passed through its edit (text in, text out), every other part as it was."""
+    with zipfile.ZipFile(io.BytesIO(threemf)) as package:
+        entries = [(info, package.read(info)) for info in package.infolist()]
+    missing = set(edits) - {info.filename for info, _ in entries}
+    if missing:
+        raise ValueError(f"the 3MF has no {sorted(missing)[0]}")
+    out = io.BytesIO()
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as package:
+        for info, content in entries:
+            edit = edits.get(info.filename)
+            package.writestr(info.filename, edit(content.decode("utf-8")).encode("utf-8") if edit else content)
+    return out.getvalue()
+
+
+def normalise_3mf(threemf: bytes) -> bytes:
+    """The kernel's 3MF made to the 3MF core specification, which lib3mf, the Consortium's reader, holds it to.
+
+    The kernel numbers its objects from 0, where a resource id is a positive integer, so every id and
+    every reference to one moves up by one. Its content types name the relationships part only by an
+    override, and lib3mf refuses a package without a default for the extension, so the defaults are added.
+    The geometry is untouched.
+    """
+
+    def renumber(model: str) -> str:
+        ids = [int(found) for found in re.findall(r'<object\b[^>]*?\sid="(\d+)"', model)]
+        if not ids or min(ids) > 0:
+            return model
+        return _RESOURCE_ID.sub(lambda found: f"{found.group(1)}{int(found.group(2)) + 1}{found.group(3)}", model)
+
+    def defaults(types: str) -> str:
+        added = "".join(f'<Default Extension="{extension}" ContentType="{kind}" />' for extension, kind in _DEFAULT_TYPES.items() if f'Extension="{extension}"' not in types)
+        opening = _TYPES_OPEN.search(types)
+        if opening is None:
+            raise ValueError("the 3MF content types have no Types element")
+        return types[: opening.end()] + added + types[opening.end() :]
+
+    return _rewrite(threemf, {"3D/3dmodel.model": renumber, "[Content_Types].xml": defaults})
+
+
+def lay_out(threemf: bytes, gap_mm: float = PARTS_GAP_MM) -> bytes:
+    """The kernel's 3MF with each body as its own build item, dropped to z = 0 and set beside the one before.
+
+    The kernel writes one item made of all bodies, which is right for printing them in place. For a
+    kit printed apart, each body's mesh becomes an item of its own, moved (never turned) so its lowest
+    point is on the bed and its box starts *gap_mm* past the box before it along x.
+    """
+    with zipfile.ZipFile(io.BytesIO(threemf)) as package:
+        entries = [(info, package.read(info)) for info in package.infolist()]
+    (model,) = [content.decode("utf-8") for info, content in entries if info.filename == "3D/3dmodel.model"]
+    meshes = _MESH_OBJECT.findall(model)
+    if len(meshes) < 2:
+        raise ValueError(f"the 3MF holds {len(meshes)} body meshes; laying out needs two or more")
+    items, cursor = [], 0.0
+    for identifier, mesh in meshes:
+        points = [tuple(map(float, found)) for found in _VERTEX.findall(mesh)]
+        if not points:
+            raise ValueError(f"body mesh {identifier} has no vertices")
+        low = [min(point[k] for point in points) for k in range(3)]
+        high = [max(point[k] for point in points) for k in range(3)]
+        # Rounded, and + 0.0 so that no "-0.000000" reaches a slicer.
+        move = " ".join(f"{round(value, 6) + 0.0:.6f}" for value in (cursor - low[0], -low[1], -low[2]))
+        items.append(f'<item objectid="{identifier}" transform="1 0 0 0 1 0 0 0 1 {move}" />')
+        cursor += high[0] - low[0] + gap_mm
+    # The kernel's one item of all bodies goes: each body is now an item of its own.
+    model = _COMPONENTS_OBJECT.sub("", model)
+    model, builds = _BUILD.subn("<build>" + "".join(items) + "</build>", model)
+    if builds != 1:
+        raise ValueError("the 3MF has no single build element to rewrite")
+    out = io.BytesIO()
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as package:
+        for info, content in entries:
+            package.writestr(info.filename, model.encode("utf-8") if info.filename == "3D/3dmodel.model" else content)
+    return out.getvalue()
+
+
+def body_meshes(threemf: bytes) -> list[tuple[list[tuple[float, ...]], list[tuple[int, ...]]]]:
+    """Each body's mesh in the kernel's 3MF, in the order it holds them: vertices in millimetres and triangles by vertex.
+
+    The kernel writes one mesh object per body, from the mesh the STL was written with, so the print
+    block can judge the bodies one by one where part.stl has them merged.
+    """
+    with zipfile.ZipFile(io.BytesIO(threemf)) as package:
+        model = package.read("3D/3dmodel.model").decode("utf-8")
+    return [([tuple(map(float, found)) for found in _VERTEX.findall(mesh)], [tuple(map(int, found)) for found in _TRIANGLE.findall(mesh)]) for _, mesh in _MESH_OBJECT.findall(model)]
+
+
+def _bodies_apart(shape, threemf: Path, directory: Path, names: dict[str, str], linear: float, angular: float, max_bytes: int) -> None:
+    """Write part.parts.3mf for printing the bodies apart; failing that, one STL per body, at most MAX_BODY_FILES.
+
+    Neither is the checked part, so neither can fail the build: when both fail, no laid-out file is
+    named, and the worker says so.
+    """
+    parts = directory / "part.parts.3mf"
+    try:
+        parts.write_bytes(lay_out(threemf.read_bytes()))
+        _fits(parts, "laid-out 3MF", max_bytes)
+    except (ValueError, OSError, zipfile.BadZipFile, BuildFailed):
+        parts.unlink(missing_ok=True)
+    else:
+        names["parts.3mf"] = parts.name
+        return
+    bodies = {}
+    for number, solid in enumerate(shape.Solids()[:MAX_BODY_FILES], 1):
+        body = directory / f"part.body-{number}.stl"
+        try:
+            written = solid.exportStl(str(body), tolerance=linear, angularTolerance=angular, ascii=False, relative=False)
+        except Exception:
+            written = False
+        if not (written and whole_stl(body) and body.stat().st_size <= max_bytes):
+            for name in [*bodies.values(), body.name]:
+                (directory / name).unlink(missing_ok=True)
+            return
+        bodies[f"body-{number}.stl"] = body.name
+    names.update(bodies)
+
+
+def export(shape, cq, directory: Path, max_bytes: int) -> tuple[dict[str, str], dict[str, float]]:
+    """Write STEP, STL, 3MF and GLB of *shape* into *directory*.
+
+    Returns the file names by kind and the mesh tolerance that was used. STEP, STL and 3MF are
+    in millimetres; the GLB is in metres, the unit of glTF. A shape of several bodies also gets
+    ``part.parts.3mf``, the bodies laid out to print apart (or one STL per body), and a GLB with
+    one node per body.
     """
     from OCP.BRepTools import BRepTools
 
-    names = {"step": "part.step", "stl": "part.stl", "glb": "part.glb"}
-    step, stl, glb = (directory / names[kind] for kind in ("step", "stl", "glb"))
+    names = {"step": "part.step", "stl": "part.stl", "3mf": "part.3mf", "glb": "part.glb"}
+    step, stl, threemf, glb = (directory / names[kind] for kind in ("step", "stl", "3mf", "glb"))
     cq.exporters.export(shape, str(step))
     _fits(step, "STEP", max_bytes)
     scale = max(1.0, shape.BoundingBox().DiagonalLength / MESH_FULL_DETAIL_MM)
@@ -289,6 +536,23 @@ def export(shape, cq, directory: Path, max_bytes: int) -> tuple[dict[str, str], 
     if not whole_stl(stl):
         raise BuildFailed(None, "export", "the STL mesh could not be written in full, even at the coarsest tolerance. Simplify the part: fewer small fillets and holes.")
     _fits(stl, "STL", max_bytes)
-    cq.Assembly(shape, name="part").export(str(glb), tolerance=linear, angularTolerance=angular)
+    # The slicer's file: in millimetres, from the mesh the STL was just written with (the kernel keeps it on the shape).
+    cq.exporters.export(shape, str(threemf), tolerance=linear, angularTolerance=angular)
+    _fits(threemf, "3MF", max_bytes)
+    # Before anything reads it: part.parts.3mf is made from these bytes and inherits the ids and defaults.
+    threemf.write_bytes(normalise_3mf(threemf.read_bytes()))
+    _fits(threemf, "3MF", max_bytes)
+    solids = shape.Solids()
+    if len(solids) > 1:
+        _bodies_apart(shape, threemf, directory, names, linear, angular, max_bytes)
+        # One node per body, so a viewer can show and pick them apart.
+        assembly = cq.Assembly(name="part")
+        for number, solid in enumerate(solids, 1):
+            assembly.add(solid, name=f"body-{number}")
+    else:
+        assembly = cq.Assembly(shape, name="part")
+    assembly.export(str(glb), tolerance=linear, angularTolerance=angular)
+    _fits(glb, "GLB", max_bytes)
+    glb.write_bytes(in_metres(glb.read_bytes()))
     _fits(glb, "GLB", max_bytes)
     return names, {"tolerance_mm": linear, "angular_rad": angular}

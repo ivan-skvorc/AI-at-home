@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "entry": "static/dist/index.mjs",
+  "files": [
+    "static/dist/chunks/model-worker.mjs",
+    "static/dist/chunks/viewer-AK5UTFMR.mjs",
+    "static/dist/index.mjs"
+  ]
+}

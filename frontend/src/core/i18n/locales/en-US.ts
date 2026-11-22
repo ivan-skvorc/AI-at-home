@@ -209,6 +209,7 @@ export const enUS: Translations = {
       weknora: bundledCopy("deerflow-extension-weknora", "en-US"),
       example: bundledCopy("deerflow-extension-example", "en-US"),
       cad: bundledCopy("deerflow-extension-cad", "en-US"),
+      cadPreview: bundledCopy("deerflow-extension-cad-preview", "en-US"),
     },
     pageUnavailable: "Extension page unavailable",
     pageUnavailableHint:
@@ -470,6 +471,8 @@ export const enUS: Translations = {
     loadingFullFile: "Loading full file...",
     previewFailed:
       "This file could not be previewed. You can still download it.",
+    tooLarge:
+      "This file is larger than the 25 MiB preview limit. Download it to view it.",
     viewSource: "View source",
     missingTarget: "This link does not say which artifact to display.",
   },

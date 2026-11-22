@@ -1,0 +1,25 @@
+{
+  "id": "h02-bolt-flange",
+  "band": "holes",
+  "title": "Bolt flange",
+  "request": "Design a round flange 80 mm in diameter and 8 mm thick. It has a 30 mm bore through the centre and six 6.5 mm bolt holes spaced evenly on a 60 mm bolt circle.",
+  "orientation": "z",
+  "truth": {
+    "solids": 1,
+    "bbox_mm": [
+      80.0,
+      80.0,
+      8.0
+    ],
+    "volume_mm3": 32964.732,
+    "hole_diameters_mm": [
+      6.5,
+      6.5,
+      6.5,
+      6.5,
+      6.5,
+      6.5,
+      30.0
+    ]
+  }
+}

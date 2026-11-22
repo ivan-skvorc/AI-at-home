@@ -245,6 +245,13 @@ MIGRATIONS = {
         "description": "Add the bundled CAD plugin that builds mechanical parts from a chat",
         "plugins_from_example": ("cad",),
     },
+    76: {
+        # The CAD model preview is bundled (backend/extensions/sources) and
+        # enabled in the example, so the CAD module's GLB and STL files open as
+        # a model; an existing install gets its record once.
+        "description": "Add the bundled CAD model preview that draws GLB and STL files in the artifact panel",
+        "plugins_from_example": ("cad-preview",),
+    },
     # Future migrations go here:
     # 60: {
     #     'description': '...',

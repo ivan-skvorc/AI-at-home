@@ -1,0 +1,28 @@
+{
+  "id": "f05-v-pulley",
+  "band": "fits",
+  "title": "V-groove pulley",
+  "request": "Make a V-groove pulley for a 6 mm shaft: 40 mm outside diameter and 12 mm wide, with a 6 mm bore through the centre and a 90 degree V groove 5 mm deep running round the rim, centred in the width.",
+  "needs": [
+    {
+      "item": "56",
+      "why": "revolve",
+      "operations": [
+        "revolve"
+      ]
+    }
+  ],
+  "orientation": "free",
+  "truth": {
+    "solids": 1,
+    "bbox_mm": [
+      40.0,
+      40.0,
+      12.0
+    ],
+    "volume_mm3": 11860.559,
+    "hole_diameters_mm": [
+      6.0
+    ]
+  }
+}

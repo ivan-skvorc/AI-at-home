@@ -1,0 +1,21 @@
+{
+  "id": "h05-countersunk-strip",
+  "band": "holes",
+  "title": "Countersunk strip",
+  "request": "Make a mounting strip 100 mm long, 20 mm wide and 4 mm thick, with three countersunk holes for M4 flat-head screws on its centre line, 40 mm apart, the middle one at the centre. Each is a 4.5 mm clearance hole with a 90 degree countersink 9 mm across at the top face.",
+  "orientation": "z",
+  "truth": {
+    "solids": 1,
+    "bbox_mm": [
+      100.0,
+      20.0,
+      4.0
+    ],
+    "volume_mm3": 7666.009,
+    "hole_diameters_mm": [
+      4.5,
+      4.5,
+      4.5
+    ]
+  }
+}

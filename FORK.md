@@ -522,7 +522,7 @@ Then confirm each fork feature end-to-end:
 | **Passwordless by default** (§5)                                                                        | `scripts/serve.sh::apply_default_auth_mode` exports `DEER_FLOW_AUTH_DISABLED="${DEER_FLOW_AUTH_DISABLED:-1}"` after loading `.env` (pinned by `backend/tests/test_serve_auth_default.py`); both `.env.example` files document the `=0` opt-out. Backend honors it via `auth_disabled.py`, frontend via `core/auth/auth-disabled-user.ts` (both ignore it when `DEER_FLOW_ENV`/`ENVIRONMENT` is prod).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | **Dev-origin defaults (§5, LAN/Tailscale)**                                                             | `frontend/src/dev-origins.js::getAllowedDevOrigins()` returns `DEFAULT_DEV_ORIGIN_PATTERNS` (private-LAN + Tailscale) merged with `DEER_FLOW_DEV_ALLOWED_ORIGINS`, unless `DEER_FLOW_DEV_ALLOWED_ORIGINS_STRICT`; wired in `next.config.js`. Pinned by `frontend/tests/unit/dev-origins.test.ts` (runs the defaults through Next's real `isCsrfOriginAllowed` matcher).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | **Multi-user mode toggle** (§6)                                                                         | `deerflow/config/runtime_settings.py` (`is_multi_user_mode_enabled` / `set_multi_user_mode` / `resolve_owner_scope`, default ON) gates `thread_meta` `search`/`get`/`check_access` and run-store read helpers (writes keep the real owner); `GET`/`PUT /api/settings/multi-user-mode` (`app/gateway/routers/settings.py`, PUT admin-gated). Frontend toggle + confirm dialog in `account-settings-page.tsx` via `core/settings/multi-user-mode.ts`. Pinned by `backend/tests/test_multi_user_mode.py` + `frontend/tests/unit/core/settings/multi-user-mode.test.ts`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
-| **Cost overview + aux counters** (§7)                                                                   | Shared `app/gateway/pricing.py` (console + thread endpoint import it); `GET /api/threads/{id}/token-usage` returns `total_cost`/`promo_total_cost`/`currency`/per-model `cost`/`aux`; store aggregation carries the input/output/cache-read split (`new_by_model_usage_entry`); `deerflow/runtime/aux_usage.py` records the four per-conversation sinks in `CHAT_AUX_CATEGORIES` — memory (`agents/memory/manager.py::_host_default_extraction_callback`), suggestions and prompt polish (`utils/oneshot_llm.py::run_oneshot_llm_with_usage`), and the goal check (`runtime/goal.py::evaluate_goal_completion`) — **write-through to the durable `deerflow/runtime/aux_usage_store.py`** (`<DeerFlow home>/aux_usage.sqlite3`, kill switch `DEER_FLOW_AUX_USAGE_DB=0`). **The quietest failure: a non-graph LLM call that takes a `thread_id` and is never given a category.** No `—`, no warning; the header simply prints less than was spent (`input_polish` and `goal` both shipped that way). Such a call needs a `CHAT_AUX_CATEGORIES` entry and a `record_aux_usage_metadata` call in the same change set — pinned by `test_aux_usage_wiring.py`. Frontend `token-usage-indicator.tsx` + `core/threads/token-usage.ts`. Pinned by `backend/tests/test_pricing.py`, `test_model_ids.py`, `test_aux_usage.py`, `test_aux_usage_wiring.py`, `test_thread_token_usage.py`, `test_thread_cost_robustness.py`, `test_input_polish_router.py`, `tests/blocking_io/test_aux_usage.py` + `frontend/tests/unit/core/threads/token-usage.test.ts`. **Run `test_thread_cost_robustness.py` for any change to pricing, the run stores, or the token-usage endpoint** — it holds three properties that are silent when broken: spend survives a restart (the aggregation counts every status that spent tokens, via `COUNTED_RUN_STATUSES` — narrowing it back to `success`/`error` makes a restart delete money from the header while the spend cap keeps charging), a mid-thread model switch is priced per turn at the model that ran it, and an edited message keeps its replaced turns in `total_cost` while excluding them from `steps[]` as `superseded_*`. **The aux registry's store is a local file, so its sync API blocks.** Re-pointing the suggestions route or the `token-usage` endpoint at `record_aux_usage` / `get_thread_aux_usage` instead of the `a*` wrappers fails the strict Blockbuster anchor — do not "fix" that by marking the anchor `allow_blocking_io`; restore the offload. Nor make the memory path async: it runs on the memory updater's loop-less debounce thread, which is why the durable store is its own SQLite file rather than the async runs engine. **Three things make this render `—`, none of which raises.** (1) Provider-id resolution (`pricing.py::_pricing_lookup_candidates`): buckets are keyed by the _provider-reported_ id, not the `config.yaml` one, so exact-only matching nulls every cost — pinned by `test_thread_token_usage.py::test_thread_token_usage_prices_provider_reported_model_ids`. (2) A bundled model with no `price:` block contributes nothing — pinned by `test_config_integrity.py::TestBundledModelPricing`. (3) The reported id can be _doubled_ (LangChain's `merge_dicts` concatenates equal `response_metadata` strings, so a provider sending several `finish_reason` chunks yields `deepseek/deepseek-v4-prodeepseek/deepseek-v4-pro`), which matches nothing and prices at zero — collapsed by `deerflow/model_ids.py::normalize_reported_model_name`, pinned by `test_model_ids.py` and `test_thread_token_usage.py::test_a_stream_duplicated_model_id_still_prices_and_is_named_once`. A bug report quoting a nonexistent model id is this one. **The second one has a delivery trap:** fixing `config.example.yaml` does **not** fix an existing install (`sync-api-key-models.py` skips active provider blocks; `merge_missing` cannot add a key inside a list entry), which is why `pricing.py` still derives a price from the `($in/out)` pair in `display_name` (pinned by `test_model_price_fields.py::TestBackwardCompatibility`) and why `TestBundledModelPricing::test_every_bundled_model_is_priced` requires a `price:` block on every bundled model. **Any change to the bundled model blocks must answer: does this reach a config that already exists?** `make doctor`'s `model pricing` check warns, naming the `—` symptom, when nothing configured can be priced. **A fourth failure is silent rather than visible:** an _expired_ promo — a promotion the provider has stopped still advertises a price nobody is getting. `TestBundledModelPricing::test_discounts_are_real_discounts_and_parse_their_expiry` pins that a bundled discount is below list and its `until:` parses (an unreadable one reads as _expired_); neither test knows whether the discount is still running, so re-verify live promos as step 6 of the [model audit](#auditing-the-model-list-settings--pricing). Cost is **per model everywhere**, the promo included: run buckets and the `aux` sinks are each priced at their own model's rate (`test_promo_total_is_model_aware_across_lead_subagent_and_aux`). Manual: run an Ultra-mode turn (so a subagent model is involved) and confirm the header shows a **green** dollar amount; on a discounted model the dropdown shows the green promo total beside the red standard one; on `—` the dropdown names the unpriced model. |
+| **Cost overview + aux counters** (§7)                                                                   | `deerflow/runtime/aux_usage.py` records the four per-conversation sinks in `CHAT_AUX_CATEGORIES` — memory (`agents/memory/manager.py::_host_default_extraction_callback`), suggestions and prompt polish (`utils/oneshot_llm.py::run_oneshot_llm_with_usage`), and the goal check (`runtime/goal.py::evaluate_goal_completion`) — **write-through to the durable `deerflow/runtime/aux_usage_store.py`** (`<DeerFlow home>/aux_usage.sqlite3`, kill switch `DEER_FLOW_AUX_USAGE_DB=0`). **The quietest failure: a non-graph LLM call that takes a `thread_id` and is never given a category.** No `—`, no warning; the header simply prints less than was spent. Such a call needs a `CHAT_AUX_CATEGORIES` entry and a `record_aux_usage_metadata` call in the same change set — pinned by `test_aux_usage_wiring.py`. Pinned by `backend/tests/test_pricing.py`, `test_model_ids.py`, `test_aux_usage.py`, `test_aux_usage_wiring.py`, `test_thread_token_usage.py`, `test_thread_cost_robustness.py`, `test_input_polish_router.py`, `tests/blocking_io/test_aux_usage.py` + `frontend/tests/unit/core/threads/token-usage.test.ts`. **Run `test_thread_cost_robustness.py` for any change to pricing, the run stores, or the token-usage endpoint** — it holds three properties that are silent when broken: spend survives a restart (the aggregation counts every status that spent tokens, via `COUNTED_RUN_STATUSES` — narrowing it back to `success`/`error` makes a restart delete money from the header while the spend cap keeps charging), a mid-thread model switch is priced per turn at the model that ran it, and an edited message keeps its replaced turns in `total_cost` while excluding them from `steps[]` as `superseded_*`. **The aux registry's store is a local file, so its sync API blocks.** Re-pointing the suggestions route or the `token-usage` endpoint at `record_aux_usage` / `get_thread_aux_usage` instead of the `a*` wrappers fails the strict Blockbuster anchor — do not "fix" that by marking the anchor `allow_blocking_io`; restore the offload. Nor make the memory path async: it runs on the memory updater's loop-less debounce thread, which is why the durable store is its own SQLite file rather than the async runs engine. **Three things make this render `—`, none of which raises.** (1) Provider-id resolution (`pricing.py::_pricing_lookup_candidates`): buckets are keyed by the _provider-reported_ id, not the `config.yaml` one, so exact-only matching nulls every cost — pinned by `test_thread_token_usage.py::test_thread_token_usage_prices_provider_reported_model_ids`. (2) A bundled model with no `price:` block contributes nothing — pinned by `test_config_integrity.py::TestBundledModelPricing`. (3) The reported id can be _doubled_ (LangChain's `merge_dicts` concatenates equal `response_metadata` strings, so a provider sending several `finish_reason` chunks yields `deepseek/deepseek-v4-prodeepseek/deepseek-v4-pro`), which matches nothing and prices at zero — collapsed by `deerflow/model_ids.py::normalize_reported_model_name`, pinned by `test_model_ids.py` and `test_thread_token_usage.py::test_a_stream_duplicated_model_id_still_prices_and_is_named_once`. A bug report quoting a nonexistent model id is this one. **The second one has a delivery trap:** fixing `config.example.yaml` does **not** fix an existing install (`sync-api-key-models.py` skips active provider blocks; `merge_missing` cannot add a key inside a list entry), which is why `pricing.py` still derives a price from the `($in/out)` pair in `display_name` (pinned by `test_model_price_fields.py::TestBackwardCompatibility`) and why `TestBundledModelPricing::test_every_bundled_model_is_priced` requires a `price:` block on every bundled model. **Any change to the bundled model blocks must answer: does this reach a config that already exists?** `make doctor`'s `model pricing` check warns, naming the `—` symptom, when nothing configured can be priced. **A fourth failure is silent rather than visible:** an _expired_ promo — a promotion the provider has stopped still advertises a price nobody is getting. `TestBundledModelPricing::test_discounts_are_real_discounts_and_parse_their_expiry` pins that a bundled discount is below list and its `until:` parses (an unreadable one reads as _expired_); neither test knows whether the discount is still running, so re-verify live promos as step 6 of the [model audit](#auditing-the-model-list-settings--pricing). Cost is **per model everywhere**, the promo included: run buckets and the `aux` sinks are each priced at their own model's rate (`test_promo_total_is_model_aware_across_lead_subagent_and_aux`). Manual: run an Ultra-mode turn (so a subagent model is involved) and confirm the header shows a **green** dollar amount; on a discounted model the dropdown shows the green promo total beside the red standard one; on `—` the dropdown names the unpriced model. |
 | **Explicit `price:` / `discount:` fields** (§17)                                                        | `cd backend && uv run pytest tests/test_model_price_fields.py tests/test_config_integrity.py tests/test_pricing.py` (source parity: the audit row's `test_audit_models.py`; dropdown: the next row). Covers: the field precedence (`price:` > legacy `pricing:` > a `($in/out)` pair in `display_name`), the additive discount, every expiry rule, that **no bundled model carries a price in its name**, that the two synced sources ship the same price, and that the dropdown renders the price from the field. Wiring: `deerflow/pricing.py` (`parse_discount_expiry`, `_raw_from_price_fields`, `_resolve_discount_window`), the `price`/`discount` fields on `ModelConfig`, the **factory exclude set** in `models/factory.py`, `ModelPriceResponse` on `GET /api/models`, `wizard/providers.py::MODEL_PRICES`, and `core/models/sorting.ts` (`resolveModelPrice`, `modelNameSegments`). **Four properties must not be "fixed" into their opposites:** (1) an expired discount is dropped in `build_pricing_map`, so it never reaches a `ModelPricing` and no consumer re-checks the window — do not add a second expiry check downstream; (2) an unparseable `until` and an unavailable clock both mean _expired_, never _eternal_; (3) `price`/`discount` must stay in the factory's exclude set, because `ModelConfig` is `extra="allow"` and an unexcluded key is forwarded into the provider client and from there into the completion request payload; (4) the display-name price **parser stays**, as the legacy path — `config_upgrade.py` cannot add a key inside an existing list entry, so every install written before this change is priced by that parser and nothing else. Manual: set a `discount:` with `until:` in the past and confirm the header and the dropdown both show only the standard rate; confirm the dropdown still shows a price at all.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | **Model dropdown sorting/grouping** (§8)                                                                | `cd frontend && pnpm test sorting` exercises the parse/sort/group logic (`frontend/tests/unit/core/models/sorting.test.ts`). Wiring: `core/models/sorting.ts` (`parseModelPrice` promo-aware, `parseModelProvider`, `sortModels`, `groupModelsByProvider`, `demoteLast`); preference `modelPicker` in `core/settings/local.ts`; shared UI `components/workspace/model-picker-controls.tsx` (`ModelPickerControls` + `ModelPickerList` + `ModelDisplayName`) used by the lead + subagent pickers in `input-box.tsx` and the sidecar picker in `sidecar/sidecar-panel.tsx`; **`components/workspace/model-select.tsx` (`ModelSelect`) is the same picker packaged for every other site** — `democracy-setup.tsx`, `settings/suggestions-settings-page.tsx`, `settings/subagent-settings-page.tsx`, `agents/agent-generator.tsx`, `agents/agent-settings-dialog.tsx` — pinned by `frontend/tests/unit/components/workspace/model-select.dom.test.tsx` and, structurally, `model-picker-sites.test.ts`. **Tests locate a picker by its own `data-slot="model-select"`, never by `getByRole("combobox")`** — that role belongs to whichever primitive is underneath, so it vanished when the primitive was swapped and took `suggestions-settings.spec.ts` down with a 30s timeout while the product itself was fine. `model-picker-sites.test.ts` fails in milliseconds on both halves of that (a dropped `data-slot`, or any spec driving a model picker by the combobox role); i18n keys in `core/i18n/locales/{en-US,zh-CN}.ts`. **Row layout** (provider first, price pinned to the right edge, weights + window on the second line) is `modelRowParts` + `ModelPickerRow`, pinned by `sorting.test.ts` (`parseModelProviderLabel`, `formatModelSize`, `formatContextWindow`, `modelRowParts` — including the legacy name whose price group must be removed _whole_ rather than leaving `GLM-5.2 ( → )`), by `model-select.dom.test.tsx` (the provider leads the row, the price span carries `ml-auto`, a local model's `id · GiB · K ctx` line, and grouped mode dropping the per-row provider), and structurally by `model-picker-sites.test.ts`, which fails any component driving `ModelPickerList` without `ModelPickerRow`. **Upstream's rival picker** (`model-picker-content.tsx`: favorites, no search) must not be wired into `input-box.tsx`/`sidecar-panel.tsx`, and its e2e spec `model-favorites.spec.ts` is deleted on each sync that brings it back — `model-selector-overflow.test.ts` fails both directions; why, and the integration path: §8. Manual: open the dropdown → Sort (Default/Name/Price), direction toggle and Group-by-provider appear and reorder the list; prices render green against the right edge and the discounted entry shows its red list price beside the green promo. A whole name turning green, or an uncoloured price, means `modelNameSegments` drifted from `price:`. Then **close** the dropdown on a discounted model at a narrow width: clipping means the `w-full` on the three `ModelSelectorName` triggers was dropped (§8) — CSS with no unit test, so it needs the eye. Then check a non-chat screen (Democracy setup, Settings → Suggestions/Subagents, the agent generator, a custom agent's dialog): a plain grey list means a site was added without `ModelSelect`. |
 | **Live chat slots** (§9)                                                                                 | `cd frontend && pnpm test live-chat-slots` covers the pure model (`frontend/tests/unit/core/threads/live-chat-slots.test.ts`: one slot per thread, the ceiling **declining** rather than evicting, a stable key surviving a new→real promotion) and the provider (`live-chat-slots-busy.dom.test.tsx`). Wiring: the live chat is `components/workspace/chats/chat-instance.tsx` (**fully controlled**, own provider stack via `chat-providers.tsx` with a per-instance `storageScope`); `keep-alive-chat-viewport.tsx` is mounted in `workspace-content.tsx` **above** the route inside `LiveChatSlotsProvider` and renders one instance per slot (only the active shown, the rest `display:none`); `[thread_id]/page.tsx` is a thin registrar in app builds and the classic inline `<ChatInstance>` in static-demo; state in `core/threads/live-chat-slots-context.tsx`; `ChatBox` panel ids keyed by thread id (not pathname). **The user-managed tab strip this replaced is gone on purpose** (folders do that job, §32) — a sync that reintroduces `chat-tabs*`, `/api/settings/chat-tabs` or a `chatTabs.*` i18n block is re-adding a removed feature, not restoring one. **If upstream restructures `[thread_id]/page.tsx`,** re-extract its body onto `chat-instance.tsx` and keep the registrar/classic split; watch for a barrel (`components/workspace/chats/index.ts`) import of the client viewport into the server `workspace-content.tsx` (import the file directly to keep the `"use client"` boundary). **Upstream may also extract the same body into a _new_ file** — #4765 added `chats/chat-page.tsx`, a slot-less duplicate missing the fork's cost header. An _add/add_ reports no conflict, so the duplicate silently becomes where upstream's future chat work lands; it is **deliberately deleted in this fork**. Port any delta into `chat-instance.tsx` and delete it again. |
@@ -552,6 +552,7 @@ Then confirm each fork feature end-to-end:
 | **ComfyUI on by default, models, and the generation page** (§26)                                        | `cd backend && uv run pytest tests/test_detect_comfyui.py tests/test_comfyui_models.py tests/test_comfyui_tools.py tests/test_doctor.py -k "Media or comfyui or Autostart or CLI"` plus `python3 scripts/pnpm.py rstest run image-generation workspace-header`. Covers the provisioning gate (Docker **and** a GPU start it; no GPU or no Docker holds and names the override; `DEER_FLOW_COMFYUI_AUTOSTART=0` honoured where it could run; a detector that raises reads as "no GPU"), the CLI words the launch scripts branch on (`bundled start` / `bundled hold` / `external <url>`), models-directory resolution for both integrations (bundled bind mount, `DEER_FLOW_COMFYUI_EXTERNAL_MODELS`, a container's own `…/models` mount, well-known paths, and the **refusal** when none answers), the install contract (no partial file survives a failed download or checksum mismatch, no silent replacement, a path-shaped name refused), and the setup page's handoff (stash consumed once, malformed stash discarded, the seed carrying pixel size and fallback sentence, prompt mode verbatim or write-both-halves, negative prompt dropped for a CFG-1 checkpoint, resolution snapped, capped per kind, refused rather than replaced when cleared). **Silent when broken:** active tool entries and launch-time provisioning must move together — the detector reads `config.yaml`, so commenting the entries out switches the feature off and active entries with nothing behind them fail at chat time; the tools must stay **bound** where no ComfyUI runs (that is what makes the agent fall back to the cloud skill) and `make doctor` must **skip** rather than warn there; the bundled container must stay out of the main compose project, or `up --remove-orphans` deletes it during an unrelated restart; `comfyui_models.py` must never fall back to the bundled directory for an external instance — that download succeeds and the model never loads; a `direct` prompt must reach the seed **verbatim**; the previewed size must be the snapped size that runs; and the **sidebar must offer no `/workspace/image` route** — the feature is deliberately unadvertised, so an entry re-added by hand or by a merge renders perfectly, fails nothing, and quietly puts it back in the shop window. Manual: `make comfy-models` against a running instance, `make comfy-model-add SOURCE=<url> TYPE=checkpoints`, then open `/workspace/image/new` directly (no sidebar entry leads there) → a prompt → confirm the composer is seeded, not sent, and the run produces a PNG.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | **Internet switch on the conversation** (§27)                                                           | `cd backend && uv run pytest tests/test_internet_toggle.py` plus `python3 scripts/pnpm.py rstest run internet-toggle`. The asserts that are silent when broken: **absent is not off** (only an explicit `False` opts out, so IM/TUI/scheduler callers keep their tools), the group classification is an **allowlist** (an unclassified group is dropped — a blocklist of `web`/`browser` passes everything else and ships the next provider group), **MCP and ACP tools go too**, a **subagent inherits** the switch from the parent run context, and the offline notice is appended to the _rendered_ prompt rather than a template placeholder an operator's saved `SYSTEM_PROMPT.md` would not have. UI wiring: `pnpm test:e2e internet-toggle` drives the composer control by its own `data-slot="internet-toggle"` — and because the composer is shared, a change to it means the **whole** `pnpm test:e2e`, not that one spec.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 | **Tiered voice input** (§24)                                                                            | `cd backend && uv run pytest tests/test_voice_stt.py` plus `python3 scripts/pnpm.py rstest run voice-input`. The asserts that are silent when broken: `voice.allow_cloud_fallback` and `voice.stt.enabled` both default **false** and `resolveVoiceInputTier` returns `null` rather than `"cloud"` when neither local tier is available; `DEFAULT_VOICE_SERVER_CONFIG` keeps cloud off when `/api/voice/config` errors or is unreachable (fail closed, not open); `is_local_endpoint` treats Tailscale CGNAT `100.64.0.0/10` as local, so a tailnet STT service is not mislabelled as off-machine; the upload size cap refuses **before** the STT service is called; error text never echoes the service body (a transcript is speech); and `recorder.test.ts` proves the microphone track is stopped on all four exits — success, recorder error, failed construction, and abandonment. A regression in the first two reads as "voice still works" while audio goes back to the vendor.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| **CAD model preview** (§56) | `cd examples/deerflow-extension-cad-preview && node --test` and `cd frontend && pnpm test:e2e cad-preview`. Silent when broken: `twenty file switches leave one live context…` (a leaked WebGL context blanks old previews only after about sixteen switches; §56 says why) and the bounding box against `report.json` (1000× off if the GLB is not read as metres). |
 
 **Integration points that tend to need a hand** (where upstream refactors collide with fork additions — check these first when tests fail): the AIO sandbox provider (upstream's cross-instance ownership store adds instance attributes that minimal test fixtures built via `__new__` must seed), the skills tool-policy path (upstream's dynamic `SkillToolPolicyMiddleware` vs. any fork static filtering — reconcile onto the middleware and drop dead build-time filters), `scripts/check.py`'s Docker diagnostics (any upstream test that mocks `run_command` with a strict dict must tolerate the extra `docker` calls), and the `task_tool.py` / `input-box.tsx` model-override plumbing.
 
@@ -5340,8 +5341,10 @@ figures were 11,354 and 11,434 until 2026-11-11, when the brief gained the
 limits the lead was never told and the extension a seventh tool (§44), and each
 figure rose by 144 on 2026-11-15, when the CAD module's tool began to ride every
 request (§51), and by 5 on 2026-11-16 with its loop wording and the `cad-modeling`
-skill's name in the index. 37 tokens of the allowance remain in Double Plus, 9 with
-`shared_workspace: read`, so new brief or tool text has to replace old text.
+skill's name in the index. `test_context_fit_critical.py` holds every mode and
+both workflows options to the allowance, and the CAD tool to 150 tokens of its
+own, so new brief or tool text has to replace old text; a count of spare tokens
+goes stale with the next prompt change, so none is quoted here.
 Measured with `shared_workspace: off` unless said otherwise.
 
 **The refusal says what is true.** It states the room the guard really allows,
@@ -5626,10 +5629,13 @@ itself. CadQuery is the input because models already write it.
 One tool, `cad_build`: a part name, the script and the
 numbers the part must meet go in; pass or fail per check with measured values
 comes out, or the refusal with its construct and line. Files go through
-`ToolContext.write_output` (§50): the script and a report for every build, STEP,
-STL and GLB only when every check passed, and `<name>.failed.glb` when the part
-built and a check failed. The package README holds the user's half: the
-allow-list, the limits, the install.
+`ToolContext.write_output` (§50): the script and a report for every build; a
+picture, the GLB, STL and 3MF (for several bodies also a laid-out `.parts.3mf`)
+and the STEP, in that order, only when every check passed; and
+`<name>.failed.png` with `<name>.failed.glb` when the part built and a check
+failed. The package README holds the user's half: the allow-list, the limits,
+the install; `docs/guide/cad-parts.md` the picture, the print files and the
+printer profile.
 
 **Built until it passes.** A real model's first script for a laptop stand used a
 `for` loop over its hinge links, was refused, and the conversation read as if
@@ -5674,13 +5680,14 @@ package is left alone, so a module installed by hand keeps its settings.
 structural migration, it rewrites `config.yaml` without its comments and keeps
 the original as `config.yaml.bak`. What it costs every install: about 1.7 GB of
 disk for the kernel (1.64 GB of the 2.6 GB environment the image's own sync
-line builds on `python:3.12-slim-bookworm`, measured), and 144 tokens of every
-request on a window up to 64K, where the short tool form applies. That leaves a
-32K local model 42 tokens of the fixed-request allowance in the heaviest
-composer mode and 14 with the workflows option `shared_workspace: read`; the
-first version of the tool cost 175 and put that option 17 tokens over, which
-the critical check did not measure (found in review). It now carries the tool
-in every mode and measures both documented options. The module can be turned
+line builds on `python:3.12-slim-bookworm`, measured), and its tool on every
+request on a window up to 64K, where the short tool form applies: `cad_build`
+may cost at most 150 tokens of every request
+(`test_the_bundled_cad_tool_stays_cheap_on_every_request`), and that per-tool
+cap binds before the 32K composer allowance does. The first version of the tool
+cost 175 and put the workflows option `shared_workspace: read` 17 tokens over
+the allowance, which the critical check did not measure (found in review). It
+now carries the tool in every mode and measures both documented options. The module can be turned
 off, not removed: `make extension-remove` edits tracked files (the manager's
 own group, the lock), and the next `git pull` then stops on them.
 After editing the example, refresh the snapshot with a plain copy that leaves
@@ -5715,6 +5722,159 @@ goes on. The library steps and a passing test cube inside an image were not run
 24.04, where the kernel maps exactly libX11 with its dependencies and the three
 dispatch libraries beyond the base system.
 
+**What the 2026-11-22 round added, and why each piece is shaped as it is.** A
+review of the open CAD items (roadmap items 46–59) found that the leverage was
+in what the module reads, measures and shows, not in a new way to run scripts.
+It shipped as one change set in separately reviewable commits, and each piece
+below keeps pass or fail where it was: on the re-imported STEP and the user's
+numbers.
+
+- **Scripts the way models write them (item 55).** The real handler refused
+  `w, d, t = 60, 40, 6`, `import math`, `p[0]`, `min(...)` and comprehensions,
+  and each refusal spent one of the eight attempts on arithmetic. The reader
+  now computes them itself: tuple assignment of plain names, `import math` in
+  that form only with a closed table (`pi`, `tau` and thirteen functions), and
+  `abs`, `min`, `max`, `round`, `int`, `float` and `len`, each by the reader's
+  own function on numbers it has already checked, never by a lookup on a
+  module, so the names cannot be rebound and `math.system` is refused. An index
+  is a whole number known when the script is read; a list comprehension has
+  one `for` over a range or a stated list and no `if`, and is unrolled item by
+  item, bounded by `MAX_SEQUENCE_ITEMS` and `MAX_WORK` rather than by loop
+  passes. A refusal names its construct in `error.refused` (`loft`,
+  `import os`), and an off-list method is answered with the nearest names, not
+  the whole table. Refusals still count toward the eight attempts, as the
+  `MAX_ATTEMPTS` comment budgets; the CAD eval counts them by construct before
+  a separate budget is argued. The script's top-level numbers go to
+  `report.json` as `parameters`, never into the answer.
+- **Operations that need no new trust (item 56).** `revolve`, `loft`, `sweep`,
+  `twistExtrude`, `wedge`, `transformed`, `spline`, the outline arcs,
+  `offset2D`, `end`, `first` and `last` take plain data or a part built earlier
+  in the script, and each row is a prefix of the kernel's positional order,
+  checked against 2.8.0's signatures. `combine` stays the boolean kind
+  everywhere, so the kernel's `"cut"` mode is `cut()`. A sweep's path must end
+  with an outline method, or be a helix: a path holding a solid is refused
+  before the kernel loads. The method list sits after the short form's cut, so
+  small windows pay nothing for it.
+- **Lettering and threads widen two SECURITY.md rules, each by one thing the
+  module owns (item 59).** Both are home-print staples, and both needed what
+  the boundary excluded. `text` has no `font` or `fontPath` in the table:
+  `build.py` passes the package's own font (`build.INJECTED`), because the slim
+  Gateway image has no system fonts and a path from a script would reach the
+  file system. The font is Liberation Sans 2.1.5 under the SIL OFL 1.1, half
+  the size of DejaVu Sans and with Arial's widths, which CadQuery names by
+  default; it came from Debian's `fonts-liberation` package because release
+  downloads were blocked where it was added, and `fonts/README.md` records its
+  SHA-256. `cq.Wire.makeHelix` is the one constructor on `cq` besides
+  `Workplane`: the reader keeps its numbers as data (at most 200 turns), and
+  only `sweep`'s path takes the value. Threads shipped behind a gate, a valid
+  M8 × 1.25 and M24 × 3 thread each under five seconds in the kernel tests
+  (0.55 s and 0.60 s measured). Each widening landed as its own commit with its
+  SECURITY.md text, for review.
+- **Where the features are (item 57).** `measure_holes` computed each hole's
+  axis point and dropped it. Each hole now carries `at`, its entry point, and
+  `axis`, and the measurement adds the bounding-box corners, the centre of mass
+  and the area. A `hole_diameters_mm` entry may be `[d, x, y, z]`, any point on
+  the axis, so the schema did not change: it passes when a measured hole of
+  that diameter has its axis within max(0.05 mm, 0.1 % of the largest side) of
+  the point, matched one to one, and a miss names the nearest hole that no
+  other point took. A blind hole's point may not lie past its floor by more
+  than that tolerance (`past_floor_mm` on a miss), because h08's hole drilled
+  into the wrong end lies on the same line and passed; a point beside the part
+  on the entry side still places it. The answer
+  lists at most 12 holes (four add about 50 tokens, pinned at 120), and
+  `report.json` holds every hole once, with what made it: the module's and
+  CadQuery's versions, the script's SHA-256 and the files of the set. The
+  checks moved into `checks.py`, which needs neither the extension API nor the
+  kernel to import, so `measure_cli` (`python -I -m
+  deerflow_extension_cad.measure_cli <step> [truth.json]`, under the worker's
+  limits) and the CAD eval judge a STEP exactly as `cad_build` does.
+  Fillet reach: `build.selections()` counts, for each fillet and chamfer the
+  result is made of, the edges the kernel took and the edges the part had then
+  (`measured.selections`, `{line, method, edges, of}`, all in `report.json`).
+  The answer names one only when it took more than four edges and not every
+  edge (`EDGES_SAID_ABOVE`), at most `MAX_LINES_SAID` notes of about 26 tokens
+  each, so the usual four-corner fillet costs nothing.
+- **The picture (item 53).** Nothing looked at the part, and a feature on the
+  wrong face passes every number. `render.py` draws a 960 px sheet, iso, top,
+  front and right at one scale, with numpy and Pillow alone: VTK's offscreen
+  path has no EGL or OSMesa in the image, and a software z-buffer takes about
+  0.2 s on a 17,600-triangle enclosure. It reads the exported STL, so the
+  picture is the printed file, and it is byte-identical for the same STL. The
+  footer gives the measured size with a plain `x`, because Pillow's built-in
+  font, the one every host has, draws no multiplication sign. A failed build is
+  drawn in orange under a banner naming its failed checks. The reply shows the
+  PNG inline through the existing outputs rendering, and a vision model is
+  asked to look at it once, at review (`NEXT_PICTURE`), not on every attempt.
+- **Ready to print (item 54).** `printability.py` reads the STL's arrays: bed
+  contact, overhang past the printer's angle with the bed left out, a sampled
+  thinnest wall, watertightness, the best of the six faces down when it at
+  least halves the overhang, the fit to the bed, and grams. Notes come only past
+  fixed thresholds. The printer is operator configuration (`printer:` in the
+  CAD record), bounded per key, which the API cannot write and which costs no
+  tokens. The kernel writes the 3MF natively in millimetres, and `build.export`
+  scales the GLB's scene roots by 0.001, because glTF is metres and a 40 mm
+  part read as 40 m in every viewer; the viewer (§56) reads that scale. One
+  wall estimate is used, `printability.thinnest_wall_mm`: it is deterministic
+  and reads the file the slicer gets, while `measure.sampled_wall` is bounded
+  by a clock, so its value moved with the machine's load and it could add a
+  second to every build. A part of several bodies is judged body by body, each
+  standing on the bed as `.parts.3mf` lays it out (`assess_apart`, meshes read
+  from the 3MF's per-body objects, `printed_apart: true`): on the merged STL a
+  part split for the bed was still too tall, open where its halves touch and
+  400 mm² overhanging, and the notes sent the model to split it again. Bodies
+  share the wall rays by area. Welded connected components of the STL would not
+  do: touching bodies weld into one. `build.export` renumbers the kernel's 3MF
+  objects from 1 and adds the `rels` and `model` default content types, because
+  lib3mf refused every file the kernel wrote (`normalise_3mf`).
+- **Several bodies (item 51).** The first real request was a print-in-place
+  laptop stand. `bodies` (1 to 20) makes the check "closed solids", exactly n
+  valid closed solids, with the volume their sum and the box their union; with
+  one body every sentence is as before. Each body's holes are measured against
+  that body alone, so a captive pin does not fill its bore. The smallest gap is
+  a note, never a check: a gap of zero already fails the count, because
+  touching bodies fuse. `<name>.3mf` keeps the kernel's one object of N
+  components for printing in place, and `<name>.parts.3mf` rewrites the build
+  items so each body stands on the bed 5 mm apart, translation only, falling
+  back to one STL per body (at most eight). `split` is a keyword-only row,
+  because the kernel reads a positional part as a cutting tool, which is
+  `cut()`'s job.
+- **The skill (item 58).** `SKILL.md` asks only for dimensions that decide the
+  shape, never for printer facts, and shows a draft's picture before details
+  are argued; hole allowances, fits, walls and overhangs come from
+  `references/fdm.md` (ISO 273, 4032, 4762 and 10642; the heat-set insert
+  column is labelled typical, since vendor tables could not be fetched), parts
+  are built in print orientation, and a fit-test coupon is offered when a part
+  must fit real hardware. The front matter is unchanged, so it costs nothing
+  per request; `SKILL.md` is pinned at 10 KB and `fdm.md` at 6 KB.
+- **A delegated part (item 47).** A subagent inherits `write_file`, so a
+  `.report.json` or a `.step` is no evidence it built anything. The generic
+  acceptance leaf `tool_result:<namespace>/<tool> <field>=<JSON scalar> [where
+  <arg>=<JSON scalar>]` reads the host-stamped answer instead: the newest
+  matching call decides, and a missing, truncated or compacted answer is
+  UNVERIFIED. It adds nothing CAD-specific to core (see
+  `subagents/ACCEPTANCE_CHECKS.md`), and the `task` description did not change
+  by a byte; `references/delegation.md` carries the recipe, one part name per
+  subagent, Ultra only. The leaf matches `where` exactly and records no other
+  argument, so `holds` says the subagent's newest build of that exact name
+  passed against numbers the subagent chose (a reviewer's subagent passed with
+  a 10 mm cube for a 60 × 40 × 6 bracket); the recipe has the lead build the
+  returned script once against its own numbers before calling the part
+  finished, which also covers a rebuild under a case variant of the name.
+  Binding the numbers in the leaf would need an assertion clause on the
+  deciding call, not a second `where`, which filters and would let an early
+  pass decide. Plus Ultracode is later work: its workflow agents run
+  on child threads where acceptance criteria are not checked, so it needs merge
+  workspaces and host evidence on the workflow record.
+- **The CAD eval (item 48).** `cad_build`'s pass is graded on the model's own
+  numbers. `make cad-eval MODEL=...` (`docs/guide/cad-eval.md`) sends 22 part
+  specs to the running agent and re-measures each delivered STEP through
+  `measure_cli` against truth derived from a reference part. The specs and
+  references are original: CadQueryEval's code is MIT, but the licence of its
+  task data is unconfirmed, so it is cited and not vendored. The offline half
+  shipped; the live rows (a local 32K model and a cloud model at k=3, a
+  baseline row on the module as it was before this round, two runs that agree
+  within the interval) are roadmap item 48.
+
 **The decisions, and what was rejected.**
 
 - **Read, then perform.** `interpreter.compile_script` turns the text into a flat
@@ -5745,12 +5905,13 @@ dispatch libraries beyond the base system.
   because a kernel call holds the interpreter for its whole duration and nothing
   inside the child can interrupt it.
 - **The tool decides.** The STEP that was written is imported again and measured:
-  one valid closed solid, bounding box, volume, holes. Measuring the file, not the
+  one valid closed solid (or the number of bodies asked for), bounding box,
+  volume, holes. Measuring the file, not the
   object in memory, is what makes "a STEP listed in a `cad_build` answer means a
   part that passed" true. It is not a statement about every `.step` in the
   outputs: an earlier build's STEP stays when a later one fails, and an agent
-  with file tools can write one itself. Expected holes are one list of
-  diameters, which carries the count.
+  with file tools can write one itself. Expected holes are one list, a diameter
+  or a diameter with a point on its axis per hole, which carries the count.
 - **One named offline group.** `local_extensions` joins
   `OFFLINE_ALLOWED_TOOL_GROUPS` and `cad_build` declares it. `media` is not
   reused: it means the local ComfyUI service.
@@ -5823,10 +5984,14 @@ dispatch libraries beyond the base system.
   together, each told to simplify a part that was fine.
 - **The whole process group is killed, also after a worker that finished.** The
   worker starts no process; one that exists means the kernel was made to.
-- **The description is paid on every request.** `cad_build` costs 146 tokens in
-  the short tool form and the heaviest composer mode has 37 to spare on a 32K
-  model, 9 with a workflows option on (the loop wording and the skill's name in
-  the index cost 5). The array parameters carry no item
+- **The description is paid on every request.** `cad_build` may cost at most
+  150 tokens of every request
+  (`test_the_bundled_cad_tool_stays_cheap_on_every_request`), and that per-tool
+  cap binds before the 32K composer allowance does. The opening sentence was
+  rewritten to say what a script may contain, which is also what a small model
+  reads, and the 10 tokens it saved (146 to 136, measured 2026-11-22) paid for
+  `bodies` (136 to 144); a `min_gap_mm` parameter as well would have made 152,
+  so the clearance comes from the printer profile at no cost. The array parameters carry no item
   types for that reason; the handler checks each number. Parameter names say what they hold instead of carrying descriptions.
   A small model gets the sentences before `Methods:` only, so "assign the part
   to result" moved behind the method list: the reader falls back to the last
@@ -5874,6 +6039,26 @@ dispatch libraries beyond the base system.
 - **The first expected numbers are held until the part passes.** A new run
   starts the count over and keeps the numbers: "keep going" is not a new
   request. Only a pass followed by the user speaking again releases them.
+- **The checked answer is written before anything that follows the checks.**
+  The worker writes a `built` result, then draws the picture and runs the print
+  check, each skipped with a note when under three seconds of the build's time
+  remain; on a timeout in either, the parent delivers the built result with a
+  note. A renderer forced to fail and a timeout while drawing are both tests
+  (`test_a_picture_that_cannot_be_drawn_costs_the_part_nothing`,
+  `test_a_build_stopped_while_its_picture_is_drawn_still_delivers_the_checked_part`).
+- **The print block never decides.** `decide()` does not read it, and
+  `test_the_print_block_never_decides` compares `passed` with and without it.
+- **The GLB's root scale is the viewer's contract.** The viewer's e2e fixtures
+  are generated from this module and committed, so an export that drops the
+  scale still passes the viewer's spec; the kernel test
+  `test_the_glb_opens_at_real_size_and_the_3mf_is_in_millimetres` is what
+  catches it.
+- **`checks.py` stays importable without the host.** `test_checks.py` runs
+  `decide()` and `measure_cli` as a program with `deerflow_extension_api` made
+  unimportable; the CAD eval measures through it, and roadmap item 50 would.
+- **The font and the helix stay the module's.** `font` and `fontPath` stay out
+  of the table, lettering stays printable ASCII of at most 64 characters counted
+  in `MAX_WORK`, and a helix is taken only as `sweep`'s path.
 
 **Known gaps.** The internet switch does not filter plugin tools at all: an
 extension tool in the default `extensions` group is still offered offline, the
@@ -5888,27 +6073,44 @@ the CHANGELOG entry carries the three commands that clear it. A pattern of which
 some instances miss the part still passes unless the holes are declared, since
 the volume changed. An outline nobody used is a note in the answer, not a
 failure: the sloppy idiom `rect(...).vertices().hole(...)` leaves one behind on
-a correct part. A hole's position and a pocket's depth are not checked at all;
+a correct part. Holes are measured and checked where they are, but a pocket's
+depth and the positions of pockets, bosses and slots are not checked at all;
 `unchecked` in the answer shows what was measured and not asked about. An event
 loop that is stopped and closed without cancelling its tasks leaves the worker
 to the processor backstop and its directory behind. Windows gets neither the
-process-group kill nor the limits. **A part is one solid**, so a print-in-place
-design of loose bodies cannot be delivered; the answer says so in a note instead
-of counting attempts against it. Threads, sweeps, lofts and revolved shapes are
-not on the allow-list. The attempt count and the held numbers live in Gateway
-memory, by part name: a restart forgets them, and a model that renames the part
-on every attempt starts a new count each time. The tool measures no positions:
-a feature on the wrong face passes every check, which is why the skill has
-every feature placed from the part's origin (`workplane(origin=(0, 0, 0))`;
-the centre of a face moves when a cut splits it). Nor does it count what a
-selector took: a fillet on `edges("|Z")` after a rim was added rounds the rim
-too, and the volume comes out as worked out. A build that runs out of
-time is told what it was doing when the clock ran out, which is not always
-what took the time. The skill has not been run on a
-real model here: roadmap item 45's acceptance (a plate, an L-bracket and an
-enclosure on one cloud model and one local 32K model) is still open; reviewer
-agents following the skill built eleven parts, each within the limit, with
-positions checked by geometry on four of them.
+process-group kill nor the limits. The attempt count and the held numbers live
+in Gateway memory, by part name: a restart forgets them, and a model that
+renames the part on every attempt starts a new count each time. A feature other
+than a hole on the wrong face passes every check; the picture is where it shows,
+and the skill places every feature from the part's origin
+(`workplane(origin=(0, 0, 0))`; the centre of a face moves when a cut splits
+it). A selector takes every matching edge on the part as it is at that line, so a
+fillet on `edges("|Z")` after a rim was added rounds the rim too and the volume
+comes out as worked out; the answer names such a fillet by its edge count (item
+57, below), but a selection of too few edges is shown only by the report and the
+picture. A build that runs out of time is
+told what it was doing when the clock ran out, which is not always what took
+the time. Not exposed, each for its reason: `sweep`'s `normal` and `auxSpine` (a
+kernel vector, a second rail), `spline`'s arguments past `periodic`,
+`offset2D`'s `"tangent"` kind (`"intersection"` gives the same sharp corners),
+`text`'s `kind` (one font file letters bold and italic as regular), `split` with
+a part (`cut()` does it), `parametricCurve`, `each`, `eachpoint` and `cutEach`
+(callables), `sketch` and `placeSketch`, and every constructor on `cq` but
+`cq.Wire.makeHelix`. CadQuery's 3MF writer writes each face's vertices apart,
+so a slicer may report a repair; `normalise_3mf` renumbers the objects from 1
+and adds the default content types, and a pass that welds the vertices is not
+written. `measure.sampled_wall` is a library function the worker does not call
+(the print block's wall comes from `printability.py`). The print thresholds and
+the skill's clearance and nut tables have not been checked on a real printer;
+that is the fit-test coupon, printed on the owner's printer. The skill has not
+been run on a real model here: roadmap item 48's first live run (a plate, an
+L-bracket and an enclosure on one cloud model and one local 32K model, scored
+on ground truth) is still open, and so is whether a vision model gains from the
+picture, which that run counts in `view_image` calls; reviewer agents following
+the skill built eleven parts, each within the limit, with positions checked by
+geometry on four of them. A live Ultra delegation under `delegation.md`'s
+criterion has not been run either; the offline tests drive the real subagent
+executor with a scripted model.
 
 **On an upstream sync.** The package is fork-only. `internet_access.py`,
 `doctor.py`, `backend/Dockerfile` (two blocks: the libraries, the load step) and
@@ -5919,12 +6121,20 @@ adds the `cad` group, its name in `default-groups` and one line in
 record, migration 73, the `--no-group cad` retry in `scripts/serve.sh`,
 `scripts/dev_multi_instance.sh` and the `install` target, a third Dockerfile
 block in the dev stage, and a longer doctor limit in `scripts/support_bundle.py`. A sync that touches the example fails `test_bundled_cad_extension.py` until
-the snapshot is refreshed.
+the snapshot is refreshed. The package declares `numpy` and `pillow` for the
+picture and the print block (the lock already resolved both through the
+kernel's own dependencies), and its snapshot carries `fonts/`. The generic
+`tool_result` leaf lives in upstream's `acceptance_checks.py` and `executor.py`
+as additive blocks, wired through `task_tool.py` and batch acceptance; the eval
+is fork-only (`backend/scripts/benchmark/cad_eval/`, the `cad-eval` target).
 `cadquery` is pinned; a bump owes a pass of the package's kernel tests, which
 check every allow-listed method against the kernel's own signature.
 
 Coverage: the package's tests (`test_interpreter.py`, `test_worker_process.py`,
-`test_build.py`, `test_measure.py`; the last two need the kernel),
+`test_build.py`, `test_measure.py`, `test_checks.py`, `test_render.py`,
+`test_printability.py` and `test_eval_specs.py`; those that build parts need the
+kernel), `backend/tests/test_bench_cad_eval.py` (the eval's scoring, offline),
+`backend/tests/test_acceptance_tool_result.py` (the generic leaf),
 `tests/skills/test_cad_modeling.py` (the skill against the module; it runs in
 Skill Review CI, and the operations page is compared again inside the Backend gate),
 `backend/tests/test_cad_extension.py`, `test_bundled_cad_extension.py`,
@@ -6450,3 +6660,120 @@ learning lines' preconditions, the ledger hand-off failing open),
 re-enable winning, daily cadence), `test_change_cycle_doc.py`,
 `test_repo_map.py`, and `tests/skills/test_coding_skills.py` /
 `test_git_pr_workflow.py`.
+
+### 56. CAD models you can turn in the file preview
+
+**Why.** The CAD module (§51) ships bundled and on, and its GLB and STL files
+could only be downloaded: on a phone, looking at a part meant a second app. The
+picture §51 now draws covers the first look; this adds rotation. Roadmap item 46.
+
+**What.** `examples/deerflow-extension-cad-preview`, a browser-only package on
+the host's `artifactPreviews` contract, in the Office preview's layout: no tool
+and no route. A `.glb`, `.stl` or `*.failed.glb` in the artifact panel, the
+reader or the Files view becomes a model with Fit, Reset, Top, Front and Iso,
+an edges toggle, and a `role="status"` line giving the bounding box in
+millimetres in the CAD frame (Z up). A failed GLB carries a banner naming its
+report. The package README holds the user's half (limits, units, build);
+`docs/guide/file-previews.md` the guide.
+
+**Bundled and on by default,** the way CAD is: a snapshot in
+`backend/extensions/sources/deerflow-extension-cad-preview`, an
+extensions-group entry and a `[tool.uv.sources]` path in
+`backend/pyproject.toml` with no platform marker (the Python half is a
+registration and the rest is built browser assets), an enabled `plugins:` record
+in `config.example.yaml`, and a `config_upgrade.py` migration that names
+`cad-preview` alone, as migration 73 does for `cad`: migration 76, so
+`config_version` is 76 in the example and both chart copies. Like every
+migration that delivers a record, it rewrites `config.yaml` without its comments
+and keeps the original as `config.yaml.bak`; the release note says so.
+Rejected: off by default.
+A viewer that waits for an operator leaves every default CAD user with files
+they can only download, and the parsers, not the switch, are what contain a
+hostile file. `make extension-disable NAME=cad-preview` turns it off, and GLB
+and STL files go back to the download fallback.
+
+**The decisions, and what was rejected.**
+
+- **three.js 0.187.0, pinned exactly and bundled.** Its core is 565 KB
+  minified (140 KB gzip) against Babylon's 1.54 MB; model-viewer has no STL
+  loader and pulls its decoders from a CDN; Online3DViewer fetches its parts
+  from jsdelivr at run time. Nothing is fetched from outside the server.
+  `build.mjs` fails an asset over 3 MiB, under the host's 4 MiB cap.
+- **A package of its own.** Viewing a model needs no geometry kernel, and the
+  viewer reads any GLB or STL, not only the CAD module's.
+- **One self-contained module Worker per file.** Plugin assets are served with
+  `Content-Security-Policy: sandbox`, so the Worker's origin is opaque: it can
+  neither import further chunks nor fetch, and `new Worker(url)` needs a
+  same-origin URL (`docs/full-stack-plugins.md` now states both). It gets its
+  own copy of the bytes, answers with fixed codes only, and is terminated when
+  it answers, after 15 seconds, or when the preview closes.
+- **Counts are summed from the file's declarations and checked before anything
+  is allocated:** 1,000,000 triangles, 1,000,000 vertices, 20,000 primitives
+  or nodes, a 4 MiB JSON chunk, a node depth of 64. GLB is a strict glTF 2.0
+  subset (no `uri` buffers, no `extensionsRequired`, triangles only, every
+  accessor, buffer view and index bounded, node cycles refused); an STL is
+  binary whenever 84 + 50 n equals its length, even with a `solid` header.
+  Feature edges are computed in the Worker and skipped above 600,000 triangles.
+- **GLB is metres and Y-up, STL millimetres and Z-up.** The CAD module writes
+  its GLB with a root scale of 0.001 (§51), so this viewer, like any glTF tool,
+  shows the real size; a GLB written before that change reads 1000 times too
+  large. A part of several bodies (one node each) is drawn whole in one draw
+  call, with a group range per node.
+- **No STEP preview.** An OpenCascade WebAssembly build is 7,604,031 bytes,
+  over the per-asset cap, LGPL-2.1, cannot be fetched by an opaque-origin
+  Worker, and would tessellate differently from the kernel that measured the
+  part. The GLB is the preview and the STEP the download (roadmap.md,
+  *Deliberately not*).
+- **One generic host change.** `frontend/src/core/artifacts/binary-preview.ts`
+  throws a named `PreviewTooLargeError`, and `MountedPreview` says the file is
+  larger than the 25 MiB preview limit (en-US, zh-CN) and offers no retry;
+  before, an oversize file read as one that could not be opened.
+
+**What must not be simplified away.**
+
+- **One WebGL context per mount, released in `dispose()`.** The order is the
+  README's: the pending frame, observers, controls, geometries and materials,
+  render lists, `renderer.dispose()`, `forceContextLoss()`, the canvas shrunk
+  and removed, the Worker terminated, Blob URLs revoked. Browsers keep about
+  sixteen live contexts, and a leak shows only after many file switches, as
+  older previews going blank. A mount already aborted creates no context, and a
+  lost context says *Display lost* and offers *Reload*.
+- **Render on demand.** No animation loop, no damping, no auto-rotation: the
+  e2e idle-frame check fails on any of them.
+- **No allocation before the caps.** A test proves no large typed array exists
+  when a cap is hit; a new glTF feature is a new check with a hostile fixture.
+- **The theme is read, not copied.** The edge colour is resolved from
+  `--foreground` and resolved again when the theme changes, without a remount.
+
+**Known gaps.** There was no real phone and no GPU where it was built: 390 px
+was emulated and WebGL ran on SwiftShader, so a real phone with a GPU browser is
+the owner's acceptance check. At 390 px the chat header's toolbar
+(`chat-instance.tsx`, a row that does not shrink) runs past the viewport behind
+the panel's sheet, with or without this package, so the spec checks page-level
+overflow only from 600 px up; it checks the viewer's own box at every width. A 3MF gets the download fallback. The bounding box is measured
+on the triangles, so a curved face can read up to the mesh tolerance under the
+CAD report, which measures the solid.
+
+**On an upstream sync.** The package is fork-only. Upstream owns the host files
+it touches: `binary-preview.ts` (the named error), `plugin-artifact-preview.tsx`
+(the reason in `MountedPreview`), the i18n locales, `catalog.ts` and
+`bundled-documentation.json`. An upstream change to how previews mount and
+unmount is where a context leak would come from, and only the e2e spec sees it,
+which is why this feature has a checklist row. A sync that touches the example
+fails `test_bundled_cad_preview_extension.py` until the snapshot is refreshed
+(leaving out `node_modules`, `.venv` and `__pycache__`).
+
+Coverage: the package's `node --test` suites (`glb`, `stl`, `mesh` and
+`worker-client`: hostile files, and an indexed GLB of three vertices with more
+than a million index triplets refused before allocation) and its
+`test_registration.py`; `scripts/check_extension.py` on the package; the
+frontend `binary-preview.test.ts` and `plugin-artifact-preview.dom.test.tsx`;
+`frontend/tests/e2e/cad-preview.spec.ts` (a GLB, an STL, a failed GLB and a GLB
+of two bodies in the panel and the reader at 1440 and 390 px, the bounding box
+against `report.json` within 0.1 mm, both download fallbacks, twenty file
+switches with one live context, no idle frames, the theme switch, and GLB and
+STL unchanged with the plugin absent or disabled); and
+`backend/tests/test_bundled_cad_preview_extension.py`, which also holds
+migration 76's cases (delivered once to an install on version 75, a removal
+that sticks, an operator's own record left alone); `test_config_upgrade_script.py`
+only pins the example's plugin order (`workflows`, `cad`, `cad-preview`).

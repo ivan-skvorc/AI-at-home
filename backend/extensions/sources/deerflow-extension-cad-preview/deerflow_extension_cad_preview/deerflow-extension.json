@@ -1,0 +1,51 @@
+{
+  "schema_version": 1,
+  "id": "cad-preview",
+  "locales": {
+    "en-US": {
+      "title": "CAD model preview",
+      "description": "Rotate GLB and STL models in the side panel and the reader, with the bounding box in millimetres.",
+      "usage": [
+        {
+          "title": "Open a model",
+          "description": "Open a GLB or STL file, such as a part from the CAD module, in the right-hand panel, the Files view or the standalone reader."
+        },
+        {
+          "title": "Turn and measure",
+          "description": "Drag to rotate, scroll or pinch to zoom, and use Fit, Top, Front and Iso. The bounding box along the CAD axes is shown under the model."
+        },
+        {
+          "title": "Download the original",
+          "description": "The original file always downloads unchanged. Files over 25 MiB or 1,000,000 triangles show the reason and a download instead of a preview."
+        }
+      ],
+      "requirements": [
+        "Ships installed and enabled in this fork. Turn it off with make extension-disable NAME=cad-preview.",
+        "Needs WebGL in the browser. A failed build (.failed.glb) is shown with a note pointing to its report."
+      ]
+    },
+    "zh-CN": {
+      "title": "CAD 模型预览",
+      "description": "在右侧面板和独立阅读页中旋转查看 GLB 和 STL 模型，并显示以毫米为单位的包围盒。",
+      "usage": [
+        {
+          "title": "打开模型",
+          "description": "在右侧面板、文件视图或独立阅读页中打开 GLB 或 STL 文件，例如 CAD 模块生成的零件。"
+        },
+        {
+          "title": "旋转与测量",
+          "description": "拖动旋转，滚轮或双指缩放，并可使用适应、俯视、前视和轴测视图。模型下方显示沿 CAD 坐标轴的包围盒。"
+        },
+        {
+          "title": "下载原始文件",
+          "description": "原始文件始终可原样下载。超过 25 MiB 或 1,000,000 个三角形的文件会显示原因和下载按钮，而不是预览。"
+        }
+      ],
+      "requirements": [
+        "此分支默认安装并启用。可通过 make extension-disable NAME=cad-preview 关闭。",
+        "需要浏览器支持 WebGL。未通过检查的构建（.failed.glb）会显示提示，并指向其报告。"
+      ]
+    }
+  },
+  "docs_url": "https://github.com/ivan-skvorc/AI-at-home/tree/main/examples/deerflow-extension-cad-preview#readme"
+}

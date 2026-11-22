@@ -86,7 +86,7 @@ def test_the_backend_installs_it_from_the_snapshot_only_where_the_kernel_has_whe
     assert not installs("darwin", "x86_64") and not installs("win32", "AMD64") and not installs("linux", "armv7l")
     # In a group of its own, in the default set: installed without being asked for, and droppable alone.
     assert "cad" in project["tool"]["uv"]["default-groups"]
-    assert not [entry for entry in project["dependency-groups"]["extensions"] if "cad" in entry]
+    assert not [entry for entry in project["dependency-groups"]["extensions"] if Requirement(entry).name == "deerflow-extension-cad"]
     assert project["tool"]["uv"]["sources"]["deerflow-extension-cad"] == {"path": "extensions/sources/deerflow-extension-cad"}
     # The stock image build copies backend/ only; the lock must not point outside it.
     _validate_locked_local_sources(BACKEND / "uv.lock", BACKEND)

@@ -21,8 +21,12 @@ cd ../../backend && python -m pytest tests/test_cad_extension.py tests/test_cad_
   and `ast.parse` has one call site. A change that lets a value from a script reach a lookup, a file path or
   a subprocess argument needs its own review.
 - **A new method is a table row with typed arguments, an example that builds and
-  a signature that matches the kernel.** Methods that take a path, a callable, a
-  font or a raw kernel object stay off the list. A new string kind needs a
+  a signature that matches the kernel.** No parameter that takes a path, a
+  callable, a font or a raw kernel object goes on the list: `text` is there
+  without `font` and `fontPath` because `build.py` passes the package's own font
+  (`build.INJECTED`), and `cq.Wire.makeHelix` is the one constructor on `cq`
+  besides `Workplane`, whose value only `sweep`'s path takes; both are
+  SECURITY.md invariants. A new string kind needs a
   closed pattern, because CadQuery parses selector strings itself. After a
   change to the table, regenerate the skill's page, which a test compares:
   `python deerflow_extension_cad/allowlist.py > ../../skills/public/cad-modeling/references/operations.md`.
@@ -44,9 +48,18 @@ cd ../../backend && python -m pytest tests/test_cad_extension.py tests/test_cad_
   prints to stdout. Keep `__init__.py` and `tool.py` free of kernel imports.
 - **Kernel calls hold the GIL.** Only the parent's wall clock and a kill of the
   process group stop a build; a timeout inside the child does nothing.
-- **Pass or fail is decided on the re-imported STEP, by `decide()`.** STEP is
-  written last and only for a part that passed every check, so a STEP listed in
-  an answer means a checked part.
+- **Pass or fail is decided on the re-imported STEP, by `checks.decide()`.**
+  STEP is written last and only for a part that passed every check, so a STEP
+  listed in an answer means a checked part. `checks.py` and `measure_cli.py`
+  import without the extension API and without the kernel, because the CAD
+  eval and `test_checks.py` load them outside the Gateway.
+- **What runs after the checks never costs the part.** The worker writes the
+  checked answer first; the picture (`render.py`) and the print block
+  (`printability.py`) follow, and a failure or a timeout there becomes a note.
+  Neither is read by `decide()`.
+- **The GLB is in metres: `build.export` scales its root by 0.001.** The
+  viewer package and every glTF tool read it at real size; its e2e fixtures are
+  generated from this module, so regenerate them after an export change.
 - **`findSolid()` walks back to the parent.** After an operation that empties
   the part it returns the part as it was before, which then passes. `build.py`
   fails an operation that leaves no solid, and a cut that changes no volume.
@@ -58,8 +71,9 @@ cd ../../backend && python -m pytest tests/test_cad_extension.py tests/test_cad_
 - **Clean-up must not depend on a task getting to run.** A task cancelled
   before its first step does nothing, and the host also runs tools on loops
   that end at once: the kill is direct and the release is a done callback.
-- **The tool description is paid on every request.** The context-fit critical
-  check has under forty tokens to spare with this tool on every request, nine
-  with a workflows option on: shorten elsewhere before adding a word, and keep
-  parameter meaning in the names. A small model gets the sentences before
+- **The tool description is paid on every request.** `cad_build` may cost at
+  most 150 tokens of every request
+  (`test_the_bundled_cad_tool_stays_cheap_on_every_request`), and that cap binds
+  before the composer allowance does: shorten elsewhere before adding a word,
+  and keep parameter meaning in the names. A small model gets the sentences before
   `Methods:` and nothing after, so what it cannot do without goes first.

@@ -176,6 +176,7 @@ def _make_result(
     token_usage_records: list[dict] | None = None,
     tool_receipts: list[dict] | None = None,
     bash_executions: list[dict] | None = None,
+    tool_results: list[dict] | None = None,
 ) -> SimpleNamespace:
     return SimpleNamespace(
         status=status,
@@ -187,6 +188,7 @@ def _make_result(
         usage_reported=False,
         tool_receipts=tool_receipts,
         bash_executions=bash_executions,
+        tool_results=tool_results,
     )
 
 
@@ -3441,7 +3443,7 @@ def _run_completed_task_tool(monkeypatch, *, result_text: str, tool_receipts: li
     return _task_tool_message(command)
 
 
-def _run_completed_task_tool_with_criteria(monkeypatch, *, criteria: list[str], bash_executions: list[dict] | None = None) -> ToolMessage:
+def _run_completed_task_tool_with_criteria(monkeypatch, *, criteria: list[str], bash_executions: list[dict] | None = None, tool_results: list[dict] | None = None) -> ToolMessage:
     """Drive the completed branch with acceptance criteria attached.
 
     The workspace-scoped file leaves read through the lazily imported
@@ -3474,7 +3476,7 @@ def _run_completed_task_tool_with_criteria(monkeypatch, *, criteria: list[str], 
     monkeypatch.setattr(
         task_tool_module,
         "get_background_task_result",
-        lambda _: _make_result(FakeSubagentStatus.COMPLETED, result="done", tool_receipts=None, bash_executions=bash_executions),
+        lambda _: _make_result(FakeSubagentStatus.COMPLETED, result="done", tool_receipts=None, bash_executions=bash_executions, tool_results=tool_results),
     )
     monkeypatch.setattr(task_tool_module, "get_stream_writer", lambda: lambda _event: None)
     monkeypatch.setattr(task_tool_module.asyncio, "sleep", _no_sleep)
@@ -3506,6 +3508,15 @@ def test_task_tool_completed_stamps_acceptance_verdict(monkeypatch):
     assert "- [holds] file:../outputs/report.md non-empty" in message.content
     assert "- [holds] tests_passed:make test" in message.content
     assert "- [UNVERIFIED] open ended" in message.content
+
+
+def test_task_tool_completed_checks_tool_result_criteria(monkeypatch):
+    from deerflow.extensions.plugin_tools import plugin_tool_name
+
+    entry = {"tool_name": plugin_tool_name("parts", "build_part"), "tool_call_id": "tc-1", "turn": "ai-1", "ordinal": 0, "result_id": "r-1", "result": "ok", "args": {"name": "bracket-a"}, "fields": {"passed": True}, "compacted": False}
+    message = _run_completed_task_tool_with_criteria(monkeypatch, criteria=['tool_result:parts/build_part passed=true where name="bracket-a"'], tool_results=[entry])
+    verdict = message.additional_kwargs["subagent_acceptance_verdict"]
+    assert [(leaf["family"], leaf["checked"], leaf["holds"]) for leaf in verdict["leaves"]] == [("tool_result", True, True)]
 
 
 def test_task_tool_completed_without_criteria_stamps_no_acceptance_verdict(monkeypatch):

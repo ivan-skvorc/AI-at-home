@@ -2,6 +2,7 @@ import { afterEach, expect, rs, test } from "@rstest/core";
 
 import {
   MAX_BINARY_PREVIEW_BYTES,
+  PreviewTooLargeError,
   readPreviewFile,
 } from "@/core/artifacts/binary-preview";
 
@@ -61,6 +62,31 @@ test("cancels a declared oversized response before reading it", async () => {
     readPreviewFile("/file", new AbortController().signal),
   ).rejects.toThrow("too large");
   expect(cancel).toHaveBeenCalled();
+});
+
+test("both oversize paths reject with the named error a host can explain", async () => {
+  const declared = new Response(new ReadableStream(), {
+    headers: { "content-length": String(MAX_BINARY_PREVIEW_BYTES + 1) },
+  });
+  const streamed = new Response(
+    new ReadableStream({
+      start(controller) {
+        controller.enqueue(new Uint8Array(MAX_BINARY_PREVIEW_BYTES + 1));
+        controller.close();
+      },
+    }),
+  );
+  for (const response of [declared, streamed]) {
+    rs.spyOn(globalThis, "fetch").mockResolvedValueOnce(response);
+    const error: unknown = await readPreviewFile(
+      "/file",
+      new AbortController().signal,
+    ).catch((reason: unknown) => reason);
+    expect(error).toBeInstanceOf(PreviewTooLargeError);
+    expect((error as PreviewTooLargeError).limitBytes).toBe(
+      MAX_BINARY_PREVIEW_BYTES,
+    );
+  }
 });
 
 for (const declared of [undefined, "1"]) {

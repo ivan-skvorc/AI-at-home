@@ -5,15 +5,19 @@ It starts ``worker.py`` in a fresh interpreter with a wall-clock limit, reads
 back measured numbers, compares them with what the model said the part must
 meet, and writes files through the host (``ToolContext.write_output``).
 
-The tool decides pass or fail, not the model: STEP, STL and GLB are written
-only when every check passed, so a STEP file listed in a ``cad_build`` answer
-means a part that passed.
+The tool decides pass or fail, not the model: STEP, STL, 3MF and GLB are
+written only when every check passed, so a STEP file listed in a ``cad_build``
+answer means a part that passed. A failed build keeps its picture and GLB, named
+``.failed``, to look at.
 """
 
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import importlib.metadata
 import json
+import math
 import os
 import re
 import shutil
@@ -29,7 +33,9 @@ from typing import Any
 
 from deerflow_extension_api import HostCapabilityError, ToolContext
 
-from deerflow_extension_cad.build import MESH_STEPS
+# The checks live in checks.py, which needs no extension API (the eval and measure_cli use it);
+# they are named here too, where the handler and older callers look for them.
+from deerflow_extension_cad.checks import MAX_HOLES, MAX_HOLES_LISTED, MAX_LINES_SAID, canonical_holes, decide, gap_notes, notes_on, unchecked
 
 WORKER = Path(__file__).with_name("worker.py")
 REQUEST_FILE = "request.json"
@@ -62,11 +68,6 @@ MAX_RESULT_BYTES = 256 * 1024
 CPU_BACKSTOP_SECONDS = 10
 MAX_EXPORT_BYTES = 16 * 1024 * 1024
 
-#: A bounding box side or a hole diameter matches within 0.01 mm or 0.1 %, whichever is larger.
-#: The kernel's own noise is far below that; the slack is for the model's rounding.
-LENGTH_TOLERANCE_MM = 0.01
-LENGTH_TOLERANCE_RATIO = 0.001
-
 # Every character here is paid on every request of every conversation, and a
 # small local model gets only the opening sentences within 280 characters (the
 # host's short tool form): everything before "Methods:", whose sentence is too
@@ -77,15 +78,17 @@ LENGTH_TOLERANCE_RATIO = 0.001
 # handler checks the values itself (``_problem_with``). The context-fit critical
 # check pins the cost (backend/tests/test_context_fit_critical.py).
 DESCRIPTION = (
-    "Build and check a part from a CadQuery script. It is read, not run: only assignments, arithmetic, "
-    "for loops over range() or a list, and allow-listed Workplane methods. No if, while, def or other imports. Millimetres. "
-    "Methods: box, cylinder, sphere, rect, circle, ellipse, polygon, slot2D, polyline, "
-    "moveTo, move, lineTo, line, hLine, vLine, hLineTo, vLineTo, threePointArc, close, center, extrude, cutBlind, cutThruAll, "
-    "hole, cboreHole, cskHole, fillet, chamfer, shell, pushPoints, rarray, polarArray, faces, edges, vertices, workplane, tag, "
-    "workplaneFromTagged, translate, rotate, mirror, mirrorX, mirrorY, union, cut, intersect. "
+    "Build and check a part from a CadQuery script. It is read, not run: assignments, arithmetic, math, "
+    "for loops and allow-listed Workplane methods; no if, while or def. Millimetres. "
+    "Methods: box, cylinder, sphere, wedge, rect, circle, ellipse, polygon, slot2D, polyline, "
+    "moveTo, move, lineTo, line, hLine, vLine, hLineTo, vLineTo, threePointArc, spline, radiusArc, sagittaArc, tangentArcPoint, "
+    "polarLine, polarLineTo, close, center, offset2D, extrude, cutBlind, cutThruAll, revolve, loft, sweep, twistExtrude, text, split, "
+    "hole, cboreHole, cskHole, fillet, chamfer, shell, pushPoints, rarray, polarArray, faces, edges, vertices, workplane, transformed, tag, "
+    "workplaneFromTagged, end, first, last, translate, rotate, mirror, mirrorX, mirrorY, union, cut, intersect. "
     "bbox_xyz_mm is the expected overall size along x, y and z. volume_min_max_mm3 is the allowed volume range. "
-    "hole_diameters_mm lists one diameter per expected hole, [] for none. Assign the part to result. "
-    "Returns pass or fail per check with the measured values. STEP, STL and GLB files are saved only when every check passes."
+    "hole_diameters_mm lists one diameter, or [d, x, y, z], per expected hole, [] for none. "
+    "bodies is how many separate solids the part is, 1 unless loose parts are meant. Assign the part to result. "
+    "Returns pass or fail per check with the measured values. STEP, STL, GLB and 3MF files are saved only when every check passes."
 )
 
 INPUT_SCHEMA: dict[str, Any] = {
@@ -97,13 +100,19 @@ INPUT_SCHEMA: dict[str, Any] = {
         "bbox_xyz_mm": {"type": "array"},
         "volume_min_max_mm3": {"type": "array"},
         "hole_diameters_mm": {"type": "array"},
+        # The number of separate solids, 1 when left out. Measured at 8 tokens of every request (FORK.md §51).
+        "bodies": {"type": "integer"},
     },
     "required": ["name", "script", "bbox_xyz_mm"],
 }
-EXPECTATIONS = ("bbox_xyz_mm", "volume_min_max_mm3", "hole_diameters_mm")
+EXPECTATIONS = ("bbox_xyz_mm", "volume_min_max_mm3", "hole_diameters_mm", "bodies")
+#: What an expectation the model leaves out means to the checks: comparing against it keeps a default
+#: that was once stated and is now left out from reading as a moved number.
+EXPECTATION_DEFAULTS: dict[str, Any] = {"bodies": 1}
 
 MAX_NAME_CHARS = 60
-MAX_HOLES = 400
+#: Separate solids a part may be: a chain or a kit, not a pile. measure.py works out every pair's gap up to this.
+MAX_BODIES = 20
 #: No expected number may exceed what a script itself may state.
 MAX_EXPECTED = 1e12
 
@@ -112,8 +121,11 @@ MAX_EXPECTED = 1e12
 MAX_ATTEMPTS = 8
 #: Parts whose builds are counted. An entry is a few hundred bytes; the cap only keeps the table from growing for ever.
 MAX_COUNTED_PARTS = 1000
-#: Lines of left-out bodies one note names, and loops that drop work one answer names.
-MAX_LINES_SAID = 5
+#: What the worker may say about a script it refused or a build that failed, passed on as it is.
+_ERROR_KEYS = ("construct", "refused", "line", "operation", "message")
+#: Notes from the worker an answer passes on ("no picture: ..."), and how long each may be.
+MAX_WORKER_NOTES = 5
+MAX_WORKER_NOTE_CHARS = 300
 
 NEXT_FIX = "Attempt {attempt} of {limit}. Read what failed, change the script and call cad_build again with the same name. Keep the expected numbers: change one only if it was worked out wrongly. Do not present this part as finished."
 #: For a build whose script could not be stored: without its files it is not one of the part's attempts.
@@ -124,14 +136,16 @@ NEXT_STOP = (
     "{attempt} builds of this part in this run and the last one did not pass. Stop building. Tell the user what still fails, with the measured numbers, "
     "and what you would change next. Do not present this part as finished; build again only when the user asks."
 )
-#: For a result of several bodies. No change of one kind passes it, so both ways out are said in the field a model follows.
+#: For a result of more bodies than expected. No change of one kind passes it, so both ways out are said in the field a model follows.
 NEXT_LOOSE = (
-    "Attempt {attempt} of {limit}. The result is several separate bodies and cad_build delivers one solid. If they are meant to be one part, "
-    "make them overlap or share a face and call cad_build again with the same name. If the design is loose bodies, such as a print-in-place hinge, "
-    "stop: tell the user that this tool cannot deliver it. Do not present this part as finished."
+    "Attempt {attempt} of {limit}. Expected {expected}, got {solids} separate bodies. If they are meant to be one part, "
+    "make them overlap or share a face and call cad_build again with the same name. If loose bodies are intended, such as a print-in-place hinge "
+    "or a box and its lid, call cad_build again with the same name and bodies={solids}. Do not present this part as finished."
 )
 NEXT_REVIEW = "Every check passed. Before you present the part, go through what the user asked for that these numbers do not cover; if something is missing or wrong, change the script and build again."
 NEXT_PRESENT = "Every check passed. Present the part, and say which of the user's requirements these numbers do not cover."
+#: After either sentence of a pass, when the part's picture was saved. Viewed once, at review: the numbers decide.
+NEXT_PICTURE = " Show {picture} in your reply; if you can view images, look at it once and compare it with the request."
 NEXT_CHANGED = " The expected numbers are not the ones this part was first built against (expected_changed): they stand for what the user asked for, so tell the user which changed and why."
 NEXT_UNAVAILABLE = "The CAD kernel cannot run on this server, so another script will not help. Do not call cad_build again; tell the user, and that `make doctor` on the server names what is missing."
 NEXT_BUSY = "Nothing is wrong with the script. Call cad_build again with the same arguments."
@@ -148,6 +162,9 @@ MAX_LOADING_ANSWERS = 3
 MAX_COUNTED_CONVERSATIONS = 1000
 #: What a timed-out worker was doing, in the words of the answer.
 _PHASES = {
+    # Only when the answer written before this step cannot be read: otherwise run_worker returns it.
+    "rendering": "The part was built and checked, and drawing its picture did not finish in time. Simplify the part: fewer small fillets and holes.",
+    "checking print": "The part was built and checked, and checking how it prints did not finish in time. Simplify the part: fewer small fillets and holes.",
     "exporting": "The part was built, and writing its files did not finish in time. Simplify the part: fewer small fillets and holes.",
     "measuring": "The part was built, and measuring it did not finish in time. Reduce the number of holes and fillets.",
 }
@@ -178,12 +195,65 @@ def _problem_with(payload: Mapping[str, Any]) -> str | None:
         return "bbox_xyz_mm must be three positive numbers: the expected size along x, y and z in millimetres"
     if "volume_min_max_mm3" in payload and (not numbers("volume_min_max_mm3", 2) or not 0 <= payload["volume_min_max_mm3"][0] <= payload["volume_min_max_mm3"][1]):
         return "volume_min_max_mm3 must be [min, max] with 0 <= min <= max, in cubic millimetres"
-    if "hole_diameters_mm" in payload and (not numbers("hole_diameters_mm", None) or len(payload["hole_diameters_mm"]) > MAX_HOLES or any(diameter <= 0 for diameter in payload["hole_diameters_mm"])):
-        return f"hole_diameters_mm must list one positive diameter per expected hole, at most {MAX_HOLES}"
+    if "bodies" in payload and (type(payload["bodies"]) is not int or not 1 <= payload["bodies"] <= MAX_BODIES):
+        return f"bodies must be a whole number from 1 to {MAX_BODIES}: how many separate solids the part is"
+    if "hole_diameters_mm" in payload:
+        holes = payload["hole_diameters_mm"]
+
+        def hole(entry: Any) -> bool:
+            # A diameter, or a diameter and a point on the hole's axis: [d, x, y, z].
+            point = entry if isinstance(entry, (list, tuple)) and len(entry) == 4 else [entry]
+            return all(type(number) in (int, float) and abs(number) <= MAX_EXPECTED for number in point) and point[0] > 0
+
+        if not isinstance(holes, (list, tuple)) or len(holes) > MAX_HOLES or not all(hole(entry) for entry in holes):
+            return f"hole_diameters_mm must list one positive diameter, or [d, x, y, z], per expected hole, at most {MAX_HOLES}"
     return None
 
 
-def settings_from(config: Mapping[str, Any]) -> dict[str, int]:
+#: The operator's printer (``printer:`` in the CAD record's config), for the print block and its notes.
+#: Defaults for a common 0.4 mm nozzle printing PLA. No build volume means no fit note.
+PRINTER_DEFAULTS: dict[str, float] = {"nozzle_mm": 0.4, "layer_mm": 0.2, "overhang_deg": 45.0, "min_clearance_mm": 0.3, "density_g_cm3": 1.24}
+PRINTER_RANGES: dict[str, tuple[float, float]] = {"nozzle_mm": (0.1, 2.0), "layer_mm": (0.02, 1.0), "overhang_deg": (10.0, 80.0), "min_clearance_mm": (0.05, 3.0), "density_g_cm3": (0.5, 20.0)}
+BUILD_VOLUME_RANGE_MM = (10.0, 5000.0)
+
+
+def printer_from(config: Mapping[str, Any]) -> dict[str, Any]:
+    """The printer profile from the CAD record's config: every value bounded, and an error names its key.
+
+    It is operator configuration in config.yaml, which no API writes, and it costs no tokens: the
+    model sees only notes that name the value they compared against.
+    """
+    given = config.get("printer")
+    if given is None:
+        given = {}  # `printer:` with every value commented out
+    if not isinstance(given, Mapping):
+        raise ValueError("cad: printer must be a mapping of printer values, such as nozzle_mm: 0.4")
+    known = ("build_volume_mm", *PRINTER_DEFAULTS)
+    unknown = sorted(str(key) for key in given if key not in known)
+    if unknown:
+        # A misspelled value would otherwise be a default the operator thinks they changed.
+        raise ValueError(f"cad: printer.{unknown[0]} is not a printer value; printer takes {', '.join(known)}")
+
+    def number(value: Any, low: float, high: float) -> bool:
+        return type(value) in (int, float) and math.isfinite(value) and low <= value <= high
+
+    profile: dict[str, Any] = {"build_volume_mm": None}
+    volume = given.get("build_volume_mm")
+    if volume is not None:
+        low, high = BUILD_VOLUME_RANGE_MM
+        if not (isinstance(volume, (list, tuple)) and len(volume) == 3 and all(number(side, low, high) for side in volume)):
+            raise ValueError(f"cad: printer.build_volume_mm must be three numbers from {low:g} to {high:g}: the bed's x and y and the height, in millimetres")
+        profile["build_volume_mm"] = [float(side) for side in volume]
+    for key, default in PRINTER_DEFAULTS.items():
+        value = given.get(key, default)
+        low, high = PRINTER_RANGES[key]
+        if not number(value, low, high):
+            raise ValueError(f"cad: printer.{key} must be a number from {low:g} to {high:g}")
+        profile[key] = float(value)
+    return profile
+
+
+def settings_from(config: Mapping[str, Any]) -> dict[str, Any]:
     """Read the operator's values for this extension, clamped to what the host allows."""
 
     def whole(key: str, default: int, low: int, high: int) -> int:
@@ -196,6 +266,7 @@ def settings_from(config: Mapping[str, Any]) -> dict[str, int]:
         "timeout_seconds": whole("timeout_seconds", DEFAULT_TIMEOUT_SECONDS, 5, MAX_TIMEOUT_SECONDS),
         "memory_mb": whole("memory_mb", DEFAULT_MEMORY_MB, MIN_MEMORY_MB, 65536),
         "parallel_builds": whole("parallel_builds", default_parallel_builds(), 1, MAX_PARALLEL_BUILDS),
+        "printer": printer_from(config),
     }
 
 
@@ -215,89 +286,126 @@ def part_key(name: str) -> str:
     return " ".join(visible.split()) or name
 
 
-# --- Deciding ---------------------------------------------------------------
+def _parameters_of(result: Mapping[str, Any]) -> dict[str, int | float]:
+    """The script's starting numbers as the worker read them: names and numbers only, nothing else it sends."""
+    parameters = result.get("parameters")
+    if not isinstance(parameters, Mapping):
+        return {}
+    return {name: value for name, value in parameters.items() if isinstance(name, str) and type(value) in (int, float)}
 
 
-def _close(expected: float, measured: float) -> bool:
-    return abs(expected - measured) <= max(LENGTH_TOLERANCE_MM, LENGTH_TOLERANCE_RATIO * abs(expected))
+def _worker_notes(result: Mapping[str, Any]) -> list[str]:
+    """What the worker says about the steps after the checks ("no picture: ..."): sentences only, bounded."""
+    notes = result.get("notes")
+    if not isinstance(notes, list):
+        return []
+    return [note[:MAX_WORKER_NOTE_CHARS] for note in notes if isinstance(note, str) and note][:MAX_WORKER_NOTES]
 
 
-def decide(measured: Mapping[str, Any], payload: Mapping[str, Any]) -> list[dict[str, Any]]:
-    """Compare what was measured on the re-imported STEP with what the part must meet."""
-    voids = measured.get("enclosed_voids") or 0
-    checks: list[dict[str, Any]] = [
-        {
-            "check": "one closed solid",
-            "expected": "exactly one valid, closed solid",
-            "measured": f"{measured['solids']} solid(s), valid={measured['valid']}, closed={measured['closed']}" + (f", {voids} sealed {'cavity' if voids == 1 else 'cavities'} inside" if voids else ""),
-            "passed": measured["solids"] == 1 and measured["valid"] and measured["closed"],
-        },
-    ]
-    box = measured["bbox_mm"]
-    checks.append({"check": "bounding box", "expected": list(payload["bbox_xyz_mm"]), "measured": box, "passed": len(box) == 3 and all(_close(e, m) for e, m in zip(payload["bbox_xyz_mm"], box))})
-    if "volume_min_max_mm3" in payload:
-        low, high = payload["volume_min_max_mm3"]
-        slack = 1e-6 * high
-        checks.append({"check": "volume", "expected": [low, high], "measured": measured["volume_mm3"], "passed": low - slack <= measured["volume_mm3"] <= high + slack})
-    if "hole_diameters_mm" in payload:
-        expected = sorted(payload["hole_diameters_mm"])
-        found = sorted(hole["diameter_mm"] for hole in measured["holes"])
-        check = {"check": "holes", "expected": expected, "measured": found, "passed": len(expected) == len(found) and all(_close(e, m) for e, m in zip(expected, found))}
-        if measured["solids"] != 1:
-            # Holes are measured on one solid. An empty list would read as "your holes are gone".
-            check.update(measured="not measured: the result is not one solid", passed=False)
-        # The check compares diameters. A hole that stops inside the part is said, with how deep it goes.
-        blind = sorted(hole["depth_mm"] for hole in measured["holes"] if hole.get("through") is False)
-        if blind:
-            check["blind_depths_mm"] = blind
-        checks.append(check)
-    return checks
+#: The print block's numbers an answer carries; report.json keeps the whole block.
+_PRINT_SAID = ("grams", "bed_contact_mm2", "overhang_mm2", "thinnest_wall_mm")
 
 
-def notes_on(measured: Mapping[str, Any]) -> list[str]:
-    """What the checks do not decide and a reader of the answer should still know."""
-    notes = []
-    solids = measured.get("solids")
-    if isinstance(solids, int) and solids > 1:
-        notes.append(f"The result is {solids} separate bodies. Bodies become one part only where they overlap or share a face, and a cut that goes right through a part leaves two.")
-    bodies = measured.get("unused_bodies") or 0
-    if bodies:
-        lines = sorted({line for line in measured.get("unused_body_lines") or [] if isinstance(line, int)})
-        where = f" (built on line {', '.join(map(str, lines[:MAX_LINES_SAID]))}{' and more' if len(lines) > MAX_LINES_SAID else ''})" if lines else ""
-        notes.append(f"The script builds {bodies} bod{'y' if bodies == 1 else 'ies'}{where} that {'is' if bodies == 1 else 'are'} not part of the result: join {'it' if bodies == 1 else 'them'} with union(), or delete the lines.")
-    loops = [dropped for dropped in measured.get("dropped_passes") or [] if isinstance(dropped, Mapping)]
-    for dropped in loops[:MAX_LINES_SAID]:
-        count, line = dropped.get("passes"), dropped.get("loop_line")
-        if isinstance(count, int) and isinstance(line, int):
-            notes.append(
-                f"{count} pass{'' if count == 1 else 'es'} of the loop on line {line} do{'es' if count == 1 else ''} work on the part that is not in the result: "
-                "carry the part through the loop, for example result = result.hole(...), or delete the work."
-            )
-    if len(loops) > MAX_LINES_SAID:
-        notes.append("More loops than these do work that is not in the result.")
-    if measured.get("unused_outline"):
-        notes.append("The script draws an outline that is never extruded or cut; it is not part of the result.")
-    voids = measured.get("enclosed_voids") or 0
-    if voids:
-        notes.append(f"The part has {voids} sealed {'cavity' if voids == 1 else 'cavities'} inside that cannot be reached from outside.")
-    tolerance = (measured.get("mesh") or {}).get("tolerance_mm")
-    if isinstance(tolerance, (int, float)) and tolerance > MESH_STEPS[0][0]:
-        notes.append(f"The STL mesh is coarser than usual ({tolerance:g} mm off the surface at most) to keep the file small; the STEP file is exact.")
-    crossing = [hole for hole in measured.get("holes") or [] if isinstance(hole.get("walls"), int) and hole["walls"] > 1]
-    if crossing:
-        most = max(hole["walls"] for hole in crossing)
-        notes.append(f"{len(crossing)} hole{'' if len(crossing) == 1 else 's'} pass{'es' if len(crossing) == 1 else ''} through {most} walls with air between and count{'s' if len(crossing) == 1 else ''} once: one drill pass is one hole.")
+def print_block(measured: Mapping[str, Any]) -> dict[str, Any] | None:
+    """The print block as an answer carries it: four numbers, the fit when there is a bed to fit, and the notes.
+
+    ``printed_apart`` marks the block of a part of several bodies, judged each on the bed as .parts.3mf lays them out.
+    """
+    block = measured.get("print")
+    if not isinstance(block, Mapping):
+        return None
+    said: dict[str, Any] = {key: _short(block[key]) for key in _PRINT_SAID if type(block.get(key)) in (int, float)}
+    if isinstance(block.get("fits_build_volume"), bool):
+        said["fits_build_volume"] = block["fits_build_volume"]
+    if block.get("printed_apart") is True:
+        said["printed_apart"] = True
+    notes = _worker_notes(block)
+    if notes:
+        said["notes"] = notes
+    return said or None
+
+
+def _short(value: Any) -> Any:
+    """A number as an answer prints it: a whole number without its '.0', which is a token saved per number."""
+    return int(value) if isinstance(value, float) and value.is_integer() else value
+
+
+def listed_holes(measured: Mapping[str, Any]) -> tuple[list[dict[str, Any]], int]:
+    """The holes an answer lists, with where each is entered and which way it runs, and how many have a position.
+
+    A part of several bodies lists each hole with its body, numbered from 1 in the order of ``measured.bodies``.
+    """
+    bodies = measured.get("bodies")
+    owned = [(number, hole) for number, body in enumerate(bodies, 1) if isinstance(body, Mapping) for hole in body.get("holes") or []] if isinstance(bodies, list) else [(None, hole) for hole in measured.get("holes") or []]
+    located = [(number, hole) for number, hole in owned if isinstance(hole, Mapping) and isinstance(hole.get("at"), list) and isinstance(hole.get("axis"), list)]
+    listed = []
+    for number, hole in located[:MAX_HOLES_LISTED]:
+        entry: dict[str, Any] = {"d": _short(hole["diameter_mm"]), "at": [_short(value) for value in hole["at"]], "axis": [_short(value) for value in hole["axis"]]}
+        if number is not None:
+            entry["body"] = number
+        listed.append(entry)
+    return listed, len(located)
+
+
+#: A fillet or chamfer is named in the answer when it took more edges than this and not every edge of
+#: its part. A selector string takes four edges of a box, its corners along one axis or one face's
+#: edges; more is where it also caught a rim, a pocket or a hole made before it. Every edge is what
+#: fillet() on the part itself, or edges() with no selector, asks for. report.json keeps every count.
+EDGES_SAID_ABOVE = 4
+#: What each operation did to the edges it took, in the words of its note.
+_DONE_TO_EDGES = {"fillet": "rounded", "chamfer": "cut"}
+
+
+def selection_notes(measured: Mapping[str, Any]) -> list[str]:
+    """The fillets and chamfers that took more edges than a selector usually means: a note each, at most MAX_LINES_SAID.
+
+    Passes of a loop that took the same edges are one note. Only a method of the table and whole
+    numbers from the worker reach a note.
+    """
+    taken: list[tuple[str, int, int]] = []
+    for selected in measured.get("selections") or []:
+        if not isinstance(selected, Mapping):
+            continue
+        method, line, edges, of = (selected.get(key) for key in ("method", "line", "edges", "of"))
+        said = (method, line, edges)
+        if isinstance(method, str) and method in _DONE_TO_EDGES and type(line) is int and type(edges) is int and type(of) is int and EDGES_SAID_ABOVE < edges < of and said not in taken:
+            taken.append(said)
+    notes = [f"{method}() on line {line} {_DONE_TO_EDGES[method]} {edges} edges: check that the selection took only the edges meant." for method, line, edges in taken[:MAX_LINES_SAID]]
+    if len(taken) > MAX_LINES_SAID:
+        notes.append(f"More fillets and chamfers than these took more than {EDGES_SAID_ABOVE} edges.")
     return notes
 
 
-def unchecked(measured: Mapping[str, Any], payload: Mapping[str, Any]) -> dict[str, Any]:
-    """What was measured and not asked about, under the name of the argument that would check it."""
-    extra: dict[str, Any] = {}
-    if "volume_min_max_mm3" not in payload:
-        extra["volume_mm3"] = measured["volume_mm3"]
-    if "hole_diameters_mm" not in payload:
-        extra["hole_diameters_mm"] = sorted(hole["diameter_mm"] for hole in measured["holes"])[:MAX_HOLES]
-    return extra
+def provenance() -> dict[str, str | None]:
+    """What made a report: this module's release and the kernel's, read from the installed metadata, never by importing the kernel."""
+    found: dict[str, str | None] = {}
+    for key, distribution in (("module_version", "deerflow-extension-cad"), ("cadquery_version", "cadquery")):
+        try:
+            found[key] = importlib.metadata.version(distribution)
+        except importlib.metadata.PackageNotFoundError:
+            found[key] = None
+    return found
+
+
+def report_text(report: Mapping[str, Any]) -> str:
+    """report.json as text: a key per line in the outer two levels and one record per line in a list of records.
+
+    A part with hundreds of holes stays a file of tens of kilobytes this way; indenting every
+    number of every hole's point and axis doubled it.
+    """
+
+    def compact(value: Any) -> str:
+        return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+
+    def block(value: Any, depth: int) -> str:
+        pad, end = "  " * (depth + 1), "  " * depth
+        if isinstance(value, Mapping) and value and depth < 2:
+            return "{\n" + ",\n".join(f"{pad}{compact(key)}: {block(item, depth + 1)}" for key, item in value.items()) + "\n" + end + "}"
+        if isinstance(value, list) and value and all(isinstance(item, Mapping) for item in value):
+            return "[\n" + ",\n".join(pad + compact(item) for item in value) + "\n" + end + "]"
+        return compact(value)
+
+    return block(report, 0) + "\n"
 
 
 # --- Counting the attempts ---------------------------------------------------
@@ -320,7 +428,7 @@ class Attempts:
         """Count one build. Returns its number in this run, the expected numbers that changed, and whether it failed as the last one did."""
         key = (conversation, part)
         # The holes are checked in any order and printed sorted, so they are held sorted.
-        expected = {name: sorted(value) if name == "hole_diameters_mm" else list(value) for name, value in expected.items()}
+        expected = {name: canonical_holes(value) if name == "hole_diameters_mm" else value if isinstance(value, int) else list(value) for name, value in expected.items()}
         with self._lock:
             # Taken out and put back last: the table is kept in the order parts were last built.
             entry = self._parts.pop(key, None)
@@ -341,17 +449,20 @@ class Attempts:
             # A check added later makes the part harder to pass, not easier: it is held from then on and not reported.
             entry["first"].update({name: expected[name] for name in expected if name not in entry["first"]})
             # Compared exactly: a tolerance here would let a band move by a feature's worth without a word.
-            changed = {name: {"first": entry["first"][name], "now": expected.get(name)} for name in EXPECTATIONS if name in entry["first"] and entry["first"][name] != expected.get(name)}
+            # A left-out number is what the checks take for it: bodies=1 dropped is no change, bodies=2 dropped is 1.
+            now = {name: expected.get(name, EXPECTATION_DEFAULTS.get(name)) for name in EXPECTATIONS}
+            changed = {name: {"first": entry["first"][name], "now": now[name]} for name in EXPECTATIONS if name in entry["first"] and entry["first"][name] != now[name]}
             return entry["builds"], changed, same
 
 
-def _next_after(passed: bool, attempt: int, changed: Mapping[str, Any], same: bool, loose: bool) -> str:
+def _next_after(passed: bool, attempt: int, changed: Mapping[str, Any], same: bool, solids: Any = 1, bodies: int = 1) -> str:
     if passed:
         step = NEXT_REVIEW if attempt < MAX_ATTEMPTS else NEXT_PRESENT
     elif attempt >= MAX_ATTEMPTS:
         step = NEXT_STOP.format(attempt=attempt)
-    elif loose:
-        step = NEXT_LOOSE.format(attempt=attempt, limit=MAX_ATTEMPTS)
+    elif isinstance(solids, int) and solids > max(bodies, 1):
+        expected = f"{bodies} bod{'y' if bodies == 1 else 'ies'}"
+        step = NEXT_LOOSE.format(attempt=attempt, limit=MAX_ATTEMPTS, expected=expected, solids=solids)
     else:
         step = NEXT_FIX.format(attempt=attempt, limit=MAX_ATTEMPTS) + (NEXT_SAME if same else "")
     return step + (NEXT_CHANGED if changed else "")
@@ -360,11 +471,16 @@ def _next_after(passed: bool, attempt: int, changed: Mapping[str, Any], same: bo
 # --- Running the worker -----------------------------------------------------
 
 
-def _prepare(script: str, memory_mb: int, timeout_seconds: int) -> str:
+#: The worker's steps after the checks, in order, and the note for each one a timeout leaves out.
+_AFTER_THE_CHECKS = {"rendering": "no picture: the build used most of its time", "checking print": "no print check: the build used most of its time"}
+
+
+def _prepare(script: str, memory_mb: int, timeout_seconds: int, extra: Mapping[str, Any] | None = None) -> str:
     directory = tempfile.mkdtemp(prefix="deerflow-cad-")
     # The kernel works on several cores at once, so processor time runs ahead of the clock.
     cpu_seconds = timeout_seconds * (os.cpu_count() or 1) + CPU_BACKSTOP_SECONDS
-    request = {"script": script, "memory_mb": memory_mb, "max_export_bytes": MAX_EXPORT_BYTES, "cpu_seconds": cpu_seconds}
+    # The wall clock too, so the worker can leave out a step after the checks that would not finish in it.
+    request = {"script": script, "memory_mb": memory_mb, "max_export_bytes": MAX_EXPORT_BYTES, "cpu_seconds": cpu_seconds, "budget_seconds": timeout_seconds, **(extra or {})}
     try:
         Path(directory, REQUEST_FILE).write_text(json.dumps(request), encoding="utf-8")
     except BaseException:
@@ -386,8 +502,8 @@ class _Preparation:
         self._abandoned = False
         self._directory: str | None = None
 
-    def make(self, script: str, memory_mb: int, timeout_seconds: int) -> str | None:
-        directory = _prepare(script, memory_mb, timeout_seconds)
+    def make(self, script: str, memory_mb: int, timeout_seconds: int, extra: Mapping[str, Any] | None = None) -> str | None:
+        directory = _prepare(script, memory_mb, timeout_seconds, extra)
         with self._lock:
             if not self._abandoned:
                 self._directory = directory
@@ -480,8 +596,20 @@ def _phase_of(directory: str) -> str:
         return ""
 
 
-async def run_worker(script: str, *, timeout_seconds: int, memory_mb: int, slots: threading.BoundedSemaphore | None = None) -> dict[str, Any]:
-    """Build *script* in a child interpreter and return its answer, or a failure it could not report itself."""
+async def run_worker(
+    script: str,
+    *,
+    timeout_seconds: int,
+    memory_mb: int,
+    slots: threading.BoundedSemaphore | None = None,
+    expected: Mapping[str, Any] | None = None,
+    printer: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build *script* in a child interpreter and return its answer, or a failure it could not report itself.
+
+    *expected* is what the part must meet; the worker draws a failed part's picture with the checks it did
+    not pass. *printer* is the operator's printer profile, which the print check measures against.
+    """
     if slots is not None and not await _acquire(slots, QUEUE_SECONDS):
         return {"status": "busy", "message": "the server is building other parts right now and has no free slot for this one"}
     process = None
@@ -490,7 +618,8 @@ async def run_worker(script: str, *, timeout_seconds: int, memory_mb: int, slots
     try:
         preparation = _Preparation()
         try:
-            directory = await asyncio.to_thread(preparation.make, script, memory_mb, timeout_seconds)
+            extra = {key: dict(value) for key, value in (("expected", expected), ("printer", printer)) if value is not None} or None
+            directory = await asyncio.to_thread(preparation.make, script, memory_mb, timeout_seconds, extra)
         except asyncio.CancelledError:
             preparation.abandon()
             raise
@@ -516,6 +645,16 @@ async def run_worker(script: str, *, timeout_seconds: int, memory_mb: int, slots
                 # Nothing was built yet, so nothing can be said about the part. The modules Python
                 # compiled before it was stopped stay compiled, which is why calling again works.
                 return {"status": "loading", "message": "the CAD kernel was still loading when the time ran out. The first build after an install, an update or a restart takes longer."}
+            if phase in _AFTER_THE_CHECKS:
+                # The checked part was answered before this step began. It stands, without what the step adds.
+                _stop(process)
+                stopped = True
+                result = await asyncio.to_thread(_collect, directory)
+                if result.get("status") == "built":
+                    steps = list(_AFTER_THE_CHECKS)
+                    left_out = [_AFTER_THE_CHECKS[step] for step in steps[steps.index(phase) :]]
+                    result["notes"] = [note for note in result.get("notes") or [] if isinstance(note, str)] + left_out
+                    return result
             advice = _PHASES.get(phase, "Simplify the part: fewer pattern points, fewer fillets, and hole() instead of circle().cutThruAll() for round holes.")
             return {"status": "failed", "message": f"the build did not finish within {timeout_seconds} seconds and was stopped. {advice}"}
         # At once, before its files are read: whatever the worker left running goes with it.
@@ -552,8 +691,11 @@ async def _save(context: ToolContext, name: str, content: bytes, saved: list[str
     return path
 
 
-def make_handler(settings: Mapping[str, int]):
+def make_handler(settings: Mapping[str, Any]):
     slots = threading.BoundedSemaphore(settings.get("parallel_builds") or default_parallel_builds())
+    printer = settings.get("printer") or printer_from({})
+    # Read once, when the module is installed: every report names the code that made it.
+    made_by = provenance()
     # Builds in a row that never got past loading the kernel, by conversation: three people
     # asking at once after a restart are each on their first attempt.
     still_loading: dict[str, int] = {}
@@ -566,7 +708,8 @@ def make_handler(settings: Mapping[str, int]):
         if problem:
             return {"passed": False, "error": {"message": problem}, "files": [], "next": NEXT_ARGUMENTS}
         script = payload["script"]
-        result = await run_worker(script, timeout_seconds=settings["timeout_seconds"], memory_mb=settings["memory_mb"], slots=slots)
+        expected = {key: payload[key] for key in EXPECTATIONS if key in payload}
+        result = await run_worker(script, timeout_seconds=settings["timeout_seconds"], memory_mb=settings["memory_mb"], slots=slots, expected=expected, printer=printer)
         status = result.get("status")
         conversation = str(context.thread_id or "")
         if status == "loading":
@@ -587,7 +730,7 @@ def make_handler(settings: Mapping[str, int]):
             # Without the script there is no stem for the set, and files under a guessed one would mix with
             # another build's. What the build itself said still reaches the model: a refusal stays a refusal.
             status = result.get("status")
-            error = {key: result[key] for key in ("construct", "line", "operation", "message") if result.get(key) is not None}
+            error = {key: result[key] for key in _ERROR_KEYS if result.get(key) is not None}
             if status == "built":
                 error = {"message": "the part was built, but its script could not be stored, so nothing was"}
             return {
@@ -601,8 +744,12 @@ def make_handler(settings: Mapping[str, int]):
         answer: dict[str, Any] = {"passed": False}
         # None while the build's own outcome decides what comes next; a sentence when something else does.
         next_step: str | None = None
-        expected = {key: payload[key] for key in EXPECTATIONS if key in payload}
-        report: dict[str, Any] = {"name": payload["name"], "passed": False, "expected": expected}
+        picture: str | None = None
+        report: dict[str, Any] = {"name": payload["name"], "passed": False, "expected": expected, **made_by, "script_sha256": hashlib.sha256(script.encode("utf-8")).hexdigest()}
+        parameters = _parameters_of(result)
+        if parameters:
+            # The numbers the script starts with, for a follow-up edit. The model has them in its script already.
+            report["parameters"] = parameters
         failure = ""
         files = result.get("files") or {}
         if result.get("status") == "built":
@@ -610,16 +757,34 @@ def make_handler(settings: Mapping[str, int]):
             passed = all(check["passed"] for check in checks)
             answer.update(passed=passed, checks=checks)
             report.update(passed=passed, checks=checks, measured=result["measured"])
-            failure = json.dumps([[check["check"], check["measured"]] for check in checks if not check["passed"]], sort_keys=True, default=str)
-            notes = notes_on(result["measured"])
-            if notes:
-                answer["notes"] = report["notes"] = notes
+            # A hole moved but still not where it belongs is a different failure, not the same one.
+            failure = json.dumps([[check["check"], check["measured"], *([check["misplaced"]] if "misplaced" in check else [])] for check in checks if not check["passed"]], sort_keys=True, default=str)
+            bodies = payload.get("bodies", 1)
+            notes = notes_on(result["measured"], bodies) + gap_notes(result["measured"], printer) + selection_notes(result["measured"])
             extra = unchecked(result["measured"], payload)
             if extra:
                 answer["unchecked"] = extra
+            listed, located = listed_holes(result["measured"])
+            if listed:
+                answer["holes"] = listed
+                if located > len(listed):
+                    notes.append(f"The answer lists {len(listed)} of the {located} holes; {stem}.report.json lists every hole with where it is.")
+            notes += _worker_notes(result)
+            if notes:
+                answer["notes"] = report["notes"] = notes
             if passed:
-                # STEP goes last: a STEP file in the outputs means the whole set was handed over.
-                for kind in ("glb", "stl", "step"):
+                printing = print_block(result["measured"])
+                if printing:
+                    # Reported, never checked: the block cannot change pass or fail.
+                    answer["print"] = printing
+                # The picture first: it is what a reader looks at, and a picture the host refuses is a problem, not a lost part.
+                if "png" in files:
+                    picture = await _save(context, f"{stem}.png", files["png"], saved, problems)
+                # STEP goes last: a STEP file in the outputs means the whole set was handed over. The 3MF is
+                # part of the set when the worker wrote one (it always does since item 54).
+                # So are the bodies laid out for printing apart, or each body's STL where they could not be.
+                laid_out = sorted((kind for kind in files if kind == "parts.3mf" or re.fullmatch(r"body-\d+\.stl", kind)), key=lambda kind: (len(kind), kind))
+                for kind in ("glb", "stl", *(("3mf",) if "3mf" in files else ()), *laid_out, "step"):
                     if kind not in files:
                         problems.append(f"the {kind.upper()} export is missing or larger than {MAX_EXPORT_BYTES // (1024 * 1024)} MiB")
                     elif await _save(context, f"{stem}.{kind}", files[kind], saved, problems) is not None:
@@ -628,10 +793,12 @@ def make_handler(settings: Mapping[str, int]):
                     answer["passed"] = report["passed"] = False
                     next_step = NEXT_UNSTORED
                     break
-            elif "glb" in files:
-                await _save(context, f"{stem}.failed.glb", files["glb"], saved, problems)
+            else:
+                for kind in ("png", "glb"):
+                    if kind in files:
+                        await _save(context, f"{stem}.failed.{kind}", files[kind], saved, problems)
         else:
-            error = {key: result[key] for key in ("construct", "line", "operation", "message") if result.get(key) is not None}
+            error = {key: result[key] for key in _ERROR_KEYS if result.get(key) is not None}
             answer["error"] = report["error"] = error or {"message": "the build failed"}
             failure = json.dumps(answer["error"], sort_keys=True, default=str)
             if result.get("status") == "unavailable":
@@ -642,11 +809,14 @@ def make_handler(settings: Mapping[str, int]):
             answer["attempt"] = report["attempt"] = attempt
             if changed:
                 answer["expected_changed"] = report["expected_changed"] = changed
-            solids = (result.get("measured") or {}).get("solids")
-            next_step = _next_after(answer["passed"], attempt, changed, same, isinstance(solids, int) and solids > 1)
+            next_step = _next_after(answer["passed"], attempt, changed, same, (result.get("measured") or {}).get("solids"), payload.get("bodies", 1))
+            if answer["passed"] and picture is not None:
+                next_step += NEXT_PICTURE.format(picture=picture)
         if problems:
             report["problems"] = list(problems)
-        await _save(context, f"{stem}.report.json", json.dumps(report, indent=2, ensure_ascii=False).encode("utf-8"), saved, problems)
+        # The set as stored, for whoever reads the report later: the eval finds the delivered part this way.
+        report["files"] = [Path(path).name for path in saved]
+        await _save(context, f"{stem}.report.json", report_text(report).encode("utf-8"), saved, problems)
         if problems:
             answer["problems"] = problems
         answer["files"] = saved

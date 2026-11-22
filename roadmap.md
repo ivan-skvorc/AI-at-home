@@ -69,22 +69,54 @@ machines they already run on, and the look they should share are in
 [docs/companion-apps.md](docs/companion-apps.md). They do not pull training into
 this fork; that decision stays under *Deliberately not*.
 
-Items **43–50** came from wanting mechanical parts out of the same chat: describe a
+Items **43–51** came from wanting mechanical parts out of the same chat: describe a
 bracket, get a script that can be edited, a STEP file for a CAD program and an STL for the
-printer, on whichever model the conversation already uses. A separate desktop app was
-planned first and dropped, because the models, the three subscription sign-ins, the agent
-loop and the artifact panel already live here. The constraint that shapes all eight is the
-default install: `LocalSandboxProvider` with `allow_host_bash: false` gives the agent no
-shell, so "write a script and run it" is not available where most people start. The CAD
-module therefore builds a part **without running what the model wrote**, as an installed
-extension, and the files it writes are ordinary outputs that the Files view lists. Item
-**43** — a plugin tool can write a bounded, host-checked file into the outputs of the
-conversation that called it (`ToolContext.write_output`, extension API 0.2.13) — landed:
-see [FORK.md §50](./FORK.md). Item **44** — the CAD module itself, a bundled
+printer, on whichever model the conversation already uses. Item 49 is the exception: it is
+not CAD, and it sits among them only because of when it was written. A separate desktop app
+was planned first and dropped, because the models, the three subscription sign-ins, the
+agent loop and the artifact panel already live here. The constraint that shapes every CAD
+item is the default install: `LocalSandboxProvider` with `allow_host_bash: false` gives the
+agent no shell, so "write a script and run it" is not available where most people start.
+The CAD module therefore builds a part **without running what the model wrote**, as an
+installed extension, and the files it writes are ordinary outputs that the Files view
+lists. Item **43** — a plugin tool can write a bounded, host-checked file into the outputs
+of the conversation that called it (`ToolContext.write_output`, extension API 0.2.13) —
+landed: see [FORK.md §50](./FORK.md). Item **44** — the CAD module itself, a bundled
 extension whose `cad_build` tool reads a CadQuery script, performs an allow-list of
 operations in a child process and hands over STEP, STL and GLB only for a part that
 measured right — landed: see [FORK.md §51](./FORK.md). Both numbers stay retired like
 12–15.
+
+Items **53–59** came from a review of the open CAD items on 2026-11-21, against the code
+and against published results for CAD agents. The figures it measured itself were taken in
+the kernel or in the context-fit harness; the published ones name their source. The review
+found premises that no longer held. Item 50's reason for a container had gone stale,
+because loops had landed and most of what it listed needs no container. The description
+budget was quoted from an old measurement. Item 46's STEP step cannot fit the asset cap,
+item 47's file evidence can be written by the subagent it judges, and 45's done-when graded
+the model on its own numbers. Items 46, 47, 48, 50 and 51 were rewritten, and the ideas the
+review declined are under *Deliberately not*. Item **45** — the CAD skill, proven on real
+models — was merged rather than shipped: its live proof is item 48's first run, scored on
+ground truth, and its skill revision is item 58. Its number stays retired like 12–15.
+
+Items **46**, **47**, **51** and **53–59** — the CAD model preview, the `tool_result`
+acceptance leaf for delegated parts, parts of several bodies, the picture, the 3MF and
+print notes, scripts the way models write them, revolve, loft and sweep, where the features
+are (hole positions and how many edges a fillet or chamfer took), the FDM and hardware
+reference, and lettering and threads — landed together as one change set:
+see [FORK.md §51 and §56](./FORK.md). Their numbers stay retired like 12–15. Item **48**
+keeps only its live-run half, because its offline harness (`make cad-eval`) shipped. Two
+acceptance checks need the
+owner's hardware rather than a change: the viewer on a real phone with a GPU, and the print
+thresholds and the skill's clearance tables on a printed fit-test coupon. FORK.md records
+both under its known gaps; the live Ultra delegation rides with item 48's first run.
+
+Every CAD item states what it costs per request, against two rules that no item loosens.
+`cad_build` may cost at most 150 tokens of every request
+(`test_the_bundled_cad_tool_stays_cheap_on_every_request`), and every composer mode must
+fit `FIXED_REQUEST_ALLOWANCE_TOKENS` on a 32K window (`test_context_fit_critical.py`). The
+per-tool cap is the one that binds. A count of spare tokens goes stale with the next prompt
+change, so the items cite the rule and date their measurements.
 
 ---
 
@@ -129,20 +161,12 @@ Open items, one line each. The full orchestrator prompts follow.
   an empty chat, in the light and dark themes, and not from the marketing landing page.
 - **42. One card, one turn** — Ollama and training stay on the daily PC; the home server
   only serves the pages; a training run and a chat take turns on the 3090.
-- **45. The CAD skill, proven on real models** — the skill and the tool's attempt count
-  landed (FORK.md §51); what is open is running them on a cloud model and a local one.
-- **46. 3D files open in the artifact panel** — GLB and STL rotate in the panel and the
-  reader, on a phone too; STEP after that.
-- **47. Geometry decides a delegated part** — a subagent's part passes on the existing
-  acceptance checklist or not at all.
-- **48. A CAD eval** — one command says which configured model can make the part, what it
-  cost, and which operations it reached for that the module does not have.
+- **48. The CAD eval's live runs** — `make cad-eval` shipped offline; the first scored rows
+  on a local 32K model and a cloud model, two runs that agree, and what they change.
 - **49. Ollama models from Settings** — find, size against the card, pull and delete
   without a terminal; the daemon downloads, under operator limits.
-- **50. Full scripts where a container exists** — unrestricted build123d and CadQuery, and
-  a native FreeCAD file, for the parts the allow-list cannot express.
-- **51. A part made of several bodies** — a print-in-place hinge is loose bodies with a
-  gap; the tool delivers one solid and says so.
+- **50. Full scripts where a container exists** — gated on item 48: only what the reader
+  can never accept, built in the container and judged on the host.
 - **52. Memory that helps a coding agent** — repository-scoped facts, build/test
   procedures, a search over past conversations, and project memory the agent can write.
 
@@ -167,14 +191,14 @@ else wants the card. 41 last of the three, once the URLs it opens are real; its 
 specified in [docs/companion-apps.md](docs/companion-apps.md), not designed again in the
 change.
 
-**Suggested order for 45–51.** 43 and 44 landed (FORK.md §50 and §51): the module builds
-and checks a part on the default sandbox, and the skill and the attempt count of 45 landed
-with it. 45's remainder first: nothing here has seen a real model follow the skill. 51 when
-a request needs it; the first real request did. 46 next, since a part nobody can look
-at is half delivered. 47 before CAD is used in Ultra or Plus Ultracode, where subagents
-report on their own work. 48 after 45, and again after every change to the allow-list.
-49 is independent of the rest. 50 only if 48 shows that the allow-list, and not the model,
-is what stops real parts.
+**Suggested order for CAD.** 48's live runs first, on the owner's host: they are the only
+measure of whether the shipped CAD work helps real models, they are the skill's proof on
+real models and carry the live Ultra delegation, and their refusal counts decide item 50's
+gate. Run 48 again after every change to the allow-list, the skill or the tool's answers. 50 only if 48 shows that
+the reader, and not the model, is what stops real parts, and only where a Docker daemon
+can build and test it.
+
+**49** is not CAD and is independent of all of the above; it can start any time.
 
 ---
 
@@ -1179,164 +1203,56 @@ insider's matching gate, `ollama.gpu_lock_file`. In FrontalRobotomy:
 
 ---
 
-## 45. The CAD skill, proven on real models
+## 48. The CAD eval's live runs
 
-**Goal** — A request for a part follows the same short procedure on every model: ask for
-what is missing, write the requirements down, write the script, call the tool, read the
-numbers back, repair, hand over the files. The procedure exists; this item is the proof.
+**Goal** — The first scored rows of `make cad-eval` on real models: one local 32K model
+and one cloud model at k=3, each run twice, plus a baseline row on the module as it was
+before the 2026-11-22 round, in the dated table of `docs/guide/cad-eval.md`; and FORK.md
+§51 updated with what those runs change in the skill.
 
-**What landed** (FORK.md §51) — `skills/public/cad-modeling/` with `SKILL.md`,
-`references/operations.md` generated from the allow-list and `references/failures.md`;
-`tests/skills/test_cad_modeling.py`, which fails when the skill and the module differ;
-`for` loops in scripts; and in the tool the attempt count (eight builds of a part in a
-run, then stop and report), the expected numbers held from a part's first build, and an
-answer that always ends with what to do next.
+**Why it fits** — The harness shipped offline (FORK.md §51): 22 original part specs in
+three bands, a reference part and derived truth for each, scoring of the delivered STEP
+through `measure_cli`, and `test_eval_specs.py` and `test_bench_cad_eval.py` in CI.
+Nothing yet shows that any change of that round raises success on a real model, and
+`cad_build`'s own pass is graded on the model's numbers, so only these rows can say whether
+the skill, the picture and the wider reader help. They are also the skill's proof on real
+models, which used to be an item of its own: a plate, an L-bracket and an enclosure on one
+cloud model and one local 32K model, now scored on ground truth.
 
-**Why it is still open** — None of it has been followed by a real model in this
-repository. The first real request (a print-in-place laptop stand, on a cloud model) hit
-the loop refusal that is now fixed and would next hit item 51. Whether a local 32K model
-finds the skill by name in its index and follows seven steps is not known.
-
-**Depends on** — nothing open.
-
-**Scope**
-
-- Run three requests on one cloud model and on one local model at a 32K window: a plate
-  with holes, an L-bracket, an enclosure with a lid. Record attempts, refusals and where
-  the model left the procedure.
-- Change the skill and the tool's `next` sentences from what those runs show, tests
-  first: both are pinned (`test_cad_modeling.py`, `test_cad_extension.py`).
-- A conversation without the module ends with the install instruction and no invented
-  geometry.
-- With item 50 present, the skill names the container route for parts the allow-list
-  refuses.
-
-**Key files** — `skills/public/cad-modeling/`, `tests/skills/test_cad_modeling.py`,
-`examples/deerflow-extension-cad/deerflow_extension_cad/tool.py` (the `NEXT_*` sentences).
-
-**Done when** — the three parts each pass on both models within the attempt limit, and
-what the runs changed in the skill is recorded in FORK.md §51.
-
----
-
-## 46. 3D files open in the artifact panel
-
-**Goal** — Selecting `part.glb` or `part.stl` in the artifact panel, the reader or the
-Files view shows a model that can be rotated, on the desktop and on a phone. The original
-file still downloads unchanged.
-
-**Why it fits** — The `artifactPreviews` contract exists for exactly this, and the Office
-preview is the worked example: a packaged, operator-installed browser contribution, files
-read through the authenticated artifact route, no public viewer service. It runs in the
-user's own browser, so the WebGL failures that desktop webviews have on Linux with NVIDIA
-cards do not arise.
-
-**Depends on** — nothing in code. The CAD module (FORK.md §51) already produces the files.
+**Depends on** — LLM API keys and Ollama with a 32K local model on the owner's host, and
+`make dev` with the CAD module on and its bundled snapshot carrying `measure_cli` (the run
+refuses to start without it). Nothing in this file.
 
 **Scope**
 
-- A second packaged extension, `examples/deerflow-extension-cad-preview/`, modelled on
-  `examples/deerflow-extension-office-preview/`. It registers `glb` and `stl` first. It is
-  separate from the CAD module's package so that viewing a model does not require the
-  kernel.
-- The renderer and its parsers ship inside the trusted package and are served by content
-  hash. Parsing runs in a Worker with a deadline, as the Office preview does.
-- Limits stated in the README and enforced: the host's 25 MiB read cap, a triangle cap,
-  and the download fallback with a reason when either is exceeded.
-- Orbit, fit to view, bounding-box dimensions on screen, light and dark themes. No
-  automatic rotation, since reduced motion is this fork's default.
-- `dispose()` releases the WebGL context; opening twenty files in a row must not exhaust
-  contexts.
-- A second step adds `step` and `stp` through an OpenCascade WebAssembly reader in the
-  same Worker, under the same limits. Until then the GLB is the preview and the STEP is
-  the download.
-- Off until an operator installs it, like every extension. Third-party notices included.
+- Run `make cad-eval MODEL=<local 32K model> K=3 QUANT=<its quantisation>` and
+  `make cad-eval MODEL=<cloud model> K=3`, twice each, and paste the printed rows into the
+  results table. A baseline row runs the cloud model on the module as it was before the
+  round (check out the commit before its merge and refresh the snapshot).
+- Two runs of one model agree within the stated interval, or the disagreement is recorded
+  with its cause.
+- FORK.md §51 records what the runs changed in the skill, and what the `view_image` counts
+  say about whether a vision model uses the picture.
+- One live Ultra delegation through `skills/public/cad-modeling/references/delegation.md`'s
+  criterion, on a real model, recorded with its checklist line; the offline tests drive the
+  real subagent executor with a scripted model.
+- Offline, once unblocked: CadQueryEval's 25 tasks as a further band, with their LICENSE
+  and attribution, once the licence of the task data is confirmed (its code is MIT); and
+  specs for the operations that have none yet, a loft, a sweep and a thread (`revolve` and
+  `text` have one each).
 
-**Key files** — `examples/deerflow-extension-cad-preview/` (new, the Office preview's
-layout: `ui/`, the Python package with `ui_manifest.json` and `deerflow-extension.json`,
-`tests/test_registration.py`), `scripts/check_extension.py`, `examples/README.md`,
-`frontend/tests/e2e/` (a GLB fixture, following the Office fixtures).
-`docs/full-stack-plugins.md` should not need to change; if it does, the contract was the
-wrong shape and that is its own change.
+**Key files** — `docs/guide/cad-eval.md` (the results table), FORK.md §51, and
+`backend/scripts/benchmark/cad_eval/specs/` for new specs.
 
-**Done when** — the GLB and STL from the CAD module, and a `part.failed.glb`, render in the panel
-and the reader at desktop width and at 390px; an oversize file falls back to download and
-says why; twenty consecutive previews leave no leaked context; the E2E spec is green; and
-with the extension removed the files behave exactly as they do today.
+**Done when**
 
----
+- The results table holds rows for one local 32K model and one cloud model at k=3, each
+  run twice and agreeing within the interval, and the baseline row.
+- FORK.md §51 says what the runs changed in the skill and what the `view_image` counts
+  showed, and one live Ultra delegation is recorded.
+- Item 50's gate is decided from the rows' refusals by construct.
 
-## 47. Geometry decides a delegated part
-
-**Goal** — When the lead hands a part to a `task` subagent, in Ultra or in a Plus
-Ultracode workflow, the part passes or fails on measured numbers. The subagent's own
-summary is not evidence.
-
-**Why it fits** — `acceptance_checks.py` already decides lead-supplied criteria in code on
-the `task` tool's completed branch. The CAD module writes `<name>.step` only for a part that
-passed its checks and `<name>.report.json`, with `passed`, for every build, and it needs no
-shell. The file leaf that exists today is a start and not proof by itself: a STEP from an
-earlier build that passed stays when a later build of the same name fails (its files are
-`<name>-1.*`), and a subagent with file tools can write a `.step` itself.
-
-**Depends on** — nothing open. The CAD module shipped (FORK.md §51).
-
-**Scope**
-
-- The lead's criteria name the build's files with the existing file leaf, and read `passed`
-  from the build's own report. Confirm the leaf's path form for the outputs directory in
-  `ACCEPTANCE_CHECKS.md` before writing the skill text.
-- No CAD-specific code in core. Where the existing leaves cannot read the report, the
-  addition is a generic leaf that reads a JSON report, usable by any tool.
-- A short recipe for Plus Ultracode in the skill's references: several candidate scripts
-  from child agents, each built and measured, a second agent checking the findings, the
-  first passing candidate returned. Local dispatch already runs children one at a time
-  when the card holds one model.
-- Repair rounds count against the existing run limits and the spend cap. No new limit.
-
-**Key files** —
-`backend/packages/harness/deerflow/subagents/acceptance_checks.py` and
-`ACCEPTANCE_CHECKS.md` beside it (read; edit only for a generic leaf),
-`skills/public/cad-modeling/references/`.
-
-**Done when** — a subagent whose part fails produces a failed checklist that the lead sees
-and acts on; a passing part passes; and a search of `backend/packages/harness/` finds
-nothing specific to CAD.
-
----
-
-## 48. A CAD eval
-
-**Goal** — One command scores any configured model on a fixed set of part specs and prints
-pass rate, repair rounds, tokens, cost, and the operations the model asked for that the
-allow-list refused.
-
-**Why it fits** — The thesis is local models worth preferring rather than tolerating, and
-for CAD nobody knows which ones are until it is measured. `make drift-eval` is the
-precedent: opt-in, out of CI, end to end through the running agent. Unlike drift it needs
-no judge model, because the checks are numbers. The refused-operation count is what tells
-the CAD module which method to add next, and item 50 whether it is needed at all.
-
-**Depends on** — 45, on top of the CAD module (FORK.md §51). It does not wait for item 25,
-but belongs in that suite once
-it exists.
-
-**Scope**
-
-- Fifteen to twenty specs in three bands: prismatic parts; holes, patterns and pockets;
-  fillets, shells and two-part fits. Each has the request text and the expected numbers.
-- Runs against the running agent on the default sandbox, per model, under the run limits
-  and spend cap already configured, and reports the spend.
-- A dated results table in the docs. The table is evidence, so a row carries the model,
-  its quantisation and window, the module version and the skill version.
-- Out of CI. Re-run after any change to the allow-list or the skill.
-
-**Key files** — a runner under `scripts/` and its `Makefile` target, following the layout
-`drift-eval` uses; fixtures beside it; a results page under `docs/`.
-
-**Done when** — the table has at least one local model and one subscription model; two
-runs of the same model agree within a stated tolerance; and the command refuses to start
-when the CAD module is not installed.
+It costs nothing per request: the eval runs out of band.
 
 ---
 
@@ -1381,78 +1297,65 @@ check passes for the newly synced entry.
 
 ## 50. Full scripts where a container exists
 
-**Goal** — With the container sandbox configured, a part the allow-list cannot express is
-built from an unrestricted build123d or CadQuery script run inside the conversation's
-container, and judged by the same checks.
+**Goal** — With the container sandbox in container mode, a part that needs what the reader
+can never accept — callables, the Sketch API, or control flow that depends on a build — is
+built from a full CadQuery script in the conversation's container. The CAD worker on the
+host judges the STEP it wrote.
 
-**Why it fits** — The allow-list is a floor, not a ceiling. Lofts, sweeps along curves,
-text and anything that needs a loop are refused by the CAD module, correctly. The container is
-the place this fork already has for code a model wrote, and the best public results for
-CAD by agents come from full scripts inside a measuring loop.
+**Why it fits** — The reader is a floor, not a ceiling, and the floor has risen: loops,
+revolve, loft and sweep, lettering and threads have all landed (FORK.md §51).
+What remains is what an allow-list cannot read, and the best public results for CAD by
+agents come from full scripts inside a measuring loop. Judging inside the container would
+let the model's code patch the checker, so the judging happens on the host. That needs a
+generic read hook, and FORK.md §50 made `ToolContext` write-only on purpose, so the hook
+gets its own review.
 
-**Depends on** — 45, the CAD module (FORK.md §51), and the container sandbox (`AioSandboxProvider`, local
-container mode). It adds nothing to the default install.
+Several constraints shape the rest. build123d 0.13 needs OCP 8 while CadQuery 2.8.0 needs
+OCP below 8, so the image holds one line. External AIO mode surfaces no outputs (item 17).
+The `sandbox-image-smoke` workflow only pulls images, so the layer needs its own build job.
+Nothing of this could be built or tested where it was planned, which had no Docker daemon,
+and the gate needs live data from 48.
+
+**Depends on** — 48, whose run decides the gate, and the container sandbox
+(`AioSandboxProvider`, local container mode). It adds nothing to the default install.
 
 **Scope**
 
-- An image layer under `docker/`, built from the supported AIO image line, with pinned
-  build123d and CadQuery, and a make target beside the `sandbox-*` targets that builds it
-  and writes the sandbox `image:` value. Nothing is installed at run time, so an offline
-  conversation still builds.
-- The CAD module's checker (`measure.py`) packaged as a command inside that image, so a
-  script's STEP is
-  measured by the same code and reported in the same format. One checker, two entry
-  points.
-- The skill chooses: `cad_build` first; the container only when the tool refused a
-  construct and a container is configured. It never asks the user to enable host bash.
-- An optional image variant with FreeCAD, for a native `.FCStd` with a feature tree beside
-  the STEP: FreeCAD Python run with `freecadcmd`, headless, judged on its exported STEP.
+- The gate: start only when an item 48 run shows that, for some model users run, at least
+  10% of specs fail on `expected_refused` constructs that the reader cannot admit. The
+  threshold is stated in `docs/guide/cad-eval.md`.
+- A generic core hook: `ToolContext.read_output(path, max_bytes)` in extension API 0.2.14.
+  It is read-only, limited to the calling thread's outputs, and refuses `..`, symlinks and
+  oversize files. It has its own tests, and a FORK.md §50 amendment says why a read is now
+  admitted.
+- In the CAD module, `cad_check(name, step_path, bbox_xyz_mm, …)`, registered only when the
+  operator sets `container_scripts: true`. It reads the STEP through `read_output` and runs
+  the same worker measurement, `checks.py` and `decide()`. It costs about 60–80 tokens
+  per request, and only where the operator turns it on.
+- An image layer under `docker/` on the pinned AIO image line, with `cadquery==2.8.0`
+  only; build123d only as 0.12.x on OCP 7.9, and only if 48 asks for it. Nothing is
+  installed at run time, so an offline conversation still builds. `scripts/sandbox_toggle.py`
+  gains an image option that requires `MODE=container`.
+- A new CI job builds and smoke-tests the layer when `docker/` paths change.
+- The skill chooses `cad_build` first, and the container only when the tool refused a
+  construct and `cad_check` exists. It never asks the user to enable host bash.
 - No `--gpus`, no extra capability, no published port.
+- SECURITY.md states that the host worker parses an untrusted STEP inside the child-process
+  limits. The FreeCAD variant this item used to offer is under *Deliberately not*.
 
-**Key files** — `docker/` (the image layer), `Makefile` (`sandbox-*` targets),
-`examples/deerflow-extension-cad/` (the shared checker), `skills/public/cad-modeling/`,
-`backend/docs/CONFIGURATION.md`.
+**Key files** — later: `backend/packages/extension-api/` (`read_output`),
+`examples/deerflow-extension-cad/deerflow_extension_cad/` (`cad_check`), `docker/` (the
+image layer), `scripts/sandbox_toggle.py`, `.github/workflows/` (the new build job),
+`skills/public/cad-modeling/`, `SECURITY.md`, and FORK.md §50 and §51.
 
-**Done when** — a lofted part that `cad_build` refuses is built in the container and
-passes the same report; the same conversation on the default sandbox ends with the refusal
-and its reason, not an attempt; and the FreeCAD variant, when present, produces a file
-whose sketch and pad are editable in FreeCAD.
+**Done when**
 
----
-
-## 51. A part made of several bodies
-
-**Goal** — A design of loose bodies that belong together (a print-in-place hinge, a
-captive nut, a chain) is built, checked and delivered as one file.
-
-**Why it fits** — `cad_build` passes a part only when it is exactly one solid. That is
-right for a bracket and wrong for anything that moves after printing: the first real
-request was a folding laptop stand with an accordion hinge. Today the answer says the
-tool cannot deliver it, so the model stops instead of spending its attempts.
-
-**Depends on** — nothing open. Loops (FORK.md §51) are what make such a script short
-enough to write.
-
-**Scope**
-
-- An expected body count in the call, one by default. It costs tokens of every request:
-  the context-fit critical check has nine to spare in its heaviest documented case, so
-  the description is shortened elsewhere first.
-- The check becomes "the expected number of valid, closed solids". Volume is their sum
-  and the bounding box their union, which the re-import already measures.
-- The smallest gap between two bodies is measured and reported, and may be given as a
-  minimum. Bodies that touch or overlap would have been joined by `union()`, so the gap
-  is the print-in-place property that matters.
-- Hole measurement per body: `measure.py` decides material or air on one solid today.
-- STEP, STL and GLB hold all bodies in their built positions.
-
-**Key files** — `examples/deerflow-extension-cad/deerflow_extension_cad/tool.py`
-(`decide`, the schema), `measure.py`, `build.py` (`solid_of`, `export`), the package
-tests, `skills/public/cad-modeling/`.
-
-**Done when** — a two-link hinge with a 0.3 mm gap passes with a body count of three and
-fails with a gap of zero; a one-body part behaves exactly as before; and the fixed
-request still fits the allowance.
+- A `parametricCurve` part is refused by `cad_build`, built in the container, and passes
+  `cad_check` with a report in the same format.
+- A report edited by hand inside the container changes nothing.
+- Default installs have no `cad_check`, and the context-fit check is unchanged.
+- `read_output` refuses another thread's outputs, `..`, symlinks and oversize files.
+- The CI job builds the image.
 
 ---
 
@@ -1550,7 +1453,7 @@ the cliff; the reading in parts that FORK.md §45 extended, and item 35, remove 
 stand at it.
 
 **A downloadable desktop app.** An installer for Windows, macOS and Linux was the first
-shape of the CAD idea behind items 43–50. This fork is a server reached from a browser,
+shape of the CAD idea behind the CAD items. This fork is a server reached from a browser,
 the Script workflows extension does not run on a Windows Gateway, and packaging a geometry
 kernel for three systems is a project of its own. The items give up the installer and keep
 everything else.
@@ -1569,7 +1472,53 @@ above. Item 48's eval and the passed parts from item 44 are what this fork can h
 **Driving a desktop CAD program.** SolidWorks, or any other program operated through its
 window, is the computer-use surface this file already declines.
 
-**OpenSCAD.** Models write it easily and it rebuilds quickly, but it has no true fillets or
-chamfers, exports meshes rather than STEP by default, and fails silently where CadQuery
-fails loudly. If it is ever wanted it is one more input format for item 44, argued on its
-own.
+**OpenSCAD or build123d as the core language.** Models write OpenSCAD easily and it
+rebuilds quickly, but it has no true fillets or chamfers, exports meshes rather than STEP
+by default, gives the checker no analytic holes to measure, and fails silently where
+CadQuery fails loudly. build123d has no head-to-head result over CadQuery and less training
+data behind it, and 0.13 needs OCP 8 where CadQuery 2.8.0 needs OCP below 8, so the two
+cannot share a kernel. Either, if it is ever wanted, is one more input format for item 44,
+argued on its own; build123d may enter item 50's image only as 0.12.x on OCP 7.9, and only
+if item 48 asks for it.
+
+**STEP preview in the browser.** The CAD model preview (FORK.md §56) was once planned with
+a second step that read STEP files through an OpenCascade WebAssembly build. `occt-import-js.wasm` is 7,604,031
+bytes, over the 4 MiB per-asset cap; it is LGPL-2.1 and was last published in 2024-12; a
+Worker in the opaque origin cannot fetch a separate WASM file; and it is a second OCCT
+build that tessellates differently from the kernel that measured the part. The CAD module
+already writes a GLB from the same shape, so the GLB is the preview and the STEP is the
+download.
+
+**A hosted text-to-CAD backend.** Zoo (KittyCAD), Onshape FeatureScript and CADAM are cloud
+geometry engines: the design leaves the machine, they return KCL or meshes rather than a
+script the user can edit, and they charge by the minute. That is the opposite of a
+local-first fork with an offline switch.
+
+**An OS process sandbox for full scripts without Docker.** bubblewrap and srt run on Linux
+only and Seatbelt on macOS only, so each covers one of the supported hosts; Ubuntu 24.04
+restricts the user namespaces they need through AppArmor; and each would need its own
+security review. What it would unlock is unknown until item 48 counts refusals, and item 50
+already names the route where a container exists.
+
+**A FreeCAD file from a model-written script.** Item 50 used to offer an image variant that
+wrote a native `.FCStd` beside the STEP. Opening a crafted `.FCStd` runs code in FreeCAD
+before 1.1.2 (CVE-2026-34789), so a file the model's script wrote would carry that script's
+reach out of the container and onto the user's unsandboxed desktop. The STEP stays the file
+to edit.
+
+**Slicing, or sending a job to a printer, from the CAD worker.** The worker starts no
+process, and its process-group kill is reasoned from that. The slicers are AGPL binaries
+that uv cannot install, and sending a job is a consequential action that waits for item 36.
+If it is wanted, it comes later as a separate, optional extension that takes the 3MF the
+CAD module writes.
+
+**A separate refusal budget for the CAD tool.** The `MAX_ATTEMPTS` comment budgets one or
+two refusals on purpose, the reader now accepts the commonest ones, and a second budget would
+change the pinned `NEXT_*` sentences. Item 48 reports refusals by construct; this is
+revisited only if its data shows that refusals still use up the attempts.
+
+**A CAD-specific repair store, and other CAD extras.** Repair patterns go to `failures.md`
+through the skill learning loop (FORK.md §55), and `report.json` records a part's
+parameters for follow-up edits. Consensus sampling, FEA feedback, DXF export, a panel
+that rebuilds a part from its parameters, and remixing uploaded STEP files have low
+measured value for this user now, and each needs a new hook (`read_output`) or new UI.

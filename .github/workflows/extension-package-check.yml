@@ -10,6 +10,8 @@ on:
       - 'backend/packages/harness/deerflow/extensions/**'
       - 'backend/pyproject.toml'
       - 'backend/uv.lock'
+      # The CAD package's test_eval_specs.py loads the eval's specs and scorer from here.
+      - 'backend/scripts/benchmark/cad_eval/**'
       - '.github/workflows/extension-package-check.yml'
   push:
     branches: [main, "*-dev"]
@@ -20,6 +22,8 @@ on:
       - 'backend/packages/harness/deerflow/extensions/**'
       - 'backend/pyproject.toml'
       - 'backend/uv.lock'
+      # The CAD package's test_eval_specs.py loads the eval's specs and scorer from here.
+      - 'backend/scripts/benchmark/cad_eval/**'
       - '.github/workflows/extension-package-check.yml'
 
 permissions:

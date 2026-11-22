@@ -12,7 +12,10 @@ independent Python package using the public `deerflow-extension-api` contract.
 The [CAD module](deerflow-extension-cad/README.md) is a tools-only package with a
 heavy pinned dependency, a child process and a file-writing tool: it builds a
 part from a CadQuery script without running the script. It ships installed in
-this fork, from a committed copy in `backend/extensions/sources/`.
+this fork, from a committed copy in `backend/extensions/sources/`. Its files are
+drawn by the [CAD model preview](deerflow-extension-cad-preview/README.md), a
+browser-only `artifactPreviews` package with a bundled three.js viewer and strict
+GLB and STL parsers in a Worker; it ships installed beside the CAD module.
 
 Additional examples cover [Office file previews](deerflow-extension-office-preview/README.md),
 [text-list classification](deerflow-extension-jev-classify/README.md),

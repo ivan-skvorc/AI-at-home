@@ -2,11 +2,11 @@
 
 Run with "run change_cycle.md level 1" (or 2, or 3). Each level includes everything in the levels before it.
 
-| Level | Tests | Typical use |
-|---|---|---|
-| 1 | Features linked to the changed files | Everyday changes |
-| 2 | The whole app | Before a release; after large or risky changes |
-| 3 | The whole app + quality review | Periodic clean-up; after a large feature |
+| Level | Tests | Typical use | Map |
+|---|---|---|---|
+| 1 | Features linked to the changed files | Everyday changes | Updated for the changed files |
+| 2 | The whole app | Before a release; after large or risky changes | Updated, then checked whole against the code |
+| 3 | The whole app + quality review | Periodic clean-up; after a large feature | Updated again for what the quality fixes add, delete or rename |
 
 **Automatic for every change request, whichever agent or model runs it.** Claude
 Code, Codex, Grok Build, any other coding agent and their delegated agents run
@@ -87,6 +87,7 @@ user loses outright and the rest of the suite does not notice.
 
 ## Level 1: affected features
 
+- Update the map for the changed files (Every level, step 3): a new file gets its index row under a feature, deleted and renamed files are fixed, a new feature gets its area entry, and the sync line is rewritten. Then `cd backend && uv run pytest tests/test_repo_map.py -q`, which fails on a shipped file with no row and on a row whose file is gone.
 - Look up each changed file in the file → features index and run the tests of every feature listed (`ALL` means every feature: run the level 2 suites).
 - Run changed test files.
 - Run lint / type-check if the repo has them: `cd backend && make lint` for backend changes, `cd frontend && pnpm check` for frontend changes, `make check-agent-guidance` and `backend/tests/test_agent_guidance_check.py` for any `AGENTS.md` edit, `backend/tests/test_change_cycle_doc.py` for this file.
@@ -97,7 +98,7 @@ user loses outright and the rest of the suite does not notice.
 
 - Full test suite, lint, type-check and build.
 - `git grep -nE '^(<{7}|={7}|>{7})( |$)'` prints nothing.
-- Check the map against the code: every file that runs or ships is in the index, every feature has a test, the board shows every feature. `cd backend && uv run pytest tests/test_repo_map.py -q` checks the first two mechanically (and that no index row is stale); the board is checked by eye.
+- Update the map, then check all of it against the code, not only the changed files: every file that runs or ships is in the index, every feature has a test, the board shows every feature. `cd backend && uv run pytest tests/test_repo_map.py -q` checks the first two mechanically (and that no index row is stale); the board is checked by eye.
 - An upstream merge, or a change whose effects cannot be bounded to named areas, also runs FORK.md's whole post-sync checklist.
 
 ## Level 3: quality review
@@ -115,8 +116,9 @@ Then:
 2. Fixes keep behavior the same. A fix that can't isn't made here; log it with "Why kept: needs owner decision".
 3. Log every finding not fixed in [`docs/quality-exceptions.md`](docs/quality-exceptions.md).
 4. Check every entry in `docs/quality-exceptions.md`. If its "Fix when" condition is met, fix it and delete the entry. Entries whose condition still holds are not reported again.
-5. Rerun the Level 2 checks after the fixes.
-6. Quality fixes go in their own PR, separate from feature changes, so either can be reverted alone.
+5. Update the map again for what the fixes changed: rows for the shared files they add, removal of the files they delete, renamed paths, and the board when a shared node appears or goes. Rewrite the sync line.
+6. Rerun the Level 2 checks after the fixes, `tests/test_repo_map.py` included.
+7. Quality fixes go in their own PR, separate from feature changes, so either can be reverted alone.
 
 ## Model audit (only when asked)
 

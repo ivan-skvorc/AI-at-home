@@ -704,6 +704,7 @@ class SubagentBatchService:
                 batch=item["batch"],
                 app_config=app_config,
                 bash_executions=getattr(result, "bash_executions", None),
+                tool_results=getattr(result, "tool_results", None),
             )
         )
         try:

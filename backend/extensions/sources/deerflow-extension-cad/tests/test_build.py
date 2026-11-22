@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import inspect
 import json
+import math
 import time
 
 import pytest
@@ -66,11 +67,11 @@ async def _build(script: str, outputs: Outputs | None = None, **expect):
     return answer, outputs.files
 
 
-async def test_the_plate_is_built_and_its_five_files_are_handed_over():
+async def test_the_plate_is_built_and_its_files_are_handed_over_in_order():
     answer, files = await _build(PLATE)
     assert answer["passed"] is True, answer
     assert {check["check"]: check["passed"] for check in answer["checks"]} == {"one closed solid": True, "bounding box": True, "volume": True, "holes": True}
-    assert sorted(files) == ["part.glb", "part.py", "part.report.json", "part.step", "part.stl"]
+    assert sorted(files) == ["part.3mf", "part.glb", "part.png", "part.py", "part.report.json", "part.step", "part.stl"]
     assert files["part.py"].decode() == PLATE
     assert files["part.step"].startswith(b"ISO-10303-21") and b"MANIFOLD_SOLID_BREP" in files["part.step"]
     assert files["part.glb"][:4] == b"glTF"
@@ -79,6 +80,10 @@ async def test_the_plate_is_built_and_its_five_files_are_handed_over():
     assert report["measured"]["bbox_mm"] == [60.0, 40.0, 6.0]
     assert [hole["diameter_mm"] for hole in report["measured"]["holes"]] == [4.0, 4.0]
     assert sorted(answer["files"]) == sorted(f"/mnt/user-data/outputs/{name}" for name in files)
+    # The order a set is saved in: the picture before the meshes, STEP as the last part file, the report after it.
+    assert [path.rpartition("/")[2] for path in answer["files"]] == ["part.py", "part.png", "part.glb", "part.stl", "part.3mf", "part.step", "part.report.json"]
+    assert files["part.png"][:8] == b"\x89PNG\r\n\x1a\n"
+    assert answer["next"].endswith(" Show /mnt/user-data/outputs/part.png in your reply; if you can view images, look at it once and compare it with the request.")
 
 
 async def test_the_same_script_with_one_hole_removed_fails_the_hole_check_and_leaves_no_step():
@@ -86,9 +91,174 @@ async def test_the_same_script_with_one_hole_removed_fails_the_hole_check_and_le
     assert answer["passed"] is False
     failed = [check for check in answer["checks"] if not check["passed"]]
     assert [(check["check"], check["expected"], check["measured"]) for check in failed] == [("holes", [4, 4], [4.0])]
-    assert sorted(files) == ["part.failed.glb", "part.py", "part.report.json"]
-    assert files["part.failed.glb"][:4] == b"glTF"
+    assert sorted(files) == ["part.failed.glb", "part.failed.png", "part.py", "part.report.json"]
+    assert files["part.failed.glb"][:4] == b"glTF" and files["part.failed.png"][:8] == b"\x89PNG\r\n\x1a\n"
     assert json.loads(files["part.report.json"])["passed"] is False
+
+
+async def test_holes_expected_at_points_are_checked_where_they_are():
+    # The plate is centred on the origin, so its top face is at z = 3; any point on a hole's axis places it.
+    answer, files = await _build(PLATE, **{**EXPECT, "hole_diameters_mm": [[4, -15, 0, 3], [4, 15, 0, -3]]})
+    assert answer["passed"] is True, answer
+    assert answer["holes"] == [{"d": 4, "at": [-15, 0, 3], "axis": [0, 0, -1]}, {"d": 4, "at": [15, 0, 3], "axis": [0, 0, -1]}]
+    answer, files = await _build(PLATE, **{**EXPECT, "hole_diameters_mm": [[4, -14, 0, 3], [4, 15, 0, 3]]})
+    holes = next(check for check in answer["checks"] if check["check"] == "holes")
+    assert answer["passed"] is False and holes["misplaced"] == [{"expected": [4, -14, 0, 3], "nearest_at": [-15.0, 0.0, 3.0], "off_axis_mm": 1.0}]
+    assert "part.step" not in files
+
+
+async def test_a_blind_hole_drilled_into_the_opposite_face_is_not_where_it_was_asked_for():
+    # h08 of the CAD eval: a 3 mm hole 12 mm deep into the bar's +x end face, asked for at that face's
+    # centre. Drilled into the -x end it lies on the same line, and the eval scores it a truth fail.
+    bar = 'result = cq.Workplane("XY").box(80, 20, 8).faces("{face}").workplane(centerOption="CenterOfBoundBox").hole(3, 12)\n'
+    expect = {"bbox_xyz_mm": [80, 20, 8], "hole_diameters_mm": [[3, 40, 0, 0]]}
+    right, _ = await _build(bar.format(face=">X"), **expect)
+    assert right["passed"] is True, right
+    wrong, files = await _build(bar.format(face="<X"), **expect)
+    holes = next(check for check in wrong["checks"] if check["check"] == "holes")
+    assert wrong["passed"] is False and holes["misplaced"] == [{"expected": [3, 40, 0, 0], "nearest_at": [-40.0, 0.0, 0.0], "off_axis_mm": 0.0, "past_floor_mm": 68.0}]
+    assert "part.step" not in files
+    # A blind insert hole asked for on the top face and drilled up from the bottom one.
+    plate = 'result = cq.Workplane("XY").box(30, 30, 10).faces("{face}").workplane(centerOption="CenterOfBoundBox").hole(6, 4)\n'
+    top = {"bbox_xyz_mm": [30, 30, 10], "hole_diameters_mm": [[6, 0, 0, 5]]}
+    assert (await _build(plate.format(face=">Z"), **top))[0]["passed"] is True
+    bottom, _ = await _build(plate.format(face="<Z"), **top)
+    holes = next(check for check in bottom["checks"] if check["check"] == "holes")
+    assert bottom["passed"] is False and holes["misplaced"][0]["past_floor_mm"] == 6.0
+
+
+async def test_a_report_of_four_hundred_holes_stays_small_and_names_what_made_it(tmp_path, monkeypatch):
+    # A script may make 200 pattern points, and an expectation may name 400 holes. The plate is measured
+    # by the module itself and handed to the real handler as the worker's answer.
+    from deerflow_extension_cad import measure, tool
+
+    plate = cq.Workplane("XY").box(205, 205, 4).faces(">Z").workplane().rarray(10, 10, 20, 20).hole(3).findSolid()
+    names, mesh = build.export(plate, cq, tmp_path, tool.MAX_EXPORT_BYTES)
+    measured = {**measure.measure_step(tmp_path / names["step"], cq), "mesh": mesh}
+    exported = {kind: (tmp_path / name).read_bytes() for kind, name in names.items()}
+
+    async def worker(script, **limits):
+        return {"status": "built", "measured": measured, "files": dict(exported)}
+
+    monkeypatch.setattr(tool, "run_worker", worker)
+    answer, files = await _build("result = cq.Workplane('XY').box(205, 205, 4)\n", bbox_xyz_mm=[205, 205, 4], hole_diameters_mm=[3] * 400)
+    assert answer["passed"] is True, answer
+    report = json.loads(files["part.report.json"])
+    assert len(report["measured"]["holes"]) == 400 and len(files["part.report.json"]) < 50_000
+    # Twelve holes in the answer, every hole in the report: once, on a line of its own.
+    assert len(answer["holes"]) == 12 and any("part.report.json lists every hole" in note for note in answer["notes"])
+    assert files["part.report.json"].count(b'"at":') == 400
+    assert report["cadquery_version"] == cq.__version__ and report["module_version"]
+    assert report["files"] == ["part.py", "part.glb", "part.stl", "part.3mf", "part.step"]
+
+
+def _glb_document(glb: bytes) -> dict:
+    length = int.from_bytes(glb[12:16], "little")
+    assert int.from_bytes(glb[16:20], "little") == 0x4E4F534A and length % 4 == 0 and int.from_bytes(glb[8:12], "little") == len(glb)
+    return json.loads(glb[20 : 20 + length])
+
+
+async def test_the_glb_opens_at_real_size_and_the_3mf_is_in_millimetres():
+    import io
+    import re
+    import zipfile
+
+    answer, files = await _build(PLATE)
+    report = json.loads(files["part.report.json"])
+    low, high = report["measured"]["bbox_min_mm"], report["measured"]["bbox_max_mm"]
+    # glTF is in metres: the scene's root scales the kernel's millimetre vertices by 0.001.
+    document = _glb_document(files["part.glb"])
+    (root,) = document["scenes"][document.get("scene", 0)]["nodes"]
+    scale = document["nodes"][root]["scale"]
+    assert scale == [0.001, 0.001, 0.001]
+    positions = [document["accessors"][primitive["attributes"]["POSITION"]] for mesh in document["meshes"] for primitive in mesh["primitives"]]
+    extent = [max(a["max"][k] for a in positions) - min(a["min"][k] for a in positions) for k in range(3)]
+    assert all(abs(side * scale[0] - size / 1000) <= 1e-6 for side, size in zip(extent, report["measured"]["bbox_mm"]))
+    # The slicer's file: a 3MF package whose model is in millimetres and spans the measured box.
+    with zipfile.ZipFile(io.BytesIO(files["part.3mf"])) as package:
+        model = package.read("3D/3dmodel.model").decode("utf-8")
+    assert 'unit="millimeter"' in model
+    vertices = [tuple(map(float, found)) for found in re.findall(r'<vertex x="([^"]+)" y="([^"]+)" z="([^"]+)"', model)]
+    assert all(abs(min(v[k] for v in vertices) - low[k]) <= 1e-6 and abs(max(v[k] for v in vertices) - high[k]) <= 1e-6 for k in range(3))
+    # A failed part's GLB is in metres too.
+    _, failed = await _build(ONE_HOLE)
+    assert document["nodes"][root]["scale"] == _glb_document(failed["part.failed.glb"])["nodes"][root]["scale"] and "part.3mf" not in failed
+
+
+#: A part of two bodies that touch: the slicer's file holds both, and part.parts.3mf lays them apart.
+SPLIT = "result = cq.Workplane('XY').box(20, 20, 40).faces('>Z').workplane(-20).split(keepTop=True, keepBottom=True)\n"
+
+
+def _package(data: bytes) -> tuple[str, str]:
+    import io
+    import zipfile
+
+    with zipfile.ZipFile(io.BytesIO(data)) as package:
+        return package.read("3D/3dmodel.model").decode("utf-8"), package.read("[Content_Types].xml").decode("utf-8")
+
+
+async def _slicer_files() -> dict[str, bytes]:
+    _, one = await _build(PLATE)
+    _, two = await _build(SPLIT, bbox_xyz_mm=[20, 20, 40], bodies=2)
+    return {"one-part.3mf": one["part.3mf"], "two-part.3mf": two["part.3mf"], "two-part.parts.3mf": two["part.parts.3mf"]}
+
+
+async def test_the_3mf_files_keep_to_the_3mf_core_specification():
+    # The kernel numbers its objects from 0, where the specification's resource ids are positive, and gives
+    # the package relationships no content type of their own: lib3mf, the 3MF Consortium's reader, refused
+    # every file. Each is renumbered from 1 and given the defaults; every reference still names an object.
+    import re
+
+    for name, data in (await _slicer_files()).items():
+        model, types = _package(data)
+        ids = [int(found) for found in re.findall(r'<object id="(\d+)"', model)]
+        references = [int(found) for found in re.findall(r'objectid="(\d+)"', model)]
+        assert ids and min(ids) >= 1 and len(set(ids)) == len(ids) and references and set(references) <= set(ids), name
+        assert '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml" />' in types, name
+        assert '<Default Extension="model" ContentType="application/vnd.ms-package.3dmanufacturing-3dmodel+xml" />' in types, name
+
+
+async def test_the_3mf_files_open_in_the_3mf_consortiums_reader(tmp_path):
+    lib3mf = pytest.importorskip("lib3mf", reason="lib3mf is not installed")
+    wrapper = lib3mf.get_wrapper()
+    for name, data in (await _slicer_files()).items():
+        path = tmp_path / name
+        path.write_bytes(data)
+        model = wrapper.CreateModel()
+        reader = model.QueryReader("3mf")
+        reader.SetStrictModeActive(True)
+        reader.ReadFromFile(str(path))
+        meshes, items = model.GetMeshObjects(), model.GetBuildItems()
+        counted = [sum(1 for _ in iter(listing.MoveNext, False)) for listing in (meshes, items)]
+        assert counted == ([1, 1] if name == "one-part.3mf" else [2, 1] if name == "two-part.3mf" else [2, 2]), (name, counted)
+
+
+async def test_a_passed_part_says_how_it_prints_and_the_print_block_never_decides():
+    from deerflow_extension_api import ExtensionPrincipal, ToolContext
+
+    from deerflow_extension_cad import checks
+
+    outputs = Outputs()
+    context = ToolContext(ExtensionPrincipal("alice"), {"enabled": True}, "thread-a", output_writer=outputs.write)
+    # The operator's printer has a bed smaller than the plate: a note, not a failure.
+    handler = make_handler(settings_from({"printer": {"build_volume_mm": [50, 50, 50], "nozzle_mm": 0.6}}))
+    answer = await handler({"name": "part", "script": PLATE, **EXPECT}, context)
+    assert answer["passed"] is True, answer
+    printing = answer["print"]
+    assert set(printing) == {"grams", "bed_contact_mm2", "overhang_mm2", "thinnest_wall_mm", "fits_build_volume", "notes"}
+    assert printing["fits_build_volume"] is False and printing["notes"] == ["larger than the build volume (50 × 50 × 50 mm) in X"]
+    # 14249 mm3 of PLA at 1.24 g/cm3, solid.
+    assert printing["grams"] == pytest.approx(17.67, abs=0.01) and printing["overhang_mm2"] == 0
+    report = json.loads(outputs.files["part.report.json"])
+    block = report["measured"]["print"]
+    assert block["build_volume_mm"] == [50.0, 50.0, 50.0] and block["watertight"] is True and block["notes"] == printing["notes"]
+    # The same measurement without its print block is decided the same way.
+    without = {key: value for key, value in report["measured"].items() if key != "print"}
+    assert checks.decide(report["measured"], EXPECT) == checks.decide(without, EXPECT) == answer["checks"]
+    # A failed part carries no print block in its answer; its report still has one.
+    failed = await handler({"name": "part", "script": ONE_HOLE, **EXPECT}, context)
+    assert failed["passed"] is False and "print" not in failed
+    assert "print" in json.loads(outputs.files["part-1.report.json"])["measured"]
 
 
 HOSTILE = [
@@ -119,6 +289,38 @@ async def test_a_hostile_script_is_refused_with_its_reason_and_nothing_runs(labe
     assert sorted(files) == ["part.py", "part.report.json"]
     assert elapsed < 10
     assert not any(canary.exists() for canary in canaries)
+
+
+#: The plate as models write it from ordinary Python habits (item 55): names assigned together, math, an index, a comprehension, round().
+HABITS_PLATE = """\
+import cadquery as cq
+import math
+
+w, d, t = 60, 40, 6
+holes = [(-15, 0), (15, 0)]
+spacing = math.hypot(holes[1][0] - holes[0][0], 0)
+
+result = (
+    cq.Workplane("XY")
+    .box(w, d, t)
+    .faces(">Z")
+    .workplane()
+    .pushPoints([(x * spacing / 30, y) for x, y in holes])
+    .hole(round(4.04, 1))
+)
+"""
+
+
+async def test_a_plate_written_with_the_habits_of_ordinary_python_builds_and_passes():
+    answer, files = await _build(HABITS_PLATE)
+    assert answer["passed"] is True, answer
+    assert sorted(files) == ["part.3mf", "part.glb", "part.png", "part.py", "part.report.json", "part.step", "part.stl"]
+    assert json.loads(files["part.report.json"])["parameters"] == {"w": 60, "d": 40, "t": 6, "spacing": 30.0}
+    # A method that is not on the list is refused before the kernel loads, and the answer says which.
+    answer, files = await _build(HABITS_PLATE.replace(".hole(round(4.04, 1))", ".hole(4).faces('>Z').sketch()"))
+    assert answer["passed"] is False and answer["error"]["construct"] == "method" and answer["error"]["message"].startswith(".sketch() is not on the allow-list")
+    assert sorted(files) == ["part.py", "part.report.json"]
+    assert answer["error"]["refused"] == "sketch"
 
 
 async def test_a_kernel_error_names_the_line_and_the_operation():
@@ -315,6 +517,128 @@ async def test_two_separate_bodies_are_not_one_part():
     assert "part.step" not in files and "part.failed.glb" in files
 
 
+#: Two 30 x 20 x 4 leaves, each with a 6 mm bore, one above the other, and a pin through both bores:
+#: three bodies with {gap} mm between the leaves and around the pin (fdm.md's print-in-place hinge).
+HINGE = """\
+gap = {gap}
+a = cq.Workplane("XY").box(30, 20, 4).translate((0, 0, 2)).faces(">Z").workplane().hole(6)
+b = cq.Workplane("XY").box(30, 20, 4).translate((0, 0, 6 + gap)).faces(">Z").workplane().hole(6)
+pin = cq.Workplane("XY").circle(3 - gap).extrude(8 + gap)
+result = a.union(b).union(pin)
+"""
+
+
+def _model(threemf: bytes) -> str:
+    import io
+    import zipfile
+
+    with zipfile.ZipFile(io.BytesIO(threemf)) as package:
+        return package.read("3D/3dmodel.model").decode("utf-8")
+
+
+def _laid_out_items(threemf: bytes) -> list[tuple[list[float], list[float]]]:
+    """Each build item of a 3MF as the box its mesh occupies once moved by the item's transform."""
+    import re
+
+    model = _model(threemf)
+    meshes = dict(re.findall(r'<object id="(\d+)"[^>]*>\s*<mesh>(.*?)</mesh>', model, re.S))
+    boxes = []
+    for identifier, transform in re.findall(r'<item objectid="(\d+)" transform="([^"]+)"', model):
+        move = [float(value) for value in transform.split()[9:]]
+        points = [tuple(map(float, found)) for found in re.findall(r'<vertex x="([^"]+)" y="([^"]+)" z="([^"]+)"', meshes[identifier])]
+        boxes.append(([min(p[k] for p in points) + move[k] for k in range(3)], [max(p[k] for p in points) + move[k] for k in range(3)]))
+    return boxes
+
+
+async def test_a_print_in_place_hinge_passes_as_three_bodies_with_its_gap_said():
+    answer, files = await _build(HINGE.format(gap=0.3), bbox_xyz_mm=[30, 20, 8.3], hole_diameters_mm=[6, 6], bodies=3)
+    assert answer["passed"] is True, answer
+    assert [check["check"] for check in answer["checks"]] == ["closed solids", "bounding box", "holes"]
+    # Each leaf's bore is a hole of that leaf: the pin inside it is another body and does not fill it.
+    assert [(hole["d"], hole["body"]) for hole in answer["holes"]] == [(6, 1), (6, 2)]
+    report = json.loads(files["part.report.json"])
+    smallest = report["measured"]["gaps"][0]
+    assert abs(smallest["gap_mm"] - 0.3) <= 0.01 and smallest["direction"] == [0.0, 0.0, 1.0]
+    assert answer["notes"] == ["The smallest gap between bodies is 0.3 mm, between body 1 and body 2, along +z."]
+    # Printed in place: the kernel's one item of three components. Printed apart: three items on the bed, side by side.
+    assert sorted(files) == ["part.3mf", "part.glb", "part.parts.3mf", "part.png", "part.py", "part.report.json", "part.step", "part.stl"]
+    in_place = _model(files["part.3mf"])
+    assert in_place.count("<item ") == 1 and in_place.count("<component ") == 3
+    boxes = _laid_out_items(files["part.parts.3mf"])
+    assert len(boxes) == 3 and all(abs(low[2]) <= 1e-6 for low, _ in boxes)
+    assert all(boxes[k][1][0] + 5 - 1e-6 <= boxes[k + 1][0][0] for k in range(2))
+    # One GLB node per body, for a viewer that picks them apart.
+    document = _glb_document(files["part.glb"])
+    (root,) = document["scenes"][document.get("scene", 0)]["nodes"]
+    assert [document["nodes"][child]["name"] for child in document["nodes"][root]["children"]] == ["body-1", "body-2", "body-3"]
+
+
+async def test_bodies_that_touch_fuse_and_fail_the_count_and_a_tight_gap_is_said():
+    fused, files = await _build(HINGE.format(gap=0), bbox_xyz_mm=[30, 20, 8], bodies=3)
+    assert fused["passed"] is False and [check["check"] for check in fused["checks"] if not check["passed"]] == ["closed solids"]
+    assert "part.step" not in files
+    tight, files = await _build(HINGE.format(gap=0.1), bbox_xyz_mm=[30, 20, 8.1], bodies=3)
+    assert tight["passed"] is True, tight
+    assert tight["notes"] == [
+        "The smallest gap between bodies is 0.1 mm, between body 1 and body 2, along +z.",
+        "That gap is under the printer's minimum clearance (0.3 mm): printed as modelled, the bodies may fuse.",
+        "The gap of 0.1 mm between body 1 and body 2, along +z is thinner than one layer (0.2 mm): the slicer may fill it and fuse the bodies.",
+    ]
+
+
+async def test_a_box_and_its_lid_modelled_closed_pass_as_two_bodies():
+    script = 'box = cq.Workplane("XY").box(40, 30, 20).faces(">Z").shell(-2)\nlid = cq.Workplane("XY").box(40, 30, 2).translate((0, 0, 11.3)).faces("<Z").workplane().rect(36 - 0.6, 26 - 0.6).extrude(3)\nresult = box.union(lid)\n'
+    answer, files = await _build(script, bbox_xyz_mm=[40, 30, 22.3], bodies=2)
+    assert answer["passed"] is True, answer
+    assert answer["notes"][0].startswith("The smallest gap between bodies is 0.3 mm")
+    boxes = _laid_out_items(files["part.parts.3mf"])
+    assert len(boxes) == 2 and all(abs(low[2]) <= 1e-6 for low, _ in boxes) and boxes[0][1][0] + 5 - 1e-6 <= boxes[1][0][0]
+
+
+async def test_a_part_too_tall_for_the_bed_split_in_two_passes_as_two_bodies():
+    # split() keeps both halves when asked to: two bodies that touch, laid out apart for the printer.
+    answer, files = await _build("result = cq.Workplane('XY').box(20, 20, 40).faces('>Z').workplane(-20).split(keepTop=True, keepBottom=True)\n", bbox_xyz_mm=[20, 20, 40], bodies=2)
+    assert answer["passed"] is True, answer
+    assert answer["notes"][:2] == ["The smallest gap between bodies is 0 mm, between body 1 and body 2.", "That gap is under the printer's minimum clearance (0.3 mm): printed as modelled, the bodies may fuse."]
+    boxes = _laid_out_items(files["part.parts.3mf"])
+    assert [[round(value, 6) for value in low] for low, _ in boxes] == [[0, 0, 0], [25, 0, 0]]
+
+
+async def test_a_part_split_for_the_bed_is_judged_as_its_bodies_print_apart():
+    # The way out failures.md gives for "larger than the build volume": split it and build bodies=2. Judged as
+    # one mesh the split part was still too tall, open where the halves touch and 400 mm² overhanging, and
+    # the answer sent the model to split it again. Each half is 20 mm tall, closed and flat in part.parts.3mf.
+    outputs = Outputs()
+    context = ToolContext(ExtensionPrincipal("alice"), {"enabled": True}, "thread-a", output_writer=outputs.write)
+    handler = make_handler(settings_from({"printer": {"build_volume_mm": [100, 100, 30]}}))
+    answer = await handler({"name": "part", "script": SPLIT, "bbox_xyz_mm": [20, 20, 40], "bodies": 2}, context)
+    assert answer["passed"] is True, answer
+    printing = answer["print"]
+    assert (printing["fits_build_volume"], printing["printed_apart"], printing["overhang_mm2"]) == (True, True, 0)
+    assert printing["notes"] == ["as modelled the bodies do not fit the build volume together (100 × 100 × 30 mm) in Z; printed apart, as the .parts.3mf lays them out, each one does"]
+    block = json.loads(outputs.files["part.report.json"])["measured"]["print"]
+    assert block["watertight"] is True and "open_edges" not in block and block["bed_contact_mm2"] == pytest.approx(800, abs=0.5)
+    assert [body["fits_build_volume"] for body in block["bodies"]] == [True, True]
+    # One body is judged on the part's own STL, as before.
+    single = await handler({"name": "plate", "script": PLATE, **EXPECT}, context)
+    assert "printed_apart" not in single["print"] and "bodies" not in json.loads(outputs.files["plate.report.json"])["measured"]["print"]
+
+
+def test_bodies_that_cannot_be_laid_out_get_one_stl_each(tmp_path, monkeypatch):
+    from deerflow_extension_cad import tool
+
+    def broken(threemf, gap_mm=build.PARTS_GAP_MM):
+        raise ValueError("the layout broke")
+
+    monkeypatch.setattr(build, "lay_out", broken)
+    a = cq.Workplane("XY").box(10, 10, 10).val()
+    b = cq.Workplane("XY").box(10, 10, 10).translate((30, 0, 0)).val()
+    names, _ = build.export(cq.Compound.makeCompound([a, b]), cq, tmp_path, tool.MAX_EXPORT_BYTES)
+    assert "parts.3mf" not in names and not (tmp_path / "part.parts.3mf").exists()
+    assert [names[f"body-{number}.stl"] for number in (1, 2)] == ["part.body-1.stl", "part.body-2.stl"]
+    assert all(build.whole_stl(tmp_path / names[f"body-{number}.stl"]) for number in (1, 2))
+
+
 BLOCK = 'cq.Workplane("XY").box(60, 40, 6)'
 EMPTIED = [
     ("an intersection of parts that do not meet", 'a = cq.Workplane("XY").box(40, 40, 20)\nb = cq.Workplane("XY").sphere(22).translate((100, 0, 0))\nresult = a.intersect(b)\n', [40, 40, 20], 3, "intersect"),
@@ -354,6 +678,8 @@ ADDS_NOTHING = [
     ("an extrusion down into the block", f'result = {BLOCK}.faces(">Z").workplane().rect(20, 10).extrude(-3)\n', "extrude"),
     ("a cylinder placed inside the plate", f"result = {BLOCK}.cylinder(4, 3)\n", "cylinder"),
     ("a body joined where the part already is", f'a = {BLOCK}\nresult = a.union(cq.Workplane("XY").box(10, 10, 2))\n', "union"),
+    ("a wedge inside the block", f"result = {BLOCK}.wedge(10, 10, 2, 2, 0, 8, 2)\n", "wedge"),
+    ("a ring revolved inside the block", f'result = {BLOCK}.faces(">Z").workplane(offset=-3).moveTo(1.5, 0).rect(1, 1).revolve(360, (0, 0, 0), (0, 1, 0))\n', "revolve"),
 ]
 
 
@@ -430,6 +756,47 @@ async def test_what_the_checks_do_not_cover_is_said_in_the_answer():
     assert "notes" not in answer and "unchecked" not in answer and "blind_depths_mm" not in next(check for check in answer["checks"] if check["check"] == "holes")
 
 
+#: An open box with its vertical corners rounded: on the box as it is after shell(), "|Z" takes the inner corners too.
+RIM = 'result = cq.Workplane("XY").box(40, 40, 10).faces(">Z").shell(-2).edges({selector}).fillet(1)\n'
+
+
+def _selections(script: str) -> list[dict]:
+    program = compile_script(script)
+    return build.selections(program, build.build_parts(program, cq), cq)
+
+
+def test_each_fillet_and_chamfer_reports_how_many_edges_it_took_of_its_part():
+    # The rim fixture takes eight edges, four more than the corners meant; the narrower selector takes the two it names.
+    assert _selections(RIM.format(selector='"|Z"')) == [{"line": 1, "method": "fillet", "edges": 8, "of": 24}]
+    assert _selections(RIM.format(selector='"|Z and >X"')) == [{"line": 1, "method": "fillet", "edges": 2, "of": 24}]
+    # The kernel's own count: a face stands for its edges, and the part itself for every edge.
+    assert _selections('result = cq.Workplane("XY").box(10, 10, 10).faces(">Z").chamfer(1)\n') == [{"line": 1, "method": "chamfer", "edges": 4, "of": 12}]
+    assert _selections('result = cq.Workplane("XY").box(10, 10, 10).fillet(1)\n') == [{"line": 1, "method": "fillet", "edges": 12, "of": 12}]
+    # Only what the result is made of: a trial fillet the part never uses is not counted, and a part without one reports none.
+    script = 'a = cq.Workplane("XY").box(10, 10, 10)\ntrial = a.edges().fillet(1)\nresult = a.edges("|Z").fillet(2)\n'
+    assert _selections(script) == [{"line": 3, "method": "fillet", "edges": 4, "of": 12}]
+    assert _selections(PLATE) == []
+
+
+async def test_a_fillet_that_took_more_edges_than_a_selector_usually_means_is_said_and_every_count_is_reported():
+    answer, files = await _build(RIM.format(selector='"|Z"'), bbox_xyz_mm=[40, 40, 10])
+    assert answer["passed"] is True, answer
+    assert answer["notes"] == ["fillet() on line 1 rounded 8 edges: check that the selection took only the edges meant."]
+    assert json.loads(files["part.report.json"])["measured"]["selections"] == [{"line": 1, "method": "fillet", "edges": 8, "of": 24}]
+    # Four edges or fewer, or every edge of the part, is what a selector or a plain fillet() means: the answer says nothing.
+    for script, taken in (
+        (RIM.format(selector='"|Z and >X"'), {"line": 1, "method": "fillet", "edges": 2, "of": 24}),
+        ('result = cq.Workplane("XY").box(40, 40, 10).edges("|Z").fillet(2)\n', {"line": 1, "method": "fillet", "edges": 4, "of": 12}),
+        ('result = cq.Workplane("XY").box(40, 40, 10).edges().chamfer(1)\n', {"line": 1, "method": "chamfer", "edges": 12, "of": 12}),
+    ):
+        answer, files = await _build(script, bbox_xyz_mm=[40, 40, 10])
+        assert answer["passed"] is True and "notes" not in answer, answer
+        assert json.loads(files["part.report.json"])["measured"]["selections"] == [taken]
+    # A part with no fillet or chamfer carries no selections at all.
+    answer, files = await _build(PLATE)
+    assert "selections" not in json.loads(files["part.report.json"])["measured"]
+
+
 @pytest.mark.parametrize(
     "script",
     [
@@ -502,17 +869,155 @@ async def test_a_rebuild_does_not_touch_the_first_build():
     await _build(PLATE, outputs)
     answer, files = await _build(ONE_HOLE, outputs)
     assert answer["passed"] is False
-    assert sorted(files) == ["part-1.failed.glb", "part-1.py", "part-1.report.json", "part.glb", "part.py", "part.report.json", "part.step", "part.stl"]
+    assert sorted(files) == ["part-1.failed.glb", "part-1.failed.png", "part-1.py", "part-1.report.json", "part.3mf", "part.glb", "part.png", "part.py", "part.report.json", "part.step", "part.stl"]
+
+
+#: Item 56's operations against volumes worked out by hand: (label, script, bounding box, volume).
+ANALYTIC = [
+    # A 4 x 4 square along 20 + 20 mm with a mitred corner: the area times the length of the path.
+    ("a square swept along an L", "path = cq.Workplane('XZ').polyline([(0, 0), (0, 20), (20, 20)])\nresult = cq.Workplane('XY').rect(4, 4).sweep(path)\n", [22, 4, 22], 4 * 4 * 40),
+    ("a frustum lofted between two circles", "result = cq.Workplane('XY').circle(10).workplane(offset=20).circle(5).loft()\n", [20, 20, 20], math.pi * 20 * (10**2 + 10 * 5 + 5**2) / 3),
+    ("a ring revolved about the y axis", "result = cq.Workplane('XY').moveTo(12.5, 0).rect(5, 4).revolve(360, (0, 0, 0), (0, 1, 0))\n", [30, 4, 30], math.pi * (15**2 - 10**2) * 4),
+    # A twist turns the outline and keeps its area: the same volume as the plain extrusion.
+    ("a twisted extrusion", "result = cq.Workplane('XY').rect(20, 10).twistExtrude(10, 45)\n", None, 20 * 10 * 10),
+    # A prismatoid: a 20 x 10 base narrowed to a 10 mm edge 10 mm up, h / 6 * (base + 4 * middle + top).
+    ("a wedge", "result = cq.Workplane('XY').wedge(20, 10, 10, 5, 5, 15, 5)\n", [20, 10, 10], 10 / 6 * (20 * 10 + 4 * 15 * 5 + 10 * 0)),
+]
+
+
+@pytest.mark.parametrize(("label", "script", "bbox", "volume"), ANALYTIC, ids=[item[0] for item in ANALYTIC])
+def test_each_new_operation_builds_the_volume_worked_out_by_hand(label, script, bbox, volume):
+    solid = build.solid_of(build.run_program(compile_script(script), cq))
+    assert solid.isValid()
+    assert solid.Volume() == pytest.approx(volume, rel=1e-3)
+    if bbox:
+        box = solid.BoundingBox()
+        assert [box.xlen, box.ylen, box.zlen] == pytest.approx(bbox, abs=1e-3)
+
+
+LETTERED = "result = cq.Workplane('XY').box(40, 15, 3).faces('>Z').workplane().text('HELLO', 8, {distance}{combine})\n"
+
+
+async def test_lettering_is_cut_or_raised_in_the_modules_own_font():
+    # The slim Gateway image has no system fonts: the module ships one, and the build passes its path.
+    assert build.FONT.is_file() and build.FONT.parent.name == "fonts"
+    licence = (build.FONT.parent / "OFL.txt").read_text(encoding="utf-8")
+    assert "SIL OPEN FONT LICENSE Version 1.1" in licence and "Liberation" in licence
+    cut, files = await _build(LETTERED.format(distance=-0.6, combine=""), bbox_xyz_mm=[40, 15, 3])
+    assert cut["passed"] is True, cut
+    assert 1700 < cut["unchecked"]["volume_mm3"] < 1795 and "part.step" in files
+    raised, _ = await _build(LETTERED.format(distance=0.6, combine=", combine=True"), bbox_xyz_mm=[40, 15, 3.6])
+    assert raised["passed"] is True and 1805 < raised["unchecked"]["volume_mm3"] < 1900, raised
+    # Lettering is cut unless combine=True, so a positive distance alone cuts air: that is said, not passed.
+    air, _ = await _build(LETTERED.format(distance=0.6, combine=""), bbox_xyz_mm=[40, 15, 3])
+    assert air["passed"] is False and air["error"]["operation"] == "text" and "combine=True" in air["error"]["message"]
+
+
+def test_lettering_is_never_in_a_font_the_script_names(monkeypatch):
+    # The path is the module's, and a missing file is a failed build, not the kernel's silent fallback to a system font.
+    monkeypatch.setattr(build, "FONT", build.FONT.with_name("missing.ttf"))
+    with pytest.raises(build.BuildFailed) as failed:
+        build.run_program(compile_script(LETTERED.format(distance=-0.6, combine="")), cq)
+    assert failed.value.operation == "text" and "font" in failed.value.message
+
+
+#: The thread gate (item 59): threads ship only if both build valid inside it.
+THREADS = {
+    "M8 x 1.25": (8, 1.25, 10),
+    "M24 x 3": (24, 3, 24),
+}
+THREAD_GATE_SECONDS = 5
+
+
+def _thread(d: float, pitch: float, length: float) -> str:
+    return (
+        f"d, pitch, length = {d}, {pitch}, {length}\n"
+        "root = d / 2 - 0.61343 * pitch\n"
+        "helix = cq.Wire.makeHelix(pitch, length, root - 0.05)\n"
+        "half = 0.4 * pitch\n"
+        "outline = [(root - 0.05, -half), (d / 2, -0.06 * pitch), (d / 2, 0.06 * pitch), (root - 0.05, half)]\n"
+        "thread = cq.Workplane('XZ').polyline(outline).close().sweep(helix, isFrenet=True)\n"
+        "result = cq.Workplane('XY').circle(root).extrude(length).union(thread)\n"
+    )
+
+
+@pytest.mark.parametrize(("d", "pitch", "length"), THREADS.values(), ids=THREADS.keys())
+def test_a_metric_thread_builds_valid_inside_the_gate(d, pitch, length):
+    started = time.perf_counter()
+    solid = build.solid_of(build.run_program(compile_script(_thread(d, pitch, length)), cq))
+    assert solid.isValid() and len(solid.Solids()) == 1
+    assert time.perf_counter() - started < THREAD_GATE_SECONDS
+    box = solid.BoundingBox()
+    assert [box.xlen, box.ylen] == pytest.approx([d, d], abs=0.01)
+
+
+async def test_a_threaded_rod_passes_the_tools_checks():
+    answer, files = await _build(_thread(8, 1.25, 10), bbox_xyz_mm=[8, 8, 11])
+    assert answer["passed"] is True, answer
+    assert "part.step" in files
+
+
+async def test_a_part_split_at_a_workplane_keeps_the_half_asked_for():
+    answer, _ = await _build("result = cq.Workplane('XY').box(20, 20, 40).faces('>Z').workplane(-20).split(keepBottom=True)\n", bbox_xyz_mm=[20, 20, 20], volume_min_max_mm3=[7990, 8010])
+    assert answer["passed"] is True, answer
+
+
+async def test_a_sweep_along_a_solid_is_refused_before_the_kernel_loads():
+    started = time.monotonic()
+    answer, files = await _build("path = cq.Workplane('XY').box(5, 5, 5)\nresult = cq.Workplane('XY').rect(4, 4).sweep(path)\n", bbox_xyz_mm=[5, 5, 5])
+    assert (answer["error"]["construct"], answer["error"]["line"]) == ("argument", 2) and "outline" in answer["error"]["message"]
+    assert sorted(files) == ["part.py", "part.report.json"] and time.monotonic() - started < 10
+
+
+@pytest.mark.parametrize(
+    ("script", "operation", "hint"),
+    [
+        ("result = cq.Workplane('XY').rect(10, 10).loft()\n", "loft", "loft needs two or more closed outlines on separate workplanes"),
+        ("path = cq.Workplane('XZ').polyline([(0, 0), (0, 20)])\nresult = cq.Workplane('XY').sweep(path)\n", "sweep", "sweep needs a closed outline drawn before it, and the path must start on the profile's plane"),
+        ("result = cq.Workplane('XY').rect(10, 4).revolve(360, (0, 0, 0), (0, 1, 0))\n", "revolve", "the axis must not cross the outline"),
+        ("result = cq.Workplane('XY').twistExtrude(10, 45)\n", "twistExtrude", "there is no closed outline to extrude"),
+    ],
+    ids=["a loft of one outline", "a sweep with no outline", "a revolve about an axis through the outline", "a twist with no outline"],
+)
+async def test_an_operation_that_cannot_make_its_solid_fails_with_its_likely_cause(script, operation, hint):
+    answer, files = await _build(script, bbox_xyz_mm=[10, 10, 10])
+    assert answer["passed"] is False and answer["error"]["operation"] == operation
+    assert f"Likely cause: {hint}" in answer["error"]["message"]
+    assert "part.step" not in files
+
+
+async def test_a_sweep_that_runs_into_itself_fails_cleanly():
+    # A profile wider than the U it follows: the kernel makes a solid that crosses itself.
+    script = "path = cq.Workplane('XZ').polyline([(0, 0), (0, 20), (3, 20), (3, 0)])\nresult = cq.Workplane('XY').circle(10).sweep(path)\n"
+    started = time.monotonic()
+    answer, files = await _build(script, bbox_xyz_mm=[23, 20, 30])
+    assert answer["passed"] is False and time.monotonic() - started < 30
+    assert "part.step" not in files and "part.stl" not in files
 
 
 def test_every_allow_listed_method_matches_the_kernels_own_signature():
-    """Positional arguments are bound by the table, so its order must be CadQuery's order."""
+    """Positional arguments are bound by the table, so its order must be CadQuery's order.
+
+    A parameter the table marks keyword-only is bound by name only, so it need only exist.
+    Two exceptions, each stated: split takes **kwargs and names keepTop and keepBottom in its
+    documentation, and text's fontPath is not in the table at all because build.py passes it.
+    """
     for name, method in allowlist.METHODS.items():
         kernel = [parameter for parameter in inspect.signature(vars(cq.Workplane)[name]).parameters if parameter != "self"]
-        ours = [param.name for param in method.params]
+        ours = [param.name for param in method.params if not param.keyword]
         assert ours == kernel[: len(ours)], f"{name}: the table says {ours}, cadquery {cq.__version__} says {kernel}"
+        named = [param.name for param in method.params if param.keyword]
+        if name == "split":
+            assert kernel == ["args", "kwargs"] and all(f":param bool {keyword}:" in cq.Workplane.split.__doc__ for keyword in named)
+        else:
+            assert set(named) <= set(kernel), f"{name}: {named} are not parameters of cadquery {cq.__version__}"
+    for name, injected in build.INJECTED.items():
+        kernel = inspect.signature(vars(cq.Workplane)[name]).parameters
+        assert set(injected) <= set(kernel) and not set(injected) & {param.name for param in allowlist.METHODS[name].params}
     constructor = [parameter for parameter in inspect.signature(cq.Workplane.__init__).parameters if parameter != "self"]
     assert [param.name for param in allowlist.CONSTRUCTOR.params] == constructor[:2]
+    helix = [parameter for parameter in inspect.signature(cq.Wire.makeHelix).parameters]
+    assert [param.name for param in allowlist.HELIX.params if not param.keyword] == helix[:3] and {param.name for param in allowlist.HELIX.params if param.keyword} <= set(helix)
 
 
 @pytest.mark.parametrize("name", sorted(allowlist.METHODS))
@@ -526,12 +1031,17 @@ def test_every_allow_listed_method_has_an_example_that_builds_a_solid(name):
     assert solid.isValid() and solid.Volume() > 0
 
 
+def test_the_helix_example_builds_one_threaded_solid():
+    solid = build.solid_of(build.run_program(compile_script(allowlist.HELIX.example), cq))
+    assert solid.isValid() and len(solid.Solids()) == 1
+
+
 def test_the_table_holds_no_method_that_takes_a_path_a_callable_or_a_font():
     forbidden = {
         "export",
         "exportSvg",
         "toSvg",
-        "text",
+        # text is on the list since item 59: the font is the module's own file, which build.py passes; see below.
         "each",
         "eachpoint",
         "cutEach",
@@ -547,12 +1057,15 @@ def test_the_table_holds_no_method_that_takes_a_path_a_callable_or_a_font():
         "val",
         "vals",
         "findSolid",
-        "split",
-        "sweep",
+        # split is on the list since item 51, by keyword only: given a part, it would cut with it, which cut() does.
+        # sweep is on the list since item 56: its path is a part the script drew, never a file.
         "toPending",
         "copyWorkplane",
     }
     assert not forbidden & set(allowlist.METHODS)
+    # No parameter that names a font or a file: text's font is the module's own, passed by build.py.
+    assert not {"font", "fontPath", "fname"} & {param.name for method in allowlist.METHODS.values() for param in method.params}
+    assert [(name, param.kind) for name, method in allowlist.METHODS.items() for param in method.params if param.name == "path"] == [("sweep", allowlist.PATH)]
     for name in allowlist.METHODS:
         for parameter in inspect.signature(vars(cq.Workplane)[name]).parameters.values():
             annotation = str(parameter.annotation)
