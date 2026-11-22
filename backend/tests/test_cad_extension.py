@@ -333,6 +333,23 @@ async def test_a_check_added_later_is_held_and_not_reported_as_a_change(cad, out
 
 
 @pytest.mark.asyncio
+async def test_leaving_out_bodies_is_one_body_and_not_a_changed_number(cad, outputs, monkeypatch):
+    # `bodies` is 1 when it is left out, for the check and for what the part is held to: dropping a stated
+    # 1 changes no check, and the answer must not have the model tell the user that a requirement moved.
+    await _call(cad, outputs, monkeypatch, ONE_HOLE, run="run-1", hole_diameters_mm=[4, 4], bodies=1)
+    left_out, _, _ = await _call(cad, outputs, monkeypatch, ONE_HOLE, run="run-1", hole_diameters_mm=[4, 4])
+    assert "expected_changed" not in left_out and "tell the user which changed" not in left_out["next"]
+    # Left out, then stated, then left out again.
+    for bodies in (None, 1, None):
+        again, _, _ = await _call(cad, outputs, monkeypatch, ONE_HOLE, run="run-1", name="lid", hole_diameters_mm=[4, 4], **({} if bodies is None else {"bodies": bodies}))
+        assert "expected_changed" not in again
+    # Two bodies dropped to the default is a change, and it is said as the one body it now is.
+    await _call(cad, outputs, monkeypatch, ONE_HOLE, run="run-1", name="kit", hole_diameters_mm=[4, 4], bodies=2)
+    dropped, _, _ = await _call(cad, outputs, monkeypatch, ONE_HOLE, run="run-1", name="kit", hole_diameters_mm=[4, 4])
+    assert dropped["expected_changed"] == {"bodies": {"first": 2, "now": 1}}
+
+
+@pytest.mark.asyncio
 async def test_each_part_and_each_conversation_is_counted_apart(cad, outputs, monkeypatch, tmp_path):
     await _call(cad, outputs, monkeypatch, ONE_HOLE, run="run-1", hole_diameters_mm=[4, 4])
     same, _, _ = await _call(cad, outputs, monkeypatch, ONE_HOLE, run="run-1", hole_diameters_mm=[4, 4], name="mounting  PLATE")

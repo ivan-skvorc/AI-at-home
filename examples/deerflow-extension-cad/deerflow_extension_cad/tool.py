@@ -106,6 +106,9 @@ INPUT_SCHEMA: dict[str, Any] = {
     "required": ["name", "script", "bbox_xyz_mm"],
 }
 EXPECTATIONS = ("bbox_xyz_mm", "volume_min_max_mm3", "hole_diameters_mm", "bodies")
+#: What an expectation the model leaves out means to the checks: comparing against it keeps a default
+#: that was once stated and is now left out from reading as a moved number.
+EXPECTATION_DEFAULTS: dict[str, Any] = {"bodies": 1}
 
 MAX_NAME_CHARS = 60
 #: Separate solids a part may be: a chain or a kit, not a pile. measure.py works out every pair's gap up to this.
@@ -441,7 +444,9 @@ class Attempts:
             # A check added later makes the part harder to pass, not easier: it is held from then on and not reported.
             entry["first"].update({name: expected[name] for name in expected if name not in entry["first"]})
             # Compared exactly: a tolerance here would let a band move by a feature's worth without a word.
-            changed = {name: {"first": entry["first"][name], "now": expected.get(name)} for name in EXPECTATIONS if name in entry["first"] and entry["first"][name] != expected.get(name)}
+            # A left-out number is what the checks take for it: bodies=1 dropped is no change, bodies=2 dropped is 1.
+            now = {name: expected.get(name, EXPECTATION_DEFAULTS.get(name)) for name in EXPECTATIONS}
+            changed = {name: {"first": entry["first"][name], "now": now[name]} for name in EXPECTATIONS if name in entry["first"] and entry["first"][name] != now[name]}
             return entry["builds"], changed, same
 
 
