@@ -73,7 +73,7 @@ does not get a vote.
 | One closed solid | The file holds exactly one solid, it is valid, its shells are closed and its volume is positive. With `bodies` above 1 the check is "closed solids": exactly that many valid, closed solids; the volume is their sum and the bounding box their union |
 | Bounding box | Each side is within 0.01 mm or 0.1 % of `bbox_xyz_mm`, whichever is larger |
 | Volume | The volume is inside `volume_min_max_mm3` (only when given) |
-| Holes | The drilled holes match `hole_diameters_mm`, one entry per hole, a diameter or `[d, x, y, z]`, same tolerance (only when given). A hole given a point passes when a measured hole of that diameter has its axis within 0.05 mm or 0.1 % of the largest side of the point, one measured hole per expected hole |
+| Holes | The drilled holes match `hole_diameters_mm`, one entry per hole, a diameter or `[d, x, y, z]`, same tolerance (only when given). A hole given a point passes when a measured hole of that diameter has its axis within 0.05 mm or 0.1 % of the largest side of the point and, for a blind hole, the point lies no further past its floor than that, one measured hole per expected hole |
 
 A hole is a full-circle, concave cylindrical wall with air inside that is open at
 one end or both. A counterbore or countersink counts once, with its drill
@@ -137,8 +137,10 @@ checked.
 The answer lists up to 12 holes, each with its diameter, the point where it is
 entered (`at`) and its drill direction (`axis`); beyond that a note names the
 report, which lists every hole. A hole check that missed a position gives
-`misplaced`: the expected entry, the nearest hole of that diameter and how far
-its axis is from the point.
+`misplaced`: the expected entry, the nearest hole of that diameter that no
+other point accounts for (`nearest_matches` names the point when none is left),
+how far its axis is from the point and, for a blind hole, how far past its
+floor the point lies (`past_floor_mm`).
 
 ## How it prints
 

@@ -5776,7 +5776,11 @@ numbers.
   and the area. A `hole_diameters_mm` entry may be `[d, x, y, z]`, any point on
   the axis, so the schema did not change: it passes when a measured hole of
   that diameter has its axis within max(0.05 mm, 0.1 % of the largest side) of
-  the point, matched one to one, and a miss names the nearest hole. The answer
+  the point, matched one to one, and a miss names the nearest hole that no
+  other point took. A blind hole's point may not lie past its floor by more
+  than that tolerance (`past_floor_mm` on a miss), because h08's hole drilled
+  into the wrong end lies on the same line and passed; a point beside the part
+  on the entry side still places it. The answer
   lists at most 12 holes (four add about 50 tokens, pinned at 120), and
   `report.json` holds every hole once, with what made it: the module's and
   CadQuery's versions, the script's SHA-256 and the files of the set. The

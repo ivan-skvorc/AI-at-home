@@ -67,9 +67,12 @@ The checks decide pass or fail, on numbers the model states before the build:
   `[d, x, y, z]`, a diameter and any point on its axis, such as its centre on
   the face it is drilled from. It then passes only when a measured hole of that
   diameter has its axis within 0.05 mm, or 0.1 % of the part's largest side, of
-  that point. One measured hole stands for one expected hole. A hole that is
+  that point. For a blind hole the point must also not lie past the hole's
+  floor by more than that, so the same line drilled into the opposite face does
+  not pass. One measured hole stands for one expected hole. A hole that is
   not where it was asked for is listed with the nearest hole of its diameter
-  and how far off it is.
+  that no other point accounts for, how far off its axis is and, for a blind
+  hole, how far past its floor the point lies.
 
 The answer also lists up to 12 holes, each with its diameter, the point where
 it is entered and its drill direction. The report lists every hole, and its

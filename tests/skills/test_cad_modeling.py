@@ -139,6 +139,8 @@ QUOTED = [
     # Holes where they are, and how many edges a fillet or chamfer took (item 57).
     "nearest_at",
     "off_axis_mm",
+    "past_floor_mm",
+    "nearest_matches",
     "lists every hole with where it is",
     "check that the selection took only the edges meant",
     # The steps after the checks (items 53 and 54), and printability's notes.
