@@ -14,8 +14,8 @@ the tool works on the default install, where `LocalSandboxProvider` gives the
 agent no shell, and why installing it does not weaken that decision. It also
 works with the conversation's internet switch off.
 
-**The tool decides pass or fail, not the model.** STEP, STL and GLB files are
-written only when every check passed. A STEP file listed in a `cad_build` answer
+**The tool decides pass or fail, not the model.** STEP, STL, 3MF and GLB files
+are written only when every check passed. A STEP file listed in a `cad_build` answer
 therefore means a part that passed.
 
 **A part is built until it passes.** The agent runs the loop: build, read what
@@ -34,21 +34,29 @@ Ask in any conversation, in any mode, on any model:
 > Make a 60 × 40 × 6 mm mounting plate with two 4 mm through holes, 30 mm apart.
 
 The model calls `cad_build` with a script and the expected numbers. A build that
-passes writes five files, which open in the artifact panel and are listed in the
-Files view:
+passes writes these files, in this order (STEP last, then the report). They
+open in the artifact panel and are listed in the Files view; the GLB and STL
+rotate there through the bundled
+[CAD model preview](../deerflow-extension-cad-preview/README.md):
 
 | File | Content |
 | --- | --- |
 | `mounting-plate.py` | The script, as given |
-| `mounting-plate.report.json` | Expected and measured numbers, each check, pass or fail |
+| `mounting-plate.png` | A picture: iso, top, front and right views with the measured size; the reply shows it inline |
+| `mounting-plate.glb` | The mesh for a viewer, in metres (glTF's unit), one node per body |
+| `mounting-plate.stl` | The mesh, in millimetres |
+| `mounting-plate.3mf` | The part for a slicer, in millimetres; several bodies stay one object, to print in place |
+| `mounting-plate.parts.3mf` | Only for several bodies: each body on the bed, 5 mm apart, to print apart (fallback: `mounting-plate.body-N.stl`, at most 8) |
 | `mounting-plate.step` | The part for a CAD program |
-| `mounting-plate.stl` | The mesh for a slicer |
-| `mounting-plate.glb` | The mesh for a viewer |
+| `mounting-plate.report.json` | Expected and measured numbers, each check, the print block, and what made it (module and CadQuery versions, the script's SHA-256, the files of the set) |
 
-A build that fails a check writes the script, the report and
-`mounting-plate.failed.glb`, so the wrong shape can still be looked at. It
-writes no STEP and no STL. A script that is refused, or that the kernel cannot
-build, leaves the script and the report only.
+A build that fails a check writes the script, `mounting-plate.failed.png`
+(with a banner naming the checks it did not pass), `mounting-plate.failed.glb`
+and the report, so the wrong shape can still be looked at. It writes no STEP,
+STL or 3MF. A script that is refused, or that the kernel cannot build, leaves
+the script and the report only: a refusal or a kernel failure writes no
+picture. A picture that cannot be drawn, or a build with under 3 s of its time
+left, gets a note (`no picture: ...`) and costs the part nothing.
 
 A second build of the same name never replaces the first: its files are
 `mounting-plate-1.*`, as a set. So a STEP file from an earlier build that
@@ -62,10 +70,10 @@ does not get a vote.
 
 | Check | Passes when |
 | --- | --- |
-| One closed solid | The file holds exactly one solid, it is valid, its shells are closed and its volume is positive |
+| One closed solid | The file holds exactly one solid, it is valid, its shells are closed and its volume is positive. With `bodies` above 1 the check is "closed solids": exactly that many valid, closed solids; the volume is their sum and the bounding box their union |
 | Bounding box | Each side is within 0.01 mm or 0.1 % of `bbox_xyz_mm`, whichever is larger |
 | Volume | The volume is inside `volume_min_max_mm3` (only when given) |
-| Holes | The drilled holes match `hole_diameters_mm`, one entry per hole, same tolerance (only when given) |
+| Holes | The drilled holes match `hole_diameters_mm`, one entry per hole, a diameter or `[d, x, y, z]`, same tolerance (only when given). A hole given a point passes when a measured hole of that diameter has its axis within 0.05 mm or 0.1 % of the largest side of the point, one measured hole per expected hole |
 
 A hole is a full-circle, concave cylindrical wall with air inside that is open at
 one end or both. A counterbore or countersink counts once, with its drill
@@ -110,10 +118,34 @@ A loop whose every pass starts from the same part keeps only the last pass's
 work; the answer says how many passes did work that is not in the result. Not
 counted, because nothing is missing: a tool made ready for a pass that never
 came (a cutter moved on after its last cut), a part put together again in
-every pass, and a trial cut outside a loop. A result made of several loose
-bodies is said to be that, its holes are reported as not measured instead of
-as none, and `next` gives both ways out: join the bodies, or tell the user
-that the tool delivers one solid.
+every pass, and a trial cut outside a loop. A result of more bodies than
+`bodies` (1 when not given) is said to be that, and `next` gives both ways
+out: join the bodies, or call again with `bodies` set to the count when loose
+bodies are meant. With one body expected, holes are reported as not measured
+instead of as none. With several, each body's holes are measured against that
+body alone, the answer lists them with their body, and the smallest gap
+between bodies is a note, with notes for a gap under the printer's
+`min_clearance_mm` and a vertical gap under its `layer_mm`. Gaps are never
+checked.
+
+The answer lists up to 12 holes, each with its diameter, the point where it is
+entered (`at`) and its drill direction (`axis`); beyond that a note names the
+report, which lists every hole. A hole check that missed a position gives
+`misplaced`: the expected entry, the nearest hole of that diameter and how far
+its axis is from the point.
+
+## How it prints
+
+A passed part's answer carries `print`: grams (solid, at the printer's
+density), bed contact, overhang past the printer's angle, a sampled thinnest
+wall, and the fit to the build volume when one is set, plus notes past fixed
+thresholds (a wall under two nozzle widths, an overhang that needs support with
+a better face down, nothing flat on the bed, larger than the bed, a mesh that
+is not watertight). The whole block is in report.json for every build. It is
+reported, never checked: pass or fail stays on the user's numbers. The printer
+is the operator's, set under `printer:` in the CAD record of config.yaml (see
+`config.example.yaml`); the model cannot change it. The user guide is
+[docs/guide/cad-parts.md](../../docs/guide/cad-parts.md).
 
 ## Building until it passes
 
@@ -295,7 +327,7 @@ against the kernel (`tests/test_build.py`).
 | Build time | 20 seconds wall clock, then the process group is killed | `timeout_seconds` |
 | Build memory | 4,096 MiB of address space, where the operating system enforces it (Linux) | `memory_mb` |
 | Builds at once | half the processor cores, at least one; a call waits 3 seconds for a slot, then is told to call again | `parallel_builds` |
-| Mesh | STL: 0.1 mm off the surface and 0.3 rad between facets, in proportion to the size for a part over a metre; coarser (twice, then four times) until it is under 6 MiB. GLB: a mesh for viewing, bounded by the same angle | `build.py` |
+| Mesh | STL: 0.1 mm off the surface and 0.3 rad between facets, in proportion to the size for a part over a metre; coarser (twice, then four times) until it is under 6 MiB. GLB: a mesh for viewing, bounded by the same angle. GLB in metres; STL, STEP and 3MF in millimetres | `build.py` |
 | Exported file | 16 MiB read back, then the host's `plugin_outputs` caps apply (8 MiB per file by default) | `tool.py` |
 
 Pattern cost grows faster than the count. `circle().cutThruAll()` on a pattern is
@@ -389,7 +421,7 @@ and restart:
 make extension-install SOURCE="$PWD/examples/deerflow-extension-cad"
 ```
 
-`config` accepts four values, all optional:
+`config` accepts five values, all optional:
 
 | Key | Default | Meaning |
 | --- | --- | --- |
@@ -397,6 +429,7 @@ make extension-install SOURCE="$PWD/examples/deerflow-extension-cad"
 | `timeout_seconds` | `20` | Wall clock for one build, 5 to 25 |
 | `memory_mb` | `4096` | Address space for one build, 3,072 to 65,536 |
 | `parallel_builds` | half the cores | Builds at once, 1 to 16; each holds several hundred MiB |
+| `printer` | a 0.4 mm nozzle printing PLA, no build volume | The operator's printer for the print block and its notes: `build_volume_mm`, `nozzle_mm`, `layer_mm`, `overhang_deg`, `min_clearance_mm`, `density_g_cm3`, each optional and bounded ([cad-parts.md](../../docs/guide/cad-parts.md#the-printer-profile)). An unknown key or a value out of range stops the module at install with a message naming `printer.<key>` |
 
 Then check it:
 
@@ -447,8 +480,12 @@ deerflow_extension_cad/
 ├── __init__.py     # install(): registers the tool; imports no kernel
 ├── allowlist.py    # the operations a script may ask for, as data
 ├── interpreter.py  # text → allow-listed operations, or a refusal with its line
-├── build.py        # operations → kernel calls; STEP, STL and GLB export
-├── measure.py      # the re-imported STEP: solids, bounding box, volume, holes
+├── build.py        # operations → kernel calls; STEP, STL, 3MF and GLB export
+├── measure.py      # the re-imported STEP: solids, bounding box, volume, holes and where they are, gaps
+├── checks.py       # pass or fail, and the notes; no extension API, used by measure_cli and the eval
+├── render.py       # the picture: numpy and Pillow
+├── printability.py # the print block, from the STL
+├── measure_cli.py  # measure and judge one STEP outside the Gateway
 ├── worker.py       # the child process
 ├── tool.py         # the handler: child process, limits, pass or fail, file writes
 ├── selftest.py     # the one-millimetre cube `make doctor` builds
@@ -457,5 +494,9 @@ tests/
 ├── test_interpreter.py     # what is accepted and what is refused
 ├── test_worker_process.py  # the parent's hold on the child
 ├── test_build.py           # the whole tool against the real kernel
-└── test_measure.py         # what counts as a hole
+├── test_measure.py         # what counts as a hole, where it is, measure_cli
+├── test_checks.py          # the checks without the host
+├── test_render.py          # the picture
+├── test_printability.py    # the print block
+└── test_eval_specs.py      # every CAD eval spec's reference part meets its stored truth, scored through measure_cli
 ```
