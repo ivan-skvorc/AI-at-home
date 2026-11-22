@@ -341,6 +341,32 @@ def test_every_level_updates_the_map() -> None:
         section = _section(text, heading)
         assert "Update the map" in section, f"{heading} no longer updates the map"
         assert "test_repo_map.py" in section, f"{heading} no longer runs the map check"
+    header = next(line for line in text.splitlines() if line.startswith("| Level |"))
+    map_column = [cell.strip() for cell in header.strip("|").split("|")].index("Map")
     for row in ("| 1 | Features linked to the changed files |", "| 2 | The whole app |", "| 3 | The whole app + quality review |"):
         line = next(line for line in text.splitlines() if line.startswith(row))
-        assert line.rstrip().rstrip("|").rsplit("|", 1)[-1].strip(), f"the level table row {row!r} lost its map column"
+        assert [cell.strip() for cell in line.strip().strip("|").split("|")][map_column], f"the level table row {row!r} lost its map column"
+
+
+def test_readme_changes_only_when_warranted_and_level_3_checks_it_whole() -> None:
+    """Levels 1 and 2 touch README.md only for a reason; level 3 reads all of it.
+
+    A rule that sends every change to the README fills it with churn, and one
+    that never reads it whole lets it drift: a removed feature stays promised
+    and a number goes stale while every test is green. So the everyday levels
+    name the reasons a change updates README.md, and level 3 checks the whole
+    file against the code.
+    """
+    text = CHANGE_CYCLE.read_text(encoding="utf-8")
+    every_level = _section(text, "Every level")
+    assert "changes only when the change warrants it" in every_level, "Every level no longer limits README.md updates to changes that warrant one"
+    assert "leaves `README.md` alone" in every_level, "Every level no longer says what leaves README.md untouched"
+    level_3 = _section(text, "Level 3: quality review")
+    assert "The whole `README.md`" in level_3, "Level 3 no longer checks the whole README.md"
+
+    header = next(line for line in text.splitlines() if line.startswith("| Level |"))
+    columns = [cell.strip() for cell in header.strip("|").split("|")]
+    readme_column = columns.index("README")
+    rows = {line.split("|")[1].strip(): [cell.strip() for cell in line.strip().strip("|").split("|")] for line in text.splitlines() if line.startswith(("| 1 |", "| 2 |", "| 3 |"))}
+    assert "only if the change warrants it" in rows["1"][readme_column] and "only if the change warrants it" in rows["2"][readme_column]
+    assert "whole" in rows["3"][readme_column]
