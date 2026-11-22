@@ -177,6 +177,10 @@ def main() -> None:
             measured["unused_body_lines"] = sorted(set(bodies))[: MAX_UNUSED_SAID + 1]
         if passes:
             measured["dropped_passes"] = [{"loop_line": line, "passes": count} for line, count in passes.items()][: MAX_UNUSED_SAID + 1]
+        # Every count, for report.json; the answer names only the fillets and chamfers that took more than a selector usually means.
+        selected = build.selections(program, parts, cq)
+        if selected:
+            measured["selections"] = selected
     except build.BuildFailed as failed:
         _answer({"status": "failed", "line": failed.line, "operation": failed.operation, "message": failed.message, "parameters": parameters})
         return

@@ -668,6 +668,47 @@ async def test_what_the_checks_do_not_cover_is_said_in_the_answer():
     assert "notes" not in answer and "unchecked" not in answer and "blind_depths_mm" not in next(check for check in answer["checks"] if check["check"] == "holes")
 
 
+#: An open box with its vertical corners rounded: on the box as it is after shell(), "|Z" takes the inner corners too.
+RIM = 'result = cq.Workplane("XY").box(40, 40, 10).faces(">Z").shell(-2).edges({selector}).fillet(1)\n'
+
+
+def _selections(script: str) -> list[dict]:
+    program = compile_script(script)
+    return build.selections(program, build.build_parts(program, cq), cq)
+
+
+def test_each_fillet_and_chamfer_reports_how_many_edges_it_took_of_its_part():
+    # The rim fixture takes eight edges, four more than the corners meant; the narrower selector takes the two it names.
+    assert _selections(RIM.format(selector='"|Z"')) == [{"line": 1, "method": "fillet", "edges": 8, "of": 24}]
+    assert _selections(RIM.format(selector='"|Z and >X"')) == [{"line": 1, "method": "fillet", "edges": 2, "of": 24}]
+    # The kernel's own count: a face stands for its edges, and the part itself for every edge.
+    assert _selections('result = cq.Workplane("XY").box(10, 10, 10).faces(">Z").chamfer(1)\n') == [{"line": 1, "method": "chamfer", "edges": 4, "of": 12}]
+    assert _selections('result = cq.Workplane("XY").box(10, 10, 10).fillet(1)\n') == [{"line": 1, "method": "fillet", "edges": 12, "of": 12}]
+    # Only what the result is made of: a trial fillet the part never uses is not counted, and a part without one reports none.
+    script = 'a = cq.Workplane("XY").box(10, 10, 10)\ntrial = a.edges().fillet(1)\nresult = a.edges("|Z").fillet(2)\n'
+    assert _selections(script) == [{"line": 3, "method": "fillet", "edges": 4, "of": 12}]
+    assert _selections(PLATE) == []
+
+
+async def test_a_fillet_that_took_more_edges_than_a_selector_usually_means_is_said_and_every_count_is_reported():
+    answer, files = await _build(RIM.format(selector='"|Z"'), bbox_xyz_mm=[40, 40, 10])
+    assert answer["passed"] is True, answer
+    assert answer["notes"] == ["fillet() on line 1 rounded 8 edges: check that the selection took only the edges meant."]
+    assert json.loads(files["part.report.json"])["measured"]["selections"] == [{"line": 1, "method": "fillet", "edges": 8, "of": 24}]
+    # Four edges or fewer, or every edge of the part, is what a selector or a plain fillet() means: the answer says nothing.
+    for script, taken in (
+        (RIM.format(selector='"|Z and >X"'), {"line": 1, "method": "fillet", "edges": 2, "of": 24}),
+        ('result = cq.Workplane("XY").box(40, 40, 10).edges("|Z").fillet(2)\n', {"line": 1, "method": "fillet", "edges": 4, "of": 12}),
+        ('result = cq.Workplane("XY").box(40, 40, 10).edges().chamfer(1)\n', {"line": 1, "method": "chamfer", "edges": 12, "of": 12}),
+    ):
+        answer, files = await _build(script, bbox_xyz_mm=[40, 40, 10])
+        assert answer["passed"] is True and "notes" not in answer, answer
+        assert json.loads(files["part.report.json"])["measured"]["selections"] == [taken]
+    # A part with no fillet or chamfer carries no selections at all.
+    answer, files = await _build(PLATE)
+    assert "selections" not in json.loads(files["part.report.json"])["measured"]
+
+
 @pytest.mark.parametrize(
     "script",
     [

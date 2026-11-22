@@ -283,6 +283,30 @@ def left_out(program: Program, parts: list) -> tuple[list[int], dict[int, int]]:
     return sorted(bodies.values()), {loop: len(dropped) for loop, dropped in sorted(passes.items())}
 
 
+#: The operations whose reach a selector decides: they work on every edge of whatever the selection holds.
+_ON_EDGES = ("fillet", "chamfer")
+
+
+def selections(program: Program, parts: list, cq) -> list[dict]:
+    """How many edges each fillet and chamfer of the result took, and how many edges its part had then.
+
+    A selector takes every edge that matches on the part as it is at that line, so a fillet
+    meant for four corners also rounds the inner corners of a rim or the edges of a pocket
+    made before it, and the part still meets every number it was asked to meet. The count
+    is the kernel's own: fillet() and chamfer() take the edges of whatever the selection
+    holds, a face standing for its edges and the part for all of them. Both calls already
+    succeeded on these objects when the operation ran, and take nothing from the script.
+    One entry per operation; a script has at most ``interpreter.MAX_OPERATIONS``.
+    """
+    used = _used_by_result(program)
+    found = []
+    for slot, operation in enumerate(program.operations):
+        if slot in used and operation.method in _ON_EDGES and operation.receiver is not None:
+            selected = parts[operation.receiver]
+            found.append({"line": operation.line, "method": operation.method, "edges": len(selected.edges().vals()), "of": len(selected.findSolid().Edges())})
+    return found
+
+
 def solid_of(part):
     """The solid a script's result stands for, even when its last call selected a face or drew an outline."""
     try:
