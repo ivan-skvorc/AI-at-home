@@ -106,7 +106,9 @@ A passed part's `print` block has `grams` (solid, at the printer's density),
 `bed_contact_mm2`, `overhang_mm2`, `thinnest_wall_mm` and, when the operator set
 a build volume, `fits_build_volume`. It is reported, never checked: a part
 passes or fails on its numbers alone. Its `notes` come only past a fixed
-threshold. The printer is the operator's; do not ask the user for it.
+threshold. The printer is the operator's; do not ask the user for it. For
+several bodies the block has `printed_apart: true`: each body is judged on the
+bed as `.parts.3mf` lays it out, and each note names its bodies (`body 2: …`).
 
 | The print note says | Do |
 | --- | --- |
@@ -114,6 +116,7 @@ threshold. The printer is the operator's; do not ask the user for it.
 | … mm² overhangs past …° and needs support | When the note names a better side (`; with its … side on the bed it would be …`), tell the user to lay the part on that side in the slicer. Turning it in the script instead changes the expected bounding box: say why when `expected_changed` reports it. Otherwise chamfer the underside at 45°, or tell the user it needs support |
 | nothing flat rests on the bed: give it a flat face at the lowest z, or it needs a brim or support | Cut a flat at the lowest z, or turn the part onto a flat face |
 | larger than the build volume (… mm) in … | With `; it fits turned 90° on the bed`, say so: the user turns it in the slicer. Otherwise `split` it, keeping both halves, and build it with `bodies=2`: the `.parts.3mf` lays the halves apart, so a gap note about where they touch does not apply to it. Or tell the user it does not fit their printer |
+| as modelled the bodies do not fit the build volume together (… mm) in …; printed apart, as the .parts.3mf lays them out, each one does | Present the `.parts.3mf` for printing. The bodies cannot be printed in place from the `.3mf` on this printer: say so when they were meant to be |
 | the mesh is not watertight | The STEP is exact; the STL and 3MF have gaps a slicer usually repairs. Tell the user, and simplify the smallest features if the slicer cannot |
 
 ## Not a failure of the script

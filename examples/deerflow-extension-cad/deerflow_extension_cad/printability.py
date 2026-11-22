@@ -26,6 +26,9 @@ OVERHANG_NOTE_MM2 = 25.0
 MIN_BED_CONTACT_MM2 = 1.0
 #: Rays the wall estimate casts at most. A large mesh gets fewer, so the work stays bounded (WALL_PAIR_BUDGET).
 WALL_SAMPLES = 512
+#: Bodies printed apart share WALL_SAMPLES by area, so twenty bodies cost about what one part does; a
+#: small body still gets this many rays.
+MIN_BODY_WALL_SAMPLES = 16
 #: Ray and triangle pairs the wall estimate weighs before its exact test; the rays are cut to fit.
 WALL_PAIR_BUDGET = 8_000_000
 #: The six ways to lay a part down, by the side that goes on the bed. The order breaks a tie.
@@ -51,6 +54,23 @@ def read_stl(data: bytes) -> np.ndarray:
     if not np.isfinite(triangles).all():
         raise ValueError("the STL holds coordinates that are not finite numbers")
     return triangles
+
+
+def mesh_triangles(vertices: Sequence[Sequence[float]], triangles: Sequence[Sequence[int]]) -> np.ndarray:
+    """The triangles of a mesh given as vertices and vertex indices, as a 3MF holds it, as an (n, 3, 3) array.
+
+    Raises ValueError for a mesh without triangles, an index past the vertices or a coordinate that is
+    not a finite number.
+    """
+    points = np.asarray(vertices, dtype=np.float64)
+    corners = np.asarray(triangles, dtype=np.int64)
+    if points.ndim != 2 or points.shape[1:] != (3,) or corners.ndim != 2 or corners.shape[1:] != (3,) or not len(corners):
+        raise ValueError("the mesh holds no triangles of three vertices each")
+    if corners.min() < 0 or corners.max() >= len(points):
+        raise ValueError("the mesh names a vertex it does not hold")
+    if not np.isfinite(points).all():
+        raise ValueError("the mesh holds coordinates that are not finite numbers")
+    return points[corners]
 
 
 def _cross(triangles: np.ndarray) -> np.ndarray:
@@ -274,16 +294,18 @@ def assess(
     density_g_cm3: float,
     volume_mm3: float | None = None,
     wall_mm: float | None = None,
+    wall_samples: int = WALL_SAMPLES,
 ) -> dict:
     """The print block: what the part would do on the bed, printed as built.
 
     *volume_mm3* is the measured volume (the mesh's own when None); *wall_mm* a
-    thinnest wall measured elsewhere, used instead of this module's sampled one.
+    thinnest wall measured elsewhere, used instead of this module's sampled one,
+    which casts at most *wall_samples* rays.
     """
     normals, extent, area = unit_normals(triangles), _extent(triangles), areas(triangles)
     heights = triangles[:, :, 2]
     volume = abs(mesh_volume_mm3(triangles)) if volume_mm3 is None else float(volume_mm3)
-    wall = thinnest_wall_mm(triangles) if wall_mm is None else float(wall_mm)
+    wall = thinnest_wall_mm(triangles, samples=wall_samples) if wall_mm is None else float(wall_mm)
     unshared = open_edges(triangles)
     block: dict = {
         "bed_contact_mm2": round(float(area[_on_bed(heights, normals[:, 2], extent)].sum()), 1),
@@ -305,12 +327,81 @@ def assess(
     return block
 
 
+def assess_apart(
+    bodies: Sequence[np.ndarray],
+    *,
+    overhang_deg: float,
+    build_volume_mm: Sequence[float] | None,
+    density_g_cm3: float,
+    volume_mm3: float | None = None,
+) -> dict:
+    """The print block of a part of several bodies, each printed apart: moved onto the bed, never turned.
+
+    That is how ``part.parts.3mf`` lays them out. Judged as one mesh, bodies that touch share edges of
+    four triangles, a body resting on another hangs over the bed, and the bodies together may not fit
+    where each one does. Each body is assessed on its own (``bodies``, numbered from 1 in the order
+    given); the areas are summed, the wall is the thinnest, and the part fits and is watertight only when
+    every body does. ``as_modelled`` keeps whether the bodies fit together where they were built.
+    """
+    total = sum(float(areas(body).sum()) for body in bodies) or 1.0
+    blocks = []
+    for body in bodies:
+        samples = max(MIN_BODY_WALL_SAMPLES, round(WALL_SAMPLES * float(areas(body).sum()) / total))
+        blocks.append(assess(body, overhang_deg=overhang_deg, build_volume_mm=build_volume_mm, density_g_cm3=density_g_cm3, wall_samples=samples))
+    volume = sum(abs(mesh_volume_mm3(body)) for body in bodies) if volume_mm3 is None else float(volume_mm3)
+    walls = [block["thinnest_wall_mm"] for block in blocks if block["thinnest_wall_mm"] is not None]
+    unshared = sum(block.get("open_edges", 0) for block in blocks)
+    block: dict = {
+        "printed_apart": True,
+        "bed_contact_mm2": round(sum(body["bed_contact_mm2"] for body in blocks), 1),
+        "overhang_mm2": round(sum(body["overhang_mm2"] for body in blocks), 1),
+        "overhang_deg": float(overhang_deg),
+        "thinnest_wall_mm": min(walls) if walls else None,
+        "watertight": unshared == 0,
+        "grams": round(volume / 1000.0 * density_g_cm3, 2),
+    }
+    if unshared:
+        block["open_edges"] = unshared
+    if build_volume_mm is not None:
+        block["build_volume_mm"] = [float(size) for size in build_volume_mm]
+        over = [body for body in blocks if not body["fits_build_volume"]]
+        block["fits_build_volume"] = not over
+        if over:
+            block["too_large_axes"] = [axis for axis in "XYZ" if any(axis in body["too_large_axes"] for body in over)]
+            block["fits_turned"] = all(body["fits_turned"] for body in over)
+        block["as_modelled"] = fit(np.ptp(np.concatenate([body.reshape(-1, 3) for body in bodies]), axis=0).tolist(), build_volume_mm)
+    block["bodies"] = blocks
+    return block
+
+
+def _numbers(numbers: Sequence[int]) -> str:
+    """Body numbers as a sentence names them: "body 2", "bodies 1 and 3", "bodies 1, 2 and 3"."""
+    if len(numbers) == 1:
+        return f"body {numbers[0]}"
+    return "bodies " + ", ".join(map(str, numbers[:-1])) + f" and {numbers[-1]}"
+
+
 def _number(value: float) -> str:
     return f"{value:.2f}".rstrip("0").rstrip(".")
 
 
 def notes(block: dict, *, nozzle_mm: float) -> list[str]:
-    """The sentences an answer carries: only what is past a fixed threshold, so a plain part says nothing."""
+    """The sentences an answer carries: only what is past a fixed threshold, so a plain part says nothing.
+
+    Of bodies printed apart, each sentence names the bodies it is about, and one more says when the
+    bodies fit the bed apart and not together, as modelled.
+    """
+    if "bodies" in block:
+        by_sentence: dict[str, list[int]] = {}
+        for number, body in enumerate(block["bodies"], 1):
+            for sentence in notes(body, nozzle_mm=nozzle_mm):
+                by_sentence.setdefault(sentence, []).append(number)
+        said = [f"{_numbers(numbers)}: {sentence}" for sentence, numbers in by_sentence.items()]
+        together = block.get("as_modelled")
+        if block.get("fits_build_volume") is True and isinstance(together, dict) and together.get("fits_build_volume") is False:
+            room = " × ".join(_number(size) for size in block["build_volume_mm"])
+            said.append(f"as modelled the bodies do not fit the build volume together ({room} mm) in {', '.join(together['too_large_axes'])}; printed apart, as the .parts.3mf lays them out, each one does")
+        return said
     said: list[str] = []
     wall, least = block.get("thinnest_wall_mm"), WALL_NOZZLES * nozzle_mm
     if wall is not None and wall < least:

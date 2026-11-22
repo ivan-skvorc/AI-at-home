@@ -113,6 +113,13 @@ one), nothing flat on the bed, a part larger than the build volume (and whether
 it fits turned 90°), and a mesh that is not watertight. The report holds the
 whole block for every built part, passed or failed.
 
+A part of several bodies is judged body by body instead, each standing on the
+bed as `.parts.3mf` lays it out, never turned. The block then has
+`printed_apart: true`: its areas are the bodies' sums, it fits and is watertight
+only when every body does, and each note names its bodies (`body 2: …`). One
+more note says when the bodies fit the bed apart but not together as modelled,
+which matters for printing them in place from the `.3mf`.
+
 The model builds a part in print orientation, with the bed face flat at the
 lowest z. For holes that take screws, nuts and inserts, fits between printed
 parts, walls and overhangs, it reads the skill's

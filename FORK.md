@@ -5817,7 +5817,15 @@ numbers.
   wall estimate is used, `printability.thinnest_wall_mm`: it is deterministic
   and reads the file the slicer gets, while `measure.sampled_wall` is bounded
   by a clock, so its value moved with the machine's load and it could add a
-  second to every build.
+  second to every build. A part of several bodies is judged body by body, each
+  standing on the bed as `.parts.3mf` lays it out (`assess_apart`, meshes read
+  from the 3MF's per-body objects, `printed_apart: true`): on the merged STL a
+  part split for the bed was still too tall, open where its halves touch and
+  400 mm² overhanging, and the notes sent the model to split it again. Bodies
+  share the wall rays by area. Welded connected components of the STL would not
+  do: touching bodies weld into one. `build.export` renumbers the kernel's 3MF
+  objects from 1 and adds the `rels` and `model` default content types, because
+  lib3mf refused every file the kernel wrote (`normalise_3mf`).
 - **Several bodies (item 51).** The first real request was a print-in-place
   laptop stand. `bodies` (1 to 20) makes the check "closed solids", exactly n
   valid closed solids, with the volume their sum and the box their union; with

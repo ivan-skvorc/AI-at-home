@@ -604,6 +604,26 @@ async def test_a_part_too_tall_for_the_bed_split_in_two_passes_as_two_bodies():
     assert [[round(value, 6) for value in low] for low, _ in boxes] == [[0, 0, 0], [25, 0, 0]]
 
 
+async def test_a_part_split_for_the_bed_is_judged_as_its_bodies_print_apart():
+    # The way out failures.md gives for "larger than the build volume": split it and build bodies=2. Judged as
+    # one mesh the split part was still too tall, open where the halves touch and 400 mm² overhanging, and
+    # the answer sent the model to split it again. Each half is 20 mm tall, closed and flat in part.parts.3mf.
+    outputs = Outputs()
+    context = ToolContext(ExtensionPrincipal("alice"), {"enabled": True}, "thread-a", output_writer=outputs.write)
+    handler = make_handler(settings_from({"printer": {"build_volume_mm": [100, 100, 30]}}))
+    answer = await handler({"name": "part", "script": SPLIT, "bbox_xyz_mm": [20, 20, 40], "bodies": 2}, context)
+    assert answer["passed"] is True, answer
+    printing = answer["print"]
+    assert (printing["fits_build_volume"], printing["printed_apart"], printing["overhang_mm2"]) == (True, True, 0)
+    assert printing["notes"] == ["as modelled the bodies do not fit the build volume together (100 × 100 × 30 mm) in Z; printed apart, as the .parts.3mf lays them out, each one does"]
+    block = json.loads(outputs.files["part.report.json"])["measured"]["print"]
+    assert block["watertight"] is True and "open_edges" not in block and block["bed_contact_mm2"] == pytest.approx(800, abs=0.5)
+    assert [body["fits_build_volume"] for body in block["bodies"]] == [True, True]
+    # One body is judged on the part's own STL, as before.
+    single = await handler({"name": "plate", "script": PLATE, **EXPECT}, context)
+    assert "printed_apart" not in single["print"] and "bodies" not in json.loads(outputs.files["plate.report.json"])["measured"]["print"]
+
+
 def test_bodies_that_cannot_be_laid_out_get_one_stl_each(tmp_path, monkeypatch):
     from deerflow_extension_cad import tool
 

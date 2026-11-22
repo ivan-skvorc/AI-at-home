@@ -153,6 +153,9 @@ QUOTED = [
     "larger than the build volume",
     "it fits turned 90° on the bed",
     "the mesh is not watertight",
+    # Several bodies are judged as .parts.3mf lays them out, each named by its number.
+    "do not fit the build volume together",
+    "printed apart, as the .parts.3mf lays them out, each one does",
 ]
 
 

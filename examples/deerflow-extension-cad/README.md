@@ -149,7 +149,9 @@ density), bed contact, overhang past the printer's angle, a sampled thinnest
 wall, and the fit to the build volume when one is set, plus notes past fixed
 thresholds (a wall under two nozzle widths, an overhang that needs support with
 a better face down, nothing flat on the bed, larger than the bed, a mesh that
-is not watertight). The whole block is in report.json for every build. It is
+is not watertight). A part of several bodies is judged body by body, each on
+the bed as `.parts.3mf` lays it out (`printed_apart`), with the bodies named in
+each note. The whole block is in report.json for every build. It is
 reported, never checked: pass or fail stays on the user's numbers. The printer
 is the operator's, set under `printer:` in the CAD record of config.yaml (see
 `config.example.yaml`); the model cannot change it. The user guide is

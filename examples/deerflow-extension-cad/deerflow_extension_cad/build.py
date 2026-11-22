@@ -379,6 +379,7 @@ MAX_BODY_FILES = 8
 _MESH_OBJECT = re.compile(r'<object id="(\d+)"[^>]*>\s*<mesh>(.*?)</mesh>\s*</object>', re.S)
 _COMPONENTS_OBJECT = re.compile(r'<object id="\d+"[^>]*>\s*<components>.*?</components>\s*</object>', re.S)
 _VERTEX = re.compile(r'<vertex x="([^"]+)" y="([^"]+)" z="([^"]+)"')
+_TRIANGLE = re.compile(r'<triangle v1="(\d+)" v2="(\d+)" v3="(\d+)"')
 _BUILD = re.compile(r"<build>.*?</build>", re.S)
 
 
@@ -466,6 +467,17 @@ def lay_out(threemf: bytes, gap_mm: float = PARTS_GAP_MM) -> bytes:
         for info, content in entries:
             package.writestr(info.filename, model.encode("utf-8") if info.filename == "3D/3dmodel.model" else content)
     return out.getvalue()
+
+
+def body_meshes(threemf: bytes) -> list[tuple[list[tuple[float, ...]], list[tuple[int, ...]]]]:
+    """Each body's mesh in the kernel's 3MF, in the order it holds them: vertices in millimetres and triangles by vertex.
+
+    The kernel writes one mesh object per body, from the mesh the STL was written with, so the print
+    block can judge the bodies one by one where part.stl has them merged.
+    """
+    with zipfile.ZipFile(io.BytesIO(threemf)) as package:
+        model = package.read("3D/3dmodel.model").decode("utf-8")
+    return [([tuple(map(float, found)) for found in _VERTEX.findall(mesh)], [tuple(map(int, found)) for found in _TRIANGLE.findall(mesh)]) for _, mesh in _MESH_OBJECT.findall(model)]
 
 
 def _bodies_apart(shape, threemf: Path, directory: Path, names: dict[str, str], linear: float, angular: float, max_bytes: int) -> None:
