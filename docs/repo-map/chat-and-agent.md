@@ -143,12 +143,12 @@ External: none
 Tests: backend/tests/test_threads_router.py, frontend/tests/unit/core/threads/edit-version-answer.dom.test.tsx, frontend/tests/e2e/edit-message-versions.spec.ts
 
 ### Delegate to subagents
-What: the lead agent hands subtasks to subagents (task tool, batches, external ACP agents); Ultra mode can route them to a cheaper per-thread subagent model, and local dispatch only runs as many as the GPU can hold.
+What: the lead agent hands subtasks to subagents (task tool, batches, external ACP agents); Ultra mode can route them to a cheaper per-thread subagent model, local dispatch only runs as many as the GPU can hold, and acceptance criteria are judged in code, including on a plugin tool's own recorded answer (tool_result), never on files the subagent could write.
 Entry points: task and batch_task tools, Settings: Subagents, GET /api/threads/{thread_id}/subagent-batches, /api/subagents
 Files: backend/packages/harness/deerflow/subagents/**, backend/packages/harness/deerflow/tools/builtins/task_tool.py, backend/packages/harness/deerflow/tools/builtins/batch_task_tool.py, backend/packages/harness/deerflow/tools/builtins/invoke_acp_agent_tool.py, backend/app/subagent_batches/**, backend/app/gateway/routers/subagents.py, backend/app/gateway/routers/subagent_batches.py, frontend/src/components/workspace/messages/subtask-card.tsx, frontend/src/components/workspace/thread-subagent-batches.tsx, frontend/src/core/tasks/**, frontend/src/components/workspace/settings/subagent-settings-page.tsx
 Data: subagent_batches and managed_subagents tables
 External: LLM providers, ACP agents when configured
-Tests: backend/tests/test_task_tool_core_logic.py, backend/tests/test_subagent_executor.py, backend/tests/test_subagent_local_residency.py, backend/tests/test_subagent_batch_service.py, backend/tests/test_invoke_acp_agent_tool.py, frontend/tests/unit/components/workspace/messages/subtask-card.dom.test.tsx, frontend/tests/e2e/subagent-dropdown.spec.ts
+Tests: backend/tests/test_task_tool_core_logic.py, backend/tests/test_subagent_executor.py, backend/tests/test_subagent_local_residency.py, backend/tests/test_subagent_batch_service.py, backend/tests/test_invoke_acp_agent_tool.py, backend/tests/test_acceptance_tool_result.py, frontend/tests/unit/components/workspace/messages/subtask-card.dom.test.tsx, frontend/tests/e2e/subagent-dropdown.spec.ts
 
 ### Democracy panels
 What: pick an organizer and panelists; the organizer researches once, the panel answers and reviews each other anonymously, and the organizer synthesizes one answer that reports the split.

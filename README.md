@@ -27,7 +27,9 @@
 > - 🗂️ **A file explorer for each conversation** — a labelled **Files** button right after the token counter in the chat header (or **Show files** in a chat's sidebar menu) browses the folders the agent created in that chat: its `workspace`, your `uploads` and the `outputs`, as a tree you open folder by folder, with sizes and times. Any file opens in the preview panel or downloads, including the scratch files the agent never presented, and open folders refresh while a run is working. The tab says plainly that this folder is **deleted together with the chat**. Read-only; nothing to configure.
 > - 📒 **Shared folders remember which chats wrote to them** — a folder a conversation creates or edits inside a writable custom `sandbox.mounts` directory is recorded, with an edit log, and listed under **Shared folders** in that chat's **Files** tab. Such folders outlive the chat, so when you delete the last conversation that used one, DeerFlow **offers** to delete it: never on its own, with nothing pre-ticked, and only for a folder a conversation was seen creating. Needs the default SQL database and a writable mount; nothing else to switch on.
 > - 🧩 **Extensions whose tools produce files** — an installed extension's tool can write a file into the conversation that called it, and the file opens in the artifact panel and the Files view like one from a built-in tool. It works on the default sandbox with no shell, because the Gateway does the writing. **The tool only names a file:** it cannot choose a conversation or a folder, and an existing file is never replaced. Nothing to switch on; `plugin_outputs` in `config.yaml` caps a file at 8 MiB and one tool call at 32 MiB.
-> - 📐 **Mechanical parts from a chat** — describe a bracket and get a script you can edit, a STEP file for a CAD program, an STL for the printer and a GLB to look at, on whichever model the conversation uses, with the internet switch off. **The model's script is never run:** the bundled CAD module reads it and performs an allow-list of CadQuery operations itself, then measures the result and refuses to hand over a STEP file for a part that missed its numbers. **A part is built until it passes:** the assistant writes your requirements down first, builds, reads the measurements, repairs and builds again, while the tool counts the attempts, holds the numbers the part was first given, and stops the loop with a report after eight builds instead of running on. Scripts may use `for` loops. Installed and on with every new install and every update on Linux (x86-64 and arm64, glibc 2.31 or newer) and Apple-silicon Macs; Windows and Intel Macs go without it. It adds about 1.7 GB of disk for its geometry kernel, which loads only while a part is being built. Turn it off with `make extension-disable NAME=cad` and a restart (the disk space stays in use); see its [README](examples/deerflow-extension-cad/README.md).
+> - 📐 **Mechanical parts from a chat** — describe a bracket and get a script you can edit, a picture of the part right in the reply, a STEP file for a CAD program, a 3MF for your slicer and an STL and GLB at real size, on whichever model the conversation uses, with the internet switch off. **The model's script is never run:** the bundled CAD module reads it and performs an allow-list of CadQuery operations itself (revolved, lofted and swept shapes, lettering and threads included), then measures the result and refuses to hand over a STEP file for a part that missed its numbers, with holes checked where they are when the request places them. **A part is built until it passes:** the assistant writes your requirements down first, builds, reads the measurements, repairs and builds again, while the tool counts the attempts, holds the numbers the part was first given, and stops the loop with a report after eight builds instead of running on. A print-in-place hinge or a box with its lid passes as several bodies and arrives both in place and laid out on the bed, and every passed part comes with a print report (grams, overhang, thinnest wall, fit to your bed) that is **reported, never pass or fail**; your printer goes in an optional `printer:` block of the CAD record. Installed and on with every new install and every update on Linux (x86-64 and arm64, glibc 2.31 or newer) and Apple-silicon Macs; Windows and Intel Macs go without it. It adds about 1.7 GB of disk for its geometry kernel, which loads only while a part is being built. Turn it off with `make extension-disable NAME=cad` and a restart (the disk space stays in use); see the [CAD parts guide](docs/guide/cad-parts.md) and the module's [README](examples/deerflow-extension-cad/README.md).
+> - 🧊 **CAD models you can turn in the file preview** — a `.glb` or `.stl` file, the CAD module's among them, opens in the artifact panel, the reader and the Files view as a model you can rotate, zoom and view from the top, the front or an angle, with its size in millimetres, on a phone too. **It never moves on its own** and draws only when you touch it, and each file is checked against fixed caps in a background worker before anything is drawn, so a file that is too large or malformed falls back to a download. The original always downloads unchanged. Bundled and on, like the CAD module; nothing to configure, and `make extension-disable NAME=cad-preview` turns it off.
+> - 📏 **A CAD eval graded on ground truth** — `make cad-eval MODEL=...` sends 22 fixed part requests to the running agent and measures each delivered STEP file again against numbers the model never saw, because `cad_build`'s own pass is graded on the model's reading of the request. **A part the tool passed can still score a fail**, and the run reports how often a part presented as finished is really right, with an interval. Opt-in and out of CI: it needs `make dev` with the CAD module on, and it spends tokens on the model you name.
 > - 🕯️ **Gaslight mode** — edit **either half of a turn**. Edit your own message and it replays from there; edit the assistant's answer and your text simply *becomes* what it said. Both versions are kept behind a `‹ 2/2 ›` switcher, and one conversation stays **one** sidebar entry however many times you edit it.
 > - 🌐 **An internet switch on the composer** — a globe takes *this* conversation offline: search, fetching, browser control, MCP and external agents are left out of the run, and subagents inherit it. Per chat, not a global setting.
 > - 📄 **PDF / Office uploads that just work** — `pymupdf4llm` is bundled, so PDF / DOCX / PPTX / XLSX uploads are reliably readable by the agent (`uploads.auto_convert_documents: true`).
@@ -174,6 +176,8 @@ DeerFlow has newly integrated the intelligent search and crawling toolset indepe
     - [Private GitHub repositories](#private-github-repositories)
   - [Files in a Conversation](#files-in-a-conversation)
   - [Shared Folders and Their Edit Log](#shared-folders-and-their-edit-log)
+  - [CAD Parts From a Chat](#cad-parts-from-a-chat)
+  - [CAD Models in the File Preview](#cad-models-in-the-file-preview)
   - [System Prompt](#system-prompt)
   - [Internet Access Switch](#internet-access-switch)
   - [Concurrent Chats](#concurrent-chats)
@@ -577,7 +581,9 @@ version; the [Table of Contents](#table-of-contents) lists them.
 | Projects, instructions, document shelf | [Projects](docs/guide/projects.md) |
 | Scheduled tasks | [Scheduled Tasks](docs/guide/scheduled-tasks.md) |
 | Feishu, Slack, Telegram, Discord, DingTalk and other IM channels | [IM Channels](docs/guide/im-channels.md) |
-| File attachments, downloads and Office previews | [File Previews](docs/guide/file-previews.md) |
+| File attachments, downloads, Office previews and the CAD model preview | [File Previews](docs/guide/file-previews.md) |
+| CAD parts: the picture, 3MF and print notes, the printer profile, several bodies, lettering and threads | [CAD Parts](docs/guide/cad-parts.md) |
+| Scoring a model's CAD parts against ground truth (`make cad-eval`) | [CAD Eval](docs/guide/cad-eval.md) |
 | Token usage dashboard, workspace, chat archive | [Workspace UI](docs/guide/workspace.md) |
 | Terminal workbench | [Terminal Workbench (TUI)](docs/guide/tui.md) |
 | Personal access tokens, stream actions, embedded Python client | [API Access and Python Client](docs/guide/api-and-client.md) |
@@ -1271,6 +1277,88 @@ changed from outside DeerFlow can look unused. It needs the default SQL database
 and works with the local sandbox and per-conversation containers. No new
 configuration keys. Details:
 [Shared folders in writable mounts](docs/guide/sandbox.md#shared-folders-in-writable-mounts).
+
+### CAD Parts From a Chat
+
+Ask for a part in any conversation, in any mode, on any model: "a 60 × 40 × 6 mm
+mounting plate with two 4 mm holes, 30 mm apart". The assistant calls
+`cad_build` with a CadQuery script and the numbers the part must meet. The bundled
+CAD module **reads the script and never runs it**: it performs an allow-list of
+operations in a child process, imports the STEP it wrote, measures it, and saves
+the files only for a part that passed every check. The files open in the artifact
+panel: the script, a picture (shown inline in the reply), the GLB and STL, a 3MF
+for the slicer, the STEP and a report. A failed build saves its picture and GLB
+under `.failed` names, so the wrong shape can still be looked at. The assistant
+repairs and builds again under the same name, and the tool stops the loop with a
+report after eight builds of one part.
+
+**A pass means the part met the numbers the model wrote down, not that it is the
+part you meant.** The picture is there to catch a feature on the wrong face, and
+`make cad-eval` measures how often a model's finished parts are really right.
+Holes can be checked where they are, and a print-in-place hinge or a box with its
+lid passes as several bodies (`bodies`), saved both in place and laid out on the
+bed. Every passed part carries a print report (grams, bed contact, overhang, a
+sampled thinnest wall, fit to the bed), which is **reported and never decides
+pass or fail**. A build gets 20 seconds; the GLB is in metres and the STL, STEP
+and 3MF in millimetres. Nothing is sliced or sent to a printer.
+
+On by default on Linux (x86-64 and arm64, glibc 2.31 or newer) and Apple-silicon
+Macs. Your printer is optional operator configuration in the CAD record of
+`config.yaml`; the model cannot change it, and leaving it out means a 0.4 mm
+nozzle printing PLA with no bed size:
+
+```yaml
+plugins:
+  - name: cad
+    package: deerflow-extension-cad
+    use: deerflow_extension_cad:install
+    enabled: true
+    required: false
+    config:
+      enabled: true
+      printer:                    # optional; every value has a default
+        build_volume_mm: [256, 256, 256]
+        nozzle_mm: 0.4
+```
+
+Turn the module off with `make extension-disable NAME=cad` and a restart. Details:
+[CAD parts](docs/guide/cad-parts.md), [the CAD eval](docs/guide/cad-eval.md), the
+module's [README](examples/deerflow-extension-cad/README.md) and its boundary in
+[SECURITY.md](SECURITY.md).
+
+### CAD Models in the File Preview
+
+Select a `.glb` or `.stl` file in the artifact panel, the reader or the
+**Files** view and it opens as a model: drag to rotate, scroll or pinch to zoom,
+**Fit**, **Reset**, **Top**, **Front** and **Iso** views and an **Edges** toggle,
+with `Bounding box X × Y × Z mm` under it along the CAD axes. A `*.failed.glb`
+carries a banner pointing to its report. **The model never moves on its own**: it
+is drawn only when something changes, with no animation running in between.
+
+Each file is parsed in its own background worker, checked against fixed caps
+before anything is allocated (1,000,000 triangles, 1,000,000 vertices, 20,000
+primitives or nodes, 15 seconds), and a file past a cap, or past the host's
+25 MiB preview limit, says why and offers the download. The original always
+downloads unchanged, and nothing is fetched from outside the server. A GLB the
+CAD module wrote before it switched to metres reads 1000 times too large.
+
+Bundled and on by default, with this record in `config.yaml`; an existing install
+gets it from the config upgrade on its next update. Its one key is `enabled`:
+
+```yaml
+plugins:
+  - name: cad-preview
+    package: deerflow-extension-cad-preview
+    use: deerflow_extension_cad_preview:install
+    enabled: true
+    required: false
+    config:
+      enabled: true
+```
+
+Turn it off with `make extension-disable NAME=cad-preview` and a restart, and GLB
+and STL files go back to the download fallback. Details:
+[CAD model preview](docs/guide/file-previews.md#cad-model-preview-extension).
 
 ### System Prompt
 

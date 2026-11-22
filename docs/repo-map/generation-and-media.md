@@ -16,6 +16,7 @@ flowchart LR
   end
   subgraph cad [CAD parts from a chat]
     cadExt["deerflow-extension-cad"]
+    cadEval["make cad-eval"]
   end
   subgraph bigdoc [Big documents on small models]
     analyze["analyze_document tool"]
@@ -74,12 +75,12 @@ External: browser speech recognition, a local Whisper-compatible STT server
 Tests: backend/tests/test_voice_stt.py, frontend/tests/unit/core/voice-input/voice-tiers.test.ts, frontend/tests/unit/core/voice-input/recorder.test.ts, frontend/tests/unit/core/voice-input/speech-recognition.test.ts
 
 ### CAD parts from a chat
-What: describe a part and get an editable CAD script plus STEP, STL and GLB files, built by the bundled CAD extension without running the model's code.
-Entry points: CAD extension tools, cad-modeling skill
-Files: backend/extensions/sources/deerflow-extension-cad/**, examples/deerflow-extension-cad/**, skills/public/cad-modeling/**
-Data: thread outputs directory
-External: none (works with the internet switch off)
-Tests: backend/tests/test_cad_extension.py, backend/tests/test_bundled_cad_extension.py, backend/tests/test_cad_runtime_deps.py, tests/skills/test_cad_modeling.py
+What: describe a part and get an editable CAD script, a picture of it and STEP, STL, 3MF and GLB files, built by the bundled CAD extension without running the model's code; holes are checked where they are, several bodies print in place or laid out apart, a print block reports how it prints (never pass or fail), and make cad-eval grades a model's delivered parts against ground truth. The files rotate in the panel through the CAD model preview (sidebar-and-workspace.md).
+Entry points: cad_build (CAD extension tool), cad-modeling skill, make cad-eval
+Files: backend/extensions/sources/deerflow-extension-cad/**, examples/deerflow-extension-cad/**, skills/public/cad-modeling/**, backend/scripts/benchmark/cad_eval/**
+Data: thread outputs directory, the operator's printer profile (printer: in the CAD record of config.yaml)
+External: none for building (works with the internet switch off); make cad-eval drives a configured model through the running Gateway
+Tests: backend/tests/test_cad_extension.py, backend/tests/test_bundled_cad_extension.py, backend/tests/test_cad_runtime_deps.py, backend/tests/blocking_io/test_cad_extension.py, backend/tests/test_context_fit_critical.py, backend/tests/test_bench_cad_eval.py, tests/skills/test_cad_modeling.py, examples/deerflow-extension-cad/tests/test_interpreter.py, examples/deerflow-extension-cad/tests/test_worker_process.py, examples/deerflow-extension-cad/tests/test_build.py, examples/deerflow-extension-cad/tests/test_measure.py, examples/deerflow-extension-cad/tests/test_checks.py, examples/deerflow-extension-cad/tests/test_render.py, examples/deerflow-extension-cad/tests/test_printability.py, examples/deerflow-extension-cad/tests/test_eval_specs.py
 
 ### Big documents on small models
 What: analyze_document reads a PDF, EPUB, HTML or zipped book in parts sized for the serving model, transcribes scanned PDFs with a vision model, and make drift-eval checks that long-document answers stay on the question.

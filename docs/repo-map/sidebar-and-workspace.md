@@ -23,6 +23,9 @@ flowchart LR
   subgraph art [Artifacts and previews]
     artPanel["artifact-viewer.tsx"]
   end
+  subgraph cadprev [CAD model preview]
+    cadViewer["deerflow-extension-cad-preview"]
+  end
   subgraph proj [Projects]
     projPage["/workspace/projects/[id]"]
   end
@@ -91,6 +94,7 @@ flowchart LR
   files --> sandboxFs
   upl --> sandboxFs
   art --> sandboxFs
+  cadprev --> artPanel
   changes --> sandboxFs
   pwa --> pushSvc
   sched --> threadMeta
@@ -146,12 +150,20 @@ External: none
 Tests: backend/tests/test_uploads_router.py, backend/tests/test_uploads_manager.py, backend/tests/test_uploads_middleware_core_logic.py, frontend/tests/unit/core/uploads/api.test.ts, frontend/tests/e2e/file-transfer.spec.ts
 
 ### Artifacts and previews
-What: files the agent presents open in the artifact panel with previews for Markdown, code, tables, images and (through the office preview extension) Word, Excel and PowerPoint, and download as files or an archive.
+What: files the agent presents open in the artifact panel with previews for Markdown, code, tables, images and, through preview extensions, Word, Excel and PowerPoint (office preview) and GLB and STL models (CAD model preview), and download as files or an archive; a file over the 25 MiB preview limit says so and offers the download.
 Entry points: artifact panel, /artifacts/view, GET /api/threads/{thread_id}/artifacts/{path}
 Files: backend/app/gateway/routers/artifacts.py, backend/app/gateway/artifact_archive.py, backend/packages/harness/deerflow/tools/builtins/present_file_tool.py, backend/packages/harness/deerflow/agents/middlewares/artifact_capture_middleware.py, frontend/src/components/workspace/artifacts/**, frontend/src/core/artifacts/**, frontend/src/app/artifacts/**, examples/deerflow-extension-office-preview/**
 Data: thread outputs directory
 External: none
-Tests: backend/tests/test_artifacts_router.py, backend/tests/test_artifact_capture_middleware.py, backend/tests/test_artifact_archive.py, frontend/tests/unit/core/artifacts/api.test.ts, frontend/tests/e2e/artifact-preview.spec.ts, frontend/tests/e2e/office-preview-navigation.spec.ts
+Tests: backend/tests/test_artifacts_router.py, backend/tests/test_artifact_capture_middleware.py, backend/tests/test_artifact_archive.py, frontend/tests/unit/core/artifacts/api.test.ts, frontend/tests/unit/core/artifacts/binary-preview.test.ts, frontend/tests/unit/components/workspace/artifacts/plugin-artifact-preview.dom.test.tsx, frontend/tests/e2e/artifact-preview.spec.ts, frontend/tests/e2e/office-preview-navigation.spec.ts, frontend/tests/e2e/cad-preview.spec.ts
+
+### CAD model preview
+What: a `.glb` or `.stl` file, the CAD module's output among them, opens as a model you can rotate in the artifact panel, the reader and the Files view, with its bounding box in millimetres and no motion of its own; a bundled browser extension (three.js) parses each file in a Worker that checks every count before it allocates, and the original still downloads.
+Entry points: artifact panel, /artifacts/view, the Files view; make extension-disable NAME=cad-preview
+Files: examples/deerflow-extension-cad-preview/**, backend/extensions/sources/deerflow-extension-cad-preview/**
+Data: thread outputs directory (read through the artifact route)
+External: none (three.js is bundled; nothing is fetched from a CDN)
+Tests: examples/deerflow-extension-cad-preview/tests/glb.test.mjs, examples/deerflow-extension-cad-preview/tests/stl.test.mjs, examples/deerflow-extension-cad-preview/tests/mesh.test.mjs, examples/deerflow-extension-cad-preview/tests/worker-client.test.mjs, examples/deerflow-extension-cad-preview/tests/test_registration.py, backend/tests/test_bundled_cad_preview_extension.py, frontend/tests/e2e/cad-preview.spec.ts
 
 ### Projects
 What: group conversations into a project with its own instructions, memory and a document shelf the agent can search.

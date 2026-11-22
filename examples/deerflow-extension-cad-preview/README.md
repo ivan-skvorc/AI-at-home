@@ -36,7 +36,9 @@ The original file always downloads unchanged, from the panel's download button.
 
 glTF is metres and Y-up by definition, so a GLB is read as metres. The CAD
 module writes its GLB with a root scale of 0.001 over millimetre vertices, which
-reads as the part's real size. A GLB written by the CAD module before that
+reads as the part's real size. A part of several bodies, which the CAD module
+writes as one node per body, is drawn whole, each body where it was modelled;
+the bounding box is their union. A GLB written by the CAD module before that
 change has no root scale and reads 1000 times too large. An STL has no unit; it
 is read as millimetres, Z-up, which is what the CAD module and slicers use.
 
