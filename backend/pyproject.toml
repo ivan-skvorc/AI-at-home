@@ -68,6 +68,9 @@ webpush = ["deerflow-harness[webpush]"]
 # the same locked runtime set without promoting those packages to core deps.
 extensions = [
     "deerflow-extension-workflows ; sys_platform != 'win32'",
+    # Fork: the CAD model preview ships installed. Browser-only and pure Python,
+    # so it needs no platform marker.
+    "deerflow-extension-cad-preview",
 ]
 # Fork: the CAD module ships installed (FORK.md §51). It has a group of its own
 # because its geometry kernel has wheels for fewer hosts than everything else
@@ -142,4 +145,5 @@ members = ["packages/harness", "packages/extension-api"]
 deerflow-harness = { workspace = true }
 deerflow-extension-api = { workspace = true }
 deerflow-extension-workflows = { path = "extensions/sources/deerflow-extension-workflows" }
+deerflow-extension-cad-preview = { path = "extensions/sources/deerflow-extension-cad-preview" }
 deerflow-extension-cad = { path = "extensions/sources/deerflow-extension-cad" }
