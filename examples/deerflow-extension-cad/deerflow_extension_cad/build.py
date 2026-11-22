@@ -381,7 +381,8 @@ def lay_out(threemf: bytes, gap_mm: float = PARTS_GAP_MM) -> bytes:
         move = " ".join(f"{round(value, 6) + 0.0:.6f}" for value in (cursor - low[0], -low[1], -low[2]))
         items.append(f'<item objectid="{identifier}" transform="1 0 0 0 1 0 0 0 1 {move}" />')
         cursor += high[0] - low[0] + gap_mm
-    model, assemblies = _COMPONENTS_OBJECT.subn("", model)
+    # The kernel's one item of all bodies goes: each body is now an item of its own.
+    model = _COMPONENTS_OBJECT.sub("", model)
     model, builds = _BUILD.subn("<build>" + "".join(items) + "</build>", model)
     if builds != 1:
         raise ValueError("the 3MF has no single build element to rewrite")

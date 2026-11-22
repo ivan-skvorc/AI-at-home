@@ -11,10 +11,10 @@ fraction of a second and no geometry.
 
 Once the part is measured, the answer is written at once: that is the checked
 part. What follows adds to it and may be cut short without costing it: the
-picture (``render.py``) and the print block (``printability.py``). Each such step is skipped with a note when less than
-``MIN_SECONDS_LEFT`` of the build's wall clock remains, and a failure inside
-one becomes a note, never a failed build. After each step the answer is
-written again with what it added.
+picture (``render.py``) and the print block (``printability.py``). Each such
+step is skipped with a note when less than ``MIN_SECONDS_LEFT`` of the build's
+wall clock remains, and a failure inside one becomes a note, never a failed
+build. After each step the answer is written again with what it added.
 """
 
 from __future__ import annotations
