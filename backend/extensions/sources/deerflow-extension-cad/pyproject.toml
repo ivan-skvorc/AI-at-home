@@ -9,6 +9,11 @@ dependencies = [
     "deerflow-extension-api>=0.2.13,<0.3",
     # The kernel. Pinned: the allow-list is checked against this release's signatures.
     "cadquery==2.8.0",
+    # The picture (render.py) and the print block (printability.py). Both arrive with the kernel
+    # today (numpy through cadquery, Pillow through vtk and matplotlib); stated so a kernel release
+    # that drops them cannot take them away. Pillow 10.1 is the first with a sized built-in font.
+    "numpy>=2,<3",
+    "pillow>=10.1,<14",
 ]
 
 [project.entry-points."deerflow.extensions"]
