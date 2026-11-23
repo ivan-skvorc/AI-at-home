@@ -196,7 +196,7 @@ class TestRealExampleConfig:
         out = sync_api.sync(self.text, {"anthropic"})
         data = yaml.safe_load(out)
         names = {m["model"] for m in data["models"]}
-        assert {"claude-fable-5-1", "claude-opus-5-5", "claude-opus-5", "claude-sonnet-5-5", "claude-sonnet-5", "claude-haiku-5-5"}.issubset(names)
+        assert {"claude-fable-5-2", "claude-opus-5-5", "claude-opus-5", "claude-sonnet-5-5", "claude-sonnet-5", "claude-haiku-5-5"}.issubset(names)
         assert "claude-sonnet-4-6" not in names  # rolled out when Sonnet 5.5 shipped (2026-09-28)
         assert "claude-haiku-4-5" not in names  # rolled out when Haiku 5.5 shipped (2026-10-07)
         assert all(m["api_key"] == "$ANTHROPIC_API_KEY" for m in data["models"])
@@ -212,14 +212,14 @@ class TestRealExampleConfig:
         data = yaml.safe_load(out)
         by_model = {m["model"]: m for m in data["models"]}
 
-        for slug in ("claude-fable-5-1", "claude-opus-5-5", "claude-opus-5", "claude-sonnet-5-5", "claude-sonnet-5", "claude-haiku-5-5"):
+        for slug in ("claude-fable-5-2", "claude-opus-5-5", "claude-opus-5", "claude-sonnet-5-5", "claude-sonnet-5", "claude-haiku-5-5"):
             enabled = by_model[slug]["when_thinking_enabled"]["thinking"]
             assert enabled.get("type") == "adaptive", slug
             assert enabled.get("display") == "summarized", slug
             assert "budget_tokens" not in enabled, slug
 
     def test_fable_never_sends_disabled_thinking_but_opus_sonnet_do(self):
-        """Fable 5.1, Opus 5.5 and Sonnet 5.5 reject `thinking: {type: disabled}` with a 400, so
+        """Fable 5.2, Opus 5.5 and Sonnet 5.5 reject `thinking: {type: disabled}` with a 400, so
         neither may send it on either toggle state: when thinking is "disabled" they
         keep adaptive+summarized (they cannot turn thinking off, and summarized keeps
         the multi-turn replay legal). Opus 5 / Sonnet 5 / Haiku 5.5 accept
@@ -234,7 +234,7 @@ class TestRealExampleConfig:
         data = yaml.safe_load(out)
         by_model = {m["model"]: m for m in data["models"]}
 
-        for always_on in ("claude-fable-5-1", "claude-opus-5-5", "claude-sonnet-5-5"):
+        for always_on in ("claude-fable-5-2", "claude-opus-5-5", "claude-sonnet-5-5"):
             disabled = by_model[always_on]["when_thinking_disabled"]["thinking"]
             assert disabled.get("type") == "adaptive", (always_on, disabled)
             assert disabled.get("display") == "summarized", (always_on, disabled)
@@ -248,7 +248,7 @@ class TestRealExampleConfig:
         data = yaml.safe_load(out)
         ids = {m["model"] for m in data["models"]}
         expected = {
-            "anthropic/claude-fable-5.1",
+            "anthropic/claude-fable-5.2",
             # Anthropic and OpenAI each route a *pair* — FORK.md step 3.
             "anthropic/claude-opus-5.5",
             "x-ai/grok-4.7",
@@ -375,7 +375,7 @@ class TestFirstPartyKeyCoverage:
     gated by that lab's own `.env` key, carrying more than just the flagship, and
     that flagship *also* on OpenRouter for users who hold only an
     `OPENROUTER_API_KEY` — the Anthropic shape (six Claudes on the direct key,
-    Fable 5.1 additionally routed) generalised to Grok, GPT, Gemini, Qwen, Kimi,
+    Fable 5.2 additionally routed) generalised to Grok, GPT, Gemini, Qwen, Kimi,
     DeepSeek and the rest. Everything mechanical about that rule is pinned here,
     so the audit step needs no network.
     """
@@ -458,9 +458,9 @@ class TestFirstPartyKeyCoverage:
         for slug, (_env, bundle) in self.bundles.items():
             bare = {same_model(m["model"]) for m in bundle}
             assert bare & routed, f"{slug}: no home model is doubled on OpenRouter"
-        # The template case this generalises: Anthropic's Fable 5.1 is direct *and* routed.
-        assert "claude-fable-5-1" in direct_ids
-        assert "claude-fable-5-1" in routed
+        # The template case this generalises: Anthropic's Fable 5.2 is direct *and* routed.
+        assert "claude-fable-5-2" in direct_ids
+        assert "claude-fable-5-2" in routed
 
     def test_routed_claude_slugs_keep_openrouters_dotted_version(self):
         """`anthropic/claude-fable-5-1` shipped for three weeks and could not be
@@ -475,7 +475,7 @@ class TestFirstPartyKeyCoverage:
     # FORK.md, step 3: two labs route a *pair* rather than a single flagship,
     # because their top tier is really two models a factor of two apart in price.
     PAIRED_ROUTED_LABS = {
-        "anthropic": ("anthropic/claude-fable-5.1", "anthropic/claude-opus-5.5"),
+        "anthropic": ("anthropic/claude-fable-5.2", "anthropic/claude-opus-5.5"),
         "openai": ("openai/gpt-6.2-astra", "openai/gpt-6.2-sol"),
     }
 

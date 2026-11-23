@@ -296,9 +296,9 @@ models:
   # This happens automatically. On every launch `scripts/sync-api-key-models.py`
   # (the API-key auto-config, a companion to the Ollama sync) reads your `.env`
   # and uncomments the matching block below:
-  #   ANTHROPIC_API_KEY  -> Claude Fable 5.1 / Opus 5.5 / Opus 5 / Sonnet 5.5 /
+  #   ANTHROPIC_API_KEY  -> Claude Fable 5.2 / Opus 5.5 / Opus 5 / Sonnet 5.5 /
   #                         Sonnet 5 / Haiku 5.5 (direct Anthropic API)
-  #   OPENROUTER_API_KEY -> Claude Fable 5.1 / Claude Opus 5.5 / Grok 4.7 /
+  #   OPENROUTER_API_KEY -> Claude Fable 5.2 / Claude Opus 5.5 / Grok 4.7 /
   #                         GPT-6.2 Astra / GPT-6.2 Sol /
   #                         Gemini 3.8 Flash / Llama 4 Maverick /
   #                         MiniMax M3 / Qwen4 Max /
@@ -358,7 +358,7 @@ models:
   # below. Opus and Sonnet each ship their previous generation alongside the
   # current one (Opus 5 + Opus 5.5, Sonnet 5 + Sonnet 5.5); Haiku and Fable ship only
   # the latest. All six use adaptive thinking (the `budget_tokens` form is
-  # rejected/deprecated on these models). Fable 5.1's, Opus 5.5's and
+  # rejected/deprecated on these models). Fable 5.2's, Opus 5.5's and
   # Sonnet 5.5's thinking is always on: all three reject an explicit
   # `thinking: {type: disabled}` with a 400, so their disabled state stays on
   # adaptive+summarized, while Opus 5 / Sonnet 5 / Haiku 5.5 accept `type: disabled`. `supports_thinking: true` is required or DeerFlow silently
@@ -373,10 +373,10 @@ models:
   # between the markers below when it finds a real ANTHROPIC_API_KEY in your .env;
   # you can also uncomment them by hand.
   # === BEGIN auto-model-config: anthropic (uncommented at startup when ANTHROPIC_API_KEY is set) ===
-  # - name: claude-fable-5-1
-  #   display_name: Claude Fable 5.1 (Anthropic)
+  # - name: claude-fable-5-2
+  #   display_name: Claude Fable 5.2 (Anthropic)
   #   use: langchain_anthropic:ChatAnthropic
-  #   model: claude-fable-5-1
+  #   model: claude-fable-5-2
   #   api_key: $ANTHROPIC_API_KEY
   #   default_request_timeout: 600.0
   #   max_retries: 2
@@ -385,9 +385,9 @@ models:
   #   supports_thinking: true
   #   price:                          # per 1M tokens; the single source of truth for cost display and budgets
   #     currency: USD
-  #     input: 10.0
-  #     output: 50.0
-  #     cache_hit: 0.25      # prompt-cache reads (Fable 5.1 caches at 0.025x, not the usual 0.1x)
+  #     input: 8.0
+  #     output: 40.0
+  #     cache_hit: 0.2       # prompt-cache reads (Fable 5.2 caches at 0.025x, not the usual 0.1x)
   #   when_thinking_enabled:
   #     thinking:
   #       type: adaptive
@@ -520,7 +520,7 @@ models:
   # routed through the standard OpenAI-compatible ChatOpenAI + base_url pattern.
   # The set below is one flagship per lab, routed for OpenRouter-only users, with
   # two deliberate exceptions where the lab's top tier is really two models at
-  # two very different prices: Anthropic ships **Fable 5.1 and Opus 5.5** here, and
+  # two very different prices: Anthropic ships **Fable 5.2 and Opus 5.5** here, and
   # OpenAI ships **GPT-6.2 Astra and GPT-6.2 Sol**. Routing only the dearer of each
   # pair charged an OpenRouter-only user 2x for work the cheaper one does, and
   # routing only the cheaper one put the lab's best model out of reach on that
@@ -562,10 +562,10 @@ models:
   # between the markers below when it finds a real OPENROUTER_API_KEY in your .env.
   # Delete any you don't want after they are enabled.
   # === BEGIN auto-model-config: openrouter (uncommented at startup when OPENROUTER_API_KEY is set) ===
-  # - name: openrouter-fable-5-1
-  #   display_name: Claude Fable 5.1 (OpenRouter) (p)
+  # - name: openrouter-fable-5-2
+  #   display_name: Claude Fable 5.2 (OpenRouter) (p)
   #   use: langchain_openai:ChatOpenAI
-  #   model: anthropic/claude-fable-5.1   # OpenRouter dots the version; the direct API id hyphenates it
+  #   model: anthropic/claude-fable-5.2   # OpenRouter dots the version; the direct API id hyphenates it
   #   api_key: $OPENROUTER_API_KEY
   #   base_url: https://openrouter.ai/api/v1
   #   request_timeout: 600.0
@@ -575,8 +575,8 @@ models:
   #   supports_thinking: true
   #   price:                          # per 1M tokens; the single source of truth for cost display and budgets
   #     currency: USD
-  #     input: 10.0
-  #     output: 50.0
+  #     input: 8.0
+  #     output: 40.0
   #
   # - name: openrouter-opus-5-5
   #   display_name: Claude Opus 5.5 (OpenRouter) (p)

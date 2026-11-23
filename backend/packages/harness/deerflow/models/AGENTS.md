@@ -62,10 +62,12 @@ transport, so they check the payload that DeerFlow sends.
 - **Cancelling a Codex async call closes its HTTP stream.** Async generation owns
   an HTTPX async stream, not an executor-backed sync request. Load TLS trust
   off-loop, keep retry sleeps cancellable, and drain the client close across
-  repeated cancellation. `test_codex_cancellation.py` observes real loopback EOF
-  before fixture release.
+  repeated cancellation.
 - **MindIE requests `stream=False` and simulates streaming**, and its XML tool
   calls and numeric arguments are parsed in the adapter.
+- **Run the preserved-thinking guard last** in a Claude `_get_request_payload`
+  (`preserved_thinking.py`), its mixin before `ChatAnthropic`, so its fingerprint
+  covers the payload as sent.
 - **Claude prompt caching copies before it marks.** The request payload shares
   blocks and tool dicts with the caller, and a `cache_control` marker written in
   place is checkpointed with the thread. Strip stored markers on every request,

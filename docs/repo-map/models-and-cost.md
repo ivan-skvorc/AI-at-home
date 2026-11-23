@@ -106,7 +106,7 @@ Entry points: Settings: Models, /api/managed-models, POST /api/models/resolve
 Files: backend/packages/harness/deerflow/models/**, backend/app/gateway/routers/managed_models.py, backend/app/gateway/routers/models.py, backend/app/gateway/model_discovery.py, backend/packages/harness/deerflow/config/managed_models.py, frontend/src/core/models/**, frontend/src/components/workspace/settings/model-settings-page.tsx, frontend/src/components/workspace/settings/model-catalog-dialog.tsx, docker/docker-compose.cli-auth.yaml
 Data: managed model entries, encrypted provider credentials
 External: LLM provider APIs
-Tests: backend/tests/test_model_factory.py, backend/tests/test_managed_models.py, backend/tests/test_claude_provider_thinking.py, backend/tests/test_patched_openai.py, backend/tests/test_vllm_provider.py, frontend/tests/unit/core/models/api.test.ts, frontend/tests/e2e/model-management.spec.ts
+Tests: backend/tests/test_model_factory.py, backend/tests/test_managed_models.py, backend/tests/test_claude_provider_thinking.py, backend/tests/test_preserved_thinking.py, backend/tests/test_patched_openai.py, backend/tests/test_vllm_provider.py, frontend/tests/unit/core/models/api.test.ts, frontend/tests/e2e/model-management.spec.ts
 
 ### Sortable model picker
 What: every screen that picks a model uses one picker: sort by name or price, group by provider, search, prices in one column and a local model's weights and window under its id.

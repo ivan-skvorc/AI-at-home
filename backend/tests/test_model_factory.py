@@ -133,6 +133,16 @@ def test_legacy_chatopenai_config_uses_empty_choice_guard():
     assert isinstance(model, GuardedChatOpenAI)
 
 
+def test_chat_anthropic_config_gets_the_preserved_thinking_guard():
+    from deerflow.models.preserved_thinking import GuardedChatAnthropic
+
+    config = _make_app_config([_make_model("claude-fable-5-2", use="langchain_anthropic:ChatAnthropic", max_tokens=1024)])
+
+    model = factory_module.create_chat_model(name="claude-fable-5-2", app_config=config, attach_tracing=False, api_key="sk-ant-test")
+
+    assert type(model) is GuardedChatAnthropic
+
+
 def test_raises_when_model_not_found(monkeypatch):
     cfg = _make_app_config([_make_model("only-model")])
     monkeypatch.setattr(factory_module, "get_app_config", lambda: cfg)

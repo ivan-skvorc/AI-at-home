@@ -126,6 +126,29 @@ providers that pass could actually reach.
   - Audit-script gaps, reported only: the live parser still reads only the catalog headline, and
     all five price findings this pass are artifacts of that.
 
+  **Fable 5.2 roll and the thinking guard applied** (same day, branch
+  `claude/sweet-goodall-3ub6ri`, approved by the owner). This clears the first "Still owed" item.
+  - The blocker, re-read on Anthropic's preserved-thinking, prefix-check, what's-new and
+    migration pages: a request that sends back a thinking block whose earlier content
+    (`system`, `tools`, any earlier message) changed fails the prefix check. Fable 5.2 answers
+    with a 400, and Fable 5.1 does so by default on accounts created from 2026-08-31. Leaving
+    blocks out never errors, but the blocks that are sent must be one unbroken run.
+  - The fix, `models/preserved_thinking.py`: each answer records a fingerprint of the request that
+    produced it, thinking left out. A later request keeps the newest unbroken run of turns whose
+    fingerprint still matches and leaves out the rest. A request still refused is retried once
+    with `drop_block`. `create_chat_model` builds it for `langchain_anthropic:ChatAnthropic`, and
+    `ClaudeChatModel` inherits it. The OpenRouter route needed nothing: `ChatOpenAI` never sends
+    the thinking back.
+  - Rolled in both synced sources: `claude-fable-5-2` `$8/$40` (cache `$0.20`) and
+    `anthropic/claude-fable-5.2` `$8/$40`, settings copied from Fable 5.1, which Anthropic's
+    migration guide calls drop-in apart from the prefix check. The routed pair is now `$8/$40`
+    beside Opus 5.5's `$4/$20`, 2x apart, so the pair rule holds. Prose: QUICK START, both block
+    comments, the wizard's comments and `description=` strings, the sync script's docstring,
+    README's leading bullet and wizard paragraph (which still named GPT-6 Astra and GPT-6.1 Sol;
+    fixed), FORK.md, `CHANGELOG.md`. The stale fixture's routed Fable entry moved with it.
+  - Not verified with a live key: the owner did not provide one. The guard is tested offline
+    against the request bodies it sends.
+
 - **2026-11-21 (branch `worktree-agent-a1059069ff81fb4fa`) — tier 1 for every price with two
   exceptions. OpenAI's home GPT-6 Astra and GPT-6.1 Sol are corroborated, because they have left
   OpenAI's price cards. z.ai's home block is tier 3, because its docs answered with a 403.
