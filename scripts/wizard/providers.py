@@ -130,7 +130,7 @@ ANTHROPIC_ADAPTIVE_THINKING_CONFIG = {
     },
 }
 
-# Claude Fable 5.1, Claude Opus 5.5 and Claude Sonnet 5.5 have thinking permanently on: an explicit
+# Claude Fable 5.2, Claude Opus 5.5 and Claude Sonnet 5.5 have thinking permanently on: an explicit
 # `thinking: {type: disabled}` is rejected with a 400, so neither toggle state can
 # turn thinking off. Both states therefore send adaptive thinking with
 # `display: summarized` — `summarized` for the same multi-turn-replay reason as the
@@ -177,16 +177,16 @@ ANTHROPIC_THINKING_CONFIG = ANTHROPIC_BUDGET_THINKING_CONFIG
 # Latest Claude models, enabled together when the user has an ANTHROPIC_API_KEY.
 # Opus and Sonnet each ship their previous generation alongside the current one
 # (Opus 5 + Opus 5.5, Sonnet 5 + Sonnet 5.5); Haiku and Fable ship only the
-# latest. Fable 5.1, Opus 5.5 and Sonnet 5.5 run adaptive thinking that cannot be
+# latest. Fable 5.2, Opus 5.5 and Sonnet 5.5 run adaptive thinking that cannot be
 # disabled; Opus 5 / Sonnet 5 / Haiku 5.5 run adaptive thinking that can be.
 # Ordered most- to least-capable; the previous generation is kept alongside its
 # successor so existing threads can stay pinned to it.
 ANTHROPIC_BUNDLE_MODELS: list[dict] = [
     {
-        "name": "claude-fable-5-1",
-        "display_name": "Claude Fable 5.1 (Anthropic)",
+        "name": "claude-fable-5-2",
+        "display_name": "Claude Fable 5.2 (Anthropic)",
         "use": "langchain_anthropic:ChatAnthropic",
-        "model": "claude-fable-5-1",
+        "model": "claude-fable-5-2",
         "api_key": "$ANTHROPIC_API_KEY",
         "default_request_timeout": 600.0,
         "max_retries": 2,
@@ -306,7 +306,7 @@ def _openrouter_model(
 #     held it until Gemini 4 Carbon passed it on OpenRouter usage (2026-11-16).
 #
 # One flagship per lab, with two deliberate exceptions where a lab's top tier is
-# really two models at very different prices: Anthropic routes **Fable 5.1 and
+# really two models at very different prices: Anthropic routes **Fable 5.2 and
 # Opus 5.5**, OpenAI routes **GPT-6.2 Astra and GPT-6.2 Sol**. Routing only the
 # dearer of each pair bills an OpenRouter-only user 2x for work the cheaper one
 # does; routing only the cheaper puts the lab's best model out of reach on that
@@ -326,7 +326,7 @@ def _openrouter_model(
 # read and the number they were billed against were two copies that could drift
 # — and a discount could only "end" by someone editing a string.
 OPENROUTER_BUNDLE_MODELS: list[dict] = [
-    _openrouter_model("openrouter-fable-5-1", "Claude Fable 5.1 (OpenRouter) (p)", "anthropic/claude-fable-5.1", supports_vision=True),
+    _openrouter_model("openrouter-fable-5-2", "Claude Fable 5.2 (OpenRouter) (p)", "anthropic/claude-fable-5.2", supports_vision=True),
     _openrouter_model("openrouter-opus-5-5", "Claude Opus 5.5 (OpenRouter) (p)", "anthropic/claude-opus-5.5", supports_vision=True),
     _openrouter_model("openrouter-grok-4.7", "Grok 4.7 (OpenRouter) (p)", "x-ai/grok-4.7", supports_vision=True),
     _openrouter_model("openrouter-gpt-6.2-astra", "GPT-6.2 Astra (OpenRouter) (p)", "openai/gpt-6.2-astra", supports_vision=True),
@@ -629,7 +629,7 @@ ZAI_HOME_BUNDLE_MODELS: list[dict] = [
 # Keep this table, the `config.example.yaml` marker blocks, and FORK.md in sync;
 # `tests/test_config_integrity.py` and `tests/test_setup_wizard.py` pin it.
 MODEL_PRICES: dict[str, dict] = {
-    "claude-fable-5-1": {"price": {"currency": "USD", "input": 10.0, "output": 50.0, "cache_hit": 0.25}},  # 0.025x, not the usual 0.1x
+    "claude-fable-5-2": {"price": {"currency": "USD", "input": 8.0, "output": 40.0, "cache_hit": 0.2}},  # 0.025x, not the usual 0.1x
     "claude-opus-5-5": {"price": {"currency": "USD", "input": 4.0, "output": 20.0, "cache_hit": 0.2}},  # 0.05x
     "claude-opus-5": {"price": {"currency": "USD", "input": 5.0, "output": 25.0, "cache_hit": 0.5}},
     "claude-sonnet-5-5": {"price": {"currency": "USD", "input": 2.0, "output": 10.0, "cache_hit": 0.1}},  # 0.05x
@@ -659,7 +659,7 @@ MODEL_PRICES: dict[str, dict] = {
     "openai-gpt-6.2-sol": {"price": {"currency": "USD", "input": 2.0, "output": 10.0}},
     "openai-gpt-6.1-terra": {"price": {"currency": "USD", "input": 1.0, "output": 5.0}},
     "openai-gpt-6-luna": {"price": {"currency": "USD", "input": 0.1, "output": 0.5}},
-    "openrouter-fable-5-1": {"price": {"currency": "USD", "input": 10.0, "output": 50.0}},
+    "openrouter-fable-5-2": {"price": {"currency": "USD", "input": 8.0, "output": 40.0}},
     "openrouter-opus-5-5": {"price": {"currency": "USD", "input": 4.0, "output": 20.0}},
     "openrouter-grok-4.7": {"price": {"currency": "USD", "input": 2.0, "output": 6.0}},
     "openrouter-gpt-6.2-astra": {"price": {"currency": "USD", "input": 8.0, "output": 40.0}},
@@ -898,9 +898,9 @@ LLM_PROVIDERS: list[LLMProvider] = [
     LLMProvider(
         name="anthropic",
         display_name="Anthropic",
-        description="Latest Claude Fable 5.1, Opus 5.5, Opus 5, Sonnet 5.5, Sonnet 5 and Haiku 5.5",
+        description="Latest Claude Fable 5.2, Opus 5.5, Opus 5, Sonnet 5.5, Sonnet 5 and Haiku 5.5",
         use="langchain_anthropic:ChatAnthropic",
-        models=["claude-fable-5-1", "claude-opus-5-5", "claude-opus-5", "claude-sonnet-5-5", "claude-sonnet-5", "claude-haiku-5-5"],
+        models=["claude-fable-5-2", "claude-opus-5-5", "claude-opus-5", "claude-sonnet-5-5", "claude-sonnet-5", "claude-haiku-5-5"],
         default_model="claude-opus-5-5",
         env_var="ANTHROPIC_API_KEY",
         package="langchain-anthropic",
@@ -1119,7 +1119,7 @@ LLM_PROVIDERS: list[LLMProvider] = [
     LLMProvider(
         name="openrouter",
         display_name="OpenRouter",
-        description="One key: Claude Fable 5.1 + Opus 5.5, GPT-6.2 Astra + GPT-6.2 Sol, xAI/Google flagships & open alternatives",
+        description="One key: Claude Fable 5.2 + Opus 5.5, GPT-6.2 Astra + GPT-6.2 Sol, xAI/Google flagships & open alternatives",
         use="langchain_openai:ChatOpenAI",
         models=[entry["model"] for entry in OPENROUTER_BUNDLE_MODELS],
         default_model=OPENROUTER_BUNDLE_MODELS[0]["model"],

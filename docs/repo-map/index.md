@@ -1,6 +1,6 @@
 # Repo map
 
-Synced by change cycle: 2026-11-23, level 1, "model audit 2026-11-23: every price tier 1, no changes"
+Synced by change cycle: 2026-11-23, level 1, "Claude Fable 5.2 and the preserved-thinking guard for direct Claude requests"
 
 What the app does, feature by feature, and which files, data and external
 services each feature uses. Each area file opens with its own board and holds

@@ -31,6 +31,7 @@ from langchain_core.messages import BaseMessage
 from pydantic import PrivateAttr
 
 from deerflow.models.credential_loader import OAUTH_ANTHROPIC_BETAS
+from deerflow.models.preserved_thinking import PreservedThinkingMixin
 from deerflow.utils.retry_after import bounded_retry_after_ms, parse_retry_after_date_ms
 
 logger = logging.getLogger(__name__)
@@ -51,7 +52,7 @@ _DEFAULT_BILLING_HEADER = "x-anthropic-billing-header: cc_version=2.1.85.351; cc
 OAUTH_BILLING_HEADER = os.environ.get("ANTHROPIC_BILLING_HEADER", _DEFAULT_BILLING_HEADER)
 
 
-class ClaudeChatModel(ChatAnthropic):
+class ClaudeChatModel(PreservedThinkingMixin, ChatAnthropic):
     """ChatAnthropic with OAuth Bearer auth, prompt caching, and smart thinking.
 
     Config example:
@@ -172,6 +173,13 @@ class ClaudeChatModel(ChatAnthropic):
         if self.auto_thinking_budget:
             self._apply_thinking_budget(payload)
 
+        # Last, so the fingerprint covers the payload as sent.
+        return self._guard_preserved_thinking(payload, input_)
+
+    def _finish_drop_block_payload(self, payload: dict) -> dict:
+        # The retry adds a beta, and request betas replace the OAuth default header.
+        if self._is_oauth:
+            self._apply_oauth_betas(payload)
         return payload
 
     def _apply_oauth_billing(self, payload: dict) -> None:

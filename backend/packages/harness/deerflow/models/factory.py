@@ -591,6 +591,15 @@ def create_chat_model(
     model_class = resolve_class(model_config.use, BaseChatModel)
     if model_config.use == "langchain_openai:ChatOpenAI" and model_class is ChatOpenAI:
         model_class = GuardedChatOpenAI
+    elif model_config.use == "langchain_anthropic:ChatAnthropic":
+        from langchain_anthropic import ChatAnthropic
+
+        from deerflow.models.preserved_thinking import GuardedChatAnthropic
+
+        if model_class is ChatAnthropic:
+            # Plain ChatAnthropic sends edited-prefix thinking back, which
+            # Claude Fable 5.2 rejects with a 400 (preserved_thinking.py).
+            model_class = GuardedChatAnthropic
     model_settings_from_config = model_config.model_dump(exclude_none=True, exclude=set(_MODEL_METADATA_FIELDS))
     if isinstance(model_config.reasoning, bool | str):
         # Before the capability contract, ``reasoning`` was an unrestricted
