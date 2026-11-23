@@ -11,6 +11,121 @@ Newest first. Append a pass; never rewrite one. A dated line is what tells the
 next person whether the roster was checked last week or last year, and _which_
 providers that pass could actually reach.
 
+- **2026-11-23 (branch `claude/sweet-goodall-3ub6ri`) — tier 1 for every price, z.ai's home
+  block included. No price edits, no roster change. Claude Fable 5.2 stays deferred. Step 8's
+  regression tests were not run, by request.** The repository owner asked for this pass in
+  words, two days after the 2026-11-21 pass, and asked for all checks to be skipped. Nothing in
+  either synced source changed, so the step 8 suites have nothing new to read; they last ran
+  green on 2026-11-21 against the same tree.
+
+  **Machine half.** `python3 scripts/audit_models.py` reached OpenRouter and reported 17
+  findings, the same set the 2026-11-21 pass closed on: five price findings and 12
+  `new_candidate` rows. There was no retired slug, no promo change and no price in any display
+  name, and the two synced sources agree. The ten catalog-less providers were skipped. All five
+  price findings are catalog-headline artifacts; each lab's own endpoint matches the bundle:
+  - Kimi K3.1 Pro: `$0.2403/$8.4023` is Relace's fp4 host. Moonshot's own host charges `$2/$10`.
+  - GLM-5.3: `$0.0699/$1.40` is Wafer's fp4 `/us` host. Z.AI's own host charges `$1.40/$4.40`.
+  - Gemini 3.8 Flash: `$0.825/$4.125` is the regional list at 50% off. Every routed Google
+    endpoint shows 50% off, so the standard host charges `$0.75/$3.75`.
+  - DeepSeek V4.1 Flash: the off-peak base `$0.15/$0.60`. DeepSeek's own host has the weekday
+    peak override `$0.30/$1.20`, which the bundle carries.
+  - Qwen4 Max: the endpoint running 5% off (see below).
+
+  **What the network reached.** Every host this pass tried answered 200:
+  - `openrouter.ai`: the catalog, `/endpoints` for all 15 routed slugs, the Qwen4 Max model page
+    and `/rankings` ("Usage data through Nov 22, 2026").
+  - `platform.claude.com`: pricing, models overview, deprecations, release notes.
+  - `openai.com`: `/api/pricing`, which redirects to `/business/pricing/#api`.
+  - `docs.x.ai`, `cloud.google.com` (redirected to `/model-garden/pricing`),
+    `api-docs.deepseek.com`, `platform.kimi.ai`.
+  - `docs.mistral.ai`: the Large 4 and Small 4 model pages.
+  - `www.alibabacloud.com`: Model Studio pricing, "Last Updated: Nov 21, 2026".
+  - `platform.minimax.io` and `docs.z.ai`. z.ai's docs returned 403 on the last pass, so its
+    home block is back at tier 1.
+
+  **Prices — tier 1, unchanged on every entry.**
+  - Anthropic: Fable 5.1 `$10/$50` (cache `$0.25`), Opus 5.5 `$4/$20` (`$0.20`), Opus 5 `$5/$25`
+    (`$0.50`), Sonnet 5.5 `$2/$10` (`$0.10`), Sonnet 5 `$2/$10` (`$0.20`), Haiku 5.5
+    `$0.10/$0.50` (`$0.01`, prompts up to 100K). No introductory window. All six are Active, and
+    the earliest possible retirement is still Sonnet 5, not sooner than 2027-06-30.
+  - OpenAI (its API price cards): GPT-6.2 Astra `$8/$40`, GPT-6.2 Sol `$2/$10`, GPT-6.1 Terra
+    `$1/$5`, GPT-6 Luna `$0.10/$0.50`.
+  - xAI (the models page's own price fields): Grok 4.7 `$2/$6`, Grok 4.3 `$1.25/$2.50`. Nothing
+    newer than 4.7 is listed.
+  - Google (Cloud page): 3.8 Flash `$1.50/$7.50`, with the introductory `$0.75/$3.75` through
+    2026-12-31. 3.5 Flash-Lite `$0.30/$2.50`. 4 Carbon `$4/$20` from 2026-12-01; its `$2/$10`
+    promotion to 2026-11-30 is still not shipped.
+  - DeepSeek: V4 Pro `$1.32/$3.96` and `deepseek-flash` `$0.30/$1.20`, both peak rates, still
+    serving V4-Pro-0813 and V4.1-Flash-1017.
+  - Moonshot: K3.1 Pro `$2/$10` (`$0.20`), K3 `$3/$15` (`$0.30`).
+  - Qwen: Qwen4 Max `$1.50/$4.50`. Qwen3.7 Plus `$0.40/$1.60`; its limited-time 20% off is still
+    not shipped.
+  - Mistral: Large 4 `$0.70/$2.10` (`$0.07`), Small 4 `$0.15/$0.60`.
+  - MiniMax: M3 `$0.30/$1.20` ("Permanent 50% off", prompts up to 512K), M3.1 Flash
+    `$0.15/$0.60` (`$0.015`).
+  - z.ai: GLM-5.3 `$1.40/$4.40`, GLM-5.3 Flash `$0.15/$0.50`.
+
+  Routed entries, read off each `/endpoints`:
+  - Fable 5.1, Opus 5.5, Grok 4.7, GPT-6.2 Astra, GPT-6.2 Sol, Kimi K3.1 Pro, Mistral Large 4
+    and GLM-5.3 match their lab's own OpenRouter endpoint at discount 0. DeepSeek V4 Pro 0813
+    and V4.1 Flash 1017 match it too, read with the endpoint's peak-hour overrides.
+  - Llama 4 Maverick: `$0.35/$1.00` on Parasail, its only host.
+  - Nemotron 3 Ultra: `$0.50/$2.20` on KT and DeepInfra. NVIDIA has no host.
+  - MiniMax M3: MiniMax's own host is still absent. Parasail and Venice give `$0.30/$1.20`,
+    which is MiniMax's list.
+  - Gemini 3.8 Flash: 50% off on all six Google endpoints, so its `discount:` and inherited
+    `until: 2026-12-31` stay.
+  - Qwen4 Max: `/endpoints` now lists only the Alibaba endpoint at `$1.425/$4.275`, discount
+    0.05. The model page still lists two Alibaba endpoints, that one and one at `$1.50/$4.50`,
+    discount 0. The two readings still disagree, so the 5% is again **not shipped**, and the
+    standard `$1.50/$4.50` stays.
+
+  **Synced, and step 8.** Nothing was edited in `config.example.yaml`, `providers.py`, the stale
+  fixture or any prose copy, so QUICK START, every `description=`, the sync script's docstring,
+  `.env.example` and the README bullet are as the 2026-11-21 pass left them. Step 8
+  (`sync-api-key-models.py --dry-run` and the regression suites) **did not run**: the owner asked
+  to skip all checks.
+
+  **Left alone (published, not shipped, or unknown).**
+  - Carbon's `$2/$10` promotion, Qwen3.7 Plus's 20% off and the routed Qwen4 Max's 5%.
+  - The published cache-read rates the earlier entries listed, kept off as the conservative upper
+    bound.
+  - OpenAI's rates above 272K tokens and xAI's above 200K.
+
+  **Settings findings, carried and not edited** (each needs a live key): Mistral Large 4's
+  reasoning flag; the MiniMax home entries on plain `ChatOpenAI`; vision under-claimed by
+  `deepseek-flash` (DeepSeek's page still marks it ✓) and by Qwen3.7 Plus; the adaptive
+  Claudes' forced-tool-use and sampling-parameter limits.
+
+  **Discovery and declines** (OpenRouter rankings, "Usage data through Nov 22, 2026", read
+  2026-11-23).
+  - Claude Fable 5.2 stays deferred. Anthropic's release notes have no entry after 2026-11-17,
+    the prefix check still applies to every account, and the repository still has no
+    `block_binding`/`drop_block` handling. It is #1 on the intelligence board and #7 by share of
+    implementation spend, which does not change the blocker.
+  - Declined again, with no new evidence: Gemini 4 Carbon as a `new_candidate`, Pixtral Large
+    2502, GPT-6.2 Astra Pro, the routed Haiku 5.5 and Sonnet 5.5, Nemotron 3.5 Super VL and
+    GLM-5.3 FlashX Legal.
+  - Watch:
+    - Gemini 4 Neon: #4 on New & Trending, 505B (281B last pass).
+    - Gemini 4 Hydrogen: re-judge when 3.8 Flash's intro ends.
+    - Further routed siblings: GLM-5.3 Flash (#3 weekly, #4 today, #3 monthly), GPT-6 Luna (#5,
+      #5, #4) and MiniMax M3.1 Flash (#7 weekly, +461%). Neither of the first two is #1 in any
+      window, and the DeepSeek precedent was #1 for three passes.
+    - New labs: Xiaomi MiMo-V2.6-Flash (#10 weekly, +381%), StepFun Step 5 Preview (#6 on New &
+      Trending, still a preview id), Upstage Solar Mini 4 (#7), Thinking Machines Inkling 2 Mini
+      (#5) and Baidu ERNIE-5.5-Flash-Preview (#8 today, a free preview).
+  - No cloaked codename is on the boards read.
+
+  **Still owed:**
+  - Claude Fable 5.2 and the thinking-history fix.
+  - Tencent Hy4 flash: #4 weekly (10.2T, new) and #1 on New & Trending. It needs its own change
+    and Tencent's own page.
+  - Meta's Muse line under the `meta/` prefix: Muse Spark 1.3 Contributor is #9 today (463B).
+  - The Mistral Large 4 thinking flag and the MiniMax adapter.
+  - Audit-script gaps, reported only: the live parser still reads only the catalog headline, and
+    all five price findings this pass are artifacts of that.
+
 - **2026-11-21 (branch `worktree-agent-a1059069ff81fb4fa`) — tier 1 for every price with two
   exceptions. OpenAI's home GPT-6 Astra and GPT-6.1 Sol are corroborated, because they have left
   OpenAI's price cards. z.ai's home block is tier 3, because its docs answered with a 403.
