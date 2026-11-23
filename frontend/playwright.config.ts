@@ -2,6 +2,10 @@ import { defineConfig, devices } from "@playwright/test";
 
 const baseURL = process.env.PLAYWRIGHT_BASE_URL ?? "http://localhost:3000";
 const skipWebServer = process.env.PLAYWRIGHT_SKIP_WEB_SERVER === "1";
+// CI builds once in its own step (.github/workflows/e2e-tests.yml), with this
+// webServer's env, so a slow runner's cold build cannot run out the server-start
+// window below; everywhere else the config still builds before it starts.
+const prebuilt = process.env.PLAYWRIGHT_PREBUILT === "1";
 
 export default defineConfig({
   testDir: "./tests/e2e",
@@ -28,7 +32,9 @@ export default defineConfig({
   webServer: skipWebServer
     ? undefined
     : {
-        command: "pnpm exec next build && pnpm exec next start",
+        command: prebuilt
+          ? "pnpm exec next start"
+          : "pnpm exec next build && pnpm exec next start",
         url: baseURL,
         reuseExistingServer: !process.env.CI,
         timeout: 120_000,
