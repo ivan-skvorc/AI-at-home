@@ -156,6 +156,15 @@ jobs:
           const browser = await chromium.launch();
           await browser.close();'
 
+      - name: Build frontend for E2E
+        # Built here, with the env playwright.config.ts gives its webServer, so the
+        # cold build is not counted against Playwright's 120 s server-start window.
+        working-directory: frontend
+        run: pnpm exec next build
+        env:
+          SKIP_ENV_VALIDATION: "1"
+          DEER_FLOW_AUTH_DISABLED: "1"
+
       - name: Run E2E tests
         working-directory: frontend
         run: >-
@@ -166,6 +175,7 @@ jobs:
           --output=test-results/e2e
         env:
           SKIP_ENV_VALIDATION: '1'
+          PLAYWRIGHT_PREBUILT: '1'
           PLAYWRIGHT_HTML_OUTPUT_DIR: playwright-report/e2e
 
       - name: Run auth recovery E2E tests

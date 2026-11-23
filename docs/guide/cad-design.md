@@ -54,6 +54,14 @@ parameters inside Code), and Preview shows a dot when a new render lands.
   full render. A file that takes longer is stopped and the page says so. The
   live preview also caps `$fn` at 24, so curves look coarser until the full
   render.
+- **Only Finalize builds.** While you draft, the assistant can only save
+  OpenSCAD drafts: the CAD module's `cad_build` is withheld from those turns, so
+  the part is not built behind the preview's back. Finalize is the one step
+  that builds the CadQuery part and its files.
+- **A turn without a draft says so.** When the assistant answers without
+  saving a draft (it asked a question, or built files some other way), the
+  conversation says *The model answered without saving a draft, so the preview
+  did not change* and the preview stays as it was. Ask it to draft the part.
 - **One automatic repair, never more.** When the assistant's draft fails to
   render, the page asks it once to fix the file and says so; if the fix fails
   too, it is up to you. An engine that cannot load or times out does not count

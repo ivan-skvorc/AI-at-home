@@ -186,7 +186,7 @@ Entry points: /workspace/capabilities, /workspace/extensions/[namespace]/[surfac
 Files: backend/packages/harness/deerflow/extensions/**, backend/packages/extension-api/**, backend/packages/harness/deerflow/capabilities/**, backend/app/gateway/routers/plugins.py, backend/app/gateway/routers/capabilities.py, backend/app/gateway/extension_artifacts.py, frontend/src/core/extensions/**, frontend/src/components/workspace/capabilities/**, frontend/src/components/workspace/plugin-surfaces.tsx, examples/**
 Data: extension_leases table, extension state
 External: none
-Tests: backend/tests/test_extension_loader.py, backend/tests/test_extension_manager.py, backend/tests/test_plugin_tools.py, backend/tests/test_capability_api.py, backend/tests/test_extension_api_contracts.py, frontend/tests/unit/core/extensions/actions.dom.test.tsx, frontend/tests/e2e/capability-center.spec.ts
+Tests: backend/tests/test_extension_loader.py, backend/tests/test_extension_manager.py, backend/tests/test_extension_isolation.py, backend/tests/test_extension_injection.py, backend/tests/test_cad_design_end_to_end.py, backend/tests/test_plugin_tools.py, backend/tests/test_capability_api.py, backend/tests/test_extension_api_contracts.py, frontend/tests/unit/core/extensions/actions.dom.test.tsx, frontend/tests/e2e/capability-center.spec.ts
 
 ### Web search
 What: web_search is a pluggable dispatcher, Tavily first with the bundled self-hosted SearXNG behind it (or SearXNG alone with no key), that reports a blocked engine as an error instead of an empty result.

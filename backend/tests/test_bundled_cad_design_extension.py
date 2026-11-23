@@ -129,6 +129,9 @@ def test_the_shipped_record_loads_with_its_page_tool_middleware_and_route(tmp_pa
 
 def test_delegated_subagents_get_the_filter_that_removes_scad_draft(tmp_path, monkeypatch):
     """The host binds plugin tools into subagents too, so the subagent stack must carry the filter."""
+    from langchain.agents.middleware.types import ModelRequest
+    from langchain_core.messages import AIMessage, HumanMessage
+
     from deerflow.agents.lead_agent.agent import build_middlewares
     from deerflow.agents.middlewares.tool_error_handling_middleware import build_subagent_runtime_middlewares
     from deerflow.config.app_config import AppConfig
@@ -143,9 +146,18 @@ def test_delegated_subagents_get_the_filter_that_removes_scad_draft(tmp_path, mo
     def names(stack):
         return {type(m.inner if isinstance(m, IsolatedMiddleware) else m).__name__ for m in stack}
 
-    assert "NoDrafting" in names(build_subagent_runtime_middlewares(app_config=app_config, model_name="gpt-4o", extensions=loaded))
+    subagent = build_subagent_runtime_middlewares(app_config=app_config, model_name="gpt-4o", extensions=loaded)
+    assert "NoDrafting" in names(subagent)
     lead = names(build_middlewares(config={"configurable": {}}, model_name="gpt-4o", app_config=app_config, extensions=loaded))
     assert "DesignMode" in lead and "NoDrafting" not in lead
+
+    # What the wrapper the host put around it hands on, not what the filter returns.
+    (wrapped,) = [m for m in subagent if isinstance(m, IsolatedMiddleware) and type(m.inner).__name__ == "NoDrafting"]
+    scad_draft, other = {"name": plugin_tool_name("cad-design", "scad_draft")}, {"name": "bash"}
+    request = ModelRequest(model=None, messages=[HumanMessage("hi")], system_message=None, tools=[scad_draft, other], state={}, runtime=None)
+    passed = []
+    wrapped.wrap_model_call(request, lambda sent: passed.append(sent) or AIMessage("ok"))
+    assert passed[0].tools == [other]
 
 
 def test_the_migration_delivers_the_shipped_record():

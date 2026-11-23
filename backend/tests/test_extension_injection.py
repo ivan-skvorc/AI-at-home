@@ -113,6 +113,26 @@ def test_outermost_lands_at_index_zero():
     assert _tags(result)[0] == "visible"
 
 
+def test_only_a_model_logical_contribution_may_adjust_the_model_request():
+    """One decision per model call, outer of retries: the one place a narrowed request is meant to start."""
+    from deerflow.extensions.injection import isolate
+    from deerflow.extensions.isolation import IsolatedMiddleware
+
+    placements = {placement: _Probe(placement.value) for placement in Placement}
+    result, _, _ = inject_middlewares(
+        _stack(),
+        _ANCHORS,
+        AgentScope.LEAD,
+        _ctx(),
+        _extensions(*(MiddlewarePlacement(probe, placement) for placement, probe in placements.items())),
+    )
+    roles = {m.inner.tag: m.adjusts_model_requests for m in result if isinstance(m, IsolatedMiddleware)}
+
+    assert roles == {placement.value: placement is Placement.MODEL_LOGICAL for placement in Placement}
+    for placement, probe in placements.items():
+        assert isolate(MiddlewarePlacement(probe, placement), "demo:install", lambda d: None).adjusts_model_requests is (placement is Placement.MODEL_LOGICAL)
+
+
 def test_outer_of_lands_immediately_before_the_anchor():
     probe = _Probe("decision")
     result, _, _ = inject_middlewares(

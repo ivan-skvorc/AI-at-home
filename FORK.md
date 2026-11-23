@@ -554,7 +554,7 @@ Then confirm each fork feature end-to-end:
 | **Internet switch on the conversation** (§27)                                                           | `cd backend && uv run pytest tests/test_internet_toggle.py` plus `python3 scripts/pnpm.py rstest run internet-toggle`. The asserts that are silent when broken: **absent is not off** (only an explicit `False` opts out, so IM/TUI/scheduler callers keep their tools), the group classification is an **allowlist** (an unclassified group is dropped — a blocklist of `web`/`browser` passes everything else and ships the next provider group), **MCP and ACP tools go too**, a **subagent inherits** the switch from the parent run context, and the offline notice is appended to the _rendered_ prompt rather than a template placeholder an operator's saved `SYSTEM_PROMPT.md` would not have. UI wiring: `pnpm test:e2e internet-toggle` drives the composer control by its own `data-slot="internet-toggle"` — and because the composer is shared, a change to it means the **whole** `pnpm test:e2e`, not that one spec.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 | **Tiered voice input** (§24)                                                                            | `cd backend && uv run pytest tests/test_voice_stt.py` plus `python3 scripts/pnpm.py rstest run voice-input`. The asserts that are silent when broken: `voice.allow_cloud_fallback` and `voice.stt.enabled` both default **false** and `resolveVoiceInputTier` returns `null` rather than `"cloud"` when neither local tier is available; `DEFAULT_VOICE_SERVER_CONFIG` keeps cloud off when `/api/voice/config` errors or is unreachable (fail closed, not open); `is_local_endpoint` treats Tailscale CGNAT `100.64.0.0/10` as local, so a tailnet STT service is not mislabelled as off-machine; the upload size cap refuses **before** the STT service is called; error text never echoes the service body (a transcript is speech); and `recorder.test.ts` proves the microphone track is stopped on all four exits — success, recorder error, failed construction, and abandonment. A regression in the first two reads as "voice still works" while audio goes back to the vendor.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | **CAD model preview** (§56) | `cd examples/deerflow-extension-cad-preview && node --test` and `cd frontend && pnpm test:e2e cad-preview`. Silent when broken: `twenty file switches leave one live context…` (a leaked WebGL context blanks old previews only after about sixteen switches; §56 says why) and the bounding box against `report.json` (1000× off if the GLB is not read as metres). |
-| **CAD design page** (§58) | `cd examples/deerflow-extension-cad-design && node --test && ../../backend/.venv/bin/python -m pytest tests -q`, `cd backend && uv run pytest tests/test_bundled_cad_design_extension.py -q` and `cd frontend && pnpm test:e2e cad-design`; the token half runs in the first critical check. Silent when broken: `scad_draft` reaching a chat or a subagent (`test_the_cad_design_page_adds_nothing_outside_a_design_run`, `test_delegated_subagents_get_the_filter_that_removes_scad_draft`, the package's `test_subagents_never_receive_the_drafting_tool`), the Worker's time limit (`a render past its limit terminates the Worker…`; a model's infinite loop otherwise freezes renders for good), the wasm hash (`a changed byte fails the check…`, `the shipped wasm is the npm package's binary and its hashes are baked in`), and snapshot equality (`test_the_installed_snapshot_matches_the_example_source`). |
+| **CAD design page** (§58) | `cd examples/deerflow-extension-cad-design && node --test && ../../backend/.venv/bin/python -m pytest tests -q`, `cd backend && uv run pytest tests/test_bundled_cad_design_extension.py tests/test_cad_design_end_to_end.py -q` and `cd frontend && pnpm test:e2e cad-design`; the token half runs in the first critical check. Silent when broken: the brief or the tool filter dropped by the host's isolation wrapper (`test_cad_design_end_to_end.py`), `scad_draft` reaching a chat or a subagent (`test_the_cad_design_page_adds_nothing_outside_a_design_run`, `test_delegated_subagents_get_the_filter_that_removes_scad_draft`, the package's `test_subagents_never_receive_the_drafting_tool`), the Worker's time limit (`a render past its limit terminates the Worker…`; a model's infinite loop otherwise freezes renders for good), the wasm hash (`a changed byte fails the check…`, `the shipped wasm is the npm package's binary and its hashes are baked in`), and snapshot equality (`test_the_installed_snapshot_matches_the_example_source`). |
 
 **Integration points that tend to need a hand** (where upstream refactors collide with fork additions — check these first when tests fail): the AIO sandbox provider (upstream's cross-instance ownership store adds instance attributes that minimal test fixtures built via `__new__` must seed), the skills tool-policy path (upstream's dynamic `SkillToolPolicyMiddleware` vs. any fork static filtering — reconcile onto the middleware and drop dead build-time filters), `scripts/check.py`'s Docker diagnostics (any upstream test that mocks `run_command` with a strict dict must tolerate the extra `docker` calls), and the `task_tool.py` / `input-box.tsx` model-override plumbing.
 
@@ -4767,7 +4767,10 @@ of run; `submit_run_input` now stores the sanitized `plugin_options` beside
 still inherits the source run's client `recursion_limit`. The extension's `UltracodeMode`
 middleware appends the brief to the system message (so a saved `SYSTEM_PROMPT.md`
 still gets it) and, without a session-bound AgentRuns handle, says the mode is
-unavailable instead of silently answering as Ultra. The composer offers both
+unavailable instead of silently answering as Ultra. Until §58's host fix the
+brief never reached the model: the isolation wrapper around contributed
+middleware handed on the original request, and the tests called the middleware
+bare. `test_cad_design_end_to_end.py` now checks it on a real run. The composer offers both
 modes only when `/api/plugins` lists `community.workflows` enabled, and moves a
 remembered selection to Ultra with a toast.
 
@@ -7114,20 +7117,62 @@ the record. Rejected: off by default. The page costs nothing on a chat request
     (`filterThreadSearchResults`), like Side Chat threads: any plugin that
     presents its threads itself sets it. The thread stays reachable by URL and
     keeps its search corpus.
+  - A `MODEL_LOGICAL` model wrapper may adjust the request it hands on
+    (`IsolatedMiddleware(adjusts_model_requests=True)`, set by
+    `injection.isolate` from the placement; `admit_model_request_adjustment`):
+    remove bound tools and append to the system message, nothing else. Any
+    plugin that binds a tool for one kind of run needs it to keep that tool and
+    its instructions off every other run. Another model, messages or tool choice,
+    an added tool or a rewritten system message is refused with one warning per
+    agent build, and the original request goes on; every other placement and
+    every tool call stays observational, now with that warning instead of
+    silence. The position is outer of retries and of the context guard, so the
+    guard measures what is sent. Rejected: an opt-out from the wrapper (a broken
+    plugin would break runs), a new placement or API field (the placement already
+    says where), and carrying the brief as a hidden input message (it would not
+    take `scad_draft` off ordinary chats).
 - **Viewer reuse by relative import.** `ui/` imports cad-preview's STL reader,
   mesh preparation and limits from `../../deerflow-extension-cad-preview/ui/`
   and builds its model Worker, so both packages stay side by side in the
   snapshot; three.js is pinned at cad-preview's 0.187.0.
+
+**The first release's brief never reached the model.** An owner's design run
+built the part with `cad_build`, `bash` and `present_files` like an ordinary chat
+and never called `scad_draft`, so no draft version existed and the preview stayed
+empty. The host's isolation wrapper handed the original request downstream, by
+the first extension contract's design, so `DesignMode`'s removal and brief were
+dropped on every call: design runs got `scad_draft` with only its one-line
+description, and every ordinary chat and subagent kept it. The middleware's tests
+called it bare, past the wrapper. The fix is the `MODEL_LOGICAL` adjustment above;
+`backend/tests/test_cad_design_end_to_end.py` drives the page's `prompt` action
+through the real Gateway, loader, run worker and lead agent with only the chat
+model faked, and `test_context_fit_critical.py` measures through the wrapper. The
+page also says when a prompt or repair turn ended without a new draft (*The model
+answered without saving a draft, so the preview did not change*), instead of
+showing nothing (`endedWithoutDraft` in `ui/outcomes.js`). Draft and repair runs
+also lose `cad_build`, and the brief says not to follow the `cad-modeling` skill:
+the owner's answer followed that skill's Step 7 word for word, and with both tools
+offered a run can build behind the preview's back. Finalize, the owner's chosen
+path to CadQuery, keeps `cad_build`; ordinary chats are untouched.
 
 **What must not be simplified away.**
 
 - **`scad_draft` costs 0 tokens outside design runs.** The host binds every
   enabled plugin tool on every request; `DesignMode` removes it from every lead
   model call without the design flag, before touching the store, and
-  `NoDrafting` removes it from every subagent call. The middleware is
+  `NoDrafting` removes it from every subagent call. Both work only because the
+  host forwards a `MODEL_LOGICAL` adjustment; a test of the bare middleware
+  proves nothing. The middleware is
   registered even when the record starts disabled, because an administrator
   can switch the plugin on at runtime. `test_context_fit_critical.py` measures
-  both directions in every mode, and a forged flag.
+  both directions in every mode, and a forged flag, through the host's wrapper;
+  `test_cad_design_end_to_end.py` checks it on real runs.
+- **Draft runs cannot build.** `DesignMode` drops `cad_build` from drafting
+  calls (draft and repair) and `scad_draft` from every other call. Offering both
+  lets a model follow the cad-modeling skill and build without drafting, which
+  is the reported empty preview; `test_cad_design_end_to_end.py` pins it.
+- **A turn without a draft says so.** Without the note, a model that answers in
+  text leaves the preview as it was and the user sees nothing happen.
 - **The Worker's time limit and its recreation.** Without them, a model-written
   infinite loop freezes the page's renders for good; nothing else notices.
 - **The wasm hash check, both of the piece and of the inflated binary.** Dropping
@@ -7156,7 +7201,11 @@ when it ends.
 
 **On an upstream sync.** The package is fork-only. Upstream owns every host file
 it needs: `backend/app/gateway/extension_agent_runs.py` (`stream_mode`,
-`delete_thread`), `deerflow_extension_api/agent_runs.py` and `API_VERSION`,
+`delete_thread`), `deerflow/extensions/isolation.py` and `injection.py` (the
+`MODEL_LOGICAL` adjustment; an upstream rewrite that drops it silently takes the
+brief and the tool filter away again, which `test_cad_design_end_to_end.py`
+catches), the extension docs `middleware.mdx` and `index.mdx` in both locales,
+`deerflow_extension_api/agent_runs.py` and `API_VERSION`,
 `frontend/src/core/extensions/` (`services.ts`, `surfaces.ts`, `contracts.ts`,
 `registry.ts`, `catalog.ts`, `bundled-documentation.json`),
 `components/workspace/plugin-page.tsx` and `plugin-surfaces.tsx`,
@@ -7179,13 +7228,20 @@ source; `wasm-loader`, `scad-client` — the time limit, superseded live renders
 `test_actions`, `test_tool`, `test_middleware`, `test_router`, `test_scad`,
 `test_install`, `test_registration`); `scripts/check_extension.py` on the package;
 `backend/tests/test_bundled_cad_design_extension.py` (snapshot equality, the
-install on every host, the shipped record, subagents' filter, and migration 78's
-cases); `test_context_fit_critical.py` (0 tokens outside a design run in every
+install on every host, the shipped record, subagents' filter through its wrapper,
+and migration 78's cases); `test_cad_design_end_to_end.py` (the page's prompt
+action on the real Gateway: the brief and `scad_draft` reach the model and the
+draft is stored; an ordinary chat, with or without a forged flag, gets neither;
+the Ultracode brief arrives); `test_extension_isolation.py` and
+`test_extension_injection.py` (what a `MODEL_LOGICAL` wrapper may hand on, what
+is refused and reported, and that only that placement may);
+`test_context_fit_critical.py` (0 tokens outside a design run in every
 mode, a design run's draft and finalize phases within
-`FIXED_REQUEST_ALLOWANCE_TOKENS`, `scad_draft` within 150 tokens);
+`FIXED_REQUEST_ALLOWANCE_TOKENS`, `scad_draft` within 150 tokens, all through the
+host's wrapper);
 `test_extension_agent_runs.py` (`stream_mode` forwarded and refused outside the
 subset, `delete_thread`); the frontend `services.test.ts` (`joinRunStream`),
 `surfaces.dom.test.ts`, `plugin-page.dom.test.tsx` (`layout: "full"`),
 `registry.test.ts` and `thread-search-query.test.ts` (unlisted threads); the e2e
-`frontend/tests/e2e/cad-design.spec.ts`; and `backend/tests/test_bench_cad_eval.py`
+`frontend/tests/e2e/cad-design.spec.ts` (including a turn that saves no draft); and `backend/tests/test_bench_cad_eval.py`
 for the eval's design path.

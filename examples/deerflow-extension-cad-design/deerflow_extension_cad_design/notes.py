@@ -23,6 +23,7 @@ MODEL_SOURCES = ("model", "repair")
 
 DRAFT_BRIEF = """## Design page
 You are drafting one part on the user's design page. Write OpenSCAD and save it with the drafting tool (name contains `scad_draft`), sending the whole file every time; the page renders it in the browser.
+Draft only: do not build the part with cad_build, follow the cad-modeling skill, or write or present files for it. The user's Finalize button builds the CadQuery part.
 - Millimetres, Z up, the part resting on z=0.
 - Every dimension is a top-level named parameter with a Customizer range, e.g. `width = 40; // [10:1:100]`; the user drags these as sliders.
 - No import(), include or use of files, and no text(): the browser has no fonts. Keep $fn at 64 or lower.

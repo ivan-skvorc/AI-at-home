@@ -21,6 +21,14 @@ test.use({
   },
 });
 
+// SwiftShader draws on the CPU: on a loaded CI runner the first frames of a
+// view (shader compiles at full panel size) took longer than the default 5 s
+// poll and the 30 s test budget, while the same commit passed on a faster
+// runner. These budgets are wait limits for software WebGL, not assertions:
+// every check below is unchanged. cad-design.spec.ts allows the same 120 s.
+test.describe.configure({ timeout: 120_000 });
+const RENDER_WAIT = { timeout: 20_000 };
+
 const threadId = "00000000-0000-0000-0000-000000004646";
 const models = [
   "mounting-plate.glb",
@@ -191,7 +199,7 @@ async function expectModel(page: Page, name: string) {
         centre: drawn[Math.floor((box.width / 2) * scale)],
         runs: inner.filter((on, x) => on && !inner[x - 1]).length,
       };
-    })
+    }, RENDER_WAIT)
     .toMatchObject(bodies === 1 ? { centre: true } : { runs: bodies });
   await expect(host.locator(".banner")).toHaveCount(
     name.endsWith(".failed.glb") ? 1 : 0,
@@ -363,7 +371,9 @@ test("twenty file switches leave one live context, idle frames stop and the them
     await expect(preview(page, name).locator("canvas")).toBeVisible({
       timeout: 20_000,
     });
-    await expect.poll(async () => (await probe()).live).toBeLessThanOrEqual(1);
+    await expect
+      .poll(async () => (await probe()).live, RENDER_WAIT)
+      .toBeLessThanOrEqual(1);
   }
   expect((await probe()).created).toBeGreaterThanOrEqual(21);
   expect(warnings).toEqual([]);

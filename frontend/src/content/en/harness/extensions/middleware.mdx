@@ -69,7 +69,7 @@ A middleware occupies one position in a list, but that position only means somet
 
 | Placement        | Axis and end      | Guarantee                                                                                          | Typical use                                   |
 | ---------------- | ----------------- | -------------------------------------------------------------------------------------------------- | --------------------------------------------- |
-| `MODEL_LOGICAL`  | Model, outer end  | Outer of retry and error handling. Fires **once per logical model decision**, however many times the host retries underneath | Auditing decisions, counting turns             |
+| `MODEL_LOGICAL`  | Model, outer end  | Outer of retry and error handling. Fires **once per logical model decision**, however many times the host retries underneath | Auditing decisions, counting turns, scoping a plugin's own tool and brief |
 | `MODEL_PHYSICAL` | Model, inner end  | Inner of every request-transforming middleware. Fires **once per provider call**; retries re-enter it | Provider latency, cost, the exact final request |
 | `TOOL_VISIBLE`   | Tool, outer end   | Outer of truncation, sanitization, and error wrapping. Observes **what the model finally sees**     | End-to-end tool latency, what the model was told |
 | `TOOL_RAW`       | Tool, inner end   | Adjacent to the real tool callable. Observes the **raw return** before any processing               | Capturing untruncated tool output             |
@@ -116,9 +116,10 @@ After inserting contributions, the host validates its ordering invariants on the
 
 ## What a contributed middleware can change
 
-Every contribution in this release is **observational**. The host enforces this in the wrapper around your middleware.
+Contributions are **observational**, with one narrow exception for model calls at `MODEL_LOGICAL`. The host enforces both in the wrapper around your middleware.
 
-- **`wrap_model_call` / `wrap_tool_call` and their async forms.** You may inspect the request and the result. You must call `handler` exactly once. The host always passes the **original** request downstream, even if you call `handler` with a modified one, and always returns the **real** downstream result, whatever your hook returns. You cannot rewrite prompts, veto tool calls, or replace tool output from an extension.
+- **`wrap_model_call` / `wrap_tool_call` and their async forms.** You may inspect the request and the result. You must call `handler` exactly once. The host always returns the **real** downstream result, whatever your hook returns. It passes the **original** request downstream, even if you call `handler` with a modified one, and logs one warning per agent build that names what it dropped. You cannot veto tool calls, replace tool output, or choose the model from an extension.
+- **The `MODEL_LOGICAL` exception.** A `wrap_model_call` (or `awrap_model_call`) at `MODEL_LOGICAL` may hand on `request.override(tools=..., system_message=...)` where the tools are some of the request's own tool objects and the system message's text starts with the original text. The host forwards exactly that: removing bound tools and appending to the system message, so a plugin can offer its tool and its instructions only to the runs that use them. Anything else in the request (another model, messages, tool choice, an added tool, a rewritten system message) is refused and the original request goes on. The position is outer of retries and of the host's context-window guard, so the guard measures the adjusted request. If your hook raises before calling `handler`, the original request goes on: write the adjustment as advice the run can do without.
 - **`before_agent` / `before_model` / `after_model` / `after_agent` and their async forms.** These run as in any `AgentMiddleware`, and a returned dict is applied as a state update. If the middleware declares a `state_schema`, the wrapper forwards it.
 
 Because LangChain wires both the sync and the async path when either side of a wrap pair exists, the wrapper supplies a pass-through for the side you did not write. Implement both `wrap_tool_call` and `awrap_tool_call` (or both model forms) if you must observe both paths. Normal Gateway runs are async.
@@ -164,7 +165,8 @@ LangChain requires unique middleware names and uses them as trace identities and
 
 ## Common pitfalls
 
-- **Expecting to modify calls.** Wrap hooks are observe-only in this release. For request-shaping behavior, use `extensions.middlewares` (see [Customization](/docs/harness/customization)), which imposes no wrapper, and accept that it is trusted configuration rather than a contract.
+- **Expecting to modify calls.** Wrap hooks are observe-only, apart from removing tools and appending system text at `MODEL_LOGICAL`. For other request-shaping behavior, use `extensions.middlewares` (see [Customization](/docs/harness/customization)), which imposes no wrapper, and accept that it is trusted configuration rather than a contract.
+- **Testing the middleware bare.** Your hook's return value is not what reaches the model; the wrapper's decision is. Test a contribution through `deerflow.extensions.injection.isolate(placement, source, on_error)`, which wraps it the way the host injects it.
 - **Implementing only `wrap_tool_call`.** Gateway runs take the async path, so a sync-only middleware sees nothing there.
 - **Heavy work in `contribute_middlewares()`.** It runs on every agent assembly. Build expensive clients once in `install()`, or lazily in the app store.
 - **Depending on the concrete anchor.** Choose the placement by the guarantee you need, not by the neighbor it happens to sit next to today.
