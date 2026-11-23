@@ -1,4 +1,4 @@
-"""Registration through a fake host registry (the asset checks are in test_registration.py)."""
+"""Registration through a fake host registry (the asset checks are in test_cad_design_registration.py)."""
 
 import json
 from pathlib import Path
