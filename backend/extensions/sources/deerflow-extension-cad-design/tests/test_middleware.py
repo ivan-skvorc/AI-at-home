@@ -2,13 +2,14 @@ import json
 from types import SimpleNamespace
 
 import pytest
+from langchain.agents.middleware.types import ModelRequest
+from langchain_core.messages import SystemMessage, ToolMessage
+from langgraph.types import Command
+
 from deerflow_extension_cad_design.constants import CAD_BUILD_TOOL, SCAD_DRAFT_TOOL, bound_tool_name
 from deerflow_extension_cad_design.middleware import Contributor, DesignMode, final_from_answer
 from deerflow_extension_cad_design.notes import DIFF_CHARS
 from deerflow_extension_cad_design.store import Store
-from langchain.agents.middleware.types import ModelRequest
-from langchain_core.messages import SystemMessage, ToolMessage
-from langgraph.types import Command
 
 DESIGN = "a" * 32
 OTHER_TOOL = {"type": "function", "function": {"name": "web_search", "description": "", "parameters": {}}}
@@ -110,13 +111,16 @@ def cad_close(expected, measured):
 
 
 def cad_answer(bbox=(10, 20, 5.5), expected=(10, 20, 5.5), solid=True):
-    """An answer as the real cad_build forms it: `passed` is every check's AND, the box judged at 0.1 %."""
+    """An answer as the real cad_build forms it: `passed` is every check's AND, the box judged at 0.1 %,
+    and the part exported only when it passed (a failed build leaves *.failed.png/.glb and the report)."""
     box_ok = all(cad_close(e, m) for e, m in zip(expected, bbox, strict=True))
     checks = [{"check": "one closed solid", "expected": "x", "measured": "1 solid" if solid else "2 solids", "passed": solid}, {"check": "bounding box", "expected": list(expected), "measured": list(bbox), "passed": box_ok}]
+    passed = all(check["passed"] for check in checks)
+    names = ("part.py", "part.glb", "part.stl", "part.3mf", "part.step") if passed else ("part.py", "part.failed.png", "part.failed.glb", "part.report.json")
     return {
-        "passed": all(check["passed"] for check in checks),
+        "passed": passed,
         "checks": checks,
-        "files": ["/mnt/user-data/outputs/part.py", "/mnt/user-data/outputs/part.glb"],
+        "files": [f"/mnt/user-data/outputs/{name}" for name in names],
         "attempt": 1,
         "next": "Tell the user.",
     }
@@ -129,15 +133,18 @@ def test_the_cad_answer_fixture_is_what_cad_build_returns():
 
 def test_final_from_answer():
     built = final_from_answer(cad_answer(), {"status": "running", "run_id": "run-1"}, [10, 20, 5.5])
-    assert built["status"] == "built" and built["files"] == ["part.py", "part.glb"] and built["run_id"] == "run-1"
+    assert built["status"] == "built" and built["files"] == ["part.py", "part.glb", "part.stl", "part.3mf", "part.step"] and built["run_id"] == "run-1"
     assert built["bbox_mm"] == [10, 20, 5.5] and built["tolerance_mm"] == [0.5, 0.5, 0.5]
-    # cad_build fails these on its 0.1 % box check; the page's max(0.5 mm, 2 %) still calls them built.
+    # cad_build fails these on its 0.1 % box check and so exports nothing; the size is within
+    # the page's max(0.5 mm, 2 %), so the build is asked again against the measured size.
     near = cad_answer(bbox=(10.4, 20.3, 5.9))
     assert near["passed"] is False
-    assert final_from_answer(near, None, [10, 20, 5.5])["status"] == "built"
+    again = final_from_answer(near, None, [10, 20, 5.5])
+    assert again["status"] == "failed" and "bbox_xyz_mm = [10.4, 20.3, 5.9]" in again["message"]
+    assert final_from_answer(cad_answer(bbox=(10.4, 20.3, 5.9), expected=(10.4, 20.3, 5.9)), None, [10, 20, 5.5])["status"] == "built"
     mismatch = final_from_answer(cad_answer(bbox=(10, 22, 5.5)), None, [10, 20, 5.5])
     assert mismatch["status"] == "mismatch" and mismatch["draft_bbox_mm"] == [10, 20, 5.5]
-    assert final_from_answer(cad_answer(bbox=(101.5, 20, 5.5), expected=(100, 20, 5.5)), None, [100, 20, 5.5])["status"] == "built"  # 2 % of 100 mm
+    assert final_from_answer(cad_answer(bbox=(101.5, 20, 5.5), expected=(101.5, 20, 5.5)), None, [100, 20, 5.5])["status"] == "built"  # 2 % of 100 mm
     failed = final_from_answer({"passed": False, "error": {"message": "refused: if"}, "files": []}, None, [1, 1, 1])
     assert failed["status"] == "failed" and failed["message"] == "refused: if"
     # Any other failed check still fails the build, whatever the box says.
@@ -145,19 +152,27 @@ def test_final_from_answer():
     assert other["status"] == "failed" and other["message"] == "Failed checks: one closed solid, bounding box"
 
 
-def test_a_faceted_draft_against_its_true_part_is_built():
+def test_a_faceted_draft_against_its_true_part_is_built_once_exported():
     """cylinder(r=10) at 30 fragments renders 19.89 mm across; the CadQuery cylinder is 20 mm."""
     draft = [20, 19.89, 5]
     answer = cad_answer(bbox=(20, 20, 5), expected=draft)
     assert answer["passed"] is False  # the real tool's verdict, as the brief makes it
-    final = final_from_answer(answer, None, draft)
-    assert final["status"] == "built" and final["bbox_mm"] == [20, 20, 5]
+    first = final_from_answer(answer, None, draft)
+    # Nothing but *.failed.* files: no part to download or show, so not built yet.
+    assert first["status"] == "failed" and first["bbox_mm"] == [20, 20, 5] and "bbox_xyz_mm = [20, 20, 5]" in first["message"]
+    rebuilt = final_from_answer(cad_answer(bbox=(20, 20, 5), expected=(20, 20, 5)), None, draft)
+    assert rebuilt["status"] == "built" and "part.step" in rebuilt["files"]
 
 
-def test_the_finalize_brief_says_a_small_size_miss_is_not_a_failure():
+def test_a_built_status_needs_an_exported_part():
+    answer = {"passed": True, "checks": [{"check": "bounding box", "expected": [1, 1, 1], "measured": [1, 1, 1], "passed": True}], "files": ["/o/part.py", "/o/part.failed.glb"]}
+    assert final_from_answer(answer, None, [1, 1, 1])["status"] == "failed"
+
+
+def test_the_finalize_brief_asks_a_rebuild_for_a_small_size_miss():
     from deerflow_extension_cad_design.notes import FINALIZE_BRIEF
 
-    assert "0.5 mm or 2 %" in FINALIZE_BRIEF and "do not rebuild" in FINALIZE_BRIEF
+    assert "0.5 mm or 2 %" in FINALIZE_BRIEF and "passing the measured size as bbox_xyz_mm" in FINALIZE_BRIEF
 
 
 async def test_the_finalize_build_is_recorded(store):

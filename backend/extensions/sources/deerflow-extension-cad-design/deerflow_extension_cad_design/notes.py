@@ -32,7 +32,8 @@ FINALIZE_BRIEF = """## Design page: finalize
 Port draft v{seq} (the OpenSCAD file in the latest message) to a CadQuery script with the same parameter names and values,
 the same orientation (Z up) and real fillets and chamfers where the draft approximates them. Build it with the CAD tool (name contains `cad_build`)
 passing bbox_xyz_mm = {bbox}, the draft's rendered size. The draft is faceted, so the page accepts a size within 0.5 mm or 2 % per axis:
-when only cad_build's bounding box check fails by less than that, the part is built; do not rebuild for it. Do not draft again. Report the result in two sentences."""
+when only cad_build's bounding box check fails, and by less than that, the size is right, but cad_build exports the part only when every check passes:
+build once more with the same script passing the measured size as bbox_xyz_mm. Do not change the script for it, and do not draft again. Report the result in two sentences."""
 
 
 def chain(versions: list[dict[str, Any]], head_id: str | None) -> list[dict[str, Any]]:

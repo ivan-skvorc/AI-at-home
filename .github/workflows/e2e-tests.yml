@@ -16,6 +16,8 @@ on:
       - 'examples/deerflow-extension-bookmarks/**'
       - 'examples/deerflow-extension-office-preview/**'
       - 'examples/deerflow-extension-cad-preview/**'
+      - 'examples/deerflow-extension-cad-design/**'
+      - 'backend/extensions/sources/deerflow-extension-cad-design/**'
       - '.github/workflows/e2e-tests.yml'
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
@@ -32,6 +34,8 @@ on:
       - 'examples/deerflow-extension-bookmarks/**'
       - 'examples/deerflow-extension-office-preview/**'
       - 'examples/deerflow-extension-cad-preview/**'
+      - 'examples/deerflow-extension-cad-design/**'
+      - 'backend/extensions/sources/deerflow-extension-cad-design/**'
       - '.github/workflows/e2e-tests.yml'
 
 concurrency:
@@ -123,6 +127,25 @@ jobs:
         if: ${{ matrix.shard == 1 }}
         working-directory: examples/deerflow-extension-cad-preview
         run: node --test
+
+      # The CAD design page bundles cad-preview's parser modules from the sibling
+      # checkout, which import nothing from npm, so only its own install is needed.
+      # The Gateway serves the committed bundle, so a rebuild that changes it
+      # (sources edited without rerunning build.mjs) fails here, before the tests
+      # and before any shard's Playwright run could test a different bundle.
+      - name: Build and test CAD design page
+        if: ${{ matrix.shard == 1 }}
+        working-directory: examples/deerflow-extension-cad-design
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          node build.mjs
+          stale="$(git status --porcelain -- deerflow_extension_cad_design/static deerflow_extension_cad_design/ui_manifest.json)"
+          if [ -n "$stale" ]; then
+            echo "::error::The committed CAD design bundle is stale; run node build.mjs in examples/deerflow-extension-cad-design and commit the result (and its backend snapshot)."
+            echo "$stale"
+            exit 1
+          fi
+          node --test
 
       - name: Verify Playwright Chromium
         working-directory: frontend

@@ -18,6 +18,10 @@ flowchart LR
     cadExt["deerflow-extension-cad"]
     cadEval["make cad-eval"]
   end
+  subgraph design [CAD design page]
+    designPage["/workspace/extensions/cad-design/designs"]
+    scadWorker["OpenSCAD Worker (browser)"]
+  end
   subgraph bigdoc [Big documents on small models]
     analyze["analyze_document tool"]
     driftEval["make drift-eval"]
@@ -46,6 +50,8 @@ flowchart LR
   analyze --> llm
   img --> outputs
   cad --> outputs
+  design --> cad
+  design --> outputs
   media --> sandbox
   media --> outputs
 ```
@@ -81,6 +87,14 @@ Files: backend/extensions/sources/deerflow-extension-cad/**, examples/deerflow-e
 Data: thread outputs directory, the operator's printer profile (printer: in the CAD record of config.yaml)
 External: none for building (works with the internet switch off); make cad-eval drives a configured model through the running Gateway
 Tests: backend/tests/test_cad_extension.py, backend/tests/test_bundled_cad_extension.py, backend/tests/test_cad_runtime_deps.py, backend/tests/blocking_io/test_cad_extension.py, backend/tests/test_context_fit_critical.py, backend/tests/test_bench_cad_eval.py, tests/skills/test_cad_modeling.py, examples/deerflow-extension-cad/tests/test_interpreter.py, examples/deerflow-extension-cad/tests/test_worker_process.py, examples/deerflow-extension-cad/tests/test_build.py, examples/deerflow-extension-cad/tests/test_measure.py, examples/deerflow-extension-cad/tests/test_checks.py, examples/deerflow-extension-cad/tests/test_render.py, examples/deerflow-extension-cad/tests/test_printability.py, examples/deerflow-extension-cad/tests/test_eval_specs.py
+
+### CAD design page
+What: Designs in the sidebar opens a page where the assistant drafts a part in OpenSCAD and the viewer's browser renders it while the code streams (OpenSCAD compiled to WebAssembly in a Worker; the Gateway never runs it); every render is a version, the code is editable, top-level numbers are sliders, and Finalize ports the draft to CadQuery and builds it with the CAD module's cad_build, checking the size against the draft. The scad_draft tool reaches design runs only. Host hooks it uses: AgentRuns.start stream_mode and delete_thread (extension API 0.2.14), joinRunStream, models, layout full, the box icon and the deerflow_listed hide flag (Extensions and plugins).
+Entry points: /workspace/extensions/cad-design/designs, scad_draft (extension tool), /api/extensions/cad-design/designs/{design_id}/files/{name}, make cad-eval CAD_PATH=design, make extension-disable NAME=cad-design
+Files: examples/deerflow-extension-cad-design/**, backend/extensions/sources/deerflow-extension-cad-design/**, backend/scripts/benchmark/cad_eval/design_path.py
+Data: design store (SQLite at cad-design/designs.sqlite under DEER_FLOW_HOME), the design's hidden thread and its outputs directory
+External: none (OpenSCAD, three.js and CodeMirror are bundled; nothing is fetched from a CDN)
+Tests: examples/deerflow-extension-cad-design/tests/test_store.py, examples/deerflow-extension-cad-design/tests/test_actions.py, examples/deerflow-extension-cad-design/tests/test_tool.py, examples/deerflow-extension-cad-design/tests/test_middleware.py, examples/deerflow-extension-cad-design/tests/test_router.py, examples/deerflow-extension-cad-design/tests/test_scad.py, examples/deerflow-extension-cad-design/tests/test_install.py, examples/deerflow-extension-cad-design/tests/test_registration.py, examples/deerflow-extension-cad-design/tests/build.test.mjs, examples/deerflow-extension-cad-design/tests/built-worker.test.mjs, examples/deerflow-extension-cad-design/tests/wasm-loader.test.mjs, examples/deerflow-extension-cad-design/tests/scad-client.test.mjs, examples/deerflow-extension-cad-design/tests/run-stream.test.mjs, backend/tests/test_bundled_cad_design_extension.py, backend/tests/test_context_fit_critical.py, backend/tests/test_extension_agent_runs.py, backend/tests/test_bench_cad_eval.py, frontend/tests/e2e/cad-design.spec.ts
 
 ### Big documents on small models
 What: analyze_document reads a PDF, EPUB, HTML or zipped book in parts sized for the serving model, transcribes scanned PDFs with a vision model, and make drift-eval checks that long-document answers stay on the question.

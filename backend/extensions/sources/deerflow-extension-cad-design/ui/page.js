@@ -107,6 +107,8 @@ export function mountPage(root, context) {
   };
   // Created with the first design view; the viewer is released when it closes.
   let viewer = null;
+  // Set when the 3D view could not start (no WebGL); renders still run and report.
+  let viewerFailed = false;
   let editor = null;
   let editTimer = 0;
   const timers = new Set();
@@ -258,6 +260,7 @@ export function mountPage(root, context) {
     try {
       viewerReady()?.setDraft(model, { partial });
     } catch {
+      viewerFailed = true;
       setOverlay(text.errors.webgl, true);
     }
   }
@@ -487,6 +490,11 @@ export function mountPage(root, context) {
   };
 
   function setOverlay(message, isError = false) {
+    // A browser without WebGL keeps saying so once a render has nothing else to show.
+    if (!message && viewerFailed) {
+      message = text.errors.webgl;
+      isError = true;
+    }
     overlay.hidden = !message;
     overlay.textContent = message ?? "";
     overlay.classList.toggle("error", isError);
@@ -514,12 +522,18 @@ export function mountPage(root, context) {
 
   function viewerReady() {
     if (viewer) return viewer;
+    if (viewerFailed) return null;
     try {
       viewer = createViewer(viewport, {
         label: text.viewport,
-        onLost: () => setOverlay(text.errors.webgl, true),
+        // No WebGL, or the context was lost: the viewer stays empty from here on.
+        onLost: () => {
+          viewerFailed = true;
+          setOverlay(text.errors.webgl, true);
+        },
       });
     } catch {
+      viewerFailed = true;
       setOverlay(text.errors.webgl, true);
       return null;
     }
@@ -556,7 +570,7 @@ export function mountPage(root, context) {
   function renderInfo() {
     info.replaceChildren();
     const shown = S.shown?.metrics ? S.shown : S.lastGood;
-    placeholder.hidden = !!viewer?.hasDraft();
+    placeholder.hidden = !!viewer?.hasDraft() || viewerFailed;
     if (!shown?.metrics) return;
     const m = shown.metrics;
     info.append(
@@ -832,6 +846,8 @@ export function mountPage(root, context) {
     listView.hidden = false;
     viewer?.dispose();
     viewer = null;
+    viewerFailed = false;
+    setOverlay(null);
     loadList();
   }
 

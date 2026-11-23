@@ -2,10 +2,11 @@ import pytest
 from conftest import FakeRuns
 from deerflow_extension_api import AGENT_RUNS_RESOLVER_KEY, ExtensionPrincipal
 from deerflow_extension_api.auth import EXTENSION_PRINCIPAL_RESOLVER_KEY
-from deerflow_extension_cad_design.router import build_router, valid_name
-from deerflow_extension_cad_design.store import Store
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+
+from deerflow_extension_cad_design.router import build_router, valid_name
+from deerflow_extension_cad_design.store import Store
 
 DESIGN = "a" * 32
 

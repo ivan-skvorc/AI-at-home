@@ -229,7 +229,17 @@ class Designs:
         design_id = new_id()
         # Hidden from the chat lists (deerflow_listed); still reachable by URL.
         thread_id = await runs.create_thread(metadata={"cad_design_id": design_id, "deerflow_listed": False})
-        return {"design": await self._call(self.store.create_design, owner, design_id, title, thread_id)}
+        try:
+            design = await self._call(self.store.create_design, owner, design_id, title, thread_id)
+        except BaseException:
+            # A refused row (the per-owner cap) would orphan the thread: it is unlisted
+            # and only purge_design, which needs the row, ever deletes it.
+            try:
+                await runs.delete_thread(thread_id=thread_id)
+            except AgentRunError:
+                pass
+            raise
+        return {"design": design}
 
     async def get_design(self, payload: Mapping[str, Any], context: Any) -> dict[str, Any]:
         owner = self._owner(context)

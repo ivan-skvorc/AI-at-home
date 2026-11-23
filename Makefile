@@ -43,7 +43,7 @@ help:
 	@echo "  make detect-thread-boundaries - Inventory backend executor/thread/event-loop boundaries"
 	@echo "  make detect-blocking-io        - Inventory blocking IO that may block the backend event loop"
 	@echo "  make drift-eval      - Measure mission drift on a large PDF (PAGES=/MODE=/PRIMARY=/JUDGE=)"
-	@echo "  make cad-eval MODEL=... - Score a model's CAD parts against ground truth (K=3 BAND= SPEC= MEASURE_PYTHON=; needs make dev)"
+	@echo "  make cad-eval MODEL=... - Score a model's CAD parts against ground truth (K=3 BAND= SPEC= CAD_PATH= MEASURE_PYTHON=; needs make dev)"
 	@echo "  make install         - Install all dependencies (frontend + backend + pre-commit hooks)"
 	@echo "  make extension-install SOURCE=... - Install and enable a trusted Python extension"
 	@echo "  make extension-upgrade SOURCE=... - Replace an installed extension and keep its config"
@@ -119,11 +119,13 @@ drift-eval:
 # MEASURE_PYTHON names another Python with the CAD module, such as the kernel
 # venv; a path is taken from the repository root, because the recipe runs in
 # backend/, and a bare command name is left for PATH.
+# CAD_PATH=design drafts each part in OpenSCAD first, as the design page does
+# (not PATH=, which would replace the recipe's command search path).
 # Depth: docs/guide/cad-eval.md
 cad-eval:
 	@cd backend && PYTHONPATH=. uv run python -m scripts.benchmark.cad_eval run \
 		$(if $(MODEL),--model "$(MODEL)",) --k $(or $(K),3) \
-		$(if $(BAND),--band $(BAND),) $(if $(SPEC),--spec $(SPEC),) $(if $(QUANT),--quant $(QUANT),) \
+		$(if $(BAND),--band $(BAND),) $(if $(SPEC),--spec $(SPEC),) $(if $(QUANT),--quant $(QUANT),) $(if $(CAD_PATH),--path $(CAD_PATH),) \
 		$(if $(BASE_URL),--base-url $(BASE_URL),) $(if $(MAX_COST),--max-cost $(MAX_COST),) $(if $(NO_MODULE),--no-module,) \
 		$(if $(MEASURE_PYTHON),--measure-python "$(if $(findstring /,$(MEASURE_PYTHON)),$(abspath $(MEASURE_PYTHON)),$(MEASURE_PYTHON))",)
 

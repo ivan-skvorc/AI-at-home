@@ -5,6 +5,7 @@ import re
 from pathlib import Path
 
 import pytest
+
 from deerflow_extension_cad_design import install
 
 MiB = 1024 * 1024

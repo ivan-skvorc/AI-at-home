@@ -7,6 +7,9 @@ PYTHONPATH=. uv run python -m scripts.benchmark.cad_eval run --model qwen3-32k
 PYTHONPATH=. uv run python -m scripts.benchmark.cad_eval run --model qwen3-32k --band holes --k 1
 PYTHONPATH=. uv run python -m scripts.benchmark.cad_eval run --model qwen3-32k --spec h01-mounting-plate
 
+# the design path: an OpenSCAD draft first, then the port to CadQuery (design_path.py)
+PYTHONPATH=. uv run python -m scripts.benchmark.cad_eval run --model qwen3-32k --path design
+
 # the one spec for a Gateway with the CAD module turned off
 PYTHONPATH=. uv run python -m scripts.benchmark.cad_eval run --model qwen3-32k --no-module
 
@@ -31,6 +34,7 @@ from typing import Any
 import httpx
 
 from .agent import DEFAULT_BASE_URL, DEFAULT_TIMEOUT_SECONDS, SpendCapReached, StartRefused, check_gateway, download, headers, run_request, token_usage
+from .design_path import DEFAULT_PATH, PATHS, draft_prompt, extract_draft, finalize_prompt, path_hash
 from .measuring import MeasureCli
 from .score import TABLE_HEADER, Build, SampleResult, Transcript, format_row, judge_truth, read_transcript, summarize
 from .specs import BANDS, NO_MODULE_BAND, Spec, SpecError, load_specs, spec_set_hash
@@ -39,7 +43,7 @@ logger = logging.getLogger("cad_eval")
 
 DEFAULT_OUT_DIR = Path("/tmp/deer-flow-cad-eval")
 SKILL_DIR = Path(__file__).resolve().parents[4] / "skills" / "public" / "cad-modeling"
-USAGE = "cad-eval needs a model: make cad-eval MODEL=<a model name from config.yaml> [K=3] [BAND=prismatic|holes|fits] [SPEC=<id,...>]"
+USAGE = "cad-eval needs a model: make cad-eval MODEL=<a model name from config.yaml> [K=3] [BAND=prismatic|holes|fits] [SPEC=<id,...>] [CAD_PATH=direct|design]"
 #: Exit statuses: a completed run, a run with samples that produced nothing to score, usage, refused to start.
 EXIT_OK, EXIT_INCOMPLETE, EXIT_USAGE, EXIT_REFUSED = 0, 1, 2, 3
 
@@ -80,17 +84,36 @@ def _facts(result: SampleResult, transcript: Transcript) -> None:
     result.tool_errors = transcript.tool_errors
 
 
-async def evaluate_sample(client: httpx.AsyncClient, spec: Spec, sample: int, *, model: str, measurer, out_dir: Path, timeout: float) -> SampleResult:
-    """One request, one run, one score. Only a re-measured STEP decides the truth pass."""
+async def _design_runs(client: httpx.AsyncClient, spec: Spec, result: SampleResult, *, model: str, timeout: float) -> list[dict[str, Any]]:
+    """The design path's two turns in one thread: the OpenSCAD draft, then the port to CadQuery."""
+    draft = await run_request(client, prompt=draft_prompt(spec.prompt()), model=model, thread_id=result.thread_id, timeout=timeout)
+    result.error = draft.error
+    result.draft_builds = len(read_transcript(draft.messages).builds)
+    scad = extract_draft(draft.messages)
+    result.draft_found = scad is not None
+    if scad is None or draft.error:
+        # No file to port: the sample has no part, which is the path's honest result.
+        return draft.messages
+    final = await run_request(client, prompt=finalize_prompt(scad), model=model, thread_id=result.thread_id, timeout=timeout)
+    result.error = final.error
+    return [*draft.messages, *final.messages]
+
+
+async def evaluate_sample(client: httpx.AsyncClient, spec: Spec, sample: int, *, model: str, measurer, out_dir: Path, timeout: float, path: str = DEFAULT_PATH) -> SampleResult:
+    """One request, one run (two on the design path), one score. Only a re-measured STEP decides the truth pass."""
     thread_id = f"cad-eval-{spec.id}-{sample}-{uuid.uuid4().hex[:8]}"
-    result = SampleResult(spec=spec.id, band=spec.band, sample=sample, thread_id=thread_id)
-    record = await run_request(client, prompt=spec.prompt(), model=model, thread_id=thread_id, timeout=timeout)
-    result.error = record.error
+    result = SampleResult(spec=spec.id, band=spec.band, sample=sample, thread_id=thread_id, path=path)
+    if path == "design":
+        messages = await _design_runs(client, spec, result, model=model, timeout=timeout)
+    else:
+        record = await run_request(client, prompt=spec.prompt(), model=model, thread_id=thread_id, timeout=timeout)
+        result.error = record.error
+        messages = record.messages
     directory = out_dir / thread_id
     directory.mkdir(parents=True, exist_ok=True)
-    (directory / "messages.json").write_text(json.dumps(record.messages, indent=1, default=str), encoding="utf-8")
+    (directory / "messages.json").write_text(json.dumps(messages, indent=1, default=str), encoding="utf-8")
 
-    transcript = read_transcript(record.messages)
+    transcript = read_transcript(messages)
     _facts(result, transcript)
     usage = await token_usage(client, thread_id)
     result.input_tokens = int(usage.get("total_input_tokens") or 0)
@@ -129,7 +152,7 @@ def _line(result: SampleResult) -> str:
     if result.reply_ok is not None:
         verdict = "PASS" if result.reply_ok else "FAIL"
     else:
-        verdict = "TRUTH PASS" if result.truth_passed else "self-pass, truth FAIL" if result.self_passed else "no part"
+        verdict = "TRUTH PASS" if result.truth_passed else "self-pass, truth FAIL" if result.self_passed else "no draft" if result.draft_found is False else "no part"
     refusals = f", refused {sum(result.refusals.values())}" if result.refusals else ""
     error = f" !! {result.error}" if result.error else ""
     return f"  {result.spec} #{result.sample}: {verdict} ({result.builds} build(s){refusals}, {result.total_tokens} tokens){error}"
@@ -138,6 +161,9 @@ def _line(result: SampleResult) -> str:
 def _meta(args, facts, specs: list[Spec], results: list[SampleResult], now: datetime) -> dict[str, Any]:
     provenance = next((result.provenance for result in results if result.provenance), {})
     scope = args.band or ("specs" if args.spec else "all")
+    if args.path == "design":
+        # Same specs, other prompts: the design path's prompt hash rides in the Specs cell.
+        scope += f"; design {path_hash()}"
     return {
         "date": now.date().isoformat(),
         "model": args.model,
@@ -179,6 +205,9 @@ async def run_eval(args, *, transport: httpx.AsyncBaseTransport | None = None, m
     if args.k < 1:
         print("cad-eval: --k must be at least 1", file=sys.stderr)
         return EXIT_USAGE
+    if args.no_module and args.path != DEFAULT_PATH:
+        print("cad-eval: --no-module runs the direct path only", file=sys.stderr)
+        return EXIT_USAGE
     try:
         if args.no_module:
             specs = load_specs(band=NO_MODULE_BAND)
@@ -212,12 +241,12 @@ async def run_eval(args, *, transport: httpx.AsyncBaseTransport | None = None, m
             print(f"cad-eval: not starting: {exc}", file=sys.stderr)
             return EXIT_REFUSED
         out_dir.mkdir(parents=True, exist_ok=True)
-        print(f"cad-eval: {len(specs)} spec(s) x {args.k} sample(s) on {args.model} at {args.base_url}", file=sys.stderr)
+        print(f"cad-eval: {len(specs)} spec(s) x {args.k} sample(s) on {args.model} at {args.base_url}, {args.path} path", file=sys.stderr)
         spent = 0.0
         for spec in specs:
             for sample in range(1, args.k + 1):
                 try:
-                    result = await evaluate_sample(client, spec, sample, model=args.model, measurer=measurer, out_dir=out_dir, timeout=args.timeout)
+                    result = await evaluate_sample(client, spec, sample, model=args.model, measurer=measurer, out_dir=out_dir, timeout=args.timeout, path=args.path)
                 except SpendCapReached as exc:
                     stopped = f"the Gateway's spend cap refused the run (HTTP 402): {exc}"
                     break
@@ -236,7 +265,7 @@ async def run_eval(args, *, transport: httpx.AsyncBaseTransport | None = None, m
     row = format_row(summary, meta)
     record = {
         "generated_at": now.isoformat(),
-        "settings": {"model": args.model, "provider_model": facts.provider_model, "k": args.k, "band": args.band, "spec": args.spec, "no_module": args.no_module, "base_url": args.base_url, "max_cost": args.max_cost},
+        "settings": {"model": args.model, "provider_model": facts.provider_model, "k": args.k, "band": args.band, "spec": args.spec, "no_module": args.no_module, "path": args.path, "base_url": args.base_url, "max_cost": args.max_cost},
         "meta": meta,
         "stopped": stopped,
         "summary": summary.to_dict(),
@@ -253,6 +282,10 @@ async def run_eval(args, *, transport: httpx.AsyncBaseTransport | None = None, m
         print(f"full record: {record_path}", file=sys.stderr)
         return EXIT_OK if ok and not stopped else EXIT_INCOMPLETE
     _report(summary, row, stopped)
+    if args.path == "design":
+        drafted = sum(bool(result.draft_found) for result in results)
+        early = sum(result.draft_builds for result in results)
+        print(f"design path     : {drafted}/{len(results)} drafts in OpenSCAD, {early} build(s) in the draft turn (prompts {path_hash()})")
     print(f"\nfull record: {record_path}", file=sys.stderr)
     # A measurement, not a gate: a low pass rate is a result. A run that could not score every sample is not.
     return EXIT_INCOMPLETE if stopped or summary.errors else EXIT_OK
@@ -274,6 +307,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--k", type=int, default=3, help="Samples per spec (default: 3; one sample of 20 specs has a standard error near 11%%).")
     parser.add_argument("--band", choices=BANDS, default=None, help="Run one band only.")
     parser.add_argument("--spec", default=None, help="Comma-separated spec ids to run.")
+    parser.add_argument("--path", choices=PATHS, default=DEFAULT_PATH, help="direct: the request alone. design: an OpenSCAD draft first, then the port to CadQuery, as the design page does (default: direct).")
     parser.add_argument("--no-module", action="store_true", help="Run the one spec for a Gateway with the CAD module turned off.")
     parser.add_argument("--quant", default=None, help="Quantisation of a local model, recorded in the row (for example Q4_K_M).")
     parser.add_argument("--base-url", default=DEFAULT_BASE_URL, help=f"Gateway base URL (default: {DEFAULT_BASE_URL}).")

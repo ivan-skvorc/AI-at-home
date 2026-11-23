@@ -19,7 +19,10 @@ draft as a checked CadQuery part through the CAD module's `cad_build`.
   0.2.14), because that thread is hidden from the chat lists.
 - Finalize judges the CadQuery part's size against the draft's rendered size
   within 0.5 mm or 2 % per axis, whichever is larger: the draft is a faceted
-  mesh, so `cad_build`'s own 0.1 % box check alone does not fail the build.
+  mesh, so `cad_build`'s own 0.1 % box check alone is not a wrong size. Because
+  `cad_build` exports the part only when every check passes, such a build is
+  rebuilt once against the measured size, and Finalize reports built only when
+  a STEP, GLB, STL or 3MF was exported.
 - Only the file's own errors are stored as a version's render. When the engine
   fails to load, crashes or times out, nothing is stored and no automatic repair
   starts; a later good render replaces a stored failure.

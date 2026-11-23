@@ -1,7 +1,9 @@
 // Runs the shipped Worker bundle in node with the shipped WebAssembly asset:
 // the same bytes and code a browser gets, minus the Worker wrapper.
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 import { gunzipSync } from "node:zlib";
 
@@ -91,11 +93,38 @@ test("a syntax error answers with its line and no mesh", async () => {
   assert.deepEqual(reply.errorLines, [2]);
 });
 
-test("files outside the source cannot be read", async () => {
-  const reply = await send({
+test("files outside the source cannot be read", async (t) => {
+  // Real, readable host files that would render if the Worker could see them: a
+  // valid STL tetrahedron and an OpenSCAD file with a 50 mm cube in it.
+  const dir = await mkdtemp(join(tmpdir(), "scad-worker-"));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const facet = (a, b, c) =>
+    `facet normal 0 0 0\nouter loop\nvertex ${a}\nvertex ${b}\nvertex ${c}\nendloop\nendfacet\n`;
+  const o = "0 0 0",
+    x = "1 0 0",
+    y = "0 1 0",
+    z = "0 0 1";
+  const stl = join(dir, "part.stl");
+  await writeFile(
+    stl,
+    `solid t\n${facet(o, y, x)}${facet(o, x, z)}${facet(o, z, y)}${facet(x, y, z)}endsolid t\n`,
+  );
+  const scad = join(dir, "big.scad");
+  await writeFile(scad, "cube(50);\n");
+
+  const imported = await send({
     type: "render",
     id: 4,
-    code: 'import("/etc/passwd");',
+    code: `import("${stl}");`,
   });
-  assert.equal(reply.ok, false);
+  assert.equal(imported.ok, false);
+  assert.match(imported.warnings.join("\n"), /Can't open import file/);
+
+  const included = await send({
+    type: "render",
+    id: 5,
+    code: `include <${scad}>\ncube(1);\n`,
+  });
+  assert.match(included.warnings.join("\n"), /Can't open include file/);
+  assert.deepEqual(included.metrics?.bbox_mm, [1, 1, 1]);
 });

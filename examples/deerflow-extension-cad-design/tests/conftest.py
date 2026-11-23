@@ -14,6 +14,7 @@ sys.path.insert(0, str(ROOT / "backend/packages/extension-api"))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from deerflow_extension_api import AgentRun, AgentRunError  # noqa: E402
+
 from deerflow_extension_cad_design.actions import Designs  # noqa: E402
 from deerflow_extension_cad_design.store import Store  # noqa: E402
 

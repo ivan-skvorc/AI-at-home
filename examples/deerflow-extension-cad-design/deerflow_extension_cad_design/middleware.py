@@ -57,6 +57,16 @@ def _triple(value: Any) -> list[float] | None:
     return None
 
 
+#: The part files cad_build writes only when every check passes; a failed build
+#: leaves <stem>.failed.glb and .failed.png, which are not the part.
+DELIVERABLE_SUFFIXES = (".step", ".glb", ".stl", ".3mf")
+
+
+def deliverable(name: str) -> bool:
+    lower = name.lower()
+    return lower.endswith(DELIVERABLE_SUFFIXES) and ".failed." not in lower
+
+
 def bbox_check(measured: list[float], draft: list[float]) -> tuple[bool, list[float]]:
     tolerance = [max(TOLERANCE_MM, TOLERANCE_RATIO * abs(size)) for size in draft]
     return all(abs(m - d) <= t for m, d, t in zip(measured, draft, tolerance, strict=True)), tolerance
@@ -80,7 +90,9 @@ def final_from_answer(answer: Mapping[str, Any], previous: Mapping[str, Any] | N
         final["bbox_mm"] = measured
     # cad_build judges the box at 0.1 %, but the draft's box is a faceted mesh's: a true
     # cylinder or sphere differs from it by more than that. The page judges the box
-    # itself (max(0.5 mm, 2 %)), so a failed box check alone does not fail the build.
+    # itself (max(0.5 mm, 2 %)), so a failed box check alone is not a wrong size. But
+    # cad_build exports the part (STEP, GLB, STL) only when every check passes, so such
+    # a build is "built" only once a rebuild against the measured size has exported it.
     failed = [str(check.get("check")) for check in checks if check.get("passed") is False]
     box_only = answer.get("error") is None and failed == ["bounding box"] and measured is not None and draft is not None
     if answer.get("passed") is not True and not box_only:
@@ -94,6 +106,10 @@ def final_from_answer(answer: Mapping[str, Any], previous: Mapping[str, Any] | N
         if not within:
             final.update(status="mismatch", message="Port the draft's dimensions exactly; the CadQuery part has a different size.")
             return final
+    if not any(deliverable(name) for name in files):
+        size = "[" + ", ".join(f"{value:.3f}".rstrip("0").rstrip(".") for value in measured) + "]" if measured is not None else "the measured size"
+        final.update(status="failed", message=f"The part matches the draft, but cad_build exported nothing because its strict bounding box check failed. Build it again passing bbox_xyz_mm = {size}.")
+        return final
     final["status"] = "built"
     return final
 

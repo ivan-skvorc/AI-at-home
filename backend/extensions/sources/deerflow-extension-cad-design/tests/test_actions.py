@@ -1,6 +1,7 @@
 import pytest
 from conftest import action_context
 from deerflow_extension_api import AgentRunError
+
 from deerflow_extension_cad_design.actions import ACTIONS, Designs, simplify_messages
 from deerflow_extension_cad_design.constants import CAD_BUILD_TOOL, SCAD_DRAFT_TOOL
 
@@ -28,6 +29,17 @@ async def test_create_makes_a_hidden_owned_thread(designs, runs):
     assert [d["id"] for d in listed["designs"]] == [design["id"]]
     assert listed["designs"][0]["thumbnail"] is None and listed["designs"][0]["versions"] == 0
     assert (await designs.list_designs({}, action_context("bob", runs)))["designs"] == []
+
+
+async def test_a_refused_create_deletes_its_thread(designs, runs, monkeypatch):
+    import deerflow_extension_cad_design.store as store_module
+
+    monkeypatch.setattr(store_module, "MAX_DESIGNS_PER_OWNER", 1)
+    await new_design(designs, runs)
+    with pytest.raises(AgentRunError) as refused:
+        await new_design(designs, runs)
+    assert refused.value.status_code == 409
+    assert runs.deleted == ["thread-2"]
 
 
 async def test_other_users_get_404(designs, runs):

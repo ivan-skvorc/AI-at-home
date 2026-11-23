@@ -23,6 +23,7 @@ import httpx
 import pytest
 
 from scripts.benchmark.cad_eval.__main__ import build_parser, run_eval
+from scripts.benchmark.cad_eval.design_path import DRAFT_INSTRUCTIONS, DRAFT_RULES, extract_draft, finalize_prompt, path_hash
 from scripts.benchmark.cad_eval.measuring import MeasureCli, MeasureError
 from scripts.benchmark.cad_eval.score import TABLE_HEADER, judge_truth, read_transcript, truth_from, wilson
 from scripts.benchmark.cad_eval.specs import BANDS, NO_MODULE_BAND, PREAMBLE, load_specs, spec_set_hash
@@ -415,6 +416,72 @@ async def test_a_spend_cap_stops_further_samples(tmp_path):
 
     record = _record(tmp_path)
     assert len(record["samples"]) == 2 and record["stopped"].startswith("spend cap")
+
+
+# --- The design path ------------------------------------------------------------
+
+DRAFT = "width = 80; // [40:1:120]\ndepth = 50;\ncube([width, depth, 5]);"
+
+
+def _draft_reply(text: str = f"Here is the draft.\n\n```openscad\n{DRAFT}\n```") -> list[dict]:
+    return [_final(text)]
+
+
+@pytest.mark.anyio
+async def test_the_design_path_drafts_in_openscad_then_ports_the_draft_to_cadquery_in_the_same_thread(tmp_path, capsys):
+    port = [_call("c1", name="plate", script="..."), _answer("c1", _built("plate")), _final()]
+    gateway = FakeGateway([_draft_reply(), port], files={f"{OUTPUTS}/plate.step": b"good"})
+    assert await _run(tmp_path, gateway, FakeMeasurer({b"good": GOOD}), "--path", "design") == 0
+
+    first, second = gateway.posted
+    assert first["config"] == second["config"]
+    draft = first["input"]["messages"][0]["content"]
+    assert draft.startswith(PLATE.prompt()) and draft.endswith(DRAFT_INSTRUCTIONS)
+    finalize = second["input"]["messages"][0]["content"]
+    assert finalize == finalize_prompt(DRAFT) and "cad_build" in finalize
+    # The truth never reaches either turn, and the part is scored on the same truth as the direct path.
+    assert str(PLATE.truth["volume_mm3"]) not in json.dumps(gateway.posted)
+    record = _record(tmp_path)
+    (sample,) = record["samples"]
+    assert (sample["path"], sample["draft_found"], sample["draft_builds"], sample["truth_passed"]) == ("design", True, 0, True)
+    assert record["settings"]["path"] == "design"
+    assert record["meta"]["specs"].endswith(f"(specs; design {path_hash()})")
+    assert "design path     : 1/1 drafts" in capsys.readouterr().out
+
+
+@pytest.mark.anyio
+async def test_a_draft_turn_without_an_openscad_file_is_no_part_and_nothing_is_ported(tmp_path):
+    gateway = FakeGateway([_draft_reply("I would make a plate 80 by 50.")])
+    assert await _run(tmp_path, gateway, FakeMeasurer({}), "--path", "design") == 0
+
+    assert len(gateway.posted) == 1
+    (sample,) = _record(tmp_path)["samples"]
+    assert (sample["draft_found"], sample["truth_passed"], sample["error"]) == (False, False, None)
+
+
+def test_the_draft_is_the_last_openscad_block_the_model_wrote():
+    messages = [
+        {"type": "human", "content": "```openscad\ncube(1);\n```"},
+        _final("first\n```openscad\ncube(2);\n```"),
+        _final([{"type": "text", "text": "fixed\n```scad\ncube(3);\n```"}]),
+        _final("```python\nprint(1)\n```"),
+    ]
+    assert extract_draft(messages) == "cube(3);\n"
+    assert extract_draft([_final("no code")]) is None
+
+
+def test_the_design_path_gives_the_drafting_rules_of_the_page_brief():
+    notes = pytest.importorskip("deerflow_extension_cad_design.notes")
+    for rule in DRAFT_RULES:
+        assert rule in notes.DRAFT_BRIEF.splitlines()
+
+
+@pytest.mark.anyio
+async def test_the_design_path_does_not_run_without_the_module(tmp_path, capsys):
+    gateway = FakeGateway([], cad=False)
+    args = build_parser().parse_args(["run", "--model", "qwen-32k", "--no-module", "--path", "design", "--out-dir", str(tmp_path)])
+    assert await run_eval(args, transport=httpx.MockTransport(gateway.handler), measurer=FakeMeasurer({})) == 2
+    assert "direct path only" in capsys.readouterr().err and gateway.requests == []
 
 
 # --- The module-disabled spec -------------------------------------------------
