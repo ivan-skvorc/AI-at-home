@@ -187,6 +187,29 @@ async function expectModel(page: Page, name: string) {
       // Read three pixels in from each side, like the corner: a screenshot at
       // a fractional offset can catch the panel's border in its edge column.
       const inner = drawn.slice(3, -3);
+      // TEMP-DIAG (#177): remove before merge.
+      if (process.env.CI)
+        console.log(
+          "TEMP-DIAG",
+          name,
+          page.viewportSize()!.width,
+          JSON.stringify({
+            png: [png.readUInt32BE(16), png.readUInt32BE(20)],
+            box,
+            corner,
+            centrePixel: pngRow(png, Math.floor((box.height / 2) * scale))[
+              Math.floor((box.width / 2) * scale)
+            ],
+            drawnCount: drawn.filter(Boolean).length,
+            renderer: await canvas.evaluate((element) => {
+              const gl = document.createElement("canvas").getContext("webgl2");
+              const info = gl?.getExtension("WEBGL_debug_renderer_info");
+              return info
+                ? gl!.getParameter(info.UNMASKED_RENDERER_WEBGL)
+                : String(gl);
+            }),
+          }),
+        );
       return {
         centre: drawn[Math.floor((box.width / 2) * scale)],
         runs: inner.filter((on, x) => on && !inner[x - 1]).length,
