@@ -1,6 +1,6 @@
 # Repo map
 
-Synced by change cycle: 2026-11-23, level 1, "CAD design page"
+Synced by change cycle: 2026-11-23, level 1, "CAD design drafts reach the model"
 
 What the app does, feature by feature, and which files, data and external
 services each feature uses. Each area file opens with its own board and holds
