@@ -1,0 +1,61 @@
+{
+  "schema_version": 1,
+  "id": "cad-design",
+  "locales": {
+    "zh-CN": {
+      "title": "CAD 设计",
+      "description": "在独立的“设计”页面上与助手一起起草零件：助手编写 OpenSCAD 代码，由你的浏览器渲染预览；每次渲染自动保存一个版本，可以手动修改代码或拖动参数滑块，满意后一键生成经过校验的 CadQuery 零件。",
+      "usage": [
+        {
+          "title": "新建设计并描述零件",
+          "description": "打开侧栏中的“设计”，新建一个设计，在左侧对话框中说明零件的外形和以毫米为单位的尺寸。助手编写代码时，右侧预览会随之逐步更新。"
+        },
+        {
+          "title": "修改代码和参数",
+          "description": "在“代码”页签中直接编辑，或在“参数”页签中拖动滑块；松开滑块或保存代码后会生成新版本，助手下次回复时能看到你的改动。"
+        },
+        {
+          "title": "查看版本并回退",
+          "description": "“版本”页签按顺序列出每个版本及其渲染结果；点击某个版本即可查看并以它为基础继续。删除的设计会进入回收站，可以恢复或彻底删除。"
+        },
+        {
+          "title": "生成最终零件",
+          "description": "点击“生成”，助手会把当前草稿移植为 CadQuery 脚本并调用 cad_build 构建；页面并排显示草稿和实测结果，检查包围盒是否一致，并提供 STEP、STL、3MF 和 GLB 文件下载。"
+        }
+      ],
+      "requirements": [
+        "草稿在浏览器中用 OpenSCAD（WebAssembly 版本）渲染，Gateway 从不执行模型编写的代码；需要支持 WebAssembly 和 WebGL 的现代浏览器。",
+        "生成最终零件需要已启用的 CAD 零件模块（cad_build）。",
+        "通过登录后的浏览器会话使用；设计对话不会出现在聊天列表中。"
+      ]
+    },
+    "en-US": {
+      "title": "CAD designs",
+      "description": "Draft a part with the assistant on its own Designs page: the assistant writes OpenSCAD and your browser renders it. Every render is saved as a version, you can edit the code or drag parameter sliders, and Finalize turns the draft into a checked CadQuery part.",
+      "usage": [
+        {
+          "title": "Start a design and describe the part",
+          "description": "Open Designs in the sidebar, create a design, and describe the part with its sizes in millimetres in the conversation on the left. The preview on the right updates while the assistant writes the code."
+        },
+        {
+          "title": "Edit the code and the parameters",
+          "description": "Edit the file in the Code tab or drag the sliders in the Parameters tab. Releasing a slider or saving the code makes a new version, and the assistant sees your edit on its next turn."
+        },
+        {
+          "title": "Step through versions",
+          "description": "The Versions tab lists every version with its render result; click one to view it and continue from it. Deleted designs go to the trash, where you can restore or purge them."
+        },
+        {
+          "title": "Finalize the part",
+          "description": "Finalize has the assistant port the draft to a CadQuery script and build it with cad_build. The page shows the draft and the measured part side by side, checks that their bounding boxes agree, and links the STEP, STL, 3MF and GLB files."
+        }
+      ],
+      "requirements": [
+        "Drafts render in your browser with OpenSCAD compiled to WebAssembly; the Gateway never runs model-written code. It needs a current browser with WebAssembly and WebGL.",
+        "Finalize needs the CAD parts module (cad_build) enabled.",
+        "It works from a signed-in browser session; design conversations stay out of the chat list."
+      ]
+    }
+  },
+  "docs_url": "https://github.com/ivan-skvorc/AI-at-home/tree/main/examples/deerflow-extension-cad-design#readme"
+}

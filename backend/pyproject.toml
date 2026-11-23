@@ -71,6 +71,9 @@ extensions = [
     # Fork: the CAD model preview ships installed. Browser-only and pure Python,
     # so it needs no platform marker.
     "deerflow-extension-cad-preview",
+    # Fork: the CAD design page ships installed. Its OpenSCAD runs in the browser
+    # and its Python is pure, so it needs no platform marker either.
+    "deerflow-extension-cad-design",
 ]
 # Fork: the CAD module ships installed (FORK.md §51). It has a group of its own
 # because its geometry kernel has wheels for fewer hosts than everything else
@@ -146,4 +149,5 @@ deerflow-harness = { workspace = true }
 deerflow-extension-api = { workspace = true }
 deerflow-extension-workflows = { path = "extensions/sources/deerflow-extension-workflows" }
 deerflow-extension-cad-preview = { path = "extensions/sources/deerflow-extension-cad-preview" }
+deerflow-extension-cad-design = { path = "extensions/sources/deerflow-extension-cad-design" }
 deerflow-extension-cad = { path = "extensions/sources/deerflow-extension-cad" }

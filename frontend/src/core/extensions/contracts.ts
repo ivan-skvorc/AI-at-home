@@ -13,6 +13,13 @@ export type ExtensionRequestOptions = Pick<
   RequestInit,
   "method" | "headers" | "body" | "signal"
 >;
+/** One server-sent event of a joined run; `data` is parsed JSON, or the raw text. */
+export type RunStreamEvent = { event: string; data: unknown };
+/** Names of the models this user can pick; `defaultName` is the user's current choice. */
+export type SurfaceModels = {
+  list: Array<{ name: string; display_name?: string }>;
+  defaultName?: string;
+};
 export type SurfaceContext = {
   namespace: string;
   locale: string;
@@ -27,6 +34,17 @@ export type SurfaceContext = {
   ) => Promise<Response>;
   /** Host resolves current thread ownership before navigating; unavailable on older hosts. */
   openConversation?: (threadId: string) => Promise<void>;
+  /**
+   * Observe a run's SSE stream through the authenticated host join route. The
+   * Gateway checks thread ownership; the page signal ends the stream on unmount.
+   */
+  joinRunStream?: (
+    threadId: string,
+    runId: string,
+    options?: { signal?: AbortSignal },
+  ) => AsyncIterable<RunStreamEvent>;
+  /** The host's current model list, read live; empty while it is still loading. */
+  models?: SurfaceModels;
 };
 export type PluginSurface = {
   id: string;
@@ -34,6 +52,8 @@ export type PluginSurface = {
   title: string;
   /** Optional sidebar entry for a page surface; the host owns its URL. */
   navigation?: { label: string; labelZh?: string; icon?: string };
+  /** "full" mounts the page edge to edge under the header, without a title or page scroll. */
+  layout?: "column" | "full";
   /** Mount synchronously; async work must observe context.signal. */
   mount: (
     root: HTMLElement,

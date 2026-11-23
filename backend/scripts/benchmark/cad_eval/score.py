@@ -362,6 +362,11 @@ class SampleResult:
     expected_refused_seen: bool | None = None
     #: The no-module spec: the reply carried every phrase it must.
     reply_ok: bool | None = None
+    #: ``direct``, or ``design``: an OpenSCAD draft first, then the port to CadQuery (design_path.py).
+    path: str = "direct"
+    #: The design path: the draft turn returned an OpenSCAD file, and how many builds it made anyway.
+    draft_found: bool | None = None
+    draft_builds: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

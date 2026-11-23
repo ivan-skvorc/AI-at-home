@@ -23,7 +23,7 @@ def host(monkeypatch):
     request = Request({"type": "http", "app": app, "headers": [], "state": {}})
     request.state.user = user
     request.state.auth_source = "session"
-    request.state.auth = AuthContext(user, ["threads:write", "threads:read", "runs:create", "runs:read", "runs:cancel"])
+    request.state.auth = AuthContext(user, ["threads:write", "threads:read", "threads:delete", "runs:create", "runs:read", "runs:cancel"])
     monkeypatch.setattr("app.gateway.extension_agent_runs.resolve_route_permissions", AsyncMock(return_value=list(request.state.auth.permissions)))
     return control, request, load_user
 
@@ -424,6 +424,64 @@ async def test_custom_agent_binding_and_permission_rechecks_use_current_user(run
     state.agent_runs_host.load_user.return_value = request.state.user.model_copy(update={"system_role": "admin"})
     await runs.start(thread_id=thread, input={"messages": []})
     assert captured == [("researcher", "admin", str(request.state.user.id))]
+
+
+@pytest.mark.asyncio
+async def test_start_forwards_requested_stream_modes_to_admission(runtime, monkeypatch):
+    """API 0.2.14: a plugin page that joins the run stream asks for the modes it reads."""
+    from app.gateway.routers.thread_runs import RunResponse
+
+    runs, _, _, _, _ = runtime
+    thread = await runs.create_thread(thread_id="stream-modes")
+    captured = []
+
+    async def admit(thread_id, body, admitted_request, idempotency_key=None):
+        captured.append(body.stream_mode)
+        return RunResponse(thread_id=thread_id, run_id=f"run-{len(captured)}", assistant_id=body.assistant_id, status="pending")
+
+    monkeypatch.setattr("app.gateway.routers.thread_runs.create_run", admit)
+    await runs.start(thread_id=thread, input={"messages": []})
+    requested = ["values", "messages-tuple"]
+    await runs.start(thread_id=thread, input={"messages": []}, stream_mode=requested)
+    requested.append("updates")  # admitted data is copied before the first await
+    await runs.start(thread_id=thread, input={"messages": []}, stream_mode=("updates", "custom"))
+    assert captured == [None, ["values", "messages-tuple"], ["updates", "custom"]]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stream_mode", ["values", [], ["debug"], ["checkpoints"], ["values", 3], ["values", "values"]])
+async def test_start_rejects_stream_modes_outside_the_extension_subset(runtime, monkeypatch, stream_mode):
+    runs, _, _, _, _ = runtime
+    thread = await runs.create_thread(thread_id="stream-modes-bad")
+    admit = AsyncMock()
+    monkeypatch.setattr("app.gateway.routers.thread_runs.create_run", admit)
+    with pytest.raises(AgentRunError) as rejected:
+        await runs.start(thread_id=thread, input={"messages": []}, stream_mode=stream_mode)
+    assert rejected.value.status_code == 422
+    admit.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_delete_thread_removes_an_owned_thread_and_needs_the_delete_permission(runtime, monkeypatch):
+    """API 0.2.14: a plugin that created a thread for its own entity can delete it with the entity."""
+    runs, state, request, _, _ = runtime
+    thread = await runs.create_thread(thread_id="plugin-owned")
+    first = await runs.start(thread_id=thread, input={"messages": [{"role": "user", "content": "keep"}]})
+    assert (await runs.wait(thread_id=thread, run_id=first.run_id, timeout=5)).status == "success"
+    await runs.delete_thread(thread_id=thread)
+    assert await state.thread_store.get(thread, user_id=None) is None
+    with pytest.raises(AgentRunError) as gone:
+        await runs.get_state(thread_id=thread)
+    assert gone.value.status_code == 404
+    with pytest.raises(AgentRunError) as again:
+        await runs.delete_thread(thread_id=thread)
+    assert again.value.status_code == 404
+    other = await runs.create_thread(thread_id="plugin-kept")
+    monkeypatch.setattr("app.gateway.extension_agent_runs.resolve_route_permissions", AsyncMock(return_value=["threads:write", "threads:read"]))
+    with pytest.raises(AgentRunError) as denied:
+        await runs.delete_thread(thread_id=other)
+    assert denied.value.status_code == 403
+    assert await state.thread_store.get(other, user_id=None) is not None
 
 
 @pytest.mark.asyncio

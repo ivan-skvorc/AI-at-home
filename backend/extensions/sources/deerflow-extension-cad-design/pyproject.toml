@@ -1,0 +1,60 @@
+[project]
+name = "deerflow-extension-cad-design"
+version = "0.1.0"
+description = "A design page for DeerFlow: OpenSCAD drafts rendered in the browser, versions, and a CadQuery finalize step"
+readme = "README.md"
+requires-python = ">=3.12"
+# The browser bundle ships the OpenSCAD WebAssembly build (GPL-2.0-or-later), so the package is GPL too.
+license = "GPL-2.0-or-later"
+license-files = ["THIRD_PARTY_NOTICES.md"]
+dependencies = [
+    "deerflow-extension-api>=0.2.14,<0.3",
+    # The contributed file route (router.py). The Gateway already has it.
+    "fastapi>=0.115.0,<1",
+    # The design-mode middleware (middleware.py). The Gateway already has both.
+    "langchain>=1.3,<2",
+    "langchain-core>=1.2,<2",
+]
+
+[project.optional-dependencies]
+dev = [
+    "httpx>=0.28,<1",
+    # test_middleware.py builds the Command a tool returns.
+    "langgraph>=1.2.9,<1.3",
+    "pytest>=9,<10",
+    "pytest-asyncio>=1,<2",
+    "ruff>=0.14,<1",
+]
+
+[project.entry-points."deerflow.extensions"]
+cad_design = "deerflow_extension_cad_design:install"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["deerflow_extension_cad_design"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+
+[tool.uv]
+# Rebuild the installed copy when any packaged file changes, not only
+# pyproject.toml (uv's default): DeerFlow bundles this extension as a snapshot
+# that `git pull` updates in place, and a stale build would keep old code and bundles.
+cache-keys = [{ file = "pyproject.toml" }, { file = "deerflow_extension_cad_design/**/*" }]
+
+[tool.ruff]
+line-length = 240
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["deerflow_extension_cad_design"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"

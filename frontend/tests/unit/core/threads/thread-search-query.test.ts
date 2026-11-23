@@ -88,3 +88,24 @@ test("thread search can explicitly include sidecar threads for parent lookup", a
 
   await expect(options.queryFn()).resolves.toEqual([sidecar]);
 });
+
+test("thread search hides threads an extension marked unlisted", async () => {
+  const search = rs
+    .fn()
+    .mockResolvedValue([
+      makeThread("primary-1"),
+      makeThread("design-1", { deerflow_listed: false, cad_design_id: "d" }),
+      makeThread("listed-1", { deerflow_listed: true }),
+      makeThread("odd-1", { deerflow_listed: "false" }),
+    ]);
+  const options = buildThreadsSearchQueryOptions(
+    { threads: { search } },
+    DEFAULT_THREAD_SEARCH_PARAMS,
+  );
+
+  await expect(options.queryFn()).resolves.toEqual([
+    makeThread("primary-1"),
+    makeThread("listed-1", { deerflow_listed: true }),
+    makeThread("odd-1", { deerflow_listed: "false" }),
+  ]);
+});

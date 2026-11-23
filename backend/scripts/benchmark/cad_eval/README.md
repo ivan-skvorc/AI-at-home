@@ -8,7 +8,7 @@ a result row and the dated results are in
 
 ```bash
 # from the repository root, with `make dev` up
-make cad-eval MODEL=<name from config.yaml> [K=3] [BAND=prismatic|holes|fits] [SPEC=<id,...>]
+make cad-eval MODEL=<name from config.yaml> [K=3] [BAND=prismatic|holes|fits] [SPEC=<id,...>] [CAD_PATH=design]
 
 # from backend/
 PYTHONPATH=. uv run python -m scripts.benchmark.cad_eval list
@@ -25,6 +25,7 @@ uv run --no-project pytest -q tests/test_eval_specs.py
 | --- | --- |
 | `specs.py` | Loads `specs/<id>/spec.json`, the bands and the spec-set hash |
 | `score.py` | Pure scoring: the transcript, the truth judgement, the Wilson interval, the row |
+| `design_path.py` | The design path's two prompts (an OpenSCAD draft, then the port to CadQuery) and the draft's extraction |
 | `agent.py` | The Gateway over public HTTP |
 | `measuring.py` | The measurer: `measure_cli` as a child process, for scored parts and reference parts alike |
 | `derive_truth.py` | Builds each `reference.py` and stores what `measure_cli` measures as the truth |

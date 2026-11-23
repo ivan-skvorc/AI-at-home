@@ -26,6 +26,7 @@ make cad-eval MODEL=qwen3-32k K=1 BAND=holes   # one band
 make cad-eval MODEL=qwen3-32k SPEC=h01-mounting-plate,f02-open-box
 make cad-eval MODEL=qwen3-32k QUANT=Q4_K_M     # record a local model's quantisation in the row
 make cad-eval MODEL=gpt-big MAX_COST=2         # stop starting samples after 2 units of spend
+make cad-eval MODEL=qwen3-32k CAD_PATH=design  # draft in OpenSCAD first, then port to CadQuery
 ```
 
 From `backend/`, the same runner takes flags:
@@ -66,6 +67,41 @@ NAME=cad`, then restart). The model is asked for a STEP file, and the run passes
 when it calls no CAD tool and its reply tells the user that `make doctor` on the
 server says why. It refuses to start while the module is on.
 
+### The design path
+
+`make cad-eval MODEL=... CAD_PATH=design` (from `backend/`, `--path design`)
+runs the same specs another way, the way the [CAD design page](cad-design.md)
+works: the model drafts the part in OpenSCAD first and then ports the draft to
+CadQuery for `cad_build`. It answers whether that detour helps or hurts the
+measured part. The variable is `CAD_PATH`, not `PATH`, because `make` would
+hand a `PATH=` override to the recipe as its command search path.
+
+A sample is two runs in one thread:
+
+1. The spec's request and the fixed sentence, followed by the drafting rules
+   the design page's brief gives (millimetres, Z up, named parameters with a
+   Customizer range, no imported files, no `text()`, `$fn` at most 64). The
+   model is asked for the whole file in one ```` ```openscad ```` block and no
+   CAD tool yet.
+2. The last OpenSCAD block of that reply, sent back with the page's finalize
+   instruction: port it to CadQuery with the same parameter names and values
+   and build it with `cad_build`.
+
+Scoring is unchanged: the newest passing build of the two runs is re-measured
+against the same truth. A draft turn that returns no OpenSCAD block ends the
+sample with no part (`draft_found: false` in the record, *no draft* in the
+log); nothing is ported. Builds made in the draft turn anyway are counted in
+`draft_builds`. The design path cannot run with `NO_MODULE`.
+
+It emulates the page's prompts, not the page. No browser renders the draft, so
+the model gets no render result, no automatic repair and no rendered bounding
+box to pass to `cad_build`, and the page's `scad_draft` tool and version note
+are not in play: they reach design runs only. A row's Specs cell carries
+`; design <hash>`, a hash over the two prompts, so a design-path row is
+compared only with rows of the same prompts, and beside a direct row of the
+same spec-set hash. `tests/test_bench_cad_eval.py` keeps the drafting rules
+equal to the page's brief.
+
 ## How one sample is scored
 
 1. The request text, followed by a fixed sentence asking the model not to ask
@@ -101,7 +137,7 @@ newest one, and that part fails its truth.
 | Tokens / sample, Spend | From `/api/threads/{id}/token-usage`; spend is in the Gateway's pricing currency, and a Gateway spend cap (HTTP 402) stops the run |
 | Module, CadQuery | `module_version` and `cadquery_version` from the delivered `report.json`, once the module writes them (item 57) |
 | Skill | The first 12 hex digits of a hash over `skills/public/cad-modeling` |
-| Specs | The spec-set hash and the scope (`all`, a band, or `specs`) |
+| Specs | The spec-set hash and the scope (`all`, a band, or `specs`), plus `; design <hash>` on the design path |
 
 Rows are comparable only when the spec-set hash matches. The hash covers every
 request, truth and reference script and the fixed sentence added to each
@@ -218,4 +254,4 @@ keep older rows, and compare only rows with the same spec-set hash.
 
 No live rows yet. The first rows, one local model with a 32K window and one
 cloud model at `K=3` plus a baseline on main's module, need a model on the
-owner's host.
+owner's host, and so do the design path's first rows beside them.

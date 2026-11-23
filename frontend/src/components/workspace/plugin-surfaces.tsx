@@ -15,11 +15,16 @@ import {
 } from "@/core/extensions/registry";
 import {
   bindFrontendServices,
+  joinRunStream,
   openConversation,
+  pluginModelSnapshot,
   requestExtensionRoute,
 } from "@/core/extensions/services";
 import { mountSurface } from "@/core/extensions/surfaces";
 import { useI18n } from "@/core/i18n/hooks";
+import { useModels } from "@/core/models/hooks";
+import { useLocalSettings } from "@/core/settings/hooks";
+import { cn } from "@/lib/utils";
 
 function Surface({
   entry,
@@ -37,7 +42,16 @@ function Surface({
   const services = useFrontendServices();
   const currentServices = useRef(services);
   currentServices.current = services;
+  const { models } = useModels();
+  const [localSettings] = useLocalSettings();
+  // Read through getters so a page sees the list once it loads without remounting.
+  const currentModels = useRef(pluginModelSnapshot([]));
+  currentModels.current = pluginModelSnapshot(
+    models,
+    localSettings.context.model_name,
+  );
   const [failed, setFailed] = useState(false);
+  const fill = surface.layout === "full";
   useEffect(() => {
     if (!ref.current) return;
     const abort = new AbortController();
@@ -58,6 +72,16 @@ function Surface({
           ),
         openConversation: (id, signal) =>
           openConversation(id, (path) => router.push(path), signal),
+        joinRunStream: (threadId, runId, signal) =>
+          joinRunStream(threadId, runId, signal),
+        models: {
+          get list() {
+            return currentModels.current.list.map((model) => ({ ...model }));
+          },
+          get defaultName() {
+            return currentModels.current.defaultName;
+          },
+        },
         callBackend: bindFrontendServices(
           currentServices.current,
           entry,
@@ -72,9 +96,12 @@ function Surface({
     };
   }, [entry, surface, locale, threadId, user?.id, router]);
   return (
-    <section aria-label={surface.title}>
+    <section
+      aria-label={surface.title}
+      className={cn(fill && "flex min-h-0 flex-1 flex-col")}
+    >
       {failed && <p role="alert">{t.extensions.viewFailed}</p>}
-      <div ref={ref} />
+      <div ref={ref} className={cn(fill && "min-h-0 flex-1")} />
     </section>
   );
 }

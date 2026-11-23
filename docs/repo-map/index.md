@@ -1,6 +1,6 @@
 # Repo map
 
-Synced by change cycle: 2026-11-23, level 1, "Claude Fable 5.2 and the preserved-thinking guard for direct Claude requests"
+Synced by change cycle: 2026-11-23, level 1, "CAD design page"
 
 What the app does, feature by feature, and which files, data and external
 services each feature uses. Each area file opens with its own board and holds
@@ -12,7 +12,7 @@ index.
 | [Chat and the agent loop](chat-and-agent.md) | 19 |
 | [Models and cost](models-and-cost.md) | 11 |
 | [Sidebar and workspace](sidebar-and-workspace.md) | 19 |
-| [Generation, media and documents](generation-and-media.md) | 6 |
+| [Generation, media and documents](generation-and-media.md) | 7 |
 | [Tools, skills and integrations](integrations-and-channels.md) | 18 |
 | [Install, run and operate](ops-and-install.md) | 10 |
 
@@ -143,12 +143,14 @@ flowchart LR
 | `backend/scripts/**` | none (dev tooling) |
 | `backend/scripts/benchmark/drift_eval/**` | Big documents on small models |
 | `backend/scripts/benchmark/cad_eval/**` | CAD parts from a chat |
+| `backend/scripts/benchmark/cad_eval/design_path.py` | CAD parts from a chat, CAD design page |
 | `backend/scripts/migrate_*.py` | Install and configure |
 | `backend/packages/harness/pyproject.toml` | ALL |
 | `backend/packages/extension-api/pyproject.toml` | ALL |
 | `backend/packages/extension-api/**` | Extensions and plugins |
 | `backend/extensions/sources/deerflow-extension-cad/**` | CAD parts from a chat |
 | `backend/extensions/sources/deerflow-extension-cad-preview/**` | CAD model preview |
+| `backend/extensions/sources/deerflow-extension-cad-design/**` | CAD design page |
 | `backend/extensions/sources/deerflow-extension-workflows/**` | Plus Ultracode |
 | `backend/app/__init__.py` | ALL |
 | `backend/app/channels/**` | IM channels |
@@ -800,6 +802,7 @@ flowchart LR
 | `examples/deerflow-extension-agent-teams/**` | Custom agents |
 | `examples/deerflow-extension-cad/**` | CAD parts from a chat |
 | `examples/deerflow-extension-cad-preview/**` | CAD model preview |
+| `examples/deerflow-extension-cad-design/**` | CAD design page |
 | `examples/deerflow-extension-knowledge/**` | Knowledge retrieval |
 | `examples/deerflow-extension-knowledge-center/**` | Knowledge retrieval |
 | `examples/deerflow-extension-knowledge-management/**` | Knowledge retrieval |

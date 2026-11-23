@@ -210,6 +210,7 @@ export const enUS: Translations = {
       example: bundledCopy("deerflow-extension-example", "en-US"),
       cad: bundledCopy("deerflow-extension-cad", "en-US"),
       cadPreview: bundledCopy("deerflow-extension-cad-preview", "en-US"),
+      cadDesign: bundledCopy("deerflow-extension-cad-design", "en-US"),
     },
     pageUnavailable: "Extension page unavailable",
     pageUnavailableHint:

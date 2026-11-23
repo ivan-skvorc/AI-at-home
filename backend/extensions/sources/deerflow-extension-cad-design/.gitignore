@@ -1,0 +1,4 @@
+node_modules/
+!deerflow_extension_cad_design/static/dist/
+!deerflow_extension_cad_design/static/dist/**
+*.egg-info/

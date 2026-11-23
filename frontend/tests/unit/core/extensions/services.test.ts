@@ -4,8 +4,10 @@ import { loadFrontendExtensions } from "@/core/extensions/registry";
 import {
   bindFrontendServices,
   conversationText,
+  joinRunStream,
   latestVisibleAnswer,
   openConversation,
+  pluginModelSnapshot,
   requestExtensionRoute,
 } from "@/core/extensions/services";
 import type { AgentThread } from "@/core/threads/types";
@@ -224,4 +226,111 @@ test("unmounted or switched-account plugin pages cannot navigate after a late me
     openConversation("thread", navigate, abort.signal),
   ).rejects.toThrow();
   expect(getThread).not.toHaveBeenCalled();
+});
+
+function sseBody(chunks: string[]) {
+  const encoder = new TextEncoder();
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      for (const chunk of chunks) controller.enqueue(encoder.encode(chunk));
+      controller.close();
+    },
+  });
+}
+
+async function collect(iterable: AsyncIterable<unknown>) {
+  const events: unknown[] = [];
+  for await (const event of iterable) events.push(event);
+  return events;
+}
+
+test("run stream join reads the authenticated SSE route and parses split events", async () => {
+  request.mockResolvedValue(
+    new Response(
+      sseBody([
+        ': heartbeat\n\nevent: metadata\ndata: {"run_id":',
+        '"r1"}\r',
+        "\n\r\nevent: messages\ndata: [1,\ndata: 2]\n\n",
+        "data: not json\n\nevent: end\ndata: null\n\n",
+      ]),
+      { headers: { "Content-Type": "text/event-stream" } },
+    ),
+  );
+  const signal = new AbortController().signal;
+  expect(await collect(joinRunStream("thread-1", "run_1", signal))).toEqual([
+    { event: "metadata", data: { run_id: "r1" } },
+    { event: "messages", data: [1, 2] },
+    { event: "message", data: "not json" },
+    { event: "end", data: null },
+  ]);
+  expect(request).toHaveBeenCalledTimes(1);
+  const [url, init] = request.mock.calls[0]!;
+  expect(url).toBe("/api/threads/thread-1/runs/run_1/join");
+  expect(init.method).toBe("GET");
+  expect(init.headers.Accept).toBe("text/event-stream");
+  expect(init.signal).toBe(signal);
+});
+
+test("run stream join refuses malformed ids, failed responses and aborted pages", async () => {
+  const signal = new AbortController().signal;
+  for (const [threadId, runId] of [
+    ["../auth", "run"],
+    ["thread", "run/../../x"],
+    ["thread", ""],
+    ["thread", "a".repeat(129)],
+    ["thread?x=1", "run"],
+  ] as const) {
+    await expect(
+      collect(joinRunStream(threadId, runId, signal)),
+    ).rejects.toThrow();
+  }
+  expect(request).not.toHaveBeenCalled();
+  request.mockResolvedValue(new Response("nope", { status: 404 }));
+  await expect(collect(joinRunStream("thread", "run", signal))).rejects.toThrow(
+    "404",
+  );
+  await expect(
+    collect(joinRunStream("thread", "run", AbortSignal.abort())),
+  ).rejects.toThrow();
+  expect(request).toHaveBeenCalledTimes(1);
+});
+
+test("aborting a joined run stream rejects the reader and cancels the body", async () => {
+  const abort = new AbortController();
+  const cancel = rs.fn();
+  const encoder = new TextEncoder();
+  request.mockResolvedValue(
+    new Response(
+      new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(encoder.encode("event: values\ndata: 1\n\n"));
+        },
+        cancel,
+      }),
+    ),
+  );
+  const seen: unknown[] = [];
+  await expect(
+    (async () => {
+      for await (const event of joinRunStream("t", "r", abort.signal)) {
+        seen.push(event);
+        abort.abort();
+      }
+    })(),
+  ).rejects.toThrow();
+  expect(seen).toEqual([{ event: "values", data: 1 }]);
+  expect(cancel).toHaveBeenCalled();
+});
+
+test("plugin model snapshots copy names and prefer the user's model", () => {
+  const models = [
+    { name: "fast", display_name: "Fast", price: { input: 1 } },
+    { name: "smart", display_name: "" },
+  ];
+  expect(pluginModelSnapshot(models, "smart")).toEqual({
+    list: [{ name: "fast", display_name: "Fast" }, { name: "smart" }],
+    defaultName: "smart",
+  });
+  expect(pluginModelSnapshot(models, "gone").defaultName).toBe("fast");
+  expect(pluginModelSnapshot([], "gone")).toEqual({ list: [] });
 });

@@ -116,17 +116,11 @@ every model call faked at the model boundary because the machine that built it h
 and no GPU. It keeps only the live half: whether the monitor catches real drift on a real
 model, and what it costs in time and false stops.
 
-Items **61–64** came from wanting CAD as a place of its own rather than a chat: a
-**design** page with the prompt on one half of the screen and a live 3D preview on the
-other, where the part redraws while the model is still writing it. Four decisions shape
-them, made by the owner on 2026-11-23. Drafts are **OpenSCAD**, rendered in the viewer's
-own browser, because only a browser-side renderer can redraw as the code streams and it
-never runs the model's code on the Gateway. The final part stays **CadQuery** through
-`cad_build`, reached by a Finalize button, because only CadQuery gives true fillets, STEP
-and the measured checks. A design is its **own stored entity** with a version made
-automatically by every render, not a chat with a flag. And the script is **editable**,
-with OpenSCAD's top-level numbers as **sliders** that redraw without a model call. These
-reverse two entries under *Deliberately not*, which now say where the line moved.
+Items **61–64** — the design store and page, live OpenSCAD drafts, the code tab and
+parameter sliders, and Finalize to CadQuery — came from wanting CAD as a place of its own
+rather than a chat, and landed together as the CAD design page: see
+[FORK.md §58](./FORK.md). Their numbers stay retired like 12–15. The design path's first
+live rows in `make cad-eval` (`CAD_PATH=design`) ride with item 48's runs.
 
 Every CAD item states what it costs per request, against two rules that no item loosens.
 `cad_build` may cost at most 150 tokens of every request
@@ -189,14 +183,6 @@ Open items, one line each. The full orchestrator prompts follow.
 - **60. The deviation monitor's live acceptance** — `make drift-eval MODE=agent` with the
   monitor off and on, on one local and one cloud model: what it catches, what it stops by
   mistake, and what each check costs.
-- **61. The design store and the design page** — a design is its own entity with automatic
-  versions; prompt on one half of the screen, preview on the other.
-- **62. Live OpenSCAD drafts** — the draft redraws in the browser while the model writes it,
-  and the render's errors and size go back to the model.
-- **63. The code tab and parameter sliders** — hand edits and slider moves redraw the draft
-  and become versions the model sees.
-- **64. Finalize to CadQuery** — one button ports the draft to CadQuery, runs `cad_build` and
-  checks the measured part against the draft.
 
 **Suggested order for 19–25.** Voice first (19), since it is the one missing modality and it
 closes a live privacy leak. Then the injection boundary (23), *before* anything widens the
@@ -225,11 +211,6 @@ real models and carry the live Ultra delegation, and their refusal counts decide
 gate. Run 48 again after every change to the allow-list, the skill or the tool's answers. 50 only if 48 shows that
 the reader, and not the model, is what stops real parts, and only where a Docker daemon
 can build and test it.
-
-**Suggested order for the design page (61–64).** Strictly in order: 61 gives 62 a place to
-store a draft and show it, 63 edits what 62 renders, and 64 needs a draft worth finalizing.
-None waits for 48 or 50, but run 48 again after 64, since Finalize is a new way to reach
-`cad_build`.
 
 **49** is not CAD and is independent of all of the above; it can start any time.
 
@@ -1485,191 +1466,6 @@ beside it, billed to the run.
 
 ---
 
-## 61. The design store and the design page
-
-**Goal** — A **design** is a stored entity of its own, listed apart from chats, opened at
-its own page: the prompt and the conversation on one half of the screen, the 3D preview
-on the other. Every render makes a version automatically, and a timeline steps back to
-any version and branches from it.
-
-**Why it fits** — Iterating on a part is looking, not reading. In a chat the preview sits in
-the artifact panel behind the messages, and a part's history is scattered across turns
-and file names. A design keeps one part, its versions and its conversation together, and
-leaves chats as they are.
-
-**Depends on** — nothing open. It reuses the shipped GLB and STL viewer (FORK.md §56) for
-the preview and the image page's precedent (FORK.md §26) for a page of its own.
-
-**Scope**
-
-- **Extension first** (AGENTS.md). The full-stack plugin contract already gives a plugin a
-  workspace page, contributed `/api/extensions/` routes and tools
-  (`docs/full-stack-plugins.md`). Ship the design module as a bundled extension beside
-  `cad` and `cad-preview`. If the page contract cannot host the host's conversation view
-  (the composer, streaming messages and the model picker), add a generic hook for that to
-  the contract and use it; the design logic does not go into core.
-- **The store**: a design has an id, an owner, a title, a version list and one backing
-  thread for its conversation, so models, memory, uploads and run history are the ones
-  chats already have. A version records its source (prompt turn, hand edit, slider,
-  Finalize), its parent version, the OpenSCAD source, the parameter values, and, after
-  Finalize, the CadQuery script and the `cad_build` outputs. Owner-scoped like threads
-  (`app/gateway/AUTHORIZATION.md`), and included in `make backup` / `restore`.
-- **Versions are automatic**: each render that succeeds or fails makes one. Stepping back
-  shows that version; prompting or editing from it creates a branch, and the model's next
-  turn is told which version it is working from.
-- **The page**: a split layout, prompt left and preview right, with a draggable divider.
-  At phone width it becomes tabs (Prompt, Preview, Code), and the preview tab shows a dot
-  when a new render lands. A "New design" entry in the sidebar and a list of designs,
-  renamed and deleted like chats (deleted designs go to Trash).
-- Preview: the §56 viewer, with Fit, Reset, the view buttons and the bounding box in
-  millimetres. Items 62–64 feed it.
-
-**Key files** — `docs/full-stack-plugins.md` (the page and route contract),
-`backend/packages/harness/deerflow/extensions/AGENTS.md`,
-`examples/deerflow-extension-cad-preview/` (the viewer to reuse), a new
-`examples/deerflow-extension-cad-design/`, `frontend/src/app/workspace/image/new/` (the
-precedent), `Makefile` (`backup`), FORK.md (a new section and checklist row).
-
-**Done when** — a design can be created, renamed, listed, deleted and restored; versions
-appear without a save button, stepping back and prompting from an old version creates a
-branch the model is told about; another user cannot read or list it; a backup and restore
-round-trips it; and the page is usable one-handed at 390px.
-
-It costs nothing on chat requests. On a design's own thread, the version note it adds to
-each turn is dated and measured against the 32K context-fit check.
-
----
-
-## 62. Live OpenSCAD drafts
-
-**Goal** — On the design page the model writes OpenSCAD, and the preview redraws **while
-the code streams**, in the viewer's own browser. When a render fails or finishes, its
-error or bounding box goes back to the model.
-
-**Why it fits** — Models write OpenSCAD easily and it renders in seconds, which is what a
-draft needs. Rendering in the browser keeps the rule under *Deliberately not*: the Gateway
-never runs what the model wrote. The tab runs it, in a Worker, as it would any untrusted
-page script.
-
-**Depends on** — 61.
-
-**Scope**
-
-- A tool bound **only on design threads**, for example `scad_draft(code, params?)`. It
-  stores the source as a new version and returns at once; it runs nothing on the server.
-  The frontend renders from the tool call's arguments as they stream.
-- The renderer: openscad-wasm in a dedicated Worker, outputting a mesh to the §56 viewer.
-  Measure the WASM's size first against the 4 MiB per-asset cap (§56 already fails an
-  asset over 3 MiB). If it is over, the choice between serving it as a separate host
-  asset and raising the cap for this extension goes to the owner with the numbers. Record
-  OpenSCAD's licence (GPL) and how the fork distributes the binary in FORK.md.
-- Live rendering: debounce while the code streams, render the longest prefix that ends on
-  a complete top-level statement, and keep the last good mesh on screen until a newer one
-  renders. A partial render is marked as partial. The final render runs on the whole
-  source when the tool call completes.
-- Bounds: the Worker has no network, sees only the design's own files, and is terminated
-  after a time limit; a terminated render reports "too slow" with the limit. `$fn` and
-  similar resolution settings are capped for the live pass and lifted for the final one.
-- Feedback: the final render's result — errors with line numbers, or the bounding box,
-  volume and whether the mesh is manifold — is attached to the version and handed to the
-  model at the start of its next turn. A failed render may trigger one automatic repair
-  turn, never more, and the page says so.
-- A short OpenSCAD drafting skill, loaded only on design threads: units in millimetres,
-  Z up, top-level named parameters with Customizer comments (`// [min:step:max]`) so that
-  item 63 can turn them into sliders, and no `import()` of files outside the design.
-
-**Key files** — the design extension from 61, `examples/deerflow-extension-cad-preview/`
-(the viewer and its asset build), `skills/public/` (the drafting skill),
-`backend/tests/test_context_fit_critical.py`, FORK.md.
-
-**Done when** — a streamed draft visibly redraws at least twice before the tool call ends;
-a script with an infinite loop is stopped at the limit and the page stays responsive; a
-syntax error reaches the model with its line on the next turn; the bounding box shown
-matches the one the model is told; and no request leaves the browser from the Worker.
-
-Per request: 0 tokens on chats. On design threads, the tool's description is held to the
-same 150-token rule as `cad_build`, the skill is loaded on demand, and every composer mode
-still fits the 32K check.
-
----
-
-## 63. The code tab and parameter sliders
-
-**Goal** — Beside the preview, a **Code** tab holds the current OpenSCAD source, editable
-by hand, and a **Parameters** panel turns its top-level numbers into sliders. Either
-redraws the draft at once, without a model call, and becomes a version the model sees.
-
-**Why it fits** — Changing a wall from 2 to 2.4 mm is a slider, not a prompt; a round trip
-through a 32K local model for it costs a minute. The older decline of "a panel that
-rebuilds a part from its parameters" was about CadQuery, which needs the Gateway to
-rebuild; an OpenSCAD draft rebuilds in the browser for free.
-
-**Depends on** — 62.
-
-**Scope**
-
-- The code editor is the CodeMirror the frontend already ships, with OpenSCAD
-  highlighting. A hand edit renders on a debounce and makes a version on blur or on
-  Ctrl/Cmd+S, marked as a hand edit.
-- Sliders come from top-level numeric assignments; a Customizer comment sets range and
-  step, otherwise a range is derived from the value and shown as such. Booleans become
-  toggles. Moving a slider re-renders live; releasing it writes the value into the source
-  and makes one version, not one per pixel.
-- The model's next turn receives what changed since its own last version: the hand-edit
-  diff or the new parameter values, so it never undoes them by accident.
-- An edit made while the model is streaming waits until the turn ends, or the user stops
-  the turn; two writers never race on one version.
-
-**Key files** — the design extension, `frontend/package.json` (CodeMirror is already a
-dependency), FORK.md.
-
-**Done when** — a slider move redraws without any request to the Gateway; a hand edit and
-a slider change each produce one version; the model's next answer builds on them rather
-than reverting them; and an edit during a streaming turn is held, not lost.
-
-Per request: only the diff of the user's changes, on design threads only.
-
----
-
-## 64. Finalize to CadQuery
-
-**Goal** — A **Finalize** button on a design turns the current OpenSCAD draft into a
-CadQuery part through `cad_build`, and shows the measured part beside the draft with the
-STEP, STL and 3MF as the version's downloads.
-
-**Why it fits** — The draft is for looking; the part for printing or for a CAD program needs
-what only the CadQuery path has: true fillets and chamfers, a STEP file, the measured
-hole positions and the print notes (FORK.md §51). Finalize keeps the fast loop and the
-measured result on the same page.
-
-**Depends on** — 62; 63 for the parameter values it carries.
-
-**Scope**
-
-- Finalize asks the model, in the design's own thread, to port the current version to
-  CadQuery with the same parameter names and values, and to run `cad_build`. Draft fillet
-  approximations (`minkowski`, `hull`) become real fillets.
-- The check: the measured bounding box must match the draft's within a stated tolerance.
-  A mismatch is shown beside both previews and handed to the model as the next turn's
-  repair note.
-- A finalized version shows the draft and the measured GLB side by side (or a toggle at
-  phone width), and lists the files `cad_build` wrote. A later prompt continues from the
-  draft; Finalize can run again.
-- Item 48 gains a band for this path: draft → Finalize on the existing specs, so the eval
-  says whether going through OpenSCAD helps or hurts the measured result.
-
-**Key files** — `examples/deerflow-extension-cad/` (`cad_build` is reused, not changed),
-the design extension, `backend/scripts/benchmark/cad_eval/` (the new band),
-`docs/guide/cad-eval.md`, FORK.md §51.
-
-**Done when** — Finalize on a drafted bracket produces STEP, STL and 3MF on the design's
-version; a deliberately mismatched port is caught by the bounding-box check and repaired
-on the next turn; and the eval's new band has rows on one local and one cloud model.
-
-Per request: none beyond `cad_build`'s existing cost, and only when Finalize is pressed.
-
----
-
 ## Deliberately not on this roadmap
 
 **GPU passthrough into the sandbox container.** The shipped media work (FORK.md §23)
@@ -1732,7 +1528,7 @@ obvious: `exec` the script in the Gateway with a trimmed set of builtins. A trim
 is not a boundary, and the default sandbox has no shell because `LocalSandboxProvider` is
 not an isolation boundary either. Item 44 interprets an allow-list instead, and item 50
 runs real scripts where a container exists. The only other route is the user's own
-browser: item 62 renders OpenSCAD drafts in a Worker in the tab, where the model's code has
+browser: the CAD design page (FORK.md §58) renders OpenSCAD drafts in a Worker in the tab, where the model's code has
 no more reach than a web page. There is no Gateway-side route; a Gateway-side MCP server
 that runs scripts is the same shortcut under another name.
 
@@ -1744,11 +1540,11 @@ above. Item 48's eval and the passed parts from item 44 are what this fork can h
 window, is the computer-use surface this file already declines.
 
 **OpenSCAD or build123d as the language of the measured part.** OpenSCAD is the draft
-language of the design page (items 61–64), because models write it easily and it renders
+language of the CAD design page (FORK.md §58), because models write it easily and it renders
 in the browser as it streams. It is not the language of the final part: it has no true
 fillets or chamfers, exports meshes rather than STEP by default, gives the checker no
 analytic holes to measure, and fails silently where CadQuery fails loudly, so Finalize
-(item 64) ports every draft to CadQuery before `cad_build` measures it. build123d has no
+(FORK.md §58) ports every draft to CadQuery before `cad_build` measures it. build123d has no
 head-to-head result over CadQuery and less training data behind it, and 0.13 needs OCP 8
 where CadQuery 2.8.0 needs OCP below 8, so the two cannot share a kernel. If it is ever
 wanted, it is one more input format for item 44, argued on its own; build123d may enter item 50's image only as 0.12.x on OCP 7.9, and only
@@ -1793,6 +1589,6 @@ revisited only if its data shows that refusals still use up the attempts.
 **A CAD-specific repair store, and other CAD extras.** Repair patterns go to `failures.md`
 through the skill learning loop (FORK.md §55), and `report.json` records a part's
 parameters for follow-up edits. Consensus sampling, FEA feedback, DXF export, a panel
-that rebuilds a CadQuery part from its parameters (item 63's sliders move OpenSCAD drafts
+that rebuilds a CadQuery part from its parameters (the design page's sliders, FORK.md §58, move OpenSCAD drafts
 only, in the browser), and remixing uploaded STEP files have low
 measured value for this user now, and each needs a new hook (`read_output`) or new UI.

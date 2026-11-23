@@ -1,7 +1,11 @@
 import { afterEach, beforeEach, expect, rs, test } from "@rstest/core";
+import { BoxIcon, PuzzleIcon } from "lucide-react";
 
 import { fetchFrontendExtensions } from "@/core/extensions/api";
-import { loadFrontendExtensions } from "@/core/extensions/registry";
+import {
+  extensionIcon,
+  loadFrontendExtensions,
+} from "@/core/extensions/registry";
 
 const config = rs.hoisted(() => ({ backend: "" }));
 rs.mock("@/core/config", () => ({ getBackendBaseURL: () => config.backend }));
@@ -335,3 +339,43 @@ for (const field of ["mentionProviders", "surfaces"] as const) {
     ]);
   });
 }
+
+test("the icon allowlist includes box and falls back for unknown names", () => {
+  expect(extensionIcon("box")).toBe(BoxIcon);
+  expect(extensionIcon("cube")).toBe(PuzzleIcon);
+  expect(extensionIcon("toString")).toBe(PuzzleIcon);
+});
+
+test("page surfaces accept only the column and full layouts", async () => {
+  const assets = {
+    ...entry,
+    transport: "assets-v1" as const,
+    entry: `/api/plugins/${entry.namespace}/assets/${"b".repeat(64)}/index.mjs`,
+  };
+  const surface = {
+    id: "designs",
+    slot: "page",
+    title: "Designs",
+    mount: () => undefined,
+  };
+  for (const layout of [undefined, "column", "full"]) {
+    const loaded = await loadFrontendExtensions(
+      [assets],
+      rs.fn(),
+      async () => ({
+        default: { ...extension, surfaces: [{ ...surface, layout }] },
+      }),
+    );
+    expect(loaded[0]?.error).toBeUndefined();
+  }
+  for (const layout of [null, "wide", 1, { toString: () => "full" }]) {
+    const loaded = await loadFrontendExtensions(
+      [assets],
+      rs.fn(),
+      async () => ({
+        default: { ...extension, surfaces: [{ ...surface, layout }] },
+      }),
+    );
+    expect(loaded[0]?.error).toBeTruthy();
+  }
+});

@@ -58,12 +58,29 @@ capabilities or interpret the revision as cross-process recovery authority.
 - `create_thread(assistant_id="lead_agent", thread_id=None, metadata=None)` creates
   an owned thread. A caller-chosen ID is idempotent under the ordinary thread
   creation rules. Use a stable ID when recovering uncertain creation.
+- `delete_thread(thread_id)` (API 0.2.14) is the host's thread DELETE for a
+  thread the caller owns: its files, checkpoints, runs and events go with it.
+  A plugin that created a thread for an entity of its own, such as a design,
+  calls it when that entity is deleted for good, because a thread created
+  with `deerflow_listed: false` metadata has no chat-list entry where the user
+  could delete it. A missing or foreign thread raises 404, work in flight 409,
+  and a user without `threads:delete` 403.
 - `start(thread_id, input, context=None, idempotency_key=None)` starts or continues
   the Agent associated with that existing thread. Select a Custom Agent when
   creating the thread; changing `agent_name` or bootstrapping through `context`
   is rejected. Model/context options follow normal host validation. External
   system/developer messages are rejected. Concurrent starts conflict rather than
   implicitly interrupting each other.
+- `start(..., stream_mode=None)` (API 0.2.14) chooses what the run publishes to
+  its stream, so a plugin page can follow it live through
+  `GET /api/threads/{thread_id}/runs/{run_id}/join`, which keeps its usual owner
+  check. Pass a non-empty list of distinct modes from `values`,
+  `messages-tuple`, `updates` and `custom`; `messages-tuple` carries the
+  model's token and tool-call chunks as they arrive. `None` keeps the host
+  default, `values`. Any other value, including a bare string or a host-only
+  mode such as `debug`, raises `AgentRunError(422)` before admission. Declare
+  `@extension(api="0.2.14")` when you pass it, because an older host's `start`
+  rejects the keyword.
 - `get(thread_id, run_id)` returns an `AgentRun` with IDs, status, originating
   assistant, and stop reason. It follows the normal owner-scoped run API.
 - `wait(thread_id, run_id, timeout=60)` polls until the run leaves pending/running.

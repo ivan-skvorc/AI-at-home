@@ -101,6 +101,14 @@ export const extensionCatalog = [
     guide:
       "https://github.com/ivan-skvorc/AI-at-home/tree/main/examples/deerflow-extension-cad-preview#readme",
   },
+  {
+    key: "cadDesign",
+    package: "deerflow-extension-cad-design",
+    namespace: "cad-design",
+    // A fork package: upstream has no such example to link to.
+    guide:
+      "https://github.com/ivan-skvorc/AI-at-home/tree/main/examples/deerflow-extension-cad-design#readme",
+  },
 ] as const;
 
 export interface ExtensionCatalogEntry {

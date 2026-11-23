@@ -176,6 +176,16 @@ class AgentRuns(Protocol):
         """
         ...
 
+    async def delete_thread(self, *, thread_id: str) -> None:
+        """Delete a thread the caller owns, with its files and history (API 0.2.14).
+
+        For a plugin that created the thread for an entity of its own and deletes
+        that entity for good. It is the host's thread DELETE: a missing or foreign
+        thread raises 404, work still in flight 409, and a caller without the
+        threads:delete permission 403.
+        """
+        ...
+
     async def copy_workspace(self, *, source_thread_id: str, thread_id: str) -> WorkspaceSnapshot:
         """Copy the source thread's workspace and uploads into a child (API 0.2.10).
 
@@ -205,6 +215,7 @@ class AgentRuns(Protocol):
         idempotency_key: str | None = None,
         execution_fence: ExecutionFence | None = None,
         artifact_imports: list[dict[str, Any]] | None = None,
+        stream_mode: list[str] | None = None,
     ) -> AgentRun:
         """Start or continue the thread's Agent with ordinary run admission.
 
@@ -215,6 +226,12 @@ class AgentRuns(Protocol):
         sha256, size). A new run verifies the copies while holding admission,
         before constructing its Agent. Idempotent retries reuse the original Run
         without revalidating files that it may already have edited.
+
+        stream_mode (API 0.2.14) picks what the run publishes to its stream,
+        for a browser page that joins it (GET /api/threads/{id}/runs/{id}/join):
+        a non-empty list of distinct values from "values", "messages-tuple",
+        "updates" and "custom". None keeps the host default ("values"); any
+        other value raises AgentRunError(422) before admission.
         """
         ...
 

@@ -29,6 +29,7 @@
 > - 🧩 **Extensions whose tools produce files** — an installed extension's tool can write a file into the conversation that called it, and the file opens in the artifact panel and the Files view like one from a built-in tool. It works on the default sandbox with no shell, because the Gateway does the writing. **The tool only names a file:** it cannot choose a conversation or a folder, and an existing file is never replaced. Nothing to switch on; `plugin_outputs` in `config.yaml` caps a file at 8 MiB and one tool call at 32 MiB.
 > - 📐 **Mechanical parts from a chat** — describe a bracket and get a script you can edit, a picture of the part right in the reply, a STEP file for a CAD program, a 3MF for your slicer and an STL and GLB at real size, on whichever model the conversation uses, with the internet switch off. **The model's script is never run:** the bundled CAD module reads it and performs an allow-list of CadQuery operations itself (revolved, lofted and swept shapes, lettering and threads included), then measures the result and refuses to hand over a STEP file for a part that missed its numbers, with holes checked where they are when the request places them. **A part is built until it passes:** the assistant writes your requirements down first, builds, reads the measurements, repairs and builds again, while the tool counts the attempts, holds the numbers the part was first given, and stops the loop with a report after eight builds instead of running on. A print-in-place hinge or a box with its lid passes as several bodies and arrives both in place and laid out on the bed, and every passed part comes with a print report (grams, overhang, thinnest wall, fit to your bed) that is **reported, never pass or fail**; your printer goes in an optional `printer:` block of the CAD record. Installed and on with every new install and every update on Linux (x86-64 and arm64, glibc 2.31 or newer) and Apple-silicon Macs; Windows and Intel Macs go without it. It adds about 1.7 GB of disk for its geometry kernel, which loads only while a part is being built. Turn it off with `make extension-disable NAME=cad` and a restart (the disk space stays in use); see the [CAD parts guide](docs/guide/cad-parts.md) and the module's [README](examples/deerflow-extension-cad/README.md).
 > - 🧊 **CAD models you can turn in the file preview** — a `.glb` or `.stl` file, the CAD module's among them, opens in the artifact panel, the reader and the Files view as a model you can rotate, zoom and view from the top, the front or an angle, with its size in millimetres, on a phone too. **It never moves on its own** and draws only when you touch it, and each file is checked against fixed caps in a background worker before anything is drawn, so a file that is too large or malformed falls back to a download. The original always downloads unchanged. Bundled and on, like the CAD module; nothing to configure, and `make extension-disable NAME=cad-preview` turns it off.
+> - 🏗️ **A design page for CAD parts** — **Designs** in the sidebar opens a page with the conversation on the left and a 3D preview on the right that **redraws while the assistant is still writing**: drafts are OpenSCAD, rendered by your own browser, so the server never runs the model's code. Every render is kept as a version you can step back to, the Code tab is an editor and the part's top-level numbers become sliders that redraw without asking the model, and **Finalize** ports the draft to CadQuery and builds a checked part (STEP, STL, 3MF) whose size is compared with the draft. Ordinary chats pay nothing for it. Bundled and on, like the CAD module; `make extension-disable NAME=cad-design` turns it off.
 > - 📏 **A CAD eval graded on ground truth** — `make cad-eval MODEL=...` sends 22 fixed part requests to the running agent and measures each delivered STEP file again against numbers the model never saw, because `cad_build`'s own pass is graded on the model's reading of the request. **A part the tool passed can still score a fail**, and the run reports the truth pass rate with a 95% interval, and how often a part presented as finished is really right (claim precision). Opt-in and out of CI: it needs `make dev` with the CAD module on, and it spends tokens on the model you name.
 > - 🕯️ **Gaslight mode** — edit **either half of a turn**. Edit your own message and it replays from there; edit the assistant's answer and your text simply *becomes* what it said. Both versions are kept behind a `‹ 2/2 ›` switcher, and one conversation stays **one** sidebar entry however many times you edit it.
 > - 🌐 **An internet switch on the composer** — a globe takes *this* conversation offline: search, fetching, browser control, MCP and external agents are left out of the run, and subagents inherit it. Per chat, not a global setting.
@@ -180,6 +181,7 @@ DeerFlow has newly integrated the intelligent search and crawling toolset indepe
   - [Shared Folders and Their Edit Log](#shared-folders-and-their-edit-log)
   - [CAD Parts From a Chat](#cad-parts-from-a-chat)
   - [CAD Models in the File Preview](#cad-models-in-the-file-preview)
+  - [CAD Design Page](#cad-design-page)
   - [System Prompt](#system-prompt)
   - [Internet Access Switch](#internet-access-switch)
   - [Concurrent Chats](#concurrent-chats)
@@ -586,6 +588,7 @@ version; the [Table of Contents](#table-of-contents) lists them.
 | Feishu, Slack, Telegram, Discord, DingTalk and other IM channels | [IM Channels](docs/guide/im-channels.md) |
 | File attachments, downloads, Office previews and the CAD model preview | [File Previews](docs/guide/file-previews.md) |
 | CAD parts: the picture, 3MF and print notes, the printer profile, several bodies, lettering and threads | [CAD Parts](docs/guide/cad-parts.md) |
+| The CAD design page: OpenSCAD drafts in the browser, versions, sliders, Finalize | [CAD Design Page](docs/guide/cad-design.md) |
 | Scoring a model's CAD parts against ground truth (`make cad-eval`) | [CAD Eval](docs/guide/cad-eval.md) |
 | Token usage dashboard, workspace, chat archive | [Workspace UI](docs/guide/workspace.md) |
 | Terminal workbench | [Terminal Workbench (TUI)](docs/guide/tui.md) |
@@ -1416,6 +1419,61 @@ plugins:
 Turn it off with `make extension-disable NAME=cad-preview` and a restart, and GLB
 and STL files go back to the download fallback. Details:
 [CAD model preview](docs/guide/file-previews.md#cad-model-preview-extension).
+
+### CAD Design Page
+
+**Designs** in the sidebar opens a page for working on one part with the
+assistant: the conversation and the model picker on the left, and on the right
+tabs for **Preview**, **Code**, **Parameters** and **Versions** (at phone width,
+Prompt, Preview and Code). Describe the part and the assistant writes it in
+OpenSCAD; **the preview redraws while the code is still streaming**, from the
+longest part of the file that is complete so far. It sits beside
+[CAD Parts From a Chat](#cad-parts-from-a-chat): a chat builds a CadQuery part in
+one go, and this page iterates on a fast draft first.
+
+**The draft runs in your browser, never on the server.** OpenSCAD compiled to
+WebAssembly runs in a background worker of the tab with no network access, under
+a time limit (8 seconds live, 30 for the full render); the 2.7 MB engine is
+checked against a fingerprint built into the page before it is used. The final
+render's errors with their lines, or its size, volume and whether it is a closed
+solid, go to the assistant on its next turn, and a draft that fails gets **one**
+automatic repair turn, never more. Every render is a version; clicking an older
+one makes it current, and the next prompt branches from it. A hand edit in the
+Code tab, or a slider in Parameters (made from top-level lines such as
+`width = 40; // [10:1:100]`), redraws without any request to the server and
+becomes one version when you save or let go; the assistant sees it as a diff.
+
+**Finalize** asks the assistant to port the draft to CadQuery with the same
+parameters and build it with the CAD module's `cad_build`. The page shows the
+draft and the measured part side by side with the files to download, and accepts
+the size within 0.5 mm or 2 % per axis, since the draft is a faceted mesh. The
+limits that bite: `text()` does not render (the browser build has no fonts), a
+version keeps an OpenSCAD file of at most `max_source_bytes`, and Finalize needs
+the CAD module on. Designs are per user and stay out of the chat list; deleted
+ones go to a Trash in the page, and **Delete forever** also deletes their
+conversation and files. The drafting tool reaches design runs only, so ordinary
+chats and subagents pay no tokens for it.
+
+Bundled and on by default, with this record in `config.yaml`; an existing install
+gets it from config migration 78 on its next update:
+
+```yaml
+plugins:
+  - name: cad-design
+    package: deerflow-extension-cad-design
+    use: deerflow_extension_cad_design:install
+    enabled: true
+    required: false
+    config:
+      enabled: true
+      storage_path: cad-design/designs.sqlite  # relative = under DEER_FLOW_HOME (local and Docker alike)
+      max_source_bytes: 65536    # largest OpenSCAD file a version keeps, 1024 to 262144
+```
+
+Turn it off with `make extension-disable NAME=cad-design` and a restart. Details:
+[CAD design page](docs/guide/cad-design.md) and the package's
+[README](examples/deerflow-extension-cad-design/README.md). The browser bundle
+ships OpenSCAD, which is GPL-2.0-or-later.
 
 ### System Prompt
 

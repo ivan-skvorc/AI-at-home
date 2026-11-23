@@ -39,6 +39,13 @@ export function shouldIncludeSidecarThreads(params: ThreadSearchFilterParams) {
   );
 }
 
+/** Extensions mark threads they present themselves; still reachable by URL and search. */
+export const LISTED_METADATA_KEY = "deerflow_listed";
+
+export function isUnlistedThread(thread: Pick<AgentThread, "metadata">) {
+  return thread.metadata?.[LISTED_METADATA_KEY] === false;
+}
+
 export function filterThreadSearchResults(
   threads: AgentThread[],
   params: ThreadSearchFilterParams,
@@ -51,7 +58,9 @@ export function filterThreadSearchResults(
   // near-identical entries.
   return threads.filter(
     (thread) =>
-      shouldShowInPrimaryThreadLists(thread) && !isEditVersionThread(thread),
+      shouldShowInPrimaryThreadLists(thread) &&
+      !isEditVersionThread(thread) &&
+      !isUnlistedThread(thread),
   );
 }
 

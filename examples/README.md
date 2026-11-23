@@ -16,6 +16,12 @@ this fork, from a committed copy in `backend/extensions/sources/`. Its files are
 drawn by the [CAD model preview](deerflow-extension-cad-preview/README.md), a
 browser-only `artifactPreviews` package with a bundled three.js viewer and strict
 GLB and STL parsers in a Worker; it ships installed beside the CAD module.
+The [CAD design page](deerflow-extension-cad-design/README.md) is a full-stack
+plugin built on both: the assistant drafts a part in OpenSCAD, the page renders
+it with OpenSCAD compiled to WebAssembly in the viewer's browser and keeps each
+draft as a version, and finalize rebuilds it as a checked part through the CAD
+module. It reuses the preview's parsers from that sibling package at build time
+and ships installed beside them.
 
 Additional examples cover [Office file previews](deerflow-extension-office-preview/README.md),
 [text-list classification](deerflow-extension-jev-classify/README.md),
