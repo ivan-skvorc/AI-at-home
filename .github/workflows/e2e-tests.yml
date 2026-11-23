@@ -139,7 +139,7 @@ jobs:
         run: |
           npm ci --ignore-scripts --no-audit --no-fund
           node build.mjs
-          stale="$(git status --porcelain -- deerflow_extension_cad_design/static deerflow_extension_cad_design/ui_manifest.json)"
+          stale="$(git -c safe.directory="$GITHUB_WORKSPACE" status --porcelain -- deerflow_extension_cad_design/static deerflow_extension_cad_design/ui_manifest.json)"
           if [ -n "$stale" ]; then
             echo "::error::The committed CAD design bundle is stale; run node build.mjs in examples/deerflow-extension-cad-design and commit the result (and its backend snapshot)."
             echo "$stale"
