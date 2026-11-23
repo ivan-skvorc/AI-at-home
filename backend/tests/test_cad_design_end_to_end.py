@@ -18,6 +18,7 @@ called it directly, past the wrapper, and passed.
 
 from __future__ import annotations
 
+import logging
 import time
 import uuid
 from pathlib import Path
@@ -187,6 +188,11 @@ def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     from app.gateway.app import create_app
 
     CALLS.clear()
+    # The Gateway's startup applies the configured log level to the deerflow and app
+    # loggers and may lower root handler levels (apply_logging_level); left in place,
+    # that INFO level leaks into later caplog assertions in the same worker.
+    loggers = {name: logging.getLogger(name).level for name in ("deerflow", "app")}
+    root_level, handlers = logging.root.level, {handler: handler.level for handler in logging.root.handlers}
     try:
         with patch("deerflow.agents.lead_agent.agent.create_chat_model", new=lambda *args, **kwargs: RecordingModel()), TestClient(create_app()) as test_client:
             response = test_client.post("/api/v1/auth/register", json={"email": "designer@example.com", "password": "very-strong-password-123"})
@@ -196,6 +202,14 @@ def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     finally:
         reset_loaded_extensions()
         reset_runtime_diagnostics()
+        for name, level in loggers.items():
+            logging.getLogger(name).setLevel(level)
+        logging.root.setLevel(root_level)
+        for handler in list(logging.root.handlers):
+            if handler in handlers:
+                handler.setLevel(handlers[handler])
+            else:
+                logging.root.removeHandler(handler)
 
 
 def _action(client, name: str, payload: dict[str, Any]) -> dict[str, Any]:
