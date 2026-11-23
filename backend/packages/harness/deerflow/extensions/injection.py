@@ -16,6 +16,17 @@ from deerflow.extensions.registry import LoadedExtensions
 logger = logging.getLogger(__name__)
 
 
+def isolate(
+    placement: MiddlewarePlacement,
+    source: str,
+    on_error: Callable[[Diagnostic], None],
+    *,
+    name: str | None = None,
+) -> IsolatedMiddleware:
+    """Wrap one contribution the way the host injects it."""
+    return IsolatedMiddleware(placement.middleware, source, on_error, name=name, adjusts_model_requests=placement.placement is Placement.MODEL_LOGICAL)
+
+
 def inject_middlewares(
     middlewares: Sequence[object],
     anchors: Mapping[Placement, PlacementAnchor],
@@ -95,7 +106,7 @@ def inject_middlewares(
     # must be the *last* one inserted at that index. Sorting by (index,
     # priority) descending achieves that: lower-priority items are processed
     # — and therefore inserted, and therefore displaced outward — first.
-    resolved: list[tuple[int, int, str, object]] = []
+    resolved: list[tuple[int, int, str, MiddlewarePlacement]] = []
     for priority, (_, (source, placement)) in enumerate(ordered):
         anchor = anchors.get(placement.placement)
         if anchor is None:
@@ -106,13 +117,14 @@ def inject_middlewares(
             message = f"placement {placement.placement.name} fell back to a secondary anchor (primary anchor middleware is absent from this stack); the observation semantics of this placement may differ from its documented guarantee"
             diagnostics.append(Diagnostic.warning(source, message))
             logger.warning("Extension %s: %s", source, message)
-        resolved.append((index, priority, source, placement.middleware))
+        resolved.append((index, priority, source, placement))
 
     # LangChain requires names to be unique across the complete stack and uses
     # them as trace identities and, for before/after hooks, LangGraph node IDs.
     used_names = {getattr(middleware, "name", type(middleware).__name__) for middleware in result}
     runtime_diagnostic_sink = isolation_diagnostic_sink if isolation_diagnostic_sink is not None else diagnostics.append
-    for index, priority, source, middleware in sorted(resolved, key=lambda item: (item[0], item[1]), reverse=True):
+    for index, priority, source, placement in sorted(resolved, key=lambda item: (item[0], item[1]), reverse=True):
+        middleware = placement.middleware
         try:
             inner_name = getattr(middleware, "name", type(middleware).__name__)
             base_name = graph_safe_middleware_name(f"extension:{source}:{inner_name}:{priority}")
@@ -121,12 +133,7 @@ def inject_middlewares(
             while name in used_names:
                 name = f"{base_name}_{suffix}"
                 suffix += 1
-            wrapped = IsolatedMiddleware(
-                middleware,
-                source,
-                runtime_diagnostic_sink,
-                name=name,
-            )
+            wrapped = isolate(placement, source, runtime_diagnostic_sink, name=name)
         except Exception as exc:
             message = f"middleware construction failed: {exc}"
             diagnostics.append(Diagnostic.error(source, message))

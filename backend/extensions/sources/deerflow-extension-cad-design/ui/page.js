@@ -3,6 +3,7 @@ import { prepareInWorker } from "../../deerflow-extension-cad-preview/ui/worker-
 import { createEditor } from "./editor.js";
 import {
   appendOnly,
+  endedWithoutDraft,
   isDraftSource,
   isEngineFailure,
   shouldRepair,
@@ -1626,6 +1627,9 @@ export function mountPage(root, context) {
           ? text.runEnded.error
           : String(run.state.error),
       );
+    // A turn that saved no draft leaves the preview as it was: say so, not nothing.
+    const noDraft = endedWithoutDraft(run, S.versions);
+    if (noDraft && run.kind === "prompt") S.note = text.noDraft;
     await loadMessages();
     renderAll();
     renderParams();
@@ -1645,8 +1649,9 @@ export function mountPage(root, context) {
       if (!started) S.note = null;
     } else if (run.kind === "repair") {
       // An engine failure is not the repair's verdict; the preview says what failed.
-      S.note =
-        run.lastOutcome === true || run.lastOutcome === "engine"
+      S.note = noDraft
+        ? text.noDraft
+        : run.lastOutcome === true || run.lastOutcome === "engine"
           ? null
           : text.repairSpent;
       renderMessages();

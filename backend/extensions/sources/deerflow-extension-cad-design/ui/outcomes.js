@@ -44,6 +44,20 @@ export function shouldRepair(run) {
 export const isDraftSource = (source) =>
   source === "model" || source === "repair";
 
+/**
+ * Whether a prompt or repair turn ended without saving a draft, so the preview
+ * did not change: the model answered in text, asked a question, or built the
+ * part some other way. A stopped or failed run says so already; a resumed run
+ * may have drafted before the page knew its versions.
+ */
+export function endedWithoutDraft(run, versions) {
+  if (run?.kind !== "prompt" && run?.kind !== "repair") return false;
+  if (run.stopped || run.state?.error) return false;
+  return !versions.some(
+    (version) => isDraftSource(version.source) && !run.known.has(version.id),
+  );
+}
+
 /** After a save: try again only for edits made since the attempt, never the same failed text. */
 export function shouldRetrySave({ now, attempted, running }) {
   return !running && now !== attempted;

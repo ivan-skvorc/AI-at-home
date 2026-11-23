@@ -30,7 +30,10 @@ cd ../frontend && pnpm exec playwright test cad-design
 - **The tool reaches only design runs.** The middleware removes `scad_draft`
   from every model call without the `cad-design` run option and adds 0 tokens
   there; `backend/tests/test_context_fit_critical.py` measures both phases.
-  Keep the brief and the version note inside that budget.
+  Keep the brief and the version note inside that budget. The host forwards only
+  removed tools and appended system text from `MODEL_LOGICAL`, so test the
+  middleware through the host's wrapper
+  (`backend/tests/test_cad_design_end_to_end.py`), never bare.
 - **One WebGL context per design view, released on dispose**, and the mesh is
   updated in place: a context per render runs into the browser's cap.
 - **At most one automatic repair per model version**, stored with the version,

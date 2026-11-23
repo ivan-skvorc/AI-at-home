@@ -151,7 +151,11 @@ class DesignMode(AgentMiddleware):
     # -- model calls -----------------------------------------------------------
 
     def notes(self, request: Any) -> tuple[list[str], bool]:
-        """(system notes, keep the drafting tool) for one model call."""
+        """(system notes, whether this is a drafting call) for one model call.
+
+        A drafting call keeps ``scad_draft`` and loses ``cad_build``: only Finalize builds
+        CadQuery. With both offered, a model followed the cad-modeling skill, built the
+        part in one go and never drafted, so the page's preview stayed empty."""
         found = self.design_run(request.runtime)
         if found is None:
             return [], False
@@ -166,7 +170,8 @@ class DesignMode(AgentMiddleware):
 
     def apply(self, request: Any, notes: list[str], keep: bool) -> Any:
         changes: dict[str, Any] = {}
-        tools = [tool for tool in request.tools if keep or tool_name(tool) != SCAD_DRAFT_TOOL]
+        dropped = CAD_BUILD_TOOL if keep else SCAD_DRAFT_TOOL
+        tools = [tool for tool in request.tools if tool_name(tool) != dropped]
         if len(tools) != len(request.tools):
             changes["tools"] = tools
         if notes:

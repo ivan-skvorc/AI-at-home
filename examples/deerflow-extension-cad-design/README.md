@@ -8,10 +8,15 @@ draft as a checked CadQuery part through the CAD module's `cad_build`.
 - The model tool `scad_draft` only stores the file as a version. The page
   renders it with OpenSCAD compiled to WebAssembly in the viewer's browser; the
   Gateway never executes model-written OpenSCAD or Python.
-- The tool and the design brief reach only design runs: a lead middleware
-  removes the tool from every other model call, so ordinary conversations pay
-  no tokens for it (`backend/tests/test_context_fit_critical.py`). Delegated
-  subagents never receive it.
+- The tool and the design brief reach only design runs: a lead middleware at
+  `MODEL_LOGICAL`, the one placement whose tool removals and appended system
+  text the host hands on, removes the tool from every other model call, so
+  ordinary conversations pay no tokens for it
+  (`backend/tests/test_context_fit_critical.py`,
+  `backend/tests/test_cad_design_end_to_end.py`). Delegated subagents never
+  receive it.
+- A prompt or repair turn that saves no draft says so in the conversation; the
+  preview stays as it was.
 - Designs and versions are stored per user in SQLite under `DEER_FLOW_HOME`
   (`storage_path`, default `cad-design/designs.sqlite`); deleted designs go to a
   trash inside the page. "Delete forever" also deletes the design's

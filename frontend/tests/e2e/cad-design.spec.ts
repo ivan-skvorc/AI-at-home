@@ -4,6 +4,7 @@ import {
   DesignBackend,
   gatewayRequests,
   mockCadDesign,
+  TEXT_ANSWER,
   type Render,
 } from "./utils/cad-design";
 import { mockLangGraphAPI } from "./utils/mock-api";
@@ -160,6 +161,39 @@ test("a prompt streams a draft that the browser renders, and a slider redraws wi
   });
   await expect.poll(() => reported(backend).length).toBe(2);
   expectCube(reported(backend)[1], [40, 20, 20]);
+});
+
+test("a turn that saves no draft says so instead of showing nothing", async ({
+  page,
+}) => {
+  const backend = await setup(page, 1440);
+  backend.draft = null;
+  await page.goto(pageURL);
+  await page.getByRole("button", { name: "New design" }).click();
+
+  const prompt = page.getByRole("textbox", { name: /Describe the part/ });
+  await prompt.fill("A 30 x 20 x 10 mm block with a cone on top");
+  await page.getByRole("button", { name: "Send", exact: true }).click();
+
+  await expect(page.getByText(TEXT_ANSWER)).toBeVisible();
+  await expect(
+    page.getByText(
+      "The model answered without saving a draft, so the preview did not change. Ask it to draft the part.",
+    ),
+  ).toBeVisible();
+  await expect(prompt).toBeEnabled();
+  await expect(page.getByText("No render yet.")).toBeVisible();
+  expect(backend.versions).toHaveLength(0);
+  expect(backend.calledWith("report_render")).toHaveLength(0);
+
+  // The next prompt clears it.
+  backend.draft = CUBE;
+  await prompt.fill("Draft it, please");
+  await page.getByRole("button", { name: "Send", exact: true }).click();
+  await expect(page.getByText("20 × 20 × 20 mm", { exact: true })).toBeVisible({
+    timeout: 60_000,
+  });
+  await expect(page.getByText(/without saving a draft/)).toHaveCount(0);
 });
 
 test("a syntax error in a hand edit names its line", async ({ page }) => {

@@ -110,15 +110,18 @@ def test_observer_cannot_replace_the_downstream_request():
             return handler("mutated")
 
     seen = []
+    errors = []
 
     def handler(request):
         seen.append(request)
         return "core-result"
 
-    wrapped = IsolatedMiddleware(_RewritesRequest(), "observer:install", lambda d: None)
+    wrapped = IsolatedMiddleware(_RewritesRequest(), "observer:install", errors.append)
 
     assert wrapped.wrap_tool_call("original", handler) == "core-result"
     assert seen == ["original"]
+    # The dropped request is reported, never silent: a contribution that relies on it is broken.
+    assert [(error.level, error.source) for error in errors] == [("warning", "observer:install")]
 
 
 def test_async_observer_cannot_replace_the_downstream_request():
@@ -127,15 +130,151 @@ def test_async_observer_cannot_replace_the_downstream_request():
             return await handler("mutated")
 
     seen = []
+    errors = []
 
     async def handler(request):
         seen.append(request)
         return "core-result"
 
-    wrapped = IsolatedMiddleware(_RewritesRequest(), "observer:install", lambda d: None)
+    wrapped = IsolatedMiddleware(_RewritesRequest(), "observer:install", errors.append)
 
     assert asyncio.run(wrapped.awrap_model_call("original", handler)) == "core-result"
     assert seen == ["original"]
+    assert [error.level for error in errors] == ["warning"]
+
+
+# -- model-request adjustments (Placement.MODEL_LOGICAL) ------------------------------------------
+
+
+def _model_request():
+    from langchain.agents.middleware.types import ModelRequest
+    from langchain_core.messages import HumanMessage, SystemMessage
+
+    tools = [{"name": "keep"}, {"name": "drop"}]
+    return ModelRequest(model=None, messages=[HumanMessage("hi")], system_message=SystemMessage("BASE"), tools=tools, state={}, runtime=None)
+
+
+def _appended(request, note="NOTE"):
+    from langchain_core.messages import SystemMessage
+
+    return SystemMessage(content=f"{request.system_message.content}\n\n{note}")
+
+
+class _Adjusts(AgentMiddleware):
+    """Removes one bound tool and appends a note, as the CAD design and workflows pages do."""
+
+    def __init__(self, adjust=None) -> None:
+        super().__init__()
+        self.adjust = adjust or (lambda request: request.override(tools=[tool for tool in request.tools if tool["name"] != "drop"], system_message=_appended(request)))
+
+    def wrap_model_call(self, request, handler):
+        return handler(self.adjust(request))
+
+    async def awrap_model_call(self, request, handler):
+        return await handler(self.adjust(request))
+
+
+def _send(wrapped, request, *, asynchronous: bool):
+    seen = []
+
+    def handler(passed):
+        seen.append(passed)
+        return "core-result"
+
+    async def ahandler(passed):
+        return handler(passed)
+
+    result = asyncio.run(wrapped.awrap_model_call(request, ahandler)) if asynchronous else wrapped.wrap_model_call(request, handler)
+    assert result == "core-result"
+    (passed,) = seen
+    return passed
+
+
+@pytest.mark.parametrize("asynchronous", [False, True], ids=["sync", "async"])
+def test_an_adjusting_wrapper_hands_on_removed_tools_and_appended_system_text(asynchronous):
+    errors = []
+    wrapped = IsolatedMiddleware(_Adjusts(), "design:install", errors.append, adjusts_model_requests=True)
+    request = _model_request()
+
+    passed = _send(wrapped, request, asynchronous=asynchronous)
+
+    assert [tool["name"] for tool in passed.tools] == ["keep"]
+    assert passed.tools[0] is request.tools[0]
+    assert passed.system_message.content == "BASE\n\nNOTE"
+    assert passed.messages is request.messages
+    assert errors == []
+
+
+@pytest.mark.parametrize(
+    ("adjust", "reason"),
+    [
+        (lambda request: request.override(tools=[*request.tools, {"name": "extra"}]), "added tools"),
+        (lambda request: request.override(tools=[request.tools[0], request.tools[0]]), "added tools"),
+        (lambda request: request.override(system_message=_appended(request, "").model_copy(update={"content": "REPLACED"})), "system message"),
+        (lambda request: request.override(system_message=None), "system message"),
+        (lambda request: request.override(messages=[]), "messages"),
+        (lambda request: request.override(model=object()), "model"),
+        (lambda request: request.override(tool_choice="any"), "tool_choice"),
+        (lambda request: "another object", "another object"),
+    ],
+    ids=["added-tool", "duplicated-tool", "rewritten-system", "removed-system", "messages", "model", "tool-choice", "foreign-object"],
+)
+@pytest.mark.parametrize("asynchronous", [False, True], ids=["sync", "async"])
+def test_an_adjustment_beyond_removing_tools_and_appending_is_refused(adjust, reason, asynchronous):
+    errors = []
+    wrapped = IsolatedMiddleware(_Adjusts(adjust), "design:install", errors.append, adjusts_model_requests=True)
+    request = _model_request()
+
+    assert _send(wrapped, request, asynchronous=asynchronous) is request
+    # Reported once per wrapper (one agent build), not on every model call.
+    assert _send(wrapped, request, asynchronous=asynchronous) is request
+    assert len(errors) == 1
+    assert errors[0].level == "warning" and errors[0].source == "design:install"
+    assert reason in errors[0].message
+
+
+def test_an_adjusting_wrapper_keeps_tool_calls_observational():
+    class _RewritesToolCall(AgentMiddleware):
+        def wrap_tool_call(self, request, handler):
+            return handler("mutated")
+
+    seen = []
+    errors = []
+    wrapped = IsolatedMiddleware(_RewritesToolCall(), "design:install", errors.append, adjusts_model_requests=True)
+
+    assert wrapped.wrap_tool_call("original", lambda request: seen.append(request) or "core-result") == "core-result"
+    assert seen == ["original"]
+    assert len(errors) == 1
+
+
+def test_without_the_adjusting_role_a_model_request_change_is_dropped():
+    """MODEL_PHYSICAL and every tool placement promise the request other middleware made."""
+    errors = []
+    wrapped = IsolatedMiddleware(_Adjusts(), "observer:install", errors.append)
+    request = _model_request()
+
+    assert _send(wrapped, request, asynchronous=True) is request
+    assert len(errors) == 1
+
+
+def test_an_adjusting_wrapper_that_fails_before_the_handler_forwards_the_original_request():
+    def explode(request):
+        raise ValueError("store unreadable")
+
+    errors = []
+    wrapped = IsolatedMiddleware(_Adjusts(explode), "design:install", errors.append, adjusts_model_requests=True)
+    request = _model_request()
+
+    assert _send(wrapped, request, asynchronous=False) is request
+    assert [error.level for error in errors] == ["error"]
+
+
+def test_a_copy_keeps_the_adjusting_role():
+    import copy
+
+    wrapped = IsolatedMiddleware(_Adjusts(), "design:install", lambda d: None, adjusts_model_requests=True)
+
+    assert copy.copy(wrapped).adjusts_model_requests is True
 
 
 def test_post_handler_failure_does_not_replay_tool_handler():

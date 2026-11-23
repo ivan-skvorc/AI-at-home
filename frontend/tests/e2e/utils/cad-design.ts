@@ -87,8 +87,11 @@ export class DesignBackend {
   streams = new Map<string, string>();
   /** The design thread's history as the `messages` action simplifies it. */
   history: Record<string, unknown>[] = [];
-  /** The file the mocked model writes on the next prompt. */
-  draft = "";
+  /**
+   * The file the mocked model writes on the next prompt; null answers in text
+   * and calls another tool instead, saving no draft.
+   */
+  draft: string | null = "";
 
   seed(title: string, scad: string, render: Render | null = null) {
     const design = this.newDesign(title);
@@ -206,6 +209,20 @@ export class DesignBackend {
       case "prompt": {
         const design = this.design(payload);
         const runId = `run-${hexId().slice(-8)}`;
+        if (this.draft === null) {
+          design.run_id = runId;
+          this.streams.set(runId, answerStream(runId, TEXT_ANSWER));
+          this.history.push(
+            { id: `human-${runId}`, role: "user", text: payload.text },
+            {
+              id: `ai-${runId}`,
+              role: "assistant",
+              text: TEXT_ANSWER,
+              tool_calls: [{ name: "bash", args: {} }],
+            },
+          );
+          return { run_id: runId, thread_id: design.thread_id };
+        }
         // The tool's part: store the whole file as the new head.
         const version = this.addVersion(design, this.draft, "model");
         version.run_id = runId;
@@ -246,6 +263,24 @@ const sse = (events: { event: string; data: unknown }[]) =>
       ({ event, data }) => `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`,
     )
     .join("");
+
+/** What the mocked model says when it answers without drafting. */
+export const TEXT_ANSWER = "The part is done. Files above.";
+
+/** A joined run whose model only answers in text. */
+function answerStream(runId: string, text: string) {
+  return sse([
+    { event: "metadata", data: { run_id: runId } },
+    {
+      event: "messages",
+      data: [
+        { type: "AIMessageChunk", id: `ai-${runId}`, content: text },
+        { langgraph_node: "model" },
+      ],
+    },
+    { event: "end", data: null },
+  ]);
+}
 
 /**
  * One joined run as the Gateway streams it for stream_mode

@@ -72,8 +72,10 @@ hook directory, so they never run a developer's or CI's Git hooks.
 - **`extensions/ordering.py` owns the ordering invariants** and validates the final
   composed chain. Contributed middleware declares a semantic placement; it is
   composed at one final point.
-- **A failing extension does not fail the run.** Contributed middleware is wrapped
-  by `IsolatedMiddleware`, and observer failures are contained per observer.
+- **A failing extension does not fail the run.** `IsolatedMiddleware` contains
+  each contribution's failures and hands on the original request; only a
+  `MODEL_LOGICAL` model wrapper may remove tools and append system text. Test
+  contributions through `injection.isolate`, never bare.
 - **Cancellation is the exception.** A genuine cancellation of the run propagates
   through a contributor. A `CancelledError` that the contributor raised for its own
   reasons is contained like any other failure.
@@ -114,6 +116,5 @@ recorded here with the reason.
 
 ## Fork
 
-FORK.md holds the invariants: §44 for the Double Plus Ultracode hooks
-(`plugin_options`, message marker, `parent_thread_id`, `copy_workspace`,
-`merge_workspace`), §50 for `ToolContext.write_output`.
+FORK.md holds the invariants: §44 for the Double Plus Ultracode hooks, §50 for
+`ToolContext.write_output`, §58 for `MODEL_LOGICAL` request adjustments.

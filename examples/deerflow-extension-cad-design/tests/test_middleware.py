@@ -69,6 +69,9 @@ def test_no_flag_never_touches_the_store(tmp_path):
     assert not store.exists()
 
 
+BUILD_TOOL = {"type": "function", "function": {"name": CAD_BUILD_TOOL, "description": "", "parameters": {}}}
+
+
 async def test_a_design_run_keeps_the_tool_and_gets_the_brief(store):
     sent = await arun(DesignMode(store), request(flagged()))
     assert sent.tools == [OTHER_TOOL, DRAFT_TOOL]
@@ -230,3 +233,20 @@ async def test_subagents_never_receive_the_drafting_tool(store):
             assert sent.tools == [OTHER_TOOL]
             assert sent.system_message.content == "BASE"
     assert run(middleware, request({}, tools=(OTHER_TOOL,))).tools == [OTHER_TOOL]
+
+
+@pytest.mark.parametrize("phase", ["draft", "repair"])
+async def test_draft_and_repair_runs_cannot_build_the_part(store, phase):
+    # The owner's design run built with cad_build (the cad-modeling skill's path) and the
+    # preview stayed empty. Only Finalize builds CadQuery, so draft runs lose cad_build.
+    tools = (OTHER_TOOL, BUILD_TOOL, DRAFT_TOOL)
+    for sent in (run(DesignMode(store), request(flagged(phase), tools)), await arun(DesignMode(store), request(flagged(phase), tools))):
+        assert sent.tools == [OTHER_TOOL, DRAFT_TOOL]
+        text = sent.system_message.content
+        assert "cad_build" in text and "cad-modeling" in text and "Finalize" in text
+
+
+async def test_finalize_and_ordinary_runs_keep_cad_build(store):
+    tools = (OTHER_TOOL, BUILD_TOOL, DRAFT_TOOL)
+    for context in (flagged("finalize"), {"thread_id": "thread-1"}):
+        assert (await arun(DesignMode(store), request(context, tools))).tools == [OTHER_TOOL, BUILD_TOOL]

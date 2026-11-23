@@ -91,6 +91,8 @@ const EN = {
   repairing: "The draft did not render; the model was asked to repair it once.",
   repairSpent:
     "The repair did not render either. Edit the code, or describe the fix.",
+  noDraft:
+    "The model answered without saving a draft, so the preview did not change. Ask it to draft the part.",
   errors: {
     load: "OpenSCAD could not be loaded.",
     integrity:
@@ -196,6 +198,7 @@ const ZH = {
     `草稿 ${draft} mm，构建 ${built} mm（容差 ${tolerance} mm）`,
   repairing: "草稿未能渲染；已请模型修复一次。",
   repairSpent: "修复后仍未能渲染。请编辑代码，或描述如何修正。",
+  noDraft: "模型这次回答没有保存草稿，所以预览没有变化。请让它起草这个零件。",
   errors: {
     load: "无法加载 OpenSCAD。",
     integrity: "OpenSCAD 文件未通过完整性校验，未被使用。",

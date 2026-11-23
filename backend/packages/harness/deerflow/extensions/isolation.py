@@ -19,16 +19,28 @@ so the wrapper supplies a silent pass-through counterpart when the inner
 implements only one side; otherwise the base class raises
 ``NotImplementedError`` before isolation can fail open.
 
-All first-version contributions are observational, hence fail-open. A future
-intercepting (decision-making) contribution would need to fail closed and must
-opt out of this wrapper explicitly.
+Contributions are observational, with one narrow exception. A model-call
+wrapper the host places at ``Placement.MODEL_LOGICAL`` (``adjusts_model_requests``)
+may adjust the request it hands on: remove bound tools and append to the system
+message, so a plugin can scope its own tool and brief to the runs that use them.
+Nothing else passes (another model, messages or tool choice, an added tool, a
+rewritten system message); the original request goes on instead, with a warning
+naming what was refused. The position is outer of retries and of the context
+guard, so the guard measures the adjusted request. Every other placement and
+every tool call stays observational, and a request handed on there is dropped
+the same way, never silently. An adjustment is advice, not a decision, hence
+still fail-open: a wrapper that fails before calling the handler sends the
+original request. A decision-making contribution (vetoing a call, choosing the
+model) would need to fail closed and must opt out of this wrapper explicitly.
 """
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 import re
 import threading
+from collections import Counter
 from collections.abc import Awaitable, Callable
 from types import TracebackType
 from typing import Any
@@ -48,7 +60,40 @@ def graph_safe_middleware_name(value: str) -> str:
     return _UNSAFE_GRAPH_NAME.sub("_", value)
 
 
+def _system_text(message: Any) -> str:
+    """A system message's text, list content joined the way the bundled extensions join it."""
+    content = getattr(message, "content", "") if message is not None else ""
+    if isinstance(content, str):
+        return content
+    return "\n".join(part.get("text", "") if isinstance(part, dict) else str(part) for part in content or ())
+
+
+def admit_model_request_adjustment(original: Any, proposed: Any) -> tuple[Any, str | None]:
+    """The request an adjusting wrapper may hand on, and why a proposal was refused.
+
+    Admitted: ``proposed`` differs from ``original`` only in ``tools``, a sub-multiset
+    of the original tool objects, and ``system_message``, whose text extends the
+    original's. Anything else is refused and ``original`` is returned.
+    """
+    if proposed is original:
+        return original, None
+    if type(proposed) is not type(original) or not dataclasses.is_dataclass(original):
+        return original, "it handed on another object instead of the model request"
+    changed = {field.name for field in dataclasses.fields(original) if getattr(proposed, field.name) is not getattr(original, field.name)}
+    other = sorted(changed - _ADJUSTABLE_FIELDS)
+    if other:
+        return original, f"it changed {', '.join(other)}"
+    if "tools" in changed and Counter(map(id, proposed.tools or ())) - Counter(map(id, original.tools or ())):
+        return original, "it added tools; bound tools may only be removed"
+    if "system_message" in changed and not _system_text(proposed.system_message).startswith(_system_text(original.system_message)):
+        return original, "it rewrote the system message; text may only be appended to it"
+    return proposed, None
+
+
 _WRAP_HOOKS = ("wrap_model_call", "awrap_model_call", "wrap_tool_call", "awrap_tool_call")
+_MODEL_HOOKS = frozenset({"wrap_model_call", "awrap_model_call"})
+#: The ModelRequest fields an adjusting wrapper may change, and only by narrowing or appending.
+_ADJUSTABLE_FIELDS = frozenset({"tools", "system_message"})
 _WRAP_HOOK_PAIRS = (
     ("wrap_model_call", "awrap_model_call"),
     ("wrap_tool_call", "awrap_tool_call"),
@@ -158,7 +203,7 @@ class IsolatedMiddleware(AgentMiddleware):
     see the same interface on the wrapper as on the inner middleware itself.
     """
 
-    def __new__(cls, inner: AgentMiddleware, source: str, on_error: Callable[[Diagnostic], None], *, name: str | None = None):
+    def __new__(cls, inner: AgentMiddleware, source: str, on_error: Callable[[Diagnostic], None], *, name: str | None = None, adjusts_model_requests: bool = False):
         if cls is IsolatedMiddleware:
             cls = _wrapper_subclass(_implemented_hooks(inner))
         return super().__new__(cls)
@@ -170,9 +215,12 @@ class IsolatedMiddleware(AgentMiddleware):
         on_error: Callable[[Diagnostic], None],
         *,
         name: str | None = None,
+        adjusts_model_requests: bool = False,
     ) -> None:
         super().__init__()
         self._inner = inner
+        self._adjusts_model_requests = adjusts_model_requests
+        self._refusal_reported = False
         self._source = source
         self._on_error = on_error
         if name is None:
@@ -210,6 +258,11 @@ class IsolatedMiddleware(AgentMiddleware):
         return self._name
 
     @property
+    def adjusts_model_requests(self) -> bool:
+        """Whether this wrapper hands on an admitted model-request adjustment (MODEL_LOGICAL)."""
+        return self._adjusts_model_requests
+
+    @property
     def inner(self) -> AgentMiddleware:
         """The wrapped middleware. Used by ordering checks and tests."""
         return self._inner
@@ -226,6 +279,25 @@ class IsolatedMiddleware(AgentMiddleware):
             self._on_error(Diagnostic.error(self._source, message))
         except Exception:  # pragma: no cover - reporting must never raise
             logger.exception("Extension %s: diagnostic reporting failed", self._source)
+
+    def _downstream(self, hook: str, original: Any, proposed: Any) -> Any:
+        """The request to hand downstream when the inner hook called the handler with ``proposed``."""
+        if proposed is original:
+            return original
+        if self._adjusts_model_requests and hook in _MODEL_HOOKS:
+            admitted, refusal = admit_model_request_adjustment(original, proposed)
+        else:
+            admitted, refusal = original, "it handed on another request where wrappers may only observe"
+        if refusal is not None and not self._refusal_reported:
+            # Once per wrapper, which is once per agent build: a run makes many model calls.
+            self._refusal_reported = True
+            message = f"{type(self._inner).__name__}.{hook} handed on a changed request that was not used: {refusal}"
+            logger.warning("Extension %s: %s", self._source, message)
+            try:
+                self._on_error(Diagnostic.warning(self._source, message))
+            except Exception:  # pragma: no cover - reporting must never raise
+                logger.exception("Extension %s: diagnostic reporting failed", self._source)
+        return admitted
 
     def _invoke_sync(
         self,
@@ -253,10 +325,9 @@ class IsolatedMiddleware(AgentMiddleware):
             handler_error_traceback = None
             handler_succeeded = False
             try:
-                # The first contract slice is observational: a contributed
-                # wrapper may inspect the request but cannot substitute a new
-                # one after the host's policy/authorization layers have run.
-                handler_result = handler(request)
+                # Observational, except an admitted MODEL_LOGICAL adjustment
+                # (see the module docstring): never a substituted request.
+                handler_result = handler(self._downstream(hook, request, inner_request))
             except BaseException as exc:
                 handler_error = exc
                 handler_error_traceback = exc.__traceback__
@@ -322,7 +393,7 @@ class IsolatedMiddleware(AgentMiddleware):
             handler_error_traceback = None
             handler_succeeded = False
             try:
-                handler_result = await handler(request)
+                handler_result = await handler(self._downstream(hook, request, inner_request))
             except BaseException as exc:
                 handler_error = exc
                 handler_error_traceback = exc.__traceback__

@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   appendOnly,
+  endedWithoutDraft,
   isDraftSource,
   isEngineFailure,
   shouldRepair,
@@ -66,6 +67,42 @@ test("the automatic repair follows only a prompt run that ended on its own", () 
   assert.equal(shouldRepair(run({ failedVersion: null })), false);
   assert.equal(shouldRepair(run({ kind: "repair" })), false);
   assert.equal(shouldRepair(run({ kind: "finalize" })), false);
+});
+
+test("a prompt or repair turn that saved no draft is told apart", () => {
+  const before = [{ id: "v1", source: "model" }];
+  const run = (extra = {}) => ({
+    kind: "prompt",
+    stopped: false,
+    state: { error: null },
+    known: new Set(["v1"]),
+    ...extra,
+  });
+  // The model answered (or built elsewhere) without scad_draft: the preview did not change.
+  assert.equal(endedWithoutDraft(run(), before), true);
+  assert.equal(endedWithoutDraft(run({ kind: "repair" }), before), true);
+  assert.equal(endedWithoutDraft(run(), []), true);
+  // A new model or repair version is a draft; a hand edit saved meanwhile is not.
+  assert.equal(
+    endedWithoutDraft(run(), [...before, { id: "v2", source: "model" }]),
+    false,
+  );
+  assert.equal(
+    endedWithoutDraft(run(), [...before, { id: "v2", source: "repair" }]),
+    false,
+  );
+  assert.equal(
+    endedWithoutDraft(run(), [...before, { id: "v2", source: "hand" }]),
+    true,
+  );
+  // A stopped or failed run already says why; finalize and a resumed run are not drafting turns.
+  assert.equal(endedWithoutDraft(run({ stopped: true }), before), false);
+  assert.equal(
+    endedWithoutDraft(run({ state: { error: "The run failed." } }), before),
+    false,
+  );
+  assert.equal(endedWithoutDraft(run({ kind: "finalize" }), before), false);
+  assert.equal(endedWithoutDraft(run({ kind: "resume" }), before), false);
 });
 
 test("model and repair drafts are both the model's", () => {

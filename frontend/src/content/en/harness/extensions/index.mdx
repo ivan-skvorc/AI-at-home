@@ -82,7 +82,7 @@ Because loading is startup-only, **every change needs a Gateway restart**: insta
 
 ## Failure model
 
-Extensions are observational, so a broken extension degrades to a log line instead of a broken run:
+Extensions are observational (a model-call wrapper at `MODEL_LOGICAL` may only remove tools and append system text), so a broken extension degrades to a log line instead of a broken run:
 
 - A contribution that raises is skipped, and the Gateway logs an error attributed to its entry point (`Extension <use>: ...`).
 - Contributed middleware runs inside an isolating wrapper that never repeats a model call or tool side effect. See [Failure isolation](/docs/harness/extensions/middleware#failure-isolation).

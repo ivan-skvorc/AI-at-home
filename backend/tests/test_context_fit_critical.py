@@ -329,28 +329,36 @@ def _cad_design_additions():
     plugin = contributed["plugin"]
     tools = [{"type": "function", "function": {"name": plugin_tool_name(plugin.namespace, tool.name), "description": tool.description, "parameters": _model_facing_schema(tool.input_schema)}} for tool in plugin.tools]
     (placed,) = contributed["contributor"].contribute_middlewares(None, AgentBuildContext(scope=AgentScope.LEAD, agent_name=None, model_name=MODEL_NAME, policy=None))
-    return tools, placed.middleware
+    return tools, placed
 
 
-def _through(middleware, request: ModelRequest, context: dict) -> ModelRequest:
-    """What the middleware hands on for *request* on a run with *context*."""
+def _through(placed, request: ModelRequest, context: dict) -> ModelRequest:
+    """What the contribution hands on for *request* on a run with *context*.
+
+    Through the host's isolation wrapper, built the way the host injects it: the
+    wrapper, not the middleware, decides what reaches the model.
+    """
+    from deerflow.extensions.injection import isolate
+
+    diagnostics: list = []
     sent: list[ModelRequest] = []
-    middleware.wrap_model_call(request.override(runtime=SimpleNamespace(context=context)), lambda guarded: sent.append(guarded) or AIMessage(content="ok"))
+    isolate(placed, "cad-design", diagnostics.append).wrap_model_call(request.override(runtime=SimpleNamespace(context=context)), lambda guarded: sent.append(guarded) or AIMessage(content="ok"))
+    assert not diagnostics, diagnostics
     return sent[0]
 
 
 @pytest.mark.parametrize("mode", list(MODES))
 def test_the_cad_design_page_adds_nothing_outside_a_design_run(stock_config, mode):
     request = _fresh_request(mode)
-    tools, middleware = _cad_design_additions()
+    tools, placed = _cad_design_additions()
     bound = request.override(tools=[*request.tools, *tools])
     options = {"community.workflows": {"mode": mode}} if mode in ("ultracode", "double_ultracode") else {}
     for context in ({"thread_id": f"critical-{mode}", **MODES[mode]}, {"thread_id": f"critical-{mode}", "plugin_options": options, **MODES[mode]}):
-        sent = _through(middleware, bound, context)
+        sent = _through(placed, bound, context)
         assert _fixed_tokens(sent) == _fixed_tokens(request), f"{mode}: the CAD design page costs tokens outside a design run"
     # A design flag the run's own thread does not back is no design run either.
     forged = {"thread_id": f"critical-{mode}", "plugin_options": {"cad-design": {"design_id": "a" * 32, "phase": "draft"}}, **MODES[mode]}
-    assert _fixed_tokens(_through(middleware, bound, forged)) == _fixed_tokens(request)
+    assert _fixed_tokens(_through(placed, bound, forged)) == _fixed_tokens(request)
 
 
 @pytest.mark.parametrize("phase", ["draft", "finalize"])
@@ -359,8 +367,8 @@ def test_a_cad_design_run_fits_in_every_mode(stock_config, mode, phase):
     # A design run's context comes from the page's prompt action: the mode's flags and the
     # cad-design options, never the workflows options, so the Ultracode brief is not on it.
     # The note is at its bound: a long hand edit (cut diff) and a failed render.
-    tools, middleware = _cad_design_additions()
-    store = middleware.store
+    tools, placed = _cad_design_additions()
+    store = placed.middleware.store
     thread = f"design-{mode}"
     store.create_design("critical", "a" * 32, "Bracket", thread)
     base = store.add_version("critical", "a" * 32, parent_id=None, source="model", scad="\n".join(f"p{i} = {i}; // [0:1:1000]" for i in range(400)), params={})
@@ -369,7 +377,7 @@ def test_a_cad_design_run_fits_in_every_mode(stock_config, mode, phase):
     request = _fresh_request(mode, workflow_brief=False)
     bound = request.override(tools=[*request.tools, *tools])
     context = {"thread_id": thread, "plugin_options": {"cad-design": {"design_id": "a" * 32, "head": head["id"], "phase": phase}}, **MODES[mode]}
-    sent = _through(middleware, bound, context)
+    sent = _through(placed, bound, context)
     assert "## Design page" in sent.system_message.content, "the design brief did not render"
     fixed = _fixed_tokens(sent)
     assert fixed <= FIXED_REQUEST_ALLOWANCE_TOKENS, f"{mode} {phase}: a CAD design run costs ~{fixed:,} fixed tokens, over the {FIXED_REQUEST_ALLOWANCE_TOKENS:,} a 32K local model can spare"
