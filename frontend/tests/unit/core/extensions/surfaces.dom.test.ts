@@ -113,3 +113,81 @@ for (const failMount of [false, true]) {
     expect(navigate).not.toHaveBeenCalled();
   });
 }
+
+test("joined run streams carry the page signal and stop with the page", async () => {
+  const seenSignals: AbortSignal[] = [];
+  const join = rs.fn(async function* (
+    _threadId: string,
+    _runId: string,
+    signal: AbortSignal,
+  ) {
+    seenSignals.push(signal);
+    yield { event: "values", data: 1 };
+    signal.throwIfAborted();
+  });
+  let joinLater!: NonNullable<
+    Parameters<Parameters<typeof mountSurface>[1]["mount"]>[1]["joinRunStream"]
+  >;
+  const own = new AbortController();
+  const cleanup = mountSurface(
+    document.createElement("div"),
+    {
+      id: "designs",
+      slot: "page",
+      title: "Designs",
+      mount(_root, context) {
+        joinLater = context.joinRunStream!;
+        return { dispose: rs.fn() };
+      },
+    },
+    {
+      namespace: "cad-design",
+      locale: "en",
+      settings: {},
+      callBackend: rs.fn(),
+      joinRunStream: join,
+    },
+    rs.fn(),
+  );
+  const events: unknown[] = [];
+  for await (const event of joinLater("t", "r", { signal: own.signal }))
+    events.push(event);
+  expect(events).toEqual([{ event: "values", data: 1 }]);
+  expect(join).toHaveBeenCalledWith("t", "r", expect.any(AbortSignal));
+  own.abort();
+  expect(seenSignals[0]?.aborted).toBe(true);
+  cleanup();
+  const late = joinLater("t", "r");
+  await expect(late[Symbol.asyncIterator]().next()).rejects.toThrow();
+  expect(join).toHaveBeenCalledTimes(1);
+});
+
+test("a full-layout surface root fills its host and models pass through", () => {
+  const container = document.createElement("div");
+  let models: unknown;
+  let root!: HTMLElement;
+  mountSurface(
+    container,
+    {
+      id: "designs",
+      slot: "page",
+      title: "Designs",
+      layout: "full",
+      mount(element, context) {
+        root = element;
+        models = context.models?.list;
+        return { dispose: rs.fn() };
+      },
+    },
+    {
+      namespace: "cad-design",
+      locale: "en",
+      settings: {},
+      callBackend: rs.fn(),
+      models: { list: [{ name: "a", display_name: "A" }], defaultName: "a" },
+    },
+    rs.fn(),
+  );
+  expect(models).toEqual([{ name: "a", display_name: "A" }]);
+  expect(root.style.height).toBe("100%");
+});

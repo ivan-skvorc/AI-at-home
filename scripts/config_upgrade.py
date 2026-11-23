@@ -252,6 +252,12 @@ MIGRATIONS = {
         "description": "Add the bundled CAD model preview that draws GLB and STL files in the artifact panel",
         "plugins_from_example": ("cad-preview",),
     },
+    78: {
+        # The CAD design page is bundled (backend/extensions/sources) and enabled
+        # in the example; an existing install gets its record once (FORK.md §58).
+        "description": "Add the bundled CAD design page that drafts parts in OpenSCAD and finalizes them with CadQuery",
+        "plugins_from_example": ("cad-design",),
+    },
     # Future migrations go here:
     # 60: {
     #     'description': '...',

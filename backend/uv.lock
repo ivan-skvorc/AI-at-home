@@ -1136,6 +1136,7 @@ dev = [
     { name = "textual" },
 ]
 extensions = [
+    { name = "deerflow-extension-cad-design" },
     { name = "deerflow-extension-cad-preview" },
     { name = "deerflow-extension-workflows", marker = "sys_platform != 'win32'" },
 ]
@@ -1195,13 +1196,14 @@ dev = [
     { name = "textual", specifier = ">=0.80" },
 ]
 extensions = [
+    { name = "deerflow-extension-cad-design", directory = "extensions/sources/deerflow-extension-cad-design" },
     { name = "deerflow-extension-cad-preview", directory = "extensions/sources/deerflow-extension-cad-preview" },
     { name = "deerflow-extension-workflows", marker = "sys_platform != 'win32'", directory = "extensions/sources/deerflow-extension-workflows" },
 ]
 
 [[package]]
 name = "deerflow-extension-api"
-version = "0.2.13"
+version = "0.2.14"
 source = { editable = "packages/extension-api" }
 
 [[package]]
@@ -1221,6 +1223,26 @@ requires-dist = [
     { name = "deerflow-extension-api", specifier = ">=0.2.13,<0.3" },
     { name = "numpy", specifier = ">=2,<3" },
     { name = "pillow", specifier = ">=10.1,<14" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=9,<10" },
+    { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=1,<2" },
+    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.14,<1" },
+]
+provides-extras = ["dev"]
+
+[[package]]
+name = "deerflow-extension-cad-design"
+version = "0.1.0"
+source = { directory = "extensions/sources/deerflow-extension-cad-design" }
+dependencies = [
+    { name = "deerflow-extension-api" },
+    { name = "fastapi" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "deerflow-extension-api", specifier = ">=0.2.14,<0.3" },
+    { name = "fastapi", specifier = ">=0.115.0,<1" },
+    { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.28,<1" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=9,<10" },
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=1,<2" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.14,<1" },

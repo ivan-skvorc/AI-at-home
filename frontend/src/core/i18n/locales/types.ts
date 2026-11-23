@@ -161,7 +161,8 @@ export interface Translations {
       | "lightrag"
       | "example"
       | "cad"
-      | "cadPreview",
+      | "cadPreview"
+      | "cadDesign",
       {
         title: string;
         description: string;

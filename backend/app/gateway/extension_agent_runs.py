@@ -44,6 +44,20 @@ def _json_object(value: Mapping[str, Any] | None) -> dict[str, Any] | None:
         raise AgentRunError(422, "Agent run input must be a JSON object of at most 256 KiB") from exc
 
 
+#: Run stream modes an extension may request (API 0.2.14): the ones a page
+#: joining the run stream renders. Debug/task/checkpoint modes stay host-only.
+EXTENSION_STREAM_MODES = frozenset({"values", "messages-tuple", "updates", "custom"})
+
+
+def _stream_modes(value) -> list[str] | None:
+    if value is None:
+        return None
+    modes = list(value) if isinstance(value, (list, tuple)) else None
+    if not modes or len(set(modes)) != len(modes) or any(not isinstance(mode, str) or mode not in EXTENSION_STREAM_MODES for mode in modes):
+        raise AgentRunError(422, f"stream_mode must be a non-empty list of distinct modes from {sorted(EXTENSION_STREAM_MODES)}")
+    return modes
+
+
 def _view(response) -> AgentRun:
     return AgentRun(response.thread_id, response.run_id, response.status, response.assistant_id, response.stop_reason)
 
@@ -266,6 +280,14 @@ class _BoundAgentRuns:
             response = await create_thread(ThreadCreateRequest(assistant_id=assistant_id, thread_id=thread_id, metadata=_json_object(metadata) or {}), request)
             return response.thread_id
 
+    async def delete_thread(self, *, thread_id) -> None:
+        from app.gateway.routers.threads import delete_thread_data
+
+        # The ordinary DELETE route: owner check on a live row, no run in flight
+        # (409), and the same cleanup of files, checkpoints, runs and events.
+        async with self._request("threads:delete", thread_id) as request:
+            await delete_thread_data(thread_id, request)
+
     async def copy_workspace(self, *, source_thread_id, thread_id) -> WorkspaceSnapshot:
         from app.gateway.extension_workspaces import copy_workspace
 
@@ -286,7 +308,7 @@ class _BoundAgentRuns:
             applied, conflicts, skipped = await asyncio.to_thread(merge_workspace, self._user_id, thread_id, into_thread_id, dict(base.files))
         return WorkspaceMerge(applied=tuple(applied), conflicts=tuple(conflicts), skipped=tuple(skipped))
 
-    async def _start(self, *, thread_id, input=None, resume=None, context=None, idempotency_key=None, execution_fence=None, artifact_imports=None):
+    async def _start(self, *, thread_id, input=None, resume=None, context=None, idempotency_key=None, execution_fence=None, artifact_imports=None, stream_mode=None):
         from app.gateway.extension_artifacts import validate_import_receipts
         from app.gateway.routers.thread_runs import create_run
         from app.gateway.run_models import RunCreateRequest
@@ -298,6 +320,7 @@ class _BoundAgentRuns:
         run_input = _json_object(input)
         run_context = _json_object(context)
         command = _json_object({"resume": resume}) if resume is not None else None
+        stream_modes = _stream_modes(stream_mode)
         imports = _json_object({"items": artifact_imports})["items"] if artifact_imports is not None else None
         if imports is not None:
             if self._plugin_namespace is None or resume is not None:
@@ -317,12 +340,12 @@ class _BoundAgentRuns:
                     raise AgentRunError(503, "Fenced Agent admission requires run heartbeats and a cross-process stream bridge")
                 request.state.extension_execution_fence = execution_fence
             assistant_id = await resolve_thread_assistant_id(request, thread_id, fail_closed=True)
-            body = RunCreateRequest(assistant_id=assistant_id, input=run_input, command=command, context=run_context, on_disconnect="continue")
+            body = RunCreateRequest(assistant_id=assistant_id, input=run_input, command=command, context=run_context, stream_mode=stream_modes, on_disconnect="continue")
             response = await create_run(thread_id, body, request, idempotency_key=f"extension:{self._plugin_namespace or ''}:{idempotency_key}" if idempotency_key is not None else None)
             return _view(response)
 
-    async def start(self, *, thread_id, input, context=None, idempotency_key=None, execution_fence=None, artifact_imports=None) -> AgentRun:
-        return await self._start(thread_id=thread_id, input=input, context=context, idempotency_key=idempotency_key, execution_fence=execution_fence, artifact_imports=artifact_imports)
+    async def start(self, *, thread_id, input, context=None, idempotency_key=None, execution_fence=None, artifact_imports=None, stream_mode=None) -> AgentRun:
+        return await self._start(thread_id=thread_id, input=input, context=context, idempotency_key=idempotency_key, execution_fence=execution_fence, artifact_imports=artifact_imports, stream_mode=stream_mode)
 
     async def start_batch_followup(self, *, thread_id, batch_id, input, context, config, execution_fence, goal_wakeup=None):
         """Native single follow-up; the existing SQL admission fences cancellation."""

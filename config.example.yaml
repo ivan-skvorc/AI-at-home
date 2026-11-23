@@ -20,7 +20,7 @@
 # ============================================================================
 # Bump this number when the config schema changes.
 # Run `make config-upgrade` to merge new fields into your local config.yaml.
-config_version: 77
+config_version: 78
 
 # Optional operator-owned literal prompt extensions (see CONFIGURATION.md):
 # lead_prompt_overlay:
@@ -5711,3 +5711,20 @@ plugins:
     required: false
     config:
       enabled: true
+  # Bundled and on by default: the CAD design page (FORK.md §58). Designs in
+  # the sidebar opens a page where the assistant drafts a part in OpenSCAD, your
+  # browser renders it (the Gateway never runs model-written code), every render
+  # is kept as a version, and Finalize builds a checked CadQuery part with the
+  # CAD module above. Its `scad_draft` tool reaches design runs only. Its source
+  # is examples/deerflow-extension-cad-design, installed from the snapshot in
+  # backend/extensions/sources. Turn it off with
+  # `make extension-disable NAME=cad-design`, which keeps this record.
+  - name: cad-design
+    package: deerflow-extension-cad-design
+    use: deerflow_extension_cad_design:install
+    enabled: true
+    required: false
+    config:
+      enabled: true
+      storage_path: cad-design/designs.sqlite  # relative = under DEER_FLOW_HOME (local and Docker alike)
+      max_source_bytes: 65536    # largest OpenSCAD file a version keeps, 1024 to 262144

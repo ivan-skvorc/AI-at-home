@@ -20,7 +20,11 @@ APIs and lifecycles. Public contracts live in `deerflow_extension_api` (0.2.7).
 Backend actions and model tools may use the optional host-bound
 `context.agent_runs` capability to create, continue, inspect, resume, and cancel
 full Agent runs. See [Agent run control](../backend/docs/extension-agent-runs.md)
-for authorization, service-held handle lifetime, and handoff examples.
+for authorization, service-held handle lifetime, and handoff examples. Since
+extension API 0.2.14 `start` takes an optional `stream_mode` (a subset of
+`values`, `messages-tuple`, `updates`, `custom`; anything else is a 422), so a
+plugin page can join the run's stream and show tokens and tool-call arguments
+while they arrive.
 
 The browser contribution API is experimental. `BrowserModule(code=...)` remains the
 self-contained transport; `BrowserAssets(root=...)` adds manifest-listed resources
@@ -226,6 +230,38 @@ routing rules. Missing or inaccessible conversations reject without navigating;
 unmount/account changes abort pending reads and prevent late navigation. Cleanup
 aborts outstanding work and fences late callbacks. Plugin async work should observe
 the signal and release resources in `dispose()`.
+
+Optional `layout: "column" | "full"` chooses the page frame. The default `column`
+renders a centred, scrolling column under a title. `full` mounts the surface edge to
+edge under the breadcrumb header with no title and no outer scroll; the surface root
+fills the area (`height: 100%`), so the plugin owns its own panes and scrolling. A
+`navigation.icon` is a name from the host allowlist (`bell`, `users`, `bookmark`,
+`box`, `download`, `file-json`, `file-text`); other names show a generic icon.
+
+The optional `joinRunStream(threadId, runId, { signal? })` helper observes a run's
+server-sent events through the host's authenticated
+`GET /api/threads/{threadId}/runs/{runId}/join` route, for example a run a backend
+action started with `context.agent_runs.start(..., stream_mode=[...])`. It returns an
+async iterable of `{ event, data }`, where `data` is the parsed JSON payload or the raw
+text. Both identifiers must match `^[A-Za-z0-9_-]{1,128}$`; the Gateway checks thread
+ownership, so a page can join only its user's runs. Joining is read-only observation:
+closing the stream does not cancel the run. The page signal (and the optional caller
+signal) ends the stream and rejects the iterator; a failed response rejects with its
+status, and an event over 16 MiB stops the stream. It does not resume after a dropped
+connection; poll the run's status through a backend action and join again.
+
+The optional `models` context value is the host's current model list,
+`{ list: [{ name, display_name? }], defaultName? }`, where `defaultName` is the
+user's current chat model when it is still available, otherwise the first model. It
+carries names only (no prices or credentials), reads live without remounting the
+page, and is empty while the host is still loading the list. A plugin that starts a
+run passes the chosen name as `model_name`; the Gateway still enforces model access.
+
+A thread whose metadata has `deerflow_listed: false` is left out of the chat lists
+in the sidebar and the chats page, like Side Chat threads, because an extension page
+presents it itself. It remains reachable by URL, keeps its search corpus, and
+behaves as an ordinary conversation otherwise. Set the key when creating the thread,
+for example `create_thread(metadata={"deerflow_listed": False})`.
 
 Conversation actions receive a conversation context and host services. The
 `latestVisibleAnswer` and `conversationText` services reuse the existing export

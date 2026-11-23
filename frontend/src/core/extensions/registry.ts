@@ -1,6 +1,7 @@
 import {
   BellIcon,
   BookmarkIcon,
+  BoxIcon,
   DownloadIcon,
   FileJsonIcon,
   FileTextIcon,
@@ -20,6 +21,7 @@ export function extensionIcon(name?: string): LucideIcon {
     bell: BellIcon,
     users: UsersIcon,
     bookmark: BookmarkIcon,
+    box: BoxIcon,
     download: DownloadIcon,
     "file-json": FileJsonIcon,
     "file-text": FileTextIcon,
@@ -153,7 +155,10 @@ export async function loadFrontendExtensions(
               surface.slot !== "page" ||
               typeof surface.title !== "string" ||
               !surface.title.trim() ||
-              typeof surface.mount !== "function"
+              typeof surface.mount !== "function" ||
+              (surface.layout !== undefined &&
+                surface.layout !== "column" &&
+                surface.layout !== "full")
             )
               throw new Error("Invalid plugin surface");
             if (surface.navigation !== undefined) {

@@ -1,0 +1,1 @@
+var e={encoding:"gzip",bytes:8178497,sha256:"ca81ad3d2ed0490f217db335aa8106fb451ca627073502aabb686866bfed1a7b",files:[{path:"./openscad.gz.wasm",bytes:2670268,sha256:"28ec050b871bbe3a655ecde7a758203ac86e50d3d0a3ba2bae75515dcc65b9c3"}]};export{e as a};

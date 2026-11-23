@@ -23,6 +23,7 @@ export function PluginPage({
     ({ contribution, surface }) =>
       contribution.namespace === namespace && surface.id === surfaceId,
   );
+  const full = !query.isPending && page?.surface.layout === "full";
   const title = page
     ? pluginPageTitle(page.surface, locale)
     : t.extensions.pageUnavailable;
@@ -34,39 +35,49 @@ export function PluginPage({
         <span>/</span>
         <span>{title}</span>
       </div>
-      <main className="flex-1 overflow-y-auto">
-        <div className="mx-auto max-w-6xl space-y-6 px-5 py-8 md:px-10">
-          {query.isPending ? (
-            <p role="status">{t.extensions.pageLoading}</p>
-          ) : (
-            <>
-              <h1 className="text-2xl font-semibold">{title}</h1>
-              {page ? (
-                <PluginSurfaces
-                  slot="page"
-                  namespace={namespace}
-                  surfaceId={surfaceId}
-                />
-              ) : (
-                <div className="space-y-4">
-                  <p>{t.extensions.pageUnavailableHint}</p>
-                  <Button
-                    variant="outline"
-                    onClick={() => window.location.reload()}
-                  >
-                    {t.extensions.reload}
-                  </Button>
-                  <Button variant="ghost" asChild>
-                    <Link href="/workspace/capabilities?tab=extensions">
-                      {t.extensions.viewAll}
-                    </Link>
-                  </Button>
-                </div>
-              )}
-            </>
-          )}
-        </div>
-      </main>
+      {full ? (
+        <main className="flex min-h-0 flex-1 flex-col overflow-hidden">
+          <PluginSurfaces
+            slot="page"
+            namespace={namespace}
+            surfaceId={surfaceId}
+          />
+        </main>
+      ) : (
+        <main className="flex-1 overflow-y-auto">
+          <div className="mx-auto max-w-6xl space-y-6 px-5 py-8 md:px-10">
+            {query.isPending ? (
+              <p role="status">{t.extensions.pageLoading}</p>
+            ) : (
+              <>
+                <h1 className="text-2xl font-semibold">{title}</h1>
+                {page ? (
+                  <PluginSurfaces
+                    slot="page"
+                    namespace={namespace}
+                    surfaceId={surfaceId}
+                  />
+                ) : (
+                  <div className="space-y-4">
+                    <p>{t.extensions.pageUnavailableHint}</p>
+                    <Button
+                      variant="outline"
+                      onClick={() => window.location.reload()}
+                    >
+                      {t.extensions.reload}
+                    </Button>
+                    <Button variant="ghost" asChild>
+                      <Link href="/workspace/capabilities?tab=extensions">
+                        {t.extensions.viewAll}
+                      </Link>
+                    </Button>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        </main>
+      )}
     </div>
   );
 }

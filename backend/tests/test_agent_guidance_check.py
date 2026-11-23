@@ -85,6 +85,9 @@ EXPECTED_GUIDANCE_PATHS = {
     "examples/deerflow-extension-cad-preview/AGENTS.md",
     # The bundled snapshot copies its package byte for byte, guide included.
     "backend/extensions/sources/deerflow-extension-cad-preview/AGENTS.md",
+    "examples/deerflow-extension-cad-design/AGENTS.md",
+    # The bundled snapshot copies its package byte for byte, guide included.
+    "backend/extensions/sources/deerflow-extension-cad-design/AGENTS.md",
 }
 
 
